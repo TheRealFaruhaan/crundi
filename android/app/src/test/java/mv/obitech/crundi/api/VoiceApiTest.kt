@@ -143,4 +143,140 @@ class VoiceApiTest {
     @Test fun aServerWithoutBrainStatsHasNone() = runBlocking {
         assertEquals(null, CrundiClient(FakeTransport()).voice.brainStats())
     }
+
+    // ─── volume, admin mode, compact, history, keyboard, tickers and triggers ───
+
+    @Test fun volumeAndAdminModeAreRead() = runBlocking {
+        val t = FakeTransport().on("GET /api/voice/settings", settingsJson.replace("\"limitReached\":false}", "\"limitReached\":false,\"volume\":55,\"adminMode\":true,\"adminCapable\":true}"))
+        val s = CrundiClient(t).voice.settings()
+        assertEquals(55, s.volume)
+        assertTrue(s.adminMode)
+        assertEquals(true, s.adminCapable)
+        assertEquals(0.55f, volumeGain(s.volume), 0.001f)
+    }
+
+    @Test fun anOlderServerHasFullVolumeAndNoAdminMode() = runBlocking {
+        val s = CrundiClient(FakeTransport().on("GET /api/voice/settings", settingsJson)).voice.settings()
+        assertEquals(100, s.volume)
+        assertFalse(s.adminMode)
+        assertEquals(null, s.adminCapable)
+        assertEquals(1f, volumeGain(null), 0f)
+        assertEquals(1f, volumeGain(5), 0f)
+    }
+
+    @Test fun volumeAndAdminModeAreSaved() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/settings", settingsJson)
+        CrundiClient(t).voice.save(volume = 40, adminMode = false)
+        val body = t.requests.last().json.toString()
+        assertTrue(body, body.contains("\"volume\":40") && body.contains("\"adminMode\":false"))
+        assertFalse(body.contains("model"))
+    }
+
+    @Test fun adminModeRefusedSaysWhy() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/settings", """{"ok":false,"error":"Admin mode needs Sonnet or above. Choose another model first."}""", 400)
+        try { CrundiClient(t).voice.save(adminMode = true); fail() } catch (e: ApiException) {
+            assertTrue(e.message!!.startsWith("Admin mode needs Sonnet"))
+        }
+    }
+
+    @Test fun aTypedTurnSaysSoAndItsVolumeIsRead() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"Louder, Sir.","volume":85}""")
+        val r = CrundiClient(t).voice.turn("speak up", "Cru", false, typed = true)
+        assertEquals(85, r.volume)
+        assertTrue(t.requests.last().json.toString().contains("\"typed\":true"))
+        CrundiClient(t).voice.turn("speak up", "Cru", false)
+        assertFalse(t.requests.last().json.toString().contains("typed"))
+        assertEquals(null, CrundiClient(FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"x"}""")).voice.turn("a", "b", false).volume)
+    }
+
+    @Test fun compactAnswersOrSaysNotSupported() = runBlocking {
+        assertTrue(CrundiClient(FakeTransport().on("POST /api/voice/compact", """{"ok":true}""")).voice.compact()!!.ok)
+        val no = CrundiClient(FakeTransport().on("POST /api/voice/compact", """{"ok":false,"error":"Nothing to compact yet"}""")).voice.compact()!!
+        assertFalse(no.ok)
+        assertEquals("Nothing to compact yet", no.error)
+        assertEquals(null, CrundiClient(FakeTransport()).voice.compact())
+    }
+
+    @Test fun historyIsReadAndPagedBack() = runBlocking {
+        val t = FakeTransport().on("GET /api/voice/history", """{"ok":true,"turns":[{"id":3,"at":1000,"said":"usage?","speak":"Plenty.","show":"5h 2%","report":false},{"id":4,"at":2000,"said":"","speak":"The build finished.","show":"","report":true}],"more":true}""")
+        val h = CrundiClient(t).voice.history(40, 0)!!
+        assertEquals(2, h.turns.size)
+        assertTrue(h.more)
+        assertTrue(h.turns[1].report)
+        assertEquals("40", t.requests.last().query["limit"])
+        assertEquals(null, t.requests.last().query["before"])
+        CrundiClient(t).voice.history(40, 1000)
+        assertEquals("1000", t.requests.last().query["before"])
+        assertEquals(null, CrundiClient(FakeTransport()).voice.history())
+    }
+
+    @Test fun tickersAndTriggersAreReadAndChanged() = runBlocking {
+        val list = """{"ok":true,"tickers":[{"id":"t1","type":"ticker","name":"Morning briefing","purpose":"Start the day","enabled":true,"enabledAt":5,"createdBy":"cru","createdAt":1,"lastFiredAt":0,"fires":0,"window":null,"summary":"07:30 on weekdays","every":null,"at":"07:30","days":[1,2,3,4,5]}],
+            "triggers":[{"id":"g1","type":"trigger","name":"Hot CPU","purpose":"","enabled":false,"createdBy":"owner","createdAt":2,"lastFiredAt":1700000000000,"fires":3,"window":{"from":"08:00"},"summary":"CPU above 90%","condition":{"kind":"cpu","above":90},"once":false,"cooldown":30}],
+            "kinds":["cpu","service-down"],"limits":{"perHour":12,"firedLastHour":1,"minEvery":15,"defaultCooldown":30}}"""
+        val t = FakeTransport().on("GET /api/voice/wakeups", list).on("POST /api/voice/wakeups", list)
+        val w = CrundiClient(t).voice.wakeups()!!
+        assertEquals("Morning briefing", w.tickers[0].name)
+        assertTrue(w.tickers[0].enabled)
+        assertEquals("owner", w.triggers[0].createdBy)
+        assertEquals(3, w.triggers[0].fires)
+        assertEquals(1, w.limits.firedLastHour)
+        CrundiClient(t).voice.wakeup("g1", "enable")
+        val body = t.requests.last().json.toString()
+        assertTrue(body.contains("\"id\":\"g1\"") && body.contains("\"action\":\"enable\""))
+        assertEquals(null, CrundiClient(FakeTransport()).voice.wakeups())
+    }
+
+    @Test fun anUnknownWakeupSaysSo() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/wakeups", """{"ok":false,"error":"No ticker or trigger with that id"}""", 404)
+        try { CrundiClient(t).voice.wakeup("zz", "delete"); fail() } catch (e: ApiException) { assertEquals("No ticker or trigger with that id", e.message) }
+    }
+
+    @Test fun theStreamSaysWhenSettingsChange() {
+        assertEquals(ListenEvent.Settings, ListenEvent.parse("""{"type":"settings"}"""))
+        assertEquals(ListenEvent.Ready(), ListenEvent.parse("""{"type":"ready","keyboard":true}"""))
+    }
+
+    // ─── the owner's voice ───
+
+    @Test fun utterancesSayWhetherTheVoiceWasTheOwners() {
+        assertEquals(ListenEvent.Utterance("open it", false), ListenEvent.parse("""{"type":"utterance","text":"open it","owner":false}"""))
+        assertEquals(ListenEvent.Utterance("open it", true), ListenEvent.parse("""{"type":"utterance","text":"open it","owner":true}"""))
+        assertEquals(ListenEvent.Utterance("open it", null), ListenEvent.parse("""{"type":"utterance","text":"open it","owner":null}"""))
+    }
+
+    @Test fun speakerStatusEnrolFinishAndForget() = runBlocking {
+        val status = """{"ok":true,"available":true,"model":"ready","enrolled":true,"phrases":6,"seconds":14.2,"enrolledAt":"2026-11-09T10:00:00.000Z","threshold":0.6,"minSeconds":1,"minPhrases":5,"enrolling":null,"prompts":["Hey Cru, what's on the board?"],"ownerOnly":true}"""
+        val t = FakeTransport().on("GET /api/voice/speaker", status).on("DELETE /api/voice/speaker", status.replace("\"enrolled\":true", "\"enrolled\":false"))
+            .on("POST /api/voice/speaker/enrol", """{"ok":true,"accepted":true,"seconds":2.1,"consistency":null,"phrases":1}""")
+            .on("POST /api/voice/speaker/finish", status)
+        val c = CrundiClient(t).voice
+        val s = c.speaker()!!
+        assertTrue(s.enrolled)
+        assertEquals(6, s.phrases)
+        assertEquals(1, s.prompts.size)
+        val r = c.enrolPhrase(ByteArray(3200), 16000, restart = true)
+        assertTrue(r.accepted)
+        assertEquals(null, r.consistency)
+        val req = t.requests.last()
+        assertEquals("1", req.query["restart"])
+        assertEquals("audio/L16;rate=16000", req.upload!!.contentType)
+        assertEquals(3200L, req.upload!!.length)
+        assertTrue(c.finishEnrol().enrolled)
+        assertFalse(c.forgetSpeaker().enrolled)
+        assertEquals(null, CrundiClient(FakeTransport()).voice.speaker())
+        assertEquals(VoiceApi.SPEAKER_UNSUPPORTED, CrundiClient(FakeTransport()).voice.enrolPhrase(ByteArray(2), 16000, false).error)
+    }
+
+    @Test fun aTurnSaysWhenTheVoiceWasNotRecognised() = runBlocking {
+        val r = CrundiClient(FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"I can't do that.","speaker":{"owner":false,"unrecognised":true}}""")).voice.turn("delete it", "Cru", false)
+        assertEquals(false, r.speaker?.owner)
+        assertTrue(r.speaker!!.unrecognised)
+    }
+
+    @Test fun ownerOnlyIsSaved() = runBlocking {
+        val t = FakeTransport().on("POST /api/voice/settings", settingsJson)
+        CrundiClient(t).voice.save(ownerOnly = false)
+        assertTrue(t.requests.last().json.toString().contains("\"ownerOnly\":false"))
+    }
 }

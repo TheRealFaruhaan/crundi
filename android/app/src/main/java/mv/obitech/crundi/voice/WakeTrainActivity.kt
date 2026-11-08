@@ -273,7 +273,7 @@ fun WakeTrainScreen(ui: TrainUi, level: () -> Float, ev: TrainEvents) {
                     textAlign = TextAlign.Center,
                 )
             } else {
-                CruIcon(96.dp)
+                CruIcon(72.dp)
                 Spacer(Modifier.height(22.dp))
                 CrundiButton(if (ui.trying) "Listening…" else "Try it", ev.onTry, kind = ButtonKind.Primary, icon = "mic", enabled = !ui.trying)
                 if (ui.tryResult.isNotEmpty()) Text(

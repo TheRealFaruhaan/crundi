@@ -22,8 +22,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null, brain: String? = null, cliIdleMinutes: Int? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null, brain: String? = null, cliIdleMinutes: Int? = null, volume: Int? = null, adminMode: Boolean? = null, ownerOnly: Boolean? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes, "volume" to volume, "adminMode" to adminMode, "ownerOnly" to ownerOnly)), null)
 
     /**
      * Replace one of the server's keys: [key] is "anthropicKey", "deepgramKey"
@@ -51,9 +51,12 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
      * "side key"); [locked] tells Claude the phone is locked, so anything
      * that would change something waits for an unlock (spec §4).
      */
-    suspend fun turn(text: String, where: String, locked: Boolean): VoiceReply {
+    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false): VoiceReply {
         // A failed turn comes back { ok:false, error } with 200: read it as a reply, not an exception.
-        val r = transport.exchange(ApiRequest("POST", "/api/voice/turn", json = Uploads.toJson(mapOf("text" to text, "where" to where, "locked" to locked)), slow = true))
+        // [typed]: keyboard mode, words typed rather than heard (an older server ignores it).
+        val body = mutableMapOf<String, Any?>("text" to text, "where" to where, "locked" to locked)
+        if (typed) body["typed"] = true
+        val r = transport.exchange(ApiRequest("POST", "/api/voice/turn", json = Uploads.toJson(body), slow = true))
         if (r.status == 404) throw ApiException(404, UNSUPPORTED)
         val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()
             ?: throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
@@ -74,6 +77,79 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
 
     /** A voice session just opened: warm the server's prompt cache while the owner speaks. Best effort. */
     suspend fun warm() { runCatching { rpc.post("/api/voice/warm") } }
+
+    /**
+     * The conversation so far becomes a summary (capability "voice-compact"),
+     * the notebook kept. Null from an older server (404).
+     */
+    suspend fun compact(): CompactReply? {
+        val r = transport.exchange(ApiRequest("POST", "/api/voice/compact", json = Uploads.toJson(emptyMap<String, Any?>()), slow = true))
+        if (r.status == 404) return null
+        val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()
+            ?: throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(CompactReply.serializer(), obj)
+    }
+
+    /**
+     * Cru's conversation as chat messages (capability "voice-history"): the
+     * latest [limit] turns before [before] (ms; 0 the newest), oldest first.
+     * Null from an older server (404).
+     */
+    suspend fun history(limit: Int = 40, before: Long = 0): VoiceHistory? {
+        val q = mutableMapOf("limit" to limit.toString())
+        if (before > 0) q["before"] = before.toString()
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/history", query = q))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(VoiceHistory.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
+    /**
+     * Cru's tickers and triggers (capability "voice-wakeups"). Null from an
+     * older server (404).
+     */
+    suspend fun wakeups(): VoiceWakeups? {
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/wakeups"))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(VoiceWakeups.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
+    /** Switch one on or off, or delete it: [action] is "enable", "disable" or "delete". The list as it is now. */
+    suspend fun wakeup(id: String, action: String): VoiceWakeups {
+        require(action in setOf("enable", "disable", "delete")) { "Not a wake-up action: $action" }
+        return rpc.read(rpc.post("/api/voice/wakeups", mapOf("id" to id, "action" to action)), null)
+    }
+
+    // ─── the owner's voice (capability "voice-speaker") ───
+
+    /** Whether Cru knows the owner's voice, and the phrases to enrol with. Null from an older server (404). */
+    suspend fun speaker(): SpeakerStatus? {
+        val r = transport.exchange(ApiRequest("GET", "/api/voice/speaker"))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(SpeakerStatus.serializer(), CrundiJson.parseToJsonElement(r.text))
+    }
+
+    /**
+     * One enrolment phrase: [pcm] 16-bit little-endian mono at [rate].
+     * [restart]: the first phrase of a fresh enrolment. A phrase the server
+     * does not accept comes back with [EnrolReply.problem]; a failure with [EnrolReply.error].
+     */
+    suspend fun enrolPhrase(pcm: ByteArray, rate: Int, restart: Boolean): EnrolReply {
+        val up = Upload("audio/L16;rate=$rate", pcm.size.toLong(), { out, count -> out.write(pcm); count(pcm.size.toLong()) }, pcm.size.toLong())
+        val r = transport.exchange(ApiRequest("POST", "/api/voice/speaker/enrol", query = if (restart) mapOf("restart" to "1") else emptyMap(), upload = up, slow = true))
+        if (r.status == 404) return EnrolReply(ok = false, error = SPEAKER_UNSUPPORTED)
+        val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()
+            ?: return EnrolReply(ok = false, error = OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(EnrolReply.serializer(), obj)
+    }
+
+    /** The phrases read become the owner's voice profile (at least [SpeakerStatus.minPhrases]). */
+    suspend fun finishEnrol(): SpeakerStatus = rpc.read(rpc.post("/api/voice/speaker/finish"), null)
+
+    /** Forget the owner's voice: Cru acts on any voice again. */
+    suspend fun forgetSpeaker(): SpeakerStatus = rpc.read(rpc.delete("/api/voice/speaker"), null)
 
     /** Start a fresh conversation. */
     suspend fun reset() { rpc.post("/api/voice/reset") }
@@ -150,6 +226,14 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     fun listen(listener: SocketListener, sampleRate: Int = 16000): DataSocket =
         transport.openSocket("/api/voice/listen", mapOf("encoding" to "linear16", "sample_rate" to sampleRate.toString()), listener)
 
+    /**
+     * Keyboard mode's line (capability "voice-keyboard"): no audio and no
+     * Deepgram, only Cru's reports and settings changes come down it. Send
+     * { type: stop } and close it when leaving keyboard mode. Blocking.
+     */
+    fun listenKeyboard(listener: SocketListener): DataSocket =
+        transport.openSocket("/api/voice/listen", mapOf("keyboard" to "1"), listener)
+
     companion object {
         const val CAPABILITY = "voice-assistant"
         const val TTS_STREAM = "voice-tts-stream"
@@ -163,6 +247,19 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val CHAT_VOICE = "chat-voice"
         /** GET /api/voice/cues and its clips. */
         const val CUES = "voice-cues"
+        /** settings.volume, a turn's reply volume, { type: settings } on the stream. */
+        const val VOLUME = "voice-volume"
+        /** POST /api/voice/compact: the voice screen's Compact button. */
+        const val COMPACT = "voice-compact"
+        /** GET /api/voice/history: the voice screen's chat view. */
+        const val HISTORY = "voice-history"
+        /** /api/voice/listen?keyboard=1: reports and settings without a microphone. */
+        const val KEYBOARD = "voice-keyboard"
+        /** GET/POST /api/voice/wakeups and the 'voice-wakeups' event. */
+        const val WAKEUPS = "voice-wakeups"
+        /** The owner's voice: GET/DELETE /api/voice/speaker, enrol, finish; ownerOnly; utterances' owner. */
+        const val SPEAKER = "voice-speaker"
+        const val SPEAKER_UNSUPPORTED = "Not supported by this server: update it to teach Cru your voice."
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
         /** The keys [saveKey] may set. */
@@ -237,7 +334,16 @@ data class VoiceSettings(
     val anthropicAdminKeySet: Boolean? = null,
     val spend: VoiceSpend = VoiceSpend(),
     val limitReached: Boolean = false,
+    /** How loud Cru talks, 10 to 100 (%). An older server has none: 100. */
+    val volume: Int = 100,
+    /** Admin mode: Cru may run any command on the server. */
+    val adminMode: Boolean = false,
+    /** The model can hold admin mode (Sonnet or above). Null from an older server, which has no admin mode: the switch is not shown. */
+    val adminCapable: Boolean? = null,
 )
+
+/** [VoiceSettings.volume] as a player's gain, 0.1 to 1 (anything out of range: 1, as the web). */
+fun volumeGain(volume: Int?): Float = if (volume != null && volume in 10..100) volume / 100f else 1f
 
 /** One brain and model's record (src/voice/agent.js stats()). */
 @Serializable
@@ -280,6 +386,85 @@ data class VoiceReply(
     /** The turn was cancelled (POST /api/voice/cancel): neither said nor shown; [acted] is what it had already done. */
     val cancelled: Boolean = false,
     val acted: List<Acted> = emptyList(),
+    /** The volume to say it at, 10 to 100 (capability "voice-volume"; Cru may just have changed it). Null from an older server. */
+    val volume: Int? = null,
+    /** The voice check on what was said (capability "voice-speaker"); null for typed words or an older server. */
+    val speaker: SpeakerCheck? = null,
+)
+
+@Serializable
+data class SpeakerCheck(val owner: Boolean? = null, val unrecognised: Boolean = false)
+
+/** GET /api/voice/speaker. */
+@Serializable
+data class SpeakerStatus(
+    val ok: Boolean = false,
+    /** The voice check can run on this server. */
+    val available: Boolean = false,
+    val enrolled: Boolean = false,
+    val phrases: Int = 0,
+    val seconds: Double = 0.0,
+    /** When the voice was enrolled (ISO), or null. */
+    val enrolledAt: String? = null,
+    val minPhrases: Int = 5,
+    val minSeconds: Double = 0.0,
+    val prompts: List<String> = emptyList(),
+    /** "Only act on my voice". */
+    val ownerOnly: Boolean = true,
+)
+
+/** POST /api/voice/speaker/enrol: the phrase [accepted], or the [problem] with it; [error] when it could not be checked. */
+@Serializable
+data class EnrolReply(
+    val ok: Boolean = false,
+    val accepted: Boolean = false,
+    val seconds: Double = 0.0,
+    /** How like the earlier phrases, 0..1; null for the first. */
+    val consistency: Double? = null,
+    val phrases: Int = 0,
+    val problem: String = "",
+    val error: String = "",
+)
+
+@Serializable
+data class CompactReply(val ok: Boolean = false, val error: String = "", val skipped: String = "")
+
+/** One turn of Cru's conversation: what the owner [said] ("" for Cru speaking up on its own, [report]) and the answer. */
+@Serializable
+data class VoiceTurn(val id: Long = 0, val at: Long = 0, val said: String = "", val speak: String = "", val show: String = "", val report: Boolean = false)
+
+/** GET /api/voice/history: [turns] oldest first; [more] older ones to page back to. */
+@Serializable
+data class VoiceHistory(val ok: Boolean = false, val turns: List<VoiceTurn> = emptyList(), val more: Boolean = false)
+
+/** A ticker (on a schedule) or a trigger (on a condition): a reason for Cru to wake up on its own. */
+@Serializable
+data class WakeItem(
+    val id: String = "",
+    val type: String = "",
+    val name: String = "",
+    val purpose: String = "",
+    val enabled: Boolean = false,
+    val enabledAt: Long = 0,
+    /** "cru" or "owner". */
+    val createdBy: String = "",
+    val createdAt: Long = 0,
+    /** When it last woke Cru, ms; 0 never. */
+    val lastFiredAt: Long = 0,
+    val fires: Int = 0,
+    val summary: String = "",
+)
+
+@Serializable
+data class WakeLimits(val perHour: Int = 12, val firedLastHour: Int = 0, val minEvery: Int = 0, val defaultCooldown: Int = 0)
+
+@Serializable
+data class VoiceWakeups(
+    val ok: Boolean = false,
+    val tickers: List<WakeItem> = emptyList(),
+    val triggers: List<WakeItem> = emptyList(),
+    val kinds: List<String> = emptyList(),
+    val limits: WakeLimits = WakeLimits(),
 )
 
 /** Something a cancelled turn had already done, which can't be undone. */
@@ -337,13 +522,15 @@ sealed interface ListenEvent {
     data object Speech : ListenEvent
     /** Words so far; may still change. */
     data class Interim(val text: String) : ListenEvent
-    /** A finished sentence. */
-    data class Utterance(val text: String) : ListenEvent
+    /** A finished sentence; [owner]: the voice check (capability "voice-speaker"), null when not checked. */
+    data class Utterance(val text: String, val owner: Boolean? = null) : ListenEvent
     data class Failed(val error: String) : ListenEvent
     /** Cru has news, unasked (a watched chat finished or waits on the owner): say it. */
     data class Report(val speak: String, val show: String) : ListenEvent
     /** The server dropped what the owner said ("scratch that"). */
     data class Discard(val text: String) : ListenEvent
+    /** A setting changed on the server (Cru's volume, say): fetch them again. */
+    data object Settings : ListenEvent
 
     companion object {
         /** One message off the socket, or null for one this app does not know. */
@@ -355,7 +542,8 @@ sealed interface ListenEvent {
                 "speech" -> Speech
                 "interim" -> Interim(t)
                 "discard" -> Discard(t)
-                "utterance" -> if (t.isBlank()) null else Utterance(t)
+                "settings" -> Settings
+                "utterance" -> if (t.isBlank()) null else Utterance(t, (o["owner"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull())
                 "error" -> Failed((o["error"] as? JsonPrimitive)?.contentOrNull ?: "The stream stopped")
                 "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); if (sp.isBlank() && sh.isBlank()) null else Report(sp, sh) }
                 else -> null

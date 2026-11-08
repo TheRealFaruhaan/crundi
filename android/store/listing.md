@@ -61,6 +61,21 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.28 (en-US)
+
+Version code 59. Internal track. Since 1.1.3-dev.27 (code 58): Cru parity with server 1.21.6-dev.33/34 (volume, compact, chat view, keyboard mode, new mark, tones, auto-scroll, admin mode, tickers and triggers, voice enrolment, usage in the top row) and the chat scroll fix.
+
+```
+<en-US>
+Cru, the voice assistant:
+- New mark, calm tones instead of spoken cues, reply scrolls as it is spoken.
+- Chat view of the whole conversation, and a keyboard mode.
+- Volume, compact, admin mode, tickers and triggers, and voice enrolment in its settings.
+- Usage now in the top row.
+Chats: scrolling up while Claude writes stays put.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.27 (en-US)
 
 Version code 58. Internal track. Since 1.1.3-dev.26 (code 57): agents panel scrolls; Dismiss finished takes effect at once (server 1.21.6-dev.31 sends the change).

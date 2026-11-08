@@ -1,0 +1,96 @@
+package mv.obitech.crundi.voice
+
+import mv.obitech.crundi.api.VoiceTurn
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** The voice screen's chat view (CruChat), keyboard or voice (CruMode), following the reply (SpeechFollow), the mark (CruMark). */
+class CruChatTest {
+    private val turns = listOf(
+        VoiceTurn(1, 1000, "usage?", "Plenty.", "5h 2%"),
+        VoiceTurn(2, 2000, "[Report] build", "The build finished.", "", report = true),
+        VoiceTurn(3, 3000, "", "", ""),
+    )
+
+    @Test fun turnsBecomeMessagesReportsAreCrusAlone() {
+        val m = CruChat.fromTurns(turns)
+        assertEquals(2, m.size)
+        assertEquals("usage?", m[0].said)
+        assertEquals("5h 2%", m[0].show)
+        assertEquals("", m[1].said)
+        assertEquals("The build finished.", m[1].speak)
+        assertFalse(m[0].live)
+        assertTrue(m[0].key != m[1].key)
+    }
+
+    @Test fun olderPagesGoFirstAFreshLoadKeepsWhatHappenedHere() {
+        val loaded = CruChat.fromTurns(turns.take(1))
+        val older = CruChat.fromTurns(listOf(VoiceTurn(0, 500, "hello", "Sir.", "")))
+        assertEquals(listOf("hello", "usage?"), CruChat.merge(loaded, older, older = true).map { it.said })
+        // Asked here before the history came: kept unless the server already has it.
+        val here = CruChat.add(emptyList(), "usage?", "Plenty.", "5h 2%", 1001)
+        val here2 = CruChat.add(here, "open kanban", "Done.", "", 4000)
+        val fresh = CruChat.merge(here2, loaded, older = false)
+        assertEquals(listOf("usage?", "open kanban"), fresh.map { it.said })
+    }
+
+    @Test fun anEmptyExchangeIsNotAdded() {
+        assertTrue(CruChat.add(emptyList(), " ", "", "", 1).isEmpty())
+        assertEquals(1, CruChat.add(emptyList(), "", "News, Sir.", "", 1).size)
+    }
+
+    @Test fun theWordsBeingHeardShowWhileListeningOrThinking() {
+        assertEquals("open the", CruChat.hearing(VoiceState(phase = Phase.Listening, heard = "open the ")))
+        assertEquals("open it", CruChat.hearing(VoiceState(phase = Phase.Thinking, heard = "open it")))
+        assertEquals("", CruChat.hearing(VoiceState(phase = Phase.Speaking, heard = "open it")))
+        assertEquals("", CruChat.hearing(VoiceState(phase = Phase.Listening, heard = "")))
+    }
+
+    @Test fun pagingBackStartsFromTheOldest() {
+        assertEquals(0L, CruChat.before(emptyList()))
+        assertEquals(1000L, CruChat.before(CruChat.fromTurns(turns)))
+    }
+
+    @Test fun keyboardWhenVoiceCannotWorkElseTheLastChoice() {
+        // No microphone permission, no Deepgram key, or past its limit with no recogniser on the phone.
+        assertTrue(CruMode.voiceUnavailable(micGranted = false, deepgramKeySet = true, deepgramLimitReached = false, deviceRecogniser = true))
+        assertTrue(CruMode.voiceUnavailable(true, false, false, true))
+        assertTrue(CruMode.voiceUnavailable(true, true, true, false))
+        assertFalse(CruMode.voiceUnavailable(true, true, true, true))
+        assertFalse(CruMode.voiceUnavailable(true, null, false, false))
+        assertFalse(CruMode.voiceUnavailable(true, true, false, false))
+        assertTrue(CruMode.startInKeyboard(saved = false, voiceUnavailable = true))
+        assertTrue(CruMode.startInKeyboard(saved = true, voiceUnavailable = false))
+        assertFalse(CruMode.startInKeyboard(saved = false, voiceUnavailable = false))
+        assertFalse(CruMode.startInKeyboard(saved = null, voiceUnavailable = false))
+    }
+
+    @Test fun theReplyIsFollowedOnlyWhenTallerThanItsArea() {
+        assertEquals(1500L, SpeechFollow.durationMs("Yes.", 1f))
+        assertEquals(10_000L, SpeechFollow.durationMs("x".repeat(140), 1f))
+        assertEquals(5_000L, SpeechFollow.durationMs("x".repeat(140), 2f))
+        assertEquals(null, SpeechFollow.target(500, 1000, 0f, 300f, 600f, 0f))
+        // Half way: the middle of the reply a third of the way down the view.
+        assertEquals(100f + 500f - 200f, SpeechFollow.target(500, 1000, 100f, 1000f, 600f, 900f)!!, 0.01f)
+        assertEquals(0f, SpeechFollow.target(0, 1000, 100f, 1000f, 600f, 900f)!!, 0.01f)
+        assertEquals(900f, SpeechFollow.target(5000, 1000, 100f, 1000f, 600f, 900f)!!, 0.01f)
+    }
+
+    @Test fun theMarksWordParses() {
+        val nodes = CruMark.wordNodes()
+        assertTrue(nodes.first() is androidx.compose.ui.graphics.vector.PathNode.MoveTo)
+        // One move, then nine curves and two lines.
+        assertEquals(1, nodes.count { it is androidx.compose.ui.graphics.vector.PathNode.MoveTo })
+        assertEquals(2, nodes.count { it is androidx.compose.ui.graphics.vector.PathNode.LineTo })
+        assertEquals(9, nodes.count { it is androidx.compose.ui.graphics.vector.PathNode.CurveTo })
+    }
+
+    @Test fun theShortBarsPulse() {
+        assertEquals(1f, CruMark.pulse(0f), 0.001f)
+        assertEquals(0.45f, CruMark.pulse(0.5f), 0.001f)
+        assertEquals(1f, CruMark.pulse(1f), 0.001f)
+        assertEquals(CruMark.pulse(0.9f), CruMark.pulse(-0.1f), 0.001f)
+    }
+}

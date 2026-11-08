@@ -51,7 +51,7 @@ import kotlin.random.Random
  * touch area while spread, on purpose.
  */
 @Composable
-fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String?, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     var frame by remember { mutableLongStateOf(0L) }
     val st = remember { FloatArray(4) }                  // morph (0 sphere .. 1 water), its velocity, level, peak
     val hist = remember { FloatArray(HIST) }
@@ -131,7 +131,7 @@ fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String, label:
                 drawCircle(lerp(CrundiColors.Sky, Color.White, 0.3f).copy(alpha = (0.8f * (1f - a)).coerceIn(0f, 1f)), 2.4f * px * (1f - a * 0.5f), Offset(x, y))
             }
         }
-        CrundiIcon(icon, size = 24.dp, tint = Color.White)
+        if (icon != null) CrundiIcon(icon, size = 24.dp, tint = Color.White)
     }
 }
 

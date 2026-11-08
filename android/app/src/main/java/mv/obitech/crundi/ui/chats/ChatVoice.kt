@@ -310,7 +310,9 @@ data class ChatVoiceUi(
  * can be ([CallAudio]), so the echo canceller takes most of it out.
  * One chat at a time has the mic. Main thread only, except the mic callback.
  */
-class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, private val send: (String) -> Unit) {
+class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, private val sendOut: (String) -> Unit) {
+    /** A voice message goes to the chat: with Cru's soft "sent" tone (no thinking tones in a chat). */
+    private val send: (String) -> Unit = { msg -> speaker.tone(mv.obitech.crundi.voice.Tones.of(mv.obitech.crundi.voice.Tones.SENT)); sendOut(msg) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _ui = MutableStateFlow(ChatVoiceUi())
     val ui: StateFlow<ChatVoiceUi> = _ui
@@ -355,6 +357,7 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
     fun configure(s: VoiceSettings?, streams: Boolean) {
         speaker.deepgramVoice = if (s?.deepgramLimitReached == true) "" else s?.ttsVoice.orEmpty()
         speaker.rate = (s?.speechRate ?: 1.0).toFloat()
+        speaker.volume = mv.obitech.crundi.api.volumeGain(s?.volume)
         speaker.streams = streams
     }
 
@@ -672,7 +675,11 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
         val mode = _ui.value.mode
         if (mode == ChatVoiceUi.Mode.Off) return
         when (ev) {
-            is ListenEvent.Ready -> _ui.update { it.copy(connecting = false) }
+            is ListenEvent.Ready -> {
+                // The microphone is live: Cru's "listening" tone, once per stream.
+                if (_ui.value.connecting) speaker.tone(mv.obitech.crundi.voice.Tones.of(mv.obitech.crundi.voice.Tones.LISTEN))
+                _ui.update { it.copy(connecting = false) }
+            }
             is ListenEvent.Interim -> if (early.isNotEmpty() && ChatVoice.afterEarly(ev.text, early).isEmpty()) {} else if (mode != ChatVoiceUi.Mode.Finishing || ev.text.isNotBlank()) {
                 if (ev.text.isNotBlank() && ev.text != _ui.value.interim) replies.words(System.currentTimeMillis())
                 _ui.update { it.copy(interim = ev.text, connecting = false) }
@@ -685,6 +692,8 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
                     else -> { said += ev.text; syncHeld() }
                 }
             }
+            // Cru's settings changed: nothing for a chat's voice mode to do.
+            ListenEvent.Settings -> {}
             // "Scratch that": what was heard so far goes nowhere.
             is ListenEvent.Discard -> { said.clear(); syncHeld(); _ui.update { it.copy(interim = "") }; replies.ownerDone(); pumpSoon() }
             is ListenEvent.Failed -> if (mode == ChatVoiceUi.Mode.Finishing) final?.complete(Unit) else stop("Voice input stopped: " + ev.error.trimEnd('.') + ".")

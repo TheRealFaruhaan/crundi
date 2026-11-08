@@ -117,6 +117,8 @@ sealed interface VoiceEvent {
     data object Close : VoiceEvent
     /** Cru has news, unasked: said now if it is just listening, else once it is free. */
     data class Report(val speak: String, val show: String, val now: Long) : VoiceEvent
+    /** The owner is doing something that is not words heard (typing in keyboard mode): the microphone's timeout starts again. */
+    data class Active(val now: Long) : VoiceEvent
 }
 
 sealed interface VoiceEffect {
@@ -256,6 +258,7 @@ class VoiceMachine(
                 else -> s to emptyList()
             }
             VoiceEvent.Close -> s.copy(phase = Phase.Ended) to listOf(VoiceEffect.StopSaying, VoiceEffect.Finish)
+            is VoiceEvent.Active -> s.copy(activeSince = e.now, quietSince = e.now) to emptyList()
             is VoiceEvent.Report -> if (s.phase == Phase.Listening && s.pending.isEmpty() && s.heard.isEmpty()) tell(s, e.speak, e.show, e.now)
                 else s.copy(reports = s.reports + (e.speak to e.show)) to emptyList()
         }

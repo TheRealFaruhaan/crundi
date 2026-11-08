@@ -55,7 +55,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.withFrameMillis
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextOverflow
+import mv.obitech.crundi.api.VoiceApi
 import mv.obitech.crundi.ui.components.ButtonKind
+import mv.obitech.crundi.ui.components.CrundiIconButton
+import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.CrundiButton
 import mv.obitech.crundi.ui.components.MarkdownText
 import mv.obitech.crundi.ui.icons.CrundiIcon
@@ -93,17 +117,21 @@ fun VoiceScreen(
     waitingHint: String = "",
     /** The × by the owner's words: take back what he said, until the answer comes. */
     onCancel: () -> Unit = {},
+    /** Compact, the chat view, keyboard mode. */
+    more: VoiceMore = VoiceMore(),
     modifier: Modifier = Modifier,
 ) {
     val s = ui.state
     val cells = remember(shell?.projects) { cellsOf(shell?.projects.orEmpty()) }
     val arcs = remember(shell?.usage, ui.spend) {
+        // Cru answering through Claude Code has no API spend: only the API brain shows it (an older server has only that one).
         val sp = ui.spend
+        val apiSp = sp?.takeIf { it.brain != "claude-code" }
         UsageArcs(
             week = shell?.usage?.weekUsed,
             fiveHour = shell?.usage?.fiveHourUsed,
-            api = sp?.let { if (it.monthlyLimitUsd > 0) (it.spend.claudeUsd / it.monthlyLimitUsd).toFloat() else 1f },
-            apiLabel = sp?.let { "Claude $" + "%.2f".format(java.util.Locale.US, it.spend.claudeUsd) + " / $" + fmtUsd(it.monthlyLimitUsd) }.orEmpty(),
+            api = apiSp?.let { if (it.monthlyLimitUsd > 0) (it.spend.claudeUsd / it.monthlyLimitUsd).toFloat() else 1f },
+            apiLabel = apiSp?.let { "Claude $" + "%.2f".format(java.util.Locale.US, it.spend.claudeUsd) + " / $" + fmtUsd(it.monthlyLimitUsd) }.orEmpty(),
             deepgram = sp?.let { if (it.deepgramLimitUsd > 0) (it.spend.deepgramUsd / it.deepgramLimitUsd).toFloat() else 1f },
             deepgramLabel = sp?.let { "Deepgram $" + "%.2f".format(java.util.Locale.US, it.spend.deepgramUsd) + " / $" + fmtUsd(it.deepgramLimitUsd) }.orEmpty(),
         )
@@ -116,19 +144,27 @@ fun VoiceScreen(
     Box(
         modifier.fillMaxSize().background(CrundiColors.BgPrimary),
     ) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            TopRow(ui, phase, onClose)
-            VoiceField(
-                phase, ca, cb, mic, voice, cells, arcs,
-                Modifier.fillMaxWidth().weight(1.5f).padding(top = 8.dp).semantics { contentDescription = statusText(ui, phase) },
-            )
+        Column(Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            TopRow(ui, phase, more)
+            // The usage, right under the top row (a phone has no room beside the mark).
             UsageLegend(arcs)
-            Words(ui, phase, onAllowMic, onCancel, Modifier.weight(1f, fill = true))
-            if (waitingHint.isNotEmpty() && phase == Phase.Ended && ui.blocked.isEmpty()) Text(waitingHint, style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
+            val chatView = ui.chat && VoiceApi.HISTORY in ui.caps
+            if (chatView) {
+                ChatList(ui, more, Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp))
+                if (ui.needsMic || ui.blocked.isNotEmpty()) Words(ui, phase, onAllowMic, onCancel, Modifier.padding(bottom = 4.dp))
+                else if (s.notice.isNotEmpty()) Text(s.notice, style = CrundiType.Small.copy(color = CrundiColors.Yellow), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+            } else {
+                VoiceField(
+                    phase, ca, cb, mic, voice, cells, arcs,
+                    Modifier.fillMaxWidth().weight(1.5f).padding(top = 8.dp).semantics { contentDescription = statusText(ui, phase) },
+                )
+                Words(ui, phase, onAllowMic, onCancel, Modifier.weight(1f, fill = true))
+            }
+            if (waitingHint.isNotEmpty() && phase == Phase.Ended && ui.blocked.isEmpty() && !ui.keyboard) Text(waitingHint, style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             // A question awaiting the owner's yes: answered by voice (Phase 4), no buttons.
-            if (s.question.isNotEmpty() && phase != Phase.Thinking) Text("Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
+            if (s.question.isNotEmpty() && phase != Phase.Thinking) Text(if (ui.keyboard) "Type yes or no" else "Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
-            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock)
+            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock, more)
         }
     }
 }
@@ -152,15 +188,120 @@ private fun UsageLegend(u: UsageArcs) {
     }
 }
 
+/** What the voice screen's newer buttons do; each defaults to nothing (a host that has not wired it). */
+class VoiceMore(
+    /** The Compact button (capability "voice-compact"). */
+    val onCompact: () -> Unit = {},
+    /** The chat view on (true) or off (capability "voice-history"). */
+    val onChat: (Boolean) -> Unit = {},
+    /** "Earlier messages" in the chat view. */
+    val onMoreHistory: () -> Unit = {},
+    /** Keyboard mode on (true) or back to voice. */
+    val onKeyboard: (Boolean) -> Unit = {},
+    /** Words typed in keyboard mode, sent. */
+    val onSend: (String) -> Unit = {},
+    /** The owner is typing: activity, for the timeouts. */
+    val onTyping: () -> Unit = {},
+)
+
 @Composable
-private fun TopRow(ui: VoiceUi, phase: Phase, onClose: () -> Unit) {
+private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text("CRU", style = CrundiType.Wordmark.copy(fontSize = 14.sp, color = CrundiColors.TextSecondary))
-        if (ui.server.isNotEmpty()) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, modifier = Modifier.weight(1f, fill = false))
+        CruIcon(22.dp, live = phase == Phase.Listening || phase == Phase.Thinking || phase == Phase.Speaking, modifier = Modifier.semantics { contentDescription = "Cru" })
+        if (ui.server.isNotEmpty()) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         Spacer(Modifier.weight(1f))
+        if (ui.spend?.adminMode == true) AdminPill()
         StatusPill(statusText(ui, phase), phase)
+        if (VoiceApi.COMPACT in ui.caps) CrundiIconButton("minimize-2", more.onCompact, contentDescription = "Compact the conversation", size = 16.dp, touch = 38.dp)
+        if (VoiceApi.HISTORY in ui.caps) CrundiIconButton(
+            "message-circle", { more.onChat(!ui.chat) },
+            contentDescription = if (ui.chat) "Back to the voice view" else "Chat view",
+            size = 17.dp, touch = 38.dp, tint = if (ui.chat) CrundiColors.AccentHover else CrundiColors.TextSecondary,
+        )
     }
 }
+
+/** Admin mode is on: Cru can run any command on the server. */
+@Composable
+private fun AdminPill() {
+    Text(
+        "ADMIN",
+        style = CrundiType.Badge.copy(fontSize = 10.sp, color = CrundiColors.Red, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
+        modifier = Modifier.padding(end = 6.dp).clip(RoundedCornerShape(10.dp)).background(CrundiColors.RedDim).border(1.dp, CrundiColors.Red.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .semantics { contentDescription = "Admin mode is on: Cru can run any command" },
+    )
+}
+
+/**
+ * The chat view: the conversation as messages, the owner's on the right and
+ * Cru's on the left (what is only shown under what it said), the words being
+ * heard as a faded bubble of his, newest at the bottom.
+ */
+@Composable
+private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
+    val list = ui.history
+    val hearing = CruChat.hearing(ui.state)
+    val state = rememberLazyListState()
+    val count = list.size + (if (hearing.isNotEmpty()) 1 else 0)
+    // New messages: follow them down, unless the owner has scrolled up to read (older ones loaded above don't move it).
+    val lastIndex = (if (ui.moreHistory) 1 else 0) + (if (list.isEmpty() && hearing.isEmpty()) 1 else 0) + list.size + (if (hearing.isNotEmpty()) 1 else 0) - 1
+    val first = remember { booleanArrayOf(true) }
+    LaunchedEffect(list.lastOrNull()?.key, hearing.isNotEmpty(), ui.historyLoaded) {
+        val info = state.layoutInfo
+        val atEnd = info.visibleItemsInfo.lastOrNull()?.let { it.index >= info.totalItemsCount - 2 } ?: true
+        if (lastIndex >= 0 && (first[0] || atEnd)) state.scrollToItem(lastIndex)
+        if (list.isNotEmpty()) first[0] = false
+    }
+    val keys = remember(list) { val seen = HashSet<String>(); list.map { m -> var k = m.key; while (!seen.add(k)) k += "'"; k } }
+    LazyColumn(modifier, state = state, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (ui.moreHistory) item(key = "more") {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CrundiButton("Earlier messages", more.onMoreHistory, kind = ButtonKind.Ghost, icon = "chevron-up") }
+        }
+        if (list.isEmpty() && hearing.isEmpty()) item(key = "none") {
+            Text(
+                when {
+                    ui.historyError.isNotEmpty() -> ui.historyError
+                    !ui.historyLoaded -> "Loading the conversation…"
+                    else -> "No messages yet."
+                },
+                style = CrundiType.Small.copy(color = if (ui.historyError.isNotEmpty()) CrundiColors.Yellow else CrundiColors.TextMuted),
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+            )
+        }
+        items(list.size, key = { keys[it] }) { i ->
+            val m = list[i]
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at))
+                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "")
+            }
+        }
+        if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true) }
+    }
+}
+
+@Composable
+private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false) {
+    val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp)
+    Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
+        Column(
+            Modifier.fillMaxWidth(0.86f).wrapContentWidth(if (mine) Alignment.End else Alignment.Start)
+                .alpha(if (faded) 0.55f else 1f)
+                .clip(shape)
+                .background(if (mine) CrundiColors.AccentDim else CrundiColors.BgSecondary.copy(alpha = 0.9f))
+                .border(1.dp, if (mine) CrundiColors.Accent.copy(alpha = 0.35f) else CrundiColors.Border, shape)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
+        ) {
+            if (text.isNotEmpty()) Text(text, style = CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
+            if (detail.isNotEmpty()) Box(Modifier.padding(top = if (text.isNotEmpty()) 6.dp else 0.dp)) { MarkdownText(detail, compact = true) }
+            if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp))
+        }
+    }
+}
+
+/** "9 Nov 14:05". */
+private fun msgTime(at: Long): String = if (at <= 0) "" else java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(at))
 
 @Composable
 private fun StatusPill(text: String, phase: Phase) {
@@ -179,8 +320,31 @@ private fun StatusPill(text: String, phase: Phase) {
 @Composable
 private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, onCancel: () -> Unit, modifier: Modifier) {
     val s = ui.state
-    // Scrolls: a long answer is never cut off.
-    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 10.dp).animateContentSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    // Scrolls: a long answer is never cut off. While Cru says it, the part being said stays in view.
+    val scroll = rememberScrollState()
+    val box = remember { FloatArray(3) }   // the reply's top and height in the scrolled column, the visible height
+    val own = remember { mutableStateOf(false) }
+    LaunchedEffect(s.reply) { own.value = false }
+    val rate = (ui.spend?.speechRate ?: 1.0).toFloat()
+    LaunchedEffect(phase == Phase.Speaking, s.reply) {
+        if (phase != Phase.Speaking || s.reply.isEmpty()) return@LaunchedEffect
+        val from = System.currentTimeMillis()
+        val lasts = SpeechFollow.durationMs(s.reply, rate)
+        while (true) {
+            withFrameMillis { }
+            if (own.value) break
+            val target = SpeechFollow.target(System.currentTimeMillis() - from, lasts, box[0], box[1], box[2], scroll.maxValue.toFloat()) ?: continue
+            val cur = scroll.value.toFloat()
+            if (kotlin.math.abs(target - cur) > 1f) scroll.scrollTo((cur + (target - cur) * 0.12f).toInt())
+        }
+    }
+    Column(
+        modifier.fillMaxWidth().onSizeChanged { box[2] = it.height.toFloat() }
+            // The owner touching the text scrolls it himself: stop following until the next reply.
+            .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial); own.value = true } }
+            .verticalScroll(scroll).padding(top = 10.dp).animateContentSize(),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
         when {
             ui.needsMic -> Problem("mic", "Cru needs the microphone to hear you.") {
                 CrundiButton("Allow the microphone", onAllowMic, kind = ButtonKind.Primary, icon = "mic")
@@ -209,9 +373,9 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, onCancel: (
                     }
                 }
                 if (heard.isEmpty() && s.reply.isEmpty() && phase == Phase.Listening) {
-                    Text(if (s.locked) "Ask anything. Changes wait for an unlock." else "Ask me anything, Sir.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
+                    Text(if (s.locked) "Ask anything. Changes wait for an unlock." else if (ui.keyboard) "Type to Cru below, Sir." else "Ask me anything, Sir.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
                 }
-                AnimatedVisibility(s.reply.isNotEmpty(), enter = fadeIn(tween(300)), exit = fadeOut()) {
+                AnimatedVisibility(s.reply.isNotEmpty(), enter = fadeIn(tween(300)), exit = fadeOut(), modifier = Modifier.onGloballyPositioned { box[0] = it.positionInParent().y; box[1] = it.size.height.toFloat() }) {
                     Text(s.reply, style = CrundiType.Title.copy(fontSize = 18.sp, lineHeight = 25.sp, fontWeight = FontWeight.Medium), textAlign = TextAlign.Center)
                 }
                 if (s.detail.isNotEmpty()) {
@@ -236,10 +400,35 @@ private fun Problem(icon: String, text: String, action: @Composable () -> Unit =
     }
 }
 
+/**
+ * The bottom row. Voice: the keyboard button on the left, the liquid button
+ * in the middle, close on the right. Keyboard mode: the button back to
+ * voice, the text field and send (stop while Cru talks), close.
+ */
 @Composable
-private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?) {
+private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?, more: VoiceMore) {
+    val canSwitch = ui.blocked.isEmpty()
+    if (ui.keyboard) {
+        var typed by rememberSaveable { mutableStateOf("") }
+        val send = { val t = typed.trim(); if (t.isNotEmpty()) { more.onSend(t); typed = "" } }
+        Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (canSwitch) RoundButton("mic", "Back to voice") { more.onKeyboard(false) }
+            CrundiTextField(
+                typed, { typed = it; more.onTyping() }, Modifier.weight(1f),
+                placeholder = "Type to Cru", singleLine = false, maxLines = 4,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, capitalization = KeyboardCapitalization.Sentences),
+                keyboardActions = KeyboardActions(onSend = { send() }),
+            )
+            if (phase == Phase.Speaking && typed.isBlank()) RoundButton("stop", "Stop talking", onClick = onMic)
+            else RoundButton("send", "Send", enabled = typed.isNotBlank(), accent = true, onClick = send)
+            RoundButton("x", "Close", onClick = onClose)
+        }
+        return
+    }
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (canSwitch) RoundButton("keyboard", "Keyboard mode") { more.onKeyboard(true) }
             if (ui.state.locked && onUnlock != null) {
                 Row(
                     Modifier.clip(RoundedCornerShape(16.dp)).background(CrundiColors.BgTertiary).border(1.dp, CrundiColors.Border, RoundedCornerShape(16.dp)).clickable(onClick = onUnlock).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -249,17 +438,40 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
                     Text("Unlock", style = CrundiType.Small)
                 }
             }
+            }
         }
-        val icon = if (phase == Phase.Speaking) "stop" else "mic"
         val label = when (phase) { Phase.Speaking -> "Stop talking"; Phase.Ended -> "Talk again"; else -> "Listening" }
-        val ring = rememberInfiniteTransition(label = "ring").animateFloat(0f, 1f, infiniteRepeatable(tween(1600, easing = LinearEasing)), label = "r")
-        FluidMic(phase, accent, mic, icon, label, onMic)
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-            Box(
-                Modifier.size(44.dp).clip(CircleShape).background(CrundiColors.BgTertiary.copy(alpha = 0.8f)).clickable(onClickLabel = "Close", onClick = onClose).semantics { contentDescription = "Close" },
-                contentAlignment = Alignment.Center,
-            ) { CrundiIcon("x", size = 18.dp, tint = CrundiColors.TextSecondary) }
-        }
+        // The animated blob alone: no microphone drawn on it.
+        FluidMic(phase, accent, mic, null, label, onMic)
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { RoundButton("x", "Close", onClick = onClose) }
+    }
+}
+
+/** A round 44dp button of the bottom row. */
+@Composable
+private fun RoundButton(icon: String, label: String, enabled: Boolean = true, accent: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier.size(44.dp).alpha(if (enabled) 1f else 0.45f).clip(CircleShape)
+            .background(if (accent) CrundiColors.Accent else CrundiColors.BgTertiary.copy(alpha = 0.8f))
+            .clickable(enabled = enabled, onClickLabel = label, onClick = onClick).semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) { CrundiIcon(icon, size = 18.dp, tint = if (accent) Color.White else CrundiColors.TextSecondary) }
+}
+
+/** Following Cru's reply down as it is said (crundi-voice.js followSpeech), with no Compose in it (SpeechFollowTest). */
+object SpeechFollow {
+    /** How long [text] takes to say: 14 characters a second at normal speed, at least 1.5 s. */
+    fun durationMs(text: String, rate: Float): Long = maxOf(1500L, (text.length / (14f * rate.coerceAtLeast(0.1f)) * 1000f).toLong())
+
+    /**
+     * Where to scroll to, [elapsed] ms into saying a reply lasting [lasts]:
+     * the point that far through it ([top], [height] in the scrolled column)
+     * a third of the way down the visible [view]. Null when it all fits.
+     */
+    fun target(elapsed: Long, lasts: Long, top: Float, height: Float, view: Float, max: Float): Float? {
+        if (max < 4f || height <= 0f) return null
+        val frac = (elapsed.toFloat() / lasts.coerceAtLeast(1L)).coerceIn(0f, 1f)
+        return (top + frac * height - view / 3f).coerceIn(0f, max)
     }
 }
 
@@ -277,7 +489,7 @@ fun statusText(ui: VoiceUi, phase: Phase): String = when {
     ui.blocked.isNotEmpty() -> "Unavailable"
     else -> when (phase) {
         Phase.Starting -> "Waking"
-        Phase.Listening -> if (ui.state.offline) "Listening (offline)" else "Listening"
+        Phase.Listening -> if (ui.keyboard) "Ready" else if (ui.state.offline) "Listening (offline)" else "Listening"
         Phase.Thinking -> "Thinking"
         Phase.Speaking -> "Speaking"
         Phase.Ended -> "Asleep"

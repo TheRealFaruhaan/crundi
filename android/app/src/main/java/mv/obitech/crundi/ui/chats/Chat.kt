@@ -61,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import kotlin.reflect.KProperty
@@ -276,29 +277,61 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
             val act = activity(c)
             val list = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size + 1).coerceAtLeast(0))
             val lastLen = entries.lastOrNull()?.let { it.text.length + it.status.length } ?: 0
-            // Sending goes to the bottom, wherever the log was, and keeps
-            // following what comes in for a while (the message and the reply
-            // arrive after the send).
-            var followUntil by remember { mutableStateOf(0L) }
+            val density = LocalDensity.current.density
+            // Following the end (ChatFollow in ChatJump.kt): only while the
+            // reader is at the bottom. Scrolling up stops it, so a reply being
+            // written never drags them back down; the bottom, the arrow or a
+            // send starts it again.
+            val follow = remember(list) { ChatFollow() }
+            LaunchedEffect(list) {
+                list.interactionSource.interactions.collect { i ->
+                    when (i) {
+                        is androidx.compose.foundation.interaction.DragInteraction.Start -> follow.dragging = true
+                        is androidx.compose.foundation.interaction.DragInteraction.Stop, is androidx.compose.foundation.interaction.DragInteraction.Cancel -> {
+                            follow.released(ChatJump.atEnd(list.layoutInfo, density))
+                        }
+                    }
+                }
+            }
+            LaunchedEffect(list) {
+                // Only the position: a row growing below is not the reader moving.
+                // Both from one layout pass, so a position never meets an older layout's idea of the end.
+                var last: Any? = null
+                androidx.compose.runtime.snapshotFlow { list.layoutInfo.let { ChatJump.position(it) to ChatJump.atEnd(it, density) } }
+                    .collect { (pos, atEnd) -> if (pos != last) { last = pos; follow.moved(pos, atEnd) } }
+            }
+            // To the last row, then the rest of it: a long last message would otherwise stop at its top.
+            suspend fun toEnd(animate: Boolean) = follow.auto({ ChatJump.position(list.layoutInfo) }) {
+                val n = list.layoutInfo.totalItemsCount
+                if (n == 0) return@auto
+                val lastShown = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index == n - 1
+                if (!lastShown) { if (animate) list.animateScrollToItem(n - 1) else list.scrollToItem(n - 1) }
+                // Twice at most: the first pass may have measured before the newest content was laid out.
+                repeat(2) {
+                    val rest = ChatJump.distanceBelow(list.layoutInfo)
+                    if (rest <= 0) return@auto
+                    if (animate) list.animateScrollBy(rest.toFloat()) else list.scrollBy(rest.toFloat())
+                }
+            }
+            // Sending goes to the bottom, wherever the log was, and follows the reply.
             LaunchedEffect(ui.sentSeq) {
                 if (ui.sentSeq == 0) return@LaunchedEffect
-                followUntil = System.currentTimeMillis() + 8000
-                val n = list.layoutInfo.totalItemsCount
-                if (n > 0) list.animateScrollToItem(n - 1)
+                follow.jumped()
+                toEnd(animate = true)
             }
-            // Back to the newest message (ChatJump.kt): shown well up the log,
-            // with a dot once something has come in below.
-            val density = LocalDensity.current.density
+            // Back to the newest message (ChatJump.kt): shown well up the log, or
+            // whenever the log has stopped following, with a dot once something
+            // has come in below.
             val jumpFar by remember(list) { androidx.compose.runtime.derivedStateOf { ChatJump.far(list.layoutInfo, density) } }
+            val jumpShown by remember(list) { androidx.compose.runtime.derivedStateOf { jumpFar || (!follow.following && !ChatJump.atEnd(list.layoutInfo, density)) } }
             var newBelow by remember { mutableStateOf(false) }
             var dockPx by remember { mutableStateOf(0) }
-            LaunchedEffect(entries.size) { if (jumpFar) newBelow = true }
+            LaunchedEffect(entries.size) { if (jumpShown) newBelow = true }
             LaunchedEffect(list) { androidx.compose.runtime.snapshotFlow { ChatJump.atEnd(list.layoutInfo, density) }.collect { if (it) newBelow = false } }
             val jumpScope = rememberCoroutineScope()
-            LaunchedEffect(entries.size, lastLen, act) {
-                val info = list.layoutInfo
-                val nearEnd = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 3 } ?: true
-                if ((nearEnd || System.currentTimeMillis() < followUntil) && info.totalItemsCount > 0) list.animateScrollToItem(info.totalItemsCount - 1)
+            // New rows and a growing last one (a reply streaming in) keep the end in view, while following.
+            LaunchedEffect(entries.size, lastLen, act, c.exited) {
+                if (follow.shouldFollow) toEnd(animate = false)
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
               // Panels Claude docked to this chat sit above the conversation, at most 42% of it (ui.panels).
@@ -333,15 +366,10 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                     val sug = c.suggestion
                     if (sug != null && sugOn) SuggestionBubble(sug.text, { actions.useSuggestion(sug) }, actions::dismissSuggestion, Modifier.miniTarget(c.id, "sug"))
                 }
-                JumpToNewest(jumpFar, newBelow, {
+                JumpToNewest(jumpShown, newBelow, {
                     newBelow = false
-                    // To the last row, then the rest of it: a long last message would otherwise stop at its top.
-                    jumpScope.launch {
-                        val n = list.layoutInfo.totalItemsCount
-                        if (n > 0) list.animateScrollToItem(n - 1)
-                        val rest = ChatJump.distanceBelow(list.layoutInfo)
-                        if (rest > 0) list.animateScrollBy(rest.toFloat())
-                    }
+                    follow.jumped()
+                    jumpScope.launch { toEnd(animate = true) }
                 // Above the suggested reply, which runs across the dock; beside the badges alone it fits.
                 }, Modifier.align(Alignment.BottomCenter).padding(bottom = if (sugOn) with(LocalDensity.current) { dockPx.toDp() } + 16.dp else 8.dp))
               }

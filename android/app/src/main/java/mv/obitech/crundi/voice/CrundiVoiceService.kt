@@ -115,6 +115,14 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                     onAnswer = { c.answer(it) },
                     onCancel = { c.cancelWords() },
                     onAllowMic = { openActivity(unlock = false) },
+                    more = VoiceMore(
+                        onCompact = { c.compact() },
+                        onChat = { c.setChat(it) },
+                        onMoreHistory = { c.moreHistory() },
+                        onKeyboard = { c.setKeyboard(it) },
+                        onSend = { c.send(it) },
+                        onTyping = { c.typing() },
+                    ),
                 )
             }
         }

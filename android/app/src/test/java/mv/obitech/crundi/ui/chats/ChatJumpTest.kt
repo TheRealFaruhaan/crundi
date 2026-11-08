@@ -78,4 +78,82 @@ class ChatJumpTest {
         assertEquals(480, ChatJump.threshold(900, 2f))
         assertEquals(1000, ChatJump.threshold(3000, 2f))
     }
+
+    private fun delta(id: String, text: String) =
+        """{"type":"ui-event","id":"$chat","event":{"type":"delta","id":"$id","text":"$text"}}"""
+    private fun entry(i: Int) =
+        """{"type":"ui-event","id":"$chat","event":{"type":"entry","entry":{"id":"m$i","kind":"assistant-text","text":"Message number $i arrives.","seq":$i}}}"""
+    private fun shown(text: String) = compose.onAllNodes(androidx.compose.ui.test.hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty()
+
+    @Test fun scrolledUpStaysPutWhileTheReplyStreams() {
+        val t = FakeApi.transport()
+        open(t)
+        settle()
+        compose.onAllNodes(hasScrollToIndexAction()).onFirst().performScrollToIndex(30)
+        settle()
+        assertTrue("reading up the log", shown("Message number 31,"))
+        repeat(10) { t.pushSocket(delta("m60", " and more of the reply streaming in, line after line after line")); settle() }
+        t.pushSocket(entry(61)); settle()
+        assertTrue("not dragged back down", shown("Message number 31,"))
+        assertTrue("the arrow is there", jumpShown())
+        compose.onNode(hasContentDescription("Go to the newest message")).performClick()
+        repeat(120) { compose.mainClock.advanceTimeByFrame(); compose.waitForIdle() }
+        assertTrue("at the newest", shown("Message number 61 arrives."))
+        // Following again: what comes next stays in view.
+        t.pushSocket(entry(62)); settle()
+        assertTrue("follows once back", shown("Message number 62 arrives."))
+        assertTrue(!jumpShown())
+    }
+
+    @Test fun atTheBottomTheStreamStaysInView() {
+        val t = FakeApi.transport()
+        open(t)
+        settle()
+        repeat(6) { t.pushSocket(delta("m60", " streaming more words onto the last reply so it grows taller")); settle() }
+        t.pushSocket(entry(61)); settle()
+        assertTrue("the newest is in view", shown("Message number 61 arrives."))
+        assertTrue(!jumpShown())
+    }
+
+    @Test fun followRules() {
+        val f = ChatFollow()
+        assertTrue(f.shouldFollow)
+        // The reader scrolls up: following stops.
+        f.moved(1 to 0, atEnd = false)
+        assertTrue(!f.following)
+        // Content growing does not move the position, and nothing restarts it but the reader.
+        f.moved(1 to 0, atEnd = false)
+        assertTrue(!f.following)
+        // Back at the bottom by scrolling: following again.
+        f.moved(5 to 0, atEnd = true)
+        assertTrue(f.following)
+        // A finger on the log: never follow under it; dragging up turns it off at once.
+        f.dragging = true
+        assertTrue(!f.shouldFollow)
+        f.moved(4 to 0, atEnd = false)
+        f.released(atEnd = false)
+        assertTrue(!f.following)
+        // The arrow, or a send.
+        f.jumped()
+        assertTrue(f.shouldFollow)
+        // Let go at the bottom: following.
+        f.moved(2 to 0, atEnd = false)
+        f.dragging = true
+        f.released(atEnd = true)
+        assertTrue(f.following)
+    }
+
+    @Test fun ownScrollsAreNotTheReaders() = kotlinx.coroutines.runBlocking {
+        val f = ChatFollow()
+        // Mid-scroll positions of the log's own scroll never stop following.
+        f.auto({ 9 to 0 }) { f.moved(3 to 0, atEnd = false) }
+        assertTrue(f.following)
+        // Hearing late of where it ended does not either.
+        f.moved(9 to 0, atEnd = false)
+        assertTrue(f.following)
+        // A finger counts even mid-scroll.
+        f.dragging = true
+        f.auto({ 9 to 0 }) { f.moved(8 to 0, atEnd = false) }
+        assertTrue(!f.following)
+    }
 }

@@ -265,10 +265,10 @@ private fun TopBarRight(data: ShellData, callbacks: ShellCallbacks, compact: Boo
         callbacks.onVoice?.let { open ->
             // Cru's mark, bare: no outline, no background.
             Box(
-                Modifier.size(32.dp).clip(Dimens.ShapeSm).clickable(onClickLabel = "Talk to Cru", onClick = open)
-                    .semantics { contentDescription = "Talk to Cru" },
+                Modifier.height(32.dp).clip(Dimens.ShapeSm).clickable(onClickLabel = "Talk to Cru", onClick = open)
+                    .semantics { contentDescription = "Talk to Cru" }.padding(horizontal = 2.dp),
                 contentAlignment = Alignment.Center,
-            ) { mv.obitech.crundi.voice.CruIcon(26.dp) }
+            ) { mv.obitech.crundi.voice.CruIcon(24.dp) }
         }
         if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
         if (data.approvals > 0) TopBarAct("shield-alert", "Things waiting on you", data.approvals.toString(), true, callbacks.onApprovals, Modifier.miniTarget("top", "bell"))

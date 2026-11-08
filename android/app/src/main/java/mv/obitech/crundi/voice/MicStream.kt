@@ -156,6 +156,19 @@ object VoicePrefs {
     fun screenAwakeMinutes(ctx: Context) = p(ctx).getInt("voice.screenAwake", 2)
     fun setScreenAwakeMinutes(ctx: Context, m: Int) = p(ctx).edit().putInt("voice.screenAwake", m).apply()
 
+    /** The voice screen in keyboard mode: the owner's last choice on this phone; null = never chosen. */
+    fun keyboard(ctx: Context): Boolean? = p(ctx).takeIf { it.contains("voice.keyboard") }?.getBoolean("voice.keyboard", false)
+    fun setKeyboard(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.keyboard", on).apply()
+
+    /** The voice screen shows the conversation as chat messages (until changed). */
+    fun chatView(ctx: Context) = p(ctx).getBoolean("voice.chatView", false)
+    fun setChatView(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.chatView", on).apply()
+
+    /** What the server last said about Deepgram, so the screen opens in the right mode before it asks again; null = never fetched. */
+    fun deepgramKeySet(ctx: Context): Boolean? = p(ctx).takeIf { it.contains("voice.dgKeySet") }?.getBoolean("voice.dgKeySet", true)
+    fun deepgramLimitReached(ctx: Context) = p(ctx).getBoolean("voice.dgLimit", false)
+    fun setDeepgram(ctx: Context, keySet: Boolean, limitReached: Boolean) = p(ctx).edit().putBoolean("voice.dgKeySet", keySet).putBoolean("voice.dgLimit", limitReached).apply()
+
     // ─── "Hey Cru" (Phase 6) ───
 
     /** D3: listen for "Hey Cru" while the app is in front. Off by default. */

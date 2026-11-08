@@ -503,5 +503,13 @@ class CancelTest {
         assertFalse(Speech.isDiscard("scratch that itch on the board"))
         assertFalse(Speech.isDiscard("let me check"))
     }
-}
 
+    @Test fun typingKeepsTheSessionFromWindingDown() {
+        // 25 s of nothing heard, then typing: the 30 s timeout starts again from there.
+        val (s, fx) = run(listening(), VoiceEvent.Active(25_000), VoiceEvent.Tick(40_000))
+        assertEquals(Phase.Listening, s.phase)
+        assertTrue(fx.isEmpty())
+        val (ended, _) = run(listening(), VoiceEvent.Active(25_000), VoiceEvent.Tick(56_000))
+        assertEquals(Phase.Ended, ended.phase)
+    }
+}

@@ -49,13 +49,19 @@ class VoiceActivity : ComponentActivity() {
     private fun asleep() {
         if (!inFront) { finish(); return }
         waiting = true
-        HeyCrundi.screenWaiting { wake() }
+        // Keyboard mode: no microphone at all, "Hey Cru" included; typing wakes it.
+        if (!controller.ui.value.keyboard) HeyCrundi.screenWaiting { wake() }
         handler.removeCallbacks(letSleep)
         handler.postDelayed(letSleep, VoicePrefs.screenAwakeMinutes(this) * 60_000L)
         // Silent since the last thing said, which was the microphone's time ago. An older server sets none.
+        closeLater(VoicePrefs.silenceSeconds(this) * 1000L)
+    }
+
+    /** The screen closes after the server's screenCloseSeconds of silence, [already] ms of which have passed; typing starts it again. */
+    private fun closeLater(already: Long = 0L) {
         val close = controller.ui.value.spend?.screenCloseSeconds ?: 0
         handler.removeCallbacks(closeIdle)
-        if (close > 0) handler.postDelayed(closeIdle, (close * 1000L - VoicePrefs.silenceSeconds(this) * 1000L).coerceAtLeast(0L))
+        if (close > 0) handler.postDelayed(closeIdle, (close * 1000L - already).coerceAtLeast(0L))
     }
 
     /** "Hey Cru", or the mic tapped: listening again. */
@@ -94,6 +100,14 @@ class VoiceActivity : ComponentActivity() {
                     onAnswer = { controller.answer(it) },
                     onCancel = { controller.cancelWords() },
                     onAllowMic = { askMic.launch(Manifest.permission.RECORD_AUDIO) },
+                    more = VoiceMore(
+                        onCompact = { controller.compact() },
+                        onChat = { controller.setChat(it) },
+                        onMoreHistory = { controller.moreHistory() },
+                        onKeyboard = { on -> if (waiting) wake(); controller.setKeyboard(on) },
+                        onSend = { t -> if (waiting) wake(); controller.send(t) },
+                        onTyping = { if (waiting) closeLater() else controller.typing() },
+                    ),
                 )
             }
         }
@@ -105,7 +119,8 @@ class VoiceActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         inFront = true
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED && !asked) {
+        // Keyboard mode chosen on this phone: it needs no microphone, so none is asked for.
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED && !asked && VoicePrefs.keyboard(this) != true) {
             asked = true
             askMic.launch(Manifest.permission.RECORD_AUDIO)
         } else controller.open()

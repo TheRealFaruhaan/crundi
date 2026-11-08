@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyListLayoutInfo
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,8 +63,54 @@ object ChatJump {
     fun far(info: LazyListLayoutInfo, density: Float): Boolean =
         info.totalItemsCount > 0 && distanceBelow(info) > threshold(info.viewportEndOffset - info.viewportStartOffset, density)
 
+    /**
+     * Where the log stands, from the same layout pass as [atEnd]: the first
+     * row shown and how far it is scrolled. A row growing below leaves it be.
+     */
+    fun position(info: LazyListLayoutInfo): Pair<Int, Int> =
+        info.visibleItemsInfo.firstOrNull()?.let { it.index to it.offset } ?: (-1 to 0)
+
     /** Close enough to the end that whatever came in has been seen. */
     fun atEnd(info: LazyListLayoutInfo, density: Float): Boolean = distanceBelow(info) < (60 * density).toInt()
+}
+
+/**
+ * Whether the log follows what comes in (new rows, a reply still being
+ * written). It follows while the reader is at the bottom; moving away from it
+ * themselves (a drag, a fling, a scroll by accessibility) stops it, and coming
+ * back to the bottom, the arrow, or sending a message starts it again. The
+ * log's own scrolls to the end are marked with [auto] so they never count as
+ * the reader's, and nothing follows while a finger is on the log.
+ */
+class ChatFollow(following: Boolean = true) {
+    var following by mutableStateOf(following)
+        private set
+    /** A finger is on the log: never scroll under it. */
+    var dragging by mutableStateOf(false)
+    private var autoDepth = 0
+    /** Where the log's last own scroll left it, so hearing of that late does not count as the reader's. */
+    private var autoAt: Any? = null
+
+    /** The scroll position changed to [pos]; [atEnd] is where it now stands. */
+    fun moved(pos: Any, atEnd: Boolean) {
+        if (!dragging && (autoDepth > 0 || pos == autoAt)) return
+        following = atEnd
+    }
+
+    /** A finger left the log: following again only if it was let go at the bottom. */
+    fun released(atEnd: Boolean) { dragging = false; following = atEnd }
+
+    /** Back to the newest on purpose: the arrow, or a message sent from here. */
+    fun jumped() { following = true }
+
+    /** Whether new content should take the log to the end now. */
+    val shouldFollow: Boolean get() = following && !dragging
+
+    /** Runs one of the log's own scrolls to the end. */
+    suspend fun auto(at: () -> Any, block: suspend () -> Unit) {
+        autoDepth++
+        try { block() } finally { autoDepth--; autoAt = at() }
+    }
 }
 
 @Composable

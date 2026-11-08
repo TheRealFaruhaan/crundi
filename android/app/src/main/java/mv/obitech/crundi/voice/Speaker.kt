@@ -55,6 +55,54 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     var rate: Float = 1f
     /** The server streams speech as it is made (capability "voice-tts-stream"). */
     var streams: Boolean = false
+    /**
+     * How loud Cru is, 0.1 to 1 (the server's volume, capability "voice-volume"):
+     * every reply, cue and the phone's own voice. A change applies to what is playing now.
+     */
+    var volume: Float = 1f
+        set(v) {
+            field = v.coerceIn(0f, 1f)
+            runCatching { track?.setVolume(field) }
+            runCatching { player?.setVolume(field, field) }
+            runCatching { cuePlayer?.setVolume(field, field) }
+            runCatching { toneTrack?.setVolume(field) }
+        }
+
+    private var toneTrack: AudioTrack? = null
+    private var toneEnd: Job? = null
+
+    /**
+     * Play one of Cru's tones ([Tones]): 16-bit mono PCM at [Tones.RATE], at
+     * Cru's volume, on its voice's session and route (so the echo handling
+     * still applies). A new tone replaces one still playing.
+     */
+    fun tone(samples: ShortArray) {
+        stopTone()
+        if (samples.isEmpty()) return
+        val t = runCatching {
+            AudioTrack.Builder()
+                .setAudioAttributes(attrs)
+                .apply { if (sessionId > 0) setSessionId(sessionId) }
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(Tones.RATE).setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(samples.size * 2)
+                .build()
+        }.getOrNull() ?: return
+        if (runCatching { t.write(samples, 0, samples.size) }.getOrDefault(-1) <= 0) { runCatching { t.release() }; return }
+        runCatching { t.setVolume(volume) }
+        toneTrack = t
+        if (runCatching { t.play() }.isFailure) { stopTone(); return }
+        val ms = samples.size * 1000L / Tones.RATE + 80
+        toneEnd = scope.launch { delay(ms); if (toneTrack === t) stopTone() }
+    }
+
+    fun stopTone() {
+        toneEnd?.cancel(); toneEnd = null
+        val t = toneTrack ?: return
+        toneTrack = null
+        runCatching { t.stop() }
+        runCatching { t.release() }
+    }
 
     private val _level = MutableStateFlow(0f)
     val level: StateFlow<Float> = _level
@@ -117,7 +165,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     fun cue(file: File?, text: String, onDone: () -> Unit): Boolean {
         stopCue()
         if (file != null) {
-            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); joinSession(this); setDataSource(file.path); prepare() } }.getOrNull() ?: return false
+            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); joinSession(this); setDataSource(file.path); prepare(); setVolume(volume, volume) } }.getOrNull() ?: return false
             cuePlayer = mp
             cueDone = onDone
             // Its level, for the gate: how loud Cru is now.
@@ -207,6 +255,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
 
     fun release() {
         stop()
+        stopTone()
         tts?.shutdown(); tts = null; ttsReady = null
     }
 
@@ -227,6 +276,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 .setBufferSizeInBytes(maxOf(AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT), rate / 5 * 2))
                 .build()
         }.getOrNull() ?: return false
+        runCatching { t.setVolume(volume) }
         track = t
         var frames = 0L
         synchronized(levels) { levels.clear() }
@@ -308,7 +358,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                     mp.setDataSource(file.path)
                     mp.setOnCompletionListener { if (cont.isActive) cont.resume(true) }
                     mp.setOnErrorListener { _, _, _ -> if (cont.isActive) cont.resume(false); true }
-                    mp.setOnPreparedListener { it.start(); follow(it) }
+                    mp.setOnPreparedListener { it.setVolume(volume, volume); it.start(); follow(it) }
                     mp.prepareAsync()
                 } catch (e: Exception) {
                     if (cont.isActive) cont.resume(false)
@@ -331,7 +381,10 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     private fun joinSession(mp: MediaPlayer) { if (sessionId > 0) runCatching { mp.audioSessionId = sessionId } }
 
     /** The device voice's parameters: the microphone's session too. */
-    private fun ttsParams() = Bundle().apply { if (sessionId > 0) putInt(TextToSpeech.Engine.KEY_PARAM_SESSION_ID, sessionId) }
+    private fun ttsParams() = Bundle().apply {
+        if (sessionId > 0) putInt(TextToSpeech.Engine.KEY_PARAM_SESSION_ID, sessionId)
+        putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
+    }
 
     /** [_level] follows what is played on [session]. */
     private fun levelOf(session: Int): Visualizer =

@@ -39,6 +39,18 @@ data class VoiceUi(
     val server: String = "",
     /** The voice settings and this month's spend, for the screen's usage arcs. */
     val spend: mv.obitech.crundi.api.VoiceSettings? = null,
+    /** The server's capabilities (empty: not known), for what the screen offers. */
+    val caps: Set<String> = emptySet(),
+    /** Keyboard mode: no microphone, a text field; Cru's replies still said and shown. */
+    val keyboard: Boolean = false,
+    /** The chat view: the conversation as messages, in place of the field. */
+    val chat: Boolean = false,
+    /** The chat view's messages, oldest first, and whether older ones can be loaded. */
+    val history: List<CruMsg> = emptyList(),
+    val moreHistory: Boolean = false,
+    val historyLoaded: Boolean = false,
+    /** Why the history could not be loaded, or "". */
+    val historyError: String = "",
 )
 
 /**
@@ -82,6 +94,16 @@ class VoiceController(
     val voiceLevel: StateFlow<Float> = speaker.level
 
     private var api: VoiceApi? = null
+    /** Keyboard mode (no microphone); [ownerChose]: he switched it himself, so the server's settings don't switch it back. */
+    private var keyboard = false
+    private var ownerChose = false
+    /** Keyboard mode's line (capability "voice-keyboard"): Cru's reports and settings changes, no audio. */
+    @Volatile private var kbSocket: DataSocket? = null
+    /** Each stream opened is numbered: one closed on purpose (a mode switch) is not "lost". */
+    @Volatile private var streamGen = 0
+    @Volatile private var kbGen = 0
+
+    init { _ui.update { it.copy(chat = VoicePrefs.chatView(ctx)) } }
 
     /** The app's live picture of the server (projects, their state, usage) for the field; null without a paired server. */
     val shell: StateFlow<mv.obitech.crundi.ui.shell.ShellData>? = Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).shell.state }
@@ -106,15 +128,20 @@ class VoiceController(
 
     fun open() {
         if (running) return
-        _ui.value = VoiceUi()
+        // The chat view and its messages, and the last settings, stay from one session to the next.
+        val was = _ui.value
+        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend)
         if (!VoicePrefs.enabled(ctx)) { block("The voice assistant is turned off. Turn it on in App settings, Voice assistant."); return }
         val server = Servers.current(ctx) ?: run { block("Pair this phone with a Crundi server first."); return }
-        _ui.update { it.copy(server = server.host) }
         val caps = ServerCaps.get(ctx, server.id)
+        _ui.update { it.copy(server = server.host, caps = caps) }
         // Known capabilities without the assistant: say so before trying. Unknown (never
         // handshaken since an update): try, and a 404 says the same.
         if (caps.isNotEmpty() && VoiceApi.CAPABILITY !in caps && "handshake" in caps) { block(VoiceApi.UNSUPPORTED); return }
-        if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        // Voice or keyboard: keyboard when voice can't work here, else the owner's last choice.
+        if (!ownerChose) keyboard = CruMode.startInKeyboard(VoicePrefs.keyboard(ctx), voiceUnavailable(VoicePrefs.deepgramKeySet(ctx), VoicePrefs.deepgramLimitReached(ctx)))
+        _ui.update { it.copy(keyboard = keyboard) }
+        if (!keyboard && !micGranted()) {
             _ui.update { it.copy(needsMic = true) }
             return
         }
@@ -130,13 +157,134 @@ class VoiceController(
         // A chat in voice mode may ask for the microphone ("Switch to this chat?"): this is how it closes the session.
         HeyCrundi.sessionCloser { close() }
         dispatch(VoiceEvent.Opened(isLocked(), now(), cancellable = VoiceApi.CANCEL in caps))
-        VoiceMicService.start(ctx)
         scope.launch { voice.warm() }
         scope.launch { checkServer(voice, server.host) }
+        if (keyboard) startKeyboard(voice) else startVoice(voice)
+        tick = scope.launch { while (isActive) { delay(1000); dispatch(VoiceEvent.Tick(now())) } }
+        if (_ui.value.chat && !_ui.value.historyLoaded) loadHistory(false)
+    }
+
+    private fun micGranted() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+    private fun voiceUnavailable(deepgramKeySet: Boolean?, limitReached: Boolean) =
+        CruMode.voiceUnavailable(micGranted(), deepgramKeySet, limitReached, recogniserAvailable())
+
+    private fun recogniserAvailable() = runCatching {
+        android.speech.SpeechRecognizer.isRecognitionAvailable(ctx) ||
+            (android.os.Build.VERSION.SDK_INT >= 31 && android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx))
+    }.getOrDefault(false)
+
+    /** The microphone to the server (or the phone's recogniser, once the stream was lost). */
+    private fun startVoice(voice: VoiceApi) {
+        VoiceMicService.start(ctx)
+        if (_ui.value.state.offline) { useFallback(); return }
         scope.launch(Dispatchers.IO) { openStream(voice) }
         startMic()
-        tick = scope.launch { while (isActive) { delay(1000); dispatch(VoiceEvent.Tick(now())) } }
     }
+
+    /** Keyboard mode: nothing to wait for, and the line for Cru's reports when the server has one. */
+    private fun startKeyboard(voice: VoiceApi) {
+        if (_ui.value.state.phase == Phase.Starting) dispatch(VoiceEvent.Ready(now(), false))
+        if (VoiceApi.KEYBOARD in _ui.value.caps) scope.launch(Dispatchers.IO) { openKeyboardLine(voice) }
+    }
+
+    /**
+     * The keyboard button: switch between voice and keyboard. Remembered on
+     * this phone. Asleep, it wakes; voice without the microphone permission
+     * asks for it.
+     */
+    fun setKeyboard(on: Boolean) {
+        ownerChose = true
+        VoicePrefs.setKeyboard(ctx, on)
+        switchMode(on)
+    }
+
+    private fun switchMode(on: Boolean) {
+        if (on == keyboard && running) return
+        keyboard = on
+        _ui.update { it.copy(keyboard = on, needsMic = false) }
+        val v = api
+        if (!running || v == null) {
+            // Asleep, or stopped for the microphone: start again in the mode chosen.
+            if (_ui.value.blocked.isEmpty()) { stopAll(); open() }
+            return
+        }
+        if (on) {
+            stopVoice()
+            startKeyboard(v)
+        } else {
+            stopKeyboardLine()
+            // No microphone permission: stopped, asking for it (allowed, open() starts again in voice).
+            if (!micGranted()) { stopAll(); _ui.update { it.copy(needsMic = true) }; return }
+            startVoice(v)
+        }
+    }
+
+    /** Typed words (keyboard mode): asked as voice turns are. Asleep, it wakes first. */
+    fun send(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        if (!running || _ui.value.state.phase == Phase.Ended) {
+            if (_ui.value.blocked.isNotEmpty()) return
+            stopAll(); open()
+        }
+        typedNext = true
+        dispatch(VoiceEvent.Typed(t, now()))
+    }
+
+    /** The owner is typing: that counts as activity, so the session does not wind down under him. */
+    fun typing() { if (running) dispatch(VoiceEvent.Active(now())) }
+
+    /** The chat view on or off, remembered on this phone. */
+    fun setChat(on: Boolean) {
+        VoicePrefs.setChatView(ctx, on)
+        _ui.update { it.copy(chat = on) }
+        if (on && !_ui.value.historyLoaded) loadHistory(false)
+    }
+
+    /** "Earlier messages". */
+    fun moreHistory() = loadHistory(true)
+
+    private fun voiceApi(): VoiceApi? = api ?: Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).api.voice }
+
+    private var historyJob: Job? = null
+    private fun loadHistory(older: Boolean) {
+        if (VoiceApi.HISTORY !in _ui.value.caps) return
+        val v = voiceApi() ?: return
+        if (historyJob?.isActive == true) return
+        val before = if (older) CruChat.before(_ui.value.history) else 0L
+        historyJob = scope.launch {
+            try {
+                val r = v.history(40, before)
+                if (r == null) { _ui.update { it.copy(historyLoaded = true, historyError = "Not supported by this server.") }; return@launch }
+                _ui.update { it.copy(history = CruChat.merge(it.history, CruChat.fromTurns(r.turns), older), moreHistory = r.more, historyLoaded = true, historyError = "") }
+            } catch (e: Exception) {
+                _ui.update { it.copy(historyError = e.message ?: "Could not load the conversation") }
+            }
+        }
+    }
+
+    private fun chatAdd(said: String, speak: String, show: String) =
+        _ui.update { it.copy(history = CruChat.add(it.history, said, speak, show, now())) }
+
+    /** The Compact button: the conversation so far becomes a summary, the notebook kept. */
+    fun compact() {
+        val v = voiceApi() ?: return
+        note("Compacting the conversation…")
+        scope.launch {
+            val msg = try {
+                val r = v.compact()
+                when {
+                    r == null -> "Compacting is not supported by this server."
+                    r.ok -> "Compacted: Cru carries on from a summary, its notebook kept."
+                    else -> "Not compacted: " + r.error.ifEmpty { r.skipped }.ifEmpty { "the server could not" }
+                }
+            } catch (e: Exception) { "Not compacted: " + (e.message ?: "the server could not be reached") }
+            note(msg)
+        }
+    }
+
+    private fun note(text: String) = _ui.update { it.copy(state = it.state.copy(notice = text)) }
 
     /** The big button: stop Crundi talking, or wake again once asleep. */
     fun tapMic() {
@@ -148,7 +296,10 @@ class VoiceController(
     }
 
     /** Yes or No tapped on a question (or anything typed): sent as if said. */
-    fun answer(text: String) = dispatch(VoiceEvent.Typed(text, now()))
+    fun answer(text: String) { typedNext = true; dispatch(VoiceEvent.Typed(text, now())) }
+
+    /** The next question asked was typed or tapped, not said: the server's voice check does not apply to it. */
+    private var typedNext = false
 
     /** The phone has been unlocked since the session opened. */
     fun unlocked() = dispatch(VoiceEvent.Unlocked(now()))
@@ -169,8 +320,13 @@ class VoiceController(
     // ─── the machine ───
 
     private fun dispatch(e: VoiceEvent) {
+        val was = _ui.value.state.phase
         val (s, effects) = machine.on(_ui.value.state, e)
         _ui.update { it.copy(state = s) }
+        // Cru has woken and listens: a soft rising tone.
+        if (was == Phase.Starting && s.phase == Phase.Listening) speaker.tone(Tones.of(Tones.LISTEN))
+        // The answer came (or the turn was taken back): no more thinking tones.
+        if (was == Phase.Thinking && s.phase != Phase.Thinking) thinking?.cancel()
         for (fx in effects) run(fx)
     }
 
@@ -185,8 +341,9 @@ class VoiceController(
             // A live stream (barge-in): the server is told what Crundi says, and drops it.
             is VoiceEffect.Saying -> socket?.send(buildJsonObject { put("type", "saying"); put("text", fx.text) }.toString())
             VoiceEffect.Said -> { sendPreroll = false; socket?.send("""{"type":"said"}""") }
-            VoiceEffect.Cue -> playCue()
-            VoiceEffect.StopCue -> speaker.stopCue()
+            // A soft "sent", then a calm tone while Cru thinks (no spoken "One moment, Sir").
+            VoiceEffect.Cue -> thinkingTones()
+            VoiceEffect.StopCue -> { thinking?.cancel(); speaker.stopTone() }
             VoiceEffect.StopSaying -> { speakingNow = false; speaker.stop() }
             VoiceEffect.PauseStream -> {
                 if (streaming) { gate.start(); gateFired = false }
@@ -210,7 +367,7 @@ class VoiceController(
                     }
                     held.clear()
                     streaming = true
-                    fallback?.start()
+                    if (!keyboard) fallback?.start()
                 }
                 // After an answer, wait for the speaker and the room to go quiet,
                 // or the end of Crundi's own voice is heard as the owner's words.
@@ -242,26 +399,46 @@ class VoiceController(
         // The machine numbered this turn: its answer is matched to it.
         val turn = _ui.value.state.turn
         val where = if (locked) "$source, phone locked" else source
+        // Typed (keyboard mode, Yes / No): said so, or once a voice is enrolled it would lose the owner's powers.
+        val typed = keyboard || typedNext
+        typedNext = false
         scope.launch {
-            val r = try { voice.turn(text, where, locked) } catch (e: ApiException) {
+            val r = try { voice.turn(text, where, locked, typed = typed) } catch (e: ApiException) {
                 VoiceReply(ok = false, error = when {
                     e.offline -> "I can't reach the server, Sir."
                     VoiceApi.unsupported(e) -> VoiceApi.UNSUPPORTED
                     else -> e.message
                 })
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
+            // Cru may have just turned itself up or down: the reply is said at the new volume.
+            r.volume?.let { speaker.volume = mv.obitech.crundi.api.volumeGain(it) }
+            // The chat view: what was asked and the answer, when it is this turn's.
+            val current = _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }
+            if (current && r.ok && !r.cancelled) chatAdd(text, r.speak, r.show)
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }))
+            // The voice was not the owner's: Cru answered, but changed nothing.
+            if (r.ok && !r.cancelled && r.speaker?.unrecognised == true && current) note(NOT_RECOGNISED)
             // After the reply, so a note about it (untrained) isn't cleared by the reply's own.
             if (r.ok && !r.cancelled) phoneActions(r.phoneActions)
             // The spend moved: refresh the arcs.
             // (and the voice: Cru may just have changed its own speed or voice)
-            runCatching { voice.settings() }.getOrNull()?.let { s ->
-                val old = _ui.value.spend
-                speaker.rate = s.speechRate.toFloat(); speaker.deepgramVoice = s.ttsVoice; _ui.update { it.copy(spend = s) }
-                // Another voice or speed (or Deepgram's limit reached): the cues follow it.
-                if (old == null || old.ttsVoice != s.ttsVoice || old.speechRate != s.speechRate || old.deepgramLimitReached != s.deepgramLimitReached) scope.launch { loadCues(voice, s) }
-            }
+            refreshSettings(voice)
         }
+    }
+
+    /** The settings again (after a turn, or the server said one changed): the voice, its speed and volume, the spend. */
+    private suspend fun refreshSettings(voice: VoiceApi) {
+        runCatching { voice.settings() }.getOrNull()?.let { s ->
+            applySettings(s)
+        }
+    }
+
+    private fun applySettings(s: mv.obitech.crundi.api.VoiceSettings) {
+        speaker.rate = s.speechRate.toFloat()
+        speaker.deepgramVoice = s.ttsVoice
+        speaker.volume = mv.obitech.crundi.api.volumeGain(s.volume)
+        VoicePrefs.setDeepgram(ctx, s.deepgramKeySet, s.deepgramLimitReached)
+        _ui.update { it.copy(spend = s) }
     }
 
     /**
@@ -303,54 +480,22 @@ class VoiceController(
         dispatch(VoiceEvent.VoiceHeard(now()))
     }
 
-    // ─── the "one moment, Sir" cue ───
+    // ─── the tones (in place of the spoken "one moment, Sir" cues) ───
 
-    /** The cues for the voice in use: (phrase, clip on the phone) or (phrase, null) for the phone's own voice. */
-    @Volatile private var cues: List<Pair<String, java.io.File?>> = emptyList()
-    private var lastCue = -1
-    private var cueRetry: Job? = null
+    private var thinking: Job? = null
 
-    /**
-     * The server's cues (capability "voice-cues"), their clips fetched once and
-     * kept in the app's cache, so one plays with no network wait. An older
-     * server has none: the phone's voice says ours, a Deepgram voice plays none
-     * (it would not match).
-     */
-    private suspend fun loadCues(voice: VoiceApi, s: mv.obitech.crundi.api.VoiceSettings) {
-        val deviceVoice = s.ttsVoice.isEmpty() || s.deepgramLimitReached
-        val list = try { voice.cues() } catch (e: Exception) { Log.i(TAG, "cues: ${e.message}"); cues = if (deviceVoice) Speech.CUES.map { it to null } else emptyList(); return }
-        if (list == null) { cues = if (deviceVoice) Speech.CUES.map { it to null } else emptyList(); return }
-        if (list.device) { cues = list.cues.map { it.text to null }; return }
-        val safe = { x: String -> x.filter { it.isLetterOrDigit() || it == '-' || it == '.' }.ifEmpty { "_" } }
-        val dir = java.io.File(ctx.cacheDir, "cues/${safe(list.voice)}/${safe(list.rate)}")
-        val out = ArrayList<Pair<String, java.io.File?>>()
-        for (c in list.cues) {
-            val url = c.url ?: continue
-            val f = java.io.File(dir, "${safe(c.id)}.mp3")
-            if (!f.exists()) runCatching {
-                val bytes = voice.cueClip(url)
-                kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    dir.mkdirs()
-                    val tmp = java.io.File(dir, "${safe(c.id)}.tmp")
-                    tmp.writeBytes(bytes)
-                    tmp.renameTo(f)
-                }
-            }.onFailure { Log.i(TAG, "cue clip: ${it.message}") }
-            if (f.exists()) out += c.text to f
+    /** "Sent" now; then, while this turn is still being thought about, the think tone after 1.4 s and every 4 s. */
+    private fun thinkingTones() {
+        speaker.tone(Tones.of(Tones.SENT))
+        thinking?.cancel()
+        val turn = _ui.value.state.turn
+        thinking = scope.launch {
+            delay(Tones.THINK_FIRST_MS)
+            while (isActive && running && _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }) {
+                speaker.tone(Tones.of(Tones.THINK))
+                delay(Tones.THINK_EVERY_MS)
+            }
         }
-        cues = out
-        // Being made for the first time: ask again in a while.
-        if (list.cues.any { it.url == null } && cueRetry?.isActive != true) cueRetry = scope.launch { delay(20_000); if (running) loadCues(voice, s) }
-    }
-
-    private fun playCue() {
-        if (speaker.cueing) return
-        val list = cues
-        val i = Speech.pickCue(list.size, lastCue)
-        if (i < 0) return
-        lastCue = i
-        val (text, file) = list[i]
-        if (speaker.cue(file, text) { dispatch(VoiceEvent.CueDone(now())) }) dispatch(VoiceEvent.CueStarted(text, now()))
     }
 
     // ─── listening ───
@@ -358,10 +503,9 @@ class VoiceController(
     private suspend fun checkServer(voice: VoiceApi, host: String) {
         try {
             val s = voice.settings()
-            speaker.deepgramVoice = s.ttsVoice
-            speaker.rate = s.speechRate.toFloat()
-            _ui.update { it.copy(spend = s) }
-            scope.launch { loadCues(voice, s) }
+            applySettings(s)
+            // No Deepgram (or past its limit with no recogniser here): keyboard, unless he chose voice himself.
+            if (running && !keyboard && !ownerChose && voiceUnavailable(s.deepgramKeySet, s.deepgramLimitReached)) switchMode(true)
             // Claude Code answers on the owner's subscription: no API key needed then.
             if (!s.anthropicKeySet && s.brain != "claude-code") block("There is no Claude API key on $host yet. Add one in Settings > Voice assistant, under Keys.")
         } catch (e: ApiException) {
@@ -371,23 +515,52 @@ class VoiceController(
     }
 
     private fun openStream(voice: VoiceApi) {
+        val gen = streamGen
         try {
             val s = voice.listen(object : SocketListener {
                 override fun onMessage(text: String) {
                     val ev = ListenEvent.parse(text) ?: return
-                    scope.launch { heard(ev) }
+                    scope.launch { if (gen == streamGen) heard(ev) }
                 }
                 override fun onClosed(code: Int, reason: String) {
                     scope.launch {
-                        if (!running) return@launch
+                        if (!running || gen != streamGen) return@launch
                         lost(when (code) { 404 -> "this server has no live speech"; 401 -> "signed out"; else -> reason.ifEmpty { "the stream closed" } })
                     }
                 }
             })
-            scope.launch { if (running) socket = s else s.close() }
+            scope.launch { if (running && gen == streamGen) socket = s else runCatching { s.close() } }
         } catch (e: ApiException) {
-            scope.launch { lost(e.message) }
+            scope.launch { if (gen == streamGen) lost(e.message) }
         }
+    }
+
+    /** Keyboard mode's line: reports and settings changes only. Losing it loses only those. */
+    private fun openKeyboardLine(voice: VoiceApi) {
+        val gen = kbGen
+        try {
+            val s = voice.listenKeyboard(object : SocketListener {
+                override fun onMessage(text: String) {
+                    val ev = ListenEvent.parse(text) ?: return
+                    if (ev is ListenEvent.Report || ev is ListenEvent.Settings) scope.launch { if (gen == kbGen && running) heard(ev) }
+                }
+                override fun onClosed(code: Int, reason: String) {
+                    scope.launch { if (gen == kbGen) kbSocket = null }
+                }
+            })
+            scope.launch {
+                if (running && keyboard && gen == kbGen) kbSocket = s
+                else runCatching { s.send("""{"type":"stop"}"""); s.close() }
+            }
+        } catch (e: ApiException) {
+            Log.i(TAG, "keyboard line: ${e.message}")
+        }
+    }
+
+    private fun stopKeyboardLine() {
+        kbGen++
+        kbSocket?.let { s -> runCatching { s.send("""{"type":"stop"}"""); s.close() } }
+        kbSocket = null
     }
 
     private fun heard(ev: ListenEvent) {
@@ -396,10 +569,15 @@ class VoiceController(
             is ListenEvent.Ready -> dispatch(VoiceEvent.Ready(now(), ev.echoFilter && fallback == null))
             ListenEvent.Speech -> {}
             is ListenEvent.Interim -> dispatch(VoiceEvent.Interim(ev.text, now()))
-            is ListenEvent.Utterance -> dispatch(VoiceEvent.Utterance(ev.text, now()))
+            is ListenEvent.Utterance -> {
+                dispatch(VoiceEvent.Utterance(ev.text, now()))
+                if (ev.owner == false && _ui.value.state.phase == Phase.Thinking) note(NOT_RECOGNISED)
+            }
             is ListenEvent.Failed -> if (fallback != null) block("No speech recognition: ${ev.error}.") else lost(ev.error)
-            is ListenEvent.Report -> dispatch(VoiceEvent.Report(ev.speak, ev.show, now()))
+            is ListenEvent.Report -> { chatAdd("", ev.speak, ev.show); dispatch(VoiceEvent.Report(ev.speak, ev.show, now())) }
             is ListenEvent.Discard -> dispatch(VoiceEvent.Discard(now()))
+            // A setting changed on the server (Cru's volume, say): picked up at once.
+            ListenEvent.Settings -> api?.let { v -> scope.launch { refreshSettings(v) } }
         }
     }
 
@@ -410,6 +588,7 @@ class VoiceController(
     }
 
     private fun useFallback() {
+        if (keyboard) return
         stopMic()
         val f = fallback ?: FallbackRecognizer(ctx, VOCABULARY, onLevel = { _mic.value = it }) { ev -> heard(ev) }.also { fallback = it }
         if (!f.available) { block("Live speech recognition is unavailable and this phone has none of its own."); return }
@@ -460,6 +639,15 @@ class VoiceController(
         tick?.cancel(); tick = null
         speakingNow = false
         speaker.stop()
+        thinking?.cancel(); speaker.stopTone()
+        stopVoice()
+        stopKeyboardLine()
+        if (holdsMic) { holdsMic = false; HeyCrundi.sessionCloser(null); HeyCrundi.sessionClosed() }
+    }
+
+    /** The microphone, its stream and the phone's recogniser stop (closed, or keyboard mode). */
+    private fun stopVoice() {
+        streamGen++
         stopMic()
         callAudio.stop(); speaker.route = CruAudio.Route.Media; speaker.sessionId = 0
         socket?.let { s -> runCatching { s.send("""{"type":"stop"}"""); s.close() } }
@@ -467,8 +655,8 @@ class VoiceController(
         fallback?.pause()
         synchronized(preroll) { preroll.clear() }
         held.clear()
+        streaming = true
         VoiceMicService.stop(ctx)
-        if (holdsMic) { holdsMic = false; HeyCrundi.sessionCloser(null); HeyCrundi.sessionClosed() }
     }
 
     private fun block(why: String) {
@@ -481,6 +669,7 @@ class VoiceController(
 
     companion object {
         private const val TAG = "CrundiVoice"
+        private const val NOT_RECOGNISED = "Not recognised: Cru answers but won't act."
         /** Quiet after Crundi finishes before listening again: the speaker's tail and the room's echo. */
         private const val RESUME_AFTER_SPEECH_MS = 450L
         /** 100 ms chunks kept while Cru talks: 1.3 s. */

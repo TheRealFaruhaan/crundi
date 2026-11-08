@@ -33,6 +33,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +79,8 @@ import java.util.Locale
  */
 data class CruSettingsUi(
     val host: String = "",
+    /** The server's capabilities, for the sections an older server has no part in. */
+    val caps: Set<String> = emptySet(),
     /** Null while loading; [error] says why it isn't there. */
     val server: VoiceSettings? = null,
     val error: String = "",
@@ -92,6 +96,19 @@ data class CruSettingsUi(
     val memory: MemoryUi? = null,
     /** The brains compared; null when the server has none to compare. */
     val stats: BrainStats? = null,
+    /** Cru's tickers and triggers (capability "voice-wakeups"); null when the server has none. */
+    val wakeups: WakeupsUi? = null,
+    /** "Your voice" (capability "voice-speaker"); null when the server has none. */
+    val speaker: SpeakerUi? = null,
+)
+
+/** Tickers and triggers as the server has them, and the one whose Delete was tapped once. */
+data class WakeupsUi(
+    val loaded: mv.obitech.crundi.api.VoiceWakeups? = null,
+    val error: String = "",
+    val confirmDelete: String = "",
+    /** The ids being changed now. */
+    val busy: Set<String> = emptySet(),
 )
 
 /** The notebook: files as the server has them, the owner's edits, the search. */
@@ -128,6 +145,13 @@ class CruSettingsEvents(
     val onSaveDgLimit: () -> Unit = {},
     val onPause: (Int) -> Unit = {},
     val onRate: (Double) -> Unit = {},
+    val onVolume: (Int) -> Unit = {},
+    val onAdminMode: (Boolean) -> Unit = {},
+    /** A ticker or trigger switched on (true) or off. */
+    val onWakeupSwitch: (String, Boolean) -> Unit = { _, _ -> },
+    /** Delete tapped: once asks, twice deletes. */
+    val onWakeupDelete: (String) -> Unit = {},
+    val speaker: SpeakerEvents = SpeakerEvents(),
     val onKeyText: (String, String) -> Unit = { _, _ -> },
     val onSaveKey: (String) -> Unit = {},
     val onReset: () -> Unit = {},
@@ -144,6 +168,10 @@ object CruSection {
     const val MODEL = "model"
     const val VOICE = "voice"
     const val SPEED = "speed"
+    const val VOLUME = "volume"
+    const val ADMIN = "admin"
+    const val WAKEUPS = "wakeups"
+    const val SPEAKER = "speaker"
     const val LISTENING = "listening"
     const val SCREEN = "screen"
     const val SPENDING = "spending"
@@ -161,13 +189,21 @@ fun CruSettingsRoute() {
     val shell by app.shell.state.collectAsStateWithLifecycle()
     val v = app.api.voice
     val scope = rememberCoroutineScope()
-    var ui by remember { mutableStateOf(CruSettingsUi(host = shell.serverHost)) }
+    var ui by remember { mutableStateOf(CruSettingsUi(host = shell.serverHost, caps = shell.capabilities.toSet())) }
+    LaunchedEffect(shell.capabilities) { ui = ui.copy(caps = shell.capabilities.toSet()) }
     var note by remember { mutableStateOf<Actions.Note?>(null) }
     var search by remember { mutableStateOf<Job?>(null) }
     val preview = remember { arrayOfNulls<MediaPlayer>(1) }
     DisposableEffect(Unit) { onDispose { preview[0]?.release() } }
     LaunchedEffect(note) { if (note?.error == false) { delay(4000); note = null } }
     val hasMemory = VoiceApi.MEMORY in shell.capabilities
+    val hasWakeups = VoiceApi.WAKEUPS in shell.capabilities
+    val hasSpeaker = VoiceApi.SPEAKER in shell.capabilities
+    // Enrolling: the phone's microphone at 16 kHz, as the voice screen hears it.
+    val rec = remember { arrayOfNulls<MicStream>(1) }
+    val recBuf = remember { java.io.ByteArrayOutputStream() }
+    var recLevel by remember { mutableStateOf(0f) }
+    DisposableEffect(Unit) { onDispose { rec[0]?.stop(); rec[0] = null; HeyCrundi.training(false) } }
 
     fun say(text: String, error: Boolean = false) { note = Note(text, error) }
     fun withServer(s: VoiceSettings) = ui.copy(server = s, limitText = fmtUsd(s.monthlyLimitUsd), dayText = s.billingDay.toString(), dgDayText = s.deepgramBillingDay.toString(), dgLimitText = fmtUsd(s.deepgramLimitUsd))
@@ -195,6 +231,72 @@ fun CruSettingsRoute() {
             } catch (e: Exception) { say(e.message ?: "Not saved", true) }
         }
     }
+    fun wakeups(change: (WakeupsUi) -> WakeupsUi) { ui.wakeups?.let { ui = ui.copy(wakeups = change(it)) } }
+    fun loadWakeups() {
+        if (!hasWakeups) { ui = ui.copy(wakeups = null); return }
+        scope.launch {
+            val w = ui.wakeups ?: WakeupsUi()
+            ui = try {
+                val got = v.wakeups()
+                if (got == null) ui.copy(wakeups = null) else ui.copy(wakeups = (ui.wakeups ?: w).copy(loaded = got, error = ""))
+            } catch (e: Exception) { ui.copy(wakeups = w.copy(error = e.message ?: "Could not load the tickers and triggers")) }
+        }
+    }
+    fun changeWakeup(id: String, action: String, done: String) {
+        wakeups { it.copy(busy = it.busy + id, confirmDelete = "") }
+        scope.launch {
+            try {
+                val got = v.wakeup(id, action)
+                wakeups { it.copy(loaded = got, busy = it.busy - id, error = "") }
+                say(done)
+            } catch (e: Exception) {
+                wakeups { it.copy(busy = it.busy - id) }
+                say(e.message ?: "Not changed", true)
+            }
+        }
+    }
+    fun spk(change: (SpeakerUi) -> SpeakerUi) { ui.speaker?.let { ui = ui.copy(speaker = change(it)) } }
+    fun loadSpeaker() {
+        if (!hasSpeaker) { ui = ui.copy(speaker = null); return }
+        scope.launch {
+            val cur = ui.speaker ?: SpeakerUi()
+            ui = try {
+                val got = v.speaker()
+                if (got == null) ui.copy(speaker = null) else ui.copy(speaker = (ui.speaker ?: cur).copy(status = got, error = ""))
+            } catch (e: Exception) { ui.copy(speaker = cur.copy(error = e.message ?: "Could not load your voice")) }
+        }
+    }
+    fun endEnrol(msg: String, bad: Boolean) {
+        rec[0]?.stop(); rec[0] = null
+        HeyCrundi.training(false)
+        spk { it.copy(active = false, recording = false, busy = false, msg = msg, bad = bad) }
+    }
+    fun stopRecording() {
+        val m = rec[0] ?: return
+        m.stop(); rec[0] = null
+        val pcm = synchronized(recBuf) { recBuf.toByteArray() }
+        val restart = ui.speaker?.let { Enrolment.restart(it) } ?: true
+        spk { it.copy(recording = false, busy = true, msg = "Checking…", bad = false) }
+        scope.launch {
+            val r = runCatching { v.enrolPhrase(pcm, Enrolment.RATE, restart) }.getOrElse { mv.obitech.crundi.api.EnrolReply(ok = false, error = it.message ?: "Could not reach the server") }
+            if (ui.speaker?.active == true) spk { Enrolment.after(it, r) }
+        }
+    }
+    fun startRecording() {
+        if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            spk { it.copy(msg = "Allow the microphone for Crundi (Android settings, Apps, Crundi, Permissions), then try again.", bad = true) }
+            return
+        }
+        synchronized(recBuf) { recBuf.reset() }
+        val m = MicStream(Enrolment.RATE) { bytes, level ->
+            recLevel = level
+            val full = synchronized(recBuf) { recBuf.write(bytes); recBuf.size() >= Enrolment.RATE * 2 * Enrolment.MAX_SECONDS }
+            if (full) scope.launch { stopRecording() }
+        }
+        if (!m.start()) { spk { it.copy(msg = "The microphone could not be opened. Is another app using it?", bad = true) }; return }
+        rec[0] = m
+        spk { it.copy(recording = true, msg = "", bad = false) }
+    }
     fun save(done: String, call: suspend () -> VoiceSettings) {
         ui = ui.copy(busy = true)
         scope.launch {
@@ -210,12 +312,19 @@ fun CruSettingsRoute() {
             runCatching { v.voices() }.getOrNull()?.let { ui = ui.copy(deepgram = it.voices) }
             if (ui.server?.brain?.isNotEmpty() == true) loadStats()
             loadMemory()
+            loadWakeups()
+            loadSpeaker()
         } catch (e: Exception) {
             ui = ui.copy(error = if (VoiceApi.unsupported(e)) VoiceApi.UNSUPPORTED else e.message ?: "Could not load the settings")
         }
     }
+    // Cru made, changed or fired one ('voice-wakeups' on the event stream): the list again.
+    LaunchedEffect(hasWakeups) {
+        if (inspecting || !hasWakeups) return@LaunchedEffect
+        app.api.events.changes("voice-wakeups").collect { loadWakeups() }
+    }
 
-    CruSettingsScreen(ui, note, CruSettingsEvents(
+    CruSettingsScreen(ui.speaker?.let { sp -> if (sp.recording) ui.copy(speaker = sp.copy(level = recLevel)) else ui } ?: ui, note, CruSettingsEvents(
         onBack = { nav.back() },
         onCloseNote = { note = null },
         onPickDeepgram = { save("Cru will speak with this voice") { v.save(ttsVoice = it) } },
@@ -256,6 +365,42 @@ fun CruSettingsRoute() {
         },
         onPause = { ms -> save("Cru waits ${ms / 1000.0} s of quiet before sending") { v.save(pauseMs = ms) } },
         onRate = { r -> save("Cru talks at ${rateLabel(r)}") { v.save(speechRate = r) } },
+        onVolume = { n -> save("Cru talks at $n%") { v.save(volume = n) } },
+        onAdminMode = { on -> save(if (on) "Admin mode is on" else "Admin mode is off") { v.save(adminMode = on) } },
+        onWakeupSwitch = { id, on -> changeWakeup(id, if (on) "enable" else "disable", if (on) "Switched on" else "Switched off") },
+        speaker = SpeakerEvents(
+            onStart = { HeyCrundi.training(true); spk { Enrolment.start(it) } },
+            onRecord = { if (rec[0] != null) stopRecording() else if (ui.speaker?.busy != true) startRecording() },
+            onFinish = {
+                spk { it.copy(busy = true) }
+                scope.launch {
+                    try {
+                        val st = v.finishEnrol()
+                        spk { it.copy(status = (it.status ?: st).copy(enrolled = st.enrolled || st.phrases > 0, phrases = st.phrases, seconds = st.seconds, enrolledAt = st.enrolledAt ?: it.status?.enrolledAt)) }
+                        endEnrol("Cru knows your voice now.", false)
+                        loadSpeaker()
+                    } catch (e: Exception) { spk { it.copy(busy = false, msg = e.message ?: "Not saved", bad = true) } }
+                }
+            },
+            onCancel = { endEnrol("Enrolment cancelled: nothing changed.", false) },
+            onForget = {
+                if (ui.speaker?.confirmForget != true) spk { it.copy(confirmForget = true) }
+                else scope.launch {
+                    try { v.forgetSpeaker(); spk { it.copy(confirmForget = false, msg = "Your voice is forgotten.", bad = false) }; loadSpeaker() }
+                    catch (e: Exception) { spk { it.copy(confirmForget = false, msg = e.message ?: "Not changed", bad = true) } }
+                }
+            },
+            onOwnerOnly = { on ->
+                scope.launch {
+                    try { v.save(ownerOnly = on); spk { it.copy(status = it.status?.copy(ownerOnly = on)) }; say(if (on) "Cru acts on your voice only" else "Cru acts on any voice") }
+                    catch (e: Exception) { say(e.message ?: "Not saved", true) }
+                }
+            },
+        ),
+        onWakeupDelete = { id ->
+            if (ui.wakeups?.confirmDelete == id) changeWakeup(id, "delete", "Deleted")
+            else wakeups { it.copy(confirmDelete = id) }
+        },
         onKeyText = { k, t -> ui = ui.copy(keyText = ui.keyText + (k to t)) },
         onSaveKey = { k ->
             val t = ui.keyText[k].orEmpty().trim()
@@ -359,6 +504,15 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
         if (RATE_CHOICES.none { kotlin.math.abs(s.speechRate - it) < 0.01 }) Text("Now ${rateLabel(s.speechRate)}", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
     }
 
+    // ─── Volume (capability "voice-volume"): every reply and cue, on every device ───
+    if (VoiceApi.VOLUME in ui.caps) Fold(CruSection.VOLUME, "Volume", "${s.volume}%", open) {
+        Text("How loud Cru talks, on every device. You can also ask Cru: \"speak up\" or \"quieter\".", style = CrundiType.Small, modifier = Modifier.padding(bottom = 10.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (n in VOLUME_CHOICES) CrundiChip("$n%", s.volume == n, { if (s.volume != n) ev.onVolume(n) })
+        }
+        if (s.volume !in VOLUME_CHOICES) Text("Now ${s.volume}%", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
+    }
+
     // ─── Pause before sending (D44) ───
     Fold(CruSection.LISTENING, "Pause before sending", pauseLabel(s.pauseMs), open) {
         Text("How long you can pause before what you said is sent. Longer lets you speak slowly, with pauses.", style = CrundiType.Small, modifier = Modifier.padding(bottom = 10.dp))
@@ -430,6 +584,33 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
                 CrundiButton("Save", { ev.onSaveKey(k.first) }, enabled = !ui.busy && typed.isNotBlank())
             }
         }
+    }
+
+    // ─── Admin mode: any command on the server, by voice (an older server has none) ───
+    s.adminCapable?.let { capable ->
+        Fold(CruSection.ADMIN, "Admin mode", if (s.adminMode) "On" else "Off", open, warn = s.adminMode) {
+            Text(
+                "Cru can run any command on this server as the Crundi user, with no confirmation. Only your voice is obeyed.",
+                style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.padding(bottom = 4.dp),
+            )
+            mv.obitech.crundi.ui.components.CrundiSwitchRow(
+                "Admin mode", s.adminMode, { ev.onAdminMode(it) },
+                Modifier.padding(horizontal = 0.dp), detail = if (capable) "Switched on here only, never by Cru." else "Needs Sonnet or above: choose another model first.",
+                enabled = !ui.busy && (capable || s.adminMode),
+            )
+        }
+    }
+
+    // ─── Your voice (capability "voice-speaker") ───
+    ui.speaker?.let { sp ->
+        val st = sp.status
+        Fold(CruSection.SPEAKER, "Your voice", when { st == null -> ""; !st.available -> "Not available"; st.enrolled -> "Enrolled"; else -> "Not enrolled" }, open) { SpeakerPart(sp, ev.speaker) }
+    }
+
+    // ─── Tickers and triggers (capability "voice-wakeups") ───
+    ui.wakeups?.let { w ->
+        val all = w.loaded?.let { it.tickers + it.triggers }.orEmpty()
+        Fold(CruSection.WAKEUPS, "Tickers and triggers", if (w.loaded == null) "" else "${all.count { it.enabled }} of ${all.size} on", open) { WakeupsPart(w, ev) }
     }
 
     // ─── Memory (D39: the notebook) ───
@@ -568,6 +749,56 @@ private fun MemoryPart(m: MemoryUi, ev: CruSettingsEvents) {
     }
 }
 
+@Composable
+private fun WakeupsPart(w: WakeupsUi, ev: CruSettingsEvents) {
+    Text("Reasons for Cru to wake up on its own: a ticker repeats on a schedule, a trigger fires when something happens. Each is off until switched on; on each wake-up Cru decides whether to stay quiet, tell you, or alert you. Ask Cru to add one.", style = CrundiType.Small)
+    val got = w.loaded
+    if (w.error.isNotEmpty()) Text(w.error, style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.padding(top = 8.dp))
+    if (got == null) { if (w.error.isEmpty()) Text("Loading…", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp)); return }
+    for ((title, list, none) in listOf(
+        Triple("Tickers", got.tickers, "No tickers yet. Try: Cru, wake me with a briefing at half seven on weekdays."),
+        Triple("Triggers", got.triggers, "No triggers yet. Try: Cru, tell me if the CPU stays above 90 percent."),
+    )) {
+        Text(title, style = CrundiType.Heading, modifier = Modifier.padding(top = 14.dp, bottom = 4.dp))
+        if (list.isEmpty()) Text(none, style = CrundiType.Small)
+        for (x in list) WakeRow(x, w.confirmDelete == x.id, x.id in w.busy, ev)
+    }
+    val lim = got.limits
+    Text("At most ${lim.perHour} wake-ups an hour (${lim.firedLastHour} in the last hour), and none once the monthly limit is reached.", style = CrundiType.Small, modifier = Modifier.padding(top = 10.dp))
+}
+
+@Composable
+private fun WakeRow(x: mv.obitech.crundi.api.WakeItem, confirming: Boolean, busy: Boolean, ev: CruSettingsEvents) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(x.name.ifEmpty { x.id }, style = CrundiType.Body.copy(color = if (x.enabled) CrundiColors.TextPrimary else CrundiColors.TextSecondary))
+                if (x.summary.isNotEmpty()) Text(x.summary, style = CrundiType.Small)
+            }
+            androidx.compose.material3.Switch(
+                checked = x.enabled, onCheckedChange = { ev.onWakeupSwitch(x.id, it) }, enabled = !busy,
+                colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedThumbColor = CrundiColors.TextPrimary, checkedTrackColor = CrundiColors.Accent, checkedBorderColor = CrundiColors.Accent,
+                    uncheckedThumbColor = CrundiColors.TextSecondary, uncheckedTrackColor = CrundiColors.BgTertiary, uncheckedBorderColor = CrundiColors.Border,
+                ),
+                modifier = Modifier.semantics { contentDescription = if (x.enabled) "On: switch off" else "Off: switch on" },
+            )
+        }
+        if (x.purpose.isNotEmpty()) Text(x.purpose, style = CrundiType.Small, modifier = Modifier.padding(top = 2.dp))
+        Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Last woke Cru: " + (if (x.lastFiredAt > 0) wakeTime(x.lastFiredAt) else "never") + (if (x.fires > 0) " (${x.fires} in all)" else "") + " · made by " + (if (x.createdBy == "owner") "you" else "Cru"),
+                style = CrundiType.Meta, modifier = Modifier.weight(1f),
+            )
+            CrundiButton(if (confirming) "Delete for good?" else "Delete", { ev.onWakeupDelete(x.id) }, kind = ButtonKind.Danger, icon = "trash", enabled = !busy)
+        }
+        Box(Modifier.fillMaxWidth().padding(top = 8.dp).size(Dimens.Hairline).background(CrundiColors.Border))
+    }
+}
+
+private fun wakeTime(ms: Long): String = java.text.SimpleDateFormat("d MMM HH:mm", Locale.getDefault()).format(java.util.Date(ms))
+
+private val VOLUME_CHOICES = listOf(25, 40, 55, 70, 85, 100)
 private val RATE_CHOICES = listOf(0.85, 1.0, 1.15, 1.3, 1.5)
 private val CLOSE_CHOICES = listOf(30, 45, 60, 120, 300)
 private val IDLE_CHOICES = listOf(5, 10, 15, 30, 60, 120)
