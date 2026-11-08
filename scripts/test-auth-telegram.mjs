@@ -154,6 +154,8 @@ r = await post('/api/auth/config', { action: 'telegram-clear' });
 check('then the bot can be removed', r.body.ok && envVal('TELEGRAM_BOT_TOKEN') === '' && r.body.restartRequired === true);
 
 stop();
-rmSync(tmp, { recursive: true, force: true });
+// Windows keeps a stopped server's files locked for a moment: retry, and
+// never fail the test over leaving a temporary folder behind.
+try { rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* the OS cleans its temp folder */ }
 console.log(failures ? `\n${failures} FAILED` : '\nAll Telegram sign-in and channel checks passed.');
 process.exit(failures ? 1 : 0);
