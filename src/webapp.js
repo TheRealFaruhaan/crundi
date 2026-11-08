@@ -2636,6 +2636,57 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     res.end(content);
   }
 
+  // ─── Telegram: one sign-in method and one notification channel ───
+  // The bot (token + allowed username) is shared by both and lives in the
+  // .env as always (TELEGRAM_BOT_TOKEN / ALLOWED_USERNAME), so existing
+  // installs need nothing. It is read at start-up: a change needs a restart.
+  const TOKEN_KEPT = '__crundi_token_kept__';
+  /** A key's value as written in the .env file, or undefined if it is not there. */
+  function envFileValue(key) {
+    try {
+      const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+      const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
+      return m ? m[1].trim() : undefined;
+    } catch { return undefined; }
+  }
+  /**
+   * The bot as Settings shows it. Never the token itself.
+   * status: 'not-set-up' (no bot running), 'connected' (polling), 'offline'
+   * (configured but not polling: bad token, network, another poller).
+   */
+  function telegramBotInfo() {
+    const fileToken = envFileValue('TELEGRAM_BOT_TOKEN');
+    const fileUser = envFileValue('ALLOWED_USERNAME');
+    const savedToken = fileToken !== undefined ? fileToken : (config.botToken || '');
+    const savedUser = (fileUser !== undefined ? fileUser : (config.allowedUsername || '')).replace(/^@/, '');
+    const restartRequired = savedToken !== (config.botToken || '')
+      || savedUser.toLowerCase() !== String(config.allowedUsername || '').replace(/^@/, '').toLowerCase();
+    let running = false;
+    try { running = !!(bot && typeof bot.isRunning === 'function' && bot.isRunning()); } catch { running = false; }
+    const chatId = getChatId ? getChatId() : null;
+    return {
+      tokenSet: !!savedToken,
+      allowedUsername: savedUser,
+      botUsername: config.botUsername || '',
+      status: !bot ? 'not-set-up' : running ? 'connected' : 'offline',
+      restartRequired,
+      chatId: chatId ? String(chatId) : '',
+    };
+  }
+  /** Where the Telegram channel sends. Live, and kept across restarts. */
+  function saveTelegramChatId(raw) {
+    const s = String(raw ?? '').trim();
+    if (s && !/^-?\d{1,20}$/.test(s)) return { ok: false, error: 'A Telegram chat ID is a number.' };
+    const stateFile = join(config.dataDir, '.crundi-state.json');
+    let state = {};
+    try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')) || {}; } catch { state = {}; }
+    const newId = s ? Number(s) : null;
+    state.chatId = newId;
+    writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 });
+    if (setChatId) setChatId(newId);
+    return { ok: true };
+  }
+
   /** Settings as GET /api/settings returns them (also read by the voice assistant, redacted). */
   function settingsView() {
     const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
@@ -2645,6 +2696,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
       settings[key] = m ? m[1].trim() : '';
     }
+    // The bot token is write-only now (Settings > Sign-in > Telegram). Older
+    // clients still load this and post every field back, so they are given a
+    // placeholder that the save path recognises and leaves alone; a blank
+    // would wipe the token on their next save.
+    if (settings.TELEGRAM_BOT_TOKEN) settings.TELEGRAM_BOT_TOKEN = TOKEN_KEPT;
     const chatId = getChatId ? getChatId() : '';
     return {
       settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
@@ -3399,6 +3455,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         github: m.github,
         setupRequired: !m.anyConfigured,
         botUsername: m.telegram ? (config.botUsername || '') : '',
+        // The bot's public numeric id (the part of the token before the
+        // colon, which is not secret): the login page's Telegram button
+        // goes straight to Telegram's sign-in page with it.
+        telegramBotId: m.telegram ? (String(config.botToken || '').split(':')[0].replace(/\D/g, '') || '') : '',
       });
     }
 
@@ -5659,8 +5719,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Notification channels ───
+    // GET /api/notify/channels -> { ok, channels: [ { id, label, describe, available,
+    //   unavailableReason, enabled, ... } ] }. The 'telegram' entry also carries
+    //   telegram: { chatId, botStatus: 'not-set-up'|'connected'|'offline',
+    //               tokenSet, botUsername, restartRequired }
+    //   (the bot itself is edited under Sign-in: /api/auth/config telegram-save).
+    // POST /api/notify/channels { id, enabled } -> { ok }   (on/off, as before)
+    // POST /api/notify/telegram/chat { chatId: '123' | '' } -> { ok }  (where it sends)
     if (path === '/api/notify/channels' && req.method === 'GET') {
-      return json(res, { ok: true, channels: channels.list() });
+      const tg = telegramBotInfo();
+      return json(res, {
+        ok: true,
+        channels: channels.list().map((c) => (c.id === 'telegram'
+          ? { ...c, telegram: { chatId: tg.chatId, botStatus: tg.status, tokenSet: tg.tokenSet, botUsername: tg.botUsername, restartRequired: tg.restartRequired } }
+          : c)),
+      });
+    }
+
+    if (path === '/api/notify/telegram/chat' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body || body.chatId === undefined) return json(res, { ok: false, error: 'Which chat ID?' }, 400);
+      const r = saveTelegramChatId(body.chatId);
+      return json(res, r, r.ok ? 200 : 400);
     }
 
     if (path === '/api/notify/channels' && req.method === 'POST') {
@@ -5937,15 +6018,67 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Sign-in methods (authenticated) ───
+    //
+    // GET /api/auth/config ->
+    //   { ok, telegram, password, google, github, anyConfigured,      (bool: each method on)
+    //     passwordFromEnv, telegramAvailable, passwordSet,
+    //     oauth: { google|github: { configured, clientId, secretSet, allowed,
+    //              verified, verifiedAs, idPinned (github only) } },
+    //     callbackUrls: { google, github },
+    //     telegramBot: { tokenSet, allowedUsername, botUsername,
+    //                    status: 'not-set-up'|'connected'|'offline',
+    //                    restartRequired, chatId } }
+    //   Secrets (client secrets, the bot token) are never in it.
+    //
+    // POST /api/auth/config, by action:
+    //   { action:'set-password', password }            -> { ok, totpSecret, uri }
+    //   { action:'enable'|'disable', method:'telegram'|'password'|'google'|'github' } -> { ok }
+    //   { action:'oauth-save', provider, clientId, clientSecret ('' keeps), allowed } -> { ok }
+    //   { action:'oauth-clear', provider }               -> { ok }
+    //   { action:'telegram-save', botToken ('' keeps), allowedUsername } -> { ok, restartRequired }
+    //   { action:'telegram-clear' }                       -> { ok, restartRequired }
+    //   Refusals are { ok:false, error } with 400.
+    //
+    // The old path still works: POST /api/settings { settings: { TELEGRAM_BOT_TOKEN,
+    // ALLOWED_USERNAME, ... }, chatId }. GET /api/settings now gives the token as
+    // a placeholder that the same POST recognises and keeps.
     if (path === '/api/auth/config' && req.method === 'GET') {
       // The exact address each provider must be told to send people back to.
-      return json(res, { ok: true, ...authConfig.status(), callbackUrls: { google: oauthCallbackUrl('google'), github: oauthCallbackUrl('github') } });
+      return json(res, { ok: true, ...authConfig.status(), callbackUrls: { google: oauthCallbackUrl('google'), github: oauthCallbackUrl('github') }, telegramBot: telegramBotInfo() });
     }
 
     if (path === '/api/auth/config' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
+
+      // The Telegram bot: shared by the sign-in method and the notification
+      // channel. Written to the .env the way the Configuration form always
+      // did, so it takes effect at the next restart.
+      if (body.action === 'telegram-save') {
+        const token = String(body.botToken || '').trim();
+        const user = String(body.allowedUsername || '').trim().replace(/^@/, '');
+        const haveToken = !!token || !!telegramBotInfo().tokenSet;
+        if (token && !/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/.test(token)) return json(res, { ok: false, error: 'That does not look like a bot token. It comes from @BotFather and looks like 123456:ABC-DEF...' }, 400);
+        if (!/^[A-Za-z0-9_]{3,32}$/.test(user)) return json(res, { ok: false, error: 'Enter your Telegram username (letters, digits and _).' }, 400);
+        if (!haveToken) return json(res, { ok: false, error: 'Enter the bot token from @BotFather.' }, 400);
+        const w = writeEnvKeys(token ? { TELEGRAM_BOT_TOKEN: token, ALLOWED_USERNAME: user } : { ALLOWED_USERNAME: user });
+        if (!w.ok) return json(res, { ok: false, error: `Could not save: ${w.error}` }, 500);
+        console.log(`[crundi] Telegram bot settings saved${token ? ' (new token)' : ''}; restart to apply`);
+        return json(res, { ok: true, restartRequired: telegramBotInfo().restartRequired });
+      }
+      if (body.action === 'telegram-clear') {
+        // Taking the bot away takes the sign-in with it, so the last-method
+        // rule applies here too.
+        if (authConfig.methods().telegram) {
+          const off = authConfig.setTelegramEnabled(false);
+          if (!off.ok) return json(res, off, 400);
+        }
+        const w = writeEnvKeys({ TELEGRAM_BOT_TOKEN: '', ALLOWED_USERNAME: '' });
+        if (!w.ok) return json(res, { ok: false, error: `Could not save: ${w.error}` }, 500);
+        console.log('[crundi] Telegram bot removed; restart to apply');
+        return json(res, { ok: true, restartRequired: telegramBotInfo().restartRequired });
+      }
 
       // Setting a password always (re)mints the TOTP secret, so the response
       // carries the new one to enrol.
@@ -6016,6 +6149,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           for (const key of KEYS) {
             if (settings[key] !== undefined) pairs[key] = settings[key];
           }
+          // An older client posting back the placeholder it was given: keep
+          // the stored token (see settingsView).
+          if (pairs.TELEGRAM_BOT_TOKEN === TOKEN_KEPT) delete pairs.TELEGRAM_BOT_TOKEN;
           const w = writeEnvKeys(pairs);
           if (!w.ok) return json(res, { ok: false, error: `Could not save settings: ${w.error}` }, 500);
           restartRequired = true;

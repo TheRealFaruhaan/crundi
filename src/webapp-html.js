@@ -3525,6 +3525,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       <!-- Google / GitHub, through the owner's own OAuth app. Each button
            shows only when that method is set up and turned on. -->
       <div id="oauth-login" style="display:none;">
+        <button type="button" class="oauth-btn" id="oauth-btn-telegram" data-provider="telegram" style="display:none;">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+          <span>Sign in with Telegram</span>
+        </button>
         <button type="button" class="oauth-btn" id="oauth-btn-google" data-provider="google" style="display:none;">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
           <span>Sign in with Google</span>
@@ -4840,15 +4844,26 @@ export function getWebappHtml(botUsername, appVersion = '') {
         return;
       }
 
-      if (methods.telegram) injectTelegramWidget();
+      // Telegram is a button like the others, driving Telegram's own widget
+      // script (Telegram.Login.auth, its popup flow). The old embedded widget
+      // stays the way in when that cannot work: no bot id from the server,
+      // or the desktop app, where a popup opens in the system browser and
+      // can never answer this page.
+      const tgButton = methods.telegram && /^[0-9]+$/.test(String(methods.telegramBotId || '')) && !isDesktopApp();
+      if (methods.telegram && !tgButton) injectTelegramWidget();
+      else $('#telegram-login-container').style.display = 'none';
+      if (tgButton) loadTelegramLib();
       if (methods.password) form.style.display = 'flex';
-      // An empty Telegram slot still took its height, leaving a gap at the top.
-      if (!methods.telegram) $('#telegram-login-container').style.display = 'none';
-      // Google / GitHub: a button each, only for what is on. An older server
-      // sends neither field, so nothing shows.
+      // One button each, only for what is on. An older server sends no
+      // google/github field, so those do not show.
       const oauthOn = ['google', 'github'].filter((k) => methods[k] === true);
-      if (oauthOn.length) {
+      if (tgButton || oauthOn.length) {
         $('#oauth-login').style.display = 'flex';
+        if (tgButton) {
+          const tb = $('#oauth-btn-telegram');
+          tb.style.display = '';
+          tb.addEventListener('click', () => telegramLogin(methods.telegramBotId));
+        }
         for (const k of oauthOn) {
           const b = $('#oauth-btn-' + k);
           b.style.display = '';
@@ -4858,7 +4873,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       if ((methods.telegram || oauthOn.length) && methods.password) orEl.style.display = '';
 
-      prompt.textContent = oauthOn.length ? 'Sign in to continue'
+      prompt.textContent = (tgButton || oauthOn.length) ? 'Sign in to continue'
         : methods.telegram && methods.password
         ? 'Sign in with Telegram, or with your password'
         : methods.password ? 'Sign in with your password and authenticator code'
@@ -4929,6 +4944,69 @@ export function getWebappHtml(botUsername, appVersion = '') {
         oauthPollTimer = setTimeout(tick, 1500);
       };
       oauthPollTimer = setTimeout(tick, 1500);
+    }
+
+    // ─── Telegram sign-in ───
+    // Telegram's widget script, loaded on its own (no data-telegram-login, so
+    // it draws nothing) for its Telegram.Login.auth popup flow. The user it
+    // hands back is posted to /api/auth exactly as the widget's own data is,
+    // and the server checks it the same way (hash signed with the bot token,
+    // the allowed username).
+    let tgLibLoading = null;
+    function loadTelegramLib() {
+      if (window.Telegram && window.Telegram.Login && window.Telegram.Login.auth) return Promise.resolve(true);
+      if (tgLibLoading) return tgLibLoading;
+      tgLibLoading = new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://telegram.org/js/telegram-widget.js?22';
+        s.onload = () => resolve(!!(window.Telegram && window.Telegram.Login && window.Telegram.Login.auth));
+        s.onerror = () => { tgLibLoading = null; resolve(false); };
+        document.head.appendChild(s);
+      });
+      return tgLibLoading;
+    }
+    /** The old embedded widget, in place of the button, when the popup cannot be used. */
+    function telegramFallback(msg) {
+      const c = $('#telegram-login-container');
+      if (c && !c.childElementCount) injectTelegramWidget();
+      if (c) c.style.display = '';
+      const b = $('#oauth-btn-telegram');
+      if (b) b.style.display = 'none';
+      if (msg) $('#oauth-error').textContent = msg;
+    }
+    async function telegramLogin(botId) {
+      const err = $('#oauth-error');
+      err.textContent = '';
+      const ok = await loadTelegramLib();
+      if (!ok) { telegramFallback('Could not load Telegram’s sign-in. Use the Telegram button above.'); return; }
+      window.Telegram.Login.auth({ bot_id: botId, request_access: 'write' }, async (user) => {
+        // false: the popup was closed, cancelled, or blocked by the browser.
+        if (!user) { telegramFallback('Telegram sign-in did not finish. Try the Telegram button above.'); return; }
+        try {
+          const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ telegramLogin: user }) });
+          const d = await r.json();
+          if (d && d.ok && storeSession(d)) { showApp(); connectSSE(); checkImport(); return; }
+          err.textContent = (d && d.error) || 'Sign-in failed';
+        } catch (ex) { err.textContent = 'Could not reach the server: ' + ex.message; }
+      });
+    }
+    // Harmless leftover: a page that comes back with #tgAuthResult (Telegram
+    // can do that when its popup opens as a tab) is still signed in.
+    async function consumeTelegramResult() {
+      const m = location.hash.match(/[#&?]tgAuthResult=([A-Za-z0-9_=-]*)/);
+      if (!m) return false;
+      history.replaceState(null, '', location.pathname);
+      let data = null;
+      try { data = JSON.parse(decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { data = null; }
+      if (!data || typeof data !== 'object') { window.__crundiAuthErr = 'Telegram sign-in was cancelled.'; return false; }
+      try {
+        const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ telegramLogin: data }) });
+        const d = await r.json();
+        if (d && d.ok) return storeSession(d);
+        window.__crundiAuthErr = (d && d.error) || 'Sign-in failed';
+      } catch (ex) { window.__crundiAuthErr = 'Could not reach the server: ' + ex.message; }
+      return false;
     }
 
     // Arrived back from the provider: swap the one-time code for a session.
@@ -14527,6 +14605,70 @@ export function getWebappHtml(botUsername, appVersion = '') {
       google: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>',
       github: '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
     };
+    const TELEGRAM_MARK = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>';
+    // Settings → Sign-in → Telegram. The bot it uses is also the Telegram
+    // notification channel's, so it is entered once, here.
+    function authTelegramSettings(authCfg, st) {
+      const tb = authCfg.telegramBot;
+      const on = !!authCfg.telegram;
+      const canOn = !!authCfg.telegramAvailable;
+      const toggle = '<button type="button" class="set-tgl' + (on ? ' on' : '') + '" id="auth-tgl-telegram"'
+        + ((canOn || on) ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+        + ' role="switch" aria-checked="' + (on ? 'true' : 'false') + '" data-action="auth-toggle" data-method="telegram"><span class="set-tgl-knob"></span></button>';
+      // An older server: only the switch, as before.
+      if (!tb) return '<div class="seg-pref-row" style="margin-top:14px;"><div><div class="set-tgl-lbl">' + TELEGRAM_MARK + 'Telegram</div></div>' + toggle + '</div>';
+      const status = !tb.tokenSet
+        ? 'Not set up. Create a bot with @BotFather, then enter its token and your Telegram username, and Save.'
+        : tb.restartRequired
+          ? 'Saved. Restart Crundi to start the bot with these settings; it can be turned on after that.'
+          : tb.status === 'connected'
+            ? 'Bot ' + (tb.botUsername ? '@' + escHtml(tb.botUsername) + ' ' : '') + 'is connected. Sign in with the Telegram account you set here.'
+            : 'The bot is offline. Check the token, and that no other server is using the same bot.';
+      return '<div id="auth-telegram-block" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">'
+        + '<div class="seg-pref-row" style="margin-bottom:10px;">'
+        + '<div><div class="set-tgl-lbl">' + TELEGRAM_MARK + 'Telegram</div>'
+        + '<p style="' + st.hintStyle + '">' + status + '</p></div>'
+        + toggle
+        + '</div>'
+        + '<p style="' + st.hintStyle + ';margin-bottom:10px;">In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel. <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:var(--accent-hover);">Open</a></p>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">'
+        + '<div><label style="' + st.labelStyle + '">Bot token</label><input id="auth-telegram-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="' + (tb.tokenSet ? 'Saved (leave blank to keep)' : '123456:ABC-DEF...') + '" style="' + st.monoStyle + '"></div>'
+        + '<div><label style="' + st.labelStyle + '">Allowed Telegram username</label><input id="auth-telegram-user" value="' + escHtml(tb.allowedUsername || '') + '" placeholder="your-username" autocomplete="off" spellcheck="false" style="' + st.inputStyle + '"></div>'
+        + '</div>'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+        + '<button type="button" data-action="auth-telegram-save" style="' + st.btnStyle + '">Save</button>'
+        + (tb.restartRequired ? '<button type="button" class="kanban-btn" data-action="srv-restart">Restart now</button>' : '')
+        + (tb.tokenSet ? '<button type="button" class="kanban-btn" data-action="auth-telegram-clear">Remove</button>' : '')
+        + '</div>'
+        + '</div>';
+    }
+    // Settings → Notification Channels → Telegram: the bot's state, and the
+    // chat it sends to. The bot is the one set under Sign-in → Telegram.
+    function telegramChannelExtra(t, st) {
+      const dot = (c) => '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + c + ';margin-right:6px;vertical-align:1px;"></span>';
+      const state = !t.tokenSet
+        ? dot('var(--text-muted)') + 'Not set up'
+        : t.restartRequired
+          ? dot('var(--yellow)') + 'Saved, waiting for a restart'
+          : t.botStatus === 'connected'
+            ? dot('var(--green)') + 'Connected' + (t.botUsername ? ' as @' + escHtml(t.botUsername) : '')
+            : dot('var(--red)') + 'Offline';
+      return '<div style="margin-top:8px;font-size:0.78rem;color:var(--text-secondary);">Bot: ' + state
+        + ' <span style="color:var(--text-muted);">&middot; token ' + (t.tokenSet ? 'set' : 'not set') + ',</span> '
+        + '<button type="button" class="lr-link" data-action="goto-signin-telegram" style="padding:0;font-size:0.78rem;">' + (t.tokenSet ? 'edit under Sign-in' : 'set it up under Sign-in') + '</button></div>'
+        + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
+        + '<input id="tg-chat-id" value="' + escHtml(t.chatId || '') + '" placeholder="Chat ID (filled in when you send /start)" inputmode="numeric" spellcheck="false" style="' + st.monoStyle + 'max-width:260px;">'
+        + '<button type="button" data-action="telegram-chat-save" style="' + st.btnSubtleStyle + '">Save</button>'
+        + '</div>'
+        + '<p style="' + st.hintStyle + '">Where messages go. Send /start to the bot and it fills itself in, or enter it by hand.</p>';
+    }
+    /** Open Settings → Sign-in and bring the Telegram block into view. */
+    function gotoSigninTelegram() {
+      const h = Array.from(document.querySelectorAll('#settings-panel h4')).find((x) => x.textContent.trim().indexOf('Sign-in') === 0);
+      if (h && h.parentElement && !h.parentElement.classList.contains('open')) h.click();
+      const b = $('#auth-telegram-block');
+      if (b) setTimeout(() => { try { b.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { b.scrollIntoView(); } }, 60);
+    }
     function authOAuthSettings(authCfg, st) {
       // An older server sends no oauth block: say nothing rather than offer
       // fields it cannot save.
@@ -14702,15 +14844,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
         let html = '<div class="info-section"><h4>Configuration</h4>'
           + '<p style="color:var(--text-muted);font-size:0.78rem;margin-bottom:16px;">Changes are saved to <code style="font-family:var(--mono);font-size:0.72rem;background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;">' + escHtml(data.envPath) + '</code></p>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token</label>'
-          + '<input type="password" id="set-bot-token" style="' + monoStyle + '" value="' + escHtml(s.TELEGRAM_BOT_TOKEN || '') + '" placeholder="123456:ABC-DEF..." />'
-          + '<p style="' + hintStyle + '">Optional. From @BotFather. Telegram is one notification channel (and a way to sign in); Crundi runs fully without it, and everything for you lands in its own inbox.</p></div>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Allowed Username</label>'
-          + '<input type="text" id="set-username" style="' + inputStyle + '" value="' + escHtml(s.ALLOWED_USERNAME || '') + '" placeholder="your-telegram-username" />'
-          + '<p style="' + hintStyle + '">With a bot token: the Telegram user who may sign in with it and receive its messages.</p></div>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Chat ID</label>'
-          + '<input type="text" id="set-chat-id" style="' + monoStyle + '" value="' + escHtml(data.chatId || '') + '" placeholder="(auto-set when you send /start to the bot)" />'
-          + '<p style="' + hintStyle + '">Where the Telegram channel sends. Auto-discovered when you send /start, or enter manually.</p></div>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Projects Directory</label>'
           + '<input type="text" id="set-projects-dir" style="' + monoStyle + '" value="' + escHtml(s.PROJECTS_DIR || '') + '" placeholder="C:\\\\Projects" />'
           + '<p style="' + hintStyle + '">Single mode: subfolders auto-discovered. Leave empty for multi mode (add projects individually).</p></div>'
@@ -14772,18 +14905,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<div class="info-section"><h4>Sign-in</h4>'
           + '<p style="' + hintStyle + ';margin-bottom:14px;">Any one of these is enough, any mix can be on, and one must always stay on.</p>'
 
-          + '<div class="seg-pref-row" style="margin-bottom:14px;">'
-          + '<div><div class="set-tgl-lbl">Telegram</div>'
-          + '<p style="' + hintStyle + '">'
-          + (authCfg.telegramAvailable
-              ? 'Sign in with the Telegram account set above.'
-              : 'Needs a bot token and username above before it can be turned on.')
-          + '</p></div>'
-          + '<button type="button" class="set-tgl' + (authCfg.telegram ? ' on' : '') + '" id="auth-tgl-telegram"'
-          + (authCfg.telegramAvailable ? '' : ' disabled style="opacity:0.4;cursor:default;"')
-          + ' role="switch" aria-checked="' + (authCfg.telegram ? 'true' : 'false') + '" data-action="auth-toggle" data-method="telegram"><span class="set-tgl-knob"></span></button>'
-          + '</div>'
-
           + '<div class="seg-pref-row" style="margin-bottom:10px;">'
           + '<div><div class="set-tgl-lbl">Password + authenticator code</div>'
           + '<p style="' + hintStyle + '">'
@@ -14805,6 +14926,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<p style="' + hintStyle + ';margin-bottom:8px;">Shown once. Without it you will not be able to sign in with the new password.</p>'
           + '<code id="auth-enrol-secret" style="display:block;font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:9px;text-align:center;word-break:break-all;"></code>'
           + '</div>'
+          + authTelegramSettings(authCfg, { inputStyle, monoStyle, labelStyle, hintStyle, btnStyle })
           + authOAuthSettings(authCfg, { inputStyle, monoStyle, labelStyle, hintStyle, btnStyle })
           + '</div>'
 
@@ -14822,6 +14944,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
                     + (c.available ? '<button type="button" data-action="push-test" style="' + btnSubtleStyle + '">Send a test</button>' : '')
                     + '</div>'
                   : '')
+              + (c.id === 'telegram' && c.telegram ? telegramChannelExtra(c.telegram, { monoStyle, hintStyle, btnSubtleStyle }) : '')
               + '</div>'
               + '<button type="button" class="set-tgl' + (c.enabled ? ' on' : '') + '"'
               + ' id="chan-tgl-' + escHtml(c.id) + '"'
@@ -14962,28 +15085,22 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     async function saveSettings() {
+      // The Telegram bot is not here any more: it is set under Sign-in, and
+      // where it sends under Notification Channels. Keys left out are kept.
       const settings = {
-        TELEGRAM_BOT_TOKEN: ($('#set-bot-token') || {}).value || '',
-        ALLOWED_USERNAME: ($('#set-username') || {}).value || '',
         PROJECTS_DIR: ($('#set-projects-dir') || {}).value || '',
         WEB_PORT: ($('#set-web-port') || {}).value || '',
         CLOUDFLARE_TUNNEL_TOKEN: ($('#set-tunnel-token') || {}).value || '',
         CLOUDFLARE_TUNNEL_URL: ($('#set-tunnel-url') || {}).value || '',
         DATA_DIR: ($('#set-data-dir') || {}).value || '',
       };
-      // Telegram is optional: both or neither.
-      if (!settings.TELEGRAM_BOT_TOKEN !== !settings.ALLOWED_USERNAME) {
-        toast('For Telegram, give both the bot token and the allowed username, or leave both empty', 'error');
-        return;
-      }
-      const chatId = ($('#set-chat-id') || {}).value || '';
       const status = $('#settings-status');
       if (status) status.textContent = 'Saving...';
       try {
         const r = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings, chatId }),
+          body: JSON.stringify({ settings }),
         });
         const data = await r.json();
         if (data.ok) {
@@ -15253,6 +15370,41 @@ export function getWebappHtml(botUsername, appVersion = '') {
           const el = $('#auth-' + d.provider + '-cb');
           const txt = el ? el.textContent : '';
           if (navigator.clipboard && txt) navigator.clipboard.writeText(txt).then(() => toast('Copied', 'success'), () => toast('Select it and copy it by hand', 'error'));
+          break;
+        }
+        case 'auth-telegram-save': {
+          const tok = $('#auth-telegram-token');
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'telegram-save', botToken: tok ? tok.value : '', allowedUsername: ($('#auth-telegram-user') || {}).value || '' }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not save that', 'error'); return; }
+              toast(dd.restartRequired ? 'Saved. Restart required for the bot to use it.' : 'Saved', 'success');
+              renderSettings();
+            })
+            .catch(err => toast('Could not save that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-telegram-clear': {
+          if (!confirm('Remove the Telegram bot? Telegram sign-in and Telegram notifications both stop after the next restart.')) break;
+          apiFetch('/api/auth/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'telegram-clear' }) })
+            .then(r => r.json())
+            .then(dd => { if (!dd.ok) { toast(dd.error || 'Could not remove that', 'error'); return; } toast('Removed. Restart required.', 'success'); renderSettings(); })
+            .catch(err => toast('Could not remove that: ' + err.message, 'error'));
+          break;
+        }
+        case 'goto-signin-telegram': {
+          gotoSigninTelegram();
+          break;
+        }
+        case 'telegram-chat-save': {
+          apiFetch('/api/notify/telegram/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatId: ($('#tg-chat-id') || {}).value || '' }) })
+            .then(r => r.json())
+            .then(dd => { if (!dd.ok) { toast(dd.error || 'Could not save that', 'error'); return; } toast('Chat ID saved', 'success'); renderSettings(); })
+            .catch(err => toast('Could not save that: ' + err.message, 'error'));
           break;
         }
         case 'auth-set-password': {
@@ -18928,7 +19080,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (APP_LOGIN && !token) {
         if (!takeAppLogin(await askAppLogin('get'))) takeAppLogin(await askAppLogin('renew'));
       }
-      if (((await consumeOAuthHandoff()) || consumeRedirectToken()) && await checkAuth()) {
+      if (((await consumeOAuthHandoff()) || (await consumeTelegramResult()) || consumeRedirectToken()) && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
         return;
       }

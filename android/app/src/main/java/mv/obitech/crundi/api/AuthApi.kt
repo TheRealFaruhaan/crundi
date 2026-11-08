@@ -52,6 +52,19 @@ class AuthApi internal constructor(private val rpc: Rpc) {
         return rpc.read(rpc.post("/api/auth/oauth/start", mapOf("provider" to provider, "purpose" to "test", "desktop" to true)), null)
     }
 
+    /**
+     * The Telegram bot, shared by the sign-in method and the notification
+     * channel: a token ("" keeps the saved one) and the Telegram username
+     * allowed to sign in. Written to the server's .env: it applies after a
+     * restart ([TelegramSaved.restartRequired]). Only on a server that sends
+     * [AuthConfig.telegramBot].
+     */
+    suspend fun saveTelegram(botToken: String, allowedUsername: String): TelegramSaved =
+        rpc.read(rpc.post("/api/auth/config", mapOf("action" to "telegram-save", "botToken" to botToken.trim(), "allowedUsername" to allowedUsername.trim().removePrefix("@"))), null)
+
+    /** Take the bot away (refused while Telegram is the only way to sign in). */
+    suspend fun clearTelegram(): TelegramSaved = rpc.read(rpc.post("/api/auth/config", mapOf("action" to "telegram-clear")), null)
+
     suspend fun poll(pollId: String): OAuthPoll = rpc.read(rpc.post("/api/auth/oauth/poll", mapOf("pollId" to pollId)), null)
 
     companion object {
@@ -75,6 +88,11 @@ data class AuthConfig(
     val oauth: OAuthConfigs? = null,
     /** The exact address each provider must send people back to ("" until the server knows its own). */
     val callbackUrls: Map<String, String> = emptyMap(),
+    /**
+     * The Telegram bot, edited here rather than in Configuration. Null from an
+     * older server, where the token and username are still Configuration fields.
+     */
+    val telegramBot: TelegramBot? = null,
 ) {
     fun isOn(method: String): Boolean = when (method) { "telegram" -> telegram; "password" -> password; "google" -> google; "github" -> github; else -> false }
     /** How many methods are on: the last one cannot be turned off. */
@@ -100,6 +118,21 @@ data class OAuthView(
     val verified: Boolean = false,
     val verifiedAs: String = "",
 )
+
+/** The bot as Settings sees it: never the token. status: not-set-up, connected or offline. */
+@Serializable
+data class TelegramBot(
+    val tokenSet: Boolean = false,
+    val allowedUsername: String = "",
+    val botUsername: String = "",
+    val status: String = "not-set-up",
+    /** Saved, but the running bot still has the old settings until Crundi restarts. */
+    val restartRequired: Boolean = false,
+    val chatId: String = "",
+)
+
+@Serializable
+data class TelegramSaved(val ok: Boolean = false, val restartRequired: Boolean = false)
 
 @Serializable
 data class PasswordSet(val ok: Boolean = false, val totpSecret: String = "", val uri: String = "")

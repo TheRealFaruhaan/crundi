@@ -186,6 +186,8 @@ class SystemApi internal constructor(private val rpc: Rpc) {
     )), null)
     suspend fun channels(): List<NotifyChannel> = rpc.read(rpc.get("/api/notify/channels"), "channels", emptyList())
     suspend fun setChannel(id: String, enabled: Boolean) { rpc.post("/api/notify/channels", mapOf("id" to id, "enabled" to enabled)) }
+    /** Where the Telegram channel sends ("" clears it). Only on a server whose channel carries [TelegramChannel]. */
+    suspend fun setTelegramChat(chatId: String) { rpc.post("/api/notify/telegram/chat", mapOf("chatId" to chatId.trim())) }
     suspend fun update(force: Boolean = false): UpdateStatus = rpc.read(rpc.get("/api/update/status", mapOf("force" to if (force) "1" else null), slow = force), null)
     /** production or dev */
     suspend fun setUpdateChannel(channel: String) { rpc.post("/api/update/channel", mapOf("channel" to channel)) }

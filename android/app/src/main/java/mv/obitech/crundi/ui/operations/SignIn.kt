@@ -83,7 +83,9 @@ val OAUTH_PROVIDERS = listOf(
 object SignInRules {
     /** The header's word for a method: On, Off or Not set up. */
     fun state(c: AuthConfig, method: String): String = when {
+        method == "telegram" && c.telegramBot?.restartRequired == true -> "Restart needed"
         c.isOn(method) -> "On"
+        method == "telegram" && c.telegramBot?.tokenSet == false -> "Not set up"
         method == "telegram" && !c.telegramAvailable -> "Not set up"
         method == "password" && !c.passwordSet -> "Not set up"
         method in AuthApi.OAUTH && c.oauth?.of(method)?.configured != true -> "Not set up"
@@ -102,6 +104,14 @@ object SignInRules {
         !o.configured -> "Not set up. Create an OAuth app with ${p.label}, then fill this in, Save and Test."
         !o.verified -> "Saved, not tested since the last change. Run Test before turning it on."
         else -> "Tested: signed in as ${o.verifiedAs.ifEmpty { o.allowed }}." + if (o.idPinned) " Pinned to that account's id, so a renamed username cannot take it over." else ""
+    }
+
+    /** What the Telegram section says about the bot (a newer server), as the web's. */
+    fun telegramStatus(t: mv.obitech.crundi.api.TelegramBot): String = when {
+        !t.tokenSet -> "Not set up. Create a bot with @BotFather, then enter its token and your Telegram username, and Save."
+        t.restartRequired -> "Saved. Restart Crundi to start the bot with these settings; it can be turned on after that."
+        t.status == "connected" -> "Bot " + (if (t.botUsername.isNotEmpty()) "@${t.botUsername} " else "") + "is connected. Sign in with the Telegram account you set here."
+        else -> "The bot is offline. Check the token, and that no other server is using the same bot."
     }
 
     /** The callback URL is the computer's own: it only works when signing in there. */
@@ -133,6 +143,11 @@ class SignInEvents(
     /** Hand the new secret to an authenticator app on this phone (otpauth://). */
     val onAuthenticator: (String) -> Unit = {},
     val onConfiguration: () -> Unit = {},
+    /** The bot token ("" keeps the saved one) and the allowed Telegram username. */
+    val onSaveTelegram: (String, String) -> Unit = { _, _ -> },
+    val onClearTelegram: () -> Unit = {},
+    /** Settings > Server and Claude Code, where the restart is (with its confirmation). */
+    val onRestartPage: () -> Unit = {},
     val onCloseNote: () -> Unit = {},
     val onBack: () -> Unit = {},
 )
@@ -193,6 +208,14 @@ fun SignInRoute() {
                 if (!ok) actions.note = Actions.Note("No authenticator app on this phone opens it. Type the code in by hand.", true)
             },
             onConfiguration = { nav.to(SettingsPage.Config.route) },
+            onSaveTelegram = { token, user ->
+                actions.run("tg-save", after = config::reload) {
+                    val r = api.auth.saveTelegram(token, user)
+                    actions.note = Actions.Note(if (r.restartRequired) "Saved. Restart Crundi to start the bot with these settings." else "Saved", false)
+                }
+            },
+            onClearTelegram = { actions.run("tg-clear", "Telegram bot removed. Restart Crundi to stop it.", config::reload) { api.auth.clearTelegram() } },
+            onRestartPage = { nav.to(SettingsPage.Server.route) },
             onCloseNote = actions::clear,
             onBack = { nav.back() },
         ),
@@ -203,6 +226,7 @@ fun SignInRoute() {
 @Composable
 fun SignInScreen(state: SignInState, events: SignInEvents = SignInEvents(), open: Set<String> = emptySet()) {
     var remove by remember { mutableStateOf<OAuthProvider?>(null) }
+    var removeTelegram by remember { mutableStateOf(false) }
     SettingsPageFrame(SettingsPage.SignIn, state.note, events.onCloseNote, events.onBack) {
         when (val l = state.config) {
             Load.Loading -> LoadingState()
@@ -213,8 +237,13 @@ fun SignInScreen(state: SignInState, events: SignInEvents = SignInEvents(), open
                 else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Dimens.ScreenPad), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Any one of these is enough, any mix can be on, and one must always stay on.", style = CrundiType.Small, modifier = Modifier.padding(horizontal = 2.dp))
                     MethodFold(c, "telegram", "Telegram", open) {
-                        Switch(c, "telegram", "Sign in with Telegram", if (c.telegramAvailable) "Sign in with the Telegram account set in Configuration." else "Needs a bot token and username in Configuration before it can be turned on.", state, events)
-                        CrundiButton("Open Configuration", events.onConfiguration, icon = "settings", modifier = Modifier.padding(top = 4.dp))
+                        val tb = c.telegramBot
+                        if (tb != null) TelegramPart(tb, c, state, events) { removeTelegram = true }
+                        else {
+                            // An older server: the bot is still set in Configuration.
+                            Switch(c, "telegram", "Sign in with Telegram", if (c.telegramAvailable) "Sign in with the Telegram account set in Configuration." else "Needs a bot token and username in Configuration before it can be turned on.", state, events)
+                            CrundiButton("Open Configuration", events.onConfiguration, icon = "settings", modifier = Modifier.padding(top = 4.dp))
+                        }
                     }
                     MethodFold(c, "password", "Password + authenticator code", open) { PasswordPart(c, state, events) }
                     c.oauth?.let { o ->
@@ -224,6 +253,9 @@ fun SignInScreen(state: SignInState, events: SignInEvents = SignInEvents(), open
             }
         }
     }
+    if (removeTelegram) CrundiDialog("Remove the Telegram bot?", { removeTelegram = false },
+        message = "Telegram sign-in and the Telegram notification channel both stop after the next restart. To use them again, enter the bot token again.",
+        confirm = "Remove", danger = true, onConfirm = { removeTelegram = false; events.onClearTelegram() })
     remove?.let { p ->
         CrundiDialog("Remove ${p.label} sign-in?", { remove = null },
             message = "This forgets its client ID and secret. To use it again, fill them in and Test it again.",
@@ -234,7 +266,7 @@ fun SignInScreen(state: SignInState, events: SignInEvents = SignInEvents(), open
 @Composable
 private fun MethodFold(c: AuthConfig, method: String, title: String, open: Set<String>, content: @Composable () -> Unit) {
     val s = SignInRules.state(c, method)
-    FoldSection(method, title, s, open, summaryColor = when (s) { "On" -> CrundiColors.Green; "Not set up" -> CrundiColors.TextMuted; else -> null }) {
+    FoldSection(method, title, s, open, summaryColor = when (s) { "On" -> CrundiColors.Green; "Not set up" -> CrundiColors.TextMuted; "Restart needed" -> CrundiColors.Yellow; else -> null }) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { content() }
     }
 }
@@ -243,6 +275,26 @@ private fun MethodFold(c: AuthConfig, method: String, title: String, open: Set<S
 private fun Switch(c: AuthConfig, method: String, label: String, detail: String, state: SignInState, events: SignInEvents) {
     val can = SignInRules.canSwitch(c, method) && state.busy != "toggle-$method"
     CrundiSwitchRow(label, c.isOn(method), { events.onToggle(method, it) }, Modifier.padding(horizontal = 0.dp), detail = detail, enabled = can)
+}
+
+/** Telegram on a newer server: the bot (shared with the notification channel), its account, and the switch. */
+@Composable
+private fun TelegramPart(tb: mv.obitech.crundi.api.TelegramBot, c: AuthConfig, state: SignInState, events: SignInEvents, onRemove: () -> Unit) {
+    Switch(c, "telegram", "Sign in with Telegram", SignInRules.telegramStatus(tb), state, events)
+    Text("In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel.", style = CrundiType.Small)
+    CrundiButton("Open @BotFather", { events.onOpen("https://t.me/BotFather") }, icon = "external-link")
+    var token by remember(tb.tokenSet) { mutableStateOf("") }
+    var user by remember(tb.allowedUsername) { mutableStateOf(tb.allowedUsername) }
+    Text("Bot token", style = CrundiType.Small.copy(color = CrundiColors.TextSecondary), modifier = Modifier.padding(top = 4.dp))
+    CrundiTextField(token, { token = it }, Modifier.fillMaxWidth(), placeholder = if (tb.tokenSet) "Saved (leave blank to keep)" else "123456:ABC-DEF...", mono = true, password = true)
+    Text("Allowed Telegram username", style = CrundiType.Small.copy(color = CrundiColors.TextSecondary))
+    CrundiTextField(user, { user = it }, Modifier.fillMaxWidth(), placeholder = "your-username")
+    @OptIn(ExperimentalLayoutApi::class)
+    FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        CrundiButton("Save", { events.onSaveTelegram(token, user); token = "" }, kind = ButtonKind.Primary, icon = "check", enabled = state.busy != "tg-save")
+        if (tb.restartRequired) CrundiButton("Restart now…", events.onRestartPage, icon = "rotate-ccw")
+        if (tb.tokenSet) CrundiButton("Remove", onRemove, kind = ButtonKind.Danger, icon = "trash", enabled = state.busy != "tg-clear")
+    }
 }
 
 @Composable

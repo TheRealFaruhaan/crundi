@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.26 (en-US)
+
+Version code 57. Internal track. Since 1.1.3-dev.25 (code 56): Telegram moved out of Configuration: bot under Sign-in > Telegram, chat ID and bot status under Notifications (servers with telegramBot); older servers as before.
+
+```
+<en-US>
+Telegram is one method among the others.
+
+- Its bot is set up under Settings, Sign-in, Telegram, and its chat under Notifications. Configuration no longer has Telegram fields.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.25 (en-US)
 
 Version code 56. Internal track. Since 1.1.3-dev.24 (code 55): Settings > Sign-in (AuthApi, SignIn.kt) and Backup and restore (BackupApi, Backup.kt); Sign out this phone; inbox channel first; Telegram optional.

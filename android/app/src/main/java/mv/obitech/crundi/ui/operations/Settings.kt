@@ -1,6 +1,10 @@
 package mv.obitech.crundi.ui.operations
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.draw.clip
+import mv.obitech.crundi.api.model.TelegramChannel
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -319,6 +323,7 @@ data class NotificationsState(
     val channels: Load<List<NotifyChannel>> = Load.Loading,
     val prefs: Load<Map<String, String>> = Load.Loading,
     val note: Actions.Note? = null,
+    val busy: String? = null,
 )
 
 @Composable
@@ -333,8 +338,10 @@ fun NotificationsRoute() {
         is Load.Ready -> Load.Ready(s.value.notifyPrefs); is Load.Failed -> s; Load.Loading -> Load.Loading
     }
     NotificationsScreen(
-        NotificationsState(channels.value, prefs, actions.note),
+        NotificationsState(channels.value, prefs, actions.note, actions.busy),
         onChannel = { ch, on -> actions.run(ch.id, after = channels::reload) { api.system.setChannel(ch.id, on) } },
+        onTelegramChat = { id -> actions.run("tg-chat", if (id.isBlank()) "Chat ID cleared" else "Chat ID saved", channels::reload) { api.system.setTelegramChat(id) } },
+        onSignIn = { nav.to(SettingsPage.SignIn.route) },
         onPref = { key, v ->
             val next = (prefs.valueOrNull.orEmpty()) + (key to v)
             local = next
@@ -346,7 +353,7 @@ fun NotificationsRoute() {
 }
 
 @Composable
-fun NotificationsScreen(state: NotificationsState, onChannel: (NotifyChannel, Boolean) -> Unit = { _, _ -> }, onPref: (String, String) -> Unit = { _, _ -> }, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}) {
+fun NotificationsScreen(state: NotificationsState, onChannel: (NotifyChannel, Boolean) -> Unit = { _, _ -> }, onPref: (String, String) -> Unit = { _, _ -> }, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}, onTelegramChat: (String) -> Unit = {}, onSignIn: () -> Unit = {}) {
     SettingsPageFrame(SettingsPage.Notifications, state.note, onCloseNote, onBack) {
         ScrollBody {
             Group("Notification channels", detail = notifyChannelsDetail(state.channels.valueOrNull.orEmpty())) {
@@ -354,12 +361,15 @@ fun NotificationsScreen(state: NotificationsState, onChannel: (NotifyChannel, Bo
                     Load.Loading -> Text("Loading…", style = CrundiType.Small)
                     is Load.Failed -> Text(l.message, style = CrundiType.Small.copy(color = CrundiColors.Red))
                     // The Crundi inbox comes first and is always on: its switch shows on and cannot move.
-                    is Load.Ready -> for (ch in l.value) CrundiSwitchRow(
-                        ch.label, ch.alwaysOn || (ch.enabled && ch.available), { if (ch.available && !ch.alwaysOn) onChannel(ch, it) },
-                        detail = (if (ch.available) ch.describe else ch.unavailableReason.ifEmpty { ch.describe.ifEmpty { "Not available here" } }),
-                        modifier = Modifier.padding(horizontal = 0.dp),
-                        enabled = ch.available && !ch.alwaysOn,
-                    )
+                    is Load.Ready -> for (ch in l.value) {
+                        CrundiSwitchRow(
+                            ch.label, ch.alwaysOn || (ch.enabled && ch.available), { if (ch.available && !ch.alwaysOn) onChannel(ch, it) },
+                            detail = (if (ch.available) ch.describe else ch.unavailableReason.ifEmpty { ch.describe.ifEmpty { "Not available here" } }),
+                            modifier = Modifier.padding(horizontal = 0.dp),
+                            enabled = ch.available && !ch.alwaysOn,
+                        )
+                        ch.telegram?.let { TelegramChannelPart(it, state.busy == "tg-chat", onTelegramChat, onSignIn) }
+                    }
                 }
             }
             Text(
@@ -378,6 +388,33 @@ fun NotificationsScreen(state: NotificationsState, onChannel: (NotifyChannel, Bo
                 }
             }
         }
+    }
+}
+
+/** The Telegram bot's state in words, and its colour: Not set up, Saved and waiting for a restart, Connected, Offline. */
+fun telegramBotState(t: TelegramChannel): Pair<String, androidx.compose.ui.graphics.Color> = when {
+    !t.tokenSet -> "Not set up" to CrundiColors.TextMuted
+    t.restartRequired -> "Saved, waiting for a restart" to CrundiColors.Yellow
+    t.botStatus == "connected" -> ("Connected" + if (t.botUsername.isNotEmpty()) " as @${t.botUsername}" else "") to CrundiColors.Green
+    else -> "Offline" to CrundiColors.Red
+}
+
+/** Under the Telegram channel (a newer server): the bot's state, where it is set up, and the chat it sends to. */
+@Composable
+private fun TelegramChannelPart(t: TelegramChannel, busy: Boolean, onChat: (String) -> Unit, onSignIn: () -> Unit) {
+    val (state, color) = telegramBotState(t)
+    var chat by remember(t.chatId) { mutableStateOf(t.chatId) }
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            androidx.compose.foundation.layout.Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(color))
+            Text("Bot: $state · token ${if (t.tokenSet) "set" else "not set"}", style = CrundiType.Small.copy(color = CrundiColors.TextSecondary), modifier = Modifier.weight(1f))
+            CrundiButton(if (t.tokenSet) "Edit under Sign-in" else "Set it up under Sign-in", onSignIn, kind = ButtonKind.Ghost)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiTextField(chat, { chat = it.filter { c -> c.isDigit() || c == '-' }.take(21) }, Modifier.weight(1f), placeholder = "Chat ID (filled in when you send /start)", mono = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            CrundiButton("Save", { onChat(chat) }, enabled = !busy && chat != t.chatId)
+        }
+        Text("Where messages go. Send /start to the bot and it fills itself in, or enter it by hand.", style = CrundiType.Small)
     }
 }
 
@@ -546,6 +583,9 @@ val ENV_FIELDS = listOf(
 /** Not a .env key: the Telegram chat ID is saved beside the settings (chatId). */
 const val CHAT_ID = "chatId"
 
+/** The Configuration fields that move to Sign-in > Telegram and Notifications on a server that has them there. */
+val TELEGRAM_KEYS = setOf("TELEGRAM_BOT_TOKEN", "ALLOWED_USERNAME", CHAT_ID)
+
 object ConfigRules {
     /** Telegram is optional: a bot token and an allowed username together, or neither. Null when that holds. */
     fun telegramError(values: Map<String, String>): String? {
@@ -555,7 +595,14 @@ object ConfigRules {
     }
 }
 
-data class ConfigState(val settings: Load<ServerSettings> = Load.Loading, val restartRequired: Boolean = false, val busy: String? = null, val note: Actions.Note? = null)
+/**
+ * [telegramElsewhere]: the server edits the Telegram bot under Sign-in and
+ * its chat under Notifications (it sends AuthConfig.telegramBot), so these
+ * fields are left out here. An older server keeps them here.
+ */
+data class ConfigState(val settings: Load<ServerSettings> = Load.Loading, val restartRequired: Boolean = false, val busy: String? = null, val note: Actions.Note? = null, val telegramElsewhere: Boolean = false) {
+    val fields: List<EnvField> get() = if (telegramElsewhere) ENV_FIELDS.filter { it.key !in TELEGRAM_KEYS } else ENV_FIELDS
+}
 
 @Composable
 fun ConfigRoute() {
@@ -563,16 +610,22 @@ fun ConfigRoute() {
     val nav = LocalNavigator.current
     val actions = rememberActions()
     val settings = rememberLoad { api.system.settings() }
+    // Where the Telegram bot is edited: Sign-in on a newer server, here on an older one.
+    val auth = rememberLoad { api.auth.config() }
     var restart by remember { mutableStateOf(false) }
+    val elsewhere = auth.value.valueOrNull?.telegramBot != null
     ConfigScreen(
-        ConfigState(settings.value, restart, actions.busy, actions.note),
+        ConfigState(if (auth.value is Load.Loading) Load.Loading else settings.value, restart, actions.busy, actions.note, elsewhere),
         onSave = { values ->
-            val bad = ConfigRules.telegramError(values)
+            val bad = if (elsewhere) null else ConfigRules.telegramError(values)
             if (bad != null) actions.note = Actions.Note(bad, true)
             else actions.run("save", "Settings saved. Restart required for changes to take effect.", settings::reload) {
-                restart = api.system.saveSettings(SettingsChange(env = values - CHAT_ID, chatId = values[CHAT_ID].orEmpty().trim())).restartRequired
+                // Keys left out are kept by the server: on a newer one the Telegram ones are not sent at all.
+                val change = if (elsewhere) SettingsChange(env = values - TELEGRAM_KEYS) else SettingsChange(env = values - CHAT_ID, chatId = values[CHAT_ID].orEmpty().trim())
+                restart = api.system.saveSettings(change).restartRequired
             }
         },
+        onSignIn = { nav.to(SettingsPage.SignIn.route) },
         onRestartPage = { nav.to(SettingsPage.Server.route) },
         onCloseNote = actions::clear,
         onBack = { nav.back() },
@@ -580,18 +633,23 @@ fun ConfigRoute() {
 }
 
 @Composable
-fun ConfigScreen(state: ConfigState, onSave: (Map<String, String>) -> Unit = {}, onRestartPage: () -> Unit = {}, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}) {
+fun ConfigScreen(state: ConfigState, onSave: (Map<String, String>) -> Unit = {}, onRestartPage: () -> Unit = {}, onCloseNote: () -> Unit = {}, onBack: () -> Unit = {}, onSignIn: () -> Unit = {}) {
     SettingsPageFrame(SettingsPage.Config, state.note, onCloseNote, onBack) {
         when (val l = state.settings) {
             Load.Loading -> LoadingState()
             is Load.Failed -> ErrorState(l.message)
             is Load.Ready -> {
-                val values = remember(l.value) { androidx.compose.runtime.mutableStateMapOf<String, String>().apply { putAll(l.value.settings); put(CHAT_ID, l.value.chatId) } }
+                val fields = state.fields
+                val values = remember(l.value, fields) {
+                    androidx.compose.runtime.mutableStateMapOf<String, String>().apply {
+                        for (f in fields) put(f.key, if (f.key == CHAT_ID) l.value.chatId else l.value.settings[f.key].orEmpty())
+                    }
+                }
                 ScrollBody {
                     if (l.value.envPath.isNotEmpty()) Text("Changes are saved to ${l.value.envPath}", style = CrundiType.Meta, modifier = Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp))
                     if (state.restartRequired) Banner("Saved: restart the server for it to take effect.", Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp).fillMaxWidth(), BadgeKind.Warn, "alert-triangle")
                     Group("Server configuration") {
-                        for ((i, f) in ENV_FIELDS.withIndex()) {
+                        for ((i, f) in fields.withIndex()) {
                             if (i > 0) CrundiDivider()
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text(f.label, style = CrundiType.Body)
@@ -600,6 +658,10 @@ fun ConfigScreen(state: ConfigState, onSave: (Map<String, String>) -> Unit = {},
                             CrundiTextField(values[f.key].orEmpty(), { values[f.key] = it }, placeholder = f.placeholder, mono = true, password = f.secret)
                             Text(f.hint, style = CrundiType.Small)
                         }
+                    }
+                    if (state.telegramElsewhere) Row(Modifier.fillMaxWidth().padding(horizontal = Dimens.ScreenPad, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Telegram is one sign-in method and one notification channel: its bot is set under Sign-in, and where it sends under Notifications.", style = CrundiType.Small, modifier = Modifier.weight(1f))
+                        CrundiButton("Sign-in", onSignIn, icon = "key")
                     }
                     Row(Modifier.fillMaxWidth().padding(horizontal = Dimens.ScreenPad, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                         if (state.restartRequired) CrundiButton("Restart server…", onRestartPage, icon = "rotate-ccw")

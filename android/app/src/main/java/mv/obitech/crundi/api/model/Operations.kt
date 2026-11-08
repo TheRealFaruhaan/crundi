@@ -159,7 +159,10 @@ data class SettingsChange(
 
 /** A way the server tells the person things (GET /api/notify/channels), in the server's order. id: inbox, telegram, desktop, webpush, mobile. */
 /** [alwaysOn]: the Crundi inbox, which cannot be turned off (an older server has no such channel). */
-@Serializable data class NotifyChannel(val id: String, val label: String = "", val describe: String = "", val available: Boolean = true, val unavailableReason: String = "", val enabled: Boolean = false, val alwaysOn: Boolean = false)
+@Serializable data class NotifyChannel(val id: String, val label: String = "", val describe: String = "", val available: Boolean = true, val unavailableReason: String = "", val enabled: Boolean = false, val alwaysOn: Boolean = false, val telegram: TelegramChannel? = null)
+
+/** The Telegram channel's bot and chat (newer servers; the bot itself is edited under Sign-in). botStatus: not-set-up, connected or offline. */
+@Serializable data class TelegramChannel(val chatId: String = "", val botStatus: String = "not-set-up", val tokenSet: Boolean = false, val botUsername: String = "", val restartRequired: Boolean = false)
 
 @Serializable
 data class UpdateInfo(
