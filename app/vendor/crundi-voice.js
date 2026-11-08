@@ -918,12 +918,19 @@
     sent: [[880, 0, 0.08, 0.13], [659.25, 0.07, 0.14, 0.13]],
     think: [[523.25, 0, 0.9, 0.07, 0.18], [783.99, 0, 0.9, 0.05, 0.18]],
   };
-  function tone(kind) {
-    if (!S) return;
+  var toneCtx = null;
+  /** Cru's tone [kind] (see TONES); with no voice screen open (a chat in voice mode) on its own context, at [vol] 0..1. */
+  function tone(kind, vol) {
     var notes = TONES[kind]; if (!notes) return;
     try {
-      var ctx = S.ctx || (S.ctx = new (window.AudioContext || window.webkitAudioContext)());
-      var out = outNode() || ctx.destination, t0 = ctx.currentTime + 0.02;
+      var ctx, out;
+      if (S) { ctx = S.ctx || (S.ctx = new (window.AudioContext || window.webkitAudioContext)()); out = outNode() || ctx.destination; }
+      else {
+        ctx = toneCtx || (toneCtx = new (window.AudioContext || window.webkitAudioContext)());
+        if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
+        out = ctx.createGain(); out.gain.value = vol >= 0 && vol <= 1 ? vol : 1; out.connect(ctx.destination);
+      }
+      var t0 = ctx.currentTime + 0.02;
       notes.forEach(function (n) {
         var o = ctx.createOscillator(), g = ctx.createGain(), at = t0 + n[1], dur = n[2], peak = n[3], rise = n[4] || 0.012;
         o.type = 'sine'; o.frequency.value = n[0];
@@ -1363,7 +1370,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, tone: tone, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
     // The own-voice tools, shared with a chat's voice mode (claude-chat.js), which talks over its replies the same way.
     kit: { createGate: createGate, createPreroll: createPreroll, voicedShare: voicedShare, makeLoopback: makeLoopback },
     // The PC's "Hey Cru" (app/voice-wake/controller.js): an asleep screen has let the microphone go, and is woken where it is.

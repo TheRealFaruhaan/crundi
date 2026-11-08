@@ -3205,7 +3205,7 @@
       try { if (m.ctx) m.ctx.close(); } catch (e) { /* gone */ }
     }
     function micHeard(e, m) {
-      if (e.type === 'ready') { m.ready = true; return; }
+      if (e.type === 'ready') { m.ready = true; cruTone('listen'); return; }
       var late = vc.sentNow && Date.now() - vc.sentNow.at < 4000 && voiceLogic.alreadySent(vc.sentNow.text, e.text);
       if (e.type === 'interim') {
         if (late && vc.on && !vc.ptt) return;
@@ -3243,8 +3243,11 @@
       stickBottom = true;
       scrollDown(true);
       sendText(text);
+      cruTone('sent');
       return true;
     }
+    // Cru's tones, as on its own screen: listening when the mic is live, sent when the words go.
+    function cruTone(kind) { try { if (window.CrundiVoice && window.CrundiVoice.tone) window.CrundiVoice.tone(kind); } catch (e) { /* no audio */ } }
     function voiceFail(why) {
       voiceStop();
       voiceShow(why, 'err');

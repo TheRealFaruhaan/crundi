@@ -20,9 +20,11 @@
  */
 
 import { readdirSync, statSync, readFileSync, realpathSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve, relative, isAbsolute, sep } from 'node:path';
 
 export const READ_ONLY_TOOL_NAMES = [
+  'workbench_overview',
   'list_projects', 'list_folder', 'read_file', 'search_files',
   'get_settings', 'get_voice_spend',
   'list_services', 'get_service_logs',
@@ -140,6 +142,12 @@ export function makeTools(deps) {
   };
 
   const tools = [
+    {
+      name: 'workbench_overview',
+      description: 'What is going on across the whole workbench, in one call: per project, the open chats (state, whether one waits on the owner, what was last asked and answered), the cards in progress and next up on its board, its git commits of the last two days, and any service that is down. Use it first for "what are we doing?", "what\'s next?", "where are we?", "what happened today?": the answer is what the projects are doing, not only what you did.',
+      input_schema: obj({ project: str('Optional: only this project') }),
+      run: ({ project: only } = {}) => overview(deps, only ? project(only).alias : null),
+    },
     {
       name: 'list_projects',
       description: 'List every project in Crundi: alias (used by other tools), display name and folder.',
@@ -400,4 +408,57 @@ export function makeTools(deps) {
 function clip(s, n = 1500) {
   const t = String(s || '');
   return t.length > n ? t.slice(0, n) + '…' : t;
+}
+
+
+/** One look across every project (workbench_overview). Busy projects first; the quiet ones only by name. */
+export function overview(deps, only = null, { now = Date.now(), gitLog = recentCommits } = {}) {
+  const projects = deps.listProjects().filter(p => !only || p.alias === only);
+  const chats = (() => { try { return deps.chats() || []; } catch { return []; } })();
+  const services = (() => { try { return deps.services() || []; } catch { return []; } })();
+  const lastOf = (id, kind) => {
+    try {
+      const h = deps.chatHistory(String(id));
+      const m = (h && h.messages || []).filter(x => x.kind === kind && String(x.text || '').trim()).pop();
+      return m ? clip(String(m.text).replace(/\s+/g, ' '), 220) : '';
+    } catch { return ''; }
+  };
+  const busy = [], quiet = [];
+  for (const p of projects) {
+    const open = chats.filter(c => c.project === p.alias && !c.collaborator);
+    let board = null;
+    try { board = deps.kanban.getBoard(p.alias); } catch { board = null; }
+    const cards = (s) => ((board && board.tasks) || []).filter(t => t.status === s && !t.deleted);
+    const titles = (list, n) => list.slice(0, n).map(t => ({ id: t.id, title: t.title }));
+    const commits = gitLog(p.path, now);
+    const down = services.filter(s => (s.project === p.alias || String(s.key || '').startsWith(p.alias + ':')) && /stop|fail|crash|exit/i.test(String(s.status || s.state || '')));
+    const entry = {
+      project: p.alias,
+      chats: open.map(c => ({
+        id: c.id, title: c.title, state: c.agentState || c.status || '',
+        waitingOnOwner: Array.isArray(c.pending) ? c.pending.length > 0 : !!c.pending,
+        lastAsked: lastOf(c.id, 'user'), lastAnswer: lastOf(c.id, 'assistant-text'),
+      })),
+      inProgress: titles(cards('in_progress'), 6),
+      next: titles(cards('todo'), 3),
+      backlogTop: titles(cards('backlog'), 3),
+      backlogCount: cards('backlog').length,
+      commits,
+      servicesDown: down.map(s => s.name || s.key),
+    };
+    const active = entry.chats.length || entry.inProgress.length || entry.next.length || commits.length || entry.servicesDown.length;
+    if (active || only) busy.push(entry); else quiet.push(p.alias);
+  }
+  return { asOf: new Date(now).toISOString(), active: busy, quiet,
+    note: 'Speak to what the projects are doing: chats working or waiting on the owner first, then what is in progress, then what is next. Open a chat with read_chat for detail.' };
+}
+
+/** The project's commits of the last two days (git log; read-only, quick, empty when not a repository). */
+function recentCommits(dir, now = Date.now()) {
+  if (!dir || !existsSync(join(dir, '.git'))) return [];
+  try {
+    const since = new Date(now - 48 * 3600 * 1000).toISOString();
+    const out = execFileSync('git', ['-C', dir, 'log', '--all', `--since=${since}`, '--no-merges', '--format=%h%x09%cr%x09%s', '-n', '8'], { encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.split('\n').filter(Boolean).map(l => { const [hash, when, subject] = l.split('\t'); return { hash, when, subject: clip(subject || '', 140) }; });
+  } catch { return []; }
 }

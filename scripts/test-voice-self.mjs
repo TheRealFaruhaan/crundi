@@ -71,5 +71,18 @@ ok(th[1].said === 'hello' && th[1].speak === 'Hi, Sir.' && th[1].show === 'The d
 ok(idx.turns({ before: 2000 }).length === 1, 'paged back with before');
 idx.close();
 
+// A new install starts with the general persona; an existing one is never touched.
+const { createVoiceMemory } = await import('../src/voice/memory.js');
+const { readFileSync: rf, writeFileSync: wf, mkdirSync: md } = await import('node:fs');
+const fresh = join(process.env.DATA_DIR, 'fresh');
+const m1 = createVoiceMemory({ dataDir: fresh, index: { add() {}, turns() { return []; } } });
+ok(/How the owner wants Cru to behave/.test(rf(join(fresh, 'voice-memory', 'memories', 'persona.md'), 'utf8')), 'a fresh notebook starts with the default persona');
+const kept = join(process.env.DATA_DIR, 'kept');
+md(join(kept, 'voice-memory', 'memories'), { recursive: true });
+wf(join(kept, 'voice-memory', 'memories', 'persona.md'), 'mine');
+createVoiceMemory({ dataDir: kept, index: { add() {}, turns() { return []; } } });
+ok(rf(join(kept, 'voice-memory', 'memories', 'persona.md'), 'utf8') === 'mine', 'an existing persona is left alone');
+void m1;
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll Cru-self checks passed');
 process.exit(failed ? 1 : 0);

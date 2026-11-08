@@ -10,6 +10,7 @@
  * Everything is in <dataDir>/voice-memory, private to this user.
  */
 
+import { DEFAULT_PERSONA } from './persona-default.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNotebook } from './notebook.js';
@@ -23,6 +24,14 @@ export function createVoiceMemory({ dataDir, index: givenIndex } = {}) {
   const notebook = createNotebook(join(dir, 'memories'), {
     onChange: (path, text) => index.add('note', text ? `${path}\n${text}` : '', { ref: path }),
   });
+  // A new install starts with the general rules (persona-default.js), never over an existing persona.
+  try {
+    const persona = join(dir, 'memories', 'persona.md');
+    if (!existsSync(persona)) {
+      mkdirSync(join(dir, 'memories'), { recursive: true, mode: 0o700 });
+      writeFileSync(persona, DEFAULT_PERSONA, { mode: 0o600, flag: 'wx' });
+    }
+  } catch { /* already there, or not writable: Cru starts without it */ }
 
   const store = {
     /** The saved conversation, or [] (a broken file is set aside, not lost). */
