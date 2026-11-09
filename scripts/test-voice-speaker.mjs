@@ -94,6 +94,15 @@ const pcm = (x) => { const b = Buffer.alloc(x.length * 2); for (let i = 0; i < x
 
   let t = 1000;
   const rv = S.createRecentVerdicts({ now: () => t });
+  {
+    const rb = S.createRecentVerdicts({ now: () => t });
+    rb.remember('Yes.', { owner: true, reason: 'owner', score: 0.33, word: 0.55, brief: true, seconds: 0.4 });
+    const got = rb.lookup('yes');
+    ok(got.brief === true && got.word === 0.55, 'a remembered verdict keeps brief and its short-reply score (admin mode needs them)');
+    rb.remember('restart the web service', { owner: true, reason: 'owner', score: 0.6, brief: false, seconds: 2 });
+    rb.remember('now', { owner: true, reason: 'owner', score: 0.4, brief: true, seconds: 0.9 });
+    ok(rb.lookup('restart the web service now').brief === false, 'a turn with a full-length owner part is not brief');
+  }
   rv.remember('Restart the build, please.', { owner: false, reason: 'other' });
   rv.remember('what time is it', { owner: true, reason: 'owner' });
   ok(rv.lookup('restart the build please')?.owner === false, 'a turn finds its utterance\'s verdict (case and punctuation aside)');

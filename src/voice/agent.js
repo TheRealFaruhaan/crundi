@@ -154,9 +154,9 @@ export function splitReply(text) {
 }
 
 /** The volatile context that goes in front of what the owner said. */
-export function contextLine({ now = new Date(), where = '', locked = false, unrecognised = false, speaker = '', admin = voiceSettings.adminOn() } = {}) {
+export function contextLine({ now = new Date(), where = '', locked = false, unrecognised = false, speaker = '', admin = voiceSettings.adminOn(), confirmOk = false } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `[${when}${speaker ? ` · ${speaker}` : ''}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are' : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
+  return `[${when}${speaker ? ` · ${speaker}` : ''}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? (confirmOk ? ' · too short to tell whose voice, but you asked the owner a question moments ago: if this answers it (yes or no), call confirm_action or cancel_action for it (the server checks it may); change nothing else' : ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are') : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
 }
 
 /**
@@ -334,7 +334,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       start = history.length;
       let note = '';
       try { note = String(turnNote() || '').trim(); } catch { note = ''; }
-      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker });
+      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker, confirmOk });
       history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${ctx}${note ? `\n${note}` : ''}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {

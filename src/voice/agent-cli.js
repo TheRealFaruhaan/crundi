@@ -267,7 +267,7 @@ export function createCliVoiceAgent({
       const note = cancelledNote; cancelledNote = '';
       let tn = '';
       try { tn = String(turnNote() || '').trim(); } catch { tn = ''; }
-      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker });
+      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker, confirmOk });
       try { r = await ask(model, `${lead}${note}${ctx}${tn ? `\n${tn}` : ''}\n${said}`); }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
       const tools = r.tools;

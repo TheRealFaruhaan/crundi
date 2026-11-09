@@ -290,8 +290,12 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     const clip = ring ? utteranceAudio(ring, spans) : null;
     if (!clip) { out(remember({ owner: null, reason: 'unavailable' })); return; }
     // A bare "yes" is checked once the owner has taught Cru his short replies.
-    if (clip.seconds < (speaker.shortWords ? WORD_MIN_SECONDS : SHORT_MIN_SECONDS)) { out(remember({ owner: null, reason: 'short', seconds: clip.seconds })); return; }
-    out(speaker.verify(clip.samples, { seconds: clip.seconds }).then(remember, () => remember({ owner: null, reason: 'unavailable' })));
+    if (clip.seconds < (speaker.shortWords ? WORD_MIN_SECONDS : SHORT_MIN_SECONDS)) { console.log(`[voice] speaker: "${String(e.text).slice(0, 30)}" ${clip.seconds}s too short to check`); out(remember({ owner: null, reason: 'short', seconds: clip.seconds })); return; }
+    out(speaker.verify(clip.samples, { seconds: clip.seconds }).then((v) => {
+      // Short clips are logged with their scores, to tune the short-reply rule on real use.
+      if (v && v.brief) console.log(`[voice] speaker: "${String(e.text).slice(0, 30)}" ${v.seconds}s main ${v.score}${Number.isFinite(v.word) ? ` word ${v.word}` : ''} -> ${v.owner === true ? 'owner' : v.owner === false ? 'other' : 'unsure'}`);
+      return remember(v);
+    }, () => remember({ owner: null, reason: 'unavailable' })));
   }
   const key = getSettings().deepgramKey;
   if (!key) {

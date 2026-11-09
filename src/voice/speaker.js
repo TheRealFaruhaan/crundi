@@ -495,7 +495,8 @@ export function createRecentVerdicts({ windowMs = 120_000, max = 64, now = () =>
     remember(text, v) {
       const norm = normText(text);
       if (!norm || !v) return;
-      list.push({ norm, owner: v.owner ?? null, reason: v.reason || '', score: v.score, at: now() });
+      // brief and word travel with it: admin mode tells a full sentence from a short reply by them.
+      list.push({ norm, owner: v.owner ?? null, reason: v.reason || '', score: v.score, brief: !!v.brief, ...(Number.isFinite(v.word) ? { word: v.word } : {}), seconds: v.seconds, at: now() });
       if (list.length > max) list = list.slice(-max);
     },
     /** { owner, reason } for [text], or null: nothing heard matches (typed, or the phone's own recogniser). */
@@ -505,11 +506,12 @@ export function createRecentVerdicts({ windowMs = 120_000, max = 64, now = () =>
       const fresh = list.filter((e) => t - e.at <= windowMs);
       list = fresh;
       const exact = fresh.filter((e) => e.norm === norm).pop();
-      if (exact) return { owner: exact.owner, reason: exact.reason, score: exact.score };
+      if (exact) return { owner: exact.owner, reason: exact.reason, score: exact.score, brief: exact.brief, ...(Number.isFinite(exact.word) ? { word: exact.word } : {}), seconds: exact.seconds };
       const parts = fresh.filter((e) => e.norm.length >= 3 && (' ' + norm + ' ').includes(' ' + e.norm + ' '));
       if (!parts.length) return null;
       if (parts.some((e) => e.owner === false)) return { owner: false, reason: 'other' };
-      if (parts.some((e) => e.owner === true)) return { owner: true, reason: 'owner' };
+      // Pieces of a turn: brief unless one owner piece was a full-length check.
+      if (parts.some((e) => e.owner === true)) return { owner: true, reason: 'owner', brief: !parts.some((e) => e.owner === true && !e.brief) };
       return { owner: null, reason: parts[parts.length - 1].reason };
     },
     clear() { list = []; },
