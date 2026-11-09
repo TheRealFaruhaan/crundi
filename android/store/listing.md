@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.33 (en-US)
+
+Version code 64. Internal track. Since 1.1.3-dev.32 (code 63): Cru's close button moved to the top bar; reports no longer shown as the owner's messages. Server 1.21.6-dev.44.
+
+```
+<en-US>
+Cru:
+- The close button is in the top bar now, so the typing box has room.
+- Cru's own reports no longer show as if you had said them.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.32 (en-US)
 
 Version code 63. Internal track. Since 1.1.3-dev.31 (code 62): files for Cru (voice-attach: camera, gallery, file picker, share target), PIN moved to Your PIN and the PC lock, PC lock and auto lock controls (pc-lock), short-reply training without rejections. Server 1.21.6-dev.43.

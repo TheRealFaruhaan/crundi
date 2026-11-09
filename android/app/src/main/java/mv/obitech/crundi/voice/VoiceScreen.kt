@@ -148,7 +148,7 @@ fun VoiceScreen(
         modifier.fillMaxSize().background(CrundiColors.BgPrimary),
     ) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            TopRow(ui, phase, more)
+            TopRow(ui, phase, more, onClose)
             // The usage, right under the top row (a phone has no room beside the mark).
             UsageLegend(arcs)
             // Kid mode runs on the PC: a note here, with the parent's controls; its screen is not drawn on the phone.
@@ -233,7 +233,7 @@ class VoiceMore(
 enum class AttachSource { Camera, Media, Files }
 
 @Composable
-private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
+private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Unit) {
     // Compact asks first (a row under the top row; a dialog can't open over the side-key overlay).
     var askCompact by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
@@ -254,6 +254,8 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
             val unread by CruUnread.count.collectAsState()
             if (unread > 0 && !ui.chat) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(8.dp).clip(CircleShape).background(CrundiColors.Red))
         }
+        // Close: up here (as on the web), so the typing box keeps the bottom row's room.
+        CrundiIconButton("x", onClose, contentDescription = "Close", size = 17.dp, touch = 38.dp)
     }
     if (askCompact) Column(
         Modifier.fillMaxWidth().padding(top = 8.dp).background(CrundiColors.BgSecondary, RoundedCornerShape(12.dp))
@@ -479,7 +481,6 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
             )
             if (phase == Phase.Speaking && typed.isBlank() && !filesReady) RoundButton("stop", "Stop talking", onClick = onMic)
             else RoundButton("send", "Send", enabled = typed.isNotBlank() || filesReady, accent = true, onClick = send)
-            RoundButton("x", "Close", onClick = onClose)
         }
         return
     }
@@ -502,7 +503,7 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
         val label = when (phase) { Phase.Speaking -> "Stop talking"; Phase.Ended -> "Talk again"; else -> "Listening" }
         // The animated blob alone: no microphone drawn on it.
         FluidMic(phase, accent, mic, null, label, onMic)
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { RoundButton("x", "Close", onClick = onClose) }
+        Box(Modifier.weight(1f))
     }
 }
 

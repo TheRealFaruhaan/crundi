@@ -5519,7 +5519,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/history' && req.method === 'GET' && kidOn()) return json(res, { ok: true, turns: [], more: false, kid: true });
     if (path === '/api/voice/history' && req.method === 'GET') {
       const turns = voiceMemory.turns({ before: Number(url.searchParams.get('before')) || 0, limit: Number(url.searchParams.get('limit')) || 50 });
-      return json(res, { ok: true, turns: turns.reverse(), more: turns.length >= (Number(url.searchParams.get('limit')) || 50) });
+      // Cru's own reports and wake-ups are not something the owner said: shown as Cru's news only (report: true).
+      const shown = turns.map((t) => (/^\s*(\(report\)|\[Report for the owner|\[Wake-up)/.test(String(t.said || '')) ? { ...t, said: '', report: true } : t));
+      return json(res, { ok: true, turns: shown.reverse(), more: turns.length >= (Number(url.searchParams.get('limit')) || 50) });
     }
     if (path === '/api/voice/memory/search' && req.method === 'GET') {
       return json(res, { ok: true, ...(await voiceMemory.index.search(String(url.searchParams.get('q') || ''))) });

@@ -6486,9 +6486,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const ok = e.target && e.target.closest && (e.target.closest('#pc-lock') || e.target.closest('.cv-ov'));
       if (!ok) { e.stopPropagation(); e.preventDefault(); }
     }, true));
-    if (window.api && window.api.kidLock && userRole !== 'collaborator') {
+    // After the whole page script has run (userRole is declared further down:
+    // reading it here, at load, stopped the PC app's page at its splash screen).
+    if (window.api && window.api.kidLock) setTimeout(() => {
+      if (userRole === 'collaborator') return;
       apiFetch('/api/lock').then((r) => r.ok ? r.json() : null).then((st) => { if (st && st.ok) { if (st.on) applyPcLock(st); else if (st.auto && window.api.setAutoLock) window.api.setAutoLock(st.auto); } }).catch(() => {});
-    }
+    }, 0);
     // The PC app's shortcuts (Ctrl+Shift+L visible, Super+Shift+L full) and its tray items.
     if (window.api && window.api.onPcLock) window.api.onPcLock((mode, by) => {
       if (pcLockState) return;
