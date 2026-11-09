@@ -9,13 +9,13 @@ import kotlin.math.sin
 
 /** The phone deciding, from the microphone alone, whether the owner is talking over Cru. */
 class OwnerGateTest {
-    private val speech = { 0.6 }
-    private val clap = { 0.05 }
+    private val speech = { true }
+    private val clap = { false }
 
     private fun gate() = OwnerGate().also { g -> repeat(50) { g.learn(0.01f) }; g.start() }
 
     /** The first chunk (100 ms each) at which the gate said "him", or -1. */
-    private fun feed(g: OwnerGate, chunks: Int, mic: (Int, Float?) -> Float, play: (Int) -> Float?, voiced: () -> Double = speech): Int {
+    private fun feed(g: OwnerGate, chunks: Int, mic: (Int, Float?) -> Float, play: (Int) -> Float?, voiced: () -> Boolean = speech): Int {
         var hit = -1
         for (i in 0 until chunks) { val p = play(i); if (g.hear(mic(i, p), p, 100, voiced) && hit < 0) hit = i }
         return hit

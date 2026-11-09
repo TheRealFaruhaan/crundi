@@ -259,12 +259,23 @@ val fetchWakeWord = tasks.register<FetchWakeWord>("fetchWakeWord") {
     classesJar = wakeWordOut.map { it.file("libs/sherpa-onnx.jar") }
 }
 
+// ─── Barge-in's speech detector (voice/SpeechDetector.kt) ───
+// Silero VAD's weights (MIT), the same file the web client loads:
+// app/vendor/silero-vad-16k.bin, made by scripts/make-vad-weights.py. Copied
+// in at build time, so there is one copy in the repository.
+val vadOut = layout.buildDirectory.dir("generated/vad")
+val copyVadWeights by tasks.registering(Sync::class) {
+    from(rootProject.file("../app/vendor/silero-vad-16k.bin"), rootProject.file("../app/vendor/silero-vad-16k.LICENSE.txt"))
+    into(vadOut.map { it.dir("assets/vad") })
+}
+
 android.sourceSets.getByName("main") {
     jniLibs.srcDir(wakeWordOut.get().dir("jniLibs"))
     assets.srcDir(wakeWordOut.get().dir("assets"))
+    assets.srcDir(vadOut.get().dir("assets"))
 }
 // Every variant's build starts after the fetch.
-tasks.named("preBuild") { dependsOn(fetchWakeWord) }
+tasks.named("preBuild") { dependsOn(fetchWakeWord, copyVadWeights) }
 
 dependencies {
     // Scanning the pairing picture (ScanActivity): the camera through

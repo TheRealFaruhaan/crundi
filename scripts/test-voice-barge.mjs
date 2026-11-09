@@ -8,6 +8,8 @@
  *   cues     the phrases, made once per voice and speed in the background,
  *            counted as Deepgram TTS, served only by their own names
  *   web      crundi-voice.js's pure helpers (talksOver, isEcho, pickCue)
+ *   vad      the speech detector (Silero VAD, run in JS): the same as the
+ *            model itself, speech cuts in, noise and music never do
  *
  * Run: node scripts/test-voice-barge.mjs
  */
@@ -193,7 +195,7 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   let seed = 7; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
   const noiseClip = () => { const c = new Float32Array(6400); for (let i = 0; i < c.length; i++) c[i] = rnd() * 2 - 1; return c; };
   ok(T.voicedShare(voicedClip()) > 0.8 && T.voicedShare(noiseClip()) < 0.3, 'voicing: a pitched voice is voiced, a hiss or a clap is not');
-  const speech = () => 0.6, clap = () => 0.05;
+  const speech = () => true, clap = () => false;
   const playFor = (g, frames, mic, play, voiced = speech) => { let hit = -1; for (let i = 0; i < frames; i++) { const p = typeof play === 'function' ? play(i) : play; if (g.hear(typeof mic === 'function' ? mic(i, p) : mic, p, 85, voiced) && hit < 0) hit = i; } return hit; };
   {
     // Speakers, no echo cancelling: Cru's voice comes back at a third of its level, rising and falling.
@@ -205,7 +207,7 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
     ok(hit >= 0 && hit * 85 <= 600, 'speakers: the owner talking over it is heard within about half a second (' + hit * 85 + ' ms)');
     g.start();
     playFor(g, 20, (i, p) => p * 0.33, play);
-    ok(playFor(g, 12, 0.75, 0.55, clap) < 0, 'a clap or a cough as loud is not him (not voiced)');
+    ok(playFor(g, 12, 0.75, 0.55, clap) < 0, 'a clap or a cough as loud is not him (not speech)');
   }
   {
     // Headphones (or the loopback's echo cancelling working): hardly any echo.
@@ -254,6 +256,84 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
     const W2 = { ...W, Audio: function () { this.play = () => Promise.reject(new Error('needs a click')); this.pause = () => {}; } };
     made.length = 0;
     ok(await rejects(W2, 500), 'audio not allowed to play yet: played directly');
+  }
+}
+
+// ─── the speech detector: barge-in only on speech ───
+{
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+  const src = readFileSync(join(root, 'app', 'vendor', 'crundi-voice.js'), 'utf8');
+  const ctx = { window: {}, document: {}, navigator: {}, localStorage: {}, setTimeout, clearTimeout };
+  vm.runInNewContext(src, ctx);
+  const T = ctx.window.CrundiVoice._test;
+  const bin = readFileSync(join(root, 'app', 'vendor', 'silero-vad-16k.bin'));
+  const W = T.parseVad(bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.length));
+  ok(W && W.enc.length === 4 && W.wih.length === 512 * 128, 'the weights file reads (SVAD v1, every layer)');
+  ok(T.parseVad(new ArrayBuffer(16)) === null && T.parseVad(bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.length - 2)) === null, 'anything else is refused (the voicing check stands in)');
+  ok(T.SPEECH_MS >= 200 && T.SPEECH_MS <= 320, 'barge-in needs about a quarter of a second of speech (' + T.SPEECH_MS + ' ms)');
+
+  const raw = readFileSync(join(root, 'test', 'fixtures', 'vad-speech.s16'));
+  const voice = new Int16Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.length));
+  const ref = JSON.parse(readFileSync(join(root, 'test', 'fixtures', 'vad-speech.probs.json'), 'utf8'));
+  {
+    // The model's own output (ONNX Runtime, silero_vad.onnx v5.1.2) for the same frames.
+    const v = T.createVad(W), got = [];
+    for (let i = 0; i + 512 <= voice.length; i += 512) { v.push(voice.subarray(i, i + 512)); got.push(v.prob); }
+    let worst = 0; for (let i = 0; i < ref.length; i++) worst = Math.max(worst, Math.abs(ref[i] - got[i]));
+    ok(got.length === ref.length && worst < 0.01, 'frame for frame the same as Silero VAD itself (worst ' + worst.toFixed(4) + ')');
+  }
+  // Fed as the microphone comes (85 ms at a time): how long the longest run of speech is.
+  // The detector runs all the while the microphone is open: a second of a quiet room comes first.
+  const f32 = (n, fn) => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = fn(i, i / 16000); return a; };
+  let seed = 11; const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 * 2 - 1; };
+  const room = f32(16000, () => rnd() * 0.004);
+  // How long after it starts it is taken for someone talking (-1: never).
+  const talks = (pcm) => { const v = T.createVad(W); v.push(room); for (let i = 0; i < pcm.length; i += 1365) { v.push(pcm.subarray(i, i + 1365)); if (v.talking) return Math.round((i + 1365) / 16); } return -1; };
+  const voiceF = f32(voice.length, (i) => voice[i] / 32768);
+  // The sentence's first word starts about 220 ms in.
+  const at = talks(voice);
+  ok(at > 0 && at <= 800, 'a spoken sentence cuts in (' + at + ' ms into the clip)');
+  ok(T.VAD_WARM * 32 >= 800, 'nothing counts until the detector has run a moment (a sound out of silence reads as speech at first)');
+  let pk = 0; const pink = f32(80000, () => { pk = pk * 0.97 + rnd() * 0.15; return pk; });
+  // A fan 10 dB under his voice (as loud as a fan worth talking over gets).
+  const rms = (a) => Math.sqrt(a.reduce((t, x) => t + x * x, 0) / a.length);
+  const fanGain = rms(voiceF.filter((x) => Math.abs(x) > 0.01)) / rms(pink) / Math.pow(10, 10 / 20);
+  const noisy = f32(voice.length, (i) => voiceF[i] + pink[i % pink.length] * fanGain);
+  const atNoisy = talks(noisy);
+  ok(atNoisy > 0 && atNoisy <= 1000, 'and still does over a fan\'s noise (' + atNoisy + ' ms)');
+  const sounds = {
+    'white noise': f32(80000, () => rnd() * 0.3),
+    'a fan (pink noise)': pink,
+    // Started at once, or faded in: either way the detector takes it for speech for a moment; it never rises and falls as speech does.
+    'a loud hum starting': f32(80000, (i, t) => 0.4 * (Math.sin(2 * Math.PI * 120 * t) + 0.4 * Math.sin(2 * Math.PI * 240 * t))),
+    'a hum fading in': f32(80000, (i, t) => Math.min(1, i / 4800) * 0.4 * (Math.sin(2 * Math.PI * 120 * t) + 0.4 * Math.sin(2 * Math.PI * 240 * t))),
+    'music (a chord, changing)': f32(80000, (i, t) => { const n = [220, 277, 330, 440][Math.floor(t * 2) % 4]; return Math.min(1, i / 4800) * 0.2 * (Math.sin(2 * Math.PI * n * t) + Math.sin(2 * Math.PI * n * 1.5 * t) + 0.5 * Math.sin(2 * Math.PI * n * 2 * t)); }),
+    'clicks and knocks': f32(80000, (i) => (i % 8000 < 300 ? rnd() * 0.8 * Math.exp(-(i % 8000) / 60) : 0)),
+    'a door slam': f32(32000, (i) => (i > 8000 ? rnd() * 0.9 * Math.exp(-(i - 8000) / 1600) : 0)),
+  };
+  for (const [name, pcm] of Object.entries(sounds)) ok(talks(pcm) < 0, name + ' never cuts in');
+  {
+    // Tones that start while it listens are where it is closest: over ten rooms, never once.
+    const tones = ['a hum fading in', 'music (a chord, changing)'];
+    let hits = 0, missed = 0;
+    for (let r = 1; r <= 10; r++) {
+      let s2 = r * 7919; const rr = () => { s2 = (s2 * 16807) % 2147483647; return s2 / 2147483647 * 2 - 1; };
+      const room2 = f32(16000, () => rr() * 0.004);
+      const heard = (pcm) => { const v = T.createVad(W); v.push(room2); for (let i = 0; i < pcm.length; i += 1600) { v.push(pcm.subarray(i, i + 1600)); if (v.talking) return true; } return false; };
+      for (const t of tones) if (heard(sounds[t])) hits++;
+      if (!heard(voice)) missed++;
+    }
+    ok(hits === 0, 'a hum or music starting never cuts in, whatever the room (' + hits + ' of 20)');
+    ok(missed === 0, 'and the sentence always does (' + missed + ' of 10 missed)');
+  }
+  {
+    const v = T.createVad(W);
+    v.push(voice); v.reset();
+    ok(v.prob === 0 && v.speechMs === 0 && !v.speech && !v.talking, 'reset starts afresh');
+    const t0 = performance.now(); const n = Math.floor(voice.length / 512);
+    v.push(voice);
+    const per = (performance.now() - t0) / n;
+    ok(per < 16, 'fast enough for the microphone (' + per.toFixed(2) + ' ms per 32 ms frame)');
   }
 }
 

@@ -214,6 +214,13 @@ class BargeInDetectorTest {
         assertTrue(x.hear(0.7f, 0.5f, 100))
     }
 
+    @Test fun aNoiseAsLoudIsNot() {
+        val x = d()
+        repeat(8) { x.hear(0.2f, 0.5f, 100) }
+        repeat(10) { assertFalse(x.hear(0.7f, 0.5f, 100) { false }) }
+        assertTrue(x.hear(0.7f, 0.5f, 100) { true })
+    }
+
     @Test fun neverInTheFirstMomentOfAnAnswer() {
         val x = d()
         repeat(7) { assertFalse(x.hear(0.9f, 0.5f, 100)) }

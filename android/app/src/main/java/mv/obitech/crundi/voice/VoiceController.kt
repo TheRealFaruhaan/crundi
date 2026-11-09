@@ -102,7 +102,8 @@ class VoiceController(
     private val barge = BargeInDetector()
     /** Is it the owner over Cru? Decided here while nothing is sent ([OwnerGate]). */
     private val gate = OwnerGate()
-    private val ring = VoiceRing()
+    /** Is it someone talking, not a noise ([SpeechDetector])? Loaded on the recording thread, at the first chunk. */
+    private val speech by lazy { SpeechCheck(SpeechDetector.load(ctx)) }
     @Volatile private var gateFired = false
     /** Cru's voice as speakerphone call audio, so the echo canceller takes it out ([CallAudio]). */
     private val callAudio = CallAudio(ctx)
@@ -718,16 +719,16 @@ class VoiceController(
     private fun startMic() {
         val m = MicStream { bytes, level ->
             _mic.value = level
+            speech.push(bytes)
             if (!streaming && _ui.value.state.let { it.live || it.cue.isNotEmpty() }) {
                 // Cru is talking (or a cue plays): nothing goes out; the phone decides if it is him.
-                ring.add(bytes)
                 if (!gateFired) {
                     val play = speaker.playLevel
-                    if (gate.hear(level, play, 100) { CruWake.voicedShare(ring.snapshot()) }) { gateFired = true; scope.launch { ownerHeard() } }
+                    if (gate.hear(level, play, 100) { speech.talking() }) { gateFired = true; scope.launch { ownerHeard() } }
                 }
             } else if (speakingNow) {
                 val voice = if (speaker.measured) speaker.level.value else null
-                if (barge.hear(level, voice, 100)) {
+                if (barge.hear(level, voice, 100) { !speech.notTalking() }) {
                     // A live stream keeps listening for his words; a paused one cuts in on this alone.
                     if (_ui.value.state.live) barge.rearm() else speakingNow = false
                     scope.launch { voiceHeard() }

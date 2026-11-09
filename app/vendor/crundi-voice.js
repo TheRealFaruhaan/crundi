@@ -26,12 +26,13 @@
  * has them as the far end and takes them out of the microphone; and while
  * it speaks (or a cue plays) nothing at all is sent: the mic runs into a
  * local gate (createGate: louder than Crundi's echo, for a moment, and
- * voiced) that decides here whether the owner is talking. When it is him,
+ * speech by a real speech detector, createVad: Silero VAD run here, so noise
+ * never cuts Crundi off) that decides here whether the owner is talking. When it is him,
  * Crundi stops at once and the stream resumes from a pre-roll of the last
  * second and a bit, so his first words are kept. On a server that knows
  * barge-in ('ready' echoFilter) the server's transcript filter ('saying' /
  * 'said') is the second net; an older server is paused as before and a loud
- * voice alone cuts in. The moment something is asked
+ * voice (speech, not noise) alone cuts in. The moment something is asked
  * a short cue ("One moment, Sir.") is played from clips loaded when the
  * screen opened, or said with the browser's voice. Yes/no to Crundi's
  * questions by voice; on a PC you may also type.
@@ -142,11 +143,12 @@
    * fast, rises slowly: the owner's voice hardly moves it), and only a voice
    * [overEcho] times louder than that echo counts. With it unknown (the
    * browser's own voice) the bar is the loudest of the last two seconds,
-   * and high until there are some. Either way: held for [holdMs], and voiced.
+   * and high until there are some. Either way: held for [holdMs], and speech
+   * (the speech detector, createVad: a door, a cough, music or a fan is not).
    */
   function createGate(o) {
     o = o || {};
-    var holdMs = o.holdMs || 300, floor = 0.03, overNoise = 3.2, overEcho = 2, unknownOver = 1.6, unknownStart = 0.45, minVoiced = 0.3;
+    var holdMs = o.holdMs || 300, floor = 0.03, overNoise = 3.2, overEcho = 2, unknownOver = 1.6, unknownStart = 0.45;
     var est = 0.6, noise = 0.01, loud = 0, recent = [0, 0, 0, 0], hist = [], run = [];
     function pct90(a) { if (!a.length) return 0; var b = a.slice().sort(function (x, y) { return x - y; }); return b[Math.min(b.length - 1, Math.floor(b.length * 0.9))]; }
     return {
@@ -154,8 +156,8 @@
       learn: function (level) { noise = Math.min(0.2, Math.max(0.002, noise * 0.95 + level * 0.05)); },
       /** Crundi starts to play: count afresh (the echo learnt is kept). */
       start: function () { loud = 0; recent = [0, 0, 0, 0]; hist = []; run = []; },
-      /** One stretch of microphone: [play] Crundi's level now (null: unknown); voiced() the share of voiced frames lately. True: it is him. */
-      hear: function (level, play, ms, voiced) {
+      /** One stretch of microphone: [play] Crundi's level now (null: unknown); speech() true when it is speech (heardSpeech). True: it is him. */
+      hear: function (level, play, ms, speech) {
         var gate;
         if (play != null) {
           recent.shift(); recent.push(play);
@@ -174,13 +176,150 @@
           loud = 0; run = [];
         }
         if (loud < holdMs) return false;
-        return !voiced || voiced() >= minVoiced;
+        return !speech || !!speech();
       },
       /** How long it has been loud: his words began about then. */
       get loudMs() { return loud; },
       get echo() { return est; },
       get noise() { return noise; },
     };
+  }
+
+  // ─── The speech detector: Silero VAD v5 (MIT), run here ───
+  /** Speech starts at this probability and lasts until it falls below the second (Silero's own defaults). */
+  var VAD_ON = 0.5, VAD_OFF = 0.35;
+  /** Barge-in needs this much unbroken speech: a door, a cough, music or a fan never gets there. */
+  var SPEECH_MS = 250;
+  /** Frames (32 ms) it runs before it is trusted: a sound out of nothing reads as speech for a moment. */
+  var VAD_WARM = 30;
+  /**
+   * Speech rises and falls syllable by syllable; a hum or a held chord that
+   * the detector takes for speech as it starts does not. Within the run of
+   * speech (its first VAD_SKIP frames aside: the sound's own onset) the
+   * loudest and quietest frames must be this far apart.
+   */
+  var SPEECH_SWING_DB = 10, VAD_SKIP = 3;
+  /** One frame: 512 new samples at 16 kHz (32 ms), after 64 of the last frame's. */
+  var VAD_FRAME = 512, VAD_CTX = 64;
+  /** How many weights the file holds. */
+  var VAD_WEIGHTS = 243073;
+
+  /**
+   * The weights file (app/vendor/silero-vad-16k.bin, made by
+   * scripts/make-vad-weights.py): "SVAD", version 1, float16 weights.
+   * The phone's SpeechDetector.kt reads the same file. Null when it is not that.
+   */
+  function parseVad(buf) {
+    var dv = new DataView(buf);
+    if (buf.byteLength !== 8 + 2 * VAD_WEIGHTS || dv.getUint32(0, false) !== 0x53564144 || dv.getUint32(4, true) !== 1) return null;
+    var at = 8;
+    function take(n) {
+      var out = new Float32Array(n);
+      for (var i = 0; i < n; i++, at += 2) {
+        var h = dv.getUint16(at, true), s = h & 0x8000 ? -1 : 1, e = (h >> 10) & 31, f = h & 1023;
+        out[i] = e === 0 ? s * f * 5.960464477539063e-8 : e === 31 ? (f ? NaN : s * Infinity) : s * Math.pow(2, e - 15) * (1 + f / 1024);
+      }
+      return out;
+    }
+    var shapes = [[128, 129], [64, 128], [64, 64], [128, 64]], enc = [];
+    for (var k = 0; k < 4; k++) enc.push({ o: shapes[k][0], c: shapes[k][1], s: k === 1 || k === 2 ? 2 : 1, w: take(shapes[k][0] * shapes[k][1] * 3), b: take(shapes[k][0]) });
+    var W = { enc: enc, wih: take(512 * 128), whh: take(512 * 128), bl: take(512), wo: take(128), bo: take(1)[0] };
+    return W;
+  }
+
+  var VAD_COS = null, VAD_SIN = null;
+  /** The STFT of the model: a periodic Hann window, 256 points, bins 0..128. */
+  function vadTables() {
+    if (VAD_COS) return;
+    VAD_COS = new Float32Array(129 * 256); VAD_SIN = new Float32Array(129 * 256);
+    for (var k = 0; k < 129; k++) for (var n = 0; n < 256; n++) {
+      var w = 0.5 - 0.5 * Math.cos(2 * Math.PI * n / 256), a = 2 * Math.PI * k * n / 256;
+      VAD_COS[k * 256 + n] = Math.cos(a) * w; VAD_SIN[k * 256 + n] = Math.sin(a) * w;
+    }
+  }
+  function sigm(x) { return 1 / (1 + Math.exp(-x)); }
+  /** 1-D convolution, kernel 3, padding 1: [x] is c*T (channel-major); returns o*To. */
+  function vadConv(L, x, T) {
+    var To = Math.floor((T - 1) / L.s) + 1, out = new Float32Array(L.o * To);
+    for (var o = 0; o < L.o; o++) for (var t = 0; t < To; t++) {
+      var sum = L.b[o], t0 = t * L.s - 1;
+      for (var c = 0; c < L.c; c++) {
+        var wi = (o * L.c + c) * 3, xi = c * T;
+        for (var k = 0; k < 3; k++) { var tt = t0 + k; if (tt >= 0 && tt < T) sum += L.w[wi + k] * x[xi + tt]; }
+      }
+      out[o * To + t] = sum > 0 ? sum : 0;
+    }
+    return { x: out, T: To };
+  }
+
+  /**
+   * A streaming speech detector over 16 kHz audio. push() it the microphone
+   * as it comes; [prob] is the latest frame's speech probability, [speech]
+   * whether it is speech now (with hysteresis), [speechMs] how long it has
+   * been speech without a break, [talking] true once that is someone
+   * talking (SPEECH_MS of it, with speech's rise and fall). It hears any
+   * voice: Cru's own echo is kept out by the gate's level rule, not here.
+   */
+  function createVad(W) {
+    vadTables();
+    var buf = new Float32Array(VAD_CTX + VAD_FRAME), fill = VAD_CTX, h = new Float32Array(128), c = new Float32Array(128);
+    var xp = new Float32Array(640), mag = new Float32Array(129 * 4), g = new Float32Array(512);
+    var me = { prob: 0, speech: false, speechMs: 0, frames: 0, talking: false }, db = new Float32Array(64);
+    function frame() {
+      var en = 0;
+      for (var a = VAD_CTX; a < buf.length; a++) en += buf[a] * buf[a];
+      db[me.frames % 64] = 10 * Math.log10(en / VAD_FRAME + 1e-10);
+      for (var i = 0; i < 576; i++) xp[i] = buf[i];
+      for (var j = 0; j < 64; j++) xp[576 + j] = buf[574 - j];   // reflect
+      for (var t = 0; t < 4; t++) for (var k = 0; k < 129; k++) {
+        var re = 0, im = 0, base = k * 256, off = t * 128;
+        for (var n = 0; n < 256; n++) { var v = xp[off + n]; re += VAD_COS[base + n] * v; im += VAD_SIN[base + n] * v; }
+        mag[k * 4 + t] = Math.sqrt(re * re + im * im);
+      }
+      var e = { x: mag, T: 4 };
+      for (var l = 0; l < 4; l++) e = vadConv(W.enc[l], e.x, e.T);
+      var x = e.x;   // 128 x 1
+      for (var r = 0; r < 512; r++) {
+        var s = W.bl[r], wi = r * 128;
+        for (var q = 0; q < 128; q++) s += W.wih[wi + q] * x[q] + W.whh[wi + q] * h[q];
+        g[r] = s;
+      }
+      var out = W.bo;
+      for (var u = 0; u < 128; u++) {
+        c[u] = sigm(g[128 + u]) * c[u] + sigm(g[u]) * Math.tanh(g[256 + u]);
+        h[u] = sigm(g[384 + u]) * Math.tanh(c[u]);
+        if (h[u] > 0) out += h[u] * W.wo[u];
+      }
+      var p = sigm(out);
+      me.prob = p; me.frames++;
+      me.speech = me.speech ? p >= VAD_OFF : p >= VAD_ON;
+      me.speechMs = me.speech ? me.speechMs + 32 : 0;
+      // Talking: speech long enough, and rising and falling as speech does.
+      var run = Math.min(64, me.speechMs / 32), lo = Infinity, hi = -Infinity;
+      for (var y = 0; y < run - VAD_SKIP; y++) { var d = db[(me.frames - 1 - y + 64) % 64]; if (d < lo) lo = d; if (d > hi) hi = d; }
+      me.talking = me.speechMs >= SPEECH_MS && run - VAD_SKIP >= 5 && hi - lo >= SPEECH_SWING_DB;
+      for (var z = 0; z < VAD_CTX; z++) buf[z] = buf[VAD_FRAME + z];
+      fill = VAD_CTX;
+    }
+    /** [pcm]: 16 kHz samples, Int16Array or Float32Array (-1..1). */
+    me.push = function (pcm) {
+      var scale = pcm.BYTES_PER_ELEMENT === 2 ? 1 / 32768 : 1;
+      for (var i = 0; i < pcm.length; i++) { buf[fill++] = pcm[i] * scale; if (fill === buf.length) frame(); }
+    };
+    me.reset = function () { buf.fill(0); fill = VAD_CTX; h.fill(0); c.fill(0); db.fill(0); me.prob = 0; me.speech = false; me.speechMs = 0; me.talking = false; };
+    return me;
+  }
+
+  /** The weights, fetched once per page. Resolves to null when they cannot be had (the voicing check stands in). */
+  var vadWeights = null;
+  function loadVad() {
+    if (!vadWeights) {
+      vadWeights = (typeof fetch === 'function' ? fetch('/vendor/silero-vad-16k.bin') : Promise.reject(new Error('no fetch')))
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+        .then(parseVad)
+        .catch(function () { vadWeights = null; return null; });
+    }
+    return vadWeights;
   }
 
   /** The last [maxMs] of microphone chunks, to send when the owner cuts in. */
@@ -609,13 +748,14 @@
         }
         var level = Math.sqrt(Math.sqrt(sum / Math.max(1, n))), ms = x.length / ctx.sampleRate * 1000;
         S.mic = level;
+        if (S.vad) S.vad.push(out); else if (!S.vadAsked) { S.vadAsked = true; var s0 = S; loadVad().then(function (W) { if (W && S === s0) s0.vad = createVad(W); }); }
         var nowMs = Date.now(); if (level >= (S.micPeak || 0) || nowMs - (S.micPeakAt || 0) > 2000) { S.micPeak = level; S.micPeakAt = nowMs; }
         if (S.live) {
           if (S.held) {
             // Crundi is talking: nothing goes out; is it him?
             S.preroll.push(out.buffer, ms);
             keepVoice(out);
-            if (S.gate.hear(level, S.unknownVoice ? null : playLevel(), ms, recentVoicing)) ownerSpoke();
+            if (S.gate.hear(level, S.unknownVoice ? null : playLevel(), ms, heardSpeech)) ownerSpoke();
             return;
           }
           if (!S.speaking && !S.cue) S.gate.learn(level);
@@ -1039,6 +1179,15 @@
     for (var i = 0; i < pcm.length; i++) { r[at] = pcm[i] / 32768; at = (at + 1) % r.length; }
     S.ringAt = at;
   }
+  /**
+   * Is the owner speaking, not making a noise? The speech detector, once it
+   * has run a moment: at least SPEECH_MS of unbroken speech. Without it (the
+   * weights not loaded yet, or not to be had) the old voicing check stands in.
+   */
+  function heardSpeech() {
+    if (S.vad && S.vad.frames >= VAD_WARM) return S.vad.talking;
+    return recentVoicing() >= 0.3;
+  }
   function recentVoicing() {
     var r = S.ring, n = r.length, c = new Float32Array(n);
     for (var i = 0; i < n; i++) c[i] = r[(S.ringAt + i) % n];
@@ -1381,7 +1530,8 @@
     var gate = S.outAnalyser ? Math.max(0.03, S.noise * 3.2, S.echo * peak * 2.2 + 0.04) : Math.max(0.45, S.noise * 3.2);
     if (S.spokeFor <= 700) { S.loudFor = 0; return; }
     S.loudFor = level >= gate ? S.loudFor + ms : 0;
-    if (S.loudFor < 400) return;
+    // Speech, by the detector (its ring of voice is only kept for the live gate, so without it: the level alone, as before).
+    if (S.loudFor < 400 || (S.vad && S.vad.frames >= VAD_WARM && !S.vad.talking)) return;
     // With the stream on, a voice that loud only lowers the bar for his words
     // (a cough or a door is not an interruption); an older server has only this.
     if (S.live) { S.hintAt = Date.now(); S.loudFor = 0; } else bargeIn();
@@ -1984,7 +2134,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

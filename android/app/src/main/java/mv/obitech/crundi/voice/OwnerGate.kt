@@ -12,8 +12,8 @@ package mv.obitech.crundi.voice
  * hardly moves it) and only a voice [overEcho] times louder than that echo
  * counts. With it unknown (the phone's own voice) the bar is the loudest of
  * the last couple of seconds, and high until there are some. Either way it
- * must hold for [holdMs] and be voiced (a pitch, as speech has: a cough, a
- * clap or a door is not him).
+ * must hold for [holdMs] and be speech ([SpeechDetector]: a cough, a clap,
+ * a door, a fan or music is not him).
  *
  * Words are never looked at here: the owner may well say "on it" himself.
  */
@@ -24,7 +24,6 @@ class OwnerGate(
     private val overEcho: Float = 2f,
     private val unknownOver: Float = 1.6f,
     private val unknownStart: Float = 0.45f,
-    private val minVoiced: Double = 0.3,
 ) {
     private var est = 0.6f
     private var noise = 0.01f
@@ -47,10 +46,10 @@ class OwnerGate(
 
     /**
      * One stretch of microphone, [ms] long. [play] is Cru's level now, or
-     * null when unknown; [voiced] the share of voiced frames lately (asked
-     * only once it has been loud for long enough). True: it is him.
+     * null when unknown; [speech] whether it is someone talking (asked only
+     * once it has been loud for long enough). True: it is him.
      */
-    fun hear(level: Float, play: Float?, ms: Long, voiced: () -> Double): Boolean {
+    fun hear(level: Float, play: Float?, ms: Long, speech: () -> Boolean): Boolean {
         val gate = if (play != null) {
             System.arraycopy(recent, 1, recent, 0, recent.size - 1); recent[recent.size - 1] = play
             val peak = recent.max()
@@ -71,7 +70,7 @@ class OwnerGate(
             loud = 0L; run.clear()
         }
         if (loud < holdMs) return false
-        return voiced() >= minVoiced
+        return speech()
     }
 
     private fun pct90(a: List<Float>): Float {

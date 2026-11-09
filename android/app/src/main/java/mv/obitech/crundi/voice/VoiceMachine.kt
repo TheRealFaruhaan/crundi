@@ -495,9 +495,11 @@ class BargeInDetector(
 
     /**
      * While speaking: true once the owner has been talking over Crundi for
-     * [holdMs]. [voice] is Crundi's playback level, or null when unknown.
+     * [holdMs]. [voice] is Crundi's playback level, or null when unknown;
+     * [speech] whether it is someone talking ([SpeechCheck]: a noise as loud
+     * is not an interruption).
      */
-    fun hear(level: Float, voice: Float?, ms: Long): Boolean {
+    fun hear(level: Float, voice: Float?, ms: Long, speech: () -> Boolean = { true }): Boolean {
         spokeFor += ms
         val gate = if (voice == null) maxOf(unknownGate, noise * overNoise) else {
             recent[ri] = voice; ri = (ri + 1) % recent.size
@@ -508,6 +510,6 @@ class BargeInDetector(
         }
         if (spokeFor <= calibrateMs) { loudFor = 0L; return false }
         loudFor = if (level >= gate) loudFor + ms else 0L
-        return loudFor >= holdMs
+        return loudFor >= holdMs && speech()
     }
 }

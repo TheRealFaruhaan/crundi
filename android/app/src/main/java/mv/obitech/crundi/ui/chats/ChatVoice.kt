@@ -25,11 +25,11 @@ import mv.obitech.crundi.api.model.VoiceSay
 import mv.obitech.crundi.voice.HeyCrundi
 import mv.obitech.crundi.voice.CallAudio
 import mv.obitech.crundi.voice.CruAudio
-import mv.obitech.crundi.voice.CruWake
+import mv.obitech.crundi.voice.SpeechCheck
+import mv.obitech.crundi.voice.SpeechDetector
 import mv.obitech.crundi.voice.MicStream
 import mv.obitech.crundi.voice.OwnerGate
 import mv.obitech.crundi.voice.PreRoll
-import mv.obitech.crundi.voice.VoiceRing
 import mv.obitech.crundi.voice.Speaker
 
 /**
@@ -234,7 +234,7 @@ class ReplyQueue(private val quietMs: Long = ChatVoice.QUIET_MS) {
 /**
  * The owner talking over Claude's reply, told apart from Claude's own voice
  * on the phone (the voice screen's [OwnerGate]: louder than the echo the
- * playback makes, voiced, for 300 ms). While the reply plays nothing goes to
+ * playback makes, for 300 ms, and speech by [SpeechDetector]). While the reply plays nothing goes to
  * the server; the last moment is held ([PreRoll]) so his first words go
  * first once it is him. Thread-safe: fed on the recording thread.
  */
@@ -249,12 +249,12 @@ class ReplyBargeIn(private val gate: OwnerGate = OwnerGate(), private val held: 
 
     /**
      * One chunk ([ms] long) while it plays: [play] its level (null unknown),
-     * [voiced] the share of voiced frames lately. Non-null once it is him:
+     * [speech] whether it is someone talking. Non-null once it is him:
      * the chunks to send first, from just before his voice rose.
      */
-    @Synchronized fun hear(chunk: ByteArray, level: Float, play: Float?, ms: Long, voiced: () -> Double): List<ByteArray>? {
+    @Synchronized fun hear(chunk: ByteArray, level: Float, play: Float?, ms: Long, speech: () -> Boolean): List<ByteArray>? {
         held.push(chunk, ms)
-        if (fired || !gate.hear(level, play, ms, voiced)) return null
+        if (fired || !gate.hear(level, play, ms, speech)) return null
         fired = true
         return held.drain(minOf(PREROLL_MS, gate.loudMs + LEAD_MS))
     }
@@ -341,7 +341,8 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
     private var pressPaused = false
     private val replies = ReplyQueue()
     private val barge = ReplyBargeIn()
-    private val ring = VoiceRing()
+    /** Is it someone talking, not a noise ([SpeechDetector])? Loaded on the recording thread, at the first chunk. */
+    private val speech by lazy { SpeechCheck(SpeechDetector.load(ctx)) }
     /** The reply is playing in voice mode: the mic is kept here, nothing streamed. Read on the recording thread. */
     @Volatile private var pausedForReply = false
     private var pump: Job? = null
@@ -625,10 +626,10 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
         ChatVoice.heyCruNote(wake)?.let { note(it) }
         val m = MicStream { bytes, level ->
             _levels.value = _levels.value.drop(1) + level
+            speech.push(bytes)
             if (pausedForReply) {
                 // Claude is talking: nothing goes out; the phone decides if it is him over it.
-                ring.add(bytes)
-                barge.hear(bytes, level, speaker.playLevel, 100) { CruWake.voicedShare(ring.snapshot()) }?.let { first ->
+                barge.hear(bytes, level, speaker.playLevel, 100) { speech.talking() }?.let { first ->
                     scope.launch { if (pausedForReply) pauseReply(first) }
                 }
                 return@MicStream

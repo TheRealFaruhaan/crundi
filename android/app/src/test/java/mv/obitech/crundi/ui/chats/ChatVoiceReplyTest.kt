@@ -98,25 +98,25 @@ class ChatVoiceReplyTest {
 
     @Test fun claudesOwnVoiceNeverCutsIn() {
         val b = barge()
-        for (i in 0 until 80) { val p = cru(i); assertNull("at $i", b.hear(chunk, p * 0.33f, p, 100) { 0.6 }) }
+        for (i in 0 until 80) { val p = cru(i); assertNull("at $i", b.hear(chunk, p * 0.33f, p, 100) { true }) }
     }
 
     @Test fun theOwnerOverItCutsInWithHisFirstWords() {
         val b = barge()
-        for (i in 0 until 20) { val p = cru(i); b.hear(chunk, p * 0.33f, p, 100) { 0.6 } }
+        for (i in 0 until 20) { val p = cru(i); b.hear(chunk, p * 0.33f, p, 100) { true } }
         var first: List<ByteArray>? = null
         var at = -1
-        for (i in 0 until 10) { val r = b.hear(chunk, 0.75f, 0.55f, 100) { 0.6 }; if (r != null && first == null) { first = r; at = i } }
+        for (i in 0 until 10) { val r = b.hear(chunk, 0.75f, 0.55f, 100) { true }; if (r != null && first == null) { first = r; at = i } }
         assertTrue("at $at", at in 0..5)
         // What he said before the gate opened goes first: from about 600 ms before his voice rose, at most 1.3 s.
         assertTrue(first!!.size in 3..13)
         // Once only, until the next reply.
-        assertNull(b.hear(chunk, 0.75f, 0.55f, 100) { 0.6 })
+        assertNull(b.hear(chunk, 0.75f, 0.55f, 100) { true })
     }
 
     @Test fun aClapIsNotHim() {
         val b = barge()
-        for (i in 0 until 20) { val p = cru(i); b.hear(chunk, p * 0.33f, p, 100) { 0.6 } }
-        for (i in 0 until 10) assertNull(b.hear(chunk, 0.75f, 0.55f, 100) { 0.05 })
+        for (i in 0 until 20) { val p = cru(i); b.hear(chunk, p * 0.33f, p, 100) { true } }
+        for (i in 0 until 10) assertNull(b.hear(chunk, 0.75f, 0.55f, 100) { false })
     }
 }

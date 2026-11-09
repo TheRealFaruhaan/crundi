@@ -29,11 +29,13 @@ on:
     paths:
       - 'android/**'
       - 'src/crundi-code.js'
+      - 'app/vendor/silero-vad-16k.bin'
       - '.github/workflows/android.yml'
   pull_request:
     paths:
       - 'android/**'
       - 'src/crundi-code.js'
+      - 'app/vendor/silero-vad-16k.bin'
   workflow_dispatch:
     inputs:
       tag:
