@@ -11,9 +11,8 @@
  */
 
 import { getSettings, addDeepgramTtsSpend, deepgramOverLimit } from './settings.js';
+import { deepgramUrl } from './deepgram-host.js';
 
-const MODELS_URL = 'https://api.deepgram.com/v1/models';
-const SPEAK_URL = 'https://api.deepgram.com/v1/speak';
 const LIST_TTL_MS = 60 * 60 * 1000;
 const MAX_CHARS = 2000;
 
@@ -64,7 +63,7 @@ export async function listVoices({ fetchImpl = fetch, force = false } = {}) {
   if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
   if (!force && cached.voices && Date.now() - cached.at < LIST_TTL_MS) return { ok: true, voices: cached.voices, fromDeepgram: true };
   try {
-    const res = await fetchImpl(MODELS_URL, { headers: { Authorization: `Token ${key}` } });
+    const res = await fetchImpl(deepgramUrl('/v1/models'), { headers: { Authorization: `Token ${key}` } });
     if (!res.ok) throw new Error(`Deepgram answered ${res.status}`);
     const voices = parseVoices(await res.json());
     if (!voices.length) throw new Error('Deepgram listed no voices');
@@ -95,7 +94,7 @@ export async function speak(text, voice, { fetchImpl = fetch, rate } = {}) {
   if (!t) return { ok: false, error: 'Nothing to say' };
   let res;
   try {
-    res = await fetchImpl(`${SPEAK_URL}?${new URLSearchParams({ model, encoding: 'mp3', ...speedParam(model, rate) })}`, {
+    res = await fetchImpl(`${deepgramUrl('/v1/speak')}?${new URLSearchParams({ model, encoding: 'mp3', ...speedParam(model, rate) })}`, {
       method: 'POST',
       headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: t }),
@@ -131,7 +130,7 @@ export async function speakStream(text, voice, { fetchImpl = fetch } = {}) {
   if (!t) return { ok: false, error: 'Nothing to say' };
   let res;
   try {
-    res = await fetchImpl(`${SPEAK_URL}?${new URLSearchParams({ model, encoding: 'linear16', sample_rate: String(STREAM_RATE), container: 'none', ...speedParam(model) })}`, {
+    res = await fetchImpl(`${deepgramUrl('/v1/speak')}?${new URLSearchParams({ model, encoding: 'linear16', sample_rate: String(STREAM_RATE), container: 'none', ...speedParam(model) })}`, {
       method: 'POST',
       headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: t }),
@@ -158,7 +157,6 @@ export function _clearCache() { cached = { at: 0, voices: null }; }
 // one (Settings: kidVoice, default flux-gemma-en); a failure falls back to
 // the owner's Aura voice. Spend is counted like Aura's, per character, until
 // Deepgram's own Flux price is known.
-const FLUX_URL = 'https://api.deepgram.com/v2/speak';
 export const FLUX_VOICES = ['flux-gemma-en', 'flux-heather-en', 'flux-brooke-en', 'flux-meghan-en', 'flux-cole-en'];
 export const isFluxModel = (m) => /^flux-[a-z]+-[a-z]{2}$/.test(String(m || ''));
 /** Kid Cru's moods, as the expressivity Flux takes. */
@@ -200,7 +198,7 @@ export async function speakKidStream(text, { voice = '', expressivity = 2, rate 
   const sp = Math.round(Math.max(0.5, Math.min(1.5, Number(rate) || 1)) * 20) / 20;
   const q = new URLSearchParams({ model, encoding: 'linear16', sample_rate: String(STREAM_RATE), expressivity: String(ex), ...(sp !== 1 ? { speed: String(sp) } : {}) });
   try {
-    const res = await fetchImpl(`${FLUX_URL}?${q}`, { method: 'POST', headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t }) });
+    const res = await fetchImpl(`${deepgramUrl('/v2/speak')}?${q}`, { method: 'POST', headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t }) });
     if (res.ok && res.body) { addDeepgramTtsSpend(t.length); return { ok: true, body: rawPcm(res.body), rate: STREAM_RATE, voice: model }; }
   } catch { /* the fallback speaks */ }
   return fallback(text, '', { fetchImpl });

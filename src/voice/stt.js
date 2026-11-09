@@ -13,8 +13,8 @@
 
 import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js';
 import { fixNames } from './names.js';
+import { deepgramUrl } from './deepgram-host.js';
 
-const LISTEN_URL = 'https://api.deepgram.com/v1/listen';
 const MODEL = 'nova-3';
 /** Deepgram's keyterm prompting takes up to this many terms per request. */
 const MAX_KEYTERMS = 100;
@@ -52,7 +52,7 @@ export function keyterms({ projects = [], services = [] } = {}) {
 export function listenUrl(terms, { language = 'en' } = {}) {
   const q = new URLSearchParams({ model: MODEL, smart_format: 'true', punctuate: 'true', language });
   for (const t of terms) q.append('keyterm', t);
-  return `${LISTEN_URL}?${q}`;
+  return `${deepgramUrl('/v1/listen')}?${q}`;
 }
 
 /**

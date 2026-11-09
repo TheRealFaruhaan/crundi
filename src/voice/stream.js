@@ -42,8 +42,8 @@ import { keyterms } from './stt.js';
 import { fixNames, nameList } from './names.js';
 import { CUES } from './cues.js';
 import { createAudioRing, utteranceAudio, SHORT_MIN_SECONDS, WORD_MIN_SECONDS } from './speaker.js';
+import { deepgramWsUrl } from './deepgram-host.js';
 
-const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
 /** Deepgram closes a stream after about 10 s without audio; it asks for a KeepAlive every 3–5 s. */
 const KEEPALIVE_MS = 4000;
 
@@ -83,7 +83,7 @@ export function streamUrl(terms, { language = 'en', audio = null, pauseMs = PAUS
   });
   if (audio) { q.set('encoding', audio.encoding); q.set('sample_rate', String(audio.sample_rate)); q.set('channels', '1'); }
   for (const t of terms) q.append('keyterm', t);
-  return `${STREAM_URL}?${q}`;
+  return `${deepgramWsUrl('/v1/listen')}?${q}`;
 }
 
 /** After Cru stops, its last words may still be finalised for this long. */

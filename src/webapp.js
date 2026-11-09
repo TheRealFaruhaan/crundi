@@ -122,6 +122,7 @@ import { createGameLibrary } from './voice/kid-games.js';
 import { createWorkshop as createKidWorkshop } from './voice/kid-workshop.js';
 import { createReflex as createKidReflex, clipKey as kidClipKey } from './voice/kid-reflex.js';
 import { speakKidStream, MOOD_EXPRESSIVITY } from './voice/tts.js';
+import { startHostWatch as startDeepgramHostWatch } from './voice/deepgram-host.js';
 import { checkInSandbox } from './widget-render.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
@@ -3407,6 +3408,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     apiUrl: () => `http://127.0.0.1:${localPort || port}`,
     claudeBin: () => resolveClaudeBin(),
   });
+  // Speech goes to the nearer Deepgram region (a far one stutters mid-reply).
+  startDeepgramHostWatch({ log: (m) => console.log(`[voice] ${m}`) });
   const voiceAgent = createVoiceBrain({
     api: createVoiceAgent({ ...voiceBrainOpts, store: voiceMemory.store }),
     cli: voiceCli,
