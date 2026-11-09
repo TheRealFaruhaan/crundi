@@ -106,6 +106,7 @@ import { config } from './config.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
 import { systemPromptArgs, collaboratorPromptLayer } from './system-prompt.js';
+import { attributionFor, attributionArgs } from './attribution.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
 
 const isWin = process.platform === 'win32';
@@ -1215,7 +1216,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (collaborator.cacheDir) {
         try { mkdirSync(collaborator.cacheDir, { recursive: true }); } catch { /* the sandbox will say */ }
       }
-      args.push('--settings', JSON.stringify(collaboratorSettings({
+      // One --settings only: the collaborator's sandbox and permissions, plus
+      // Crundi's commit/PR attribution unless the owner set their own.
+      const collabAttribution = attributionFor(workdir);
+      args.push('--settings', JSON.stringify({
+        ...(collabAttribution ? { attribution: collabAttribution } : {}),
+        ...collaboratorSettings({
         root: resolvePath(workdir),
         gitDir: gitPaths.gitDir || '',
         commonDir: gitPaths.commonDir || '',
@@ -1227,7 +1233,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         projectsDir: config.projectsDir || '',
         dataDir: config.dataDir || '',
         home: homedir(),
-      })));
+      }),
+      }));
       // --strict-mcp-config means "ONLY servers named by --mcp-config". It was
       // passed alone, so every collaborator session started with ZERO MCP
       // servers — verified: 0 crundi tools, and 93 once --mcp-config was added.
@@ -1283,6 +1290,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       const deny = (Array.isArray(disallowedTools) ? disallowedTools : []).filter(Boolean).map(String);
       if (allow.length) args.push('--allowedTools', allow.join(','));
       if (deny.length) args.push('--disallowedTools', deny.join(','));
+      // Commits and PRs say they were made with Crundi (see attribution.js).
+      args.push(...attributionArgs(workdir, config.dataDir));
     }
     // What this Claude is told about the machine it woke up on. Unattended runs
     // get Crundi's layer only — see system-prompt.js.

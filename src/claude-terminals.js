@@ -17,6 +17,8 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { getProject } from './project-store.js';
 import { systemPromptArgs } from './system-prompt.js';
+import { attributionArgs } from './attribution.js';
+import { config } from './config.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
 import { titlesFromChat } from './chat-autotitle.js';
 
@@ -447,6 +449,8 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     // system-prompt.js. This is the one flag here whose value contains spaces,
     // which is why the bash path below has to quote at all.
     flagList.push(...systemPromptArgs({ project: key, userLayers }));
+    // Commits and PRs say they were made with Crundi (see attribution.js).
+    flagList.push(...attributionArgs(project.path, config.dataDir));
     const cleanPrompt = prompt ? String(prompt).replace(/[\r\n]+/g, ' ').trim() : '';
 
     const shell = isWin ? 'cmd.exe' : '/bin/bash';
