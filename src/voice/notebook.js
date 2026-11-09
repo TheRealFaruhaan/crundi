@@ -149,6 +149,10 @@ export function createNotebook(dir, { onChange = () => {}, guard = () => '' } = 
       walk(root);
       return out.sort((a, b) => a.path.localeCompare(b.path));
     },
+    /** One file's text, or '' when it does not exist. */
+    read(path) {
+      try { const f = file(path); return existsSync(f) && !statSync(f).isDirectory() ? readFileSync(f, 'utf-8') : ''; } catch { return ''; }
+    },
     /** The owner edits a file on the /voice page ('' text deletes it). */
     save(path, text) {
       ensure();

@@ -19,6 +19,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../config.js';
 import { writePrivateFile } from '../private-fs.js';
+import { cleanAway, AWAY_CLASSES, AWAY_CLASS_IDS } from './autonomy.js';
 
 /**
  * Models offered in Voice assistant settings (D8). Prices: US$ per million
@@ -70,6 +71,9 @@ const DEFAULTS = {
   // Full admin mode (9 Nov): Cru may run any command as the user Crundi runs
   // as. Switched on by hand only (Settings), never by Cru; Sonnet or above.
   adminMode: false,
+  // Cru on its own (autonomy.js): what Cru may change when nobody spoke (a
+  // wake-up, the heartbeat). Switched on by hand only; Cru can switch it off.
+  away: { on: false, allow: ['chats', 'kanban', 'notes'] },
   // "Only act on my voice" (speaker.js): with the owner's voice enrolled, a
   // spoken request in another voice gets answers but changes nothing.
   ownerOnly: true,
@@ -190,6 +194,8 @@ export function publicSettings(now = new Date()) {
     adminMode: adminOn(s),
     adminCapable: adminCapable(s.model || DEFAULT_MODEL),
     ownerOnly: s.ownerOnly !== false,
+    away: cleanAway(s.away),
+    awayClasses: AWAY_CLASS_IDS.map((id) => ({ id, label: AWAY_CLASSES[id].label })),
     screenCloseSeconds: s.screenCloseSeconds || 60,
     cliIdleMinutes: s.cliIdleMinutes || 30,
     deepgramPeriodStart: ymd(dg.start),
@@ -255,6 +261,10 @@ export function updateSettings(patch = {}) {
   if (patch.adminMode !== undefined) {
     if (patch.adminMode === true && !adminCapable(s.model || DEFAULT_MODEL)) return { ok: false, error: 'Admin mode needs Sonnet or above. Choose another model first.' };
     s.adminMode = patch.adminMode === true;
+  }
+  if (patch.away !== undefined) {
+    if (!patch.away || typeof patch.away !== 'object') return { ok: false, error: 'away is { on, allow }' };
+    s.away = cleanAway(patch.away, cleanAway(s.away));
   }
   if (patch.ownerOnly !== undefined) {
     if (typeof patch.ownerOnly !== 'boolean') return { ok: false, error: 'ownerOnly is true or false' };

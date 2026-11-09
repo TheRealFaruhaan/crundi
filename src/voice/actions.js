@@ -30,6 +30,7 @@
  */
 
 import { join } from 'node:path';
+import { awayAllows } from './autonomy.js';
 
 export const ACTION_TOOL_NAMES = [
   'send_to_chat', 'start_chat', 'close_chat', 'park_chat', 'resume_chat', 'watch_chat', 'unwatch_chat',
@@ -40,6 +41,7 @@ export const ACTION_TOOL_NAMES = [
   'list_chat_schedules', 'add_chat_schedule', 'delete_chat_schedule',
   'add_schedule', 'update_schedule', 'set_schedule_enabled', 'delete_schedule',
   'set_voice_setting', 'compact_conversation', 'start_fresh', 'set_volume', 'set_background_listening',
+  'service_control', 'share_routine', 'on_my_own_off',
   'confirm_action', 'cancel_action', 'close_voice',
 ];
 
@@ -128,6 +130,13 @@ export function makeActionTools(deps, ctx) {
     const hit = all.find(c => c.id === ref) || all.find(c => String(c.title || '').toLowerCase() === r)
       || all.filter(c => String(c.title || '').toLowerCase().includes(r))[0];
     if (!hit) throw new Error(`No open chat matches "${ref}". Use list_panels for the chats and their ids.`);
+    return hit;
+  };
+  const svc = (ref) => {
+    const r = String(ref || '').toLowerCase();
+    const all = deps.services ? deps.services() : [];
+    const hit = all.find(x => x.key === ref) || all.find(x => String(x.name || '').toLowerCase() === r) || all.find(x => String(x.key).toLowerCase() === r);
+    if (!hit) throw new Error(`No service "${ref}". Use list_services.`);
     return hit;
   };
   const chatName = (c) => `the "${c.title || 'untitled'}" chat in ${c.project}`;
@@ -437,9 +446,37 @@ export function makeActionTools(deps, ctx) {
         return { ok: true, phoneAction: { type: 'background-listening', minutes: m }, say: m ? `The phone will listen for "Hey Cru" for ${m} minutes.` : 'The phone will stop listening.' };
       },
     },
+    // ─── services: start, stop or restart one ───
+    {
+      name: 'service_control',
+      description: 'Start, stop or restart one of Crundi\'s services (list_services for their keys). intent explicit when the owner asked for exactly this; otherwise it is asked first. Stopping is always asked when you are on your own.',
+      input_schema: obj({ service: str('The service key or name'), op: str('start, stop or restart', { enum: ['start', 'stop', 'restart'] }), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }) }, ['service', 'op']),
+      check: (i) => { svc(i.service); if (!['start', 'stop', 'restart'].includes(i.op)) throw new Error('op is start, stop or restart'); },
+      confirm: (i) => i.intent === 'explicit' ? null : `${i.op === 'stop' ? 'Stop' : i.op === 'start' ? 'Start' : 'Restart'} the service ${svc(i.service).name}?`,
+      run: async (i) => { const s = svc(i.service); const r = await deps.serviceOp(s.key, i.op); return r && r.ok === false ? r : { ok: true, service: s.name, op: i.op }; },
+    },
+    // ─── a routine of Cru's as a Claude skill, for the chats it starts ───
+    {
+      name: 'share_routine',
+      description: 'Turn one of your routines (/memories/routines/<name>.md) into a Claude skill, so the Claude Code chats you start (in every project, or in one) can follow it too. Asks the owner first. Run it again to update the skill after improving the routine.',
+      input_schema: obj({ routine: str('The routine\'s name (its file name without .md)'), project: str('Optional project alias: only that project\'s chats; without it, every project') }, ['routine']),
+      check: (i) => { if (!deps.routineText?.(String(i.routine))) throw new Error(`No routine called "${i.routine}" in /memories/routines/`); if (i.project) project(i.project); },
+      confirm: (i) => `Share your routine "${i.routine}" as a Claude skill ${i.project ? `in ${i.project}` : 'for every project'}?`,
+      run: (i) => deps.shareRoutine(String(i.routine), i.project ? project(i.project).alias : ''),
+    },
+    // ─── Cru on its own (autonomy.js): switched off, never on, by voice ───
+    {
+      name: 'on_my_own_off',
+      description: 'Switch "Cru on its own" off: when nobody speaks, you then ask the owner for every change. everything: also pause all your tickers and triggers, drop the questions waiting on his phone and pause your jobs ("stop everything"). Only the owner switches it back on, in Settings.',
+      input_schema: obj({ everything: bool('Stop everything, not just the switch') }),
+      safe: true,
+      run: (i) => deps.awayOff ? deps.awayOff({ everything: !!i.everything }) : { ok: false, error: 'Not available' },
+    },
     // Cru's own tickers and triggers (voice/wakeups.js): read-only wake-ups,
     // switched on and off by Cru itself without a yes (safe).
     ...(deps.wakeupDefs || []),
+    // Cru's jobs (voice/jobs.js): cards it takes on and sees through.
+    ...(deps.jobDefs || []),
   ];
 
   const byName = new Map(defs.map(d => [d.name, d]));
@@ -449,6 +486,21 @@ export function makeActionTools(deps, ctx) {
     // Another voice (or too short to tell) while "Only act on my voice" is on: questions only.
     if (ctx.unrecognised?.()) return { done: false, unrecognised: true, say: UNRECOGNISED };
     if (def.safe) { if (def.check) def.check(input); return def.run(input); }
+    // Nobody spoke (a wake-up, a heartbeat, a followed chat): only what the
+    // owner ticked runs; anything else becomes a yes/no on his phone.
+    if (ctx.unattended?.()) {
+      if (def.check) def.check(input);
+      if (awayAllows(def.name, input, ctx.away ? ctx.away() : null)) {
+        const r = await def.run(input);
+        if (r && r.ok !== false) { deps.broadcast?.(def.name, input); deps.onAwayAct?.(def.name, input, r); }
+        return r;
+      }
+      if (!deps.askOwner) return { done: false, error: 'Nobody is here to say yes, so nothing was done. Mention it to the owner when he is back.' };
+      const q = (def.confirm && def.confirm(input)) || `${def.name.replace(/_/g, ' ')}: ${describeInput(input)}?`;
+      const a = deps.askOwner({ title: q, tool: def.name, input, run: async () => { const r = await def.run(input); if (r && r.ok !== false) deps.broadcast?.(def.name, input); return r; } });
+      if (!a.ok) return { done: false, error: a.error };
+      return { done: false, askedOwner: true, id: a.id, say: 'Not done: nobody is here to say yes, so the owner has been asked on his phone. If he approves it runs, and you will be told either way. Do not ask again.' };
+    }
     if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it for this; nothing was changed.' };
     if (def.check) def.check(input);
     const q = def.confirm ? def.confirm(input) : null;
@@ -467,6 +519,7 @@ export function makeActionTools(deps, ctx) {
     description: 'Carry out an action the owner has agreed to in their latest message. Only after asking and hearing yes; never on your own.',
     input_schema: obj({ id: str('The id the action gave') }, ['id']),
     run: async ({ id }) => {
+      if (ctx.unattended?.()) return { done: false, error: 'Nobody has spoken: only the owner\'s own yes confirms an action. Nothing was done.' };
       if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it; nothing was changed.' };
       // Too short to tell who said "yes": it may only confirm an action a recognised request asked about.
       if (ctx.unrecognised?.()) {
@@ -495,6 +548,11 @@ export function makeActionTools(deps, ctx) {
     run: () => ({ ok: true, close: true, say: 'The voice screen closes after your reply; an empty reply closes it silently.' }),
   });
   return tools;
+}
+
+/** A short, readable line for an action's input (the phone question when no confirm line exists). */
+function describeInput(i = {}) {
+  return Object.entries(i).filter(([k, v]) => k !== 'intent' && v !== undefined && v !== '').map(([k, v]) => `${k} ${typeof v === 'string' ? (v.length > 60 ? `"${v.slice(0, 57)}…"` : `"${v}"`) : JSON.stringify(v)}`).join(', ').slice(0, 180);
 }
 
 function paragraphs(text) {

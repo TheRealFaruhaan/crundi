@@ -212,9 +212,17 @@ function cleanTickerSchedule(i, was = {}) {
   return out;
 }
 
-export function createWakeupStore({ file = '', now = () => Date.now(), onChange = () => {} } = {}) {
+export function createWakeupStore({ file = '', now = () => Date.now(), onChange = () => {}, builtins = [] } = {}) {
   let data = { tickers: [], triggers: [] };
   try { if (file && existsSync(file)) { const d = JSON.parse(readFileSync(file, 'utf-8')); data = { tickers: d.tickers || [], triggers: d.triggers || [] }; } } catch { /* start empty */ }
+  // Built-in tickers (the heartbeat): always there, off until switched on, never deleted.
+  for (const b of builtins) {
+    if (data.tickers.some(t => t.id === b.id)) continue;
+    data.tickers.unshift({
+      id: b.id, type: 'ticker', builtin: true, name: b.name, purpose: b.purpose, ...cleanTickerSchedule(b), window: cleanWindow({ from: b.from, to: b.to, days: b.windowDays }),
+      enabled: false, enabledAt: 0, createdBy: 'owner', createdAt: now(), lastFiredAt: 0, fires: 0,
+    });
+  }
   const save = () => { if (file) { try { writePrivateFile(file, JSON.stringify(data, null, 2)); } catch (e) { console.warn('[voice] could not save the wake-ups:', e.message); } } onChange(); };
   const newId = (p) => `${p}_${randomBytes(4).toString('hex')}`;
   const all = () => [...data.tickers, ...data.triggers];
@@ -288,16 +296,17 @@ export function createWakeupStore({ file = '', now = () => Date.now(), onChange 
     remove(ref, type = '') {
       const x = find(ref, type);
       if (!x) throw new Error(`No ${type || 'ticker or trigger'} "${ref}"`);
+      if (x.builtin) throw new Error(`"${x.name}" is built in: switch it off instead`);
       data.tickers = data.tickers.filter(t => t.id !== x.id);
       data.triggers = data.triggers.filter(t => t.id !== x.id);
       save();
       return { ok: true, deleted: x.name };
     },
     /** A wake-up was delivered to Cru. A once-trigger switches itself off. */
-    markFired(id, at = now()) {
+    markFired(id, at = now(), { quiet = false } = {}) {
       const x = find(id);
       if (!x) return;
-      x.lastFiredAt = at; x.fires = (x.fires || 0) + 1;
+      x.lastFiredAt = at; if (!quiet) x.fires = (x.fires || 0) + 1;
       if (x.type === 'trigger' && x.once) x.enabled = false;
       save();
     },
@@ -380,7 +389,7 @@ const nameMatches = (want, ...names) => !want || names.some(n => lc(n) === lc(wa
  * @param overLimit   () => boolean: the month's spend limit is reached
  * @param maxPerHour  the global cap
  */
-export function createWakeupEngine({ store, report, overLimit = () => false, now = () => Date.now(), maxPerHour = MAX_PER_HOUR, log = () => {} }) {
+export function createWakeupEngine({ store, report, overLimit = () => false, now = () => Date.now(), maxPerHour = MAX_PER_HOUR, log = () => {}, prepare = () => '' }) {
   const fired = [];                 // when each wake-up went to Cru, oldest first
   const state = new Map();          // trigger id -> { aboveSince, latched, retries }
   const retry = new Map();          // item id -> { what, tries }
@@ -414,12 +423,16 @@ export function createWakeupEngine({ store, report, overLimit = () => false, now
     const t = now();
     const why = inflight.has(item.id) ? 'already waking' : blocked(item, t);
     if (why) { log(`[voice] ${item.type} "${item.name}" not fired: ${why}`); return Promise.resolve({ ok: false, skipped: why }); }
+    // More for the note (the heartbeat's checklist), or null: nothing to do, so no call at all (not counted).
+    let extra = '';
+    try { extra = prepare(item); } catch { extra = ''; }
+    if (extra === null) { store.markFired(item.id, t, { quiet: true }); return Promise.resolve({ ok: true, skipped: 'nothing to check' }); }
     // Counted before it runs, so a burst cannot get past the cap; in flight, so not twice.
     fired.push(t);
     inflight.add(item.id);
     const job = chain.then(async () => {
       let r;
-      try { r = await report(noteFor(item, what, t), item); } catch (e) { r = { ok: false, error: e.message }; }
+      try { r = await report(noteFor(item, what, t) + (extra || ''), item); } catch (e) { r = { ok: false, error: e.message }; }
       inflight.delete(item.id);
       if (r && r.busy) {
         // Cru was busy: not a wake-up spent, so it is given back and tried on a later scan.

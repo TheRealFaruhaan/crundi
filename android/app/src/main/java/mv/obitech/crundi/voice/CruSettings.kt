@@ -30,6 +30,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -149,6 +150,12 @@ class CruSettingsEvents(
     val onRate: (Double) -> Unit = {},
     val onVolume: (Int) -> Unit = {},
     val onAdminMode: (Boolean) -> Unit = {},
+    /** Cru on its own (capability "voice-away"): switched on or off. */
+    val onAway: (Boolean) -> Unit = {},
+    /** One class ticked (true) or unticked. */
+    val onAwayClass: (String, Boolean) -> Unit = { _, _ -> },
+    /** Stop everything, once confirmed. */
+    val onAwayStop: () -> Unit = {},
     /** A ticker or trigger switched on (true) or off. */
     val onWakeupSwitch: (String, Boolean) -> Unit = { _, _ -> },
     /** Delete tapped: once asks, twice deletes. */
@@ -173,6 +180,7 @@ object CruSection {
     const val SPEED = "speed"
     const val VOLUME = "volume"
     const val ADMIN = "admin"
+    const val AWAY = "away"
     const val WAKEUPS = "wakeups"
     const val SPEAKER = "speaker"
     const val LISTENING = "listening"
@@ -203,6 +211,7 @@ fun CruSettingsRoute() {
     val hasMemory = VoiceApi.MEMORY in shell.capabilities
     val hasWakeups = VoiceApi.WAKEUPS in shell.capabilities
     val hasSpeaker = VoiceApi.SPEAKER in shell.capabilities
+    val hasShortWords = VoiceApi.SHORT_WORDS in shell.capabilities
     val hasKid = mv.obitech.crundi.api.KidApi.KID in shell.capabilities
     // Enrolling: the phone's microphone at 16 kHz, as the voice screen hears it.
     val rec = remember { arrayOfNulls<MicStream>(1) }
@@ -267,7 +276,7 @@ fun CruSettingsRoute() {
             val cur = ui.speaker ?: SpeakerUi()
             ui = try {
                 val got = v.speaker()
-                if (got == null) ui.copy(speaker = null) else ui.copy(speaker = (ui.speaker ?: cur).copy(status = got, error = ""))
+                if (got == null) ui.copy(speaker = null) else ui.copy(speaker = (ui.speaker ?: cur).copy(status = got, error = "", wordsOk = hasShortWords))
             } catch (e: Exception) { ui.copy(speaker = cur.copy(error = e.message ?: "Could not load your voice")) }
         }
     }
@@ -281,9 +290,11 @@ fun CruSettingsRoute() {
         m.stop(); rec[0] = null
         val pcm = synchronized(recBuf) { recBuf.toByteArray() }
         val restart = ui.speaker?.let { Enrolment.restart(it) } ?: true
+        val word = ui.speaker?.takeIf { it.words }?.pos
         spk { it.copy(recording = false, busy = true, msg = "Checking…", bad = false) }
         scope.launch {
-            val r = runCatching { v.enrolPhrase(pcm, Enrolment.RATE, restart) }.getOrElse { mv.obitech.crundi.api.EnrolReply(ok = false, error = it.message ?: "Could not reach the server") }
+            val r = runCatching { if (word != null) v.enrolWord(pcm, Enrolment.RATE, word, restart) else v.enrolPhrase(pcm, Enrolment.RATE, restart) }
+                .getOrElse { mv.obitech.crundi.api.EnrolReply(ok = false, error = it.message ?: "Could not reach the server") }
             if (ui.speaker?.active == true) spk { Enrolment.after(it, r) }
         }
     }
@@ -385,22 +396,55 @@ fun CruSettingsRoute() {
         onRate = { r -> save("Cru talks at ${rateLabel(r)}") { v.save(speechRate = r) } },
         onVolume = { n -> save("Cru talks at $n%") { v.save(volume = n) } },
         onAdminMode = { on -> save(if (on) "Admin mode is on" else "Admin mode is off") { v.save(adminMode = on) } },
+        onAway = { on ->
+            ui.server?.away?.let { a -> save(if (on) "Cru may now act on its own, as ticked" else "Cru asks before every change again") { v.saveAway(on, a.allow) } }
+        },
+        onAwayClass = { id, on ->
+            ui.server?.away?.let { a -> save("Saved") { v.saveAway(a.on, if (on) (a.allow + id).distinct() else a.allow - id) } }
+        },
+        onAwayStop = {
+            ui = ui.copy(busy = true)
+            scope.launch {
+                try {
+                    val r = v.stopAway()
+                    ui = (r.settings?.let { withServer(it) } ?: ui.copy(server = ui.server?.copy(away = ui.server?.away?.copy(on = false)))).copy(busy = false)
+                    say("Stopped: ${r.wakeupsPaused} wake-up" + (if (r.wakeupsPaused == 1) "" else "s") + " paused, ${r.jobsPaused} job" + (if (r.jobsPaused == 1) "" else "s") + " paused")
+                    loadWakeups()
+                } catch (e: Exception) { ui = ui.copy(busy = false); say(e.message ?: "Could not stop", true) }
+            }
+        },
         onWakeupSwitch = { id, on -> changeWakeup(id, if (on) "enable" else "disable", if (on) "Switched on" else "Switched off") },
         speaker = SpeakerEvents(
             onStart = { HeyCrundi.training(true); spk { Enrolment.start(it) } },
             onRecord = { if (rec[0] != null) stopRecording() else if (ui.speaker?.busy != true) startRecording() },
             onFinish = {
+                val words = ui.speaker?.words == true
                 spk { it.copy(busy = true) }
                 scope.launch {
                     try {
+                        if (words) {
+                            val st = v.finishWords()
+                            spk { it.copy(status = st) }
+                            endEnrol("Cru knows your short replies now.", false)
+                            loadSpeaker()
+                            return@launch
+                        }
                         val st = v.finishEnrol()
-                        spk { it.copy(status = (it.status ?: st).copy(enrolled = st.enrolled || st.phrases > 0, phrases = st.phrases, seconds = st.seconds, enrolledAt = st.enrolledAt ?: it.status?.enrolledAt)) }
-                        endEnrol("Cru knows your voice now.", false)
-                        loadSpeaker()
+                        spk { it.copy(status = (it.status ?: st).copy(enrolled = st.enrolled || st.phrases > 0, phrases = st.phrases, seconds = st.seconds, enrolledAt = st.enrolledAt ?: it.status?.enrolledAt, shortWords = st.shortWords ?: it.status?.shortWords, wordPrompts = st.wordPrompts.ifEmpty { it.status?.wordPrompts.orEmpty() })) }
+                        // Then the short replies, if this server takes them (optional: Not now ends it).
+                        if (ui.speaker?.let { Enrolment.offerWords(it) } == true) {
+                            spk { Enrolment.startWords(it, "Cru knows your voice now. Next, optionally: short replies, so a bare yes or no is recognised too.") }
+                            loadSpeaker()
+                        } else {
+                            endEnrol("Cru knows your voice now.", false)
+                            loadSpeaker()
+                        }
                     } catch (e: Exception) { spk { it.copy(busy = false, msg = e.message ?: "Not saved", bad = true) } }
                 }
             },
-            onCancel = { endEnrol("Enrolment cancelled: nothing changed.", false) },
+            onCancel = { endEnrol(if (ui.speaker?.words == true) "Short replies not changed." else "Enrolment cancelled: nothing changed.", false) },
+            onWords = { HeyCrundi.training(true); spk { Enrolment.startWords(it) } },
+            onSkip = { spk { Enrolment.skip(it) } },
             onForget = {
                 if (ui.speaker?.confirmForget != true) spk { it.copy(confirmForget = true) }
                 else scope.launch {
@@ -620,6 +664,11 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
         }
     }
 
+    // ─── Cru on its own (capability "voice-away"; an older server has no away: left out) ───
+    s.away?.takeIf { s.awayClasses.isNotEmpty() }?.let { a ->
+        Fold(CruSection.AWAY, "Cru on its own", if (a.on) "On" else "Off", open, warn = a.on) { AwayPart(a, s.awayClasses, ui.busy, ev) }
+    }
+
     // ─── Kid mode (capability "voice-kid") ───
     ui.kid?.let { k ->
         Fold(CruSection.KID, "Kid mode", kidSummary(k.status), open, warn = k.status?.on == true) { KidModePart(k, s, ev.kid) }
@@ -791,6 +840,39 @@ private fun WakeupsPart(w: WakeupsUi, ev: CruSettingsEvents) {
     Text("At most ${lim.perHour} wake-ups an hour (${lim.firedLastHour} in the last hour), and none once the monthly limit is reached.", style = CrundiType.Small, modifier = Modifier.padding(top = 10.dp))
 }
 
+/** Cru on its own: the switch, what it may do (dimmed while off), and Stop everything (asks first). */
+@Composable
+private fun AwayPart(a: mv.obitech.crundi.api.VoiceAway, classes: List<mv.obitech.crundi.api.AwayClass>, busy: Boolean, ev: CruSettingsEvents) {
+    var confirm by rememberSaveable { mutableStateOf(false) }
+    Text(
+        "When nobody is talking to it (a wake-up, the heartbeat, a job it took on), Cru may do what is ticked below without asking. Anything else comes to your phone to approve or decline. Cru can switch this off, never on.",
+        style = CrundiType.Small, modifier = Modifier.padding(bottom = 4.dp),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        CrundiIcon("zap", size = 16.dp, tint = if (a.on) CrundiColors.Yellow else CrundiColors.TextSecondary)
+        mv.obitech.crundi.ui.components.CrundiSwitchRow("Cru on its own", a.on, { ev.onAway(it) }, Modifier.padding(horizontal = 0.dp).padding(start = 8.dp), enabled = !busy)
+    }
+    Column(Modifier.padding(start = 24.dp).then(if (a.on) Modifier else Modifier.alpha(0.55f))) {
+        for (c in classes) {
+            val on = c.id in a.allow
+            Row(
+                Modifier.fillMaxWidth().clip(Dimens.ShapeSm).clickable(enabled = !busy) { ev.onAwayClass(c.id, !on) }.padding(vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                mv.obitech.crundi.ui.planning.PlanningCheckbox(on, { if (!busy) ev.onAwayClass(c.id, !on) }, 18.dp)
+                Text(c.label.ifEmpty { c.id }, style = CrundiType.Body, modifier = Modifier.padding(start = 10.dp))
+            }
+        }
+    }
+    CrundiButton("Stop everything", { confirm = true }, kind = ButtonKind.Danger, icon = "pause", enabled = !busy, modifier = Modifier.padding(top = 10.dp))
+    Text("Switches this off, pauses every ticker and trigger Cru keeps (the heartbeat too), drops its questions and pauses its jobs.", style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp))
+    if (confirm) mv.obitech.crundi.ui.components.CrundiDialog(
+        "Stop everything", onDismiss = { confirm = false },
+        message = "Stop everything Cru does on its own? Its tickers, triggers and jobs pause until switched on again.",
+        confirm = "Stop everything", onConfirm = { confirm = false; ev.onAwayStop() }, danger = true,
+    )
+}
+
 @Composable
 private fun WakeRow(x: mv.obitech.crundi.api.WakeItem, confirming: Boolean, busy: Boolean, ev: CruSettingsEvents) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
@@ -811,10 +893,11 @@ private fun WakeRow(x: mv.obitech.crundi.api.WakeItem, confirming: Boolean, busy
         if (x.purpose.isNotEmpty()) Text(x.purpose, style = CrundiType.Small, modifier = Modifier.padding(top = 2.dp))
         Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "Last woke Cru: " + (if (x.lastFiredAt > 0) wakeTime(x.lastFiredAt) else "never") + (if (x.fires > 0) " (${x.fires} in all)" else "") + " · made by " + (if (x.createdBy == "owner") "you" else "Cru"),
+                "Last woke Cru: " + (if (x.lastFiredAt > 0) wakeTime(x.lastFiredAt) else "never") + (if (x.fires > 0) " (${x.fires} in all)" else "") + (if (x.builtin) " · built in" else " · made by " + (if (x.createdBy == "owner") "you" else "Cru")),
                 style = CrundiType.Meta, modifier = Modifier.weight(1f),
             )
-            CrundiButton(if (confirming) "Delete for good?" else "Delete", { ev.onWakeupDelete(x.id) }, kind = ButtonKind.Danger, icon = "trash", enabled = !busy)
+            // The built-in heartbeat can be switched off, never deleted (the server refuses).
+            if (!x.builtin) CrundiButton(if (confirming) "Delete for good?" else "Delete", { ev.onWakeupDelete(x.id) }, kind = ButtonKind.Danger, icon = "trash", enabled = !busy)
         }
         Box(Modifier.fillMaxWidth().padding(top = 8.dp).size(Dimens.Hairline).background(CrundiColors.Border))
     }

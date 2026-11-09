@@ -76,6 +76,55 @@ export const ENROL_PHRASES = [
   'Thank you, Cru. That will be all for now.',
 ];
 
+/**
+ * Short replies (9 Nov, the owner: "I don't mind pre-training for that"): an
+ * optional step after the phrases. Each is said WORD_REPEATS times in one
+ * recording, with a pause between; every saying is kept as a clip, and a
+ * reply under SHORT_MIN_SECONDS is then checked against those clips.
+ */
+export const ENROL_WORDS = ['Yes', 'No', 'Yeah', 'Okay', 'Go ahead', 'Do it', 'Stop', 'Cancel', 'This one', 'That one'];
+export const WORD_REPEATS = 3;
+/** Short replies taught before they are used. */
+export const MIN_WORDS = 5;
+/** Below this much speech there is no check even with short replies taught. */
+export const WORD_MIN_SECONDS = 0.3;
+/** A saying longer than this while teaching is not a short reply. */
+export const WORD_MAX_SECONDS = 1.6;
+/** Teaching: a reply whose sayings are on average less like the profile than this is asked again. */
+export const WORD_ENROL_MIN = 0.25;
+/**
+ * The check under MIN_SECONDS with short replies taught (decideShort): the
+ * clip's word score is the mean of its WORD_K best cosines with the taught
+ * clips. The owner: word score >= WORD_THRESHOLD and profile cosine >=
+ * WORD_MAIN_MIN. Another voice (false) only when both are clearly low (word
+ * < WORD_REJECT, profile < WORD_REJECT_MAIN); anything between is no verdict
+ * ('short'), which still may answer a waiting confirmation (turnPolicy).
+ *
+ * Measured 9 Nov 2026 (ERes2Net through sherpa-onnx, word clips cut by
+ * Parakeet word times, padded 0.08 s as the live stream does; 24 taught clips):
+ *  - same word taught (CMU Arctic speakers and the owner's own recordings,
+ *    a word said again against clips that include it): 0.3-0.5 s accepted
+ *    87% (the owner 13 of 14), 0.5-0.8 s 100% (owner 14 of 14); other
+ *    speakers saying the same word: 0 of 873 and 0 of 328 passed.
+ *  - taught clips of other words (the harder case): 0.3-0.5 s accepted 64%
+ *    (owner 41%), 0.5-0.8 s 87% (owner 70%); impostors 0 of 6881 and 3 of
+ *    12609 (0.02%, all Arctic studio speakers against each other; 0 of 7332
+ *    against the owner).
+ *  - called another voice: no genuine clip of 757 under 0.8 s, 2 of 360 at
+ *    0.8-1.5 s (the same 2 as the phrases' bar alone); about 93% of
+ *    impostor clips. The rest is no verdict.
+ *  - 0.8-1.5 s: the word rule let no impostor through that SHORT_THRESHOLD
+ *    did not already (that bar passed 136 of 13787 there, nearly all Arctic
+ *    studio voices against each other).
+ * Quiet recordings only; no noise or phone-channel measurement, and the
+ * owner's same-word clips came from one recording, so expect a little less.
+ */
+export const WORD_K = 3;
+export const WORD_THRESHOLD = 0.48;
+export const WORD_MAIN_MIN = 0.30;
+export const WORD_REJECT = 0.30;
+export const WORD_REJECT_MAIN = 0.25;
+
 // ─── features: kaldi-native-fbank as sherpa-onnx configures it ───
 
 const FRAME_LEN = 400;   // 25 ms
@@ -289,6 +338,35 @@ export function findSpeech(x) {
   return { seconds: (count * step) / SAMPLE_RATE, start: first < 0 ? 0 : first * step, end: last < 0 ? 0 : (last + 1) * step };
 }
 
+/**
+ * The separate sayings in a recording of a short reply said a few times
+ * ("yes … yes … yes"): runs of speech frames (by findSpeech's gate) apart by
+ * more than [gap] seconds. Each { samples (padded 0.08 s, as the live
+ * stream's words are), seconds }; blips under 0.12 s are left out.
+ */
+export function splitSayings(x, { gap = 0.3, pad = 0.08 } = {}) {
+  const step = FRAME_SHIFT, n = Math.floor(x.length / step);
+  if (!n) return [];
+  const db = new Float64Array(n);
+  for (let f = 0; f < n; f++) {
+    let s = 0; for (let i = f * step; i < (f + 1) * step; i++) s += x[i] * x[i];
+    db[f] = 10 * Math.log10(s / step + 1e-12);
+  }
+  const sorted = Float64Array.from(db).sort();
+  const floor = sorted[Math.floor(n * 0.1)], loud = sorted[Math.floor(n * 0.9)];
+  const gate = Math.max(Math.min(floor + 9, loud - 6), -55);
+  const maxGap = Math.round(gap * 100), runs = [];
+  for (let f = 0; f < n; f++) {
+    if (db[f] <= gate) continue;
+    const r = runs[runs.length - 1];
+    if (r && f - r[1] - 1 <= maxGap) r[1] = f; else runs.push([f, f]);
+  }
+  const p = Math.round(pad * SAMPLE_RATE);
+  return runs.map(([a, b]) => ({ a: a * step, b: (b + 1) * step, seconds: ((b + 1 - a) * step) / SAMPLE_RATE }))
+    .filter((r) => r.seconds >= 0.12)
+    .map((r) => ({ samples: x.subarray(Math.max(0, r.a - p), Math.min(x.length, r.b + p)), seconds: Math.round(r.seconds * 100) / 100 }));
+}
+
 /** A recording with the silence before and after the speech cut (0.2 s kept each side). */
 export function trimSilence(x) {
   const s = findSpeech(x);
@@ -323,6 +401,38 @@ export function decide(score, seconds, threshold = THRESHOLD) {
   if (seconds >= MIN_SECONDS) return score >= threshold;
   if (seconds >= SHORT_MIN_SECONDS) return score >= Math.min(threshold, SHORT_THRESHOLD);
   return null;
+}
+
+/** Mean of the [k] best cosines of normalised [v] with the taught [clips] (normalised). */
+export function wordScore(v, clips, k = WORD_K) {
+  if (!clips || !clips.length) return NaN;
+  const c = clips.map((x) => cosine(v, x)).sort((a, b) => b - a);
+  const n = Math.min(k, c.length);
+  let s = 0; for (let i = 0; i < n; i++) s += c[i];
+  return s / n;
+}
+
+/**
+ * true / false / null for a clip under MIN_SECONDS when short replies are
+ * taught: [word] its wordScore, [main] its cosine with the profile. From
+ * SHORT_MIN_SECONDS the phrases' own bar (decide) may say yes too, and only a
+ * clearly low score says another voice; under WORD_MIN_SECONDS, null.
+ */
+export function decideShort({ word, main, seconds }) {
+  if (!Number.isFinite(word) || !Number.isFinite(main) || seconds < WORD_MIN_SECONDS) return null;
+  if (seconds >= MIN_SECONDS) return decide(main, seconds);
+  if (word >= WORD_THRESHOLD && main >= WORD_MAIN_MIN) return true;
+  if (seconds >= SHORT_MIN_SECONDS && decide(main, seconds)) return true;
+  if (word < WORD_REJECT && main < WORD_REJECT_MAIN) return false;
+  return null;
+}
+
+/** The taught clips in a profile file's words, normalised; null when none. */
+function wordClips(words) {
+  const list = words && Array.isArray(words.list) ? words.list : [];
+  const clips = [];
+  for (const w of list) for (const c of (Array.isArray(w.clips) ? w.clips : [])) if (Array.isArray(c) && c.length) clips.push(normalise(Float32Array.from(c)));
+  return clips.length ? clips : null;
 }
 
 /**
@@ -488,17 +598,31 @@ export function createSpeaker({ dir, embedder, now = () => Date.now() } = {}) {
   let profile = null;
   let session = null; // { started, phrases: [{ v, seconds }] }
 
+  let wordSession = null; // { started, words: Map(index -> [Float32Array]) }
+
   function loadProfile() {
     if (profile !== null) return profile || null;
     try {
       const p = JSON.parse(readFileSync(file, 'utf8'));
-      profile = p && Array.isArray(p.mean) && p.mean.length ? { ...p, vec: Float32Array.from(p.mean) } : false;
+      profile = p && Array.isArray(p.mean) && p.mean.length ? { ...p, vec: Float32Array.from(p.mean), clips: wordClips(p.words) } : false;
     } catch { profile = false; }
     return profile || null;
   }
   function liveSession() {
     if (session && now() - session.started > SESSION_MS) session = null;
     return session;
+  }
+  function liveWords() {
+    if (wordSession && now() - wordSession.started > SESSION_MS) wordSession = null;
+    return wordSession;
+  }
+  function readRecord() {
+    try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; }
+  }
+  function writeRecord(rec) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writePrivateFile(file, JSON.stringify(rec));
+    profile = null;
   }
 
   async function embedSpeech(samples) {
@@ -525,6 +649,12 @@ export function createSpeaker({ dir, embedder, now = () => Date.now() } = {}) {
         minPhrases: MIN_PHRASES,
         enrolling: s ? { phrases: s.phrases.length, seconds: round1(s.phrases.reduce((a, x) => a + x.seconds, 0)) } : null,
         prompts: ENROL_PHRASES,
+        // Short replies (capability 'voice-short-words').
+        shortWords: p && p.clips ? { trained: true, words: p.words.list.length, clips: p.clips.length, at: p.words.at || null } : { trained: false, words: 0, clips: 0, at: null },
+        wordPrompts: ENROL_WORDS,
+        wordRepeats: WORD_REPEATS,
+        minWords: MIN_WORDS,
+        wordsEnrolling: liveWords() ? { words: wordSession.words.size } : null,
       };
     },
 
@@ -536,14 +666,21 @@ export function createSpeaker({ dir, embedder, now = () => Date.now() } = {}) {
       const p = loadProfile();
       const secs = seconds ?? samples.length / SAMPLE_RATE;
       if (!p) return { owner: null, reason: 'no-profile', seconds: secs };
-      if (secs < SHORT_MIN_SECONDS) return { owner: null, reason: 'short', seconds: round1(secs) };
+      const clips = p.clips;
+      if (secs < (clips ? WORD_MIN_SECONDS : SHORT_MIN_SECONDS)) return { owner: null, reason: 'short', seconds: round2(secs) };
       try {
-        const score = cosine(normalise(await embedSpeech(samples)), p.vec);
-        const owner = decide(score, secs);
+        const v = normalise(await embedSpeech(samples));
+        const score = cosine(v, p.vec);
+        const word = clips && secs < MIN_SECONDS ? wordScore(v, clips) : null;
+        const owner = word === null ? decide(score, secs) : decideShort({ word, main: score, seconds: secs });
+        const r3 = (x) => Math.round(x * 1000) / 1000;
         // brief: checked on less than MIN_SECONDS (enough for everyday requests, not for admin mode).
-        return { owner, reason: owner ? 'owner' : 'other', score: Math.round(score * 1000) / 1000, seconds: round1(secs), brief: secs < MIN_SECONDS };
-      } catch { return { owner: null, reason: 'unavailable', seconds: round1(secs) }; }
+        return { owner, reason: owner === null ? 'short' : owner ? 'owner' : 'other', score: r3(score), ...(word === null ? {} : { word: r3(word) }), seconds: round2(secs), brief: secs < MIN_SECONDS };
+      } catch { return { owner: null, reason: 'unavailable', seconds: round2(secs) }; }
     },
+
+    /** Short replies taught (the live stream checks from WORD_MIN_SECONDS then). */
+    get shortWords() { const p = loadProfile(); return !!(p && p.clips); },
 
     /**
      * One enrolment phrase (16 kHz floats, the whole recording). [restart]
@@ -571,25 +708,73 @@ export function createSpeaker({ dir, embedder, now = () => Date.now() } = {}) {
       const s = liveSession();
       if (!s || s.phrases.length < MIN_PHRASES) return { ok: false, error: `Read at least ${MIN_PHRASES} phrases first (${s ? s.phrases.length : 0} so far).` };
       const mean = meanProfile(s.phrases.map((p) => p.v));
+      // A new enrolment starts without short replies: they are taught again after it.
       const rec = { version: 1, model: MODEL.id, dim: mean.length, mean: Array.from(mean, (x) => Math.round(x * 1e6) / 1e6), count: s.phrases.length, seconds: round1(s.phrases.reduce((a, x) => a + x.seconds, 0)), enrolledAt: new Date(now()).toISOString() };
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
-      writePrivateFile(file, JSON.stringify(rec));
-      profile = null;
+      writeRecord(rec);
       session = null;
+      wordSession = null;
       recent.clear();
       return { ok: true, phrases: rec.count, seconds: rec.seconds, enrolledAt: rec.enrolledAt };
+    },
+
+    /**
+     * One short reply ([word]: its index in ENROL_WORDS), said WORD_REPEATS
+     * times in one recording. [restart] begins the step afresh. { ok,
+     * accepted, word, sayings, seconds (all of them), each (seconds each), likeYou,
+     * words, problem? }.
+     */
+    async enrolWord(samples, { word, restart = false } = {}) {
+      const p = loadProfile();
+      if (!p) return { ok: false, error: 'Enrol your voice with the phrases first.' };
+      const w = Number(word);
+      if (!Number.isInteger(w) || w < 0 || w >= ENROL_WORDS.length) return { ok: false, error: 'No such word' };
+      if (restart || !liveWords()) wordSession = { started: now(), words: new Map() };
+      const sayings = splitSayings(samples);
+      const base = { ok: true, accepted: false, word: w, sayings: sayings.length, seconds: round2(sayings.reduce((a, x) => a + x.seconds, 0)), each: sayings.map((x) => x.seconds), likeYou: null, words: wordSession.words.size };
+      if (!sayings.length) return { ...base, problem: 'Nothing was heard. Check the microphone and try again.' };
+      if (sayings.some((x) => x.seconds > WORD_MAX_SECONDS)) return { ...base, problem: `Say just "${ENROL_WORDS[w]}", with a short pause between each time.` };
+      if (sayings.length < 2) return { ...base, problem: `Say it ${WORD_REPEATS} times, with a short pause between.` };
+      const vs = [];
+      try { for (const x of sayings.slice(0, WORD_REPEATS + 1)) vs.push(normalise(await embedSpeech(x.samples))); } catch (e) { return { ok: false, error: `The voice check is not available: ${e.message}` }; }
+      const likeYou = Math.round(vs.reduce((a, v) => a + cosine(v, p.vec), 0) / vs.length * 1000) / 1000;
+      if (likeYou < WORD_ENROL_MIN) return { ...base, likeYou, problem: 'That did not sound like your enrolled voice (another voice, or a lot of noise?). Try it again.' };
+      wordSession.words.set(w, vs);
+      return { ...base, accepted: true, likeYou, words: wordSession.words.size };
+    },
+
+    /** The short replies said become part of the profile (at least MIN_WORDS of them). */
+    finishWords() {
+      const s = liveWords(), rec = readRecord();
+      if (!rec || !Array.isArray(rec.mean)) return { ok: false, error: 'Enrol your voice with the phrases first.' };
+      if (!s || s.words.size < MIN_WORDS) return { ok: false, error: `Say at least ${MIN_WORDS} of the short replies first (${s ? s.words.size : 0} so far).` };
+      const list = [...s.words.entries()].sort((a, b) => a[0] - b[0])
+        .map(([i, vs]) => ({ word: ENROL_WORDS[i], clips: vs.map((v) => Array.from(v, (x) => Math.round(x * 1e5) / 1e5)) }));
+      rec.words = { at: new Date(now()).toISOString(), list };
+      writeRecord(rec);
+      wordSession = null;
+      recent.clear();
+      return { ok: true, words: list.length, clips: list.reduce((a, x) => a + x.clips.length, 0) };
+    },
+
+    /** Forget the short replies only (the phrases' profile stays). */
+    forgetWords() {
+      wordSession = null;
+      const rec = readRecord();
+      if (rec && rec.words) { delete rec.words; writeRecord(rec); recent.clear(); }
+      return { ok: true };
     },
 
     /** Forget the owner's voice (and any enrolment in progress). */
     forget() {
       try { if (existsSync(file)) unlinkSync(file); } catch { /* gone */ }
-      profile = false; session = null; recent.clear();
+      profile = false; session = null; wordSession = null; recent.clear();
       return { ok: true };
     },
   };
 }
 
 const round1 = (x) => Math.round(x * 10) / 10;
+const round2 = (x) => Math.round(x * 100) / 100;
 
 // ─── the live stream's recent audio ───
 

@@ -202,6 +202,12 @@ export const CAPABILITIES = Object.freeze([
   // carry owner (true/false/null); /api/voice/turn takes typed:true for typed
   // text and answers with speaker { owner, unrecognised }.
   'voice-speaker',
+  // Short replies (voice/speaker.js ENROL_WORDS): GET /api/voice/speaker adds
+  // shortWords { trained, words, clips, at }, wordPrompts, wordRepeats,
+  // minWords; POST /api/voice/speaker/words?word=N[&restart=1] (one reply said
+  // a few times, audio as for enrol), POST /api/voice/speaker/words/finish,
+  // DELETE /api/voice/speaker/words. With them taught, a bare "yes" is checked.
+  'voice-short-words',
   // Cru's live screen (voice/screen.js): GET /api/voice/screen -> { screen },
   // POST /api/voice/screen/close, POST /api/voice/screen/event { text } (a
   // tap on Cru's page, answered as a turn), and { type: 'screen', screen } on
@@ -215,6 +221,14 @@ export const CAPABILITIES = Object.freeze([
   // kidPauseMs, kidGames; SSE 'voice-kid', socket { type: 'kid' },
   // { type: 'game-command' }, desktop { type: 'kid-mode' }.
   'voice-kid',
+  // Cru on its own (voice/autonomy.js, jobs.js): settings away { on, allow }
+  // and awayClasses [{ id, label }]; /api/approvals items with source 'cru'
+  // (choices yes/no) answered by POST /api/voice/ask { id, choice };
+  // POST /api/voice/away/stop { everything } (stop everything);
+  // GET /api/voice/jobs -> { jobs }, SSE 'voice-jobs'; push tag 'cru-ask'.
+  // The heartbeat is a built-in ticker (id 'heartbeat', builtin: true) in
+  // /api/voice/wakeups: it can be switched off, not deleted.
+  'voice-away',
   // Voice mode in a chat: the composer's mic sends "voice input: …" (spoken
   // through /api/voice/listen), and the chat's 'voice-say' events (Claude's
   // speak tool) are said aloud by the screen in voice mode, through

@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.31 (en-US)
+
+Version code 62. Internal track. Since 1.1.3-dev.30 (code 61): Cru on its own settings and stop-everything (voice-away), Cru's approvals (source cru), built-in heartbeat ticker, short-reply voice training (voice-short-words). Server 1.21.6-dev.39.
+
+```
+<en-US>
+Cru:
+- Cru on its own: tick what Cru may do while you're away; anything else comes here to approve or decline. Stop everything pauses it all.
+- Cru's questions in approvals, with Approve and Decline.
+- The heartbeat ticker can be switched on and off, not deleted.
+- Teach short replies: say yes, no, go ahead and a few more, so a one-word answer is recognised as you.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.30 (en-US)
 
 Version code 61. Internal track. Since 1.1.3-dev.29 (code 60): Cru live screen (voice-screen), kid mode parent controls, approvals and status card (voice-kid; kid screen itself stays PC-only), Compact confirmation. Server 1.21.6-dev.37.

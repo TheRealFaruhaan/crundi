@@ -1,0 +1,17 @@
+<div class="wna a-own">
+  <div class="card"><b>Fix login</b><span class="col">In progress</span></div>
+  <div class="chat">Claude chat · working on it…</div>
+  <div class="ask"><b>Cru asks</b><div>Restart the service web?</div><span class="y">Approve</span><span class="n">Decline</span></div>
+  <style>
+    .a-own{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-own .card{position:absolute;left:110px;top:34px;width:200px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-own .col{display:block;margin-top:4px;font-size:11px;color:var(--accent)}
+    .a-own .chat{position:absolute;left:110px;top:104px;width:200px;padding:8px 12px;border-radius:10px;background:var(--bg-tertiary,rgba(255,255,255,.05));color:var(--text-secondary);opacity:0;animation:aown1 7s ease infinite}
+    .a-own .ask{position:absolute;left:330px;top:60px;width:190px;padding:10px 12px;border-radius:12px;border:1px solid var(--accent);background:var(--bg-secondary);opacity:0;animation:aown2 7s ease infinite}
+    .a-own .ask div{margin:4px 0 8px;color:var(--text-secondary)}
+    .a-own .y,.a-own .n{display:inline-block;padding:3px 9px;border-radius:6px;margin-right:6px;font-size:12px}
+    .a-own .y{background:var(--accent);color:#fff}.a-own .n{border:1px solid var(--border)}
+    @keyframes aown1{0%,12%{opacity:0;transform:translateY(6px)}24%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes aown2{0%,40%{opacity:0;transform:translateX(8px)}52%,92%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

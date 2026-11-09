@@ -41,7 +41,7 @@ import { getSettings, addDeepgramSpend, deepgramOverLimit } from './settings.js'
 import { keyterms } from './stt.js';
 import { fixNames, nameList } from './names.js';
 import { CUES } from './cues.js';
-import { createAudioRing, utteranceAudio, SHORT_MIN_SECONDS } from './speaker.js';
+import { createAudioRing, utteranceAudio, SHORT_MIN_SECONDS, WORD_MIN_SECONDS } from './speaker.js';
 
 const STREAM_URL = 'wss://api.deepgram.com/v1/listen';
 /** Deepgram closes a stream after about 10 s without audio; it asks for a KeepAlive every 3–5 s. */
@@ -289,7 +289,8 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     if (!speaker.enrolled) { out(remember({ owner: null, reason: 'no-profile' })); return; }
     const clip = ring ? utteranceAudio(ring, spans) : null;
     if (!clip) { out(remember({ owner: null, reason: 'unavailable' })); return; }
-    if (clip.seconds < SHORT_MIN_SECONDS) { out(remember({ owner: null, reason: 'short', seconds: clip.seconds })); return; }
+    // A bare "yes" is checked once the owner has taught Cru his short replies.
+    if (clip.seconds < (speaker.shortWords ? WORD_MIN_SECONDS : SHORT_MIN_SECONDS)) { out(remember({ owner: null, reason: 'short', seconds: clip.seconds })); return; }
     out(speaker.verify(clip.samples, { seconds: clip.seconds }).then(remember, () => remember({ owner: null, reason: 'unavailable' })));
   }
   const key = getSettings().deepgramKey;

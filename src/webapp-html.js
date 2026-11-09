@@ -5815,6 +5815,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
         html += '<div style="margin-top:12px;"><label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-admin"' + (s.adminMode ? ' checked' : '') + '> ' + ic('shield-alert') + ' Admin mode</label>'
           + hint('Cru can run any command on this server as the Crundi user, with no confirmation. Only your voice is obeyed.' + (s.adminCapable === false ? ' It needs Sonnet or above: choose another model first.' : '')) + '</div>';
       }
+      // Cru on its own (capability 'voice-away'): what it may do when nobody is talking to it.
+      if (s.away && Array.isArray(s.awayClasses)) {
+        html += '<div style="margin-top:12px;"><label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-away"' + (s.away.on ? ' checked' : '') + '> ' + ic('zap') + ' Cru on its own</label>'
+          + hint('When nobody is talking to it (a wake-up, the heartbeat, a job it took on), Cru may do what is ticked below without asking. Anything else comes to your phone to approve or decline. Cru can switch this off, never on.')
+          + '<div id="vs-away-list" style="margin:6px 0 0 24px;' + (s.away.on ? '' : 'opacity:0.55;') + '">'
+          + s.awayClasses.map(function (c) { return '<label style="display:flex;gap:8px;align-items:center;font-size:0.8rem;color:var(--text-primary);margin:3px 0;"><input type="checkbox" class="vs-away-c" data-id="' + escHtml(c.id) + '"' + (s.away.allow.indexOf(c.id) >= 0 ? ' checked' : '') + '> ' + escHtml(c.label) + '</label>'; }).join('')
+          + '</div><div style="display:flex;gap:8px;align-items:center;margin-top:8px;"><button type="button" class="svc-btn danger" id="vs-away-stop">' + ic('pause') + ' Stop everything</button><span id="vs-away-note" style="font-size:0.78rem;"></span></div>'
+          + hint('Switches this off, pauses every ticker and trigger Cru keeps (the heartbeat too), drops its questions and pauses its jobs.') + '</div>';
+      }
       // Spending
       html += sub('Spending');
       html += '<p style="' + st.hint + ';margin:4px 0 0;">Claude API: $' + (Number(sp.claudeUsd) || 0).toFixed(2) + ' of $' + s.monthlyLimitUsd + ', ' + (Number(sp.turns) || 0) + ' requests, restarts ' + escHtml(s.nextReset || '') + (s.limitReached ? ' (limit reached)' : '') + '. Deepgram: $' + (Number(sp.deepgramUsd) || 0).toFixed(2) + ' of $' + s.deepgramLimitUsd + ', restarts ' + escHtml(s.deepgramNextReset || '') + (s.deepgramLimitReached ? ' (limit reached)' : '') + '.</p>';
@@ -5874,6 +5883,27 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const d = await vsPost('/api/voice/reset', {}).catch(() => null);
         vsNote('vs-reset-note', d && d.ok !== false ? 'Cru starts a fresh conversation' : 'Could not reset', !(d && d.ok !== false));
       };
+      const away = document.getElementById('vs-away');
+      const awaySave = async (msg) => {
+        const allow = Array.prototype.slice.call(document.querySelectorAll('.vs-away-c')).filter(function (b) { return b.checked; }).map(function (b) { return b.dataset.id; });
+        const d = await save({ away: { on: !!(away && away.checked), allow: allow } }, msg);
+        const list = document.getElementById('vs-away-list');
+        if (list) list.style.opacity = away && away.checked ? '' : '0.55';
+        return d;
+      };
+      if (away) away.onchange = async () => {
+        const want = away.checked;
+        const d = await awaySave(want ? 'Cru may now act on its own, as ticked' : 'Cru asks before every change again');
+        if (!(d && d.ok)) away.checked = !want;
+      };
+      document.querySelectorAll('.vs-away-c').forEach(function (b) { b.onchange = function () { awaySave('Saved'); }; });
+      const awayStop = document.getElementById('vs-away-stop');
+      if (awayStop) awayStop.onclick = async () => {
+        if (!confirm('Stop everything Cru does on its own? Its tickers, triggers and jobs pause until switched on again.')) return;
+        const d = await vsPost('/api/voice/away/stop', { everything: true }).catch(() => null);
+        if (d && d.ok) { if (away) away.checked = false; const list = document.getElementById('vs-away-list'); if (list) list.style.opacity = '0.55'; vsNote('vs-away-note', 'Stopped: ' + (d.wakeupsPaused || 0) + ' wake-ups paused, ' + (d.jobsPaused || 0) + ' jobs paused'); vsLoadWakeups(); }
+        else vsNote('vs-away-note', (d && d.error) || 'Could not stop', true);
+      };
       const adm = document.getElementById('vs-admin');
       if (adm) adm.onchange = async () => {
         const want = adm.checked;
@@ -5893,7 +5923,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // The owner's voice (voice/speaker.js): enrolled here with this browser's
     // microphone, one phrase at a time (16 kHz mono WAV), each checked by the
     // server; "Only act on my voice"; forgetting it.
-    const spk = { st: null, active: false, pos: 0, results: [], rec: null, mic: null, busy: false, msg: '', bad: false, watch: null };
+    const spk = { st: null, active: false, mode: 'phrases', pos: 0, results: [], rec: null, mic: null, busy: false, msg: '', bad: false, watch: null };
     const SPK_MAX_S = 15;
     async function vsLoadSpeaker() {
       const box = document.getElementById('vs-spk-box');
@@ -5917,14 +5947,40 @@ export function getWebappHtml(botUsername, appVersion = '') {
           const when = st.enrolledAt ? new Date(st.enrolledAt) : null;
           h += '<div style="font-size:0.78rem;color:var(--text-secondary);display:flex;gap:6px;align-items:center;margin-top:4px;">' + ic('check') + 'Enrolled'
             + (when && !isNaN(when.getTime()) ? ' on ' + escHtml(when.toLocaleDateString()) : '') + ': ' + st.phrases + ' phrases, ' + st.seconds + ' s of speech</div>';
+          // Short replies (capability 'voice-short-words'; an older server: no line).
+          if (st.shortWords) h += '<div style="font-size:0.78rem;color:var(--text-secondary);display:flex;gap:6px;align-items:center;margin-top:4px;">' + ic(st.shortWords.trained ? 'check' : 'info')
+            + (st.shortWords.trained ? 'Short replies taught: ' + st.shortWords.words + ' of ' + (st.wordPrompts || []).length + ', so a bare yes or no is recognised' : 'Short replies not taught: a bare yes or no is too short to tell') + '</div>';
         } else h += say('Not enrolled yet: Cru acts on any voice. Read a few short phrases so it knows yours (about a minute).', false);
         if (st.available) {
           h += '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-spk-only"' + (st.ownerOnly ? ' checked' : '') + (st.enrolled ? '' : ' disabled') + '> Only act on my voice</label>'
             + '<p style="' + S.hint + ';margin:4px 0 0;">Anyone may still ask Cru questions; only your voice, or typing, changes anything. Admin mode always needs your voice.</p>'
             + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"><button type="button" data-spk="start" style="' + (st.enrolled ? S.subtle : S.btn) + '">' + (st.enrolled ? 'Enrol again' : 'Enrol my voice') + '</button>'
+            + (st.enrolled && st.shortWords ? '<button type="button" data-spk="words" style="' + S.subtle + '">' + (st.shortWords.trained ? 'Teach short replies again' : 'Teach short replies') + '</button>' : '')
             + (st.enrolled ? '<button type="button" data-spk="forget" style="' + S.subtle + '">Forget my voice</button>' : '') + '</div>';
         }
         el.innerHTML = h + say(spk.msg, spk.bad);
+      } else if (spk.mode === 'words') {
+        const words = st.wordPrompts || [], kept = spk.results.filter((r) => r.accepted).length, min = st.minWords || 5, times = st.wordRepeats || 3;
+        if (spk.pos < words.length) {
+          h += '<p style="' + S.label + ';margin-top:10px;">Short reply ' + (spk.pos + 1) + ' of ' + words.length + ': click Record, say it ' + times + ' times with a short pause between, then Stop</p>'
+            + '<p style="font-size:1.1rem;font-weight:600;color:var(--text-primary);margin:6px 0 10px;">' + escHtml(words[spk.pos]) + '</p>'
+            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="rec" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>' + (spk.rec ? ic('stop') + ' Stop' : ic('mic') + ' Record') + '</button>'
+            + '<div style="width:160px;height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;"><div id="vs-spk-meter" style="height:100%;width:0%;background:var(--accent);transition:width 60ms linear;"></div></div>'
+            + (!spk.rec ? '<button type="button" data-spk="skip" style="' + S.subtle + '"' + (spk.busy ? ' disabled' : '') + '>Skip</button>' : '')
+            + (kept >= min && !spk.rec ? '<button type="button" data-spk="finish" style="' + S.subtle + '">Finish now</button>' : '')
+            + '<button type="button" data-spk="cancel" style="' + S.subtle + '">' + (st.shortWords && st.shortWords.trained ? 'Cancel' : 'Not now') + '</button></div>';
+        } else if (kept >= min) {
+          h += '<p style="' + S.label + ';margin-top:10px;">All short replies said.</p><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="finish" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>Finish</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        } else {
+          h += '<p style="' + S.label + ';margin-top:10px;">At least ' + min + ' short replies are needed (' + kept + ' so far).</p><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="words" style="' + S.btn + '">Start over</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        }
+        h += spk.results.map((r) => '<div style="display:flex;gap:6px;align-items:center;font-size:0.75rem;margin-top:4px;color:' + (r.accepted ? 'var(--text-secondary)' : 'var(--red)') + ';">'
+          + ic(r.accepted ? 'check' : 'x') + escHtml(words[r.n] || '') + ': heard ' + r.sayings + ' time' + (r.sayings === 1 ? '' : 's')
+          + (r.likeYou != null ? ', ' + Math.round(r.likeYou * 100) + '% like your voice' : '') + (r.problem ? '. ' + escHtml(r.problem) : '') + '</div>').join('');
+        el.innerHTML = h + say(spk.rec ? 'Listening…' : spk.msg, !spk.rec && spk.bad);
       } else {
         const prompts = st.prompts || [], kept = spk.results.filter((r) => r.accepted).length, min = st.minPhrases || 5;
         if (spk.pos < prompts.length) {
@@ -5957,12 +6013,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (a === 'start') vsSpkStart();
         else if (a === 'rec') { if (spk.rec) vsSpkStop(); else vsSpkRecord(); }
         else if (a === 'finish') vsSpkFinish();
-        else if (a === 'cancel') vsSpkEnd('Enrolment cancelled: nothing changed.', false);
+        else if (a === 'cancel') vsSpkEnd(spk.mode === 'words' ? 'Short replies not changed.' : 'Enrolment cancelled: nothing changed.', false);
+        else if (a === 'words') vsSpkStart('words');
+        else if (a === 'skip') { spk.pos++; spk.msg = ''; spk.bad = false; vsSpkRender(); }
         else if (a === 'forget') vsSpkForget();
       };
     }
-    function vsSpkStart() {
-      Object.assign(spk, { active: true, pos: 0, results: [], rec: null, busy: false, msg: '', bad: false });
+    function vsSpkStart(mode, msg) {
+      Object.assign(spk, { active: true, mode: mode === 'words' ? 'words' : 'phrases', pos: 0, results: [], rec: null, busy: false, msg: msg || '', bad: false });
       if (spk.watch) clearInterval(spk.watch);
       // Closing Settings lets go of the microphone.
       spk.watch = setInterval(() => { if (!document.getElementById('vs-spk')) vsSpkEnd('', false); }, 1000);
@@ -6036,16 +6094,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (!r) return;
       spk.rec = null; spk.busy = true; spk.msg = 'Checking…'; spk.bad = false;
       vsSpkRender();
-      const first = !spk.results.some((x) => x.accepted);
+      const first = !spk.results.some((x) => x.accepted), words = spk.mode === 'words';
       let d = null;
       try {
-        const res = await apiFetch('/api/voice/speaker/enrol' + (first ? '?restart=1' : ''), { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: vsSpkWav(r.chunks, r.n, r.rate) });
+        const url = words ? '/api/voice/speaker/words?word=' + spk.pos + (first ? '&restart=1' : '') : '/api/voice/speaker/enrol' + (first ? '?restart=1' : '');
+        const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: vsSpkWav(r.chunks, r.n, r.rate) });
         d = await res.json();
       } catch { d = null; }
       spk.busy = false;
       if (!spk.active) return;
       if (!d || !d.ok) { spk.msg = (d && d.error) || 'Could not reach the server'; spk.bad = true; vsSpkRender(); return; }
-      spk.results.push({ n: spk.pos, accepted: !!d.accepted, seconds: d.seconds, consistency: d.consistency, problem: d.problem || '' });
+      spk.results.push({ n: spk.pos, accepted: !!d.accepted, seconds: d.seconds, consistency: d.consistency, sayings: d.sayings || 0, likeYou: d.likeYou, problem: d.problem || '' });
       if (d.accepted) { spk.pos++; spk.msg = ''; } else { spk.msg = d.problem || 'Try that one again.'; spk.bad = true; }
       vsSpkRender();
     }
@@ -6053,10 +6112,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (spk.busy) return;
       spk.busy = true; vsSpkRender();
       let d = null;
-      try { d = await vsPost('/api/voice/speaker/finish', {}); } catch { d = null; }
+      const words = spk.mode === 'words';
+      try { d = await vsPost(words ? '/api/voice/speaker/words/finish' : '/api/voice/speaker/finish', {}); } catch { d = null; }
       spk.busy = false;
       if (!d || !d.ok) { spk.msg = (d && d.error) || 'Not saved'; spk.bad = true; vsSpkRender(); return; }
       spk.st = Object.assign({}, spk.st, d);
+      if (words) { vsSpkEnd('Cru knows your short replies now.', false); return; }
+      // Then the short replies, if this server takes them (optional: Not now ends it).
+      if (spk.st.shortWords && (spk.st.wordPrompts || []).length) { vsSpkStart('words', 'Cru knows your voice now. Next, optionally: short replies, so a bare yes or no is recognised too.'); return; }
       vsSpkEnd('Cru knows your voice now.', false);
     }
     async function vsSpkForget() {
@@ -6342,7 +6405,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + '<div style="' + vwStyles.hint + '">' + escHtml(x.summary || '') + '</div>'
         + '<div style="' + vwStyles.hint + '">' + escHtml(x.purpose || '') + '</div>'
         + '<div style="' + vwStyles.hint + '">Last woke Cru: ' + escHtml(when(x.lastFiredAt)) + (x.fires ? ' (' + x.fires + ' in all)' : '') + ' · made by ' + (x.createdBy === 'owner' ? 'you' : 'Cru') + '</div></div>'
-        + '<button type="button" class="svc-btn danger" data-vs-wake="delete" data-id="' + escHtml(x.id) + '" title="Delete">' + ic('trash') + '</button></div>';
+        + (x.builtin ? '' : '<button type="button" class="svc-btn danger" data-vs-wake="delete" data-id="' + escHtml(x.id) + '" title="Delete">' + ic('trash') + '</button>') + '</div>';
       const group = (title, list, none) => '<div style="' + vwStyles.label + ';margin-top:10px;">' + title + '</div>' + (list.length ? list.map(item).join('') : '<p style="' + vwStyles.hint + ';margin:4px 0 0;">' + none + '</p>');
       const lim = r.limits || {};
       el.innerHTML = group('Tickers', r.tickers || [], 'No tickers yet. Try: Cru, wake me with a briefing at half seven on weekdays.')
@@ -10596,9 +10659,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         } else if (it.source === 'collab') {
           h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '">Approve</button>'
             + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
-        } else if (it.source === 'kid') {
-          // Kid Cru asking the parent: each answer the question offers.
-          h += (it.choices || []).map(function (c) { return '<button class="' + (c.id === 'no' ? 'no' : 'yes') + '" data-action="appr-kid" data-id="' + escHtml(it.id) + '" data-choice="' + escHtml(c.id) + '">' + escHtml(c.label) + '</button>'; }).join('');
+        } else if (it.source === 'kid' || it.source === 'cru') {
+          // Kid Cru asking the parent, or Cru asking from a wake-up: each answer the question offers.
+          h += (it.choices || []).map(function (c) { return '<button class="' + (c.id === 'no' ? 'no' : 'yes') + '" data-action="' + (it.source === 'cru' ? 'appr-cru' : 'appr-kid') + '" data-id="' + escHtml(it.id) + '" data-choice="' + escHtml(c.id) + '">' + escHtml(c.label) + '</button>'; }).join('');
         } else if (it.source === 'chat') {
           // Answered in the chat, where the full input and the always-allow
           // choice live. Duplicating that here would mean two half-answers.
@@ -16060,6 +16123,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         }
         case 'appr-yes': if (d.id) decideApproval(d.id, true); break;
+        case 'appr-cru': if (d.id) vsPost('/api/voice/ask', { id: d.id, choice: d.choice || 'no' }).then(function (r) { if (!(r && r.ok)) toast((r && r.error) || 'That could not be applied', 'error'); }).catch(function () { toast('That could not be applied', 'error'); }); break;
         case 'appr-kid': if (d.id) vsPost('/api/voice/kid/ask', { id: d.id, choice: d.choice || 'no' }).then(function (r) { if (!(r && r.ok)) toast((r && r.error) || 'That could not be applied', 'error'); }).catch(function () { toast('That could not be applied', 'error'); }); break;
         case 'appr-yes-session': if (d.id) decideApproval(d.id, true, 'session'); break;
         case 'appr-yes-always': if (d.id) decideApproval(d.id, true, 'always'); break;

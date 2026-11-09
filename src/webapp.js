@@ -110,6 +110,8 @@ import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
 import { selfNote as voiceSelfNote, capCheck as voiceCapCheck, ROUTINES_DIR as VOICE_ROUTINES_DIR } from './voice/reflect.js';
 import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, trimSilence as trimVoiceSilence } from './voice/speaker.js';
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
+import { createOwnerAsks, createDailyLog, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
+import { createJobStore, jobToolDefs } from './voice/jobs.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
@@ -2461,7 +2463,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Kid Cru asking the parent (capability 'voice-kid'): answered with POST /api/voice/kid/ask.
     let kidItems = [];
     try { kidItems = kidAsks.pending().map((a) => ({ id: a.id, source: 'kid', kind: a.kind, title: a.title, detail: a.why || '', choices: a.choices, createdAt: a.createdAt })); } catch { kidItems = []; }
-    const items = [...secrets, ...chat, ...collab, ...kidItems].sort((a, b) => a.createdAt - b.createdAt);
+    // Cru asking from an unattended turn (capability 'voice-away'): answered with POST /api/voice/ask.
+    let cruItems = [];
+    try { cruItems = cruAsks.pending().map((a) => ({ id: a.id, source: 'cru', kind: a.tool, title: a.title, detail: a.detail || '', choices: a.choices, createdAt: a.createdAt })); } catch { cruItems = []; }
+    const items = [...secrets, ...chat, ...collab, ...kidItems, ...cruItems].sort((a, b) => a.createdAt - b.createdAt);
     return { items, count: items.length };
   }
   const dismissedChatCards = new Set();
@@ -2790,7 +2795,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // same gate: a locked phone waits for an unlock; anything that needs the owner's
   // yes is parked until their next message.
   const voicePending = createVoicePending();
-  const voiceCtx = { pending: voicePending, locked: () => false, unrecognised: () => false };
+  const voiceCtx = { pending: voicePending, locked: () => false, unrecognised: () => false, unattended: () => false, away: () => voiceSettings.getSettings().away || null };
   // Chats Cru reports on: those it set going (one turn), and those the owner
   // asked it to follow (every turn). chat id -> { title, project, follow, told: Set of pending ids }
   const voiceWatches = new Map();
@@ -2875,16 +2880,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
   // A watched chat, only when it finishes its turn or needs the owner, never
   // at every step, so Cru doesn't chatter.
-  async function voiceReport(id, w, what, { needsOwner = false } = {}) {
+  async function voiceReport(id, w, what, { needsOwner = false, tries = 0 } = {}) {
     const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
     const last = lastSaidBy(id);
     const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
-    return cruDeliver({
-      note: `${name} ${what}.${last ? ` Its last message: "${last}"` : ''}`,
+    // One of Cru's jobs: what to do with it (jobs.js).
+    const job = cruJobs.forChat(id);
+    const jobLine = job ? ` This chat is your job ${job.id} on the card "${job.title}" (${job.project}): check what it did (read_chat if you need more than its last message). More to do: send_to_chat the next step. Finished and checked: finish_job done. Blocked on the owner: finish_job stuck and tell him what is needed. Say nothing to him for an ordinary step.` : '';
+    // A job's ordinary turn is Cru's to handle (a wake-up: it may stay quiet);
+    // one waiting on the owner is still told to him.
+    const asWake = !!job && !needsOwner;
+    const r = await cruDeliver({
+      note: `${name} ${what}.${last ? ` Its last message: "${last}"` : ''}${jobLine}`,
+      ...(asWake ? { wake: true } : {}),
       line: `${(w.title || 'The chat')} in ${w.project} ${what}.`, detail: last,
       chatId: id, project: w.project || '', chatTitle: (term && (term.longTitle || term.title)) || w.title || '',
       needsOwner, tag: `voice-watch-${id}`, url: `/chat/${id}`,
     });
+    // Cru was busy talking: a job's step is not lost, it is tried again shortly.
+    if (asWake && r && r.busy && tries < 6) setTimeout(() => { voiceReport(id, w, what, { needsOwner, tries: tries + 1 }).catch(() => {}); }, 20000).unref?.();
+    return r;
   }
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
     const w = voiceWatches.get(id);
@@ -2908,9 +2923,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Cru's own tickers and triggers (voice/wakeups.js): built-in, read-only
   // reasons to wake Cru, each off until switched on. A wake-up asks Cru, who
   // may stay quiet, say something (cruDeliver) or alert the owner.
-  const wakeStore = createWakeupStore({ file: join(config.dataDir, 'voice-wakeups.json'), onChange: () => broadcastSSE('voice-wakeups', {}) });
+  const wakeStore = createWakeupStore({
+    file: join(config.dataDir, 'voice-wakeups.json'), onChange: () => broadcastSSE('voice-wakeups', {}),
+    // The heartbeat (autonomy.js): Cru's regular look round, off until switched on.
+    builtins: [{ id: HEARTBEAT_ID, name: 'Heartbeat', every: 30, from: '08:00', to: '22:00', purpose: `Your regular look round: go through your checklist (${HEARTBEAT_FILE}), your jobs and what is waiting; act where you may, and say nothing unless something needs the owner.` }],
+  });
   const wakeEngine = createWakeupEngine({
     store: wakeStore,
+    prepare: (item) => (item.id === HEARTBEAT_ID ? heartbeatNote() : ''),
     overLimit: () => voiceAgent.which === 'api' && voiceSettings.overLimit(),
     report: async (note, item) => {
       const r = await cruDeliver({ note, wake: true, tag: `voice-wake-${item.id}`, url: '/' });
@@ -2967,6 +2987,92 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       wakeEngine.sample(sample);
     } catch (err) { console.warn('[voice] wake-up check failed:', err.message); }
   }, 30 * 1000).unref();
+  // ─── Cru on its own (voice/autonomy.js, jobs.js) ───
+  // The day's log (/memories/log/YYYY-MM-DD.md): what Cru did by itself.
+  const cruLog = createDailyLog({ read: (p) => voiceMemory.notebook.read(p), save: (p, t) => voiceMemory.notebook.save(p, t), list: () => voiceMemory.notebook.list() });
+  const cruJobs = createJobStore({ file: join(config.dataDir, 'voice-jobs.json'), onChange: () => broadcastSSE('voice-jobs', {}) });
+  // Questions from an unattended turn: Approve / Decline on every device.
+  const cruAsks = createOwnerAsks({
+    onAsk: (a) => {
+      broadcastApprovals();
+      mobilePush.send(a.title, { title: 'Cru asks', url: '/', tag: 'cru-ask' }).catch(() => {});
+    },
+    onDone: async (a, choice) => {
+      broadcastApprovals();
+      let note;
+      if (choice === 'yes') {
+        let r;
+        try { r = await a.run(); } catch (e) { r = { ok: false, error: e.message }; }
+        cruLog.add(`Owner approved: ${a.title} -> ${r && r.ok === false ? 'failed: ' + (r.error || '') : 'done'}`);
+        note = `[The owner approved on his phone: "${a.title}"] It was carried out. Result: ${JSON.stringify(r || {}).slice(0, 600)}. Carry on with what it was for; say something only if he needs to know.`;
+      } else {
+        cruLog.add(`Owner ${choice === 'no' ? 'declined' : 'did not answer'}: ${a.title}`);
+        note = `[The owner ${choice === 'no' ? 'declined' : 'did not answer, in 12 hours,'} on his phone: "${a.title}"] Nothing was done. Don't ask again for the same thing; leave it, or mention it when he is next talking to you.`;
+      }
+      setTimeout(() => { cruDeliver({ note, wake: true, tag: 'cru-ask-done', url: '/' }).catch(() => {}); }, 300);
+    },
+  });
+  setInterval(() => cruAsks.expire(), 60 * 1000).unref();
+  /** Switch Cru on its own off; everything: also pause the wake-ups, drop the asks, pause the jobs. */
+  function cruAwayOff({ everything = false } = {}) {
+    const was = voiceSettings.getSettings().away || {};
+    voiceSettings.updateSettings({ away: { ...was, on: false } });
+    let paused = 0, dropped = 0, jobs = 0;
+    if (everything) {
+      for (const x of wakeStore.enabled()) { try { wakeStore.setEnabled(x.id, false); paused++; } catch { /* gone */ } }
+      dropped = cruAsks.clear();
+      jobs = cruJobs.pauseAll();
+      broadcastApprovals();
+    }
+    cruLog.add(everything ? `Stopped everything: on-my-own off, ${paused} wake-ups paused, ${dropped} questions dropped, ${jobs} jobs paused` : 'On-my-own switched off');
+    for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } }
+    broadcastSSE('voice-settings', {});
+    return { ok: true, away: false, ...(everything ? { wakeupsPaused: paused, questionsDropped: dropped, jobsPaused: jobs } : {}) };
+  }
+  // A routine of Cru's as a Claude skill (share_routine).
+  function cruRoutineText(name) {
+    const n = String(name || '').replace(/\.md$/, '').replace(/[^A-Za-z0-9._-]/g, '');
+    return n ? voiceMemory.notebook.read(`/memories/routines/${n}.md`) : '';
+  }
+  function cruShareRoutine(name, alias = '') {
+    const text = cruRoutineText(name);
+    if (!text) return { ok: false, error: `No routine called "${name}"` };
+    const n = ('cru-' + skills.slug(String(name).replace(/\.md$/, ''))).slice(0, 60);
+    const scope = alias || 'global';
+    const first = text.split('\n').map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean) || n;
+    const content = `---\nname: ${n}\ndescription: ${JSON.stringify(('Cru\'s routine: ' + first).slice(0, 300))}\n---\n\n${text.trim()}\n`;
+    const have = skills.get(scope, n);
+    if (!have || have.ok === false) { const c = skills.create(scope, { name: n, description: first.slice(0, 300) }); if (!c.ok) return c; }
+    const w = skills.writeFile(scope, n, 'SKILL.md', { content });
+    if (w && w.ok === false) return w;
+    cruLog.add(`Shared the routine "${name}" as the skill ${n} (${alias || 'every project'})`);
+    return { ok: true, skill: n, where: alias || 'every project' };
+  }
+  // The heartbeat: a built-in ticker that reads Cru's checklist; an empty one skips the call.
+  function heartbeatNote() {
+    const list = voiceMemory.notebook.read(HEARTBEAT_FILE);
+    const open = cruJobs.list();
+    if (checklistEmpty(list) && !open.length) return null;
+    const chats = new Map((claudeUi ? claudeUi.list() : []).map((c) => [c.id, c]));
+    const jobs = open.map((j) => { const c = chats.get(j.chatId); const last = (j.notes || []).slice(-1)[0]; return `- ${j.id} "${j.title}" (${j.project}), ${j.status}, ${Math.round((Date.now() - j.startedAt) / 60000)} min, chat ${c ? (c.status || 'open') : 'gone'}${last ? `; last note: ${last.text}` : ''}`; }).join('\n');
+    const asks = cruAsks.pending().map((a) => `- ${a.title}`).join('\n');
+    const log = cruLog.tail(10);
+    return `\n[Your checklist, ${HEARTBEAT_FILE}:\n${String(list || '(empty)').trim().slice(0, 2500)}]${jobs ? `\n[Your open jobs:\n${jobs}]` : ''}${asks ? `\n[Waiting on the owner's phone:\n${asks}]` : ''}${log ? `\n[Today so far (/memories/log):\n${log}]` : ''}\nGo through the checklist now, quickly, with the fewest lookups that answer it. Act where you may; say nothing at all if nothing needs him. Keep the checklist current: add what he asks you to keep an eye on, drop what is over.`;
+  }
+  // Routine nudges (after Hermes): a turn that took many steps, or found the
+  // way past a failure, may be worth keeping as a routine.
+  const cruSteps = { n: 0, failed: false, recovered: false, nudge: '' };
+  function cruStepDone(name, out) {
+    if (['memory', 'memory_search', 'list_wakeups', 'close_voice', 'cancel_action'].includes(name)) return;
+    cruSteps.n++;
+    const bad = !out || out.ok === false || !!out.error;
+    if (bad) cruSteps.failed = true; else if (cruSteps.failed) cruSteps.recovered = true;
+  }
+  function cruTurnBegins() {
+    const { n, recovered } = cruSteps;
+    cruSteps.nudge = n >= 5 || recovered ? `[Your last turn took ${n} steps${recovered ? ', and found the way past a failure' : ''}. If it is something he may ask for again, save it as a routine in /memories/routines/ in this same turn (or patch the routine you followed where it fell short): when to use it, then the steps. Skip it if it was a one-off.]` : '';
+    cruSteps.n = 0; cruSteps.failed = false; cruSteps.recovered = false;
+  }
   const voiceActions = makeVoiceActionTools({
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
@@ -2997,6 +3103,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     services: () => getAllServiceStatus().map(sv => ({ key: sv.key, name: sv.name })),
     voiceSettings,
     wakeupDefs: wakeDefs,
+    jobDefs: jobToolDefs({
+      jobs: cruJobs, kanban,
+      project: (alias) => { const p = allProjects().find(x => x.alias === String(alias || '').toLowerCase()); if (!p) throw new Error(`No project called "${alias}". Use list_projects.`); return p; },
+      createChat: (alias, opts) => claudeUi.create(alias, opts),
+      sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
+      watch: (id, title, project, { follow = false } = {}) => { const was = voiceWatches.get(id); voiceWatches.set(id, { title: title || was?.title || '', project, follow, told: was?.told || new Set() }); },
+      unwatch: (id) => voiceWatches.delete(id),
+      chats: () => (claudeUi ? claudeUi.list() : []),
+      log: (line) => cruLog.add(line),
+    }),
+    serviceOp: (key, op) => (op === 'start' ? startService(key) : op === 'stop' ? stopService(key) : restartService(key)),
+    routineText: cruRoutineText,
+    shareRoutine: cruShareRoutine,
+    awayOff: cruAwayOff,
+    askOwner: (q) => cruAsks.ask(q),
+    onAwayAct: (tool, input) => cruLog.add(`On my own: ${tool.replace(/_/g, ' ')} ${JSON.stringify(input).slice(0, 160)}`),
     broadcast: (tool, input = {}) => {
       if (/kanban/.test(tool)) broadcastKanban(input.project);
       else if (/note/.test(tool)) broadcastNotes(input.project, {});
@@ -3145,6 +3267,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // One memory (Phase 2): the conversation on disk, the notebook, search.
   // Kid mode makes the parent's instructions read only.
   const voiceMemory = createVoiceMemory({ dataDir: config.dataDir, guard: (p) => (kidOn() && !kidServerWrite && p === KID_FILE ? 'Kid mode is on: the parent instructions (kid-mode.md) are read only until it is switched off.' : '') });
+  // The heartbeat's checklist, written once; Cru and the owner keep it after that.
+  try { if (!voiceMemory.notebook.read(HEARTBEAT_FILE) && !existsSync(join(config.dataDir, 'voice-memory', '.heartbeat-seeded'))) { voiceMemory.notebook.save(HEARTBEAT_FILE, HEARTBEAT_DEFAULT); writeFileSync(join(config.dataDir, 'voice-memory', '.heartbeat-seeded'), ''); } } catch (err) { console.warn('[voice] could not write the heartbeat checklist:', err.message); }
   // Kid Cru asking the parent (ask_parent): an approval on every signed-in device and the phone.
   const kidAsks = createParentAsks({
     onAsk: (a) => {
@@ -3191,11 +3315,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     } catch (e) { console.warn('[voice] could not add the approved channel:', e.message); }
   }
   const voiceBrainOpts = {
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), kidStartTool, kidProgressTool],
-    beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voicePending.newTurn(); },
-    turnNote: kidNews,
+    // Each step is counted for the routine nudge (cruStepDone).
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), kidStartTool, kidProgressTool]
+      .map((t) => ({ ...t, run: async (i) => { let out; try { out = await t.run(i); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
+    beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
+    turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
     // Cru speaking up by itself: nobody spoke, so with a voice enrolled no admin powers.
-    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceTurnOwner = false; voiceOwnerVerdict = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, typed: false, verdict: null }).admin; },
+    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceCtx.unattended = () => true; cruTurnBegins(); voiceTurnOwner = false; voiceOwnerVerdict = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, typed: false, verdict: null }).admin; },
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
     persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
@@ -4988,8 +5114,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         ownerOnly: typeof body.ownerOnly === 'boolean' ? body.ownerOnly : undefined,
         kidVoice: body.kidVoice, kidSpeechRate: body.kidSpeechRate, kidGames: body.kidGames, kidChattiness: body.kidChattiness, kidPauseMs: body.kidPauseMs,
         kidReflex: typeof body.kidReflex === 'boolean' ? body.kidReflex : undefined,
+        away: body.away && typeof body.away === 'object' ? body.away : undefined,
       });
+      if (r.ok && body.away && typeof body.away === 'object') { cruLog.add(`Owner set on-my-own ${voiceSettings.getSettings().away.on ? 'on: ' + voiceSettings.getSettings().away.allow.join(', ') : 'off'}`); broadcastSSE('voice-settings', {}); }
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
+    }
+    // ─── Cru on its own (capability 'voice-away') ───
+    if (path === '/api/voice/ask' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const a = cruAsks.answer(String(body.id || ''), String(body.choice || ''));
+      return json(res, a ? { ok: true } : { ok: false, error: 'That question is no longer waiting' }, a ? 200 : 404);
+    }
+    if (path === '/api/voice/away/stop' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      return json(res, { ...cruAwayOff({ everything: body.everything !== false }), ...voiceSettings.publicSettings() });
+    }
+    if (path === '/api/voice/jobs' && req.method === 'GET') {
+      const chats = new Map((claudeUi ? claudeUi.list() : []).map((c) => [c.id, c]));
+      return json(res, { ok: true, jobs: cruJobs.list(true).map((j) => ({ ...j, chatOpen: chats.has(j.chatId) })) });
     }
     // ─── Cru's live screen (capability 'voice-screen') ───
     if (path === '/api/voice/screen' && req.method === 'GET') return json(res, { ok: true, screen: voiceScreen.get() });
@@ -5176,6 +5320,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (samples.length > 16000 * 20) return json(res, { ok: false, error: 'One phrase at a time: 20 seconds at most' }, 400);
       const r = await voiceSpeaker.enrolPhrase(samples, { restart: url.searchParams.get('restart') === '1' });
       return json(res, r, r.ok ? 200 : 503);
+    }
+    // Short replies (capability 'voice-short-words'): one at a time, each said a few times.
+    if (path === '/api/voice/speaker/words' && req.method === 'POST') {
+      let audio;
+      try { audio = await readBodyBuffer(req, 4 * 1024 * 1024); } catch { return json(res, { ok: false, error: 'Recording too large (4 MB at most)' }, 413); }
+      let samples;
+      try { samples = decodeVoiceAudio(audio, String(req.headers['content-type'] || '')); } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      if (samples.length > 16000 * 20) return json(res, { ok: false, error: 'One reply at a time: 20 seconds at most' }, 400);
+      const r = await voiceSpeaker.enrolWord(samples, { word: url.searchParams.get('word'), restart: url.searchParams.get('restart') === '1' });
+      return json(res, r, r.ok ? 200 : (/first|such/.test(r.error || '') ? 400 : 503));
+    }
+    if (path === '/api/voice/speaker/words/finish' && req.method === 'POST') {
+      const r = voiceSpeaker.finishWords();
+      return json(res, r.ok ? { ...r, ...(await voiceSpeaker.status()), ok: true } : r, r.ok ? 200 : 400);
+    }
+    if (path === '/api/voice/speaker/words' && req.method === 'DELETE') {
+      return json(res, { ...voiceSpeaker.forgetWords(), ...(await voiceSpeaker.status()) });
     }
     if (path === '/api/voice/speaker/finish' && req.method === 'POST') {
       const r = voiceSpeaker.finish();
@@ -5553,6 +5714,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           const src = String((it && it.source) || '');
           if (src === 'chat') { dismissedChatCards.add(id); done++; continue; }
           if (src === 'kid') { if (kidAsks.answer(id, 'no')) done++; continue; }
+          if (src === 'cru') { if (cruAsks.answer(id, 'no')) done++; continue; }
           if (src === 'secret') {
             const entry = pendingSecretRequests.get(id);
             if (entry) { entry.reject('The owner dismissed this secret access request.'); done++; }

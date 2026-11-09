@@ -32,6 +32,27 @@ class EnrolmentTest {
         assertEquals(3, u.results.size)
     }
 
+    @Test fun shortRepliesAreTaughtOneByOneAndMaySkip() {
+        val ws = st.copy(minWords = 2, wordPrompts = listOf("Yes", "No", "Stop"), shortWords = mv.obitech.crundi.api.ShortWords())
+        assertFalse(Enrolment.offerWords(SpeakerUi(status = ws)))
+        assertFalse(Enrolment.offerWords(SpeakerUi(status = st, wordsOk = true)))
+        var u = Enrolment.startWords(SpeakerUi(status = ws, wordsOk = true), "next")
+        assertTrue(Enrolment.offerWords(u))
+        assertTrue(u.active && u.words)
+        assertEquals("next", u.msg)
+        assertTrue(Enrolment.restart(u))
+        u = Enrolment.after(u, EnrolReply(ok = true, accepted = true, seconds = 1.2, sayings = 3, likeYou = 0.6))
+        assertEquals(1, u.pos)
+        assertEquals(3, u.results[0].sayings)
+        assertFalse(Enrolment.canFinish(u))
+        u = Enrolment.skip(u)
+        assertEquals(2, u.pos)
+        u = Enrolment.after(u, EnrolReply(ok = true, accepted = true, seconds = 1.0, sayings = 3))
+        assertTrue(Enrolment.canFinish(u))
+        // Back to the phrases: their own rule again.
+        assertFalse(Enrolment.start(u).words)
+    }
+
     @Test fun aFailedCheckSaysWhyAndKeepsThePhrase() {
         val u = Enrolment.after(Enrolment.start(SpeakerUi(status = st)).copy(busy = true), EnrolReply(ok = false, error = "The voice check is not available"))
         assertEquals(0, u.pos)

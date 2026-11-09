@@ -268,6 +268,29 @@ class VoiceApiTest {
         assertEquals(VoiceApi.SPEAKER_UNSUPPORTED, CrundiClient(FakeTransport()).voice.enrolPhrase(ByteArray(2), 16000, false).error)
     }
 
+    @Test fun shortRepliesStatusEnrolAndFinish() = runBlocking {
+        val status = """{"ok":true,"available":true,"enrolled":true,"phrases":6,"shortWords":{"trained":true,"words":6,"clips":18,"at":"2026-11-09T10:00:00.000Z"},"wordPrompts":["Yes","No"],"wordRepeats":3,"minWords":5,"prompts":[]}"""
+        val t = FakeTransport().on("GET /api/voice/speaker", status)
+            .on("POST /api/voice/speaker/words", """{"ok":true,"accepted":true,"word":1,"sayings":3,"seconds":1.3,"each":[0.4,0.5,0.4],"likeYou":0.61,"words":2}""")
+            .on("POST /api/voice/speaker/words/finish", status)
+        val c = CrundiClient(t).voice
+        val s = c.speaker()!!
+        assertTrue(s.shortWords!!.trained)
+        assertEquals(18, s.shortWords!!.clips)
+        assertEquals(listOf("Yes", "No"), s.wordPrompts)
+        val r = c.enrolWord(ByteArray(3200), 16000, 1, restart = true)
+        assertTrue(r.accepted)
+        assertEquals(3, r.sayings)
+        assertEquals(0.61, r.likeYou!!, 1e-9)
+        val req = t.requests.last()
+        assertEquals("1", req.query["word"])
+        assertEquals("1", req.query["restart"])
+        assertTrue(c.finishWords().shortWords!!.trained)
+        // An older server: no shortWords, and the call says it is not supported.
+        assertEquals(null, CrundiJson.decodeFromString(SpeakerStatus.serializer(), """{"ok":true,"enrolled":true}""").shortWords)
+        assertEquals(VoiceApi.SPEAKER_UNSUPPORTED, CrundiClient(FakeTransport()).voice.enrolWord(ByteArray(2), 16000, 0, false).error)
+    }
+
     @Test fun aTurnSaysWhenTheVoiceWasNotRecognised() = runBlocking {
         val r = CrundiClient(FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"I can't do that.","speaker":{"owner":false,"unrecognised":true}}""")).voice.turn("delete it", "Cru", false)
         assertEquals(false, r.speaker?.owner)

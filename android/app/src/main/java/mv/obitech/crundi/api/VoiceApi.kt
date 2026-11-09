@@ -26,6 +26,26 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes, "volume" to volume, "adminMode" to adminMode, "ownerOnly" to ownerOnly)), null)
 
     /**
+     * Cru on its own (capability "voice-away"): whether Cru may act without
+     * asking when nobody is talking to it, and which classes ([VoiceSettings.awayClasses] ids).
+     */
+    suspend fun saveAway(on: Boolean, allow: List<String>): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("away" to mapOf("on" to on, "allow" to allow))), null)
+
+    /**
+     * Stop everything Cru does on its own (capability "voice-away"): away off,
+     * every ticker and trigger paused, its questions dropped, its jobs paused.
+     */
+    suspend fun stopAway(): AwayStopped {
+        val o = rpc.post("/api/voice/away/stop", mapOf("everything" to true))
+        fun n(k: String) = (o[k] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()?.toInt() ?: 0
+        return AwayStopped(n("wakeupsPaused"), n("questionsDropped"), n("jobsPaused"), runCatching { CrundiJson.decodeFromJsonElement(VoiceSettings.serializer(), o) }.getOrNull())
+    }
+
+    /** Answer one of Cru's questions (an approval with source "cru"): [choice] "yes" or "no". */
+    suspend fun ask(id: String, choice: String) { rpc.post("/api/voice/ask", mapOf("id" to id, "choice" to choice)) }
+
+    /**
      * Kid mode's settings (capability "voice-kid"); null leaves one as it is.
      * [kidVoice] "" is Cru's own voice. The server refuses any change while kid mode is on (423).
      */
@@ -168,6 +188,24 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         return CrundiJson.decodeFromJsonElement(EnrolReply.serializer(), obj)
     }
 
+    /**
+     * One short reply (capability "voice-short-words"): [word] is its index in
+     * [SpeakerStatus.wordPrompts], said [SpeakerStatus.wordRepeats] times in
+     * [pcm] (16-bit little-endian mono at [rate]). [restart]: the first of a fresh round.
+     */
+    suspend fun enrolWord(pcm: ByteArray, rate: Int, word: Int, restart: Boolean): EnrolReply {
+        val up = Upload("audio/L16;rate=$rate", pcm.size.toLong(), { out, count -> out.write(pcm); count(pcm.size.toLong()) }, pcm.size.toLong())
+        val q = if (restart) mapOf("word" to word.toString(), "restart" to "1") else mapOf("word" to word.toString())
+        val r = transport.exchange(ApiRequest("POST", "/api/voice/speaker/words", query = q, upload = up, slow = true))
+        if (r.status == 404) return EnrolReply(ok = false, error = SPEAKER_UNSUPPORTED)
+        val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()
+            ?: return EnrolReply(ok = false, error = OkHttpTransport.defaultMessage(r.status, r.text))
+        return CrundiJson.decodeFromJsonElement(EnrolReply.serializer(), obj)
+    }
+
+    /** The short replies said become part of the owner's voice (at least [SpeakerStatus.minWords]). */
+    suspend fun finishWords(): SpeakerStatus = rpc.read(rpc.post("/api/voice/speaker/words/finish"), null)
+
     /** The phrases read become the owner's voice profile (at least [SpeakerStatus.minPhrases]). */
     suspend fun finishEnrol(): SpeakerStatus = rpc.read(rpc.post("/api/voice/speaker/finish"), null)
 
@@ -282,8 +320,12 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val WAKEUPS = "voice-wakeups"
         /** The owner's voice: GET/DELETE /api/voice/speaker, enrol, finish; ownerOnly; utterances' owner. */
         const val SPEAKER = "voice-speaker"
+        /** Short replies: POST /api/voice/speaker/words?word=N, /words/finish; status shortWords, wordPrompts. */
+        const val SHORT_WORDS = "voice-short-words"
         /** GET /api/voice/unread, POST /api/voice/seen, the 'voice-unread' event, cruChat pushes. */
         const val UNREAD = "voice-unread"
+        /** Cru on its own: settings.away/awayClasses, POST /api/voice/away/stop, POST /api/voice/ask, approvals with source "cru", built-in tickers. */
+        const val AWAY = "voice-away"
         const val SPEAKER_UNSUPPORTED = "Not supported by this server: update it to teach Cru your voice."
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
@@ -365,6 +407,10 @@ data class VoiceSettings(
     val adminMode: Boolean = false,
     /** The model can hold admin mode (Sonnet or above). Null from an older server, which has no admin mode: the switch is not shown. */
     val adminCapable: Boolean? = null,
+    /** Cru on its own (capability "voice-away"). Null from an older server: the section is not shown. */
+    val away: VoiceAway? = null,
+    /** What may be ticked under [away] (chats, kanban, notes, services, jobs). */
+    val awayClasses: List<AwayClass> = emptyList(),
     // ─── Kid mode (capability "voice-kid"); an older server has none of these ───
     /** Kid Cru's voice (a Flux voice), or "" for Cru's own. Null from an older server. */
     val kidVoice: String? = null,
@@ -377,6 +423,16 @@ data class VoiceSettings(
     /** Improve games overnight. */
     val kidGames: KidGamesSettings? = null,
 )
+
+/** Cru on its own: switched [on], and the [AwayClass] ids it may do without asking. */
+@Serializable
+data class VoiceAway(val on: Boolean = false, val allow: List<String> = emptyList())
+
+@Serializable
+data class AwayClass(val id: String = "", val label: String = "")
+
+/** POST /api/voice/away/stop: how much was paused or dropped, and the settings as they are now (null if not readable). */
+data class AwayStopped(val wakeupsPaused: Int = 0, val questionsDropped: Int = 0, val jobsPaused: Int = 0, val settings: VoiceSettings? = null)
 
 /** "Improve games overnight": on a night after kid mode was used, between [from] and [to] (HH:MM). */
 @Serializable
@@ -455,7 +511,17 @@ data class SpeakerStatus(
     val prompts: List<String> = emptyList(),
     /** "Only act on my voice". */
     val ownerOnly: Boolean = true,
+    /** Short replies taught (capability "voice-short-words"); null from an older server. */
+    val shortWords: ShortWords? = null,
+    /** The short replies to say, each [wordRepeats] times; at least [minWords] of them. */
+    val wordPrompts: List<String> = emptyList(),
+    val wordRepeats: Int = 3,
+    val minWords: Int = 5,
 )
+
+/** Whether the owner's short replies ("yes", "no"…) are taught, so a bare one is recognised. */
+@Serializable
+data class ShortWords(val trained: Boolean = false, val words: Int = 0, val clips: Int = 0, val at: String? = null)
 
 /** POST /api/voice/speaker/enrol: the phrase [accepted], or the [problem] with it; [error] when it could not be checked. */
 @Serializable
@@ -466,6 +532,9 @@ data class EnrolReply(
     /** How like the earlier phrases, 0..1; null for the first. */
     val consistency: Double? = null,
     val phrases: Int = 0,
+    /** A short reply: how many times it was heard, and how like the enrolled voice (0..1). */
+    val sayings: Int = 0,
+    val likeYou: Double? = null,
     val problem: String = "",
     val error: String = "",
 )
@@ -497,6 +566,8 @@ data class WakeItem(
     val lastFiredAt: Long = 0,
     val fires: Int = 0,
     val summary: String = "",
+    /** Built in (the heartbeat, capability "voice-away"): can be switched off, never deleted. */
+    val builtin: Boolean = false,
 )
 
 @Serializable

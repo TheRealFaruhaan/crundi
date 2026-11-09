@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+/**
+ * test-voice-away.mjs — Cru on its own: what runs unattended, what goes to the
+ * owner's phone, the heartbeat skipping an empty checklist, jobs, the log.
+ * Run: node scripts/test-voice-away.mjs
+ */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+const dir = mkdtempSync(join(tmpdir(), 'cru-away-'));
+process.env.DATA_DIR = dir;
+const settings = await import('../src/voice/settings.js');
+const A = await import('../src/voice/autonomy.js');
+const { makeActionTools, createPending } = await import('../src/voice/actions.js');
+const { createWakeupStore, createWakeupEngine } = await import('../src/voice/wakeups.js');
+const { createJobStore, jobToolDefs, jobPrompt } = await import('../src/voice/jobs.js');
+const { createNotebook } = await import('../src/voice/notebook.js');
+
+let failed = 0;
+const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
+
+// ─── the rules ───
+ok(settings.publicSettings().away.on === false, 'starts off');
+ok(!A.awayAllows('move_kanban_task', { status: 'done' }, { on: false, allow: ['kanban'] }), 'off: nothing runs unattended');
+ok(A.awayAllows('move_kanban_task', { status: 'done' }, { on: true, allow: ['kanban'] }), 'on + ticked: a card move runs');
+ok(!A.awayAllows('move_kanban_task', { status: 'todo' }, { on: true, allow: ['kanban'] }), 'a card to To do is always asked');
+ok(!A.awayAllows('start_chat', { mode: 'bypass' }, { on: true, allow: ['chats'] }), 'a bypass chat is always asked');
+ok(!A.awayAllows('service_control', { op: 'stop' }, { on: true, allow: ['services'] }), 'stopping a service is always asked');
+ok(A.awayAllows('service_control', { op: 'restart' }, { on: true, allow: ['services'] }), 'restarting one runs when ticked');
+ok(!A.awayAllows('create_project', {}, { on: true, allow: A.AWAY_CLASS_IDS }), 'what is in no class is always asked');
+ok(A.awayAllows('watch_chat', {}, { on: false }), 'following a chat is always fine');
+ok(settings.updateSettings({ away: { on: true, allow: ['kanban', 'nonsense'] } }).ok && JSON.stringify(settings.publicSettings().away) === JSON.stringify({ on: true, allow: ['kanban'] }), 'the setting is cleaned');
+
+// ─── the gate ───
+const moved = [];
+const asked = [];
+const ctx = { pending: createPending(), locked: () => false, unrecognised: () => false, unattended: () => true, away: () => settings.getSettings().away };
+const deps = {
+  listProjects: () => [{ alias: 'p' }], chats: () => [], projectsDir: () => '',
+  kanban: { moveTask: (...a) => { moved.push(a); return { ok: true }; }, getTask: () => ({ task: { title: 'Card', status: 'backlog', todos: [] } }), addTask: () => ({ ok: true }) },
+  services: () => [{ key: 'web', name: 'Web' }], serviceOp: (k, op) => ({ ok: true, k, op }),
+  askOwner: (q) => { asked.push(q); return { ok: true, id: 'cru-1' }; },
+  awayOff: () => ({ ok: true }),
+};
+const tools = makeActionTools(deps, ctx);
+const t = (n) => tools.find((x) => x.name === n);
+let r = await t('move_kanban_task').run({ project: 'p', taskId: 'x', status: 'done' });
+ok(moved.length === 1 && r.ok !== false, 'unattended, ticked: runs without a yes');
+r = await t('move_kanban_task').run({ project: 'p', taskId: 'x', status: 'todo' });
+ok(moved.length === 1 && r.askedOwner && asked.length === 1, 'unattended, To do: the owner is asked on his phone, nothing done');
+r = await t('service_control').run({ service: 'web', op: 'restart', intent: 'explicit' });
+ok(r.askedOwner && asked.length === 2, 'unattended, services not ticked: asked');
+const ran = await asked[1].run();
+ok(ran.ok && ran.op === 'restart', 'the approved action runs server-side');
+r = await t('confirm_action').run({ id: 'a1' });
+ok(r.done === false && /Nobody has spoken/.test(r.error), 'confirm_action never works unattended');
+ctx.unattended = () => false;
+r = await t('move_kanban_task').run({ project: 'p', taskId: 'x', status: 'todo' });
+ok(r.needsConfirmation, 'attended: the spoken yes as before');
+r = await t('on_my_own_off').run({ everything: true });
+ok(r.ok, 'on_my_own_off runs without a yes');
+
+// ─── owner asks ───
+let done = [];
+let clock = 1000;
+const asks = A.createOwnerAsks({ now: () => clock, onDone: (a, c) => done.push([a.id, c]) });
+const one = asks.ask({ title: 'Restart Web?', run: () => ({ ok: true }) });
+ok(one.ok && asks.pending().length === 1, 'an ask waits');
+ok(asks.ask({ title: 'Restart Web?', run: () => ({}) }).already, 'the same question is not asked twice');
+ok(asks.answer(one.id, 'maybe') === null, 'only yes or no');
+ok(asks.answer(one.id, 'yes') && done[0][1] === 'yes', 'answered yes');
+asks.ask({ title: 'B', run: () => ({}) });
+clock += A.ASK_TIMEOUT_MS + 1;
+asks.expire();
+ok(done[1][1] === null && !asks.pending().length, 'unanswered: expires, told as no answer');
+
+// ─── heartbeat ───
+ok(A.checklistEmpty('# Heartbeat\n\n## x\n') && !A.checklistEmpty(A.HEARTBEAT_DEFAULT), 'an empty checklist is recognised');
+const store = createWakeupStore({ builtins: [{ id: A.HEARTBEAT_ID, name: 'Heartbeat', every: 30, purpose: 'look round' }] });
+ok(store.find(A.HEARTBEAT_ID)?.builtin && !store.find(A.HEARTBEAT_ID).enabled, 'the heartbeat is built in and off');
+let threw = false; try { store.remove(A.HEARTBEAT_ID); } catch { threw = true; }
+ok(threw, 'the heartbeat cannot be deleted');
+store.setEnabled(A.HEARTBEAT_ID, true);
+const notes = [];
+let extra = null;
+const eng = createWakeupEngine({ store, report: async (n) => { notes.push(n); return { ok: true }; }, prepare: () => extra });
+r = await eng.fire(store.find(A.HEARTBEAT_ID));
+ok(r.skipped && !notes.length && eng.firedTimes.length === 0, 'nothing to check: no call, not counted');
+extra = '\n[Your checklist: services]';
+r = await eng.fire({ ...store.find(A.HEARTBEAT_ID), lastFiredAt: 0 });
+ok(notes.length === 1 && notes[0].includes('[Your checklist: services]'), 'with a checklist: Cru wakes with it');
+
+// ─── jobs ───
+const jobs = createJobStore({ file: join(dir, 'jobs.json') });
+const sent = [], watched = [], moves = [];
+const jdefs = jobToolDefs({
+  jobs, kanban: { getTask: () => ({ task: { title: 'Fix login', description: 'It fails', status: 'backlog', todos: [{ text: 'add test', done: false }] } }), moveTask: (...a) => moves.push(a) },
+  project: (a) => ({ alias: a }), createChat: async () => ({ ok: true, id: 'c1' }), sendMessage: (id, text) => sent.push([id, text]),
+  watch: (...a) => watched.push(a), unwatch: () => {}, chats: () => [{ id: 'c1', status: 'running', title: 'Fix login' }], log: () => {},
+});
+const jt = (n) => jdefs.find((x) => x.name === n);
+r = await jt('start_job').run({ project: 'p', taskId: 't1' });
+ok(r.ok && sent[0][1].includes('Fix login') && sent[0][1].includes('add test') && watched[0][3].follow && moves[0][2] === 'in_progress', 'start_job: a chat on the card, followed, card in progress');
+ok(jobs.forChat('c1')?.id === r.job, 'the chat is known as the job\'s');
+let dup = false; try { jobs.add({ project: 'p', taskId: 't1', title: 'x', chatId: 'c2' }); } catch { dup = true; }
+ok(dup, 'one job per card');
+ok(jt('start_job').confirm({ project: 'p', taskId: 't1' }) && !jt('start_job').confirm({ project: 'p', taskId: 't1', intent: 'explicit' }), 'asked unless the owner asked for it');
+r = jt('finish_job').run({ job: 't1', outcome: 'done', summary: 'fixed' });
+ok(r.ok && moves[1][2] === 'done' && !jobs.list().length, 'finish_job done: card to Done, job closed');
+ok(jobPrompt({ title: 'T' }).includes('summary'), 'the chat is asked to end with a summary');
+jobs.add({ project: 'p', taskId: 't2', title: 'Two', chatId: 'c3' });
+ok(jobs.pauseAll() === 1 && jobs.list()[0].status === 'paused', 'stop everything pauses jobs');
+
+// ─── the day's log ───
+const nb = createNotebook(join(dir, 'nb'));
+const log = A.createDailyLog(nb, { now: () => new Date(2026, 10, 9, 14, 5) });
+log.add('Restarted web');
+ok(nb.read('/memories/log/2026-11-09.md').includes('- 14:05 Restarted web'), 'a line in today\'s log');
+ok(log.tail(5).includes('Restarted web'), 'its tail for the heartbeat');
+nb.save('/memories/log/2026-09-01.md', '# old\n- x\n');
+log.prune(new Date(2026, 10, 9));
+ok(!nb.read('/memories/log/2026-09-01.md'), 'logs older than 30 days go');
+
+if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
+console.log('\nAll on-my-own checks passed');

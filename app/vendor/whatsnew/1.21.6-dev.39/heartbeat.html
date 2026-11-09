@@ -1,0 +1,15 @@
+<div class="wna a-hb">
+  <svg class="pulse" viewBox="0 0 200 40" width="220" height="44"><path d="M0 20h60l10-14 12 28 10-14h108" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  <div class="list"><b>Heartbeat checklist</b><div class="r">Services that should be running</div><div class="r">Chats waiting on you</div><div class="r">My jobs</div></div>
+  <div class="quiet">All well: Cru stays quiet</div>
+  <style>
+    .a-hb{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-hb .pulse{position:absolute;left:120px;top:24px}
+    .a-hb .pulse path{stroke-dasharray:260;stroke-dashoffset:260;animation:ahb 3s linear infinite}
+    .a-hb .list{position:absolute;left:120px;top:80px;width:250px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-hb .r{margin-top:5px;padding:4px 8px;border-radius:6px;background:var(--bg-tertiary,rgba(255,255,255,.04))}
+    .a-hb .quiet{position:absolute;left:390px;top:120px;color:var(--text-secondary);font-style:italic;opacity:0;animation:ahbq 6s ease infinite}
+    @keyframes ahb{to{stroke-dashoffset:0}}
+    @keyframes ahbq{0%,45%{opacity:0}60%,92%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

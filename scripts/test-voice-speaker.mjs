@@ -258,6 +258,86 @@ const spk = S.createSpeaker({ dir: sdir, embedder: emb });
   settings.updateSettings({ adminMode: false });
 }
 
+// ─── short replies: taught, stored, and a bare "yes" checked ───
+{
+  // The rule, by numbers.
+  const D = S.decideShort;
+  ok(D({ word: 0.6, main: 0.4, seconds: 0.4 }) === true, 'a short reply like the taught ones and like the voice: the owner');
+  ok(D({ word: 0.6, main: 0.2, seconds: 0.4 }) === null, 'like a taught reply but not like the voice: no verdict');
+  ok(D({ word: 0.4, main: 0.4, seconds: 0.5 }) === null, 'in between: no verdict (short), never another voice');
+  ok(D({ word: 0.2, main: 0.1, seconds: 0.5 }) === false, 'clearly unlike both: another voice');
+  ok(D({ word: 0.9, main: 0.9, seconds: 0.2 }) === null, `under ${S.WORD_MIN_SECONDS} s: no verdict even so`);
+  ok(D({ word: 0.35, main: 0.37, seconds: 1.0 }) === true, 'from 0.8 s the phrases\' own bar still counts');
+  ok(D({ word: 0.35, main: 0.3, seconds: 1.0 }) === null, 'and below it, unsure is no verdict rather than another voice');
+  ok(D({ word: NaN, main: 0.9, seconds: 0.5 }) === null, 'no word score: no verdict');
+  const u = (i) => Float32Array.from({ length: 4 }, (_, j) => (j === i ? 1 : 0));
+  ok(Math.abs(S.wordScore(u(0), [u(0), u(0), u(1), u(0)]) - 1) < 1e-6 && Math.abs(S.wordScore(u(0), [u(0), u(1), u(1)]) - 1 / 3) < 1e-6, 'the word score is the mean of the best three');
+  const says = S.splitSayings(join_(silence(0.4), tone(300, 0.4), silence(0.5), tone(300, 0.45), silence(0.5), tone(300, 0.4), silence(0.4)));
+  ok(says.length === 3 && says.every((x) => Math.abs(x.seconds - 0.4) < 0.07), `a reply said three times is three sayings (${says.map((x) => x.seconds).join(', ')} s)`);
+
+  // Taught through the speaker (enrolled above with the fake model).
+  for (let i = 0; i < S.MIN_PHRASES; i++) await spk.enrolPhrase(tone(300 + i * 5, 3), { restart: i === 0 });
+  ok(spk.finish().ok, 'enrolled again for the short replies');
+  let st = await spk.status();
+  ok(st.shortWords && st.shortWords.trained === false && st.wordPrompts.length >= 8 && st.wordRepeats === 3, 'status: short replies not taught yet, the replies to say offered');
+  ok((await spk.verify(tone(310, 1), { seconds: 0.5 })).reason === 'short' && !spk.shortWords, 'not taught: a short reply is still too short');
+  const thrice = (hz) => join_(silence(0.3), tone(hz, 0.4), silence(0.5), tone(hz, 0.4), silence(0.5), tone(hz, 0.4), silence(0.3));
+  let r = await spk.enrolWord(thrice(300), { word: 0, restart: true });
+  ok(r.ok && r.accepted && r.sayings === 3 && r.words === 1 && r.likeYou > 0.9, 'a reply said three times is kept');
+  r = await spk.enrolWord(join_(silence(0.3), tone(300, 0.4), silence(0.3)), { word: 1 });
+  ok(r.ok && !r.accepted && /times/.test(r.problem), 'said once: asked to say it again, a few times');
+  r = await spk.enrolWord(thrice(2000), { word: 1 });
+  ok(r.ok && !r.accepted && /did not sound like/.test(r.problem), 'another voice teaching: not kept');
+  r = await spk.enrolWord(tone(300, 3), { word: 1 });
+  ok(!r.accepted && /just/.test(r.problem), 'a whole sentence: say just the word');
+  ok((await spk.enrolWord(thrice(300), { word: 99 })).ok === false, 'a word not on the list: refused');
+  ok(spk.finishWords().ok === false, `fewer than ${S.MIN_WORDS} replies: not saved`);
+  for (let w = 1; w < S.MIN_WORDS; w++) await spk.enrolWord(thrice(290 + w * 5), { word: w });
+  const fw = spk.finishWords();
+  ok(fw.ok && fw.words === S.MIN_WORDS && fw.clips === S.MIN_WORDS * 3, `saved: ${fw.words} replies, ${fw.clips} clips`);
+  const rec = JSON.parse(readFileSync(join(sdir, 'speaker.json'), 'utf8'));
+  ok(rec.mean.length === 8 && rec.words.list.length === S.MIN_WORDS && rec.words.list[0].word === 'Yes' && rec.words.list[0].clips.length === 3, 'kept beside the profile, in the same private file');
+  if (process.platform !== 'win32') ok((statSync(join(sdir, 'speaker.json')).mode & 0o077) === 0, 'still private (0600)');
+  st = await spk.status();
+  ok(st.shortWords.trained && st.shortWords.words === S.MIN_WORDS && st.enrolled, 'status: short replies taught');
+  const fresh = S.createSpeaker({ dir: sdir, embedder: emb });
+  ok(fresh.shortWords, 'they survive a restart');
+  const yes = await fresh.verify(tone(310, 0.5), { seconds: 0.4 });
+  ok(yes.owner === true && yes.brief === true && yes.word > 0.9, 'a bare "yes" in the owner\'s voice: the owner, brief');
+  ok(S.turnPolicy({ enrolled: true, verdict: yes }).unrecognised === false && S.turnPolicy({ enrolled: true, verdict: yes }).admin.owner === false, 'it may act, but admin mode still wants more');
+  const no = await fresh.verify(tone(1800, 0.5), { seconds: 0.4 });
+  ok(no.owner === false && no.reason === 'other', 'a bare "yes" in another voice: another voice');
+  ok((await fresh.verify(tone(310, 0.5), { seconds: 0.2 })).reason === 'short', 'a blip is still too short');
+
+  // The live stream checks a short word now.
+  class FakeWs extends EventEmitter {
+    constructor(url) { super(); this.url = url; this.readyState = 0; FakeWs.last = this; }
+    send() {}
+    close() { this.readyState = 3; }
+  }
+  const client = new EventEmitter();
+  client.readyState = 1; client.out = [];
+  client.send = (m) => client.out.push(JSON.parse(m));
+  client.close = () => {};
+  relay(client, { WebSocketImpl: FakeWs, audio: { encoding: 'linear16', sample_rate: '16000' }, speaker: fresh });
+  const dg = FakeWs.last; dg.readyState = 1; dg.emit('open');
+  const audio = join_(silence(0.2), tone(300, 0.5), silence(0.3));
+  for (let i = 0; i < audio.length; i += 1600) client.emit('message', pcm(audio.subarray(i, i + 1600)), true);
+  dg.emit('message', JSON.stringify({ type: 'Results', is_final: true, start: 0.2, duration: 0.5, channel: { alternatives: [{ transcript: 'yes', words: [{ word: 'yes', start: 0.22, end: 0.62 }] }] } }));
+  dg.emit('message', JSON.stringify({ type: 'UtteranceEnd' }));
+  await tick(); await tick();
+  ok(client.out.find((m) => m.type === 'utterance')?.owner === true, 'the live stream: "yes" (0.4 s) in the owner\'s voice is his');
+  client.emit('message', JSON.stringify({ type: 'stop' }), false);
+
+  ok(fresh.forgetWords().ok && !fresh.shortWords && fresh.enrolled, 'the short replies can be forgotten on their own');
+  ok((await fresh.verify(tone(310, 0.5), { seconds: 0.4 })).reason === 'short', 'and a bare "yes" is too short again');
+  await fresh.enrolWord(thrice(300), { word: 0, restart: true });
+  for (let w = 1; w < S.MIN_WORDS; w++) await fresh.enrolWord(thrice(300), { word: w });
+  ok(fresh.finishWords().ok && fresh.shortWords, 'taught again');
+  for (let i = 0; i < S.MIN_PHRASES; i++) await fresh.enrolPhrase(tone(300, 3), { restart: i === 0 });
+  ok(fresh.finish().ok && !fresh.shortWords, 'enrolling the voice again starts without short replies');
+}
+
 // ─── settings and forgetting ───
 {
   ok(settings.publicSettings().ownerOnly === true, '"Only act on my voice" is on by default');
