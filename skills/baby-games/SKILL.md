@@ -26,6 +26,12 @@ Who reads this:
    without a goal is entertainment; a game for "2–7" serves nobody.
 2. **No reading required.** Every instruction is spoken and shown (picture, pointing
    hand, glow). Text on screen is only the thing being learned (a letter, a numeral).
+   The spoken line is easy to miss (the child is talking, Cru is talking), so the
+   screen alone must say what to do: an animated pointing hand that taps the
+   first thing to touch, the target pulsing, and the first round played as a
+   demonstration. One kind of tap per round: never a hidden first step (such as
+   "tap each one to count, then tap the number") that makes the right answer do
+   nothing. Every tap answers with something visible and audible at once.
 3. **Celebrate every success**, specifically ("You found the B!"), and vary it.
    Use the instant reflex lines for it (no thinking delay), picked at random from
    many variants so it never sounds the same.
@@ -473,7 +479,8 @@ The **kid-games library's README is authoritative**; this is how it works today
 
 - [ ] One age band, one learning goal, written in a comment at the top and in `meta.json`.
 - [ ] Works with no options; every option clamped.
-- [ ] Playable without reading; every instruction is spoken; a replay button exists.
+- [ ] Playable without reading; every instruction is spoken AND shown (pointing hand, pulse, a demonstrated first round); a replay button exists.
+- [ ] No hidden steps: the right answer always works when tapped; every tap gets an immediate visible and audible response.
 - [ ] Targets meet the band's size and gap; nothing tappable in the bottom 10%.
 - [ ] Tap works with finger and mouse; no drag-only, double-tap or long-press.
 - [ ] Big bright outlined cursor (star over tappables), hover glow; ripple on touch.

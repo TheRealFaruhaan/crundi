@@ -121,5 +121,10 @@ nb.save('/memories/log/2026-09-01.md', '# old\n- x\n');
 log.prune(new Date(2026, 10, 9));
 ok(!nb.read('/memories/log/2026-09-01.md'), 'logs older than 30 days go');
 
+// ─── silence, said ───
+const AG = await import('../src/voice/agent.js');
+ok(AG.splitReply('QUIET').speak === '' && AG.splitReply('[mood: happy] QUIET.').speak === '' && AG.splitReply('HEARTBEAT_OK').speak === '', 'QUIET alone is silence');
+ok(AG.splitReply('It is quiet today, Sir.').speak !== '', 'a real sentence with the word is still said');
+
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nAll on-my-own checks passed');

@@ -72,7 +72,7 @@ export function validateGame(html) {
     [/<meta\b[^>]*http-equiv/i, '<meta http-equiv>'],
     [/\b(?:src|href|action|poster|srcset)\s*=\s*["']?\s*(?!data:|#|blob:)[a-z][a-z0-9+.-]*:/i, 'a link to another place'],
     [/\b(?:src|href|action|poster)\s*=\s*["']?\s*\/\//i, 'a protocol-relative link'],
-    [/url\(\s*(?!["']?\s*(?:data:|blob:|#))/i, 'url() other than data:'], [/@import\b/i, '@import'],
+    [/(?<![\w.$])url\(\s*(?!["']?\s*(?:data:|blob:|#))/i, 'url() other than data:'], [/@import\b/i, '@import'],
     [/\beval\s*\(|\bnew\s+Function\s*\(|setTimeout\s*\(\s*["'`]/, 'eval / new Function'],
     [/\b(?:localStorage|sessionStorage|indexedDB|document\.cookie)\b/, 'storage'],
     [/\bwindow\.open\s*\(|\b(?:top|parent)\.location\b|\blocation\s*=[^=]|location\.(?:href|assign|replace)\b/, 'navigation'],

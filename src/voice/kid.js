@@ -218,7 +218,7 @@ How you talk:
 - Start every reply with a mood marker, which is never said or shown: [mood: excited] for cheering, greetings and fun (the usual), [mood: happy] for friendly chat, [mood: calm] for explaining something or winding down, [mood: gentle] after a miss or when they are sad or tired, to comfort. Then what you say.
 - Your reply is spoken aloud. One to three short sentences, simple words, one idea at a time, one simple question at a time. No markdown, no lists, no links.
 - Use their name when you know it. Young children speak unclearly and you may mishear: guess kindly, or ask again in a friendly way. Never make them feel wrong.
-- Silence is fine: when what you hear is not for you (grown-ups talking, noise), reply with nothing at all.
+- Silence is fine: when what you hear is not for you (grown-ups talking, noise), reply with just QUIET (that word alone: nothing is said).
 - When they call you ("Hey Cru!"), answer happily and briefly ("Hi! I'm here! What shall we do?").
 
 Talking (as much as playing):
@@ -235,7 +235,7 @@ Playing and learning (always):
 - Learning first: letters and their sounds, matching, counting, shapes and colours, and the world (animals, the body, nature, everyday things). start_game starts an approved game (list_games); what they are learning is in the context below, so offer games that fit and favour what they are learning now.
 - You may share one true, simple, kid-safe fun fact when it fits ("Did you know an octopus has three hearts?"). Only facts you are sure of.
 - The live screen (show_screen, update_screen) is for big, bright, simple things: a letter, a picture, a count, a little story. For a tiny custom game you may write html for show_screen: big tap targets, bright colours, very few words, no network; window.cru.say(text) says a word aloud, window.cru.tell(text) tells you what was tapped.
-- Messages like [Kid tapped: …] or [Game: …] come from the screen, not from speech. While a game runs you hear about the events you watch (watch_game, unwatch_game: be more chatty or quieter as suits the child; by default the start, every few correct answers, two misses in a row, a new level, a round done, idle, stuck, the finish and a light check-in). Instant cheer lines play first by themselves; you add personal words on top: their name, what they liked last time, help in your own words after two misses (maybe game_command easier or hint). The child can talk to you at any time during a game, and the game carries on while you talk: cheer, give a hint, encourage, or reply with nothing at all when the game is going well by itself. The game gives its own sounds and pictures; you are the friend on top. game_command makes it easier, harder, gives a hint, moves on or ends it.
+- Messages like [Kid tapped: …] or [Game: …] come from the screen, not from speech. While a game runs you hear about the events you watch (watch_game, unwatch_game: be more chatty or quieter as suits the child; by default the start, every few correct answers, two misses in a row, a new level, a round done, idle, stuck, the finish and a light check-in). Instant cheer lines play first by themselves; you add personal words on top: their name, what they liked last time, help in your own words after two misses (maybe game_command easier or hint). The child can talk to you at any time during a game, and the game carries on while you talk: cheer, give a hint, encourage, or reply with just QUIET (that word alone: nothing is said) when the game is going well by itself. The game gives its own sounds and pictures; you are the friend on top. game_command makes it easier, harder, gives a hint, moves on or ends it.
 - Videos only with play_video, and only from the parent's approved list (list_videos). If asked for something else, you may ask_parent (kind video, with its name or @handle) and offer an approved one meanwhile. When the time limit is up and they want more, ask_parent (kind time). Never more than one question waiting. One or two videos, then suggest a game.
 - Follow the parent's rules (time limits, bedtime, breaks). Suggest a break gently when they say so. The context line says when a grown-up added time or paused the screen.
 - Call the parent what the child calls them (the instructions' "What the child calls you", e.g. Daddy; otherwise "your grown-up"). Asking: "Let me ask Daddy!" Yes: "Daddy said yes! Here we go!" No: always kind and with something else ("Daddy said not this time. How about the animal game?"). No answer: "Daddy is busy right now. Let's play something else!" Never make the parent sound like the bad guy, and never encourage asking again and again.
@@ -276,14 +276,14 @@ export function cleanFriendNote(text) {
 }
 
 /** The kid's context line: the time, how long kid mode has been on, time a grown-up added. */
-export function kidContextLine({ now = new Date(), since = 0, extraMinutes = 0 } = {}) {
+export function kidContextLine({ now = new Date(), since = 0, extraMinutes = 0, onScreen = null } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', hour: '2-digit', minute: '2-digit' });
   const mins = since ? Math.max(0, Math.round((now.getTime() - since) / 60000)) : 0;
-  return `[${when}${since ? ` · kid mode on for ${mins} minute${mins === 1 ? '' : 's'}` : ''}${extraMinutes ? ` · a grown-up added ${extraMinutes} minutes of time` : ''}]`;
+  return `[${when}${since ? ` · kid mode on for ${mins} minute${mins === 1 ? '' : 's'}` : ''}${extraMinutes ? ` · a grown-up added ${extraMinutes} minutes of time` : ''}${onScreen === null ? '' : onScreen ? ` · on the screen now: ${onScreen}` : ' · nothing is on the screen now (no game or video)'}]`;
 }
 
 /** Every tool a kid conversation may have; nothing else is ever offered there. */
-export const KID_TOOL_NAMES = [...SCREEN_TOOL_NAMES, 'list_games', 'start_game', 'list_videos', 'play_video', 'friend_note', 'watch_game', 'unwatch_game', 'game_command', 'tell_parent', 'ask_parent', 'make_game'];
+export const KID_TOOL_NAMES = [...SCREEN_TOOL_NAMES, 'list_games', 'start_game', 'list_videos', 'play_video', 'friend_note', 'look_at_picture', 'watch_game', 'unwatch_game', 'game_command', 'tell_parent', 'ask_parent', 'make_game'];
 
 /**
  * The kid's tools.
@@ -301,7 +301,7 @@ export const KID_TOOL_NAMES = [...SCREEN_TOOL_NAMES, 'list_games', 'start_game',
  *   extraApproved(): [youtube items] the parent allowed once (ask_parent)
  * }
  */
-export function makeKidTools({ makeGame = null, screen, instructions, games, resolveHandle = async () => '', onGame = () => {}, friend = null, watch = null, sendCommand = () => {}, tellParent = null, asks = null, childName = () => '', extraApproved = () => [] }) {
+export function makeKidTools({ picture = null, makeGame = null, screen, instructions, games, resolveHandle = async () => '', onGame = () => {}, friend = null, watch = null, sendCommand = () => {}, tellParent = null, asks = null, childName = () => '', extraApproved = () => [] }) {
   const parsed = () => parseInstructions(instructions());
   const approvedGames = () => {
     const p = parsed().games;
@@ -373,6 +373,16 @@ export function makeKidTools({ makeGame = null, screen, instructions, games, res
         if (!friend) return { ok: false, error: 'Not available' };
         friend.write(cleanFriendNote(text));
         return { ok: true, saved: true };
+      },
+    },
+    {
+      name: 'look_at_picture',
+      description: 'See what the child showed you: their drawing (from the drawing pad\'s "Show Cru" button) or another picture from a game. Look, then say something warm and specific about it (the colours, what you think it is, one thing you love), and ask them about it. If you cannot tell what it is, guess kindly or ask; never say it is messy or wrong.',
+      input_schema: { type: 'object', additionalProperties: false, properties: {} },
+      run: () => {
+        const p = picture ? picture() : null;
+        if (!p) return { ok: false, error: 'Nothing has been shown to you yet. Ask the child to tap the camera button ("Show Cru") on their drawing.' };
+        return { content: [{ type: 'image', data: p.data, mimeType: p.mime }, { type: 'text', text: `${p.label || 'The child\'s picture'}, shown ${Math.max(0, Math.round((Date.now() - p.at) / 1000))} seconds ago.` }] };
       },
     },
     ...(watch ? makeGameWatchTools({ watch, send: sendCommand }) : []),
@@ -453,7 +463,7 @@ export function gameEventLine(e, note = '') {
   if (e.streak > 1) bits.push(`(${e.streak} in a row)`);
   if (e.twice) bits.push('(missed twice in a row)');
   if (e.count > 1) bits.push(`(${e.count} times)`);
-  return `[Game: ${bits.join(' ')}${e.game ? ` · in ${e.game}` : ''}] Not said by the child: the game you are watching. An instant cheer line has already played. Add a few personal words of your own if they help (their name, what they liked before, a hint, encouragement, the next thing), or reply with nothing at all.${note ? ` Your note to yourself: ${note}` : ''}`;
+  return `[Game: ${bits.join(' ')}${e.game ? ` · in ${e.game}` : ''}] Not said by the child: the game you are watching. An instant cheer line has already played. Add a few personal words of your own if they help (their name, what they liked before, a hint, encouragement, the next thing), or reply with just QUIET (that word alone: nothing is said). Every word you reply is said aloud to the child: never talk about tools, nudges or what you are doing behind the scenes.${note ? ` Your note to yourself: ${note}` : ''}`;
 }
 
 /**

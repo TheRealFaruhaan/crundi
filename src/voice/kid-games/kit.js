@@ -280,6 +280,8 @@
     opts: opts,
     say: function (t) { lastSay = Date.now(); post({ cru: 'say', text: String(t || '').slice(0, 300) }); },
     tell: function (t) { post({ cru: 'tell', text: String(t || '').slice(0, 300) }); },
+    /** Show Cru a picture (a canvas's toDataURL): Cru looks at it and talks about it. */
+    share: function (dataUrl, label) { post({ cru: 'picture', data: String(dataUrl || ''), label: String(label || '').slice(0, 80) }); },
     event: function (kind, detail, item) { gameEvent(String(kind || 'tap'), item == null ? detail : item, detail); },
     /** A game's answer to a command from Cru: kid.on('easier', fn); next, easier, harder, hint, pause, resume, end. */
     on: function (action, fn) { handlers[String(action)] = fn; },

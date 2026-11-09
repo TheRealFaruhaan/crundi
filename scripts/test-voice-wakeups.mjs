@@ -244,7 +244,7 @@ ok(r.ok && alerts[0].urgent === true && alerts[0].title === 'API is down', 'aler
 
 // ─── what Cru is told ───
 const p = reportPrompt('[Ticker "morning"]', { wake: true });
-ok(/reply with nothing at all/.test(p) && /alert_owner/.test(p) && /switch it off/.test(p), 'a wake-up lets Cru stay quiet, alert, or switch it off');
+ok(/reply with just QUIET/.test(p) && /alert_owner/.test(p) && /switch it off/.test(p), 'a wake-up lets Cru stay quiet, alert, or switch it off');
 ok(/Tell the owner now/.test(reportPrompt('x')), 'a chat report is still always told');
 ok(/Tickers and triggers/.test(SYSTEM_PROMPT) && /switch it off/.test(SYSTEM_PROMPT), "Cru's instructions cover them, and switching them off");
 

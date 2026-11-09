@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "id": "kid-show-cru",
+      "tag": "Voice",
+      "title": "Show Cru a drawing",
+      "body": "In kid mode's drawing pad, the camera button shows the drawing to Cru, who looks at it and talks about it with your child. Kid mode is also easier to talk to: the child sees their words and Cru's thinking dots, and talking over Cru gets a friendly wait a moment.",
+      "keys": [ { "keys": ["Camera button"], "text": "on the drawing pad" } ],
+      "art": "show-cru.html",
+      "artTitle": "Desktop"
+    }
+  ]
+}

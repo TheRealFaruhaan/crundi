@@ -233,7 +233,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   }
   {
     // Silent close and silence: an empty reply says nothing (the screen closes, or keeps listening).
-    ok(/close_voice and reply with nothing at all/.test(SYSTEM_PROMPT) && /Silence is an answer/.test(SYSTEM_PROMPT), 'the prompt: close silently, and stay quiet when nothing is needed');
+    ok(/close_voice and reply with just QUIET/.test(SYSTEM_PROMPT) && /Silence is an answer/.test(SYSTEM_PROMPT), 'the prompt: close silently, and stay quiet when nothing is needed');
     const quiet = () => ({ messages: { create: async () => ({ stop_reason: 'end_turn', usage: {}, content: [] }) } });
     const q = await createVoiceAgent({ tools, client: quiet }).turn('hmm, let me think');
     ok(q.ok && q.speak === '' && q.show === '', 'an empty reply is fine: nothing said');

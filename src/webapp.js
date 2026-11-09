@@ -3057,7 +3057,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const jobs = open.map((j) => { const c = chats.get(j.chatId); const last = (j.notes || []).slice(-1)[0]; return `- ${j.id} "${j.title}" (${j.project}), ${j.status}, ${Math.round((Date.now() - j.startedAt) / 60000)} min, chat ${c ? (c.status || 'open') : 'gone'}${last ? `; last note: ${last.text}` : ''}`; }).join('\n');
     const asks = cruAsks.pending().map((a) => `- ${a.title}`).join('\n');
     const log = cruLog.tail(10);
-    return `\n[Your checklist, ${HEARTBEAT_FILE}:\n${String(list || '(empty)').trim().slice(0, 2500)}]${jobs ? `\n[Your open jobs:\n${jobs}]` : ''}${asks ? `\n[Waiting on the owner's phone:\n${asks}]` : ''}${log ? `\n[Today so far (/memories/log):\n${log}]` : ''}\nGo through the checklist now, quickly, with the fewest lookups that answer it. Act where you may; say nothing at all if nothing needs him. Keep the checklist current: add what he asks you to keep an eye on, drop what is over.`;
+    return `\n[Your checklist, ${HEARTBEAT_FILE}:\n${String(list || '(empty)').trim().slice(0, 2500)}]${jobs ? `\n[Your open jobs:\n${jobs}]` : ''}${asks ? `\n[Waiting on the owner's phone:\n${asks}]` : ''}${log ? `\n[Today so far (/memories/log):\n${log}]` : ''}\nGo through the checklist now, quickly, with the fewest lookups that answer it. Act where you may. If nothing needs him (the usual case), reply with just QUIET: that word alone, nothing is said. Never report that all is well. Keep the checklist current: add what he asks you to keep an eye on, drop what is over.`;
   }
   // Routine nudges (after Hermes): a turn that took many steps, or found the
   // way past a failure, may be worth keeping as a routine.
@@ -3230,6 +3230,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     kidGames.endPlay(false);
     voiceScreen.clear();
     kidWatch.reset();
+    kidPicture = null;
     if (kidWorkshop) kidWorkshop.markKidUse();
     console.log(`[voice] kid mode on (${by || 'owner'})`);
     kidBroadcast();
@@ -3367,7 +3368,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Its own history, store and notes; the parent's instructions read only;
   // only the live screen, games, approved videos and its friend notes.
   const kidInstructions = () => (voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '';
+  // What the child last showed kid Cru (the drawing pad's "Show Cru"): kept in memory only, never saved.
+  let kidPicture = null;
   const kidTools = makeKidTools({
+    picture: () => kidPicture,
     screen: voiceScreen,
     instructions: kidInstructions,
     games: kidGames,
@@ -3400,7 +3404,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     tools: kidTools,
     systemPrompt: KID_SYSTEM_PROMPT,
     intro: () => kidIntro(kidInstructions(), { friend: kidFriend.read(), learning: kidSkills.summary() }),
-    context: ({ now }) => kidContextLine({ now, since: voiceSettings.kidState().since, extraMinutes: kidSession.extraMinutes }),
+    // What is on the kid screen right now, every turn: a fresh kid mode never thinks an old game is still up.
+    context: ({ now }) => { const sc = voiceScreen.get(); return kidContextLine({ now, since: voiceSettings.kidState().since, extraMinutes: kidSession.extraMinutes, onScreen: sc ? String(sc.title || (sc.video ? 'a video' : 'a game')).slice(0, 80) : '' }); },
     noCompact: true,
     refusal: '[mood: gentle] Hmm, let\'s do something else! How about a game?',
     beforeTurn: () => { if (kidWorkshop) kidWorkshop.markKidUse(); },
@@ -3420,7 +3425,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   /** Whichever Cru is answering now: the child's friend in kid mode, else the owner's. */
   const cru = () => (kidOn() ? kidAgent : voiceAgent);
   /** A kid turn: its mood marker taken off and turned into how lively it sounds. */
-  async function kidTurn(text, opts = {}) {
+  // One kid turn at a time, in order: what the child says while kid Cru is
+  // still answering (a game event, or their own last words) waits its turn
+  // instead of being refused. Game events step aside while the child waits.
+  let kidChain = Promise.resolve();
+  let kidChildWaiting = 0;
+  let kidLastChildAt = 0;
+  function kidTurn(text, opts = {}, { child = false } = {}) {
+    if (child) { kidChildWaiting++; kidLastChildAt = Date.now(); }
+    const run = kidChain.then(() => { if (child) kidChildWaiting--; return kidTurnNow(text, opts); });
+    kidChain = run.catch(() => {});
+    return run;
+  }
+  async function kidTurnNow(text, opts = {}) {
     const r = await kidAgent.turn(text, opts);
     if (r && r.ok) {
       const m = splitMood(r.speak || '');
@@ -3435,7 +3452,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   /** Something from a game for kid Cru (a watched event): its answer goes to the open screens. */
   let kidEventBusy = false;
   async function kidGameWake(line, { force = false } = {}) {
-    if (!line || (kidEventBusy && !force) || kidSession.paused) return;
+    // The child is talking with Cru: a game's own nudges (idle, a cheer) wait, so Cru never answers out of turn.
+    if (!line || (kidEventBusy && !force) || kidSession.paused || (!force && (kidChildWaiting || Date.now() - kidLastChildAt < 20000))) return;
     for (let i = 0; i < 40 && kidEventBusy; i++) await new Promise((ok) => setTimeout(ok, 500));
     kidEventBusy = true;
     try {
@@ -5196,6 +5214,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     // What a game reports: the play log and the child's levels, the instant
     // line to say now, and (when kid Cru watches that event) a word from Cru later.
+    // The child showed kid Cru a picture (capability 'voice-kid'): kept in memory, then Cru is asked to look.
+    if (path === '/api/voice/kid/picture' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse((await readBodyBuffer(req, 3 * 1024 * 1024)).toString('utf8')); } catch { return json(res, { ok: false, error: 'Too large or not a picture' }, 400); }
+      const m = String(body.data || '').match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+      if (!m || m[2].length > 2.5 * 1024 * 1024) return json(res, { ok: false, error: 'Not a picture' }, 400);
+      kidPicture = { mime: m[1], data: m[2], label: String(body.label || 'The child\'s drawing').slice(0, 80), at: Date.now() };
+      return json(res, { ok: true });
+    }
     if (path === '/api/voice/kid/play' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
@@ -5295,7 +5322,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // The phone's own recogniser (over the Deepgram limit) mishears the names too.
       // Kid mode: the child's friend answers, in its own conversation.
       if (kidOn()) {
-        const r = await kidTurn(String(body.text || '').slice(0, 2000), { where: 'the kid screen' });
+        const r = await kidTurn(String(body.text || '').slice(0, 2000), { where: 'the kid screen' }, { child: true });
         if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
         return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
       }
@@ -5493,7 +5520,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         } catch { verdict = voiceSpeaker.recent.lookup(r.text); }
       }
       const rules = voiceTurnRules({ typed: false, verdict });
-      const answer = r.text && kidOn() ? await kidTurn(r.text, { where: 'the kid screen' }) : r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }) : { ok: false, error: 'Nothing was heard' };
+      const answer = r.text && kidOn() ? await kidTurn(r.text, { where: 'the kid screen' }, { child: true }) : r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }) : { ok: false, error: 'Nothing was heard' };
       if (answer && answer.ok) answer.speaker = rules.speaker;
       if (answer && answer.ok) answer.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);

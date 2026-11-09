@@ -313,7 +313,12 @@
     '.cv-ov.kid{color:#312e81!important;background:radial-gradient(circle at 10% 16%,rgba(251,191,36,.45) 0 8%,transparent 8.5%),radial-gradient(circle at 90% 22%,rgba(244,114,182,.38) 0 6%,transparent 6.5%),radial-gradient(circle at 82% 88%,rgba(52,211,153,.40) 0 7%,transparent 7.5%),radial-gradient(circle at 16% 86%,rgba(167,139,250,.40) 0 5.5%,transparent 6%),linear-gradient(175deg,#bae6fd 0%,#e0f2fe 45%,#fef9c3 100%)!important}' +
     '.cv-ov.kid .cv-top{padding:18px 28px 0}.cv-ov.kid .cv-wm .cru-ic{width:86px!important;height:52px!important}.cv-ov.kid .cv-pill{display:none!important}' +
     '.cv-ov.kid .cv-scr{max-width:none;padding:0 2vw}.cv-ov.kid .cv-scr-h,.cv-ov.kid .cv-scr-t{display:none!important}.cv-ov.kid.has-scr .cv-scr{flex:1 1 auto;min-height:0}' +
-    '.cv-ov.kid .cv-heard{display:none!important}.cv-ov.kid .cv-words{max-width:min(1100px,92vw);padding:4px 24px 18px;overflow:visible!important;flex:none}' +
+    // The child sees they were heard: their words in their own bubble, and Cru's dots while it thinks.
+    '.cv-ov.kid .cv-heard{justify-content:flex-end;max-width:min(1100px,92vw);margin:0 auto;padding:0 24px;min-height:0}.cv-ov.kid .cv-heard .cv-ht{display:inline-block;background:#dbeafe;color:#1e3a8a;border-radius:24px;padding:10px 20px;font:700 clamp(17px,2vmin,26px)/1.3 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;box-shadow:0 4px 0 rgba(30,58,138,.12)}.cv-ov.kid .cv-heard .cv-ht:empty{display:none}.cv-ov.kid .cv-heard .cv-cx{display:none!important}' +
+    '.cv-ov.kid .cv-reply.think{display:inline-block!important;min-width:90px;min-height:1em}.cv-ov.kid .cv-reply.think::after{content:"";display:inline-block;width:72px;height:18px;background:radial-gradient(circle,#6366f1 7px,transparent 8px) 0 50%/24px 18px repeat-x;animation:cvkdots 1s ease-in-out infinite}' +
+    '.cv-ov.kid.kwait .cv-reply::before{content:"Wait for me!";display:block;font-size:.6em;color:#b45309;margin-bottom:4px}.cv-ov.kid.kwait .cv-reply.think::before{content:none}' +
+    '@keyframes cvkdots{0%,100%{opacity:.35;transform:translateY(0)}50%{opacity:1;transform:translateY(-5px)}}' +
+    '.cv-ov.kid .cv-words{max-width:min(1100px,92vw);padding:4px 24px 18px;overflow:visible!important;flex:none}' +
     '.cv-ov.kid .cv-reply{display:inline-block;position:relative;background:#fff;color:#312e81;border-radius:28px;padding:16px 26px;margin-top:6px;font:700 clamp(20px,2.4vmin,34px)/1.3 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;box-shadow:0 6px 0 rgba(49,46,129,.15),0 10px 30px rgba(49,46,129,.12)}.cv-ov.kid .cv-lock{color:#6366f1}.cv-ov.kid .cv-note{color:#b45309}.cv-ov.kid .cv-reply:empty{display:none}' +
     '.cv-ov.kid .cv-reply:after{content:"";position:absolute;left:50%;bottom:-14px;margin-left:-14px;border:14px solid transparent;border-top-color:#fff;border-bottom:0}' +
     '.cv-ov.kid .cv-detail{display:none!important}.cv-ov.kid .cv-bot{padding:6px 24px 20px}.cv-ov.kid .cv-mic{width:clamp(110px,15vmin,170px);height:clamp(110px,15vmin,170px)}' +
@@ -541,7 +546,7 @@
       if (!s.anthropicKeySet && s.brain !== 'claude-code') { block('There is no Claude API key on the server yet. Add one in Settings, Voice assistant.'); return; }
       // Keyboard mode when voice can't work here, or when the owner chose it last time on this device.
       if (!voiceUsable(s) || (kbPref() && !S.kid)) keyboard(true, false); else openMic();
-      if (S.kid) setTimeout(function () { if (S && S.kid && !S.greeted) { S.greeted = true; ask('[Your friend is here: the kid screen just opened. Say hello.]', false, true, true); } }, 900);
+      if (S.kid) setTimeout(function () { if (S && S.kid && !S.greeted) { S.greeted = true; ask('[Your friend is here: the kid screen just opened, fresh: whatever was on it before (a game, a drawing, a video) is over. Say hello.]', false, true, true); } }, 900);
     }).catch(function (e) { block(e.message || 'Could not reach the server'); });
   }
 
@@ -665,10 +670,11 @@
     }
     else if (e.type === 'interim') {
       // Talking over Crundi: cut it off the moment his words come.
-      if (S.phase === 'speak') { if (S.live && talksOver(e.text, S.lastSaid, Date.now() - S.hintAt <= HINT_MS ? 1 : 2)) { cutIn(); S.heard = e.text; } else return; }
+      // Kid mode: a child talks over Cru all the time; Cru finishes, then answers (utter keeps the words).
+      if (S.phase === 'speak') { if (S.kid) return; if (S.live && talksOver(e.text, S.lastSaid, Date.now() - S.hintAt <= HINT_MS ? 1 : 2)) { cutIn(); S.heard = e.text; } else return; }
       else if (echo(e.text)) return;
       else if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); }
-      else if (S.phase === 'think') { if (S.cue && talksOver(e.text, S.cue.text)) stopCue(); S.heard = (S.pending + ' ' + e.text).trim(); }
+      else if (S.phase === 'think') { if (S.kid) return; if (S.cue && talksOver(e.text, S.cue.text)) stopCue(); S.heard = (S.pending + ' ' + e.text).trim(); }
     }
     else if (e.type === 'utterance') { if (S.phase === 'listen') S.pttSent = true; utter(e.text, false); }
     else if (e.type === 'error') { S.notice = e.error; }
@@ -686,6 +692,10 @@
     if (!typed && echo(t)) { S.heard = ''; render(); return; }
     // "Scratch that" alone (an older server passes it on): take back, never ask it.
     if (!typed && isDiscard(t)) { if (S.phase === 'speak') { if (S.live) cutIn(); } else takeBack(true); render(); return; }
+    // Kid mode: one thing at a time. Said while Cru thinks or talks: not saved up;
+    // Cru says "wait a moment" (thinking) or shows its wait sign (talking), and
+    // listens again once it has answered.
+    if (S.kid && (S.phase === 'think' || S.phase === 'speak')) { kidWait(); return; }
     if (S.phase === 'think') { S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
     // Said over Crundi (the stream stayed on): cut it off and ask that now.
     if (S.phase === 'speak') { if (!typed && !(S.live && talksOver(t, S.lastSaid, 1))) return; cutIn(); }
@@ -697,6 +707,8 @@
 
   /** News, unasked (a watched chat finished or waits on the owner): said now if Cru is just listening, else once it is free. */
   // ─── Chat view: the conversation as message bubbles, remembered on this device ───
+  /** How long a screen Cru opened for its own news keeps listening for an answer, after saying it. */
+  var REPORT_LINGER_MS = 8000;
   var CHAT_KEY = 'crundi_cru_chat_view';
   function chatPref() { try { return localStorage.getItem(CHAT_KEY) === '1'; } catch (e) { return false; } }
   function chatView(on) {
@@ -768,6 +780,8 @@
    * [typed]: typed here, not spoken: the server's voice check does not apply (capability 'voice-speaker').
    */
   function ask(t, keep, typed, hidden) {
+    S.waitSaid = false; if (S.kid) loadKidWait();
+    if (!hidden) { S.reportOnly = false; S.reportCloseAt = 0; }
     S.phase = 'think'; S.asked = hidden ? '' : t; S.heard = hidden ? '' : t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
     var turn = ++S.turn;
     // A soft "sent", then, while Cru thinks, a calm pulse every few seconds (no spoken "let me check").
@@ -841,6 +855,7 @@
     if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show); return; }
     S.speaking = false; S.saidUntil = Date.now(); S.unknownVoice = false;
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
+    if (S.reportOnly && !S.reports.length) S.reportCloseAt = Date.now() + REPORT_LINGER_MS;
     if (S.live) { said(); releaseLater(); }
     else setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
     if (S.pending) { var p = S.pending; S.pending = ''; ask(p); }
@@ -943,7 +958,7 @@
     S.speakOpts = opts;
     // A line that never reports its end (a device with no voice of its own, a stream that stalls) must not
     // leave the screen on "Speaking": past about twice its expected length, listening carries on (tick()).
-    S.speakDeadline = Date.now() + 6000 + String(text || '').length * 140;
+    S.speakDeadline = Date.now() + (opts.reflex ? 2500 : 6000) + String(text || '').length * 140;
     S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0; S.unknownVoice = false;
     // The reply scrolls along as it is said (about 14 characters a second at normal speed).
     S.sayFrom = Date.now(); S.sayFor = Math.max(1500, String(text || '').length / (14 * ((S.settings && S.settings.speechRate) || 1)) * 1000); S.ownScroll = false;
@@ -1088,11 +1103,45 @@
     }).catch(function () { /* no cues */ });
   }
 
-  function playCue() {
-    if (!S || !S.cues.length) return;
-    var i = pickCue(S.cues.length, S.cueLast, Math.random), c = S.cues[i];
+  /**
+   * Kid mode: the child talked while Cru was busy. Thinking: a short "wait a
+   * moment" line, at most once per answer (picked at random, never twice the
+   * same in a row). Talking: Cru finishes; a wait sign shows a moment.
+   */
+  var KID_WAIT_LINES = ['Wait a moment!', 'Hold on, I\'m thinking!', 'One second, friend!', 'Just a moment, let me think!', 'Ooh, wait for me!'];
+  function kidWait() {
+    if (!S || !S.kid) return;
+    S.waitAt = Date.now();
+    setTimeout(render, 2600);
+    if (S.phase === 'think' && !S.waitSaid && S.kidWaitCues && S.kidWaitCues.length) { S.waitSaid = true; playCue(S.kidWaitCues, 'kidWaitLast'); }
+    render();
+  }
+  /** The wait lines, made once in kid Cru's voice (instant later, like the cues). */
+  function loadKidWait() {
+    if (!S || !S.kid || S.kidWaitCues) return;
+    var s = S; s.kidWaitCues = [];
+    var deviceVoice = !(s.settings && s.settings.ttsVoice) || (s.settings && s.settings.deepgramLimitReached);
+    if (deviceVoice) { s.kidWaitDevice = true; s.kidWaitCues = KID_WAIT_LINES.map(function (t) { return { text: t }; }); return; }
+    KID_WAIT_LINES.forEach(function (t) {
+      S.opts.apiFetch('/api/voice/speak?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' }, body: JSON.stringify({ text: t, expressivity: 1 }) })
+        .then(function (res) { if (!res.ok || !/L16/i.test(res.headers.get('Content-Type') || '')) throw new Error('no audio'); return res.arrayBuffer(); })
+        .then(function (ab) {
+          if (S !== s) return;
+          var ctx = s.ctx || (s.ctx = new (window.AudioContext || window.webkitAudioContext)());
+          var n = Math.floor(ab.byteLength / 2); if (!n) return;
+          var view = new DataView(ab), buf = ctx.createBuffer(1, n, 24000), ch = buf.getChannelData(0);
+          for (var i = 0; i < n; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
+          s.kidWaitCues.push({ text: t, buf: buf });
+        }).catch(function () { /* that line is left out */ });
+    });
+  }
+
+  function playCue(list, lastKey) {
+    list = list || (S && S.cues); lastKey = lastKey || 'cueLast';
+    if (!S || !list || !list.length) return;
+    var i = pickCue(list.length, S[lastKey], Math.random), c = list[i];
     if (!c) return;
-    S.cueLast = i;
+    S[lastKey] = i;
     stopCue();
     var s = S, cue = { text: c.text, ends: 0 };
     var done = function () { if (S === s && s.cue === cue) { s.cue = null; if (s.live && !s.speaking) { said(); s.unknownVoice = false; releaseLater(); } } };
@@ -1101,7 +1150,7 @@
       cue.node = node; cue.ends = s.ctx.currentTime + 0.01 + c.buf.duration;
       node.onended = done;
       node.start(s.ctx.currentTime + 0.01);
-    } else if (s.cueDevice && window.speechSynthesis) {
+    } else if ((s.cueDevice || (list === s.kidWaitCues && s.kidWaitDevice)) && window.speechSynthesis) {
       var u = deviceUtterance(c.text);
       u.onend = done; u.onerror = done;
       cue.utter = u;
@@ -1141,6 +1190,7 @@
 
   function tapMic() {
     if (!S) return;
+    S.reportOnly = false; S.reportCloseAt = 0;
     if (S.phase === 'speak') { bargeIn(); return; }
     if (S.phase === 'ended' && S.micOff) { wakeMic(); return; }
     if (S.phase === 'ended' && !S.notice) { S.phase = 'listen'; S.quietSince = Date.now(); render(); }
@@ -1205,7 +1255,8 @@
   function tick() {
     if (!S) return;
     // Stuck on "Speaking" with nothing playing: carry on listening.
-    if (S.phase === 'speak' && S.speakDeadline && Date.now() > S.speakDeadline && !(window.speechSynthesis && speechSynthesis.speaking)) {
+    // (The device's own voice can report "speaking" for ever, on Linux in particular: past the deadline plus 3 s it is stopped anyway.)
+    if (S.phase === 'speak' && S.speakDeadline && Date.now() > S.speakDeadline && (!(window.speechSynthesis && speechSynthesis.speaking) || Date.now() > S.speakDeadline + 3000)) {
       var playing = false;
       try { playing = !!(S.ctx && (S.nodes || []).length && S.outAnalyser); } catch (e) { playing = false; }
       if (!playing || Date.now() > S.speakDeadline + 8000) { S.speakDeadline = 0; stopSpeaking(S); afterSpeech(); }
@@ -1214,6 +1265,8 @@
     var idleMs = ((S.settings && S.settings.screenCloseSeconds) || 60) * 1000;
     // Kid mode stays, listening; a panel on screen keeps the screen open (the mic still sleeps).
     if (S.kid) return;
+    // Opened by Cru's own news and said: closed again, unless the owner started talking.
+    if (S.reportOnly && S.reportCloseAt && Date.now() > S.reportCloseAt && S.phase === 'listen' && !S.heard && !S.pending) { close(); return; }
     if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && !S.screen && Date.now() - S.quietSince > idleMs) { close(); return; }
     if (S.phase === 'listen' && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
   }
@@ -1309,6 +1362,7 @@
     var m = e.data || {};
     if (m.cru === 'say') sayLocal(String(m.text || '').slice(0, 300));
     else if (m.cru === 'tell') screenTell(String(m.text || '').slice(0, 300));
+    else if (m.cru === 'picture') showPicture(String(m.data || ''), String(m.label || ''));
     else if (m.type === 'game') gameEvent({ event: m.event, item: m.item, detail: m.detail, streak: m.streak });
     else if (m.cru === 'event') gameEvent(m.kind === 'result' ? { event: 'result', skill: m.skill, item: m.item, ok: m.ok, ms: m.ms } : { event: m.kind === 'wrong' ? 'miss' : m.kind === 'level' ? 'level-up' : m.kind, item: m.detail, detail: m.detail });
   }
@@ -1318,6 +1372,17 @@
     if (Date.now() - S.sayAt < 600) return;
     S.sayAt = Date.now();
     speak(t, { reflex: true, expressivity: 1 });
+  }
+  /** The child shows Cru a picture (the drawing pad's camera): kept on the server, then Cru looks. */
+  function showPicture(data, label) {
+    if (!S || !S.kid || !/^data:image\/(png|jpeg|webp);base64,/.test(data) || data.length > 2500000) return;
+    var s = S;
+    post('/api/voice/kid/picture', { data: data, label: label }).then(function (r) {
+      if (S !== s || !(r && r.ok)) return;
+      // Busy talking or thinking: as soon as Cru is free.
+      var go = function (n) { if (S !== s) return; if ((S.phase === 'speak' || S.phase === 'think') && n < 40) { setTimeout(function () { go(n + 1); }, 500); return; } screenTell('[The child tapped "Show Cru" to show you ' + (label || 'their drawing') + ': call look_at_picture, then tell them what you see.]'); };
+      go(0);
+    }).catch(function () { /* an older server */ });
   }
   /** Something tapped that Cru should hear: answered like something said. */
   function screenTell(t) {
@@ -1488,9 +1553,13 @@
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;
-    q('.cv-ht').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? (S.kid ? 'Talk to me, or tap!' : 'Ask me anything, Sir.') : '');
+    // Kid mode: what the child said, while Cru thinks about it or while it waits for Cru to finish talking.
+    if (S.kid) h = ph === 'speak' ? '' : ph === 'think' ? (S.heard || S.asked) : S.heard;
+    S.ov.classList.toggle('kwait', !!(S.kid && S.waitAt && Date.now() - S.waitAt < 2500 && (ph === 'think' || ph === 'speak')));
+    q('.cv-ht').textContent = h ? (S.kid ? h : '“' + h + '”') : (ph === 'listen' && !S.reply && !S.kid ? 'Ask me anything, Sir.' : '');
     q('.cv-cx').hidden = !canCancel(S);
-    q('.cv-reply').textContent = S.reply;
+    q('.cv-reply').textContent = S.kid && ph === 'think' ? '' : S.reply;
+    q('.cv-reply').classList.toggle('think', !!(S.kid && ph === 'think'));
     var d = q('.cv-detail'); d.hidden = !S.detail; d.textContent = S.detail;
     q('.cv-yesno').hidden = !(S.question && ph !== 'think');
     var n = q('.cv-note'); n.hidden = !S.notice; n.textContent = S.notice;
@@ -1770,7 +1839,8 @@
 
   /** The PC: news while the dropdown is shut opens it and says it (src/webapp.js voiceReport). */
   function report(say, show, opts) {
-    if (!S) { open(opts || {}); if (S) S.reports.push({ speak: say, show: show }); return; }
+    // Opened by Cru itself (news, a wake-up): it says it, and closes again unless the owner answers.
+    if (!S) { open(opts || {}); if (S) { S.reportOnly = true; S.reports.push({ speak: say, show: show }); } return; }
     tell(say, show);
   }
 

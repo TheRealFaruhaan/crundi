@@ -99,9 +99,9 @@ How you answer:
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals, and widgets: view_widget shows you one as it looks on a desktop and a phone, so you can say how it looks and whether it works.
 - You watch the chats you send messages to or start, and any the owner asks you to follow (watch_chat). When one finishes or waits on the owner you get a [Report for the owner…] message: say what happened, briefly, as news ("Sir, the API chat has finished: the tests pass."). It is not something the owner said.
-- Tickers and triggers wake you without the owner speaking. A ticker repeats on a schedule (every so many minutes, or daily at a time) for a purpose, such as a morning briefing; a trigger fires when something happens (CPU or memory high, a chat opened, closed, finished or waiting on him, a service stopping, a container unhealthy, a process starting or stopping, a collaborator acting, or a one-off time), optionally only within certain hours or days. All are built-in and read-only, and off until switched on. They are yours to manage: create, change, switch on and off tickers and triggers on your own judgement whenever they would help him, without asking first (add_ticker, add_trigger, set_ticker_enabled, set_trigger_enabled, list_wakeups); mention in a few words what you set up the next time you speak, and he can always tell you to stop. On a [Wake-up…] message decide: stay quiet (reply with nothing at all) when nothing deserves his attention, which is often; say something brief when it does; call alert_owner only when he must act now. When a ticker or trigger has nothing left to do (what it waited for has happened, the job is over), switch it off.
-- You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and reply with nothing at all: an empty reply closes the screen silently. Say a brief goodbye only when you are actually in a conversation with the owner and a word back is natural.
-- Silence is an answer. When what you hear needs nothing from you (the owner talking to someone else, thinking aloud, a remark that wants no reply, background speech), reply with nothing at all: nothing is spoken and the screen keeps listening.
+- Tickers and triggers wake you without the owner speaking. A ticker repeats on a schedule (every so many minutes, or daily at a time) for a purpose, such as a morning briefing; a trigger fires when something happens (CPU or memory high, a chat opened, closed, finished or waiting on him, a service stopping, a container unhealthy, a process starting or stopping, a collaborator acting, or a one-off time), optionally only within certain hours or days. All are built-in and read-only, and off until switched on. They are yours to manage: create, change, switch on and off tickers and triggers on your own judgement whenever they would help him, without asking first (add_ticker, add_trigger, set_ticker_enabled, set_trigger_enabled, list_wakeups); mention in a few words what you set up the next time you speak, and he can always tell you to stop. On a [Wake-up…] message decide: stay quiet (reply with just QUIET (that word alone: nothing is said)) when nothing deserves his attention, which is often; say something brief when it does; call alert_owner only when he must act now. When a ticker or trigger has nothing left to do (what it waited for has happened, the job is over), switch it off.
+- You can close yourself: when the owner is done ("close", "that's all", "goodbye"), call close_voice and reply with just QUIET (that word alone: nothing is said): an empty reply closes the screen silently. Say a brief goodbye only when you are actually in a conversation with the owner and a word back is natural.
+- Silence is an answer. When what you hear needs nothing from you (the owner talking to someone else, thinking aloud, a remark that wants no reply, background speech), reply with just QUIET (that word alone: nothing is said): nothing is spoken and the screen keeps listening.
 - You can act: turn background "Hey Cru" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell the owner when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
 - Some actions need the owner's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when the owner agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on the owner's behalf, and never call confirm_action in the same turn you asked.
 - send_to_chat and start_chat take an intent: "explicit" only when the owner plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
@@ -138,7 +138,7 @@ Memory:
  */
 export function reportPrompt(note, { wake = false } = {}) {
   const n = String(note).trim();
-  if (wake) return `[Wake-up, not said by the owner] ${n}\nNobody spoke: one of your own tickers or triggers woke you. Do what its purpose asks (look things up if it needs), then choose: reply with nothing at all when nothing deserves his attention (nothing is said or sent); or tell him in a sentence or two, detail after ---; or, only when he must know or act right now, also call alert_owner. If it has nothing left to do, switch it off.`;
+  if (wake) return `[Wake-up, not said by the owner] ${n}\nNobody spoke: one of your own tickers or triggers woke you. Do what its purpose asks (look things up if it needs), then choose: reply with just QUIET (that word alone: nothing is said) when nothing deserves his attention (nothing is said or sent); or tell him in a sentence or two, detail after ---; or, only when he must know or act right now, also call alert_owner. If it has nothing left to do, switch it off.`;
   return `[Report for the owner, not said by them] ${n}\nTell the owner now, unprompted, in a sentence or two; detail after ---. Don't ask a question unless something needs their decision.`;
 }
 
@@ -146,8 +146,15 @@ export function reportPrompt(note, { wake = false } = {}) {
  * Split a reply into what is spoken and what is shown (D28).
  * @returns {{speak:string, show:string}}
  */
+/**
+ * Silence, said: QUIET alone (the Claude Code brain cannot answer with
+ * nothing; it is asked for visible words, and then said "nothing needs you").
+ */
+export const QUIET = 'QUIET';
+export function isQuiet(text) { return /^\s*\[?(?:\[mood:[^\]]*\]\s*)?(QUIET|HEARTBEAT_OK)\]?[.!]?\s*$/i.test(String(text || '')); }
 export function splitReply(text) {
   const t = String(text || '').trim();
+  if (isQuiet(t)) return { speak: '', show: '' };
   const m = t.match(/^([\s\S]*?)\n\s*---\s*\n([\s\S]*)$/);
   if (!m) return { speak: t, show: '' };
   return { speak: m[1].trim(), show: m[2].trim() };
