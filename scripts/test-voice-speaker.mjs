@@ -76,6 +76,9 @@ const pcm = (x) => { const b = Buffer.alloc(x.length * 2); for (let i = 0; i < x
   ok(S.decide(0.9, 0.6) === null, 'under 0.8 s there is no verdict');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true } }).admin.owner === false, 'a brief check is not enough for admin mode');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true } }).unrecognised === false, 'but everyday requests are fine');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: null, reason: 'short' }, recentOwner: true }).unrecognised === false, 'too short to tell, just after a recognised sentence: the owner carrying on');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: null, reason: 'short' }, recentOwner: false }).unrecognised === true, 'too short to tell, out of the blue: not acted on');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: false, reason: 'other' }, recentOwner: true }).unrecognised === true, 'another voice is never carried on');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true, word: 0.6 }, recentOwner: true }).admin.owner === true, 'admin: a taught short reply just after a recognised request answers');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true, word: 0.6 }, recentOwner: false }).admin.owner === false, 'admin: a taught short reply on its own does not');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true }, recentOwner: true }).admin.owner === false, 'admin: a brief check without a taught word does not');
@@ -276,7 +279,7 @@ const spk = S.createSpeaker({ dir: sdir, embedder: emb });
   const D = S.decideShort;
   ok(D({ word: 0.6, main: 0.4, seconds: 0.4 }) === true, 'a short reply like the taught ones and like the voice: the owner');
   ok(D({ word: 0.6, main: 0.2, seconds: 0.4 }) === null, 'like a taught reply but not like the voice: no verdict');
-  ok(D({ word: 0.4, main: 0.4, seconds: 0.5 }) === null, 'in between: no verdict (short), never another voice');
+  ok(D({ word: 0.34, main: 0.4, seconds: 0.5 }) === null, 'in between: no verdict (short), never another voice');
   ok(D({ word: 0.2, main: 0.1, seconds: 0.5 }) === false, 'clearly unlike both: another voice');
   ok(D({ word: 0.9, main: 0.9, seconds: 0.2 }) === null, `under ${S.WORD_MIN_SECONDS} s: no verdict even so`);
   ok(D({ word: 0.35, main: 0.37, seconds: 1.0 }) === true, 'from 0.8 s the phrases\' own bar still counts');

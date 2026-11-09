@@ -9972,12 +9972,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // A notes page takes text too; the caret follows the pointer there.
       if (el.closest('.nt-root') && window.CrundiNotes && window.CrundiNotes.dropPreview(x, y)) return { kind: 'notes', x, y };
       if (el.closest('#term-input')) return { kind: 'input' };
+      // Cru's screen (voice and chat view): the reference goes to Cru (crundi-voice.js dropRef).
+      if (el.closest('.cv-ov') && window.CrundiVoice && window.CrundiVoice.dropRef) return { kind: 'cru' };
       const cell = el.closest('.term-cell[data-tid]');
       if (cell) return { kind: 'term', id: cell.dataset.tid };
       return null;
     }
     function insertRefToTarget(target, ref) {
       if (!ref || !target) return;
+      if (target.kind === 'cru') { if (window.CrundiVoice.dropRef(ref)) toast('Added for Cru'); return; }
       if (target.kind === 'notes') {
         if (window.CrundiNotes && window.CrundiNotes.dropText(target.x, target.y, ref)) toast('Added to the note');
         return;

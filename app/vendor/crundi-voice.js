@@ -270,7 +270,7 @@
     '.cv-att{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 0;justify-content:center}.cv-att[hidden]{display:none}.cv-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:4px 6px 4px 8px;border-radius:12px;background:#1a1a28;border:1px solid ' + C.border + ';color:' + C.text + ';font-size:12px}.cv-chip img{width:28px;height:28px;object-fit:cover;border-radius:6px}.cv-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cv-chip.up{opacity:.6}.cv-chip.bad{border-color:#f87171}.cv-chip button{border:0;background:none;color:' + C.muted + ';cursor:pointer;padding:0 2px;font-size:14px;line-height:1}' +
     '.cv-ov.drop{outline:3px dashed ' + C.accent + ';outline-offset:-8px}.cv-m .att{display:inline-flex;align-items:center;gap:6px;margin:2px 0;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.08);font-size:12px}' +
     // Kid mode: a big keyboard button (left) and a mute button (right); typing in a big friendly box.
-    '.cv-mute{display:none}.cv-ov.kid .cv-mute{display:flex;position:absolute;right:24px;top:50%;transform:translateY(-50%)}.cv-mute .sl{display:none}.cv-ov.muted .cv-mute .sl{display:inline}.cv-ov.muted .cv-mute{background:#fee2e2!important;color:#b91c1c!important}' +
+    '.cv-ov:not(.kid) .cv-mute{display:none!important}.cv-ov.kid .cv-mute{display:flex;position:absolute;right:24px;top:50%;transform:translateY(-50%)}.cv-mute .sl{display:none}.cv-ov.muted .cv-mute .sl{display:inline}.cv-ov.muted .cv-mute{background:#fee2e2!important;color:#b91c1c!important}' +
     '.cv-ov.kid .cv-kbb,.cv-ov.kid .cv-mute{width:64px;height:64px;border-radius:50%;background:#fff;color:#4f46e5;box-shadow:0 5px 0 rgba(49,46,129,.18)}.cv-ov.kid .cv-kbb svg{width:28px;height:28px}.cv-ov.kid .cv-kbb.on{background:#4f46e5;color:#fff}' +
     '.cv-ov.kid.kb .cv-type{font:700 22px "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;padding:14px 20px;border-radius:28px;background:#fff;color:#312e81;border:3px solid #a5b4fc}.cv-ov.kid.kb .cv-send{width:64px;height:64px;border-radius:50%}' +
     '.cv-ov.locked .cv-chatb,.cv-ov.locked .cv-attb,.cv-ov.locked .cv-chat,.cv-ov.locked .cv-att{display:none!important}' +
@@ -585,7 +585,8 @@
   // ─── the microphone: 16 kHz PCM to the server, and the level ───
   function openMic() {
     navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
-      if (!S) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+      // Closed, or switched to typing (or muted) while the microphone was starting: let it go at once.
+      if (!S || S.kb || S.muted) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       S.stream = stream;
       var ctx = new (window.AudioContext || window.webkitAudioContext)();
       S.ctx = ctx;
@@ -795,6 +796,10 @@
     });
     // What is being heard right now, not yet sent.
     if (S.heard && (S.phase === 'listen' || S.phase === 'think') && S.heard !== S.lastChatAsked) h += '<div class="cv-m me live">' + esc(S.heard) + '</div>';
+    // Rebuilt only when it changed: render() runs on every word heard, and a long history
+    // rebuilt each time starved the animation (the mic froze in the chat view).
+    if (h === S.chatHtml && !toEnd) return;
+    S.chatHtml = h;
     var nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     list.innerHTML = h || '<div style="text-align:center;color:' + C.muted + ';font-size:13px">No messages yet.</div>';
     S.ov.querySelector('.cv-more').hidden = !S.moreChat;
@@ -1398,7 +1403,8 @@
     // Opened by Cru's own news and said: closed again, unless the owner started talking.
     if (S.reportOnly && S.reportCloseAt && Date.now() > S.reportCloseAt && S.phase === 'listen' && !S.heard && !S.pending) { close(); return; }
     if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && !S.screen && Date.now() - S.quietSince > idleMs) { close(); return; }
-    if (S.phase === 'listen' && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
+    // (Typing: there is no microphone to put to sleep; its socket brings Cru's news.)
+    if (S.phase === 'listen' && !S.kb && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
   }
 
 
@@ -1723,7 +1729,9 @@
     var norm = (ph === 'listen' || ph === 'speak') ? Math.min(1, target / S.peak) : target;
     S.lvl += (norm - S.lvl) * (norm > S.lvl ? 0.45 : 0.15);
     if (ms - S.lastShift > 16) { S.wave.copyWithin(1, 0); S.wave[0] = S.lvl; S.lastShift = ms; }
-    drawField(t, ph);
+    // The field is hidden in the chat view: drawn at no size it throws, and the mic below stopped moving.
+    var fc = S.ov.querySelector('.cv-field canvas');
+    if (fc && fc.clientWidth > 40 && fc.clientHeight > 40) { try { drawField(t, ph); } catch (e) { /* the mic still moves */ } }
     drawMic(t, ms, ph);
   }
 
@@ -1978,9 +1986,18 @@
 
   window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
-    kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
+    kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
+    /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */
+    dropRef: function (ref) {
+      if (!S || S.kid || !ref) return false;
+      var inp = S.ov.querySelector('.cv-type');
+      if (S.kb && inp) { inp.value = (inp.value ? inp.value.replace(/\s*$/, ' ') : '') + ref + ' '; try { inp.focus(); } catch (e) { /* gone */ } S.quietSince = Date.now(); return true; }
+      addRef(ref); return true;
+    },
+    shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
     // The own-voice tools, shared with a chat's voice mode (claude-chat.js), which talks over its replies the same way.
     kit: { createGate: createGate, createPreroll: createPreroll, voicedShare: voicedShare, makeLoopback: makeLoopback },
     // The PC's "Hey Cru" (app/voice-wake/controller.js): an asleep screen has let the microphone go, and is woken where it is.
-    get holdsMic() { return !!S && !S.micOff; }, wake: function () { if (S && S.micOff) { wakeMic(); return true; } return false; } };
+    // Typing (or muted on the kid screen) counts as holding it: the PC's own "Hey Cru" listener stays off too, so no microphone is open at all.
+    get holdsMic() { return !!S && (!S.micOff || !!S.kb || !!S.muted); }, wake: function () { if (S && (S.kb || S.muted)) return true; if (S && S.micOff) { wakeMic(); return true; } return false; } };
 })();

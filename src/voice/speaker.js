@@ -120,7 +120,11 @@ export const WORD_ENROL_MIN = 0.25;
  * owner's same-word clips came from one recording, so expect a little less.
  */
 export const WORD_K = 3;
-export const WORD_THRESHOLD = 0.48;
+// 0.37 (10 Nov, from 0.48): the owner's own live "yes" scored 0.39 against his taught
+// replies (the settings page's recording and the live stream sound a little different).
+// Against the owner's taught clips, other speakers' short clips did not reach 0.38
+// (0 of ~7,300 in the calibration set; /tmp/spk-short), so the bar can sit there.
+export const WORD_THRESHOLD = 0.37;
 export const WORD_MAIN_MIN = 0.30;
 export const WORD_REJECT = 0.30;
 export const WORD_REJECT_MAIN = 0.25;
@@ -463,7 +467,11 @@ export const ADMIN_FOLLOW_MS = 120_000;
 export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, verdict = null, answering = false, recentOwner = false } = {}) {
   const owner = verdict ? verdict.owner : null;
   const short = !!verdict && owner === null && verdict.reason === 'short';
-  const unrecognised = enrolled && ownerOnly && !typed && (owner === false || short);
+  // Too short to tell, moments after a full sentence recognised as the owner's
+  // (recentOwner: within ADMIN_FOLLOW_MS, no other voice since): taken as the
+  // owner carrying on (10 Nov). Another voice (false) never is.
+  const carryOn = short && recentOwner;
+  const unrecognised = enrolled && ownerOnly && !typed && (owner === false || (short && !carryOn));
   // A bare "yes" is too short to tell whose voice it is. It may still answer a
   // question that a recognised request asked moments ago (answering: such a
   // confirmation is waiting): then it may confirm or cancel that one action,
