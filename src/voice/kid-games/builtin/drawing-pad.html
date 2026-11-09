@@ -1,0 +1,22 @@
+<div class="k-row" id="pal" style="margin-bottom:10px"></div>
+<canvas id="c" width="800" height="560" style="display:block;width:100%;max-width:800px;margin:0 auto;aspect-ratio:10/7;background:#fff;border-radius:22px;touch-action:none"></canvas>
+<script>
+(function () {
+  var c = document.getElementById('c'), g = c.getContext('2d'), col = '#ef4444', size = 18, down = false, last = null, strokes = 0;
+  var pal = document.getElementById('pal');
+  kid.COLOURS.concat([{ name: 'black', hex: '#111827' }]).forEach(function (k) {
+    var b = kid.el('button', 'k-btn', ''); b.style.background = k.hex; b.style.minWidth = b.style.minHeight = '64px'; b.style.borderRadius = '50%';
+    b.onclick = function () { col = k.hex; [].forEach.call(pal.children, function (x) { x.style.outline = ''; }); b.style.outline = '5px solid #fff'; kid.say(k.name + '!'); };
+    pal.appendChild(b);
+  });
+  var clear = kid.el('button', 'k-btn', 'New'); clear.style.background = '#64748b'; clear.style.fontSize = '24px'; clear.style.minHeight = '64px';
+  clear.onclick = function () { g.clearRect(0, 0, 800, 560); kid.event('tap', 'new page'); kid.say('A fresh page!'); };
+  pal.appendChild(clear);
+  pal.children[0].style.outline = '5px solid #fff';
+  function pos(e) { var r = c.getBoundingClientRect(); return [(e.clientX - r.left) * 800 / r.width, (e.clientY - r.top) * 560 / r.height]; }
+  c.onpointerdown = function (e) { down = true; last = pos(e); c.setPointerCapture(e.pointerId); g.fillStyle = col; g.beginPath(); g.arc(last[0], last[1], size / 2, 0, 7); g.fill(); };
+  c.onpointermove = function (e) { if (!down) return; var p = pos(e); g.strokeStyle = col; g.lineWidth = size; g.lineCap = 'round'; g.lineJoin = 'round'; g.beginPath(); g.moveTo(last[0], last[1]); g.lineTo(p[0], p[1]); g.stroke(); last = p; };
+  c.onpointerup = c.onpointercancel = function () { if (down) { strokes++; if (strokes % 15 === 0) kid.say(kid.pick(['What a lovely picture!', 'Beautiful colours!', 'You are a great artist!'])); kid.event('tap', 'draw'); } down = false; };
+  kid.say('Pick a colour and draw anything you like!');
+})();
+</script>

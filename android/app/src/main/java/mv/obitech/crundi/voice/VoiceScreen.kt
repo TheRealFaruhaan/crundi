@@ -207,13 +207,16 @@ class VoiceMore(
 
 @Composable
 private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
+    // Compact asks first (a row under the top row; a dialog can't open over the side-key overlay).
+    var askCompact by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         CruIcon(22.dp, live = phase == Phase.Listening || phase == Phase.Thinking || phase == Phase.Speaking, modifier = Modifier.semantics { contentDescription = "Cru" })
         if (ui.server.isNotEmpty()) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         Spacer(Modifier.weight(1f))
         if (ui.spend?.adminMode == true) AdminPill()
         StatusPill(statusText(ui, phase), phase)
-        if (VoiceApi.COMPACT in ui.caps) CrundiIconButton("minimize-2", more.onCompact, contentDescription = "Compact the conversation", size = 16.dp, touch = 38.dp)
+        if (VoiceApi.COMPACT in ui.caps) CrundiIconButton("minimize-2", { askCompact = !askCompact }, contentDescription = "Compact the conversation", size = 16.dp, touch = 38.dp)
         if (VoiceApi.HISTORY in ui.caps) Box {
             CrundiIconButton(
                 "message-circle", { more.onChat(!ui.chat) },
@@ -224,6 +227,18 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
             val unread by CruUnread.count.collectAsState()
             if (unread > 0 && !ui.chat) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(8.dp).clip(CircleShape).background(CrundiColors.Red))
         }
+    }
+    if (askCompact) Column(
+        Modifier.fillMaxWidth().padding(top = 8.dp).background(CrundiColors.BgSecondary, RoundedCornerShape(12.dp))
+            .border(1.dp, CrundiColors.Border, RoundedCornerShape(12.dp)).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Compact the conversation? Cru carries on from a summary; its notebook and memory search keep everything.", style = CrundiType.Small)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            mv.obitech.crundi.ui.components.CrundiButton("Compact", { askCompact = false; more.onCompact() })
+            mv.obitech.crundi.ui.components.CrundiButton("Cancel", { askCompact = false }, kind = mv.obitech.crundi.ui.components.ButtonKind.Ghost)
+        }
+    }
     }
 }
 

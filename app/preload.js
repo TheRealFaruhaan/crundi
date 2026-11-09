@@ -79,6 +79,12 @@ contextBridge.exposeInMainWorld('api', {
     forget: () => ipcRenderer.invoke('voice-wake:forget'),
   },
 
+  // Kid mode (crundi-voice.js): lock this window to the kid screen (kiosk,
+  // above everything, keys swallowed) or let it go once the PIN was accepted;
+  // onKidStart: the tray's "Kid mode" item.
+  kidLock: (on) => ipcRenderer.invoke('kid:lock', !!on),
+  onKidStart: (cb) => { const h = () => cb(); ipcRenderer.on('kid:start', h); return () => ipcRenderer.removeListener('kid:start', h); },
+
   // Interactive browser panel — WebContentsView managed in the main process.
   wbrowser: {
     open: (id, url) => ipcRenderer.invoke('wbrowser:open', id, url),

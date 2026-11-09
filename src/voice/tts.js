@@ -150,3 +150,58 @@ export async function speakStream(text, voice, { fetchImpl = fetch } = {}) {
 
 /** Tests only. */
 export function _clearCache() { cached = { at: 0, voices: null }; }
+
+// ─── Flux (kid mode's voice) ───
+//
+// Deepgram's Flux voices (flux-<name>-en) speak through /v2/speak and take an
+// expressivity, -2 (subdued) to 2 (lively), set per request. Kid mode uses
+// one (Settings: kidVoice, default flux-gemma-en); a failure falls back to
+// the owner's Aura voice. Spend is counted like Aura's, per character, until
+// Deepgram's own Flux price is known.
+const FLUX_URL = 'https://api.deepgram.com/v2/speak';
+export const FLUX_VOICES = ['flux-gemma-en', 'flux-heather-en', 'flux-brooke-en', 'flux-meghan-en', 'flux-cole-en'];
+export const isFluxModel = (m) => /^flux-[a-z]+-[a-z]{2}$/.test(String(m || ''));
+/** Kid Cru's moods, as the expressivity Flux takes. */
+export const MOOD_EXPRESSIVITY = { excited: 2, happy: 1, calm: 0, gentle: -1 };
+
+/** Drop a WAV header, if Deepgram sends one, so the stream is raw PCM. */
+function rawPcm(body) {
+  let first = true, buf = new Uint8Array(0);
+  return body.pipeThrough(new TransformStream({
+    transform(chunk, ctl) {
+      if (!first) { ctl.enqueue(chunk); return; }
+      const m = new Uint8Array(buf.length + chunk.length); m.set(buf); m.set(chunk, buf.length); buf = m;
+      if (buf.length < 64) return;
+      first = false;
+      const riff = buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46;
+      if (!riff) { ctl.enqueue(buf); return; }
+      // The "data" chunk's bytes start 8 after its tag.
+      for (let i = 12; i + 8 <= buf.length; i++) if (buf[i] === 0x64 && buf[i + 1] === 0x61 && buf[i + 2] === 0x74 && buf[i + 3] === 0x61) { ctl.enqueue(buf.slice(i + 8)); return; }
+      ctl.enqueue(buf.slice(44));
+    },
+    flush(ctl) { if (first && buf.length) ctl.enqueue(buf); },
+  }));
+}
+
+/**
+ * Kid mode's speech, streamed as raw PCM like speakStream: a Flux voice at
+ * [expressivity] (-2..2) and [rate] (0.5..1.5); on any failure, the owner's
+ * Aura voice (speakStream) instead.
+ */
+export async function speakKidStream(text, { voice = '', expressivity = 2, rate = 1, fetchImpl = fetch, fallback = speakStream } = {}) {
+  const model = voice || getSettings().kidVoice || '';
+  if (!isFluxModel(model)) return fallback(text, isVoiceModel(model) ? model : '', { fetchImpl });
+  const key = getSettings().deepgramKey;
+  if (!key) return { ok: false, error: 'No Deepgram key is set. Add one in Settings › Voice assistant.' };
+  if (deepgramOverLimit()) return { ok: false, limitReached: true, error: 'This month\'s Deepgram spend has reached its limit' };
+  const t = String(text || '').trim().slice(0, MAX_CHARS);
+  if (!t) return { ok: false, error: 'Nothing to say' };
+  const ex = Math.max(-2, Math.min(2, Math.round(Number(expressivity) || 0)));
+  const sp = Math.round(Math.max(0.5, Math.min(1.5, Number(rate) || 1)) * 20) / 20;
+  const q = new URLSearchParams({ model, encoding: 'linear16', sample_rate: String(STREAM_RATE), expressivity: String(ex), ...(sp !== 1 ? { speed: String(sp) } : {}) });
+  try {
+    const res = await fetchImpl(`${FLUX_URL}?${q}`, { method: 'POST', headers: { Authorization: `Token ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: t }) });
+    if (res.ok && res.body) { addDeepgramTtsSpend(t.length); return { ok: true, body: rawPcm(res.body), rate: STREAM_RATE, voice: model }; }
+  } catch { /* the fallback speaks */ }
+  return fallback(text, '', { fetchImpl });
+}

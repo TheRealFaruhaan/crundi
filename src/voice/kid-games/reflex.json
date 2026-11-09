@@ -1,0 +1,175 @@
+{
+ "version": 1,
+ "about": "Instant lines for game events (kid-reflex.js). {name} is the child's first name (left out when unknown), {item} the letter, word or number, {sound} the letter's sound, {word} its word, {parent} what the child calls the parent (\"your grown-up\" when unset). Lines with a slot that cannot be filled are skipped. Kid-safe, short, warm; never shaming.",
+ "events": {
+  "correct": {
+   "mood": "excited",
+   "lines": [
+    "Yes! You did it!",
+    "Great job, {name}!",
+    "Wow, well done!",
+    "You found {item}!",
+    "That's right, {item}!",
+    "Amazing!",
+    "Super star!",
+    "Hooray!",
+    "You got it!",
+    "Brilliant, {name}!",
+    "Yes, {item} says {sound}!",
+    "Fantastic finding!",
+    "High five!",
+    "You're so clever!",
+    "Woohoo!",
+    "Well spotted, {name}!",
+    "Yay, you're brilliant!"
+   ]
+  },
+  "miss": {
+   "mood": "gentle",
+   "lines": [
+    "Good try! Have another go.",
+    "Almost! Try again.",
+    "Oops, nearly! Look again.",
+    "That's okay, try another one.",
+    "Good trying, {name}!",
+    "Hmm, not that one. You can do it!",
+    "Let's look again together.",
+    "Nice try! Keep going.",
+    "So close! One more try.",
+    "You're learning! Try again.",
+    "Ooh, tricky one! Have another look.",
+    "Keep going, you're doing great!"
+   ]
+  },
+  "hint": {
+   "mood": "calm",
+   "lines": [
+    "Here's a little help.",
+    "Look, it's this one!",
+    "Let me help you, {name}.",
+    "Here, have a clue!",
+    "Look closely. Can you see it?"
+   ]
+  },
+  "level-up": {
+   "mood": "excited",
+   "lines": [
+    "Level up! You're getting so good!",
+    "Wow, a new level, {name}!",
+    "You're ready for something trickier!",
+    "Up we go! Great work!"
+   ]
+  },
+  "round-done": {
+   "mood": "happy",
+   "lines": [
+    "Round done! Well played!",
+    "That was fun! Ready for more?",
+    "Great round, {name}!",
+    "You finished the round!"
+   ]
+  },
+  "finished": {
+   "mood": "excited",
+   "lines": [
+    "You finished the game! Hooray!",
+    "All done! You were brilliant, {name}!",
+    "What a star! Game finished!",
+    "You did the whole game! Amazing!"
+   ]
+  },
+  "idle": {
+   "mood": "calm",
+   "lines": [
+    "Are you still there?",
+    "Hello? Want to keep playing?",
+    "Peekaboo! Shall we play some more?",
+    "I'm still here, {name}! Your turn."
+   ]
+  },
+  "stuck": {
+   "mood": "gentle",
+   "lines": [
+    "Shall we look together?",
+    "Take your time. You can do it!",
+    "Let's find it together, {name}.",
+    "Have a little look around."
+   ]
+  },
+  "start": {
+   "mood": "excited",
+   "lines": [
+    "Let's play!",
+    "Ready, {name}? Let's go!",
+    "Here we go!",
+    "Yay, game time!"
+   ]
+  },
+  "making": {
+   "mood": "excited",
+   "lines": [
+    "I'm drawing the pictures!",
+    "Adding the fun sounds!",
+    "Making the buttons nice and big!",
+    "Nearly ready, {name}!",
+    "Mixing the colours!",
+    "Ooh, this is going to be fun!",
+    "Just a little bit more!",
+    "Can you pop the bubbles while you wait?",
+    "Putting in the surprises!",
+    "Almost there!"
+   ]
+  },
+  "waiting": {
+   "mood": "happy",
+   "lines": [
+    "Just a moment!",
+    "Hold on, getting it ready!",
+    "Here it comes!",
+    "Wait for it...",
+    "Pop some bubbles while we wait!"
+   ]
+  },
+  "ask-asking": {
+   "mood": "happy",
+   "lines": [
+    "Let me ask {parent}!",
+    "I'll send {parent} a message!",
+    "Good idea! I'll ask {parent}.",
+    "Let's ask {parent}. Off goes the message!"
+   ]
+  },
+  "ask-waiting": {
+   "mood": "happy",
+   "lines": [
+    "Still waiting for {parent}... let's pop some bubbles!",
+    "The message is on its way to {parent}!",
+    "{parent} will answer soon. Pop a bubble!",
+    "Waiting for {parent}... can you catch a bubble?"
+   ]
+  },
+  "ask-yes": {
+   "mood": "excited",
+   "lines": [
+    "{parent} said yes! Here we go!",
+    "Hooray, {parent} said yes!",
+    "Yes! {parent} said okay!"
+   ]
+  },
+  "ask-no": {
+   "mood": "gentle",
+   "lines": [
+    "{parent} said not this time. Let's play something fun instead!",
+    "Not this time, says {parent}. How about a game?",
+    "{parent} said maybe another day. Shall we play?"
+   ]
+  },
+  "ask-timeout": {
+   "mood": "gentle",
+   "lines": [
+    "{parent} is busy right now. Let's play something else!",
+    "{parent} is busy just now. How about a game?"
+   ]
+  }
+ }
+}

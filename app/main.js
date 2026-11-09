@@ -207,12 +207,84 @@ function createWindow() {
   });
 
   mainWindow.on('close', (e) => {
+    // Kid mode: the window stays (only the PIN, on the kid screen, unlocks it).
+    if (kidLocked) { e.preventDefault(); return; }
     if (!app.isQuitting) {
       e.preventDefault();
       mainWindow.hide();
     }
   });
+  wireKidLock(mainWindow);
 }
+
+// ─── Kid mode: the window locked to the kid screen ───
+//
+// The page (crundi-voice.js) asks for it when the kid screen opens and lets
+// go once the server has accepted the PIN. While locked: kiosk and full
+// screen, above everything ('screen-saver' level), off the taskbar, focus
+// taken back whenever it is lost, and the keys that reload, close, quit,
+// open devtools or switch away are swallowed here, before the page sees
+// them. The OS keeps what it never hands to an app: Ctrl+Alt+Del and the
+// lock screen on Windows, the Super key and VT switching on Linux.
+let kidLocked = false;
+let kidRefocus = null;
+
+function kidLockWindow(on) {
+  const w = mainWindow;
+  if (!w || w.isDestroyed()) return { ok: false };
+  kidLocked = !!on;
+  appendLog(`[kid] window ${kidLocked ? 'locked' : 'unlocked'}`);
+  try {
+    if (kidLocked) {
+      w.show();
+      w.setSkipTaskbar(true);
+      w.setAlwaysOnTop(true, 'screen-saver');
+      w.setFullScreen(true);
+      w.setKiosk(true);
+      w.setMinimizable(false);
+      w.setClosable(false);
+      w.focus();
+      if (w.webContents.isDevToolsOpened()) w.webContents.closeDevTools();
+    } else {
+      w.setKiosk(false);
+      w.setFullScreen(false);
+      w.setAlwaysOnTop(false);
+      w.setSkipTaskbar(false);
+      w.setMinimizable(true);
+      w.setClosable(true);
+    }
+  } catch (err) { appendLog(`[kid] lock: ${err.message}`); }
+  updateTrayMenu();
+  return { ok: true, locked: kidLocked };
+}
+
+/** Keys that would leave or break the kid screen. */
+function kidBlockedKey(input) {
+  const k = String(input.key || '').toLowerCase();
+  const mod = input.control || input.meta;
+  if (['f5', 'f11', 'f12', 'escape', 'browserback', 'browserforward', 'browserrefresh', 'browserhome'].includes(k)) return true;
+  if (input.alt && ['f4', 'arrowleft', 'arrowright', 'tab', 'home'].includes(k)) return true;
+  if (mod && ['r', 'w', 'q', 'n', 't', 'p', 'l', 'o', 's', 'u', 'h', 'j', 'f', 'm', '+', '-', '=', '0', 'tab'].includes(k)) return true;
+  if (mod && input.shift && ['i', 'j', 'c', 'delete'].includes(k)) return true;
+  if (input.meta || k === 'meta' || k === 'os') return true;
+  return false;
+}
+
+function wireKidLock(w) {
+  w.webContents.on('before-input-event', (e, input) => {
+    if (kidLocked && input.type === 'keyDown' && kidBlockedKey(input)) e.preventDefault();
+  });
+  w.webContents.on('devtools-opened', () => { if (kidLocked) w.webContents.closeDevTools(); });
+  w.on('blur', () => {
+    if (!kidLocked) return;
+    clearTimeout(kidRefocus);
+    kidRefocus = setTimeout(() => { if (kidLocked && !w.isDestroyed()) { w.show(); w.setAlwaysOnTop(true, 'screen-saver'); w.moveTop(); w.focus(); } }, 150);
+  });
+  w.on('leave-full-screen', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) w.setFullScreen(true); }, 100); });
+  w.on('minimize', () => { if (kidLocked && !w.isDestroyed()) { w.restore(); w.focus(); } });
+  w.on('hide', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) w.show(); }, 100); });
+}
+ipcMain.handle('kid:lock', (_e, on) => kidLockWindow(!!on));
 
 // ─── Downloads ───
 //
@@ -276,6 +348,12 @@ function updateTrayMenu() {
     { label: statusLabels[botStatus] || 'Unknown', enabled: false },
     { type: 'separator' },
     { label: 'Open', click: () => showWindow() },
+    // Kid mode: the page asks the server (the PIN must be set there) and locks this window.
+    {
+      label: kidLocked ? 'Kid mode is on' : 'Kid mode',
+      enabled: !kidLocked,
+      click: () => { showWindow(); try { mainWindow?.webContents.send('kid:start'); } catch { /* no page */ } },
+    },
     {
       // In remote mode the window goes straight to the other server, so this is
       // the way back to the local shell to change or clear that setting.
@@ -301,7 +379,7 @@ function updateTrayMenu() {
     },
     {
       label: 'Stop',
-      enabled: botStatus === 'running' || botStatus === 'starting',
+      enabled: !kidLocked && (botStatus === 'running' || botStatus === 'starting'),
       click: () => stopBot(),
     },
     { type: 'separator' },
@@ -312,7 +390,9 @@ function updateTrayMenu() {
     { type: 'separator' },
     {
       label: 'Quit',
-      click: () => gracefulShutdownAndExit(),
+      // Not while the kid screen is locked: only the PIN ends it.
+      enabled: !kidLocked,
+      click: () => { if (!kidLocked) gracefulShutdownAndExit(); },
     },
   ]);
 

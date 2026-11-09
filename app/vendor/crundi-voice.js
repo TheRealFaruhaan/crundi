@@ -44,6 +44,10 @@
   var KIND = { working: C.yellow, waiting: C.sky, needs: C.hover, error: C.red, running: C.green, idle: C.muted };
   var PALETTE = { listen: [C.sky, C.accent], think: [C.ask, C.deep], speak: [C.hover, C.ask], start: [C.accent, C.deep], ended: [C.muted, '#22223a'] };
   var LOGO = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="14" y1="14" x2="82" y2="82"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4f46e5"/></linearGradient></defs><mask id="eh"><rect width="96" height="96" fill="#fff"/><rect x="32" y="43" width="10.5" height="18" rx="5.2" fill="#000"/><rect x="53.5" y="43" width="10.5" height="18" rx="5.2" fill="#000"/></mask><path d="M48 27V17" fill="none" stroke-linecap="round" stroke="#fbbf24" stroke-width="5.5"/><circle cx="48" cy="13" r="6.5" fill="#fbbf24"/><rect x="11" y="26" width="74" height="57" rx="23" fill="url(#g)" mask="url(#eh)"/></svg>');
+  // Kid mode's big, bright cursor (dark outline: seen on any background), and a star over what can be tapped. The games' kit uses the same.
+  var KID_CURSOR = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M5 3l34 18-15 4-6 15z" fill="#facc15" stroke="#111" stroke-width="3" stroke-linejoin="round"/></svg>');
+  var KID_POINTER = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 56 56"><path d="M28 3l7 16 17 2-13 12 4 17-15-9-15 9 4-17L4 21l17-2z" fill="#f472b6" stroke="#111" stroke-width="3" stroke-linejoin="round"/><circle cx="28" cy="28" r="4" fill="#fff"/></svg>');
+  var KID_PALETTE = { listen: ['#facc15', '#f472b6'], think: ['#a3e635', '#22d3ee'], speak: ['#f472b6', '#facc15'], start: ['#22d3ee', '#a78bfa'], ended: [C.muted, '#22223a'] };
   var PAUSE_AFTER_SPEECH_MS = 450, SILENCE_MS = 30000, ECHO_MS = 5000;
   /** A cue this close to its end is let finish before the reply; any further off, the reply cuts it. */
   var CUE_FINISH_MS = 300;
@@ -259,7 +263,12 @@
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
     '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
     '.cv-x.on{background:' + C.accent + ';color:#fff}.cv-chatb{position:relative}.cv-chatb.cru-unread:after{content:"";position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#ef4444}' +
-    '.cv-bot .cv-kbb{margin-left:0;flex:none}.cv-ov.kb .cv-mic,.cv-ov.kb .cv-ptt{display:none!important}' +
+    // The bottom row as on the phone: the voice button in the middle, the keyboard on its left;
+    // the text box (with its send button) only in keyboard mode, where it takes the voice button's place.
+    '.cv-bot{position:relative}.cv-bot .cv-kbb{margin-left:0;flex:none;position:absolute;left:24px;top:50%;transform:translateY(-50%)}.cv-ov.kb .cv-bot .cv-kbb{position:static;transform:none}' +
+    '.cv-bot .cv-type,.cv-bot .cv-send{display:none}.cv-ov.kb .cv-bot .cv-type{display:block}.cv-ov.kb .cv-bot .cv-send{display:flex;margin-left:0;background:' + C.accent + ';color:#fff}' +
+    '.cv-ov.kb .cv-mic,.cv-ov.kb .cv-ptt{display:none!important}' +
+    '.cv-confirm{width:100%;max-width:680px;box-sizing:border-box;margin:8px auto 0;padding:10px 14px;border-radius:12px;background:' + C.card + ';border:1px solid ' + C.border + ';font-size:13px;color:' + C.text + ';display:flex;flex-wrap:wrap;gap:8px;align-items:center}.cv-confirm[hidden]{display:none}.cv-confirm span{flex:1 1 200px}.cv-confirm .yes{border-color:' + C.accent + '}' +
     '.cv-ov.chat .cv-field,.cv-ov.chat .cv-words{display:none}.cv-ov.chat .cv-chat{display:flex}.cv-ov.chat .cv-mic{width:64px;height:64px}.cv-ov.chat .cv-mic canvas{left:-104px;top:-44px}' +
     '.cv-x{margin-left:10px;width:34px;height:34px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;font-size:0;display:flex;align-items:center;justify-content:center}' +
     '.cv-field{position:relative;width:100%;max-width:820px;flex:1.5;min-height:300px}.cv-field canvas{position:absolute;inset:0;width:100%;height:100%}' +
@@ -269,16 +278,43 @@
     '.cv-cx{flex:none;width:26px;height:26px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-cx:hover{color:' + C.text + ';background:#24243a}.cv-cx[hidden]{display:none}' +
     '.cv-ht{min-width:0}.cv-reply{font-size:19px;line-height:27px;font-weight:500;margin-top:12px}' +
     '.cv-detail{margin-top:12px;text-align:left;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;font-size:14px;line-height:20px;white-space:pre-wrap}' +
-    '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:6px;font-size:13px;color:' + C.hover + '}' +
+    '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:8px;font-size:13px;color:' + C.hover + ';display:flex;gap:8px;align-items:center;justify-content:center}.cv-yesno[hidden]{display:none}.cv-yn{border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';border-radius:16px;padding:6px 16px;font-size:13px;cursor:pointer}.cv-yn:hover{border-color:' + C.accent + '}' +
     '.cv-bot{width:100%;max-width:680px;display:flex;align-items:center;justify-content:center;gap:16px;padding:8px 24px 22px;box-sizing:border-box}' +
     '.cv-type{flex:1;min-width:0;background:#1a1a28;border:1px solid ' + C.border + ';border-radius:20px;color:' + C.text + ';padding:10px 14px;font-size:14px;outline:none}.cv-type:focus{border-color:' + C.accent + '}' +
     '.cv-mic{width:112px;height:112px;flex:none;cursor:pointer;position:relative}.cv-mic canvas{position:absolute;left:-80px;top:-20px;width:272px;height:152px;pointer-events:none}' +
     '.cv-ptt{display:none;font-size:11px;color:' + C.muted + ';text-align:center;padding-bottom:6px}' +
     // A wide screen (a PC): a dropdown under the top bar's mic button, the work in view around it.
     '@media (min-width:900px){.cv-ov{left:auto;right:var(--cv-right,14px);top:var(--cv-top,52px);bottom:auto;width:400px;height:min(600px,calc(100vh - 70px));border:1px solid ' + C.border + ';border-radius:16px;box-shadow:0 18px 60px rgba(0,0,0,.6);animation:cvdrop .18s ease-out}.cv-field{min-height:230px}.cv-reply{font-size:16px;line-height:23px}.cv-heard{font-size:14px}.cv-top{padding:12px 14px 0}.cv-bot{padding:4px 14px 12px}.cv-ptt{display:block}}' +
+    // With Cru's panel up, the dropdown is wider and taller: the panel needs the room.
+    '@media (min-width:900px){.cv-ov.has-scr:not(.kid){width:min(580px,calc(100vw - 40px));height:min(760px,calc(100vh - 70px))}}' +
     '@keyframes cvdrop{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}' +
 
-    '.cv-mic svg{position:absolute;left:44px;top:44px;width:24px;height:24px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}';
+    '.cv-mic svg{position:absolute;left:44px;top:44px;width:24px;height:24px;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}' +
+    // The live screen: Cru's panel. In the voice view it takes the field's place; in the chat view it sits above the messages.
+    '.cv-scr{display:none;position:relative;width:100%;max-width:820px;flex:1.5;min-height:200px;flex-direction:column;box-sizing:border-box;padding:8px 14px 0}.cv-ov.has-scr .cv-scr{display:flex}.cv-ov.has-scr .cv-field{display:none}' +
+    '.cv-ov.chat .cv-scr{flex:none;max-height:42vh;min-height:0}.cv-ov.chat.scr-min .cv-scr-b{display:none}' +
+    '.cv-scr-h{display:flex;align-items:center;gap:6px;padding:0 2px 6px}.cv-scr-t{flex:1;min-width:0;font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+    '.cv-scr-h .cv-x{width:28px;height:28px;margin-left:0}.cv-ov:not(.chat) .cv-scr-min{display:none}' +
+    '.cv-scr-b{flex:1;min-height:0;overflow:auto;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:20px}' +
+    '.cv-scr-b.frame{padding:0;overflow:hidden}.cv-scr-b iframe{flex:1;width:100%;min-height:240px;border:0;border-radius:14px;background:transparent}' +
+    '.cv-b-h{font-size:16px;font-weight:600}.cv-b-t{white-space:pre-wrap;color:' + C.text + '}.cv-b-l{margin:0;padding-left:20px}.cv-b-l li{margin:2px 0}' +
+    '.cv-b-c{list-style:none;margin:0;padding:0}.cv-b-c li{display:flex;gap:8px;align-items:flex-start;margin:3px 0}.cv-b-c i{flex:none;width:14px;height:14px;margin-top:3px;border-radius:4px;border:1.5px solid ' + C.muted + '}.cv-b-c li.d i{background:' + C.green + ';border-color:' + C.green + '}.cv-b-c li.d span{color:' + C.text2 + ';text-decoration:line-through}' +
+    '.cv-b-tb{border-collapse:collapse;width:100%}.cv-b-tb td,.cv-b-tb th{padding:4px 8px;border-bottom:1px solid ' + C.border + ';text-align:left;vertical-align:top}.cv-b-tb th{color:' + C.text2 + ';font-weight:500}.cv-b-tb td:first-child{color:' + C.text2 + '}' +
+    '.cv-b-p{display:flex;flex-direction:column;gap:4px}.cv-b-p span{font-size:12px;color:' + C.text2 + '}.cv-b-p div{height:8px;border-radius:4px;background:#1a1a28;overflow:hidden}.cv-b-p b{display:block;height:100%;background:linear-gradient(90deg,' + C.sky + ',' + C.accent + ')}' +
+    '.cv-b-i{max-width:100%;border-radius:10px}.cv-b-ch{display:flex;flex-wrap:wrap;gap:6px}.cv-b-ch span{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid}' +
+    // Kid mode: the whole window, bright and friendly, a big cursor, nothing to leave by.
+    '.cv-ov.kid{inset:0!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;max-height:none!important;border:0!important;border-radius:0!important;z-index:2147483000;background:radial-gradient(circle at 50% 30%,#1e1b4b,#0a0a0f 70%)}' +
+    '.cv-ov.kid .cv-cmp,.cv-ov.kid .cv-chatb,.cv-ov.kid .cv-close,.cv-ov.kid .cv-kbb,.cv-ov.kid .cv-type,.cv-ov.kid .cv-send,.cv-ov.kid .cv-confirm,.cv-ov.kid .cv-leg,.cv-ov.kid .cv-ptt,.cv-ov.kid .cv-admin,.cv-ov.kid .cv-scr-x{display:none!important}' +
+    '.cv-ov.kid .cv-top,.cv-ov.kid .cv-scr,.cv-ov.kid .cv-field{max-width:none}.cv-ov.kid .cv-reply{font-size:24px;line-height:32px}.cv-ov.kid .cv-heard{font-size:18px}.cv-ov.kid .cv-mic{width:150px;height:150px}.cv-ov.kid .cv-mic svg{left:63px;top:63px}' +
+    '.cv-ov.kid.has-scr .cv-scr{flex:4}.cv-ov.kid.has-scr .cv-words{flex:none;max-height:24vh}.cv-ov.kid .cv-scr-b iframe{height:100%}' +
+    '.cv-ov.kid .cv-scr-b{border:0;background:rgba(255,255,255,.04)}.cv-ov.kid .cv-wm .cru-ic .cru-b1{animation:cru-p .5s ease-in-out infinite}.cv-ov.kid .cv-wm .cru-ic .cru-b2{animation:cru-p .5s ease-in-out .12s infinite}' +
+    '.cv-ov.kid,.cv-ov.kid *{cursor:url("' + KID_CURSOR + '") 5 3,auto}.cv-ov.kid button,.cv-ov.kid .cv-mic,.cv-ov.kid [role=button]{cursor:url("' + KID_POINTER + '") 28 28,pointer}' +
+    '.cv-lock{display:none;width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:' + C.muted + ';opacity:.45;cursor:pointer;margin-left:8px;align-items:center;justify-content:center}.cv-ov.kid .cv-lock{display:flex}.cv-lock:hover{opacity:.9}' +
+    '.cv-talk{display:none;position:absolute;left:50%;bottom:14px;transform:translateX(-50%);padding:14px 26px;border-radius:999px;border:0;background:#f59e0b;color:#111;font:700 20px system-ui,sans-serif;box-shadow:0 6px 0 rgba(0,0,0,.3);z-index:3}.cv-ov.kid.vid .cv-talk{display:block}' +
+    '.cv-fs{display:none;margin:6px auto 0;padding:8px 16px;border-radius:999px;border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';font-size:14px}.cv-ov.kid.nofs .cv-fs{display:block}' +
+    '.cv-pin{position:absolute;inset:0;background:rgba(10,10,15,.94);display:flex;align-items:center;justify-content:center;z-index:5}.cv-pin-box{display:flex;flex-direction:column;align-items:center;gap:12px;color:' + C.text + '}' +
+    '.cv-pin-box p{margin:0;font-size:14px;color:' + C.text2 + '}.cv-pin-in{font:600 26px ui-monospace,monospace;letter-spacing:.4em;text-align:center;width:220px;padding:8px;border-radius:10px;border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + '}' +
+    '.cv-pin-k{display:grid;grid-template-columns:repeat(3,64px);gap:10px}.cv-pin-k button{height:56px;border-radius:12px;border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';font-size:20px}.cv-pin-e{min-height:18px;font-size:13px;color:' + C.red + '}';
 
   var S = null;   // the open session
 
@@ -304,11 +340,18 @@
       '<span class="cv-admin" hidden title="Admin mode is on: Cru can run any command. Turn it off in Settings, or say: admin mode off">ADMIN</span>' +
       '<button class="cv-x cv-cmp" title="Compact the conversation (Cru keeps a summary and its notebook)" aria-label="Compact the conversation"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></button>' +
       '<button class="cv-x cv-chatb" title="Chat view: the whole conversation as messages" aria-label="Chat view"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg></button>' +
-      '<button class="cv-x" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
-      '<div class="cv-field"><canvas></canvas></div><div class="cv-chat" hidden><div class="cv-more" hidden>Earlier messages</div><div class="cv-msgs"></div></div>' +
-      '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden>Say yes or no</div><div class="cv-note" hidden></div></div>' +
-      '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div>' +
-      '<div class="cv-bot"><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Or type to Cru…" aria-label="Type to Cru">' +
+      '<button class="cv-x cv-close" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+      '<button class="cv-lock" title="Grown-ups" aria-label="Grown-ups"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button></div>' +
+      '<div class="cv-confirm" hidden><span>Compact the conversation? Cru carries on from a summary; its notebook and memory search keep everything.</span><button class="cv-yn yes">Compact</button><button class="cv-yn no">Cancel</button></div>' +
+      '<div class="cv-field"><canvas></canvas></div>' +
+      '<div class="cv-scr"><div class="cv-scr-h"><span class="cv-scr-t"></span>' +
+      '<button class="cv-x cv-scr-min" title="Fold the panel" aria-label="Fold the panel"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>' +
+      '<button class="cv-x cv-scr-x" title="Close the panel" aria-label="Close the panel"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
+      '<div class="cv-scr-b"></div><button class="cv-talk">Talk to Cru</button></div>' +
+      '<div class="cv-chat" hidden><div class="cv-more" hidden>Earlier messages</div><div class="cv-msgs"></div></div>' +
+      '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden><span>Say it, or tap:</span><button class="cv-yn" data-yn="Yes, go ahead.">Yes</button><button class="cv-yn" data-yn="No, don\'t.">No</button></div><div class="cv-note" hidden></div></div>' +
+      '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div><button class="cv-fs">Full screen</button>' +
+      '<div class="cv-bot"><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Type to Cru…" aria-label="Type to Cru"><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
       '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
@@ -333,22 +376,42 @@
       cells: [], usage: {}, raf: 0, timer: 0,
       // How it was opened: 'click' (stays), 'hover' (goes when the pointer leaves, if idle), 'ptt' (push to talk).
       how: opts.how || 'click', ptt: opts.how === 'ptt',
+      // Kid mode: the child's screen (locked; only the PIN leaves it). screen: Cru's live panel.
+      kid: !!opts.kid, screen: null, video: createVideoGate(), sayAt: 0,
     };
+    if (S.kid) ov.classList.add('kid');
     ov.addEventListener('mouseenter', function () { if (S) clearTimeout(S.leaveTimer); });
     ov.addEventListener('mouseleave', function () { if (S) maybeLeave(); });
     ov.addEventListener('pointerdown', function () { if (S && S.how === 'hover') S.how = 'click'; });
-    q('.cv-x:not(.cv-cmp):not(.cv-chatb)').onclick = close;
+    q('.cv-close').onclick = close;
+    q('.cv-scr-x').onclick = function (e) { e.stopPropagation(); closeScreen(); };
+    q('.cv-scr-min').onclick = function (e) { e.stopPropagation(); S.ov.classList.toggle('scr-min'); };
+    q('.cv-lock').onclick = function (e) { e.stopPropagation(); pinPad(); };
+    q('.cv-talk').onclick = function (e) { e.stopPropagation(); talkOverVideo(); };
+    q('.cv-fs').onclick = function (e) { e.stopPropagation(); kidFullscreen(); };
+    // A tap on Yes or No is the signed-in owner answering: typed, so no voice check applies.
+    Array.prototype.forEach.call(ov.querySelectorAll('.cv-yn'), function (b) { b.onclick = function (e) { e.stopPropagation(); if (S && S.question) utter(b.getAttribute('data-yn'), true); }; });
     q('.cv-chatb').onclick = function (e) { e.stopPropagation(); chatView(!(S && S.chat)); };
     // The owner scrolling Cru's words himself: they stop following the speech until the next reply.
     ['wheel', 'touchstart', 'mousedown'].forEach(function (ev) { q('.cv-words').addEventListener(ev, function () { if (S) S.ownScroll = true; }, { passive: true }); });
+    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (v && S) { inp.value = ''; utter(v, true); inp.focus(); } };
     q('.cv-kbb').onclick = function (e) { e.stopPropagation(); keyboard(!(S && S.kb), true); };
     q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
     // The view the owner chose last time, on this device.
     if (chatPref()) setTimeout(function () { if (S) chatView(true); }, 0);
     setUnread(unread);
+    // Compact asks first: a small question under the top row, Compact or Cancel.
     q('.cv-cmp').onclick = function (e) {
       e.stopPropagation();
       if (!S) return;
+      var box = q('.cv-confirm');
+      box.hidden = !box.hidden;
+    };
+    q('.cv-confirm .no').onclick = function (e) { e.stopPropagation(); q('.cv-confirm').hidden = true; };
+    q('.cv-confirm .yes').onclick = function (e) {
+      e.stopPropagation();
+      if (!S) return;
+      q('.cv-confirm').hidden = true;
       S.notice = 'Compacting the conversation…'; render();
       post('/api/voice/compact').then(function (r) {
         if (!S) return;
@@ -363,6 +426,11 @@
     // don't fire underneath.
     S.onKey = function (e) {
       if (!S) return;
+      // Kid mode: no key does anything but typing the PIN.
+      if (S.kid) {
+        if (e.target && e.target.classList && e.target.classList.contains('cv-pin-in')) { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); pinTry(); } return; }
+        e.stopPropagation(); e.preventDefault(); return;
+      }
       // Docked beside the page (a wide screen), keys elsewhere are the page's.
       var docked = window.innerWidth >= 900, inside = S.ov.contains(e.target);
       if (docked && !inside) return;
@@ -374,6 +442,10 @@
       } else if (S.ov.contains(e.target) || e.target === document.body) e.stopPropagation();
     };
     window.addEventListener('keydown', S.onKey, true);
+    S.onMsg = onFrameMessage;
+    window.addEventListener('message', S.onMsg);
+    if (S.kid) kidSetup();
+    loadScreen();
     S.logo = new Image(); S.logo.src = LOGO;
     refreshData();
     S.timer = setInterval(function () { refreshData(); tick(); }, 1000);
@@ -411,14 +483,17 @@
     if (!S.onVis) { S.onVis = function () { if (S && document.visibilityState === 'visible' && (!S.wake || S.wake.released)) keepAwake(); }; document.addEventListener('visibilitychange', S.onVis); }
   }
 
-  function close() {
+  function close(force) {
     if (!S) return;
+    if (S.kid && force !== 'kid-exit') return;
     var s = S; S = null;
     announce('crundi-voice-close', {});
     try { if (s.wake) s.wake.release(); } catch (e) { /* gone */ }
     if (s.onVis) document.removeEventListener('visibilitychange', s.onVis);
     cancelAnimationFrame(s.raf); clearInterval(s.timer);
     window.removeEventListener('keydown', s.onKey, true);
+    if (s.onMsg) window.removeEventListener('message', s.onMsg);
+    if (s.onFs) document.removeEventListener('fullscreenchange', s.onFs);
     stopSpeaking(s);
     clearTimeout(s.releaseTimer);
     try { if (s.loop) s.loop.close(); } catch (e) { /* gone */ }
@@ -455,7 +530,8 @@
       // The Claude Code brain needs no key: it runs on the subscription.
       if (!s.anthropicKeySet && s.brain !== 'claude-code') { block('There is no Claude API key on the server yet. Add one in Settings, Voice assistant.'); return; }
       // Keyboard mode when voice can't work here, or when the owner chose it last time on this device.
-      if (!voiceUsable(s) || kbPref()) keyboard(true, false); else openMic();
+      if (!voiceUsable(s) || (kbPref() && !S.kid)) keyboard(true, false); else openMic();
+      if (S.kid) setTimeout(function () { if (S && S.kid && !S.greeted) { S.greeted = true; ask('[Your friend is here: the kid screen just opened. Say hello.]', false, true, true); } }, 900);
     }).catch(function (e) { block(e.message || 'Could not reach the server'); });
   }
 
@@ -487,6 +563,7 @@
         }
         var level = Math.sqrt(Math.sqrt(sum / Math.max(1, n))), ms = x.length / ctx.sampleRate * 1000;
         S.mic = level;
+        var nowMs = Date.now(); if (level >= (S.micPeak || 0) || nowMs - (S.micPeakAt || 0) > 2000) { S.micPeak = level; S.micPeakAt = nowMs; }
         if (S.live) {
           if (S.held) {
             // Crundi is talking: nothing goes out; is it him?
@@ -505,7 +582,12 @@
       ws.binaryType = 'arraybuffer';
       S.ws = ws;
       ws.onmessage = function (m) { var e; try { e = JSON.parse(m.data); } catch (x) { return; } heard(e); };
-      ws.onclose = function () { if (S && S.ws === ws && S.phase !== 'ended') { S.notice = 'Live listening stopped. Type instead, or close and open again.'; render(); } };
+      ws.onclose = function () {
+        if (!S || S.ws !== ws || S.phase === 'ended') return;
+        // Kid mode: never a bare error; a friendly line, and listening again in a moment.
+        if (S.kid) { S.notice = 'Hold on, I am getting ready again!'; render(); var s = S; setTimeout(function () { if (S === s && S.kid && !S.paused) { S.notice = ''; stopMic(); S.phase = 'start'; openMic(); } }, 3000); return; }
+        S.notice = 'Live listening stopped. Type instead, or close and open again.'; render();
+      };
     }).catch(function () { if (!S) return; keyboard(true, false); S.notice = 'The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.'; render(); });
   }
 
@@ -520,7 +602,7 @@
     S.kb = !!on;
     S.ov.classList.toggle('kb', S.kb);
     var b = S.ov.querySelector('.cv-kbb'); if (b) { b.classList.toggle('on', S.kb); b.title = S.kb ? 'Back to voice' : 'Keyboard mode: type to Cru, no microphone'; }
-    var input = S.ov.querySelector('.cv-type'); if (input) input.placeholder = S.kb ? 'Type to Cru…' : 'Or type to Cru…';
+    var input = S.ov.querySelector('.cv-type');
     if (S.kb) {
       stopMic();
       // Cru still talks back: the speakers need their own audio context.
@@ -557,9 +639,20 @@
   function heard(e) {
     if (!S) return;
     if (e.type === 'ready') { S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
-    else if (e.type === 'report') tell(e.speak || '', e.show || '');
+    else if (e.type === 'report') { if (e.kid && typeof e.expressivity === 'number') S.nextExpr = e.expressivity; tell(e.speak || '', e.show || ''); }
+    // Cru changed the live screen; kid mode switched; a command for the game on screen.
+    else if (e.type === 'screen') { showScreen(e.screen || null); return; }
+    else if (e.type === 'kid') { if (kidHook) kidHook(e.kid || {}); return; }
+    else if (e.type === 'game-command') { gameCommand(e.command || {}); return; }
+    // An instant line from the server (a game being made, waiting for the parent): said if Cru is free.
+    else if (e.type === 'say') { if (S.kid && e.text && S.phase === 'listen' && !S.heard && !S.video.playing && !S.paused) { S.reply = String(e.text); speak(String(e.text), { reflex: true, expressivity: typeof e.expressivity === 'number' ? e.expressivity : 1 }); render(); } return; }
     // The server dropped what he said ("scratch that"): clear it, or cancel the turn it started.
     else if (e.type === 'discard') takeBack(true);
+    else if ((e.type === 'interim' || e.type === 'utterance') && S.paused) return;
+    else if ((e.type === 'interim' || e.type === 'utterance') && S.video.playing) {
+      if (e.type === 'utterance' && S.video.wake(e.text, recentMicPeak())) { talkOverVideo(); }
+      return;
+    }
     else if (e.type === 'interim') {
       // Talking over Crundi: cut it off the moment his words come.
       if (S.phase === 'speak') { if (S.live && talksOver(e.text, S.lastSaid, Date.now() - S.hintAt <= HINT_MS ? 1 : 2)) { cutIn(); S.heard = e.text; } else return; }
@@ -664,8 +757,8 @@
    * [keep]: the last answer stays on screen (it was cut short by what the owner said meanwhile).
    * [typed]: typed here, not spoken: the server's voice check does not apply (capability 'voice-speaker').
    */
-  function ask(t, keep, typed) {
-    S.phase = 'think'; S.asked = t; S.heard = t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
+  function ask(t, keep, typed, hidden) {
+    S.phase = 'think'; S.asked = hidden ? '' : t; S.heard = hidden ? '' : t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
     var turn = ++S.turn;
     // A soft "sent", then, while Cru thinks, a calm pulse every few seconds (no spoken "let me check").
     tone('sent');
@@ -681,6 +774,8 @@
       if (S.turn !== turn || S.phase !== 'think') return;
       var ok = r && r.ok;
       S.reply = ok ? (r.speak || '') : ''; S.detail = ok ? (r.show || '') : ''; S.notice = ok ? '' : (r && r.error || 'Something went wrong');
+      // The kid screen never shows a grown-up's error.
+      if (!ok && S.kid) S.notice = 'Oops! I need a grown-up to help me. Let\'s try again soon!';
       S.question = ok && r.pending && r.pending.length ? r.pending[0].question : '';
       // The owner is done: close once the goodbye has been said.
       S.closing = !!(ok && r.close);
@@ -689,6 +784,8 @@
       if (ok && r.speaker && r.speaker.unrecognised) S.notice = 'Cru could not recognise who was speaking, so nothing was changed.';
       // Cru may have just turned itself up or down: the reply says so in the new volume.
       if (ok && typeof r.volume === 'number' && S.settings) { S.settings.volume = r.volume; applyVolume(); }
+      // Kid Cru's mood: how lively its voice is.
+      S.expr = ok && typeof r.expressivity === 'number' ? r.expressivity : null;
       var say = ok ? S.reply : S.notice;
       if (ok) { S.lastChatAsked = S.asked; chatAdd(S.asked, S.reply, S.detail); }
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
@@ -796,6 +893,7 @@
   }
   function applyVolume() {
     if (S && S.outGain) { try { S.outGain.gain.value = volume(); } catch (e) { /* closing */ } }
+    sendVolume();
   }
 
   function outNode() {
@@ -829,7 +927,10 @@
   /** Crundi stopped talking (live stream): the server keeps dropping its words a moment longer. */
   function said() { wsSend({ type: 'said' }); }
 
-  function speak(text) {
+  function speak(text, opts) {
+    opts = opts || {};
+    if (S.video.playing) videoPause();
+    S.speakOpts = opts;
     S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0; S.unknownVoice = false;
     // The reply scrolls along as it is said (about 14 characters a second at normal speed).
     S.sayFrom = Date.now(); S.sayFor = Math.max(1500, String(text || '').length / (14 * ((S.settings && S.settings.speechRate) || 1)) * 1000); S.ownScroll = false;
@@ -851,7 +952,13 @@
     var an = outNode();
     S.outAnalyser = an;
     var at = Math.max(ctx.currentTime + 0.05, S.cue && S.cue.ends ? S.cue.ends : 0), rate = 24000, carry = null, any = false;
-    return S.opts.apiFetch('/api/voice/speak?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' }, body: JSON.stringify({ text: text }) }).then(function (res) {
+    // Kid mode: how lively (the mood of Cru's reply, or of an instant line); a line not ready in 400 ms is said by the device instead.
+    var o = S.speakOpts || {}, ex = typeof o.expressivity === 'number' ? o.expressivity : (typeof S.nextExpr === 'number' ? S.nextExpr : (typeof S.expr === 'number' ? S.expr : null));
+    S.nextExpr = null;
+    var late = null, s0 = S;
+    if (o.reflex) late = setTimeout(function () { if (S === s0 && S.speakToken === token && !any) { S.speakToken = {}; browserSpeech(text); } }, 400);
+    return S.opts.apiFetch('/api/voice/speak?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' }, body: JSON.stringify(ex == null ? { text: text } : { text: text, expressivity: ex }) }).then(function (res) {
+      clearTimeout(late);
       if (!res.ok || !res.body || !/L16/i.test(res.headers.get('Content-Type') || '')) throw new Error('no stream');
       var reader = res.body.getReader();
       function pump() {
@@ -1084,8 +1191,268 @@
     if (!S) return;
     // After a short silence (Settings, default a minute) the voice screen closes itself; "Hey Cru" opens it again.
     var idleMs = ((S.settings && S.settings.screenCloseSeconds) || 60) * 1000;
-    if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && Date.now() - S.quietSince > idleMs) { close(); return; }
+    // Kid mode stays, listening; a panel on screen keeps the screen open (the mic still sleeps).
+    if (S.kid) return;
+    if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && !S.screen && Date.now() - S.quietSince > idleMs) { close(); return; }
     if (S.phase === 'listen' && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
+  }
+
+
+  // ─── The live screen (capability 'voice-screen'): Cru's own panel ───
+  function loadScreen() {
+    var s = S;
+    api('/api/voice/screen').then(function (r) { if (S === s && r && r.ok !== false && r.screen !== undefined) showScreen(r.screen); }).catch(function () { /* an older server: no panel */ });
+  }
+  var TONE_COLOURS = { ok: C.green, warn: C.yellow, bad: C.red, info: C.sky, muted: C.muted };
+  /** Cru's blocks, drawn here in Crundi's style; every text escaped. */
+  function blocksHtml(blocks) {
+    return (blocks || []).map(function (b) {
+      if (b.type === 'heading') return '<div class="cv-b-h">' + esc(b.text) + '</div>';
+      if (b.type === 'text') return '<div class="cv-b-t">' + esc(b.text) + '</div>';
+      if (b.type === 'list') { var tag = b.ordered ? 'ol' : 'ul'; return '<' + tag + ' class="cv-b-l">' + (b.items || []).map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</' + tag + '>'; }
+      if (b.type === 'checklist') return '<ul class="cv-b-c">' + (b.items || []).map(function (i) { return '<li' + (i.done ? ' class="d"' : '') + '><i></i><span>' + esc(i.text) + '</span></li>'; }).join('') + '</ul>';
+      if (b.type === 'table') return '<table class="cv-b-tb">' + (b.headers ? '<tr>' + b.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr>' : '') + (b.rows || []).map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(c) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+      if (b.type === 'progress') return '<div class="cv-b-p"><span>' + esc(b.label || '') + ' ' + esc(b.value) + '%</span><div><b style="width:' + Math.max(0, Math.min(100, Number(b.value) || 0)) + '%"></b></div></div>';
+      if (b.type === 'image' && /^(https:|data:image\/)/i.test(b.url || '')) return '<img class="cv-b-i" alt="' + esc(b.alt || '') + '" src="' + esc(b.url) + '" referrerpolicy="no-referrer">';
+      if (b.type === 'chips') return '<div class="cv-b-ch">' + (b.items || []).map(function (c) { var col = TONE_COLOURS[c.tone] || C.sky; return '<span style="color:' + col + ';border-color:' + hex(col, 0.45) + ';background:' + hex(col, 0.12) + '">' + esc(c.text) + '</span>'; }).join('') + '</div>';
+      return '';
+    }).join('');
+  }
+  /** What Cru put up (null: nothing). A video or a page goes in a frame; a page's frame is kept when only its blocks change. */
+  function showScreen(scr) {
+    if (!S) return;
+    var was = S.screen;
+    S.screen = scr || null;
+    S.ov.classList.toggle('has-scr', !!scr);
+    var body = S.ov.querySelector('.cv-scr-b');
+    if (!scr) { body.innerHTML = ''; S.frame = null; S.vidFrame = null; S.video.reset(); S.ov.classList.remove('vid'); render(); return; }
+    S.ov.querySelector('.cv-scr-t').textContent = scr.title || '';
+    var same = was && scr && was.doc && scr.doc === was.doc && S.frame;
+    if (scr.video && scr.video.embed) {
+      if (!(was && was.video && was.video.embed === scr.video.embed && S.vidFrame)) {
+        body.className = 'cv-scr-b frame'; body.innerHTML = '';
+        var v = document.createElement('iframe');
+        // youtube-nocookie only, no related videos, the player's API on (to know when it plays).
+        var src = scr.video.embed;
+        if (!/^https:\/\/www\.youtube-nocookie\.com\/embed\//.test(src)) return;
+        v.src = src + (src.indexOf('?') < 0 ? '?' : '&') + 'enablejsapi=1&origin=' + encodeURIComponent(location.origin);
+        v.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+        v.setAttribute('allow', 'autoplay; encrypted-media');
+        v.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+        v.title = scr.title || 'Video';
+        v.onload = function () { try { v.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 'cru' }), '*'); } catch (e) { /* gone */ } };
+        body.appendChild(v); S.vidFrame = v; S.frame = null;
+        S.video.loaded();
+      }
+    } else if (scr.doc) {
+      if (!same) {
+        body.className = 'cv-scr-b frame'; body.innerHTML = (scr.blocks && scr.blocks.length ? '' : '');
+        var f = document.createElement('iframe');
+        // Somebody else's page: an opaque origin, no network (its own CSP), never same-origin.
+        f.setAttribute('sandbox', 'allow-scripts');
+        f.setAttribute('allow', 'autoplay');
+        f.setAttribute('referrerpolicy', 'no-referrer');
+        f.title = scr.title || 'Cru';
+        f.onload = function () { sendVolume(); };
+        f.srcdoc = scr.doc;
+        body.appendChild(f); S.frame = f; S.vidFrame = null; S.video.reset();
+      }
+    } else {
+      body.className = 'cv-scr-b'; body.innerHTML = blocksHtml(scr.blocks); S.frame = null; S.vidFrame = null; S.video.reset();
+    }
+    // A page with blocks too: the blocks above the frame.
+    if (scr.doc && scr.blocks && scr.blocks.length && !same) { var d = el('div', '', blocksHtml(scr.blocks)); d.style.padding = '10px 12px'; body.insertBefore(d, body.firstChild); }
+    S.ov.classList.toggle('vid', !!S.video.playing);
+    render();
+  }
+  function closeScreen() {
+    if (!S || S.kid) return;
+    showScreen(null);
+    post('/api/voice/screen/close').catch(function () { /* the next push says */ });
+  }
+  /** The game's sounds follow Cru's volume, and are muted while a video plays. */
+  function sendVolume() {
+    if (!S || !S.frame || !S.frame.contentWindow) return;
+    try { S.frame.contentWindow.postMessage({ cru: 'volume', value: volume(), muted: !!S.video.playing }, '*'); } catch (e) { /* gone */ }
+  }
+  /** Cru tells the game to do something (game_command): next, easier, harder, hint, pause, resume, end. */
+  function gameCommand(c) {
+    if (!S || !S.frame || !S.frame.contentWindow || !c || !c.action) return;
+    try { S.frame.contentWindow.postMessage({ type: 'command', action: String(c.action) }, '*'); } catch (e) { /* gone */ }
+  }
+  /** Messages from Cru's page or game (only from the frame this screen made) and from the video player. */
+  function onFrameMessage(e) {
+    if (!S) return;
+    if (S.vidFrame && e.source === S.vidFrame.contentWindow) { videoMessage(e.data); return; }
+    if (!S.frame || e.source !== S.frame.contentWindow) return;
+    var m = e.data || {};
+    if (m.cru === 'say') sayLocal(String(m.text || '').slice(0, 300));
+    else if (m.cru === 'tell') screenTell(String(m.text || '').slice(0, 300));
+    else if (m.type === 'game') gameEvent({ event: m.event, item: m.item, detail: m.detail, streak: m.streak });
+    else if (m.cru === 'event') gameEvent(m.kind === 'result' ? { event: 'result', skill: m.skill, item: m.item, ok: m.ok, ms: m.ms } : { event: m.kind === 'wrong' ? 'miss' : m.kind === 'level' ? 'level-up' : m.kind, item: m.detail, detail: m.detail });
+  }
+  /** A game says a word (a letter, a picture's name): now, unless Cru is talking. */
+  function sayLocal(t) {
+    if (!t || !S || S.phase === 'speak' || S.phase === 'think' || S.video.playing) return;
+    if (Date.now() - S.sayAt < 600) return;
+    S.sayAt = Date.now();
+    speak(t, { reflex: true, expressivity: 1 });
+  }
+  /** Something tapped that Cru should hear: answered like something said. */
+  function screenTell(t) {
+    if (!t || !S || S.phase === 'think') return;
+    S.phase = 'think'; render();
+    var s = S;
+    post('/api/voice/screen/event', { text: t }).then(function (r) {
+      if (S !== s) return;
+      if (S.phase === 'think') S.phase = 'listen';
+      if (r && r.ok && (r.speak || r.show)) { if (typeof r.expressivity === 'number') S.nextExpr = r.expressivity; tell(r.speak || '', r.show || ''); }
+      render();
+    }).catch(function () { if (S === s && S.phase === 'think') { S.phase = 'listen'; render(); } });
+  }
+  /** A game event: the play log and levels, and the instant line to say (kid mode). */
+  function gameEvent(ev) {
+    if (!S || !ev || !ev.event || S.video.playing) return;
+    var s = S;
+    ev.speaking = S.phase === 'speak' || S.phase === 'think';
+    post('/api/voice/kid/play', ev).then(function (r) {
+      if (S !== s || !r || !r.reflex || !r.reflex.text) return;
+      if (S.phase === 'speak' || S.phase === 'think') return;
+      // After the game's own sound.
+      setTimeout(function () { if (S === s && S.phase !== 'speak' && S.phase !== 'think') { S.reply = r.reflex.text; speak(r.reflex.text, { reflex: true, expressivity: r.reflex.expressivity }); render(); } }, 250);
+    }).catch(function () { /* an older server */ });
+  }
+
+  // ─── A video on the live screen: speech does not reach Cru while it plays ───
+  /**
+   * The YouTube player tells its state (enablejsapi); while it plays, what
+   * the microphone hears is the video, so nothing is a turn, no game event or
+   * instant line fires, and only a tap on "Talk to Cru" (or a loud, clear
+   * "Hey Cru" alone, over the video's level) gets Cru back: the video pauses.
+   */
+  function createVideoGate() {
+    var st = 'none';
+    return {
+      get playing() { return st === 'playing'; },
+      get state() { return st; },
+      loaded: function () { st = 'loading'; },
+      reset: function () { st = 'none'; },
+      /** The player's state: 1 playing, 2 paused, 0 ended. Returns 'resume' when listening should come back. */
+      player: function (code) {
+        var was = st;
+        st = code === 1 ? 'playing' : code === 2 ? 'paused' : code === 0 ? 'ended' : code === 3 ? (was === 'playing' ? 'playing' : 'buffering') : st;
+        return was === 'playing' && st !== 'playing' ? 'resume' : st === 'playing' && was !== 'playing' ? 'mute' : '';
+      },
+      /** While it plays: only "Hey Cru" (or the name) alone, said loudly over it. */
+      wake: function (text, micPeak) { return st === 'playing' && isCalling(text) && (micPeak || 0) >= 0.55; },
+    };
+  }
+  function recentMicPeak() { return S && Date.now() - (S.micPeakAt || 0) < 2500 ? S.micPeak || 0 : 0; }
+  function videoMessage(data) {
+    var d = data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) { return; } }
+    if (!d || !S) return;
+    var code = d.event === 'onStateChange' ? d.info : d.event === 'infoDelivery' && d.info && typeof d.info.playerState === 'number' ? d.info.playerState : null;
+    if (code == null) return;
+    var act = S.video.player(code);
+    S.ov.classList.toggle('vid', S.video.playing);
+    if (act === 'mute') { wsSend({ type: 'pause' }); S.streaming = false; S.heard = ''; }
+    if (act === 'resume') { S.streaming = true; wsSend({ type: 'resume' }); S.phase = 'listen'; S.quietSince = Date.now(); tone('listen'); }
+    render();
+  }
+  function videoPause() {
+    if (!S || !S.vidFrame) return;
+    try { S.vidFrame.contentWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*'); } catch (e) { /* gone */ }
+  }
+  /** "Talk to Cru" over a video: it pauses, and Cru listens. */
+  function talkOverVideo() {
+    if (!S) return;
+    videoPause();
+    S.video.player(2);
+    S.ov.classList.remove('vid');
+    S.streaming = true; wsSend({ type: 'resume' });
+    S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
+    tone('listen'); render();
+  }
+
+  // ─── Kid mode (capability 'voice-kid'): the child's screen, left only with the PIN ───
+  var kidHook = null;
+  function kidSetup() {
+    // The PC app locks its window (kiosk); a browser goes full screen and holds the keys it can.
+    try { if (window.api && window.api.kidLock) window.api.kidLock(true); } catch (e) { /* an older app */ }
+    S.onFs = function () { if (S && S.kid) S.ov.classList.toggle('nofs', !document.fullscreenElement && !(window.api && window.api.kidLock)); };
+    document.addEventListener('fullscreenchange', S.onFs);
+    kidFullscreen();
+  }
+  function kidFullscreen() {
+    if (!S || !S.kid || (window.api && window.api.kidLock)) return;
+    var d = document.documentElement;
+    var p = d.requestFullscreen ? d.requestFullscreen({ navigationUI: 'hide' }) : null;
+    if (p && p.then) p.then(function () { try { if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(); } catch (e) { /* not here */ } if (S) S.ov.classList.remove('nofs'); }, function () { if (S) S.ov.classList.add('nofs'); });
+    else S.ov.classList.add('nofs');
+  }
+  /** The grown-ups' lock: a PIN pad. */
+  function pinPad() {
+    if (!S || !S.kid || S.ov.querySelector('.cv-pin')) return;
+    var box = el('div', 'cv-pin', '<div class="cv-pin-box"><p>Grown-ups: enter the PIN to leave kid mode</p><input class="cv-pin-in" type="password" inputmode="numeric" autocomplete="off" maxlength="8"><div class="cv-pin-k"></div><div class="cv-pin-e"></div></div>');
+    var keys = box.querySelector('.cv-pin-k'), input = box.querySelector('.cv-pin-in');
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'Back', '0', 'OK'].forEach(function (k) {
+      var b = el('button', '', k === 'Back' ? '&larr;' : k);
+      b.onclick = function (e) { e.stopPropagation(); if (k === 'OK') pinTry(); else if (k === 'Back') input.value = input.value.slice(0, -1); else if (input.value.length < 8) input.value += k; };
+      keys.appendChild(b);
+    });
+    box.onclick = function (e) { if (e.target === box) box.remove(); };
+    S.ov.appendChild(box);
+    setTimeout(function () { try { input.focus(); } catch (e) { /* gone */ } }, 0);
+    S.pinTimer = setTimeout(function () { if (box.parentNode) box.remove(); }, 60000);
+  }
+  function pinTry() {
+    var box = S && S.ov.querySelector('.cv-pin');
+    if (!box) return;
+    var input = box.querySelector('.cv-pin-in'), err = box.querySelector('.cv-pin-e');
+    var pin = String(input.value || '').replace(/\D/g, '');
+    if (!pin) return;
+    post('/api/voice/kid/exit', { pin: pin }).then(function (r) {
+      if (r && r.ok) { kidExit(); return; }
+      input.value = '';
+      err.textContent = (r && r.error) || 'That is not the PIN';
+    }).catch(function () { err.textContent = 'Could not reach the server'; });
+  }
+  /** Kid mode is over (the PIN, or another screen ended it): unlock and close. */
+  function kidExit() {
+    try { if (window.api && window.api.kidLock) window.api.kidLock(false); } catch (e) { /* an older app */ }
+    try { if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); } catch (e) { /* none */ }
+    try { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen(); } catch (e) { /* none */ }
+    if (S && S.kid) close('kid-exit');
+  }
+  /**
+   * The page tells the voice screen what kid mode is (at load, and on the
+   * server's 'voice-kid' event): on, the kid screen opens over everything;
+   * off, it goes.
+   */
+  function kidMode(state, opts) {
+    var on = !!(state && state.on);
+    if (on && !(S && S.kid)) { if (S) close(); open(Object.assign({}, opts || {}, { kid: true, how: 'click' })); }
+    else if (!on && S && S.kid) kidExit();
+  }
+  kidHook = function (st) { if (S && S.kid && !st.on) kidExit(); else if (S && S.kid) kidPaused(!!st.paused); };
+  /** A grown-up paused the kid screen from another device: a break scene, the microphone let go. */
+  function kidPaused(on) {
+    if (!S || !S.kid || !!S.paused === !!on) return;
+    S.paused = !!on;
+    var v = S.ov.querySelector('.cv-break');
+    if (on) {
+      stopSpeaking(S); videoPause(); sleepMic();
+      if (!v) {
+        v = el('div', 'cv-break', '<svg width="160" height="120" viewBox="0 0 160 120" aria-hidden="true"><circle cx="80" cy="60" r="36" fill="#facc15"><animate attributeName="r" values="34;38;34" dur="3s" repeatCount="indefinite"/></circle><path d="M66 56q4-4 8 0M86 56q4-4 8 0" stroke="#111" stroke-width="3" fill="none" stroke-linecap="round"/><path d="M68 70q12 8 24 0" stroke="#111" stroke-width="3" fill="none" stroke-linecap="round"/></svg><div>Break time! See you soon.</div>');
+        v.style.cssText = 'position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(10,10,15,.92);font:700 26px system-ui,sans-serif;color:#fde68a';
+        S.ov.appendChild(v);
+      }
+    } else {
+      if (v) v.remove();
+      if (S.micOff) wakeMic();
+      tone('listen');
+    }
   }
 
   // ─── the screen ───
@@ -1094,13 +1461,13 @@
     if (!S) return;
     if (S.chat) renderChat(false);
     var q = function (s) { return S.ov.querySelector(s); };
-    var ph = S.phase, pal = PALETTE[ph] || PALETTE.listen;
+    var ph = S.phase, P = S.kid ? KID_PALETTE : PALETTE, pal = P[ph] || P.listen;
     // Admin mode on: always in view while it is.
     var adm = q('.cv-admin'); if (adm) adm.hidden = !(S.settings && S.settings.adminMode === true);
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;
-    q('.cv-ht').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? 'Ask me anything, Sir.' : '');
+    q('.cv-ht').textContent = h ? '“' + h + '”' : (ph === 'listen' && !S.reply ? (S.kid ? 'Talk to me, or tap!' : 'Ask me anything, Sir.') : '');
     q('.cv-cx').hidden = !canCancel(S);
     q('.cv-reply').textContent = S.reply;
     var d = q('.cv-detail'); d.hidden = !S.detail; d.textContent = S.detail;
@@ -1154,7 +1521,7 @@
 
   function drawField(t, ph) {
     var f = fit(S.ov.querySelector('.cv-field canvas')), g = f.g, W = f.w, H = f.h;
-    var pal = PALETTE[ph] || PALETTE.listen, a = pal[0], b = pal[1];
+    var P = S.kid ? KID_PALETTE : PALETTE, pal = P[ph] || P.listen, a = pal[0], b = pal[1];
     g.clearRect(0, 0, W, H);
     var cx = W / 2, cy = H / 2, L = Math.min(38, Math.min(W, H * 0.8) / 390 * 40), lvl = S.lvl;
     var glow = g.createRadialGradient(cx, cy, 0, cx, cy, Math.min(W, H) * 0.5); glow.addColorStop(0, hex(a, 0.16 + 0.12 * lvl)); glow.addColorStop(0.7, hex(a, 0.04)); glow.addColorStop(1, 'rgba(0,0,0,0)');
@@ -1242,7 +1609,7 @@
     if (talking && Lq.lv > 0.3 && Math.random() < 0.08) Lq.ripples.push({ x: (Math.random() - 0.5) * 2.6, b: ms });
     Lq.drops = Lq.drops.filter(function (d) { return ms - d.b < 900; }); Lq.ripples = Lq.ripples.filter(function (r) { return ms - r.b < 900; });
     g.clearRect(0, 0, W, H);
-    var cx = W / 2, cy = H / 2, R = 30, m = Lq.m, pal = PALETTE[ph] || PALETTE.listen;
+    var cx = W / 2, cy = H / 2, R = 30, m = Lq.m, pal = (S.kid ? KID_PALETTE : PALETTE)[ph] || PALETTE.listen;
     var gl = g.createRadialGradient(cx, cy, 0, cx, cy, R * 3); gl.addColorStop(0, hex(C.sky, 0.18 + 0.2 * Lq.lv)); gl.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gl; g.fillRect(0, 0, W, H);
     Lq.ripples.forEach(function (r) { var a = (ms - r.b) / 900; g.strokeStyle = 'rgba(125,211,252,' + (0.5 * (1 - a) * m) + ')'; g.lineWidth = 1.2; g.beginPath(); g.ellipse(cx + r.x * R, cy - R * (1 - 0.62 * m) * 0.35, 6 + 40 * a, (6 + 40 * a) * 0.22, 0, 0, 7); g.stroke(); });
     function shape(tt, layer) {
@@ -1386,7 +1753,9 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel }, open: open, close: close, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling }, open: open, close: function () { close(); },
+    /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
+    kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report, shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
     // The own-voice tools, shared with a chat's voice mode (claude-chat.js), which talks over its replies the same way.
     kit: { createGate: createGate, createPreroll: createPreroll, voicedShare: voicedShare, makeLoopback: makeLoopback },
     // The PC's "Hey Cru" (app/voice-wake/controller.js): an asleep screen has let the microphone go, and is woken where it is.

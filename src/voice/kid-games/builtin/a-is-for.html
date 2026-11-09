@@ -1,0 +1,31 @@
+<div class="k-title" id="ask"></div>
+<div class="k-big k-pop" id="letter"></div>
+<div class="k-grid" id="grid" style="margin-top:12px"></div>
+<div class="k-stars" id="stars"></div>
+<script>
+(function () {
+  var L = kid.letters(null, 'letter-sounds'), choices = Math.max(2, Math.min(4, Number(kid.opts.choices) || 3)), rounds = Math.max(1, Math.min(26, Number(kid.opts.rounds) || 6));
+  var round = 0, stars = 0;
+  function next() {
+    if (round >= rounds) { document.getElementById('ask').textContent = 'Super star!'; document.getElementById('grid').innerHTML = ''; document.getElementById('letter').textContent = ''; kid.done('matched ' + stars + ' letters to pictures'); return; }
+    round++;
+    var x = kid.pick(L), w = kid.WORDS[x];
+    var others = kid.sample(kid.LETTERS.filter(function (y) { return y !== x; }), choices - 1).map(function (y) { return kid.WORDS[y]; });
+    kid.ask('letter-sounds', x);
+    document.getElementById('ask').textContent = 'Which one starts with ' + x + '?';
+    var le = document.getElementById('letter'); le.textContent = x + x.toLowerCase(); le.classList.remove('k-pop'); void le.offsetWidth; le.classList.add('k-pop');
+    kid.say(x + ' says ' + kid.SOUNDS[x] + '. Which picture starts with ' + x + '?');
+    var g = document.getElementById('grid'); g.innerHTML = '';
+    kid.shuffle([w].concat(others)).forEach(function (word, i) {
+      var b = kid.el('button', 'k-btn k-pop', kid.pic(word, 110)); b.style.background = ['#1e3a8a', '#3f1d63', '#14532d', '#7c2d12'][i % 4]; b.style.width = b.style.height = '150px';
+      b.onclick = function () {
+        if (word === w) { stars++; kid.correct(x, 'Yes! ' + x + ' is for ' + w + '!'); setTimeout(next, 1800); }
+        else { b.classList.add('k-shake', 'k-dim'); kid.wrong(word, 'That is a ' + word + '. Try again!'); }
+      };
+      g.appendChild(b);
+    });
+    document.getElementById('stars').textContent = 'Round ' + round + ' of ' + rounds;
+  }
+  next();
+})();
+</script>

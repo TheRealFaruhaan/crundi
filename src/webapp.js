@@ -112,6 +112,14 @@ import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, t
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
+import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
+import { parseYoutubeLine, parseInstructions as parseKidInstructions, KID_FILE, KID_SYSTEM_PROMPT, kidIntro, kidContextLine, makeKidTools, makeStartKidTool, createPinGuard, hashPin, PIN_RE as KID_PIN_RE, createHandleResolver, createGameWatch, splitMood, GAME_EVENTS, createParentNotes, createParentAsks } from './voice/kid.js';
+import { createSkills as createKidSkills, TAXONOMY as KID_TAXONOMY } from './voice/kid-skills.js';
+import { createGameLibrary } from './voice/kid-games.js';
+import { createWorkshop as createKidWorkshop } from './voice/kid-workshop.js';
+import { createReflex as createKidReflex, clipKey as kidClipKey } from './voice/kid-reflex.js';
+import { speakKidStream, MOOD_EXPRESSIVITY } from './voice/tts.js';
+import { checkInSandbox } from './widget-render.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 
@@ -2450,7 +2458,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }));
     // Forget dismissals for cards that no longer exist, so the set cannot grow.
     for (const id of dismissedChatCards) if (!liveChatIds.has(id)) dismissedChatCards.delete(id);
-    const items = [...secrets, ...chat, ...collab].sort((a, b) => a.createdAt - b.createdAt);
+    // Kid Cru asking the parent (capability 'voice-kid'): answered with POST /api/voice/kid/ask.
+    let kidItems = [];
+    try { kidItems = kidAsks.pending().map((a) => ({ id: a.id, source: 'kid', kind: a.kind, title: a.title, detail: a.why || '', choices: a.choices, createdAt: a.createdAt })); } catch { kidItems = []; }
+    const items = [...secrets, ...chat, ...collab, ...kidItems].sort((a, b) => a.createdAt - b.createdAt);
     return { items, count: items.length };
   }
   const dismissedChatCards = new Set();
@@ -2820,6 +2831,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
     let spoken = false;
     let r = null;
+    // Kid mode: Cru's news for the owner is never said on the kid screen; it waits (a wake-up comes back later).
+    if (kidOn()) {
+      if (wake) return { ok: false, busy: true, error: 'kid mode' };
+      try { voiceMemory.remember({ said: `[Report for the owner, not said by them] ${String(note || line).slice(0, 2000)}`, speak: line, show: detail || '' }); voiceUnread.add(line); } catch { /* best effort */ }
+      mobilePush.send(line, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, chatId: chatId || undefined }).catch(() => {});
+      return { ok: true, said: 'push' };
+    }
     if (wake || open.length || pcs.length) {
       r = await voiceAgent.report(note, wake ? { wake: true } : {}).catch(() => null);
       if (wake) {
@@ -3000,7 +3018,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * @param verdict  { owner, reason } of what was heard, or null (none found)
    */
   function voiceTurnRules({ typed = false, verdict = null } = {}) {
-    const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict });
+    const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict, answering: voicePending.verifiedWaiting(120_000) });
     // admin: set as the turn starts (beforeTurn), never while another still runs.
     // Who spoke, in words for Cru's context line.
     const who = typed ? 'typed by the signed-in owner'
@@ -3008,7 +3026,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         : verdict && verdict.owner === true ? 'spoken in the owner\'s recognised voice'
           : verdict && verdict.owner === false ? 'spoken in a voice not recognised as the owner\'s'
             : 'spoken, too short (or not checkable) to tell whose voice';
-    return { unrecognised: p.unrecognised, voice: p.admin, who, speaker: { owner: verdict ? verdict.owner ?? null : null, unrecognised: p.unrecognised } };
+    return { unrecognised: p.unrecognised, confirmOk: p.confirmOk, voice: p.admin, who, speaker: { owner: verdict ? verdict.owner ?? null : null, unrecognised: p.unrecognised } };
   }
   const voiceAdminTools = makeVoiceAdminTools({
     ownerVoice: () => voiceOwnerVerdict,
@@ -3016,13 +3034,168 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     logFile: join(config.dataDir, 'voice-memory', 'admin-log.jsonl'),
     onChanged: () => { for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } } },
   });
+  // ─── Cru's live screen and kid mode (voice/screen.js, voice/kid*.js) ───
+  // Something for every open voice screen, down its /api/voice/listen socket.
+  const voiceListenSend = (msg) => { const t = JSON.stringify(msg); for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(t); } catch { /* gone */ } } };
+  const kidDir = join(config.dataDir, 'kid-games');
+  const kidPrivDir = join(config.dataDir, 'voice-memory', 'kid');
+  const kidSkills = createKidSkills({ file: join(kidDir, 'skills.json'), historyFile: join(kidDir, 'progress.jsonl') });
+  let kidWorkshop = null;
+  const kidGames = createGameLibrary({
+    dir: kidDir,
+    initFor: (skills) => kidSkills.initFor(skills),
+    onPlay: (p) => { kidSkills.addPlayTime(p.seconds); if (kidWorkshop) kidWorkshop.markKidUse(); },
+  });
+  const voiceScreen = createVoiceScreen({
+    file: join(config.dataDir, 'voice-memory', 'screen.json'),
+    onChange: (screen) => voiceListenSend({ type: 'screen', screen }),
+    kid: () => voiceSettings.kidOn(),
+    gameDoc: (id, o) => kidGames.doc(id, o),
+  });
+  // Kid Cru's own notes about its friend: written only in kid mode, by kid Cru.
+  const kidFriendFile = join(kidPrivDir, 'friend.md');
+  const kidFriend = {
+    read: () => { try { return readFileSync(kidFriendFile, 'utf-8'); } catch { return ''; } },
+    write: (t) => {
+      if (!voiceSettings.kidOn()) throw new Error('Only in kid mode');
+      mkdirSync(kidPrivDir, { recursive: true, mode: 0o700 });
+      writeFileSync(kidFriendFile, t, { mode: 0o600 });
+    },
+    clear: () => { try { writeFileSync(kidFriendFile, '', { mode: 0o600 }); } catch { /* none */ } },
+  };
+  const kidFirstName = () => { const m = /^\s*-?\s*(?:first )?name:\s*([A-Za-z][A-Za-z' -]{0,30})\s*$/im.exec(kidFriend.read()); return m ? m[1].trim().split(/\s+/)[0] : ''; };
+  const kidPins = createPinGuard();
+  const kidHandles = createHandleResolver({ file: join(kidDir, 'youtube-handles.json') });
+  const kidWatch = createGameWatch({ chattiness: () => voiceSettings.getSettings().kidChattiness || 'normal' });
+  const kidReflex = createKidReflex({ dir: kidDir });
+  const kidOn = () => voiceSettings.kidOn();
+  let cruTapAt = 0;
+  // A session's extras from the parent: time added, a pause, videos allowed once.
+  const kidSession = { extraMinutes: 0, paused: false, onceVideos: [] };
+  const kidPublic = () => ({ ...voiceSettings.kidState(), paused: kidSession.paused, extraMinutes: kidSession.extraMinutes, playing: (voiceScreen.get() || {}).title || '', asks: kidAsks.pending().map(({ id, kind, title, choices, createdAt }) => ({ id, kind, title, choices, createdAt })) });
+  /** The server writes the parent's instructions (an "Always allow"): the only write allowed while kid mode is on. */
+  let kidServerWrite = false;
+  // The workshop's news for the owner, said at his next turn outside kid mode.
+  const kidNewsFile = join(kidPrivDir, 'news.txt');
+  const kidNews = () => {
+    if (kidOn()) return '';
+    let t = '';
+    try { t = readFileSync(kidNewsFile, 'utf-8').trim(); } catch { return ''; }
+    if (t) { try { writeFileSync(kidNewsFile, ''); } catch { /* next time */ } }
+    return t ? `[News from the kid games workshop last night, not said by the owner: mention it briefly when it fits] ${t}` : '';
+  };
+  /** Kid mode changed: every screen, the web pages and the PC apps hear of it. */
+  function kidBroadcast() {
+    const st = kidPublic();
+    broadcastSSE('voice-kid', st);
+    voiceListenSend({ type: 'kid', kid: st });
+    const m = JSON.stringify({ type: 'kid-mode', kid: st });
+    for (const ws of desktopSockets) { try { if (ws.readyState === 1) ws.send(m); } catch { /* gone */ } }
+  }
+  function kidStart(by) {
+    if (kidOn()) return { ok: true, ...kidPublic() };
+    const r = voiceSettings.setKidOn(true, by);
+    if (!r.ok) return r;
+    Object.assign(kidSession, { extraMinutes: 0, paused: false, onceVideos: [] });
+    kidAsks.clear();
+    try { voiceAgent.cancel(); } catch { /* nothing running */ }
+    kidGames.endPlay(false);
+    voiceScreen.clear();
+    kidWatch.reset();
+    if (kidWorkshop) kidWorkshop.markKidUse();
+    console.log(`[voice] kid mode on (${by || 'owner'})`);
+    kidBroadcast();
+    return { ok: true, ...kidPublic() };
+  }
+  function kidStop(how = 'PIN') {
+    try { kidAgent.cancel(); } catch { /* nothing running */ }
+    kidGames.endPlay(false);
+    voiceScreen.clear();
+    const r = voiceSettings.setKidOn(false);
+    kidAsks.clear();
+    broadcastApprovals();
+    console.log(`[voice] kid mode off (${how})`);
+    kidBroadcast();
+    return r;
+  }
+  /** Is it the owner asking (typed, or his recognised voice when one is enrolled)? Set per turn in beforeTurn. */
+  let voiceTurnOwner = false;
+  const kidStartTool = makeStartKidTool({
+    canStart: () => (!voiceSettings.kidPinHash() ? 'No kid-mode PIN is set yet. The owner sets one in Settings, Voice assistant, Kid mode; say so.'
+      : kidOn() ? 'Kid mode is already on.'
+        : voiceCtx.locked() ? 'The phone is locked: kid mode waits for an unlock.'
+          : !voiceTurnOwner ? 'Only the owner can switch kid mode on: typed, or said in his recognised voice.' : ''),
+    start: (by) => setTimeout(() => kidStart(by), 1500),
+  });
+  /** How the child is doing, for the owner (read only). */
+  const kidProgressTool = {
+    name: 'kid_progress',
+    description: 'How the child is doing in kid mode: per development area (language, numbers, shapes-colours, memory, logic, motor, feelings, creative, world) the level, the trend, what is mastered and being learnt, play time, notes; and the games, with any the overnight workshop added or changed. Read only. area: an area id or label; range: week, month or all.',
+    input_schema: { type: 'object', additionalProperties: false, properties: { area: { type: 'string' }, range: { type: 'string', enum: ['week', 'month', 'all'] } } },
+    run: ({ area = '', range = 'month' } = {}) => {
+      const p = kidSkills.progress({ range, area });
+      return {
+        ...p, areas: p.areas.filter((a) => a.series.length || a.skills.length).map(({ series, ...a }) => ({ ...a, days: series.length, first: series[0] || null, latest: series[series.length - 1] || null })),
+        summary: kidSkills.summary(),
+        games: kidGames.list().map((g) => ({ id: g.id, title: g.title, skills: g.skills, enabled: g.enabled !== false, createdBy: g.createdBy, version: g.version, isNew: !!g.isNew })),
+        playsLastWeek: kidGames.plays({ since: Date.now() - 7 * 86400000 }).length,
+      };
+    },
+  };
   // One memory (Phase 2): the conversation on disk, the notebook, search.
-  const voiceMemory = createVoiceMemory({ dataDir: config.dataDir });
+  // Kid mode makes the parent's instructions read only.
+  const voiceMemory = createVoiceMemory({ dataDir: config.dataDir, guard: (p) => (kidOn() && !kidServerWrite && p === KID_FILE ? 'Kid mode is on: the parent instructions (kid-mode.md) are read only until it is switched off.' : '') });
+  // Kid Cru asking the parent (ask_parent): an approval on every signed-in device and the phone.
+  const kidAsks = createParentAsks({
+    onAsk: (a) => {
+      // The wait: a message flying to the parent, bubbles to pop, a friendly line every ~9 s.
+      const who = kidParent() || 'your grown-up';
+      if (kidOn() && !(voiceScreen.get() && voiceScreen.get().video)) { try { voiceScreen.game('_waiting', { theme: 'message', line: 'Asking ' + who + '...', steps: ['Sending the message...', 'Flying to ' + who + '...', 'Waiting for ' + who + '...'], progress: 0.3 }, 'Asking your grown-up'); } catch { /* none */ } }
+      clearInterval(kidAskTalk);
+      kidAskTalk = setInterval(() => { if (kidOn() && kidAsks.pending().length) kidSay('ask-waiting'); else clearInterval(kidAskTalk); }, 9000);
+      kidAskTalk.unref?.();
+      broadcastApprovals();
+      kidBroadcast();
+      mobilePush.send(a.title, { title: 'Kid mode', url: '/', tag: 'kid-ask' }).catch(() => {});
+    },
+    onDone: (a, choice) => {
+      broadcastApprovals();
+      if (!kidOn()) return;
+      clearInterval(kidAskTalk);
+      { const sc = voiceScreen.get(); if (sc && sc.game && sc.game.id === '_waiting' && sc.title === 'Asking your grown-up') voiceScreen.clear(); }
+      // The instant line first (kind, never blaming the parent), then kid Cru carries on.
+      kidSay(!choice ? 'ask-timeout' : choice === 'no' ? 'ask-no' : 'ask-yes');
+      const label = choice ? (a.choices.find((c) => c.id === choice) || {}).label || choice : '';
+      if (choice === 'once' || choice === 'always') {
+        const item = parseYoutubeLine(a.what) || { kind: 'handle', id: String(a.what).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 30), label: a.what };
+        item.label = item.label || a.what;
+        kidSession.onceVideos.push(item);
+        if (choice === 'always') kidAlwaysAllow(a.what, item);
+      }
+      if (choice === 'add-15' || choice === 'add-30') kidSession.extraMinutes += choice === 'add-15' ? 15 : 30;
+      kidBroadcast();
+      const line = choice ? `[Parent answered: ${label} — to "${a.title}"] Not said by the child.` : `[Parent answered: no answer came — to "${a.title}"] Not said by the child: say kindly that the grown-up is busy, and offer something allowed.`;
+      setTimeout(() => kidGameWake(line, { force: true }), 200);
+    },
+  });
+  // Time asked for: an expired question still gets its friendly answer.
+  setInterval(() => kidAsks.expire(), 30 * 1000).unref();
+  /** "Always allow": the server adds the channel to the parent's instructions (never kid Cru). */
+  function kidAlwaysAllow(what, item) {
+    try {
+      const text = (voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '';
+      const line = `- ${item.kind === 'handle' ? '@' + item.id : item.kind === 'channel' ? item.id : item.kind === 'video' ? 'https://youtu.be/' + item.id : 'playlist: ' + item.id} (${String(item.label || what).replace(/[()]/g, '').slice(0, 60)})`;
+      const next = /^## Approved YouTube\s*$/m.test(text) ? text.replace(/^## Approved YouTube\s*$/m, (h) => `${h}\n${line}`) : `${text.trimEnd()}\n\n## Approved YouTube\n${line}\n`;
+      kidServerWrite = true;
+      try { voiceMemory.notebook.save(KID_FILE, next); } finally { kidServerWrite = false; }
+    } catch (e) { console.warn('[voice] could not add the approved channel:', e.message); }
+  }
   const voiceBrainOpts = {
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...voiceAdminTools],
-    beforeTurn: ({ locked, unrecognised, voice }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceOwnerVerdict = voice || null; voicePending.newTurn(); },
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), kidStartTool, kidProgressTool],
+    beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voicePending.newTurn(); },
+    turnNote: kidNews,
     // Cru speaking up by itself: nobody spoke, so with a voice enrolled no admin powers.
-    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceOwnerVerdict = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, typed: false, verdict: null }).admin; },
+    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceTurnOwner = false; voiceOwnerVerdict = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, typed: false, verdict: null }).admin; },
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
     persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
@@ -3055,8 +3228,185 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   // Compaction while idle: ten quiet minutes, at most once a minute's check.
   setInterval(() => {
-    if (Date.now() - voiceAgent.lastActivity > 10 * 60 * 1000) voiceAgent.compact().catch(() => {});
+    if (!kidOn() && Date.now() - voiceAgent.lastActivity > 10 * 60 * 1000) voiceAgent.compact().catch(() => {});
   }, 60 * 1000).unref();
+
+  // ─── Kid Cru: the child's friend, a conversation of its own ───
+  // Its own history, store and notes; the parent's instructions read only;
+  // only the live screen, games, approved videos and its friend notes.
+  const kidInstructions = () => (voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '';
+  const kidTools = makeKidTools({
+    screen: voiceScreen,
+    instructions: kidInstructions,
+    games: kidGames,
+    resolveHandle: (h) => kidHandles.resolve(h),
+    onGame: (id, o) => { kidGames.startPlay(id, o); kidWarmGame(id, o); },
+    friend: kidFriend,
+    watch: kidWatch,
+    sendCommand: (cmd) => voiceListenSend({ type: 'game-command', command: cmd }),
+    // Something worrying the child said: a short note for the parent (inbox and phone), never a recording.
+    asks: kidAsks,
+    makeGame: (idea, skill) => kidMakeGame(idea, skill),
+    childName: () => kidFirstName(),
+    extraApproved: () => kidSession.onceVideos,
+    tellParent: createParentNotes({
+      send: (note) => {
+        console.log('[voice] kid Cru told the parent:', note);
+        try { inbox.add({ kind: 'alert', cru: true, title: 'Kid mode: a note for you', text: note }); } catch (err) { console.warn('[inbox] could not keep the note:', err.message); }
+        mobilePush.send(note, { title: 'Kid mode', url: '/', tag: 'kid-note' }).catch(() => {});
+      },
+    }),
+  });
+  const kidStore = (() => {
+    const f = join(kidPrivDir, 'conversation.json');
+    return {
+      load() { try { const h = JSON.parse(readFileSync(f, 'utf-8')); return Array.isArray(h.history) ? h.history : []; } catch { return []; } },
+      save(history) { mkdirSync(kidPrivDir, { recursive: true, mode: 0o700 }); writeFileSync(f, JSON.stringify({ savedAt: new Date().toISOString(), history }), { mode: 0o600 }); },
+    };
+  })();
+  const kidBrainOpts = {
+    tools: kidTools,
+    systemPrompt: KID_SYSTEM_PROMPT,
+    intro: () => kidIntro(kidInstructions(), { friend: kidFriend.read(), learning: kidSkills.summary() }),
+    context: ({ now }) => kidContextLine({ now, since: voiceSettings.kidState().since, extraMinutes: kidSession.extraMinutes }),
+    noCompact: true,
+    refusal: '[mood: gentle] Hmm, let\'s do something else! How about a game?',
+    beforeTurn: () => { if (kidWorkshop) kidWorkshop.markKidUse(); },
+  };
+  const kidCli = createCliVoiceAgent({
+    ...kidBrainOpts,
+    workdir: join(kidPrivDir, 'cli-work'),
+    stateDir: join(kidPrivDir, 'cli'),
+    apiUrl: () => `http://127.0.0.1:${localPort || port}`,
+    claudeBin: () => resolveClaudeBin(),
+  });
+  const kidAgent = createVoiceBrain({
+    api: createVoiceAgent({ ...kidBrainOpts, store: kidStore }),
+    cli: kidCli,
+    logFile: join(kidPrivDir, 'brain-log.jsonl'),
+  });
+  /** Whichever Cru is answering now: the child's friend in kid mode, else the owner's. */
+  const cru = () => (kidOn() ? kidAgent : voiceAgent);
+  /** A kid turn: its mood marker taken off and turned into how lively it sounds. */
+  async function kidTurn(text, opts = {}) {
+    const r = await kidAgent.turn(text, opts);
+    if (r && r.ok) {
+      const m = splitMood(r.speak || '');
+      r.speak = m.text.trim();
+      r.show = splitMood(r.show || '').text.trim();
+      r.mood = m.mood;
+      r.expressivity = MOOD_EXPRESSIVITY[m.mood];
+      r.kid = true;
+    }
+    return r;
+  }
+  /** Something from a game for kid Cru (a watched event): its answer goes to the open screens. */
+  let kidEventBusy = false;
+  async function kidGameWake(line, { force = false } = {}) {
+    if (!line || (kidEventBusy && !force) || kidSession.paused) return;
+    for (let i = 0; i < 40 && kidEventBusy; i++) await new Promise((ok) => setTimeout(ok, 500));
+    kidEventBusy = true;
+    try {
+      const r = await kidTurn(line, { where: 'the game on the kid screen' });
+      if (r && r.ok && (r.speak || r.show)) voiceListenSend({ type: 'report', speak: r.speak || '', show: r.show || '', kid: true, mood: r.mood, expressivity: r.expressivity });
+    } finally {
+      kidEventBusy = false;
+      setTimeout(() => { const due = kidWatch.due({ busy: kidEventBusy }); if (due && kidOn()) kidGameWake(due); }, 3100).unref?.();
+    }
+  }
+
+  // ─── A game made now, for the child (make_game) ───
+  // The waiting scene (kid-games/waiting.html) shows meanwhile, moved on by
+  // the build's real steps, with a cheerful line every ~9 s and bubbles to pop.
+  let kidMakes = [];
+  /** An instant line said on the kid screen (no model). */
+  const kidParent = () => { try { return parseKidInstructions((voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '').parent; } catch { return ''; } };
+  const kidSay = (event) => { const l = kidReflex.pick(event, { name: kidFirstName(), parent: kidParent() }); if (l) voiceListenSend({ type: 'say', text: l.text, expressivity: l.expressivity }); return l; };
+  let kidAskTalk = null;
+  function kidMakeGame(idea, skill) {
+    if (!idea) return { ok: false, error: 'Say what the game is about' };
+    if (!kidWorkshop || kidWorkshop.building) return { ok: false, error: 'A game is already being made: wait for it.' };
+    const t = Date.now();
+    kidMakes = kidMakes.filter((x) => t - x < 3600 * 1000);
+    if (kidMakes.length >= 3) return { ok: false, error: 'Enough new games this hour: offer one that is there already.' };
+    kidMakes.push(t);
+    kidGames.endPlay(false);
+    voiceScreen.game('_waiting', { theme: idea, line: 'Cru is making your game!', progress: 0.05 }, 'Making your game');
+    const talk = setInterval(() => { if (kidOn()) kidSay('making'); }, 9000);
+    talk.unref?.();
+    kidWorkshop.buildLive({
+      idea, skill,
+      onStep: (value, step) => voiceListenSend({ type: 'game-command', command: { action: 'progress', value, step } }),
+    }).then((r) => {
+      clearInterval(talk);
+      if (!kidOn()) return;
+      if (r.ok) {
+        voiceListenSend({ type: 'game-command', command: { action: 'ready' } });
+        setTimeout(() => {
+          if (!kidOn()) return;
+          try { voiceScreen.game(r.id, {}, r.title); kidGames.startPlay(r.id, {}); kidWatch.reset(); } catch { /* gone */ }
+          kidGameWake(`[New game ready: "${r.title}" (id ${r.id}), about ${idea}. It is on the screen now: present it with a happy ta-da, in a sentence.]`, { force: true });
+        }, 1800);
+      } else {
+        voiceScreen.clear();
+        kidGameWake(`[New game failed: the ${idea} game could not be made this time. Cheerfully offer the closest game there is (list_games) and start it if they want.]`, { force: true });
+      }
+    }).catch(() => { clearInterval(talk); });
+    return { ok: true, making: true, note: 'It is being made now (a minute or two). Say so excitedly; a waiting screen with bubbles is up meanwhile.' };
+  }
+
+  // Kid speech, kept on disk by voice + expressivity + text, so a line said once is instant.
+  const kidClipDir = join(kidPrivDir, 'clips');
+  const kidVoiceNow = () => voiceSettings.getSettings().kidVoice || voiceSettings.getSettings().ttsVoice || '';
+  const kidClipFile = (text, ex) => join(kidClipDir, kidClipKey(kidVoiceNow(), ex, text) + '.pcm');
+  /** Make (and keep) the clip for [text], quietly; a clip already made is left. */
+  async function kidMakeClip(text, ex) {
+    const f = kidClipFile(text, ex);
+    if (existsSync(f) || !voiceSettings.getSettings().deepgramKey || voiceSettings.deepgramOverLimit()) return;
+    const st = await speakKidStream(text, { expressivity: ex, rate: voiceSettings.getSettings().kidSpeechRate || 1 });
+    if (!st.ok) return;
+    const buf = Buffer.from(await new Response(st.body).arrayBuffer());
+    if (buf.length > 2000) { mkdirSync(kidClipDir, { recursive: true, mode: 0o700 }); writeFileSync(f, buf, { mode: 0o600 }); }
+  }
+  // The instant lines for a game, made in the background as it starts (one at a time).
+  let kidWarming = Promise.resolve();
+  function kidWarmGame(id, o = {}) {
+    if (voiceSettings.getSettings().kidReflex === false) return;
+    const g = kidGames.get(id);
+    const letters = typeof o.letters === 'string' ? o.letters.toUpperCase().replace(/[^A-Z]/g, '').split('') : [];
+    const items = letters.length ? letters : (g && (g.skills || []).some((k) => /letter|upper/.test(k)) ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('') : []);
+    const lines = kidReflex.warmLines({ name: kidFirstName(), items }).slice(0, 120);
+    kidWarming = kidWarming.then(async () => { for (const l of lines) { if (!kidOn()) return; await kidMakeClip(l.text, MOOD_EXPRESSIVITY[l.mood]).catch(() => {}); } }).catch(() => {});
+  }
+
+  // The games workshop: on a night after kid mode was used, while nobody is about.
+  kidWorkshop = createKidWorkshop({
+    lib: kidGames,
+    dir: kidDir,
+    settings: () => { const g = voiceSettings.getSettings().kidGames || {}; return { enabled: g.improve !== false, from: g.from, to: g.to }; },
+    kidOn,
+    lastActivity: () => {
+      const busy = (claudeUi ? claudeUi.list() : []).some((c) => c.agentState === 'working');
+      return busy ? Date.now() : Math.max(voiceAgent.lastActivity || 0, kidAgent.lastActivity || 0);
+    },
+    claudeBin: () => { try { return resolveClaudeBin(); } catch { return null; } },
+    render: async (id) => {
+      const d = kidGames.doc(id, {});
+      if (!d) return { ok: false, problems: ['could not be built (meta.json missing or broken?)'] };
+      return checkInSandbox({ baseUrl: `http://127.0.0.1:${localPort || port}`, doc: voiceScreenDoc(d.html, { title: d.title, kid: true }) });
+    },
+    onDone: (r) => {
+      kidReflex.reload();
+      const titles = (ids) => ids.map((id) => (kidGames.get(id) || {}).title || id).join(', ');
+      const bits = [];
+      if (r.created.length) bits.push(`new game${r.created.length > 1 ? 's' : ''}: ${titles(r.created)}`);
+      if (r.updated.length) bits.push(`improved: ${titles(r.updated)}`);
+      if (r.failed.length) bits.push(`${r.failed.length} change${r.failed.length > 1 ? 's' : ''} refused by the safety checks`);
+      if (bits.length) { try { mkdirSync(kidPrivDir, { recursive: true, mode: 0o700 }); writeFileSync(kidNewsFile, `${bits.join('; ')}. ${r.summary || ''}`.slice(0, 1500), { mode: 0o600 }); } catch { /* best effort */ } }
+      broadcastSSE('voice-kid-games', {});
+    },
+  });
+  setInterval(() => { try { kidWorkshop.tick(); } catch (e) { console.warn('[kid-workshop]', e.message); } }, 5 * 60 * 1000).unref();
 
   function readBodyBuffer(req, max) {
     return new Promise((resolve, reject) => {
@@ -4628,6 +4978,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (path === '/api/voice/settings' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, kidMode: true, error: 'Kid mode is on: settings wait until it is switched off with the PIN.' }, 423);
       const r = voiceSettings.updateSettings({
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd, deepgramLimitUsd: body.deepgramLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
@@ -4635,20 +4986,175 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         brain: body.brain, screenCloseSeconds: body.screenCloseSeconds, cliIdleMinutes: body.cliIdleMinutes,
         adminMode: typeof body.adminMode === 'boolean' ? body.adminMode : undefined,
         ownerOnly: typeof body.ownerOnly === 'boolean' ? body.ownerOnly : undefined,
+        kidVoice: body.kidVoice, kidSpeechRate: body.kidSpeechRate, kidGames: body.kidGames, kidChattiness: body.kidChattiness, kidPauseMs: body.kidPauseMs,
+        kidReflex: typeof body.kidReflex === 'boolean' ? body.kidReflex : undefined,
       });
       return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
+    }
+    // ─── Cru's live screen (capability 'voice-screen') ───
+    if (path === '/api/voice/screen' && req.method === 'GET') return json(res, { ok: true, screen: voiceScreen.get() });
+    if (path === '/api/voice/screen/close' && req.method === 'POST') {
+      kidGames.endPlay(false);
+      voiceScreen.clear();
+      return json(res, { ok: true, screen: null });
+    }
+    // Something tapped on Cru's own page (window.cru.tell): Cru hears it, as a
+    // tap and never as the owner speaking, so it changes nothing.
+    if (path === '/api/voice/screen/event' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const what = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      if (!what) return json(res, { ok: false, error: 'Nothing tapped' }, 400);
+      const now = Date.now();
+      if (now - cruTapAt < 2000) return json(res, { ok: false, skipped: 'too soon' });
+      cruTapAt = now;
+      const line = what.startsWith('[') ? what : `[${kidOn() ? 'Kid' : 'Owner'} tapped on the live screen: ${what}]`;
+      const r = kidOn() ? await kidTurn(line, { where: 'the kid screen' }) : await voiceAgent.turn(line, { where: 'the live screen', unrecognised: true, speaker: 'a tap on the live screen, not speech' });
+      if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
+      return json(res, r, r.ok || r.cancelled ? 200 : 400);
+    }
+    // ─── Kid mode (capability 'voice-kid') ───
+    if (path === '/api/voice/kid' && req.method === 'GET') {
+      return json(res, { ok: true, ...kidPublic(), ...kidPins.state, instructions: kidOn() ? undefined : kidInstructions(), parentName: kidOn() ? undefined : kidParent() });
+    }
+    if (path === '/api/voice/kid/pin' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, error: 'The PIN cannot change while kid mode is on' }, 423);
+      const pin = String(body.pin ?? '');
+      if (body.remove === true) { voiceSettings.setKidPinHash(''); return json(res, { ok: true, ...voiceSettings.kidState() }); }
+      if (!KID_PIN_RE.test(pin)) return json(res, { ok: false, error: 'The PIN is 4 to 8 digits' }, 400);
+      const r = voiceSettings.setKidPinHash(hashPin(pin));
+      kidPins.reset();
+      return json(res, r.ok ? { ok: true, ...voiceSettings.kidState() } : r, r.ok ? 200 : 400);
+    }
+    if (path === '/api/voice/kid/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      const r = kidStart(['settings', 'tray', 'screen'].includes(body.by) ? body.by : 'settings');
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    // The only way out: the PIN, a few tries, then a lockout that grows.
+    if (path === '/api/voice/kid/exit' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (!kidOn()) return json(res, { ok: true, on: false });
+      const r = kidPins.attempt(String(body.pin ?? ''), voiceSettings.kidPinHash());
+      if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
+      kidStop();
+      return json(res, { ok: true, ...voiceSettings.kidState() });
+    }
+    // What a game reports: the play log and the child's levels, the instant
+    // line to say now, and (when kid Cru watches that event) a word from Cru later.
+    if (path === '/api/voice/kid/play' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const ev = String(body.event || body.kind || '');
+      const e = { event: ev === 'wrong' ? 'miss' : ev === 'level' ? 'level-up' : ev, item: String(body.item ?? '').slice(0, 40), detail: String(body.detail ?? '').slice(0, 200), streak: Number(body.streak) || 0, game: (kidGames.playing || {}).game || '' };
+      kidGames.event({ kind: ev === 'miss' ? 'wrong' : ev === 'level-up' ? 'level' : ev, detail: e.detail || e.item });
+      if (ev === 'result' && body.skill) kidSkills.record(String(body.skill), String(body.item ?? ''), body.ok === true);
+      if (kidWorkshop && kidOn()) kidWorkshop.markKidUse();
+      const out = { ok: true };
+      if (GAME_EVENTS.includes(e.event)) {
+        const speaking = body.speaking === true || kidEventBusy;
+        // The instant line (no model), unless Cru asked to say something itself.
+        if (voiceSettings.getSettings().kidReflex !== false && !kidWatch.takeQuiet() && kidReflex.gate(e.event, { speaking })) {
+          const line = kidReflex.pick(e.event, { name: kidFirstName(), item: e.item });
+          if (line) out.reflex = { ...line, cached: existsSync(kidClipFile(line.text, line.expressivity)) };
+        }
+        if (kidOn()) { const wake = kidWatch.offer(e, { busy: speaking }); if (wake) kidGameWake(wake); }
+      }
+      return json(res, out);
+    }
+    // The parent's side, from any signed-in device (no PIN: the owner is signed in).
+    if (path === '/api/voice/kid/ask' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const a = kidAsks.answer(String(body.id || ''), String(body.choice || ''));
+      return json(res, a ? { ok: true } : { ok: false, error: 'That question was already answered, or has expired' }, a ? 200 : 404);
+    }
+    // What the child calls the parent (Settings): a line of the parent's instructions.
+    if (path === '/api/voice/kid/parent-name' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      const name = String(body.name || '').replace(/[^\p{L} ,'-]/gu, '').trim().slice(0, 60);
+      const text = kidInstructions();
+      const line = `- What the child calls you: ${name || '(not set, e.g. Daddy, Mummy, Baba, Mama)'}`;
+      const next = /^-?\s*what the child calls you:.*$/im.test(text) ? text.replace(/^-?\s*what the child calls you:.*$/im, line)
+        : /^## About the kid\s*$/m.test(text) ? text.replace(/^## About the kid\s*$/m, (h) => `${h}\n${line}`) : `${text.trimEnd()}\n\n## About the kid\n${line}\n`;
+      try { voiceMemory.notebook.save(KID_FILE, next); } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      return json(res, { ok: true, parent: name });
+    }
+    if (path === '/api/voice/kid/end' && req.method === 'POST') {
+      if (!kidOn()) return json(res, { ok: true, on: false });
+      kidStop('the parent, remotely');
+      return json(res, { ok: true, ...voiceSettings.kidState() });
+    }
+    if (path === '/api/voice/kid/pause' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      if (!kidOn()) return json(res, { ok: false, error: 'Kid mode is off' }, 409);
+      kidSession.paused = body.paused !== false;
+      if (kidSession.paused) { try { kidAgent.cancel(); } catch { /* none */ } }
+      kidBroadcast();
+      return json(res, { ok: true, ...kidPublic() });
+    }
+    if (path === '/api/voice/kid/time' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      if (!kidOn()) return json(res, { ok: false, error: 'Kid mode is off' }, 409);
+      const m = Math.round(Number(body.minutes));
+      if (!Number.isFinite(m) || m < 1 || m > 240) return json(res, { ok: false, error: 'minutes: 1 to 240' }, 400);
+      kidSession.extraMinutes += m;
+      kidBroadcast();
+      setTimeout(() => kidGameWake(`[A grown-up added ${m} more minutes of time] Not said by the child: tell them happily, in a few words.`, { force: true }), 100);
+      return json(res, { ok: true, ...kidPublic() });
+    }
+    if (path === '/api/voice/kid/progress' && req.method === 'GET') {
+      const range = ['week', 'month', 'all'].includes(url.searchParams.get('range')) ? url.searchParams.get('range') : 'month';
+      return json(res, { ok: true, ...kidSkills.progress({ range, area: String(url.searchParams.get('area') || '') }), taxonomy: KID_TAXONOMY.map((a) => ({ id: a.id, label: a.label, about: a.about, skills: a.skills.map(([id, label]) => ({ id, label })) })) });
+    }
+    if (path === '/api/voice/kid/progress/reset' && req.method === 'POST') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      kidSkills.reset();
+      return json(res, { ok: true });
+    }
+    if (path === '/api/voice/kid/games' && req.method === 'GET') {
+      return json(res, { ok: true, games: kidGames.list(), workshop: kidWorkshop ? kidWorkshop.state : null });
+    }
+    if (path === '/api/voice/kid/games' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      const id = String(body.id || '');
+      const r = body.action === 'enable' ? kidGames.setEnabled(id, true) : body.action === 'disable' ? kidGames.setEnabled(id, false)
+        : body.action === 'rollback' ? kidGames.rollback(id) : body.action === 'seen' ? (kidGames.markSeen(), { ok: true }) : { ok: false, error: 'action: enable, disable, rollback or seen' };
+      return json(res, r.ok ? { ok: true, games: kidGames.list() } : r, r.ok ? 200 : 400);
+    }
+    if (path === '/api/voice/kid/friend' && req.method === 'GET') return json(res, { ok: true, text: kidOn() ? '' : kidFriend.read() });
+    if (path === '/api/voice/kid/friend' && req.method === 'DELETE') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      kidFriend.clear();
+      return json(res, { ok: true });
     }
     if (path === '/api/voice/turn' && req.method === 'POST') {
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
       // The phone's own recogniser (over the Deepgram limit) mishears the names too.
+      // Kid mode: the child's friend answers, in its own conversation.
+      if (kidOn()) {
+        const r = await kidTurn(String(body.text || '').slice(0, 2000), { where: 'the kid screen' });
+        if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
+        return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+      }
       const said = fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
       // Whose voice (capability 'voice-speaker'): typed turns say typed:true;
       // a spoken one finds the verdict its utterance got on /api/voice/listen.
       const typed = body.typed === true;
       const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
-      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, voice: rules.voice, speaker: rules.who });
+      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who });
       if (r && r.ok) r.speaker = rules.speaker;
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
@@ -4711,6 +5217,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Cru's unread messages (the dot on its mark), and marking them read.
     if (path === '/api/voice/unread' && req.method === 'GET') return json(res, { ok: true, ...voiceUnread.state });
     if (path === '/api/voice/seen' && req.method === 'POST') { voiceUnread.seen(); return json(res, { ok: true, ...voiceUnread.state }); }
+    // Kid mode: the owner's conversation is never shown on the kid screen.
+    if (path === '/api/voice/history' && req.method === 'GET' && kidOn()) return json(res, { ok: true, turns: [], more: false, kid: true });
     if (path === '/api/voice/history' && req.method === 'GET') {
       const turns = voiceMemory.turns({ before: Number(url.searchParams.get('before')) || 0, limit: Number(url.searchParams.get('limit')) || 50 });
       return json(res, { ok: true, turns: turns.reverse(), more: turns.length >= (Number(url.searchParams.get('limit')) || 50) });
@@ -4739,6 +5247,28 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
       // ?stream=1 (capability 'voice-tts-stream'): raw PCM piped as Deepgram
       // makes it, so the phone starts playing after the first bytes.
+      // Kid mode: kid Cru's voice (Flux, lively by mood), each line kept on disk so a repeat is instant.
+      if (kidOn() && !body.voice) {
+        const ex = Number.isFinite(Number(body.expressivity)) ? Math.max(-2, Math.min(2, Math.round(Number(body.expressivity)))) : (MOOD_EXPRESSIVITY[body.mood] ?? 2);
+        const text = String(body.text || '').trim().slice(0, 2000);
+        const f = kidClipFile(text, ex);
+        if (existsSync(f)) {
+          res.writeHead(200, { 'Content-Type': 'audio/L16; rate=24000; channels=1', 'Cache-Control': 'no-store', 'X-Sample-Rate': '24000', 'X-Clip': 'cached' });
+          return createReadStream(f).pipe(res);
+        }
+        const st = await speakKidStream(text, { expressivity: ex, rate: voiceSettings.getSettings().kidSpeechRate || 1 });
+        if (!st.ok) return json(res, st, 400);
+        res.writeHead(200, { 'Content-Type': `audio/L16; rate=${st.rate}; channels=1`, 'Cache-Control': 'no-store', 'X-Sample-Rate': String(st.rate) });
+        // Kept as it streams; only a whole clip is saved.
+        const parts = [];
+        const src = Readable.fromWeb(st.body);
+        src.on('data', (c) => parts.push(c));
+        src.on('end', () => { if (text.length <= 200) { try { mkdirSync(kidClipDir, { recursive: true, mode: 0o700 }); writeFileSync(f, Buffer.concat(parts), { mode: 0o600 }); } catch { /* next time */ } } });
+        src.on('error', () => { try { res.end(); } catch { /* gone */ } });
+        req.on('close', () => { try { src.destroy(); } catch { /* done */ } });
+        src.pipe(res);
+        return;
+      }
       if (url.searchParams.get('stream') === '1') {
         const st = await voiceSpeakStream(body.text, body.voice ? String(body.voice) : '');
         if (!st.ok) return json(res, st, 400);
@@ -4762,17 +5292,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // The owner cancelled what they said ("scratch that", the x): the turn in
     // progress stops, unanswered; what it already did is listed (acted).
     if (path === '/api/voice/cancel' && req.method === 'POST') {
-      return json(res, voiceAgent.cancel());
+      return json(res, cru().cancel());
     }
     if (path === '/api/voice/warm' && req.method === 'POST') {
-      return json(res, await voiceAgent.warm());
+      return json(res, await cru().warm());
     }
     // The voice screen's Compact button: the conversation so far becomes a summary.
     if (path === '/api/voice/compact' && req.method === 'POST') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not in kid mode' }, 423);
       const r = await voiceAgent.compact({ force: true });
       return json(res, r.ok ? { ok: true } : { ok: false, error: r.skipped || 'Could not compact' });
     }
     if (path === '/api/voice/reset' && req.method === 'POST') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not in kid mode' }, 423);
       voiceAgent.reset();
       return json(res, { ok: true });
     }
@@ -4794,7 +5326,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         } catch { verdict = voiceSpeaker.recent.lookup(r.text); }
       }
       const rules = voiceTurnRules({ typed: false, verdict });
-      const answer = r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, voice: rules.voice, speaker: rules.who }) : { ok: false, error: 'Nothing was heard' };
+      const answer = r.text && kidOn() ? await kidTurn(r.text, { where: 'the kid screen' }) : r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }) : { ok: false, error: 'Nothing was heard' };
       if (answer && answer.ok) answer.speaker = rules.speaker;
       if (answer && answer.ok) answer.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);
@@ -5020,6 +5552,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (!id) continue;
           const src = String((it && it.source) || '');
           if (src === 'chat') { dismissedChatCards.add(id); done++; continue; }
+          if (src === 'kid') { if (kidAsks.answer(id, 'no')) done++; continue; }
           if (src === 'secret') {
             const entry = pendingSecretRequests.get(id);
             if (entry) { entry.reject('The owner dismissed this secret access request.'); done++; }
@@ -7103,10 +7636,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Code brain). Its own token, made at start: it reaches these tools only.
     if (path === '/api/voice/cli-tool' && req.method === 'POST') {
       const tok = String(req.headers['x-cru-token'] || '');
-      if (!tok || tok.length !== voiceCli.token.length || !timingSafeEqual(Buffer.from(tok), Buffer.from(voiceCli.token))) return json(res, { error: 'Invalid token' }, 403);
+      // The owner's Cru and kid Cru each have their own token, and reach only their own tools.
+      const same = (t) => tok.length === t.length && timingSafeEqual(Buffer.from(tok), Buffer.from(t));
+      const brain = tok && same(voiceCli.token) ? voiceCli : tok && same(kidCli.token) ? kidCli : null;
+      if (!brain) return json(res, { error: 'Invalid token' }, 403);
       let body;
       try { body = JSON.parse(await readBody(req)); } catch { return json(res, { isError: true, content: 'Bad request body' }, 400); }
-      return json(res, await voiceCli.callTool(String(body.tool || '').replace(/^mcp__cru__/, ''), body.args || {}));
+      return json(res, await brain.callTool(String(body.tool || '').replace(/^mcp__cru__/, ''), body.args || {}));
     }
     if (path === '/api/mcp/call' && req.method === 'POST') {
       // Auth via internal API key (not user token) — or a collaborator's own.
@@ -7899,7 +8435,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             services: getAllServiceStatus().map(sv => sv.name),
             // The phone streams raw 16-bit PCM and says so; a browser sends WebM.
             audio: { encoding: url.searchParams.get('encoding'), sample_rate: url.searchParams.get('sample_rate') },
-            pauseMs: voiceSettings.getSettings().pauseMs,
+            // Small children pause longer: kid mode waits longer before sending.
+            pauseMs: kidOn() ? (voiceSettings.getSettings().kidPauseMs || 3200) : voiceSettings.getSettings().pauseMs,
             // Each utterance's voice checked against the owner's (voice/speaker.js).
             speaker: voiceSpeaker,
           });

@@ -84,5 +84,31 @@ createVoiceMemory({ dataDir: kept, index: { add() {}, turns() { return []; } } }
 ok(rf(join(kept, 'voice-memory', 'memories', 'persona.md'), 'utf8') === 'mine', 'an existing persona is left alone');
 void m1;
 
+// A short "yes" (too short to tell whose voice) may confirm what a recognised request asked, and nothing else.
+{
+  const { turnPolicy } = await import('../src/voice/speaker.js');
+  const { createPending, makeActionTools: mk } = await import('../src/voice/actions.js');
+  const short = { owner: null, reason: 'short' };
+  ok(turnPolicy({ enrolled: true, verdict: short, answering: true }).confirmOk === true, 'short yes with a recognised question waiting may confirm');
+  ok(turnPolicy({ enrolled: true, verdict: short, answering: false }).confirmOk === false, 'short yes with nothing recognised waiting may not');
+  ok(turnPolicy({ enrolled: true, verdict: { owner: false }, answering: true }).confirmOk === false, 'another voice never confirms');
+  const pend = createPending();
+  let unrec = false, confirmOk = true, verified = true;
+  const ctx = { pending: pend, locked: () => false, unrecognised: () => unrec, confirmOk: () => confirmOk, verified: () => verified };
+  const ran = [];
+  const tools2 = mk({ listProjects: () => [{ alias: 'crundi' }], kanban: { getTask: () => ({ id: 'x' }), deleteTask: (...a) => { ran.push(a); return { ok: true }; } }, voiceSettings: settings }, ctx);
+  const del = tools2.find((x) => x.name === 'delete_kanban_task'), conf = tools2.find((x) => x.name === 'confirm_action');
+  pend.newTurn();
+  const asked = await del.run({ project: 'crundi', taskId: 'x1' });
+  ok(asked.needsConfirmation && pend.verifiedWaiting(), 'a recognised request asks and is marked verified');
+  pend.newTurn(); unrec = true; confirmOk = true;
+  const other = await del.run({ project: 'crundi', taskId: 'x2' });
+  ok(other.unrecognised, 'the short "yes" turn cannot start anything else');
+  const yes = await conf.run({ id: asked.id });
+  ok(ran.length === 1 && !yes.unrecognised, 'but it confirms the recognised request');
+  // A question asked in an unrecognised turn is not confirmable by a short yes.
+  pend.newTurn(); unrec = true; confirmOk = false; verified = false;
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll Cru-self checks passed');
 process.exit(failed ? 1 : 0);

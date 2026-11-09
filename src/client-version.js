@@ -202,6 +202,19 @@ export const CAPABILITIES = Object.freeze([
   // carry owner (true/false/null); /api/voice/turn takes typed:true for typed
   // text and answers with speaker { owner, unrecognised }.
   'voice-speaker',
+  // Cru's live screen (voice/screen.js): GET /api/voice/screen -> { screen },
+  // POST /api/voice/screen/close, POST /api/voice/screen/event { text } (a
+  // tap on Cru's page, answered as a turn), and { type: 'screen', screen } on
+  // /api/voice/listen whenever it changes (screen null: gone).
+  'voice-screen',
+  // Kid mode (voice/kid.js): GET /api/voice/kid, POST /api/voice/kid/pin
+  // { pin } | { remove }, /kid/start { by }, /kid/exit { pin } (429 locked),
+  // /kid/play (game events -> { reflex }), GET /kid/progress?range=&area=,
+  // POST /kid/progress/reset, GET|POST /kid/games, GET|DELETE /kid/friend;
+  // settings kidMode, kidVoice, kidSpeechRate, kidReflex, kidChattiness,
+  // kidPauseMs, kidGames; SSE 'voice-kid', socket { type: 'kid' },
+  // { type: 'game-command' }, desktop { type: 'kid-mode' }.
+  'voice-kid',
   // Voice mode in a chat: the composer's mic sends "voice input: …" (spoken
   // through /api/voice/listen), and the chat's 'voice-say' events (Claude's
   // speak tool) are said aloud by the screen in voice mode, through

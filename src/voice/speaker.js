@@ -329,12 +329,18 @@ export function decide(score, seconds, threshold = THRESHOLD) {
  * @param o.ownerOnly the "Only act on my voice" setting
  * @param o.typed     typed by the signed-in owner (no voice at all)
  * @param o.verdict   { owner: true|false|null, reason } from the voice check, or null (none found)
- * @returns { unrecognised, admin: { owner: true|false, reason } }
+ * @param o.answering a confirmation asked during a recognised (or typed) turn is waiting, recent
+ * @returns { unrecognised, admin: { owner: true|false, reason }, confirmOk }
  */
-export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, verdict = null } = {}) {
+export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, verdict = null, answering = false } = {}) {
   const owner = verdict ? verdict.owner : null;
   const short = !!verdict && owner === null && verdict.reason === 'short';
   const unrecognised = enrolled && ownerOnly && !typed && (owner === false || short);
+  // A bare "yes" is too short to tell whose voice it is. It may still answer a
+  // question that a recognised request asked moments ago (answering: such a
+  // confirmation is waiting): then it may confirm or cancel that one action,
+  // and nothing else. Another voice (false) never confirms anything.
+  const confirmOk = !unrecognised || (short && answering);
   let admin;
   if (!enrolled) admin = { owner: true, reason: 'no voice enrolled' };
   else if (owner === true) admin = { owner: true, reason: 'the owner\'s voice' };
@@ -342,7 +348,7 @@ export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, 
   else if (typed) admin = { owner: true, reason: 'typed by the owner' };
   else if (short) admin = { owner: false, reason: 'That was too short to tell who is speaking, and admin mode only obeys the owner. Nothing was done: ask them to say it a bit longer so you can recognise who they are.' };
   else admin = { owner: false, reason: 'Who is speaking could not be checked for that request, and admin mode only obeys the owner. Nothing was done: ask them to say it again, a bit longer, or to type it.' };
-  return { unrecognised, admin };
+  return { unrecognised, admin, confirmOk };
 }
 
 /** Text as compared between an utterance and the turn it became. */

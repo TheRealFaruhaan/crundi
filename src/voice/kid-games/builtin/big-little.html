@@ -1,0 +1,38 @@
+<div class="k-title" id="ask">Match the big and little letters!</div>
+<div class="k-row" id="big" style="margin-bottom:22px"></div>
+<div class="k-row" id="small"></div>
+<div class="k-stars" id="stars"></div>
+<script>
+(function () {
+  var L = kid.letters(null, 'upper-lower'), pairs = Math.max(2, Math.min(6, Number(kid.opts.pairs) || 4)), rounds = Math.max(1, Math.min(10, Number(kid.opts.rounds) || 3));
+  var round = 0, picked = null, left = 0;
+  function start() {
+    if (round >= rounds) { document.getElementById('ask').textContent = 'You matched them all!'; kid.done('matched ' + rounds * pairs + ' letter pairs'); return; }
+    round++;
+    var set = kid.sample(L, Math.min(pairs, L.length)); left = set.length; picked = null;
+    var big = document.getElementById('big'), small = document.getElementById('small');
+    big.innerHTML = ''; small.innerHTML = '';
+    set.forEach(function (x, i) {
+      var b = kid.el('button', 'k-btn k-pop', x); b.style.background = kid.BRIGHT[i % 8]; b.dataset.l = x;
+      b.onclick = function () { if (b.disabled) return; [].forEach.call(big.children, function (c) { c.style.outline = ''; }); picked = b; kid.ask('upper-lower', x); b.style.outline = '6px solid #fff'; kid.say('Big ' + x + '. Now find little ' + x.toLowerCase() + '!'); };
+      big.appendChild(b);
+    });
+    kid.shuffle(set).forEach(function (x) {
+      var s = kid.el('button', 'k-btn k-pop', x.toLowerCase()); s.style.background = '#334155'; s.dataset.l = x;
+      s.onclick = function () {
+        if (s.disabled) return;
+        if (!picked) { kid.say('First tap a big letter!'); return; }
+        if (picked.dataset.l === x) {
+          var c = picked.style.background; s.style.background = c; s.disabled = picked.disabled = true; picked.style.outline = ''; picked.classList.add('k-dim'); s.classList.add('k-dim'); picked = null; left--;
+          kid.correct(x, 'Yes! Big ' + x + ', little ' + x.toLowerCase() + '!');
+          if (!left) setTimeout(start, 1500);
+        } else { s.classList.add('k-shake'); setTimeout(function () { s.classList.remove('k-shake'); }, 400); kid.wrong(x.toLowerCase(), 'That is little ' + x.toLowerCase() + '. Try another one!'); }
+      };
+      small.appendChild(s);
+    });
+    document.getElementById('stars').textContent = 'Round ' + round + ' of ' + rounds;
+    kid.say('Tap a big letter, then its little letter!');
+  }
+  start();
+})();
+</script>

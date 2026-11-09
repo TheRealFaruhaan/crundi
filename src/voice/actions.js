@@ -65,12 +65,16 @@ export function createPending({ now = () => Date.now() } = {}) {
     /** The owner has said something: a new turn begins. */
     newTurn() { turn++; sweep(); },
     get turn() { return turn; },
-    propose(tool, input, question) {
+    /** [verified]: asked during a turn spoken in the owner's recognised voice (or typed). */
+    propose(tool, input, question, { verified = false } = {}) {
       sweep();
       const id = `a${++seq}`;
-      items.set(id, { id, tool, input, question, turn, at: now() });
+      items.set(id, { id, tool, input, question, turn, at: now(), verified: !!verified });
       return id;
     },
+    /** Is a confirmation from a recognised request waiting, asked within [ms]? (A short "yes" may answer it.) */
+    verifiedWaiting(ms = 120_000) { sweep(); for (const p of items.values()) if (p.verified && now() - p.at <= ms) return true; return false; },
+    peek(id) { return items.get(String(id || '')) || null; },
     /** The action, if the owner has spoken since it was proposed; else why not. */
     take(id) {
       sweep();
@@ -449,7 +453,7 @@ export function makeActionTools(deps, ctx) {
     if (def.check) def.check(input);
     const q = def.confirm ? def.confirm(input) : null;
     if (q) {
-      const id = ctx.pending.propose(def.name, input, q);
+      const id = ctx.pending.propose(def.name, input, q, { verified: !ctx.unrecognised?.() && (ctx.verified ? ctx.verified() : true) });
       return { done: false, needsConfirmation: true, id, ask: q, rule: 'Nothing has been done. Ask the owner this, in your own words, and stop. Only if the owner agrees in their next message, call confirm_action with this id; if they decline, call cancel_action.' };
     }
     const r = await def.run(input);
@@ -464,7 +468,11 @@ export function makeActionTools(deps, ctx) {
     input_schema: obj({ id: str('The id the action gave') }, ['id']),
     run: async ({ id }) => {
       if (ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it; nothing was changed.' };
-      if (ctx.unrecognised?.()) return { done: false, unrecognised: true, say: UNRECOGNISED };
+      // Too short to tell who said "yes": it may only confirm an action a recognised request asked about.
+      if (ctx.unrecognised?.()) {
+        const p = ctx.pending.peek(id);
+        if (!(ctx.confirmOk?.() && p && p.verified)) return { done: false, unrecognised: true, say: UNRECOGNISED };
+      }
       const t = ctx.pending.take(id);
       if (t.error) return { done: false, error: t.error };
       const def = byName.get(t.action.tool);

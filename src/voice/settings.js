@@ -78,6 +78,19 @@ const DEFAULTS = {
   screenCloseSeconds: 60,
   // After this many minutes without a turn the Claude Code brain's process stops.
   cliIdleMinutes: 30,
+  // Kid mode (voice/kid.js): on, since when, and the PIN's salted hash (never the PIN).
+  kidMode: { on: false, pinHash: '', since: 0, by: '' },
+  // Kid mode's own voice and pace: a Deepgram Flux voice (expressive, tts.js speakKidStream), an Aura one, or '' for the owner's.
+  kidVoice: 'flux-gemma-en',
+  kidSpeechRate: 1.05,
+  // Instant cheer lines for game events (kid-reflex.js), no model call.
+  kidReflex: true,
+  // Kid Cru's chattiness during games (kid.js CHATTINESS): quiet, normal or chatty.
+  kidChattiness: 'normal',
+  // Small children pause longer: how long before what they said is sent, ms.
+  kidPauseMs: 3200,
+  // The games workshop (voice/kid-workshop.js): on a night after kid mode was used.
+  kidGames: { improve: true, from: '01:00', to: '05:00' },
   // month: the Claude month's first day; deepgramMonth: Deepgram's.
   spend: { month: '', deepgramMonth: '', claudeUsd: 0, deepgramUsd: 0, turns: 0 },
 };
@@ -89,7 +102,7 @@ function load() {
   if (cache) return cache;
   let saved = {};
   try { if (existsSync(FILE())) saved = JSON.parse(readFileSync(FILE(), 'utf-8')); } catch { saved = {}; }
-  cache = { ...DEFAULTS, ...saved, spend: { ...DEFAULTS.spend, ...(saved.spend || {}) } };
+  cache = { ...DEFAULTS, ...saved, spend: { ...DEFAULTS.spend, ...(saved.spend || {}) }, kidMode: { ...DEFAULTS.kidMode, ...(saved.kidMode || {}) }, kidGames: { ...DEFAULTS.kidGames, ...(saved.kidGames || {}) } };
   return cache;
 }
 
@@ -192,7 +205,39 @@ export function publicSettings(now = new Date()) {
     deepgramLimitUsd: s.deepgramLimitUsd,
     limitReached: spend.claudeUsd >= s.monthlyLimitUsd,
     deepgramLimitReached: spend.deepgramUsd >= s.deepgramLimitUsd,
+    // Kid mode (capability 'voice-kid'): never the PIN or its hash.
+    kidMode: kidState(s),
+    kidVoice: s.kidVoice || '',
+    kidSpeechRate: s.kidSpeechRate || 1,
+    kidReflex: s.kidReflex !== false,
+    kidChattiness: ['quiet', 'normal', 'chatty'].includes(s.kidChattiness) ? s.kidChattiness : 'normal',
+    kidPauseMs: s.kidPauseMs || 3200,
+    kidGames: { improve: s.kidGames.improve !== false, from: s.kidGames.from, to: s.kidGames.to },
   };
+}
+
+/** Kid mode as anyone may see it. */
+export function kidState(s = load()) {
+  const k = s.kidMode || {};
+  return { on: k.on === true, since: k.on ? k.since || 0 : 0, pinSet: !!k.pinHash, by: k.on ? k.by || '' : '' };
+}
+export function kidOn() { return load().kidMode.on === true; }
+export function kidPinHash() { return load().kidMode.pinHash || ''; }
+/** A new PIN's hash (kid.js hashPin), or '' to remove it (only while kid mode is off). */
+export function setKidPinHash(hash) {
+  const s = load();
+  if (s.kidMode.on) return { ok: false, error: 'The PIN cannot change while kid mode is on' };
+  s.kidMode = { ...s.kidMode, pinHash: String(hash || '') };
+  save();
+  return { ok: true };
+}
+/** Kid mode on (needs a PIN) or off (the caller checked the PIN). */
+export function setKidOn(on, by = '') {
+  const s = load();
+  if (on && !s.kidMode.pinHash) return { ok: false, error: 'Set a kid-mode PIN first (Settings, Voice assistant, Kid mode)' };
+  s.kidMode = { ...s.kidMode, on: !!on, since: on ? (s.kidMode.on ? s.kidMode.since : Date.now()) : 0, by: on ? String(by || '') : '' };
+  save();
+  return { ok: true };
 }
 
 /**
@@ -264,6 +309,36 @@ export function updateSettings(patch = {}) {
     const v = String(patch.ttsVoice || '');
     if (v && !/^aura(-2)?-[a-z0-9]+-[a-z]{2}$/.test(v)) return { ok: false, error: `Not a Deepgram voice: ${v}` };
     s.ttsVoice = v;
+  }
+  if (patch.kidVoice !== undefined) {
+    const v = String(patch.kidVoice || '');
+    if (v && !/^(aura(-2)?|flux)-[a-z0-9]+-[a-z]{2}$/.test(v)) return { ok: false, error: `Not a Deepgram voice: ${v}` };
+    s.kidVoice = v;
+  }
+  if (patch.kidSpeechRate !== undefined) {
+    const n = Number(patch.kidSpeechRate);
+    if (!Number.isFinite(n) || n < 0.7 || n > 1.5) return { ok: false, error: 'Talking speed is 0.7 to 1.5 (1 is normal)' };
+    s.kidSpeechRate = Math.round(n * 20) / 20;
+  }
+  if (patch.kidReflex !== undefined) s.kidReflex = patch.kidReflex === true;
+  if (patch.kidChattiness !== undefined) {
+    if (!['quiet', 'normal', 'chatty'].includes(patch.kidChattiness)) return { ok: false, error: 'Chattiness is quiet, normal or chatty' };
+    s.kidChattiness = patch.kidChattiness;
+  }
+  if (patch.kidPauseMs !== undefined) {
+    const n = Number(patch.kidPauseMs);
+    if (!Number.isFinite(n) || n < 1500 || n > 6000) return { ok: false, error: 'The kid pause is 1.5 to 6 seconds' };
+    s.kidPauseMs = Math.round(n);
+  }
+  if (patch.kidGames !== undefined && patch.kidGames && typeof patch.kidGames === 'object') {
+    const g = { ...s.kidGames };
+    if (patch.kidGames.improve !== undefined) g.improve = patch.kidGames.improve === true;
+    for (const k of ['from', 'to']) {
+      if (patch.kidGames[k] === undefined) continue;
+      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(patch.kidGames[k]))) return { ok: false, error: 'A time is HH:MM' };
+      g[k] = String(patch.kidGames[k]);
+    }
+    s.kidGames = g;
   }
   for (const k of ['anthropicKey', 'deepgramKey', 'anthropicAdminKey']) {
     if (patch[k] !== undefined) s[k] = String(patch[k]).trim();

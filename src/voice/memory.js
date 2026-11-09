@@ -11,18 +11,20 @@
  */
 
 import { DEFAULT_PERSONA } from './persona-default.js';
+import { KID_DEFAULT } from './kid.js';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createNotebook } from './notebook.js';
 import { createMemoryIndex } from './memory-index.js';
 
-export function createVoiceMemory({ dataDir, index: givenIndex } = {}) {
+export function createVoiceMemory({ dataDir, index: givenIndex, guard = () => '' } = {}) {
   const dir = join(dataDir, 'voice-memory');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   const convFile = join(dir, 'conversation.json');
   const index = givenIndex || createMemoryIndex({ dir });
   const notebook = createNotebook(join(dir, 'memories'), {
     onChange: (path, text) => index.add('note', text ? `${path}\n${text}` : '', { ref: path }),
+    guard,
   });
   // A new install starts with the general rules (persona-default.js), never over an existing persona.
   try {
@@ -32,6 +34,11 @@ export function createVoiceMemory({ dataDir, index: givenIndex } = {}) {
       writeFileSync(persona, DEFAULT_PERSONA, { mode: 0o600, flag: 'wx' });
     }
   } catch { /* already there, or not writable: Cru starts without it */ }
+  // Kid mode's parent instructions start from the defaults (kid.js KID_DEFAULT), never over the owner's.
+  try {
+    const kid = join(dir, 'memories', 'kid-mode.md');
+    if (!existsSync(kid)) { mkdirSync(join(dir, 'memories'), { recursive: true, mode: 0o700 }); writeFileSync(kid, KID_DEFAULT, { mode: 0o600, flag: 'wx' }); }
+  } catch { /* already there */ }
 
   const store = {
     /** The saved conversation, or [] (a broken file is set aside, not lost). */

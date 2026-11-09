@@ -1,0 +1,82 @@
+<!-- The waiting scene (kid-games.js: game id "_waiting"). Never a bare spinner:
+     a scene for the theme (egg: an egg wobbles and cracks as progress grows;
+     blocks: blocks stack up; stars: stars twinkle), fun steps on a progress
+     bar, and a toy to play meanwhile (pop the bubbles). Options: { theme,
+     line, steps: [..], progress 0-1 }. The host moves it on with the command
+     { type: 'command', action: 'progress', value: 0-1, step }, and
+     { action: 'ready' } plays the ta-da. -->
+<style>
+  .w-wrap{display:flex;flex-direction:column;align-items:center;gap:10px;height:100%;position:relative;overflow:hidden}
+  .w-scene{width:220px;height:200px}
+  .w-line{font-size:26px;font-weight:800;text-align:center}
+  .w-bar{width:min(80vw,420px);height:26px;border-radius:14px;background:rgba(255,255,255,.12);overflow:hidden;position:relative}
+  .w-bar b{display:block;height:100%;width:5%;border-radius:14px;background:linear-gradient(90deg,#facc15,#f472b6,#22d3ee);transition:width .8s ease}
+  .w-step{font-size:20px;opacity:.9;min-height:26px;text-align:center}
+  .w-bub{position:absolute;border-radius:50%;cursor:pointer;opacity:.85;animation:wrise linear forwards}
+  @keyframes wrise{from{transform:translateY(0)}to{transform:translateY(-120vh)}}
+  .w-pop{animation:wpop .3s ease-out forwards!important}@keyframes wpop{to{transform:scale(1.8);opacity:0}}
+  .w-wob{animation:wwob 1.2s ease-in-out infinite;transform-origin:50% 90%}@keyframes wwob{0%,100%{transform:rotate(-4deg)}50%{transform:rotate(4deg)}}
+  .w-tw{animation:wtw 1.4s ease-in-out infinite}@keyframes wtw{0%,100%{opacity:.4}50%{opacity:1}}
+  .w-ta{animation:kpop .6s ease-out}
+  @media (prefers-reduced-motion: reduce){.w-wob,.w-tw,.w-bub{animation:none}}
+</style>
+<div class="w-wrap" id="w">
+  <div class="w-line" id="line"></div>
+  <svg class="w-scene" id="scene" viewBox="0 0 220 200" xmlns="http://www.w3.org/2000/svg"></svg>
+  <div class="w-bar"><b id="bar"></b></div>
+  <div class="w-step" id="step"></div>
+</div>
+<script>
+(function () {
+  var o = kid.opts || {}, theme = /egg|dino|animal|bird/i.test(o.theme || '') ? 'egg' : /message|parent|ask/i.test(o.theme || '') ? 'message' : /star|space|wait/i.test(o.theme || '') ? 'stars' : 'blocks';
+  var steps = Array.isArray(o.steps) && o.steps.length ? o.steps.slice(0, 12).map(String) : ['Getting the colours ready...', 'Drawing the pictures...', 'Adding the sounds...', 'Making the buttons big...', 'Nearly there...'];
+  var p = Math.max(0, Math.min(1, Number(o.progress) || 0.05)), stepAt = 0;
+  document.getElementById('line').textContent = String(o.line || 'Cru is making something for you!').slice(0, 80);
+  var sc = document.getElementById('scene');
+  function draw() {
+    var h = '';
+    if (theme === 'egg') {
+      var cracks = Math.floor(p * 5);
+      h += '<ellipse cx="110" cy="182" rx="70" ry="10" fill="rgba(0,0,0,.25)"/><g class="w-wob"><ellipse cx="110" cy="110" rx="58" ry="74" fill="#fef3c7" stroke="#d6b36a" stroke-width="4"/>'
+        + '<g fill="#a3e635"><circle cx="86" cy="92" r="9"/><circle cx="132" cy="120" r="12"/><circle cx="100" cy="150" r="7"/></g>';
+      var c = ['M80 70l12 10 8-12', 'M120 60l10 12 10-8', 'M70 120l14 6 6 14', 'M140 100l-12 10 10 12', 'M100 40l10 14 12-6'];
+      for (var i = 0; i < cracks; i++) h += '<path d="' + c[i] + '" stroke="#78350f" stroke-width="4" fill="none" stroke-linecap="round"/>';
+      h += '</g>';
+    } else if (theme === 'message') {
+      // A paper plane carrying the message, flying across to a phone.
+      var px = 20 + p * 120;
+      h += '<rect x="160" y="60" width="44" height="80" rx="8" fill="#334155" stroke="#94a3b8" stroke-width="3"/><rect x="166" y="70" width="32" height="56" rx="3" fill="#22d3ee" opacity=".6"/>'
+        + '<path d="M40 150 Q 110 40 180 100" stroke="#fff" stroke-dasharray="6 8" stroke-width="3" fill="none" opacity=".35"/>'
+        + '<g class="w-wob" transform="translate(' + px + ' ' + (120 - p * 50) + ')"><path d="M0 0l46 -16-14 34-8-12z" fill="#facc15" stroke="#111" stroke-width="2"/><path d="M24 6l8 12" stroke="#111" stroke-width="2"/></g>';
+    } else if (theme === 'stars') {
+      for (var j = 0; j < 9; j++) { var x = 20 + (j * 47) % 190, y = 20 + (j * 71) % 160; h += '<path class="w-tw" style="animation-delay:' + (j * 0.17) + 's" transform="translate(' + x + ' ' + y + ') scale(' + (0.5 + (j % 3) * 0.25) + ')" d="M0-18l5 12 13 1-10 8 4 13-12-8-12 8 4-13-10-8 13-1z" fill="' + kid.BRIGHT[j % 8] + '"/>'; }
+    } else {
+      var n = 1 + Math.floor(p * 8);
+      for (var k = 0; k < n; k++) h += '<rect class="k-pop" x="' + (60 + (k % 2) * 50) + '" y="' + (160 - Math.floor(k / 2) * 34) + '" width="46" height="30" rx="6" fill="' + kid.BRIGHT[k % 8] + '" stroke="#111" stroke-width="2"/>';
+    }
+    sc.innerHTML = h;
+    document.getElementById('bar').style.width = Math.round(Math.max(0.05, p) * 100) + '%';
+    document.getElementById('step').textContent = steps[Math.min(steps.length - 1, Math.floor(p * steps.length))];
+  }
+  draw();
+  kid.on('progress', function (m) {
+    var v = Number(m.value);
+    if (v >= 0 && v <= 1) p = Math.max(p, v);
+    if (m.step) steps[Math.min(steps.length - 1, Math.floor(p * steps.length))] = String(m.step).slice(0, 60);
+    draw();
+  });
+  kid.on('ready', function () { p = 1; draw(); document.getElementById('line').textContent = 'Ta-da!'; document.getElementById('line').className = 'w-line w-ta'; kid.sound('done'); kid.confetti(); });
+  // A toy meanwhile: bubbles float up; tap to pop.
+  var wrap = document.getElementById('w');
+  setInterval(function () {
+    if (wrap.querySelectorAll('.w-bub').length > 8) return;
+    var b = document.createElement('div'), s = 50 + Math.random() * 40;
+    b.className = 'w-bub'; b.setAttribute('data-tap', '1');
+    b.style.cssText = 'width:' + s + 'px;height:' + s + 'px;left:' + (Math.random() * 85) + '%;bottom:-' + s + 'px;background:radial-gradient(circle at 30% 30%,#fff,' + kid.pick(kid.BRIGHT) + ');animation-duration:' + (7 + Math.random() * 5) + 's';
+    b.onpointerdown = function () { b.classList.add('w-pop'); kid.sound('yes'); setTimeout(function () { b.remove(); }, 300); };
+    b.addEventListener('animationend', function (e) { if (e.animationName === 'wrise') b.remove(); });
+    wrap.appendChild(b);
+  }, 1300);
+  stepAt = steps.length;
+})();
+</script>

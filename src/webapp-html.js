@@ -1211,6 +1211,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     .appr-src.secret { color: var(--yellow); border-color: var(--yellow); }
     .appr-src.collab { color: var(--sky); border-color: var(--sky); }
+    .appr-src.kid { color: var(--yellow); border-color: var(--yellow); }
     .appr-src.chat { color: var(--accent-hover); border-color: var(--accent); }
     .appr-title { flex: 1; font-size: 0.8rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; }
     .appr-detail {
@@ -5725,6 +5726,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       b.classList.add('on');   // top-bar buttons show only when switched on; the owner's alone
       window.CrundiVoice.attach(b, voiceOpts);
       voiceAttached = true;
+      // Kid mode on (started from another screen, or before this page loaded): the kid screen comes up.
+      checkKidMode();
       // Unread messages from Cru, and a notification that asked for Cru's chat view (?cru=chat).
       apiFetch('/api/voice/unread').then((r) => r.json()).then((d) => { if (d && d.ok && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); }).catch(() => {});
       try {
@@ -5836,6 +5839,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       html += '<details id="vs-wake-box" style="margin-top:18px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Tickers and triggers</summary>'
         + hint('Reasons for Cru to wake up on its own: a ticker repeats on a schedule, a trigger fires when something happens. Each is off until switched on; on each wake-up Cru decides whether to stay quiet, tell you, or alert you. Ask Cru to add one.')
         + '<div id="vs-wake" style="margin-top:6px;"></div></details>';
+      // Kid mode (an older server has none: left out)
+      if (s.kidMode !== undefined) html += '<details id="vs-kid-box" style="margin-top:18px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Kid mode</summary><div id="vs-kid" style="margin-top:6px;"></div></details>';
       // The experiment
       if (s.brain) html += sub('Brains compared') + '<div id="vs-stats" style="margin-top:6px;"></div>';
       html += '<div id="vs-status" style="font-size:0.78rem;color:var(--text-muted);margin-top:8px;"></div>';
@@ -5879,6 +5884,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       vsShowVoices(s);
       vsLoadMemory();
       vsLoadWakeups();
+      vsLoadKid();
       let memTimer = null;
       const q = document.getElementById('vs-mem-q');
       if (q) q.oninput = () => { clearTimeout(memTimer); memTimer = setTimeout(vsSearchMemory, 350); };
@@ -6126,6 +6132,203 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
     }
     // Tickers and triggers: GET /api/voice/wakeups, POST { id, action }.
+    // Kid mode (capability 'voice-kid', voice/kid.js): the PIN, starting it,
+    // how kid Cru talks, the overnight games workshop, what the child is
+    // learning over time, the games, and kid Cru's notes about the child.
+    // Nothing here is ever shown on the kid screen.
+    let vsKidRange = 'month';
+    function vsSpark(series, w, h) {
+      const pts = (series || []).filter((p) => p && typeof p.mastery === 'number');
+      if (pts.length < 2) return '<span style="font-size:0.72rem;color:var(--text-muted);">' + (pts.length ? 'one day so far' : 'no play yet') + '</span>';
+      const x = (i) => Math.round((i / (pts.length - 1)) * (w - 4)) + 2;
+      const y = (v) => Math.round((1 - Math.max(0, Math.min(1, v))) * (h - 4)) + 2;
+      const d = pts.map((p, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(p.mastery)).join(' ');
+      const last = pts[pts.length - 1];
+      return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Mastery over time"><path d="M2 ' + (h - 2) + 'H' + (w - 2) + '" stroke="var(--border)" stroke-width="1"/><path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="' + x(pts.length - 1) + '" cy="' + y(last.mastery) + '" r="3" fill="var(--accent)"/></svg>';
+    }
+    async function vsLoadKid() {
+      const box = document.getElementById('vs-kid-box'), el = document.getElementById('vs-kid');
+      if (!box || !el) return;
+      let k = null, s = null, games = null, prog = null, friend = null;
+      try {
+        const res = await apiFetch('/api/voice/kid');
+        k = res.ok ? await res.json() : null;
+      } catch { k = null; }
+      if (!k || !k.ok) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      try { s = await vsGet('/api/voice/settings'); } catch { s = null; }
+      try { games = await vsGet('/api/voice/kid/games'); } catch { games = null; }
+      try { prog = await vsGet('/api/voice/kid/progress?range=' + vsKidRange); } catch { prog = null; }
+      try { friend = await vsGet('/api/voice/kid/friend'); } catch { friend = null; }
+      const st = vwStyles;
+      const hint = (t) => '<p style="' + st.hint + ';margin:4px 0 0;">' + t + '</p>';
+      const sub = (t) => '<h5 style="margin:16px 0 4px;font-size:0.8rem;color:var(--text-primary);">' + t + '</h5>';
+      const selStyle = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary);';
+      const opt = (v, label, cur) => '<option value="' + escHtml(String(v)) + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + escHtml(label) + '</option>';
+      let h = '';
+      h += hint('A locked, full-screen screen where Cru is your child\\'s friend: learning games (letters, sounds, matching, counting, shapes, colours, the world), chats and stories, and only the YouTube channels you approve. It has its own conversation and never sees your work. Only the PIN leaves it. If your child says something worrying (hurt, scared, unsafe), Cru answers kindly, tells them to find a grown-up they trust, and sends you a short note here and on your phone; nothing is recorded.');
+      if (k.on) h += '<p style="margin:10px 0 0;font-size:0.82rem;color:var(--yellow);">Kid mode is on' + (k.since ? ' since ' + escHtml(new Date(k.since).toLocaleTimeString()) : '') + '. On the kid screen it ends only with the PIN; from here you can end it, pause it or add time (the Kid mode card at the top).</p>';
+      h += sub('PIN');
+      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="vs-kid-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" placeholder="' + (k.pinSet ? 'New PIN (4-8 digits)' : '4-8 digits') + '" style="' + selStyle + 'width:160px;"' + (k.on ? ' disabled' : '') + '><button type="button" class="svc-btn" id="vs-kid-pin-set"' + (k.on ? ' disabled' : '') + '>' + (k.pinSet ? 'Change PIN' : 'Set PIN') + '</button>'
+        + '<button type="button" class="svc-btn" id="vs-kid-start"' + (k.on || !k.pinSet ? ' disabled' : '') + '>Start kid mode</button><span id="vs-kid-note" style="font-size:0.78rem;"></span></div>';
+      h += hint(k.pinSet ? 'Keep it from your child. Five wrong tries lock it for a minute, then longer. Cru can also start kid mode when you ask it (typed, or in your recognised voice).' : 'Set a PIN first: it is the only way out of kid mode.');
+      if (s && s.ok) {
+        h += sub('How kid Cru talks');
+        h += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:0.8rem;">'
+          + '<label>Chattiness <select id="vs-kid-chat" style="' + selStyle + '">' + opt('quiet', 'Quiet', s.kidChattiness) + opt('normal', 'Normal', s.kidChattiness) + opt('chatty', 'Chatty', s.kidChattiness) + '</select></label>'
+          + '<label>Voice <select id="vs-kid-voice" style="' + selStyle + '">' + opt('flux-gemma-en', 'Gemma (lively)', s.kidVoice) + opt('flux-heather-en', 'Heather', s.kidVoice) + opt('flux-brooke-en', 'Brooke', s.kidVoice) + opt('flux-meghan-en', 'Meghan', s.kidVoice) + opt('flux-cole-en', 'Cole', s.kidVoice) + opt('', 'Same as Cru', s.kidVoice) + '</select></label>'
+          + '<label>Wait before answering <select id="vs-kid-pause" style="' + selStyle + '">' + [2500, 3200, 4000, 5000].map((n) => opt(n, (n / 1000) + ' s', s.kidPauseMs)).join('') + '</select></label>'
+          + '<label><input type="checkbox" id="vs-kid-reflex"' + (s.kidReflex !== false ? ' checked' : '') + '> Instant cheers in games</label></div>';
+        h += hint('Small children pause longer, so kid Cru waits longer before answering. Instant cheers are quick lines said the moment your child gets something right or tries again.');
+        const g = s.kidGames || {};
+        h += sub('Improve games overnight');
+        h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:0.8rem;"><label><input type="checkbox" id="vs-kid-ws"' + (g.improve !== false ? ' checked' : '') + '> On a night after kid mode was used</label>'
+          + '<label>from <input id="vs-kid-from" type="time" value="' + escHtml(g.from || '01:00') + '" style="' + selStyle + '"></label><label>to <input id="vs-kid-to" type="time" value="' + escHtml(g.to || '05:00') + '" style="' + selStyle + '"></label></div>';
+        h += hint('Your own Claude Code improves a game or two and makes one new learning game, from what your child played. Every change is safety-checked before it goes live; a failed one stays off.');
+      }
+      // Progress over time
+      h += sub('Progress');
+      h += '<div style="display:flex;gap:6px;margin-bottom:6px;">' + ['week', 'month', 'all'].map((r) => '<button type="button" class="svc-btn' + (r === vsKidRange ? ' active' : '') + '" data-kid-range="' + r + '"' + (r === vsKidRange ? ' style="border-color:var(--accent);color:var(--text-primary);"' : '') + '>' + (r === 'all' ? 'All' : r === 'week' ? 'Week' : 'Month') + '</button>').join('') + '</div>';
+      if (prog && prog.ok) {
+        const played = (prog.areas || []).filter((a) => a.level || a.series.length);
+        if (prog.notes && prog.notes.length) h += prog.notes.map((n) => '<p style="margin:2px 0;font-size:0.8rem;color:var(--text-secondary);">' + escHtml(n) + '</p>').join('');
+        const trendWord = { up: ['rising', 'var(--green)'], down: ['dipping', 'var(--yellow)'], steady: ['steady', 'var(--text-muted)'], none: ['', 'var(--text-muted)'] };
+        h += played.map((a) => {
+          const t = trendWord[a.trend] || trendWord.none;
+          return '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:6px;">'
+            + '<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;"><div><div style="font-size:0.84rem;font-weight:600;color:var(--text-primary);">' + escHtml(a.label) + '</div><div style="font-size:0.72rem;color:var(--text-muted);">' + escHtml(a.about) + '</div></div>'
+            + '<div style="display:flex;gap:10px;align-items:center;"><span style="font-size:0.78rem;">Level ' + escHtml(String(a.level || '-')) + ' of 5</span>' + (t[0] ? '<span style="font-size:0.75rem;color:' + t[1] + ';">' + t[0] + '</span>' : '') + vsSpark(a.series, 140, 32) + '</div></div>'
+            + (a.mastered.length ? '<div style="font-size:0.76rem;margin-top:4px;"><span style="color:var(--green);">Mastered:</span> ' + escHtml(a.mastered.join('; ')) + '</div>' : '')
+            + (a.learning.length ? '<div style="font-size:0.76rem;margin-top:2px;"><span style="color:var(--accent);">Learning now:</span> ' + escHtml(a.learning.join('; ')) + '</div>' : '')
+            + '</div>';
+        }).join('') || hint('Nothing measured yet: levels come from the games your child plays.');
+        const pt = prog.playTime || [];
+        if (pt.length) {
+          const max = Math.max(1, ...pt.map((p) => p.minutes));
+          const total = Math.round(pt.reduce((x, p) => x + p.minutes, 0));
+          h += '<div style="margin-top:8px;font-size:0.76rem;color:var(--text-secondary);">Play time: ' + total + ' minutes in this period</div><div style="display:flex;gap:3px;align-items:flex-end;height:48px;margin-top:4px;">'
+            + pt.slice(-31).map((p) => '<div title="' + escHtml(p.date + ': ' + p.minutes + ' min') + '" style="flex:1;min-width:4px;max-width:18px;height:' + Math.max(2, Math.round((p.minutes / max) * 46)) + 'px;background:var(--accent);border-radius:2px 2px 0 0;opacity:.8;"></div>').join('') + '</div>';
+        }
+        h += '<div style="margin-top:8px;"><button type="button" class="svc-btn danger" id="vs-kid-reset"' + (k.on ? ' disabled' : '') + '>Reset progress</button></div>';
+      }
+      // Games
+      if (games && games.ok) {
+        h += sub('Games');
+        h += (games.games || []).map((g) => '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">'
+          + '<span style="flex:1;min-width:140px;color:var(--text-primary);">' + escHtml(g.title) + (g.isNew ? ' <span style="font-size:0.68rem;padding:1px 6px;border-radius:999px;background:var(--accent);color:#fff;">new</span>' : '') + (g.changedByWorkshop ? ' <span style="font-size:0.68rem;color:var(--text-muted);">updated v' + escHtml(String(g.version)) + '</span>' : '') + '<br><span style="font-size:0.72rem;color:var(--text-muted);">' + escHtml((g.skills || []).join(', ')) + (g.ageRange ? ' · ages ' + escHtml(g.ageRange) : '') + (g.createdBy === 'workshop' ? ' · made overnight' : '') + '</span></span>'
+          + '<button type="button" class="sched-power' + (g.enabled !== false ? ' on' : '') + '" data-kid-game="' + (g.enabled !== false ? 'disable' : 'enable') + '" data-id="' + escHtml(g.id) + '" title="' + (g.enabled !== false ? 'On: click to switch off' : 'Off: click to switch on') + '"' + (k.on ? ' disabled' : '') + '></button>'
+          + (g.hasPrev ? '<button type="button" class="svc-btn" data-kid-game="rollback" data-id="' + escHtml(g.id) + '"' + (k.on ? ' disabled' : '') + '>Roll back</button>' : '') + '</div>').join('');
+        const run = games.workshop && games.workshop.runs && games.workshop.runs[0];
+        if (run) h += hint('Last overnight run ' + escHtml(new Date(run.at).toLocaleString()) + ': ' + (run.created || []).length + ' new, ' + (run.updated || []).length + ' improved, ' + (run.failed || []).length + ' refused by the checks.' + (run.summary ? ' ' + escHtml(run.summary.slice(0, 300)) : ''));
+      }
+      // Kid Cru's notes about the child, and the parent's instructions
+      h += sub('What kid Cru remembers');
+      h += '<pre style="white-space:pre-wrap;font-size:0.76rem;background:var(--bg-tertiary);border-radius:6px;padding:8px;margin:0;max-height:160px;overflow:auto;">' + escHtml((friend && friend.text) || 'Nothing yet.') + '</pre>';
+      h += '<div style="margin-top:6px;"><button type="button" class="svc-btn danger" id="vs-kid-forget"' + (k.on ? ' disabled' : '') + '>Clear it</button></div>';
+      h += hint('First name and likes only; kid Cru never keeps addresses, schools or other private details.');
+      h += sub('How your child calls you');
+      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="vs-kid-parent" type="text" maxlength="60" value="' + escHtml(k.parentName || '') + '" placeholder="e.g. Daddy, Mummy, Baba" style="' + selStyle + 'width:200px;"' + (k.on ? ' disabled' : '') + '><button type="button" class="svc-btn" id="vs-kid-parent-save"' + (k.on ? ' disabled' : '') + '>Save</button></div>';
+      h += hint('Kid Cru uses it when it asks you something ("Let me ask Daddy!"). Empty: "your grown-up".');
+      h += sub('Your instructions for kid Cru');
+      h += '<pre style="white-space:pre-wrap;font-size:0.76rem;background:var(--bg-tertiary);border-radius:6px;padding:8px;margin:0;max-height:200px;overflow:auto;">' + escHtml(k.instructions || '') + '</pre>';
+      h += hint('Tell Cru what to change outside kid mode ("the kid\\'s name is Sara", "add Blippi to the approved channels", "no videos after 7 pm"), or edit kid-mode.md in the notebook. Kid mode can only read it.');
+      el.innerHTML = h;
+
+      const note = (t, bad) => vsNote('vs-kid-note', t, bad);
+      const save = async (body, msg) => { const d = await vsPost('/api/voice/settings', body).catch(() => null); note(d && d.ok ? msg : ((d && d.error) || 'Not saved'), !(d && d.ok)); };
+      const on = (id, fn) => { const x = document.getElementById(id); if (x) x.onchange = () => fn(x); };
+      const pinBtn = document.getElementById('vs-kid-pin-set');
+      if (pinBtn) pinBtn.onclick = async () => {
+        const v = String((document.getElementById('vs-kid-pin') || {}).value || '').trim();
+        if (!/^[0-9]{4,8}$/.test(v)) { note('The PIN is 4 to 8 digits', true); return; }
+        const d = await vsPost('/api/voice/kid/pin', { pin: v }).catch(() => null);
+        if (d && d.ok) vsLoadKid(); else note((d && d.error) || 'Not saved', true);
+      };
+      const startBtn = document.getElementById('vs-kid-start');
+      if (startBtn) startBtn.onclick = async () => {
+        const d = await vsPost('/api/voice/kid/start', { by: 'settings' }).catch(() => null);
+        if (d && d.ok) { markKidDevice(true); applyKidMode(d); } else note((d && d.error) || 'Not started', true);
+      };
+      on('vs-kid-chat', (x) => save({ kidChattiness: x.value }, 'Saved'));
+      on('vs-kid-voice', (x) => save({ kidVoice: x.value }, 'Saved'));
+      on('vs-kid-pause', (x) => save({ kidPauseMs: Number(x.value) }, 'Saved'));
+      on('vs-kid-reflex', (x) => save({ kidReflex: !!x.checked }, x.checked ? 'Instant cheers on' : 'Instant cheers off'));
+      const wsSave = () => save({ kidGames: { improve: !!(document.getElementById('vs-kid-ws') || {}).checked, from: (document.getElementById('vs-kid-from') || {}).value || '01:00', to: (document.getElementById('vs-kid-to') || {}).value || '05:00' } }, 'Saved');
+      on('vs-kid-ws', wsSave); on('vs-kid-from', wsSave); on('vs-kid-to', wsSave);
+      el.querySelectorAll('[data-kid-range]').forEach((b) => { b.onclick = () => { vsKidRange = b.getAttribute('data-kid-range'); vsLoadKid(); }; });
+      const pSave = document.getElementById('vs-kid-parent-save');
+      if (pSave) pSave.onclick = async () => { const d = await vsPost('/api/voice/kid/parent-name', { name: (document.getElementById('vs-kid-parent') || {}).value || '' }).catch(() => null); if (d && d.ok) vsLoadKid(); else note((d && d.error) || 'Not saved', true); };
+      const reset = document.getElementById('vs-kid-reset');
+      if (reset) reset.onclick = async () => { if (!confirm('Forget every level and the progress history?')) return; await vsPost('/api/voice/kid/progress/reset', {}).catch(() => null); vsLoadKid(); };
+      const forget = document.getElementById('vs-kid-forget');
+      if (forget) forget.onclick = async () => { if (!confirm('Clear what kid Cru remembers about your child?')) return; await apiFetch('/api/voice/kid/friend', { method: 'DELETE' }).catch(() => null); vsLoadKid(); };
+      el.querySelectorAll('[data-kid-game]').forEach((b) => {
+        b.onclick = async () => {
+          b.disabled = true;
+          const d = await vsPost('/api/voice/kid/games', { id: b.getAttribute('data-id'), action: b.getAttribute('data-kid-game') }).catch(() => null);
+          if (d && d.ok) vsLoadKid(); else { b.disabled = false; note((d && d.error) || 'Not changed', true); }
+        };
+      });
+      // Seen: new games stop being marked new.
+      if (games && games.ok && (games.games || []).some((g) => g.isNew) && !k.on) vsPost('/api/voice/kid/games', { action: 'seen', id: '' }).catch(() => {});
+    }
+    // Kid mode from the server (at load and on 'voice-kid'): the kid screen opens over everything, or goes.
+    // The kid screen comes up on the device kid mode runs on: the PC app, or
+    // the browser that started it. Every other signed-in device gets the
+    // parent's card instead: what is on, time used, Pause, Add time, End.
+    const KID_DEVICE_KEY = 'crundi_kid_device';
+    function isKidDevice() {
+      if (window.api && window.api.kidLock) return true;
+      try { return localStorage.getItem(KID_DEVICE_KEY) === '1'; } catch { return false; }
+    }
+    function markKidDevice(on) { try { if (on) localStorage.setItem(KID_DEVICE_KEY, '1'); else localStorage.removeItem(KID_DEVICE_KEY); } catch { /* private mode */ } }
+    let kidCardTimer = null;
+    function kidCard(st) {
+      let card = document.getElementById('kid-card');
+      if (!st || !st.on || isKidDevice()) { if (card) card.remove(); clearInterval(kidCardTimer); return; }
+      if (!card) {
+        card = document.createElement('div');
+        card.id = 'kid-card';
+        card.style.cssText = 'position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:8500;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:0.82rem;max-width:calc(100vw - 24px);';
+        document.body.appendChild(card);
+      }
+      const draw = () => {
+        const mins = st.since ? Math.round((Date.now() - st.since) / 60000) : 0;
+        card.innerHTML = '<span style="color:var(--text-primary);font-weight:600;">Kid mode is on</span>'
+          + '<span style="color:var(--text-muted);">' + mins + ' min' + (st.extraMinutes ? ', +' + st.extraMinutes + ' added' : '') + (st.playing ? ' · ' + escHtml(st.playing) : '') + (st.paused ? ' · paused' : '') + '</span>'
+          + '<button type="button" class="svc-btn" data-kid-card="pause">' + (st.paused ? 'Resume' : 'Pause') + '</button>'
+          + '<button type="button" class="svc-btn" data-kid-card="time">Add 15 min</button>'
+          + '<button type="button" class="svc-btn danger" data-kid-card="end">End kid mode</button>';
+        card.querySelectorAll('[data-kid-card]').forEach((b) => {
+          b.onclick = async () => {
+            const a = b.getAttribute('data-kid-card');
+            if (a === 'end' && !confirm('End kid mode on the kid screen now?')) return;
+            const d = a === 'pause' ? await vsPost('/api/voice/kid/pause', { paused: !st.paused }).catch(() => null)
+              : a === 'time' ? await vsPost('/api/voice/kid/time', { minutes: 15 }).catch(() => null)
+                : await vsPost('/api/voice/kid/end', {}).catch(() => null);
+            if (!(d && d.ok)) toast((d && d.error) || 'That did not work', 'error');
+          };
+        });
+      };
+      draw();
+      clearInterval(kidCardTimer);
+      kidCardTimer = setInterval(draw, 30000);
+    }
+    function applyKidMode(st) {
+      if (userRole === 'collaborator' || !window.CrundiVoice || !window.CrundiVoice.kidMode) return;
+      st = st || {};
+      if (!st.on) markKidDevice(false);
+      if (isKidDevice() || !st.on) window.CrundiVoice.kidMode(st, voiceOpts());
+      if (window.CrundiVoice.kidPaused) window.CrundiVoice.kidPaused(!!st.paused);
+      kidCard(st);
+      if (document.getElementById('vs-kid')) vsLoadKid();
+    }
+    function checkKidMode() {
+      if (userRole === 'collaborator') return;
+      apiFetch('/api/voice/kid').then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && d.ok) applyKidMode(d); }).catch(() => {});
+    }
+    // The PC app's tray "Kid mode" item.
+    if (window.api && window.api.onKidStart) window.api.onKidStart(() => { vsPost('/api/voice/kid/start', { by: 'tray' }).then((d) => { if (d && d.ok) { markKidDevice(true); applyKidMode(d); } else toast((d && d.error) || 'Kid mode needs a PIN: set one in Settings, Voice assistant, Kid mode'); }).catch(() => {}); });
     async function vsLoadWakeups(r) {
       const el = document.getElementById('vs-wake'), box = document.getElementById('vs-wake-box');
       if (!el || !box) return;
@@ -9950,6 +10153,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (msg.needsOwner && window.api.showWindow) window.api.showWindow();
           window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts());
         }
+        if (msg.type === 'kid-mode' && msg.kid) applyKidMode(msg.kid);
         if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
           window.CrundiDocker.handleMessage(msg);
         }
@@ -10392,6 +10596,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         } else if (it.source === 'collab') {
           h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '">Approve</button>'
             + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
+        } else if (it.source === 'kid') {
+          // Kid Cru asking the parent: each answer the question offers.
+          h += (it.choices || []).map(function (c) { return '<button class="' + (c.id === 'no' ? 'no' : 'yes') + '" data-action="appr-kid" data-id="' + escHtml(it.id) + '" data-choice="' + escHtml(c.id) + '">' + escHtml(c.label) + '</button>'; }).join('');
         } else if (it.source === 'chat') {
           // Answered in the chat, where the full input and the always-allow
           // choice live. Duplicating that here would mean two half-answers.
@@ -10565,6 +10772,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       });
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
       es.addEventListener('voice-wakeups', () => { if (document.getElementById('vs-wake')) vsLoadWakeups(); });
+      // Kid mode switched on or off anywhere: the kid screen follows.
+      es.addEventListener('voice-kid', (e) => { try { applyKidMode(JSON.parse(e.data || '{}')); } catch (err) { /* ignore */ } });
+      es.addEventListener('voice-kid-games', () => { if (document.getElementById('vs-kid')) vsLoadKid(); });
       // Cru's unread messages: the dot on its mark.
       es.addEventListener('voice-unread', (e) => { try { const d = JSON.parse(e.data || '{}'); if (window.CrundiVoice && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); } catch (err) { /* ignore */ } });
       // Factory runs and the factory library: the views refresh what they show.
@@ -15850,6 +16060,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         }
         case 'appr-yes': if (d.id) decideApproval(d.id, true); break;
+        case 'appr-kid': if (d.id) vsPost('/api/voice/kid/ask', { id: d.id, choice: d.choice || 'no' }).then(function (r) { if (!(r && r.ok)) toast((r && r.error) || 'That could not be applied', 'error'); }).catch(function () { toast('That could not be applied', 'error'); }); break;
         case 'appr-yes-session': if (d.id) decideApproval(d.id, true, 'session'); break;
         case 'appr-yes-always': if (d.id) decideApproval(d.id, true, 'always'); break;
         case 'appr-no': if (d.id) decideApproval(d.id, false); break;

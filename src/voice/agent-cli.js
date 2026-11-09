@@ -77,7 +77,10 @@ export function createCliVoiceAgent({
   tools, workdir, stateDir, apiUrl, claudeBin,
   settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '', selfNote = null, selfFiles = null, onReflected = () => {},
   spawn = nodeSpawn,
+  // Kid mode's conversation (see agent.js createVoiceAgent): its own prompt, first line and context line.
+  systemPrompt = null, intro = null, context = null, turnNote = () => '',
 } = {}) {
+  const prompt = systemPrompt ? `${systemPrompt}\n\nYour tools: they come from the "cru" tool server, so their full names start with mcp__cru__; above they are called by the short name. They are your only tools.` : CLI_PROMPT;
   const byName = new Map(tools.map(t => [t.name, t]));
   const defs = tools
     .map(t => t.def ? (t.name === 'memory' ? MEMORY_DEF : null) : { name: t.name, description: t.description, input_schema: t.input_schema })
@@ -112,6 +115,7 @@ export function createCliVoiceAgent({
   let cancelledNote = '';
 
   const personaNote = () => {
+    if (intro) { try { const n = String(intro() || ''); return n && !n.endsWith('\n') ? n + '\n' : n; } catch { return ''; } }
     // The whole note (persona, owner, routines) when the server builds it (reflect.js selfNote).
     if (selfNote) { try { const n = String(selfNote() || ''); if (n.trim()) return n.endsWith('\n') ? n : n + '\n'; } catch { /* fall back */ } }
     let p = '';
@@ -192,7 +196,7 @@ export function createCliVoiceAgent({
     }), { mode: 0o600 });
     const args = [
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-      '--system-prompt', CLI_PROMPT,
+      '--system-prompt', prompt,
       '--model', model, '--effort', 'low',
       '--tools', '',
       '--strict-mcp-config', '--mcp-config', mcpFile,
@@ -240,7 +244,7 @@ export function createCliVoiceAgent({
     });
   }
 
-  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, speaker = '', now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     if (busy) return { ok: false, error: 'Still answering the last request' };
@@ -255,13 +259,16 @@ export function createCliVoiceAgent({
     for (let i = 0; i < 50 && draining; i++) await new Promise(ok => setTimeout(ok, 100));
     if (draining) { draining = false; clearTimeout(drainTimer); stop(); }
     try {
-      if (!report) beforeTurn({ locked, unrecognised, voice }); else beforeReport();
+      if (!report) beforeTurn({ locked, unrecognised, voice, confirmOk }); else beforeReport();
       const first = !state.sessionId;
       const lead = first ? `${personaNote()}${state.summary ? `[What we have been doing, summarised. Earlier detail is in memory_search.]\n${state.summary}\n` : ''}` : '';
       settings.countTurn(now);
       let r;
       const note = cancelledNote; cancelledNote = '';
-      try { r = await ask(model, `${lead}${note}${contextLine({ now, where, locked, unrecognised, speaker })}\n${said}`); }
+      let tn = '';
+      try { tn = String(turnNote() || '').trim(); } catch { tn = ''; }
+      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker });
+      try { r = await ask(model, `${lead}${note}${ctx}${tn ? `\n${tn}` : ''}\n${said}`); }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
       const tools = r.tools;
       if (r.cancelled) return { ok: false, cancelled: true, acted: turnSignals.acted, tools };

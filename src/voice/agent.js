@@ -94,6 +94,7 @@ How you answer:
 - When there is detail worth seeing (a list, a file excerpt, log lines, a long chat reply), say a one-line summary aloud, then put the detail after a line containing only three dashes (---). The part after --- is shown on screen and never spoken.
 - Speech recognition may mishear Crundi's own words: "compound task" or "come on task" is probably "kanban task", "mind map" is "mindmap", project names may come out as similar-sounding words. Work out what the owner most likely meant from the tools and context; if two readings are both plausible and the difference matters, ask a short question.
 - Use the tools to look things up rather than guessing. Call several at once when they're independent.
+- The live screen (show_screen, update_screen, clear_screen) is one panel on the voice screen that stays until the owner closes it or you clear it. Use it for what is better seen than heard: lists, status, comparisons, steps, a table, progress. Put the detail there and keep the spoken reply to a sentence; update it as the conversation moves on, and clear it when it no longer helps.
 
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals, and widgets: view_widget shows you one as it looks on a desktop and a phone, so you can say how it looks and whether it works.
@@ -104,6 +105,7 @@ What you can and cannot do:
 - You can act: turn background "Hey Cru" listening on the phone on for 15–120 minutes (or off), send messages into chats, start, close, park and resume chats, tell the owner when a chat finishes, edit the kanban board, notes and mindmap, create projects, manage chat schedules and scheduled tasks, and change your own voice settings.
 - Some actions need the owner's yes. When a tool answers needsConfirmation, nothing has been done: ask its question in your own words, briefly, and stop. Only when the owner agrees in their next message call confirm_action with the id; if they decline, cancel_action. Never confirm on the owner's behalf, and never call confirm_action in the same turn you asked.
 - send_to_chat and start_chat take an intent: "explicit" only when the owner plainly asked you to send, tell, type or reply something; otherwise "inferred", and it is read back first.
+- Kid mode: a locked screen where a separate, kid-safe Cru keeps a child busy with learning games, chats and approved videos; only the owner's PIN ends it. start_kid_mode switches it on when the owner asks (it needs a PIN set in Settings). The parent instructions live in /memories/kid-mode.md: when the owner tells you anything about it (the child's name or age, approved YouTube channels as @handles or channel ids under "## Approved YouTube", approved games, time limits, bedtime, content rules), edit that file with the memory tool, keeping its sections. kid_progress tells how the child is doing (by area, over a week or a month) and which games the overnight workshop added.
 - You can never type into a terminal, edit files, touch keys, logins, the tunnel, collaborators, secrets, backups, updates, skills or permissions. Say so plainly if asked.
 - Never pretend to have done something: say what happened, from the tool's answer.
 - Secret values are never available to you; credentials in settings show only as set or not set.
@@ -209,7 +211,14 @@ export async function runVoiceTool(t, name, input, signals) {
  * @param {Function} [opts.client]  (apiKey) => Anthropic-like client; tests pass a fake
  * @param {object}  [opts.settings] the settings module; tests pass a fake
  */
-export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '', selfNote = null, selfFiles = null, onReflected = () => {} } = {}) {
+/**
+ * Kid mode's conversation (kid.js) is the same agent with its own
+ * [systemPrompt], [intro] (its first line), [context] (the line before each
+ * turn), no compaction ([noCompact]: a long one starts afresh) and its own
+ * [store]. [turnNote]() is something to tell the model once, in front of the
+ * next turn (the games workshop's news), or ''.
+ */
+export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ apiKey }), settings = voiceSettings, beforeTurn = () => {}, beforeReport = () => {}, store = null, onTurnDone = () => {}, onCompacted = () => {}, persona = () => '', selfNote = null, selfFiles = null, onReflected = () => {}, systemPrompt = SYSTEM_PROMPT, intro = null, context = null, noCompact = false, refusal = "I'm afraid I can't help with that one, Sir.", turnNote = () => '' } = {}) {
   /**
    * The persona notes for the start of a conversation. Put in its first
    * message, not the system prompt, so the cached system + tools prefix
@@ -217,6 +226,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * made them.
    */
   const personaNote = () => {
+    if (intro) { try { const n = String(intro() || ''); return n && !n.endsWith('\n') ? n + '\n' : n; } catch { return ''; } }
     // The whole note (persona, owner, routines) when the server builds it (reflect.js selfNote).
     if (selfNote) { try { const n = String(selfNote() || ''); if (n.trim()) return n.endsWith('\n') ? n : n + '\n'; } catch { /* fall back */ } }
     let p = '';
@@ -237,7 +247,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
   let lastReq = null;
   let lastAt = 0;
   // System prompt as one block, so the 1-hour breakpoint can sit on it.
-  const system = [{ type: 'text', text: SYSTEM_PROMPT, cache_control: CACHE }];
+  const system = [{ type: 'text', text: systemPrompt, cache_control: CACHE }];
 
   function buildRequest(model, messages, maxTokens = 4096) {
     return {
@@ -287,7 +297,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * One spoken (or typed) request.
    * @returns {Promise<{ok:boolean, speak?:string, show?:string, tools?:string[], costUsd?:number, error?:string, limitReached?:boolean}>}
    */
-  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, speaker = '', now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     const s = settings.getSettings();
@@ -310,11 +320,17 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     try {
       // A new turn: the owner has spoken, so actions proposed before may now be
       // confirmed. Not for a report: the owner said nothing, so nothing is agreed.
-      if (!report) beforeTurn({ locked, unrecognised, voice }); else beforeReport();
+      if (!report) beforeTurn({ locked, unrecognised, voice, confirmOk }); else beforeReport();
       // Too long for one conversation: compact it now rather than lose it.
-      if (history.length > MAX_HISTORY_MESSAGES) { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
+      if (history.length > MAX_HISTORY_MESSAGES) {
+        if (noCompact) { history = []; lastReq = null; }
+        else { busy = false; const c = await compact({ force: true }); busy = true; if (!c.ok) { history = []; lastReq = null; } }
+      }
       start = history.length;
-      history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${contextLine({ now, where, locked, unrecognised, speaker })}\n${said}` });
+      let note = '';
+      try { note = String(turnNote() || '').trim(); } catch { note = ''; }
+      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker });
+      history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${ctx}${note ? `\n${note}` : ''}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const req = buildRequest(model, history);
@@ -333,7 +349,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         history.push({ role: 'assistant', content: withoutBlankText(res.content) });
 
         if (res.stop_reason === 'refusal') {
-          return { ok: true, speak: "I'm afraid I can't help with that one, Sir.", show: '', tools: used, costUsd: cost, cache };
+          return { ok: true, speak: refusal, show: '', tools: used, costUsd: cost, cache };
         }
         if (res.stop_reason === 'tool_use') {
           const calls = res.content.filter(b => b.type === 'tool_use');
@@ -401,6 +417,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    */
   async function compact({ force = false, now = new Date() } = {}) {
     if (busy) return { ok: false, skipped: 'busy' };
+    if (noCompact) { if (force) { history = []; lastReq = null; save(); return { ok: true, summary: '' }; } return { ok: false, skipped: 'not for this conversation' }; }
     if (!force && history.length < COMPACT_MIN_MESSAGES) return { ok: false, skipped: 'short' };
     const s = settings.getSettings();
     if (!s.anthropicKey || settings.overLimit(now)) return { ok: false, skipped: 'no key or over the limit' };

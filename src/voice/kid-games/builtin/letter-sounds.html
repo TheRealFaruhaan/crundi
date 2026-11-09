@@ -1,0 +1,26 @@
+<div class="k-title">Tap a letter!</div>
+<div class="k-row" id="show" style="min-height:150px"></div>
+<div class="k-grid" id="grid" style="gap:10px"></div>
+<script>
+(function () {
+  var L = kid.letters(kid.opts.letters ? null : kid.LETTERS), seen = {};
+  var g = document.getElementById('grid'), show = document.getElementById('show');
+  L.forEach(function (x, i) {
+    var b = kid.el('button', 'k-btn', x);
+    b.style.background = kid.BRIGHT[i % kid.BRIGHT.length]; b.style.fontSize = '40px'; b.style.minWidth = b.style.minHeight = '80px';
+    b.onclick = function () {
+      var w = kid.WORDS[x];
+      show.innerHTML = '';
+      var big = kid.el('div', 'k-big k-pop', x + '<span style="font-size:70px;opacity:.8"> ' + x.toLowerCase() + '</span>');
+      var p = kid.el('div', 'k-pop', kid.pic(w, 120) + '<div style="text-align:center;font-size:26px">' + w + '</div>');
+      show.appendChild(big); show.appendChild(p);
+      kid.say(x + '. ' + x + ' says ' + kid.SOUNDS[x] + '. ' + x + ' is for ' + w + '!');
+      kid.event('tap', x);
+      seen[x] = 1;
+      if (Object.keys(seen).length === L.length) kid.done('heard every letter');
+    };
+    g.appendChild(b);
+  });
+  kid.say('Tap a letter to hear its sound!');
+})();
+</script>

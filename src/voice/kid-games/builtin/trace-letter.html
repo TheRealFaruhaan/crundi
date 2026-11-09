@@ -1,0 +1,46 @@
+<div class="k-title" id="ask"></div>
+<div style="position:relative;width:min(92vw,360px);height:min(92vw,360px);margin:0 auto;border-radius:28px;background:#1e293b">
+  <canvas id="c" width="360" height="360" style="position:absolute;inset:0;width:100%;height:100%;touch-action:none;border-radius:28px"></canvas>
+</div>
+<div class="k-row" style="margin-top:14px"><button class="k-btn" id="again" style="background:#64748b;font-size:26px;min-height:70px">Again</button><button class="k-btn" id="nxt" style="background:#10b981;font-size:26px;min-height:70px">Next letter</button></div>
+<script>
+(function () {
+  var L = kid.letters(null, 'writing'), i = 0, c = document.getElementById('c'), g = c.getContext('2d');
+  var guide = null, hit = null, total = 0, got = 0, drawing = false, done = false, last = null;
+  var colour = kid.BRIGHT[0];
+  function setup() {
+    var x = L[i % L.length]; done = false; got = 0; colour = kid.BRIGHT[i % 8];
+    kid.ask('writing', x);
+    document.getElementById('ask').textContent = 'Trace the letter ' + x + '!';
+    kid.say('Let us trace the letter ' + x + '. Follow the dots with your finger!');
+    // The letter, drawn thick off screen: what counts as on the line.
+    var o = document.createElement('canvas'); o.width = o.height = 360; var og = o.getContext('2d');
+    og.fillStyle = '#fff'; og.font = '900 300px "Comic Sans MS", system-ui, sans-serif'; og.textAlign = 'center'; og.textBaseline = 'middle'; og.fillText(x, 180, 196);
+    var d = og.getImageData(0, 0, 360, 360).data; hit = new Uint8Array(36 * 36); total = 0;
+    for (var yy = 0; yy < 36; yy++) for (var xx = 0; xx < 36; xx++) { if (d[((yy * 10 + 5) * 360 + xx * 10 + 5) * 4 + 3] > 128) { hit[yy * 36 + xx] = 1; total++; } }
+    guide = o; draw();
+  }
+  function draw() {
+    g.clearRect(0, 0, 360, 360);
+    g.globalAlpha = 0.18; g.drawImage(guide, 0, 0); g.globalAlpha = 1;
+    g.fillStyle = 'rgba(255,255,255,.55)';
+    for (var yy = 0; yy < 36; yy += 2) for (var xx = 0; xx < 36; xx += 2) if (hit[yy * 36 + xx] === 1) { g.beginPath(); g.arc(xx * 10 + 5, yy * 10 + 5, 3, 0, 7); g.fill(); }
+  }
+  function pos(e) { var r = c.getBoundingClientRect(); return [(e.clientX - r.left) * 360 / r.width, (e.clientY - r.top) * 360 / r.height]; }
+  function mark(p) {
+    var xx = Math.floor(p[0] / 10), yy = Math.floor(p[1] / 10);
+    for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) { var k = (yy + dy) * 36 + xx + dx; if (k >= 0 && k < hit.length && hit[k] === 1) { hit[k] = 2; got++; } }
+  }
+  c.onpointerdown = function (e) { drawing = true; last = pos(e); c.setPointerCapture(e.pointerId); };
+  c.onpointermove = function (e) {
+    if (!drawing) return; var p = pos(e);
+    g.strokeStyle = colour; g.lineWidth = 22; g.lineCap = 'round'; g.beginPath(); g.moveTo(last[0], last[1]); g.lineTo(p[0], p[1]); g.stroke();
+    last = p; mark(p);
+    if (!done && total && got / total > 0.55) { done = true; kid.correct(L[i % L.length], 'Wow! You traced ' + L[i % L.length] + '!'); }
+  };
+  c.onpointerup = c.onpointercancel = function () { drawing = false; };
+  document.getElementById('again').onclick = function () { setup(); };
+  document.getElementById('nxt').onclick = function () { i++; if (i >= L.length && L.length > 1 && L !== kid.LETTERS) { kid.done('traced ' + L.join(', ')); i = 0; } setup(); };
+  setup();
+})();
+</script>

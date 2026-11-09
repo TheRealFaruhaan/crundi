@@ -20,7 +20,11 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 const MAX_FILE = 64 * 1024;
 const SECRETISH = /\b(sk-ant-[a-z0-9-]{10,}|sk-[a-z0-9]{20,}|ghp_[a-z0-9]{20,}|xox[bp]-[a-z0-9-]{10,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/i;
 
-export function createNotebook(dir, { onChange = () => {} } = {}) {
+/**
+ * [guard](path) → '' or why that file may not change now (kid mode makes
+ * /memories/kid-mode.md read only); checked on every write, delete and rename.
+ */
+export function createNotebook(dir, { onChange = () => {}, guard = () => '' } = {}) {
   const root = resolve(dir);
   const ensure = () => { if (!existsSync(root)) { mkdirSync(root, { recursive: true, mode: 0o700 }); } };
 
@@ -58,7 +62,9 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
     return lines.slice(Math.max(0, a - 1), b === -1 ? lines.length : b).map((l, i) => `${String(i + Math.max(1, a)).padStart(6)}\t${l}`).join('\n');
   }
 
+  const guarded = (full) => { const why = guard(shown(full)); if (why) throw new Error(why); };
   function write(full, text) {
+    guarded(full);
     if (text.length > MAX_FILE) throw new Error('That is too long for one memory file (64 KB)');
     if (SECRETISH.test(text)) throw new Error('That looks like a key or password. Secrets are never kept in memory.');
     mkdirSync(dirname(full), { recursive: true, mode: 0o700 });
@@ -100,6 +106,7 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
       const f = file(path);
       if (f === root) throw new Error('The /memories folder itself is kept');
       if (!existsSync(f)) throw new Error(`${path} does not exist`);
+      guarded(f);
       rmSync(f, { recursive: true, force: true });
       onChange(shown(f), null);
       return `Deleted ${path}`;
@@ -108,6 +115,7 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
       const a = file(old_path), b = file(new_path);
       if (!existsSync(a)) throw new Error(`${old_path} does not exist`);
       if (existsSync(b)) throw new Error(`${new_path} already exists`);
+      guarded(a); guarded(b);
       mkdirSync(dirname(b), { recursive: true, mode: 0o700 });
       renameSync(a, b);
       onChange(shown(a), null);
@@ -146,7 +154,7 @@ export function createNotebook(dir, { onChange = () => {} } = {}) {
       ensure();
       const f = file(path);
       if (f === root) throw new Error('Choose a file under /memories');
-      if (text === '' || text == null) { if (existsSync(f)) rmSync(f, { force: true }); onChange(shown(f), null); return { ok: true }; }
+      if (text === '' || text == null) { guarded(f); if (existsSync(f)) rmSync(f, { force: true }); onChange(shown(f), null); return { ok: true }; }
       write(f, String(text));
       return { ok: true };
     },

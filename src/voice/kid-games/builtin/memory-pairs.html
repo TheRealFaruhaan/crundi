@@ -1,0 +1,36 @@
+<div class="k-title" id="ask">Find the pairs!</div>
+<div class="k-grid" id="grid" style="max-width:640px;margin:0 auto"></div>
+<script>
+(function () {
+  var pairs = Math.max(2, Math.min(8, Number(kid.opts.pairs) || [0, 2, 3, 4, 6, 8][kid.level('memory')])), kind = kid.opts.kind || 'shapes';
+  var shapes = ['circle', 'square', 'triangle', 'star', 'heart', 'diamond'];
+  var faces = [];
+  for (var i = 0; i < pairs; i++) {
+    if (kind === 'letters') { var L = kid.letters(); faces.push({ key: L[i % L.length], html: '<span style="font-size:64px">' + L[i % L.length] + '</span>', say: L[i % L.length] }); }
+    else if (kind === 'pictures') { var w = kid.WORDS[kid.LETTERS[(i * 3) % 26]]; faces.push({ key: w, html: kid.pic(w, 80), say: w }); }
+    else { var sh = shapes[i % shapes.length], col = kid.COLOURS[i % kid.COLOURS.length]; faces.push({ key: sh + col.name, html: kid.shape(sh, col.hex, 80), say: col.name + ' ' + sh }); }
+  }
+  var cards = kid.shuffle(faces.concat(faces)), open = [], left = pairs, busy = false, moves = 0;
+  var g = document.getElementById('grid');
+  cards.forEach(function (f) {
+    var b = kid.el('button', 'k-btn', '?'); b.style.background = '#6366f1'; b.style.width = b.style.height = '110px'; b.style.fontSize = '48px';
+    b.onclick = function () {
+      if (busy || b.disabled || open.indexOf(b) >= 0) return;
+      b.innerHTML = f.html; b.style.background = '#1e293b'; b.classList.add('k-pop'); open.push(b); b.f = f; kid.say(f.say); kid.event('tap', f.say);
+      if (open.length === 2) {
+        moves++; busy = true; kid.ask('memory', pairs + ' pairs');
+        if (open[0].f.key === open[1].f.key) {
+          open.forEach(function (o) { o.disabled = true; o.style.background = '#065f46'; }); open = []; busy = false; left--;
+          kid.correct(f.say, 'A pair! Two ' + f.say + 's!');
+          if (!left) setTimeout(function () { document.getElementById('ask').textContent = 'You found them all!'; kid.done('found ' + pairs + ' pairs in ' + moves + ' turns'); }, 900);
+        } else {
+          kid.event('wrong', f.say);
+          setTimeout(function () { open.forEach(function (o) { o.innerHTML = '?'; o.style.background = '#6366f1'; o.classList.remove('k-pop'); }); open = []; busy = false; }, 1100);
+        }
+      }
+    };
+    g.appendChild(b);
+  });
+  kid.say('Tap two cards to find a pair!');
+})();
+</script>

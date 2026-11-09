@@ -1,0 +1,48 @@
+<div class="k-title" id="ask"></div>
+<div class="k-grid" id="grid"></div>
+<div id="fact" style="text-align:center;font-size:24px;min-height:64px;margin-top:14px;padding:0 10px"></div>
+<script>
+(function () {
+  // The question bank (trivia.json in the library), filtered for this child.
+  var bank = (window.CRU_BANK && window.CRU_BANK.items) || [];
+  var area = kid.opts.area ? 'world.' + String(kid.opts.area).replace(/^world\./, '') : '';
+  var young = kid.opts.age ? Number(String(kid.opts.age).split('-')[0]) < 4 : kid.level(area || 'world.animals') <= 2;
+  var pool = bank.filter(function (q) { return q.kind !== 'fact' && (!area || q.area === area) && (young ? q.age === '2-3' : true); });
+  if (!pool.length) pool = bank.filter(function (q) { return q.kind !== 'fact'; });
+  var rounds = Math.max(1, Math.min(15, Number(kid.opts.rounds) || 6)), round = 0;
+  var qs = kid.sample(pool, rounds);
+  function next() {
+    if (round >= qs.length) { document.getElementById('ask').textContent = 'You know so much!'; document.getElementById('grid').innerHTML = ''; document.getElementById('fact').textContent = ''; kid.done('picture trivia, ' + qs.length + ' questions'); return; }
+    var q = qs[round++], tries = 0, done = false;
+    kid.ask(q.area, q.answer);
+    document.getElementById('ask').textContent = q.q;
+    document.getElementById('fact').textContent = '';
+    kid.say(q.q);
+    var g = document.getElementById('grid'); g.innerHTML = '';
+    var btns = [];
+    kid.shuffle(q.choices.slice(0, young ? 2 : 3)).concat(young && q.choices.indexOf(q.answer) > 1 ? [] : []).forEach(function (c, i) {
+      if (young && q.choices.slice(0, 2).indexOf(q.answer) < 0 && i === 0) c = q.answer;
+      var b = kid.el('button', 'k-btn k-pop', kid.pic(c, young ? 130 : 110)); b.style.background = ['#1e3a8a', '#3f1d63', '#14532d'][i % 3]; b.style.width = b.style.height = young ? '170px' : '150px'; b.dataset.c = c;
+      btns.push(b);
+      b.onclick = function () {
+        if (done) return;
+        if (c === q.answer) {
+          done = true; kid.correct(c, 'Yes! The ' + c + '!');
+          reveal(q);
+        } else {
+          tries++; b.classList.add('k-shake', 'k-dim'); kid.wrong(c, 'That is a ' + c + '. Try again!');
+          // Never stuck: after two tries the answer shows itself.
+          if (tries >= 2) { kid.hint(); btns.forEach(function (x) { if (x.dataset.c === q.answer) { x.classList.add('k-pop'); x.style.boxShadow = '0 0 0 8px #facc15'; } }); }
+        }
+      };
+      g.appendChild(b);
+    });
+    function reveal(q) {
+      var f = q.fact || '';
+      if (f) { document.getElementById('fact').textContent = f; setTimeout(function () { kid.say((young ? '' : 'Did you know? ') + f); }, 1300); }
+      setTimeout(next, f ? 6500 : 2200);
+    }
+  }
+  next();
+})();
+</script>

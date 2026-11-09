@@ -1,0 +1,38 @@
+<div class="k-title" id="ask"></div>
+<div class="k-grid" id="grid"></div>
+<div class="k-stars" id="stars"></div>
+<script>
+(function () {
+  var rounds = Math.max(1, Math.min(20, Number(kid.opts.rounds) || 8)), choices = Math.max(2, Math.min(6, Number(kid.opts.choices) || 4));
+  var mode = kid.opts.mode || 'both';
+  var shapes = ['circle', 'square', 'triangle', 'star', 'heart'];
+  var round = 0, stars = 0;
+  function next() {
+    if (round >= rounds) { document.getElementById('ask').textContent = 'Well done!'; document.getElementById('grid').innerHTML = ''; kid.done('found ' + stars + ' shapes and colours'); return; }
+    round++;
+    var items = [], seen = {};
+    while (items.length < choices) {
+      var s = mode === 'colours' ? 'circle' : kid.pick(shapes), c = mode === 'shapes' ? kid.COLOURS[4] : kid.pick(kid.COLOURS), k = s + c.name;
+      if (mode === 'colours') k = c.name; if (mode === 'shapes') k = s;
+      if (seen[k]) continue; seen[k] = 1; items.push({ s: s, c: c, k: k });
+    }
+    var t = kid.pick(items);
+    var name = mode === 'colours' ? t.c.name : mode === 'shapes' ? t.s : t.c.name + ' ' + t.s;
+    kid.ask(mode === 'shapes' ? 'shapes' : 'colours', mode === 'shapes' ? t.s : (mode === 'colours' ? t.c.name : name));
+    document.getElementById('ask').textContent = 'Tap the ' + name + '!';
+    kid.say('Can you tap the ' + name + '?');
+    var g = document.getElementById('grid'); g.innerHTML = '';
+    items.forEach(function (it) {
+      var b = kid.el('button', 'k-btn k-pop', kid.shape(it.s, it.c.hex, 110)); b.style.background = '#1e293b'; b.style.width = b.style.height = '140px';
+      b.onclick = function () {
+        var nm = mode === 'colours' ? it.c.name : mode === 'shapes' ? it.s : it.c.name + ' ' + it.s;
+        if (it === t) { stars++; kid.correct(name, 'Yes! The ' + name + '!'); setTimeout(next, 1500); }
+        else { b.classList.add('k-shake', 'k-dim'); kid.wrong(nm, 'That is the ' + nm + '. Try again!'); }
+      };
+      g.appendChild(b);
+    });
+    document.getElementById('stars').textContent = 'Round ' + round + ' of ' + rounds;
+  }
+  next();
+})();
+</script>
