@@ -451,9 +451,11 @@ function wordClips(words) {
  * @param o.typed     typed by the signed-in owner (no voice at all)
  * @param o.verdict   { owner: true|false|null, reason } from the voice check, or null (none found)
  * @param o.answering a confirmation asked during a recognised (or typed) turn is waiting, recent
+ * @param o.recentOwner a full-length turn in the owner's recognised voice (or typed) within ADMIN_FOLLOW_MS, no other voice since
  * @returns { unrecognised, admin: { owner: true|false, reason }, confirmOk }
  */
-export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, verdict = null, answering = false } = {}) {
+export const ADMIN_FOLLOW_MS = 120_000;
+export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, verdict = null, answering = false, recentOwner = false } = {}) {
   const owner = verdict ? verdict.owner : null;
   const short = !!verdict && owner === null && verdict.reason === 'short';
   const unrecognised = enrolled && ownerOnly && !typed && (owner === false || short);
@@ -464,6 +466,11 @@ export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, 
   const confirmOk = !unrecognised || (short && answering);
   let admin;
   if (!enrolled) admin = { owner: true, reason: 'no voice enrolled' };
+  // A taught short reply ("yes", "go ahead") matched as his, moments after a
+  // full sentence recognised as his (recentOwner, nobody else in between):
+  // enough to answer Cru in admin mode (the owner, 9 Nov: "the only reason I
+  // wanted it was to use in admin mode"). A brief match on its own is not.
+  else if (owner === true && verdict && verdict.brief && !typed && Number.isFinite(verdict.word) && recentOwner) admin = { owner: true, reason: 'a taught short reply in the owner\'s voice, just after a recognised request' };
   else if (owner === true && verdict && verdict.brief && !typed) admin = { owner: false, reason: 'That was too short to be sure enough for admin mode. Nothing was done: ask them to say it a bit longer.' };
   else if (owner === true) admin = { owner: true, reason: 'the owner\'s voice' };
   else if (owner === false) admin = { owner: false, reason: 'The speaker was not recognised as the owner, and admin mode only obeys the owner. Nothing was done: say you couldn\'t recognise who they are, so you can\'t do that.' };

@@ -108,7 +108,7 @@ import { relay as voiceRelay } from './voice/stream.js';
 import { fixNames } from './voice/names.js';
 import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
 import { selfNote as voiceSelfNote, capCheck as voiceCapCheck, ROUTINES_DIR as VOICE_ROUTINES_DIR } from './voice/reflect.js';
-import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, trimSilence as trimVoiceSilence } from './voice/speaker.js';
+import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, ADMIN_FOLLOW_MS as VOICE_ADMIN_FOLLOW_MS, trimSilence as trimVoiceSilence } from './voice/speaker.js';
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
 import { createOwnerAsks, createDailyLog, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
 import { createJobStore, jobToolDefs } from './voice/jobs.js';
@@ -3139,8 +3139,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
    * whether changes are held back ("Only act on my voice").
    * @param verdict  { owner, reason } of what was heard, or null (none found)
    */
+  // The last full-length turn in the owner's recognised voice (or typed): a
+  // taught short reply just after it may answer in admin mode. Another voice resets it.
+  let voiceOwnerFullAt = 0;
   function voiceTurnRules({ typed = false, verdict = null } = {}) {
-    const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict, answering: voicePending.verifiedWaiting(120_000) });
+    const recentOwner = Date.now() - voiceOwnerFullAt <= VOICE_ADMIN_FOLLOW_MS;
+    const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict, answering: voicePending.verifiedWaiting(120_000), recentOwner });
+    if (typed || (verdict && verdict.owner === true && !verdict.brief)) voiceOwnerFullAt = Date.now();
+    else if (verdict && verdict.owner === false) voiceOwnerFullAt = 0;
     // admin: set as the turn starts (beforeTurn), never while another still runs.
     // Who spoke, in words for Cru's context line.
     const who = typed ? 'typed by the signed-in owner'

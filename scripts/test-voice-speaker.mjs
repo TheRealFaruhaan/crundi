@@ -76,6 +76,9 @@ const pcm = (x) => { const b = Buffer.alloc(x.length * 2); for (let i = 0; i < x
   ok(S.decide(0.9, 0.6) === null, 'under 0.8 s there is no verdict');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true } }).admin.owner === false, 'a brief check is not enough for admin mode');
   ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true } }).unrecognised === false, 'but everyday requests are fine');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true, word: 0.6 }, recentOwner: true }).admin.owner === true, 'admin: a taught short reply just after a recognised request answers');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true, word: 0.6 }, recentOwner: false }).admin.owner === false, 'admin: a taught short reply on its own does not');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true }, recentOwner: true }).admin.owner === false, 'admin: a brief check without a taught word does not');
   const P = S.turnPolicy;
   ok(!P({ enrolled: false, verdict: { owner: false } }).unrecognised && P({ enrolled: false }).admin.owner === true, 'no voice enrolled: everything as before, admin allowed');
   ok(P({ enrolled: true, verdict: { owner: false, reason: 'other' } }).unrecognised, 'another voice: changes are held back');
