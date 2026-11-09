@@ -464,7 +464,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
 {
   const { contextLine } = await import('../src/voice/agent.js');
   const at = new Date('2026-11-10T09:00:00Z');
-  ok(/phone is locked/.test(contextLine({ now: at, locked: true })) && !/locked/.test(contextLine({ now: at })), 'a locked phone is said in the context line only when locked');
+  ok(/device is locked/.test(contextLine({ now: at, locked: true })) && !/locked/.test(contextLine({ now: at })), 'a locked phone is said in the context line only when locked');
   ok(/phone is locked/.test(SYSTEM_PROMPT) && !/phone is locked: answer/.test(SYSTEM_PROMPT), 'the system prompt explains it once, without the changing part');
   const seen = [];
   const lockedAgent = createVoiceAgent({
@@ -473,7 +473,7 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
     client: () => ({ messages: { create: async (req) => { seen.push(JSON.parse(JSON.stringify(req))); return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Unlock first, Sir.' }], usage: {} }; } } }),
   });
   await lockedAgent.turn('add a kanban task', { locked: true, now: at });
-  ok(/phone is locked/.test(seen[0].messages[0].content) && seen[0].system[0].text === SYSTEM_PROMPT, 'locked rides in the user message; the system block is unchanged');
+  ok(/device is locked/.test(seen[0].messages[0].content) && seen[0].system[0].text === SYSTEM_PROMPT, 'locked rides in the user message; the system block is unchanged');
 }
 
 

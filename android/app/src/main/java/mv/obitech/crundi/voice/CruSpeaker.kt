@@ -223,7 +223,7 @@ private fun WordsPart(u: SpeakerUi, st: SpeakerStatus, ev: SpeakerEvents) {
             val col = if (r.accepted) CrundiColors.TextSecondary else CrundiColors.Red
             CrundiIcon(if (r.accepted) "check" else "x", size = 12.dp, tint = col)
             Text(
-                words.getOrElse(r.n) { "" } + ": heard ${r.sayings} time" + (if (r.sayings == 1) "" else "s") + (r.likeYou?.let { ", ${Math.round(it * 100)}% like your voice" } ?: "") + (if (r.problem.isNotEmpty()) ". " + r.problem else ""),
+                words.getOrElse(r.n) { "" } + (if (r.accepted) ": learnt from ${r.sayings} saying" + (if (r.sayings == 1) "" else "s") else "") + (if (r.problem.isNotEmpty()) ": " + r.problem else ""),
                 style = CrundiType.Meta.copy(color = col),
             )
         }

@@ -50,7 +50,7 @@ import { READ_ONLY_TOOL_NAMES } from './tools.js';
 import { reflectionAsk, parseReflection } from './reflect.js';
 
 /** Tools whose running changes nothing the owner would need told about when a request is cancelled. */
-const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups', 'list_jobs']);
+const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups', 'list_jobs', 'open_attachment', 'list_attachments']);
 
 /** What an action did, in a few words, for "Cancelled. Already done: …". */
 export function describeAct(name, input = {}) {
@@ -111,6 +111,7 @@ What you can and cannot do:
 - The heartbeat is your built-in ticker (off until he or you switch it on, every 30 minutes, 08:00–22:00 by default): it brings your checklist /memories/heartbeat.md, your open jobs, the questions waiting on his phone and today's log. Go through it with the fewest lookups, act where you may, and stay silent when all is well, which is most of the time. Keep the checklist short and current: add what he asks you to keep an eye on, drop what is over. With an empty checklist and no jobs it does not wake you at all.
 - Jobs: start_job takes on a kanban card and sees it through with a Claude chat in bypass mode. Each time that chat finishes a turn you are told; check what it did (read_chat), then send the next step (send_to_chat), or finish_job done (only once you have checked the work), stuck (tell him exactly what is needed) or dropped. Keep a job_note of where it stands. At most three at once; take one on only when he asks, or when he has said you may take cards on yourself.
 - The day's log, /memories/log/<date>.md, lists what you did on your own and what he approved or declined; the heartbeat shows you its last lines. Read an earlier day's when he asks what happened while he was away.
+- The owner can give you files: photos, screenshots, documents, video, anything, attached or dropped on you; and things dragged from Crundi (a kanban card, a file, a mindmap idea). Each comes as a line before his words ([The owner attached: …] with an id, or [The owner dropped in: …]). Look before you answer: open_attachment shows you a picture and reads text, code and PDFs. To have work done on it, pass it on: send_to_chat or start_chat with attachments (the ids). A file with no words: say briefly what it is and ask what he wants done with it.
 - service_control starts, stops or restarts a service (intent explicit when he asked for exactly that).
 - Never pretend to have done something: say what happened, from the tool's answer.
 - Secret values are never available to you; credentials in settings show only as set or not set.
@@ -163,7 +164,7 @@ export function splitReply(text) {
 /** The volatile context that goes in front of what the owner said. */
 export function contextLine({ now = new Date(), where = '', locked = false, unrecognised = false, speaker = '', admin = voiceSettings.adminOn(), confirmOk = false } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `[${when}${speaker ? ` · ${speaker}` : ''}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the phone is locked: answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? (confirmOk ? ' · too short to tell whose voice, but you asked the owner a question moments ago: if this answers it (yes or no), call confirm_action or cancel_action for it (the server checks it may); change nothing else' : ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are') : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
+  return `[${when}${speaker ? ` · ${speaker}` : ''}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the device is locked (the phone, or the PC lock screen): answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? (confirmOk ? ' · too short to tell whose voice, but you asked the owner a question moments ago: if this answers it (yes or no), call confirm_action or cancel_action for it (the server checks it may); change nothing else' : ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are') : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
 }
 
 /**

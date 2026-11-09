@@ -224,6 +224,39 @@ data class KidStatus(
     }
 }
 
+/** The PC lock's auto lock: after [minutes] idle (or when the computer itself locks), as [mode] (full or visible). */
+@Serializable
+data class PcAutoLock(val on: Boolean = false, val minutes: Int = 10, val mode: String = "full")
+
+/**
+ * The PC lock (capability "pc-lock"): the PC app's screen locked behind the
+ * owner's PIN (the same PIN as kid mode). GET /api/lock, SSE 'pc-lock'.
+ */
+@Serializable
+data class PcLock(
+    val on: Boolean = false,
+    /** visible (see-through overlay) or full (opaque). */
+    val mode: String = "full",
+    /** When it was locked (ms), 0 when unlocked. */
+    val since: Long = 0,
+    /** Where it was locked: settings, tray, shortcut, phone. */
+    val by: String = "",
+    val pinSet: Boolean = false,
+    /** Locking by itself when the PC is idle; null from a server without it. */
+    val auto: PcAutoLock? = null,
+    /** The idle times offered, in minutes. */
+    val autoMinutes: List<Int> = listOf(1, 2, 5, 10, 15, 30, 60),
+) {
+    companion object {
+        /** A lock state from an event's data or a reply; null when it isn't one. */
+        fun of(el: JsonElement?): PcLock? {
+            val o = el as? JsonObject ?: return null
+            if (o["on"] == null) return null
+            return runCatching { CrundiJson.decodeFromJsonElement(serializer(), o) }.getOrNull()
+        }
+    }
+}
+
 @Serializable
 data class KidPoint(val date: String = "", val level: Double = 0.0, val mastery: Double = 0.0, val plays: Int = 0)
 
@@ -329,6 +362,31 @@ class KidApi internal constructor(private val rpc: Rpc, private val transport: T
         return KidReflex(x.ls("text"), (x["expressivity"] as? JsonPrimitive)?.doubleOrNull ?: 1.0).takeIf { it.text.isNotBlank() }
     }
 
+    // ─── the PC lock (capability "pc-lock") ───
+
+    /** The PC lock now; null from a server without it (404). */
+    suspend fun lock(): PcLock? {
+        val r = transport.exchange(ApiRequest("GET", "/api/lock"))
+        if (r.status == 404) return null
+        if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
+        return PcLock.of(CrundiJson.parseToJsonElement(r.text)) ?: PcLock()
+    }
+
+    /** Lock the PC: [mode] visible or full. Needs the PIN set. */
+    suspend fun lockStart(mode: String): PcLock {
+        require(mode == "visible" || mode == "full") { "Not a lock mode: $mode" }
+        return PcLock.of(rpc.post("/api/lock/start", mapOf("mode" to mode, "by" to "phone"))) ?: PcLock(on = true, mode = mode, pinSet = true)
+    }
+
+    /** The auto lock saved; the whole lock comes back. Turning it on needs the PIN set. */
+    suspend fun lockAuto(auto: PcAutoLock): PcLock {
+        require(auto.mode == "visible" || auto.mode == "full") { "Not a lock mode: ${auto.mode}" }
+        return PcLock.of(rpc.post("/api/lock/auto", mapOf("on" to auto.on, "minutes" to auto.minutes, "mode" to auto.mode))) ?: PcLock(auto = auto)
+    }
+
+    /** Unlocked from this phone (the owner is signed in: no PIN). */
+    suspend fun lockEnd(): PcLock = PcLock.of(rpc.post("/api/lock/end")) ?: PcLock(pinSet = true)
+
     // ─── kid mode ───
 
     /** Kid mode now; null from a server without it (404). */
@@ -369,6 +427,7 @@ class KidApi internal constructor(private val rpc: Rpc, private val transport: T
     companion object {
         const val SCREEN = "voice-screen"
         const val KID = "voice-kid"
+        const val LOCK = "pc-lock"
         /** Kid Cru's voices (Deepgram Flux), as the web offers them; "" the same as Cru's. */
         val VOICES = listOf("flux-gemma-en" to "Gemma (lively)", "flux-heather-en" to "Heather", "flux-brooke-en" to "Brooke", "flux-meghan-en" to "Meghan", "flux-cole-en" to "Cole", "" to "Same as Cru")
         val CHATTINESS = listOf("quiet" to "Quiet", "normal" to "Normal", "chatty" to "Chatty")

@@ -32,6 +32,34 @@ class VoiceApiTest {
         }
     }
 
+    @Test fun aFileIsSentForCruAndATurnCarriesItsId() = runBlocking {
+        val t = FakeTransport()
+            .on("POST /api/voice/attach", """{"ok":true,"id":"att_1","name":"cat.jpg","kind":"image","size":3}""")
+            .on("POST /api/voice/turn", """{"ok":true,"speak":"A cat."}""")
+        val c = CrundiClient(t)
+        val a = c.voice.attach("cat.jpg", "image/jpeg", 3, preview = "UFY=") { "abc".byteInputStream() }
+        assertEquals("att_1", a.id)
+        assertEquals("image", a.kind)
+        val sent = String(t.lastUpload!!)
+        assertTrue(sent.contains("\"name\":\"cat.jpg\"") && sent.contains("\"preview\":\"UFY=\"") && sent.contains("\"from\":\"android\"") && sent.endsWith("\"data\":\"YWJj\"}"))
+        c.voice.turn("", "Cru", false, typed = true, attachments = listOf("att_1"), refs = listOf("https://example.com"))
+        val body = t.requests.last().json.toString()
+        assertTrue(body.contains("\"attachments\":[\"att_1\"]") && body.contains("\"refs\":[\"https://example.com\"]"))
+        // Nothing attached: neither is sent (an older server never sees them).
+        c.voice.turn("hi", "Cru", false)
+        assertFalse(t.requests.last().json.toString().contains("attachments"))
+    }
+
+    @Test fun aServerWithoutFilesForCruSaysUpdateIt() = runBlocking {
+        try { CrundiClient(FakeTransport()).voice.attach("a.txt", "text/plain", 1) { "a".byteInputStream() }; fail() } catch (e: ApiException) {
+            assertEquals(VoiceApi.ATTACH_UNSUPPORTED, e.message)
+        }
+        val big = FakeTransport().on("POST /api/voice/attach", """{"ok":false,"error":"Too large (files up to 50 MB)"}""", 413)
+        try { CrundiClient(big).voice.attach("a.bin", "", 1) { "a".byteInputStream() }; fail() } catch (e: ApiException) {
+            assertEquals("Too large (files up to 50 MB)", e.message)
+        }
+    }
+
     @Test fun aTurnSendsWhereAndLockedAndReadsTheReply() = runBlocking {
         val t = FakeTransport().on("POST /api/voice/turn", """{"ok":true,"speak":"Yes, Master.","show":"detail","tools":["get_usage"],"costUsd":0.0004}""")
         val r = CrundiClient(t).voice.turn("usage?", "side key, phone locked", true)

@@ -8,7 +8,7 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell, powerMonitor, utilityProcess, session, net } from 'electron';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell, powerMonitor, utilityProcess, session, net, globalShortcut } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -215,6 +215,7 @@ function createWindow() {
     }
   });
   wireKidLock(mainWindow);
+  wirePcLockKeys(mainWindow);
 }
 
 // ─── Kid mode: the window locked to the kid screen ───
@@ -366,6 +367,43 @@ function kidTouchpad(on) {
 app.on('will-quit', () => kidTouchpad(false));
 app.whenReady().then(() => { if (!kidLocked) kidTouchpad(false); }).catch(() => {});
 
+// The PC lock (the page asks the server; the window locks like kid mode):
+// Ctrl+Shift+L the visible lock, Super+Shift+L (the Windows key) the full one.
+// System-wide where the desktop allows it (not under Wayland); always while
+// the window has focus (wirePcLockKeys).
+function pcLockAsk(mode, by = 'shortcut') {
+  if (kidLocked) return;
+  showWindow();
+  try { mainWindow?.webContents.send('pc-lock', mode, by); } catch { /* no page */ }
+}
+// Auto lock: the page passes the setting on ({ on, minutes, mode }); after that
+// long with no keyboard or mouse anywhere on the PC (or when the OS locks), the
+// app locks itself. Once per idle stretch.
+let pcAuto = { on: false, minutes: 10, mode: 'full' };
+let pcAutoFired = false;
+ipcMain.handle('pc-lock:auto', (_e, a) => { pcAuto = { on: !!(a && a.on), minutes: Math.max(1, Number(a && a.minutes) || 10), mode: a && a.mode === 'visible' ? 'visible' : 'full' }; return true; });
+setInterval(() => {
+  if (!pcAuto.on) return;
+  let idle = 0;
+  try { idle = powerMonitor.getSystemIdleTime(); } catch { return; }
+  if (idle < 5) { pcAutoFired = false; return; }
+  if (!pcAutoFired && !kidLocked && idle >= pcAuto.minutes * 60) { pcAutoFired = true; appendLog(`[lock] auto lock after ${pcAuto.minutes} min idle`); pcLockAsk(pcAuto.mode, 'auto'); }
+}, 15000).unref?.();
+app.whenReady().then(() => { try { powerMonitor.on('lock-screen', () => { if (pcAuto.on && !kidLocked) pcLockAsk(pcAuto.mode, 'auto'); }); } catch { /* not on this OS */ } }).catch(() => {});
+app.whenReady().then(() => {
+  for (const [acc, mode] of [['CommandOrControl+Shift+L', 'visible'], ['Super+Shift+L', 'full']]) {
+    try { if (!globalShortcut.register(acc, () => pcLockAsk(mode))) appendLog(`[lock] ${acc} is taken by another app`); } catch (err) { appendLog(`[lock] ${acc}: ${err.message}`); }
+  }
+}).catch(() => {});
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* gone */ } });
+function wirePcLockKeys(w) {
+  w.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || kidLocked || !input.shift || String(input.key).toLowerCase() !== 'l') return;
+    if (input.meta && !input.control) { e.preventDefault(); pcLockAsk('full'); }
+    else if (input.control && !input.meta && !input.alt) { e.preventDefault(); pcLockAsk('visible'); }
+  });
+}
+
 // Whatever got past the keys (a gesture, task view, a shortcut the OS keeps):
 // while kid mode is on, the window comes straight back to the front.
 let kidWatch = null;
@@ -510,8 +548,10 @@ function updateTrayMenu() {
     { type: 'separator' },
     { label: 'Open', click: () => showWindow() },
     // Kid mode: the page asks the server (the PIN must be set there) and locks this window.
+    { label: 'Lock (visible)', enabled: !kidLocked, accelerator: 'CommandOrControl+Shift+L', click: () => pcLockAsk('visible') },
+    { label: 'Lock (full)', enabled: !kidLocked, accelerator: 'Super+Shift+L', click: () => pcLockAsk('full') },
     {
-      label: kidLocked ? 'Kid mode is on' : 'Kid mode',
+      label: kidLocked ? 'Locked' : 'Kid mode',
       enabled: !kidLocked,
       click: () => { showWindow(); try { mainWindow?.webContents.send('kid:start'); } catch { /* no page */ } },
     },

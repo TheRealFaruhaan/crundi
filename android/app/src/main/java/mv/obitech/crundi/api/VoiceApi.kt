@@ -81,17 +81,36 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
      * "side key"); [locked] tells Claude the phone is locked, so anything
      * that would change something waits for an unlock (spec §4).
      */
-    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false): VoiceReply {
+    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false, attachments: List<String> = emptyList(), refs: List<String> = emptyList()): VoiceReply {
         // A failed turn comes back { ok:false, error } with 200: read it as a reply, not an exception.
         // [typed]: keyboard mode, words typed rather than heard (an older server ignores it).
+        // [attachments]: ids from [attach]; [refs]: shared text or links (capability "voice-attach").
         val body = mutableMapOf<String, Any?>("text" to text, "where" to where, "locked" to locked)
         if (typed) body["typed"] = true
+        if (attachments.isNotEmpty()) body["attachments"] = attachments
+        if (refs.isNotEmpty()) body["refs"] = refs
         val r = transport.exchange(ApiRequest("POST", "/api/voice/turn", json = Uploads.toJson(body), slow = true))
         if (r.status == 404) throw ApiException(404, UNSUPPORTED)
         val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()
             ?: throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
         if (r.status == 401) throw ApiException(401, OkHttpTransport.defaultMessage(401))
         return CrundiJson.decodeFromJsonElement(VoiceReply.serializer(), obj)
+    }
+
+    /**
+     * A file for Cru (capability "voice-attach"), streamed as base64 JSON:
+     * [open] is read once, never held whole. [preview]: a smaller JPEG of a
+     * picture (base64), which is what Cru looks at. A server without it: 404,
+     * said as [ATTACH_UNSUPPORTED].
+     */
+    suspend fun attach(name: String, type: String, size: Long, preview: String? = null, progress: Progress? = null, open: () -> java.io.InputStream): VoiceAttached {
+        val fields = mapOf<String, Any?>("name" to name, "type" to type, "preview" to preview, "from" to "android")
+        val o = try {
+            rpc.call("POST", "/api/voice/attach", upload = Uploads.base64Json(fields, size, open), progress = progress, slow = true)
+        } catch (e: ApiException) {
+            throw if (e.status == 404) ApiException(404, ATTACH_UNSUPPORTED) else e
+        }
+        return CrundiJson.decodeFromJsonElement(VoiceAttached.serializer(), o)
     }
 
     /**
@@ -326,6 +345,11 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val UNREAD = "voice-unread"
         /** Cru on its own: settings.away/awayClasses, POST /api/voice/away/stop, POST /api/voice/ask, approvals with source "cru", built-in tickers. */
         const val AWAY = "voice-away"
+        /** Files for Cru: [attach], and a turn's attachments and refs. */
+        const val ATTACH = "voice-attach"
+        const val ATTACH_UNSUPPORTED = "This server does not take files for Cru yet: update it"
+        /** The largest file the server takes. */
+        const val ATTACH_MAX = 50L * 1024 * 1024
         const val SPEAKER_UNSUPPORTED = "Not supported by this server: update it to teach Cru your voice."
         /** The rate of [speakStream]'s PCM (the server's STREAM_RATE). */
         const val STREAM_RATE = 24000
@@ -541,6 +565,10 @@ data class EnrolReply(
 
 @Serializable
 data class CompactReply(val ok: Boolean = false, val error: String = "", val skipped: String = "")
+
+/** POST /api/voice/attach: the file as the server keeps it ([kind]: image, video, audio, pdf, text, file...). */
+@Serializable
+data class VoiceAttached(val ok: Boolean = false, val id: String = "", val name: String = "", val kind: String = "", val size: Long = 0)
 
 /** One turn of Cru's conversation: what the owner [said] ("" for Cru speaking up on its own, [report]) and the answer. */
 @Serializable

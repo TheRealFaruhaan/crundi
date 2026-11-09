@@ -32,6 +32,84 @@ class VoiceActivity : ComponentActivity() {
     private lateinit var controller: VoiceController
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { controller.open() }
 
+    // ─── files for Cru: the attach button's three ways in ───
+    /** A picker or the camera is open over this screen: going out of view is not the end of the session. */
+    private var picking = false
+    /** Where the camera is saving the photo. */
+    private var photo: android.net.Uri? = null
+    private val takePhoto = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        picking = false
+        val u = photo; photo = null
+        if (u == null) return@registerForActivityResult
+        if (ok) controller.attach(listOf(u), deleteAfter = true) else CruFiles.delete(this, u)
+    }
+    /** The app declares the camera (pairing scan), so Android wants it granted before the camera app may be used. */
+    private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) startCamera() else {
+            picking = false
+            android.widget.Toast.makeText(this, "Cru needs the camera to take a photo", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    private val pickMedia = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(10)) { uris ->
+        picking = false
+        controller.attach(uris)
+    }
+    private val pickFiles = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        picking = false
+        controller.attach(uris)
+    }
+
+    /** The attach button's choice. Over the lock screen the phone is unlocked first: pickers can't show over it. */
+    private fun pick(source: AttachSource) {
+        if (locked()) {
+            val km = getSystemService(KeyguardManager::class.java) ?: return
+            km.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { controller.unlocked(); pick(source) }
+            })
+            return
+        }
+        picking = true
+        try {
+            when (source) {
+                AttachSource.Camera ->
+                    if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) startCamera()
+                    else askCamera.launch(Manifest.permission.CAMERA)
+                AttachSource.Media -> pickMedia.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+                AttachSource.Files -> pickFiles.launch(arrayOf("*/*"))
+            }
+        } catch (e: android.content.ActivityNotFoundException) {
+            picking = false
+            android.widget.Toast.makeText(this, "No app on this phone can do that", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun startCamera() {
+        val u = runCatching { CruFiles.cameraFile(this) }.getOrNull() ?: run { picking = false; return }
+        photo = u
+        try { takePhoto.launch(u) } catch (e: android.content.ActivityNotFoundException) {
+            picking = false; photo = null; CruFiles.delete(this, u)
+            android.widget.Toast.makeText(this, "No camera app on this phone", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** Shared to Cru (the share sheet's "Cru"): files and pictures attached, text and links dropped in. */
+    private fun shared(intent: android.content.Intent?) {
+        val i = intent ?: return
+        if (i.action != android.content.Intent.ACTION_SEND && i.action != android.content.Intent.ACTION_SEND_MULTIPLE) return
+        val uris = ArrayList<android.net.Uri>()
+        @Suppress("DEPRECATION")
+        if (i.action == android.content.Intent.ACTION_SEND_MULTIPLE) i.getParcelableArrayListExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)?.let { uris += it }
+        else (i.getParcelableExtra<android.os.Parcelable>(android.content.Intent.EXTRA_STREAM) as? android.net.Uri)?.let { uris += it }
+        // Some apps put what they share only in the clip.
+        if (uris.isEmpty()) i.clipData?.let { c -> for (n in 0 until c.itemCount) c.getItemAt(n).uri?.let { uris += it } }
+        val text = if (uris.isEmpty()) i.getCharSequenceExtra(android.content.Intent.EXTRA_TEXT)?.toString().orEmpty() else ""
+        val subject = i.getStringExtra(android.content.Intent.EXTRA_SUBJECT).orEmpty()
+        if (uris.isNotEmpty()) controller.attach(uris)
+        else if (text.isNotBlank()) controller.attachText(if (subject.isNotBlank() && !text.contains(subject)) "$subject: $text" else text)
+        // Handled once: turning the phone or coming back does not attach it again.
+        i.action = null
+    }
+
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     /** The session is asleep and the screen open: listening for "Hey Cru" only. */
     private var waiting by mutableStateOf(false)
@@ -47,6 +125,8 @@ class VoiceActivity : ComponentActivity() {
 
     /** The microphone's time is up: listen for the wake word, and let the screen sleep later. */
     private fun asleep() {
+        // Asleep while a picker is open: the screen stays for the file coming back.
+        if (!inFront && picking) return
         if (!inFront) { finish(); return }
         waiting = true
         // Keyboard mode: no microphone at all, "Hey Cru" included; typing wakes it.
@@ -109,11 +189,15 @@ class VoiceActivity : ComponentActivity() {
                         onSend = { t -> if (waiting) wake(); controller.send(t) },
                         onTyping = { if (waiting) closeLater() else controller.typing() },
                         live = controller.live,
+                        onAttach = { pick(it) },
+                        onRemoveAttachment = { controller.removeAttachment(it) },
+                        attachmentThumb = { controller.attachmentThumb(it) },
                     ),
                 )
             }
         }
         if (intent?.getBooleanExtra(EXTRA_UNLOCK, false) == true) unlock()
+        if (savedInstanceState == null) shared(intent)
         // Opened by "Hey Cru" from the background: its "tap to talk" is done.
         HeyCrundi.cancelWakeNotification(this)
     }
@@ -129,9 +213,18 @@ class VoiceActivity : ComponentActivity() {
     }
 
     override fun onStop() {
+        inFront = false
+        // A picker or the camera over it: the session carries on, and the screen
+        // stays (it is not closed for being quiet meanwhile).
+        if (picking) {
+            handler.removeCallbacks(letSleep)
+            handler.removeCallbacks(closeIdle)
+            if (waiting) { HeyCrundi.screenWaiting(null); waiting = false }
+            super.onStop()
+            return
+        }
         // Off screen: stop listening; coming back wakes it again. Asleep, and the
         // screen went off (or the owner left): it's done.
-        inFront = false
         val wasWaiting = waiting
         handler.removeCallbacks(letSleep)
         handler.removeCallbacks(closeIdle)
@@ -156,6 +249,7 @@ class VoiceActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getBooleanExtra(EXTRA_CHAT, false)) controller.setChat(true)
+        shared(intent)
     }
 
     private fun unlock() {

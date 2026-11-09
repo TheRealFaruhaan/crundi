@@ -48,6 +48,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -177,6 +179,8 @@ fun VoiceScreen(
             // A question awaiting the owner's yes: answered by voice (Phase 4), no buttons.
             if (s.question.isNotEmpty() && phase != Phase.Thinking) Text(if (ui.keyboard) "Type yes or no" else "Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
+            // Files waiting to go with the next turn (never in kid mode).
+            if (ui.attachments.isNotEmpty() && !kidOn) AttachTray(ui.attachments, more.onRemoveAttachment)
             BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock, more)
         }
     }
@@ -217,7 +221,16 @@ class VoiceMore(
     val onTyping: () -> Unit = {},
     /** The live screen's X and its page's messages, and kid mode's controls. */
     val live: LiveActions = LiveActions(),
+    /** The attach button's choice (capability "voice-attach"); null: this host can't open pickers, no button. */
+    val onAttach: ((AttachSource) -> Unit)? = null,
+    /** The × on a chip in the tray. */
+    val onRemoveAttachment: (String) -> Unit = {},
+    /** An attached picture's small copy, by its id, for the chat view's chips. */
+    val attachmentThumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null,
 )
+
+/** Where a file for Cru comes from. */
+enum class AttachSource { Camera, Media, Files }
 
 @Composable
 private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore) {
@@ -307,7 +320,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
         items(list.size, key = { keys[it] }) { i ->
             val m = list[i]
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at))
+                if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at), thumb = more.attachmentThumb)
                 if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "")
             }
         }
@@ -316,7 +329,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
 }
 
 @Composable
-private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false) {
+private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null) {
     val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp)
     Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
         Column(
@@ -328,7 +341,9 @@ private fun Bubble(mine: Boolean, text: String, detail: String, time: String, fa
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
         ) {
-            if (text.isNotEmpty()) Text(text, style = CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
+            // The owner's: attached files and shared items as chips, then his words.
+            if (text.isNotEmpty() && mine) SaidText(text, thumb, Alignment.End, CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
+            else if (text.isNotEmpty()) Text(text, style = CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
             if (detail.isNotEmpty()) Box(Modifier.padding(top = if (text.isNotEmpty()) 6.dp else 0.dp)) { MarkdownText(detail, compact = true) }
             if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp))
         }
@@ -390,12 +405,17 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, onCancel: (
                 val heard = if (phase == Phase.Listening || phase == Phase.Thinking) s.heard else s.asked
                 AnimatedVisibility(heard.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "“" + heard + "”",
-                            style = CrundiType.Body.copy(fontSize = 17.sp, lineHeight = 24.sp, color = CrundiColors.TextSecondary),
-                            textAlign = TextAlign.Center, maxLines = 4,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
+                        val parts = remember(heard) { CruAttach.parts(heard) }
+                        val words = parts.filterIsInstance<SaidPart.Words>().joinToString("\n") { it.text }
+                        Column(Modifier.weight(1f, fill = false), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            val chips = parts.filterIsInstance<SaidPart.Chip>()
+                            if (chips.isNotEmpty()) ChipRow(chips, null, Arrangement.Center)
+                            if (words.isNotEmpty()) Text(
+                                "“" + words + "”",
+                                style = CrundiType.Body.copy(fontSize = 17.sp, lineHeight = 24.sp, color = CrundiColors.TextSecondary),
+                                textAlign = TextAlign.Center, maxLines = 4,
+                            )
+                        }
                         // Until the answer comes, what he said can be taken back.
                         if (ui.blocked.isEmpty() && s.canCancel) {
                             Box(
@@ -445,17 +465,20 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
     val canSwitch = ui.blocked.isEmpty()
     if (ui.keyboard) {
         var typed by rememberSaveable { mutableStateOf("") }
-        val send = { val t = typed.trim(); if (t.isNotEmpty()) { more.onSend(t); typed = "" } }
+        // Send works with files alone, as with words.
+        val filesReady = ui.attachments.any { it.ready }
+        val send = { val t = typed.trim(); if (t.isNotEmpty() || filesReady) { more.onSend(t); typed = "" } }
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (canSwitch) RoundButton("mic", "Back to voice") { more.onKeyboard(false) }
+            if (attachShown(ui, more)) AttachButton(more)
             CrundiTextField(
                 typed, { typed = it; more.onTyping() }, Modifier.weight(1f),
                 placeholder = "Type to Cru", singleLine = false, maxLines = 4,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, capitalization = KeyboardCapitalization.Sentences),
                 keyboardActions = KeyboardActions(onSend = { send() }),
             )
-            if (phase == Phase.Speaking && typed.isBlank()) RoundButton("stop", "Stop talking", onClick = onMic)
-            else RoundButton("send", "Send", enabled = typed.isNotBlank(), accent = true, onClick = send)
+            if (phase == Phase.Speaking && typed.isBlank() && !filesReady) RoundButton("stop", "Stop talking", onClick = onMic)
+            else RoundButton("send", "Send", enabled = typed.isNotBlank() || filesReady, accent = true, onClick = send)
             RoundButton("x", "Close", onClick = onClose)
         }
         return
@@ -464,6 +487,7 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
         Box(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (canSwitch) RoundButton("keyboard", "Keyboard mode") { more.onKeyboard(true) }
+            if (attachShown(ui, more)) AttachButton(more)
             if (ui.state.locked && onUnlock != null) {
                 Row(
                     Modifier.clip(RoundedCornerShape(16.dp)).background(CrundiColors.BgTertiary).border(1.dp, CrundiColors.Border, RoundedCornerShape(16.dp)).clickable(onClick = onUnlock).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -479,6 +503,116 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
         // The animated blob alone: no microphone drawn on it.
         FluidMic(phase, accent, mic, null, label, onMic)
         Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { RoundButton("x", "Close", onClick = onClose) }
+    }
+}
+
+/** The attach button shows: a host that can open pickers, a server that takes files, not kid mode, nothing blocking. */
+private fun attachShown(ui: VoiceUi, more: VoiceMore) =
+    more.onAttach != null && VoiceApi.ATTACH in ui.caps && ui.kid?.on != true && ui.blocked.isEmpty() && !ui.needsMic
+
+/** The paperclip: Camera, Photos & videos, or Files. */
+@Composable
+private fun AttachButton(more: VoiceMore) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        RoundButton("paperclip", "Attach a photo or file") { open = true }
+        androidx.compose.material3.DropdownMenu(open, { open = false }, containerColor = CrundiColors.BgSecondary) {
+            for ((src, icon, label) in listOf(
+                Triple(AttachSource.Camera, "camera", "Camera"),
+                Triple(AttachSource.Media, "image", "Photos & videos"),
+                Triple(AttachSource.Files, "file", "Files"),
+            )) androidx.compose.material3.DropdownMenuItem(
+                text = { Text(label, style = CrundiType.Body) },
+                leadingIcon = { CrundiIcon(icon, size = 16.dp, tint = CrundiColors.TextSecondary) },
+                onClick = { open = false; more.onAttach?.invoke(src) },
+            )
+        }
+    }
+}
+
+/**
+ * Files and shared text waiting to go with the next turn: a chip each,
+ * the picture's thumbnail, faded while uploading, red with why if it
+ * failed, × to take it out.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun AttachTray(list: List<CruAtt>, onRemove: (String) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier.fillMaxWidth().padding(top = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (a in list) {
+            val shape = RoundedCornerShape(12.dp)
+            Row(
+                Modifier.widthIn(max = 240.dp).alpha(if (a.up) 0.6f else 1f).clip(shape).background(CrundiColors.BgSecondary)
+                    .border(1.dp, if (a.bad.isNotEmpty()) CrundiColors.Red else CrundiColors.Border, shape)
+                    .padding(start = 6.dp, top = 4.dp, bottom = 4.dp)
+                    .semantics { contentDescription = if (a.bad.isNotEmpty()) a.name + ": " + a.bad else if (a.up) a.name + ", uploading" else a.name },
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                val t = a.thumb
+                if (t != null) androidx.compose.foundation.Image(t.asImageBitmap(), null, Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                else CrundiIcon(if (a.ref.isNotEmpty() && a.id.isEmpty()) "link" else "file", size = 14.dp, tint = CrundiColors.TextSecondary)
+                Text(
+                    if (a.bad.isNotEmpty()) a.name + ": " + a.bad else if (a.up) a.name + " · uploading" else a.name,
+                    style = CrundiType.Small.copy(fontSize = 12.sp, color = if (a.bad.isNotEmpty()) CrundiColors.Red else CrundiColors.TextPrimary),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                )
+                Box(
+                    Modifier.size(28.dp).clip(CircleShape).clickable(onClickLabel = "Remove") { onRemove(a.key) }.semantics { contentDescription = "Remove " + a.name },
+                    contentAlignment = Alignment.Center,
+                ) { CrundiIcon("x", size = 13.dp, tint = CrundiColors.TextMuted) }
+            }
+        }
+    }
+}
+
+/** The owner's message: its attached files and shared items as chips, then his words. */
+@Composable
+private fun SaidText(text: String, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)?, align: Alignment.Horizontal, style: androidx.compose.ui.text.TextStyle) {
+    val parts = remember(text) { CruAttach.parts(text) }
+    Column(horizontalAlignment = align, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        // Chips together in a row, words as text, in their order.
+        val groups = ArrayList<List<SaidPart>>()
+        for (p in parts) {
+            val last = groups.lastOrNull()
+            if (p is SaidPart.Chip && last != null && last.first() is SaidPart.Chip) groups[groups.size - 1] = last + p
+            else groups.add(listOf(p))
+        }
+        for (g in groups) {
+            val first = g.first()
+            if (first is SaidPart.Words) Text(first.text, style = style)
+            else ChipRow(g.filterIsInstance<SaidPart.Chip>(), thumb, Arrangement.spacedBy(4.dp, Alignment.End))
+        }
+    }
+}
+
+/** Chips for files (name · kind, a picture's thumbnail when it can be fetched) and shared items. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ChipRow(chips: List<SaidPart.Chip>, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)?, arrangement: Arrangement.Horizontal) {
+    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = if (arrangement == Arrangement.Center) Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally) else arrangement, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for (c in chips) {
+            val shape = RoundedCornerShape(10.dp)
+            Row(
+                Modifier.widthIn(max = 220.dp).clip(shape).background(CrundiColors.BgTertiary.copy(alpha = 0.8f)).border(1.dp, CrundiColors.Border, shape)
+                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                var img by remember(c.id) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
+                if (c.kind == "image" && c.id.isNotEmpty() && thumb != null) LaunchedEffect(c.id) { img = thumb(c.id) }
+                val i = img
+                if (i != null) androidx.compose.foundation.Image(i, null, Modifier.size(22.dp).clip(RoundedCornerShape(5.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                else CrundiIcon(when { c.kind.isEmpty() -> "link"; c.kind == "image" -> "image"; c.kind == "video" -> "film"; c.kind == "audio" -> "music"; else -> "file" }, size = 12.dp, tint = CrundiColors.TextSecondary)
+                Text(
+                    if (c.kind.isEmpty()) c.name else c.name + " · " + c.kind,
+                    style = CrundiType.Small.copy(fontSize = 12.sp, color = CrundiColors.TextPrimary),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

@@ -229,6 +229,18 @@ export const CAPABILITIES = Object.freeze([
   // The heartbeat is a built-in ticker (id 'heartbeat', builtin: true) in
   // /api/voice/wakeups: it can be switched off, not deleted.
   'voice-away',
+  // Files for Cru (voice/attachments.js): POST /api/voice/attach { name, type,
+  // data (base64), preview? (base64 JPEG of a picture, up to 4 MB), from } ->
+  // { ok, id, name, kind, size }; GET /api/voice/attach?id=&preview=1 (the file);
+  // POST /api/voice/turn takes attachments: [id] and refs: [text] (a dragged
+  // card or file: "[Kanban Task ID: …]"); the history shows them as lines
+  // "[The owner attached: "name" (kind, …), id att_…]" / "[The owner dropped in: …]".
+  'voice-attach',
+  // The PC lock (one PIN with kid mode): GET /api/lock -> { on, mode
+  // ('visible'|'full'), since, by, pinSet }; POST /api/lock/start { mode, by };
+  // POST /api/lock/unlock { pin } (429 locked out); POST /api/lock/end (from
+  // the owner's other device, no PIN); SSE 'pc-lock', desktop { type: 'pc-lock', lock }.
+  'pc-lock',
   // Voice mode in a chat: the composer's mic sends "voice input: …" (spoken
   // through /api/voice/listen), and the chat's 'voice-say' events (Claude's
   // speak tool) are said aloud by the screen in voice mode, through

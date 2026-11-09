@@ -84,6 +84,10 @@ contextBridge.exposeInMainWorld('api', {
   // onKidStart: the tray's "Kid mode" item.
   kidLock: (on) => ipcRenderer.invoke('kid:lock', !!on),
   onKidStart: (cb) => { const h = () => cb(); ipcRenderer.on('kid:start', h); return () => ipcRenderer.removeListener('kid:start', h); },
+  // The PC lock: the shortcuts (Ctrl+Shift+L visible, Super+Shift+L full) and the tray; the window locks with kidLock.
+  onPcLock: (cb) => { const h = (_e, mode, by) => cb(mode, by); ipcRenderer.on('pc-lock', h); return () => ipcRenderer.removeListener('pc-lock', h); },
+  // Auto lock: { on, minutes, mode }, from GET /api/lock (the app watches how long the PC is idle).
+  setAutoLock: (a) => ipcRenderer.invoke('pc-lock:auto', a),
 
   // Interactive browser panel — WebContentsView managed in the main process.
   wbrowser: {

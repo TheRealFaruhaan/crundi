@@ -146,11 +146,13 @@ export function makeActionTools(deps, ctx) {
     {
       name: 'send_to_chat',
       description: 'Send a message into an open Claude Code chat, as the owner typing it. intent: "explicit" when the owner clearly asked you to send, tell, type or reply something; "inferred" when you decided to send it on your own reading (it is then read back to the owner first). Chats only: you can never type into a terminal.',
-      input_schema: obj({ chat: str('The chat: its id or title (see list_panels)'), text: str('The message, exactly as it should be sent'), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }) }, ['chat', 'text', 'intent']),
+      input_schema: obj({ chat: str('The chat: its id or title (see list_panels)'), text: str('The message, exactly as it should be sent'), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }), attachments: { type: 'array', items: { type: 'string' }, description: 'Optional: ids of files the owner attached (att_…), passed on with the message' } }, ['chat', 'text', 'intent']),
       check: (i) => { chat(i.chat); if (!String(i.text || '').trim()) throw new Error('Nothing to send'); },
       confirm: (i) => i.intent === 'explicit' ? null : `Send ${readBack(i.text)} to ${chatName(chat(i.chat))}?`,
       run: (i) => {
-        const c = chat(i.chat); const r = deps.sendMessage(c.id, String(i.text));
+        const c = chat(i.chat);
+        const files = i.attachments && i.attachments.length ? deps.passOn(i.attachments, c.project) : [];
+        const r = deps.sendMessage(c.id, [String(i.text), ...files].join('\n'));
         if (r && r.ok === false) return r;
         // What Cru sets going, it reports back on.
         deps.watch?.(c.id, c.title, c.project, { auto: true });
@@ -160,7 +162,7 @@ export function makeActionTools(deps, ctx) {
     {
       name: 'start_chat',
       description: 'Start a new Claude Code chat in a project, with the project\'s default model unless the owner said otherwise, optionally with a first message (D15 rules apply to it, as send_to_chat). mode "bypass" starts it in bypass permissions mode, so it gets on with the job without stopping to ask for permission (Bash, edits); use it when the owner plainly asked for the task (intent explicit), and "default" (the project\'s own mode) otherwise or when they ask to approve its steps. Bypass with an inferred message is read back first.',
-      input_schema: obj({ project: str('Project alias'), title: str('Optional title'), message: str('Optional first message'), intent: str('explicit or inferred, for the first message', { enum: ['explicit', 'inferred'] }), model: str('Optional model, only if the owner named one'), mode: str('bypass (no permission prompts) or default (the project\'s mode)', { enum: ['bypass', 'default'] }) }, ['project']),
+      input_schema: obj({ project: str('Project alias'), title: str('Optional title'), message: str('Optional first message'), attachments: { type: 'array', items: { type: 'string' }, description: 'Optional: ids of files the owner attached (att_…), passed on with the first message' }, intent: str('explicit or inferred, for the first message', { enum: ['explicit', 'inferred'] }), model: str('Optional model, only if the owner named one'), mode: str('bypass (no permission prompts) or default (the project\'s mode)', { enum: ['bypass', 'default'] }) }, ['project']),
       check: (i) => project(i.project),
       confirm: (i) => {
         const where = project(i.project).alias;
@@ -171,7 +173,8 @@ export function makeActionTools(deps, ctx) {
         const p = project(i.project);
         const r = await deps.createChat(p.alias, { title: i.title || '', model: i.model || '', ...(i.mode === 'bypass' ? { skipPermissions: true } : {}) });
         if (!r || !r.ok) return r || { ok: false, error: 'The chat could not be started' };
-        if (i.message) { deps.sendMessage(r.id, String(i.message)); deps.watch?.(r.id, i.title || '', p.alias, { auto: true }); }
+        const files = i.attachments && i.attachments.length ? deps.passOn(i.attachments, p.alias) : [];
+        if (i.message || files.length) { deps.sendMessage(r.id, [String(i.message || 'Here are the files.'), ...files].join('\n')); deps.watch?.(r.id, i.title || '', p.alias, { auto: true }); }
         return { ok: true, started: true, chat: r.id, project: p.alias, sent: !!i.message, watching: !!i.message, mode: i.mode === 'bypass' ? 'bypass permissions' : 'the project default' };
       },
     },

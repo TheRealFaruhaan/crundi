@@ -353,8 +353,9 @@ export function splitSayings(x, { gap = 0.3, pad = 0.08 } = {}) {
     db[f] = 10 * Math.log10(s / step + 1e-12);
   }
   const sorted = Float64Array.from(db).sort();
-  const floor = sorted[Math.floor(n * 0.1)], loud = sorted[Math.floor(n * 0.9)];
-  const gate = Math.max(Math.min(floor + 9, loud - 6), -55);
+  const floor = sorted[Math.floor(n * 0.1)], loud = sorted[Math.floor(n * 0.9)], peak = sorted[n - 1];
+  // Not far below the loudest sound either: a quiet recording's 90th percentile is the room.
+  const gate = Math.max(Math.min(floor + 9, loud - 6), peak - 18, -55);
   const maxGap = Math.round(gap * 100), runs = [];
   for (let f = 0; f < n; f++) {
     if (db[f] <= gate) continue;
@@ -362,8 +363,12 @@ export function splitSayings(x, { gap = 0.3, pad = 0.08 } = {}) {
     if (r && f - r[1] - 1 <= maxGap) r[1] = f; else runs.push([f, f]);
   }
   const p = Math.round(pad * SAMPLE_RATE);
-  return runs.map(([a, b]) => ({ a: a * step, b: (b + 1) * step, seconds: ((b + 1 - a) * step) / SAMPLE_RATE }))
-    .filter((r) => r.seconds >= 0.12)
+  // Background sounds (a click, a cough far off, a television) are much quieter than the
+  // owner saying the word into the mic: only runs within 12 dB of the loudest are sayings.
+  const runPeak = (a, b) => { let m = -Infinity; for (let f = a; f <= b; f++) if (db[f] > m) m = db[f]; return m; };
+  return runs.filter(([a, b]) => runPeak(a, b) >= peak - 12)
+    .map(([a, b]) => ({ a: a * step, b: (b + 1) * step, seconds: ((b + 1 - a) * step) / SAMPLE_RATE }))
+    .filter((r) => r.seconds >= 0.15)
     .map((r) => ({ samples: x.subarray(Math.max(0, r.a - p), Math.min(x.length, r.b + p)), seconds: Math.round(r.seconds * 100) / 100 }));
 }
 
@@ -738,17 +743,26 @@ export function createSpeaker({ dir, embedder, now = () => Date.now() } = {}) {
       const w = Number(word);
       if (!Number.isInteger(w) || w < 0 || w >= ENROL_WORDS.length) return { ok: false, error: 'No such word' };
       if (restart || !liveWords()) wordSession = { started: now(), words: new Map() };
-      const sayings = splitSayings(samples);
-      const base = { ok: true, accepted: false, word: w, sayings: sayings.length, seconds: round2(sayings.reduce((a, x) => a + x.seconds, 0)), each: sayings.map((x) => x.seconds), likeYou: null, words: wordSession.words.size };
-      if (!sayings.length) return { ...base, problem: 'Nothing was heard. Check the microphone and try again.' };
-      if (sayings.some((x) => x.seconds > WORD_MAX_SECONDS)) return { ...base, problem: `Say just "${ENROL_WORDS[w]}", with a short pause between each time.` };
-      if (sayings.length < 2) return { ...base, problem: `Say it ${WORD_REPEATS} times, with a short pause between.` };
+      // However many times it was said, and however the pauses fell: every
+      // saying is used. A run too long for one word (two sayings run together)
+      // is cut into word-sized pieces. Nothing is judged against the phrases'
+      // voiceprint: short words score low against it, which is the reason for
+      // this separate print (the owner, 10 Nov).
+      const found = splitSayings(samples);
+      const pieces = [];
+      for (const x of found) {
+        if (x.seconds <= WORD_MAX_SECONDS) { if (x.seconds >= 0.2) pieces.push(x); continue; }
+        const n = Math.ceil(x.seconds / 0.9), len = Math.floor(x.samples.length / n);
+        for (let i = 0; i < n; i++) { const part = x.samples.subarray(i * len, (i + 1) * len); pieces.push({ samples: part, seconds: round2(part.length / SAMPLE_RATE) }); }
+      }
+      const base = { ok: true, accepted: false, word: w, sayings: pieces.length, seconds: round2(pieces.reduce((a, x) => a + x.seconds, 0)), each: pieces.map((x) => x.seconds), likeYou: null, words: wordSession.words.size };
+      if (!pieces.length) return { ...base, problem: 'Nothing was heard. Check the microphone and try again.' };
       const vs = [];
-      try { for (const x of sayings.slice(0, WORD_REPEATS + 1)) vs.push(normalise(await embedSpeech(x.samples))); } catch (e) { return { ok: false, error: `The voice check is not available: ${e.message}` }; }
-      const likeYou = Math.round(vs.reduce((a, v) => a + cosine(v, p.vec), 0) / vs.length * 1000) / 1000;
-      if (likeYou < WORD_ENROL_MIN) return { ...base, likeYou, problem: 'That did not sound like your enrolled voice (another voice, or a lot of noise?). Try it again.' };
-      wordSession.words.set(w, vs);
-      return { ...base, accepted: true, likeYou, words: wordSession.words.size };
+      try { for (const x of pieces.slice(0, 8)) vs.push(normalise(await embedSpeech(x.samples))); } catch (e) { return { ok: false, error: `The voice check is not available: ${e.message}` }; }
+      // Said again: added to what was learnt for this word (up to 12 clips).
+      const had = wordSession.words.get(w) || [];
+      wordSession.words.set(w, [...had, ...vs].slice(-12));
+      return { ...base, accepted: true, words: wordSession.words.size };
     },
 
     /** The short replies said become part of the profile (at least MIN_WORDS of them). */

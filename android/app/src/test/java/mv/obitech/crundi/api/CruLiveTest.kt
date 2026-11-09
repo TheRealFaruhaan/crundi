@@ -83,6 +83,38 @@ class CruLiveTest {
         assertFalse(off.on); assertEquals("Daddy", off.parentName); assertEquals("## About the kid", off.instructions)
     }
 
+    @Test fun pcLockReadLockedAndUnlockedFromThePhone() = runBlocking {
+        val t = FakeTransport()
+            .on("GET /api/lock", """{"ok":true,"on":false,"mode":"full","since":0,"by":"","pinSet":true}""")
+            .on("POST /api/lock/start", """{"ok":true,"on":true,"mode":"visible","since":1700000000000,"by":"phone","pinSet":true}""")
+            .on("POST /api/lock/end", """{"ok":true,"on":false,"mode":"visible","since":0,"by":"","pinSet":true}""")
+        val c = CrundiClient(t)
+        val now = c.kid.lock()!!
+        assertFalse(now.on); assertTrue(now.pinSet)
+        val on = c.kid.lockStart("visible")
+        assertTrue(on.on); assertEquals("visible", on.mode); assertEquals(1700000000000L, on.since)
+        val body = t.requests.last().json.toString()
+        assertTrue(body, body.contains("\"mode\":\"visible\"") && body.contains("\"by\":\"phone\""))
+        assertFalse(c.kid.lockEnd().on)
+        // The auto lock: read with the lock, saved whole, the lock back.
+        val t2 = FakeTransport()
+            .on("GET /api/lock", """{"ok":true,"on":false,"mode":"full","since":0,"by":"","pinSet":true,"auto":{"on":false,"minutes":10,"mode":"full"},"autoMinutes":[1,2,5,10,15,30,60]}""")
+            .on("POST /api/lock/auto", """{"ok":true,"on":false,"mode":"full","since":0,"by":"","pinSet":true,"auto":{"on":true,"minutes":5,"mode":"visible"},"autoMinutes":[1,5,60]}""")
+        val c2 = CrundiClient(t2)
+        assertEquals(PcAutoLock(on = false, minutes = 10, mode = "full"), c2.kid.lock()!!.auto)
+        val saved = c2.kid.lockAuto(PcAutoLock(on = true, minutes = 5, mode = "visible"))
+        assertEquals(PcAutoLock(true, 5, "visible"), saved.auto); assertEquals(listOf(1, 5, 60), saved.autoMinutes)
+        val sent = t2.requests.last().json.toString()
+        assertTrue(sent, sent.contains("\"on\":true") && sent.contains("\"minutes\":5") && sent.contains("\"mode\":\"visible\""))
+        assertNull(now.auto)
+        assertEquals("1 hour", mv.obitech.crundi.voice.autoMinutesLabel(60)); assertEquals("15 min", mv.obitech.crundi.voice.autoMinutesLabel(15))
+        // An older server: no lock.
+        assertNull(CrundiClient(FakeTransport()).kid.lock())
+        // The SSE event carries the same object.
+        assertEquals("full", PcLock.of(kotlinx.serialization.json.Json.parseToJsonElement("""{"on":true,"mode":"full","since":5,"by":"tray","pinSet":true}"""))!!.mode)
+        assertNull(PcLock.of(kotlinx.serialization.json.Json.parseToJsonElement("""{"type":"other"}""")))
+    }
+
     @Test fun progressPerAreaWithItsSeriesAndPlayTime() = runBlocking {
         val t = FakeTransport().on("GET /api/voice/kid/progress", """{"ok":true,"range":"week","areas":[
             {"id":"language","label":"Language and literacy","about":"Letters.","level":2.5,"trend":"up","series":[{"date":"2026-11-01","level":2,"mastery":0.3,"plays":4},{"date":"2026-11-02","level":2.5,"mastery":0.5,"plays":6}],"learning":["Letter recognition: D-F"],"mastered":["Letter recognition: A-C"],"skills":[{"id":"letters","label":"Letter recognition","level":3,"mastery":0.5,"last":null}]},

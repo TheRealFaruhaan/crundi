@@ -112,6 +112,7 @@ import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, t
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
 import { createOwnerAsks, createDailyLog, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
 import { createJobStore, jobToolDefs } from './voice/jobs.js';
+import { createAttachmentStore, attachmentToolDefs, attachmentLine, passOn as passOnAttachments, MAX_FILE as CRU_ATTACH_MAX } from './voice/attachments.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
@@ -2987,6 +2988,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       wakeEngine.sample(sample);
     } catch (err) { console.warn('[voice] wake-up check failed:', err.message); }
   }, 30 * 1000).unref();
+  // Files the owner gives Cru (voice/attachments.js, capability 'voice-attach').
+  const cruFiles = createAttachmentStore({ dir: join(config.dataDir, 'voice-memory', 'attachments') });
   // ─── Cru on its own (voice/autonomy.js, jobs.js) ───
   // The day's log (/memories/log/YYYY-MM-DD.md): what Cru did by itself.
   const cruLog = createDailyLog({ read: (p) => voiceMemory.notebook.read(p), save: (p, t) => voiceMemory.notebook.save(p, t), list: () => voiceMemory.notebook.list() });
@@ -3115,6 +3118,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }),
     serviceOp: (key, op) => (op === 'start' ? startService(key) : op === 'stop' ? stopService(key) : restartService(key)),
     routineText: cruRoutineText,
+    // Attachments passed on to a chat: copied into its project's attachments folder.
+    passOn: (ids, alias) => { const p = allProjects().find(x => x.alias === String(alias || '').toLowerCase()); if (!p || !p.path) throw new Error(`No project folder for ${alias}`); return passOnAttachments(cruFiles, ids, p.path, ensureAttachmentsDir); },
     shareRoutine: cruShareRoutine,
     awayOff: cruAwayOff,
     askOwner: (q) => cruAsks.ask(q),
@@ -3247,6 +3252,54 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     kidBroadcast();
     return r;
   }
+  // ─── The PC lock (capability 'pc-lock'): the PC app's screen locked behind
+  // the owner's PIN (the same PIN as kid mode), "visible" (the app shows
+  // through a see-through overlay) or "full" (an opaque lock screen). Not a
+  // lockdown of Cru: "Hey Cru" works as always, and the owner's voice check
+  // decides what it may change. Kept across a restart, so a restarted app locks again.
+  const pcLockFile = join(config.dataDir, 'pc-lock.json');
+  let pcLock = { on: false, mode: 'full', since: 0, by: '' };
+  // Auto lock (optional): the PC app locks itself after this many idle minutes, in this mode.
+  const AUTO_MINUTES = [1, 2, 5, 10, 15, 30, 60];
+  let pcAuto = { on: false, minutes: 10, mode: 'full' };
+  try {
+    const d = JSON.parse(readFileSync(pcLockFile, 'utf-8'));
+    if (d && d.on) pcLock = { on: true, mode: d.mode === 'visible' ? 'visible' : 'full', since: d.since || Date.now(), by: String(d.by || '') };
+    if (d && d.auto) pcAuto = { on: d.auto.on === true, minutes: AUTO_MINUTES.includes(d.auto.minutes) ? d.auto.minutes : 10, mode: d.auto.mode === 'visible' ? 'visible' : 'full' };
+  } catch { /* unlocked */ }
+  const pcLockPublic = () => ({ ...pcLock, pinSet: !!voiceSettings.kidPinHash(), auto: { ...pcAuto }, autoMinutes: AUTO_MINUTES });
+  function pcLockBroadcast() {
+    try { writeFileSync(pcLockFile, JSON.stringify({ ...pcLock, auto: pcAuto }), { mode: 0o600 }); } catch { /* best effort */ }
+    const st = pcLockPublic();
+    broadcastSSE('pc-lock', st);
+    const m = JSON.stringify({ type: 'pc-lock', lock: st });
+    for (const ws of desktopSockets) { try { if (ws.readyState === 1) ws.send(m); } catch { /* gone */ } }
+  }
+  function pcLockStart(mode = 'full', by = 'settings') {
+    if (!voiceSettings.kidPinHash()) return { ok: false, error: 'Set your PIN first (Settings, Voice assistant, Your PIN): it is the only way to unlock.' };
+    if (kidOn()) return { ok: false, error: 'Kid mode is on: the PC is already locked.' };
+    pcLock = { on: true, mode: mode === 'visible' ? 'visible' : 'full', since: Date.now(), by: String(by || '').slice(0, 20) };
+    console.log(`[lock] the PC is locked (${pcLock.mode}, ${pcLock.by || 'owner'})`);
+    pcLockBroadcast();
+    return { ok: true, ...pcLockPublic() };
+  }
+  function pcLockStop(how = 'PIN') {
+    if (!pcLock.on) return { ok: true, ...pcLockPublic() };
+    pcLock = { on: false, mode: pcLock.mode, since: 0, by: '' };
+    console.log(`[lock] the PC is unlocked (${how})`);
+    pcLockBroadcast();
+    return { ok: true, ...pcLockPublic() };
+  }
+  const pcLockTool = {
+    name: 'lock_computer',
+    description: 'Lock the PC app\'s screen when the owner asks ("lock the PC", "lock my screen"): mode "full" (an opaque lock screen, the default) or "visible" (the screen stays in view behind a see-through "locked" overlay). Only the owner\'s PIN unlocks it, at the PC or from his phone; you can never unlock it. While it is locked you work as usual ("Hey Cru" still works; the voice check decides what you may change).',
+    input_schema: { type: 'object', additionalProperties: false, properties: { mode: { type: 'string', enum: ['full', 'visible'] } } },
+    run: ({ mode } = {}) => {
+      if (pcLock.on) return { ok: true, already: true, mode: pcLock.mode };
+      const r = pcLockStart(mode === 'visible' ? 'visible' : 'full', 'cru');
+      return r.ok ? { ok: true, locked: true, mode: r.mode } : r;
+    },
+  };
   /** Is it the owner asking (typed, or his recognised voice when one is enrolled)? Set per turn in beforeTurn. */
   let voiceTurnOwner = false;
   const kidStartTool = makeStartKidTool({
@@ -3323,7 +3376,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   }
   const voiceBrainOpts = {
     // Each step is counted for the routine nudge (cruStepDone).
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), kidStartTool, kidProgressTool]
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), kidStartTool, kidProgressTool, pcLockTool]
       .map((t) => ({ ...t, run: async (i) => { let out; try { out = await t.run(i); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
     beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
     turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
@@ -5196,6 +5249,35 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       kidPins.reset();
       return json(res, r.ok ? { ok: true, ...voiceSettings.kidState() } : r, r.ok ? 200 : 400);
     }
+    // ─── The PC lock (capability 'pc-lock') ───
+    if (path === '/api/lock' && req.method === 'GET') return json(res, { ok: true, ...pcLockPublic() });
+    if (path === '/api/lock/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      const r = pcLockStart(body.mode, ['settings', 'tray', 'shortcut', 'phone', 'auto'].includes(body.by) ? body.by : 'settings');
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    // At the PC: the PIN (the same tries and lockout as kid mode).
+    if (path === '/api/lock/unlock' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (!pcLock.on) return json(res, { ok: true, ...pcLockPublic() });
+      const r = kidPins.attempt(String(body.pin ?? ''), voiceSettings.kidPinHash());
+      if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
+      return json(res, pcLockStop('PIN'));
+    }
+    // Auto lock: { on, minutes (AUTO_MINUTES), mode }.
+    if (path === '/api/lock/auto' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      if (body.on === true && !voiceSettings.kidPinHash()) return json(res, { ok: false, error: 'Set your PIN first: it is the only way to unlock.' }, 400);
+      const minutes = Number(body.minutes);
+      pcAuto = { on: body.on === undefined ? pcAuto.on : body.on === true, minutes: AUTO_MINUTES.includes(minutes) ? minutes : pcAuto.minutes, mode: body.mode === undefined ? pcAuto.mode : (body.mode === 'visible' ? 'visible' : 'full') };
+      pcLockBroadcast();
+      return json(res, { ok: true, ...pcLockPublic() });
+    }
+    // From the owner's other signed-in device (the phone): no PIN, as for kid mode.
+    if (path === '/api/lock/end' && req.method === 'POST') return json(res, pcLockStop('remotely'));
     if (path === '/api/voice/kid/start' && req.method === 'POST') {
       let body = {};
       try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
@@ -5326,7 +5408,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
         return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
       }
-      const said = fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
+      // Attached files and dragged items (capability 'voice-attach'): a line each, before what was said.
+      const attached = (Array.isArray(body.attachments) ? body.attachments : []).slice(0, 10).map((x) => cruFiles.get(String((x && x.id) || x || ''))).filter(Boolean);
+      const refs = (Array.isArray(body.refs) ? body.refs : []).slice(0, 20).map((x) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 400)).filter(Boolean);
+      const lead = [...attached.map(attachmentLine), ...refs.map((x) => `[The owner dropped in: ${x}]`)].join('\n');
+      const spoken = fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
+      const said = lead ? `${lead}\n${spoken || '(nothing said: look at what was attached and respond to it)'}` : spoken;
       // Whose voice (capability 'voice-speaker'): typed turns say typed:true;
       // a spoken one finds the verdict its utterance got on /api/voice/listen.
       const typed = body.typed === true;
@@ -5336,6 +5423,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // A file for Cru (capability 'voice-attach'): { name, type, data (base64), preview? (base64 JPEG of an image) } -> { ok, id, name, kind, size }.
+    if (path === '/api/voice/attach' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse((await readBodyBuffer(req, Math.ceil(CRU_ATTACH_MAX * 1.4) + 6 * 1024 * 1024)).toString('utf8')); } catch { return json(res, { ok: false, error: `Too large (files up to ${Math.round(CRU_ATTACH_MAX / 1048576)} MB)` }, 413); }
+      try {
+        const m = cruFiles.add({ name: body.name, mime: body.type, data: Buffer.from(String(body.data || ''), 'base64'), preview: body.preview ? Buffer.from(String(body.preview), 'base64') : null, from: String(body.from || '') });
+        return json(res, { ok: true, id: m.id, name: m.name, kind: m.kind, size: m.size });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    }
+    if (path === '/api/voice/attach' && req.method === 'GET') {
+      const id = String(url.searchParams.get('id') || '');
+      const m = cruFiles.get(id);
+      if (!m) return json(res, { ok: false, error: 'Not found' }, 404);
+      const f = url.searchParams.get('preview') === '1' && m.previewFile ? m.previewFile : m.file;
+      res.writeHead(200, { 'Content-Type': url.searchParams.get('preview') === '1' && m.previewFile ? 'image/jpeg' : (m.mime || 'application/octet-stream'), 'Content-Disposition': `inline; filename="${m.name.replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=86400' });
+      return createReadStream(f).pipe(res);
     }
     // The owner's voice (capability 'voice-speaker', voice/speaker.js): its
     // status, enrolment one phrase at a time, and forgetting it.

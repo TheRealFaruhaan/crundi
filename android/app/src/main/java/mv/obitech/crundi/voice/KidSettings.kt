@@ -48,6 +48,8 @@ import mv.obitech.crundi.api.KidGamesSettings
 import mv.obitech.crundi.api.KidPoint
 import mv.obitech.crundi.api.KidProgress
 import mv.obitech.crundi.api.KidStatus
+import mv.obitech.crundi.api.PcAutoLock
+import mv.obitech.crundi.api.PcLock
 import mv.obitech.crundi.api.PlayDay
 import mv.obitech.crundi.api.VoiceApi
 import mv.obitech.crundi.api.VoiceSettings
@@ -64,12 +66,16 @@ import mv.obitech.crundi.ui.theme.Dimens
 
 /**
  * Settings > Voice assistant > Kid mode (capability "voice-kid"), as the
- * web's #vs-kid: the PIN, starting it (and, while it is on, pausing, adding
+ * web's #vs-kid: starting it (and, while it is on, pausing, adding
  * time, ending it), how kid Cru talks, the overnight games workshop, what the
  * child is learning over time, the games, what kid Cru remembers, what the
  * child calls the parent, and the parent's instructions. Nothing here is ever
  * shown on the kid screen. The server refuses changes while kid mode is on,
  * so they are greyed out then.
+ *
+ * The PIN itself (one PIN for kid mode and the PC lock) and the PC lock
+ * (capability "pc-lock") are their own section, as the web's #vs-pin:
+ * [PinLockPart].
  */
 data class KidUi(
     /** Null while loading; [error] says why it isn't there. */
@@ -89,6 +95,8 @@ data class KidUi(
     val busy: Set<String> = emptySet(),
     /** Tapped once, waiting for the second tap: "reset", "forget". */
     val confirm: String = "",
+    /** The PC lock (capability "pc-lock"); null: not known, or a server without it. */
+    val lock: PcLock? = null,
 )
 
 class KidEvents(
@@ -112,7 +120,23 @@ class KidEvents(
     val onFromText: (String) -> Unit = {},
     val onToText: (String) -> Unit = {},
     val onSaveTimes: () -> Unit = {},
+    /** Lock the PC: visible or full. */
+    val onLock: (String) -> Unit = {},
+    val onUnlock: () -> Unit = {},
+    /** The auto lock changed (switch, minutes or mode): saved at once. */
+    val onAutoLock: (PcAutoLock) -> Unit = {},
 )
+
+/** An auto lock time as the web labels it: "5 min", 60 "1 hour". */
+fun autoMinutesLabel(m: Int): String = if (m >= 60 && m % 60 == 0) "${m / 60} hour" + (if (m == 60) "" else "s") else "$m min"
+
+/** The PIN section's line: no PIN yet, PC locked, or PIN set. */
+fun pinSummary(k: KidUi): String = when {
+    k.status == null -> ""
+    k.lock?.on == true -> "PC locked"
+    !k.status.pinSet -> "No PIN yet"
+    else -> "PIN set"
+}
 
 /** The fold's line: On, Off, or no PIN yet. */
 fun kidSummary(k: KidStatus?): String = when {
@@ -134,6 +158,9 @@ class KidSettingsModel(
     var ui by mutableStateOf(KidUi())
         private set
 
+    /** The server has the PC lock (capability "pc-lock"). */
+    var lockSupported = false
+
     private fun busy(key: String, on: Boolean) { ui = ui.copy(busy = if (on) ui.busy + key else ui.busy - key) }
 
     fun load() {
@@ -141,6 +168,7 @@ class KidSettingsModel(
             val st = try { kid.status() } catch (e: Exception) { ui = ui.copy(error = e.message ?: "Could not load kid mode"); return@launch }
             if (st == null) { ui = ui.copy(error = "Not supported by this server: update it for kid mode."); return@launch }
             ui = ui.copy(status = st, error = "")
+            loadLock()
             val p = async { runCatching { kid.progress(ui.range) }.getOrNull() }
             val g = async { runCatching { kid.games() }.getOrNull() }
             val f = async { runCatching { kid.friend() }.getOrNull() }
@@ -156,6 +184,14 @@ class KidSettingsModel(
         if (next != null) ui = ui.copy(status = next.copy(instructions = next.instructions.ifEmpty { was?.instructions.orEmpty() }, parentName = next.parentName.ifEmpty { was?.parentName.orEmpty() }))
         if (next == null || was?.on != next.on) load()
     }
+
+    fun loadLock() {
+        if (!lockSupported) { ui = ui.copy(lock = null); return }
+        scope.launch { runCatching { kid.lock() }.getOrNull()?.let { ui = ui.copy(lock = it) } }
+    }
+
+    /** The PC lock changed on the server ('pc-lock'). */
+    fun lockChanged(next: PcLock?) { if (next == null) loadLock() else ui = ui.copy(lock = next) }
 
     fun loadGames() { scope.launch { runCatching { kid.games() }.getOrNull()?.let { ui = ui.copy(games = it) } } }
 
@@ -174,7 +210,7 @@ class KidSettingsModel(
             if (!KidApi.PIN.matches(pin)) say("The PIN is 4 to 8 digits", true)
             else scope.launch {
                 busy("pin", true)
-                try { val st = kid.setPin(pin); ui = ui.copy(pinText = "", status = ui.status?.copy(pinSet = true) ?: st); say("PIN saved", false) }
+                try { val st = kid.setPin(pin); ui = ui.copy(pinText = "", status = ui.status?.copy(pinSet = true) ?: st, lock = ui.lock?.copy(pinSet = true)); say("PIN saved", false) }
                 catch (e: Exception) { say(e.message ?: "Not saved", true) }
                 busy("pin", false)
             }
@@ -246,6 +282,30 @@ class KidSettingsModel(
             if (!TIME.matches(from) || !TIME.matches(to)) say("A time is HH:MM, e.g. 01:00", true)
             else saveKid("Saved") { voice.saveKid(kidGames = g.copy(from = from, to = to)).also { ui = ui.copy(fromText = null, toText = null) } }
         },
+        onLock = { mode ->
+            scope.launch {
+                busy("lock", true)
+                try { ui = ui.copy(lock = kid.lockStart(mode)); say("The PC is locked", false) } catch (e: Exception) { say(e.message ?: "Not locked", true) }
+                busy("lock", false)
+            }
+        },
+        onAutoLock = { next ->
+            val was = ui.lock
+            ui = ui.copy(lock = was?.copy(auto = next))
+            scope.launch {
+                busy("auto", true)
+                try { val l = kid.lockAuto(next); ui = ui.copy(lock = l); say(if (l.auto?.on ?: next.on) "Auto lock on" else "Auto lock off", false) }
+                catch (e: Exception) { ui = ui.copy(lock = was); say(e.message ?: "Not saved", true) }
+                busy("auto", false)
+            }
+        },
+        onUnlock = {
+            scope.launch {
+                busy("lock", true)
+                try { ui = ui.copy(lock = kid.lockEnd()); say("The PC is unlocked", false) } catch (e: Exception) { say(e.message ?: "Not unlocked", true) }
+                busy("lock", false)
+            }
+        },
     )
 
     companion object { private val TIME = Regex("^([01]\\d|2[0-3]):[0-5]\\d$") }
@@ -274,17 +334,8 @@ fun KidModePart(k: KidUi, s: VoiceSettings, ev: KidEvents) {
         KidButtons(st, confirmEnd, onConfirm = { confirmEnd = it }, onKid = ev.onKid)
     }
 
-    // ─── PIN ───
-    Sub("PIN")
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        CrundiTextField(
-            k.pinText, ev.onPinText, Modifier.weight(1f), placeholder = if (st.pinSet) "New PIN (4-8 digits)" else "4-8 digits", icon = "lock",
-            password = true, enabled = !on, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-        )
-        CrundiButton(if (st.pinSet) "Change PIN" else "Set PIN", ev.onSetPin, enabled = !on && "pin" !in k.busy && k.pinText.isNotEmpty())
-    }
-    if (!on) CrundiButton("Start kid mode", ev.onStart, kind = ButtonKind.Primary, icon = "play", enabled = st.pinSet && "start" !in k.busy, modifier = Modifier.padding(top = 8.dp))
-    Hint(if (st.pinSet) "Keep it from your child. Five wrong tries lock it for a minute, then longer. Kid mode runs on the PC; Cru can also start it when you ask (typed, or in your recognised voice)." else "Set a PIN first: it is the only way out of kid mode.")
+    if (!on) CrundiButton("Start kid mode", ev.onStart, kind = ButtonKind.Primary, icon = "play", enabled = st.pinSet && "start" !in k.busy, modifier = Modifier.padding(top = 10.dp))
+    Hint(if (st.pinSet) "Kid mode ends only with your PIN (set under Your PIN and the PC lock). Keep it from your child. Cru can also start it when you ask (typed, or in your recognised voice)." else "Set your PIN first (under Your PIN and the PC lock): it is the only way out of kid mode.")
 
     // ─── How kid Cru talks ───
     Sub("How kid Cru talks")
@@ -474,4 +525,60 @@ private fun GameRow(g: KidGame, busy: Boolean, locked: Boolean, ev: KidEvents) {
         if (g.hasPrev) CrundiButton("Roll back", { ev.onGame(g.id, "rollback") }, kind = ButtonKind.Ghost, icon = "rotate-ccw", enabled = !busy && !locked)
         Box(Modifier.fillMaxWidth().padding(top = 6.dp).size(Dimens.Hairline).background(CrundiColors.Border))
     }
+}
+
+/**
+ * Settings > Voice assistant > Your PIN and the PC lock, as the web's #vs-pin:
+ * one PIN for kid mode and the PC lock, and (capability "pc-lock", [KidUi.lock]
+ * known) locking the PC app or unlocking it from here.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun PinLockPart(k: KidUi, ev: KidEvents) {
+    @Composable fun Hint(t: String) = Text(t, style = CrundiType.Small, modifier = Modifier.padding(top = 4.dp))
+    @Composable fun Sub(t: String) = Text(t, style = CrundiType.Heading, modifier = Modifier.padding(top = 16.dp, bottom = 6.dp))
+    if (k.error.isNotEmpty()) { Text(k.error, style = CrundiType.Small.copy(color = CrundiColors.Yellow)); return }
+    val st = k.status ?: run { Text("Loading…", style = CrundiType.Small); return }
+    val kidOn = st.on
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        CrundiTextField(
+            k.pinText, ev.onPinText, Modifier.weight(1f), placeholder = if (st.pinSet) "New PIN (4-8 digits)" else "4-8 digits", icon = "lock",
+            password = true, enabled = !kidOn, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+        )
+        CrundiButton(if (st.pinSet) "Change PIN" else "Set PIN", ev.onSetPin, enabled = !kidOn && "pin" !in k.busy && k.pinText.isNotEmpty())
+    }
+    Hint("One PIN for kid mode and the PC lock. Five wrong tries lock it for a minute, then longer.")
+
+    val lock = k.lock ?: return
+    Sub("Lock the PC")
+    val busy = "lock" in k.busy
+    if (lock.on) {
+        val at = if (lock.since > 0) " since " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(lock.since)) else ""
+        Text(
+            "The PC is locked (" + (if (lock.mode == "visible") "visible" else "full") + ")" + at + ".",
+            style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.padding(bottom = 8.dp),
+        )
+        CrundiButton("Unlock the PC", ev.onUnlock, icon = "key", enabled = !busy)
+    } else {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiButton("Lock, visible", { ev.onLock("visible") }, icon = "lock", enabled = st.pinSet && !busy)
+            CrundiButton("Lock, full", { ev.onLock("full") }, icon = "lock", enabled = st.pinSet && !busy)
+        }
+    }
+    lock.auto?.let { au ->
+        val can = st.pinSet && "auto" !in k.busy
+        mv.obitech.crundi.ui.components.CrundiSwitchRow(
+            "Lock by itself after", au.on, { ev.onAutoLock(au.copy(on = it)) },
+            Modifier.padding(top = 10.dp), enabled = can,
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for (m in lock.autoMinutes) CrundiChip(autoMinutesLabel(m), au.minutes == m, { if (can && au.minutes != m) ev.onAutoLock(au.copy(minutes = m)) })
+        }
+        Text("idle, as", style = CrundiType.Small.copy(color = CrundiColors.TextPrimary), modifier = Modifier.padding(top = 8.dp, bottom = 6.dp))
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            for ((id, label) in listOf("full" to "full lock", "visible" to "visible lock")) CrundiChip(label, au.mode == id, { if (can && au.mode != id) ev.onAutoLock(au.copy(mode = id)) })
+        }
+        Hint("Idle: no keyboard or mouse on the PC. It also locks when the computer itself locks.")
+    }
+    Hint("On the PC app: Ctrl+Shift+L locks it with the screen still visible behind a see-through overlay; Super+Shift+L (the Windows key) locks it with an opaque lock screen. Only your PIN unlocks it there; from here you can unlock it straight away. While it is locked, Hey Cru still works as usual: your voice recognition decides what Cru may change.")
 }

@@ -190,6 +190,7 @@ object CruSection {
     const val MEMORY = "memory"
     const val STATS = "stats"
     const val KID = "kid"
+    const val PIN = "pin"
 }
 
 @Composable
@@ -213,6 +214,7 @@ fun CruSettingsRoute() {
     val hasSpeaker = VoiceApi.SPEAKER in shell.capabilities
     val hasShortWords = VoiceApi.SHORT_WORDS in shell.capabilities
     val hasKid = mv.obitech.crundi.api.KidApi.KID in shell.capabilities
+    val hasLock = mv.obitech.crundi.api.KidApi.LOCK in shell.capabilities
     // Enrolling: the phone's microphone at 16 kHz, as the voice screen hears it.
     val rec = remember { arrayOfNulls<MicStream>(1) }
     val recBuf = remember { java.io.ByteArrayOutputStream() }
@@ -316,6 +318,7 @@ fun CruSettingsRoute() {
     // Kid mode (capability "voice-kid"): its own state and calls.
     val kidModel = remember(v) { KidSettingsModel(scope, app.api.kid, v, onSettings = { s -> ui = withServer(s) }, say = { t, bad -> say(t, bad) }) }
     val kidEvents = remember(kidModel) { kidModel.events { ui.server } }
+    kidModel.lockSupported = hasLock
     fun save(done: String, call: suspend () -> VoiceSettings) {
         ui = ui.copy(busy = true)
         scope.launch {
@@ -350,6 +353,12 @@ fun CruSettingsRoute() {
         app.api.events.changes("voice-kid", "voice-kid-games").collect { e ->
             if (e.name == "voice-kid") kidModel.changed(mv.obitech.crundi.api.KidStatus.of(e.data)) else kidModel.loadGames()
         }
+    }
+    // The PC locked or unlocked anywhere ('pc-lock'): at the PC, by Cru, or from here.
+    LaunchedEffect(hasKid, hasLock) {
+        if (inspecting || !hasKid || !hasLock) return@LaunchedEffect
+        kidModel.loadLock()
+        app.api.events.changes("pc-lock").collect { e -> kidModel.lockChanged(mv.obitech.crundi.api.PcLock.of(e.data)) }
     }
 
     val shown = (ui.speaker?.let { sp -> if (sp.recording) ui.copy(speaker = sp.copy(level = recLevel)) else ui } ?: ui).copy(kid = if (hasKid) kidModel.ui else null)
@@ -667,6 +676,11 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
     // ─── Cru on its own (capability "voice-away"; an older server has no away: left out) ───
     s.away?.takeIf { s.awayClasses.isNotEmpty() }?.let { a ->
         Fold(CruSection.AWAY, "Cru on its own", if (a.on) "On" else "Off", open, warn = a.on) { AwayPart(a, s.awayClasses, ui.busy, ev) }
+    }
+
+    // ─── Your PIN (kid mode and the PC lock) and the PC lock (capability "pc-lock") ───
+    ui.kid?.let { k ->
+        Fold(CruSection.PIN, "Your PIN and the PC lock", pinSummary(k), open, warn = k.lock?.on == true) { PinLockPart(k, ev.kid) }
     }
 
     // ─── Kid mode (capability "voice-kid") ───

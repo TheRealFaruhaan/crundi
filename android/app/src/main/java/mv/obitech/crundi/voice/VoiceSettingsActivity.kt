@@ -233,8 +233,9 @@ class VoiceSettingsActivity : ComponentActivity() {
         onEnabled = { on ->
             VoicePrefs.setEnabled(this, on)
             // The "Cru" launcher entry comes and goes with it.
-            packageManager.setComponentEnabledSetting(
-                ComponentName(this, "$packageName.voice.CrundiVoice"),
+            // ...and so does "Cru" in the share sheet.
+            for (alias in listOf("CrundiVoice", "ShareToCru")) packageManager.setComponentEnabledSetting(
+                ComponentName(this, "$packageName.voice.$alias"),
                 if (on) PackageManager.COMPONENT_ENABLED_STATE_DEFAULT else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP,
             )

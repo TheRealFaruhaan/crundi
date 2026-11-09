@@ -266,6 +266,15 @@
     // The bottom row as on the phone: the voice button in the middle, the keyboard on its left;
     // the text box (with its send button) only in keyboard mode, where it takes the voice button's place.
     '.cv-bot{position:relative}.cv-bot .cv-kbb{margin-left:0;flex:none;position:absolute;left:24px;top:50%;transform:translateY(-50%)}.cv-ov.kb .cv-bot .cv-kbb{position:static;transform:none}' +
+    '.cv-bot .cv-attb{position:absolute;left:72px;top:50%;transform:translateY(-50%);margin:0}.cv-ov.kb .cv-bot .cv-attb{position:static;transform:none}.cv-ov.kid .cv-attb,.cv-ov.kid .cv-att{display:none!important}' +
+    '.cv-att{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 0;justify-content:center}.cv-att[hidden]{display:none}.cv-chip{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:4px 6px 4px 8px;border-radius:12px;background:#1a1a28;border:1px solid ' + C.border + ';color:' + C.text + ';font-size:12px}.cv-chip img{width:28px;height:28px;object-fit:cover;border-radius:6px}.cv-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cv-chip.up{opacity:.6}.cv-chip.bad{border-color:#f87171}.cv-chip button{border:0;background:none;color:' + C.muted + ';cursor:pointer;padding:0 2px;font-size:14px;line-height:1}' +
+    '.cv-ov.drop{outline:3px dashed ' + C.accent + ';outline-offset:-8px}.cv-m .att{display:inline-flex;align-items:center;gap:6px;margin:2px 0;padding:3px 8px;border-radius:10px;background:rgba(255,255,255,.08);font-size:12px}' +
+    // Kid mode: a big keyboard button (left) and a mute button (right); typing in a big friendly box.
+    '.cv-mute{display:none}.cv-ov.kid .cv-mute{display:flex;position:absolute;right:24px;top:50%;transform:translateY(-50%)}.cv-mute .sl{display:none}.cv-ov.muted .cv-mute .sl{display:inline}.cv-ov.muted .cv-mute{background:#fee2e2!important;color:#b91c1c!important}' +
+    '.cv-ov.kid .cv-kbb,.cv-ov.kid .cv-mute{width:64px;height:64px;border-radius:50%;background:#fff;color:#4f46e5;box-shadow:0 5px 0 rgba(49,46,129,.18)}.cv-ov.kid .cv-kbb svg{width:28px;height:28px}.cv-ov.kid .cv-kbb.on{background:#4f46e5;color:#fff}' +
+    '.cv-ov.kid.kb .cv-type{font:700 22px "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;padding:14px 20px;border-radius:28px;background:#fff;color:#312e81;border:3px solid #a5b4fc}.cv-ov.kid.kb .cv-send{width:64px;height:64px;border-radius:50%}' +
+    '.cv-ov.locked .cv-chatb,.cv-ov.locked .cv-attb,.cv-ov.locked .cv-chat,.cv-ov.locked .cv-att{display:none!important}' +
+    '.cv-ov.muted .cv-mic{opacity:.35;filter:grayscale(1)}.cv-ov.kid.kb .cv-mute{display:none!important}' +
     '.cv-bot .cv-type,.cv-bot .cv-send{display:none}.cv-ov.kb .cv-bot .cv-type{display:block}.cv-ov.kb .cv-bot .cv-send{display:flex;margin-left:0;background:' + C.accent + ';color:#fff}' +
     '.cv-ov.kb .cv-mic,.cv-ov.kb .cv-ptt{display:none!important}' +
     '.cv-confirm{width:100%;max-width:680px;box-sizing:border-box;margin:8px auto 0;padding:10px 14px;border-radius:12px;background:' + C.card + ';border:1px solid ' + C.border + ';font-size:13px;color:' + C.text + ';display:flex;flex-wrap:wrap;gap:8px;align-items:center}.cv-confirm[hidden]{display:none}.cv-confirm span{flex:1 1 200px}.cv-confirm .yes{border-color:' + C.accent + '}' +
@@ -304,7 +313,7 @@
     '.cv-b-i{max-width:100%;border-radius:10px}.cv-b-ch{display:flex;flex-wrap:wrap;gap:6px}.cv-b-ch span{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid}' +
     // Kid mode: the whole window, bright and friendly, a big cursor, nothing to leave by.
     '.cv-ov.kid{inset:0!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;max-height:none!important;border:0!important;border-radius:0!important;z-index:2147483000;background:radial-gradient(circle at 50% 30%,#1e1b4b,#0a0a0f 70%)}' +
-    '.cv-ov.kid .cv-cmp,.cv-ov.kid .cv-chatb,.cv-ov.kid .cv-close,.cv-ov.kid .cv-kbb,.cv-ov.kid .cv-type,.cv-ov.kid .cv-send,.cv-ov.kid .cv-confirm,.cv-ov.kid .cv-leg,.cv-ov.kid .cv-ptt,.cv-ov.kid .cv-admin,.cv-ov.kid .cv-scr-x{display:none!important}' +
+    '.cv-ov.kid .cv-cmp,.cv-ov.kid .cv-chatb,.cv-ov.kid .cv-close,.cv-ov.kid .cv-confirm,.cv-ov.kid .cv-leg,.cv-ov.kid .cv-ptt,.cv-ov.kid .cv-admin,.cv-ov.kid .cv-scr-x{display:none!important}' +
     '.cv-ov.kid .cv-top,.cv-ov.kid .cv-scr,.cv-ov.kid .cv-field{max-width:none}.cv-ov.kid .cv-reply{font-size:24px;line-height:32px}.cv-ov.kid .cv-heard{font-size:18px}.cv-ov.kid .cv-mic{width:150px;height:150px}.cv-ov.kid .cv-mic svg{left:63px;top:63px}' +
     '.cv-ov.kid.has-scr .cv-scr{flex:4}.cv-ov.kid.has-scr .cv-words{flex:none;max-height:24vh}.cv-ov.kid .cv-scr-b iframe{height:100%}' +
     // Kid mode's own look (9 Nov, the owner: "doesn't look good, doesn't blend"): one bright, playful
@@ -366,8 +375,9 @@
       '<div class="cv-chat" hidden><div class="cv-more" hidden>Earlier messages</div><div class="cv-msgs"></div></div>' +
       '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden><span>Say it, or tap:</span><button class="cv-yn" data-yn="Yes, go ahead.">Yes</button><button class="cv-yn" data-yn="No, don\'t.">No</button></div><div class="cv-note" hidden></div></div>' +
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div><button class="cv-fs">Full screen</button>' +
-      '<div class="cv-bot"><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Type to Cru…" aria-label="Type to Cru"><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
-      '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div></div>';
+      '<div class="cv-att" hidden></div><input class="cv-file" type="file" multiple hidden>' +
+      '<div class="cv-bot"><button class="cv-x cv-attb" title="Attach a file, photo or video (or drop it here)" aria-label="Attach"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Type to Cru…" aria-label="Type to Cru"><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
+      '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div><button class="cv-x cv-mute" title="Mute the microphone" aria-label="Mute the microphone"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/><path class="sl" d="m2 2 20 20"/></svg></button></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
     // Under the button that opened it (a wide screen).
@@ -409,8 +419,28 @@
     q('.cv-chatb').onclick = function (e) { e.stopPropagation(); chatView(!(S && S.chat)); };
     // The owner scrolling Cru's words himself: they stop following the speech until the next reply.
     ['wheel', 'touchstart', 'mousedown'].forEach(function (ev) { q('.cv-words').addEventListener(ev, function () { if (S) S.ownScroll = true; }, { passive: true }); });
-    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (v && S) { inp.value = ''; utter(v, true); inp.focus(); } };
-    q('.cv-kbb').onclick = function (e) { e.stopPropagation(); keyboard(!(S && S.kb), true); };
+    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (S && (v || attReady())) { inp.value = ''; if (v) utter(v, true); else ask('', false, true); inp.focus(); } };
+    // Files for Cru (capability 'voice-attach'): the paperclip, a drop anywhere on Cru, a pasted picture.
+    q('.cv-attb').onclick = function (e) { e.stopPropagation(); q('.cv-file').click(); };
+    q('.cv-file').onchange = function () { var f = q('.cv-file'); attachFiles(f.files); f.value = ''; };
+    ov.addEventListener('dragover', function (e) { if (!S || S.kid) return; e.preventDefault(); e.stopPropagation(); ov.classList.add('drop'); });
+    ov.addEventListener('dragleave', function (e) { if (e.target === ov) ov.classList.remove('drop'); });
+    ov.addEventListener('drop', function (e) {
+      if (!S || S.kid) return;
+      e.preventDefault(); e.stopPropagation(); ov.classList.remove('drop');
+      var dt = e.dataTransfer;
+      if (dt && dt.files && dt.files.length) { attachFiles(dt.files); return; }
+      // A kanban card, a file row, a mindmap idea... dragged from Crundi: its reference ("[Kanban Task ID: …]").
+      var t = dt && dt.getData('text/plain');
+      if (t) addRef(t);
+    });
+    q('.cv-type').addEventListener('paste', function (e) {
+      var items = (e.clipboardData && e.clipboardData.files) || [];
+      if (items.length) { e.preventDefault(); attachFiles(items); }
+    });
+    q('.cv-kbb').onclick = function (e) { e.stopPropagation(); if (S && S.kid) { kidMute(false, true); keyboard(!S.kb, false); return; } keyboard(!(S && S.kb), true); };
+    // Kid mode: the microphone off (Cru still talks, taps and games still work); tap again to listen.
+    q('.cv-mute').onclick = function (e) { e.stopPropagation(); if (S) kidMute(!S.muted); };
     q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
     // The view the owner chose last time, on this device.
     if (chatPref()) setTimeout(function () { if (S) chatView(true); }, 0);
@@ -453,7 +483,7 @@
       var inp = S.ov.querySelector('.cv-type');
       if (e.target === inp) {
         e.stopPropagation(); S.quietSince = Date.now();
-        if (e.key === 'Enter' && inp.value.trim()) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; utter(t, true); }
+        if (e.key === 'Enter' && (inp.value.trim() || attReady())) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; if (t) utter(t, true); else ask('', false, true); }
       } else if (S.ov.contains(e.target) || e.target === document.body) e.stopPropagation();
     };
     window.addEventListener('keydown', S.onKey, true);
@@ -610,6 +640,22 @@
   var KB_KEY = 'crundi_cru_keyboard';
   function kbPref() { try { return localStorage.getItem(KB_KEY) === '1'; } catch (e) { return false; } }
   function voiceUsable(s) { return !!(s && s.deepgramKeySet && !s.deepgramLimitReached); }
+  function kidMute(on, quiet) {
+    if (!S || !!S.muted === !!on) return;
+    S.muted = !!on;
+    S.ov.classList.toggle('muted', S.muted);
+    var b = S.ov.querySelector('.cv-mute'); if (b) { b.title = S.muted ? 'Turn the microphone back on' : 'Mute the microphone'; b.setAttribute('aria-label', b.title); }
+    if (quiet) { render(); return; }
+    if (S.muted) {
+      if (!S.kb) {
+        stopMic();
+        if (!S.ctx) { try { S.ctx = new (window.AudioContext || window.webkitAudioContext)(); outNode(); } catch (e) { /* silent then */ } }
+        reportSocket();
+        if (S.phase !== 'think' && S.phase !== 'speak') S.phase = 'listen';
+      }
+    } else if (!S.kb) { closeSocket(); S.phase = 'start'; openMic(); }
+    render();
+  }
   function keyboard(on, chosen) {
     if (!S) return;
     if (!on && !voiceUsable(S.settings)) { S.notice = S.settings && S.settings.deepgramLimitReached ? 'Voice is off: this month\'s Deepgram limit is reached.' : 'Voice needs a Deepgram key: add one in Settings, Voice assistant.'; render(); return; }
@@ -744,7 +790,7 @@
     var when = function (at) { var d = new Date(at); return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
     var h = '';
     (S.msgs || []).forEach(function (m) {
-      if (m.said) h += '<div class="cv-m me">' + esc(m.said) + '<time>' + esc(when(m.at)) + '</time></div>';
+      if (m.said) h += '<div class="cv-m me">' + saidHtml(m.said) + '<time>' + esc(when(m.at)) + '</time></div>';
       if (m.speak || m.show) h += '<div class="cv-m cru">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>') + '</div>';
     });
     // What is being heard right now, not yet sent.
@@ -779,6 +825,88 @@
    * [keep]: the last answer stays on screen (it was cut short by what the owner said meanwhile).
    * [typed]: typed here, not spoken: the server's voice check does not apply (capability 'voice-speaker').
    */
+  // ─── Files and dropped items for Cru ───
+  var ATT_MAX = 50 * 1024 * 1024;
+  function attReady() { return !!(S && S.att && S.att.some(function (a) { return a.id || a.ref; })); }
+  /** What goes with the next turn: the uploaded files and the dropped references; the tray empties. */
+  function takeAtt() {
+    var list = (S && S.att) || [];
+    var ready = list.filter(function (a) { return a.id || a.ref; });
+    S.att = list.filter(function (a) { return a.up; });
+    renderAtt();
+    return {
+      attachments: ready.filter(function (a) { return a.id; }).map(function (a) { return a.id; }),
+      refs: ready.filter(function (a) { return a.ref; }).map(function (a) { return a.ref; }),
+      label: ready.map(function (a) { return a.ref ? '[The owner dropped in: ' + a.ref + ']' : '[The owner attached: "' + a.name + '" (' + (a.kind || 'file') + '), id ' + a.id + '.]'; }).join('\n'),
+    };
+  }
+  function addRef(t) {
+    if (!S) return;
+    t = String(t).replace(/\s+/g, ' ').trim().slice(0, 400);
+    if (!t) return;
+    (S.att = S.att || []).push({ ref: t, name: t });
+    renderAtt(); S.quietSince = Date.now();
+  }
+  /** A smaller JPEG of a picture, for Cru to look at (big photos stay whole for passing on). */
+  function previewOf(file) {
+    return new Promise(function (done) {
+      if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { done(null); return; }
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () {
+        var k = Math.min(1, 1568 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+        var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        var d = c.toDataURL('image/jpeg', 0.85); done({ b64: d.slice(d.indexOf(',') + 1), thumb: d });
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); done(null); };
+      img.src = url;
+    });
+  }
+  function readB64(file) {
+    return new Promise(function (done, fail) { var r = new FileReader(); r.onload = function () { var d = String(r.result); done(d.slice(d.indexOf(',') + 1)); }; r.onerror = function () { fail(new Error('Could not read the file')); }; r.readAsDataURL(file); });
+  }
+  function attachFiles(files) {
+    if (!S || S.kid) return;
+    Array.prototype.slice.call(files || [], 0, 10).forEach(function (file) {
+      var a = { name: file.name || 'file', up: true }, s = S;
+      (S.att = S.att || []).push(a); renderAtt();
+      if (file.size > ATT_MAX) { a.up = false; a.bad = 'Too large (50 MB at most)'; renderAtt(); return; }
+      previewOf(file).then(function (pv) {
+        if (pv) { a.thumb = pv.thumb; renderAtt(); }
+        return readB64(file).then(function (b64) {
+          return post('/api/voice/attach', { name: file.name, type: file.type, data: b64, preview: pv ? pv.b64 : undefined, from: 'web' });
+        });
+      }).then(function (r) {
+        if (S !== s) return;
+        a.up = false;
+        if (r && r.ok) { a.id = r.id; a.kind = r.kind; a.name = r.name; }
+        else a.bad = (r && /404|not found/i.test(r.error || '')) ? 'This server does not take files for Cru yet: update it' : ((r && r.error) || 'Could not attach');
+        renderAtt();
+      }).catch(function (e) { if (S === s) { a.up = false; a.bad = e.message || 'Could not attach'; renderAtt(); } });
+    });
+    S.quietSince = Date.now();
+  }
+  function renderAtt() {
+    if (!S) return;
+    var box = S.ov.querySelector('.cv-att'), list = S.att || [];
+    box.hidden = !list.length;
+    box.innerHTML = list.map(function (a, i) {
+      return '<span class="cv-chip' + (a.up ? ' up' : '') + (a.bad ? ' bad' : '') + '" title="' + esc(a.bad || a.name) + '">' + (a.thumb ? '<img src="' + a.thumb + '" alt="">' : '') + '<span>' + esc(a.bad ? a.name + ': ' + a.bad : a.name) + '</span><button data-i="' + i + '" aria-label="Remove">\u00d7</button></span>';
+    }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('button'), function (b) { b.onclick = function (e) { e.stopPropagation(); S.att.splice(Number(b.getAttribute('data-i')), 1); renderAtt(); }; });
+  }
+  /** A message of the owner's in the chat view: attached files and dropped items as chips. */
+  function saidHtml(t) {
+    return String(t || '').split('\n').map(function (l) {
+      var m = l.match(/^\[The owner attached: "([^"]*)" \(([a-z]+)[^)]*\)/);
+      if (m) return '<span class="att">' + esc(m[1]) + ' · ' + esc(m[2]) + '</span>';
+      var r = l.match(/^\[The owner dropped in: (.*)\]$/);
+      if (r) return '<span class="att">' + esc(r[1]) + '</span>';
+      return esc(l);
+    }).join('<br>');
+  }
+
   function ask(t, keep, typed, hidden) {
     S.waitSaid = false; if (S.kid) loadKidWait();
     if (!hidden) { S.reportOnly = false; S.reportCloseAt = 0; }
@@ -790,7 +918,9 @@
     var s0 = S, pulse = function () { if (S !== s0 || S.phase !== 'think' || S.turn !== turn) return; tone('think'); S.thinkTimer = setTimeout(pulse, 4000); };
     S.thinkTimer = setTimeout(pulse, 1400);
     render();
-    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false, typed: !!typed }).then(function (r) {
+    var att = hidden ? { attachments: [], refs: [] } : takeAtt();
+    if (att.attachments.length || att.refs.length) { S.asked = att.label + (t ? '\n' + t : ''); S.heard = S.asked; render(); }
+    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs }).then(function (r) {
       if (!S) return;
       // Cancelled: never said or shown as an error, just what it had already done.
       if (r && r.cancelled) { if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }
@@ -1550,6 +1680,8 @@
     var ph = S.phase, P = S.kid ? KID_PALETTE : PALETTE, pal = P[ph] || P.listen;
     // Admin mode on: always in view while it is.
     var adm = q('.cv-admin'); if (adm) adm.hidden = !(S.settings && S.settings.adminMode === true);
+    // The PC lock: Cru works as always (your voice decides what it changes); its history and files stay out of view.
+    var lockedNow = !!(S.opts.isLocked && S.opts.isLocked()); S.ov.classList.toggle('locked', lockedNow); if (lockedNow && S.chat) { S.chat = false; S.ov.classList.remove('chat'); }
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;

@@ -24,8 +24,9 @@ object CruChat {
      */
     fun merge(current: List<CruMsg>, got: List<CruMsg>, older: Boolean): List<CruMsg> {
         if (older) return got + current
-        val known = got.map { it.said to it.speak }.toSet()
-        return got + current.filter { it.live && (it.said to it.speak) !in known }
+        // Matched on the words alone: a file's line here is shorter than the server's copy of it.
+        val known = got.map { CruAttach.plain(it.said) to it.speak }.toSet()
+        return got + current.filter { it.live && (CruAttach.plain(it.said) to it.speak) !in known }
     }
 
     /** An exchange that just happened, at the end; nothing when it is empty. */

@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.32 (en-US)
+
+Version code 63. Internal track. Since 1.1.3-dev.31 (code 62): files for Cru (voice-attach: camera, gallery, file picker, share target), PIN moved to Your PIN and the PC lock, PC lock and auto lock controls (pc-lock), short-reply training without rejections. Server 1.21.6-dev.43.
+
+```
+<en-US>
+Cru:
+- Give Cru files: camera, photos and videos, any file, or share to Cru from other apps. Cru looks at pictures and reads documents.
+- One PIN for kid mode and the PC lock, under Your PIN and the PC lock.
+- Lock or unlock the PC from here, and set it to lock by itself when idle.
+- Teaching short replies no longer rejects recordings.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.31 (en-US)
 
 Version code 62. Internal track. Since 1.1.3-dev.30 (code 61): Cru on its own settings and stop-everything (voice-away), Cru's approvals (source cru), built-in heartbeat ticker, short-reply voice training (voice-short-words). Server 1.21.6-dev.39.

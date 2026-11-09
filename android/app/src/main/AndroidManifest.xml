@@ -131,6 +131,34 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
+        <!-- "Cru" in Android's share sheet: a file, a picture or text shared
+             opens Cru with it attached (voice/CruFiles.kt). Turned off with
+             the assistant in App settings. -->
+        <activity-alias
+            android:name=".voice.ShareToCru"
+            android:targetActivity=".voice.VoiceActivity"
+            android:label="Cru"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity-alias>
+        <!-- A photo taken for Cru, and shared text made a file, handed out as content URIs. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.crufiles"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/cru_files" />
+        </provider>
         <!-- Mode A: Crundi as the digital assistant app (hold the side key). -->
         <service
             android:name=".voice.CrundiVoiceService"

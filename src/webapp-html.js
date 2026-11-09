@@ -5849,6 +5849,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         + hint('Reasons for Cru to wake up on its own: a ticker repeats on a schedule, a trigger fires when something happens. Each is off until switched on; on each wake-up Cru decides whether to stay quiet, tell you, or alert you. Ask Cru to add one.')
         + '<div id="vs-wake" style="margin-top:6px;"></div></details>';
       // Kid mode (an older server has none: left out)
+      // Your PIN (kid mode and the PC lock) and the PC lock itself (capability 'pc-lock').
+      if (s.kidMode !== undefined) html += '<details id="vs-pin-box" style="margin-top:18px;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Your PIN and the PC lock</summary><div id="vs-pin" style="margin-top:6px;"></div></details>';
       if (s.kidMode !== undefined) html += '<details id="vs-kid-box" style="margin-top:18px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Kid mode</summary><div id="vs-kid" style="margin-top:6px;"></div></details>';
       // The experiment
       if (s.brain) html += sub('Brains compared') + '<div id="vs-stats" style="margin-top:6px;"></div>';
@@ -5914,6 +5916,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       vsShowVoices(s);
       vsLoadMemory();
       vsLoadWakeups();
+      vsLoadPin();
       vsLoadKid();
       let memTimer = null;
       const q = document.getElementById('vs-mem-q');
@@ -5978,8 +5981,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
             + '<button type="button" data-spk="words" style="' + S.btn + '">Start over</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
         }
         h += spk.results.map((r) => '<div style="display:flex;gap:6px;align-items:center;font-size:0.75rem;margin-top:4px;color:' + (r.accepted ? 'var(--text-secondary)' : 'var(--red)') + ';">'
-          + ic(r.accepted ? 'check' : 'x') + escHtml(words[r.n] || '') + ': heard ' + r.sayings + ' time' + (r.sayings === 1 ? '' : 's')
-          + (r.likeYou != null ? ', ' + Math.round(r.likeYou * 100) + '% like your voice' : '') + (r.problem ? '. ' + escHtml(r.problem) : '') + '</div>').join('');
+          + ic(r.accepted ? 'check' : 'x') + escHtml(words[r.n] || '') + (r.accepted ? ': learnt from ' + r.sayings + ' saying' + (r.sayings === 1 ? '' : 's') : '')
+          + (r.problem ? ': ' + escHtml(r.problem) : '') + '</div>').join('');
         el.innerHTML = h + say(spk.rec ? 'Listening…' : spk.msg, !spk.rec && spk.bad);
       } else {
         const prompts = st.prompts || [], kept = spk.results.filter((r) => r.accepted).length, min = st.minPhrases || 5;
@@ -6209,6 +6212,53 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const last = pts[pts.length - 1];
       return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Mastery over time"><path d="M2 ' + (h - 2) + 'H' + (w - 2) + '" stroke="var(--border)" stroke-width="1"/><path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="' + x(pts.length - 1) + '" cy="' + y(last.mastery) + '" r="3" fill="var(--accent)"/></svg>';
     }
+    /** Your PIN (one PIN: kid mode and the PC lock), and locking the PC. */
+    async function vsLoadPin() {
+      const el = document.getElementById('vs-pin');
+      if (!el) return;
+      let k = null, lock = null;
+      try { k = await vsGet('/api/voice/kid'); } catch { k = null; }
+      try { const r = await apiFetch('/api/lock'); lock = r.ok ? await r.json() : null; } catch { lock = null; }
+      if (!k || !k.ok) { document.getElementById('vs-pin-box').style.display = 'none'; return; }
+      const st = vwStyles;
+      const hint = (t) => '<p style="' + st.hint + ';margin:4px 0 0;">' + t + '</p>';
+      const sub = (t) => '<h5 style="margin:16px 0 4px;font-size:0.8rem;color:var(--text-primary);">' + t + '</h5>';
+      const inp = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary);width:160px;';
+      let h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="vs-pin-in" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" placeholder="' + (k.pinSet ? 'New PIN (4-8 digits)' : '4-8 digits') + '" style="' + inp + '"' + (k.on ? ' disabled' : '') + '><button type="button" class="svc-btn" id="vs-pin-set"' + (k.on ? ' disabled' : '') + '>' + (k.pinSet ? 'Change PIN' : 'Set PIN') + '</button><span id="vs-pin-note" style="font-size:0.78rem;"></span></div>';
+      h += hint('One PIN for kid mode and the PC lock. Five wrong tries lock it for a minute, then longer.');
+      if (lock && lock.ok) {
+        h += sub('Lock the PC');
+        if (lock.on) h += '<p style="margin:6px 0 0;font-size:0.82rem;color:var(--yellow);">The PC is locked (' + (lock.mode === 'visible' ? 'visible' : 'full') + ') since ' + escHtml(new Date(lock.since).toLocaleTimeString()) + '.</p>';
+        h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">'
+          + (lock.on ? '<button type="button" class="svc-btn" id="vs-lock-end">Unlock the PC</button>'
+            : '<button type="button" class="svc-btn" id="vs-lock-vis"' + (k.pinSet ? '' : ' disabled') + '>' + ic('lock') + ' Lock, visible</button><button type="button" class="svc-btn" id="vs-lock-full"' + (k.pinSet ? '' : ' disabled') + '>' + ic('lock') + ' Lock, full</button>')
+          + '</div>';
+        const au = lock.auto || { on: false, minutes: 10, mode: 'full' };
+        h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:0.8rem;color:var(--text-primary);"><label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" id="vs-auto-on"' + (au.on ? ' checked' : '') + (k.pinSet ? '' : ' disabled') + '> Lock by itself after</label>'
+          + '<select id="vs-auto-min" style="' + inp.replace('width:160px;', '') + '">' + (lock.autoMinutes || [1, 2, 5, 10, 15, 30, 60]).map((m) => '<option value="' + m + '"' + (m === au.minutes ? ' selected' : '') + '>' + (m >= 60 ? (m / 60) + ' hour' : m + ' min') + '</option>').join('') + '</select>'
+          + '<span>idle, as</span><select id="vs-auto-mode" style="' + inp.replace('width:160px;', '') + '"><option value="full"' + (au.mode === 'full' ? ' selected' : '') + '>full lock</option><option value="visible"' + (au.mode === 'visible' ? ' selected' : '') + '>visible lock</option></select></div>';
+        h += hint('Idle: no keyboard or mouse on the PC. It also locks when the computer itself locks.');
+        h += hint('On the PC app: Ctrl+Shift+L locks it with the screen still visible behind a see-through overlay; Super+Shift+L (the Windows key) locks it with an opaque lock screen. Only your PIN unlocks it there; from here or your phone you can unlock it straight away. While it is locked, Hey Cru still works as usual: your voice recognition decides what Cru may change.');
+      }
+      el.innerHTML = h;
+      const note = (t, bad) => vsNote('vs-pin-note', t, bad);
+      const setBtn = document.getElementById('vs-pin-set');
+      if (setBtn) setBtn.onclick = async () => {
+        const v = String((document.getElementById('vs-pin-in') || {}).value || '').trim();
+        if (!/^[0-9]{4,8}$/.test(v)) { note('The PIN is 4 to 8 digits', true); return; }
+        const d = await vsPost('/api/voice/kid/pin', { pin: v }).catch(() => null);
+        if (d && d.ok) { vsLoadPin(); vsLoadKid(); } else note((d && d.error) || 'Not saved', true);
+      };
+      const lockWith = async (mode) => { const d = await vsPost('/api/lock/start', { mode: mode, by: 'settings' }).catch(() => null); if (d && d.ok) vsLoadPin(); else note((d && d.error) || 'Not locked', true); };
+      const lv = document.getElementById('vs-lock-vis'); if (lv) lv.onclick = () => lockWith('visible');
+      const lf = document.getElementById('vs-lock-full'); if (lf) lf.onclick = () => lockWith('full');
+      const autoSave = async () => {
+        const d = await vsPost('/api/lock/auto', { on: !!(document.getElementById('vs-auto-on') || {}).checked, minutes: Number((document.getElementById('vs-auto-min') || {}).value) || 10, mode: (document.getElementById('vs-auto-mode') || {}).value || 'full' }).catch(() => null);
+        note(d && d.ok ? (d.auto.on ? 'Auto lock on' : 'Auto lock off') : ((d && d.error) || 'Not saved'), !(d && d.ok));
+      };
+      ['vs-auto-on', 'vs-auto-min', 'vs-auto-mode'].forEach((id) => { const x = document.getElementById(id); if (x) x.onchange = autoSave; });
+      const le = document.getElementById('vs-lock-end'); if (le) le.onclick = async () => { const d = await vsPost('/api/lock/end', {}).catch(() => null); if (d && d.ok) vsLoadPin(); else note((d && d.error) || 'Not unlocked', true); };
+    }
     async function vsLoadKid() {
       const box = document.getElementById('vs-kid-box'), el = document.getElementById('vs-kid');
       if (!box || !el) return;
@@ -6231,10 +6281,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       let h = '';
       h += hint('A locked, full-screen screen where Cru is your child\\'s friend: learning games (letters, sounds, matching, counting, shapes, colours, the world), chats and stories, and only the YouTube channels you approve. It has its own conversation and never sees your work. Only the PIN leaves it. If your child says something worrying (hurt, scared, unsafe), Cru answers kindly, tells them to find a grown-up they trust, and sends you a short note here and on your phone; nothing is recorded.');
       if (k.on) h += '<p style="margin:10px 0 0;font-size:0.82rem;color:var(--yellow);">Kid mode is on' + (k.since ? ' since ' + escHtml(new Date(k.since).toLocaleTimeString()) : '') + '. On the kid screen it ends only with the PIN; from here you can end it, pause it or add time (the Kid mode card at the top).</p>';
-      h += sub('PIN');
-      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="vs-kid-pin" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" placeholder="' + (k.pinSet ? 'New PIN (4-8 digits)' : '4-8 digits') + '" style="' + selStyle + 'width:160px;"' + (k.on ? ' disabled' : '') + '><button type="button" class="svc-btn" id="vs-kid-pin-set"' + (k.on ? ' disabled' : '') + '>' + (k.pinSet ? 'Change PIN' : 'Set PIN') + '</button>'
-        + '<button type="button" class="svc-btn" id="vs-kid-start"' + (k.on || !k.pinSet ? ' disabled' : '') + '>Start kid mode</button><span id="vs-kid-note" style="font-size:0.78rem;"></span></div>';
-      h += hint(k.pinSet ? 'Keep it from your child. Five wrong tries lock it for a minute, then longer. Cru can also start kid mode when you ask it (typed, or in your recognised voice).' : 'Set a PIN first: it is the only way out of kid mode.');
+      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;"><button type="button" class="svc-btn" id="vs-kid-start"' + (k.on || !k.pinSet ? ' disabled' : '') + '>Start kid mode</button><span id="vs-kid-note" style="font-size:0.78rem;"></span></div>';
+      h += hint(k.pinSet ? 'Kid mode ends only with your PIN (set above, under Your PIN and the PC lock). Keep it from your child. Cru can also start kid mode when you ask it (typed, or in your recognised voice).' : 'Set your PIN first (above, under Your PIN and the PC lock): it is the only way out of kid mode.');
       if (s && s.ok) {
         h += sub('How kid Cru talks');
         h += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:0.8rem;">'
@@ -6300,13 +6348,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const note = (t, bad) => vsNote('vs-kid-note', t, bad);
       const save = async (body, msg) => { const d = await vsPost('/api/voice/settings', body).catch(() => null); note(d && d.ok ? msg : ((d && d.error) || 'Not saved'), !(d && d.ok)); };
       const on = (id, fn) => { const x = document.getElementById(id); if (x) x.onchange = () => fn(x); };
-      const pinBtn = document.getElementById('vs-kid-pin-set');
-      if (pinBtn) pinBtn.onclick = async () => {
-        const v = String((document.getElementById('vs-kid-pin') || {}).value || '').trim();
-        if (!/^[0-9]{4,8}$/.test(v)) { note('The PIN is 4 to 8 digits', true); return; }
-        const d = await vsPost('/api/voice/kid/pin', { pin: v }).catch(() => null);
-        if (d && d.ok) vsLoadKid(); else note((d && d.error) || 'Not saved', true);
-      };
       const startBtn = document.getElementById('vs-kid-start');
       if (startBtn) startBtn.onclick = async () => {
         const d = await vsPost('/api/voice/kid/start', { by: 'settings' }).catch(() => null);
@@ -6391,6 +6432,68 @@ export function getWebappHtml(botUsername, appVersion = '') {
       apiFetch('/api/voice/kid').then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && d.ok) applyKidMode(d); }).catch(() => {});
     }
     // The PC app's tray "Kid mode" item.
+    // ─── The PC lock (capability 'pc-lock'): this app's window locked behind the owner's PIN ───
+    // "visible": the app stays in view behind a see-through overlay; "full": an
+    // opaque lock screen. Hey Cru still works as always (Cru's screen sits above
+    // it; the owner's voice check decides what it may change).
+    let pcLockState = null;
+    let pcLockTimer = null;
+    function pcLockOn() { return !!pcLockState; }
+    function applyPcLock(st) {
+      if (!window.api || !window.api.kidLock || userRole === 'collaborator') return;
+      st = st || {};
+      if (st.auto && window.api.setAutoLock) window.api.setAutoLock(st.auto);
+      const was = !!pcLockState;
+      pcLockState = st.on ? st : null;
+      let el = document.getElementById('pc-lock');
+      if (!st.on) {
+        clearInterval(pcLockTimer);
+        if (el) el.remove();
+        if (was && !kidDeviceLocked()) window.api.kidLock(false);
+        return;
+      }
+      if (!document.getElementById('pc-lock-css')) { const cs = document.createElement('style'); cs.id = 'pc-lock-css'; cs.textContent = '#pc-lock{position:fixed;inset:0;z-index:8990;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:7vh 0 5vh;color:#fff;font-family:system-ui,sans-serif;user-select:none}#pc-lock.full{background:radial-gradient(1200px 700px at 30% 20%,#3b3f8f 0,transparent 60%),radial-gradient(900px 600px at 80% 90%,#0e7490 0,transparent 60%),#0b1022}#pc-lock.vis{background:rgba(8,10,24,.38);justify-content:flex-end;padding-bottom:5vh}#pc-lock.vis .pcl-mid,#pc-lock.vis .pcl-keys{display:none}#pc-lock.vis{box-shadow:inset 0 0 0 4px rgba(165,180,252,.55)}#pc-lock.vis .pcl-box{flex-direction:row;padding:10px 14px;gap:10px}#pc-lock.vis .pcl-in{width:160px;font-size:18px;padding:8px 10px}#pc-lock.vis .pcl-hint{display:none}.pcl-top{position:absolute;top:18px;left:0;right:0;display:flex;justify-content:center}.pcl-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.25);font-weight:600;font-size:14px}.pcl-badge svg{width:16px;height:16px}.pcl-mid{text-align:center;margin-top:3vh}.pcl-time{font-size:clamp(48px,min(11vw,14vh),140px);line-height:1.05;font-weight:300;letter-spacing:-2px;text-shadow:0 4px 30px rgba(0,0,0,.35)}.pcl-date{font-size:clamp(18px,2.2vw,28px);opacity:.9}.pcl-box{display:flex;flex-direction:column;align-items:center;gap:clamp(6px,1.4vh,12px);padding:clamp(12px,2.4vh,20px) 22px;border-radius:18px;background:rgba(15,18,40,.72);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.14);box-shadow:0 20px 60px rgba(0,0,0,.4)}.pcl-in{width:220px;text-align:center;font-size:24px;letter-spacing:8px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.08);color:#fff;outline:none}.pcl-in:focus{border-color:#a5b4fc}.pcl-keys{display:grid;grid-template-columns:repeat(3,64px);gap:10px}.pcl-keys button{height:clamp(38px,6.5vh,52px);border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}.pcl-keys button:hover{background:rgba(255,255,255,.16)}.pcl-keys svg{width:20px;height:20px}.pcl-err{min-height:18px;font-size:13px;color:#fca5a5}.pcl-hint{font-size:12px;opacity:.7}#pc-lock.shake .pcl-box{animation:pclsh .4s}@keyframes pclsh{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}'; document.head.appendChild(cs); }
+      if (!el) {
+        el = document.createElement('div'); el.id = 'pc-lock';
+        el.innerHTML = '<div class="pcl-top"><span class="pcl-badge">' + ic('lock') + ' Locked</span></div>'
+          + '<div class="pcl-mid"><div class="pcl-time"></div><div class="pcl-date"></div></div>'
+          + '<div class="pcl-box"><div class="pcl-dots"></div><input class="pcl-in" type="password" inputmode="numeric" maxlength="8" autocomplete="off" aria-label="PIN" placeholder="PIN">'
+          + '<div class="pcl-keys">' + ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map(function (k) { return '<button type="button" data-k="' + k + '">' + (k === 'del' ? ic('chevron-left') : k === 'ok' ? ic('check') : k) + '</button>'; }).join('') + '</div>'
+          + '<div class="pcl-err"></div><div class="pcl-hint">Say Hey Cru to talk to Cru</div></div>';
+        document.body.appendChild(el);
+        const inp = el.querySelector('.pcl-in'), err = el.querySelector('.pcl-err');
+        const tryPin = async () => {
+          const v = inp.value.trim(); if (!v) return;
+          const d = await vsPost('/api/lock/unlock', { pin: v }).catch(() => null);
+          inp.value = '';
+          if (d && d.ok) { applyPcLock(d); return; }
+          err.textContent = (d && d.error) || 'That did not work'; el.classList.add('shake'); setTimeout(() => el.classList.remove('shake'), 450);
+        };
+        el.querySelectorAll('.pcl-keys button').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const k = b.getAttribute('data-k'); if (k === 'del') inp.value = inp.value.slice(0, -1); else if (k === 'ok') tryPin(); else if (inp.value.length < 8) inp.value += k; err.textContent = ''; inp.focus(); }; });
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); tryPin(); } else err.textContent = ''; });
+        el.addEventListener('mousedown', (e) => { if (!e.target.closest('.pcl-box')) { e.preventDefault(); } setTimeout(() => { try { inp.focus(); } catch { /* gone */ } }, 0); });
+      }
+      el.className = st.mode === 'visible' ? 'vis' : 'full';
+      const tick = () => { const n = new Date(); el.querySelector('.pcl-time').textContent = n.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); el.querySelector('.pcl-date').textContent = n.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }); };
+      tick(); clearInterval(pcLockTimer); pcLockTimer = setInterval(tick, 10000);
+      window.api.kidLock(true);
+      setTimeout(() => { try { el.querySelector('.pcl-in').focus(); } catch { /* gone */ } }, 50);
+    }
+    function kidDeviceLocked() { try { return !!(window.CrundiVoice && window.CrundiVoice.isKid); } catch { return false; } }
+    // Every key and click outside the lock screen and Cru's screen goes nowhere while it is locked.
+    ['keydown', 'keyup', 'keypress'].forEach((t) => document.addEventListener(t, (e) => {
+      if (!pcLockState) return;
+      const ok = e.target && e.target.closest && (e.target.closest('#pc-lock') || e.target.closest('.cv-ov'));
+      if (!ok) { e.stopPropagation(); e.preventDefault(); }
+    }, true));
+    if (window.api && window.api.kidLock && userRole !== 'collaborator') {
+      apiFetch('/api/lock').then((r) => r.ok ? r.json() : null).then((st) => { if (st && st.ok) { if (st.on) applyPcLock(st); else if (st.auto && window.api.setAutoLock) window.api.setAutoLock(st.auto); } }).catch(() => {});
+    }
+    // The PC app's shortcuts (Ctrl+Shift+L visible, Super+Shift+L full) and its tray items.
+    if (window.api && window.api.onPcLock) window.api.onPcLock((mode, by) => {
+      if (pcLockState) return;
+      vsPost('/api/lock/start', { mode: mode === 'visible' ? 'visible' : 'full', by: by === 'auto' ? 'auto' : 'shortcut' }).then((d) => { if (d && d.ok) applyPcLock(d); else toast((d && d.error) || 'The PC lock needs your PIN: set it in Settings, Voice assistant', 'error'); }).catch(() => {});
+    });
     if (window.api && window.api.onKidStart) window.api.onKidStart(() => { vsPost('/api/voice/kid/start', { by: 'tray' }).then((d) => { if (d && d.ok) { markKidDevice(true); applyKidMode(d); } else toast((d && d.error) || 'Kid mode needs a PIN: set one in Settings, Voice assistant, Kid mode'); }).catch(() => {}); });
     async function vsLoadWakeups(r) {
       const el = document.getElementById('vs-wake'), box = document.getElementById('vs-wake-box');
@@ -6620,6 +6723,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function voiceOpts() {
       return ({
         apiFetch, token: () => token, host: location.host,
+        // The PC lock: Cru works as usual; only its history and files are out of view.
+        isLocked: () => pcLockOn(),
         cells: () => projects.map(p => {
           const ts = terminals.filter(t => t.project === p.alias && t.status === 'running');
           const svc = services.filter(sv => sv.alias === p.alias);
@@ -10217,6 +10322,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts());
         }
         if (msg.type === 'kid-mode' && msg.kid) applyKidMode(msg.kid);
+        if (msg.type === 'pc-lock' && msg.lock) { applyPcLock(msg.lock); if (document.getElementById('vs-pin')) vsLoadPin(); }
         if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
           window.CrundiDocker.handleMessage(msg);
         }
@@ -10836,6 +10942,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
       es.addEventListener('voice-wakeups', () => { if (document.getElementById('vs-wake')) vsLoadWakeups(); });
       // Kid mode switched on or off anywhere: the kid screen follows.
+      es.addEventListener('pc-lock', (e) => { try { const st = JSON.parse(e.data || '{}'); applyPcLock(st); if (document.getElementById('vs-pin')) vsLoadPin(); } catch (err) { /* ignore */ } });
       es.addEventListener('voice-kid', (e) => { try { applyKidMode(JSON.parse(e.data || '{}')); } catch (err) { /* ignore */ } });
       es.addEventListener('voice-kid-games', () => { if (document.getElementById('vs-kid')) vsLoadKid(); });
       // Cru's unread messages: the dot on its mark.

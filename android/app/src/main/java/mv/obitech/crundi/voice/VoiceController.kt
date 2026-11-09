@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import mv.obitech.crundi.AppGraph
 import mv.obitech.crundi.ServerCaps
 import mv.obitech.crundi.Servers
@@ -57,6 +58,8 @@ data class VoiceUi(
     val kid: mv.obitech.crundi.api.KidStatus? = null,
     /** The last command for the game on screen, numbered so the same one twice is still sent twice. */
     val gameCommand: GameCommand? = null,
+    /** Files and shared text waiting to go with the next turn (capability "voice-attach"). */
+    val attachments: List<CruAtt> = emptyList(),
 )
 
 /** Kid Cru's command for the game on screen (next, easier, harder, hint, pause, resume, end). */
@@ -149,7 +152,7 @@ class VoiceController(
         if (running) return
         // The chat view and its messages, and the last settings, stay from one session to the next.
         val was = _ui.value
-        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend, screen = was.screen, kid = was.kid)
+        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend, screen = was.screen, kid = was.kid, attachments = was.attachments)
         if (!VoicePrefs.enabled(ctx)) { block("The voice assistant is turned off. Turn it on in App settings, Voice assistant."); return }
         val server = Servers.current(ctx) ?: run { block("Pair this phone with a Crundi server first."); return }
         val caps = ServerCaps.get(ctx, server.id)
@@ -259,7 +262,8 @@ class VoiceController(
     /** Typed words (keyboard mode): asked as voice turns are. Asleep, it wakes first. */
     fun send(text: String) {
         val t = text.trim()
-        if (t.isEmpty()) return
+        // Files alone may go: Send works with only attachments.
+        if (t.isEmpty() && _ui.value.attachments.none { it.ready }) return
         if (!running || _ui.value.state.phase == Phase.Ended) {
             if (_ui.value.blocked.isNotEmpty()) return
             stopAll(); open()
@@ -439,8 +443,12 @@ class VoiceController(
         // Typed (keyboard mode, Yes / No): said so, or once a voice is enrolled it would lose the owner's powers.
         val typed = keyboard || typedNext
         typedNext = false
+        // The files and shared text ready now go with it; the tray keeps those still uploading.
+        val att = CruAttach.take(_ui.value.attachments)
+        val said = CruAttach.said(att.label, text)
+        if (att.label.isNotEmpty()) _ui.update { it.copy(attachments = CruAttach.left(it.attachments), state = it.state.copy(asked = said, heard = said)) }
         scope.launch {
-            val r = try { voice.turn(text, where, locked, typed = typed) } catch (e: ApiException) {
+            val r = try { voice.turn(text, where, locked, typed = typed, attachments = att.attachments, refs = att.refs) } catch (e: ApiException) {
                 VoiceReply(ok = false, error = when {
                     e.offline -> "I can't reach the server, Sir."
                     VoiceApi.unsupported(e) -> VoiceApi.UNSUPPORTED
@@ -451,7 +459,7 @@ class VoiceController(
             r.volume?.let { speaker.volume = mv.obitech.crundi.api.volumeGain(it) }
             // The chat view: what was asked and the answer, when it is this turn's.
             val current = _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }
-            if (current && r.ok && !r.cancelled) chatAdd(text, r.speak, r.show)
+            if (current && r.ok && !r.cancelled) chatAdd(said, r.speak, r.show)
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }))
             // The voice was not the owner's: Cru answered, but changed nothing.
             if (r.ok && !r.cancelled && r.speaker?.unrecognised == true && current) note(NOT_RECOGNISED)
@@ -769,6 +777,90 @@ class VoiceController(
         held.clear()
         streaming = true
         VoiceMicService.stop(ctx)
+    }
+
+    // ─── files for Cru (capability "voice-attach") ───
+
+    private var attSeq = 0
+
+    /** The server takes files for Cru (or has not said yet), and kid mode is off: the attach button shows. */
+    fun canAttach(ui: VoiceUi = _ui.value): Boolean = VoiceApi.ATTACH in ui.caps && ui.kid?.on != true
+
+    /** Why files can't go to Cru now, or "" (they can, or the server has not said yet). */
+    private fun attachRefused(): String {
+        if (_ui.value.kid?.on == true) return "Files are off in kid mode."
+        val server = Servers.current(ctx) ?: return "Pair this phone with a Crundi server first."
+        val caps = ServerCaps.get(ctx, server.id)
+        return if (caps.isNotEmpty() && "handshake" in caps && VoiceApi.ATTACH !in caps) VoiceApi.ATTACH_UNSUPPORTED else ""
+    }
+
+    private fun updateAtt(key: String, f: (CruAtt) -> CruAtt) =
+        _ui.update { u -> u.copy(attachments = u.attachments.map { if (it.key == key) f(it) else it }) }
+
+    /**
+     * Files picked, taken with the camera or shared to Cru: each is uploaded at
+     * once, in the tray meanwhile, and goes with the next turn, said or typed.
+     * [deleteAfter]: the app's own copy (a photo just taken), removed once sent.
+     */
+    fun attach(uris: List<android.net.Uri>, deleteAfter: Boolean = false) {
+        if (uris.isEmpty()) return
+        attachRefused().takeIf { it.isNotEmpty() }?.let { note(it); return }
+        if (running) dispatch(VoiceEvent.Active(now()))
+        for (uri in uris.take(10)) {
+            val key = "a" + (++attSeq)
+            _ui.update { it.copy(attachments = it.attachments + CruAtt(key, uri.lastPathSegment?.substringAfterLast('/') ?: "file", up = true)) }
+            scope.launch {
+                try {
+                    val info = withContext(Dispatchers.IO) { CruFiles.info(ctx, uri) }
+                    updateAtt(key) { it.copy(name = info.name) }
+                    CruAttach.tooLarge(info.size, VoiceApi.ATTACH_MAX).takeIf { it.isNotEmpty() }?.let { why -> updateAtt(key) { it.copy(up = false, bad = why) }; return@launch }
+                    val pv = if (CruAttach.previewable(info.mime)) withContext(Dispatchers.IO) { runCatching { CruFiles.preview(ctx, uri) }.getOrNull() } else null
+                    if (pv != null) updateAtt(key) { it.copy(thumb = pv.thumb) }
+                    val v = voiceApi() ?: throw IllegalStateException("Pair this phone with a Crundi server first.")
+                    val r = withContext(Dispatchers.IO) {
+                        v.attach(info.name, info.mime, info.size, pv?.jpegBase64) { ctx.contentResolver.openInputStream(uri) ?: throw java.io.FileNotFoundException(info.name) }
+                    }
+                    updateAtt(key) { it.copy(up = false, id = r.id, kind = r.kind, name = r.name.ifEmpty { it.name }) }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    // A file too big to read into memory is said plainly, not as a crash.
+                    val why = if (e is OutOfMemoryError) "Too large to send from this phone" else (e.message ?: "Could not attach")
+                    updateAtt(key) { it.copy(up = false, bad = why) }
+                } finally {
+                    if (deleteAfter) withContext(Dispatchers.IO) { CruFiles.delete(ctx, uri) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Text or a link shared to Cru: a short one goes in as a dropped
+     * reference, a long one as a text file Cru can read.
+     */
+    fun attachText(text: String) {
+        val t = text.trim()
+        if (t.isEmpty()) return
+        attachRefused().takeIf { it.isNotEmpty() }?.let { note(it); return }
+        if (t.length <= CruAttach.REF_MAX) {
+            val ref = CruAttach.refOf(t)
+            _ui.update { it.copy(attachments = it.attachments + CruAtt("a" + (++attSeq), ref, ref = ref)) }
+            if (running) dispatch(VoiceEvent.Active(now()))
+            return
+        }
+        scope.launch {
+            val file = withContext(Dispatchers.IO) { runCatching { CruFiles.textFile(ctx, t) }.getOrNull() }
+            if (file == null) note("Could not attach the shared text.") else attach(listOf(file), deleteAfter = true)
+        }
+    }
+
+    /** The × on a chip: it does not go. */
+    fun removeAttachment(key: String) = _ui.update { u -> u.copy(attachments = u.attachments.filter { it.key != key }) }
+
+    /** A small copy of an attached picture, for the chat view's chips. */
+    suspend fun attachmentThumb(id: String): androidx.compose.ui.graphics.ImageBitmap? {
+        val server = Servers.current(ctx) ?: return null
+        return runCatching { AppGraph.forServer(ctx, server).api.images.load("/api/voice/attach?id=" + java.net.URLEncoder.encode(id, "UTF-8") + "&preview=1", 160) }.getOrNull()
     }
 
     private fun block(why: String) {
