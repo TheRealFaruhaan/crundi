@@ -123,12 +123,13 @@ export function screenDoc(body, { title = '', kid = false } = {}) {
   const inner = m ? m[1] : src.replace(/<\/?(?:html|head)\b[^>]*>/gi, '').replace(/<meta\b[^>]*>/gi, '');
   return '<!doctype html><html lang="en"><head><meta charset="utf-8">'
     + `<meta http-equiv="Content-Security-Policy" content="${SCREEN_CSP}">`
-    + '<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark">'
+    + `<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="${kid ? 'light' : 'dark'}">`
     + `<title>${escapeHtml(title || 'Cru')}</title>`
     + '<style>html,body{margin:0;background:transparent;color:#e8e8f0;font:15px/1.45 system-ui,-apple-system,sans-serif}body{padding:12px;box-sizing:border-box}'
     + 'a{color:#818cf8}button{font:inherit;cursor:pointer;border-radius:10px;border:1px solid #2a2a3d;background:#1a1a28;color:#e8e8f0;padding:8px 14px}'
     + 'table{border-collapse:collapse}td,th{border-bottom:1px solid #2a2a3d;padding:4px 8px;text-align:left}'
-    + (kid ? 'body{font-size:20px}button{font-size:22px;padding:14px 20px;border-radius:18px}' : '') + '</style>'
+    // The kid screen is light and sunny: dark friendly text, bright buttons.
+    + (kid ? 'html,body{color:#312e81;font:22px/1.35 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif}a{color:#4f46e5}button{font-size:24px;padding:14px 22px;border-radius:20px;border:0;background:#6366f1;color:#fff;box-shadow:0 5px 0 rgba(49,46,129,.25)}td,th{border-color:rgba(49,46,129,.15)}' : '') + '</style>'
     + '<script>(function(){var p=window.parent;window.cru={say:function(t){p.postMessage({cru:"say",text:String(t||"").slice(0,300)},"*")},tell:function(t){p.postMessage({cru:"tell",text:String(t||"").slice(0,300)},"*")}};})();</script>'
     + head.join('\n')
     + '</head><body>' + inner + '</body></html>';

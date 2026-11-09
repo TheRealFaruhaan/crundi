@@ -229,11 +229,170 @@ function createWindow() {
 let kidLocked = false;
 let kidRefocus = null;
 
+// Windows handles the Windows key, Alt+Tab and Ctrl+Esc before any window
+// sees them, so a kiosk window alone cannot keep a child in. While kid mode is
+// on, a small low-level keyboard filter (a hidden PowerShell running a few
+// lines of C#) swallows those keys. It ends with kid mode, and on its own if
+// this app goes away. Ctrl+Alt+Del and Win+L cannot be blocked by anything.
+let kidKeysProc = null;
+let kidKeysFails = 0;
+const KID_KEYS_PS = String.raw`
+$code = @"
+using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Windows.Forms;
+public static class CrundiKidKeys {
+  delegate IntPtr Proc(int n, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, Proc p, IntPtr h, uint t);
+  [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int n, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int k);
+  [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string n);
+  static Proc keep; static IntPtr hook;
+  static IntPtr Cb(int n, IntPtr w, IntPtr l) {
+    if (n >= 0) {
+      int vk = Marshal.ReadInt32(l); int flags = Marshal.ReadInt32(l, 8);
+      bool alt = (flags & 0x20) != 0, ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
+      if (vk == 0x5B || vk == 0x5C || vk == 0x5D) return (IntPtr)1;
+      if (alt && (vk == 0x09 || vk == 0x1B || vk == 0x73 || vk == 0x20)) return (IntPtr)1;
+      if (ctrl && vk == 0x1B) return (IntPtr)1;
+    }
+    return CallNextHookEx(hook, n, w, l);
+  }
+  public static void Run(int parent) {
+    keep = Cb; hook = SetWindowsHookEx(13, keep, GetModuleHandle(null), 0);
+    var t = new System.Windows.Forms.Timer(); t.Interval = 2000;
+    t.Tick += (s, e) => { try { Process.GetProcessById(parent); } catch { Application.Exit(); } };
+    t.Start(); Application.Run();
+  }
+}
+"@
+Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms
+[CrundiKidKeys]::Run([int]$args[0])
+`;
+function kidKeys(on) {
+  if (process.platform !== 'win32') return;
+  if (!on) { kidKeysFails = 0; if (kidKeysProc) { try { kidKeysProc.kill(); } catch { /* gone */ } kidKeysProc = null; appendLog('[kid] keyboard filter off'); } return; }
+  if (kidKeysProc) return;
+  try {
+    const file = join(app.getPath('userData'), 'kid-keys.ps1');
+    writeFileSync(file, KID_KEYS_PS);
+    kidKeysProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', file, String(process.pid)], { windowsHide: true, stdio: 'ignore' });
+    kidKeysProc.on('exit', (code) => { appendLog(`[kid] keyboard filter ended (${code})`); kidKeysProc = null; if (kidLocked && ++kidKeysFails <= 5) setTimeout(() => kidKeys(true), 2000); });
+    appendLog('[kid] keyboard filter on (Windows key, Alt+Tab, Ctrl+Esc blocked)');
+  } catch (err) { appendLog(`[kid] keyboard filter: ${err.message}`); kidKeysProc = null; }
+}
+// Linux: no app can grab the Super key under Wayland, but the desktop's own
+// shortcuts can be switched off while kid mode is on (GNOME: gsettings; KDE:
+// the Meta key) and put back afterwards. The old values are kept in a file so
+// they come back even if the app was killed (restored at the next start).
+const KID_GNOME_KEYS = [
+  ['org.gnome.mutter', 'overlay-key', "''"],
+  ...['switch-applications', 'switch-applications-backward', 'switch-windows', 'switch-windows-backward', 'switch-group', 'switch-group-backward',
+    'cycle-windows', 'cycle-windows-backward', 'cycle-group', 'cycle-group-backward', 'panel-main-menu', 'panel-run-dialog', 'show-desktop', 'minimize',
+    'switch-to-workspace-left', 'switch-to-workspace-right', 'switch-to-workspace-up', 'switch-to-workspace-down', 'close']
+    .map((k) => ['org.gnome.desktop.wm.keybindings', k, '[]']),
+  ...['toggle-overview', 'toggle-application-view', 'toggle-message-tray', 'toggle-quick-settings', 'focus-active-notification', 'shift-overview-up', 'shift-overview-down']
+    .map((k) => ['org.gnome.shell.keybindings', k, '[]']),
+];
+function kidRestoreFile() { return join(app.getPath('userData'), 'kid-keys-restore.json'); }
+function sh(cmd, args) { try { return execFileSync(cmd, args, { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } }
+function kidKeysLinux(on) {
+  if (process.platform !== 'linux') return;
+  const file = kidRestoreFile();
+  if (on) {
+    if (existsSync(file)) return;   // already off (or left off by a crash: kept as it was)
+    const saved = { gnome: [], kde: null };
+    if (sh('which', ['gsettings'])) {
+      for (const [schema, key, off] of KID_GNOME_KEYS) {
+        const cur = sh('gsettings', ['get', schema, key]);
+        if (cur == null) continue;   // no such key on this desktop
+        saved.gnome.push([schema, key, cur]);
+      }
+    }
+    const kw = sh('which', ['kwriteconfig6']) ? 'kwriteconfig6' : (sh('which', ['kwriteconfig5']) ? 'kwriteconfig5' : '');
+    if (kw && (process.env.XDG_CURRENT_DESKTOP || '').toUpperCase().includes('KDE')) {
+      const rd = kw.replace('write', 'read');
+      saved.kde = { tool: kw, meta: sh(rd, ['--file', 'kwinrc', '--group', 'ModifierOnlyShortcuts', '--key', 'Meta']) || '' };
+    }
+    try { writeFileSync(file, JSON.stringify(saved)); } catch { /* best effort */ }
+    for (const [schema, key] of saved.gnome) sh('gsettings', ['set', schema, key, KID_GNOME_KEYS.find((k) => k[0] === schema && k[1] === key)[2]]);
+    if (saved.kde) { sh(saved.kde.tool, ['--file', 'kwinrc', '--group', 'ModifierOnlyShortcuts', '--key', 'Meta', '']); sh('qdbus', ['org.kde.KWin', '/KWin', 'reconfigure']) || sh('qdbus6', ['org.kde.KWin', '/KWin', 'reconfigure']); }
+    appendLog(`[kid] desktop shortcuts off (${saved.gnome.length} GNOME keys${saved.kde ? ', KDE Meta' : ''})`);
+  } else {
+    if (!existsSync(file)) return;
+    let saved = null;
+    try { saved = JSON.parse(readFileSync(file, 'utf8')); } catch { saved = null; }
+    for (const [schema, key, val] of (saved && saved.gnome) || []) sh('gsettings', ['set', schema, key, val]);
+    if (saved && saved.kde) { sh(saved.kde.tool, ['--file', 'kwinrc', '--group', 'ModifierOnlyShortcuts', '--key', 'Meta', saved.kde.meta || '']); sh('qdbus', ['org.kde.KWin', '/KWin', 'reconfigure']) || sh('qdbus6', ['org.kde.KWin', '/KWin', 'reconfigure']); }
+    try { unlinkSync(file); } catch { /* gone */ }
+    appendLog('[kid] desktop shortcuts restored');
+  }
+}
+app.on('will-quit', () => { kidKeys(false); kidKeysLinux(false); });
+// Left off by a crash or a kill: put the desktop's shortcuts back at the next start.
+app.whenReady().then(() => { if (!kidLocked) kidKeysLinux(false); }).catch(() => {});
+
+// Windows touchpad gestures (three and four fingers: task view, switch apps,
+// show the desktop) are the shell's own: switched off for this user while kid
+// mode is on (HKCU, no admin), and put back after.
+const KID_TOUCHPAD = ['ThreeFingerSlideEnabled', 'FourFingerSlideEnabled', 'ThreeFingerTapEnabled', 'FourFingerTapEnabled', 'ThreeFingerGestureSetting', 'FourFingerGestureSetting'];
+const KID_TP_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\PrecisionTouchPad';
+function kidTouchpad(on) {
+  if (process.platform !== 'win32') return;
+  const file = join(app.getPath('userData'), 'kid-touchpad-restore.json');
+  try {
+    if (on) {
+      if (existsSync(file)) return;
+      const saved = {};
+      for (const k of KID_TOUCHPAD) {
+        const out = sh('reg', ['query', KID_TP_KEY, '/v', k]);
+        const m = out && /REG_DWORD\s+0x([0-9a-f]+)/i.exec(out);
+        saved[k] = m ? parseInt(m[1], 16) : null;
+      }
+      writeFileSync(file, JSON.stringify(saved));
+      for (const k of KID_TOUCHPAD) sh('reg', ['add', KID_TP_KEY, '/v', k, '/t', 'REG_DWORD', '/d', '0', '/f']);
+      appendLog('[kid] touchpad gestures off');
+    } else {
+      if (!existsSync(file)) return;
+      let saved = {};
+      try { saved = JSON.parse(readFileSync(file, 'utf8')); } catch { saved = {}; }
+      for (const k of KID_TOUCHPAD) {
+        if (saved[k] == null) sh('reg', ['delete', KID_TP_KEY, '/v', k, '/f']);
+        else sh('reg', ['add', KID_TP_KEY, '/v', k, '/t', 'REG_DWORD', '/d', String(saved[k]), '/f']);
+      }
+      try { unlinkSync(file); } catch { /* gone */ }
+      appendLog('[kid] touchpad gestures restored');
+    }
+  } catch (err) { appendLog(`[kid] touchpad: ${err.message}`); }
+}
+app.on('will-quit', () => kidTouchpad(false));
+app.whenReady().then(() => { if (!kidLocked) kidTouchpad(false); }).catch(() => {});
+
+// Whatever got past the keys (a gesture, task view, a shortcut the OS keeps):
+// while kid mode is on, the window comes straight back to the front.
+let kidWatch = null;
+function kidWatchdog(on) {
+  clearInterval(kidWatch); kidWatch = null;
+  if (!on) return;
+  kidWatch = setInterval(() => {
+    const w = mainWindow;
+    if (!kidLocked || !w || w.isDestroyed()) return;
+    try {
+      if (w.isMinimized()) w.restore();
+      if (!w.isVisible()) w.show();
+      if (!w.isFullScreen()) w.setFullScreen(true);
+      if (!w.isFocused()) { w.setAlwaysOnTop(true, 'screen-saver'); w.moveTop(); w.focus(); }
+    } catch { /* closing */ }
+  }, 700);
+}
+
 function kidLockWindow(on) {
   const w = mainWindow;
   if (!w || w.isDestroyed()) return { ok: false };
   kidLocked = !!on;
   appendLog(`[kid] window ${kidLocked ? 'locked' : 'unlocked'}`);
+  kidKeys(kidLocked);
+  kidKeysLinux(kidLocked);
+  kidTouchpad(kidLocked);
+  kidWatchdog(kidLocked);
   try {
     if (kidLocked) {
       w.show();
@@ -281,6 +440,8 @@ function wireKidLock(w) {
     kidRefocus = setTimeout(() => { if (kidLocked && !w.isDestroyed()) { w.show(); w.setAlwaysOnTop(true, 'screen-saver'); w.moveTop(); w.focus(); } }, 150);
   });
   w.on('leave-full-screen', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) w.setFullScreen(true); }, 100); });
+  w.on('minimize', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) { w.restore(); w.focus(); } }, 50); });
+  w.on('hide', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) { w.show(); w.focus(); } }, 50); });
   w.on('minimize', () => { if (kidLocked && !w.isDestroyed()) { w.restore(); w.focus(); } });
   w.on('hide', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) w.show(); }, 100); });
 }

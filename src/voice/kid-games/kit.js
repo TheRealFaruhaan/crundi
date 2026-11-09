@@ -31,7 +31,7 @@
   function post(m) { try { P.postMessage(m, '*'); } catch (e) { /* gone */ } }
 
   var css = document.createElement('style');
-  css.textContent = 'html,body{height:100%}body{margin:0;padding:10px;box-sizing:border-box;font:22px/1.3 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;color:#fff;background:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation;overflow-x:hidden}'
+  css.textContent = 'html,body{height:100%}body{margin:0;padding:10px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;font:22px/1.3 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;color:#312e81;background:transparent;user-select:none;-webkit-user-select:none;touch-action:manipulation;overflow-x:hidden}'
     + '.k-title{font-size:30px;font-weight:800;text-align:center;margin:4px 0 10px;letter-spacing:.02em}'
     + '.k-grid{display:flex;flex-wrap:wrap;gap:14px;justify-content:center;align-items:center}'
     + '.k-btn{min-width:96px;min-height:96px;border:0;border-radius:24px;font-family:inherit;font-weight:800;font-size:52px;line-height:1;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 0 rgba(0,0,0,.25);transition:transform .12s;padding:10px}'
@@ -42,7 +42,23 @@
     + '.k-dim{opacity:.35}.k-row{display:flex;gap:12px;justify-content:center;align-items:center;flex-wrap:wrap}'
     + '.k-stars{text-align:center;font-size:18px;opacity:.85;margin-top:8px}'
     + '.k-conf{position:fixed;width:12px;height:12px;border-radius:3px;pointer-events:none;animation:kfall 1.4s ease-in forwards}@keyframes kfall{to{transform:translateY(110vh) rotate(540deg);opacity:.2}}';
+  // On the light kid screen, white things (a cow, a zebra, a sheep) need an edge to be seen.
+  css.textContent += 'svg{filter:drop-shadow(0 0 1.5px rgba(49,46,129,.55)) drop-shadow(0 3px 0 rgba(49,46,129,.16))}';
   document.head.appendChild(css);
+  // Games are laid out for about 760 x 500; on a big screen everything grows with it
+  // (the kid screen fills a PC monitor), never smaller than designed.
+  function fit() {
+    var z = Math.max(1, Math.min(2.4, Math.min(window.innerWidth / 760, window.innerHeight / 500)));
+    document.documentElement.style.zoom = String(z);
+    if (document.body) document.body.style.minHeight = Math.floor(window.innerHeight / z) + 'px';
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  document.addEventListener('DOMContentLoaded', fit);
+  window.addEventListener('load', fit);
+  // The frame may get its real size only after it is placed: look again a few times.
+  [50, 200, 600, 1500].forEach(function (ms) { setTimeout(fit, ms); });
+  try { new ResizeObserver(fit).observe(document.documentElement); } catch (e) { /* older engines: resize covers it */ }
   // A big, bright cursor (dark outline: visible on any background), a star over what can be tapped, a glow on hover,
   // and a ripple where a finger lands. The kid screen around the game uses the same (crundi-voice.js KID_CURSOR).
   var CUR_ARROW = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M5 3l34 18-15 4-6 15z" fill="#facc15" stroke="#111" stroke-width="3" stroke-linejoin="round"/><path d="M12 11l18 10" stroke="#fff" stroke-width="2.5" stroke-linecap="round" opacity=".8"/></svg>');

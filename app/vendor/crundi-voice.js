@@ -258,7 +258,7 @@
     '.cv-pill{margin-left:auto;display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;color:#d6d6f0;transition:background .4s,border-color .4s}' +
     '.cv-pill i{width:7px;height:7px;border-radius:50%;animation:cvp 1s ease-in-out infinite alternate}@keyframes cvp{from{opacity:.35}to{opacity:1}}' +
     '.cv-admin{margin-left:8px;padding:2px 8px;border-radius:999px;font:700 10px/16px ui-monospace,monospace;letter-spacing:.08em;color:#fecaca;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.55)}' +
-    '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:flex;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
+    '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:none;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
     '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
@@ -307,7 +307,17 @@
     '.cv-ov.kid .cv-cmp,.cv-ov.kid .cv-chatb,.cv-ov.kid .cv-close,.cv-ov.kid .cv-kbb,.cv-ov.kid .cv-type,.cv-ov.kid .cv-send,.cv-ov.kid .cv-confirm,.cv-ov.kid .cv-leg,.cv-ov.kid .cv-ptt,.cv-ov.kid .cv-admin,.cv-ov.kid .cv-scr-x{display:none!important}' +
     '.cv-ov.kid .cv-top,.cv-ov.kid .cv-scr,.cv-ov.kid .cv-field{max-width:none}.cv-ov.kid .cv-reply{font-size:24px;line-height:32px}.cv-ov.kid .cv-heard{font-size:18px}.cv-ov.kid .cv-mic{width:150px;height:150px}.cv-ov.kid .cv-mic svg{left:63px;top:63px}' +
     '.cv-ov.kid.has-scr .cv-scr{flex:4}.cv-ov.kid.has-scr .cv-words{flex:none;max-height:24vh}.cv-ov.kid .cv-scr-b iframe{height:100%}' +
-    '.cv-ov.kid .cv-scr-b{border:0;background:rgba(255,255,255,.04)}.cv-ov.kid .cv-wm .cru-ic .cru-b1{animation:cru-p .5s ease-in-out infinite}.cv-ov.kid .cv-wm .cru-ic .cru-b2{animation:cru-p .5s ease-in-out .12s infinite}' +
+    // Kid mode's own look (9 Nov, the owner: "doesn't look good, doesn't blend"): one bright, playful
+    // backdrop the game sits on with no box around it, big everything, Cru's words in a speech bubble.
+    // Light and sunny (the owner: "it's dark"): sky to sunshine, soft colourful shapes, dark friendly text.
+    '.cv-ov.kid{color:#312e81!important;background:radial-gradient(circle at 10% 16%,rgba(251,191,36,.45) 0 8%,transparent 8.5%),radial-gradient(circle at 90% 22%,rgba(244,114,182,.38) 0 6%,transparent 6.5%),radial-gradient(circle at 82% 88%,rgba(52,211,153,.40) 0 7%,transparent 7.5%),radial-gradient(circle at 16% 86%,rgba(167,139,250,.40) 0 5.5%,transparent 6%),linear-gradient(175deg,#bae6fd 0%,#e0f2fe 45%,#fef9c3 100%)!important}' +
+    '.cv-ov.kid .cv-top{padding:18px 28px 0}.cv-ov.kid .cv-wm .cru-ic{width:86px!important;height:52px!important}.cv-ov.kid .cv-pill{display:none!important}' +
+    '.cv-ov.kid .cv-scr{max-width:none;padding:0 2vw}.cv-ov.kid .cv-scr-h,.cv-ov.kid .cv-scr-t{display:none!important}.cv-ov.kid.has-scr .cv-scr{flex:1 1 auto;min-height:0}' +
+    '.cv-ov.kid .cv-heard{display:none!important}.cv-ov.kid .cv-words{max-width:min(1100px,92vw);padding:4px 24px 18px;overflow:visible!important;flex:none}' +
+    '.cv-ov.kid .cv-reply{display:inline-block;position:relative;background:#fff;color:#312e81;border-radius:28px;padding:16px 26px;margin-top:6px;font:700 clamp(20px,2.4vmin,34px)/1.3 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;box-shadow:0 6px 0 rgba(49,46,129,.15),0 10px 30px rgba(49,46,129,.12)}.cv-ov.kid .cv-lock{color:#6366f1}.cv-ov.kid .cv-note{color:#b45309}.cv-ov.kid .cv-reply:empty{display:none}' +
+    '.cv-ov.kid .cv-reply:after{content:"";position:absolute;left:50%;bottom:-14px;margin-left:-14px;border:14px solid transparent;border-top-color:#fff;border-bottom:0}' +
+    '.cv-ov.kid .cv-detail{display:none!important}.cv-ov.kid .cv-bot{padding:6px 24px 20px}.cv-ov.kid .cv-mic{width:clamp(110px,15vmin,170px);height:clamp(110px,15vmin,170px)}' +
+    '.cv-ov.kid .cv-scr-b{border:0!important;background:transparent!important;box-shadow:none!important}.cv-ov.kid .cv-wm .cru-ic .cru-b1{animation:cru-p .5s ease-in-out infinite}.cv-ov.kid .cv-wm .cru-ic .cru-b2{animation:cru-p .5s ease-in-out .12s infinite}' +
     '.cv-ov.kid,.cv-ov.kid *{cursor:url("' + KID_CURSOR + '") 5 3,auto}.cv-ov.kid button,.cv-ov.kid .cv-mic,.cv-ov.kid [role=button]{cursor:url("' + KID_POINTER + '") 28 28,pointer}' +
     '.cv-lock{display:none;width:30px;height:30px;border-radius:50%;border:0;background:transparent;color:' + C.muted + ';opacity:.45;cursor:pointer;margin-left:8px;align-items:center;justify-content:center}.cv-ov.kid .cv-lock{display:flex}.cv-lock:hover{opacity:.9}' +
     '.cv-talk{display:none;position:absolute;left:50%;bottom:14px;transform:translateX(-50%);padding:14px 26px;border-radius:999px;border:0;background:#f59e0b;color:#111;font:700 20px system-ui,sans-serif;box-shadow:0 6px 0 rgba(0,0,0,.3);z-index:3}.cv-ov.kid.vid .cv-talk{display:block}' +
@@ -931,6 +941,9 @@
     opts = opts || {};
     if (S.video.playing) videoPause();
     S.speakOpts = opts;
+    // A line that never reports its end (a device with no voice of its own, a stream that stalls) must not
+    // leave the screen on "Speaking": past about twice its expected length, listening carries on (tick()).
+    S.speakDeadline = Date.now() + 6000 + String(text || '').length * 140;
     S.phase = 'speak'; S.speaking = true; S.lastSaid = text; S.loudFor = 0; S.spokeFor = 0; S.hintAt = 0; S.unknownVoice = false;
     // The reply scrolls along as it is said (about 14 characters a second at normal speed).
     S.sayFrom = Date.now(); S.sayFor = Math.max(1500, String(text || '').length / (14 * ((S.settings && S.settings.speechRate) || 1)) * 1000); S.ownScroll = false;
@@ -956,7 +969,8 @@
     var o = S.speakOpts || {}, ex = typeof o.expressivity === 'number' ? o.expressivity : (typeof S.nextExpr === 'number' ? S.nextExpr : (typeof S.expr === 'number' ? S.expr : null));
     S.nextExpr = null;
     var late = null, s0 = S;
-    if (o.reflex) late = setTimeout(function () { if (S === s0 && S.speakToken === token && !any) { S.speakToken = {}; browserSpeech(text); } }, 400);
+    var hasDeviceVoice = !!(window.speechSynthesis && speechSynthesis.getVoices && speechSynthesis.getVoices().length);
+    if (o.reflex && hasDeviceVoice) late = setTimeout(function () { if (S === s0 && S.speakToken === token && !any) { S.speakToken = {}; browserSpeech(text); } }, 1500);
     return S.opts.apiFetch('/api/voice/speak?stream=1', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' }, body: JSON.stringify(ex == null ? { text: text } : { text: text, expressivity: ex }) }).then(function (res) {
       clearTimeout(late);
       if (!res.ok || !res.body || !/L16/i.test(res.headers.get('Content-Type') || '')) throw new Error('no stream');
@@ -992,6 +1006,7 @@
     u.volume = volume();
     u.onboundary = function () { if (S) S.voiceBump = 0.6 + Math.random() * 0.35; };
     u.onend = function () { if (S && S.speaking) afterSpeech(); };
+    u.onerror = function () { if (S && S.speaking) afterSpeech(); };
     stopCue();
     // The browser's voice can't go through the loopback: the gate has only the mic to go by.
     if (S) S.unknownVoice = true;
@@ -1189,6 +1204,12 @@
 
   function tick() {
     if (!S) return;
+    // Stuck on "Speaking" with nothing playing: carry on listening.
+    if (S.phase === 'speak' && S.speakDeadline && Date.now() > S.speakDeadline && !(window.speechSynthesis && speechSynthesis.speaking)) {
+      var playing = false;
+      try { playing = !!(S.ctx && (S.nodes || []).length && S.outAnalyser); } catch (e) { playing = false; }
+      if (!playing || Date.now() > S.speakDeadline + 8000) { S.speakDeadline = 0; stopSpeaking(S); afterSpeech(); }
+    }
     // After a short silence (Settings, default a minute) the voice screen closes itself; "Hey Cru" opens it again.
     var idleMs = ((S.settings && S.settings.screenCloseSeconds) || 60) * 1000;
     // Kid mode stays, listening; a panel on screen keeps the screen open (the mic still sleeps).

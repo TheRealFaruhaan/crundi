@@ -71,7 +71,11 @@ const pcm = (x) => { const b = Buffer.alloc(x.length * 2); for (let i = 0; i < x
 
 // ─── verdicts and the rules ───
 {
-  ok(S.decide(0.41, 2) === true && S.decide(0.39, 2) === false && S.decide(0.9, 1.2) === null, 'cosine 0.40 is the line; under 1.5 s of speech there is no verdict');
+  ok(S.decide(0.41, 2) === true && S.decide(0.39, 2) === false, 'cosine 0.40 is the line from 1.5 s');
+  ok(S.decide(0.37, 1.0) === true && S.decide(0.35, 1.0) === false, 'short words (0.8-1.5 s) use 0.36');
+  ok(S.decide(0.9, 0.6) === null, 'under 0.8 s there is no verdict');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true } }).admin.owner === false, 'a brief check is not enough for admin mode');
+  ok(S.turnPolicy({ enrolled: true, verdict: { owner: true, reason: 'owner', brief: true } }).unrecognised === false, 'but everyday requests are fine');
   const P = S.turnPolicy;
   ok(!P({ enrolled: false, verdict: { owner: false } }).unrecognised && P({ enrolled: false }).admin.owner === true, 'no voice enrolled: everything as before, admin allowed');
   ok(P({ enrolled: true, verdict: { owner: false, reason: 'other' } }).unrecognised, 'another voice: changes are held back');
@@ -141,8 +145,10 @@ const spk = S.createSpeaker({ dir: sdir, embedder: emb });
   ok(a.owner === true && a.reason === 'owner' && a.score > 0.9, 'the owner\'s voice: true');
   const b = await spk.verify(tone(1800, 2));
   ok(b.owner === false && b.reason === 'other', 'another voice: false');
-  const c = await spk.verify(tone(310, 1), { seconds: 1 });
+  const c = await spk.verify(tone(310, 1), { seconds: 0.6 });
   ok(c.owner === null && c.reason === 'short', 'too short: null');
+  const c2 = await spk.verify(tone(310, 1), { seconds: 1 });
+  ok(c2.owner === true && c2.brief === true, 'a short word: checked, marked brief');
   // A fresh speaker reads the profile back from disk.
   ok(S.createSpeaker({ dir: sdir, embedder: emb }).enrolled, 'the profile survives a restart');
 }

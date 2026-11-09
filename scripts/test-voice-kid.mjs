@@ -206,7 +206,7 @@ const scr = screenMod.createScreen({ file: scrFile, onChange: () => changes++, k
   const line = r.pick('correct', { item: 'B' }).text;
   ok(stream.isEcho(line, line) && stream.isEcho(line.toLowerCase().replace(/[!,]/g, ''), line), 'a reflex line heard back is Cru\'s own voice, dropped');
   const src = readFileSync(join(root, 'app/vendor/crundi-voice.js'), 'utf8');
-  ok(/speak\(r\.reflex\.text, \{ reflex: true/.test(src) && /function speak\(text, opts\)[\s\S]{0,900}if \(S\.live\) \{ wsSend\(\{ type: 'saying', text: text \}\); hold\(\); \}/.test(src), 'instant lines go through speak(): told to the server as saying, the mic held by the local gate');
+  ok(/speak\(r\.reflex\.text, \{ reflex: true/.test(src) && /function speak\(text, opts\)[\s\S]{0,1600}if \(S\.live\) \{ wsSend\(\{ type: 'saying', text: text \}\); hold\(\); \}/.test(src), 'instant lines go through speak(): told to the server as saying, the mic held by the local gate');
 }
 
 // ─── The game library: validator, seed, checks after the workshop, rollback ───

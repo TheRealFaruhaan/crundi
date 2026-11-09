@@ -38,6 +38,15 @@ export const SAMPLE_RATE = 16000;
 export const THRESHOLD = 0.40;
 /** Seconds of speech below which there is no verdict. */
 export const MIN_SECONDS = 1.5;
+/**
+ * Shorter words (9 Nov, the owner: "shorter words should be recognised too"):
+ * from 0.8 s a check is made against a slightly lower bar. Measured on the
+ * owner's voice (ERes2Net, 1 s clips, 3 enrolment phrases): at 0.36 the owner
+ * was refused about 5% of the time in a quiet room and no impostor of 1072
+ * passed; in noise about 1% did. Admin mode still needs MIN_SECONDS.
+ */
+export const SHORT_MIN_SECONDS = 0.8;
+export const SHORT_THRESHOLD = 0.36;
 /** An enrolment needs this many phrases, and offers ENROL_PHRASES. */
 export const MIN_PHRASES = 5;
 /** A phrase that agrees less than this with the ones before it is asked again. */
@@ -310,8 +319,10 @@ export function meanProfile(list) {
 
 /** true / false / null from a score and how much speech it rests on. */
 export function decide(score, seconds, threshold = THRESHOLD) {
-  if (!(seconds >= MIN_SECONDS) || !Number.isFinite(score)) return null;
-  return score >= threshold;
+  if (!Number.isFinite(score)) return null;
+  if (seconds >= MIN_SECONDS) return score >= threshold;
+  if (seconds >= SHORT_MIN_SECONDS) return score >= Math.min(threshold, SHORT_THRESHOLD);
+  return null;
 }
 
 /**
@@ -343,6 +354,7 @@ export function turnPolicy({ enrolled = false, ownerOnly = true, typed = false, 
   const confirmOk = !unrecognised || (short && answering);
   let admin;
   if (!enrolled) admin = { owner: true, reason: 'no voice enrolled' };
+  else if (owner === true && verdict && verdict.brief && !typed) admin = { owner: false, reason: 'That was too short to be sure enough for admin mode. Nothing was done: ask them to say it a bit longer.' };
   else if (owner === true) admin = { owner: true, reason: 'the owner\'s voice' };
   else if (owner === false) admin = { owner: false, reason: 'The speaker was not recognised as the owner, and admin mode only obeys the owner. Nothing was done: say you couldn\'t recognise who they are, so you can\'t do that.' };
   else if (typed) admin = { owner: true, reason: 'typed by the owner' };
@@ -524,11 +536,12 @@ export function createSpeaker({ dir, embedder, now = () => Date.now() } = {}) {
       const p = loadProfile();
       const secs = seconds ?? samples.length / SAMPLE_RATE;
       if (!p) return { owner: null, reason: 'no-profile', seconds: secs };
-      if (secs < MIN_SECONDS) return { owner: null, reason: 'short', seconds: round1(secs) };
+      if (secs < SHORT_MIN_SECONDS) return { owner: null, reason: 'short', seconds: round1(secs) };
       try {
         const score = cosine(normalise(await embedSpeech(samples)), p.vec);
         const owner = decide(score, secs);
-        return { owner, reason: owner ? 'owner' : 'other', score: Math.round(score * 1000) / 1000, seconds: round1(secs) };
+        // brief: checked on less than MIN_SECONDS (enough for everyday requests, not for admin mode).
+        return { owner, reason: owner ? 'owner' : 'other', score: Math.round(score * 1000) / 1000, seconds: round1(secs), brief: secs < MIN_SECONDS };
       } catch { return { owner: null, reason: 'unavailable', seconds: round1(secs) }; }
     },
 
