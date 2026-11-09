@@ -100,6 +100,8 @@ data class CruSettingsUi(
     val wakeups: WakeupsUi? = null,
     /** "Your voice" (capability "voice-speaker"); null when the server has none. */
     val speaker: SpeakerUi? = null,
+    /** Kid mode (capability "voice-kid"); null when the server has none. */
+    val kid: KidUi? = null,
 )
 
 /** Tickers and triggers as the server has them, and the one whose Delete was tapped once. */
@@ -160,6 +162,7 @@ class CruSettingsEvents(
     val onMemoryDelete: (String) -> Unit = {},
     val onMemoryQuery: (String) -> Unit = {},
     val onMemoryReload: () -> Unit = {},
+    val kid: KidEvents = KidEvents(),
 )
 
 /** The sections, each folded until tapped. */
@@ -178,6 +181,7 @@ object CruSection {
     const val KEYS = "keys"
     const val MEMORY = "memory"
     const val STATS = "stats"
+    const val KID = "kid"
 }
 
 @Composable
@@ -199,6 +203,7 @@ fun CruSettingsRoute() {
     val hasMemory = VoiceApi.MEMORY in shell.capabilities
     val hasWakeups = VoiceApi.WAKEUPS in shell.capabilities
     val hasSpeaker = VoiceApi.SPEAKER in shell.capabilities
+    val hasKid = mv.obitech.crundi.api.KidApi.KID in shell.capabilities
     // Enrolling: the phone's microphone at 16 kHz, as the voice screen hears it.
     val rec = remember { arrayOfNulls<MicStream>(1) }
     val recBuf = remember { java.io.ByteArrayOutputStream() }
@@ -297,6 +302,9 @@ fun CruSettingsRoute() {
         rec[0] = m
         spk { it.copy(recording = true, msg = "", bad = false) }
     }
+    // Kid mode (capability "voice-kid"): its own state and calls.
+    val kidModel = remember(v) { KidSettingsModel(scope, app.api.kid, v, onSettings = { s -> ui = withServer(s) }, say = { t, bad -> say(t, bad) }) }
+    val kidEvents = remember(kidModel) { kidModel.events { ui.server } }
     fun save(done: String, call: suspend () -> VoiceSettings) {
         ui = ui.copy(busy = true)
         scope.launch {
@@ -314,6 +322,7 @@ fun CruSettingsRoute() {
             loadMemory()
             loadWakeups()
             loadSpeaker()
+            if (hasKid) kidModel.load()
         } catch (e: Exception) {
             ui = ui.copy(error = if (VoiceApi.unsupported(e)) VoiceApi.UNSUPPORTED else e.message ?: "Could not load the settings")
         }
@@ -324,7 +333,16 @@ fun CruSettingsRoute() {
         app.api.events.changes("voice-wakeups").collect { loadWakeups() }
     }
 
-    CruSettingsScreen(ui.speaker?.let { sp -> if (sp.recording) ui.copy(speaker = sp.copy(level = recLevel)) else ui } ?: ui, note, CruSettingsEvents(
+    // Kid mode switched, paused or given time anywhere ('voice-kid'); the overnight workshop changed a game ('voice-kid-games').
+    LaunchedEffect(hasKid) {
+        if (inspecting || !hasKid) return@LaunchedEffect
+        app.api.events.changes("voice-kid", "voice-kid-games").collect { e ->
+            if (e.name == "voice-kid") kidModel.changed(mv.obitech.crundi.api.KidStatus.of(e.data)) else kidModel.loadGames()
+        }
+    }
+
+    val shown = (ui.speaker?.let { sp -> if (sp.recording) ui.copy(speaker = sp.copy(level = recLevel)) else ui } ?: ui).copy(kid = if (hasKid) kidModel.ui else null)
+    CruSettingsScreen(shown, note, CruSettingsEvents(
         onBack = { nav.back() },
         onCloseNote = { note = null },
         onPickDeepgram = { save("Cru will speak with this voice") { v.save(ttsVoice = it) } },
@@ -428,6 +446,7 @@ fun CruSettingsRoute() {
             }
         },
         onMemoryReload = { loadMemory() },
+        kid = kidEvents,
     ))
 }
 
@@ -599,6 +618,11 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
                 enabled = !ui.busy && (capable || s.adminMode),
             )
         }
+    }
+
+    // ─── Kid mode (capability "voice-kid") ───
+    ui.kid?.let { k ->
+        Fold(CruSection.KID, "Kid mode", kidSummary(k.status), open, warn = k.status?.on == true) { KidModePart(k, s, ev.kid) }
     }
 
     // ─── Your voice (capability "voice-speaker") ───

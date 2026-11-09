@@ -26,6 +26,16 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes, "volume" to volume, "adminMode" to adminMode, "ownerOnly" to ownerOnly)), null)
 
     /**
+     * Kid mode's settings (capability "voice-kid"); null leaves one as it is.
+     * [kidVoice] "" is Cru's own voice. The server refuses any change while kid mode is on (423).
+     */
+    suspend fun saveKid(kidVoice: String? = null, kidChattiness: String? = null, kidPauseMs: Int? = null, kidReflex: Boolean? = null, kidGames: KidGamesSettings? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf(
+            "kidVoice" to kidVoice, "kidChattiness" to kidChattiness, "kidPauseMs" to kidPauseMs, "kidReflex" to kidReflex,
+            "kidGames" to kidGames?.let { mapOf("improve" to it.improve, "from" to it.from, "to" to it.to) },
+        )), null)
+
+    /**
      * Replace one of the server's keys: [key] is "anthropicKey", "deepgramKey"
      * or "anthropicAdminKey". Write only: no key ever comes back, only
      * whether each is set.
@@ -355,7 +365,22 @@ data class VoiceSettings(
     val adminMode: Boolean = false,
     /** The model can hold admin mode (Sonnet or above). Null from an older server, which has no admin mode: the switch is not shown. */
     val adminCapable: Boolean? = null,
+    // ─── Kid mode (capability "voice-kid"); an older server has none of these ───
+    /** Kid Cru's voice (a Flux voice), or "" for Cru's own. Null from an older server. */
+    val kidVoice: String? = null,
+    /** quiet, normal or chatty. */
+    val kidChattiness: String = "normal",
+    /** How long kid Cru waits before answering, ms. */
+    val kidPauseMs: Int = 3200,
+    /** Instant cheers in games. */
+    val kidReflex: Boolean = true,
+    /** Improve games overnight. */
+    val kidGames: KidGamesSettings? = null,
 )
+
+/** "Improve games overnight": on a night after kid mode was used, between [from] and [to] (HH:MM). */
+@Serializable
+data class KidGamesSettings(val improve: Boolean = true, val from: String = "01:00", val to: String = "05:00")
 
 /** [VoiceSettings.volume] as a player's gain, 0.1 to 1 (anything out of range: 1, as the web). */
 fun volumeGain(volume: Int?): Float = if (volume != null && volume in 10..100) volume / 100f else 1f
@@ -550,6 +575,12 @@ sealed interface ListenEvent {
     data class Discard(val text: String) : ListenEvent
     /** A setting changed on the server (Cru's volume, say): fetch them again. */
     data object Settings : ListenEvent
+    /** Cru changed its live screen (capability "voice-screen"); null: it is gone. */
+    data class Screen(val screen: LiveScreen?) : ListenEvent
+    /** Kid mode changed (capability "voice-kid"). */
+    data class Kid(val status: KidStatus) : ListenEvent
+    /** Kid Cru tells the game on screen to do something: next, easier, harder, hint, pause, resume, end. */
+    data class GameCommand(val action: String) : ListenEvent
 
     companion object {
         /** One message off the socket, or null for one this app does not know. */
@@ -564,6 +595,9 @@ sealed interface ListenEvent {
                 "settings" -> Settings
                 "utterance" -> if (t.isBlank()) null else Utterance(t, (o["owner"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull())
                 "error" -> Failed((o["error"] as? JsonPrimitive)?.contentOrNull ?: "The stream stopped")
+                "screen" -> Screen(LiveScreen.parse(o["screen"]))
+                "kid" -> KidStatus.of(o["kid"])?.let { Kid(it) }
+                "game-command" -> ((o["command"] as? JsonObject)?.get("action") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { GameCommand(it) }
                 "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); if (sp.isBlank() && sh.isBlank()) null else Report(sp, sh) }
                 else -> null
             }

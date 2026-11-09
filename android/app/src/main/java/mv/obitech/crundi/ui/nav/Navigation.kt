@@ -82,6 +82,8 @@ object DeepLinks {
     fun route(path: String?): String? {
         if (path.isNullOrEmpty() || !path.startsWith("/") || path.startsWith("//")) return null
         chat.find(path)?.let { return Routes.chat(it.groupValues[1]) }
+        // "/approvals": what is waiting on the owner (a kid-mode question from the phone's notification).
+        if (path.substringBefore('?').trimEnd('/') == "/approvals") return Routes.APPROVALS
         // "/inbox", "/inbox?thread=<key>", "/inbox/<id>?thread=<key>": Crundi's inbox, at
         // that thread and item (a notification that carries inboxThread / inboxId).
         inbox.find(path.substringBefore('?'))?.let { m ->

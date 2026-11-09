@@ -142,7 +142,11 @@ fun CrundiApp(
             drawerOpen = drawer,
             onDrawer = { drawer = it },
             addMenuOpen = addMenuOpenAtStart,
-            overlay = { if (approvalsOpen && atRoot) mv.obitech.crundi.ui.chats.ApprovalsDropdownRoute { approvalsOpen = false } },
+            overlay = {
+                // Kid mode on (on the PC): the parent's card, on the front pages (capability "voice-kid").
+                mv.obitech.crundi.voice.KidCardRoute(visible = atRoot && !approvalsOpen && !drawer)
+                if (approvalsOpen && atRoot) mv.obitech.crundi.ui.chats.ApprovalsDropdownRoute { approvalsOpen = false }
+            },
             modifier = modifier,
         ) {
             NavHost(navController = nav, startDestination = Area.Workbench.key) {

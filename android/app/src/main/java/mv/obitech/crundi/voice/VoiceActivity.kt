@@ -108,6 +108,7 @@ class VoiceActivity : ComponentActivity() {
                         onKeyboard = { on -> if (waiting) wake(); controller.setKeyboard(on) },
                         onSend = { t -> if (waiting) wake(); controller.send(t) },
                         onTyping = { if (waiting) closeLater() else controller.typing() },
+                        live = controller.live,
                     ),
                 )
             }

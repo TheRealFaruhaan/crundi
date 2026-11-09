@@ -698,7 +698,7 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
             is ListenEvent.Discard -> { said.clear(); syncHeld(); _ui.update { it.copy(interim = "") }; replies.ownerDone(); pumpSoon() }
             is ListenEvent.Failed -> if (mode == ChatVoiceUi.Mode.Finishing) final?.complete(Unit) else stop("Voice input stopped: " + ev.error.trimEnd('.') + ".")
             // The voice assistant's own news is not this chat's.
-            is ListenEvent.Report, ListenEvent.Speech -> {}
+            is ListenEvent.Report, ListenEvent.Speech, is ListenEvent.Screen, is ListenEvent.Kid, is ListenEvent.GameCommand -> {}
         }
     }
 

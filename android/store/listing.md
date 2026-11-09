@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.30 (en-US)
+
+Version code 61. Internal track. Since 1.1.3-dev.29 (code 60): Cru live screen (voice-screen), kid mode parent controls, approvals and status card (voice-kid; kid screen itself stays PC-only), Compact confirmation. Server 1.21.6-dev.37.
+
+```
+<en-US>
+Cru:
+- Its live screen: lists, status and more, shown while you talk.
+- Kid mode, for parents: PIN, start/pause/end, add time, approvals with buttons, progress by area, games list.
+- Compact now asks first.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.29 (en-US)
 
 Version code 60. Internal track. Since 1.1.3-dev.28 (code 59): keyboard-mode inset fix (VoiceActivity adjustResize), Cru unread dot and cruChat pushes (server 1.21.6-dev.35).

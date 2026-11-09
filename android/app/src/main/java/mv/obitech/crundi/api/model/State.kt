@@ -155,9 +155,13 @@ data class ApprovalItem(
     val host: String = "",
     /** Epoch ms or ISO text, depending on source: read [createdAtMs]. */
     val createdAt: JsonElement? = null,
+    /** kid (kid Cru asking the parent, capability "voice-kid"): the answers it offers, for POST /api/voice/kid/ask. */
+    val choices: List<ApprovalChoice> = emptyList(),
 ) {
     val createdAtMs get() = timeMs(createdAt)
 }
+
+@Serializable data class ApprovalChoice(val id: String = "", val label: String = "")
 
 @Serializable data class Approvals(val items: List<ApprovalItem> = emptyList(), val count: Int = 0)
 

@@ -51,6 +51,25 @@ data class VoiceUi(
     val historyLoaded: Boolean = false,
     /** Why the history could not be loaded, or "". */
     val historyError: String = "",
+    /** Cru's live screen (capability "voice-screen"); null: nothing on it. */
+    val screen: mv.obitech.crundi.api.LiveScreen? = null,
+    /** Kid mode as the server has it (capability "voice-kid"); null: not known, or a server without it. */
+    val kid: mv.obitech.crundi.api.KidStatus? = null,
+    /** The last command for the game on screen, numbered so the same one twice is still sent twice. */
+    val gameCommand: GameCommand? = null,
+)
+
+/** Kid Cru's command for the game on screen (next, easier, harder, hint, pause, resume, end). */
+data class GameCommand(val seq: Int, val action: String)
+
+/** What the live screen and the kid-mode note can ask the voice session to do. */
+class LiveActions(
+    /** The panel's X. */
+    val onClose: () -> Unit = {},
+    /** Something Cru's page or game posted. */
+    val onFrame: (mv.obitech.crundi.api.FrameMessage) -> Unit = {},
+    /** Kid mode from the phone: "pause", "resume", "end", "time". */
+    val onKid: (String) -> Unit = {},
 )
 
 /**
@@ -130,7 +149,7 @@ class VoiceController(
         if (running) return
         // The chat view and its messages, and the last settings, stay from one session to the next.
         val was = _ui.value
-        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend)
+        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend, screen = was.screen, kid = was.kid)
         if (!VoicePrefs.enabled(ctx)) { block("The voice assistant is turned off. Turn it on in App settings, Voice assistant."); return }
         val server = Servers.current(ctx) ?: run { block("Pair this phone with a Crundi server first."); return }
         val caps = ServerCaps.get(ctx, server.id)
@@ -162,6 +181,10 @@ class VoiceController(
         if (keyboard) startKeyboard(voice) else startVoice(voice)
         tick = scope.launch { while (isActive) { delay(1000); dispatch(VoiceEvent.Tick(now())) } }
         if (_ui.value.chat && !_ui.value.historyLoaded) loadHistory(false)
+        // What is on Cru's live screen, and whether kid mode is on (each only on a server that has it).
+        val kidApi = AppGraph.forServer(ctx, server).api.kid
+        if (mv.obitech.crundi.api.KidApi.SCREEN in caps) scope.launch { runCatching { kidApi.screen() }.onSuccess { sc -> _ui.update { it.copy(screen = sc) } } }
+        if (mv.obitech.crundi.api.KidApi.KID in caps) scope.launch { runCatching { kidApi.status() }.getOrNull()?.let { k -> _ui.update { it.copy(kid = k) } } }
         // Cru's unheard reports: seen once the chat view is up, else counted for the chat button's dot.
         if (VoiceApi.UNREAD in caps) {
             if (_ui.value.chat) markSeen()
@@ -556,7 +579,7 @@ class VoiceController(
             val s = voice.listenKeyboard(object : SocketListener {
                 override fun onMessage(text: String) {
                     val ev = ListenEvent.parse(text) ?: return
-                    if (ev is ListenEvent.Report || ev is ListenEvent.Settings) scope.launch { if (gen == kbGen && running) heard(ev) }
+                    if (ev is ListenEvent.Report || ev is ListenEvent.Settings || ev is ListenEvent.Screen || ev is ListenEvent.Kid || ev is ListenEvent.GameCommand) scope.launch { if (gen == kbGen && running) heard(ev) }
                 }
                 override fun onClosed(code: Int, reason: String) {
                     scope.launch { if (gen == kbGen) kbSocket = null }
@@ -592,6 +615,81 @@ class VoiceController(
             is ListenEvent.Discard -> dispatch(VoiceEvent.Discard(now()))
             // A setting changed on the server (Cru's volume, say): picked up at once.
             ListenEvent.Settings -> api?.let { v -> scope.launch { refreshSettings(v) } }
+            is ListenEvent.Screen -> _ui.update { it.copy(screen = ev.screen) }
+            is ListenEvent.Kid -> _ui.update { it.copy(kid = ev.status) }
+            is ListenEvent.GameCommand -> _ui.update { it.copy(gameCommand = GameCommand((it.gameCommand?.seq ?: 0) + 1, ev.action)) }
+        }
+    }
+
+    // ─── the live screen (capability "voice-screen") and kid mode (capability "voice-kid") ───
+
+    private fun kidApi(): mv.obitech.crundi.api.KidApi? = Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).api.kid }
+
+    /** What the live screen and the kid-mode note do. */
+    val live = LiveActions(
+        onClose = { closeScreen() },
+        onFrame = { frame(it) },
+        onKid = { kid(it) },
+    )
+
+    /** The panel's X: gone here at once, and for every screen. */
+    fun closeScreen() {
+        _ui.update { it.copy(screen = null) }
+        val k = kidApi() ?: return
+        scope.launch { k.closeScreen() }
+    }
+
+    /** Said now (a game's word, an instant cheer), only while Cru listens and nothing is being said. */
+    private fun sayNow(text: String) {
+        val s = _ui.value.state
+        if (!running || text.isBlank() || s.phase != Phase.Listening || s.heard.isNotEmpty()) return
+        dispatch(VoiceEvent.Report(text, "", now()))
+    }
+
+    private var sayAt = 0L
+    private fun frame(m: mv.obitech.crundi.api.FrameMessage) {
+        val k = kidApi() ?: return
+        when (m) {
+            is mv.obitech.crundi.api.FrameMessage.Say -> { if (now() - sayAt >= 600) { sayAt = now(); sayNow(m.text) } }
+            is mv.obitech.crundi.api.FrameMessage.Tell -> {
+                if (_ui.value.state.phase == Phase.Thinking) return
+                scope.launch {
+                    val r = runCatching { k.screenEvent(m.text) }.getOrNull() ?: return@launch
+                    if (r.ok && (r.speak.isNotEmpty() || r.show.isNotEmpty()) && running) {
+                        r.volume?.let { speaker.volume = mv.obitech.crundi.api.volumeGain(it) }
+                        chatAdd("", r.speak, r.show)
+                        dispatch(VoiceEvent.Report(r.speak, r.show, now()))
+                    }
+                }
+            }
+            is mv.obitech.crundi.api.FrameMessage.Game -> {
+                val p = _ui.value.state.phase
+                val body = m.body + ("speaking" to (p == Phase.Speaking || p == Phase.Thinking))
+                scope.launch {
+                    val reflex = runCatching { k.play(body) }.getOrNull() ?: return@launch
+                    // After the game's own sound.
+                    delay(250)
+                    sayNow(reflex.text)
+                }
+            }
+        }
+    }
+
+    /** Kid mode from this phone: pause, resume, end, or 15 more minutes. */
+    private fun kid(action: String) {
+        val k = kidApi() ?: return
+        scope.launch {
+            try {
+                val st = when (action) {
+                    "pause" -> k.pause(true)
+                    "resume" -> k.pause(false)
+                    "time" -> k.addTime(15)
+                    "end" -> { k.end(); mv.obitech.crundi.api.KidStatus(on = false, pinSet = true) }
+                    else -> null
+                }
+                if (st != null) _ui.update { it.copy(kid = st) }
+                if (action == "time") note("15 more minutes added.")
+            } catch (e: Exception) { note(e.message ?: "That did not work") }
         }
     }
 

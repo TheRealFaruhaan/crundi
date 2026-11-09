@@ -66,6 +66,8 @@ interface ApprovalsActions {
     fun openSecrets() {}
     /** A collaborator's request. [scope]: once, session, always. */
     fun decide(item: ApprovalItem, approve: Boolean, scope: String = "once") {}
+    /** Kid Cru asking the parent (source "kid"): one of the answers it offers. */
+    fun answerKid(item: ApprovalItem, choice: String) {}
     /** Off the list: a chat card stays answerable in its chat; anything else is declined. */
     fun dismiss(item: ApprovalItem) {}
     fun clearAll() {}
@@ -149,6 +151,13 @@ private fun ApprovalsList(state: ApprovalsState, a: ApprovalsActions) {
                         SmallAct("Decline", CrundiColors.Red, busy) { a.decide(it, false) }
                     }
                     it.source == "chat" -> SmallAct("Open the chat", CrundiColors.AccentHover) { a.openChat(it) }
+                    // Kid Cru asking the parent: each answer the question offers (Allow once, Always allow, No…).
+                    it.source == "kid" -> {
+                        val item = it
+                        for (c in item.choices.ifEmpty { listOf(mv.obitech.crundi.api.model.ApprovalChoice("yes", "OK"), mv.obitech.crundi.api.model.ApprovalChoice("no", "No")) }) {
+                            SmallAct(c.label.ifEmpty { c.id }, if (c.id == "no") CrundiColors.Red else CrundiColors.Green, busy) { a.answerKid(item, c.id) }
+                        }
+                    }
                     else -> SmallAct("Open secrets", CrundiColors.AccentHover) { a.openSecrets() }
                 }
                 SmallAct("Dismiss", CrundiColors.TextMuted, busy, grow = false) { a.dismiss(it) }
@@ -161,8 +170,8 @@ private fun ApprovalsList(state: ApprovalsState, a: ApprovalsActions) {
 /** .appr-src: chat (accent), secret (yellow), collab (sky). */
 @Composable
 private fun SourcePill(source: String) {
-    val c = when (source) { "secret" -> CrundiColors.Yellow; "collab" -> CrundiColors.Sky; "chat" -> CrundiColors.AccentHover; else -> CrundiColors.TextMuted }
-    val b = when (source) { "secret" -> CrundiColors.Yellow; "collab" -> CrundiColors.Sky; "chat" -> CrundiColors.Accent; else -> CrundiColors.Border }
+    val c = when (source) { "secret" -> CrundiColors.Yellow; "collab" -> CrundiColors.Sky; "chat" -> CrundiColors.AccentHover; "kid" -> CrundiColors.Ask; else -> CrundiColors.TextMuted }
+    val b = when (source) { "secret" -> CrundiColors.Yellow; "collab" -> CrundiColors.Sky; "chat" -> CrundiColors.Accent; "kid" -> CrundiColors.Ask; else -> CrundiColors.Border }
     Text(
         source.uppercase(), style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp, color = c),
         modifier = Modifier.clip(RoundedCornerShape(99.dp)).border(Dimens.Hairline, b, RoundedCornerShape(99.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
@@ -214,6 +223,7 @@ private fun rememberApprovals(onLeave: () -> Unit): Pair<ApprovalsState, Approva
             override fun openChat(item: ApprovalItem) { leave(); if (item.sessionId.isNotEmpty()) nav.chat(item.sessionId) }
             override fun openSecrets() { leave(); nav.area(Area.Secrets) }
             override fun decide(item: ApprovalItem, approve: Boolean, scope: String) = act(item.id) { api.approvals.decide(item.id, approve, scope) }
+            override fun answerKid(item: ApprovalItem, choice: String) = act(item.id) { api.kid.answer(item.id, choice) }
             override fun dismiss(item: ApprovalItem) = act(item.id) { api.approvals.dismiss(listOf(item)) }
             override fun clearAll() = act(null) { api.approvals.dismiss(latest.items) }
         }

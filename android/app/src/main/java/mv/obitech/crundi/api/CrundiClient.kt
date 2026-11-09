@@ -75,6 +75,8 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val collaborators = CollaboratorsApi(rpc)
     /** The owner's voice assistant (capability "voice-assistant"). */
     val voice = VoiceApi(rpc, transport)
+    /** Cru's live screen (capability "voice-screen") and kid mode's parent side (capability "voice-kid"). */
+    val kid = KidApi(rpc, transport)
     /** Crundi's own inbox (capability "inbox"): what the server sent the owner. */
     val inbox = InboxApi(rpc)
 

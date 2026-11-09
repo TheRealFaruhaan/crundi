@@ -149,11 +149,23 @@ fun VoiceScreen(
             TopRow(ui, phase, more)
             // The usage, right under the top row (a phone has no room beside the mark).
             UsageLegend(arcs)
+            // Kid mode runs on the PC: a note here, with the parent's controls; its screen is not drawn on the phone.
+            val kidOn = ui.kid?.on == true
+            ui.kid?.takeIf { it.on }?.let { KidOnNote(it, more.live.onKid) }
+            // Cru's live screen (capability "voice-screen").
+            val live = ui.screen?.takeIf { !kidOn && !it.kid }
+            val liveVolume = mv.obitech.crundi.api.volumeGain(ui.spend?.volume)
+            val referer = if (ui.server.isNotEmpty()) "https://" + ui.server else ""
             val chatView = ui.chat && VoiceApi.HISTORY in ui.caps
             if (chatView) {
+                if (live != null) LivePanel(live, liveVolume, ui.gameCommand, more.live, chat = true, modifier = Modifier.fillMaxWidth(), referer = referer)
                 ChatList(ui, more, Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp))
                 if (ui.needsMic || ui.blocked.isNotEmpty()) Words(ui, phase, onAllowMic, onCancel, Modifier.padding(bottom = 4.dp))
                 else if (s.notice.isNotEmpty()) Text(s.notice, style = CrundiType.Small.copy(color = CrundiColors.Yellow), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+            } else if (live != null) {
+                // The panel takes the field's place.
+                LivePanel(live, liveVolume, ui.gameCommand, more.live, chat = false, modifier = Modifier.fillMaxWidth().weight(1.5f), referer = referer)
+                Words(ui, phase, onAllowMic, onCancel, Modifier.weight(1f, fill = true))
             } else {
                 VoiceField(
                     phase, ca, cb, mic, voice, cells, arcs,
@@ -203,6 +215,8 @@ class VoiceMore(
     val onSend: (String) -> Unit = {},
     /** The owner is typing: activity, for the timeouts. */
     val onTyping: () -> Unit = {},
+    /** The live screen's X and its page's messages, and kid mode's controls. */
+    val live: LiveActions = LiveActions(),
 )
 
 @Composable
