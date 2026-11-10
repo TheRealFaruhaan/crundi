@@ -1429,6 +1429,10 @@
     var lastH = 0;
     log.addEventListener('scroll', function () {
       if (!log.clientHeight) return; // a reset while hidden is not a user scroll
+      // The log changing height (the keyboard opening or closing) can scroll
+      // it before the resize observer below has heard: that is not the reader
+      // leaving the bottom. The observer settles it, and keeps lastH.
+      if (lastH && log.clientHeight !== lastH) return;
       stickBottom = atBottom();
       lastTop = log.scrollTop;
       syncJump();
@@ -1651,7 +1655,18 @@
         var h = log.clientHeight;
         if (h && !lastH) restoreScroll();          // 0 → visible: position wiped
         else if (h !== lastH && stickBottom) restoreScroll(); // resized while pinned
+        else if (h && h < lastH) {
+          // Shorter while reading up the log (the keyboard opening): keep
+          // what was at the bottom of the screen at the bottom, as chat apps
+          // do, instead of hiding it behind the keyboard.
+          var prev = log.style.scrollBehavior;
+          log.style.scrollBehavior = 'auto';
+          log.scrollTop += lastH - h;
+          log.style.scrollBehavior = prev;
+          lastTop = log.scrollTop;
+        }
         lastH = h;
+        if (h) syncJump();
       });
       try { logObserver.observe(log); } catch (e) { logObserver = null; }
     }

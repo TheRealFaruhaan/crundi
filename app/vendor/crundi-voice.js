@@ -549,6 +549,7 @@
       kid: !!opts.kid, screen: null, video: createVideoGate(), sayAt: 0,
     };
     if (S.kid) ov.classList.add('kid');
+    watchChatScroll(S);
     ov.addEventListener('mouseenter', function () { if (S) clearTimeout(S.leaveTimer); });
     ov.addEventListener('mouseleave', function () { if (S) maybeLeave(); });
     ov.addEventListener('pointerdown', function () { if (S && S.how === 'hover') S.how = 'click'; });
@@ -690,8 +691,55 @@
     try { if (s.loop) s.loop.close(); } catch (e) { /* gone */ }
     try { if (s.ws) { s.ws.send(JSON.stringify({ type: 'stop' })); s.ws.close(); } } catch (e) { /* gone */ }
     try { if (s.proc) s.proc.disconnect(); if (s.stream) s.stream.getTracks().forEach(function (t) { t.stop(); }); if (s.ctx) s.ctx.close(); } catch (e) { /* gone */ }
+    var vvp = window.visualViewport;
+    if (s.onVv && vvp) { vvp.removeEventListener('resize', s.onVv); vvp.removeEventListener('scroll', s.onVv); }
+    if (s.chatRo) s.chatRo.disconnect();
     s.ov.remove();
     liveMark();
+  }
+
+  /**
+   * The chat view keeps the newest message in view, as a Claude chat's log
+   * does. It follows while the owner is at the bottom (chatStick, set by his
+   * scrolling); the keyboard opening keeps the bottom of the conversation
+   * where it was instead of hiding it; a send goes to it (ask). On a phone the
+   * screen is fitted to the visual viewport, so on iOS too the keyboard makes
+   * it shorter rather than covering its bottom.
+   */
+  function watchChatScroll(s) {
+    var ov = s.ov, box = ov.querySelector('.cv-chat');
+    s.chatStick = true; s.chatH = 0;
+    var toBottom = function () { box.scrollTop = box.scrollHeight; };
+    box.addEventListener('scroll', function () {
+      if (S !== s || !box.clientHeight) return;
+      // Scrolled by its own change of height (the keyboard): the observer decides, not this.
+      if (s.chatH && box.clientHeight !== s.chatH) return;
+      s.chatStick = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+    });
+    if (window.ResizeObserver) {
+      s.chatRo = new ResizeObserver(function () {
+        if (S !== s) return;
+        var h = box.clientHeight;
+        if (h && h !== s.chatH) {
+          if (s.chatStick) toBottom();
+          // Reading up: what was at the bottom of the screen stays at the bottom.
+          else if (s.chatH && h < s.chatH) box.scrollTop += s.chatH - h;
+        }
+        s.chatH = h;
+      });
+      try { s.chatRo.observe(box); } catch (e) { s.chatRo = null; }
+    }
+    var vv = window.visualViewport;
+    if (!vv || s.kid) return;
+    s.onVv = function () {
+      if (S !== s) return;
+      if (window.matchMedia('(max-width: 899px)').matches) {
+        ov.style.bottom = 'auto'; ov.style.top = Math.round(vv.offsetTop) + 'px'; ov.style.height = Math.round(vv.height) + 'px';
+      } else if (ov.style.height) { ov.style.bottom = ''; ov.style.top = ''; ov.style.height = ''; }
+      if (s.chat && s.chatStick) toBottom();
+    };
+    vv.addEventListener('resize', s.onVv); vv.addEventListener('scroll', s.onVv);
+    s.onVv();
   }
 
   // ─── the server ───
@@ -961,7 +1009,7 @@
     var nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     list.innerHTML = h || '<div style="text-align:center;color:' + C.muted + ';font-size:13px">No messages yet.</div>';
     S.ov.querySelector('.cv-more').hidden = !S.moreChat;
-    if (toEnd || nearEnd) box.scrollTop = box.scrollHeight;
+    if (toEnd || nearEnd || S.chatStick) { box.scrollTop = box.scrollHeight; S.chatStick = true; }
   }
 
   /** The message whose reply is being said now (the last with those words), or -1 (as the phone's CruChat.speakingIndex). */
@@ -1093,6 +1141,8 @@
   function ask(t, keep, typed, hidden) {
     S.waitSaid = false; if (S.kid) loadKidWait();
     if (!hidden) { S.reportOnly = false; S.reportCloseAt = 0; }
+    // Sent: the chat view goes to it, wherever it was scrolled (renderChat, from render below).
+    if (!hidden) S.chatStick = true;
     S.phase = 'think'; S.asked = hidden ? '' : t; S.heard = hidden ? '' : t; if (!keep) { S.reply = ''; S.detail = ''; } S.question = ''; S.notice = ''; S.quietSince = Date.now();
     var turn = ++S.turn;
     // A soft "sent", then, while Cru thinks, a calm pulse every few seconds (no spoken "let me check").

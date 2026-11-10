@@ -19,6 +19,8 @@ import mv.obitech.crundi.ui.shell.LocalHost
 import mv.obitech.crundi.ui.shell.ShellSource
 import mv.obitech.crundi.ui.shell.StaticShellSource
 import mv.obitech.crundi.ui.theme.CrundiTheme
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -47,6 +49,9 @@ class ChatJumpTest {
         return """{"type":"ui-history","id":"$chat","session":{"id":"$chat","project":"crundi","title":"Long chat","status":"running","state":"idle","messages":[$msgs],"agents":[]}}"""
     }
 
+    /** The room the chat has: made smaller, as the keyboard opening does. */
+    private val room = androidx.compose.runtime.mutableStateOf(460)
+
     private fun open(t: FakeTransport) {
         t.onSocketSend = { sent -> if (sent.contains("\"subscribe-ui\"")) listOf(history(60)) else null }
         val services = object : AppServices {
@@ -54,7 +59,11 @@ class ChatJumpTest {
             override val api: CrundiClient = CrundiClient(t)
         }
         compose.mainClock.autoAdvance = false
-        compose.setContent { CrundiTheme { CompositionLocalProvider(LocalAppServices provides services, LocalHost provides bubble) { BubbleChat(chat) } } }
+        compose.setContent {
+            CrundiTheme { CompositionLocalProvider(LocalAppServices provides services, LocalHost provides bubble) {
+                androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.height(room.value.dp)) { BubbleChat(chat) }
+            } }
+        }
     }
 
     private fun settle() { repeat(30) { compose.mainClock.advanceTimeByFrame(); compose.waitForIdle() } }
@@ -155,5 +164,51 @@ class ChatJumpTest {
         f.dragging = true
         f.auto({ 9 to 0 }) { f.moved(8 to 0, atEnd = false) }
         assertTrue(!f.following)
+    }
+
+    @Test fun shrunkBy() {
+        assertEquals(300, ChatJump.shrunk(1000, 700))
+        assertEquals(0, ChatJump.shrunk(700, 1000))
+        assertEquals(0, ChatJump.shrunk(0, 700))
+        assertEquals(0, ChatJump.shrunk(700, 700))
+        assertEquals(0, ChatJump.shrunk(700, 0))
+    }
+
+    /** The newest message's text is on screen, not only in the tree (the log clips what is under its bottom). */
+    private fun onScreen(text: String): Boolean {
+        val nodes = compose.onAllNodes(androidx.compose.ui.test.hasText(text, substring = true)).fetchSemanticsNodes()
+        val log = compose.onAllNodes(hasScrollToIndexAction()).fetchSemanticsNodes().first().boundsInRoot
+        return nodes.any { val b = it.boundsInRoot; b.bottom > log.top && b.bottom <= log.bottom + 1f }
+    }
+
+    @Test fun theKeyboardKeepsTheNewestInView() {
+        val t = FakeApi.transport()
+        open(t)
+        settle()
+        assertTrue("at the newest", onScreen("Message number 60,"))
+        // The keyboard takes most of the room: the newest message still shows, at the bottom.
+        room.value = 280
+        settle()
+        assertTrue("still the newest", onScreen("Message number 60,"))
+        assertTrue(!jumpShown())
+        // And what comes in next follows.
+        t.pushSocket(entry(61)); settle()
+        assertTrue("follows with the keyboard open", onScreen("Message number 61 arrives."))
+    }
+
+    @Test fun readingUpTheKeyboardMovesTheLogUpWithIt() {
+        val t = FakeApi.transport()
+        open(t)
+        settle()
+        compose.onAllNodes(hasScrollToIndexAction()).onFirst().performScrollToIndex(30)
+        settle()
+        // The lowest message wholly on screen before the keyboard stays wholly on screen after it.
+        val bottomRow = (0..60).last { i -> onScreen("Message number $i,") }
+        assertTrue(bottomRow < 60)
+        room.value = 300
+        settle()
+        assertTrue("the row at the bottom is still in view", onScreen("Message number $bottomRow,"))
+        // Not dragged to the end: the owner was reading.
+        assertTrue("not taken to the end", !onScreen("Message number 60,"))
     }
 }

@@ -282,37 +282,10 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
             // reader is at the bottom. Scrolling up stops it, so a reply being
             // written never drags them back down; the bottom, the arrow or a
             // send starts it again.
-            val follow = remember(list) { ChatFollow() }
-            LaunchedEffect(list) {
-                list.interactionSource.interactions.collect { i ->
-                    when (i) {
-                        is androidx.compose.foundation.interaction.DragInteraction.Start -> follow.dragging = true
-                        is androidx.compose.foundation.interaction.DragInteraction.Stop, is androidx.compose.foundation.interaction.DragInteraction.Cancel -> {
-                            follow.released(ChatJump.atEnd(list.layoutInfo, density))
-                        }
-                    }
-                }
-            }
-            LaunchedEffect(list) {
-                // Only the position: a row growing below is not the reader moving.
-                // Both from one layout pass, so a position never meets an older layout's idea of the end.
-                var last: Any? = null
-                androidx.compose.runtime.snapshotFlow { list.layoutInfo.let { ChatJump.position(it) to ChatJump.atEnd(it, density) } }
-                    .collect { (pos, atEnd) -> if (pos != last) { last = pos; follow.moved(pos, atEnd) } }
-            }
-            // To the last row, then the rest of it: a long last message would otherwise stop at its top.
-            suspend fun toEnd(animate: Boolean) = follow.auto({ ChatJump.position(list.layoutInfo) }) {
-                val n = list.layoutInfo.totalItemsCount
-                if (n == 0) return@auto
-                val lastShown = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index == n - 1
-                if (!lastShown) { if (animate) list.animateScrollToItem(n - 1) else list.scrollToItem(n - 1) }
-                // Twice at most: the first pass may have measured before the newest content was laid out.
-                repeat(2) {
-                    val rest = ChatJump.distanceBelow(list.layoutInfo)
-                    if (rest <= 0) return@auto
-                    if (animate) list.animateScrollBy(rest.toFloat()) else list.scrollBy(rest.toFloat())
-                }
-            }
+            val follow = rememberChatFollow(list, density)
+            suspend fun toEnd(animate: Boolean) = follow.toEnd(list, animate)
+            // The keyboard opening keeps the newest message in view (ChatJump.kt).
+            KeepBottomInView(list, follow) { toEnd(animate = false) }
             // Sending goes to the bottom, wherever the log was, and follows the reply.
             LaunchedEffect(ui.sentSeq) {
                 if (ui.sentSeq == 0) return@LaunchedEffect

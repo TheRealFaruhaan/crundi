@@ -20,9 +20,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.lazy.LazyListLayoutInfo
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -72,6 +80,13 @@ object ChatJump {
 
     /** Close enough to the end that whatever came in has been seen. */
     fun atEnd(info: LazyListLayoutInfo, density: Float): Boolean = distanceBelow(info) < (60 * density).toInt()
+
+    /**
+     * How many pixels the log got shorter by, from [before] to [now] (the
+     * keyboard opening, the box growing a line), or 0: taller, the same, or
+     * not laid out yet.
+     */
+    fun shrunk(before: Int, now: Int): Int = if (before > 0 && now in 1 until before) before - now else 0
 }
 
 /**
@@ -110,6 +125,67 @@ class ChatFollow(following: Boolean = true) {
     suspend fun auto(at: () -> Any, block: suspend () -> Unit) {
         autoDepth++
         try { block() } finally { autoDepth--; autoAt = at() }
+    }
+}
+
+/**
+ * A [ChatFollow] kept up to date from [list]: a finger on it, and where the
+ * reader has scrolled it to (used by a chat and by Cru's chat view).
+ */
+@Composable
+fun rememberChatFollow(list: LazyListState, density: Float): ChatFollow {
+    val follow = remember(list) { ChatFollow() }
+    LaunchedEffect(list) {
+        list.interactionSource.interactions.collect { i ->
+            when (i) {
+                is DragInteraction.Start -> follow.dragging = true
+                is DragInteraction.Stop, is DragInteraction.Cancel -> follow.released(ChatJump.atEnd(list.layoutInfo, density))
+            }
+        }
+    }
+    LaunchedEffect(list) {
+        // Only the position: a row growing below is not the reader moving.
+        // Both from one layout pass, so a position never meets an older layout's idea of the end.
+        var last: Any? = null
+        snapshotFlow { list.layoutInfo.let { ChatJump.position(it) to ChatJump.atEnd(it, density) } }
+            .collect { (pos, atEnd) -> if (pos != last) { last = pos; follow.moved(pos, atEnd) } }
+    }
+    return follow
+}
+
+/** To the last row, then the rest of it: a long last message would otherwise stop at its top. One of the log's own scrolls. */
+suspend fun ChatFollow.toEnd(list: LazyListState, animate: Boolean) = auto({ ChatJump.position(list.layoutInfo) }) {
+    val n = list.layoutInfo.totalItemsCount
+    if (n == 0) return@auto
+    val lastShown = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index == n - 1
+    if (!lastShown) { if (animate) list.animateScrollToItem(n - 1) else list.scrollToItem(n - 1) }
+    // Twice at most: the first pass may have measured before the newest content was laid out.
+    repeat(2) {
+        val rest = ChatJump.distanceBelow(list.layoutInfo)
+        if (rest <= 0) return@auto
+        if (animate) list.animateScrollBy(rest.toFloat()) else list.scrollBy(rest.toFloat())
+    }
+}
+
+/**
+ * The keyboard opening (or anything else making the log shorter, the box
+ * growing a line) keeps the bottom of the conversation in view, as chat apps
+ * do. Following the newest: still at the very end. Reading up the log: the
+ * row at the bottom of the screen stays at the bottom, the log moves up with
+ * the keyboard. A finger on the log is left alone.
+ */
+@Composable
+fun KeepBottomInView(list: LazyListState, follow: ChatFollow, toEnd: suspend () -> Unit) {
+    val end by rememberUpdatedState(toEnd)
+    LaunchedEffect(list, follow) {
+        var before = 0
+        snapshotFlow { list.layoutInfo.viewportSize.height }.collect { h ->
+            val by = ChatJump.shrunk(before, h)
+            before = h
+            if (by == 0 || follow.dragging) return@collect
+            if (follow.following) end()
+            else follow.auto({ ChatJump.position(list.layoutInfo) }) { list.scrollBy(by.toFloat()) }
+        }
     }
 }
 

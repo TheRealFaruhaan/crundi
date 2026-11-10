@@ -65,6 +65,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import mv.obitech.crundi.ui.chats.toEnd
+import kotlinx.coroutines.flow.first
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.collectAsState
@@ -142,6 +144,8 @@ fun VoiceScreen(
         )
     }
     val phase = if (ui.blocked.isNotEmpty() || ui.needsMic) Phase.Ended else s.phase
+    // Each typed send: the chat view goes to it, wherever it was scrolled.
+    var sent by remember { mutableIntStateOf(0) }
     val (a, b) = palette(phase)
     val ca by animateColorAsState(a, tween(450), label = "orbA")
     val cb by animateColorAsState(b, tween(450), label = "orbB")
@@ -163,7 +167,7 @@ fun VoiceScreen(
             val chatView = ui.chat && VoiceApi.HISTORY in ui.caps
             if (chatView) {
                 if (live != null) LivePanel(live, liveVolume, ui.gameCommand, more.live, chat = true, modifier = Modifier.fillMaxWidth(), referer = referer)
-                ChatList(ui, more, Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp))
+                ChatList(ui, more, Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp), sent)
                 if (ui.needsMic || ui.blocked.isNotEmpty()) Words(ui, phase, onAllowMic, onCancel, Modifier.padding(bottom = 4.dp))
                 else if (s.notice.isNotEmpty()) Text(s.notice, style = CrundiType.Small.copy(color = CrundiColors.Yellow), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
             } else if (live != null) {
@@ -183,7 +187,7 @@ fun VoiceScreen(
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
             // Files waiting to go with the next turn (never in kid mode).
             if (ui.attachments.isNotEmpty() && !kidOn) AttachTray(ui.attachments, more.onRemoveAttachment)
-            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock, more)
+            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock, more) { sent++ }
         }
     }
 }
@@ -295,7 +299,7 @@ private fun AdminPill() {
  * heard as a faded bubble of his, newest at the bottom.
  */
 @Composable
-private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
+private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int = 0) {
     val list = ui.history
     val hearing = CruChat.hearing(ui.state)
     // Thinking and Speaking in the conversation, as other chat apps show them (the pill stays too).
@@ -303,13 +307,24 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
     val speakingAt = CruChat.speakingIndex(list, ui.state)
     val state = rememberLazyListState()
     // New messages: follow them down, unless the owner has scrolled up to read (older ones loaded above don't move it).
-    val lastIndex = (if (ui.moreHistory) 1 else 0) + (if (list.isEmpty() && hearing.isEmpty() && !thinking) 1 else 0) + list.size + (if (hearing.isNotEmpty()) 1 else 0) + (if (thinking) 1 else 0) - 1
+    // Following, and its rules, as a Claude chat's (ui.chats.ChatFollow): the keyboard opening keeps the newest in view, a send goes to it.
+    val density = androidx.compose.ui.platform.LocalDensity.current.density
+    val follow = mv.obitech.crundi.ui.chats.rememberChatFollow(state, density)
+    mv.obitech.crundi.ui.chats.KeepBottomInView(state, follow) { follow.toEnd(state, animate = false) }
     val first = remember { booleanArrayOf(true) }
-    LaunchedEffect(list.lastOrNull()?.key, hearing.isNotEmpty(), thinking, ui.historyLoaded) {
-        val info = state.layoutInfo
-        val atEnd = info.visibleItemsInfo.lastOrNull()?.let { it.index >= info.totalItemsCount - 2 } ?: true
-        if (lastIndex >= 0 && (first[0] || atEnd)) state.scrollToItem(lastIndex)
+    val last = list.lastOrNull()
+    LaunchedEffect(last?.key, last?.speak?.length, last?.show?.length, hearing, thinking, ui.historyLoaded) {
+        if (first[0] || follow.shouldFollow) {
+            // Laid out first: the screen just opened, or the history just came, has no rows yet to scroll past.
+            androidx.compose.runtime.snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
+            follow.toEnd(state, animate = false)
+        }
         if (list.isNotEmpty()) first[0] = false
+    }
+    LaunchedEffect(sent) {
+        if (sent == 0) return@LaunchedEffect
+        follow.jumped()
+        follow.toEnd(state, animate = true)
     }
     val keys = remember(list) { val seen = HashSet<String>(); list.map { m -> var k = m.key; while (!seen.add(k)) k += "'"; k } }
     LazyColumn(modifier, state = state, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -525,13 +540,13 @@ private fun Problem(icon: String, text: String, action: @Composable () -> Unit =
  * voice, the text field and send (stop while Cru talks), close.
  */
 @Composable
-private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?, more: VoiceMore) {
+private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?, more: VoiceMore, onSent: () -> Unit = {}) {
     val canSwitch = ui.blocked.isEmpty()
     if (ui.keyboard) {
         var typed by rememberSaveable { mutableStateOf("") }
         // Send works with files alone, as with words.
         val filesReady = ui.attachments.any { it.ready }
-        val send = { val t = typed.trim(); if (t.isNotEmpty() || filesReady) { more.onSend(t); typed = "" } }
+        val send = { val t = typed.trim(); if (t.isNotEmpty() || filesReady) { more.onSend(t); typed = ""; onSent() } }
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (canSwitch) RoundButton("mic", "Back to voice") { more.onKeyboard(false) }
             if (attachShown(ui, more)) AttachButton(more)
