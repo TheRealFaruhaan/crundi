@@ -44,6 +44,14 @@
   var C = { sky: '#38bdf8', accent: '#6366f1', hover: '#818cf8', deep: '#4f46e5', ask: '#c084fc', wait: '#d946ef', green: '#10b981', yellow: '#f59e0b', red: '#ef4444', muted: '#5a5a78', text: '#e8e8f0', text2: '#8888a8', border: '#2a2a3d', bg: '#0a0a0f', card: '#12121a' };
   var KIND = { working: C.yellow, waiting: C.sky, needs: C.hover, error: C.red, running: C.green, idle: C.muted };
   var PALETTE = { listen: [C.sky, C.accent], think: [C.ask, C.deep], speak: [C.hover, C.ask], start: [C.accent, C.deep], ended: [C.muted, '#22223a'] };
+  /**
+   * The mic blob's three layers say the state (the owner, 11 Nov: no pill on
+   * the top bar): listening sky blue, thinking violet, speaking green, waking
+   * indigo, asleep grey; the live stream lost amber, a problem red. As the
+   * phone's MicTone.
+   */
+  var MIC_COLORS = { listen: [C.sky, C.accent, C.ask], think: [C.ask, C.deep, C.accent], speak: [C.green, C.sky, C.green], start: [C.accent, C.deep, C.sky], ended: [C.muted, '#22223a', C.muted], offline: [C.yellow, '#fb923c', C.yellow], problem: [C.red, '#f87171', C.red] };
+  function micTone(st) { return !st ? 'ready' : st.blockedWhy ? 'problem' : st.wsLost ? 'offline' : 'ready'; }
   var LOGO = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="14" y1="14" x2="82" y2="82"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4f46e5"/></linearGradient></defs><mask id="eh"><rect width="96" height="96" fill="#fff"/><rect x="32" y="43" width="10.5" height="18" rx="5.2" fill="#000"/><rect x="53.5" y="43" width="10.5" height="18" rx="5.2" fill="#000"/></mask><path d="M48 27V17" fill="none" stroke-linecap="round" stroke="#fbbf24" stroke-width="5.5"/><circle cx="48" cy="13" r="6.5" fill="#fbbf24"/><rect x="11" y="26" width="74" height="57" rx="23" fill="url(#g)" mask="url(#eh)"/></svg>');
   // Kid mode's big, bright cursor (dark outline: seen on any background), and a star over what can be tapped. The games' kit uses the same.
   var KID_CURSOR = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48"><path d="M5 3l34 18-15 4-6 15z" fill="#facc15" stroke="#111" stroke-width="3" stroke-linejoin="round"/></svg>');
@@ -450,6 +458,9 @@
     '.cv-heard{color:' + C.text2 + ';font-size:16px;line-height:23px;min-height:23px;display:flex;align-items:center;justify-content:center;gap:6px}' +
     '.cv-cx{flex:none;width:26px;height:26px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-cx:hover{color:' + C.text + ';background:#24243a}.cv-cx[hidden]{display:none}' +
     '.cv-q{margin-top:6px;font-size:13px;line-height:18px;color:' + C.hover + '}.cv-q[hidden]{display:none}' +
+    // No status pill on the top bar: the state is the blob's, and a word at the bottom right when that is not enough.
+    '.cv-pill{visibility:hidden;padding:0!important;border:0!important;min-width:8px}' +
+    '.cv-stw{position:absolute;right:20px;bottom:10px;font-size:12px;color:' + C.muted + ';white-space:nowrap;pointer-events:none}.cv-stw.offline{color:' + C.yellow + '}.cv-stw.problem{color:' + C.red + '}.cv-ov.kid .cv-stw{display:none}' +
     '.cv-ht{min-width:0}.cv-reply{font-size:19px;line-height:27px;font-weight:500;margin-top:12px}' +
     '.cv-detail{margin-top:12px;text-align:left;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;font-size:14px;line-height:20px;white-space:pre-wrap}' +
     '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:8px;font-size:13px;color:' + C.hover + ';display:flex;gap:8px;align-items:center;justify-content:center}.cv-yesno[hidden]{display:none}.cv-yn{border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';border-radius:16px;padding:6px 16px;font-size:13px;cursor:pointer}.cv-yn:hover{border-color:' + C.accent + '}' +
@@ -559,7 +570,7 @@
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div><button class="cv-fs">Full screen</button>' +
       '<div class="cv-att" hidden></div><input class="cv-file" type="file" multiple hidden>' +
       '<div class="cv-bot"><button class="cv-x cv-attb" title="Attach a file, photo or video (or drop it here)" aria-label="Attach"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Type to Cru…" aria-label="Type to Cru"><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
-      '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div><button class="cv-x cv-mute" title="Mute the microphone" aria-label="Mute the microphone"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/><path class="sl" d="m2 2 20 20"/></svg></button></div>';
+      '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div><span class="cv-stw" aria-live="polite"></span><button class="cv-x cv-mute" title="Mute the microphone" aria-label="Mute the microphone"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/><path class="sl" d="m2 2 20 20"/></svg></button></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
     // Under the button that opened it (a wide screen).
@@ -819,7 +830,7 @@
     }).catch(function (e) { block(e.message || 'Could not reach the server'); });
   }
 
-  function block(why) { if (!S) return; S.phase = 'ended'; S.notice = why; render(); }
+  function block(why) { if (!S) return; S.phase = 'ended'; S.notice = why; S.blockedWhy = why; render(); }
 
   // ─── the microphone: 16 kHz PCM to the server, and the level ───
   function openMic() {
@@ -874,7 +885,7 @@
         if (!S || S.ws !== ws || S.phase === 'ended') return;
         // Kid mode: never a bare error; a friendly line, and listening again in a moment.
         if (S.kid) { S.notice = 'Hold on, I am getting ready again!'; render(); var s = S; setTimeout(function () { if (S === s && S.kid && !S.paused) { S.notice = ''; stopMic(); S.phase = 'start'; openMic(); } }, 3000); return; }
-        S.notice = 'Live listening stopped. Type instead, or close and open again.'; render();
+        S.wsLost = true; S.notice = 'Live listening stopped. Type instead, or close and open again.'; render();
       };
     }).catch(function () { if (!S) return; keyboard(true, false); S.notice = 'The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.'; render(); });
   }
@@ -942,7 +953,7 @@
 
   function heard(e) {
     if (!S) return;
-    if (e.type === 'ready') { S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
+    if (e.type === 'ready') { S.wsLost = false; S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
     else if (e.type === 'report') { if (e.kid && typeof e.expressivity === 'number') S.nextExpr = e.expressivity; tell(e.speak || '', e.show || ''); }
     // Cru changed the live screen; kid mode switched; a command for the game on screen.
     else if (e.type === 'screen') { showScreen(e.screen || null); return; }
@@ -2010,6 +2021,12 @@
     // The PC lock: Cru works as always (your voice decides what it changes); its history and files stay out of view.
     var lockedNow = !!(S.opts.isLocked && S.opts.isLocked()); S.ov.classList.toggle('locked', lockedNow); if (lockedNow && S.chat) { S.chat = false; S.ov.classList.remove('chat'); }
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
+    // The word at the bottom right: only when the blob does not make it plain.
+    var tn = micTone(S), sw = q('.cv-stw');
+    if (sw) {
+      var word = tn === 'problem' ? 'Unavailable' : tn === 'offline' ? 'Offline' : ph === 'start' ? 'Waking' : ph === 'ended' ? 'Asleep' : (S.kb && (ph === 'think' || ph === 'speak')) ? (ph === 'think' ? 'Thinking' : 'Speaking') : '';
+      sw.textContent = word; sw.className = 'cv-stw' + (tn !== 'ready' ? ' ' + tn : '');
+    }
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     // Listening: the words as they come; thinking: what was asked, and what is queued for next under it.
     var h = ph === 'listen' ? S.heard : S.asked;
@@ -2164,7 +2181,8 @@
     Lq.drops = Lq.drops.filter(function (d) { return ms - d.b < 900; }); Lq.ripples = Lq.ripples.filter(function (r) { return ms - r.b < 900; });
     g.clearRect(0, 0, W, H);
     var cx = W / 2, cy = H / 2, R = 30, m = Lq.m, pal = (S.kid ? KID_PALETTE : PALETTE)[ph] || PALETTE.listen;
-    var gl = g.createRadialGradient(cx, cy, 0, cx, cy, R * 3); gl.addColorStop(0, hex(C.sky, 0.18 + 0.2 * Lq.lv)); gl.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gl; g.fillRect(0, 0, W, H);
+    var tone = micTone(S), mc = S.kid ? [pal[0], C.accent, C.ask] : (tone !== 'ready' ? MIC_COLORS[tone] : (MIC_COLORS[ph] || MIC_COLORS.listen));
+    var gl = g.createRadialGradient(cx, cy, 0, cx, cy, R * 3); gl.addColorStop(0, hex(S.kid ? C.sky : mc[0], 0.18 + 0.2 * Lq.lv)); gl.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gl; g.fillRect(0, 0, W, H);
     Lq.ripples.forEach(function (r) { var a = (ms - r.b) / 900; g.strokeStyle = 'rgba(125,211,252,' + (0.5 * (1 - a) * m) + ')'; g.lineWidth = 1.2; g.beginPath(); g.ellipse(cx + r.x * R, cy - R * (1 - 0.62 * m) * 0.35, 6 + 40 * a, (6 + 40 * a) * 0.22, 0, 0, 7); g.stroke(); });
     function shape(tt, layer) {
       var pts = [], halfW = R * (1 + 1.9 * m), band = R * (1 - 0.62 * m);
@@ -2179,8 +2197,10 @@
       g.beginPath(); pts.forEach(function (p, i) { if (i) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]); }); g.closePath();
     }
     g.globalCompositeOperation = 'lighter';
-    [[pal[0], '#1e3a8a'], [C.accent, '#312e81'], [C.ask, '#4c1d95']].forEach(function (c, l) {
-      shape(t + l * 0.7, l * 1.3); var gr = g.createLinearGradient(cx - R * 2, cy - R, cx + R * 2, cy + R); gr.addColorStop(0, c[0]); gr.addColorStop(1, c[1]); g.fillStyle = gr; g.globalAlpha = 0.55; g.fill();
+    // Waking or the stream lost: a slow fade in and out; asleep: dim.
+    var dim = (tone === 'offline' || ph === 'start') ? 0.72 + 0.28 * Math.sin(t * 2.8) : ph === 'ended' ? 0.45 : 1;
+    [[mc[0], '#1e3a8a'], [mc[1], '#312e81'], [mc[2], '#4c1d95']].forEach(function (c, l) {
+      shape(t + l * 0.7, l * 1.3); var gr = g.createLinearGradient(cx - R * 2, cy - R, cx + R * 2, cy + R); gr.addColorStop(0, c[0]); gr.addColorStop(1, c[1]); g.fillStyle = gr; g.globalAlpha = 0.55 * dim; g.fill();
     });
     g.globalAlpha = 1; g.globalCompositeOperation = 'source-over';
     shape(t, 0); g.strokeStyle = 'rgba(255,255,255,.22)'; g.lineWidth = 1; g.stroke();

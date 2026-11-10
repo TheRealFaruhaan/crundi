@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,7 +52,15 @@ import kotlin.random.Random
  * touch area while spread, on purpose.
  */
 @Composable
-fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String?, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String?, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, tone: MicTone = MicTone.Ready) {
+    // The state in its colours (the owner, 11 Nov: no pill on the top bar), eased from one to the next.
+    val cols = tone.colors(phase)
+    val c0 by androidx.compose.animation.animateColorAsState(cols[0], androidx.compose.animation.core.tween(450), label = "mic0")
+    val c1 by androidx.compose.animation.animateColorAsState(cols[1], androidx.compose.animation.core.tween(450), label = "mic1")
+    val c2 by androidx.compose.animation.animateColorAsState(cols[2], androidx.compose.animation.core.tween(450), label = "mic2")
+    // Waking or reconnecting: a slow fade in and out; asleep: dim.
+    val throb = androidx.compose.animation.core.rememberInfiniteTransition(label = "micThrob").animateFloat(0.45f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1100), androidx.compose.animation.core.RepeatMode.Reverse), label = "throb")
+    val dim = when { tone == MicTone.Offline || phase == Phase.Starting -> throb.value; phase == Phase.Ended -> 0.45f; else -> 1f }
     var frame by remember { mutableLongStateOf(0L) }
     val st = remember { FloatArray(4) }                  // morph (0 sphere .. 1 water), its velocity, level, peak
     val hist = remember { FloatArray(HIST) }
@@ -102,7 +111,7 @@ fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String?, label
             val lv = st[2]
             val px = density   // the preview was drawn in CSS pixels: dp here
 
-            drawCircle(Brush.radialGradient(listOf(CrundiColors.Sky.copy(alpha = 0.18f + 0.2f * lv), Color.Transparent), c, r * 3f), r * 3f, c)
+            drawCircle(Brush.radialGradient(listOf(c0.copy(alpha = (0.18f + 0.2f * lv) * dim), Color.Transparent), c, r * 3f), r * 3f, c)
 
             // Ripples on the surface.
             for ((x, born) in ripples) {
@@ -112,10 +121,10 @@ fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String?, label
             }
 
             // The liquid: three translucent layers, blended so they glow where they overlap.
-            val layers = listOf(CrundiColors.Sky, CrundiColors.Accent, CrundiColors.Ask).map { it to lerp(it, Color.Black, 0.55f) }
+            val layers = listOf(c0, c1, c2).map { it to lerp(it, Color.Black, 0.55f) }
             layers.forEachIndexed { l, (top, deep) ->
                 val path = shape(c, r, m, t + l * 0.7f, l * 1.3f, hist)
-                drawPath(path, Brush.linearGradient(listOf(top, deep), Offset(c.x - r * 2, c.y - r), Offset(c.x + r * 2, c.y + r)), alpha = 0.55f, blendMode = BlendMode.Plus)
+                drawPath(path, Brush.linearGradient(listOf(top, deep), Offset(c.x - r * 2, c.y - r), Offset(c.x + r * 2, c.y + r)), alpha = 0.55f * dim, blendMode = BlendMode.Plus)
             }
             drawPath(shape(c, r, m, t, 0f, hist), Color.White.copy(alpha = 0.22f), style = Stroke(1f * px))
 
@@ -136,6 +145,37 @@ fun FluidMic(phase: Phase, accent: Color, mic: () -> Float, icon: String?, label
 }
 
 private const val HIST = 64
+
+/**
+ * What the blob's colours say. Ready: by phase (listening sky blue, thinking
+ * violet, speaking green, waking indigo, asleep grey). Offline: the live
+ * stream is lost and the phone's own recogniser stands in, or it is
+ * reconnecting (amber, fading in and out). Problem: the microphone is off or
+ * Cru is unavailable (red).
+ */
+enum class MicTone {
+    Ready, Offline, Problem;
+
+    fun colors(phase: Phase): List<Color> = when (this) {
+        Problem -> listOf(CrundiColors.Red, Color(0xFFF87171), CrundiColors.Red)
+        Offline -> listOf(CrundiColors.Yellow, Color(0xFFFB923C), CrundiColors.Yellow)
+        Ready -> when (phase) {
+            Phase.Listening -> listOf(CrundiColors.Sky, CrundiColors.Accent, CrundiColors.Ask)
+            Phase.Thinking -> listOf(CrundiColors.Ask, CrundiColors.AccentDeep, CrundiColors.Accent)
+            Phase.Speaking -> listOf(CrundiColors.Green, CrundiColors.Sky, CrundiColors.Green)
+            Phase.Starting -> listOf(CrundiColors.Accent, CrundiColors.AccentDeep, CrundiColors.Sky)
+            Phase.Ended -> listOf(CrundiColors.TextMuted, CrundiColors.BgHover, CrundiColors.TextMuted)
+        }
+    }
+
+    companion object {
+        fun of(ui: VoiceUi, phase: Phase): MicTone = when {
+            ui.needsMic || ui.blocked.isNotEmpty() -> Problem
+            ui.state.offline -> Offline
+            else -> Ready
+        }
+    }
+}
 
 private class Drop(val x: Float, val vx: Float, val vy: Float, val born: Long)
 

@@ -288,7 +288,7 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Un
         if (ui.server.isNotEmpty() && !full) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         Spacer(Modifier.weight(1f))
         if (ui.spend?.adminMode == true) AdminPill()
-        StatusPill(statusText(ui, phase), phase)
+        // The state is the blob's now (colour and motion, and a word at the bottom right when that isn't enough); no pill here.
         if (full) NormalViewButton(more.live.onNormal)
         // Everything but close in one menu (the owner, 11 Nov): the chat view, compact, the bubble.
         // The chat view has nothing to show under Cru's full UI: it waits for the normal view.
@@ -501,6 +501,20 @@ private fun Bubble(mine: Boolean, text: String, detail: String, time: String, fa
 /** "9 Nov 14:05". */
 private fun msgTime(at: Long): String = if (at <= 0) "" else java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.getDefault()).format(java.util.Date(at))
 
+/**
+ * The state in a word at the bottom right, only when the blob's colour and
+ * motion don't make it plain: waking, asleep, reconnecting or offline, the
+ * microphone off, unavailable (and, while typing, thinking or speaking).
+ */
+@Composable
+private fun StatusWord(ui: VoiceUi, phase: Phase, typing: Boolean = false) {
+    val tone = MicTone.of(ui, phase)
+    val show = tone == MicTone.Problem || tone == MicTone.Offline || phase == Phase.Starting || phase == Phase.Ended || (typing && (phase == Phase.Thinking || phase == Phase.Speaking))
+    if (!show) return
+    val col = when (tone) { MicTone.Problem -> CrundiColors.Red; MicTone.Offline -> CrundiColors.Yellow; else -> CrundiColors.TextMuted }
+    Text(statusText(ui, phase), style = CrundiType.Small.copy(color = col), maxLines = 1, modifier = Modifier.padding(end = 4.dp).semantics { contentDescription = "Cru: " + statusText(ui, phase) })
+}
+
 @Composable
 private fun StatusPill(text: String, phase: Phase) {
     val (a, _) = palette(phase)
@@ -635,6 +649,8 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
             if (phase == Phase.Speaking && typed.isBlank() && !filesReady) RoundButton("stop", "Stop talking", onClick = onMic)
             else RoundButton("send", "Send", enabled = typed.isNotBlank() || filesReady, accent = true, onClick = send)
         }
+        // No blob while typing: the word says the state when it is not plain from the screen.
+        Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.CenterEnd) { StatusWord(ui, phase, typing = true) }
         return
     }
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -654,9 +670,9 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
             }
         }
         val label = when (phase) { Phase.Speaking -> "Stop talking"; Phase.Ended -> "Talk again"; else -> "Listening" }
-        // The animated blob alone: no microphone drawn on it.
-        FluidMic(phase, accent, mic, null, label, onMic)
-        Box(Modifier.weight(1f))
+        // The animated blob alone: no microphone drawn on it. Its colours say the state (MicTone).
+        FluidMic(phase, accent, mic, null, statusText(ui, phase) + ". " + label, onMic, tone = MicTone.of(ui, phase))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { StatusWord(ui, phase) }
     }
 }
 
