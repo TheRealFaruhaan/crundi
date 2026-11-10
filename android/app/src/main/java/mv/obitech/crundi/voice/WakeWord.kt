@@ -168,7 +168,7 @@ object HeyCrundi {
     /** From CrundiApp: tracks whether Crundi is in front. */
     fun init(application: Application) {
         app = application
-        situation = situation.copy(inAppOn = VoicePrefs.wakeInApp(app))
+        situation = situation.copy(inAppOn = VoicePrefs.wakeInApp(app), heldOff = VoicePrefs.wakeHeldOff(app))
         application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
             override fun onActivityStarted(a: Activity) { if (started++ == 0) inFront(true) }
             override fun onActivityStopped(a: Activity) { if (--started <= 0) { started = 0; inFront(false) } }
@@ -193,7 +193,29 @@ object HeyCrundi {
     fun setInApp(on: Boolean) {
         if (!ready()) return
         VoicePrefs.setWakeInApp(app, on)
-        update { it.copy(inAppOn = on) }
+        // Turned on by the owner: Cru's earlier "stop listening" no longer holds.
+        if (on) VoicePrefs.setWakeHeldOff(app, false)
+        update { it.copy(inAppOn = on, heldOff = if (on) false else it.heldOff) }
+    }
+
+    /**
+     * Cru's background-listening off order (the phoneAction): every "Hey Cru"
+     * listener stops: the background service, in-app listening (its setting
+     * off), and the asleep voice screen, until listening is turned on again.
+     */
+    fun stopAllListening() {
+        if (!ready()) return
+        HeyCrundiService.stop(app)
+        VoicePrefs.setWakeInApp(app, false)
+        VoicePrefs.setWakeHeldOff(app, true)
+        update { it.copy(inAppOn = false, backgroundOn = false, heldOff = true) }
+    }
+
+    /** Listening turned on again (by Cru or in Settings): the off order is over. */
+    fun releaseHold() {
+        if (!ready()) return
+        if (VoicePrefs.wakeHeldOff(app)) VoicePrefs.setWakeHeldOff(app, false)
+        if (situation.heldOff) update { it.copy(heldOff = false) }
     }
 
     fun setBackground(on: Boolean) = update { it.copy(backgroundOn = on) }
@@ -510,6 +532,7 @@ class HeyCrundiService : Service() {
 
         private fun startUntil(ctx: Context, deadline: Long?) {
             VoicePrefs.setWakeOn(ctx, true, deadline)
+            HeyCrundi.releaseHold()
             val i = Intent(ctx, HeyCrundiService::class.java).setAction(ACTION_START)
             alive?.let { it.handler.post(it.refresh); return } // running: just the new deadline
             runCatching { ContextCompat.startForegroundService(ctx, i) }

@@ -175,6 +175,10 @@ object VoicePrefs {
     fun wakeInApp(ctx: Context) = p(ctx).getBoolean("voice.wake.inApp", false)
     fun setWakeInApp(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.wake.inApp", on).apply()
 
+    /** Cru was told to stop listening for "Hey Cru": nothing listens (not even the asleep voice screen) until it is turned on again. */
+    fun wakeHeldOff(ctx: Context) = p(ctx).getBoolean("voice.wake.heldOff", false)
+    fun setWakeHeldOff(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.wake.heldOff", on).apply()
+
     /** D7: the settings toggle's duration, minutes; [HeyCrundiPlan.UNTIL_OFF] = until turned off. Default 30. */
     fun wakeMinutes(ctx: Context) = HeyCrundiPlan.choice(p(ctx).getInt("voice.wake.minutes", HeyCrundiPlan.DEFAULT_MINUTES))
     fun setWakeMinutes(ctx: Context, minutes: Int) = p(ctx).edit().putInt("voice.wake.minutes", HeyCrundiPlan.choice(minutes)).apply()

@@ -156,6 +156,21 @@ ok(jobs.pauseAll() === 1 && jobs.list()[0].status === 'paused', 'stop everything
   ok(seen.join() === 'c9', 'read_chat records that Cru checked the chat');
 }
 
+// ─── Cru's background-listening order reaches the phone (6 Nov) ───
+{
+  const told = [];
+  const bctx = { pending: createPending(), locked: () => false, unrecognised: () => false, unattended: () => false, away: () => null };
+  const bt = makeActionTools({ listProjects: () => [], chats: () => [], projectsDir: () => '', broadcast: (tool, input) => told.push([tool, input]) }, bctx);
+  const sbl = bt.find((x) => x.name === 'set_background_listening'), conf = bt.find((x) => x.name === 'confirm_action');
+  bctx.pending.newTurn?.();
+  const asked = await sbl.run({ minutes: 0 });
+  ok(asked.needsConfirmation && !told.length, 'off is asked first');
+  bctx.pending.newTurn?.();
+  const done = await conf.run({ id: asked.id });
+  ok(done.ok && done.phoneAction && done.phoneAction.type === 'background-listening' && done.phoneAction.minutes === 0, 'confirmed: the reply carries the order for the phone');
+  ok(told.length === 1 && told[0][0] === 'set_background_listening' && told[0][1].minutes === 0, 'and it is broadcast, so a phone gets it when the yes came from elsewhere');
+}
+
 // ─── the day's log ───
 const nb = createNotebook(join(dir, 'nb'));
 const log = A.createDailyLog(nb, { now: () => new Date(2026, 10, 9, 14, 5) });

@@ -3202,6 +3202,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     askOwner: (q) => cruAsks.ask(q),
     onAwayAct: (tool, input) => cruLog.add(`On my own: ${tool.replace(/_/g, ' ')} ${JSON.stringify(input).slice(0, 160)}`),
     broadcast: (tool, input = {}) => {
+      // Background listening is the phone's: every open app is told, so the order reaches the
+      // phone even when it was confirmed on the PC or the web (capability 'voice-phone-action-push').
+      if (tool === 'set_background_listening') { broadcastOwnerSSE('voice-phone-action', { type: 'background-listening', minutes: input.minutes === undefined ? 30 : Number(input.minutes) || 0 }); return; }
       if (/kanban/.test(tool)) broadcastKanban(input.project);
       else if (/note/.test(tool)) broadcastNotes(input.project, {});
       else if (/mindmap/.test(tool)) broadcastMindmap();

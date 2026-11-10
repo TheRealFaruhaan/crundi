@@ -223,6 +223,10 @@ export const CAPABILITIES = Object.freeze([
   // a turn that finds Cru busy waits for it (up to 3 min) instead of
   // answering "Still answering the last request".
   'voice-turn-id',
+  // Cru's background-listening order (set_background_listening, confirmed on
+  // any client) also goes to every open app as the owner SSE event
+  // 'voice-phone-action' { type: 'background-listening', minutes } (0: off).
+  'voice-phone-action-push',
   // Kid mode (voice/kid.js): GET /api/voice/kid, POST /api/voice/kid/pin
   // { pin } | { remove }, /kid/start { by }, /kid/exit { pin } (429 locked),
   // /kid/play (game events -> { reflex }), GET /kid/progress?range=&area=,

@@ -44,6 +44,17 @@ class HeyCrundiPlanTest {
         assertNull(HeyCrundiPlan.command("something-new", 30))
     }
 
+    @Test fun cruOffOrderSilencesEveryListener() {
+        // 6 Nov: Cru's "off" stopped the service, but the asleep voice screen and in-app listening went on.
+        val base = HeyCrundiPlan.Situation(trained = true, appInFront = true, inAppOn = true)
+        assertEquals(HeyCrundiPlan.Listener.InApp, HeyCrundiPlan.listener(base))
+        assertEquals(HeyCrundiPlan.Listener.Screen, HeyCrundiPlan.listener(base.copy(screenWaiting = true)))
+        assertEquals(HeyCrundiPlan.Listener.None, HeyCrundiPlan.listener(base.copy(heldOff = true)))
+        assertEquals(HeyCrundiPlan.Listener.None, HeyCrundiPlan.listener(base.copy(heldOff = true, screenWaiting = true)))
+        assertEquals(HeyCrundiPlan.Listener.None, HeyCrundiPlan.listener(base.copy(heldOff = true, backgroundOn = true)))
+        assertEquals(HeyCrundiPlan.Command.Stop, HeyCrundiPlan.command("background-listening", 0))
+    }
+
     @Test fun theDeadlineAndTimeLeft() {
         val now = 1_000_000L
         assertNull(HeyCrundiPlan.deadline(now, 0))

@@ -1220,7 +1220,8 @@
       S.question = ok && r.pending && r.pending.length ? r.pending[0].question : '';
       // The owner is done: close once the goodbye has been said.
       S.closing = !!(ok && r.close);
-      if (ok && r.phoneActions && r.phoneActions.length) S.notice = 'Background listening is for the phone: turn it on from the Crundi app.';
+      // Background listening is the phone's: the server tells every open app (voice-phone-action-push); an older server cannot.
+      if (ok && r.phoneActions && r.phoneActions.length) S.notice = !(S.opts.capabilities && S.opts.capabilities.indexOf && S.opts.capabilities.indexOf('voice-phone-action-push') < 0) ? 'Sent to the phone: the Crundi app does it while it is open there.' : 'Background listening is for the phone: turn it on from the Crundi app.';
       // Another voice ("Only act on my voice"): answered, but nothing was changed.
       if (ok && r.speaker && r.speaker.unrecognised) S.notice = 'Cru could not recognise who was speaking, so nothing was changed.';
       // Cru may have just turned itself up or down: the reply says so in the new volume.

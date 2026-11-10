@@ -145,6 +145,8 @@ fun CrundiApp(
             overlay = {
                 // Kid mode on (on the PC): the parent's card, on the front pages (capability "voice-kid").
                 mv.obitech.crundi.voice.KidCardRoute(visible = atRoot && !approvalsOpen && !drawer)
+                // Cru's background-listening order confirmed on another device: done here too.
+                mv.obitech.crundi.voice.PhoneActionsRoute()
                 if (approvalsOpen && atRoot) mv.obitech.crundi.ui.chats.ApprovalsDropdownRoute { approvalsOpen = false }
             },
             modifier = modifier,

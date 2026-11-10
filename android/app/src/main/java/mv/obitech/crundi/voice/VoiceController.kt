@@ -510,13 +510,7 @@ class VoiceController(
      * wake word itself waits until this session lets go of the microphone.
      */
     private fun phoneActions(actions: List<mv.obitech.crundi.api.PhoneAction>) {
-        for (a in actions) when (val c = HeyCrundiPlan.command(a.type, a.minutes)) {
-            is HeyCrundiPlan.Command.Start ->
-                if (WakeProfiles.trained(ctx)) HeyCrundiService.start(ctx, c.minutes)
-                else _ui.update { it.copy(state = it.state.copy(notice = "Hey Cru isn't trained yet: train it in Voice assistant settings first.")) }
-            HeyCrundiPlan.Command.Stop -> HeyCrundiService.stop(ctx)
-            null -> Log.i(TAG, "phone action not known here: ${a.type}")
-        }
+        for (a in actions) PhoneActions.apply(ctx, a.type, a.minutes)?.let { n -> _ui.update { it.copy(state = it.state.copy(notice = n)) } }
     }
 
     private fun bargeIn() {

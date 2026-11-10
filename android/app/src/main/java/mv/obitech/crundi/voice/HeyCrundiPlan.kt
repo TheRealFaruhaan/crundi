@@ -112,10 +112,16 @@ object HeyCrundiPlan {
         val chatVoice: Boolean = false,
         /** The keyword spotter could load on this phone. */
         val engineReady: Boolean = true,
+        /**
+         * The owner told Cru to stop listening (its background-listening off order, 6 Nov: the
+         * phone stopped the service but the asleep voice screen and in-app listening went on):
+         * nothing listens until listening is turned on again, by Cru or in Settings.
+         */
+        val heldOff: Boolean = false,
     )
 
     fun listener(s: Situation): Listener = when {
-        !s.micAllowed || !s.engineReady || !s.trained || s.training || s.chatVoice || s.sessionOpen || s.handingOver -> Listener.None
+        !s.micAllowed || !s.engineReady || !s.trained || s.training || s.chatVoice || s.sessionOpen || s.handingOver || s.heldOff -> Listener.None
         s.screenWaiting -> Listener.Screen
         s.backgroundOn -> Listener.Background
         s.inAppOn && s.appInFront -> Listener.InApp
