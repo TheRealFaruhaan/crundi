@@ -178,7 +178,23 @@ ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes(
   ok(/function chatPref\(\) \{ try \{ return localStorage\.getItem\(CHAT_KEY\) !== '0'; \} catch \(e\) \{ return true; \} \}/.test(cvs) && /if \(chatPref\(\) && !S\.kid\) setTimeout/.test(cvs), 'the chat view is the default (until the owner goes back to the voice view); kid mode keeps its own screen');
   ok(/if \(say && !\(typed && !S\.kid\)\) speak\(say\); else \{ stopCue\(\); afterSpeech\(\); \}/.test(cvs), 'a typed turn\'s answer is not said (no speech made for it); kid mode still talks');
   ok(/class="cv-say" data-say="' \+ i \+ '"/.test(cvs) && /closest\('\.cv-say'\)[\s\S]{0,80}sayAgain\(Number/.test(cvs), 'each reply in the chat view has a speaker that says it');
-  ok(/function sayAgain\(i\) \{[\s\S]{0,120}S\.phase !== 'listen' \|\| S\.heard \|\| S\.pending\) return;[\s\S]{0,60}speak\(m\.speak\)/.test(cvs), 'and only while Cru is just listening');
+  ok(/function sayAgain\(i\) \{[\s\S]{0,400}S\.phase !== 'listen' \|\| S\.heard \|\| S\.pending\) return;[\s\S]{0,60}speak\(m\.speak\)/.test(cvs), 'and only while Cru is just listening');
+  ok(/S\.phase === 'speak' && i === speakingIndex\(S\.msgs, S\.phase, S\.lastSaid\)\) \{ cutIn\(\);/.test(cvs), 'tapped while it says that reply: it stops');
+  // Thinking and Speaking in the conversation (11 Nov): typing dots at the end, a sound sign by the reply being said.
+  ok(/if \(S\.phase === 'think'\) h \+= '<div class="cv-m cru cv-typing"/.test(cvs) && /@keyframes cvdot/.test(cvs), 'while Cru thinks, a typing bubble at the end of the conversation');
+  ok(/m\.speak \? \(i === sayingAt\s*\? '<button class="cv-say on"/.test(cvs) && /\.cv-say\.on \.w1\{animation:cvwave/.test(cvs), 'while it speaks, the same icon by the reply being said moves (one icon: tap to hear, and the Speaking sign)');
+  ok(/\.cv-say\{position:absolute;right:-40px;bottom:0/.test(cvs) && /\.cv-m\.cru\.say\{margin-right:40px\}/.test(cvs), 'it sits outside the bubble, at its bottom right');
+  ok(/var SPEAKER_SVG = '<svg[^']*M4 21v-4\.4C2\.2 15\.2/.test(cvs) && read('android', 'tools', 'icons-extra.json').includes('"speaking-head": "<path d=\\"M4 21v-4.4C2.2 15.2'), 'a speaking head (the owner\'s drawing), the same shape on web and Android');
+  {
+    const w = { addEventListener() {}, location: {}, navigator: {} };
+    vm.runInNewContext(cvs, { window: w, document: { addEventListener() {}, createElement() { return {}; } }, navigator: {}, localStorage: { getItem() { return null; } } });
+    const si = w.CrundiVoice._test.speakingIndex;
+    const msgs = [{ speak: 'Yes, Sir?' }, { speak: 'Done, Sir.' }, { speak: 'Yes, Sir?' }, { said: 'hi', speak: '' }];
+    ok(si(msgs, 'speak', 'Done, Sir.') === 1 && si(msgs, 'speak', ' Yes, Sir? ') === 2, 'the sign goes by the reply with those words (the latest of two alike)');
+    ok(si(msgs, 'listen', 'Done, Sir.') === -1 && si(msgs, 'speak', 'Could not reach the server') === -1 && si(msgs, 'speak', '') === -1 && si([], 'speak', 'x') === -1, 'and nowhere when Cru is not speaking, or says something not in the list');
+  }
+  const cc2 = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'VoiceScreen.kt');
+  ok(/if \(thinking\) item\(key = "thinking"\) \{ ThinkingBubble\(\) \}/.test(cc2) && /speaking = i == speakingAt/.test(cc2) && /if \(onSay != null\) SpeakerButton\(speaking, onSay/.test(cc2) && /IconPaths\.all\["speaking-head"\]/.test(cc2), 'Android: the same typing bubble and sound sign');
   const ms = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'MicStream.kt');
   ok(ms.includes('getBoolean("voice.chatView", true)'), 'Android: the chat view is the default too');
   const vc = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'VoiceController.kt');

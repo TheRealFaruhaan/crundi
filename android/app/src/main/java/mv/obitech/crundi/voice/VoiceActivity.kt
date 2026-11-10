@@ -193,6 +193,7 @@ class VoiceActivity : ComponentActivity() {
                         onRemoveAttachment = { controller.removeAttachment(it) },
                         attachmentThumb = { controller.attachmentThumb(it) },
                         onSay = { controller.sayAgain(it) },
+                        onStopSaying = { controller.stopSaying() },
                     ),
                 )
             }

@@ -290,6 +290,9 @@ class VoiceController(
     /** The speaker on one of Cru's replies: said now (a typed turn's reply is not said on its own). */
     fun sayAgain(text: String) { if (running) dispatch(VoiceEvent.SayAgain(text, now())) }
 
+    /** The speaker tapped while its reply is being said: stop, and listen (as tapping over Cru does). */
+    fun stopSaying() { if (running && _ui.value.state.phase == Phase.Speaking) bargeIn() }
+
     private fun voiceApi(): VoiceApi? = api ?: Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).api.voice }
 
     private var historyJob: Job? = null

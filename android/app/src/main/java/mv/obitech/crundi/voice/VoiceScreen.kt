@@ -15,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -229,6 +231,8 @@ class VoiceMore(
     val attachmentThumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null,
     /** The speaker on one of Cru's replies: say it aloud. */
     val onSay: (String) -> Unit = {},
+    /** The same speaker while that reply is being said: stop. */
+    val onStopSaying: () -> Unit = {},
 )
 
 /** Where a file for Cru comes from. */
@@ -294,12 +298,14 @@ private fun AdminPill() {
 private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
     val list = ui.history
     val hearing = CruChat.hearing(ui.state)
+    // Thinking and Speaking in the conversation, as other chat apps show them (the pill stays too).
+    val thinking = CruChat.thinking(ui.state)
+    val speakingAt = CruChat.speakingIndex(list, ui.state)
     val state = rememberLazyListState()
-    val count = list.size + (if (hearing.isNotEmpty()) 1 else 0)
     // New messages: follow them down, unless the owner has scrolled up to read (older ones loaded above don't move it).
-    val lastIndex = (if (ui.moreHistory) 1 else 0) + (if (list.isEmpty() && hearing.isEmpty()) 1 else 0) + list.size + (if (hearing.isNotEmpty()) 1 else 0) - 1
+    val lastIndex = (if (ui.moreHistory) 1 else 0) + (if (list.isEmpty() && hearing.isEmpty() && !thinking) 1 else 0) + list.size + (if (hearing.isNotEmpty()) 1 else 0) + (if (thinking) 1 else 0) - 1
     val first = remember { booleanArrayOf(true) }
-    LaunchedEffect(list.lastOrNull()?.key, hearing.isNotEmpty(), ui.historyLoaded) {
+    LaunchedEffect(list.lastOrNull()?.key, hearing.isNotEmpty(), thinking, ui.historyLoaded) {
         val info = state.layoutInfo
         val atEnd = info.visibleItemsInfo.lastOrNull()?.let { it.index >= info.totalItemsCount - 2 } ?: true
         if (lastIndex >= 0 && (first[0] || atEnd)) state.scrollToItem(lastIndex)
@@ -310,7 +316,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
         if (ui.moreHistory) item(key = "more") {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CrundiButton("Earlier messages", more.onMoreHistory, kind = ButtonKind.Ghost, icon = "chevron-up") }
         }
-        if (list.isEmpty() && hearing.isEmpty()) item(key = "none") {
+        if (list.isEmpty() && hearing.isEmpty() && !thinking) item(key = "none") {
             Text(
                 when {
                     ui.historyError.isNotEmpty() -> ui.historyError
@@ -325,19 +331,70 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
             val m = list[i]
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at), thumb = more.attachmentThumb)
-                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "", onSay = if (m.speak.isNotBlank()) ({ more.onSay(m.speak) }) else null)
+                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "", onSay = if (m.speak.isNotBlank()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
             }
         }
         if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true) }
+        if (thinking) item(key = "thinking") { ThinkingBubble() }
+    }
+}
+
+/** Cru is thinking: three dots rising in turn, in a bubble of Cru's, where its reply will appear. */
+@Composable
+private fun ThinkingBubble() {
+    val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = 4.dp, bottomEnd = 16.dp)
+    val t = rememberInfiniteTransition(label = "thinking").animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "dots")
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+        Row(
+            Modifier.clip(shape).background(CrundiColors.BgSecondary.copy(alpha = 0.9f)).border(1.dp, CrundiColors.Border, shape)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
+                .semantics { contentDescription = "Cru is thinking" },
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            for (k in 0 until 3) {
+                val a = VoiceIndicators.dot(t.value, k)
+                Canvas(Modifier.size(8.dp).offset(y = (-3 * a).dp)) { drawCircle(CrundiColors.TextSecondary.copy(alpha = 0.35f + 0.65f * a)) }
+            }
+        }
+    }
+}
+
+/**
+ * The speaking head beside one of Cru's replies, outside the bubble at its bottom right
+ * (as the owner drew it): tap to hear the reply, tap again to stop. While this reply is
+ * being said it is the Speaking sign: accent, the two waves from its mouth lighting in turn.
+ */
+@Composable
+private fun SpeakerButton(speaking: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val paths = remember { (mv.obitech.crundi.ui.icons.IconPaths.all["speaking-head"] ?: emptyList()).map { androidx.compose.ui.graphics.vector.PathParser().parsePathString(it).toPath() } }
+    val t = if (speaking) rememberInfiniteTransition(label = "speaking").animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "waves").value else 0f
+    val color = if (speaking) CrundiColors.Accent else CrundiColors.TextMuted
+    Box(
+        modifier.size(36.dp).clip(RoundedCornerShape(18.dp))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            .semantics { contentDescription = if (speaking) "Cru is saying this: tap to stop" else "Say it aloud" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.size(20.dp)) {
+            val k = size.minDimension / 24f
+            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f, cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round)
+            scale(k, k, pivot = androidx.compose.ui.geometry.Offset.Zero) {
+                paths.forEachIndexed { i, p ->
+                    val a = if (i == 0 || !speaking) 1f else VoiceIndicators.wave(t, i - 1)
+                    drawPath(p, color.copy(alpha = color.alpha * a), style = stroke)
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null, onSay: (() -> Unit)? = null) {
+private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null, onSay: (() -> Unit)? = null, speaking: Boolean = false) {
     val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp)
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
         Column(
-            Modifier.fillMaxWidth(0.86f).wrapContentWidth(if (mine) Alignment.End else Alignment.Start)
+            // Cru's with a speaker: the bubble as wide as it needs, the speaker hugging its bottom right.
+            (if (!mine && onSay != null) Modifier.weight(1f, fill = false) else Modifier.fillMaxWidth(0.86f).wrapContentWidth(if (mine) Alignment.End else Alignment.Start))
                 .alpha(if (faded) 0.55f else 1f)
                 .clip(shape)
                 .background(if (mine) CrundiColors.AccentDim else CrundiColors.BgSecondary.copy(alpha = 0.9f))
@@ -349,12 +406,11 @@ private fun Bubble(mine: Boolean, text: String, detail: String, time: String, fa
             if (text.isNotEmpty() && mine) SaidText(text, thumb, Alignment.End, CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
             else if (text.isNotEmpty()) Text(text, style = CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
             if (detail.isNotEmpty()) Box(Modifier.padding(top = if (text.isNotEmpty()) 6.dp else 0.dp)) { MarkdownText(detail, compact = true) }
-            // Cru's: the time, and the speaker that says the reply aloud (typed turns are not said on their own).
-            if (onSay != null) Row(verticalAlignment = Alignment.CenterVertically) {
-                if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp, end = 4.dp))
-                CrundiIconButton("volume-2", onSay, contentDescription = "Say it aloud", size = 16.dp, touch = 32.dp, tint = CrundiColors.TextMuted)
-            } else if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp))
+            if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp))
         }
+        // Cru's: one speaking head outside the bubble, at its bottom right. Tap it to hear the reply
+        // (typed turns are not said on their own); it moves while this reply is being said.
+        if (onSay != null) SpeakerButton(speaking, onSay, Modifier.padding(start = 2.dp))
     }
 }
 

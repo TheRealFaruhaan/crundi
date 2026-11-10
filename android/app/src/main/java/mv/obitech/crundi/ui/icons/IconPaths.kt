@@ -95,6 +95,7 @@ internal object IconPaths {
         "shield-alert" to listOf("M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z", "M12 8L12 12.5", "M12 16L12.01 16"),
         "sliders" to listOf("M4 21L4 14", "M4 10L4 3", "M12 21L12 12", "M12 8L12 3", "M20 21L20 16", "M20 12L20 3", "M1 14L7 14", "M9 8L15 8", "M17 16L23 16"),
         "smartphone" to listOf("M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-16a2 2 0 0 1 2 -2Z", "M12 18L12.01 18"),
+        "speaking-head" to listOf("M4 21v-4.4C2.2 15.2 1.5 13 1.5 11 1.5 6.6 4.9 3.5 9 3.5c3.6 0 5.8 2.5 6 5.5l1.5 3-1.5.5v2c0 .8-.6 1.5-1.5 1.5h-2V21", "M18.5 10.5a4 4 0 0 1 0 5", "M21 8.5a7 7 0 0 1 0 9"),
         "split-down" to listOf("M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M3 12L21 12"),
         "split-right" to listOf("M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M12 4L12 20"),
         "stop" to listOf("M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2Z"),
@@ -104,7 +105,6 @@ internal object IconPaths {
         "upload" to listOf("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M17 8L12 3L7 8", "M12 3L12 15"),
         "user" to listOf("M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M8 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z"),
         "users" to listOf("M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2", "M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z", "M23 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"),
-        "volume-2" to listOf("M11 5L6 9H2v6h4l5 4V5z", "M15.5 8.5a5 5 0 0 1 0 7", "M19 5a10 10 0 0 1 0 14"),
         "x" to listOf("M18 6L6 18", "M6 6L18 18"),
         "zap" to listOf("M13 2L3 14L12 14L11 22L21 10L12 10L13 2Z"),
     )

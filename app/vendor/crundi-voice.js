@@ -400,7 +400,11 @@
     '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:none;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
-    '.cv-m.cru{position:relative;padding-right:34px}.cv-say{position:absolute;right:4px;bottom:4px;width:26px;height:26px;border:0;border-radius:50%;background:transparent;color:' + C.muted + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-say:hover{color:' + C.text + ';background:rgba(255,255,255,.08)}' +
+    '.cv-m.cru{position:relative;overflow:visible}.cv-m.cru.say{margin-right:40px}.cv-say{position:absolute;right:-40px;bottom:0;width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:' + C.muted + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-say:hover{color:' + C.text + ';background:rgba(255,255,255,.08)}' +
+    '.cv-m.cru.cv-typing{display:flex;gap:6px;align-items:center;padding:14px 16px;min-height:0}.cv-typing i{width:8px;height:8px;border-radius:50%;background:' + C.text2 + ';opacity:.35;animation:cvdot 1.2s ease-in-out infinite}.cv-typing i:nth-child(2){animation-delay:.2s}.cv-typing i:nth-child(3){animation-delay:.4s}' +
+    '@keyframes cvdot{0%,60%,100%{opacity:.35;transform:none}30%{opacity:1;transform:translateY(-3px)}}' +
+    '.cv-say.on{color:' + C.accent + '}.cv-say.on .w1{animation:cvwave 1.1s ease-in-out infinite}.cv-say.on .w2{animation:cvwave 1.1s ease-in-out .33s infinite}' +
+    '@keyframes cvwave{0%,100%{opacity:.25}35%{opacity:1}}' +
     '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
     '.cv-x.on{background:' + C.accent + ';color:#fff}.cv-chatb{position:relative}.cv-chatb.cru-unread:after{content:"";position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#ef4444}' +
     // The bottom row as on the phone: the voice button in the middle, the keyboard on its left;
@@ -900,7 +904,8 @@
   /** How long a screen Cru opened for its own news keeps listening for an answer, after saying it. */
   var REPORT_LINGER_MS = 8000;
   var CHAT_KEY = 'crundi_cru_chat_view';
-  var SPEAKER_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>';
+  /** A speaking head in profile, sound coming from its mouth (the owner's drawing): tap to hear a reply; it is also the Speaking sign. */
+  var SPEAKER_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-4.4C2.2 15.2 1.5 13 1.5 11 1.5 6.6 4.9 3.5 9 3.5c3.6 0 5.8 2.5 6 5.5l1.5 3-1.5.5v2c0 .8-.6 1.5-1.5 1.5h-2V21"/><path class="w1" d="M18.5 10.5a4 4 0 0 1 0 5"/><path class="w2" d="M21 8.5a7 7 0 0 1 0 9"/></svg>';
   function chatPref() { try { return localStorage.getItem(CHAT_KEY) !== '0'; } catch (e) { return true; } }
   function chatView(on) {
     if (!S) return;
@@ -934,14 +939,21 @@
     var box = S.ov.querySelector('.cv-chat'), list = S.ov.querySelector('.cv-msgs');
     var when = function (at) { var d = new Date(at); return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
     var h = '';
+    // Thinking and Speaking in the conversation, as other chat apps show them (the pill stays too):
+    // the speaking head by the reply being said moves, typing dots where the next reply will appear.
+    var sayingAt = speakingIndex(S.msgs || [], S.phase, S.lastSaid);
     (S.msgs || []).forEach(function (m, i) {
       if (m.said) h += '<div class="cv-m me">' + saidHtml(m.said) + '<time>' + esc(when(m.at)) + '</time></div>';
-      // The speaker: says this reply aloud, on a tap (a typed turn's reply is not said on its own).
-      if (m.speak || m.show) h += '<div class="cv-m cru">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>')
-        + (m.speak ? '<button class="cv-say" data-say="' + i + '" title="Say it aloud" aria-label="Say it aloud">' + SPEAKER_SVG + '</button>' : '') + '</div>';
+      // The speaking head outside the bubble, at its bottom right: says this reply aloud on a tap (a typed
+      // turn's reply is not said on its own), and moves while this reply is being said (tap again: stop).
+      if (m.speak || m.show) h += '<div class="cv-m cru' + (m.speak ? ' say' : '') + '">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>')
+        + (m.speak ? (i === sayingAt
+          ? '<button class="cv-say on" data-say="' + i + '" title="Cru is saying this: tap to stop" aria-label="Cru is saying this: tap to stop">'
+          : '<button class="cv-say" data-say="' + i + '" title="Say it aloud" aria-label="Say it aloud">') + SPEAKER_SVG + '</button>' : '') + '</div>';
     });
     // What is being heard right now, not yet sent.
     if (S.heard && (S.phase === 'listen' || S.phase === 'think') && S.heard !== S.lastChatAsked) h += '<div class="cv-m me live">' + esc(S.heard) + '</div>';
+    if (S.phase === 'think') h += '<div class="cv-m cru cv-typing" role="img" aria-label="Cru is thinking"><i></i><i></i><i></i></div>';
     // Rebuilt only when it changed: render() runs on every word heard, and a long history
     // rebuilt each time starved the animation (the mic froze in the chat view).
     if (h === S.chatHtml && !toEnd) return;
@@ -952,10 +964,21 @@
     if (toEnd || nearEnd) box.scrollTop = box.scrollHeight;
   }
 
+  /** The message whose reply is being said now (the last with those words), or -1 (as the phone's CruChat.speakingIndex). */
+  function speakingIndex(msgs, phase, lastSaid) {
+    if (phase !== 'speak') return -1;
+    var t = String(lastSaid || '').trim();
+    if (!t) return -1;
+    for (var i = msgs.length - 1; i >= 0; i--) if (String(msgs[i].speak || '').trim() === t) return i;
+    return -1;
+  }
   /** The speaker on a reply: said now, when Cru is just listening (not while it thinks, talks or hears him). */
   function sayAgain(i) {
     var m = S && S.msgs && S.msgs[i];
-    if (!m || !m.speak || S.phase !== 'listen' || S.heard || S.pending) return;
+    if (!m || !m.speak) return;
+    // Tapped while it says this one: stop, and listen (as tapping over Cru does).
+    if (S.phase === 'speak' && i === speakingIndex(S.msgs, S.phase, S.lastSaid)) { cutIn(); render(); return; }
+    if (S.phase !== 'listen' || S.heard || S.pending) return;
     S.quietSince = Date.now();
     speak(m.speak);
     render();
@@ -2151,7 +2174,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

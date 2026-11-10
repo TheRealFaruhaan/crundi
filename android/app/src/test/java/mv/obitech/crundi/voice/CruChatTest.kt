@@ -107,4 +107,35 @@ class CruChatTest {
         CruUnread.set(-2)
         assertEquals(0, CruUnread.count.value)
     }
+
+    @Test fun thinkingShowsATypingBubbleOnlyWhileCruThinks() {
+        assertTrue(CruChat.thinking(VoiceState(phase = Phase.Thinking)))
+        assertFalse(CruChat.thinking(VoiceState(phase = Phase.Listening)))
+        assertFalse(CruChat.thinking(VoiceState(phase = Phase.Speaking)))
+    }
+
+    @Test fun theSpeakingSignGoesByTheReplyBeingSaid() {
+        val list = listOf(CruMsg(1, "hi", "Yes, Sir?", ""), CruMsg(2, "and?", "Done, Sir.", "detail"), CruMsg(3, "", "Yes, Sir?", ""))
+        assertEquals(1, CruChat.speakingIndex(list, VoiceState(phase = Phase.Speaking, lastSaid = "Done, Sir.")))
+        // The same words twice: the latest.
+        assertEquals(2, CruChat.speakingIndex(list, VoiceState(phase = Phase.Speaking, lastSaid = "Yes, Sir? ")))
+        // Not speaking, or saying something not in the list (an error, "Yes, Sir?" when called): none.
+        assertEquals(-1, CruChat.speakingIndex(list, VoiceState(phase = Phase.Listening, lastSaid = "Done, Sir.")))
+        assertEquals(-1, CruChat.speakingIndex(list, VoiceState(phase = Phase.Speaking, lastSaid = "I can't reach the server, Sir.")))
+        assertEquals(-1, CruChat.speakingIndex(emptyList(), VoiceState(phase = Phase.Speaking, lastSaid = "Done, Sir.")))
+    }
+
+    @Test fun theSignsStayInRangeAndTheDotsTakeTurns() {
+        for (k in 0 until 3) for (n in 0..100) {
+            val t = n / 100f
+            assertTrue(VoiceIndicators.dot(t, k) in 0f..1f)
+            if (k < 2) assertTrue(VoiceIndicators.wave(t, k) in 0.25f..1f)
+        }
+        // The speaking head's waves light in turn: the inner, then the outer.
+        assertTrue(VoiceIndicators.wave(0.3f, 0) > 0.95f && VoiceIndicators.wave(0.3f, 1) < 0.3f)
+        assertTrue(VoiceIndicators.wave(0.6f, 1) > 0.95f && VoiceIndicators.wave(0.6f, 0) == 0.25f)
+        // Each dot is highest at its own time, a third of a loop apart.
+        assertTrue(VoiceIndicators.dot(0.2f, 0) > 0.9f && VoiceIndicators.dot(0.2f, 1) == 0f)
+        assertTrue(VoiceIndicators.dot(0.2f + 1 / 3f, 1) > 0.9f && VoiceIndicators.dot(0.2f + 1 / 3f, 0) == 0f)
+    }
 }
