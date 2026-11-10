@@ -244,6 +244,8 @@ class VoiceMore(
     val onSay: (String) -> Unit = {},
     /** The same speaker while that reply is being said: stop. */
     val onStopSaying: () -> Unit = {},
+    /** Float Cru as its own bubble; null: not offered here (inside the bubble, or bubbles unavailable). */
+    val onBubble: (() -> Unit)? = null,
 )
 
 /** Where a file for Cru comes from. */
@@ -300,6 +302,8 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Un
             val unread by CruUnread.count.collectAsState()
             if (unread > 0 && !ui.chat) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(8.dp).clip(CircleShape).background(CrundiColors.Red))
         }
+        // Cru as its own floating bubble, over any app.
+        more.onBubble?.let { b -> if (!full) CrundiIconButton("message-square", b, contentDescription = "Float Cru as a bubble", size = 16.dp, touch = 38.dp) }
         // Close: up here (as on the web), so the typing box keeps the bottom row's room.
         CrundiIconButton("x", onClose, contentDescription = "Close", size = 17.dp, touch = 38.dp)
     }

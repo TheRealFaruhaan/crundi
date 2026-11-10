@@ -28,7 +28,9 @@ import mv.obitech.crundi.ui.theme.CrundiTheme
  * The overlay also opens it when it needs what only an activity can do: ask
  * for the microphone, or ask for the phone to be unlocked ([EXTRA_UNLOCK]).
  */
-class VoiceActivity : ComponentActivity() {
+open class VoiceActivity : ComponentActivity() {
+    /** Cru in its own floating bubble ([CruBubbleActivity]): no lock screen, and closing is the bubble's to do. */
+    protected open val inBubble: Boolean = false
     private lateinit var controller: VoiceController
     private val askMic = registerForActivityResult(ActivityResultContracts.RequestPermission()) { controller.open() }
 
@@ -163,7 +165,7 @@ class VoiceActivity : ComponentActivity() {
         keepOn(true)
         // Asked to close: gone, not asleep listening for Hey Cru.
         if (intent?.getBooleanExtra(EXTRA_CHAT, false) == true) VoicePrefs.setChatView(this, true)
-        controller = VoiceController(this, "Cru", ::locked, onFinish = { asleep() }, onDismiss = { finish() })
+        controller = VoiceController(this, if (inBubble) "Cru bubble" else "Cru", ::locked, onFinish = { asleep() }, onDismiss = { finish() })
         setContent {
             CrundiTheme {
                 val ui by controller.ui.collectAsStateWithLifecycle()
@@ -194,6 +196,8 @@ class VoiceActivity : ComponentActivity() {
                         attachmentThumb = { controller.attachmentThumb(it) },
                         onSay = { controller.sayAgain(it) },
                         onStopSaying = { controller.stopSaying() },
+                        // Float Cru as its own bubble (Android 11+, bubbles allowed); not from inside one.
+                        onBubble = if (!inBubble && CruBubble.available(this)) ({ CruBubble.open(this)?.let { android.widget.Toast.makeText(this, it, android.widget.Toast.LENGTH_LONG).show() } ?: finish() }) else null,
                     ),
                 )
             }
@@ -233,7 +237,8 @@ class VoiceActivity : ComponentActivity() {
         HeyCrundi.screenWaiting(null)
         waiting = false
         controller.close()
-        if (wasWaiting) finish()
+        // A bubble folded away keeps its window: tapping it again carries on.
+        if (wasWaiting && !inBubble) finish()
         super.onStop()
     }
 

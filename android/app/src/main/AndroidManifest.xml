@@ -119,6 +119,17 @@
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
+        <!-- Cru as its own floating bubble (voice/CruBubble.kt): the voice
+             screen, bubble-ready as ChatActivity is; never over the lock screen. -->
+        <activity
+            android:name=".voice.CruBubbleActivity"
+            android:exported="false"
+            android:label="Cru"
+            android:resizeableActivity="true"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
         <!-- What the side key's double press opens. Turned off with the assistant in App settings. -->
         <activity-alias
             android:name=".voice.CrundiVoice"
