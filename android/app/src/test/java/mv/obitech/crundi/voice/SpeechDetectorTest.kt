@@ -94,6 +94,30 @@ class SpeechDetectorTest {
         }
     }
 
+    /** The share of [pcm] (fed as the mic gives it, after a quiet room) where the drawn mic level moves. */
+    private fun drawn(pcm: FloatArray): Float {
+        val d = SpeechDetector(weights)
+        val check = SpeechCheck(d)
+        d.push(clip(16000) { _, _ -> rnd() * 0.004f })
+        var i = 0; var on = 0; var n = 0; var now = 0L
+        while (i + 1600 <= pcm.size) { d.push(pcm, i, i + 1600); now += 100; n++; if (check.shown(0.5f, now) > 0f) on++; i += 1600 }
+        return on.toFloat() / maxOf(1, n)
+    }
+
+    @Test fun theDrawnMicMovesForSpeechOnly() {
+        val sounds = mapOf(
+            "white noise" to clip(80000) { _, _ -> rnd() * 0.3f },
+            "a loud hum starting" to clip(80000) { _, t -> (0.4 * (sin(2 * PI * 120 * t) + 0.4 * sin(2 * PI * 240 * t))).toFloat() },
+            "music" to clip(80000) { i, t -> val n = listOf(220.0, 277.0, 330.0, 440.0)[(t * 2).toInt() % 4]; (min(1.0, i / 4800.0) * 0.2 * (sin(2 * PI * n * t) + sin(2 * PI * n * 1.5 * t) + 0.5 * sin(2 * PI * n * 2 * t))).toFloat() },
+            "a door slam" to clip(32000) { i, _ -> if (i > 8000) rnd() * 0.9f * exp(-(i - 8000) / 1600f) else 0f },
+        )
+        for ((name, pcm) in sounds) assertEquals(name, 0f, drawn(pcm), 0f)
+        assertTrue(drawn(voice) > 0.3f)
+        // Not warm yet: still; no detector at all: the level as it is.
+        assertEquals(0f, SpeechCheck(SpeechDetector(weights)).shown(0.5f, 0L), 0f)
+        assertEquals(0.5f, SpeechCheck(null).shown(0.5f, 0L), 0f)
+    }
+
     @Test fun pcmBytesAsTheMicGivesThem() {
         val bytes = ByteArray(voice.size * 2)
         for (i in voice.indices) { val v = (voice[i] * 32768).toInt().coerceIn(-32768, 32767); bytes[2 * i] = v.toByte(); bytes[2 * i + 1] = (v shr 8).toByte() }

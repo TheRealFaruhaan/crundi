@@ -201,4 +201,21 @@ class SpeechCheck(private val detector: SpeechDetector?, private val ring: Voice
 
     /** For a rule on the level alone: true only when the detector, warmed up, says it is not someone talking. */
     fun notTalking(): Boolean = detector?.let { it.warm && !it.talking } ?: false
+
+    private var speechAt = Long.MIN_VALUE / 2
+
+    /**
+     * The microphone level to draw (10 Nov: it moved with the room's noise):
+     * [level] only while the detector hears someone talking ([talking], as
+     * barge-in), and [tailMs] after, so
+     * a word's end is not cut; 0 for anything else and until it has warmed
+     * up. With no detector (it could not load) the level as it is.
+     */
+    fun shown(level: Float, now: Long = System.currentTimeMillis(), tailMs: Long = 300): Float {
+        val d = detector ?: return level
+        if (!d.warm) return 0f
+        // Someone talking, as barge-in decides it: a hum or music read as speech for a moment never counts.
+        if (d.talking) speechAt = now
+        return if (now - speechAt < tailMs) level else 0f
+    }
 }

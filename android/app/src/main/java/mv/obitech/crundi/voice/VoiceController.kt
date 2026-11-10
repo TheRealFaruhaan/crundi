@@ -737,8 +737,9 @@ class VoiceController(
 
     private fun startMic() {
         val m = MicStream { bytes, level ->
-            _mic.value = level
             speech.push(bytes)
+            // Drawn only while someone is speaking: the room's noise leaves the mic still (the gates below still get the raw level).
+            _mic.value = speech.shown(level)
             if (!streaming && _ui.value.state.let { it.live || it.cue.isNotEmpty() }) {
                 // Cru is talking (or a cue plays): nothing goes out; the phone decides if it is him.
                 if (!gateFired) {

@@ -310,6 +310,22 @@
     return me;
   }
 
+  /**
+   * The microphone level to draw: [level] only while the speech detector
+   * hears someone talking (its [talking], as barge-in), and SHOWN_TAIL_MS after (a word's end is not cut); 0 for
+   * noise and until the detector has warmed up. With no detector to be had
+   * ([none]: the weights could not load) the level as it is. [st] keeps when
+   * speech was last heard. The phone's SpeechCheck.shown has the same rule.
+   */
+  var SHOWN_TAIL_MS = 300;
+  function shownLevel(vad, none, level, now, st) {
+    if (!vad) return none ? level : 0;
+    if (vad.frames < VAD_WARM) return 0;
+    // Someone talking, as barge-in decides it (speech that rises and falls): a hum or music read as speech for a moment never counts.
+    if (vad.talking) st.speechAt = now;
+    return now - (st.speechAt || -1e12) < SHOWN_TAIL_MS ? level : 0;
+  }
+
   /** The weights, fetched once per page. Resolves to null when they cannot be had (the voicing check stands in). */
   var vadWeights = null;
   function loadVad() {
@@ -817,6 +833,8 @@
         var level = Math.sqrt(Math.sqrt(sum / Math.max(1, n))), ms = x.length / ctx.sampleRate * 1000;
         S.mic = level;
         if (S.vad) S.vad.push(out); else if (!S.vadAsked) { S.vadAsked = true; var s0 = S; loadVad().then(function (W) { if (W && S === s0) s0.vad = createVad(W); }); }
+        // What is drawn moves only for speech (10 Nov: it moved with the room's noise); the gates still get the raw level.
+        S.micShown = shownLevel(S.vad, S.vadAsked && !S.vad && vadWeights === null, level, Date.now(), S);
         var nowMs = Date.now(); if (level >= (S.micPeak || 0) || nowMs - (S.micPeakAt || 0) > 2000) { S.micPeak = level; S.micPeakAt = nowMs; }
         if (S.live) {
           if (S.held) {
@@ -892,7 +910,7 @@
     closeSocket();
     try { if (S.proc) { S.proc.onaudioprocess = null; S.proc.disconnect(); } if (S.src) S.src.disconnect(); } catch (e) { /* gone */ }
     try { if (S.stream) S.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* gone */ }
-    S.proc = null; S.src = null; S.stream = null; S.live = false; S.streaming = false; S.held = false; S.mic = 0;
+    S.proc = null; S.src = null; S.stream = null; S.live = false; S.streaming = false; S.held = false; S.mic = 0; S.micShown = 0;
   }
   function closeSocket() {
     var ws = S.ws; S.ws = null;
@@ -1365,7 +1383,9 @@
     var token = S.speakToken = {};
     var ctx = S.ctx || (S.ctx = new (window.AudioContext || window.webkitAudioContext)());
     var an = outNode();
-    S.outAnalyser = an;
+    // The level meter is S.out, behind the volume node outNode() hands back (the voice plays into that).
+    // Taking the volume node for the meter threw on every frame while Cru talked: the mic froze (10 Nov).
+    S.outAnalyser = S.out && S.out.getByteTimeDomainData ? S.out : null;
     var at = Math.max(ctx.currentTime + 0.05, S.cue && S.cue.ends ? S.cue.ends : 0), rate = 24000, carry = null, any = false;
     // Kid mode: how lively (the mood of Cru's reply, or of an instant line); a line not ready in 400 ms is said by the device instead.
     var o = S.speakOpts || {}, ex = typeof o.expressivity === 'number' ? o.expressivity : (typeof S.nextExpr === 'number' ? S.nextExpr : (typeof S.expr === 'number' ? S.expr : null));
@@ -1982,10 +2002,10 @@
     followSpeech();
     var t = ms / 1000, ph = S.phase;
     // Crundi's level: the output analyser (streamed voice), or a bump on each word (browser voice).
-    if (S.outAnalyser) { var b = new Uint8Array(S.outAnalyser.fftSize); S.outAnalyser.getByteTimeDomainData(b); var sum = 0; for (var i = 0; i < b.length; i++) { var x = (b[i] - 128) / 128; sum += x * x; } S.voice = Math.min(1, Math.sqrt(Math.sqrt(sum / b.length)) * 1.4); }
+    if (S.outAnalyser && S.outAnalyser.getByteTimeDomainData) { var b = new Uint8Array(S.outAnalyser.fftSize); S.outAnalyser.getByteTimeDomainData(b); var sum = 0; for (var i = 0; i < b.length; i++) { var x = (b[i] - 128) / 128; sum += x * x; } S.voice = Math.min(1, Math.sqrt(Math.sqrt(sum / b.length)) * 1.4); }
     else if (S.speaking) { S.voiceBump = (S.voiceBump || 0.4) * 0.94; S.voice = 0.3 + S.voiceBump * 0.6 + 0.1 * Math.abs(Math.sin(t * 9)); }
     else S.voice = 0;
-    var target = ph === 'listen' ? S.mic : ph === 'speak' ? S.voice : ph === 'think' ? 0.08 + 0.05 * Math.sin(t * 3) : 0.03;
+    var target = ph === 'listen' ? (S.micShown || 0) : ph === 'speak' ? S.voice : ph === 'think' ? 0.08 + 0.05 * Math.sin(t * 3) : 0.03;
     S.peak = Math.max(S.peak * 0.996, Math.max(0.08, target));
     var norm = (ph === 'listen' || ph === 'speak') ? Math.min(1, target / S.peak) : target;
     S.lvl += (norm - S.lvl) * (norm > S.lvl ? 0.45 : 0.15);
@@ -1993,7 +2013,7 @@
     // The field is hidden in the chat view: drawn at no size it throws, and the mic below stopped moving.
     var fc = S.ov.querySelector('.cv-field canvas');
     if (fc && fc.clientWidth > 40 && fc.clientHeight > 40) { try { drawField(t, ph); } catch (e) { /* the mic still moves */ } }
-    drawMic(t, ms, ph);
+    try { drawMic(t, ms, ph); } catch (e) { /* the next frame draws again */ }
   }
 
   function fit(cv) {
@@ -2089,7 +2109,7 @@
   function drawMic(t, ms, ph) {
     var f = fit(S.ov.querySelector('.cv-mic canvas')), g = f.g, W = f.w, H = f.h, Lq = S.liq;
     var dt = Lq.lastT ? Math.min(0.05, (ms - Lq.lastT) / 1000) : 0.016; Lq.lastT = ms;
-    var raw = ph === 'listen' ? S.mic : 0;
+    var raw = ph === 'listen' ? (S.micShown || 0) : 0;
     Lq.peak = Math.max(Lq.peak * 0.995, Math.max(0.1, raw));
     var level = Math.min(1, raw / Lq.peak); Lq.lv += (level - Lq.lv) * (level > Lq.lv ? 0.45 : 0.12);
     Lq.hist.copyWithin(1, 0); Lq.hist[0] = Lq.lv;
@@ -2245,7 +2265,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

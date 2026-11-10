@@ -327,6 +327,26 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
     ok(missed === 0, 'and the sentence always does (' + missed + ' of 10 missed)');
   }
   {
+    // The mic level drawn (10 Nov): it moves for speech only, never for the room's noise.
+    const drawn = (pcm) => {
+      const v = T.createVad(W), st = {}; let on = 0, n = 0, now = 0;
+      v.push(room);
+      for (let i = 0; i + 1365 <= pcm.length; i += 1365) { v.push(pcm.subarray(i, i + 1365)); now += 85; n++; if (T.shownLevel(v, false, 0.5, now, st) > 0) on++; }
+      return on / Math.max(1, n);
+    };
+    for (const name of ['white noise', 'a fan (pink noise)', 'clicks and knocks', 'a door slam', 'a loud hum starting', 'a hum fading in', 'music (a chord, changing)']) {
+      const share = drawn(sounds[name]);
+      ok(share === 0, 'the drawn mic stays still for ' + name + ' (' + Math.round(share * 100) + '% of the time)');
+    }
+    ok(drawn(voice) > 0.3, 'and moves while someone speaks (' + Math.round(drawn(voice) * 100) + '% of the sentence)');
+    ok(drawn(noisy) > 0.3, 'also over a fan');
+    ok(T.shownLevel(null, true, 0.4, 0, {}) === 0.4 && T.shownLevel(null, false, 0.4, 0, {}) === 0, 'no detector to be had: the level as it is; still loading: still');
+    // 10 Nov: the volume node was taken for the level meter; every frame threw while Cru talked and the mic froze.
+    ok(!/S\.outAnalyser = an;/.test(src) && /S\.outAnalyser = S\.out && S\.out\.getByteTimeDomainData \? S\.out : null/.test(src) && /try \{ drawMic\(/.test(src), 'Cru\'s level is read from the meter itself, and a bad frame never stops the mic being drawn');
+    const cold = T.createVad(W);
+    ok(T.shownLevel(cold, false, 0.4, 0, {}) === 0, 'still until the detector has warmed up');
+  }
+  {
     const v = T.createVad(W);
     v.push(voice); v.reset();
     ok(v.prob === 0 && v.speechMs === 0 && !v.speech && !v.talking, 'reset starts afresh');
