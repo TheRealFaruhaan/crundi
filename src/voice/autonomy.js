@@ -26,6 +26,7 @@ export const AWAY_CLASSES = {
   notes: { label: 'Write notes and mindmap nodes', tools: ['create_note', 'append_to_note', 'add_mindmap_node', 'update_mindmap_node'] },
   services: { label: 'Start, stop and restart services', tools: ['service_control'] },
   jobs: { label: 'Take on cards: a Claude chat in bypass mode sees each through', tools: ['start_job', 'finish_job'] },
+  schedules: { label: 'Schedule and cancel messages into chats (e.g. carry on when the usage limit resets)', tools: ['add_chat_schedule', 'delete_chat_schedule'] },
 };
 export const AWAY_CLASS_IDS = Object.keys(AWAY_CLASSES);
 /** Ticked when the owner first switches it on. */

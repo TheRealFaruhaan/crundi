@@ -219,6 +219,51 @@ ok(jobs.pauseAll() === 1 && jobs.list()[0].status === 'paused', 'stop everything
   ok(yes.ok && qsent.length === 2 && qasked.length === 2, 'answered there: done, and his phone is never asked');
 }
 
+// ─── follow-ups to work he gave Cru need no yes either: schedules, card moves (11 Nov) ───
+{
+  const fjobs = createJobStore({ file: join(dir, 'jobs-f.json') });
+  fjobs.add({ project: 'p', taskId: 'k1', title: 'Card k1', chatId: 'c1' });
+  fjobs.enqueue([{ project: 'p', taskId: 'k2', title: 'Card k2' }]);
+  const fasked = [], scheds = [], moved = [], logged = [];
+  const fctx = { pending: createPending(), locked: () => false, unrecognised: () => false, unattended: () => true, away: () => ({ on: false, allow: [] }) };
+  const fdeps = {
+    listProjects: () => [{ alias: 'p' }], projectsDir: () => '',
+    chats: () => [{ id: 'c1', title: 'Job chat', project: 'p' }, { id: 'c9', title: 'Owner chat', project: 'p' }],
+    cruRuns: (id) => !!fjobs.forChat(id),
+    cruCard: (a, t) => fjobs.list().some((j) => j.project === a && j.taskId === t) || fjobs.queued(a, t),
+    askOwner: (q) => { fasked.push(q); return { ok: true, id: 'cru-f' }; },
+    onAwayAct: (name) => logged.push(name),
+    chatSchedule: {
+      list: () => scheds.filter((x) => x.status === 'pending'),
+      add: (it) => { const x = { id: 's' + (scheds.length + 1), chat: it.chatId ? { id: it.chatId } : null, status: 'pending', ...it }; scheds.push(x); return { ok: true, item: x }; },
+      remove: (id) => { const x = scheds.find((y) => y.id === id); if (x) x.status = 'gone'; return { ok: !!x }; },
+    },
+    kanban: { moveTask: (a, t, st) => { moved.push([t, st]); return { ok: true }; }, updateTask: () => ({ ok: true }), addTodo: () => ({ ok: true }) },
+  };
+  const ft = makeActionTools(fdeps, fctx);
+  const F = (n) => ft.find((x) => x.name === n);
+  let r = await F('add_chat_schedule').run({ project: 'p', chat: 'c1', text: 'The limit has reset: carry on', trigger: 'limit-reset' });
+  ok(r.ok && scheds.length === 1 && !fasked.length && logged.includes('add_chat_schedule'), 'the usage guard\'s resume into its job chat: scheduled on its own, and logged');
+  r = await F('delete_chat_schedule').run({ id: 's1' });
+  ok(r.ok && !fasked.length, 'and cancelling one into its own chat needs no yes');
+  r = await F('move_kanban_task').run({ project: 'p', taskId: 'k1', status: 'done' });
+  ok(r.ok && moved.length === 1 && !fasked.length, 'moving the card of its own job: no yes');
+  r = await F('move_kanban_task').run({ project: 'p', taskId: 'k2', status: 'in_progress' });
+  ok(r.ok && moved.length === 2 && !fasked.length, 'nor a card in the owner\'s queue');
+  r = await F('move_kanban_task').run({ project: 'p', taskId: 'k1', status: 'todo' });
+  ok(r.askedOwner && moved.length === 2, 'but To do (a factory run) is still asked');
+  r = await F('add_chat_schedule').run({ project: 'p', chat: 'c9', text: 'Restart it', trigger: 'turn-end' });
+  ok(r.askedOwner && scheds.length === 1, 'a schedule into a chat that is not Cru\'s is still asked');
+  r = await F('add_chat_schedule').run({ project: 'p', text: 'Start fresh', trigger: 'limit-reset' });
+  ok(r.askedOwner && scheds.length === 1, 'and so is one that starts a new chat');
+  r = await F('move_kanban_task').run({ project: 'p', taskId: 'z9', status: 'done' });
+  ok(r.askedOwner && moved.length === 2, 'and a card that is not its work');
+  fctx.away = () => ({ on: true, allow: ['schedules'] });
+  r = await F('add_chat_schedule').run({ project: 'p', chat: 'c9', text: 'Restart it later', trigger: 'turn-end' });
+  ok(r.ok && scheds.length === 2, 'with schedules ticked under "Cru on its own", any chat schedule runs');
+  ok(A.classOf('add_chat_schedule') === 'schedules' && !A.AWAY_DEFAULT_ALLOW.includes('schedules'), 'schedules is its own tick, off by default');
+}
+
 // ─── the day's log ───
 const nb = createNotebook(join(dir, 'nb'));
 const log = A.createDailyLog(nb, { now: () => new Date(2026, 10, 9, 14, 5) });

@@ -3168,6 +3168,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // A chat's question or permission prompt, answered by Cru (the card says so).
     respondChat: (id, answer) => claudeUi.respond(id, answer),
     cruRuns: cruRunsChat,
+    // A card Cru is working: one of its open jobs, or in the owner's queue (its housekeeping runs on a wake-up without asking).
+    cruCard: (alias, taskId) => cruJobs.list().some(j => j.project === alias && j.taskId === String(taskId)) || cruJobs.queued(alias, taskId),
     // Admin mode, as the admin tools see it: on, a model that may hold it, and not another voice.
     adminOn: () => { const v = voiceOwnerVerdict; const owner = v && typeof v === 'object' ? v.owner : v; return voiceSettings.adminOn() && owner !== false; },
     logPromptAnswer: cruLogPromptAnswer,

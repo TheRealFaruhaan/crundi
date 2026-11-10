@@ -162,6 +162,10 @@ export function makeActionTools(deps, ctx) {
   };
   /** Does this chat belong to Cru (one of its jobs, or a chat it started)? */
   const cruRuns = (id) => !!(deps.cruRuns && deps.cruRuns(id));
+  /** Is this card Cru's work (one of its open jobs, or in the owner's queue)? */
+  const cruCard = (i) => { try { return !!(deps.cruCard && deps.cruCard(project(i.project).alias, String(i.taskId))); } catch { return false; } };
+  /** Housekeeping on a card Cru is working (never to To do: that starts a factory run). */
+  const ownCard = (i) => cruCard(i) && i.status !== 'todo';
   /**
    * May Cru answer this on its own judgement, without the owner's word?
    * A permission (or a plan) in any chat while admin mode is on; anything in a
@@ -347,6 +351,7 @@ export function makeActionTools(deps, ctx) {
       description: 'Change a card\'s title or description.',
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), title: str('New title'), description: str('New description') }, ['project', 'taskId']),
       check: (i) => project(i.project),
+      own: cruCard,
       run: (i) => deps.kanban.updateTask(project(i.project).alias, String(i.taskId), Object.fromEntries(Object.entries({ title: i.title, description: i.description }).filter(([, v]) => v !== undefined))),
     },
     {
@@ -355,6 +360,7 @@ export function makeActionTools(deps, ctx) {
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), status: str('Column (the card\'s own column to only reorder it)', { enum: STATUSES }), position: { type: 'integer', minimum: 0, description: 'Optional place in the column, 0 = top (the highest priority). "Make it the top priority" is position 0 in its own column. Left out: the end of the column (or where it is, if the column is the same).' } }, ['project', 'taskId', 'status']),
       check: (i) => { project(i.project); if (!STATUSES.includes(i.status)) throw new Error('Unknown column'); },
       confirm: (i) => i.status === 'todo' ? `Moving it to To do starts a factory run on it. Move it?` : null,
+      own: ownCard,
       run: (i) => deps.kanban.moveTask(project(i.project).alias, String(i.taskId), i.status, Number.isInteger(i.position) ? i.position : undefined),
     },
     {
@@ -370,6 +376,7 @@ export function makeActionTools(deps, ctx) {
       description: 'Add a todo to a card.',
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), text: str('The todo') }, ['project', 'taskId', 'text']),
       check: (i) => project(i.project),
+      own: cruCard,
       run: (i) => deps.kanban.addTodo(project(i.project).alias, String(i.taskId), String(i.text)),
     },
     {
@@ -377,6 +384,7 @@ export function makeActionTools(deps, ctx) {
       description: 'Tick a card\'s todo done, or untick it.',
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), todoId: str('Todo id'), done: bool('Done or not') }, ['project', 'taskId', 'todoId', 'done']),
       check: (i) => project(i.project),
+      own: cruCard,
       run: (i) => deps.kanban.updateTodo(project(i.project).alias, String(i.taskId), String(i.todoId), { done: !!i.done }),
     },
 
@@ -461,6 +469,8 @@ export function makeActionTools(deps, ctx) {
         const when = i.trigger === 'time' ? `at ${new Date(Date.parse(i.at)).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : i.trigger === 'turn-end' ? 'when its current turn ends' : 'when the usage limit resets';
         return `Schedule ${readBack(i.text)} into ${i.chat ? chatName(chat(i.chat)) : `a new chat in ${i.project}`}, ${when}?`;
       },
+      // A follow-up into a chat Cru runs (its job's chat, a chat it started), such as carrying on at the limit reset: its own work.
+      own: (i) => { try { return !!i.chat && cruRuns(chat(i.chat).id); } catch { return false; } },
       run: (i) => deps.chatSchedule.add({ project: project(i.project).alias, text: String(i.text), trigger: i.trigger === 'time' ? { type: 'time', at: i.at } : { type: i.trigger }, chatId: i.chat ? chat(i.chat).id : '' }),
     },
     {
@@ -468,6 +478,8 @@ export function makeActionTools(deps, ctx) {
       description: 'Cancel a scheduled chat message. Asks the owner first.',
       input_schema: obj({ id: str('Its id (list_chat_schedules)') }, ['id']),
       confirm: (i) => `Cancel the scheduled message ${i.id}?`,
+      // One into a chat Cru runs: its own to cancel.
+      own: (i) => { try { const it = (deps.chatSchedule.list('', '') || []).find((x) => x.id === String(i.id)); return !!(it && it.chat && cruRuns(it.chat.id)); } catch { return false; } },
       run: (i) => deps.chatSchedule.remove(String(i.id)),
     },
 
@@ -620,7 +632,9 @@ export function makeActionTools(deps, ctx) {
     }
     // Nobody spoke (a wake-up, a heartbeat, a followed chat): what the owner
     // ticked runs, and so does work he already gave Cru (`own`: ending its
-    // own jobs, the next card he queued, the next step in a chat it runs).
+    // own jobs, the next card he queued, the next step in a chat it runs,
+    // scheduling or cancelling a message into such a chat (carry on at the
+    // limit reset), and keeping its own cards up to date, never to To do).
     // Anything else is asked: in the voice conversation first when he is at
     // a voice screen, on his phone when he is not (or does not answer).
     if (ctx.unattended?.()) {
