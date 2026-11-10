@@ -393,7 +393,7 @@ private fun SleepingChat(ui: ChatUi, actions: ChatActions) {
     val row = ui.pane ?: return
     val shown = ui.chat.visible
     ParkedBody(PaneView.ofPane(row), actions::wake, busy = ui.waking != null, busyMode = ui.waking ?: "resume", preview = {
-        if (ui.chat.loaded && shown.isNotEmpty()) ParkedChatCopy(shown) else ParkedChatPreview(row.id)
+        if (ui.chat.loaded && shown.isNotEmpty()) { if (it) ParkedChatPeek(shown) { actions.wake("resume") } else ParkedChatCopy(shown) } else ParkedChatPreview(row.id, peek = it) { actions.wake("resume") }
     })
 }
 

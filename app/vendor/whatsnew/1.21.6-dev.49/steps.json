@@ -31,6 +31,28 @@
       ],
       "art": "cru-full-ui.html",
       "artTitle": "Voice"
+    },
+    {
+      "id": "parked-chat-peek",
+      "tag": "Chats",
+      "title": "Peek at a parked chat",
+      "body": "A chat put away to resume later now has Peek beside Resume: read the whole conversation without starting it again. Parked view takes you back; replying or answering anything in it resumes the chat as usual.",
+      "keys": [
+        {
+          "keys": [
+            "Peek"
+          ],
+          "text": "read it without resuming"
+        },
+        {
+          "keys": [
+            "Parked view"
+          ],
+          "text": "back to the parked chat"
+        }
+      ],
+      "art": "parked-peek.html",
+      "artTitle": "Chats"
     }
   ]
 }

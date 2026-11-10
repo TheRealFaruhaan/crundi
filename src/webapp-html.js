@@ -1395,6 +1395,19 @@ export function getWebappHtml(botUsername, appVersion = '') {
       pointer-events: none; user-select: none; overflow: hidden;
     }
     .parked-cell .pk-view .xterm { height: 100%; padding: 4px 6px; }
+    .parked-cell .pk-go { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
+    .parked-cell .pk-peek-btn { display: inline-flex; align-items: center; gap: 6px; }
+    .parked-cell .pk-peek-btn .ic, .parked-cell .pk-unpeek .ic { width: 14px; height: 14px; }
+    /* Peek: the parked chat read as it is, without resuming it. */
+    .parked-cell.pk-peek .pk-view { filter: none; pointer-events: auto; user-select: text; overflow: auto; }
+    .parked-cell.pk-peek .pk-veil { display: none; }
+    .parked-cell .pk-unpeek { display: none; }
+    .parked-cell.pk-peek .pk-unpeek {
+      display: inline-flex; align-items: center; gap: 6px; position: absolute; top: 10px; right: 12px; z-index: 5;
+      padding: 7px 12px; border-radius: 16px; border: 1px solid var(--accent); background: var(--bg-card); color: var(--text-primary);
+      font: 600 0.78rem system-ui, sans-serif; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.45);
+    }
+    .parked-cell.pk-peek .pk-unpeek:hover { background: var(--accent-dim); }
     .parked-cell .pk-veil {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       background: radial-gradient(ellipse at center, rgba(10,10,15,0.55) 0%, rgba(10,10,15,0.15) 70%);
@@ -4734,6 +4747,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     const ICON_PATHS = {
       factory: '<path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/>',
       'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+      eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z"/>',
+      'eye-off': '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1L23 23"/>',
       scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
       clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
       panel: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -8054,11 +8069,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           : (d.t.hasSession ? 'Resume picks up this conversation.' : 'Resume starts a new Claude session.');
         body.innerHTML = '<div class="pk-view"></div>'
           + '<div class="pk-veil"><div class="pk-card">'
-          + '<button class="pk-resume" data-action="pane-resume" data-tid="' + d.t.id + '">' + ic('play') + 'Resume</button>'
+          + '<div class="pk-go"><button class="pk-resume" data-action="pane-resume" data-tid="' + d.t.id + '">' + ic('play') + 'Resume</button>'
+          + (d.t.paneKind === 'ui' && d.t.hasSession ? '<button class="pk-alt pk-peek-btn" data-action="pane-peek" data-tid="' + d.t.id + '" title="Read the conversation without resuming it">' + ic('eye') + 'Peek</button>' : '') + '</div>'
           + '<div class="pk-why">' + escHtml(why) + (when ? ' \u00b7 ' + escHtml(when) : '') + '</div>'
           + '<div class="pk-what">' + escHtml(what) + '</div>'
           + parkedChoicesHtml(d.t)
-          + '</div></div>';
+          + '</div></div>'
+          // Peeking: the conversation readable, and this back to the parked view (anything done in it resumes the chat).
+          + '<button class="pk-unpeek" data-action="pane-unpeek" data-tid="' + d.t.id + '" title="Back to the parked view">' + ic('eye-off') + 'Parked view</button>';
       } else if (d.type === 'chat') {
         el.dataset.tid = d.t.id;
         el.dataset.chat = '1';
@@ -8548,9 +8566,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
       } else if (window.CrundiChat) {
         // The chat view itself, fed the stored transcript and never connected.
         // Its draft is keyed by this same id, so what you had typed shows too.
+        // Peeking (the Peek button): a reply, a prompt, an answer, anything that would change the chat,
+        // resumes it first and then goes through as usual. Reads while parked come back empty.
+        const peekFetch = (path, init) => {
+          const changes = init && init.method && String(init.method).toUpperCase() !== 'GET';
+          if (!changes || !cellEl.classList.contains('pk-peek')) return Promise.resolve(new Response('{}'));
+          return apiFetch('/api/panes/' + t.id + '/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'resume' }) })
+            .then((r) => r.json()).then((d) => { if (!d.ok) throw new Error(d.error || 'Could not resume'); return apiFetch(path, init); });
+        };
         const v = window.CrundiChat.mount(view, {
           sessionId: t.id, project: t.project,
-          apiFetch: () => Promise.resolve(new Response('{}')),
+          apiFetch: peekFetch,
           wsSend: () => {}, toast: () => {},
           // What Claude showed in the chat is part of the conversation, so it
           // is here too. Live panels are not: nothing is running behind this.
@@ -16160,6 +16186,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'notes-font': { setNotesFont(parseInt(d.dir, 10) || 0); break; }
         case 'notes-switch': { if (d.wbid) notesSwitchPage(d.wbid); break; }
         case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl, d.mode || 'resume'); break; }
+        case 'pane-peek': { const c = actionEl.closest('.parked-cell'); if (c) c.classList.add('pk-peek'); break; }
+        case 'pane-unpeek': { const c = actionEl.closest('.parked-cell'); if (c) c.classList.remove('pk-peek'); break; }
         case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
         case 'pane-full': {
           e.stopPropagation();

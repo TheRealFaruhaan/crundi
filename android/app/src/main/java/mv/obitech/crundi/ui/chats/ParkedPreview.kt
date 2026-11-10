@@ -28,12 +28,42 @@ import mv.obitech.crundi.ui.workbench.GhostLines
  * copy, the grey lines stand in.
  */
 @Composable
-fun ParkedChatPreview(paneId: String) {
+fun ParkedChatPreview(paneId: String, peek: Boolean = false, onResume: () -> Unit = {}) {
     val api = LocalAppServices.current.api
     var messages by remember(paneId) { mutableStateOf<List<ChatEntry>?>(null) }
     LaunchedEffect(paneId) { messages = runCatching { api.terminals.preview(paneId).messages }.getOrDefault(emptyList()) }
     val m = messages
-    if (m.isNullOrEmpty()) GhostLines() else ParkedChatCopy(m)
+    if (m.isNullOrEmpty()) GhostLines() else if (peek) ParkedChatPeek(m, onResume) else ParkedChatCopy(m)
+}
+
+/**
+ * Peek (the parked view's button): the whole conversation, readable and
+ * scrollable, newest at the bottom, without resuming the chat. Answering a
+ * question or a permission in it resumes the chat (it is asked again there);
+ * a reply goes through the reply box, which resumes it too.
+ */
+@Composable
+fun ParkedChatPeek(messages: List<ChatEntry>, onResume: () -> Unit) {
+    var open by remember { mutableStateOf(emptySet<String>()) }
+    val acts = remember(onResume) {
+        object : EntryActions {
+            override fun toggle(id: String) { open = if (id in open) open - id else open + id }
+            override fun allow(e: ChatEntry, always: Boolean) = onResume()
+            override fun deny(e: ChatEntry) = onResume()
+            override fun answer(e: ChatEntry, answers: Map<String, String>, notes: Map<String, String>) = onResume()
+            override fun dismissQuestion(e: ChatEntry) = onResume()
+            override fun factory(e: ChatEntry, choice: String, note: String?) = onResume()
+        }
+    }
+    val shown = messages.filter { it.kind != "gone" }
+    androidx.compose.foundation.lazy.LazyColumn(
+        Modifier.fillMaxSize().background(CrundiColors.BgPrimary),
+        reverseLayout = true,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 12.dp, top = 56.dp, bottom = 72.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        items(shown.size) { i -> val e = shown[shown.size - 1 - i]; ChatEntryView(e, "", open, acts) }
+    }
 }
 
 /** The still copy itself (pure, for screenshots). */

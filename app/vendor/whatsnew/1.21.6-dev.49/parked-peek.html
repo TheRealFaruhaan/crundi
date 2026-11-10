@@ -1,0 +1,25 @@
+<div class="wna a-pkp">
+  <div class="win">
+    <div class="conv"><i class="m1"></i><i class="m2"></i><i class="m3"></i><i class="m4"></i></div>
+    <div class="veil"><b class="t"></b><span class="btns"><span class="res">Resume</span><span class="pk">Peek</span></span></div>
+    <span class="back">Parked view</span>
+  </div>
+  <style>
+    .a-pkp{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:12px}
+    .a-pkp .win{position:absolute;left:170px;top:40px;width:300px;height:320px;border-radius:14px;background:var(--bg-secondary);border:1px solid var(--border);overflow:hidden}
+    .a-pkp .conv{position:absolute;inset:14px;animation:apkp-c 10s ease infinite}
+    .a-pkp .conv i{position:absolute;height:26px;border-radius:12px;background:var(--bg-card);border:1px solid var(--border)}
+    .a-pkp .m1{left:0;top:20px;width:190px}.a-pkp .m2{right:0;top:70px;width:140px;background:var(--accent-dim)!important;border-color:var(--accent)!important}
+    .a-pkp .m3{left:0;top:120px;width:230px;height:44px!important}.a-pkp .m4{right:0;top:190px;width:110px;background:var(--accent-dim)!important;border-color:var(--accent)!important}
+    .a-pkp .veil{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:rgba(10,10,15,.55);animation:apkp-v 10s ease infinite}
+    .a-pkp .t{width:150px;height:12px;border-radius:6px;background:var(--text-secondary);opacity:.6}
+    .a-pkp .btns{display:flex;gap:8px}
+    .a-pkp .res{padding:7px 14px;border-radius:8px;background:var(--accent);color:#fff;font-weight:600}
+    .a-pkp .pk{padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card);animation:apkp-p 10s ease infinite}
+    .a-pkp .back{position:absolute;top:10px;right:10px;padding:5px 10px;border-radius:12px;border:1px solid var(--accent);background:var(--bg-card);font-weight:600;opacity:0;animation:apkp-b 10s ease infinite}
+    @keyframes apkp-c{0%,30%{filter:blur(3px) brightness(.6)}38%,78%{filter:none}86%,100%{filter:blur(3px) brightness(.6)}}
+    @keyframes apkp-v{0%,30%{opacity:1}36%,80%{opacity:0}86%,100%{opacity:1}}
+    @keyframes apkp-p{0%,22%{border-color:var(--border)}26%,32%{border-color:var(--accent);transform:scale(.96)}36%,100%{border-color:var(--border);transform:none}}
+    @keyframes apkp-b{0%,36%{opacity:0}42%,76%{opacity:1}80%,100%{opacity:0}}
+  </style>
+</div>
