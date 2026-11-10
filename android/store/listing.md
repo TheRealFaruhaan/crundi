@@ -61,6 +61,24 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.35 (en-US)
+
+Version code 66. Internal track. Since 1.1.3-dev.34 (code 65): Cru's full-area UI with Normal view; Cru as its own bubble; call audio kept on the loudspeaker; typed and queued messages shown at once; thinking effort setting; Cru's off order stops every wake listener; parked chat Peek; mic level moves for speech only; request ids on turns. Server 1.21.6-dev.49.
+
+```
+<en-US>
+Cru:
+- Cru can fill its whole screen with its own UI; Normal view takes you back.
+- Float Cru as a bubble over any app.
+- Clearer, louder replies on the loudspeaker.
+- What you type shows at once; things said while Cru thinks show as queued.
+- Choose Cru's thinking effort in Settings.
+- "Stop listening" now stops every Hey Cru listener.
+- Peek at a parked chat without resuming it.
+- The mic moves only when you speak.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.34 (en-US)
 
 Version code 65. Internal track. Since 1.1.3-dev.33 (code 64): Cru's screen opens as a chat, typed replies are read not said, a speaker on each reply; background noise no longer cuts Cru off; Cru answers a chat's questions and permission prompts (cards say "by Cru"); admin mode wording. Server 1.21.6-dev.48.
