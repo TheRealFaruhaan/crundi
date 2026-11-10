@@ -104,6 +104,7 @@ internal object IconPaths {
         "upload" to listOf("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M17 8L12 3L7 8", "M12 3L12 15"),
         "user" to listOf("M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M8 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z"),
         "users" to listOf("M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2", "M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z", "M23 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"),
+        "volume-2" to listOf("M11 5L6 9H2v6h4l5 4V5z", "M15.5 8.5a5 5 0 0 1 0 7", "M19 5a10 10 0 0 1 0 14"),
         "x" to listOf("M18 6L6 18", "M6 6L18 18"),
         "zap" to listOf("M13 2L3 14L12 14L11 22L21 10L12 10L13 2Z"),
     )

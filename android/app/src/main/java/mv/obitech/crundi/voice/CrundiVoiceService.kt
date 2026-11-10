@@ -130,6 +130,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                         onKeyboard = { c.setKeyboard(it) },
                         onSend = { c.send(it) },
                         onTyping = { c.typing() },
+                        onSay = { c.sayAgain(it) },
                         live = c.live,
                     ),
                 )

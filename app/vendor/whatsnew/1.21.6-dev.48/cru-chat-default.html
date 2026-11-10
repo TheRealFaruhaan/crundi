@@ -1,0 +1,29 @@
+<div class="wna a-ccd">
+  <div class="win">
+    <div class="me">How is the disk?</div>
+    <div class="cru">Plenty of room, Sir: 61% free.<span class="spk"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg></span></div>
+    <div class="waves"><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="box"><span class="typed">How is the disk?</span></div>
+  </div>
+  <div class="tap"></div>
+  <style>
+    .a-ccd{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:14px}
+    .a-ccd .win{position:absolute;left:150px;top:40px;width:340px;height:320px;border-radius:16px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-ccd .me{position:absolute;right:16px;top:40px;padding:8px 12px;border-radius:14px 14px 4px 14px;background:var(--accent-dim);border:1px solid var(--accent);opacity:0;animation:accd1 10s ease infinite}
+    .a-ccd .cru{position:absolute;left:16px;top:100px;width:230px;padding:8px 38px 8px 12px;border-radius:14px 14px 14px 4px;background:var(--bg-card);border:1px solid var(--border);opacity:0;animation:accd2 10s ease infinite}
+    .a-ccd .spk{position:absolute;right:8px;bottom:6px;color:var(--text-muted);animation:accd3 10s ease infinite}
+    .a-ccd .waves{position:absolute;left:30px;top:168px;display:flex;gap:4px;align-items:center;height:24px;opacity:0;animation:accd4 10s ease infinite}
+    .a-ccd .waves i{display:block;width:4px;height:8px;border-radius:2px;background:var(--accent);animation:accdw .6s ease-in-out infinite alternate}
+    .a-ccd .waves i:nth-child(2){animation-delay:.1s}.a-ccd .waves i:nth-child(3){animation-delay:.2s}.a-ccd .waves i:nth-child(4){animation-delay:.3s}.a-ccd .waves i:nth-child(5){animation-delay:.4s}
+    .a-ccd .box{position:absolute;left:16px;right:16px;bottom:16px;height:38px;border-radius:12px;border:1px solid var(--border);background:var(--bg-primary);overflow:hidden}
+    .a-ccd .typed{position:absolute;left:12px;top:10px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;width:0;animation:accd5 10s steps(16) infinite}
+    .a-ccd .tap{position:absolute;left:447px;top:128px;width:26px;height:26px;border-radius:50%;border:2px solid var(--accent);opacity:0;animation:accd6 10s ease infinite}
+    @keyframes accd5{0%{width:0}15%,18%{width:140px}20%,100%{width:0}}
+    @keyframes accd1{0%,19%{opacity:0;transform:translateY(6px)}24%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes accd2{0%,30%{opacity:0;transform:translateY(6px)}36%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes accd3{0%,58%{color:var(--text-muted)}62%,85%{color:var(--accent)}90%,100%{color:var(--text-muted)}}
+    @keyframes accd6{0%,54%{opacity:0;transform:scale(.6)}58%{opacity:1;transform:scale(1)}66%,100%{opacity:0;transform:scale(1.5)}}
+    @keyframes accd4{0%,60%{opacity:0}64%,86%{opacity:1}90%,100%{opacity:0}}
+    @keyframes accdw{from{height:6px}to{height:22px}}
+  </style>
+</div>

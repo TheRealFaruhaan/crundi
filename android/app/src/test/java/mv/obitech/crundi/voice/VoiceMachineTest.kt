@@ -28,6 +28,42 @@ class VoiceMachineTest {
         assertEquals(listOf(VoiceEffect.Ask("how much usage do I have left?"), VoiceEffect.Cue, VoiceEffect.PauseStream, VoiceEffect.Say("Plenty, Master.")), fx)
     }
 
+    @Test fun aTypedTurnsReplyIsShownNotSaid() {
+        val (s, fx) = run(*listening(), VoiceEvent.Typed("how much usage?", 30), VoiceEvent.Reply(true, "Plenty, Master.", "5h: 2%", "", 40, silent = true))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("Plenty, Master.", s.reply)
+        assertEquals("5h: 2%", s.detail)
+        assertTrue(fx.none { it is VoiceEffect.Say })
+        assertEquals(VoiceEffect.ResumeStream, fx.last())
+    }
+
+    @Test fun aTypedTurnsErrorIsANoticeNotSaid() {
+        val (s, fx) = run(*listening(), VoiceEvent.Typed("hi", 30), VoiceEvent.Reply(false, "", "", "Could not reach the server", 40, silent = true))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("Could not reach the server", s.notice)
+        assertTrue(fx.none { it is VoiceEffect.Say })
+    }
+
+    @Test fun aTypedGoodbyeStillCloses() {
+        val (s, fx) = run(*listening(), VoiceEvent.Typed("bye", 30), VoiceEvent.Reply(true, "Goodbye, Sir.", "", "", 40, close = true, silent = true))
+        assertEquals(Phase.Ended, s.phase)
+        assertEquals(VoiceEffect.Dismiss, fx.last())
+    }
+
+    @Test fun theSpeakerOnAReplySaysItWhileListening() {
+        val (s, fx) = run(*listening(), VoiceEvent.Typed("hi", 30), VoiceEvent.Reply(true, "Yes, Master.", "", "", 40, silent = true), VoiceEvent.SayAgain("Yes, Master.", 50))
+        assertEquals(Phase.Speaking, s.phase)
+        assertEquals(VoiceEffect.Say("Yes, Master."), fx.last())
+        assertEquals(Phase.Listening, m.on(s, VoiceEvent.SpeechDone(60)).first.phase)
+    }
+
+    @Test fun theSpeakerWaitsWhileCruThinksOrTalks() {
+        val (thinking, _) = run(*listening(), VoiceEvent.Typed("hi", 30))
+        assertEquals(thinking to emptyList<VoiceEffect>(), m.on(thinking, VoiceEvent.SayAgain("Earlier answer.", 35)))
+        val (talking, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40))
+        assertEquals(talking to emptyList<VoiceEffect>(), m.on(talking, VoiceEvent.SayAgain("Earlier answer.", 45)))
+    }
+
     @Test fun afterSpeakingItListensAgain() {
         val (s, fx) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "Yes, Master.", "", "", 40), VoiceEvent.SpeechDone(50))
         assertEquals(Phase.Listening, s.phase)

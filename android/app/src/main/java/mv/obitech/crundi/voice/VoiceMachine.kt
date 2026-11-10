@@ -94,7 +94,9 @@ sealed interface VoiceEvent {
     data class Utterance(val text: String, val now: Long) : VoiceEvent
     /** Claude's answer, or why there is none. */
     /** [turn]: which turn it answers (-1: the one in progress); [cancelled]: it was cancelled, [acted] what it had already done. */
-    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false, val close: Boolean = false, val turn: Int = -1, val cancelled: Boolean = false, val acted: List<String> = emptyList()) : VoiceEvent
+    data class Reply(val ok: Boolean, val speak: String, val show: String, val error: String, val now: Long, val question: String = "", val needsUnlock: Boolean = false, val close: Boolean = false, val turn: Int = -1, val cancelled: Boolean = false, val acted: List<String> = emptyList(), val silent: Boolean = false) : VoiceEvent
+    /** The speaker on a reply in the chat view: say [text] now (only while just listening). */
+    data class SayAgain(val text: String, val now: Long) : VoiceEvent
     /** The owner tapped the × by his words. */
     data class CancelTapped(val now: Long) : VoiceEvent
     /** The server dropped what he said ("scratch that"): { type: 'discard' }. */
@@ -210,7 +212,8 @@ class VoiceMachine(
                 // Cancelled: never said or shown as an error; just what had already been done.
                 if (e.cancelled) return (if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) else s) to emptyList()
                 if (s.phase != Phase.Thinking || (e.turn >= 0 && e.turn != s.turn)) return s to emptyList()
-                val say = if (e.ok) e.speak.trim() else e.error.trim()
+                // [silent]: typed, so the answer is read, not said (no speech made: Cru works without Deepgram).
+                val say = if (e.silent) "" else if (e.ok) e.speak.trim() else e.error.trim()
                 val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock, closing = e.ok && e.close, cue = "")
                 // The owner spoke again while Crundi thought: that goes now; the answer stays on screen, unsaid.
                 if (s.pending.isNotBlank()) {
@@ -228,6 +231,11 @@ class VoiceMachine(
                     n to (listOf(VoiceEffect.StopSaying) + doneFx(s) + fx)
                 }
                 else -> ask(s, e.text, e.now)
+            }
+            is VoiceEvent.SayAgain -> if (s.phase != Phase.Listening || s.heard.isNotEmpty() || s.pending.isNotBlank() || e.text.isBlank()) s to emptyList() else {
+                val t = e.text.trim()
+                val n = s.copy(phase = Phase.Speaking, lastSaid = t, quietSince = e.now, activeSince = e.now)
+                n to sayFx(n, t)
             }
             is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
             is VoiceEvent.BargeIn -> if (s.phase == Phase.Speaking) cutIn(s, e.now) else s to emptyList()

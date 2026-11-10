@@ -287,6 +287,9 @@ class VoiceController(
     /** "Earlier messages". */
     fun moreHistory() = loadHistory(true)
 
+    /** The speaker on one of Cru's replies: said now (a typed turn's reply is not said on its own). */
+    fun sayAgain(text: String) { if (running) dispatch(VoiceEvent.SayAgain(text, now())) }
+
     private fun voiceApi(): VoiceApi? = api ?: Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).api.voice }
 
     private var historyJob: Job? = null
@@ -458,10 +461,12 @@ class VoiceController(
             } catch (e: Exception) { VoiceReply(ok = false, error = e.message ?: "Something went wrong") }
             // Cru may have just turned itself up or down: the reply is said at the new volume.
             r.volume?.let { speaker.volume = mv.obitech.crundi.api.volumeGain(it) }
+            // Typed: read, not said (no speech made for it, so Cru works without Deepgram); the
+            // speaker on its bubble says it. An older server has no chat view to tap it in: said as before.
             // The chat view: what was asked and the answer, when it is this turn's.
             val current = _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }
             if (current && r.ok && !r.cancelled) chatAdd(said, r.speak, r.show)
-            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }))
+            dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }, silent = typed && VoiceApi.HISTORY in _ui.value.caps))
             // The voice was not the owner's: Cru answered, but changed nothing.
             if (r.ok && !r.cancelled && r.speaker?.unrecognised == true && current) note(NOT_RECOGNISED)
             // After the reply, so a note about it (untrained) isn't cleared by the reply's own.

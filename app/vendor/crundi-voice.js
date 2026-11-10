@@ -400,6 +400,7 @@
     '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:none;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
+    '.cv-m.cru{position:relative;padding-right:34px}.cv-say{position:absolute;right:4px;bottom:4px;width:26px;height:26px;border:0;border-radius:50%;background:transparent;color:' + C.muted + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-say:hover{color:' + C.text + ';background:rgba(255,255,255,.08)}' +
     '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
     '.cv-x.on{background:' + C.accent + ';color:#fff}.cv-chatb{position:relative}.cv-chatb.cru-unread:after{content:"";position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#ef4444}' +
     // The bottom row as on the phone: the voice button in the middle, the keyboard on its left;
@@ -581,8 +582,10 @@
     // Kid mode: the microphone off (Cru still talks, taps and games still work); tap again to listen.
     q('.cv-mute').onclick = function (e) { e.stopPropagation(); if (S) kidMute(!S.muted); };
     q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
-    // The view the owner chose last time, on this device.
-    if (chatPref()) setTimeout(function () { if (S) chatView(true); }, 0);
+    q('.cv-msgs').onclick = function (e) { var b = e.target && e.target.closest && e.target.closest('.cv-say'); if (!b) return; e.stopPropagation(); sayAgain(Number(b.getAttribute('data-say'))); };
+    // The view the owner chose last time, on this device: the chat view unless he
+    // went back to the voice view (the default since 10 Nov). Kid mode keeps its own screen.
+    if (chatPref() && !S.kid) setTimeout(function () { if (S) chatView(true); }, 0);
     setUnread(unread);
     // Compact asks first: a small question under the top row, Compact or Cancel.
     q('.cv-cmp').onclick = function (e) {
@@ -897,7 +900,8 @@
   /** How long a screen Cru opened for its own news keeps listening for an answer, after saying it. */
   var REPORT_LINGER_MS = 8000;
   var CHAT_KEY = 'crundi_cru_chat_view';
-  function chatPref() { try { return localStorage.getItem(CHAT_KEY) === '1'; } catch (e) { return false; } }
+  var SPEAKER_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>';
+  function chatPref() { try { return localStorage.getItem(CHAT_KEY) !== '0'; } catch (e) { return true; } }
   function chatView(on) {
     if (!S) return;
     S.chat = !!on;
@@ -930,9 +934,11 @@
     var box = S.ov.querySelector('.cv-chat'), list = S.ov.querySelector('.cv-msgs');
     var when = function (at) { var d = new Date(at); return d.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); };
     var h = '';
-    (S.msgs || []).forEach(function (m) {
+    (S.msgs || []).forEach(function (m, i) {
       if (m.said) h += '<div class="cv-m me">' + saidHtml(m.said) + '<time>' + esc(when(m.at)) + '</time></div>';
-      if (m.speak || m.show) h += '<div class="cv-m cru">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>') + '</div>';
+      // The speaker: says this reply aloud, on a tap (a typed turn's reply is not said on its own).
+      if (m.speak || m.show) h += '<div class="cv-m cru">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>')
+        + (m.speak ? '<button class="cv-say" data-say="' + i + '" title="Say it aloud" aria-label="Say it aloud">' + SPEAKER_SVG + '</button>' : '') + '</div>';
     });
     // What is being heard right now, not yet sent.
     if (S.heard && (S.phase === 'listen' || S.phase === 'think') && S.heard !== S.lastChatAsked) h += '<div class="cv-m me live">' + esc(S.heard) + '</div>';
@@ -944,6 +950,15 @@
     list.innerHTML = h || '<div style="text-align:center;color:' + C.muted + ';font-size:13px">No messages yet.</div>';
     S.ov.querySelector('.cv-more').hidden = !S.moreChat;
     if (toEnd || nearEnd) box.scrollTop = box.scrollHeight;
+  }
+
+  /** The speaker on a reply: said now, when Cru is just listening (not while it thinks, talks or hears him). */
+  function sayAgain(i) {
+    var m = S && S.msgs && S.msgs[i];
+    if (!m || !m.speak || S.phase !== 'listen' || S.heard || S.pending) return;
+    S.quietSince = Date.now();
+    speak(m.speak);
+    render();
   }
 
   function tell(say, show) {
@@ -1090,7 +1105,9 @@
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
       // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
       if (S.pending) { var p = S.pending; S.pending = ''; S.closing = false; stopCue(); ask(p, true); render(); return; }
-      if (say) speak(say); else { stopCue(); afterSpeech(); }
+      // Typed: the answer is read, not said (no speech is made for it, so Cru works
+      // without Deepgram); the speaker on its bubble says it. Kid mode always talks.
+      if (say && !(typed && !S.kid)) speak(say); else { stopCue(); afterSpeech(); }
       render();
     }).catch(function (e) { if (!S || S.turn !== turn || S.phase !== 'think') return; S.notice = e.message || 'Could not reach the server'; afterSpeech(); render(); });
   }

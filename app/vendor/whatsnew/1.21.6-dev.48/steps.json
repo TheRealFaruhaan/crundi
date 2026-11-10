@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "id": "cru-chat-default-quiet-typing",
+      "tag": "Voice",
+      "title": "Cru opens as a chat, and reads typed replies",
+      "body": "Cru's screen now opens in the chat view. When you type to Cru, its reply appears as a message and is not spoken; tap the speaker on any reply to hear it. Spoken questions are still answered aloud, and typing works without Deepgram.",
+      "keys": [
+        { "keys": ["Speaker"], "text": "say this reply aloud" }
+      ],
+      "art": "cru-chat-default.html",
+      "artTitle": "Voice"
+    }
+  ]
+}

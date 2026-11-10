@@ -160,8 +160,8 @@ object VoicePrefs {
     fun keyboard(ctx: Context): Boolean? = p(ctx).takeIf { it.contains("voice.keyboard") }?.getBoolean("voice.keyboard", false)
     fun setKeyboard(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.keyboard", on).apply()
 
-    /** The voice screen shows the conversation as chat messages (until changed). */
-    fun chatView(ctx: Context) = p(ctx).getBoolean("voice.chatView", false)
+    /** The voice screen shows the conversation as chat messages (the default since 10 Nov, until changed). */
+    fun chatView(ctx: Context) = p(ctx).getBoolean("voice.chatView", true)
     fun setChatView(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.chatView", on).apply()
 
     /** What the server last said about Deepgram, so the screen opens in the right mode before it asks again; null = never fetched. */

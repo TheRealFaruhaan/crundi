@@ -172,5 +172,18 @@ ok(isOpen({ CrundiVoice: { isOpen: false }, CrundiChat: { voiceActive: true } })
 const ctl = read('app', 'voice-wake', 'controller.js');
 ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes("'chat-voice': 'Paused: a chat is listening'"), 'the listener pauses while a chat listens, says so, and resumes after');
 
+// ─── Cru's voice screen: chat view by default, typed turns read rather than said (10 Nov) ───
+{
+  const cvs = read('app', 'vendor', 'crundi-voice.js');
+  ok(/function chatPref\(\) \{ try \{ return localStorage\.getItem\(CHAT_KEY\) !== '0'; \} catch \(e\) \{ return true; \} \}/.test(cvs) && /if \(chatPref\(\) && !S\.kid\) setTimeout/.test(cvs), 'the chat view is the default (until the owner goes back to the voice view); kid mode keeps its own screen');
+  ok(/if \(say && !\(typed && !S\.kid\)\) speak\(say\); else \{ stopCue\(\); afterSpeech\(\); \}/.test(cvs), 'a typed turn\'s answer is not said (no speech made for it); kid mode still talks');
+  ok(/class="cv-say" data-say="' \+ i \+ '"/.test(cvs) && /closest\('\.cv-say'\)[\s\S]{0,80}sayAgain\(Number/.test(cvs), 'each reply in the chat view has a speaker that says it');
+  ok(/function sayAgain\(i\) \{[\s\S]{0,120}S\.phase !== 'listen' \|\| S\.heard \|\| S\.pending\) return;[\s\S]{0,60}speak\(m\.speak\)/.test(cvs), 'and only while Cru is just listening');
+  const ms = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'MicStream.kt');
+  ok(ms.includes('getBoolean("voice.chatView", true)'), 'Android: the chat view is the default too');
+  const vc = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'VoiceController.kt');
+  ok(/silent = typed && VoiceApi\.HISTORY in _ui\.value\.caps\)\)/.test(vc) && /fun sayAgain\(text: String\)/.test(vc), 'Android: a typed turn\'s reply is silent, and the bubble\'s speaker says it');
+}
+
 console.log(failed ? `\n${failed} failed` : '\nAll passed');
 process.exit(failed ? 1 : 0);

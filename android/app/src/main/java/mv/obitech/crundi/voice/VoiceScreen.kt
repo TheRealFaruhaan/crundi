@@ -227,6 +227,8 @@ class VoiceMore(
     val onRemoveAttachment: (String) -> Unit = {},
     /** An attached picture's small copy, by its id, for the chat view's chips. */
     val attachmentThumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null,
+    /** The speaker on one of Cru's replies: say it aloud. */
+    val onSay: (String) -> Unit = {},
 )
 
 /** Where a file for Cru comes from. */
@@ -323,7 +325,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
             val m = list[i]
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at), thumb = more.attachmentThumb)
-                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "")
+                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "", onSay = if (m.speak.isNotBlank()) ({ more.onSay(m.speak) }) else null)
             }
         }
         if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true) }
@@ -331,7 +333,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier) {
 }
 
 @Composable
-private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null) {
+private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null, onSay: (() -> Unit)? = null) {
     val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp)
     Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
         Column(
@@ -347,7 +349,11 @@ private fun Bubble(mine: Boolean, text: String, detail: String, time: String, fa
             if (text.isNotEmpty() && mine) SaidText(text, thumb, Alignment.End, CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
             else if (text.isNotEmpty()) Text(text, style = CrundiType.Body.copy(fontSize = 15.sp, lineHeight = 21.sp, color = CrundiColors.TextPrimary))
             if (detail.isNotEmpty()) Box(Modifier.padding(top = if (text.isNotEmpty()) 6.dp else 0.dp)) { MarkdownText(detail, compact = true) }
-            if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp))
+            // Cru's: the time, and the speaker that says the reply aloud (typed turns are not said on their own).
+            if (onSay != null) Row(verticalAlignment = Alignment.CenterVertically) {
+                if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp, end = 4.dp))
+                CrundiIconButton("volume-2", onSay, contentDescription = "Say it aloud", size = 16.dp, touch = 32.dp, tint = CrundiColors.TextMuted)
+            } else if (time.isNotEmpty()) Text(time, style = CrundiType.Meta.copy(fontSize = 10.sp, color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 3.dp))
         }
     }
 }
