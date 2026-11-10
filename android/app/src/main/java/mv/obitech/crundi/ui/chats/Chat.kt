@@ -371,7 +371,13 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
         viewing?.let { p -> mv.obitech.crundi.ui.workspace.files.FileViewDialog(p) { viewing = null } }
         linkMenu?.let { u -> if (u.startsWith("code:")) CodeMenu(u.removePrefix("code:")) { linkMenu = null } else LinkMenu(u) { linkMenu = null } }
         ui.sheet?.let { s ->
-            if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
+            // A gallery of the chat's pictures (the owner, 11 Nov): swipe to the next or the one before.
+            if (s is ChatSheet.Picture) ImageViewer(
+                s.media,
+                onSave = { m -> actions.media(m.copy(kind = "file-image")); actions.sheet(null) },
+                onClose = { actions.sheet(null) },
+                gallery = remember(c.visible, c.id) { c.visible.filter { it.status == "done" }.flatMap { it.media(c.id) }.filter { it.kind == "image" && it.path != null } },
+            )
             else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Secrets) SheetOverlay({ actions.sheet(null) }) { secretsSheet() }
             else if (s is ChatSheet.Aside) SheetOverlay({ actions.sheet(null) }) { AsideSheet(s, actions) { actions.sheet(null) } }
