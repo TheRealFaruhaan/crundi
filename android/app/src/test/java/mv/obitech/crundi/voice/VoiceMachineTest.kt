@@ -594,3 +594,82 @@ class CancelTest {
         assertEquals(Phase.Ended, ended.phase)
     }
 }
+
+/** Cru speaking up unprompted (news, wake-ups): follows how the owner's last message came in; muted, never. */
+class VoiceOffTest {
+    private val m = VoiceMachine(silenceMs = 30_000, startMs = 8_000)
+
+    private fun run(vararg events: VoiceEvent) = from(VoiceState(), *events)
+
+    private fun listening() = arrayOf(VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10))
+
+
+    private fun from(s0: VoiceState, vararg events: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
+        var s = s0
+        val fx = ArrayList<VoiceEffect>()
+        for (e in events) { val (n, f) = m.on(s, e); s = n; fx += f }
+        return s to fx
+    }
+
+    @Test fun typedLastNewsIsShownNotSaid() {
+        val (s, fx) = run(*listening(), VoiceEvent.Typed("check the build", 20), VoiceEvent.Reply(true, "On it.", "", "", 30, silent = true),
+            VoiceEvent.Report("Sir, the build passed.", "all green", 40))
+        assertTrue(s.lastTyped)
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("Sir, the build passed.", s.reply)
+        assertEquals("all green", s.detail)
+        assertTrue(fx.none { it is VoiceEffect.Say })
+    }
+
+    @Test fun spokenAgainNewsIsSaidAgain() {
+        val (s, fx) = from(VoiceState(lastTyped = true), *listening(), VoiceEvent.Utterance("what's next", 20), VoiceEvent.Reply(true, "Nothing, Sir.", "", "", 30),
+            VoiceEvent.SpeechDone(40), VoiceEvent.Report("Sir, a chat waits on you.", "", 50))
+        assertFalse(s.lastTyped)
+        assertEquals(Phase.Speaking, s.phase)
+        assertEquals(VoiceEffect.Say("Sir, a chat waits on you."), fx.last())
+    }
+
+    @Test fun crusOwnWordsHeardBackLeaveTheInputModeAsItWas() {
+        val (s, _) = run(*listening(), VoiceEvent.Typed("hi", 20), VoiceEvent.Reply(true, "Hello.", "", "", 30, silent = true),
+            VoiceEvent.Report("Sir, the build passed.", "", 40))
+        // Not said, so nothing to echo; a scratch-that is not a message either.
+        val (n, _) = from(s, VoiceEvent.Utterance("scratch that", 50))
+        assertTrue(n.lastTyped)
+    }
+
+    @Test fun yesOrNoTappedKeepsTheInputMode() {
+        val (s, _) = run(*listening(), VoiceEvent.Typed("Yes", 20, tap = true))
+        assertFalse(s.lastTyped)
+    }
+
+    @Test fun newsQueuedWhileTypedAllShowWithoutAWord() {
+        val (s, fx) = run(*listening(), VoiceEvent.Typed("hi", 20), VoiceEvent.Report("First.", "", 25), VoiceEvent.Report("Second.", "", 26),
+            VoiceEvent.Reply(true, "Hello.", "", "", 30, silent = true))
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals("Second.", s.reply)
+        assertTrue(s.reports.isEmpty())
+        assertTrue(fx.none { it is VoiceEffect.Say })
+    }
+
+    @Test fun mutedNothingIsSaid() {
+        val (s, fx) = from(VoiceState(voiceOff = true), *listening(), VoiceEvent.Utterance("how much usage?", 20), VoiceEvent.Reply(true, "Plenty, Sir.", "", "", 30),
+            VoiceEvent.Report("Sir, the build passed.", "", 40), VoiceEvent.SayAgain("Plenty, Sir.", 50), VoiceEvent.Utterance("hey cru", 60))
+        assertEquals(Phase.Listening, s.phase)
+        assertTrue(fx.none { it is VoiceEffect.Say })
+    }
+
+    @Test fun mutingWhileCruTalksStopsIt() {
+        val (s, fx) = run(*listening(), VoiceEvent.Utterance("hi", 20), VoiceEvent.Reply(true, "Hello, Sir.", "", "", 30), VoiceEvent.VoiceOff(true, 40))
+        assertTrue(s.voiceOff)
+        assertEquals(Phase.Listening, s.phase)
+        assertEquals(VoiceEffect.StopSaying, fx.first { it == VoiceEffect.StopSaying })
+        val (back, fx2) = from(s, VoiceEvent.VoiceOff(false, 50), VoiceEvent.Report("Sir, done.", "", 60))
+        assertFalse(back.voiceOff)
+        assertEquals(VoiceEffect.Say("Sir, done."), fx2.last())
+    }
+
+    @Test fun kidModeAlwaysTalks() {
+        val (_, fx) = from(VoiceState(voiceOff = true, lastTyped = true, kid = true), *listening(), VoiceEvent.Report("Well done!", "", 20))
+        assertEquals(VoiceEffect.Say("Well done!"), fx.last())
+    }
+}

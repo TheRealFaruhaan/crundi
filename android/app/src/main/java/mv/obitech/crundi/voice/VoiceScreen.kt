@@ -249,6 +249,8 @@ class VoiceMore(
     val onDropLive: (Boolean) -> Unit = {},
     /** Float Cru as its own bubble; null: not offered here (inside the bubble, or bubbles unavailable). */
     val onBubble: (() -> Unit)? = null,
+    /** The menu's "Mute Cru's voice" (true) or back on; null: not offered by this host. */
+    val onVoiceOff: ((Boolean) -> Unit)? = null,
 )
 
 /** Where a file for Cru comes from. */
@@ -298,7 +300,9 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Un
         val chatItem = VoiceApi.HISTORY in ui.caps && !full
         val compactItem = VoiceApi.COMPACT in ui.caps
         val bubbleItem = more.onBubble != null && !full
-        if (chatItem || compactItem || bubbleItem) Box {
+        // Cru's voice off (the owner, 11 Nov: in the menu): not on the kid screen, which always talks.
+        val quietItem = more.onVoiceOff != null && ui.kid?.on != true
+        if (chatItem || compactItem || bubbleItem || quietItem) Box {
             var menu by remember { mutableStateOf(false) }
             CrundiIconButton("more", { menu = true }, contentDescription = "More", size = 17.dp, touch = 38.dp)
             // Cru said something nobody heard: a red dot until the chat view is opened.
@@ -309,6 +313,11 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Un
                     text = { Text(if (ui.chat) "Voice view" else if (unread > 0) "Chat view (new)" else "Chat view", style = CrundiType.Body) },
                     leadingIcon = { CrundiIcon(if (ui.chat) "mic" else "message-circle", size = 16.dp, tint = if (unread > 0 && !ui.chat) CrundiColors.Red else CrundiColors.TextSecondary) },
                     onClick = { menu = false; more.onChat(!ui.chat) },
+                )
+                if (quietItem) androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(if (ui.state.voiceOff) "Unmute Cru's voice" else "Mute Cru's voice", style = CrundiType.Body) },
+                    leadingIcon = { CrundiIcon(if (ui.state.voiceOff) "volume-x" else "volume-2", size = 16.dp, tint = if (ui.state.voiceOff) CrundiColors.Yellow else CrundiColors.TextSecondary) },
+                    onClick = { menu = false; more.onVoiceOff?.invoke(!ui.state.voiceOff) },
                 )
                 if (compactItem) androidx.compose.material3.DropdownMenuItem(
                     text = { Text("Compact the conversation", style = CrundiType.Body) },
@@ -417,7 +426,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
             val m = list[i]
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at), thumb = more.attachmentThumb)
-                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = msgTime(m.at), onSay = if (m.speak.isNotBlank()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
+                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = msgTime(m.at), onSay = if (m.speak.isNotBlank() && ui.state.speaks()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
             }
         }
         if (thinking) item(key = "thinking") { ThinkingBubble() }

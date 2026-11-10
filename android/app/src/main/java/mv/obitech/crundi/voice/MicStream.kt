@@ -160,6 +160,14 @@ object VoicePrefs {
     fun keyboard(ctx: Context): Boolean? = p(ctx).takeIf { it.contains("voice.keyboard") }?.getBoolean("voice.keyboard", false)
     fun setKeyboard(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.keyboard", on).apply()
 
+    /** Cru's voice muted from the voice screen's menu: replies text only, until turned back on. */
+    fun voiceOff(ctx: Context) = p(ctx).getBoolean("voice.off", false)
+    fun setVoiceOff(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.off", on).apply()
+
+    /** The owner's last message to Cru was typed: what Cru says unprompted is shown, not said, until he speaks again. */
+    fun lastTyped(ctx: Context) = p(ctx).getBoolean("voice.lastTyped", false)
+    fun setLastTyped(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.lastTyped", on).apply()
+
     /** The voice screen shows the conversation as chat messages (the default since 10 Nov, until changed). */
     fun chatView(ctx: Context) = p(ctx).getBoolean("voice.chatView", true)
     fun setChatView(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("voice.chatView", on).apply()

@@ -157,7 +157,9 @@ class VoiceController(
         if (running) return
         // The chat view and its messages, and the last settings, stay from one session to the next.
         val was = _ui.value
-        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend, screen = was.screen, kid = was.kid, attachments = was.attachments)
+        _ui.value = VoiceUi(chat = was.chat, history = was.history, moreHistory = was.moreHistory, historyLoaded = was.historyLoaded, spend = was.spend, screen = was.screen, kid = was.kid, attachments = was.attachments,
+            // Cru's voice muted, and how the owner's last message came in: both kept on this phone.
+            state = VoiceState(lastTyped = VoicePrefs.lastTyped(ctx), voiceOff = VoicePrefs.voiceOff(ctx)))
         if (!VoicePrefs.enabled(ctx)) { block("The voice assistant is turned off. Turn it on in App settings, Voice assistant."); return }
         val server = Servers.current(ctx) ?: run { block("Pair this phone with a Crundi server first."); return }
         val caps = ServerCaps.get(ctx, server.id)
@@ -348,7 +350,14 @@ class VoiceController(
     }
 
     /** Yes or No tapped on a question (or anything typed): sent as if said. */
-    fun answer(text: String) { typedNext = true; dispatch(VoiceEvent.Typed(text, now())) }
+    fun answer(text: String) { typedNext = true; dispatch(VoiceEvent.Typed(text, now(), tap = true)) }
+
+    /** The menu's "Mute Cru's voice": replies text only, kept on this phone until turned back on. */
+    fun setVoiceOff(on: Boolean) {
+        VoicePrefs.setVoiceOff(ctx, on)
+        if (running) dispatch(VoiceEvent.VoiceOff(on, now()))
+        else _ui.update { it.copy(state = it.state.copy(voiceOff = on)) }
+    }
 
     /** The next question asked was typed or tapped, not said: the server's voice check does not apply to it. */
     private var typedNext = false
@@ -373,8 +382,11 @@ class VoiceController(
 
     private fun dispatch(e: VoiceEvent) {
         val was = _ui.value.state.phase
-        val (s, effects) = machine.on(_ui.value.state, e)
+        // Kid mode as the server has it: Cru always talks to the child.
+        val before = _ui.value.state.copy(kid = _ui.value.kid?.on == true)
+        val (s, effects) = machine.on(before, e)
         _ui.update { it.copy(state = s) }
+        if (s.lastTyped != before.lastTyped) VoicePrefs.setLastTyped(ctx, s.lastTyped)
         // Cru has woken and listens: a soft rising tone.
         if (was == Phase.Starting && s.phase == Phase.Listening) speaker.tone(Tones.of(Tones.LISTEN))
         // The answer came (or the turn was taken back): no more thinking tones.

@@ -80,7 +80,20 @@ data class VoiceState(
     val cancellable: Boolean = false,
     /** The number of the turn asked last: an answer to another one is not this one's. */
     val turn: Int = 0,
+    /** The owner's last message was typed (not said): what Cru says unprompted is shown, not said, until he speaks again. Kept on the phone. */
+    val lastTyped: Boolean = false,
+    /** Cru's voice muted on this phone (the menu): nothing is said, replies are text only, until turned back on. */
+    val voiceOff: Boolean = false,
+    /** Kid mode is on: Cru always talks (the child's screen). The controller keeps it as the server has it. */
+    val kid: Boolean = false,
 )
+
+/**
+ * Whether Cru says this aloud (as crundi-voice.js speaks). [unprompted]: news, a wake-up, a
+ * report, a panel's word: said only while the owner's last message was spoken. Muted, nothing is
+ * said. Kid mode always talks. A reply to a typed question is made silent by the controller.
+ */
+fun VoiceState.speaks(unprompted: Boolean = false): Boolean = kid || (!voiceOff && !(unprompted && lastTyped))
 
 /** The × by the owner's words: while they can still be taken back. */
 val VoiceState.canCancel: Boolean get() = cancellable && heard.isNotBlank() && (phase == Phase.Listening || phase == Phase.Thinking)
@@ -105,8 +118,10 @@ sealed interface VoiceEvent {
     data class Discard(val now: Long) : VoiceEvent
     /** POST /api/voice/cancel answered: what the cancelled turn had already done. */
     data class Cancelled(val acted: List<String>, val now: Long) : VoiceEvent
-    /** The owner tapped Yes or No (or typed): asked like something said. */
-    data class Typed(val text: String, val now: Long) : VoiceEvent
+    /** The owner tapped Yes or No (or typed): asked like something said. [tap]: Yes or No, which leaves the input mode as it was. */
+    data class Typed(val text: String, val now: Long, val tap: Boolean = false) : VoiceEvent
+    /** Cru's voice muted (true) or back on, from the menu: muted while it talks, it stops at once. */
+    data class VoiceOff(val on: Boolean, val now: Long) : VoiceEvent
     data class SpeechDone(val now: Long) : VoiceEvent
     /** The owner talked over Crundi. */
     data class BargeIn(val now: Long) : VoiceEvent
@@ -192,31 +207,17 @@ class VoiceMachine(
             }
             is VoiceEvent.Utterance -> {
                 val t = e.text.trim()
-                when {
-                    t.isEmpty() -> s to emptyList()
-                    echoOf(s, t, e.now) -> s.copy(heard = "") to emptyList()
-                    // "Scratch that" alone (an older server passes it on): take back, never ask it.
-                    Speech.isDiscard(t) && (s.phase == Phase.Listening || s.phase == Phase.Thinking || s.phase == Phase.Starting) -> takeBack(s, e.now, fromServer = true)
-                    // Over Cru: it stops, and nothing is asked.
-                    Speech.isDiscard(t) && s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) cutIn(s, e.now) else s to emptyList()
-                    s.phase == Phase.Thinking -> s.copy(pending = join(s.pending, t), heard = join(s.pending, t), quietSince = e.now) to emptyList()
-                    // Said over Crundi (the stream stayed on): cut it off and ask that now.
-                    s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) {
-                        val (cut, fx0) = cutIn(s, e.now)
-                        val (n, fx) = if (Speech.isCalling(t)) calledHere(cut, t, e.now) else ask(cut, t, e.now)
-                        n to (fx0 + fx)
-                    } else s to emptyList()
-                    // "Hey Cru" while already awake: here at once, without asking Claude.
-                    Speech.isCalling(t) -> calledHere(s, t, e.now)
-                    else -> ask(s, t, e.now)
-                }
+                // Something he really said (not an echo, not "scratch that"): Cru may speak up unprompted again.
+                val heardOwner = t.isNotEmpty() && !echoOf(s, t, e.now) && !Speech.isDiscard(t) && (s.phase != Phase.Speaking || (s.live && Speech.talksOver(t, s.lastSaid, 1)))
+                utterance(if (heardOwner) s.copy(lastTyped = false) else s, t, e.now)
             }
             is VoiceEvent.Reply -> {
                 // Cancelled: never said or shown as an error; just what had already been done.
                 if (e.cancelled) return (if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) else s) to emptyList()
                 if (s.phase != Phase.Thinking || (e.turn >= 0 && e.turn != s.turn)) return s to emptyList()
                 // [silent]: typed, so the answer is read, not said (no speech made: Cru works without Deepgram).
-                val say = if (e.silent) "" else if (e.ok) e.speak.trim() else e.error.trim()
+                // Muted: nothing is said (kid mode always talks).
+                val say = if (e.silent || !s.speaks()) "" else if (e.ok) e.speak.trim() else e.error.trim()
                 val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock, closing = e.ok && e.close, cue = "")
                 // The owner spoke again while Crundi thought: that goes now; the answer stays on screen, unsaid.
                 if (s.pending.isNotBlank()) {
@@ -226,16 +227,12 @@ class VoiceMachine(
                 if (say.isEmpty()) afterSpeech(next, e.now)
                 else next.copy(phase = Phase.Speaking, lastSaid = say) to sayFx(next, say)
             }
-            is VoiceEvent.Typed -> when (s.phase) {
-                Phase.Ended -> s to emptyList()
-                Phase.Thinking -> s.copy(pending = join(s.pending, e.text)) to emptyList()
-                Phase.Speaking -> {
-                    val (n, fx) = ask(s.copy(phase = Phase.Listening), e.text, e.now)
-                    n to (listOf(VoiceEffect.StopSaying) + doneFx(s) + fx)
-                }
-                else -> ask(s, e.text, e.now)
+            is VoiceEvent.Typed -> if (s.phase == Phase.Ended) s to emptyList() else typed(if (e.tap) s else s.copy(lastTyped = true), e)
+            is VoiceEvent.VoiceOff -> {
+                val n = s.copy(voiceOff = e.on)
+                if (e.on && !s.kid && s.phase == Phase.Speaking) cutIn(n, e.now) else n to emptyList()
             }
-            is VoiceEvent.SayAgain -> if (s.phase != Phase.Listening || s.heard.isNotEmpty() || s.pending.isNotBlank() || e.text.isBlank()) s to emptyList() else {
+            is VoiceEvent.SayAgain -> if (s.phase != Phase.Listening || s.heard.isNotEmpty() || s.pending.isNotBlank() || e.text.isBlank() || !s.speaks()) s to emptyList() else {
                 val t = e.text.trim()
                 val n = s.copy(phase = Phase.Speaking, lastSaid = t, quietSince = e.now, activeSince = e.now)
                 n to sayFx(n, t)
@@ -274,6 +271,37 @@ class VoiceMachine(
             is VoiceEvent.Report -> if (s.phase == Phase.Listening && s.pending.isEmpty() && s.heard.isEmpty()) tell(s, e.speak, e.show, e.now)
                 else s.copy(reports = s.reports + (e.speak to e.show)) to emptyList()
         }
+    }
+
+    /** Words he said, heard in full. */
+    private fun utterance(s: VoiceState, t: String, now: Long): Pair<VoiceState, List<VoiceEffect>> =
+        when {
+            t.isEmpty() -> s to emptyList()
+            echoOf(s, t, now) -> s.copy(heard = "") to emptyList()
+            // "Scratch that" alone (an older server passes it on): take back, never ask it.
+            Speech.isDiscard(t) && (s.phase == Phase.Listening || s.phase == Phase.Thinking || s.phase == Phase.Starting) -> takeBack(s, now, fromServer = true)
+            // Over Cru: it stops, and nothing is asked.
+            Speech.isDiscard(t) && s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) cutIn(s, now) else s to emptyList()
+            s.phase == Phase.Thinking -> s.copy(pending = join(s.pending, t), heard = join(s.pending, t), quietSince = now) to emptyList()
+            // Said over Crundi (the stream stayed on): cut it off and ask that now.
+            s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) {
+                val (cut, fx0) = cutIn(s, now)
+                val (n, fx) = if (Speech.isCalling(t)) calledHere(cut, t, now) else ask(cut, t, now)
+                n to (fx0 + fx)
+            } else s to emptyList()
+            // "Hey Cru" while already awake: here at once, without asking Claude.
+            Speech.isCalling(t) -> calledHere(s, t, now)
+            else -> ask(s, t, now)
+        }
+
+    /** Typed (or Yes / No tapped): asked like something said; over Cru, it stops first. */
+    private fun typed(s: VoiceState, e: VoiceEvent.Typed): Pair<VoiceState, List<VoiceEffect>> = when (s.phase) {
+        Phase.Thinking -> s.copy(pending = join(s.pending, e.text)) to emptyList()
+        Phase.Speaking -> {
+            val (n, fx) = ask(s.copy(phase = Phase.Listening), e.text, e.now)
+            n to (listOf(VoiceEffect.StopSaying) + doneFx(s) + fx)
+        }
+        else -> ask(s, e.text, e.now)
     }
 
     /**
@@ -321,7 +349,8 @@ class VoiceMachine(
     /** Called by name while already awake: "Yes, Sir?" at once, no Claude, no cue. */
     private fun calledHere(s: VoiceState, t: String, now: Long): Pair<VoiceState, List<VoiceEffect>> = here().let { h ->
         val n = s.copy(phase = Phase.Speaking, heard = "", asked = t, reply = h, detail = "", notice = "", lastSaid = h, quietSince = now, activeSince = now)
-        n to sayFx(n, h)
+        // Muted: shown, not said.
+        if (!s.speaks()) n.copy(phase = Phase.Listening, lastSaid = s.lastSaid) to emptyList() else n to sayFx(n, h)
     }
 
     /** Crundi stops talking now and listens (the owner talked over it, or tapped). */
@@ -351,11 +380,17 @@ class VoiceMachine(
         return next to (doneFx(s) + fx)
     }
 
-    /** News said unasked: shown, and spoken with the stream paused. */
+    /**
+     * News said unasked: shown, and spoken with the stream paused. Shown only (the next news
+     * at once) when muted, or when the owner's last message was typed ([speaks]).
+     */
     private fun tell(s: VoiceState, speak: String, show: String, now: Long): Pair<VoiceState, List<VoiceEffect>> {
         val next = s.copy(reply = speak, detail = show, heard = "", notice = "", quietSince = now, activeSince = now, question = "", needsUnlock = false)
-        return if (speak.isBlank()) next.copy(phase = Phase.Listening) to emptyList()
-        else next.copy(phase = Phase.Speaking, lastSaid = speak) to sayFx(next, speak)
+        if (speak.isNotBlank() && s.speaks(unprompted = true)) return next.copy(phase = Phase.Speaking, lastSaid = speak) to sayFx(next, speak)
+        val shown = next.copy(phase = Phase.Listening)
+        if (shown.reports.isEmpty() || shown.pending.isNotBlank()) return shown to emptyList()
+        val (sp, sh) = shown.reports.first()
+        return tell(shown.copy(reports = shown.reports.drop(1)), sp, sh, now)
     }
 
     /** Heard while Crundi speaks or within [echoMs] after, and mostly Crundi's own words. */

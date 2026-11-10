@@ -173,6 +173,16 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   ok(!T.talksOver('really', said), 'one stray word is not an interruption');
   ok(T.talksOver('stop', said) && T.talksOver('wait', said), '"stop" or "wait" alone is');
   ok(T.talksOver('which build was that', said), 'two or more of his own words are');
+  // Cru's voice: typed last, unprompted news is shown, not said; muted, nothing is said; kid mode always talks.
+  {
+    const sp = T.speaks;
+    ok(sp({}, 'unprompted') && sp({ lastTyped: false }, 'unprompted'), 'spoken last: news is said');
+    ok(!sp({ lastTyped: true }, 'unprompted'), 'typed last: news (a wake-up, a report) is text only');
+    ok(sp({ lastTyped: true }, 'reply', false) && !sp({ lastTyped: false }, 'reply', true), 'a reply follows how its own question came in');
+    ok(sp({ lastTyped: true }, 'tap'), 'the speaker on a bubble still says it');
+    ok(!sp({ voiceOff: true }, 'reply', false) && !sp({ voiceOff: true }, 'unprompted') && !sp({ voiceOff: true }, 'tap'), 'muted: nothing is said');
+    ok(sp({ kid: true, voiceOff: true, lastTyped: true }, 'unprompted') && sp({ kid: true }, 'reply', true), 'kid mode always talks');
+  }
   ok(T.talksOver('really', said, 1), 'with the voice level heard over Cru, one word is enough');
   ok(!T.talksOver('build sir', said, 1), 'but never Cru\'s own words');
   ok(T.isEcho('one moment sir', 'One moment, Sir.'), 'a cue heard back is an echo');

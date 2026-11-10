@@ -176,9 +176,11 @@ ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes(
 {
   const cvs = read('app', 'vendor', 'crundi-voice.js');
   ok(/function chatPref\(\) \{ try \{ return localStorage\.getItem\(CHAT_KEY\) !== '0'; \} catch \(e\) \{ return true; \} \}/.test(cvs) && /if \(chatPref\(\) && !S\.kid\) setTimeout/.test(cvs), 'the chat view is the default (until the owner goes back to the voice view); kid mode keeps its own screen');
-  ok(/if \(say && !\(typed && !S\.kid\)\) speak\(say\); else \{ stopCue\(\); afterSpeech\(\); \}/.test(cvs), 'a typed turn\'s answer is not said (no speech made for it); kid mode still talks');
+  ok(/if \(say && speaks\(S, 'reply', typed\)\) speak\(say\); else \{ stopCue\(\); afterSpeech\(\); \}/.test(cvs) && /if \(s\.kid\) return true;[\s\S]{0,80}if \(kind === 'reply'\) return !typed;/.test(cvs), 'a typed turn\'s answer is not said (no speech made for it); kid mode still talks');
+  ok(/if \(say && speaks\(S, 'unprompted'\)\) speak\(say\); else afterSpeech\(\);/.test(cvs) && /if \(kind === 'unprompted'\) return !s\.lastTyped;/.test(cvs), 'news unasked is said only while the owner\'s last message was spoken');
+  ok(/'<button class="cv-mi cv-quiet" role="menuitemcheckbox"/.test(cvs) && /localStorage\.setItem\(QUIET_KEY/.test(cvs) && /localStorage\.setItem\(TYPED_KEY/.test(cvs), 'Cru\'s voice can be muted from the menu; that and the last input mode are kept on the device');
   ok(/class="cv-say" data-say="' \+ i \+ '"/.test(cvs) && /closest\('\.cv-say'\)[\s\S]{0,80}sayAgain\(Number/.test(cvs), 'each reply in the chat view has a speaker that says it');
-  ok(/function sayAgain\(i\) \{[\s\S]{0,400}S\.phase !== 'listen' \|\| S\.heard \|\| S\.pending\) return;[\s\S]{0,60}speak\(m\.speak\)/.test(cvs), 'and only while Cru is just listening');
+  ok(/function sayAgain\(i\) \{[\s\S]{0,400}S\.phase !== 'listen' \|\| S\.heard \|\| S\.pending \|\| !speaks\(S, 'tap'\)\) return;[\s\S]{0,60}speak\(m\.speak\)/.test(cvs), 'and only while Cru is just listening');
   ok(/S\.phase === 'speak' && i === speakingIndex\(S\.msgs, S\.phase, S\.lastSaid\)\) \{ cutIn\(\);/.test(cvs), 'tapped while it says that reply: it stops');
   // Thinking and Speaking in the conversation (11 Nov): typing dots at the end, a sound sign by the reply being said.
   ok(/if \(S\.phase === 'think'\) h \+= '<div class="cv-m cru cv-typing"/.test(cvs) && /@keyframes cvdot/.test(cvs), 'while Cru thinks, a typing bubble at the end of the conversation');

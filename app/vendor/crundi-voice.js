@@ -506,6 +506,7 @@
     '.cv-ov.full .cv-words{display:block;flex:none;max-height:66px;padding:4px 18px 0}.cv-ov.full .cv-reply{margin-top:2px;font-size:14px;line-height:20px;font-weight:400;color:' + C.text2 + '}' +
     // A phone: room on the top row for the way back (Compact is a rare thing, it waits for the normal view); the chat view's button has nothing to show under Cru's UI.
     '.cv-ov.full .cv-chatb{display:none!important}' +
+    '.cv-quiet .off{display:none}.cv-ov.quiet .cv-quiet .off{display:inline}.cv-ov.quiet .cv-quiet .on{display:none}.cv-ov.quiet .cv-quiet svg{color:' + C.yellow + '}.cv-ov.quiet .cv-say{display:none}.cv-ov.kid .cv-quiet{display:none!important}' +
     '@media (min-width:900px){.cv-ov.full:not(.kid){width:min(1000px,calc(100vw - 40px));height:calc(100vh - 70px)}.cv-ov.full .cv-top{max-width:none}}' +
     '.cv-b-i{max-width:100%;border-radius:10px}.cv-b-ch{display:flex;flex-wrap:wrap;gap:6px}.cv-b-ch span{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid}' +
     // Kid mode: the whole window, bright and friendly, a big cursor, nothing to leave by.
@@ -561,10 +562,12 @@
       // Admin mode: an icon (the owner, 11 Nov); hover or tap says what it means.
       '<span class="cv-admin" hidden role="button" tabindex="0" aria-label="Admin mode is on" title="Admin mode is on: Cru can run any command. Turn it off in Settings, or say: admin mode off"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg><span class="cv-tip">Admin mode is on: Cru can run any command on the server. Turn it off in Settings, or say "admin mode off".</span></span>' +
       '<button class="cv-x cv-fullx" title="Back to the normal view" aria-label="Back to the normal view"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg><span>Normal view</span></button>' +
-      // Everything but close in one menu (the owner, 11 Nov): the chat view and compact.
+      // Everything but close in one menu (the owner, 11 Nov): the chat view, Cru's voice off, compact.
       '<span class="cv-mwrap"><button class="cv-x cv-menub" title="More" aria-label="More" aria-haspopup="menu"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>' +
       '<div class="cv-menu" role="menu" hidden>' +
       '<button class="cv-mi cv-chatb" role="menuitem" title="Chat view: the whole conversation as messages"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg><span>Chat view</span></button>' +
+      // Cru's voice off (the owner, 11 Nov: a menu item): replies text only, remembered on this device until turned back on.
+      '<button class="cv-mi cv-quiet" role="menuitemcheckbox" aria-checked="false" title="Replies as text only, until turned back on"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path class="on" d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/><path class="off" d="m22 9-6 6M16 9l6 6"/></svg><span>Mute Cru\'s voice</span></button>' +
       '<button class="cv-mi cv-cmp" role="menuitem" title="Compact the conversation (Cru keeps a summary and its notebook)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg><span>Compact the conversation</span></button>' +
       '</div></span>' +
       '<button class="cv-x cv-close" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
@@ -607,7 +610,11 @@
       how: opts.how || 'click', ptt: opts.how === 'ptt',
       // Kid mode: the child's screen (locked; only the PIN leaves it). screen: Cru's live panel.
       kid: !!opts.kid, screen: null, video: createVideoGate(), sayAt: 0,
+      // voiceOff: Cru's voice muted on this device. lastTyped: the owner's last message was typed, so what
+      // Cru says unprompted (news, a wake-up, a report) is shown, not said, until he speaks again. Both kept.
+      voiceOff: quietPref(), lastTyped: typedPref(),
     };
+    ov.classList.toggle('quiet', S.voiceOff && !S.kid); quietButton();
     if (S.kid) ov.classList.add('kid');
     watchChatScroll(S);
     ov.addEventListener('mouseenter', function () { if (S) clearTimeout(S.leaveTimer); });
@@ -622,7 +629,7 @@
     q('.cv-talk').onclick = function (e) { e.stopPropagation(); talkOverVideo(); };
     q('.cv-fs').onclick = function (e) { e.stopPropagation(); kidFullscreen(); };
     // A tap on Yes or No is the signed-in owner answering: typed, so no voice check applies.
-    Array.prototype.forEach.call(ov.querySelectorAll('.cv-yn'), function (b) { b.onclick = function (e) { e.stopPropagation(); if (S && S.question) utter(b.getAttribute('data-yn'), true); }; });
+    Array.prototype.forEach.call(ov.querySelectorAll('.cv-yn'), function (b) { b.onclick = function (e) { e.stopPropagation(); if (S && S.question) utter(b.getAttribute('data-yn'), true, true); }; });
     var menuEl = q('.cv-menu'), closeMenu = function () { menuEl.hidden = true; };
     // The admin icon: a tap shows what it means for a few seconds.
     q('.cv-admin').onclick = function (e) { e.stopPropagation(); var a = q('.cv-admin'); a.classList.toggle('tip'); clearTimeout(S.tipTimer); if (a.classList.contains('tip')) S.tipTimer = setTimeout(function () { a.classList.remove('tip'); }, 3500); };
@@ -631,7 +638,7 @@
     q('.cv-chatb').onclick = function (e) { e.stopPropagation(); closeMenu(); chatView(!(S && S.chat)); };
     // The owner scrolling Cru's words himself: they stop following the speech until the next reply.
     ['wheel', 'touchstart', 'mousedown'].forEach(function (ev) { q('.cv-words').addEventListener(ev, function () { if (S) S.ownScroll = true; }, { passive: true }); });
-    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (S && (v || attReady())) { inp.value = ''; if (v) utter(v, true); else ask('', false, true); inp.focus(); } };
+    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (S && (v || attReady())) { inp.value = ''; if (v) utter(v, true); else { inputMode(true); ask('', false, true); } inp.focus(); } };
     // Files for Cru (capability 'voice-attach'): the paperclip, a drop anywhere on Cru, a pasted picture.
     q('.cv-attb').onclick = function (e) { e.stopPropagation(); q('.cv-file').click(); };
     q('.cv-file').onchange = function () { var f = q('.cv-file'); attachFiles(f.files); f.value = ''; };
@@ -653,6 +660,7 @@
     q('.cv-kbb').onclick = function (e) { e.stopPropagation(); if (S && S.kid) { kidMute(false, true); keyboard(!S.kb, false); return; } keyboard(!(S && S.kb), true); };
     // Kid mode: the microphone off (Cru still talks, taps and games still work); tap again to listen.
     q('.cv-mute').onclick = function (e) { e.stopPropagation(); if (S) kidMute(!S.muted); };
+    q('.cv-quiet').onclick = function (e) { e.stopPropagation(); q('.cv-menu').hidden = true; if (S) voiceOff(!S.voiceOff); };
     q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
     q('.cv-msgs').onclick = function (e) { var d = e.target && e.target.closest && e.target.closest('.cv-drop'); if (d) { e.stopPropagation(); dropTapped(d.getAttribute('data-drop')); return; } var b = e.target && e.target.closest && e.target.closest('.cv-say'); if (!b) return; e.stopPropagation(); sayAgain(Number(b.getAttribute('data-say'))); };
     // The view the owner chose last time, on this device: the chat view unless he
@@ -698,7 +706,7 @@
       var inp = S.ov.querySelector('.cv-type');
       if (e.target === inp) {
         e.stopPropagation(); S.quietSince = Date.now();
-        if (e.key === 'Enter' && (inp.value.trim() || attReady())) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; if (t) utter(t, true); else ask('', false, true); }
+        if (e.key === 'Enter' && (inp.value.trim() || attReady())) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; if (t) utter(t, true); else { inputMode(true); ask('', false, true); } }
       } else if (S.ov.contains(e.target) || e.target === document.body) e.stopPropagation();
     };
     window.addEventListener('keydown', S.onKey, true);
@@ -999,22 +1007,25 @@
   /** Crundi's own words heard back: while it speaks, or for ECHO_MS after. */
   function echo(t) { return S.lastSaid && (S.speaking || Date.now() - S.saidUntil <= ECHO_MS) && isEcho(t, S.lastSaid); }
 
-  function utter(text, typed) {
+  /** [tap]: Yes or No tapped: typed for the server's voice check, but it leaves the input mode as it was. */
+  function utter(text, typed, tap) {
     var t = String(text || '').trim();
     if (!t || !S) return;
     if (!typed && echo(t)) { S.heard = ''; render(); return; }
     // "Scratch that" alone (an older server passes it on): take back, never ask it.
     if (!typed && isDiscard(t)) { if (S.phase === 'speak') { if (S.live) cutIn(); } else takeBack(true); render(); return; }
+    // A real message from the owner: how it came in decides whether Cru speaks up unprompted until the next.
+    if (!tap) inputMode(!!typed);
     // Kid mode: one thing at a time. Said while Cru thinks or talks: not saved up;
     // Cru says "wait a moment" (thinking) or shows its wait sign (talking), and
     // listens again once it has answered.
     if (S.kid && (S.phase === 'think' || S.phase === 'speak')) { kidWait(); return; }
-    if (S.phase === 'think') { S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
+    if (S.phase === 'think') { S.pendingTyped = (S.pending ? S.pendingTyped : true) && !!typed; S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
     // Said over Crundi (the stream stayed on): cut it off and ask that now.
     if (S.phase === 'speak') { if (!typed && !(S.live && talksOver(t, S.lastSaid, 1))) return; cutIn(); }
     if (S.phase === 'ended' && !typed) return;
     // "Hey Cru" while already awake: here at once, without asking Claude.
-    if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); speak(h); render(); return; }
+    if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); if (speaks(S, 'reply', typed)) speak(h); render(); return; }
     ask(t, false, typed);
   }
 
@@ -1118,7 +1129,7 @@
     if (!m || !m.speak) return;
     // Tapped while it says this one: stop, and listen (as tapping over Cru does).
     if (S.phase === 'speak' && i === speakingIndex(S.msgs, S.phase, S.lastSaid)) { cutIn(); render(); return; }
-    if (S.phase !== 'listen' || S.heard || S.pending) return;
+    if (S.phase !== 'listen' || S.heard || S.pending || !speaks(S, 'tap')) return;
     S.quietSince = Date.now();
     speak(m.speak);
     render();
@@ -1129,7 +1140,48 @@
     if (S.phase !== 'listen' || S.pending || S.heard) { S.reports.push({ speak: say, show: show }); return; }
     S.reply = say; S.detail = show; S.heard = ''; S.notice = ''; S.question = ''; S.quietSince = Date.now();
     chatAdd('', say, show);
-    if (say) speak(say);
+    // Unprompted: said only while the owner is talking to Cru (his last message spoken) and its voice is on.
+    if (say && speaks(S, 'unprompted')) speak(say); else afterSpeech();
+    render();
+  }
+
+  /**
+   * Whether Cru says this aloud. [kind]: 'reply' (the answer to what he just sent, [typed] or said),
+   * 'unprompted' (news, a wake-up, a report, a panel's say: follows how his last message came in),
+   * 'tap' (the speaker on a bubble). Muted, nothing is said. Kid mode always talks.
+   */
+  function speaks(s, kind, typed) {
+    if (!s) return false;
+    if (s.kid) return true;
+    if (s.voiceOff) return false;
+    if (kind === 'reply') return !typed;
+    if (kind === 'unprompted') return !s.lastTyped;
+    return true;
+  }
+
+  // ─── Cru's voice: muted, and the owner's last input mode (both kept on this device) ───
+  var QUIET_KEY = 'crundi_cru_voice_off', TYPED_KEY = 'crundi_cru_last_typed';
+  function quietPref() { try { return localStorage.getItem(QUIET_KEY) === '1'; } catch (e) { return false; } }
+  function typedPref() { try { return localStorage.getItem(TYPED_KEY) === '1'; } catch (e) { return false; } }
+  function inputMode(typed) {
+    if (!S || S.lastTyped === typed) return;
+    S.lastTyped = typed;
+    try { localStorage.setItem(TYPED_KEY, typed ? '1' : '0'); } catch (e) { /* private mode */ }
+  }
+  function quietButton() {
+    var b = S && S.ov.querySelector('.cv-quiet'); if (!b) return;
+    b.title = S.voiceOff ? 'Cru\'s voice is muted: replies are text only' : 'Replies as text only, until turned back on';
+    var l = b.querySelector('span'); if (l) l.textContent = S.voiceOff ? 'Unmute Cru\'s voice' : 'Mute Cru\'s voice';
+    b.setAttribute('aria-checked', S.voiceOff ? 'true' : 'false');
+  }
+  /** The mute button: muted, Cru stops talking now and says nothing more (replies shown) until it is turned on again. */
+  function voiceOff(on) {
+    if (!S || S.kid) return;
+    S.voiceOff = !!on;
+    try { localStorage.setItem(QUIET_KEY, S.voiceOff ? '1' : '0'); } catch (e) { /* private mode */ }
+    S.ov.classList.toggle('quiet', S.voiceOff);
+    quietButton();
+    if (S.voiceOff && S.phase === 'speak') cutIn();
     render();
   }
 
@@ -1274,10 +1326,10 @@
       if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail); }
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
       // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
-      if (S.pending) { var p = S.pending; S.pending = ''; S.closing = false; stopCue(); ask(p, true); render(); return; }
+      if (S.pending) { var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; S.closing = false; stopCue(); ask(p, true, pt); render(); return; }
       // Typed: the answer is read, not said (no speech is made for it, so Cru works
-      // without Deepgram); the speaker on its bubble says it. Kid mode always talks.
-      if (say && !(typed && !S.kid)) speak(say); else { stopCue(); afterSpeech(); }
+      // without Deepgram); the speaker on its bubble says it. Muted, nothing is said. Kid mode always talks.
+      if (say && speaks(S, 'reply', typed)) speak(say); else { stopCue(); afterSpeech(); }
       render();
     }).catch(function (e) { if (!S || S.turn !== turn || S.phase !== 'think') return; S.notice = e.message || 'Could not reach the server'; afterSpeech(); render(); });
   }
@@ -1345,7 +1397,7 @@
     if (S.reportOnly && !S.reports.length) S.reportCloseAt = Date.now() + REPORT_LINGER_MS;
     if (S.live) { said(); releaseLater(); }
     else setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
-    if (S.pending) { var p = S.pending; S.pending = ''; ask(p); }
+    if (S.pending) { var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; ask(p, false, pt); }
     render();
   }
 
@@ -1885,7 +1937,7 @@
   }
   /** A game says a word (a letter, a picture's name): now, unless Cru is talking. */
   function sayLocal(t) {
-    if (!t || !S || S.phase === 'speak' || S.phase === 'think' || S.video.playing) return;
+    if (!t || !S || S.phase === 'speak' || S.phase === 'think' || S.video.playing || !speaks(S, 'unprompted')) return;
     if (Date.now() - S.sayAt < 600) return;
     S.sayAt = Date.now();
     speak(t, { reflex: true, expressivity: 1 });
@@ -2380,7 +2432,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

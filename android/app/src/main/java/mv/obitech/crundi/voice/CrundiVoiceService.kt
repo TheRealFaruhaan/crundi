@@ -133,6 +133,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                         onSay = { c.sayAgain(it) },
                         onStopSaying = { c.stopSaying() },
                         onDropLive = { c.dropLive(it) },
+                        onVoiceOff = { c.setVoiceOff(it) },
                         live = c.live,
                     ),
                 )
