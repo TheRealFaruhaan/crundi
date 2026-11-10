@@ -81,7 +81,7 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
      * "side key"); [locked] tells Claude the phone is locked, so anything
      * that would change something waits for an unlock (spec §4).
      */
-    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false, attachments: List<String> = emptyList(), refs: List<String> = emptyList()): VoiceReply {
+    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false, attachments: List<String> = emptyList(), refs: List<String> = emptyList(), requestId: String = ""): VoiceReply {
         // A failed turn comes back { ok:false, error } with 200: read it as a reply, not an exception.
         // [typed]: keyboard mode, words typed rather than heard (an older server ignores it).
         // [attachments]: ids from [attach]; [refs]: shared text or links (capability "voice-attach").
@@ -89,6 +89,9 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         if (typed) body["typed"] = true
         if (attachments.isNotEmpty()) body["attachments"] = attachments
         if (refs.isNotEmpty()) body["refs"] = refs
+        // [requestId] (capability "voice-turn-id"): the same turn sent again (the HTTP client resends it
+        // after a dropped connection) gets that turn's answer, never a second run or "still answering".
+        if (requestId.isNotEmpty()) body["requestId"] = requestId
         val r = transport.exchange(ApiRequest("POST", "/api/voice/turn", json = Uploads.toJson(body), slow = true))
         if (r.status == 404) throw ApiException(404, UNSUPPORTED)
         val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()

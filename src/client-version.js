@@ -218,6 +218,11 @@ export const CAPABILITIES = Object.freeze([
   // top bar's button POSTs /api/voice/screen/normal (back to the normal view,
   // the content kept as the panel). Older clients just show the panel.
   'voice-screen-full',
+  // POST /api/voice/turn takes requestId: the same id sent again (a resend
+  // after a dropped connection) gets that turn's result, never a second run;
+  // a turn that finds Cru busy waits for it (up to 3 min) instead of
+  // answering "Still answering the last request".
+  'voice-turn-id',
   // Kid mode (voice/kid.js): GET /api/voice/kid, POST /api/voice/kid/pin
   // { pin } | { remove }, /kid/start { by }, /kid/exit { pin } (429 locked),
   // /kid/play (game events -> { reflex }), GET /kid/progress?range=&area=,

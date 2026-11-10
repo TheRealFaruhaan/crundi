@@ -26,8 +26,37 @@ object CruChat {
         if (older) return got + current
         // Matched on the words alone: a file's line here is shorter than the server's copy of it.
         val known = got.map { CruAttach.plain(it.said) to it.speak }.toSet()
-        return got + current.filter { it.live && (CruAttach.plain(it.said) to it.speak) !in known }
+        // Sent here and not answered yet: gone once the server's newest turns have it (with its answer).
+        val recent = got.takeLast(3).map { CruAttach.plain(it.said) }.toSet()
+        return got + current.filter { it.live && (CruAttach.plain(it.said) to it.speak) !in known && !(it.speak.isEmpty() && it.show.isEmpty() && CruAttach.plain(it.said) in recent) }
     }
+
+    /**
+     * What the owner just said or typed, shown at once (10 Nov: a typed "Yes"
+     * never appeared while its turn ran): his bubble at the end, keyed by
+     * [key] so the answer fills it in ([answered]) or a cancel takes it out ([drop]).
+     */
+    fun asked(current: List<CruMsg>, said: String, at: Long, key: String): List<CruMsg> {
+        val t = said.trim()
+        if (t.isEmpty() || current.any { it.key == key }) return current
+        return current + CruMsg(at, t, "", "", live = true, key = key)
+    }
+
+    /** The answer to the message sent as [key]; added at the end when that message is not there. */
+    fun answered(current: List<CruMsg>, key: String, said: String, speak: String, show: String, at: Long): List<CruMsg> {
+        val i = current.indexOfFirst { it.key == key }
+        if (i < 0) return add(current, said, speak, show, at)
+        return current.toMutableList().also { it[i] = it[i].copy(speak = speak.trim(), show = show.trim()) }
+    }
+
+    /** A message taken back (cancelled): out of the list. */
+    fun drop(current: List<CruMsg>, key: String): List<CruMsg> = current.filterNot { it.key == key && it.speak.isEmpty() && it.show.isEmpty() }
+
+    /**
+     * What waits to be asked next while Cru answers (said or typed meanwhile):
+     * shown on the screen as queued, then asked as soon as the answer comes.
+     */
+    fun queued(s: VoiceState): String = if (s.phase == Phase.Thinking) s.pending.trim() else ""
 
     /** An exchange that just happened, at the end; nothing when it is empty. */
     fun add(current: List<CruMsg>, said: String, speak: String, show: String, at: Long): List<CruMsg> {
@@ -35,9 +64,25 @@ object CruChat {
         return if (m.said.isEmpty() && m.speak.isEmpty() && m.show.isEmpty()) current else current + m
     }
 
-    /** The words being heard now, shown as a faded bubble of the owner's: while listening or thinking. */
-    fun hearing(s: VoiceState): String =
-        if ((s.phase == Phase.Listening || s.phase == Phase.Thinking) && s.heard.isNotBlank()) s.heard.trim() else ""
+    /**
+     * The words being heard now, shown as a faded bubble of the owner's: while
+     * listening, and while Cru thinks only words still coming in (what was
+     * asked is in the list already, what is queued shows as [queued]).
+     */
+    fun hearing(s: VoiceState): String {
+        val h = s.heard.trim()
+        if (h.isEmpty()) return ""
+        return when (s.phase) {
+            Phase.Listening -> h
+            Phase.Thinking -> {
+                // While Cru thinks, heard is the queue and then the words coming in: only those new words here.
+                val p = s.pending.trim()
+                val rest = if (p.isNotEmpty() && h.startsWith(p)) h.removePrefix(p).trim() else h
+                if (rest == s.asked.trim() || rest == p) "" else rest
+            }
+            else -> ""
+        }
+    }
 
     /** Cru is working on an answer: a typing bubble at the end of the list, where the reply will appear. */
     fun thinking(s: VoiceState): Boolean = s.phase == Phase.Thinking

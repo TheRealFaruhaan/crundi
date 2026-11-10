@@ -338,6 +338,8 @@ private fun AdminPill() {
 private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int = 0) {
     val list = ui.history
     val hearing = CruChat.hearing(ui.state)
+    // Said or typed while Cru answers: shown as queued, asked as soon as the answer comes.
+    val queued = CruChat.queued(ui.state)
     // Thinking and Speaking in the conversation, as other chat apps show them (the pill stays too).
     val thinking = CruChat.thinking(ui.state)
     val speakingAt = CruChat.speakingIndex(list, ui.state)
@@ -349,7 +351,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
     mv.obitech.crundi.ui.chats.KeepBottomInView(state, follow) { follow.toEnd(state, animate = false) }
     val first = remember { booleanArrayOf(true) }
     val last = list.lastOrNull()
-    LaunchedEffect(last?.key, last?.speak?.length, last?.show?.length, hearing, thinking, ui.historyLoaded) {
+    LaunchedEffect(last?.key, last?.speak?.length, last?.show?.length, hearing, queued, thinking, ui.historyLoaded) {
         if (first[0] || follow.shouldFollow) {
             // Laid out first: the screen just opened, or the history just came, has no rows yet to scroll past.
             androidx.compose.runtime.snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
@@ -385,8 +387,9 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
                 if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "", onSay = if (m.speak.isNotBlank()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
             }
         }
-        if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true) }
         if (thinking) item(key = "thinking") { ThinkingBubble() }
+        if (queued.isNotEmpty()) item(key = "queued") { Bubble(mine = true, text = queued, detail = "", time = "Queued: Cru answers it next", faded = true) }
+        if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true) }
     }
 }
 
@@ -516,8 +519,10 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, onCancel: (
             }
             ui.blocked.isNotEmpty() -> Problem("alert-triangle", ui.blocked)
             else -> {
-                // What the owner said: live while listening, then what was asked.
-                val heard = if (phase == Phase.Listening || phase == Phase.Thinking) s.heard else s.asked
+                // What the owner said: live while listening, then what was asked (while Cru thinks too:
+                // what he says or types meanwhile is queued, shown under it).
+                val heard = if (phase == Phase.Listening) s.heard else s.asked
+                val queued = listOf(CruChat.queued(s), CruChat.hearing(s)).filter { it.isNotEmpty() }.joinToString(" ")
                 AnimatedVisibility(heard.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val parts = remember(heard) { CruAttach.parts(heard) }
@@ -542,6 +547,11 @@ private fun Words(ui: VoiceUi, phase: Phase, onAllowMic: () -> Unit, onCancel: (
                         }
                     }
                 }
+                if (queued.isNotEmpty()) Text(
+                    "Queued, answered next: “$queued”",
+                    style = CrundiType.Small.copy(color = CrundiColors.AccentHover), textAlign = TextAlign.Center, maxLines = 3,
+                    modifier = Modifier.semantics { contentDescription = "Queued, Cru answers it next: $queued" },
+                )
                 if (heard.isEmpty() && s.reply.isEmpty() && phase == Phase.Listening) {
                     Text(if (s.locked) "Ask anything. Changes wait for an unlock." else if (ui.keyboard) "Type to Cru below, Sir." else "Ask me anything, Sir.", style = CrundiType.Body.copy(fontSize = 16.sp, color = CrundiColors.TextMuted), textAlign = TextAlign.Center)
                 }

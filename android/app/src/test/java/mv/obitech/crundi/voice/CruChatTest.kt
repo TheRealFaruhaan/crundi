@@ -48,6 +48,28 @@ class CruChatTest {
         assertEquals("", CruChat.hearing(VoiceState(phase = Phase.Listening, heard = "")))
     }
 
+    @Test fun whatIsSentShowsAtOnceAndWhatIsQueuedShowsAsQueued() {
+        // 10 Nov: a typed "Yes" never appeared while its turn ran.
+        var list = CruChat.asked(emptyList(), "Yes", 1L, "q1")
+        assertEquals(listOf("Yes"), list.map { it.said })
+        assertEquals(list, CruChat.asked(list, "Yes", 2L, "q1"))                     // the same send once
+        list = CruChat.answered(list, "q1", "Yes", "Done, Sir.", "", 3L)
+        assertEquals("Done, Sir.", list.single().speak)                             // the answer fills it in
+        assertEquals(2, CruChat.answered(list, "gone", "Hi", "Hello", "", 4L).size)  // not there: added
+        assertTrue(CruChat.drop(CruChat.asked(emptyList(), "Oops", 1L, "q2"), "q2").isEmpty())  // cancelled: out
+        // Said or typed while Cru thinks: queued, shown as such; what was asked is not repeated as heard.
+        val thinking = VoiceState(phase = Phase.Thinking, asked = "Yes", heard = "Yes", pending = "")
+        assertEquals("", CruChat.hearing(thinking))
+        val queued = thinking.copy(pending = "and the logs", heard = "and the logs")
+        assertEquals("and the logs", CruChat.queued(queued))
+        assertEquals("", CruChat.hearing(queued))
+        assertEquals("please", CruChat.hearing(queued.copy(heard = "and the logs please")))   // still coming in
+        assertEquals("", CruChat.queued(queued.copy(phase = Phase.Listening)))
+        // A fresh load: the sent message goes once the server's newest turns have it, answered.
+        val got = CruChat.fromTurns(listOf(VoiceTurn(id = 1, at = 5, said = "Yes", speak = "Done, Sir.")))
+        assertEquals(1, CruChat.merge(CruChat.asked(emptyList(), "Yes", 4L, "q3"), got, older = false).size)
+    }
+
     @Test fun pagingBackStartsFromTheOldest() {
         assertEquals(0L, CruChat.before(emptyList()))
         assertEquals(1000L, CruChat.before(CruChat.fromTurns(turns)))

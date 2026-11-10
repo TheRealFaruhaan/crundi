@@ -456,8 +456,13 @@ class VoiceController(
         val att = CruAttach.take(_ui.value.attachments)
         val said = CruAttach.said(att.label, text)
         if (att.label.isNotEmpty()) _ui.update { it.copy(attachments = CruAttach.left(it.attachments), state = it.state.copy(asked = said, heard = said)) }
+        // What he said or typed is in the conversation at once, not only when the answer comes (10 Nov:
+        // a typed "Yes" never appeared). The id makes a resend of this request get this turn's answer.
+        val requestId = java.util.UUID.randomUUID().toString()
+        val key = "q$requestId"
+        _ui.update { it.copy(history = CruChat.asked(it.history, said, now(), key)) }
         scope.launch {
-            val r = try { voice.turn(text, where, locked, typed = typed, attachments = att.attachments, refs = att.refs) } catch (e: ApiException) {
+            val r = try { voice.turn(text, where, locked, typed = typed, attachments = att.attachments, refs = att.refs, requestId = requestId) } catch (e: ApiException) {
                 VoiceReply(ok = false, error = when {
                     e.offline -> "I can't reach the server, Sir."
                     VoiceApi.unsupported(e) -> VoiceApi.UNSUPPORTED
@@ -470,7 +475,8 @@ class VoiceController(
             // speaker on its bubble says it. An older server has no chat view to tap it in: said as before.
             // The chat view: what was asked and the answer, when it is this turn's.
             val current = _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }
-            if (current && r.ok && !r.cancelled) chatAdd(said, r.speak, r.show)
+            if (r.cancelled) _ui.update { it.copy(history = CruChat.drop(it.history, key)) }
+            else if (current && r.ok) _ui.update { it.copy(history = CruChat.answered(it.history, key, said, r.speak, r.show, now())) }
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }, silent = typed && VoiceApi.HISTORY in _ui.value.caps))
             // The voice was not the owner's: Cru answered, but changed nothing.
             if (r.ok && !r.cancelled && r.speaker?.unrecognised == true && current) note(NOT_RECOGNISED)

@@ -445,6 +445,7 @@
     '.cv-words{width:100%;max-width:680px;flex:1;overflow:auto;text-align:center;padding:10px 24px;box-sizing:border-box}' +
     '.cv-heard{color:' + C.text2 + ';font-size:16px;line-height:23px;min-height:23px;display:flex;align-items:center;justify-content:center;gap:6px}' +
     '.cv-cx{flex:none;width:26px;height:26px;border-radius:50%;border:0;background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-cx:hover{color:' + C.text + ';background:#24243a}.cv-cx[hidden]{display:none}' +
+    '.cv-q{margin-top:6px;font-size:13px;line-height:18px;color:' + C.hover + '}.cv-q[hidden]{display:none}' +
     '.cv-ht{min-width:0}.cv-reply{font-size:19px;line-height:27px;font-weight:500;margin-top:12px}' +
     '.cv-detail{margin-top:12px;text-align:left;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;font-size:14px;line-height:20px;white-space:pre-wrap}' +
     '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:8px;font-size:13px;color:' + C.hover + ';display:flex;gap:8px;align-items:center;justify-content:center}.cv-yesno[hidden]{display:none}.cv-yn{border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';border-radius:16px;padding:6px 16px;font-size:13px;cursor:pointer}.cv-yn:hover{border-color:' + C.accent + '}' +
@@ -545,7 +546,7 @@
       '<button class="cv-x cv-scr-x" title="Close the panel" aria-label="Close the panel"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="cv-scr-b"></div><button class="cv-talk">Talk to Cru</button></div>' +
       '<div class="cv-chat" hidden><div class="cv-more" hidden>Earlier messages</div><div class="cv-msgs"></div></div>' +
-      '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden><span>Say it, or tap:</span><button class="cv-yn" data-yn="Yes, go ahead.">Yes</button><button class="cv-yn" data-yn="No, don\'t.">No</button></div><div class="cv-note" hidden></div></div>' +
+      '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-q" hidden></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden><span>Say it, or tap:</span><button class="cv-yn" data-yn="Yes, go ahead.">Yes</button><button class="cv-yn" data-yn="No, don\'t.">No</button></div><div class="cv-note" hidden></div></div>' +
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div><button class="cv-fs">Full screen</button>' +
       '<div class="cv-att" hidden></div><input class="cv-file" type="file" multiple hidden>' +
       '<div class="cv-bot"><button class="cv-x cv-attb" title="Attach a file, photo or video (or drop it here)" aria-label="Attach"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Type to Cru…" aria-label="Type to Cru"><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
@@ -1001,7 +1002,8 @@
     api('/api/voice/history?limit=40' + (before ? '&before=' + before : '')).then(function (r) {
       if (S !== s || !r || r.ok === false) return;
       var got = r.turns || [];
-      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live; }));
+      var recent = got.slice(-3).map(function (m) { return String(m.said || '').trim(); });
+      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live && !(!m.speak && !m.show && recent.indexOf(String(m.said || '').trim()) >= 0); }));
       s.moreChat = !!r.more;
       renderChat(!older);
     });
@@ -1012,6 +1014,21 @@
     if (!S.msgs) S.msgs = [];
     S.msgs.push({ at: Date.now(), said: said || '', speak: speak || '', show: show || '', live: true });
     if (S.chat) renderChat(true);
+  }
+  /**
+   * While Cru answers: what waits to be asked next (said or typed meanwhile),
+   * shown as queued and asked as soon as the answer comes; and the words still
+   * coming in (what was asked is in the conversation already). As the
+   * phone's CruChat.queued and CruChat.hearing.
+   */
+  function queuedOf(st) { return st && st.phase === 'think' ? String(st.pending || '').trim() : ''; }
+  function hearingOf(st) {
+    var h = String((st && st.heard) || '').trim();
+    if (!h) return '';
+    if (st.phase === 'listen') return h;
+    if (st.phase !== 'think') return '';
+    var p = String(st.pending || '').trim(), rest = p && h.indexOf(p) === 0 ? h.slice(p.length).trim() : h;
+    return rest === String(st.asked || '').trim() || rest === p ? '' : rest;
   }
   function renderChat(toEnd) {
     if (!S || !S.chat) return;
@@ -1030,9 +1047,11 @@
           ? '<button class="cv-say on" data-say="' + i + '" title="Cru is saying this: tap to stop" aria-label="Cru is saying this: tap to stop">'
           : '<button class="cv-say" data-say="' + i + '" title="Say it aloud" aria-label="Say it aloud">') + SPEAKER_SVG + '</button>' : '') + '</div>';
     });
-    // What is being heard right now, not yet sent.
-    if (S.heard && (S.phase === 'listen' || S.phase === 'think') && S.heard !== S.lastChatAsked) h += '<div class="cv-m me live">' + esc(S.heard) + '</div>';
+    // Cru thinking, then what is queued for next, then the words being heard right now.
     if (S.phase === 'think') h += '<div class="cv-m cru cv-typing" role="img" aria-label="Cru is thinking"><i></i><i></i><i></i></div>';
+    var queued = queuedOf(S), hearing = hearingOf(S);
+    if (queued) h += '<div class="cv-m me live">' + esc(queued) + '<time>Queued: Cru answers it next</time></div>';
+    if (hearing) h += '<div class="cv-m me live">' + esc(hearing) + '</div>';
     // Rebuilt only when it changed: render() runs on every word heard, and a long history
     // rebuilt each time starved the animation (the mic froze in the chat view).
     if (h === S.chatHtml && !toEnd) return;
@@ -1184,10 +1203,14 @@
     render();
     var att = hidden ? { attachments: [], refs: [] } : takeAtt();
     if (att.attachments.length || att.refs.length) { S.asked = att.label + (t ? '\n' + t : ''); S.heard = S.asked; render(); }
-    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs }).then(function (r) {
+    // What he said or typed is in the conversation at once, not only once answered (10 Nov: a typed
+    // "Yes" never appeared). The id makes a resend of this request get this turn's answer (voice/turns.js).
+    var requestId = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10), mine = null;
+    if (!hidden && S.asked) { mine = { at: Date.now(), said: S.asked, speak: '', show: '', live: true, key: requestId }; (S.msgs = S.msgs || []).push(mine); if (S.chat) renderChat(true); }
+    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs, requestId: requestId }).then(function (r) {
       if (!S) return;
-      // Cancelled: never said or shown as an error, just what it had already done.
-      if (r && r.cancelled) { if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }
+      // Cancelled: never said or shown as an error, just what it had already done; the message goes.
+      if (r && r.cancelled) { if (mine && S.msgs) { S.msgs = S.msgs.filter(function (m) { return m !== mine; }); renderChat(); } if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }
       // Taken back meanwhile (or a newer question): not this answer's place.
       if (S.turn !== turn || S.phase !== 'think') return;
       var ok = r && r.ok;
@@ -1205,7 +1228,7 @@
       // Kid Cru's mood: how lively its voice is.
       S.expr = ok && typeof r.expressivity === 'number' ? r.expressivity : null;
       var say = ok ? S.reply : S.notice;
-      if (ok) { S.lastChatAsked = S.asked; chatAdd(S.asked, S.reply, S.detail); }
+      if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail); }
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
       // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
       if (S.pending) { var p = S.pending; S.pending = ''; S.closing = false; stopCue(); ask(p, true); render(); return; }
@@ -1234,6 +1257,7 @@
     if (S.phase === 'listen' || S.phase === 'start') { S.heard = ''; S.quietSince = Date.now(); render(); return; }
     if (S.phase !== 'think') return;
     S.turn++; S.phase = 'listen'; S.heard = ''; S.pending = ''; S.notice = 'Cancelled.'; S.quietSince = Date.now();
+    if (S.msgs && S.msgs.length) { var lastM = S.msgs[S.msgs.length - 1]; if (lastM.live && lastM.key && !lastM.speak && !lastM.show) S.msgs.pop(); }
     stopCue();
     var s = S;
     post('/api/voice/cancel', {}).then(function (r) {
@@ -1971,7 +1995,10 @@
     var lockedNow = !!(S.opts.isLocked && S.opts.isLocked()); S.ov.classList.toggle('locked', lockedNow); if (lockedNow && S.chat) { S.chat = false; S.ov.classList.remove('chat'); }
     q('.cv-st').textContent = ph === 'listen' ? 'Listening' : ph === 'think' ? 'Thinking' : ph === 'speak' ? 'Speaking' : ph === 'start' ? 'Waking' : 'Asleep';
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
-    var h = (ph === 'listen' || ph === 'think') ? S.heard : S.asked;
+    // Listening: the words as they come; thinking: what was asked, and what is queued for next under it.
+    var h = ph === 'listen' ? S.heard : S.asked;
+    var qd = S.kid ? '' : [queuedOf(S), hearingOf(S)].filter(Boolean).join(' '), qe = q('.cv-q');
+    if (qe) { qe.hidden = !qd; qe.textContent = qd ? 'Queued, answered next: “' + qd + '”' : ''; }
     // Kid mode: what the child said, while Cru thinks about it or while it waits for Cru to finish talking.
     if (S.kid) h = ph === 'speak' ? '' : ph === 'think' ? (S.heard || S.asked) : S.heard;
     S.ov.classList.toggle('kwait', !!(S.kid && S.waitAt && Date.now() - S.waitAt < 2500 && (ph === 'think' || ph === 'speak')));
@@ -2265,7 +2292,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex, queuedOf: queuedOf, hearingOf: hearingOf }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

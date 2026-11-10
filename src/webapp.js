@@ -110,6 +110,7 @@ import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
 import { selfNote as voiceSelfNote, capCheck as voiceCapCheck, ROUTINES_DIR as VOICE_ROUTINES_DIR } from './voice/reflect.js';
 import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, ADMIN_FOLLOW_MS as VOICE_ADMIN_FOLLOW_MS, trimSilence as trimVoiceSilence } from './voice/speaker.js';
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
+import { createTurnGate } from './voice/turns.js';
 import { createOwnerAsks, createDailyLog, createChatReads, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
 import { createJobStore, jobToolDefs } from './voice/jobs.js';
 import { createAttachmentStore, attachmentToolDefs, attachmentLine, passOn as passOnAttachments, MAX_FILE as CRU_ATTACH_MAX } from './voice/attachments.js';
@@ -2745,6 +2746,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const allProjects = () => Object.values(listProjects()).map(p => ({ alias: p.alias, name: p.name || p.alias, path: p.path }));
   // The chats Cru has read (read_chat): with "Cru on its own" chats ticked, it may close those without a yes.
   const cruChatReads = createChatReads();
+  // The owner's turns: safe to send again, and they wait while Cru is busy (voice/turns.js).
+  const cruTurnGate = createTurnGate();
   const voiceTools = makeVoiceTools({
     listProjects: allProjects,
     onReadChat: (id) => cruChatReads.mark(id),
@@ -5509,7 +5512,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const spoken = typed ? String(body.text || '') : fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
       const said = lead ? `${lead}\n${spoken || '(nothing said: look at what was attached and respond to it)'}` : spoken;
       const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
-      const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who });
+      // A resend of the same turn (requestId) gets that turn's result; a turn that finds Cru busy waits its turn (voice/turns.js).
+      const r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }));
       if (r && r.ok) r.speaker = rules.speaker;
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
