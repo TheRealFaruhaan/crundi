@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.34 (en-US)
+
+Version code 65. Internal track. Since 1.1.3-dev.33 (code 64): Cru's screen opens as a chat, typed replies are read not said, a speaker on each reply; background noise no longer cuts Cru off; Cru answers a chat's questions and permission prompts (cards say "by Cru"); admin mode wording. Server 1.21.6-dev.48.
+
+```
+<en-US>
+Cru:
+- Cru's screen opens as a chat. Replies to what you type are shown, not spoken: tap the speaker on a reply to hear it.
+- Background noise no longer cuts Cru off mid-sentence.
+- Cru can read out and answer a chat's questions and permission prompts; the card says "by Cru".
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.33 (en-US)
 
 Version code 64. Internal track. Since 1.1.3-dev.32 (code 63): Cru's close button moved to the top bar; reports no longer shown as the owner's messages. Server 1.21.6-dev.44.
