@@ -56,7 +56,7 @@ export const ACTION_TOOL_NAMES = [
 export const LISTEN_MINUTES = [15, 30, 45, 60, 120];
 
 /** Settings voice may change (each confirmed, D32). Keys and critical settings are not among them (D17). */
-export const VOICE_SETTINGS = ['model', 'ttsVoice', 'speechRate', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'screenCloseSeconds', 'cliIdleMinutes'];
+export const VOICE_SETTINGS = ['model', 'effort', 'ttsVoice', 'speechRate', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'screenCloseSeconds', 'cliIdleMinutes'];
 
 const PENDING_MS = 10 * 60 * 1000;
 /** A wake-up's question asked at the voice screen goes to the phone if it is not answered within this. */

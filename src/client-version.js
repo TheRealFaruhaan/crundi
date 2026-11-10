@@ -227,6 +227,10 @@ export const CAPABILITIES = Object.freeze([
   // any client) also goes to every open app as the owner SSE event
   // 'voice-phone-action' { type: 'background-listening', minutes } (0: off).
   'voice-phone-action-push',
+  // Cru's thinking effort: settings effort (low|medium|high|xhigh|max,
+  // default low), efforts, and models[].efforts / apiDefaultEffort; set with
+  // POST /api/voice/settings { effort }, or by voice (set_voice_setting effort).
+  'voice-effort',
   // Kid mode (voice/kid.js): GET /api/voice/kid, POST /api/voice/kid/pin
   // { pin } | { remove }, /kid/start { by }, /kid/exit { pin } (429 locked),
   // /kid/play (game events -> { reflex }), GET /kid/progress?range=&area=,

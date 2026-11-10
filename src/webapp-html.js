@@ -5814,6 +5814,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       html += sub('Brain and model');
       if (s.brain) html += row('Brain', 'vs-brain', opt('api', 'Claude API (the key)', s.brain) + opt('claude-code', 'Claude Code (your subscription)', s.brain), 'An experiment: the same tools, rules and notebook either way. Each keeps its own conversation.');
       html += row('Model', 'vs-model', voiceModels.map((m) => opt(m.id, m.label, s.model)).join(''), 'Haiku is the quickest and cheapest. A change applies from the next conversation.');
+      // Thinking effort (capability 'voice-effort'): how hard the model thinks before it answers.
+      if (Array.isArray(s.efforts) && s.effort) {
+        const effortLabel = { low: 'Low (quickest)', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max (most thorough)' };
+        const cur = voiceModels.find((m) => m.id === s.model) || {};
+        const takes = Array.isArray(cur.efforts) && cur.efforts.length ? cur.efforts : s.efforts;
+        html += row('Thinking effort', 'vs-effort', takes.map((e) => opt(e, effortLabel[e] || e, s.effort)).join(''),
+          'How hard Cru thinks before it answers: lower is faster and cheaper, higher is more thorough. ' + (cur.label || 'This model') + ' takes every level' + (cur.apiDefaultEffort ? ' (its own default is ' + cur.apiDefaultEffort + '; Cru runs at low unless you choose)' : '') + '. You can also ask Cru to change it. It applies from the next answer.');
+      }
       if (s.brain) html += row('Stop Claude Code after', 'vs-cidle', choices([5, 10, 15, 30, 60, 120], s.cliIdleMinutes).map((n) => opt(n, n + ' minutes idle', s.cliIdleMinutes)).join(''), 'Your next message starts it again and carries on the same conversation.');
       // How Cru sounds and listens
       html += sub('Voice and listening');
@@ -5879,6 +5887,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const on = (id, fn) => { const x = document.getElementById(id); if (x) x.onchange = () => fn(x.value); };
       on('vs-brain', (v) => save({ brain: v }, v === 'claude-code' ? 'Cru answers through Claude Code now' : 'Cru answers through the Claude API now').then(showVoiceStats));
       on('vs-model', (v) => save({ model: v }, 'Model saved. It applies from the next conversation.'));
+      on('vs-effort', (v) => save({ effort: v }, 'Thinking effort saved. It applies from the next answer.'));
       on('vs-cidle', (v) => save({ cliIdleMinutes: Number(v) }, 'Saved'));
       on('vs-rate', (v) => save({ speechRate: Number(v) }, 'Cru talks at ' + rateLabel(Number(v))));
       on('vs-vol', (v) => save({ volume: Number(v) }, 'Cru talks at ' + v + '%'));

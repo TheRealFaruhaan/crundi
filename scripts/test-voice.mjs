@@ -295,6 +295,12 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(h.length === 4 && h[1].content[0].type === 'thinking' && h[1].content[0].signature === 'sig', 'assistant content appended whole, thinking unchanged');
   ok(h[2].content.length === 2 && h[2].content.every(b => b.type === 'tool_result'), 'all tool results go back in one message');
   ok(calls[0].model === 'claude-haiku-5-5' && calls[0].output_config.effort === 'low', 'Haiku, low effort');
+  {
+    // Thinking effort (Settings or by voice): low by default, the owner's level when he picks one, never one the model refuses.
+    const S = await import('../src/voice/settings.js');
+    ok(S.effortFor('claude-haiku-5-5', undefined) === 'low' && S.effortFor('claude-opus-5-5', 'max') === 'max' && S.effortFor('claude-sonnet-5-5', 'extreme') === 'low', 'effort: low by default, the chosen level, nothing a model refuses');
+    ok(S.MODELS['claude-opus-5-5'].efforts.join() === 'low,medium,high,xhigh,max', 'each model says which levels it takes');
+  }
   ok(calls[0].system[0].cache_control.ttl === '1h' && calls[0].cache_control.ttl === '1h', '1-hour breakpoint on system + tools, 1-hour automatic breakpoint on the conversation');
   ok(calls[0].system.length === 1 && calls[0].system[0].text === SYSTEM_PROMPT, 'the system prompt is one fixed block');
   ok(calls[1].messages.length === 3 && JSON.stringify(calls[1].messages.slice(0, 1)) === JSON.stringify(calls[0].messages), 'round two starts with round one unchanged (prefix match)');

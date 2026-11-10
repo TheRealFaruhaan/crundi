@@ -22,8 +22,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
     suspend fun settings(): VoiceSettings = rpc.read(rpc.get("/api/voice/settings"), null)
 
     /** Change the model, the monthly limit or the Deepgram voice ("" = the phone's own). Null leaves one as it is. */
-    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null, brain: String? = null, cliIdleMinutes: Int? = null, volume: Int? = null, adminMode: Boolean? = null, ownerOnly: Boolean? = null): VoiceSettings =
-        rpc.read(rpc.post("/api/voice/settings", mapOf("model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes, "volume" to volume, "adminMode" to adminMode, "ownerOnly" to ownerOnly)), null)
+    suspend fun save(model: String? = null, monthlyLimitUsd: Double? = null, ttsVoice: String? = null, billingDay: Int? = null, deepgramBillingDay: Int? = null, pauseMs: Int? = null, deepgramLimitUsd: Double? = null, speechRate: Double? = null, screenCloseSeconds: Int? = null, brain: String? = null, cliIdleMinutes: Int? = null, volume: Int? = null, adminMode: Boolean? = null, ownerOnly: Boolean? = null, effort: String? = null): VoiceSettings =
+        rpc.read(rpc.post("/api/voice/settings", mapOf("effort" to effort, "model" to model, "monthlyLimitUsd" to monthlyLimitUsd, "ttsVoice" to ttsVoice, "billingDay" to billingDay, "deepgramBillingDay" to deepgramBillingDay, "pauseMs" to pauseMs, "deepgramLimitUsd" to deepgramLimitUsd, "speechRate" to speechRate, "screenCloseSeconds" to screenCloseSeconds, "brain" to brain, "cliIdleMinutes" to cliIdleMinutes, "volume" to volume, "adminMode" to adminMode, "ownerOnly" to ownerOnly)), null)
 
     /**
      * Cru on its own (capability "voice-away"): whether Cru may act without
@@ -382,7 +382,13 @@ data class CueItem(val id: String = "", val text: String = "", val url: String? 
 data class CueList(val ok: Boolean = false, val voice: String = "", val rate: String = "", val device: Boolean = false, val cues: List<CueItem> = emptyList())
 
 @Serializable
-data class VoiceModel(val id: String = "", val label: String = "")
+data class VoiceModel(
+    val id: String = "", val label: String = "",
+    /** The thinking efforts it takes (capability "voice-effort"); empty from an older server. */
+    val efforts: List<String> = emptyList(),
+    /** Its own default effort on the API, for the note. */
+    val apiDefaultEffort: String = "",
+)
 
 @Serializable
 data class VoiceSpend(
@@ -397,6 +403,9 @@ data class VoiceSpend(
 data class VoiceSettings(
     val model: String = "",
     val models: List<VoiceModel> = emptyList(),
+    /** Cru's thinking effort (capability "voice-effort"): low, medium, high, xhigh or max; "" from an older server. */
+    val effort: String = "",
+    val efforts: List<String> = emptyList(),
     val anthropicKeySet: Boolean = false,
     val deepgramKeySet: Boolean = false,
     /** A Deepgram voice, or "" for the phone's own (D34). */

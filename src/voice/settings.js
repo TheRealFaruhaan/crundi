@@ -28,11 +28,26 @@ import { cleanAway, AWAY_CLASSES, AWAY_CLASS_IDS } from './autonomy.js';
  * priced as 1 hour.
  */
 export const MODELS = {
-  'claude-haiku-5-5': { label: 'Claude Haiku 5.5', input: 0.10, output: 0.50, cacheRead: 0.01 },
-  'claude-sonnet-5-5': { label: 'Claude Sonnet 5.5', input: 2.00, output: 10.00, cacheRead: 0.20 },
-  'claude-opus-5-5': { label: 'Claude Opus 5.5', input: 4.00, output: 20.00, cacheRead: 0.20 },
+  'claude-haiku-5-5': { label: 'Claude Haiku 5.5', input: 0.10, output: 0.50, cacheRead: 0.01, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], apiDefaultEffort: 'medium' },
+  'claude-sonnet-5-5': { label: 'Claude Sonnet 5.5', input: 2.00, output: 10.00, cacheRead: 0.20, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], apiDefaultEffort: 'high' },
+  'claude-opus-5-5': { label: 'Claude Opus 5.5', input: 4.00, output: 20.00, cacheRead: 0.20, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], apiDefaultEffort: 'medium' },
 };
 export const DEFAULT_MODEL = 'claude-haiku-5-5';
+/**
+ * Thinking effort (output_config.effort on the API, --effort for Claude
+ * Code): how hard the model thinks before answering. Lower is faster and
+ * cheaper; higher is more thorough. Every model here takes all five levels
+ * (thinking cannot be switched off on them: effort is the control). Cru
+ * runs at low unless the owner chooses otherwise: a voice wants speed.
+ */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const DEFAULT_EFFORT = 'low';
+/** The effort to send for [model]: the chosen one when the model takes it, else the default. */
+export function effortFor(model, effort) {
+  const m = MODELS[model] || MODELS[DEFAULT_MODEL];
+  const list = m.efforts || EFFORTS;
+  return list.includes(effort) ? effort : (list.includes(DEFAULT_EFFORT) ? DEFAULT_EFFORT : list[0]);
+}
 export const DEFAULT_LIMIT_USD = 50;
 /** Deepgram's own monthly limit (D46). */
 export const DEFAULT_DEEPGRAM_LIMIT_USD = 200;
@@ -66,6 +81,7 @@ const DEFAULTS = {
   // How fast Cru talks: Deepgram Aura-2's speed (0.7 to 1.5), and the phone's
   // or browser's own voice at the same rate.
   speechRate: 1,
+  effort: DEFAULT_EFFORT,
   // How loud Cru talks, 10 to 100 (%): its replies and cues on every client.
   volume: 100,
   // Full admin mode (9 Nov): Cru may run any command as the user Crundi runs
@@ -190,6 +206,9 @@ export function publicSettings(now = new Date()) {
     deepgramBillingDay: s.deepgramBillingDay,
     pauseMs: s.pauseMs,
     speechRate: s.speechRate || 1,
+    // Thinking effort (capability 'voice-effort'): the chosen level, the levels, and what the model takes.
+    effort: effortFor(s.model || DEFAULT_MODEL, s.effort),
+    efforts: EFFORTS,
     volume: Number.isFinite(s.volume) ? s.volume : 100,
     adminMode: adminOn(s),
     adminCapable: adminCapable(s.model || DEFAULT_MODEL),
@@ -200,7 +219,7 @@ export function publicSettings(now = new Date()) {
     cliIdleMinutes: s.cliIdleMinutes || 30,
     deepgramPeriodStart: ymd(dg.start),
     deepgramNextReset: ymd(dg.next),
-    models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label })),
+    models: Object.entries(MODELS).map(([id, m]) => ({ id, label: m.label, efforts: m.efforts || EFFORTS, apiDefaultEffort: m.apiDefaultEffort || 'high' })),
     anthropicKeySet: !!s.anthropicKey,
     deepgramKeySet: !!s.deepgramKey,
     anthropicAdminKeySet: !!s.anthropicAdminKey,
@@ -309,6 +328,12 @@ export function updateSettings(patch = {}) {
     const n = Number(patch.screenCloseSeconds);
     if (!Number.isInteger(n) || n < 15 || n > 600) return { ok: false, error: 'The voice screen closes after 15 to 600 seconds of silence' };
     s.screenCloseSeconds = n;
+  }
+  if (patch.effort !== undefined) {
+    const e = String(patch.effort || '').toLowerCase().trim();
+    const m = MODELS[patch.model || s.model || DEFAULT_MODEL] || MODELS[DEFAULT_MODEL];
+    if (!(m.efforts || EFFORTS).includes(e)) return { ok: false, error: `Effort is one of: ${(m.efforts || EFFORTS).join(', ')}` };
+    s.effort = e;
   }
   if (patch.cliIdleMinutes !== undefined) {
     const n = Number(patch.cliIdleMinutes);

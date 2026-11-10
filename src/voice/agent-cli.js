@@ -180,7 +180,9 @@ export function createCliVoiceAgent({
 
   /** The process for this model, started (resuming the conversation) if need be. */
   function ensure(model) {
-    if (proc && proc.model === model && proc.exitCode === null) return proc;
+    // The owner's thinking effort (settings.effort): a change starts Claude Code again, resuming the conversation.
+    const effort = settings.effortFor ? settings.effortFor(model, settings.getSettings().effort) : 'low';
+    if (proc && proc.model === model && proc.effort === effort && proc.exitCode === null) return proc;
     stop();
     const bin = claudeBin();
     if (!bin) throw new Error('Claude Code (the claude command) is not installed on this server');
@@ -197,7 +199,7 @@ export function createCliVoiceAgent({
     const args = [
       '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
       '--system-prompt', prompt,
-      '--model', model, '--effort', 'low',
+      '--model', model, '--effort', effort,
       '--tools', '',
       '--strict-mcp-config', '--mcp-config', mcpFile,
       '--setting-sources', '',
@@ -211,6 +213,7 @@ export function createCliVoiceAgent({
     delete env.CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR;
     const p = spawn(bin, args, { cwd: workdir, stdio: ['pipe', 'pipe', 'pipe'], env });
     p.model = model;
+    p.effort = effort;
     p.err = '';
     buf = '';
     p.stdout.on('data', (d) => {

@@ -135,6 +135,8 @@ class CruSettingsEvents(
     val onDeviceVoice: () -> Unit = {},
     val onPreviewDeepgram: (String) -> Unit = {},
     val onModel: (String) -> Unit = {},
+    /** A thinking effort chosen (capability "voice-effort"). */
+    val onEffort: (String) -> Unit = {},
     val onBrain: (String) -> Unit = {},
     val onCliIdle: (Int) -> Unit = {},
     val onScreenClose: (Int) -> Unit = {},
@@ -176,6 +178,7 @@ class CruSettingsEvents(
 object CruSection {
     const val BRAIN = "brain"
     const val MODEL = "model"
+    const val EFFORT = "effort"
     const val VOICE = "voice"
     const val SPEED = "speed"
     const val VOLUME = "volume"
@@ -378,6 +381,7 @@ fun CruSettingsRoute() {
             }
         },
         onModel = { save("Model changed. It applies from the next conversation.") { v.save(model = it) } },
+        onEffort = { save("Thinking effort saved. It applies from the next answer.") { v.save(effort = it) } },
         onBrain = { b -> save(if (b == "claude-code") "Cru answers through your Claude Code now" else "Cru answers through the Claude API now") { v.save(brain = b) }; loadStats() },
         onCliIdle = { m -> save("Claude Code stops after $m minutes idle") { v.save(cliIdleMinutes = m) } },
         onScreenClose = { sec -> save("The voice screen closes after ${closeLabel(sec)} of silence") { v.save(screenCloseSeconds = sec) } },
@@ -548,6 +552,23 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
             for (m in s.models) CrundiChip(m.label, m.id == s.model, { if (m.id != s.model) ev.onModel(m.id) })
         }
         Text("Haiku is the quickest and cheapest. A change starts a fresh conversation's cache.", style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp))
+    }
+
+    // ─── Thinking effort (capability "voice-effort") ───
+    if (s.effort.isNotEmpty() && s.efforts.isNotEmpty()) {
+        val cur = s.models.firstOrNull { it.id == s.model }
+        val takes = cur?.efforts?.takeIf { it.isNotEmpty() } ?: s.efforts
+        Fold(CruSection.EFFORT, "Thinking effort", effortLabel(s.effort), open) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (e in takes) CrundiChip(effortLabel(e), e == s.effort, { if (e != s.effort) ev.onEffort(e) })
+            }
+            Text(
+                "How hard Cru thinks before it answers: lower is faster and cheaper, higher is more thorough. " +
+                    (cur?.label ?: "This model") + " takes every level" + (cur?.apiDefaultEffort?.takeIf { it.isNotEmpty() }?.let { " (its own default is $it; Cru runs at low unless you choose)" } ?: "") +
+                    ". You can also ask Cru to change it.",
+                style = CrundiType.Small, modifier = Modifier.padding(top = 8.dp),
+            )
+        }
     }
 
     // ─── The voice (D19, D34) ───
@@ -931,3 +952,8 @@ fun closeLabel(sec: Int): String = if (sec < 60) "$sec s" else if (sec % 60 == 0
 
 /** A talking speed as shown: "Normal", "1.15×". */
 fun rateLabel(r: Double): String = if (kotlin.math.abs(r - 1.0) < 0.01) "Normal" else ("%.2f".format(java.util.Locale.US, r).trimEnd('0').trimEnd('.') + "×")
+
+/** A thinking effort as Settings shows it. */
+private fun effortLabel(e: String): String = when (e) {
+    "low" -> "Low (quickest)"; "medium" -> "Medium"; "high" -> "High"; "xhigh" -> "Extra high"; "max" -> "Max (most thorough)"; else -> e
+}

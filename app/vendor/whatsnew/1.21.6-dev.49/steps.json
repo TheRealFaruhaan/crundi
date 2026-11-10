@@ -53,6 +53,22 @@
       ],
       "art": "parked-peek.html",
       "artTitle": "Chats"
+    },
+    {
+      "id": "cru-thinking-effort",
+      "tag": "Voice",
+      "title": "Choose how hard Cru thinks",
+      "body": "Settings, Voice assistant has a Thinking effort, from Low (quickest and cheapest) to Max (most thorough), for whichever model Cru uses. You can also just ask Cru to change it; it asks first.",
+      "keys": [
+        {
+          "keys": [
+            "Thinking effort"
+          ],
+          "text": "Low, Medium, High, Extra high or Max"
+        }
+      ],
+      "art": "cru-effort.html",
+      "artTitle": "Voice"
     }
   ]
 }

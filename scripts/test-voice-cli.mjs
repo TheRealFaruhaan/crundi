@@ -231,5 +231,21 @@ const make = (fake, extra = {}) => createCliVoiceAgent({
   vs.updateSettings({ brain: 'api' });
 }
 
+// ─── the owner's thinking effort: a change starts Claude Code again with it ───
+{
+  const fake = fakeClaude(async () => ({ text: 'Yes, Sir.' }));
+  const ea = make(fake);
+  vs.updateSettings({ effort: 'low' });
+  await ea.warm();
+  vs.updateSettings({ effort: 'high' });
+  await ea.warm();
+  const at = (p, f) => p.args[p.args.indexOf(f) + 1];
+  ok(fake.procs.length === 2 && at(fake.procs[0], '--effort') === 'low' && at(fake.procs[1], '--effort') === 'high', 'a new thinking effort: Claude Code starts again with it');
+  await ea.warm();
+  ok(fake.procs.length === 2, 'and only when it changes');
+  vs.updateSettings({ effort: 'low' });
+  ea.stop?.();
+}
+
 console.log(failed ? `\n${failed} failed` : '\nAll passed');
 process.exit(failed ? 1 : 0);

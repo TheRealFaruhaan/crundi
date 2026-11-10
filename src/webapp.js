@@ -5277,7 +5277,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         model: body.model, monthlyLimitUsd: body.monthlyLimitUsd, deepgramLimitUsd: body.deepgramLimitUsd,
         anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
         ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs, speechRate: body.speechRate, volume: body.volume,
-        brain: body.brain, screenCloseSeconds: body.screenCloseSeconds, cliIdleMinutes: body.cliIdleMinutes,
+        brain: body.brain, screenCloseSeconds: body.screenCloseSeconds, cliIdleMinutes: body.cliIdleMinutes, effort: body.effort,
         adminMode: typeof body.adminMode === 'boolean' ? body.adminMode : undefined,
         ownerOnly: typeof body.ownerOnly === 'boolean' ? body.ownerOnly : undefined,
         kidVoice: body.kidVoice, kidSpeechRate: body.kidSpeechRate, kidGames: body.kidGames, kidChattiness: body.kidChattiness, kidPauseMs: body.kidPauseMs,
