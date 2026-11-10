@@ -21,7 +21,7 @@
 
 /** What may be ticked, and the tools each covers. */
 export const AWAY_CLASSES = {
-  chats: { label: 'Message, start, park and resume Claude chats', tools: ['send_to_chat', 'start_chat', 'park_chat', 'resume_chat'] },
+  chats: { label: 'Message, start, park, resume and close Claude chats (a chat is closed only after Cru has read it)', tools: ['send_to_chat', 'start_chat', 'park_chat', 'resume_chat'] },
   kanban: { label: 'Add, change and move kanban cards (never to To do)', tools: ['add_kanban_task', 'update_kanban_task', 'move_kanban_task', 'add_kanban_todo', 'check_kanban_todo'] },
   notes: { label: 'Write notes and mindmap nodes', tools: ['create_note', 'append_to_note', 'add_mindmap_node', 'update_mindmap_node'] },
   services: { label: 'Start, stop and restart services', tools: ['service_control'] },
@@ -54,6 +54,29 @@ export function awayAllows(tool, input = {}, away = {}) {
   if (tool === 'start_chat' && input.mode === 'bypass') return false;
   if (tool === 'service_control' && input.op === 'stop') return false;
   return true;
+}
+
+/**
+ * May Cru close a chat without asking (10 Nov 2026, the owner: the yes for
+ * closing was a nuisance)? With "Cru on its own" on and chats ticked, yes,
+ * attended or not, once it has read what the chat is doing ([readFresh]).
+ * Without that read it asks as before.
+ */
+export function closeAllowed(away = {}, readFresh = false) {
+  return !!(away && away.on === true && (away.allow || []).includes('chats') && readFresh);
+}
+
+/** How recently Cru must have read a chat (read_chat) to close it on its own. */
+export const CLOSE_READ_MS = 15 * 60 * 1000;
+
+/** The chats Cru has read (read_chat), and when: what closing on its own checks. */
+export function createChatReads({ now = () => Date.now(), freshMs = CLOSE_READ_MS } = {}) {
+  const at = new Map();
+  return {
+    mark(id) { if (id) at.set(String(id), now()); if (at.size > 500) at.delete(at.keys().next().value); },
+    fresh(id) { const t = at.get(String(id || '')); return !!t && now() - t < freshMs; },
+    forget(id) { at.delete(String(id || '')); },
+  };
 }
 
 /** Clean an away setting from a request. */

@@ -110,7 +110,7 @@ import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
 import { selfNote as voiceSelfNote, capCheck as voiceCapCheck, ROUTINES_DIR as VOICE_ROUTINES_DIR } from './voice/reflect.js';
 import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, ADMIN_FOLLOW_MS as VOICE_ADMIN_FOLLOW_MS, trimSilence as trimVoiceSilence } from './voice/speaker.js';
 import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
-import { createOwnerAsks, createDailyLog, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
+import { createOwnerAsks, createDailyLog, createChatReads, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
 import { createJobStore, jobToolDefs } from './voice/jobs.js';
 import { createAttachmentStore, attachmentToolDefs, attachmentLine, passOn as passOnAttachments, MAX_FILE as CRU_ATTACH_MAX } from './voice/attachments.js';
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
@@ -2743,8 +2743,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // tools over this server's state. Owner only — collaborators never reach
   // /api/voice/* (not in their allowlist).
   const allProjects = () => Object.values(listProjects()).map(p => ({ alias: p.alias, name: p.name || p.alias, path: p.path }));
+  // The chats Cru has read (read_chat): with "Cru on its own" chats ticked, it may close those without a yes.
+  const cruChatReads = createChatReads();
   const voiceTools = makeVoiceTools({
     listProjects: allProjects,
+    onReadChat: (id) => cruChatReads.mark(id),
     // Widgets (list_widgets, view_widget): the ones in each project and the
     // global ones once; a view is widget_render's screenshots and checks.
     widgets: {
@@ -3143,6 +3146,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
     createChat: (alias, opts) => claudeUi.create(alias, opts),
     markStarted: cruMarkStarted,
+    chatRead: (id) => cruChatReads.fresh(id),
+    chatReadForget: (id) => cruChatReads.forget(id),
     // A chat's question or permission prompt, answered by Cru (the card says so).
     respondChat: (id, answer) => claudeUi.respond(id, answer),
     cruRuns: cruRunsChat,

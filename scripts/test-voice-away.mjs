@@ -111,6 +111,51 @@ ok(jobPrompt({ title: 'T' }).includes('summary'), 'the chat is asked to end with
 jobs.add({ project: 'p', taskId: 't2', title: 'Two', chatId: 'c3' });
 ok(jobs.pauseAll() === 1 && jobs.list()[0].status === 'paused', 'stop everything pauses jobs');
 
+// ─── closing a chat on its own (10 Nov): chats ticked, and read first ───
+{
+  let clock = 1000;
+  const reads = A.createChatReads({ now: () => clock });
+  const closed = [], acted = [];
+  let away = { on: true, allow: ['chats'] };
+  let unattended = false;
+  const cctx = { pending: createPending(), locked: () => false, unrecognised: () => false, unattended: () => unattended, away: () => away };
+  const cdeps = {
+    listProjects: () => [{ alias: 'p' }], projectsDir: () => '',
+    chats: () => [{ id: 'c9', title: 'Old fix', project: 'p', status: 'idle' }],
+    closeChat: async (id) => { closed.push(id); return { ok: true }; },
+    chatRead: (id) => reads.fresh(id), chatReadForget: (id) => reads.forget(id),
+    onAwayAct: (tool) => acted.push(tool), askOwner: () => ({ ok: true, id: 'cru-x' }),
+  };
+  const ct = makeActionTools(cdeps, cctx).find((x) => x.name === 'close_chat');
+  let c = await ct.run({ chat: 'c9' });
+  ok(c.needsConfirmation && !closed.length, 'not read yet: closing still asks');
+  reads.mark('c9');
+  c = await ct.run({ chat: 'c9' });
+  ok(c.ok && c.onMyOwn && closed.join() === 'c9' && acted.includes('close_chat'), 'chats ticked and read: closed at once, no yes, logged');
+  ok(!reads.fresh('c9'), 'a closed chat is forgotten');
+  reads.mark('c9'); clock += A.CLOSE_READ_MS + 1;
+  c = await ct.run({ chat: 'c9' });
+  ok(c.needsConfirmation && closed.length === 1, 'read too long ago: asks again');
+  reads.mark('c9'); away = { on: true, allow: ['kanban'] };
+  c = await ct.run({ chat: 'c9' });
+  ok(c.needsConfirmation && closed.length === 1, 'chats not ticked: asks');
+  away = { on: false, allow: ['chats'] };
+  c = await ct.run({ chat: 'c9' });
+  ok(c.needsConfirmation && closed.length === 1, '"Cru on its own" off: asks');
+  away = { on: true, allow: ['chats'] }; unattended = true;
+  c = await ct.run({ chat: 'c9' });
+  ok(c.ok && closed.length === 2, 'unattended (a wake-up) too, once read');
+  cctx.unrecognised = () => true; reads.mark('c9');
+  c = await ct.run({ chat: 'c9' });
+  ok(c.unrecognised && closed.length === 2, 'another voice still changes nothing');
+  ok(A.AWAY_CLASSES.chats.label.includes('close'), 'the "on its own" tick says it covers closing');
+  const VT = await import('../src/voice/tools.js');
+  const seen = [];
+  const rc = VT.makeTools({ listProjects: () => [], chats: () => [], chatHistory: (id) => (id === 'c9' ? { state: 'idle', messages: [] } : null), onReadChat: (id) => seen.push(id) }).find((x) => x.name === 'read_chat');
+  await rc.run({ id: 'c9' });
+  ok(seen.join() === 'c9', 'read_chat records that Cru checked the chat');
+}
+
 // ─── the day's log ───
 const nb = createNotebook(join(dir, 'nb'));
 const log = A.createDailyLog(nb, { now: () => new Date(2026, 10, 9, 14, 5) });

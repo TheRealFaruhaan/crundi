@@ -17,7 +17,8 @@
  *   D15  a message into a chat: sent at once when the owner clearly asked for it
  *        (intent 'explicit'); read back first when the model decided to send
  *        it itself (intent 'inferred'). A long message is read back as one line.
- *   D24  closing a chat; D31 parking one.
+ *   D24  closing a chat (except with "Cru on its own" chats ticked, once Cru has
+ *        read it with read_chat: then at once, logged); D31 parking one.
  *        Answering a chat's question or permission prompt (answer_chat_prompt):
  *        at once when the owner said what to answer (intent 'explicit'), read
  *        back first when Cru decided itself, except where Cru may decide on its
@@ -35,7 +36,7 @@
  */
 
 import { join } from 'node:path';
-import { awayAllows } from './autonomy.js';
+import { awayAllows, closeAllowed } from './autonomy.js';
 import { answerable, pendingLine } from './tools.js';
 
 export const ACTION_TOOL_NAMES = [
@@ -251,11 +252,20 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'close_chat',
-      description: 'Close an open chat, as closing it in the app (its pane goes). Always asks the owner first.',
+      description: 'Close an open chat, as closing it in the app (its pane goes). With chats ticked under "Cru on its own", it closes at once with no yes, once you have checked what the chat is doing with read_chat in the last 15 minutes: read it first, and close only what is done with, idle or no longer wanted, never one working or waiting on the owner unless he asked. Otherwise it asks the owner first.',
       input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
       check: (i) => chat(i.chat),
+      // "Cru on its own" with chats ticked, and the chat read: no yes needed (logged).
+      auto: (i) => { let c; try { c = chat(i.chat); } catch { return null; } return closeAllowed(ctx.away ? ctx.away() : null, !!deps.chatRead?.(c.id)) ? 'away' : null; },
       confirm: (i) => { const c = chat(i.chat); return `Close ${chatName(c)}? It is ${c.status || 'open'}.`; },
-      run: async (i) => { const c = chat(i.chat); const r = await deps.closeChat(c.id); return r && r.ok === false ? r : { ok: true, closed: c.title }; },
+      run: async (i, o = {}) => {
+        const c = chat(i.chat);
+        const r = await deps.closeChat(c.id);
+        if (r && r.ok === false) return r;
+        deps.chatReadForget?.(c.id);
+        if (o.auto) deps.onAwayAct?.('close_chat', i, { ok: true, closed: c.title });
+        return { ok: true, closed: c.title, ...(o.auto ? { onMyOwn: true, say: 'Closed without asking (chats are ticked under "Cru on its own"); tell the owner briefly.' } : {}) };
+      },
     },
     {
       name: 'park_chat',

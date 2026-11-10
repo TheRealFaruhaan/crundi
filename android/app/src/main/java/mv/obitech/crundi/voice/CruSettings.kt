@@ -859,7 +859,7 @@ private fun WakeupsPart(w: WakeupsUi, ev: CruSettingsEvents) {
 private fun AwayPart(a: mv.obitech.crundi.api.VoiceAway, classes: List<mv.obitech.crundi.api.AwayClass>, busy: Boolean, ev: CruSettingsEvents) {
     var confirm by rememberSaveable { mutableStateOf(false) }
     Text(
-        "When nobody is talking to it (a wake-up, the heartbeat, a job it took on), Cru may do what is ticked below without asking. Anything else comes to your phone to approve or decline. Cru can switch this off, never on.",
+        "When nobody is talking to it (a wake-up, the heartbeat, a job it took on), Cru may do what is ticked below without asking. Anything else comes to your phone to approve or decline. With chats ticked, Cru also closes a chat without asking, even while you talk to it, once it has read what the chat is doing. Cru can switch this off, never on.",
         style = CrundiType.Small, modifier = Modifier.padding(bottom = 4.dp),
     )
     Row(verticalAlignment = Alignment.CenterVertically) {

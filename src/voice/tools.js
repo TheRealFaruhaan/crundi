@@ -318,6 +318,8 @@ export function makeTools(deps) {
       run: ({ id, messages = 12 }) => {
         const h = deps.chatHistory(String(id));
         if (!h) throw new Error('No open chat with that id');
+        // Cru has checked what this chat is doing: with "on its own" chats ticked, it may close it without a yes.
+        deps.onReadChat?.(String(id));
         const n = Math.min(40, Math.max(1, Number(messages) || 12));
         const out = [];
         for (const m of (h.messages || []).slice(-n * 3)) {
