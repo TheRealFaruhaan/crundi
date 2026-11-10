@@ -83,19 +83,21 @@ export function fuse(lists, k = RRF_K) {
  * @param {string} o.dir       <dataDir>/voice-memory
  * @param {object} [o.embedder] createEmbedder(); tests pass a fake
  */
-/** A remembered turn ("Owner: …\nCru: …\n<detail>") as its parts. */
+/** A remembered turn ("Owner: …" or "Owner (<device>): …", then "\nCru: …\n<detail>") as its parts. */
 export function splitTurn({ id, at, text }) {
   const s = String(text || '');
   const cut = s.indexOf('\nCru: ');
   let said = cut >= 0 ? s.slice(0, cut) : s;
   const rest = cut >= 0 ? s.slice(cut + 6) : '';
-  said = said.replace(/^Owner: /, '');
+  // "Owner (PC app): …": the device it came from, when recorded (voice/device.js).
+  const from = /^Owner \(([^()\n]*)\): /.exec(said);
+  said = from ? said.slice(from[0].length) : said.replace(/^Owner: /, '');
   const nl = rest.indexOf('\n');
   const speak = nl >= 0 ? rest.slice(0, nl) : rest;
   const show = nl >= 0 ? rest.slice(nl + 1) : '';
   // Cru speaking up unprompted (a report, a ticker, a trigger): not the owner's words.
   const report = /^\[(Report|Ticker|Trigger|Wake)/i.test(said);
-  return { id: Number(id), at: Number(at), said: report ? '' : said, speak, show, report };
+  return { id: Number(id), at: Number(at), said: report ? '' : said, speak, show, report, ...(from ? { device: from[1] } : {}) };
 }
 
 export function createMemoryIndex({ dir, embedder } = {}) {

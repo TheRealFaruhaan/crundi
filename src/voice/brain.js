@@ -18,7 +18,7 @@ export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile =
   const which = () => (settings.getSettings().brain === 'claude-code' && cli ? 'claude-code' : 'api');
   const pick = () => (which() === 'claude-code' ? cli : api);
 
-  function log(r, { report = false, said = '' } = {}) {
+  function log(r, { report = false, said = '', device = '' } = {}) {
     if (!logFile || !r) return;
     const s = settings.getSettings();
     const line = {
@@ -27,6 +27,8 @@ export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile =
       model: s.model,
       ok: !!r.ok,
       report,
+      // Where it was said (voice/device.js), failed and cancelled turns too.
+      ...(device ? { device } : {}),
       ms: r.ms || 0,
       apiMs: r.apiMs || 0,
       rounds: r.rounds || 0,
@@ -68,7 +70,7 @@ export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile =
 
   return {
     get which() { return which(); },
-    turn: (text, opts = {}) => timed(() => pick().turn(text, opts), { said: text }).then(afterTurn),
+    turn: (text, opts = {}) => timed(() => pick().turn(text, opts), { said: text, device: opts.device || '' }).then(afterTurn),
     report: (note, opts = {}) => timed(() => pick().report(note, opts), { report: true, said: note }).then(afterTurn),
     /** Cru's own wish: 'compact' (summarise everything) or 'fresh' (only [summary] goes on). */
     requestAfterTurn(kind, summary = '') { next = { kind: kind === 'fresh' ? 'fresh' : 'compact', summary: String(summary || '').slice(0, 4000) }; },

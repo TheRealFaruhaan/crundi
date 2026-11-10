@@ -247,7 +247,7 @@ export function createCliVoiceAgent({
     });
   }
 
-  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', device = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     if (busy) return { ok: false, error: 'Still answering the last request' };
@@ -270,7 +270,7 @@ export function createCliVoiceAgent({
       const note = cancelledNote; cancelledNote = '';
       let tn = '';
       try { tn = String(turnNote() || '').trim(); } catch { tn = ''; }
-      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker, confirmOk });
+      const ctx = context ? context({ now, where, device, locked, unrecognised, speaker }) : contextLine({ now, where, device, locked, unrecognised, speaker, confirmOk });
       try { r = await ask(model, `${lead}${note}${ctx}${tn ? `\n${tn}` : ''}\n${said}`); }
       catch (e) { return { ok: false, error: String(e.message || e) }; }
       const tools = r.tools;
@@ -283,7 +283,7 @@ export function createCliVoiceAgent({
       const parts = splitReply(reply);
       const u = res.usage || {};
       const cache = { read: u.cache_read_input_tokens || 0, written: u.cache_creation_input_tokens || 0, uncached: u.input_tokens || 0 };
-      try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, at: now.getTime() }); } catch { /* best effort */ }
+      try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, device: report ? '' : device, at: now.getTime() }); } catch { /* best effort */ }
       return {
         ok: true, ...parts, tools, costUsd: r.cost || 0, cache,
         pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close,

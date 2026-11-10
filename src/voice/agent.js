@@ -130,6 +130,7 @@ What you can and cannot do:
 How you learn to be:
 - Your manner is the owner's to shape. ${PERSONA_FILE} holds how they want you to behave: tone, length, how formal, words to use or avoid, habits, what annoys them. When they tell you how to be, or correct or react to how you answered ("shorter", "stop saying that", "I liked that"), update it then and there with the memory tool: short bullet points in their terms, changing what changed rather than piling up. Notice patterns too: if they keep cutting you off or asking for less, note it.
 - Routines are your own procedures. After a turn that took many steps, or found the way past a failure, you get a short nudge to save it; do it when it may come up again, and patch an existing routine rather than writing a near copy. When the owner asks for the same multi-step thing a second time (a morning check, a release, a tidy-up of finished chats), save how you did it as /memories/routines/<short-name>.md: the first line says when to use it (the words he uses for it), then the steps in order (which tools, what to look at, what to say). Your routines are listed at the start of each conversation; when one fits, read it and follow it, and improve it whenever you find a better way. Delete one he no longer wants.
+- The context line says which device each request came from ("from: PC app", a web browser, his Android phone's Cru screen, bubble or side-key overlay), and the conversation you search with memory_search keeps it with what he said ("Owner (PC app): …"). Asked where something came from, answer from that; older turns may have no device recorded.
 - You can tell the owner's voice from others. Once he has enrolled it (Settings, Voice assistant, Your voice: a few phrases read aloud), every spoken request is checked on the server against it, and the context line says who spoke: his voice recognised, a voice not recognised, too short to tell, typed (always him: he is signed in), or that no voice is enrolled yet. With "Only act on my voice" on, an unrecognised speaker gets answers but no changes. Asked whether you can tell who is speaking, answer from that line; if no voice is enrolled, say so and offer to walk him through enrolling.
 - Your two files about the owner have limits: persona.md (how he wants you to be) 3000 characters, owner.md (facts about him: routines, people, his words for things, what he wants first) 2500. When one is full, merge and prune it rather than adding; at each compaction you also rewrite both from what the conversation taught.
 - Keep getting better at being his. As you work together, learn the owner, not just his instructions: how he talks and the words he uses for things (his names for projects, chats and people, his shorthand), what he asks for often and when (a morning check, the same few projects), what he cares about first, what he never wants. Write what lasts to your notebook as you notice it (manner in persona.md; facts about him, his routines and his projects in other files), keep it current (change or remove a rule that no longer fits rather than adding a contradicting one), and use it: answer in his terms, anticipate the usual next step, and set up a ticker or trigger yourself for something he keeps asking about. When you are unsure which of two ways he prefers, ask once, briefly, at a natural moment, then remember the answer. Never note secrets.
@@ -173,9 +174,9 @@ export function splitReply(text) {
 }
 
 /** The volatile context that goes in front of what the owner said. */
-export function contextLine({ now = new Date(), where = '', locked = false, unrecognised = false, speaker = '', admin = voiceSettings.adminOn(), confirmOk = false } = {}) {
+export function contextLine({ now = new Date(), where = '', device = '', locked = false, unrecognised = false, speaker = '', admin = voiceSettings.adminOn(), confirmOk = false } = {}) {
   const when = now.toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `[${when}${speaker ? ` · ${speaker}` : ''}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the device is locked (the phone, or the PC lock screen): answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? (confirmOk ? ' · too short to tell whose voice, but you asked the owner a question moments ago: if this answers it (yes or no), call confirm_action or cancel_action for it (the server checks it may); change nothing else' : ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are') : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
+  return `[${when}${speaker ? ` · ${speaker}` : ''}${device ? ` · from: ${device}` : ''}${where ? ` · the owner is looking at: ${where}` : ''}${locked ? ' · the device is locked (the phone, or the PC lock screen): answer, but anything that would change something needs the owner to unlock first' : ''}${unrecognised ? (confirmOk ? ' · too short to tell whose voice, but you asked the owner a question moments ago: if this answers it (yes or no), call confirm_action or cancel_action for it (the server checks it may); change nothing else' : ' · the speaker was not recognised as the owner: answer questions, but change nothing, and if asked to, say you couldn\'t recognise who they are') : ''}${admin ? ' · ADMIN MODE IS ON: run_command and write_file work, without confirmation' : ''}]`;
 }
 
 /**
@@ -322,7 +323,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * One spoken (or typed) request.
    * @returns {Promise<{ok:boolean, speak?:string, show?:string, tools?:string[], costUsd?:number, error?:string, limitReached?:boolean}>}
    */
-  async function turn(text, { where = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', device = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     const s = settings.getSettings();
@@ -354,7 +355,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
       start = history.length;
       let note = '';
       try { note = String(turnNote() || '').trim(); } catch { note = ''; }
-      const ctx = context ? context({ now, where, locked, unrecognised, speaker }) : contextLine({ now, where, locked, unrecognised, speaker, confirmOk });
+      const ctx = context ? context({ now, where, device, locked, unrecognised, speaker }) : contextLine({ now, where, device, locked, unrecognised, speaker, confirmOk });
       history.push({ role: 'user', content: `${history.length ? '' : personaNote()}${ctx}${note ? `\n${note}` : ''}\n${said}` });
       settings.countTurn(now);
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -389,7 +390,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
           return { ok: false, error: 'The answer ran out of room before it was finished', tools: used, costUsd: cost, cache };
         }
         const parts = splitReply(reply);
-        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, at: now.getTime() }); } catch { /* memory is best effort */ }
+        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, device: report ? '' : device, at: now.getTime() }); } catch { /* memory is best effort */ }
         return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };

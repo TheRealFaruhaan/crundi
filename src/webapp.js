@@ -100,6 +100,7 @@ import { makeTools as makeVoiceTools, pendingLine as cruPendingLine, answerable 
 import { createVoiceAgent } from './voice/agent.js';
 import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
 import { createVoiceMemory } from './voice/memory.js';
+import { voiceDevice } from './voice/device.js';
 import { createCliVoiceAgent } from './voice/agent-cli.js';
 import { createVoiceBrain } from './voice/brain.js';
 import { transcribe as voiceTranscribe } from './voice/stt.js';
@@ -5519,7 +5520,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const said = lead ? `${lead}\n${spoken || '(nothing said: look at what was attached and respond to it)'}` : spoken;
       const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
       // A resend of the same turn (requestId) gets that turn's result; a turn that finds Cru busy waits its turn (voice/turns.js).
-      const r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }));
+      // Which device it came from (voice/device.js): in Cru's context line and kept with the turn.
+      const where = String(body.where || '').slice(0, 200);
+      const device = voiceDevice({ kind: clientVersion.identifyClient(req).kind, where, ua: req.headers['user-agent'] }).label;
+      const r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where, device, locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }));
       if (r && r.ok) r.speaker = rules.speaker;
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;

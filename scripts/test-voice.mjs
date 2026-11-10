@@ -709,8 +709,37 @@ const T = Object.fromEntries(tools.map(t => [t.name, t]));
   ok(summarised && (await ix.search('usage several times')).results.some(r => r.kind === 'summary'), 'the summary is searchable');
   ok((await ix.search('usage is left')).results.some(r => r.kind === 'turn'), 'and so are the turns before it');
   ok(a1.toolNames.includes('memory') && a1.toolNames.includes('memory_search'), 'the notebook and search are tools');
+  // The device each request came from (voice/device.js): in the context line, kept with the turn.
+  {
+    const seenCtx = [];
+    const a3 = mkA({ tools: [], settings: fakeS, client: () => ({ messages: { create: async (req) => { seenCtx.push(JSON.stringify(req.messages)); return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'No what, Sir?' }], usage: {} }; } } }), onTurnDone: (t) => vm.remember(t) });
+    await a3.turn('No.', { where: 'side key', device: 'Android phone, the side-key assistant overlay' });
+    ok(/from: Android phone, the side-key assistant overlay/.test(seenCtx[0] || ''), 'the context line says which device the request came from');
+    const last = vm.turns({ limit: 1 })[0];
+    ok(last && last.said === 'No.' && last.device === 'Android phone, the side-key assistant overlay', 'the turn is kept with its device, and read back without it in the words');
+    ok((await ix.search('side-key overlay')).results.some(r => r.kind === 'turn' && /Owner \(Android phone, the side-key assistant overlay\): No\./.test(r.text)), 'memory_search finds where it came from');
+    ok(!('device' in vm.turns({ limit: 50 }).find(t => /usage is left/.test(t.said))), 'a turn from before has no device');
+  }
   // Windows cannot delete an open database: close them before the temp folder goes.
   ix.close(); noModel.close();
+}
+
+// ─── which device a request came from ───
+{
+  const { voiceDevice, browserOf } = await import('../src/voice/device.js');
+  const { identifyClient } = await import('../src/client-version.js');
+  const kind = (ua, h = {}) => identifyClient({ headers: { 'user-agent': ua, ...h }, url: '/api/voice/turn' }).kind;
+  const ANDROID = 'okhttp/4 CrundiAndroid/1.40.0 (play)';
+  const PC = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Crundi/1.40.0 Chrome/130.0 Electron/33.0 Safari/537.36';
+  const CHROME = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
+  const PHONE_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  ok(voiceDevice({ kind: kind(ANDROID), where: 'side key, phone locked' }).id === 'android-overlay', 'the Android side-key overlay (locked too)');
+  ok(voiceDevice({ kind: kind(ANDROID), where: 'Cru bubble' }).id === 'android-bubble', 'the Android bubble');
+  ok(voiceDevice({ kind: kind(ANDROID), where: 'Cru' }).label === 'Android phone, the Cru screen in the app', 'the Android app\'s Cru screen');
+  ok(voiceDevice({ kind: kind(PC), where: 'web (localhost:4100)', ua: PC }).label === 'PC app', 'the PC app, from the User-Agent Electron writes');
+  ok(voiceDevice({ kind: kind(CHROME, { 'x-crundi-web': '1.40.0' }), where: 'web (dev.faruhaan.com)', ua: CHROME }).label === 'web browser, Chrome on Windows', 'a web browser, and which');
+  ok(voiceDevice({ kind: kind(PHONE_SAFARI), where: 'web (dev.faruhaan.com)', ua: PHONE_SAFARI }).label === 'web browser, Safari on iPhone', 'a page with no version header is still the web, from where');
+  ok(voiceDevice({ kind: '', where: '' }).id === 'unknown' && browserOf('') === '', 'a caller that says nothing: unknown');
 }
 
 // ─── access ───
