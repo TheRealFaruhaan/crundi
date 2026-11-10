@@ -198,5 +198,18 @@ function setup({ cards, own = false, admin = false, unattended = false, unrecogn
   ok(/Never say ids, hashes, codes or full version strings aloud/.test(SYSTEM_PROMPT) && /after ---/.test(SYSTEM_PROMPT), 'and never to read ids, hashes or versions aloud: those go on screen');
 }
 
+// ─── Cru's default instructions: autonomous (10 Nov) ───
+{
+  const { SYSTEM_PROMPT: SP } = await import('../src/voice/agent.js');
+  const { DEFAULT_PERSONA: DP } = await import('../src/voice/persona-default.js');
+  ok(/Be autonomous/.test(SP) && /needs no "shall I\?"/.test(SP), 'the obvious next step is done, not asked about');
+  ok(/real decisions, anything risky, builds and releases/.test(SP) && /Never bring him trivia/.test(SP), 'housekeeping is Cru\'s; only real decisions go to the owner');
+  ok(/read it first \(read_chat\)/.test(SP), 'a chat is read before it is closed');
+  ok(/"ask me first", not "never touch it"/.test(SP), 'a project he keeps control of: ask first, not never');
+  ok(/queued and answered next/.test(SP), 'what he says while Cru is busy is queued, never refused');
+  ok(/write it into persona\.md .* or owner\.md .* at once/.test(SP), 'a rule he sets is written to memory at once');
+  ok(DP.length <= 3000 && /needs no "shall I\?"/.test(DP), 'the starting persona says so too, and fits its 3000-character limit (' + DP.length + ')');
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);
