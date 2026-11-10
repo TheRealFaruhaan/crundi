@@ -213,6 +213,11 @@ export const CAPABILITIES = Object.freeze([
   // tap on Cru's page, answered as a turn), and { type: 'screen', screen } on
   // /api/voice/listen whenever it changes (screen null: gone).
   'voice-screen',
+  // Cru's UI over the whole content area of the Cru screen: `full: true` on
+  // the screen (show_screen / update_screen full), the bottom bar kept; the
+  // top bar's button POSTs /api/voice/screen/normal (back to the normal view,
+  // the content kept as the panel). Older clients just show the panel.
+  'voice-screen-full',
   // Kid mode (voice/kid.js): GET /api/voice/kid, POST /api/voice/kid/pin
   // { pin } | { remove }, /kid/start { by }, /kid/exit { pin } (429 locked),
   // /kid/play (game events -> { reflex }), GET /kid/progress?range=&area=,

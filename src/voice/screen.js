@@ -18,6 +18,8 @@
  *     doc?: string,                    html (or a game) wrapped for that frame: CSP, kit, bridge
  *     game?: { id, options },          a built-in game (kid-games.js), in doc
  *     video?: { kind: 'video'|'playlist', id, title, embed },   play_video only
+ *     full?: true,                     Cru's UI takes the whole content area (the bottom bar stays);
+ *                                      the owner's top-bar button goes back to the normal view (normal())
  *     kid: boolean,                    set while kid mode was on
  *     rev: number, at: ms
  *   }
@@ -142,6 +144,7 @@ export function screenDoc(body, { title = '', kid = false } = {}) {
 export function createScreen({ file = '', onChange = () => {}, kid = () => false, gameDoc = null } = {}) {
   let state = null;
   let rev = 0;
+  let normalAt = 0;
   try { if (file && existsSync(file)) { const s = JSON.parse(readFileSync(file, 'utf-8')); state = s && s.screen ? s.screen : null; rev = Number(s && s.rev) || 0; } } catch { state = null; }
 
   const persist = () => {
@@ -178,19 +181,19 @@ export function createScreen({ file = '', onChange = () => {}, kid = () => false
   return {
     get: view,
     /** show_screen: the whole panel at once. */
-    show({ title = '', blocks = [], html = '' } = {}) {
+    show({ title = '', blocks = [], html = '', full = false } = {}) {
       const isKid = !!kid();
       const b = blocksOf(blocks, isKid);
       const h = cleanHtml(html);
       if (!b.length && !h.trim() && !String(title).trim()) throw new Error('Nothing to show: give a title, blocks or html');
-      return commit({ title: clipText(title, 200), blocks: b, ...(h.trim() ? { html: h } : {}), kid: isKid });
+      return commit({ title: clipText(title, 200), blocks: b, ...(h.trim() ? { html: h } : {}), ...(full === true && !isKid ? { full: true } : {}), kid: isKid });
     },
     /**
      * update_screen: a patch to what is shown.
      *   title, html ('' removes it), replace: [block with id], append: [{id, items}],
-     *   add: [block], remove: [id]
+     *   add: [block], remove: [id], full: true|false (the whole content area, or back to the panel)
      */
-    update({ title, html, replace = [], append = [], add = [], remove = [] } = {}) {
+    update({ title, html, replace = [], append = [], add = [], remove = [], full } = {}) {
       if (!state) throw new Error('Nothing is on the live screen; use show_screen first');
       if (state.video || state.game) throw new Error('A video or a game is on the screen; use show_screen (or start_game) to replace it');
       const isKid = !!kid();
@@ -217,6 +220,7 @@ export function createScreen({ file = '', onChange = () => {}, kid = () => false
       if (gone.size) next.blocks = next.blocks.filter((b) => !gone.has(b.id));
       if (next.blocks.length > MAX_BLOCKS) throw new Error(`At most ${MAX_BLOCKS} blocks`);
       next.kid = state.kid || isKid;
+      if (full !== undefined) { if (full === true && !next.kid) next.full = true; else delete next.full; }
       return commit(next);
     },
     /** A built-in game (start_game). */
@@ -227,6 +231,21 @@ export function createScreen({ file = '', onChange = () => {}, kid = () => false
     },
     /** A video (play_video): only ever built by the server from an approved id. */
     video(v) { return commit({ title: clipText(v.title, 200), blocks: [], video: v, kid: !!kid() }); },
+    /**
+     * The owner's top-bar button while Cru's UI has the whole content area:
+     * back to the normal view, what Cru showed kept as the usual panel.
+     * Answers false when nothing was taken over.
+     */
+    normal() {
+      if (!state || !state.full) return false;
+      const next = { ...state };
+      delete next.full;
+      normalAt = Date.now();
+      commit(next);
+      return true;
+    },
+    /** When the owner last went back to the normal view (ms, 0: never). */
+    get normalAt() { return normalAt; },
     /** clear_screen, the owner's X, kid mode starting or ending. */
     clear() { if (!state) return null; return commit(null); },
     get rev() { return rev; },
@@ -242,16 +261,20 @@ export function makeScreenTools(screen) {
   return [
     {
       name: 'show_screen',
-      description: 'Put something on the live screen: one panel on the voice screen that stays up until the owner closes it or you clear it. For what is better seen than heard (lists, status, comparisons, steps, a table, progress). Give blocks (drawn in Crundi\'s style; give a block an id to change it later) and/or html (your own page in a sandboxed frame with no network: inline CSS and JS only, pictures as data: URLs; up to 200 KB; window.cru.say(text) speaks, window.cru.tell(text) sends you what was tapped). Replaces what was there. Keep the spoken reply short; the screen carries the detail.',
+      description: 'Put something on the live screen: one panel on the voice screen that stays up until the owner closes it or you clear it. For what is better seen than heard (lists, status, comparisons, steps, a table, progress). Give blocks (drawn in Crundi\'s style; give a block an id to change it later) and/or html (your own page in a sandboxed frame with no network: inline CSS and JS only, pictures as data: URLs; up to 200 KB; window.cru.say(text) speaks, window.cru.tell(text) sends you what was tapped). Replaces what was there. full: true takes over the whole content area for your own UI (the owner can always go back to the normal view). Keep the spoken reply short; the screen carries the detail.',
       input_schema: {
         type: 'object', additionalProperties: false,
         properties: {
           title: { type: 'string', description: 'The panel\'s title' },
           blocks: { type: 'array', items: blockSchema },
           html: { type: 'string', description: 'Optional: your own page (fragment or whole document)' },
+          full: { type: 'boolean', description: 'true: take over the whole content area of the Cru screen (the conversation and the orb make way; the bottom bar to type or speak stays). For your own UI that needs the room: a dashboard, a board, a game, a form, a walkthrough. The owner can go back to the normal view at any time with the button on the top bar; what you showed then stays as the usual panel. Not in kid mode (the kid screen is already whole).' },
         },
       },
-      run: (input = {}) => { const s = screen.show(input); return { ok: true, shown: true, rev: s.rev, blocks: s.blocks.length, html: !!s.html }; },
+      run: (input = {}) => {
+        const s = screen.show(input);
+        return { ok: true, shown: true, rev: s.rev, blocks: s.blocks.length, html: !!s.html, ...(s.full ? { full: true, note: 'The owner can leave the full view at any time from the top bar; your spoken or written reply still reaches him under it.' } : {}) };
+      },
     },
     {
       name: 'update_screen',
@@ -265,9 +288,10 @@ export function makeScreenTools(screen) {
           append: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, items: { type: 'array', items: {} }, rows: { type: 'array', items: {} } }, required: ['id'] }, description: 'Items (or table rows) to add to the block with that id' },
           add: { type: 'array', items: blockSchema, description: 'New blocks at the end' },
           remove: { type: 'array', items: { type: 'string' }, description: 'Ids of blocks to remove' },
+          full: { type: 'boolean', description: 'true: the whole content area (as show_screen full); false: back to the normal panel. Leave it out to keep it as it is. If the owner went back to the normal view himself, take it over again only when he asks.' },
         },
       },
-      run: (input = {}) => { const s = screen.update(input); return { ok: true, rev: s.rev, blocks: s.blocks.length }; },
+      run: (input = {}) => { const s = screen.update(input); return { ok: true, rev: s.rev, blocks: s.blocks.length, full: !!s.full }; },
     },
     {
       name: 'clear_screen',

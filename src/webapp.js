@@ -5296,6 +5296,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       voiceScreen.clear();
       return json(res, { ok: true, screen: null });
     }
+    // The owner's top-bar button while Cru's UI has the whole content area
+    // (capability 'voice-screen-full'): back to the normal view on every
+    // screen, what Cru showed kept as the usual panel.
+    if (path === '/api/voice/screen/normal' && req.method === 'POST') {
+      voiceScreen.normal();
+      return json(res, { ok: true, screen: voiceScreen.get() });
+    }
     // Something tapped on Cru's own page (window.cru.tell): Cru hears it, as a
     // tap and never as the owner speaking, so it changes nothing.
     if (path === '/api/voice/screen/event' && req.method === 'POST') {

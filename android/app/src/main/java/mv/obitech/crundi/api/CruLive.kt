@@ -30,6 +30,8 @@ data class LiveScreen(
     val video: ScreenVideo? = null,
     /** Shown while kid mode was on. */
     val kid: Boolean = false,
+    /** Cru's UI takes the whole content area (capability "voice-screen-full"); the top bar's "Normal view" goes back. */
+    val full: Boolean = false,
     val rev: Long = 0,
 ) {
     /** The video's player address, only when it is a youtube-nocookie embed (anything else is not shown). */
@@ -50,6 +52,7 @@ data class LiveScreen(
                 game = (o["game"] as? JsonObject)?.ls("id").orEmpty(),
                 video = v?.let { ScreenVideo(it.ls("kind"), it.ls("id"), it.ls("title"), it.ls("embed")) },
                 kid = (o["kid"] as? JsonPrimitive)?.booleanOrNull == true,
+                full = (o["full"] as? JsonPrimitive)?.booleanOrNull == true,
                 rev = (o["rev"] as? JsonPrimitive)?.longOrNull ?: 0,
             )
             return s
@@ -345,6 +348,9 @@ class KidApi internal constructor(private val rpc: Rpc, private val transport: T
 
     /** The X: the panel goes for every screen. */
     suspend fun closeScreen() { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/screen/close", json = Uploads.toJson(emptyMap<String, Any?>()))) } }
+
+    /** "Normal view": out of Cru's full UI for every screen, the content kept as the panel (only ever shown when the server sent full). */
+    suspend fun normalScreen() { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/screen/normal", json = Uploads.toJson(emptyMap<String, Any?>()))) } }
 
     /** Something tapped on Cru's page (cru.tell): answered as a turn. */
     suspend fun screenEvent(text: String): VoiceReply {

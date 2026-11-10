@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -154,18 +155,24 @@ fun VoiceScreen(
         modifier.fillMaxSize().background(CrundiColors.BgPrimary),
     ) {
         Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            TopRow(ui, phase, more, onClose)
+            val kidOn = ui.kid?.on == true
+            // Cru's live screen (capability "voice-screen"); full: its UI over the whole content area ("voice-screen-full").
+            val live = ui.screen?.takeIf { !kidOn && !it.kid }
+            val full = live?.full == true
+            TopRow(ui, phase, more, onClose, full)
             // The usage, right under the top row (a phone has no room beside the mark).
             UsageLegend(arcs)
             // Kid mode runs on the PC: a note here, with the parent's controls; its screen is not drawn on the phone.
-            val kidOn = ui.kid?.on == true
             ui.kid?.takeIf { it.on }?.let { KidOnNote(it, more.live.onKid) }
-            // Cru's live screen (capability "voice-screen").
-            val live = ui.screen?.takeIf { !kidOn && !it.kid }
             val liveVolume = mv.obitech.crundi.api.volumeGain(ui.spend?.volume)
             val referer = if (ui.server.isNotEmpty()) "https://" + ui.server else ""
             val chatView = ui.chat && VoiceApi.HISTORY in ui.caps
-            if (chatView) {
+            if (live != null && full) {
+                // Cru's own UI has the whole content area; the bottom bar stays, the top bar's "Normal view" goes back.
+                LivePanel(live, liveVolume, ui.gameCommand, more.live, chat = false, modifier = Modifier.fillMaxWidth().weight(1f), referer = referer, full = true)
+                if (ui.needsMic || ui.blocked.isNotEmpty()) Words(ui, phase, onAllowMic, onCancel, Modifier.padding(bottom = 4.dp))
+                else FullCaption(ui)
+            } else if (chatView) {
                 if (live != null) LivePanel(live, liveVolume, ui.gameCommand, more.live, chat = true, modifier = Modifier.fillMaxWidth(), referer = referer)
                 ChatList(ui, more, Modifier.fillMaxWidth().weight(1f).padding(top = 8.dp), sent)
                 if (ui.needsMic || ui.blocked.isNotEmpty()) Words(ui, phase, onAllowMic, onCancel, Modifier.padding(bottom = 4.dp))
@@ -242,19 +249,48 @@ class VoiceMore(
 /** Where a file for Cru comes from. */
 enum class AttachSource { Camera, Media, Files }
 
+/** Under Cru's full UI: its latest words (a typed reply is read, not said) and any notice, a few lines at most. */
 @Composable
-private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Unit) {
+private fun FullCaption(ui: VoiceUi) {
+    val s = ui.state
+    val line = s.notice.ifEmpty { s.reply }
+    if (line.isEmpty()) return
+    Text(
+        line, style = CrundiType.Small.copy(color = if (s.notice.isNotEmpty()) CrundiColors.Yellow else CrundiColors.TextSecondary),
+        textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp, start = 8.dp, end = 8.dp),
+    )
+}
+
+/** The top bar's way out of Cru's full UI: always there while it has the whole content area. */
+@Composable
+private fun NormalViewButton(onClick: () -> Unit) {
+    Row(
+        Modifier.padding(start = 4.dp).height(32.dp).clip(RoundedCornerShape(16.dp)).background(CrundiColors.Accent)
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick).padding(start = 9.dp, end = 12.dp)
+            .semantics { contentDescription = "Back to the normal view" },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        mv.obitech.crundi.ui.icons.CrundiIcon("x", size = 13.dp, tint = androidx.compose.ui.graphics.Color.White)
+        Text("Normal view", style = CrundiType.Small.copy(color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.SemiBold), maxLines = 1, softWrap = false)
+    }
+}
+
+@Composable
+private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Unit, full: Boolean = false) {
     // Compact asks first (a row under the top row; a dialog can't open over the side-key overlay).
     var askCompact by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         CruIcon(22.dp, live = phase == Phase.Listening || phase == Phase.Thinking || phase == Phase.Speaking, modifier = Modifier.semantics { contentDescription = "Cru" })
-        if (ui.server.isNotEmpty()) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+        if (ui.server.isNotEmpty() && !full) Text("  ·  " + ui.server, style = CrundiType.Meta.copy(fontSize = 12.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
         Spacer(Modifier.weight(1f))
         if (ui.spend?.adminMode == true) AdminPill()
         StatusPill(statusText(ui, phase), phase)
+        if (full) NormalViewButton(more.live.onNormal)
         if (VoiceApi.COMPACT in ui.caps) CrundiIconButton("minimize-2", { askCompact = !askCompact }, contentDescription = "Compact the conversation", size = 16.dp, touch = 38.dp)
-        if (VoiceApi.HISTORY in ui.caps) Box {
+        // The chat view has nothing to show under Cru's full UI: its button waits for the normal view.
+        if (VoiceApi.HISTORY in ui.caps && !full) Box {
             CrundiIconButton(
                 "message-circle", { more.onChat(!ui.chat) },
                 contentDescription = if (ui.chat) "Back to the voice view" else "Chat view",

@@ -124,6 +124,18 @@ const scr = screenMod.createScreen({ file: scrFile, onChange: () => changes++, k
   ok(scr.get() === null && JSON.parse(readFileSync(scrFile, 'utf8')).screen === null, 'clear_screen / the owner\'s X takes it away');
   const tools = screenMod.makeScreenTools(scr);
   ok(tools.map((t) => t.name).join() === 'show_screen,update_screen,clear_screen', 'three screen tools');
+  // Cru's UI over the whole content area, and the owner's way back.
+  const f1 = scr.show({ title: 'Board', html: '<p>board</p>', full: true });
+  ok(f1.full === true && f1.doc.includes('board'), 'show_screen full: the whole content area');
+  ok(scr.update({ add: [{ type: 'text', text: 'more' }] }).full === true, 'a patch without full keeps it');
+  ok(scr.normal() === true && !scr.get().full && scr.get().title === 'Board' && scr.normalAt > 0, 'the owner\'s button: back to the normal view, the content kept as the panel');
+  ok(scr.normal() === false, 'nothing taken over: the button changes nothing');
+  ok(scr.update({ full: true }).full === true && !scr.update({ full: false }).full, 'update_screen full on and off');
+  kidNow = true;
+  ok(!scr.show({ title: 'Kid', html: '<p>x</p>', full: true }).full, 'never in kid mode (the kid screen is already whole)');
+  kidNow = false;
+  ok(tools[0].input_schema.properties.full && tools[1].input_schema.properties.full, 'show_screen and update_screen take full');
+  scr.clear();
 }
 
 // ─── The kid's tools: nothing else is reachable ───

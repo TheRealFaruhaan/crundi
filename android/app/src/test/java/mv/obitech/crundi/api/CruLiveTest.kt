@@ -45,6 +45,18 @@ class CruLiveTest {
         assertNull(LiveScreen.parse(null))
     }
 
+    @Test fun cruCanTakeTheWholeContentAreaAndTheOwnerGoesBack() = runBlocking {
+        val full = LiveScreen.parse(CrundiJson.parseToJsonElement("""{"title":"Board","blocks":[],"doc":"<p>x</p>","full":true,"rev":4}"""))!!
+        assertTrue(full.full)
+        // An older server never says full: the usual panel.
+        assertFalse(LiveScreen.parse(CrundiJson.parseToJsonElement("""{"title":"Board","blocks":[]}"""))!!.full)
+        val t = FakeTransport().on("POST /api/voice/screen/normal", """{"ok":true,"screen":null}""")
+        CrundiClient(t).kid.normalScreen()
+        assertEquals("/api/voice/screen/normal", t.requests.single().path)
+        // An older server answering 404 is not a crash.
+        CrundiClient(FakeTransport()).kid.normalScreen()
+    }
+
     @Test fun aGameAndAVideoGoInAFrame() {
         val game = LiveScreen.parse(CrundiJson.parseToJsonElement("""{"title":"Letters","blocks":[],"game":{"id":"letters","options":{}},"doc":"<!doctype html><html><head></head><body>x</body></html>","kid":true,"rev":2}"""))!!
         assertTrue(game.framed)

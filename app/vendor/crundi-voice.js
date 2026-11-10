@@ -454,6 +454,17 @@
     '.cv-b-c{list-style:none;margin:0;padding:0}.cv-b-c li{display:flex;gap:8px;align-items:flex-start;margin:3px 0}.cv-b-c i{flex:none;width:14px;height:14px;margin-top:3px;border-radius:4px;border:1.5px solid ' + C.muted + '}.cv-b-c li.d i{background:' + C.green + ';border-color:' + C.green + '}.cv-b-c li.d span{color:' + C.text2 + ';text-decoration:line-through}' +
     '.cv-b-tb{border-collapse:collapse;width:100%}.cv-b-tb td,.cv-b-tb th{padding:4px 8px;border-bottom:1px solid ' + C.border + ';text-align:left;vertical-align:top}.cv-b-tb th{color:' + C.text2 + ';font-weight:500}.cv-b-tb td:first-child{color:' + C.text2 + '}' +
     '.cv-b-p{display:flex;flex-direction:column;gap:4px}.cv-b-p span{font-size:12px;color:' + C.text2 + '}.cv-b-p div{height:8px;border-radius:4px;background:#1a1a28;overflow:hidden}.cv-b-p b{display:block;height:100%;background:linear-gradient(90deg,' + C.sky + ',' + C.accent + ')}' +
+    // Cru's UI over the whole content area (screen.full): the orb, the words and the chat make way;
+    // the bottom bar stays, and the top bar's "Normal view" button is always there to go back.
+    '.cv-fullx{display:none!important}.cv-ov.full .cv-fullx{display:flex!important;width:auto;padding:0 12px 0 10px;gap:6px;border-radius:17px;font-size:12px;font-weight:600;color:#fff;background:' + C.accent + '}.cv-fullx span{white-space:nowrap}' +
+    '.cv-ov.full .cv-field,.cv-ov.full .cv-chat,.cv-ov.full .cv-scr-h,.cv-ov.full .cv-heard,.cv-ov.full .cv-detail,.cv-ov.full .cv-yesno{display:none!important}' +
+    '.cv-ov.full .cv-scr{display:flex;flex:1 1 auto;max-width:none;max-height:none;min-height:0;padding:10px 12px 0}.cv-ov.full.scr-min .cv-scr-b{display:flex}' +
+    '.cv-ov.full .cv-scr-b.frame{border:0;border-radius:0;background:transparent}.cv-ov.full .cv-scr-b iframe{border-radius:0;min-height:0}' +
+    // Cru's latest words, a short line under its UI (a typed reply is read, not said).
+    '.cv-ov.full .cv-words{display:block;flex:none;max-height:66px;padding:4px 18px 0}.cv-ov.full .cv-reply{margin-top:2px;font-size:14px;line-height:20px;font-weight:400;color:' + C.text2 + '}' +
+    // A phone: room on the top row for the way back (Compact is a rare thing, it waits for the normal view); the chat view's button has nothing to show under Cru's UI.
+    '@media (max-width:480px){.cv-ov.full .cv-cmp{display:none}}.cv-ov.full .cv-chatb{display:none}' +
+    '@media (min-width:900px){.cv-ov.full:not(.kid){width:min(1000px,calc(100vw - 40px));height:calc(100vh - 70px)}.cv-ov.full .cv-top{max-width:none}}' +
     '.cv-b-i{max-width:100%;border-radius:10px}.cv-b-ch{display:flex;flex-wrap:wrap;gap:6px}.cv-b-ch span{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid}' +
     // Kid mode: the whole window, bright and friendly, a big cursor, nothing to leave by.
     '.cv-ov.kid{inset:0!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;max-height:none!important;border:0!important;border-radius:0!important;z-index:2147483000;background:radial-gradient(circle at 50% 30%,#1e1b4b,#0a0a0f 70%)}' +
@@ -506,6 +517,7 @@
       '<div class="cv-top"><span class="cv-wm" aria-label="Cru">' + cruIcon(22) + '</span><div class="cv-leg"></div>' +
       '<div class="cv-pill"><i></i><span class="cv-st">Waking</span></div>' +
       '<span class="cv-admin" hidden title="Admin mode is on: Cru can run any command. Turn it off in Settings, or say: admin mode off">ADMIN</span>' +
+      '<button class="cv-x cv-fullx" title="Back to the normal view" aria-label="Back to the normal view"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg><span>Normal view</span></button>' +
       '<button class="cv-x cv-cmp" title="Compact the conversation (Cru keeps a summary and its notebook)" aria-label="Compact the conversation"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></button>' +
       '<button class="cv-x cv-chatb" title="Chat view: the whole conversation as messages" aria-label="Chat view"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg></button>' +
       '<button class="cv-x cv-close" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
@@ -555,6 +567,7 @@
     ov.addEventListener('pointerdown', function () { if (S && S.how === 'hover') S.how = 'click'; });
     q('.cv-close').onclick = close;
     q('.cv-scr-x').onclick = function (e) { e.stopPropagation(); closeScreen(); };
+    q('.cv-fullx').onclick = function (e) { e.stopPropagation(); normalView(); };
     q('.cv-scr-min').onclick = function (e) { e.stopPropagation(); S.ov.classList.toggle('scr-min'); };
     q('.cv-lock').onclick = function (e) { e.stopPropagation(); pinPad(); };
     q('.cv-talk').onclick = function (e) { e.stopPropagation(); talkOverVideo(); };
@@ -1674,6 +1687,7 @@
     var was = S.screen;
     S.screen = scr || null;
     S.ov.classList.toggle('has-scr', !!scr);
+    S.ov.classList.toggle('full', !!(scr && scr.full) && !S.kid);
     var body = S.ov.querySelector('.cv-scr-b');
     if (!scr) { body.innerHTML = ''; S.frame = null; S.vidFrame = null; S.video.reset(); S.ov.classList.remove('vid'); render(); return; }
     S.ov.querySelector('.cv-scr-t').textContent = scr.title || '';
@@ -1719,6 +1733,13 @@
     if (!S || S.kid) return;
     showScreen(null);
     post('/api/voice/screen/close').catch(function () { /* the next push says */ });
+  }
+  /** The top bar's "Normal view": out of Cru's full UI at once, here and (from the server's push) on every screen; the content stays as the panel. */
+  function normalView() {
+    if (!S || !S.screen || !S.screen.full) return;
+    var scr = {}; for (var k in S.screen) if (k !== 'full') scr[k] = S.screen[k];
+    showScreen(scr);
+    post('/api/voice/screen/normal').catch(function () { /* the next push says */ });
   }
   /** The game's sounds follow Cru's volume, and are muted while a video plays. */
   function sendVolume() {

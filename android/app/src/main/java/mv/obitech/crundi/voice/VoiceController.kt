@@ -69,6 +69,8 @@ data class GameCommand(val seq: Int, val action: String)
 class LiveActions(
     /** The panel's X. */
     val onClose: () -> Unit = {},
+    /** The top bar's "Normal view", while Cru's UI has the whole content area. */
+    val onNormal: () -> Unit = {},
     /** Something Cru's page or game posted. */
     val onFrame: (mv.obitech.crundi.api.FrameMessage) -> Unit = {},
     /** Kid mode from the phone: "pause", "resume", "end", "time". */
@@ -645,6 +647,7 @@ class VoiceController(
     /** What the live screen and the kid-mode note do. */
     val live = LiveActions(
         onClose = { closeScreen() },
+        onNormal = { normalView() },
         onFrame = { frame(it) },
         onKid = { kid(it) },
     )
@@ -654,6 +657,14 @@ class VoiceController(
         _ui.update { it.copy(screen = null) }
         val k = kidApi() ?: return
         scope.launch { k.closeScreen() }
+    }
+
+    /** "Normal view": out of Cru's full UI here at once, and for every screen; what Cru showed stays as the panel. */
+    fun normalView() {
+        if (_ui.value.screen?.full != true) return
+        _ui.update { it.copy(screen = it.screen?.copy(full = false)) }
+        val k = kidApi() ?: return
+        scope.launch { k.normalScreen() }
     }
 
     /** Said now (a game's word, an instant cheer), only while Cru listens and nothing is being said. */

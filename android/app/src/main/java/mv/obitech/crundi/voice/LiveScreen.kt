@@ -91,11 +91,13 @@ fun LivePanel(
     closable: Boolean = true,
     /** The server's address, as the video player's referrer (YouTube refuses to play without one). */
     referer: String = "",
+    /** Cru's UI over the whole content area: no header (the top bar has the way back), a page edge to edge. */
+    full: Boolean = false,
 ) {
     var folded by rememberSaveable { mutableStateOf(false) }
     val showBody = !(chat && folded)
     Column(modifier.padding(top = 8.dp)) {
-        Row(Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (!full) Row(Modifier.fillMaxWidth().padding(start = 2.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             CrundiIcon("panel", size = 14.dp, tint = CrundiColors.AccentHover)
             Text(
                 screen.title.ifEmpty { "Cru's screen" },
@@ -109,7 +111,7 @@ fun LivePanel(
         val shape = RoundedCornerShape(14.dp)
         val box = Modifier.fillMaxWidth().clip(shape).background(CrundiColors.BgCard).border(1.dp, CrundiColors.Border, shape)
         if (screen.framed) {
-            Column(box.then(if (chat) Modifier.height(300.dp) else Modifier.weight(1f, fill = true).heightIn(min = 220.dp))) {
+            Column((if (full) Modifier.fillMaxWidth() else box).then(if (chat) Modifier.height(300.dp) else Modifier.weight(1f, fill = true).heightIn(min = 220.dp))) {
                 // A page with blocks too: the blocks above the frame.
                 if (screen.blocks.isNotEmpty() && screen.videoUrl == null) Column(
                     Modifier.fillMaxWidth().heightIn(max = 160.dp).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp),
@@ -119,7 +121,7 @@ fun LivePanel(
             }
         } else {
             Column(
-                box.then(if (chat) Modifier.heightIn(max = 300.dp) else Modifier.weight(1f, fill = false))
+                box.then(if (chat) Modifier.heightIn(max = 300.dp) else Modifier.weight(1f, fill = full))
                     .verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) { Blocks(screen.blocks) }
