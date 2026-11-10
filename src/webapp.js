@@ -2909,7 +2909,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
     // One of Cru's jobs: what to do with it (jobs.js).
     const job = cruJobs.forChat(id);
-    const jobLine = job ? ` This chat is your job ${job.id} on the card "${job.title}" (${job.project}): check what it did (read_chat if you need more than its last message). More to do: send_to_chat the next step. Finished and checked: finish_job done. Blocked on the owner: finish_job stuck and tell him what is needed. Say nothing to him for an ordinary step.` : '';
+    const jobLine = job ? ` This chat is your job ${job.id} on the card "${job.title}" (${job.project}): check what it did (read_chat if you need more than its last message). More to do: send_to_chat the next step. Finished and checked: finish_job done. Blocked on the owner: finish_job stuck and tell him what is needed. Say nothing to him for an ordinary step. All of this is your own work: it needs no yes from him.${cruJobs.queue().length ? ` Your queue from the owner has ${cruJobs.queue().length} card${cruJobs.queue().length === 1 ? '' : 's'} next (list_jobs): when this job is done, start the next with start_job, without asking him.` : ''}` : '';
     // A job's ordinary turn is Cru's to handle (a wake-up: it may stay quiet);
     // one waiting on the owner is still told to him.
     // A prompt in a chat Cru runs is Cru's to answer (howTo says so): handled as a wake-up too.
@@ -3200,6 +3200,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     shareRoutine: cruShareRoutine,
     awayOff: cruAwayOff,
     askOwner: (q) => cruAsks.ask(q),
+    // At a voice screen now (Cru's reply is said there): a wake-up's question is asked there first,
+    // and goes to his phone only if he does not answer (actions.js ESCALATE_MS).
+    ownerHere: () => [...voiceListeners].some((ws) => ws.readyState === 1),
     onAwayAct: (tool, input) => cruLog.add(`On my own: ${tool.replace(/_/g, ' ')} ${JSON.stringify(input).slice(0, 160)}`),
     broadcast: (tool, input = {}) => {
       // Background listening is the phone's: every open app is told, so the order reaches the

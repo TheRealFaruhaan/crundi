@@ -9,6 +9,10 @@
  * jobs still open, so a quiet one is noticed.
  *
  * Stored in <dataDir>/voice-jobs.json. Finished jobs are kept a week.
+ *
+ * The queue (10 Nov 2026): cards the owner has handed Cru to do one after
+ * another. That is his approval: on a wake-up Cru finishes its jobs and starts
+ * the next queued card itself, without asking him again (actions.js `own`).
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -21,11 +25,12 @@ const OPEN = new Set(['running', 'paused']);
 
 export function createJobStore({ file = '', now = () => Date.now(), onChange = () => {} } = {}) {
   let jobs = [];
-  try { if (file && existsSync(file)) jobs = JSON.parse(readFileSync(file, 'utf-8')).jobs || []; } catch { jobs = []; }
+  let queue = [];
+  try { if (file && existsSync(file)) { const d = JSON.parse(readFileSync(file, 'utf-8')); jobs = d.jobs || []; queue = d.queue || []; } } catch { jobs = []; queue = []; }
   const save = () => {
     const t = now();
     jobs = jobs.filter((j) => OPEN.has(j.status) || t - (j.updatedAt || 0) < KEEP_MS);
-    if (file) { try { writePrivateFile(file, JSON.stringify({ jobs }, null, 2)); } catch (e) { console.warn('[voice] could not save the jobs:', e.message); } }
+    if (file) { try { writePrivateFile(file, JSON.stringify({ jobs, queue }, null, 2)); } catch (e) { console.warn('[voice] could not save the jobs:', e.message); } }
     onChange();
   };
   const find = (ref) => { const r = String(ref || ''); return jobs.find((j) => j.id === r) || jobs.find((j) => j.taskId === r && OPEN.has(j.status)) || null; };
@@ -52,6 +57,29 @@ export function createJobStore({ file = '', now = () => Date.now(), onChange = (
       Object.assign(j, patch, { updatedAt: now() }); save();
       return { ...j };
     },
+    /** The owner's queue: cards to take on one after another, in order. */
+    queue: () => queue.map((q) => ({ ...q })),
+    queued: (project, taskId) => queue.some((q) => q.project === project && q.taskId === String(taskId)),
+    enqueue(items) {
+      let added = 0;
+      for (const it of items || []) {
+        if (!it || !it.project || !it.taskId) continue;
+        if (queue.some((q) => q.project === it.project && q.taskId === String(it.taskId))) continue;
+        if (jobs.some((j) => j.project === it.project && j.taskId === String(it.taskId) && OPEN.has(j.status))) continue;
+        queue.push({ project: it.project, taskId: String(it.taskId), title: String(it.title || '').slice(0, 200), instructions: String(it.instructions || '').slice(0, 1000), addedAt: now() });
+        added++;
+      }
+      if (added) save();
+      return added;
+    },
+    /** Out of the queue (started, or no longer wanted); the entry, or null. */
+    unqueue(project, taskId) {
+      const i = queue.findIndex((q) => q.project === project && q.taskId === String(taskId));
+      if (i < 0) return null;
+      const [q] = queue.splice(i, 1); save();
+      return q;
+    },
+    clearQueue() { const n = queue.length; if (n) { queue = []; save(); } return n; },
     /** Stop everything: open jobs wait until Cru is told to carry on. */
     pauseAll() { let n = 0; for (const j of jobs) if (j.status === 'running') { j.status = 'paused'; j.updatedAt = now(); n++; } if (n) save(); return n; },
   };
@@ -78,16 +106,21 @@ const obj = (properties = {}, required = []) => ({ type: 'object', properties, r
  */
 export function jobToolDefs(deps) {
   const card = (alias, id) => { const t = deps.kanban.getTask(alias, String(id)); const c = t && (t.task || t); if (!c || t.ok === false || !c.title) throw new Error('No such card'); return c; };
+  const queuedCard = (i) => { try { return !!deps.jobs.queued?.(deps.project(i.project).alias, i.taskId); } catch { return false; } };
   return [
     {
       name: 'start_job',
       description: 'Take on a kanban card and see it through: a new Claude chat in its project, in bypass mode, is given the card (title, description, open todos, and your extra instructions); the card moves to In progress; you are told each time the chat finishes a turn, and check what it did, send the next step with send_to_chat, and end with finish_job. At most 3 at a time. intent explicit when the owner asked you to take the card on.',
       input_schema: obj({ project: str('Project alias'), taskId: str('Card id'), instructions: str('Optional extra instructions for the chat'), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }) }, ['project', 'taskId']),
       check: (i) => { const p = deps.project(i.project); card(p.alias, i.taskId); },
-      confirm: (i) => i.intent === 'explicit' ? null : `Take on "${card(deps.project(i.project).alias, i.taskId).title}" in ${i.project}: a Claude chat in bypass mode works on it until it's done?`,
+      confirm: (i) => i.intent === 'explicit' || queuedCard(i) ? null : `Take on "${card(deps.project(i.project).alias, i.taskId).title}" in ${i.project}: a Claude chat in bypass mode works on it until it's done?`,
+      // A card the owner queued: his approval already, so a wake-up starts it without asking.
+      own: (i) => queuedCard(i),
       run: async (i) => {
         const p = deps.project(i.project);
         const c = card(p.alias, i.taskId);
+        const q = deps.jobs.queued?.(p.alias, i.taskId) ? deps.jobs.unqueue(p.alias, i.taskId) : null;
+        if (q && q.instructions && !i.instructions) i = { ...i, instructions: q.instructions };
         const r = await deps.createChat(p.alias, { title: c.title.slice(0, 60), skipPermissions: true });
         if (!r || !r.ok) return r || { ok: false, error: 'The chat could not be started' };
         let job;
@@ -97,17 +130,18 @@ export function jobToolDefs(deps) {
         deps.watch(r.id, c.title.slice(0, 60), p.alias, { follow: true });
         try { if (c.status !== 'in_progress') deps.kanban.moveTask(p.alias, String(i.taskId), 'in_progress'); } catch { /* best effort */ }
         deps.log?.(`Took on "${c.title}" (${p.alias}) as ${job.id}`);
-        return { ok: true, job: job.id, chat: r.id, project: p.alias, card: c.title, note: 'You will be told when the chat finishes each turn. Check its work, then send_to_chat the next step or finish_job.' };
+        const left = deps.jobs.queue ? deps.jobs.queue().length : 0;
+        return { ok: true, job: job.id, chat: r.id, project: p.alias, card: c.title, ...(left ? { queued: left } : {}), note: 'You will be told when the chat finishes each turn. Check its work, then send_to_chat the next step or finish_job.' };
       },
     },
     {
       name: 'list_jobs',
-      description: 'Your jobs (cards you took on): their chat, status, how long, and your notes. all: include the finished ones of the last week.',
+      description: 'Your jobs (cards you took on): their chat, status, how long, and your notes; and the queue the owner gave you (cards to take on next, in order). all: include the finished ones of the last week.',
       input_schema: obj({ all: { type: 'boolean', description: 'Include finished ones' } }),
       read: true,
       run: (i = {}) => {
         const chats = new Map((deps.chats() || []).map((c) => [c.id, c]));
-        return { ok: true, jobs: deps.jobs.list(!!i.all).map((j) => { const c = chats.get(j.chatId); return { ...j, chat: c ? { id: c.id, status: c.status || 'open', title: c.title } : { id: j.chatId, status: 'gone' }, minutes: Math.round((Date.now() - j.startedAt) / 60000) }; }) };
+        return { ok: true, queue: deps.jobs.queue ? deps.jobs.queue() : [], jobs: deps.jobs.list(!!i.all).map((j) => { const c = chats.get(j.chatId); return { ...j, chat: c ? { id: c.id, status: c.status || 'open', title: c.title } : { id: j.chatId, status: 'gone' }, minutes: Math.round((Date.now() - j.startedAt) / 60000) }; }) };
       },
     },
     {
@@ -122,6 +156,8 @@ export function jobToolDefs(deps) {
       description: 'End a job. done: you checked the work is finished (the card moves to Done). stuck: it needs the owner (the card stays; tell him what is needed). dropped: no longer wanted. Also resume: carry on a paused job. Give a one-line summary.',
       input_schema: obj({ job: str('Job id or card id'), outcome: str('done, stuck, dropped or resume', { enum: ['done', 'stuck', 'dropped', 'resume'] }), summary: str('One line: what was done, or what is needed') }, ['job', 'outcome', 'summary']),
       check: (i) => { if (!deps.jobs.find(i.job)) throw new Error(`No job "${i.job}"`); },
+      // Ending its own job is Cru's to do, on a wake-up too.
+      own: (i) => !!deps.jobs.find(i.job),
       run: (i) => {
         const j = deps.jobs.find(i.job);
         if (i.outcome === 'resume') { deps.jobs.set(j.id, { status: 'running' }); deps.log?.(`Resumed ${j.id} "${j.title}"`); return { ok: true, job: j.id, status: 'running' }; }
@@ -129,9 +165,36 @@ export function jobToolDefs(deps) {
         if (i.outcome === 'done') { try { deps.kanban.moveTask(j.project, j.taskId, 'done'); } catch { /* best effort */ } }
         deps.unwatch?.(j.chatId);
         deps.log?.(`Job ${j.id} "${j.title}" ${i.outcome}: ${String(i.summary || '').slice(0, 200)}`);
-        return { ok: true, job: j.id, status: i.outcome, card: i.outcome === 'done' ? 'moved to Done' : 'left where it is' };
+        const next = deps.jobs.queue ? deps.jobs.queue()[0] : null;
+        return { ok: true, job: j.id, status: i.outcome, card: i.outcome === 'done' ? 'moved to Done' : 'left where it is', ...(next ? { next: { project: next.project, taskId: next.taskId, title: next.title }, nextNote: 'The owner queued this card next: start it with start_job now (no need to ask him).' } : {}) };
+      },
+    },
+    {
+      name: 'queue_jobs',
+      description: 'The owner hands you cards to do one after another ("do these three", "then that one"): they wait in your queue, in order, and when a job ends you start the next one yourself, on a wake-up too, without asking him again. intent explicit when he asked for it. Also remove: take cards out of the queue (or clear: true for all).',
+      input_schema: obj({
+        project: str('Project alias'),
+        taskIds: { type: 'array', items: { type: 'string' }, description: 'Card ids, in the order to do them' },
+        instructions: str('Optional instructions for every card\'s chat'),
+        remove: { type: 'array', items: { type: 'string' }, description: 'Card ids to take out of the queue' },
+        clear: { type: 'boolean', description: 'Empty the queue' },
+        intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }),
+      }, []),
+      check: (i) => { if (Array.isArray(i.taskIds) && i.taskIds.length) { const p = deps.project(i.project); for (const t of i.taskIds) card(p.alias, t); } },
+      confirm: (i) => (i.intent === 'explicit' || !(i.taskIds || []).length) ? null : `Queue ${(i.taskIds || []).length} card${(i.taskIds || []).length === 1 ? '' : 's'} in ${i.project} for me to take on one after another?`,
+      run: (i) => {
+        let removed = 0;
+        if (i.clear) removed += deps.jobs.clearQueue();
+        for (const t of i.remove || []) { try { if (deps.jobs.unqueue(deps.project(i.project).alias, t)) removed++; } catch { /* no such project */ } }
+        let added = 0;
+        if ((i.taskIds || []).length) {
+          const p = deps.project(i.project);
+          added = deps.jobs.enqueue(i.taskIds.map((t) => ({ project: p.alias, taskId: t, title: card(p.alias, t).title, instructions: i.instructions || '' })));
+        }
+        if (added || removed) deps.log?.(`Queue: ${added ? `${added} added` : ''}${added && removed ? ', ' : ''}${removed ? `${removed} removed` : ''}`);
+        return { ok: true, added, removed, queue: deps.jobs.queue(), note: added ? 'Start the first with start_job when a job slot is free (at most 3 at once); the rest follow as jobs end.' : undefined };
       },
     },
   ];
 }
-export const JOB_TOOL_NAMES = ['start_job', 'list_jobs', 'job_note', 'finish_job'];
+export const JOB_TOOL_NAMES = ['start_job', 'list_jobs', 'job_note', 'finish_job', 'queue_jobs'];

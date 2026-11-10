@@ -59,6 +59,8 @@ export const LISTEN_MINUTES = [15, 30, 45, 60, 120];
 export const VOICE_SETTINGS = ['model', 'ttsVoice', 'speechRate', 'monthlyLimitUsd', 'deepgramLimitUsd', 'pauseMs', 'billingDay', 'deepgramBillingDay', 'screenCloseSeconds', 'cliIdleMinutes'];
 
 const PENDING_MS = 10 * 60 * 1000;
+/** A wake-up's question asked at the voice screen goes to the phone if it is not answered within this. */
+export const ESCALATE_MS = 3 * 60 * 1000;
 const STATUSES = ['backlog', 'todo', 'in_progress', 'done'];
 
 /**
@@ -219,6 +221,8 @@ export function makeActionTools(deps, ctx) {
       input_schema: obj({ chat: str('The chat: its id or title (see list_panels)'), text: str('The message, exactly as it should be sent'), intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }), attachments: { type: 'array', items: { type: 'string' }, description: 'Optional: ids of files the owner attached (att_…), passed on with the message' } }, ['chat', 'text', 'intent']),
       check: (i) => { chat(i.chat); if (!String(i.text || '').trim()) throw new Error('Nothing to send'); },
       confirm: (i) => i.intent === 'explicit' ? null : `Send ${readBack(i.text)} to ${chatName(chat(i.chat))}?`,
+      // The next step in a chat Cru runs (its job, a chat it started): its own work, on a wake-up too.
+      own: (i) => { try { return cruRuns(chat(i.chat).id); } catch { return false; } },
       run: (i) => {
         const c = chat(i.chat);
         const files = i.attachments && i.attachments.length ? deps.passOn(i.attachments, c.project) : [];
@@ -614,18 +618,29 @@ export function makeActionTools(deps, ctx) {
       if (r && r.ok !== false) deps.broadcast?.(def.name, input);
       return r;
     }
-    // Nobody spoke (a wake-up, a heartbeat, a followed chat): only what the
-    // owner ticked runs; anything else becomes a yes/no on his phone.
+    // Nobody spoke (a wake-up, a heartbeat, a followed chat): what the owner
+    // ticked runs, and so does work he already gave Cru (`own`: ending its
+    // own jobs, the next card he queued, the next step in a chat it runs).
+    // Anything else is asked: in the voice conversation first when he is at
+    // a voice screen, on his phone when he is not (or does not answer).
     if (ctx.unattended?.()) {
       if (def.check) def.check(input);
-      if (awayAllows(def.name, input, ctx.away ? ctx.away() : null)) {
-        const r = await def.run(input);
+      if (awayAllows(def.name, input, ctx.away ? ctx.away() : null) || (def.own && def.own(input))) {
+        const r = await def.run(input, { own: true });
         if (r && r.ok !== false) { deps.broadcast?.(def.name, input); deps.onAwayAct?.(def.name, input, r); }
         return r;
       }
       if (!deps.askOwner) return { done: false, error: 'Nobody is here to say yes, so nothing was done. Mention it to the owner when he is back.' };
       const q = (def.confirm && def.confirm(input)) || `${def.name.replace(/_/g, ' ')}: ${describeInput(input)}?`;
-      const a = deps.askOwner({ title: q, tool: def.name, input, run: async () => { const r = await def.run(input); if (r && r.ok !== false) deps.broadcast?.(def.name, input); return r; } });
+      const toPhone = () => deps.askOwner({ title: q, tool: def.name, input, run: async () => { const r = await def.run(input); if (r && r.ok !== false) deps.broadcast?.(def.name, input); return r; } });
+      if (deps.ownerHere?.()) {
+        // He is at a voice screen: your reply is said there, so ask him in it. Unanswered, it goes to his phone.
+        const id = ctx.pending.propose(def.name, input, q, { verified: false });
+        const t = setTimeout(() => { if (ctx.pending.peek(id)) { ctx.pending.cancel(id); try { toPhone(); } catch { /* best effort */ } } }, deps.escalateMs ?? ESCALATE_MS);
+        t.unref?.();
+        return { done: false, needsConfirmation: true, id, ask: q, rule: `The owner is at the voice screen: ask him this in your reply (it is said there), and stop. If he says yes in his next message, call confirm_action with this id; if no, cancel_action. If he does not answer within ${Math.round((deps.escalateMs ?? ESCALATE_MS) / 60000)} minutes it goes to his phone by itself.` };
+      }
+      const a = toPhone();
       if (!a.ok) return { done: false, error: a.error };
       return { done: false, askedOwner: true, id: a.id, say: 'Not done: nobody is here to say yes, so the owner has been asked on his phone. If he approves it runs, and you will be told either way. Do not ask again.' };
     }

@@ -171,6 +171,54 @@ ok(jobs.pauseAll() === 1 && jobs.list()[0].status === 'paused', 'stop everything
   ok(told.length === 1 && told[0][0] === 'set_background_listening' && told[0][1].minutes === 0, 'and it is broadcast, so a phone gets it when the yes came from elsewhere');
 }
 
+// ─── work the owner gave Cru needs no yes; a question goes to the voice screen first (10 Nov) ───
+{
+  const qjobs = createJobStore({ file: join(dir, 'jobs-q.json') });
+  let chatN = 0; const qsent = [], qasked = [];
+  let here = false;
+  const qctx = { pending: createPending(), locked: () => false, unrecognised: () => false, unattended: () => true, away: () => ({ on: false, allow: [] }) };
+  const qdeps = {
+    listProjects: () => [{ alias: 'p' }], projectsDir: () => '',
+    chats: () => [{ id: 'c1', title: 'Job chat', project: 'p' }, { id: 'c9', title: 'Owner chat', project: 'p' }],
+    sendMessage: (id, text) => { qsent.push([id, text]); return { ok: true }; },
+    cruRuns: (id) => id === 'c1' || !!qjobs.forChat(id),
+    askOwner: (q) => { qasked.push(q); return { ok: true, id: 'cru-q' }; },
+    ownerHere: () => here, escalateMs: 60,
+    jobDefs: jobToolDefs({
+      jobs: qjobs, kanban: { getTask: (a, id) => ({ task: { title: 'Card ' + id, status: 'backlog', todos: [] } }), moveTask: () => {} },
+      project: (a) => ({ alias: a }), createChat: async () => ({ ok: true, id: 'j' + (++chatN) }), sendMessage: () => {}, watch: () => {}, unwatch: () => {}, chats: () => [], log: () => {},
+    }),
+  };
+  const qt = makeActionTools(qdeps, qctx);
+  const T = (n) => qt.find((x) => x.name === n);
+  qctx.unattended = () => false;
+  let q = await T('queue_jobs').run({ project: 'p', taskIds: ['k1', 'k2'], intent: 'explicit' });
+  ok(q.ok && q.added === 2 && qjobs.queue().map((x) => x.taskId).join() === 'k1,k2', 'the owner queues cards: no question (his word is the yes)');
+  qctx.unattended = () => true;
+  q = await T('start_job').run({ project: 'p', taskId: 'k1' });
+  ok(q.ok && q.job && !qasked.length && qjobs.queue().map((x) => x.taskId).join() === 'k2', 'on a wake-up, a queued card starts without asking; it leaves the queue');
+  q = await T('finish_job').run({ job: 'k1', outcome: 'done', summary: 'did it' });
+  ok(q.ok && q.next && q.next.taskId === 'k2' && !qasked.length, 'finishing its own job needs no yes, and says what is queued next');
+  q = await T('start_job').run({ project: 'p', taskId: 'k2' });
+  ok(q.ok && !qasked.length && !qjobs.queue().length, 'and the next queued card starts on its own');
+  q = await T('send_to_chat').run({ chat: 'c1', text: 'Now run the tests', intent: 'inferred' });
+  ok(q.ok && qsent.length === 1 && !qasked.length, 'the next step in a chat Cru runs needs no yes');
+  // Genuinely its own call, and the owner away: his phone, as before.
+  q = await T('start_job').run({ project: 'p', taskId: 'x9' });
+  ok(q.askedOwner && qasked.length === 1, 'a card he did not queue, the owner away: asked on his phone');
+  // The owner at a voice screen: in the conversation first.
+  here = true;
+  q = await T('send_to_chat').run({ chat: 'c9', text: 'Restart it', intent: 'inferred' });
+  ok(q.needsConfirmation && q.id && /voice screen/.test(q.rule) && qasked.length === 1, 'the owner at a voice screen: asked in the conversation, not on his phone');
+  await new Promise((r) => setTimeout(r, 120));
+  ok(qasked.length === 2 && qasked[1].tool === 'send_to_chat' && !qctx.pending.peek(q.id), 'unanswered there: it goes to his phone');
+  const q2 = await T('send_to_chat').run({ chat: 'c9', text: 'Restart it again', intent: 'inferred' });
+  qctx.unattended = () => false; qctx.pending.newTurn();
+  const yes = await T('confirm_action').run({ id: q2.id });
+  await new Promise((r) => setTimeout(r, 120));
+  ok(yes.ok && qsent.length === 2 && qasked.length === 2, 'answered there: done, and his phone is never asked');
+}
+
 // ─── the day's log ───
 const nb = createNotebook(join(dir, 'nb'));
 const log = A.createDailyLog(nb, { now: () => new Date(2026, 10, 9, 14, 5) });
