@@ -5314,6 +5314,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // The owner's top-bar button while Cru's UI has the whole content area
     // (capability 'voice-screen-full'): back to the normal view on every
     // screen, what Cru showed kept as the usual panel.
+    // The panel's expand button (capability 'voice-screen-expand'): the full view again.
+    if (path === '/api/voice/screen/full' && req.method === 'POST') {
+      voiceScreen.expand();
+      return json(res, { ok: true, screen: voiceScreen.get() });
+    }
     if (path === '/api/voice/screen/normal' && req.method === 'POST') {
       voiceScreen.normal();
       return json(res, { ok: true, screen: voiceScreen.get() });

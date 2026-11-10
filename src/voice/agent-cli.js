@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as voiceSettings from './settings.js';
+import { noteRateLimitEvent } from '../usage.js';
 import { reflectionAsk, parseReflection } from './reflect.js';
 import { SYSTEM_PROMPT, PERSONA_FILE, splitReply, contextLine, runVoiceTool, reportPrompt } from './agent.js';
 
@@ -160,6 +161,8 @@ export function createCliVoiceAgent({
       if (state.sessionId !== m.session_id) { state.sessionId = m.session_id; saveState(); }
       return;
     }
+    // Cru's own turns report the account's usage windows too (usage.js).
+    if (m.type === 'rate_limit_event') { try { noteRateLimitEvent(m); } catch { /* best effort */ } return; }
     if (!current) return;
     if (m.type === 'assistant' && Array.isArray(m.message?.content)) {
       for (const b of m.message.content) {

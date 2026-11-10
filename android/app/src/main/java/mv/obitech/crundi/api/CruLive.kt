@@ -349,6 +349,9 @@ class KidApi internal constructor(private val rpc: Rpc, private val transport: T
     /** The X: the panel goes for every screen. */
     suspend fun closeScreen() { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/screen/close", json = Uploads.toJson(emptyMap<String, Any?>()))) } }
 
+    /** The panel's expand button: Cru's full view again, for every screen (an older server answers 404: nothing happens). */
+    suspend fun fullScreen() { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/screen/full", json = Uploads.toJson(emptyMap<String, Any?>()))) } }
+
     /** "Normal view": out of Cru's full UI for every screen, the content kept as the panel (only ever shown when the server sent full). */
     suspend fun normalScreen() { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/screen/normal", json = Uploads.toJson(emptyMap<String, Any?>()))) } }
 

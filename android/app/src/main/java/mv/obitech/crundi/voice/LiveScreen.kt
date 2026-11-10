@@ -105,6 +105,8 @@ fun LivePanel(
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(start = 6.dp),
             )
             if (chat) CrundiIconButton(if (folded) "chevron-down" else "chevron-up", { folded = !folded }, contentDescription = if (folded) "Show the live screen" else "Fold the live screen", size = 15.dp, touch = 34.dp)
+            // Back to the full view (once the owner left it with Normal view); not for a video, not in kid mode.
+            if (closable && screen.video == null && !screen.kid) CrundiIconButton("maximize", actions.onFull, contentDescription = "Full view", size = 15.dp, touch = 34.dp)
             if (closable) CrundiIconButton("x", actions.onClose, contentDescription = "Close the live screen", size = 15.dp, touch = 34.dp)
         }
         if (!showBody) return@Column

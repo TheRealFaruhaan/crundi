@@ -218,6 +218,9 @@ export const CAPABILITIES = Object.freeze([
   // top bar's button POSTs /api/voice/screen/normal (back to the normal view,
   // the content kept as the panel). Older clients just show the panel.
   'voice-screen-full',
+  // POST /api/voice/screen/full: the live panel's expand button puts it back
+  // over the whole content area (not in kid mode, not a video).
+  'voice-screen-expand',
   // POST /api/voice/turn takes requestId: the same id sent again (a resend
   // after a dropped connection) gets that turn's result, never a second run;
   // a turn that finds Cru busy waits for it (up to 3 min) instead of

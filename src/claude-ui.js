@@ -103,6 +103,7 @@ function collaboratorEnv(collaborator) {
   return env;
 }
 import { config } from './config.js';
+import { noteRateLimitEvent } from './usage.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
 import { systemPromptArgs, collaboratorPromptLayer } from './system-prompt.js';
@@ -1644,6 +1645,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       case 'command_lifecycle': return handleCommandLifecycle(s, msg);
       case 'prompt_suggestion': return handlePromptSuggestion(s, msg);
       case 'tool_use_summary': return handleToolUseSummary(s, msg);
+      // The account's usage windows, as Claude Code saw them on this turn
+      // (usage.js): a reading that needs no Usage API call. Not a
+      // collaborator's, who may be signed in to an account of their own.
+      case 'rate_limit_event': if (!s.collaborator) { try { noteRateLimitEvent(msg); } catch { /* best effort */ } } return;
     }
   }
 

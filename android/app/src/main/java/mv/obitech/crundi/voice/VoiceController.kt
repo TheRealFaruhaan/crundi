@@ -71,6 +71,8 @@ class LiveActions(
     val onClose: () -> Unit = {},
     /** The top bar's "Normal view", while Cru's UI has the whole content area. */
     val onNormal: () -> Unit = {},
+    /** The panel's expand button: Cru's full view again (capability "voice-screen-expand"). */
+    val onFull: () -> Unit = {},
     /** Something Cru's page or game posted. */
     val onFrame: (mv.obitech.crundi.api.FrameMessage) -> Unit = {},
     /** Kid mode from the phone: "pause", "resume", "end", "time". */
@@ -651,6 +653,7 @@ class VoiceController(
     val live = LiveActions(
         onClose = { closeScreen() },
         onNormal = { normalView() },
+        onFull = { fullView() },
         onFrame = { frame(it) },
         onKid = { kid(it) },
     )
@@ -668,6 +671,15 @@ class VoiceController(
         _ui.update { it.copy(screen = it.screen?.copy(full = false)) }
         val k = kidApi() ?: return
         scope.launch { k.normalScreen() }
+    }
+
+    /** The panel's expand button: the full view here at once, and for every screen. */
+    fun fullView() {
+        val sc = _ui.value.screen ?: return
+        if (sc.full || sc.kid || sc.video != null) return
+        _ui.update { it.copy(screen = it.screen?.copy(full = true)) }
+        val k = kidApi() ?: return
+        scope.launch { k.fullScreen() }
     }
 
     /** Said now (a game's word, an instant cheer), only while Cru listens and nothing is being said. */

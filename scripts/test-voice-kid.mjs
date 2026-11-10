@@ -130,6 +130,8 @@ const scr = screenMod.createScreen({ file: scrFile, onChange: () => changes++, k
   ok(scr.update({ add: [{ type: 'text', text: 'more' }] }).full === true, 'a patch without full keeps it');
   ok(scr.normal() === true && !scr.get().full && scr.get().title === 'Board' && scr.normalAt > 0, 'the owner\'s button: back to the normal view, the content kept as the panel');
   ok(scr.normal() === false, 'nothing taken over: the button changes nothing');
+  ok(scr.expand() === true && scr.get().full === true && scr.expand() === false, 'the panel\'s expand button: the full view again (once)');
+  scr.normal();
   ok(scr.update({ full: true }).full === true && !scr.update({ full: false }).full, 'update_screen full on and off');
   kidNow = true;
   ok(!scr.show({ title: 'Kid', html: '<p>x</p>', full: true }).full, 'never in kid mode (the kid screen is already whole)');

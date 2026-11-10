@@ -258,7 +258,8 @@ class VoiceMachine(
                 s.copy(cue = "") to (if (s.phase == Phase.Thinking) doneFx(s) else emptyList())
             }
             is VoiceEvent.StreamLost -> if (s.offline) s to emptyList() else {
-                s.copy(offline = true, live = false, notice = "Live speech recognition is unavailable (${e.why}). Using the phone's recogniser.", phase = if (s.phase == Phase.Starting) Phase.Listening else s.phase, quietSince = e.now) to listOf(VoiceEffect.UseFallback)
+                // No notice line: the blob turns amber and a small overlaid word says Offline (statuses take no space, the owner, 11 Nov).
+                s.copy(offline = true, live = false, phase = if (s.phase == Phase.Starting) Phase.Listening else s.phase, quietSince = e.now) to listOf(VoiceEffect.UseFallback)
             }
             is VoiceEvent.Unlocked -> s.copy(locked = false, notice = "", quietSince = e.now, activeSince = e.now) to emptyList()
             is VoiceEvent.Tick -> when {

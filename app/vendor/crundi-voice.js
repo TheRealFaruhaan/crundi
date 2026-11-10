@@ -462,6 +462,14 @@
     // No status pill on the top bar: the state is the blob's, and a word at the bottom right when that is not enough.
     '.cv-pill{visibility:hidden;padding:0!important;border:0!important;min-width:8px}' +
     '.cv-stw{position:absolute;right:20px;bottom:10px;font-size:12px;color:' + C.muted + ';white-space:nowrap;pointer-events:none}.cv-stw.offline{color:' + C.yellow + '}.cv-stw.problem{color:' + C.red + '}.cv-ov.kid .cv-stw{display:none}' +
+    '.cv-ov.kb[data-st=think] .cv-send{animation:cvring-t 1.2s ease-in-out infinite}.cv-ov.kb[data-st=speak] .cv-send{animation:cvring-s 1.1s ease-in-out infinite}' +
+    '.cv-ov.kb[data-st=start] .cv-send{animation:cvring-w 1.2s ease-in-out infinite}.cv-ov.kb[data-st=offline] .cv-send{animation:cvring-o 1.2s ease-in-out infinite}' +
+    '.cv-ov.kb[data-st=problem] .cv-send{box-shadow:0 0 0 3px ' + C.red + '}.cv-ov.kb[data-st=ended] .cv-send{box-shadow:0 0 0 2px ' + hex(C.muted, 0.6) + '}' +
+    '@keyframes cvring-t{0%,100%{box-shadow:0 0 0 2px ' + hex(C.ask, 0.35) + '}50%{box-shadow:0 0 0 5px ' + hex(C.ask, 0.9) + '}}' +
+    '@keyframes cvring-s{0%,100%{box-shadow:0 0 0 2px ' + hex(C.green, 0.35) + '}50%{box-shadow:0 0 0 5px ' + hex(C.green, 0.9) + '}}' +
+    '@keyframes cvring-w{0%,100%{box-shadow:0 0 0 2px ' + hex(C.accent, 0.3) + '}50%{box-shadow:0 0 0 4px ' + hex(C.accent, 0.8) + '}}' +
+    '@keyframes cvring-o{0%,100%{box-shadow:0 0 0 2px ' + hex(C.yellow, 0.35) + '}50%{box-shadow:0 0 0 5px ' + hex(C.yellow, 0.9) + '}}' +
+    '.cv-ov.kb .cv-stw{bottom:2px}' +
     '.cv-ht{min-width:0}.cv-reply{font-size:19px;line-height:27px;font-weight:500;margin-top:12px}' +
     '.cv-detail{margin-top:12px;text-align:left;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;font-size:14px;line-height:20px;white-space:pre-wrap}' +
     '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:8px;font-size:13px;color:' + C.hover + ';display:flex;gap:8px;align-items:center;justify-content:center}.cv-yesno[hidden]{display:none}.cv-yn{border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';border-radius:16px;padding:6px 16px;font-size:13px;cursor:pointer}.cv-yn:hover{border-color:' + C.accent + '}' +
@@ -490,6 +498,7 @@
     // Cru's UI over the whole content area (screen.full): the orb, the words and the chat make way;
     // the bottom bar stays, and the top bar's "Normal view" button is always there to go back.
     '.cv-fullx{display:none!important}.cv-ov.full .cv-fullx{display:flex!important;width:auto;padding:0 12px 0 10px;gap:6px;border-radius:17px;font-size:12px;font-weight:600;color:#fff;background:' + C.accent + '}.cv-fullx span{white-space:nowrap}' +
+    '.cv-ov.kid .cv-scr-full,.cv-scr-full[hidden]{display:none}' +
     '.cv-ov.full .cv-field,.cv-ov.full .cv-chat,.cv-ov.full .cv-scr-h,.cv-ov.full .cv-heard,.cv-ov.full .cv-detail,.cv-ov.full .cv-yesno{display:none!important}' +
     '.cv-ov.full .cv-scr{display:flex;flex:1 1 auto;max-width:none;max-height:none;min-height:0;padding:10px 12px 0}.cv-ov.full.scr-min .cv-scr-b{display:flex}' +
     '.cv-ov.full .cv-scr-b.frame{border:0;border-radius:0;background:transparent}.cv-ov.full .cv-scr-b iframe{border-radius:0;min-height:0}' +
@@ -564,6 +573,7 @@
       '<div class="cv-field"><canvas></canvas></div>' +
       '<div class="cv-scr"><div class="cv-scr-h"><span class="cv-scr-t"></span>' +
       '<button class="cv-x cv-scr-min" title="Fold the panel" aria-label="Fold the panel"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg></button>' +
+      '<button class="cv-x cv-scr-full" title="Full view: Cru\'s screen over the whole area" aria-label="Full view"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button>' +
       '<button class="cv-x cv-scr-x" title="Close the panel" aria-label="Close the panel"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>' +
       '<div class="cv-scr-b"></div><button class="cv-talk">Talk to Cru</button></div>' +
       '<div class="cv-chat" hidden><div class="cv-more" hidden>Earlier messages</div><div class="cv-msgs"></div></div>' +
@@ -606,6 +616,7 @@
     q('.cv-close').onclick = close;
     q('.cv-scr-x').onclick = function (e) { e.stopPropagation(); closeScreen(); };
     q('.cv-fullx').onclick = function (e) { e.stopPropagation(); normalView(); };
+    q('.cv-scr-full').onclick = function (e) { e.stopPropagation(); fullView(); };
     q('.cv-scr-min').onclick = function (e) { e.stopPropagation(); S.ov.classList.toggle('scr-min'); };
     q('.cv-lock').onclick = function (e) { e.stopPropagation(); pinPad(); };
     q('.cv-talk').onclick = function (e) { e.stopPropagation(); talkOverVideo(); };
@@ -886,7 +897,8 @@
         if (!S || S.ws !== ws || S.phase === 'ended') return;
         // Kid mode: never a bare error; a friendly line, and listening again in a moment.
         if (S.kid) { S.notice = 'Hold on, I am getting ready again!'; render(); var s = S; setTimeout(function () { if (S === s && S.kid && !S.paused) { S.notice = ''; stopMic(); S.phase = 'start'; openMic(); } }, 3000); return; }
-        S.wsLost = true; S.notice = 'Live listening stopped. Type instead, or close and open again.'; render();
+        // No notice line (statuses take no space, the owner, 11 Nov): the blob turns amber and the word says Offline.
+        S.wsLost = true; render();
       };
     }).catch(function () { if (!S) return; keyboard(true, false); S.notice = 'The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.'; render(); });
   }
@@ -1787,6 +1799,7 @@
     S.screen = scr || null;
     S.ov.classList.toggle('has-scr', !!scr);
     S.ov.classList.toggle('full', !!(scr && scr.full) && !S.kid);
+    var fb = S.ov.querySelector('.cv-scr-full'); if (fb) fb.hidden = !scr || !!scr.video;
     var body = S.ov.querySelector('.cv-scr-b');
     if (!scr) { body.innerHTML = ''; S.frame = null; S.vidFrame = null; S.video.reset(); S.ov.classList.remove('vid'); render(); return; }
     S.ov.querySelector('.cv-scr-t').textContent = scr.title || '';
@@ -1839,6 +1852,14 @@
     var scr = {}; for (var k in S.screen) if (k !== 'full') scr[k] = S.screen[k];
     showScreen(scr);
     post('/api/voice/screen/normal').catch(function () { /* the next push says */ });
+  }
+  /** The panel's expand button: back to Cru's full view, here at once and (from the server's push) on every screen. */
+  function fullView() {
+    if (!S || !S.screen || S.screen.full || S.kid || S.screen.video) return;
+    var scr = {}; for (var k in S.screen) scr[k] = S.screen[k];
+    scr.full = true;
+    showScreen(scr);
+    post('/api/voice/screen/full').catch(function () { /* the next push says */ });
   }
   /** The game's sounds follow Cru's volume, and are muted while a video plays. */
   function sendVolume() {
@@ -2052,9 +2073,12 @@
     // The word at the bottom right: only when the blob does not make it plain.
     var tn = micTone(S), sw = q('.cv-stw');
     if (sw) {
-      var word = tn === 'problem' ? 'Unavailable' : tn === 'offline' ? 'Offline' : ph === 'start' ? 'Waking' : ph === 'ended' ? 'Asleep' : (S.kb && (ph === 'think' || ph === 'speak')) ? (ph === 'think' ? 'Thinking' : 'Speaking') : '';
+      // Thinking and speaking need no word, typing or not: the typing dots and the speaking head show them (the owner, 11 Nov).
+      var word = tn === 'problem' ? 'Unavailable' : tn === 'offline' ? 'Offline' : ph === 'start' ? 'Waking' : ph === 'ended' ? 'Asleep' : '';
       sw.textContent = word; sw.className = 'cv-stw' + (tn !== 'ready' ? ' ' + tn : '');
     }
+    // Typing (no blob): the state is a ring around the send button, as a shadow, taking no space.
+    S.ov.setAttribute('data-st', tn !== 'ready' ? tn : ph);
     q('.cv-pill').style.background = hex(pal[0], 0.14); q('.cv-pill').style.border = '1px solid ' + hex(pal[0], 0.35); q('.cv-pill i').style.background = pal[0];
     // Listening: the words as they come; thinking: what was asked, and what is queued for next under it.
     var h = ph === 'listen' ? S.heard : S.asked;

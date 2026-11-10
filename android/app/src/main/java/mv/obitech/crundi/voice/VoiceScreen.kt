@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -188,13 +189,13 @@ fun VoiceScreen(
                 )
                 Words(ui, phase, onAllowMic, onCancel, Modifier.weight(1f, fill = true))
             }
-            if (waitingHint.isNotEmpty() && phase == Phase.Ended && ui.blocked.isEmpty() && !ui.keyboard) Text(waitingHint, style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
+            // Asleep listening for "Hey Cru": said by the overlaid word at the bottom right, not a line of its own.
             // A question awaiting the owner's yes: answered by voice (Phase 4), no buttons.
             if (s.question.isNotEmpty() && phase != Phase.Thinking) Text(if (ui.keyboard) "Type yes or no" else "Say yes or no", style = CrundiType.Small.copy(color = CrundiColors.AccentHover), modifier = Modifier.padding(top = 4.dp))
             if (s.needsUnlock && onUnlock != null) CrundiButton("Unlock the phone", onUnlock, kind = ButtonKind.Primary, icon = "lock", modifier = Modifier.padding(top = 6.dp))
             // Files waiting to go with the next turn (never in kid mode).
             if (ui.attachments.isNotEmpty() && !kidOn) AttachTray(ui.attachments, more.onRemoveAttachment)
-            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock, more) { sent++ }
+            BottomRow(ui, phase, ca, mic, onMic, onClose, onUnlock, more, hint = if (waitingHint.isNotEmpty() && phase == Phase.Ended) "say \"Hey Cru\"" else "") { sent++ }
         }
     }
 }
@@ -518,12 +519,14 @@ private fun msgTime(at: Long): String = if (at <= 0) "" else java.text.SimpleDat
  * microphone off, unavailable (and, while typing, thinking or speaking).
  */
 @Composable
-private fun StatusWord(ui: VoiceUi, phase: Phase, typing: Boolean = false) {
+private fun StatusWord(ui: VoiceUi, phase: Phase, hint: String = "") {
     val tone = MicTone.of(ui, phase)
-    val show = tone == MicTone.Problem || tone == MicTone.Offline || phase == Phase.Starting || phase == Phase.Ended || (typing && (phase == Phase.Thinking || phase == Phase.Speaking))
+    // Thinking and speaking need no word, typing or not: the typing dots and the speaking head show them (the owner, 11 Nov).
+    val show = tone == MicTone.Problem || tone == MicTone.Offline || phase == Phase.Starting || phase == Phase.Ended
     if (!show) return
     val col = when (tone) { MicTone.Problem -> CrundiColors.Red; MicTone.Offline -> CrundiColors.Yellow; else -> CrundiColors.TextMuted }
-    Text(statusText(ui, phase), style = CrundiType.Small.copy(color = col), maxLines = 1, modifier = Modifier.padding(end = 4.dp).semantics { contentDescription = "Cru: " + statusText(ui, phase) })
+    val word = statusText(ui, phase) + (if (hint.isNotEmpty() && phase == Phase.Ended) " · $hint" else "")
+    Text(word, style = CrundiType.Small.copy(color = col), maxLines = 1, modifier = Modifier.padding(end = 4.dp).semantics { contentDescription = "Cru: $word" })
 }
 
 @Composable
@@ -641,13 +644,14 @@ private fun Problem(icon: String, text: String, action: @Composable () -> Unit =
  * voice, the text field and send (stop while Cru talks), close.
  */
 @Composable
-private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?, more: VoiceMore, onSent: () -> Unit = {}) {
+private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float, onMic: () -> Unit, onClose: () -> Unit, onUnlock: (() -> Unit)?, more: VoiceMore, hint: String = "", onSent: () -> Unit = {}) {
     val canSwitch = ui.blocked.isEmpty()
     if (ui.keyboard) {
         var typed by rememberSaveable { mutableStateOf("") }
         // Send works with files alone, as with words.
         val filesReady = ui.attachments.any { it.ready }
         val send = { val t = typed.trim(); if (t.isNotEmpty() || filesReady) { more.onSend(t); typed = ""; onSent() } }
+        Box(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (canSwitch) RoundButton("mic", "Back to voice") { more.onKeyboard(false) }
             if (attachShown(ui, more)) AttachButton(more)
@@ -657,11 +661,15 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send, capitalization = KeyboardCapitalization.Sentences),
                 keyboardActions = KeyboardActions(onSend = { send() }),
             )
-            if (phase == Phase.Speaking && typed.isBlank() && !filesReady) RoundButton("stop", "Stop talking", onClick = onMic)
-            else RoundButton("send", "Send", enabled = typed.isNotBlank() || filesReady, accent = true, onClick = send)
+            // No blob while typing: the state is a ring around the send button, drawn outside it (no layout space).
+            Box(Modifier.statusRing(MicTone.of(ui, phase), phase)) {
+                if (phase == Phase.Speaking && typed.isBlank() && !filesReady) RoundButton("stop", "Stop talking", onClick = onMic)
+                else RoundButton("send", "Send", enabled = typed.isNotBlank() || filesReady, accent = true, onClick = send)
+            }
         }
-        // No blob while typing: the word says the state when it is not plain from the screen.
-        Box(Modifier.fillMaxWidth().padding(bottom = 6.dp), contentAlignment = Alignment.CenterEnd) { StatusWord(ui, phase, typing = true) }
+        // The word, when needed, over the row's bottom padding: it takes no space.
+        Box(Modifier.align(Alignment.BottomEnd).offset(y = (-1).dp)) { StatusWord(ui, phase, hint = hint) }
+        }
         return
     }
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -683,7 +691,8 @@ private fun BottomRow(ui: VoiceUi, phase: Phase, accent: Color, mic: () -> Float
         val label = when (phase) { Phase.Speaking -> "Stop talking"; Phase.Ended -> "Talk again"; else -> "Listening" }
         // The animated blob alone: no microphone drawn on it. Its colours say the state (MicTone).
         FluidMic(phase, accent, mic, null, statusText(ui, phase) + ". " + label, onMic, tone = MicTone.of(ui, phase))
-        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { StatusWord(ui, phase) }
+        // The word, when needed, over the space right of the blob (already there): it adds no row.
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { StatusWord(ui, phase, hint = hint) }
     }
 }
 
@@ -843,5 +852,34 @@ fun statusText(ui: VoiceUi, phase: Phase): String = when {
         Phase.Thinking -> "Thinking"
         Phase.Speaking -> "Speaking"
         Phase.Ended -> "Asleep"
+    }
+}
+
+/**
+ * The state as a ring around the send button while typing (no blob then):
+ * drawn outside the button's bounds, so it takes no layout space. Thinking: a
+ * violet arc going round; speaking: a green pulse; waking or reconnecting: an
+ * amber or indigo pulse; a problem: a steady red ring; listening: none.
+ */
+@Composable
+private fun Modifier.statusRing(tone: MicTone, phase: Phase): Modifier {
+    val show = tone != MicTone.Ready || phase != Phase.Listening
+    val t = rememberInfiniteTransition(label = "ring").animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "ringT")
+    if (!show) return this
+    val col = tone.colors(phase)[0]
+    return this.drawWithContent {
+        drawContent()
+        val r = size.minDimension / 2f + 4.dp.toPx()
+        val w = 2.5.dp.toPx()
+        when {
+            tone == MicTone.Ready && phase == Phase.Thinking ->
+                drawArc(col, startAngle = 360f * t.value - 90f, sweepAngle = 110f, useCenter = false, topLeft = center - androidx.compose.ui.geometry.Offset(r, r), size = androidx.compose.ui.geometry.Size(r * 2, r * 2), style = Stroke(w, cap = androidx.compose.ui.graphics.StrokeCap.Round))
+            tone == MicTone.Problem || phase == Phase.Ended ->
+                drawCircle(col.copy(alpha = if (phase == Phase.Ended) 0.45f else 0.9f), radius = r, style = Stroke(w))
+            else -> {
+                val p = kotlin.math.sin(t.value * Math.PI.toFloat())
+                drawCircle(col.copy(alpha = 0.35f + 0.55f * p), radius = r + 2.dp.toPx() * p, style = Stroke(w))
+            }
+        }
     }
 }

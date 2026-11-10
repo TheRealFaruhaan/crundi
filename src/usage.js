@@ -34,6 +34,77 @@ const HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // drop records older than 30 d
 let cache = { data: null, at: 0 };
 let history = null; // lazy-loaded array of records
 
+// ─── The latest reading, from any source ───
+// The Usage API is rate limited (a 429 backs off for minutes), so it is not
+// the only source: every Claude Code turn reports the account's windows itself
+// (stream-json 'rate_limit_event', unifiedWindows). Whichever is newest is the
+// reading; listeners (Cru's usage_above trigger) hear each one as it lands, so
+// nothing has to poll for a threshold.
+const latest = { fiveHour: null, week: null, at: 0, source: '' };
+const readingCbs = new Set();
+
+/** Hear every new reading: fn({ fiveHour, week, at, source: 'api'|'claude' }). Returns an unsubscribe. */
+export function onUsageReading(fn) {
+  if (typeof fn !== 'function') return () => {};
+  readingCbs.add(fn);
+  return () => readingCbs.delete(fn);
+}
+
+function emitReading(reading) {
+  for (const fn of readingCbs) { try { fn(reading); } catch (e) { console.warn('[usage] a reading listener failed:', e.message); } }
+}
+
+/** Merge one reading (a window may be missing) into the latest and tell the listeners. */
+function noteReading({ fiveHour = null, week = null, source = 'api', at = Date.now() } = {}) {
+  if (!fiveHour && !week) return null;
+  if (fiveHour) latest.fiveHour = { ...fiveHour, at, source };
+  if (week) latest.week = { ...week, at, source };
+  latest.at = at; latest.source = source;
+  const r = { fiveHour, week, at, source };
+  emitReading(r);
+  return r;
+}
+
+/** The newest known reading of each window (API or Claude Code), or nulls. */
+export function getLatestReading() {
+  return { fiveHour: latest.fiveHour, week: latest.week, at: latest.at, source: latest.source };
+}
+
+/**
+ * Claude Code's own report of the limits, from a stream-json line
+ * { type: 'rate_limit_event', rate_limit_info: { utilization, rateLimitType,
+ * resetsAt, unifiedWindows: { five_hour: { utilization, resetsAt }, seven_day } } }.
+ * Utilization there is a fraction and resetsAt is in seconds. Returns the
+ * reading it made, or null when the line has no usable numbers.
+ * Only for the server account's own chats (not a collaborator's sign-in).
+ */
+export function parseRateLimitEvent(msg) {
+  const info = msg && msg.type === 'rate_limit_event' ? msg.rate_limit_info : null;
+  if (!info || typeof info !== 'object') return null;
+  const win = (w) => {
+    if (!w || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) return null;
+    const pct = w.utilization <= 1.5 ? w.utilization * 100 : w.utilization;   // a fraction (a percent, just in case)
+    const r = Number(w.resetsAt);
+    return { utilization: Math.round(pct * 10) / 10, resetsAt: Number.isFinite(r) && r > 0 ? new Date(r < 1e12 ? r * 1000 : r).toISOString() : null };
+  };
+  const u = info.unifiedWindows && typeof info.unifiedWindows === 'object' ? info.unifiedWindows : {};
+  let fiveHour = win(u.five_hour), week = win(u.seven_day);
+  // Older CLIs: only the window that is nearest its limit.
+  if (!fiveHour && !week) {
+    if (info.rateLimitType === 'five_hour') fiveHour = win(info);
+    else if (info.rateLimitType === 'seven_day') week = win(info);
+  }
+  return fiveHour || week ? { fiveHour, week } : null;
+}
+
+export function noteRateLimitEvent(msg) {
+  const r = parseRateLimitEvent(msg);
+  return r ? noteReading({ ...r, source: 'claude' }) : null;
+}
+
+/** Tests only. */
+export function _resetLatest() { latest.fiveHour = null; latest.week = null; latest.at = 0; latest.source = ''; }
+
 function ttlFor(data) { return data && data.ok ? TTL_OK_MS : TTL_ERR_MS; }
 
 function readOAuth() {
@@ -225,6 +296,7 @@ export async function getUsage({ force = false } = {}) {
       fetchedAt: new Date().toISOString(),
     };
     recordHistory(data);
+    noteReading({ fiveHour: data.fiveHour, week: data.week, source: 'api' });
     return (cache = { data, at: Date.now() }).data;
   } catch (err) {
     return (cache = { data: { ok: false, error: err.message }, at: Date.now() }).data;

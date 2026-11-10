@@ -244,6 +244,16 @@ export function createScreen({ file = '', onChange = () => {}, kid = () => false
       commit(next);
       return true;
     },
+    /**
+     * The panel's expand button (the owner, 11 Nov: once back in the normal
+     * view there was no way to the full view again): the panel over the whole
+     * content area. Not in kid mode, not for a video. False when nothing changed.
+     */
+    expand() {
+      if (!state || state.full || state.kid || state.video) return false;
+      commit({ ...state, full: true });
+      return true;
+    },
     /** When the owner last went back to the normal view (ms, 0: never). */
     get normalAt() { return normalAt; },
     /** clear_screen, the owner's X, kid mode starting or ending. */
