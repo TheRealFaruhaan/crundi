@@ -99,6 +99,8 @@ sealed interface VoiceEvent {
     data class SayAgain(val text: String, val now: Long) : VoiceEvent
     /** The owner tapped the × by his words. */
     data class CancelTapped(val now: Long) : VoiceEvent
+    /** The X on a faded bubble in the chat view: that phrase only ([queued]: the one waiting; else the words being heard). */
+    data class DropLive(val queued: Boolean, val now: Long) : VoiceEvent
     /** The server dropped what he said ("scratch that"): { type: 'discard' }. */
     data class Discard(val now: Long) : VoiceEvent
     /** POST /api/voice/cancel answered: what the cancelled turn had already done. */
@@ -164,6 +166,7 @@ class VoiceMachine(
         return when (e) {
             is VoiceEvent.Opened -> s.copy(phase = Phase.Starting, locked = e.locked, quietSince = e.now, activeSince = e.now, cancellable = e.cancellable) to emptyList()
             is VoiceEvent.CancelTapped -> takeBack(s, e.now, fromServer = false)
+            is VoiceEvent.DropLive -> dropLive(s, e.queued, e.now)
             is VoiceEvent.Discard -> takeBack(s, e.now, fromServer = true)
             is VoiceEvent.Cancelled -> if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) to emptyList() else s to emptyList()
             is VoiceEvent.Ready -> if (s.phase != Phase.Starting) s.copy(live = e.live && !s.offline) to emptyList() else {
@@ -288,6 +291,23 @@ class VoiceMachine(
             s.copy(phase = Phase.Listening, heard = "", pending = "", cue = "", notice = "Cancelled.", turn = s.turn + 1, quietSince = now, activeSince = now) to fx
         }
         else -> s to emptyList()
+    }
+
+    /**
+     * The X on a faded bubble (the owner, 10 Nov): only that phrase goes,
+     * before it reaches Cru; the answer being worked on is not touched.
+     * Queued: never asked (words still coming in stay). Being heard: the
+     * stream drops it. As crundi-voice.js dropLive.
+     */
+    private fun dropLive(s: VoiceState, queued: Boolean, now: Long): Pair<VoiceState, List<VoiceEffect>> {
+        if (queued) {
+            if (CruChat.queued(s).isEmpty()) return s to emptyList()
+            val rest = CruChat.hearing(s)
+            return s.copy(pending = "", heard = rest.ifEmpty { s.asked }, activeSince = now) to emptyList()
+        }
+        if (CruChat.hearing(s).isEmpty()) return s to emptyList()
+        val heard = if (s.phase == Phase.Thinking) s.pending.trim().ifEmpty { s.asked } else ""
+        return s.copy(heard = heard, quietSince = now, activeSince = now) to listOf(VoiceEffect.DiscardStream)
     }
 
     private fun cancelledNotice(acted: List<String>) =

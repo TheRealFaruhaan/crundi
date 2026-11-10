@@ -196,6 +196,7 @@ open class VoiceActivity : ComponentActivity() {
                         attachmentThumb = { controller.attachmentThumb(it) },
                         onSay = { controller.sayAgain(it) },
                         onStopSaying = { controller.stopSaying() },
+                        onDropLive = { controller.dropLive(it) },
                         // Float Cru as its own bubble (Android 11+, bubbles allowed); not from inside one.
                         // Offered whenever Android can bubble (11+): if bubbles are off, the button says how to turn them on.
                         // The voice screen goes only once Android has really made a bubble of it.

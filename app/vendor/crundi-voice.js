@@ -423,6 +423,7 @@
     '.cv-admin{position:relative;margin-left:8px;width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#f87171;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.55)}.cv-admin[hidden]{display:none}' +
     '.cv-tip{display:none;position:absolute;top:36px;left:50%;transform:translateX(-50%);z-index:30;width:220px;padding:8px 10px;border-radius:10px;background:' + C.card + ';border:1px solid rgba(239,68,68,.55);color:' + C.text + ';font:12px/17px system-ui,sans-serif;text-align:left;box-shadow:0 8px 24px rgba(0,0,0,.5)}.cv-admin.tip .cv-tip{display:block}' +
     '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:none;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
+    '.cv-lw{align-self:flex-end;display:flex;align-items:center;gap:6px;max-width:88%}.cv-lw .cv-m{max-width:none;min-width:0}.cv-drop{flex:none;width:28px;height:28px;border-radius:50%;border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-drop:hover{color:' + C.text + ';background:#24243a}' +
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
     '.cv-m.cru{position:relative;overflow:visible}.cv-m.cru.say{margin-right:40px}.cv-say{position:absolute;right:-40px;bottom:0;width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:' + C.muted + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-say:hover{color:' + C.text + ';background:rgba(255,255,255,.08)}' +
@@ -642,7 +643,7 @@
     // Kid mode: the microphone off (Cru still talks, taps and games still work); tap again to listen.
     q('.cv-mute').onclick = function (e) { e.stopPropagation(); if (S) kidMute(!S.muted); };
     q('.cv-more').onclick = function (e) { e.stopPropagation(); loadChat(true); };
-    q('.cv-msgs').onclick = function (e) { var b = e.target && e.target.closest && e.target.closest('.cv-say'); if (!b) return; e.stopPropagation(); sayAgain(Number(b.getAttribute('data-say'))); };
+    q('.cv-msgs').onclick = function (e) { var d = e.target && e.target.closest && e.target.closest('.cv-drop'); if (d) { e.stopPropagation(); dropTapped(d.getAttribute('data-drop')); return; } var b = e.target && e.target.closest && e.target.closest('.cv-say'); if (!b) return; e.stopPropagation(); sayAgain(Number(b.getAttribute('data-say'))); };
     // The view the owner chose last time, on this device: the chat view unless he
     // went back to the voice view (the default since 10 Nov). Kid mode keeps its own screen.
     if (chatPref() && !S.kid) setTimeout(function () { if (S) chatView(true); }, 0);
@@ -1076,8 +1077,11 @@
     // Cru thinking, then what is queued for next, then the words being heard right now.
     if (S.phase === 'think') h += '<div class="cv-m cru cv-typing" role="img" aria-label="Cru is thinking"><i></i><i></i><i></i></div>';
     var queued = queuedOf(S), hearing = hearingOf(S);
-    if (queued) h += '<div class="cv-m me live">' + esc(queued) + '<time>Queued: Cru answers it next</time></div>';
-    if (hearing) h += '<div class="cv-m me live">' + esc(hearing) + '</div>';
+    // Each faded bubble has its own X (the owner, 10 Nov): that phrase goes before it reaches Cru;
+    // the answer being worked on is not touched.
+    var DROP_SVG = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    if (queued) h += '<div class="cv-lw"><button class="cv-drop" data-drop="queued" title="Cancel this: it is not sent" aria-label="Cancel this message">' + DROP_SVG + '</button><div class="cv-m me live">' + esc(queued) + '<time>Queued: Cru answers it next</time></div></div>';
+    if (hearing) h += '<div class="cv-lw">' + (S.cancellable ? '<button class="cv-drop" data-drop="hearing" title="Cancel this: it is not sent" aria-label="Cancel this message">' + DROP_SVG + '</button>' : '') + '<div class="cv-m me live">' + esc(hearing) + '</div></div>';
     // Rebuilt only when it changed: render() runs on every word heard, and a long history
     // rebuilt each time starved the animation (the mic froze in the chat view).
     if (h === S.chatHtml && !toEnd) return;
@@ -1271,6 +1275,30 @@
   function canCancel(s) { return !!(s && s.cancellable && s.heard && (s.phase === 'listen' || s.phase === 'think')); }
 
   function cancelWords() { if (canCancel(S)) { takeBack(false); render(); } }
+
+  /**
+   * The X on a faded bubble in the chat view: only that phrase goes, before it
+   * reaches Cru. Queued: it is never asked (what is still coming in stays).
+   * Being heard: the stream drops it. Cru's answer in progress is untouched.
+   */
+  function dropLive(st, which) {
+    if (!st) return false;
+    if (which === 'queued') {
+      if (st.phase !== 'think' || !String(st.pending || '').trim()) return false;
+      var rest = hearingOf(st); st.pending = ''; st.heard = rest || st.asked || '';
+      return true;
+    }
+    if (!hearingOf(st)) return false;
+    if (st.phase === 'listen') { st.heard = ''; st.quietSince = Date.now(); return 'stream'; }
+    st.heard = String(st.pending || '').trim() || st.asked || '';
+    return 'stream';
+  }
+  function dropTapped(which) {
+    var r = dropLive(S, which);
+    if (!r) return;
+    if (r === 'stream') wsSend({ type: 'discard' });
+    render();
+  }
 
   /**
    * Take back what the owner said. Listening: the words go (the stream is
@@ -2328,7 +2356,7 @@
     tell(say, show);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex, queuedOf: queuedOf, hearingOf: hearingOf }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

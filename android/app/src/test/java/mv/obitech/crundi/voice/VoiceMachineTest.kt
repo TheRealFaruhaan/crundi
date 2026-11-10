@@ -497,6 +497,44 @@ class CancelTest {
         assertEquals("Cancelled. Already done: sent \"hi\" to the API chat.", s2.notice)
     }
 
+    // The X on a faded bubble in the chat view (10 Nov): only that phrase goes, the answer in progress stays.
+    @Test fun theQueuedBubblesXDropsItWithoutCancellingTheTurn() {
+        val (queued, _) = m.on(thinking(), VoiceEvent.Utterance("and the logs", 30))
+        assertEquals("and the logs", CruChat.queued(queued))
+        val (s, fx) = m.on(queued, VoiceEvent.DropLive(queued = true, now = 31))
+        assertEquals(Phase.Thinking, s.phase)
+        assertEquals("", s.pending)
+        assertEquals("", CruChat.queued(s))
+        assertEquals("", CruChat.hearing(s))
+        assertEquals(queued.turn, s.turn)
+        assertTrue(fx.isEmpty())
+        // The answer then comes and is said; nothing more is asked.
+        val (r, rfx) = m.on(s, VoiceEvent.Reply(true, "Board open.", "", "", 40, turn = s.turn))
+        assertEquals(Phase.Speaking, r.phase)
+        assertTrue(rfx.none { it is VoiceEffect.Ask })
+        // Words still coming in after the queue stay.
+        val (more, _) = m.on(queued, VoiceEvent.Interim("please", 32))
+        val (s2, _) = m.on(more, VoiceEvent.DropLive(queued = true, now = 33))
+        assertEquals("please", CruChat.hearing(s2))
+    }
+
+    @Test fun theHeardBubblesXDropsTheWordsAndTellsTheStream() {
+        val (heard, _) = run(listening(), VoiceEvent.Interim("open dhivo", 15))
+        val (s, fx) = m.on(heard, VoiceEvent.DropLive(queued = false, now = 16))
+        assertEquals("", CruChat.hearing(s))
+        assertEquals(listOf(VoiceEffect.DiscardStream), fx)
+        // While Cru thinks: the new words go, the turn and the queue stay.
+        val (queued, _) = m.on(thinking(), VoiceEvent.Utterance("and the logs", 30))
+        val (coming, _) = m.on(queued, VoiceEvent.Interim("please", 31))
+        val (t, tfx) = m.on(coming, VoiceEvent.DropLive(queued = false, now = 32))
+        assertEquals(Phase.Thinking, t.phase)
+        assertEquals("and the logs", CruChat.queued(t))
+        assertEquals("", CruChat.hearing(t))
+        assertEquals(listOf(VoiceEffect.DiscardStream), tfx)
+        // Nothing being heard: nothing happens.
+        assertTrue(m.on(thinking(), VoiceEvent.DropLive(queued = false, now = 26)).second.isEmpty())
+    }
+
     @Test fun theCancelledAnswerIsNeitherSaidNorShown() {
         val (s0, _) = m.on(thinking(), VoiceEvent.CancelTapped(25))
         val (s, fx) = m.on(s0, VoiceEvent.Reply(false, "", "", "", 40, turn = 1, cancelled = true))

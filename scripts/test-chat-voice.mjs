@@ -191,10 +191,20 @@ ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes(
     const si = w.CrundiVoice._test.speakingIndex;
     const msgs = [{ speak: 'Yes, Sir?' }, { speak: 'Done, Sir.' }, { speak: 'Yes, Sir?' }, { said: 'hi', speak: '' }];
     ok(si(msgs, 'speak', 'Done, Sir.') === 1 && si(msgs, 'speak', ' Yes, Sir? ') === 2, 'the sign goes by the reply with those words (the latest of two alike)');
+    // The X on a faded bubble (10 Nov): that phrase goes before it reaches Cru; the answer in progress stays.
+    const drop = w.CrundiVoice._test.dropLive, qd = w.CrundiVoice._test.queuedOf, hd = w.CrundiVoice._test.hearingOf;
+    const st = { phase: 'think', asked: 'open the board', pending: 'and the logs', heard: 'and the logs please', turn: 3 };
+    ok(drop(st, 'queued') === true && qd(st) === '' && hd(st) === 'please' && st.phase === 'think' && st.turn === 3, 'the queued bubble\'s X: never asked, the words still coming in stay, the turn untouched');
+    const st2 = { phase: 'think', asked: 'open the board', pending: 'and the logs', heard: 'and the logs please' };
+    ok(drop(st2, 'hearing') === 'stream' && hd(st2) === '' && qd(st2) === 'and the logs', 'the heard bubble\'s X: those words go (the stream is told), the queue stays');
+    const st3 = { phase: 'listen', heard: 'open dhivo' };
+    ok(drop(st3, 'hearing') === 'stream' && st3.heard === '' && drop(st3, 'hearing') === false && drop({ phase: 'listen', heard: '' }, 'queued') === false, 'listening: the words go; nothing there, nothing happens');
+    ok(/data-drop="queued"/.test(cvs) && /data-drop="hearing"/.test(cvs) && /closest\('\.cv-drop'\)[\s\S]{0,80}dropTapped\(/.test(cvs), 'the X is on each faded bubble, and wired');
     ok(si(msgs, 'listen', 'Done, Sir.') === -1 && si(msgs, 'speak', 'Could not reach the server') === -1 && si(msgs, 'speak', '') === -1 && si([], 'speak', 'x') === -1, 'and nowhere when Cru is not speaking, or says something not in the list');
   }
   const cc2 = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'VoiceScreen.kt');
   ok(/if \(thinking\) item\(key = "thinking"\) \{ ThinkingBubble\(\) \}/.test(cc2) && /speaking = i == speakingAt/.test(cc2) && /if \(onSay != null\) SpeakerButton\(speaking, onSay/.test(cc2) && /IconPaths\.all\["speaking-head"\]/.test(cc2), 'Android: the same typing bubble and sound sign');
+  ok(/key = "queued"\) \{ Bubble\([^\n]*onDrop = \{ more\.onDropLive\(true\) \}/.test(cc2) && /key = "hearing"\) \{ Bubble\([^\n]*onDrop = if \(ui\.state\.cancellable\)/.test(cc2), 'Android: the same X on each faded bubble');
   const ms = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'MicStream.kt');
   ok(ms.includes('getBoolean("voice.chatView", true)'), 'Android: the chat view is the default too');
   const vc = read('android', 'app', 'src', 'main', 'java', 'mv', 'obitech', 'crundi', 'voice', 'VoiceController.kt');

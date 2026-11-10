@@ -443,6 +443,9 @@ class VoiceController(
     /** The × by the owner's words: take back what he said (or cancel the turn it started). */
     fun cancelWords() = dispatch(VoiceEvent.CancelTapped(now()))
 
+    /** The X on a faded bubble in the chat view: that phrase goes before it is sent ([queued]: the one waiting). */
+    fun dropLive(queued: Boolean) = dispatch(VoiceEvent.DropLive(queued, now()))
+
     private fun ask(text: String) {
         val voice = api ?: return
         val locked = _ui.value.state.locked

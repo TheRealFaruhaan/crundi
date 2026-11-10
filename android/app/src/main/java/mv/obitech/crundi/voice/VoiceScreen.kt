@@ -244,6 +244,8 @@ class VoiceMore(
     val onSay: (String) -> Unit = {},
     /** The same speaker while that reply is being said: stop. */
     val onStopSaying: () -> Unit = {},
+    /** The X on a faded bubble in the chat view: that phrase is not sent (true: the queued one; false: the words being heard). */
+    val onDropLive: (Boolean) -> Unit = {},
     /** Float Cru as its own bubble; null: not offered here (inside the bubble, or bubbles unavailable). */
     val onBubble: (() -> Unit)? = null,
 )
@@ -418,8 +420,9 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
             }
         }
         if (thinking) item(key = "thinking") { ThinkingBubble() }
-        if (queued.isNotEmpty()) item(key = "queued") { Bubble(mine = true, text = queued, detail = "", time = "Queued: Cru answers it next", faded = true) }
-        if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true) }
+        // Each faded bubble has its own X (the owner, 10 Nov): that phrase goes before it reaches Cru.
+        if (queued.isNotEmpty()) item(key = "queued") { Bubble(mine = true, text = queued, detail = "", time = "Queued: Cru answers it next", faded = true, onDrop = { more.onDropLive(true) }) }
+        if (hearing.isNotEmpty()) item(key = "hearing") { Bubble(mine = true, text = hearing, detail = "", time = "", faded = true, onDrop = if (ui.state.cancellable) ({ more.onDropLive(false) }) else null) }
     }
 }
 
@@ -473,12 +476,20 @@ private fun SpeakerButton(speaking: Boolean, onClick: () -> Unit, modifier: Modi
 }
 
 @Composable
-private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null, onSay: (() -> Unit)? = null, speaking: Boolean = false) {
+private fun Bubble(mine: Boolean, text: String, detail: String, time: String, faded: Boolean = false, thumb: (suspend (String) -> androidx.compose.ui.graphics.ImageBitmap?)? = null, onSay: (() -> Unit)? = null, speaking: Boolean = false, onDrop: (() -> Unit)? = null) {
     val shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp, bottomStart = if (mine) 16.dp else 4.dp, bottomEnd = if (mine) 4.dp else 16.dp)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = Alignment.Bottom) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start, verticalAlignment = if (onDrop != null) Alignment.CenterVertically else Alignment.Bottom) {
+        // A faded bubble about to be sent: its X, at full strength, just left of it; a tap and it is not sent.
+        if (onDrop != null) Box(
+            Modifier.padding(end = 6.dp).size(32.dp).clip(CircleShape).background(CrundiColors.BgSecondary)
+                .border(1.dp, CrundiColors.Border, CircleShape)
+                .clickable(onClickLabel = "Cancel this message", onClick = onDrop)
+                .semantics { contentDescription = "Cancel this message: it is not sent" },
+            contentAlignment = Alignment.Center,
+        ) { CrundiIcon("x", size = 14.dp, tint = CrundiColors.TextSecondary) }
         Column(
             // Cru's with a speaker: the bubble as wide as it needs, the speaker hugging its bottom right.
-            (if (!mine && onSay != null) Modifier.weight(1f, fill = false) else Modifier.fillMaxWidth(0.86f).wrapContentWidth(if (mine) Alignment.End else Alignment.Start))
+            (if ((!mine && onSay != null) || onDrop != null) Modifier.weight(1f, fill = false) else Modifier.fillMaxWidth(0.86f).wrapContentWidth(if (mine) Alignment.End else Alignment.Start))
                 .alpha(if (faded) 0.55f else 1f)
                 .clip(shape)
                 .background(if (mine) CrundiColors.AccentDim else CrundiColors.BgSecondary.copy(alpha = 0.9f))
