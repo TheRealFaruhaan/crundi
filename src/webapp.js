@@ -2787,6 +2787,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const live = await usage.getUsage();
       if (live && live.ok) return live;
       const last = usage.getLatestStored();
+      // Claude Code's own report (rate_limit_event) when it is newer than the last API reading.
+      const cc = usage.getLatestReading();
+      const lastAt = last.ok ? Date.parse(last.fetchedAt) || 0 : 0;
+      if (cc.at > lastAt && (cc.fiveHour || cc.week)) {
+        const pick = (w, old) => (w ? { utilization: w.utilization, resetsAt: w.resetsAt } : old || null);
+        const at = new Date(cc.at).toISOString();
+        return { ok: true, fromClaude: true, fetchedAt: at, fiveHour: pick(cc.fiveHour, last.fiveHour), week: pick(cc.week, last.week), note: `The usage API could not be read (${live?.error || 'unavailable'}); these figures are from Claude Code's own report at ${at}.` };
+      }
       return last.ok ? { ...last, note: `The live usage could not be read (${live?.error || 'unavailable'}); these are the last figures, from ${last.fetchedAt}.` } : live;
     },
     secrets: () => secrets.listSecrets(),
@@ -2998,6 +3006,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return rest;
     },
   });
+  // Every usage reading, for the usage_above triggers: the Usage API ones
+  // (broadcastUsage reads it each minute anyway) and Claude Code's own
+  // rate_limit_event from any chat or Cru turn, which keeps coming while the
+  // API answers 429. Pushed, not polled: a crossing wakes Cru at once.
+  usage.onUsageReading((r) => { try { wakeEngine.usage(r); } catch (err) { console.warn('[voice] usage trigger check failed:', err.message); } });
   // What chats do, for the chat_finished / chat_waiting / collaborator triggers.
   const wakeTold = new Map();   // chat id -> pending card ids already told
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {

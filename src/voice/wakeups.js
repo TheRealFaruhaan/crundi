@@ -63,8 +63,19 @@ export const CONDITION_KINDS = {
   process_started: { params: { name: 'string' }, about: 'a process with this name starts' },
   process_stopped: { params: { name: 'string' }, about: 'the last process with this name stops' },
   collaborator_action: { params: { collaborator: 'string' }, about: 'a collaborator opens a chat, finishes a turn or closes a chat' },
+  usage_above: { params: { usageWindow: 'string', percent: 'number' }, about: "the Claude account's usage reaches percent of its five_hour or week window (once per crossing)" },
   at: { params: { datetime: 'string' }, about: 'a one-off time' },
 };
+/** usage_above's windows, and how long each one is (for when it reset). */
+export const USAGE_WINDOWS = { five_hour: 5 * 60 * 60 * 1000, week: 7 * 24 * 60 * 60 * 1000 };
+const USAGE_WINDOW_NAMES = { five_hour: 'five-hour', week: 'weekly' };
+/** "5h", "weekly", "seven_day"… -> 'five_hour' | 'week' | ''. */
+export function usageWindowName(w) {
+  const v = String(w || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (['five_hour', '5h', '5_hour', 'five', 'fivehour', 'session'].includes(v)) return 'five_hour';
+  if (['week', 'weekly', '7d', 'seven_day', '7_day', 'sevenday'].includes(v)) return 'week';
+  return '';
+}
 export const KINDS = Object.keys(CONDITION_KINDS);
 
 // ─── time helpers (server local time) ───
@@ -164,6 +175,7 @@ export function describe(item) {
     case 'process_started': s = `process "${c.name}" starts`; break;
     case 'process_stopped': s = `process "${c.name}" stops`; break;
     case 'collaborator_action': s = `${c.collaborator ? `collaborator "${c.collaborator}"` : 'a collaborator'} does something`; break;
+    case 'usage_above': s = `${USAGE_WINDOW_NAMES[c.usageWindow] || c.usageWindow} usage at ${c.percent}% or more`; break;
     case 'at': s = `once at ${String(c.datetime || '').replace('T', ' ')}`; break;
     default: s = String(c.kind || 'unknown');
   }
@@ -186,6 +198,11 @@ function cleanCondition(c = {}) {
   if (kind === 'cpu_above' || kind === 'memory_above') {
     if (!(out.percent > 0 && out.percent < 100)) throw new Error('percent must be between 1 and 99');
     out.forMinutes = Math.max(0, Math.min(120, Math.round(out.forMinutes ?? 5)));
+  }
+  if (kind === 'usage_above') {
+    out.usageWindow = usageWindowName(out.usageWindow);
+    if (!out.usageWindow) throw new Error('usageWindow must be five_hour or week');
+    if (!(out.percent >= 1 && out.percent <= 100)) throw new Error('percent must be between 1 and 100');
   }
   if ((kind === 'process_started' || kind === 'process_stopped') && !out.name) throw new Error('A process trigger needs the process name');
   if (kind === 'at') {
@@ -534,6 +551,40 @@ export function createWakeupEngine({ store, report, overLimit = () => false, now
     return out;
   }
 
+  /**
+   * A usage reading ({ fiveHour, week } as usage.js has them: { utilization
+   * (percent), resetsAt }, either may be missing), from the Usage API or from
+   * Claude Code's own rate_limit_event. Fires a usage_above trigger once per
+   * crossing: it must fall back clearly below (the window reset) to fire again, and
+   * one that already fired inside the current window (before a restart) does
+   * not fire again in it. A wake-up that could not go out (its cooldown, the
+   * cap) is tried again on the next reading.
+   */
+  function usage(reading = {}, t = now()) {
+    const out = [];
+    const wins = { five_hour: reading.fiveHour, week: reading.week };
+    for (const g of store.enabled()) {
+      if (g.type !== 'trigger' || g.condition.kind !== 'usage_above') continue;
+      const c = g.condition;
+      const w = wins[c.usageWindow];
+      if (!w || typeof w.utilization !== 'number' || !Number.isFinite(w.utilization)) continue;
+      const m = st(g.id);
+      const v = w.utilization;
+      const reset = w.resetsAt ? Date.parse(w.resetsAt) : NaN;
+      // Re-armed only once clearly below: the API rounds (90) where Claude Code
+      // does not (89.6), so the two sources must not make it flap.
+      if (v < c.percent - Math.min(2, c.percent / 2)) { m.latched = false; continue; }
+      if (v < c.percent || m.latched) continue;
+      // Already fired in this window (Crundi restarted since): not again.
+      if (Number.isFinite(reset) && g.lastFiredAt && g.lastFiredAt > reset - USAGE_WINDOWS[c.usageWindow] && g.lastFiredAt >= (g.enabledAt || 0)) { m.latched = true; continue; }
+      m.latched = true;
+      const when = Number.isFinite(reset) ? new Date(reset).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+      const r = fire(g, `the ${USAGE_WINDOW_NAMES[c.usageWindow]} usage is at ${Math.round(v)}% (the trigger is at ${c.percent}%)${when ? `; it resets ${when}` : ''}${reading.source ? ` [from ${reading.source === 'claude' ? "Claude Code's own report" : 'the Usage API'}]` : ''}`);
+      out.push(r.then((res) => { if (res && res.skipped && res.skipped !== 'already waking') m.latched = false; return res; }));
+    }
+    return out;
+  }
+
   /** Something that happened: 'chat_finished' | 'chat_waiting' with { chat, what }. */
   function event(kind, { chat, what = '' } = {}) {
     const out = [];
@@ -554,7 +605,7 @@ export function createWakeupEngine({ store, report, overLimit = () => false, now
   }
 
   return {
-    fire, scan, sample, event, kindsOn,
+    fire, scan, sample, event, usage, kindsOn,
     /** For the UI and list_wakeups. */
     limits() { prune(now()); return { perHour: maxPerHour, firedLastHour: fired.length, minEvery: MIN_EVERY_MIN, defaultCooldown: DEFAULT_COOLDOWN_MIN }; },
     /** Tests. */
@@ -633,11 +684,12 @@ export function wakeupToolDefs({ store, engine, alert }) {
     },
     {
       name: 'add_trigger',
-      description: `Add a trigger: it wakes you when a condition is met, so you can decide whether to tell the owner. kind is one of: ${KINDS.map(k => `${k} (${CONDITION_KINDS[k].about}${Object.keys(CONDITION_KINDS[k].params).length ? '; ' + Object.keys(CONDITION_KINDS[k].params).join(', ') : ''})`).join('; ')}. For chats, project and match (an id or part of the title) narrow it; for services, containers and collaborators, part of the name. at takes datetime like 2026-11-10T07:30 (server local time) and fires once. from/to/days limit it to a time window (e.g. only in the morning). It fires at most once per cooldown (default ${DEFAULT_COOLDOWN_MIN} minutes) unless once is true. Off unless enabled is true. Built-in and read-only: you cannot watch arbitrary commands.`,
+      description: `Add a trigger: it wakes you when a condition is met, so you can decide whether to tell the owner. kind is one of: ${KINDS.map(k => `${k} (${CONDITION_KINDS[k].about}${Object.keys(CONDITION_KINDS[k].params).length ? '; ' + Object.keys(CONDITION_KINDS[k].params).join(', ') : ''})`).join('; ')}. For chats, project and match (an id or part of the title) narrow it; for services, containers and collaborators, part of the name. at takes datetime like 2026-11-10T07:30 (server local time) and fires once. usage_above (usage_window five_hour or week, percent) wakes you the moment the account's usage reaches it, from the readings Crundi already gets, no polling: e.g. one at 90% to tell job chats to wrap up and one at 95% to stop them; it fires once per crossing and again only after the window resets. from/to/days limit it to a time window (e.g. only in the morning). It fires at most once per cooldown (default ${DEFAULT_COOLDOWN_MIN} minutes) unless once is true. Off unless enabled is true. Built-in and read-only: you cannot watch arbitrary commands.`,
       input_schema: obj({
         name: str('A short name'), purpose: str('Why it exists and what to do when it fires'),
         kind: str('The condition', { enum: KINDS }),
-        percent: num('cpu_above / memory_above: the threshold, 1-99'), forMinutes: num('cpu_above / memory_above: for how long (default 5)'),
+        percent: num('cpu_above / memory_above: the threshold, 1-99; usage_above: the percent of the window, 1-100'),
+        usage_window: str('usage_above: which window', { enum: ['five_hour', 'week'] }), forMinutes: num('cpu_above / memory_above: for how long (default 5)'),
         project: str('chat_*: only chats in this project'), match: str('chat_*: a chat id or part of its title'),
         service: str('service_stopped: part of the service name'), container: str('container_unhealthy: part of the container name'),
         process: str('process_started / process_stopped: the process name, e.g. "ffmpeg"'), collaborator: str('collaborator_action: part of their name'),
@@ -648,7 +700,7 @@ export function wakeupToolDefs({ store, engine, alert }) {
       }, ['name', 'purpose', 'kind']),
       safe: true,
       run: (i) => tryIt(() => {
-        const condition = { kind: i.kind, percent: i.percent, forMinutes: i.forMinutes, project: i.project, match: i.match, service: i.service, container: i.container, name: i.process, collaborator: i.collaborator, datetime: i.datetime };
+        const condition = { kind: i.kind, usageWindow: i.usage_window, percent: i.percent, forMinutes: i.forMinutes, project: i.project, match: i.match, service: i.service, container: i.container, name: i.process, collaborator: i.collaborator, datetime: i.datetime };
         return { ok: true, trigger: brief(store.addTrigger({ name: i.name, purpose: i.purpose, condition, from: i.from, to: i.to, days: i.days, once: i.once, cooldown: i.cooldown, enabled: i.enabled }, i.asked_by_owner ? 'owner' : 'cru')) };
       }),
     },
