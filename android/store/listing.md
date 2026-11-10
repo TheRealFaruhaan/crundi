@@ -61,6 +61,20 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.36 (en-US)
+
+Version code 67. Internal track. Since 1.1.3-dev.35 (code 66): the Cru bubble checks it really bubbled and explains the bubble settings otherwise; the notification opens the normal voice screen; top bar in one menu (bubble, compact, chat view), admin as an icon, no status pill (the state on the blob, a word when needed); times on Cru's replies. Server 1.21.6-dev.49.
+
+```
+<en-US>
+Cru:
+- Float as a bubble now really floats. If bubbles are off for Cru, it shows where to turn them on.
+- The top bar is tidier: everything but close is in one menu, and admin mode is an icon.
+- The blob at the bottom shows Cru's state by colour, with a word only when needed.
+- Cru's replies show their time.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.35 (en-US)
 
 Version code 66. Internal track. Since 1.1.3-dev.34 (code 65): Cru's full-area UI with Normal view; Cru as its own bubble; call audio kept on the loudspeaker; typed and queued messages shown at once; thinking effort setting; Cru's off order stops every wake listener; parked chat Peek; mic level moves for speech only; request ids on turns. Server 1.21.6-dev.49.
