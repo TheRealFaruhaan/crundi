@@ -232,9 +232,8 @@ class VoiceSettingsActivity : ComponentActivity() {
         onBack = { finish() },
         onEnabled = { on ->
             VoicePrefs.setEnabled(this, on)
-            // The "Cru" launcher entry comes and goes with it.
-            // ...and so does "Cru" in the share sheet.
-            for (alias in listOf("CrundiVoice", "ShareToCru")) packageManager.setComponentEnabledSetting(
+            // "Cru" in the share sheet comes and goes with it (Cru has no launcher icon of its own any more).
+            for (alias in listOf("ShareToCru")) packageManager.setComponentEnabledSetting(
                 ComponentName(this, "$packageName.voice.$alias"),
                 if (on) PackageManager.COMPONENT_ENABLED_STATE_DEFAULT else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                 PackageManager.DONT_KILL_APP,
@@ -355,11 +354,11 @@ fun VoiceSettingsScreen(ui: VoiceSettingsUi, ev: VoiceSettingsEvents) {
                 steps = "Settings > Apps > Choose default apps > Digital assistant app > Crundi. On Samsung, also Advanced features > Side button > Press and hold > Digital assistant.",
             ) { CrundiButton("Choose the digital assistant", ev.onAssistantSettings, icon = "settings") }
             Mode(
-                "B. Keep Gemini, double-press the side key",
-                "Gemini stays the phone's assistant. A double press of the side key opens Cru directly; Gemini isn't involved. Works after unlocking.",
-                if (ui.isAssistant) "Gemini is not the assistant now" else "Available",
+                "B. From Crundi, or as a bubble",
+                "Keep Gemini as the phone's assistant and open Cru from Crundi's top bar, by saying \"Hey Cru\", or float it as a bubble over any app (the voice screen's menu).",
+                "Available",
                 null,
-                steps = "On Samsung: Advanced features > Side button > Double press > Open app > Cru.",
+                steps = "Open Crundi, then tap Cru on the top bar. For the bubble: on the voice screen, the menu, Float as a bubble.",
             ) { CrundiButton("Try Cru", ev.onTry, icon = "mic") }
 
             // ─── Winding down: the microphone, then "Hey Cru", then sleep ───

@@ -1529,6 +1529,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (s.recapTimer) { clearTimeout(s.recapTimer); s.recapTimer = null; }
       // Its agents and background commands died with it.
       endRunning(s, () => true);
+      s.waiting.clear();
       setState(s, 'idle');
       s.emitter.emit('event', { type: 'exit', code });
       // The transcript is nobody's now, so a later resume of it need not fork.
@@ -2148,26 +2149,53 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * Which background tasks have finished, from the CLI's own transcript: the
    * completion is never sent over stream-json, but the CLI writes it there
    * (a queue-operation / queued_command carrying <task-notification> with the
-   * <task-id>). Read from the tail only. null when the transcript cannot be
-   * read (an unknown session, another HOME): then nothing is known, and
-   * "waiting" falls back to lasting one turn.
+   * <task-id>). null when the transcript cannot be read (an unknown session,
+   * another HOME): then nothing is known, and "waiting" falls back to lasting
+   * one turn.
+   *
+   * The whole file counts, not just its tail: a long chat's transcript runs
+   * to tens of MB, and a completion written early in it is still a
+   * completion (scanning only the last 512 KB left ids from earlier tasks in
+   * s.waiting for hours, so finished chats read "waiting"). The file is only
+   * ever appended to, so each look reads just the bytes added since the last
+   * one and adds to a per-session set. A first look at a huge file is spread
+   * over a few checks (TX_SCAN_MAX_BYTES each) rather than blocking at once.
    */
+  const TX_SCAN_MAX_BYTES = 8 * 1024 * 1024;
+  const TX_CHUNK_BYTES = 1024 * 1024;
+  // Bytes kept from the end of one read and scanned again with the next, so a
+  // notification split across the boundary is still matched (the pattern is
+  // well under this).
+  const TX_OVERLAP_BYTES = 512;
+  const TASK_DONE_RE = /<task-notification>[\s\S]{0,40}?<task-id>([a-z0-9]+)<\/task-id>/g;
   function finishedTasks(s) {
     if (!s.sessionId || !s.cwd) return null;
     const file = join(transcriptDir(s.cwd), s.sessionId + '.jsonl');
     let fd;
     try {
       const size = statSync(file).size;
-      const len = Math.min(size, 512 * 1024);
-      const buf = Buffer.alloc(len);
-      fd = openSync(file, 'r');
-      readSync(fd, buf, 0, len, size - len);
-      const done = new Set();
-      const re = /<task-notification>[\s\S]{0,40}?<task-id>([a-z0-9]+)<\/task-id>/g;
-      const text = buf.toString('utf8');
-      let m;
-      while ((m = re.exec(text))) done.add(m[1]);
-      return done;
+      let tx = s.txScan;
+      // A new transcript (another session id) or one that shrank (rewritten):
+      // start again from the top.
+      if (!tx || tx.file !== file || size < tx.offset) tx = s.txScan = { file, offset: 0, carry: Buffer.alloc(0), done: new Set() };
+      if (size > tx.offset) {
+        fd = openSync(file, 'r');
+        const stop = Math.min(size, tx.offset + TX_SCAN_MAX_BYTES);
+        while (tx.offset < stop) {
+          const len = Math.min(TX_CHUNK_BYTES, stop - tx.offset);
+          const chunk = Buffer.alloc(len);
+          const got = readSync(fd, chunk, 0, len, tx.offset);
+          if (got <= 0) break;
+          const buf = tx.carry.length ? Buffer.concat([tx.carry, chunk.subarray(0, got)]) : chunk.subarray(0, got);
+          const text = buf.toString('latin1');   // the pattern is ASCII; no multibyte split to worry about
+          TASK_DONE_RE.lastIndex = 0;
+          let m;
+          while ((m = TASK_DONE_RE.exec(text))) tx.done.add(m[1]);
+          tx.carry = Buffer.from(buf.subarray(Math.max(0, buf.length - TX_OVERLAP_BYTES)));
+          tx.offset += got;
+        }
+      }
+      return tx.done;
     } catch { return null; }
     finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* closed */ } } }
   }
@@ -2179,6 +2207,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    */
   function retireTriggers(s) {
     if (!s.waiting.size) return true;
+    // No CLI process, nothing of its can still be running: background
+    // commands, monitors and agents all die with it.
+    if (!s.proc) { s.waiting.clear(); return true; }
     const done = finishedTasks(s);
     if (!done) return false;
     const now = Date.now();
