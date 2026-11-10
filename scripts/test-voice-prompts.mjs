@@ -194,6 +194,7 @@ function setup({ cards, own = false, admin = false, unattended = false, unrecogn
 {
   const { SYSTEM_PROMPT } = await import('../src/voice/agent.js');
   ok(/answer_chat_prompt/.test(SYSTEM_PROMPT) && /admin mode is on, allow or deny a permission prompt in any chat/.test(SYSTEM_PROMPT), 'the system prompt explains reading prompts out and answering them, and when Cru may on its own');
+  ok(/They work on your own too/.test(SYSTEM_PROMPT) && /on your own restarting or stopping Crundi or the machine is refused/.test(SYSTEM_PROMPT) && /A spoken request still needs his recognised voice/.test(SYSTEM_PROMPT), 'admin mode on its own: the prompt says to look after the server, never restart Crundi, voice still checked when spoken');
   ok(/Never say ids, hashes, codes or full version strings aloud/.test(SYSTEM_PROMPT) && /after ---/.test(SYSTEM_PROMPT), 'and never to read ids, hashes or versions aloud: those go on screen');
 }
 

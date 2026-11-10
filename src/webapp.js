@@ -3234,6 +3234,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     ownerVoice: () => voiceOwnerVerdict,
     locked: () => voiceCtx.locked(),
     logFile: join(config.dataDir, 'voice-memory', 'admin-log.jsonl'),
+    unattended: () => !!voiceCtx.unattended(),
+    onOwnAct: (tool, what, r) => cruLog.add(tool === 'run_command'
+      ? `On my own (admin): ran a command (${r && r.timedOut ? 'stopped, took too long' : r && r.error ? `failed: ${String(r.error).slice(0, 80)}` : `exit ${r ? r.exitCode : '?'}`}) in ${what.cwd}: \`${String(what.command).replace(/\s+/g, ' ').slice(0, 200)}\``
+      : `On my own (admin): ${what.append ? 'appended to' : 'wrote'} ${what.path} (${what.bytes} bytes)`),
     onChanged: () => { for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } } },
   });
   // ─── Cru's live screen and kid mode (voice/screen.js, voice/kid*.js) ───
@@ -3449,8 +3453,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       .map((t) => ({ ...t, run: async (i) => { let out; try { out = await t.run(i); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
     beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
     turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
-    // Cru speaking up by itself: nobody spoke, so with a voice enrolled no admin powers.
-    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceCtx.unattended = () => true; cruTurnBegins(); voiceTurnOwner = false; voiceOwnerVerdict = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, typed: false, verdict: null }).admin; },
+    // Cru speaking up by itself: nobody spoke. Admin mode (when on) gives it full
+    // access then too, to look after the server unattended (the owner, 10 Nov):
+    // no voice to check; every command it runs is in the day's log (admin.js).
+    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceCtx.unattended = () => true; cruTurnBegins(); voiceTurnOwner = false; voiceOwnerVerdict = { owner: true, reason: 'nobody spoke: Cru on its own' }; },
     onTurnDone: (t) => voiceMemory.remember(t),
     onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
     persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',

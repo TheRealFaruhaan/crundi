@@ -662,7 +662,7 @@ private fun CruSections(ui: CruSettingsUi, s: VoiceSettings, ev: CruSettingsEven
     s.adminCapable?.let { capable ->
         Fold(CruSection.ADMIN, "Admin mode", if (s.adminMode) "On" else "Off", open, warn = s.adminMode) {
             Text(
-                "Cru can run any command on this server as the Crundi user, with no confirmation. Only your voice is obeyed.",
+                "Cru can run any command on this server as the Crundi user, with no confirmation, including on its own (the heartbeat, its tickers and triggers) to look after the server while you are away, every command logged. A spoken request is obeyed only in your voice. On its own it never restarts Crundi.",
                 style = CrundiType.Small.copy(color = CrundiColors.Yellow), modifier = Modifier.padding(bottom = 4.dp),
             )
             mv.obitech.crundi.ui.components.CrundiSwitchRow(

@@ -10,7 +10,13 @@
  *  - only the owner's voice is obeyed: with his voice enrolled
  *    (speaker.js), a spoken turn needs it recognised (too short to tell is
  *    refused too); a typed turn is his. With no voice enrolled it is
- *    allowed, the owner's choice (ownerVoice(), from turnPolicy).
+ *    allowed, the owner's choice (ownerVoice(), from turnPolicy);
+ *  - on its own too (card, 10 Nov 2026): when nobody spoke (the heartbeat,
+ *    a ticker or trigger, a chat it follows finishing) Cru has full access,
+ *    so it can look after the server unattended. There is no voice to check
+ *    and no phone to unlock then; each command and write is also listed in
+ *    the day's log (onOwnAct). Restarting or stopping Crundi itself, or the
+ *    machine, is refused on its own: only the owner may ask for that.
  *
  * The tools are always offered (the tool list stays the same, for the
  * cache), and refuse with a reason while admin mode is off.
@@ -54,6 +60,19 @@ export function runCommand(command, { cwd = homedir(), timeoutS = TIMEOUT_DEFAUL
 }
 
 /**
+ * Would [command] restart or stop Crundi (or the whole machine)? Refused on
+ * Cru's own turns: it ends every chat and terminal, and nobody asked.
+ */
+export function stopsCrundi(command) {
+  const c = String(command || '');
+  if (/\b(reboot|shutdown|poweroff|halt)\b/i.test(c) || /\binit\s+[06]\b/.test(c)) return true;
+  // systemctl/service/pm2 … restart|stop|kill … crundi, in one command of the line.
+  return c.split(/[;&|\n]+/).some((part) => /\bcrundi\b/i.test(part)
+    && (/\b(systemctl|service|pm2|launchctl|sc(\.exe)?)\b/i.test(part) && /\b(restart|stop|kill|reload|try-restart|disable|mask|delete|unload)\b/i.test(part)
+      || /\b(pkill|killall)\b/i.test(part)));
+}
+
+/**
  * The admin tools, in the voice tools' shape ({name, description,
  * input_schema, run}).
  * @param deps.settings      voice settings (tests pass a fake)
@@ -62,8 +81,10 @@ export function runCommand(command, { cwd = homedir(), timeoutS = TIMEOUT_DEFAUL
  * @param deps.locked()     the phone is locked (as for every change)
  * @param deps.logFile       every command and write is logged here
  * @param deps.onChanged()   admin mode was switched off (screens update)
+ * @param deps.unattended()  nobody spoke: Cru acting on its own (heartbeat, ticker, trigger)
+ * @param deps.onOwnAct(tool, what, result)  a command or write Cru made on its own (the day's log)
  */
-export function makeAdminTools({ settings = voiceSettings, ownerVoice = () => null, locked = () => false, logFile = '', onChanged = () => {}, run = runCommand } = {}) {
+export function makeAdminTools({ settings = voiceSettings, ownerVoice = () => null, locked = () => false, logFile = '', onChanged = () => {}, run = runCommand, unattended = () => false, onOwnAct = () => {} } = {}) {
   const log = (what) => {
     if (!logFile) return;
     try { mkdirSync(dirname(logFile), { recursive: true }); appendFileSync(logFile, JSON.stringify({ at: new Date().toISOString(), ...what }) + '\n', { mode: 0o600 }); } catch { /* best effort */ }
@@ -72,6 +93,8 @@ export function makeAdminTools({ settings = voiceSettings, ownerVoice = () => nu
     const s = settings.getSettings();
     if (s.adminMode !== true) return 'Admin mode is off. Only the owner can switch it on, in Settings › Voice assistant; you cannot.';
     if (!settings.adminCapable(s.model)) return 'Admin mode needs Sonnet or above; the current model may not use it.';
+    // On its own: full access (the owner's choice), no voice and no phone to check.
+    if (unattended()) return '';
     if (locked()) return 'The phone is locked: ask the owner to unlock it first. Nothing was done.';
     // ownerVoice(): true / false / null, or { owner, reason } (webapp.js, speaker.js turnPolicy).
     const v = ownerVoice();
@@ -96,9 +119,15 @@ export function makeAdminTools({ settings = voiceSettings, ownerVoice = () => nu
         const command = String(i.command || '').trim();
         if (!command) return { ok: false, error: 'No command' };
         const cwd = i.cwd ? resolve(String(i.cwd)) : homedir();
-        log({ tool: 'run_command', command, cwd });
+        const own = !!unattended();
+        if (own && stopsCrundi(command)) {
+          log({ tool: 'run_command', command, cwd, own, refused: 'stops Crundi' });
+          return { ok: false, error: 'On your own you may not restart or stop Crundi, or the machine: it ends every chat and terminal. Nothing was done; tell the owner it is needed and let him decide.' };
+        }
+        log({ tool: 'run_command', command, cwd, ...(own ? { own } : {}) });
         const r = await run(command, { cwd, timeoutS: Number(i.timeoutSeconds) || TIMEOUT_DEFAULT_S });
-        log({ tool: 'run_command', exitCode: r.exitCode, timedOut: !!r.timedOut });
+        log({ tool: 'run_command', exitCode: r.exitCode, timedOut: !!r.timedOut, ...(own ? { own } : {}) });
+        if (own) { try { onOwnAct('run_command', { command, cwd }, r); } catch { /* logging only */ } }
         return r;
       },
     },
@@ -120,7 +149,10 @@ export function makeAdminTools({ settings = voiceSettings, ownerVoice = () => nu
         try {
           mkdirSync(dirname(file), { recursive: true });
           if (i.append) appendFileSync(file, String(i.content ?? '')); else writeFileSync(file, String(i.content ?? ''));
-          log({ tool: 'write_file', path: file, bytes: Buffer.byteLength(String(i.content ?? '')), append: !!i.append });
+          const bytes = Buffer.byteLength(String(i.content ?? ''));
+          const own = !!unattended();
+          log({ tool: 'write_file', path: file, bytes, append: !!i.append, ...(own ? { own } : {}) });
+          if (own) { try { onOwnAct('write_file', { path: file, bytes, append: !!i.append }, { ok: true }); } catch { /* logging only */ } }
           return { ok: true, path: file };
         } catch (e) { return { ok: false, error: e.message }; }
       },

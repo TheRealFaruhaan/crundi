@@ -5813,7 +5813,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       html += '<details id="vs-spk-box" style="margin-top:14px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Your voice</summary><div id="vs-spk" style="margin-top:6px;"></div></details>';
       if (s.adminMode !== undefined) {
         html += '<div style="margin-top:12px;"><label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-admin"' + (s.adminMode ? ' checked' : '') + '> ' + ic('shield-alert') + ' Admin mode</label>'
-          + hint('Cru can run any command on this server as the Crundi user, with no confirmation. Only your voice is obeyed.' + (s.adminCapable === false ? ' It needs Sonnet or above: choose another model first.' : '')) + '</div>';
+          + hint('Cru can run any command on this server as the Crundi user, with no confirmation, including on its own (the heartbeat, its tickers and triggers) to look after the server while you are away, every command logged. A spoken request is obeyed only in your voice. On its own it never restarts Crundi.' + (s.adminCapable === false ? ' It needs Sonnet or above: choose another model first.' : '')) + '</div>';
       }
       // Cru on its own (capability 'voice-away'): what it may do when nobody is talking to it.
       if (s.away && Array.isArray(s.awayClasses)) {
@@ -5909,7 +5909,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const adm = document.getElementById('vs-admin');
       if (adm) adm.onchange = async () => {
         const want = adm.checked;
-        const d = await save({ adminMode: want }, want ? 'Admin mode is on: Cru can run any command, and only your voice is obeyed' : 'Admin mode is off');
+        const d = await save({ adminMode: want }, want ? 'Admin mode is on: Cru can run any command, also on its own; spoken requests need your voice' : 'Admin mode is off');
         if (!(d && d.ok)) adm.checked = !want;
       };
       vsLoadSpeaker();
