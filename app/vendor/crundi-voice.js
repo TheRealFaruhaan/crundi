@@ -425,6 +425,8 @@
     '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:none;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
     '.cv-lw{align-self:flex-end;display:flex;align-items:center;gap:6px;max-width:88%}.cv-lw .cv-m{max-width:none;min-width:0}.cv-drop{flex:none;width:28px;height:28px;border-radius:50%;border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text2 + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-drop:hover{color:' + C.text + ';background:#24243a}' +
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
+    '.cv-mm{align-self:flex-start;display:flex;flex-direction:column;gap:8px;max-width:100%;min-width:0}.cv-mm time{font-size:10px;color:' + C.muted + '}.cv-mm-x{max-width:100%;min-width:0;font-size:13px;color:' + C.muted + '}' +
+    '.cv-card{background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:14px;line-height:20px;max-width:560px;min-width:0;overflow-x:auto}.cv-card-t{font-size:13px;font-weight:600;color:' + C.text2 + ';text-transform:none}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
     '.cv-m.cru{position:relative;overflow:visible}.cv-m.cru.say{margin-right:40px}.cv-say{position:absolute;right:-40px;bottom:0;width:34px;height:34px;border:0;border-radius:50%;background:transparent;color:' + C.muted + ';cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}.cv-say:hover{color:' + C.text + ';background:rgba(255,255,255,.08)}' +
     '.cv-m.cru.cv-typing{display:flex;gap:6px;align-items:center;padding:14px 16px;min-height:0}.cv-typing i{width:8px;height:8px;border-radius:50%;background:' + C.text2 + ';opacity:.35;animation:cvdot 1.2s ease-in-out infinite}.cv-typing i:nth-child(2){animation-delay:.2s}.cv-typing i:nth-child(3){animation-delay:.4s}' +
@@ -974,8 +976,8 @@
 
   function heard(e) {
     if (!S) return;
-    if (e.type === 'ready') { S.wsLost = false; S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show); } } }
-    else if (e.type === 'report') { if (e.kid && typeof e.expressivity === 'number') S.nextExpr = e.expressivity; tell(e.speak || '', e.show || ''); }
+    if (e.type === 'ready') { S.wsLost = false; S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show, q.media); } } }
+    else if (e.type === 'report') { if (e.kid && typeof e.expressivity === 'number') S.nextExpr = e.expressivity; tell(e.speak || '', e.show || '', e.media); }
     // Cru changed the live screen; kid mode switched; a command for the game on screen.
     else if (e.type === 'screen') { showScreen(e.screen || null); return; }
     else if (e.type === 'kid') { if (kidHook) kidHook(e.kid || {}); return; }
@@ -1053,16 +1055,17 @@
       if (S !== s || !r || r.ok === false) return;
       var got = r.turns || [];
       var recent = got.slice(-3).map(function (m) { return String(m.said || '').trim(); });
-      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live && !(!m.speak && !m.show && recent.indexOf(String(m.said || '').trim()) >= 0); }));
+      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live && !(!m.speak && !m.show && !(m.media && m.media.length) && recent.indexOf(String(m.said || '').trim()) >= 0); }));
       s.moreChat = !!r.more;
       renderChat(!older);
     });
   }
   /** A finished exchange (or Cru speaking up) joins the chat view as it happens. */
-  function chatAdd(said, speak, show) {
-    if (!S || (!said && !speak && !show)) return;
+  function chatAdd(said, speak, show, media) {
+    var mm = mediaOf(media);
+    if (!S || (!said && !speak && !show && !mm.length)) return;
     if (!S.msgs) S.msgs = [];
-    S.msgs.push({ at: Date.now(), said: said || '', speak: speak || '', show: show || '', live: true });
+    S.msgs.push({ at: Date.now(), said: said || '', speak: speak || '', show: show || '', media: mm, live: true });
     if (S.chat) renderChat(true);
   }
   /**
@@ -1080,6 +1083,41 @@
     var p = String(st.pending || '').trim(), rest = p && h.indexOf(p) === 0 ? h.slice(p.length).trim() : h;
     return rest === String(st.asked || '').trim() || rest === p ? '' : rest;
   }
+  // ─── What Cru showed in its replies (voice/reply-media.js) ───
+  /** Cru's media session on the server (chat-media.js): where its pictures and files are kept. */
+  var CRU_MEDIA = 'cru-voice';
+  /** A reply's media as it came (a turn, a report, the history): only objects with a kind. */
+  function mediaOf(list) { return (Array.isArray(list) ? list : []).filter(function (x) { return x && typeof x === 'object' && typeof x.kind === 'string'; }).slice(0, 24); }
+  /**
+   * The reply's cards, drawn here with the live screen's blocks, and a place
+   * for the rest (pictures, players, files, frames), which the chat panel's
+   * own code draws (mountReplyMedia). Every text escaped.
+   */
+  function replyMediaHtml(m, i, time) {
+    var cards = m.media.filter(function (x) { return x.kind === 'card'; });
+    var other = m.media.length > cards.length;
+    return '<div class="cv-mm">' + cards.map(function (c) {
+      return '<div class="cv-card">' + (c.title ? '<div class="cv-card-t">' + esc(c.title) + '</div>' : '') + blocksHtml(c.blocks) + '</div>';
+    }).join('') + (other ? '<div class="cv-mm-x" data-mi="' + i + '"></div>' : '') + (time ? '<time>' + esc(time) + '</time>' : '') + '</div>';
+  }
+  /** The chat panel's media node for a reply, made once per message (scrolling back and forth loads nothing twice). */
+  function mountReplyMedia(list) {
+    Array.prototype.forEach.call(list.querySelectorAll('.cv-mm-x[data-mi]'), function (slot) {
+      var m = S.msgs && S.msgs[Number(slot.getAttribute('data-mi'))];
+      if (!m || !m.media) return;
+      if (m._mediaNode === undefined) {
+        var node = null;
+        try {
+          var items = m.media.filter(function (x) { return x.kind !== 'card'; });
+          if (S.opts.replyMedia) node = S.opts.replyMedia(items);
+          else if (window.CrundiWidgets && window.CrundiWidgets.replyMedia) node = window.CrundiWidgets.replyMedia(CRU_MEDIA, items);
+        } catch (e) { node = null; }
+        m._mediaNode = node || null;
+      }
+      if (m._mediaNode) slot.appendChild(m._mediaNode);
+      else slot.textContent = 'This needs a newer page to show.';
+    });
+  }
   function renderChat(toEnd) {
     if (!S || !S.chat) return;
     var box = S.ov.querySelector('.cv-chat'), list = S.ov.querySelector('.cv-msgs');
@@ -1096,6 +1134,8 @@
         + (m.speak ? (i === sayingAt
           ? '<button class="cv-say on" data-say="' + i + '" title="Cru is saying this: tap to stop" aria-label="Cru is saying this: tap to stop">'
           : '<button class="cv-say" data-say="' + i + '" title="Say it aloud" aria-label="Say it aloud">') + SPEAKER_SVG + '</button>' : '') + '</div>';
+      // What the reply showed (pictures, players, files, frames, cards), under its words, as a Claude chat shows them.
+      if (m.media && m.media.length) h += replyMediaHtml(m, i, !(m.speak || m.show) ? when(m.at) : '');
     });
     // Cru thinking, then what is queued for next, then the words being heard right now.
     if (S.phase === 'think') h += '<div class="cv-m cru cv-typing" role="img" aria-label="Cru is thinking"><i></i><i></i><i></i></div>';
@@ -1111,6 +1151,7 @@
     S.chatHtml = h;
     var nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     list.innerHTML = h || '<div style="text-align:center;color:' + C.muted + ';font-size:13px">No messages yet.</div>';
+    mountReplyMedia(list);
     S.ov.querySelector('.cv-more').hidden = !S.moreChat;
     if (toEnd || nearEnd || S.chatStick) { box.scrollTop = box.scrollHeight; S.chatStick = true; }
   }
@@ -1135,11 +1176,11 @@
     render();
   }
 
-  function tell(say, show) {
+  function tell(say, show, media) {
     if (!S) return;
-    if (S.phase !== 'listen' || S.pending || S.heard) { S.reports.push({ speak: say, show: show }); return; }
+    if (S.phase !== 'listen' || S.pending || S.heard) { S.reports.push({ speak: say, show: show, media: media }); return; }
     S.reply = say; S.detail = show; S.heard = ''; S.notice = ''; S.question = ''; S.quietSince = Date.now();
-    chatAdd('', say, show);
+    chatAdd('', say, show, media);
     // Unprompted: said only while the owner is talking to Cru (his last message spoken) and its voice is on.
     if (say && speaks(S, 'unprompted')) speak(say); else afterSpeech();
     render();
@@ -1323,7 +1364,7 @@
       // Kid Cru's mood: how lively its voice is.
       S.expr = ok && typeof r.expressivity === 'number' ? r.expressivity : null;
       var say = ok ? S.reply : S.notice;
-      if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail); }
+      if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; mine.media = mediaOf(r.media); if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail, r.media); }
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
       // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
       if (S.pending) { var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; S.closing = false; stopCue(); ask(p, true, pt); render(); return; }
@@ -1391,7 +1432,7 @@
     if (!S) return;
     if (S.closing) { close(); return; }
     // News that came while Cru was busy.
-    if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show); return; }
+    if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show, q.media); return; }
     S.speaking = false; S.saidUntil = Date.now(); S.unknownVoice = false;
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
     if (S.reportOnly && !S.reports.length) S.reportCloseAt = Date.now() + REPORT_LINGER_MS;
@@ -2426,13 +2467,13 @@
   function resetShortcut() { try { localStorage.removeItem(SHORTCUT_KEY); } catch (e) { /* none */ } return label(DEFAULT_SHORTCUT); }
 
   /** The PC: news while the dropdown is shut opens it and says it (src/webapp.js voiceReport). */
-  function report(say, show, opts) {
+  function report(say, show, opts, media) {
     // Opened by Cru itself (news, a wake-up): it says it, and closes again unless the owner answers.
-    if (!S) { open(opts || {}); if (S) { S.reportOnly = true; S.reports.push({ speak: say, show: show }); } return; }
-    tell(say, show);
+    if (!S) { open(opts || {}); if (S) { S.reportOnly = true; S.reports.push({ speak: say, show: show, media: media }); } return; }
+    tell(say, show, media);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

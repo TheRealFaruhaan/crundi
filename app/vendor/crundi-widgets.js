@@ -1691,13 +1691,22 @@
     if (!/show_(image|video|audio|file|embed)$/.test(String(entry.name || ''))) return null;
     var r = null;
     try { r = JSON.parse(String(entry.result || '')); } catch (e) { return null; }
+    // 1.19.19 answered show_image with { images: [{ name, caption }] }.
+    var raw = r && Array.isArray(r.items) ? r.items
+      : ((r && Array.isArray(r.images)) ? r.images.map(function (i) { var c = {}; for (var k in i) c[k] = i[k]; c.kind = 'image'; return c; }) : []);
+    return itemsMedia(sessionId, raw, String((r && r.caption) || '').slice(0, 300));
+  }
+
+  /**
+   * Stored items (as chat-media.js answers them) as the node mediaNode draws,
+   * or null when none is usable. Shared by a chat's show_* calls and by
+   * what Cru showed in its replies (replyMedia).
+   */
+  function itemsMedia(sessionId, raw, caption) {
     var sid = encodeURIComponent(sessionId);
     var NAME = /^[0-9a-f]{16}([.]poster)?[.](png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$/;
     var EMBED = /^[0-9a-f]{16}[.]embed$/;
     var num = function (v, max) { var n = Number(v); return isFinite(n) && n > 0 && n <= max ? n : 0; };
-    // 1.19.19 answered show_image with { images: [{ name, caption }] }.
-    var raw = r && Array.isArray(r.items) ? r.items
-      : ((r && Array.isArray(r.images)) ? r.images.map(function (i) { var c = {}; for (var k in i) c[k] = i[k]; c.kind = 'image'; return c; }) : []);
     var items = [];
     raw.forEach(function (i) {
       if (!i) return;
@@ -1731,7 +1740,24 @@
         items.push(base);
       }
     });
-    return items.length ? mediaNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
+    return items.length ? mediaNode(items, caption || '') : null;
+  }
+
+  /**
+   * What Cru showed in one of its replies (voice/reply-media.js), drawn as a
+   * chat's: the items of its media session [sessionId] ('cru-voice'). Cards
+   * are Cru's own and are not drawn here.
+   */
+  function replyMedia(sessionId, items) {
+    var list = (Array.isArray(items) ? items : []).filter(function (i) { return i && i.kind !== 'card'; });
+    // As Android's MediaGroup: pictures, clips and frames share one row; sounds and files are stacked after it.
+    var visual = list.filter(function (i) { return i.kind === 'image' || i.kind === 'video' || i.kind === 'embed'; });
+    var rest = list.filter(function (i) { return visual.indexOf(i) < 0; });
+    var nodes = [itemsMedia(sessionId, visual, '')].concat(rest.map(function (i) { return itemsMedia(sessionId, [i], ''); })).filter(Boolean);
+    if (nodes.length < 2) return nodes[0] || null;
+    var box = el('div', 'wg-reply-media'); box.style.cssText = 'display:flex;flex-direction:column;gap:8px;min-width:0';
+    nodes.forEach(function (n) { box.appendChild(n); });
+    return box;
   }
 
   window.CrundiWidgets = {
@@ -1758,6 +1784,7 @@
     shotsNode: shotsNode,
     mediaNode: mediaNode,
     toolMedia: toolMedia,
+    replyMedia: replyMedia,
     setChipHost: function (n) { chipEl = n; renderChips(); },
     mountPicker: mountPicker,
     mountTab: mountTab,

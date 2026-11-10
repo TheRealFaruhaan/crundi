@@ -366,6 +366,15 @@ object ChatMediaParser {
         if (e.kind != "tool" || e.status != "done" || e.isError || !TOOL.containsMatchIn(e.name)) return emptyList()
         val r = runCatching { CrundiJson.parseToJsonElement(e.result ?: "").jsonObject }.getOrNull() ?: return emptyList()
         val items = (r["items"] as? JsonArray) ?: (r["images"] as? JsonArray)?.let { arr -> JsonArray(arr.map { JsonObject((it as JsonObject) + ("kind" to JsonPrimitive("image"))) }) } ?: return emptyList()
+        return parseItems(chatId, items)
+    }
+
+    /**
+     * Stored items (as the server's chat-media.js answers them) for the media
+     * session [chatId]: a chat's show_* call, or what Cru showed in a reply
+     * (session "cru-voice"). Anything that does not look like ours is left out.
+     */
+    fun parseItems(chatId: String, items: JsonArray): List<ChatMedia> {
         val sid = java.net.URLEncoder.encode(chatId, "UTF-8")
         fun media(name: String) = "/api/chat-media?session=$sid&name=${java.net.URLEncoder.encode(name, "UTF-8")}"
         return items.mapNotNull { el ->

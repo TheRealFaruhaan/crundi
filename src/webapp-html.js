@@ -6762,6 +6762,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
           return { name: p.name || p.alias, kind, service: svc.length ? svc.some(sv => sv.status === 'running') : null };
         }),
         usage: () => usageData ? { week: usageData.week ? (usageData.week.utilization || 0) / 100 : null, five: usageData.fiveHour ? (usageData.fiveHour.utilization || 0) / 100 : null } : null,
+        // What Cru showed in a reply, drawn by the chat panel's code (crundi-widgets.js), set up first if need be.
+        replyMedia: (items) => ((widgetsReady || widgetsOn()) && window.CrundiWidgets.replyMedia ? window.CrundiWidgets.replyMedia('cru-voice', items) : null),
       });
     }
     function openUsageModal() {
@@ -10360,7 +10362,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (msg.type === 'voice-report' && window.api && window.CrundiVoice && window.CrundiVoice.report && userRole !== 'collaborator') {
           // Only a question or a permission comes to the front (as Hey Cru does); a finished turn is just said.
           if (msg.needsOwner && window.api.showWindow) window.api.showWindow();
-          window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts());
+          window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts(), Array.isArray(msg.media) ? msg.media : null);
         }
         if (msg.type === 'kid-mode' && msg.kid) applyKidMode(msg.kid);
         if (msg.type === 'pc-lock' && msg.lock) { applyPcLock(msg.lock); if (document.getElementById('vs-pin')) vsLoadPin(); }

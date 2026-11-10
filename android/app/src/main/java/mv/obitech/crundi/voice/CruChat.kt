@@ -1,5 +1,6 @@
 package mv.obitech.crundi.voice
 
+import kotlinx.serialization.json.JsonArray
 import mv.obitech.crundi.api.VoiceTurn
 
 /**
@@ -7,15 +8,23 @@ import mv.obitech.crundi.api.VoiceTurn
  * when Cru spoke up on its own: a report, a ticker, a trigger) and Cru's
  * answer, [speak] said aloud and [show] only shown. [live]: it happened
  * while this screen was open, not loaded from the server's history.
+ * [media]: what the reply showed (capability "voice-reply-media"), drawn
+ * under it (CruReplyMedia): pictures, players, files, frames, cards.
  */
-data class CruMsg(val at: Long, val said: String, val speak: String, val show: String, val live: Boolean = false, val key: String = "")
+data class CruMsg(val at: Long, val said: String, val speak: String, val show: String, val live: Boolean = false, val key: String = "", val media: JsonArray = NoMedia) {
+    /** Cru's side has something to draw: words, or what it showed. */
+    val answered: Boolean get() = speak.isNotEmpty() || show.isNotEmpty() || media.isNotEmpty()
+}
+
+/** No media: one shared empty list. */
+val NoMedia = JsonArray(emptyList())
 
 /** The chat view's list, with no Android in it (CruChatTest). */
 object CruChat {
     /** GET /api/voice/history's turns (oldest first) as messages. */
     fun fromTurns(turns: List<VoiceTurn>): List<CruMsg> =
-        turns.map { CruMsg(it.at, if (it.report) "" else it.said.trim(), it.speak.trim(), it.show.trim(), key = "t" + it.id + "-" + it.at) }
-            .filter { it.said.isNotEmpty() || it.speak.isNotEmpty() || it.show.isNotEmpty() }
+        turns.map { CruMsg(it.at, if (it.report) "" else it.said.trim(), it.speak.trim(), it.show.trim(), key = "t" + it.id + "-" + it.at, media = it.media ?: NoMedia) }
+            .filter { it.said.isNotEmpty() || it.answered }
 
     /**
      * [got] from the server joined to what is shown: [older] pages go before
@@ -28,7 +37,7 @@ object CruChat {
         val known = got.map { CruAttach.plain(it.said) to it.speak }.toSet()
         // Sent here and not answered yet: gone once the server's newest turns have it (with its answer).
         val recent = got.takeLast(3).map { CruAttach.plain(it.said) }.toSet()
-        return got + current.filter { it.live && (CruAttach.plain(it.said) to it.speak) !in known && !(it.speak.isEmpty() && it.show.isEmpty() && CruAttach.plain(it.said) in recent) }
+        return got + current.filter { it.live && (CruAttach.plain(it.said) to it.speak) !in known && !(!it.answered && CruAttach.plain(it.said) in recent) }
     }
 
     /**
@@ -43,14 +52,14 @@ object CruChat {
     }
 
     /** The answer to the message sent as [key]; added at the end when that message is not there. */
-    fun answered(current: List<CruMsg>, key: String, said: String, speak: String, show: String, at: Long): List<CruMsg> {
+    fun answered(current: List<CruMsg>, key: String, said: String, speak: String, show: String, at: Long, media: JsonArray? = null): List<CruMsg> {
         val i = current.indexOfFirst { it.key == key }
-        if (i < 0) return add(current, said, speak, show, at)
-        return current.toMutableList().also { it[i] = it[i].copy(speak = speak.trim(), show = show.trim()) }
+        if (i < 0) return add(current, said, speak, show, at, media)
+        return current.toMutableList().also { it[i] = it[i].copy(speak = speak.trim(), show = show.trim(), media = media ?: NoMedia) }
     }
 
     /** A message taken back (cancelled): out of the list. */
-    fun drop(current: List<CruMsg>, key: String): List<CruMsg> = current.filterNot { it.key == key && it.speak.isEmpty() && it.show.isEmpty() }
+    fun drop(current: List<CruMsg>, key: String): List<CruMsg> = current.filterNot { it.key == key && !it.answered }
 
     /**
      * What waits to be asked next while Cru answers (said or typed meanwhile):
@@ -59,9 +68,9 @@ object CruChat {
     fun queued(s: VoiceState): String = if (s.phase == Phase.Thinking) s.pending.trim() else ""
 
     /** An exchange that just happened, at the end; nothing when it is empty. */
-    fun add(current: List<CruMsg>, said: String, speak: String, show: String, at: Long): List<CruMsg> {
-        val m = CruMsg(at, said.trim(), speak.trim(), show.trim(), live = true, key = "l$at-${current.size}")
-        return if (m.said.isEmpty() && m.speak.isEmpty() && m.show.isEmpty()) current else current + m
+    fun add(current: List<CruMsg>, said: String, speak: String, show: String, at: Long, media: JsonArray? = null): List<CruMsg> {
+        val m = CruMsg(at, said.trim(), speak.trim(), show.trim(), live = true, key = "l$at-${current.size}", media = media ?: NoMedia)
+        return if (m.said.isEmpty() && !m.answered) current else current + m
     }
 
     /**

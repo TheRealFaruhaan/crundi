@@ -47,10 +47,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import * as voiceSettings from './settings.js';
 import { READ_ONLY_TOOL_NAMES } from './tools.js';
+import { REPLY_MEDIA_TOOL_NAMES, MAX_REPLY_MEDIA } from './reply-media.js';
 import { reflectionAsk, parseReflection } from './reflect.js';
 
 /** Tools whose running changes nothing the owner would need told about when a request is cancelled. */
-const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups', 'list_jobs', 'open_attachment', 'list_attachments']);
+const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, ...REPLY_MEDIA_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups', 'list_jobs', 'open_attachment', 'list_attachments']);
 
 /** What an action did, in a few words, for "Cancelled. Already done: …". */
 export function describeAct(name, input = {}) {
@@ -105,6 +106,7 @@ How you answer:
 - Speech recognition may mishear Crundi's own words: "compound task" or "come on task" is probably "kanban task", "mind map" is "mindmap", project names may come out as similar-sounding words. Work out what the owner most likely meant from the tools and context; if two readings are both plausible and the difference matters, ask a short question.
 - Use the tools to look things up rather than guessing. Call several at once when they're independent.
 - The live screen (show_screen, update_screen, clear_screen) is one panel on the voice screen that stays until the owner closes it or you clear it. Use it for what is better seen than heard: lists, status, comparisons, steps, a table, progress. Put the detail there and keep the spoken reply to a sentence; update it as the conversation moves on, and clear it when it no longer helps. With full: true your own UI takes over the whole content area of the Cru screen (the conversation and the orb make way; the bottom bar to type or speak stays): use it for something that needs the room (a dashboard, a board, a game, a form) or when the owner asks. The owner can go back to the normal view at any time from the top bar; then what you showed stays as the usual panel.
+- Your replies can carry more than words: show_image, show_video and show_audio put a picture or a player in your reply in the chat view, show_file offers a file to download, show_embed frames a link (a video, a post, a map) or your own HTML (a chart with Chart.js or D3, a diagram, an interactive table), and show_card puts a card of blocks (a table, a list, progress, chips) there. They stay in the conversation where you showed them; the live screen is the one panel you keep changing. Use them when the owner is reading (a typed request, the chat view), or when something has to be seen or taken away (a screenshot, an export, a chart): then say what it is in a sentence rather than reading it out.
 
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals, and widgets: view_widget shows you one as it looks on a desktop and a phone, so you can say how it looks and whether it works.
@@ -206,7 +208,7 @@ export function cleanHistory(history) {
 export async function runVoiceTool(t, name, input, signals) {
   if (!t) return { isError: true, content: `No tool called ${name}` };
   try {
-    const out = await t.run(input || {});
+    let out = await t.run(input || {});
     // Text and pictures (view_widget): MCP-style blocks become the API's own.
     if (out && typeof out === 'object' && Array.isArray(out.content)) {
       const blocks = out.content.map((b) => (b && b.type === 'image' && b.data
@@ -221,6 +223,12 @@ export async function runVoiceTool(t, name, input, signals) {
       if (out.needsUnlock) signals.needsUnlock = true;
       if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
       if (out.close) signals.close = true;
+      // Shown in the reply (reply-media.js): kept for the chat view, not handed back to the model.
+      if (Array.isArray(out.media)) {
+        if (signals.media) for (const m of out.media) if (signals.media.length < MAX_REPLY_MEDIA) signals.media.push(m);
+        const { media, ...rest } = out;
+        out = rest;
+      }
     }
     let s = typeof out === 'string' ? out : JSON.stringify(out);
     if (s.length > MAX_RESULT_CHARS) s = s.slice(0, MAX_RESULT_CHARS) + '… (cut)';
@@ -314,7 +322,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * on (a question awaiting the owner's yes, a locked phone) is collected in
    * `signals` for the reply.
    */
-  async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [], close: false }) {
+  async function runTool(block, signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, media: [] }) {
     const r = await runVoiceTool(byName.get(block.name), block.name, block.input, signals);
     return { type: 'tool_result', tool_use_id: block.id, ...(r.isError ? { is_error: true } : {}), content: r.content };
   }
@@ -338,7 +346,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const used = [];
     let cost = 0;
     const cache = { read: 0, written: 0, uncached: 0 };
-    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [] };
+    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [], media: [] };
     const me = { abort: new AbortController(), cancelled: false, signals };
     inFlight = me;
     let start = history.length;
@@ -390,8 +398,8 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
           return { ok: false, error: 'The answer ran out of room before it was finished', tools: used, costUsd: cost, cache };
         }
         const parts = splitReply(reply);
-        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, device: report ? '' : device, at: now.getTime() }); } catch { /* memory is best effort */ }
-        return { ok: true, ...parts, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close };
+        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, media: signals.media, device: report ? '' : device, at: now.getTime() }); } catch { /* memory is best effort */ }
+        return { ok: true, ...parts, media: signals.media, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {

@@ -251,6 +251,8 @@ class VoiceMore(
     val onBubble: (() -> Unit)? = null,
     /** The menu's "Mute Cru's voice" (true) or back on; null: not offered by this host. */
     val onVoiceOff: ((Boolean) -> Unit)? = null,
+    /** The paired server's client, for what Cru shows in its replies (CruReplyMedia); null: only its cards are drawn. */
+    val services: mv.obitech.crundi.ui.shell.AppServices? = null,
 )
 
 /** Where a file for Cru comes from. */
@@ -393,7 +395,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
     mv.obitech.crundi.ui.chats.KeepBottomInView(state, follow) { follow.toEnd(state, animate = false) }
     val first = remember { booleanArrayOf(true) }
     val last = list.lastOrNull()
-    LaunchedEffect(last?.key, last?.speak?.length, last?.show?.length, hearing, queued, thinking, ui.historyLoaded) {
+    LaunchedEffect(last?.key, last?.speak?.length, last?.show?.length, last?.media?.size, hearing, queued, thinking, ui.historyLoaded) {
         if (first[0] || follow.shouldFollow) {
             // Laid out first: the screen just opened, or the history just came, has no rows yet to scroll past.
             androidx.compose.runtime.snapshotFlow { state.layoutInfo.totalItemsCount }.first { it > 0 }
@@ -427,6 +429,8 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at), thumb = more.attachmentThumb)
                 if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = msgTime(m.at), onSay = if (m.speak.isNotBlank() && ui.state.speaks()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
+                // What the reply showed, under its words, as a Claude chat draws it (capability "voice-reply-media").
+                if (m.media.isNotEmpty()) CruReplyMedia(m.media, more.services)
             }
         }
         if (thinking) item(key = "thinking") { ThinkingBubble() }

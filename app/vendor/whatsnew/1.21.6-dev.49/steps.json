@@ -1,6 +1,28 @@
 {
   "steps": [
     {
+      "id": "cru-reply-media",
+      "tag": "Voice",
+      "title": "Cru's replies can show pictures, files and data",
+      "body": "In Cru's conversation, a reply can now carry pictures, video and audio players, files to download, live frames such as a chart or a video link, and cards with tables, lists and progress. They stay in the conversation where Cru showed them, on the web, the PC app and the phone.",
+      "keys": [
+        {
+          "keys": [
+            "Tap a picture"
+          ],
+          "text": "open it large"
+        },
+        {
+          "keys": [
+            "Download"
+          ],
+          "text": "save a file Cru offered"
+        }
+      ],
+      "art": "cru-reply-media.html",
+      "artTitle": "Voice"
+    },
+    {
       "id": "cru-thinking-speaking-in-chat",
       "tag": "Voice",
       "title": "See Cru think and speak in the conversation",

@@ -1,6 +1,7 @@
 package mv.obitech.crundi.api
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -522,6 +523,8 @@ data class VoiceReply(
     val volume: Int? = null,
     /** The voice check on what was said (capability "voice-speaker"); null for typed words or an older server. */
     val speaker: SpeakerCheck? = null,
+    /** What the reply showed (capability "voice-reply-media"): pictures, players, files, frames, cards. */
+    val media: kotlinx.serialization.json.JsonArray? = null,
 )
 
 /** GET /api/voice/unread: Cru's reports nobody heard; [line] the latest one's words. */
@@ -584,7 +587,7 @@ data class VoiceAttached(val ok: Boolean = false, val id: String = "", val name:
 
 /** One turn of Cru's conversation: what the owner [said] ("" for Cru speaking up on its own, [report]) and the answer. */
 @Serializable
-data class VoiceTurn(val id: Long = 0, val at: Long = 0, val said: String = "", val speak: String = "", val show: String = "", val report: Boolean = false)
+data class VoiceTurn(val id: Long = 0, val at: Long = 0, val said: String = "", val speak: String = "", val show: String = "", val report: Boolean = false, val media: kotlinx.serialization.json.JsonArray? = null)
 
 /** GET /api/voice/history: [turns] oldest first; [more] older ones to page back to. */
 @Serializable
@@ -681,7 +684,7 @@ sealed interface ListenEvent {
     data class Utterance(val text: String, val owner: Boolean? = null) : ListenEvent
     data class Failed(val error: String) : ListenEvent
     /** Cru has news, unasked (a watched chat finished or waits on the owner): say it. */
-    data class Report(val speak: String, val show: String) : ListenEvent
+    data class Report(val speak: String, val show: String, val media: JsonArray? = null) : ListenEvent
     /** The server dropped what the owner said ("scratch that"). */
     data class Discard(val text: String) : ListenEvent
     /** A setting changed on the server (Cru's volume, say): fetch them again. */
@@ -709,7 +712,7 @@ sealed interface ListenEvent {
                 "screen" -> Screen(LiveScreen.parse(o["screen"]))
                 "kid" -> KidStatus.of(o["kid"])?.let { Kid(it) }
                 "game-command" -> ((o["command"] as? JsonObject)?.get("action") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { GameCommand(it) }
-                "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); if (sp.isBlank() && sh.isBlank()) null else Report(sp, sh) }
+                "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); val md = (o["media"] as? JsonArray)?.takeIf { it.isNotEmpty() }; if (sp.isBlank() && sh.isBlank() && md == null) null else Report(sp, sh, md) }
                 else -> null
             }
         }

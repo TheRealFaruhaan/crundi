@@ -134,6 +134,8 @@ class VoiceController(
 
     /** The app's live picture of the server (projects, their state, usage) for the field; null without a paired server. */
     val shell: StateFlow<mv.obitech.crundi.ui.shell.ShellData>? = Servers.current(ctx)?.let { AppGraph.forServer(ctx, it).shell.state }
+    /** The paired server's client and caches, for what Cru shows in its replies (pictures, players, downloads); null without one. */
+    val services: mv.obitech.crundi.ui.shell.AppServices? = Servers.current(ctx)?.let { AppGraph.forServer(ctx, it) }
     @Volatile private var socket: DataSocket? = null
     private var mic: MicStream? = null
     private var fallback: FallbackRecognizer? = null
@@ -318,8 +320,8 @@ class VoiceController(
         }
     }
 
-    private fun chatAdd(said: String, speak: String, show: String) =
-        _ui.update { it.copy(history = CruChat.add(it.history, said, speak, show, now())) }
+    private fun chatAdd(said: String, speak: String, show: String, media: kotlinx.serialization.json.JsonArray? = null) =
+        _ui.update { it.copy(history = CruChat.add(it.history, said, speak, show, now(), media)) }
 
     /** The Compact button: the conversation so far becomes a summary, the notebook kept. */
     fun compact() {
@@ -493,7 +495,7 @@ class VoiceController(
             // The chat view: what was asked and the answer, when it is this turn's.
             val current = _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }
             if (r.cancelled) _ui.update { it.copy(history = CruChat.drop(it.history, key)) }
-            else if (current && r.ok) _ui.update { it.copy(history = CruChat.answered(it.history, key, said, r.speak, r.show, now())) }
+            else if (current && r.ok) _ui.update { it.copy(history = CruChat.answered(it.history, key, said, r.speak, r.show, now(), r.media)) }
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }, silent = typed && VoiceApi.HISTORY in _ui.value.caps))
             // The voice was not the owner's: Cru answered, but changed nothing.
             if (r.ok && !r.cancelled && r.speaker?.unrecognised == true && current) note(NOT_RECOGNISED)
@@ -647,7 +649,8 @@ class VoiceController(
                 if (ev.owner == false && _ui.value.state.phase == Phase.Thinking) note(NOT_RECOGNISED)
             }
             is ListenEvent.Failed -> if (fallback != null) block("No speech recognition: ${ev.error}.") else lost(ev.error)
-            is ListenEvent.Report -> { chatAdd("", ev.speak, ev.show); dispatch(VoiceEvent.Report(ev.speak, ev.show, now())) }
+            // What it showed joins the chat view; only words are said (a report of media alone is just shown).
+            is ListenEvent.Report -> { chatAdd("", ev.speak, ev.show, ev.media); if (ev.speak.isNotBlank() || ev.show.isNotBlank()) dispatch(VoiceEvent.Report(ev.speak, ev.show, now())) }
             is ListenEvent.Discard -> dispatch(VoiceEvent.Discard(now()))
             // A setting changed on the server (Cru's volume, say): picked up at once.
             ListenEvent.Settings -> api?.let { v -> scope.launch { refreshSettings(v) } }

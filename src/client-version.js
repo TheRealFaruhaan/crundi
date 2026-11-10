@@ -221,6 +221,12 @@ export const CAPABILITIES = Object.freeze([
   // POST /api/voice/screen/full: the live panel's expand button puts it back
   // over the whole content area (not in kid mode, not a video).
   'voice-screen-expand',
+  // Cru's replies carry what it showed in them (voice/reply-media.js):
+  // media: [...] on /api/voice/turn, on a 'report', and on each turn of
+  // /api/voice/history: pictures, video, audio, files to download, frames
+  // (stored under the chat-media session 'cru-voice') and cards (blocks).
+  // Older clients just show the words.
+  'voice-reply-media',
   // POST /api/voice/turn takes requestId: the same id sent again (a resend
   // after a dropped connection) gets that turn's result, never a second run;
   // a turn that finds Cru busy waits for it (up to 3 min) instead of

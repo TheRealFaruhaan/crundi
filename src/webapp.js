@@ -17,7 +17,7 @@ import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, e
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
-import { homedir, cpus as osCpus } from 'node:os';
+import { homedir, tmpdir, cpus as osCpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
@@ -118,6 +118,7 @@ import { createAttachmentStore, attachmentToolDefs, attachmentLine, passOn as pa
 import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
+import { makeReplyMediaTools } from './voice/reply-media.js';
 import { parseYoutubeLine, parseInstructions as parseKidInstructions, KID_FILE, KID_SYSTEM_PROMPT, kidIntro, kidContextLine, makeKidTools, makeStartKidTool, createPinGuard, hashPin, PIN_RE as KID_PIN_RE, createHandleResolver, createGameWatch, splitMood, GAME_EVENTS, createParentNotes, createParentAsks } from './voice/kid.js';
 import { createSkills as createKidSkills, TAXONOMY as KID_TAXONOMY } from './voice/kid-skills.js';
 import { createGameLibrary } from './voice/kid-games.js';
@@ -2864,14 +2865,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       r = await voiceAgent.report(note, wake ? { wake: true } : {}).catch(() => null);
       if (wake) {
         if (!r || !r.ok) return { ok: false, busy: !!r && r.error === 'busy', error: (r && r.error) || 'Cru did not answer' };
-        if (!String(r.speak || '').trim() && !String(r.show || '').trim()) return { ok: true, quiet: true };
+        if (!String(r.speak || '').trim() && !String(r.show || '').trim() && !(r.media && r.media.length)) return { ok: true, quiet: true };
       }
-      if (r && r.ok && (r.speak || r.show)) {
-        const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: chatId });
+      if (r && r.ok && (r.speak || r.show || (r.media && r.media.length))) {
+        const media = Array.isArray(r.media) && r.media.length ? r.media : undefined;
+        const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: chatId, media });
         if (open.length) { for (const ws of open) { try { ws.send(msg); } catch { /* gone */ } } return { ok: true, said: 'screen' }; }
         // No voice screen open: the PC says it (its connection stays open)…
         // A question or a permission brings the PC window forward; a finished turn doesn't.
-        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: chatId, needsOwner });
+        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: chatId, needsOwner, media });
         for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } spoken = true; }
       }
     }
@@ -3477,9 +3479,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { voiceMemory.notebook.save(KID_FILE, next); } finally { kidServerWrite = false; }
     } catch (e) { console.warn('[voice] could not add the approved channel:', e.message); }
   }
+  // What Cru shows inside its replies (voice/reply-media.js): files from the projects, the temporary folder or its own folder.
+  const cruReplyMediaTools = makeReplyMediaTools({
+    media: chatMedia,
+    roots: () => [...allProjects().map((p) => p.path).filter(Boolean), tmpdir(), join(config.dataDir, 'voice-memory')],
+  });
   const voiceBrainOpts = {
     // Each step is counted for the routine nudge (cruStepDone).
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), kidStartTool, kidProgressTool, pcLockTool]
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, kidStartTool, kidProgressTool, pcLockTool]
       .map((t) => ({ ...t, run: async (i) => { let out; try { out = await t.run(i); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
     beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
     turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),

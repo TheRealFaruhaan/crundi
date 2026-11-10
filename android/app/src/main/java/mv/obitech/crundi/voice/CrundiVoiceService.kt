@@ -135,6 +135,7 @@ class CrundiSession(ctx: Context) : VoiceInteractionSession(ctx) {
                         onDropLive = { c.dropLive(it) },
                         onVoiceOff = { c.setVoiceOff(it) },
                         live = c.live,
+                        services = c.services,
                     ),
                 )
             }

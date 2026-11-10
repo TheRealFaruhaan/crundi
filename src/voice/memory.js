@@ -78,9 +78,10 @@ export function createVoiceMemory({ dataDir, index: givenIndex, guard = () => ''
     store, notebook, index, searchTool,
     /** A finished turn, for later search. */
     // [device]: where it was said ("PC app"), kept with it so "where did that come from?" has an answer.
-    remember({ said, speak = '', show = '', device = '', at = Date.now() }) {
+    // [media]: what the reply showed (reply-media.js), drawn again in the chat view.
+    remember({ said, speak = '', show = '', device = '', media = null, at = Date.now() }) {
       const from = String(device || '').replace(/[()\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
-      index.add('turn', `Owner${from ? ` (${from})` : ''}: ${said}\nCru: ${speak}${show ? '\n' + show : ''}`, { at });
+      index.add('turn', `Owner${from ? ` (${from})` : ''}: ${said}\nCru: ${speak}${show ? '\n' + show : ''}`, { at, media });
     },
     rememberSummary(text, at = Date.now()) { index.add('summary', text, { at }); },
     /** The latest turns, newest first (the voice screen's chat view). */
