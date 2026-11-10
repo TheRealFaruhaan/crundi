@@ -769,7 +769,10 @@ class VoiceController(
         mic = m
         // Cru's voice joins the microphone's session, as call audio on the speaker when it can.
         speaker.sessionId = m.sessionId
+        // A headset in or out mid-session: the next sound goes the new way (in the ears as media, on the speaker as call audio).
+        callAudio.onRoute = { r -> speaker.route = r; speaker.device = callAudio.speaker }
         speaker.route = callAudio.start()
+        speaker.device = callAudio.speaker
     }
 
     private fun stopMic() { mic?.stop(); mic = null; _mic.value = 0f }
@@ -789,7 +792,8 @@ class VoiceController(
     private fun stopVoice() {
         streamGen++
         stopMic()
-        callAudio.stop(); speaker.route = CruAudio.Route.Media; speaker.sessionId = 0
+        callAudio.onRoute = null
+        callAudio.stop(); speaker.route = CruAudio.Route.Media; speaker.device = null; speaker.sessionId = 0
         socket?.let { s -> runCatching { s.send("""{"type":"stop"}"""); s.close() } }
         socket = null
         fallback?.pause()

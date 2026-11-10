@@ -89,6 +89,13 @@ class OwnerGateTest {
         assertEquals(listOf(0.25f, 0.125f, -1f, 0.0625f), s.toList())
     }
 
+    @Test fun callVolumeSitsAboveTheMediaShareNeverLower() {
+        assertEquals(6, CruAudio.callVolume(3, 10, 0.45f))    // 45% media: 60% call (the call curve is quieter)
+        assertEquals(10, CruAudio.callVolume(3, 10, 0.95f))   // never above the top
+        assertEquals(8, CruAudio.callVolume(8, 10, 0.2f))     // never lowered
+        assertEquals(1, CruAudio.callVolume(0, 10, 0f))       // muted media: the call at its lowest, still audible
+    }
+
     @Test fun callAudioOnlyOnTheSpeakerOfANewEnoughPhone() {
         val speaker = listOf(CruAudio.BUILTIN_SPEAKER, 1 /* earpiece */)
         assertEquals(CruAudio.Route.Call, CruAudio.route(34, speaker))
@@ -105,7 +112,7 @@ class OwnerGateTest {
     }
 
     @Test fun callVolumeIsNeverQuieterThanTheMediaWas() {
-        assertEquals(4, CruAudio.callVolume(2, 7, 0.6f))
+        assertEquals(5, CruAudio.callVolume(2, 7, 0.6f))   // 60% media, lifted 15%: 75% of 7
         assertEquals(6, CruAudio.callVolume(6, 7, 0.2f))
         assertFalse(CruAudio.callVolume(0, 7, 0f) == 0)
     }

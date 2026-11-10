@@ -153,7 +153,15 @@ object CruAudio {
 
     fun usage(route: Route): Int = if (route == Route.Call) USAGE_VOICE_COMMUNICATION else USAGE_ASSISTANT
 
-    /** Call audio has its own volume: at least as loud, as a share of its range, as the media volume was. */
-    fun callVolume(current: Int, max: Int, mediaShare: Float): Int =
-        maxOf(current, Math.round(mediaShare.coerceIn(0f, 1f) * max)).coerceIn(1, maxOf(1, max))
+    /**
+     * Call audio has its own volume, and its curve is quieter than media's at
+     * the same share: at least the media volume's share plus [CALL_LIFT] of the
+     * range (never lowered, never above the top).
+     */
+    fun callVolume(current: Int, max: Int, mediaShare: Float): Int {
+        val share = mediaShare.coerceIn(0f, 1f)
+        val lifted = if (share > 0f) minOf(1f, share + CALL_LIFT) else 0f
+        return maxOf(current, Math.round(lifted * max)).coerceIn(1, maxOf(1, max))
+    }
+    const val CALL_LIFT = 0.15f
 }

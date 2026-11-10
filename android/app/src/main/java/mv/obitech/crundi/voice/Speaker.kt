@@ -89,6 +89,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 .build()
         }.getOrNull() ?: return
         if (runCatching { t.write(samples, 0, samples.size) }.getOrDefault(-1) <= 0) { runCatching { t.release() }; return }
+        pin(t)
         runCatching { t.setVolume(volume) }
         toneTrack = t
         if (runCatching { t.play() }.isFailure) { stopTone(); return }
@@ -118,6 +119,10 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
      */
     var route: CruAudio.Route = CruAudio.Route.Media
     var sessionId: Int = 0
+    /** The built-in speaker while the route is Call ([CallAudio.speaker]): every track and player is pinned to it, never the earpiece. */
+    var device: android.media.AudioDeviceInfo? = null
+    private fun pin(t: AudioTrack) { val d = device?.takeIf { route == CruAudio.Route.Call } ?: return; runCatching { t.setPreferredDevice(d) } }
+    private fun pin(mp: MediaPlayer) { val d = device?.takeIf { route == CruAudio.Route.Call } ?: return; if (android.os.Build.VERSION.SDK_INT >= 28) runCatching { mp.setPreferredDevice(d) } }
     private val attrs: AudioAttributes get() = AudioAttributes.Builder()
         .setUsage(if (route == CruAudio.Route.Call) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_ASSISTANT)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
@@ -165,7 +170,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
     fun cue(file: File?, text: String, onDone: () -> Unit): Boolean {
         stopCue()
         if (file != null) {
-            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); joinSession(this); setDataSource(file.path); prepare(); setVolume(volume, volume) } }.getOrNull() ?: return false
+            val mp = runCatching { MediaPlayer().apply { setAudioAttributes(attrs); joinSession(this); pin(this); setDataSource(file.path); prepare(); setVolume(volume, volume) } }.getOrNull() ?: return false
             cuePlayer = mp
             cueDone = onDone
             // Its level, for the gate: how loud Cru is now.
@@ -276,6 +281,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 .setBufferSizeInBytes(maxOf(AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT), rate / 5 * 2))
                 .build()
         }.getOrNull() ?: return false
+        pin(t)
         runCatching { t.setVolume(volume) }
         track = t
         var frames = 0L
@@ -355,6 +361,7 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
                 try {
                     mp.setAudioAttributes(attrs)
                     joinSession(mp)
+                    pin(mp)
                     mp.setDataSource(file.path)
                     mp.setOnCompletionListener { if (cont.isActive) cont.resume(true) }
                     mp.setOnErrorListener { _, _, _ -> if (cont.isActive) cont.resume(false); true }
@@ -417,6 +424,8 @@ class Speaker(private val ctx: Context, private val scope: CoroutineScope) {
             val id = "s" + System.nanoTime()
             ttsId = id
             ttsDone = { ok -> ttsDone = null; ttsId = null; if (cont.isActive) cont.resume(ok) }
+            // The route may have changed since the engine was made (a headset, call mode).
+            runCatching { t.setAudioAttributes(attrs) }
             t.setSpeechRate(rate)
             t.setAudioAttributes(attrs)
             if (t.speak(text, TextToSpeech.QUEUE_FLUSH, ttsParams(), id) != TextToSpeech.SUCCESS) { ttsDone = null; ttsId = null; cont.resume(true); return@suspendCancellableCoroutine }

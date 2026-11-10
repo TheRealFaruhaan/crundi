@@ -607,7 +607,9 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
         val c = CallAudio(ctx)
         callAudio = c
         speaker.sessionId = m.sessionId
+        c.onRoute = { r -> speaker.route = r; speaker.device = c.speaker }
         speaker.route = c.start()
+        speaker.device = c.speaker
     }
 
     // ─── listening ───
@@ -732,8 +734,8 @@ class ChatVoiceSession(private val ctx: Context, private val voice: VoiceApi, pr
         gen++
         streaming = false
         pausedForReply = false
-        callAudio?.stop(); callAudio = null
-        speaker.route = CruAudio.Route.Media; speaker.sessionId = 0
+        callAudio?.let { it.onRoute = null; it.stop() }; callAudio = null
+        speaker.route = CruAudio.Route.Media; speaker.device = null; speaker.sessionId = 0
         mic?.stop(); mic = null
         socket?.let { s -> runCatching { s.close() } }
         socket = null
