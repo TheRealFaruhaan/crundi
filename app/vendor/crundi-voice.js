@@ -412,7 +412,8 @@
     '.cv-wm{display:flex;align-items:center}.cv-wm .cru-ic .cru-b1,.cv-wm .cru-ic .cru-b2{transform-box:fill-box;transform-origin:50% 50%}.cv-wm .cru-ic.cru-live .cru-b1{animation:cru-p .9s ease-in-out infinite}.cv-wm .cru-ic.cru-live .cru-b2{animation:cru-p .9s ease-in-out .15s infinite}@keyframes cru-p{0%,100%{transform:scaleY(1)}50%{transform:scaleY(.45)}}' +
     '.cv-pill{margin-left:auto;display:flex;align-items:center;gap:7px;padding:5px 12px;border-radius:14px;font-size:12px;font-weight:500;color:#d6d6f0;transition:background .4s,border-color .4s}' +
     '.cv-pill i{width:7px;height:7px;border-radius:50%;animation:cvp 1s ease-in-out infinite alternate}@keyframes cvp{from{opacity:.35}to{opacity:1}}' +
-    '.cv-admin{margin-left:8px;padding:2px 8px;border-radius:999px;font:700 10px/16px ui-monospace,monospace;letter-spacing:.08em;color:#fecaca;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.55)}' +
+    '.cv-admin{position:relative;margin-left:8px;width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;color:#f87171;background:rgba(239,68,68,.18);border:1px solid rgba(239,68,68,.55)}.cv-admin[hidden]{display:none}' +
+    '.cv-tip{display:none;position:absolute;top:36px;left:50%;transform:translateX(-50%);z-index:30;width:220px;padding:8px 10px;border-radius:10px;background:' + C.card + ';border:1px solid rgba(239,68,68,.55);color:' + C.text + ';font:12px/17px system-ui,sans-serif;text-align:left;box-shadow:0 8px 24px rgba(0,0,0,.5)}.cv-admin.tip .cv-tip{display:block}' +
     '.cv-chat{width:100%;max-width:680px;flex:1;overflow-y:auto;padding:10px 14px;box-sizing:border-box;display:none;flex-direction:column}.cv-msgs{display:flex;flex-direction:column;gap:8px;margin-top:auto}' +
     '.cv-m{max-width:82%;padding:8px 12px;border-radius:16px;font-size:14px;line-height:20px;white-space:pre-wrap;word-wrap:break-word}.cv-m.me{align-self:flex-end;background:#2b2b55;border-bottom-right-radius:5px}.cv-m.cru{align-self:flex-start;background:' + C.card + ';border:1px solid ' + C.border + ';border-bottom-left-radius:5px}.cv-m.live{opacity:.6;font-style:italic}' +
     '.cv-m .d{display:block;margin-top:6px;padding-top:6px;border-top:1px solid ' + C.border + ';font-size:13px;color:' + C.text2 + '}.cv-m time{display:block;font-size:10px;color:' + C.muted + ';margin-top:3px}' +
@@ -422,6 +423,9 @@
     '.cv-say.on{color:' + C.accent + '}.cv-say.on .w1{animation:cvwave 1.1s ease-in-out infinite}.cv-say.on .w2{animation:cvwave 1.1s ease-in-out .33s infinite}' +
     '@keyframes cvwave{0%,100%{opacity:.25}35%{opacity:1}}' +
     '.cv-more{align-self:center;font-size:12px;color:' + C.text2 + ';cursor:pointer;padding:4px 10px;margin-bottom:6px;border-radius:12px;background:#1a1a28}' +
+    '.cv-mwrap{position:relative;display:flex}.cv-menu{position:absolute;right:0;top:40px;z-index:20;min-width:220px;padding:6px;border-radius:12px;background:' + C.card + ';border:1px solid ' + C.border + ';box-shadow:0 10px 30px rgba(0,0,0,.5);display:flex;flex-direction:column}.cv-menu[hidden]{display:none}' +
+    '.cv-mi{display:flex;align-items:center;gap:10px;width:100%;padding:9px 10px;border:0;border-radius:8px;background:transparent;color:' + C.text + ';font:14px system-ui,sans-serif;text-align:left;cursor:pointer}.cv-mi:hover{background:rgba(255,255,255,.06)}.cv-mi svg{flex:none;color:' + C.text2 + '}.cv-mi.on svg{color:' + C.accent + '}' +
+    '.cv-menub{position:relative}.cv-menub.cru-unread:after{content:"";position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#ef4444}.cv-chatb.cru-unread svg{color:#ef4444}' +
     '.cv-x.on{background:' + C.accent + ';color:#fff}.cv-chatb{position:relative}.cv-chatb.cru-unread:after{content:"";position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;background:#ef4444}' +
     // The bottom row as on the phone: the voice button in the middle, the keyboard on its left;
     // the text box (with its send button) only in keyboard mode, where it takes the voice button's place.
@@ -480,12 +484,12 @@
     // Cru's latest words, a short line under its UI (a typed reply is read, not said).
     '.cv-ov.full .cv-words{display:block;flex:none;max-height:66px;padding:4px 18px 0}.cv-ov.full .cv-reply{margin-top:2px;font-size:14px;line-height:20px;font-weight:400;color:' + C.text2 + '}' +
     // A phone: room on the top row for the way back (Compact is a rare thing, it waits for the normal view); the chat view's button has nothing to show under Cru's UI.
-    '@media (max-width:480px){.cv-ov.full .cv-cmp{display:none}}.cv-ov.full .cv-chatb{display:none}' +
+    '.cv-ov.full .cv-chatb{display:none!important}' +
     '@media (min-width:900px){.cv-ov.full:not(.kid){width:min(1000px,calc(100vw - 40px));height:calc(100vh - 70px)}.cv-ov.full .cv-top{max-width:none}}' +
     '.cv-b-i{max-width:100%;border-radius:10px}.cv-b-ch{display:flex;flex-wrap:wrap;gap:6px}.cv-b-ch span{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid}' +
     // Kid mode: the whole window, bright and friendly, a big cursor, nothing to leave by.
     '.cv-ov.kid{inset:0!important;left:0!important;top:0!important;right:0!important;bottom:0!important;width:100%!important;height:100%!important;max-height:none!important;border:0!important;border-radius:0!important;z-index:2147483000;background:radial-gradient(circle at 50% 30%,#1e1b4b,#0a0a0f 70%)}' +
-    '.cv-ov.kid .cv-cmp,.cv-ov.kid .cv-chatb,.cv-ov.kid .cv-close,.cv-ov.kid .cv-confirm,.cv-ov.kid .cv-leg,.cv-ov.kid .cv-ptt,.cv-ov.kid .cv-admin,.cv-ov.kid .cv-scr-x{display:none!important}' +
+    '.cv-ov.kid .cv-mwrap,.cv-ov.kid .cv-cmp,.cv-ov.kid .cv-chatb,.cv-ov.kid .cv-close,.cv-ov.kid .cv-confirm,.cv-ov.kid .cv-leg,.cv-ov.kid .cv-ptt,.cv-ov.kid .cv-admin,.cv-ov.kid .cv-scr-x{display:none!important}' +
     '.cv-ov.kid .cv-top,.cv-ov.kid .cv-scr,.cv-ov.kid .cv-field{max-width:none}.cv-ov.kid .cv-reply{font-size:24px;line-height:32px}.cv-ov.kid .cv-heard{font-size:18px}.cv-ov.kid .cv-mic{width:150px;height:150px}.cv-ov.kid .cv-mic svg{left:63px;top:63px}' +
     '.cv-ov.kid.has-scr .cv-scr{flex:4}.cv-ov.kid.has-scr .cv-words{flex:none;max-height:24vh}.cv-ov.kid .cv-scr-b iframe{height:100%}' +
     // Kid mode's own look (9 Nov, the owner: "doesn't look good, doesn't blend"): one bright, playful
@@ -533,10 +537,15 @@
     ov.innerHTML =
       '<div class="cv-top"><span class="cv-wm" aria-label="Cru">' + cruIcon(22) + '</span><div class="cv-leg"></div>' +
       '<div class="cv-pill"><i></i><span class="cv-st">Waking</span></div>' +
-      '<span class="cv-admin" hidden title="Admin mode is on: Cru can run any command. Turn it off in Settings, or say: admin mode off">ADMIN</span>' +
+      // Admin mode: an icon (the owner, 11 Nov); hover or tap says what it means.
+      '<span class="cv-admin" hidden role="button" tabindex="0" aria-label="Admin mode is on" title="Admin mode is on: Cru can run any command. Turn it off in Settings, or say: admin mode off"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M12 8v4M12 16h.01"/></svg><span class="cv-tip">Admin mode is on: Cru can run any command on the server. Turn it off in Settings, or say "admin mode off".</span></span>' +
       '<button class="cv-x cv-fullx" title="Back to the normal view" aria-label="Back to the normal view"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg><span>Normal view</span></button>' +
-      '<button class="cv-x cv-cmp" title="Compact the conversation (Cru keeps a summary and its notebook)" aria-label="Compact the conversation"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/></svg></button>' +
-      '<button class="cv-x cv-chatb" title="Chat view: the whole conversation as messages" aria-label="Chat view"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg></button>' +
+      // Everything but close in one menu (the owner, 11 Nov): the chat view and compact.
+      '<span class="cv-mwrap"><button class="cv-x cv-menub" title="More" aria-label="More" aria-haspopup="menu"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>' +
+      '<div class="cv-menu" role="menu" hidden>' +
+      '<button class="cv-mi cv-chatb" role="menuitem" title="Chat view: the whole conversation as messages"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg><span>Chat view</span></button>' +
+      '<button class="cv-mi cv-cmp" role="menuitem" title="Compact the conversation (Cru keeps a summary and its notebook)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/></svg><span>Compact the conversation</span></button>' +
+      '</div></span>' +
       '<button class="cv-x cv-close" title="Close (Esc)" aria-label="Close"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
       '<button class="cv-lock" title="Grown-ups" aria-label="Grown-ups"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></button></div>' +
       '<div class="cv-confirm" hidden><span>Compact the conversation? Cru carries on from a summary; its notebook and memory search keep everything.</span><button class="cv-yn yes">Compact</button><button class="cv-yn no">Cancel</button></div>' +
@@ -591,7 +600,12 @@
     q('.cv-fs').onclick = function (e) { e.stopPropagation(); kidFullscreen(); };
     // A tap on Yes or No is the signed-in owner answering: typed, so no voice check applies.
     Array.prototype.forEach.call(ov.querySelectorAll('.cv-yn'), function (b) { b.onclick = function (e) { e.stopPropagation(); if (S && S.question) utter(b.getAttribute('data-yn'), true); }; });
-    q('.cv-chatb').onclick = function (e) { e.stopPropagation(); chatView(!(S && S.chat)); };
+    var menuEl = q('.cv-menu'), closeMenu = function () { menuEl.hidden = true; };
+    // The admin icon: a tap shows what it means for a few seconds.
+    q('.cv-admin').onclick = function (e) { e.stopPropagation(); var a = q('.cv-admin'); a.classList.toggle('tip'); clearTimeout(S.tipTimer); if (a.classList.contains('tip')) S.tipTimer = setTimeout(function () { a.classList.remove('tip'); }, 3500); };
+    q('.cv-menub').onclick = function (e) { e.stopPropagation(); menuEl.hidden = !menuEl.hidden; };
+    ov.addEventListener('click', function (e) { if (!menuEl.hidden && !(e.target.closest && e.target.closest('.cv-mwrap'))) closeMenu(); });
+    q('.cv-chatb').onclick = function (e) { e.stopPropagation(); closeMenu(); chatView(!(S && S.chat)); };
     // The owner scrolling Cru's words himself: they stop following the speech until the next reply.
     ['wheel', 'touchstart', 'mousedown'].forEach(function (ev) { q('.cv-words').addEventListener(ev, function () { if (S) S.ownScroll = true; }, { passive: true }); });
     q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (S && (v || attReady())) { inp.value = ''; if (v) utter(v, true); else ask('', false, true); inp.focus(); } };
@@ -625,6 +639,7 @@
     // Compact asks first: a small question under the top row, Compact or Cancel.
     q('.cv-cmp').onclick = function (e) {
       e.stopPropagation();
+      closeMenu();
       if (!S) return;
       var box = q('.cv-confirm');
       box.hidden = !box.hidden;
@@ -992,7 +1007,7 @@
     S.chat = !!on;
     try { localStorage.setItem(CHAT_KEY, on ? '1' : '0'); } catch (e) { /* private mode */ }
     S.ov.classList.toggle('chat', S.chat);
-    var b = S.ov.querySelector('.cv-chatb'); if (b) { b.classList.toggle('on', S.chat); b.title = S.chat ? 'Back to the voice view' : 'Chat view: the whole conversation as messages'; }
+    var b = S.ov.querySelector('.cv-chatb'); if (b) { b.classList.toggle('on', S.chat); b.title = S.chat ? 'Back to the voice view' : 'Chat view: the whole conversation as messages'; var bl = b.querySelector('span'); if (bl) bl.textContent = S.chat ? 'Voice view' : 'Chat view'; }
     if (S.chat && !S.msgs) loadChat(false); else if (S.chat && unread) loadChat(false); else renderChat(true);
     if (S.chat) markSeen(); else setUnread(unread);
   }
@@ -1042,7 +1057,7 @@
       if (m.said) h += '<div class="cv-m me">' + saidHtml(m.said) + '<time>' + esc(when(m.at)) + '</time></div>';
       // The speaking head outside the bubble, at its bottom right: says this reply aloud on a tap (a typed
       // turn's reply is not said on its own), and moves while this reply is being said (tap again: stop).
-      if (m.speak || m.show) h += '<div class="cv-m cru' + (m.speak ? ' say' : '') + '">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + (m.said ? '' : '<time>' + esc(when(m.at)) + '</time>')
+      if (m.speak || m.show) h += '<div class="cv-m cru' + (m.speak ? ' say' : '') + '">' + esc(m.speak || '') + (m.show ? '<span class="d">' + esc(m.show) + '</span>' : '') + '<time>' + esc(when(m.at)) + '</time>'
         + (m.speak ? (i === sayingAt
           ? '<button class="cv-say on" data-say="' + i + '" title="Cru is saying this: tap to stop" aria-label="Cru is saying this: tap to stop">'
           : '<button class="cv-say" data-say="' + i + '" title="Say it aloud" aria-label="Say it aloud">') + SPEAKER_SVG + '</button>' : '') + '</div>';
@@ -2208,7 +2223,7 @@
   function setUnread(n) {
     unread = Math.max(0, Number(n) || 0);
     cruButtons.forEach(function (b) { b.classList.toggle('cru-unread', unread > 0); b.title = unread ? 'Talk to Cru (' + unread + ' unread)' : 'Talk to Cru (voice assistant)'; });
-    if (S) { var c = S.ov.querySelector('.cv-chatb'); if (c) c.classList.toggle('cru-unread', unread > 0 && !S.chat); }
+    if (S) { var c = S.ov.querySelector('.cv-chatb'); if (c) c.classList.toggle('cru-unread', unread > 0 && !S.chat); var mb = S.ov.querySelector('.cv-menub'); if (mb) mb.classList.toggle('cru-unread', unread > 0 && !S.chat); }
   }
   function markSeen() {
     if (!unread || !S) return;

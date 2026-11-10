@@ -1,7 +1,11 @@
 package mv.obitech.crundi.voice
 
+import android.app.Activity
+import android.app.AlertDialog
+import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.provider.Settings
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -30,10 +34,21 @@ import mv.obitech.crundi.R
  * person, a silent notification that opens straight into the bubble and
  * leaves nothing in the shade. Folded away the session pauses (the mic is
  * let go); tapped again it carries on.
+ *
+ * 11 Nov 2026 (the owner: the button opened Cru full screen): Android
+ * bubbles a conversation only where the app's bubble setting allows it, and
+ * with "Selected conversations" (Samsung's default) a new conversation never
+ * is. It then shows an ordinary notification instead, and that notification
+ * opened the bubble's activity full screen. So [request] posts, checks a
+ * moment later whether Android really made a bubble of it (FLAG_BUBBLE), and
+ * when it did not, takes the notification down and shows the way to allow
+ * it. The notification's own tap, and the shortcut, open the normal voice screen.
  */
 object CruBubble {
-    private const val KEY = "cru"
+    const val KEY = "cru"
     private const val ID = 0x0C20
+    private const val CHECK_MS = 900L
+    private val samsung get() = Build.MANUFACTURER.equals("samsung", true)
 
     fun available(ctx: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !BubbleHelp.blocked(ctx)
 
@@ -46,13 +61,16 @@ object CruBubble {
         Notifier.channels(ctx)
         val icon = IconCompat.createWithAdaptiveBitmap(mark(ctx, adaptive = true))
         val cru = Person.Builder().setName("Cru").setKey(KEY).setIcon(IconCompat.createWithBitmap(mark(ctx, adaptive = false))).setImportant(true).setBot(true).build()
+        // The bubble opens the bubble's activity; the notification and the shortcut open the normal voice screen.
         val target = Intent(ctx, CruBubbleActivity::class.java).setAction(Intent.ACTION_VIEW)
+        val screen = Intent(ctx, VoiceActivity::class.java).setAction(Intent.ACTION_VIEW).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         runCatching {
             ShortcutManagerCompat.pushDynamicShortcut(ctx, ShortcutInfoCompat.Builder(ctx, KEY)
                 .setLongLived(true).setShortLabel("Cru").setLongLabel("Cru, your voice assistant")
-                .setIcon(icon).setPerson(cru).setLocusId(LocusIdCompat(KEY)).setIntent(target).build())
+                .setIcon(icon).setPerson(cru).setLocusId(LocusIdCompat(KEY)).setIntent(screen).build())
         }
         val pi = PendingIntent.getActivity(ctx, ID, target, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+        val open = PendingIntent.getActivity(ctx, ID + 1, screen, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build()).setConversationTitle("Cru")
             .addMessage("Tap to talk to Cru", System.currentTimeMillis(), cru)
         val n = NotificationCompat.Builder(ctx, Notifier.CHATS)
@@ -64,7 +82,7 @@ object CruBubble {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .addPerson(cru)
             .setSilent(true).setOnlyAlertOnce(true)
-            .setContentIntent(pi)
+            .setContentIntent(open)
             .setBubbleMetadata(
                 NotificationCompat.BubbleMetadata.Builder(pi, icon)
                     .setDesiredHeight(640)
@@ -75,6 +93,66 @@ object CruBubble {
             )
             .build()
         return try { NotificationManagerCompat.from(ctx).notify(ID, n); null } catch (e: SecurityException) { "Allow notifications for Crundi first: a bubble is a kind of notification." }
+    }
+
+    /** Is Cru's notification on screen as a bubble now (Android set FLAG_BUBBLE on it)? Null: not posted at all. */
+    fun bubbled(ctx: Context): Boolean? {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        val n = runCatching { nm.activeNotifications.firstOrNull { it.id == ID } }.getOrNull() ?: return null
+        return n.notification.flags and Notification.FLAG_BUBBLE != 0
+    }
+
+    /** Take Cru's notification down (it did not become a bubble: no stray card left to open). */
+    fun cancel(ctx: Context) { runCatching { NotificationManagerCompat.from(ctx).cancel(ID) } }
+
+    /**
+     * The voice screen's bubble button: post it, and a moment later look.
+     * A real bubble: [onBubbled] (the voice screen gets out of its way).
+     * Not one: the notification goes, and the owner is shown how to allow it.
+     */
+    fun request(activity: Activity, onBubbled: () -> Unit) {
+        open(activity)?.let { problem -> android.widget.Toast.makeText(activity, problem, android.widget.Toast.LENGTH_LONG).show(); if (BubbleHelp.blocked(activity) || problem.contains("turned off")) explain(activity); return }
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (activity.isFinishing || activity.isDestroyed) return@postDelayed
+            when (bubbled(activity)) {
+                true -> onBubbled()
+                else -> { cancel(activity); explain(activity) }
+            }
+        }, CHECK_MS)
+    }
+
+    /** Cru's own page in the notification settings (its conversation: "Bubble this conversation"); the app's bubble page otherwise. */
+    fun openConversationSettings(ctx: Context) {
+        val pkg = ctx.packageName
+        runCatching {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) error("no conversations")
+            ctx.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, pkg).putExtra(Settings.EXTRA_CHANNEL_ID, Notifier.CHATS)
+                .putExtra(Settings.EXTRA_CONVERSATION_ID, KEY).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure { BubbleHelp.openAppSettings(ctx) }
+    }
+
+    /** What to switch on, with buttons to the pages. */
+    fun explain(activity: Activity) {
+        val off = BubbleHelp.blocked(activity)
+        val msg = if (off) BubbleHelp.steps(activity) else (
+            "Android showed Cru as a notification instead of a bubble: Crundi's bubbles are set to selected conversations, and Cru isn't one of them yet.\n\n" +
+                "Tap Cru's settings and turn on \"Bubble this conversation\" (or set Crundi's bubbles to All conversations), then tap the bubble button again." +
+                (if (samsung) "\n\nOn Samsung, the phone's Floating notifications must also be set to Bubbles." else ""))
+        val b = AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Let Cru float as a bubble")
+            .setMessage(msg)
+            .setNegativeButton("Not now", null)
+        if (off && samsung) {
+            b.setPositiveButton("Phone settings") { _, _ -> BubbleHelp.openPhoneSettings(activity) }
+            b.setNeutralButton("App settings") { _, _ -> BubbleHelp.openAppSettings(activity) }
+        } else if (off) {
+            b.setPositiveButton("Open settings") { _, _ -> BubbleHelp.openAppSettings(activity) }
+        } else {
+            b.setPositiveButton("Cru's settings") { _, _ -> openConversationSettings(activity) }
+            b.setNeutralButton(if (samsung) "Phone settings" else "App settings") { _, _ -> if (samsung) BubbleHelp.openPhoneSettings(activity) else BubbleHelp.openAppSettings(activity) }
+        }
+        runCatching { b.show() }
     }
 
     /** Cru's round head: sky to violet, "Cru" on it (an adaptive icon fills the square). */

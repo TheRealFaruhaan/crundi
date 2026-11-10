@@ -290,20 +290,35 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Un
         if (ui.spend?.adminMode == true) AdminPill()
         StatusPill(statusText(ui, phase), phase)
         if (full) NormalViewButton(more.live.onNormal)
-        if (VoiceApi.COMPACT in ui.caps) CrundiIconButton("minimize-2", { askCompact = !askCompact }, contentDescription = "Compact the conversation", size = 16.dp, touch = 38.dp)
-        // The chat view has nothing to show under Cru's full UI: its button waits for the normal view.
-        if (VoiceApi.HISTORY in ui.caps && !full) Box {
-            CrundiIconButton(
-                "message-circle", { more.onChat(!ui.chat) },
-                contentDescription = if (ui.chat) "Back to the voice view" else "Chat view",
-                size = 17.dp, touch = 38.dp, tint = if (ui.chat) CrundiColors.AccentHover else CrundiColors.TextSecondary,
-            )
+        // Everything but close in one menu (the owner, 11 Nov): the chat view, compact, the bubble.
+        // The chat view has nothing to show under Cru's full UI: it waits for the normal view.
+        val chatItem = VoiceApi.HISTORY in ui.caps && !full
+        val compactItem = VoiceApi.COMPACT in ui.caps
+        val bubbleItem = more.onBubble != null && !full
+        if (chatItem || compactItem || bubbleItem) Box {
+            var menu by remember { mutableStateOf(false) }
+            CrundiIconButton("more", { menu = true }, contentDescription = "More", size = 17.dp, touch = 38.dp)
             // Cru said something nobody heard: a red dot until the chat view is opened.
             val unread by CruUnread.count.collectAsState()
-            if (unread > 0 && !ui.chat) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(8.dp).clip(CircleShape).background(CrundiColors.Red))
+            if (unread > 0 && !ui.chat && chatItem) Box(Modifier.align(Alignment.TopEnd).padding(top = 6.dp, end = 6.dp).size(8.dp).clip(CircleShape).background(CrundiColors.Red))
+            androidx.compose.material3.DropdownMenu(menu, { menu = false }, containerColor = CrundiColors.BgSecondary) {
+                if (chatItem) androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(if (ui.chat) "Voice view" else if (unread > 0) "Chat view (new)" else "Chat view", style = CrundiType.Body) },
+                    leadingIcon = { CrundiIcon(if (ui.chat) "mic" else "message-circle", size = 16.dp, tint = if (unread > 0 && !ui.chat) CrundiColors.Red else CrundiColors.TextSecondary) },
+                    onClick = { menu = false; more.onChat(!ui.chat) },
+                )
+                if (compactItem) androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Compact the conversation", style = CrundiType.Body) },
+                    leadingIcon = { CrundiIcon("archive", size = 16.dp, tint = CrundiColors.TextSecondary) },
+                    onClick = { menu = false; askCompact = !askCompact },
+                )
+                if (bubbleItem) androidx.compose.material3.DropdownMenuItem(
+                    text = { Text("Float as a bubble", style = CrundiType.Body) },
+                    leadingIcon = { CrundiIcon("minimize-2", size = 16.dp, tint = CrundiColors.TextSecondary) },
+                    onClick = { menu = false; more.onBubble?.invoke() },
+                )
+            }
         }
-        // Cru as its own floating bubble, over any app.
-        more.onBubble?.let { b -> if (!full) CrundiIconButton("message-square", b, contentDescription = "Float Cru as a bubble", size = 16.dp, touch = 38.dp) }
         // Close: up here (as on the web), so the typing box keeps the bottom row's room.
         CrundiIconButton("x", onClose, contentDescription = "Close", size = 17.dp, touch = 38.dp)
     }
@@ -321,16 +336,27 @@ private fun TopRow(ui: VoiceUi, phase: Phase, more: VoiceMore, onClose: () -> Un
     }
 }
 
-/** Admin mode is on: Cru can run any command on the server. */
+/** Admin mode is on: Cru can run any command on the server. An icon (the owner, 11 Nov); a tap says what it means. */
 @Composable
 private fun AdminPill() {
-    Text(
-        "ADMIN",
-        style = CrundiType.Badge.copy(fontSize = 10.sp, color = CrundiColors.Red, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp),
-        modifier = Modifier.padding(end = 6.dp).clip(RoundedCornerShape(10.dp)).background(CrundiColors.RedDim).border(1.dp, CrundiColors.Red.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 8.dp, vertical = 3.dp)
-            .semantics { contentDescription = "Admin mode is on: Cru can run any command" },
-    )
+    var tip by remember { mutableStateOf(false) }
+    LaunchedEffect(tip) { if (tip) { kotlinx.coroutines.delay(3500); tip = false } }
+    Box {
+        Box(
+            Modifier.padding(end = 6.dp).size(30.dp).clip(CircleShape).background(CrundiColors.RedDim).border(1.dp, CrundiColors.Red.copy(alpha = 0.5f), CircleShape)
+                .clickable(onClickLabel = "What admin mode means") { tip = !tip }
+                .semantics { contentDescription = "Admin mode is on: Cru can run any command" },
+            contentAlignment = Alignment.Center,
+        ) { CrundiIcon("shield-alert", size = 15.dp, tint = CrundiColors.Red) }
+        if (tip) androidx.compose.ui.window.Popup(alignment = Alignment.TopStart, offset = androidx.compose.ui.unit.IntOffset(0, 90), onDismissRequest = { tip = false }) {
+            Text(
+                "Admin mode is on: Cru can run any command on the server. Turn it off in Settings, or say \"admin mode off\".",
+                style = CrundiType.Small.copy(color = CrundiColors.TextPrimary),
+                modifier = Modifier.widthIn(max = 240.dp).clip(RoundedCornerShape(10.dp)).background(CrundiColors.BgSecondary)
+                    .border(1.dp, CrundiColors.Red.copy(alpha = 0.5f), RoundedCornerShape(10.dp)).padding(10.dp),
+            )
+        }
+    }
 }
 
 /**
@@ -388,7 +414,7 @@ private fun ChatList(ui: VoiceUi, more: VoiceMore, modifier: Modifier, sent: Int
             val m = list[i]
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (m.said.isNotEmpty()) Bubble(mine = true, text = m.said, detail = "", time = msgTime(m.at), thumb = more.attachmentThumb)
-                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = if (m.said.isEmpty()) msgTime(m.at) else "", onSay = if (m.speak.isNotBlank()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
+                if (m.speak.isNotEmpty() || m.show.isNotEmpty()) Bubble(mine = false, text = m.speak, detail = m.show, time = msgTime(m.at), onSay = if (m.speak.isNotBlank()) ({ if (i == speakingAt) more.onStopSaying() else more.onSay(m.speak) }) else null, speaking = i == speakingAt)
             }
         }
         if (thinking) item(key = "thinking") { ThinkingBubble() }
