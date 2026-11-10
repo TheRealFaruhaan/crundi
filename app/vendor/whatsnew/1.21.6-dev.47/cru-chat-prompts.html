@@ -1,0 +1,26 @@
+<div class="wna a-ccp">
+  <div class="card">
+    <div class="t">Claude wants to run a command</div>
+    <div class="cmd">npm test</div>
+    <div class="btns"><span class="b ok">Allow</span><span class="b">Deny</span></div>
+    <div class="done">allowed by Cru</div>
+  </div>
+  <div class="cru"><div class="say">Sir, the API chat wants to run the tests. Shall I allow it?</div></div>
+  <div class="me">Allow it.</div>
+  <style>
+    .a-ccp{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-ccp .card{position:absolute;left:60px;top:125px;width:230px;padding:12px 14px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-ccp .t{font-weight:600;margin-bottom:8px}
+    .a-ccp .cmd{font-family:var(--mono);font-size:12px;padding:6px 8px;border-radius:6px;background:var(--bg-primary);color:var(--text-secondary);margin-bottom:10px}
+    .a-ccp .btns{display:flex;gap:8px;animation:accp3 10s ease infinite}
+    .a-ccp .b{padding:4px 12px;border-radius:8px;border:1px solid var(--border);font-size:12px;color:var(--text-secondary)}
+    .a-ccp .b.ok{border-color:var(--accent);color:var(--accent)}
+    .a-ccp .done{position:absolute;left:14px;bottom:12px;padding:3px 10px;border-radius:8px;background:var(--accent-dim);color:var(--green);font-size:12px;opacity:0;animation:accp4 10s ease infinite}
+    .a-ccp .cru{position:absolute;left:330px;top:115px;width:240px;padding:10px 12px;border-radius:14px;background:var(--bg-secondary);border:1px solid var(--accent);opacity:0;animation:accp1 10s ease infinite}
+    .a-ccp .me{position:absolute;left:430px;top:245px;padding:8px 14px;border-radius:14px;background:var(--accent);color:var(--text-primary);opacity:0;animation:accp2 10s ease infinite}
+    @keyframes accp1{0%,8%{opacity:0;transform:translateY(6px)}16%,90%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes accp2{0%,38%{opacity:0;transform:translateY(6px)}46%,90%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes accp3{0%,55%{opacity:1}60%,96%{opacity:0}100%{opacity:1}}
+    @keyframes accp4{0%,58%{opacity:0}64%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

@@ -1948,6 +1948,8 @@
         var tag = e.status === 'denied' ? 'denied'
           : closed ? 'never answered'
             : e.always ? 'always allowed' : 'allowed';
+        // Cru (the voice assistant) answered it, for the owner or on its own judgement.
+        if (e.answeredBy === 'cru' && !closed) tag += ' by Cru';
         box.appendChild(el('div', 'cc-answered',
           '<b>' + esc(e.displayName || e.toolName) + '</b>'
           + '<span class="cc-tag ' + (e.status === 'denied' || closed ? 'no' : 'ok') + '">' + tag + '</span>'));
@@ -2168,6 +2170,7 @@
         Object.keys(ann).forEach(function (k) {
           if (ann[k] && ann[k].notes) html += '<div class="cc-ans-note">Note: ' + esc(ann[k].notes) + '</div>';
         });
+        if (e.answeredBy === 'cru') html += ' <span class="cc-tag">by Cru</span>';
         box.appendChild(el('div', 'cc-answered', html || '<span class="cc-tag">answered</span>'));
         return box;
       }

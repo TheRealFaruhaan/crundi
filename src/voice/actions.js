@@ -18,6 +18,11 @@
  *        (intent 'explicit'); read back first when the model decided to send
  *        it itself (intent 'inferred'). A long message is read back as one line.
  *   D24  closing a chat; D31 parking one.
+ *        Answering a chat's question or permission prompt (answer_chat_prompt):
+ *        at once when the owner said what to answer (intent 'explicit'), read
+ *        back first when Cru decided itself, except where Cru may decide on its
+ *        own (promptAuto: any permission in admin mode; anything in a chat Cru
+ *        runs, its jobs and the chats it started). Every answer is logged.
  *   D22  creating a project (a new folder).
  *   D32  every setting change, the voice's own included.
  *   D45  creating, changing or deleting a schedule (it acts later, unattended).
@@ -31,9 +36,10 @@
 
 import { join } from 'node:path';
 import { awayAllows } from './autonomy.js';
+import { answerable, pendingLine } from './tools.js';
 
 export const ACTION_TOOL_NAMES = [
-  'send_to_chat', 'start_chat', 'close_chat', 'park_chat', 'resume_chat', 'watch_chat', 'unwatch_chat',
+  'send_to_chat', 'start_chat', 'close_chat', 'park_chat', 'resume_chat', 'answer_chat_prompt', 'watch_chat', 'unwatch_chat',
   'add_kanban_task', 'update_kanban_task', 'move_kanban_task', 'delete_kanban_task', 'add_kanban_todo', 'check_kanban_todo',
   'create_note', 'append_to_note', 'delete_note',
   'add_mindmap_node', 'update_mindmap_node', 'delete_mindmap_node',
@@ -141,6 +147,69 @@ export function makeActionTools(deps, ctx) {
   };
   const chatName = (c) => `the "${c.title || 'untitled'}" chat in ${c.project}`;
 
+  // ─── a chat's question or permission prompt ───
+  /** The card [i] is about: by requestId, or the chat's only answerable one. */
+  const promptOf = (i) => {
+    const c = chat(i.chat);
+    const cards = (c.pending || []).filter(answerable);
+    if (!cards.length) throw new Error(`${chatName(c)} is not waiting on a question or a permission you can answer (read_chat shows what it is doing).`);
+    const card = i.requestId ? cards.find(p => String(p.requestId) === String(i.requestId)) : (cards.length === 1 ? cards[0] : null);
+    if (!card) throw new Error(i.requestId ? 'That prompt is no longer waiting. Use read_chat for what is.' : `${chatName(c)} has ${cards.length} prompts waiting: give the requestId of the one to answer (read_chat lists them).`);
+    return { c, card };
+  };
+  /** Does this chat belong to Cru (one of its jobs, or a chat it started)? */
+  const cruRuns = (id) => !!(deps.cruRuns && deps.cruRuns(id));
+  /**
+   * May Cru answer this on its own judgement, without the owner's word?
+   * A permission (or a plan) in any chat while admin mode is on; anything in a
+   * chat Cru runs.
+   */
+  const promptAuto = (i) => {
+    let pc; try { pc = promptOf(i); } catch { return null; }
+    if (cruRuns(pc.c.id)) return 'own';
+    if (pc.card.kind === 'permission' && deps.adminOn && deps.adminOn()) return 'admin';
+    return null;
+  };
+  /** The AskUserQuestion answers map: each question's text to the chosen label(s), or the owner's own words. */
+  const questionAnswers = (card, given) => {
+    const qs = Array.isArray(card.input?.questions) ? card.input.questions : [];
+    const list = Array.isArray(given) ? given : [];
+    if (!qs.length) throw new Error('This question has nothing to choose from: answer it with send_to_chat instead.');
+    if (!list.length) throw new Error(`Give answers: one per question (${qs.length}), each an option's label or number, or the owner's own words.`);
+    const out = {};
+    qs.forEach((q, n) => {
+      const g = list.find(a => a && a.question != null && (String(a.question) === String(n + 1) || String(a.question).trim().toLowerCase() === String(q.question || '').trim().toLowerCase()))
+        || (list.length === qs.length ? list[n] : null) || (qs.length === 1 ? list[0] : null);
+      if (!g || !String(g.answer ?? '').trim()) throw new Error(`No answer for question ${n + 1}: "${q.question}"`);
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const pick = (word) => {
+        const w = String(word).trim().replace(/[.!]$/, '').replace(/^(the\s+)?(option|number|choice)?\s*/i, '').replace(/\s+(one|option|choice)$/i, '');
+        const k = /^\d+$/.test(w) ? Number(w) - 1 : ({ first: 0, second: 1, third: 2, fourth: 3, fifth: 4 })[w.toLowerCase()];
+        if (k != null && opts[k]) return opts[k].label;
+        const exact = opts.find(o => String(o.label).toLowerCase() === w.toLowerCase());
+        if (exact) return exact.label;
+        const part = opts.filter(o => String(o.label).toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(String(o.label).toLowerCase()));
+        return part.length === 1 ? part[0].label : null;
+      };
+      const raw = String(g.answer).trim();
+      if (q.multiSelect) {
+        const parts = raw.split(/\s*(?:,|;|\band\b)\s*/i).filter(Boolean);
+        const labels = parts.map(pick);
+        out[q.question] = labels.every(Boolean) ? [...new Set(labels)].join(', ') : (pick(raw) || raw);
+      } else out[q.question] = pick(raw) || raw;
+    });
+    return out;
+  };
+  /** One line for the read-back and the log: what is being answered, and how. */
+  const promptAnswerLine = (i, { c, card }) => {
+    if (card.kind === 'question') {
+      let a; try { a = questionAnswers(card, i.answers); } catch { a = {}; }
+      return `answer ${chatName(c)}'s question with ${Object.values(a).map(v => `"${v}"`).join(' and ') || 'that'}`;
+    }
+    const what = pendingLine(card).replace(/^permission to /, '').replace(/^approval of /, '');
+    return `${i.decision === 'deny' ? 'deny' : 'allow'} ${chatName(c)} to ${card.toolName === 'ExitPlanMode' ? 'go ahead with its plan' : what}`;
+  };
+
   /** Each action: schema, an optional check (fails early, before asking), the yes rule, and what it does. */
   const defs = [
     {
@@ -173,6 +242,8 @@ export function makeActionTools(deps, ctx) {
         const p = project(i.project);
         const r = await deps.createChat(p.alias, { title: i.title || '', model: i.model || '', ...(i.mode === 'bypass' ? { skipPermissions: true } : {}) });
         if (!r || !r.ok) return r || { ok: false, error: 'The chat could not be started' };
+        // Cru runs this chat: it may answer its prompts on its own judgement (answer_chat_prompt).
+        deps.markStarted?.(r.id);
         const files = i.attachments && i.attachments.length ? deps.passOn(i.attachments, p.alias) : [];
         if (i.message || files.length) { deps.sendMessage(r.id, [String(i.message || 'Here are the files.'), ...files].join('\n')); deps.watch?.(r.id, i.title || '', p.alias, { auto: true }); }
         return { ok: true, started: true, chat: r.id, project: p.alias, sent: !!i.message, watching: !!i.message, mode: i.mode === 'bypass' ? 'bypass permissions' : 'the project default' };
@@ -199,6 +270,41 @@ export function makeActionTools(deps, ctx) {
       description: 'Resume a parked chat in place.',
       input_schema: obj({ chat: str('The parked chat\'s id') }, ['chat']),
       run: async (i) => deps.resumeChat(String(i.chat)),
+    },
+    {
+      name: 'answer_chat_prompt',
+      description: 'Answer a chat\'s question (AskUserQuestion) or permission prompt (a command, an edit, a fetch, a plan) for the owner. read_chat shows it in full with its requestId; read it out to him in plain words first, then answer: a question with answers (one per question: an option\'s label or number, several for a multi-select, or his own words); a permission or plan with decision allow or deny (with an optional message for Claude when denying). intent "explicit" when the owner said what to answer ("allow it", "pick the second"); "inferred" when it is your own judgement: that is read back to him first, except where you may decide yourself (any permission while admin mode is on; anything in a chat you run: your jobs and the chats you started), which runs at once and is logged.',
+      input_schema: obj({
+        chat: str('The chat: its id or title'),
+        requestId: str('The prompt\'s requestId, from read_chat (needed when it has more than one waiting)'),
+        decision: str('For a permission or plan: allow or deny', { enum: ['allow', 'deny'] }),
+        answers: { type: 'array', description: 'For a question: one per question', items: { type: 'object', properties: { question: { type: 'string', description: 'The question\'s number (1, 2…) or text' }, answer: { type: 'string', description: 'An option\'s label or number; several joined with commas for a multi-select; or the owner\'s own words' } }, required: ['answer'] } },
+        message: str('Optional: what Claude is told with a deny (why, or what to do instead)'),
+        intent: str('explicit or inferred', { enum: ['explicit', 'inferred'] }),
+      }, ['chat', 'intent']),
+      check: (i) => {
+        const { card } = promptOf(i);
+        if (card.kind === 'question') questionAnswers(card, i.answers);
+        else if (i.decision !== 'allow' && i.decision !== 'deny') throw new Error('Say allow or deny (decision) for a permission prompt.');
+      },
+      auto: promptAuto,
+      confirm: (i) => { if (i.intent === 'explicit') return null; const l = promptAnswerLine(i, promptOf(i)); return `${l[0].toUpperCase()}${l.slice(1)}?`; },
+      run: (i, how = {}) => {
+        const pc = promptOf(i);
+        const { c, card } = pc;
+        let r;
+        if (card.kind === 'question') {
+          const answers = questionAnswers(card, i.answers);
+          r = deps.respondChat(c.id, { requestId: card.requestId, behavior: 'allow', updatedInput: { ...(card.input || {}), answers }, by: 'cru' });
+        } else {
+          r = deps.respondChat(c.id, { requestId: card.requestId, behavior: i.decision === 'deny' ? 'deny' : 'allow', ...(i.decision === 'deny' ? { message: i.message ? String(i.message) : 'The owner declined this, through Cru.' } : {}), by: 'cru' });
+        }
+        if (r && r.ok === false) return r;
+        const why = how.auto === 'admin' ? 'on your own judgement, in admin mode' : how.auto === 'own' ? 'on your own judgement, in a chat you run' : i.intent === 'explicit' ? 'as the owner said' : 'with the owner\'s yes';
+        deps.logPromptAnswer?.({ chat: c.id, title: c.title, project: c.project, kind: card.kind, tool: card.toolName, asked: pendingLine(card), answer: card.kind === 'question' ? questionAnswers(card, i.answers) : (i.decision === 'deny' ? 'deny' : 'allow'), message: i.message || '', why, admin: how.auto === 'admin' });
+        deps.watch?.(c.id, c.title, c.project, { auto: true });
+        return { ok: true, answered: promptAnswerLine(i, pc), how: why, watching: true, ...(how.auto ? { say: 'Done on your own judgement and logged; tell the owner briefly what you answered.' } : {}) };
+      },
     },
     {
       name: 'watch_chat',
@@ -489,6 +595,15 @@ export function makeActionTools(deps, ctx) {
     // Another voice (or too short to tell) while "Only act on my voice" is on: questions only.
     if (ctx.unrecognised?.()) return { done: false, unrecognised: true, say: UNRECOGNISED };
     if (def.safe) { if (def.check) def.check(input); return def.run(input); }
+    // Where Cru may decide on its own (answer_chat_prompt: admin mode, or a chat it runs): no yes, spoken or not.
+    const auto = def.auto ? def.auto(input) : null;
+    if (auto) {
+      if (!ctx.unattended?.() && ctx.locked()) return { done: false, needsUnlock: true, say: 'The phone is locked. Ask the owner to unlock it for this; nothing was changed.' };
+      if (def.check) def.check(input);
+      const r = await def.run(input, { auto });
+      if (r && r.ok !== false) deps.broadcast?.(def.name, input);
+      return r;
+    }
     // Nobody spoke (a wake-up, a heartbeat, a followed chat): only what the
     // owner ticked runs; anything else becomes a yes/no on his phone.
     if (ctx.unattended?.()) {

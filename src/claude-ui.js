@@ -2820,6 +2820,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {object} [answer.updatedInput]  edited tool input, or AskUserQuestion answers
    * @param {boolean} [answer.always]       also apply the CLI's permission suggestions
    * @param {string} [answer.message]       denial reason shown to Claude
+   * @param {string} [answer.by]            'cru' when Cru (the voice assistant) answered it: the card says so
    */
   /**
    * The permission requests a chat is waiting on, for somewhere that can only
@@ -2848,7 +2849,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return out;
   }
 
-  function respond(id, { requestId, behavior, updatedInput, always, message } = {}) {
+  function respond(id, { requestId, behavior, updatedInput, always, message, by } = {}) {
     const s = sessions.get(id);
     if (!s) return { ok: false, error: `No session "${id}"` };
     const pending = s.pending.get(requestId);
@@ -2893,6 +2894,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       status: behavior === 'deny' ? 'denied' : 'allowed',
       answeredInput: response.updatedInput || null,
       always: !!always,
+      ...(by === 'cru' ? { answeredBy: 'cru' } : {}),
     });
     // Approving ExitPlanMode is what turns a proposal into the plan being
     // worked through; denying it sends Claude back to revise.

@@ -13,7 +13,7 @@ import { Readable } from 'node:stream';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import * as tls from './tls.js';
-import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, appendFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
@@ -96,7 +96,7 @@ import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
 import { createAutoTitler, titlesFromChat, isDefaultTitle } from './chat-autotitle.js';
 import * as chatMedia from './chat-media.js';
 import * as voiceSettings from './voice/settings.js';
-import { makeTools as makeVoiceTools } from './voice/tools.js';
+import { makeTools as makeVoiceTools, pendingLine as cruPendingLine, answerable as cruAnswerable } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
 import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
 import { createVoiceMemory } from './voice/memory.js';
@@ -2880,9 +2880,24 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, chatId: chatId || undefined }).catch(() => {});
     return { ok: true, said: spoken ? 'pc' : 'push' };
   }
+  /**
+   * What Cru may do about prompts a chat waits on: answer them itself (a chat
+   * it runs; a permission in admin mode), or read them out to the owner and
+   * answer as he says. '' when none can be answered from here.
+   */
+  function cruPromptHowTo(id, cards) {
+    const ok = (cards || []).filter(cruAnswerable);
+    if (!ok.length) return '';
+    const own = cruRunsChat(id);
+    const admin = voiceSettings.adminOn();
+    const ids = ok.map(p => p.requestId).join(', ');
+    if (own) return ` It is a chat you run: answer it yourself on your own judgement (answer_chat_prompt, requestId ${ids}) when the answer is plain and safe; it is logged. Ask the owner only when it really is his call.`;
+    if (admin && ok.every(p => p.kind === 'permission')) return ` Admin mode is on: you may allow or deny it yourself on your own judgement (answer_chat_prompt, requestId ${ids}); it is logged. Tell the owner briefly what you answered.`;
+    return ` Read it out to the owner in plain words (the choices, or what it wants to do) and answer as he says (answer_chat_prompt, requestId ${ids}; read_chat has it in full).${admin ? ' Admin mode is on: a permission you may allow or deny yourself.' : ''}`;
+  }
   // A watched chat, only when it finishes its turn or needs the owner, never
   // at every step, so Cru doesn't chatter.
-  async function voiceReport(id, w, what, { needsOwner = false, tries = 0 } = {}) {
+  async function voiceReport(id, w, what, { needsOwner = false, tries = 0, howTo = '' } = {}) {
     const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
     const last = lastSaidBy(id);
     const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
@@ -2891,16 +2906,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     const jobLine = job ? ` This chat is your job ${job.id} on the card "${job.title}" (${job.project}): check what it did (read_chat if you need more than its last message). More to do: send_to_chat the next step. Finished and checked: finish_job done. Blocked on the owner: finish_job stuck and tell him what is needed. Say nothing to him for an ordinary step.` : '';
     // A job's ordinary turn is Cru's to handle (a wake-up: it may stay quiet);
     // one waiting on the owner is still told to him.
-    const asWake = !!job && !needsOwner;
+    // A prompt in a chat Cru runs is Cru's to answer (howTo says so): handled as a wake-up too.
+    const asWake = !!job && (!needsOwner || !!howTo);
     const r = await cruDeliver({
-      note: `${name} ${what}.${last ? ` Its last message: "${last}"` : ''}${jobLine}`,
+      note: `${name} ${what}.${last ? ` Its last message: "${last}"` : ''}${jobLine}${howTo}`,
       ...(asWake ? { wake: true } : {}),
       line: `${(w.title || 'The chat')} in ${w.project} ${what}.`, detail: last,
       chatId: id, project: w.project || '', chatTitle: (term && (term.longTitle || term.title)) || w.title || '',
       needsOwner, tag: `voice-watch-${id}`, url: `/chat/${id}`,
     });
     // Cru was busy talking: a job's step is not lost, it is tried again shortly.
-    if (asWake && r && r.busy && tries < 6) setTimeout(() => { voiceReport(id, w, what, { needsOwner, tries: tries + 1 }).catch(() => {}); }, 20000).unref?.();
+    if (asWake && r && r.busy && tries < 6) setTimeout(() => { voiceReport(id, w, what, { needsOwner, howTo, tries: tries + 1 }).catch(() => {}); }, 20000).unref?.();
     return r;
   }
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
@@ -2911,16 +2927,39 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     voiceReport(id, w, 'has finished its turn').catch(() => {});
   });
   // Waiting on the owner (a permission or a question): said once per card.
+  // Admin mode: a permission prompt in any of the owner's chats (not a
+  // collaborator's, not a factory's) wakes Cru, who may answer it on its own
+  // judgement or leave it to him. Once per card.
+  const cruAdminTold = new Map();
+  function cruAdminPrompt(id, tries = 0) {
+    const c = claudeUi.list().find(x => x.id === id);
+    const cards = ((c && c.pending) || []).filter(p => cruAnswerable(p) && p.kind === 'permission');
+    if (!cards.length) { cruAdminTold.delete(id); return; }
+    if (!voiceSettings.adminOn() || c.collaborator || c.factory || c.background) return;
+    const told = cruAdminTold.get(id) || new Set();
+    const fresh = tries ? cards : cards.filter(p => !told.has(p.id));
+    for (const p of fresh) told.add(p.id);
+    cruAdminTold.set(id, told);
+    if (!fresh.length) return;
+    const name = `the "${c.longTitle || c.title || 'untitled'}" chat in ${c.project}`;
+    cruDeliver({
+      note: `${name} is waiting on the owner: ${fresh.map(p => cruPendingLine(p)).join('; and ')}.${cruPromptHowTo(id, fresh)} If it is plainly safe and what the chat is there to do, allow it; if it is risky or not plainly what he wants, leave it to him (reply QUIET, or tell him briefly).`,
+      wake: true, chatId: id, project: c.project, tag: `voice-admin-${id}`, url: `/chat/${id}`,
+    }).then((r) => {
+      // Cru was busy talking: tried again shortly, while it still waits.
+      if (r && r.busy && tries < 6) setTimeout(() => cruAdminPrompt(id, tries + 1), 20000).unref?.();
+    }).catch(() => {});
+  }
   if (claudeUi && claudeUi.onPendingChange) claudeUi.onPendingChange((id) => {
     const w = voiceWatches.get(id);
-    if (!w) return;
+    if (!w) { cruAdminPrompt(id); return; }
     const c = claudeUi.list().find(x => x.id === id);
     const cards = (c && c.pending) || [];
     const fresh = cards.filter(p => p && p.id && !(w.told || (w.told = new Set())).has(p.id));
     if (!fresh.length) return;
     for (const p of fresh) w.told.add(p.id);
-    const what = fresh.map(p => p.kind === 'question' ? 'a question' : `permission for ${p.displayName || p.toolName || 'a tool'}`).join(' and ');
-    voiceReport(id, w, `is waiting on the owner: ${what}`, { needsOwner: true }).catch(() => {});
+    const what = fresh.map(p => cruPendingLine(p) || 'something').join('; and ');
+    voiceReport(id, w, `is waiting on the owner: ${what}`, { needsOwner: true, howTo: cruPromptHowTo(id, fresh) }).catch(() => {});
   });
   // Cru's own tickers and triggers (voice/wakeups.js): built-in, read-only
   // reasons to wake Cru, each off until switched on. A wake-up asks Cru, who
@@ -2966,7 +3005,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     wakeTold.set(id, new Set(cards.map(p => p.id)));
     if (!cards.length) wakeTold.delete(id);
     if (!c || !fresh.length) return;
-    wakeEngine.event('chat_waiting', { chat: c, what: fresh.map(p => p.kind === 'question' ? 'a question' : `permission for ${p.displayName || p.toolName || 'a tool'}`).join(' and ') });
+    wakeEngine.event('chat_waiting', { chat: c, what: `${fresh.map(p => cruPendingLine(p) || 'something').join('; and ')}.${cruPromptHowTo(id, fresh)}` });
   });
   // Every 30 s: the times, and a reading of the machine. Docker and the
   // process list are read only while a trigger needs them.
@@ -2995,6 +3034,28 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // The day's log (/memories/log/YYYY-MM-DD.md): what Cru did by itself.
   const cruLog = createDailyLog({ read: (p) => voiceMemory.notebook.read(p), save: (p, t) => voiceMemory.notebook.save(p, t), list: () => voiceMemory.notebook.list() });
   const cruJobs = createJobStore({ file: join(config.dataDir, 'voice-jobs.json'), onChange: () => broadcastSSE('voice-jobs', {}) });
+  // The chats Cru started itself (start_chat): with its jobs' chats, the ones
+  // it runs, whose prompts it may answer on its own judgement. Kept across
+  // restarts (a chat keeps its id when resumed); the latest 200.
+  const cruStartedFile = join(config.dataDir, 'voice-started-chats.json');
+  const cruStarted = (() => { try { return new Set(JSON.parse(readFileSync(cruStartedFile, 'utf8')).chats || []); } catch { return new Set(); } })();
+  function cruMarkStarted(id) {
+    if (!id || cruStarted.has(id)) return;
+    cruStarted.add(id);
+    const keep = [...cruStarted].slice(-200);
+    cruStarted.clear(); for (const x of keep) cruStarted.add(x);
+    try { writePrivateFile(cruStartedFile, JSON.stringify({ chats: keep })); } catch (err) { console.warn('[voice] could not keep the chats Cru started:', err.message); }
+  }
+  const cruRunsChat = (id) => !!cruJobs.forChat(id) || cruStarted.has(id);
+  // Every prompt Cru answers is written to the day's log; one it approved on
+  // its own in admin mode, to the admin log as well.
+  function cruLogPromptAnswer(r) {
+    const answer = typeof r.answer === 'string' ? r.answer : Object.values(r.answer || {}).join('; ');
+    cruLog.add(`Answered the "${r.title || 'untitled'}" chat in ${r.project} (${r.asked}): ${answer}${r.message ? ` ("${String(r.message).slice(0, 80)}")` : ''}, ${r.why}`);
+    if (r.admin) {
+      try { mkdirSync(join(config.dataDir, 'voice-memory'), { recursive: true }); appendFileSync(join(config.dataDir, 'voice-memory', 'admin-log.jsonl'), JSON.stringify({ at: new Date().toISOString(), tool: 'answer_chat_prompt', chat: r.chat, project: r.project, title: r.title, asked: r.asked, answer: r.answer }) + '\n', { mode: 0o600 }); } catch { /* best effort */ }
+    }
+  }
   // Questions from an unattended turn: Approve / Decline on every device.
   const cruAsks = createOwnerAsks({
     onAsk: (a) => {
@@ -3081,6 +3142,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
     createChat: (alias, opts) => claudeUi.create(alias, opts),
+    markStarted: cruMarkStarted,
+    // A chat's question or permission prompt, answered by Cru (the card says so).
+    respondChat: (id, answer) => claudeUi.respond(id, answer),
+    cruRuns: cruRunsChat,
+    // Admin mode, as the admin tools see it: on, a model that may hold it, and not another voice.
+    adminOn: () => { const v = voiceOwnerVerdict; const owner = v && typeof v === 'object' ? v.owner : v; return voiceSettings.adminOn() && owner !== false; },
+    logPromptAnswer: cruLogPromptAnswer,
     closeChat: (id) => {
       const conv = (claudeUi.meta(id) || {}).sessionId || '';
       const r = claudeUi.close(id);
@@ -5415,11 +5483,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const attached = (Array.isArray(body.attachments) ? body.attachments : []).slice(0, 10).map((x) => cruFiles.get(String((x && x.id) || x || ''))).filter(Boolean);
       const refs = (Array.isArray(body.refs) ? body.refs : []).slice(0, 20).map((x) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 400)).filter(Boolean);
       const lead = [...attached.map(attachmentLine), ...refs.map((x) => `[The owner dropped in: ${x}]`)].join('\n');
-      const spoken = fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
-      const said = lead ? `${lead}\n${spoken || '(nothing said: look at what was attached and respond to it)'}` : spoken;
       // Whose voice (capability 'voice-speaker'): typed turns say typed:true;
       // a spoken one finds the verdict its utterance got on /api/voice/listen.
       const typed = body.typed === true;
+      // Misheard names are put right in speech only: what the owner typed is
+      // exactly what he meant ("sent by" must not become a project called "sentiq").
+      const spoken = typed ? String(body.text || '') : fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
+      const said = lead ? `${lead}\n${spoken || '(nothing said: look at what was attached and respond to it)'}` : spoken;
       const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
       const r = await voiceAgent.turn(said, { where: String(body.where || '').slice(0, 200), locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who });
       if (r && r.ok) r.speaker = rules.speaker;

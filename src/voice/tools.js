@@ -307,13 +307,13 @@ export function makeTools(deps) {
       description: 'The open chats (Claude Code conversations) and terminals, by project, with their state.',
       input_schema: obj(),
       run: () => ({
-        chats: deps.chats().map(c => ({ id: c.id, project: c.project, title: c.title, status: c.status, state: c.agentState || null, model: c.model || '' })),
+        chats: deps.chats().map(c => { const w = (c.pending || []).map(pendingLine).filter(Boolean); return { id: c.id, project: c.project, title: c.title, status: c.status, state: c.agentState || null, model: c.model || '', ...(w.length ? { waitingFor: w } : {}) }; }),
         terminals: deps.terminals().map(t => ({ id: t.id, project: t.project, title: t.title, status: t.status })),
       }),
     },
     {
       name: 'read_chat',
-      description: 'The latest messages of an open chat: what the owner asked and what Claude answered, with tool use summarised.',
+      description: 'The latest messages of an open chat: what the owner asked and what Claude answered, with tool use summarised; and, when it waits on the owner, each question in full with its choices, or each permission prompt with the command, file or change it is for (waitingOnOwner).',
       input_schema: obj({ id: str('Chat id from list_panels'), messages: num('How many recent messages (default 12, max 40)') }, ['id']),
       run: ({ id, messages = 12 }) => {
         const h = deps.chatHistory(String(id));
@@ -326,7 +326,9 @@ export function makeTools(deps) {
           else if (m.kind === 'tool') out.push({ tool: m.name || m.tool || 'tool' });
           else if (m.kind === 'error') out.push({ error: clip(m.text || m.message) });
         }
-        return { id, state: h.state, messages: out.slice(-n) };
+        const c = (() => { try { return (deps.chats() || []).find(x => x.id === String(id)); } catch { return null; } })();
+        const waiting = ((c && c.pending) || []).map(describePending).filter(Boolean);
+        return { id, state: h.state, messages: out.slice(-n), ...(waiting.length ? { waitingOnOwner: waiting, howToAnswer: 'Read the question and its choices, or what the permission is for, to the owner in plain words; answer it with answer_chat_prompt.' } : {}) };
       },
     },
     {
@@ -410,6 +412,84 @@ function clip(s, n = 1500) {
   return t.length > n ? t.slice(0, n) + '…' : t;
 }
 
+// ─── what a chat is waiting on the owner for ───
+
+/**
+ * Cards Cru may answer: a question, a permission or a plan, still pending,
+ * and not routed elsewhere (a collaborator's escalation is the owner's to
+ * decide in Crundi; a factory employee's goes to its Manager).
+ */
+export function answerable(p) {
+  return !!p && (p.kind === 'question' || p.kind === 'permission') && (!p.status || p.status === 'pending') && !!p.requestId && !p.escalated;
+}
+
+/** What a permission is for, in a line: the command, the file, the address. */
+function permissionAsks(p) {
+  const i = p.input || {};
+  const tool = String(p.toolName || '');
+  if (typeof i.command === 'string') return { command: clip(i.command, 1200), ...(i.description ? { purpose: clip(i.description, 200) } : {}) };
+  if (tool === 'Edit' || tool === 'MultiEdit' || typeof i.old_string === 'string') {
+    const edits = Array.isArray(i.edits) ? i.edits : [{ old_string: i.old_string, new_string: i.new_string }];
+    return { file: String(i.file_path || ''), edits: edits.slice(0, 4).map(e => ({ replace: clip(e.old_string, 500), with: clip(e.new_string, 500) })) };
+  }
+  if (typeof i.file_path === 'string') return { file: i.file_path, ...(typeof i.content === 'string' ? { content: clip(i.content, 800), chars: i.content.length } : {}) };
+  if (typeof i.url === 'string') return { url: i.url, ...(i.prompt ? { prompt: clip(i.prompt, 200) } : {}) };
+  if (typeof i.host === 'string') return { host: i.host };
+  return { input: clip(JSON.stringify(i), 800) };
+}
+
+/**
+ * A pending card in full, for Cru: the question with its choices, or what
+ * the permission is for (the command, the file and the change, the address),
+ * or the plan. requestId is what answer_chat_prompt takes.
+ */
+export function describePending(p) {
+  if (!p) return null;
+  const base = { requestId: String(p.requestId || ''), answerable: answerable(p) };
+  if (p.escalated) base.note = p.routedTo === 'manager' ? 'A factory employee\'s request: its Manager decides.' : 'A collaborator\'s request: the owner decides it in Crundi.';
+  if (p.kind === 'question' || p.toolName === 'AskUserQuestion') {
+    const qs = Array.isArray(p.input?.questions) ? p.input.questions : [];
+    return {
+      ...base, kind: 'question',
+      questions: qs.map((q, n) => ({
+        n: n + 1, question: clip(q.question, 600), ...(q.header ? { header: clip(q.header, 60) } : {}),
+        multiSelect: !!q.multiSelect,
+        options: (Array.isArray(q.options) ? q.options : []).map((o, k) => ({ n: k + 1, label: clip(o.label, 120), ...(o.description ? { description: clip(o.description, 300) } : {}) })),
+      })),
+    };
+  }
+  if (p.toolName === 'ExitPlanMode') return { ...base, kind: 'plan', plan: clip(p.input?.plan, 4000) };
+  return {
+    ...base, kind: 'permission', tool: String(p.toolName || ''),
+    ...(p.title ? { title: clip(p.title, 300) } : {}),
+    ...(p.description ? { description: clip(p.description, 300) } : {}),
+    ...(p.decisionReason ? { reason: clip(stripAnsi(p.decisionReason), 300) } : {}),
+    asks: permissionAsks(p),
+  };
+}
+
+/**
+ * The same in a sentence, for a report (said by Cru in its own words):
+ * 'a question: "Which database?" (Postgres, or SQLite)', 'permission to run
+ * "npm test"', 'permission to edit src/app.js'.
+ */
+export function pendingLine(p) {
+  const d = describePending(p);
+  if (!d) return '';
+  if (d.kind === 'question') {
+    const qs = d.questions.map(q => `"${clip(q.question, 200)}"${q.options.length ? ` (${q.multiSelect ? 'one or more of: ' : ''}${q.options.map(o => o.label).join(q.multiSelect ? ', ' : ', or ')})` : ''}`);
+    return qs.length ? `${qs.length > 1 ? `${qs.length} questions` : 'a question'}: ${qs.join('; ')}` : 'a question';
+  }
+  if (d.kind === 'plan') return `approval of its plan: "${clip(String(d.plan).replace(/\s+/g, ' '), 300)}"`;
+  const a = d.asks;
+  if (a.command) return `permission to run "${clip(a.command, 300)}"${a.purpose ? ` (${a.purpose})` : ''}`;
+  if (a.edits) return `permission to edit ${a.file}`;
+  if (a.file) return `permission to write ${a.file}`;
+  if (a.url) return `permission to fetch ${a.url}`;
+  if (a.host) return `permission to reach ${a.host}`;
+  return `permission for ${d.tool || 'a tool'}${d.title ? `: ${clip(d.title, 200)}` : ''}`;
+}
+
 
 /** One look across every project (workbench_overview). Busy projects first; the quiet ones only by name. */
 export function overview(deps, only = null, { now = Date.now(), gitLog = recentCommits } = {}) {
@@ -437,6 +517,7 @@ export function overview(deps, only = null, { now = Date.now(), gitLog = recentC
       chats: open.map(c => ({
         id: c.id, title: c.title, state: c.agentState || c.status || '',
         waitingOnOwner: Array.isArray(c.pending) ? c.pending.length > 0 : !!c.pending,
+        ...(Array.isArray(c.pending) && c.pending.length ? { waitingFor: c.pending.map(pendingLine).filter(Boolean) } : {}),
         lastAsked: lastOf(c.id, 'user'), lastAnswer: lastOf(c.id, 'assistant-text'),
       })),
       inProgress: titles(cards('in_progress'), 6),

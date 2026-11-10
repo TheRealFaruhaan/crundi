@@ -48,5 +48,14 @@ said('Restart the same cv service.', true);
 const end = asm.push({ type: 'UtteranceEnd' });
 ok(end && end.type === 'utterance' && end.text === 'Restart the sam cv service.', 'the utterance is fixed');
 
+// Typed turns are left as typed: only speech is misheard.
+{
+  ok(fixNames('what was sent by the API chat', { projects: ['sentiq'] }) !== 'what was sent by the API chat', 'speech: "sent by" sounds like the sentiq project, and is put right (why typed words must skip it)');
+  const { readFileSync } = await import('node:fs');
+  const web = readFileSync(new URL('../src/webapp.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const route = web.slice(web.indexOf("path === '/api/voice/turn'"), web.indexOf("path === '/api/voice/attach'"));
+  ok(/const typed = body\.typed === true;[^]*const spoken = typed \? String\(body\.text \|\| ''\) : fixNames\(/.test(route), '/api/voice/turn: a typed message (typed: true) is not name-fixed; a spoken one still is');
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll name checks passed');
 process.exit(failed ? 1 : 0);
