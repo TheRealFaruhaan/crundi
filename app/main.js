@@ -14,10 +14,11 @@ import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { spawn, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
-import { tmpdir, homedir } from 'os';
+import { tmpdir, homedir, hostname as osHostname } from 'os';
 import electronUpdater from 'electron-updater';
 import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS } from './browser-drawer.js';
 import { createServerNetProxy } from './net-tunnel-client.js';
+import { startNode as startHomepoolNode } from './homepool-node.js';
 const { autoUpdater } = electronUpdater;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -1540,6 +1541,85 @@ ipcMain.handle('voice-wake:train', (_e, recordings) => voiceWake ? voiceWake.tra
 ipcMain.handle('voice-wake:forget', () => voiceWake ? voiceWake.forget() : { ...voiceWakeStatus, error: 'Not available in this build' });
 
 // ─── IPC Handlers ───
+
+// ─── Homepool: this PC as a node (docs/homepool.md) ───
+//
+// Off until the owner switches it on from the Homepool tab. The key is the
+// node's own (hpn_…), not a sign-in: it lets this PC lend its connection to
+// that one server and nothing else. Kept in userData, readable only by this
+// user; the node itself refuses to open anything on this PC's own network.
+const HOMEPOOL_FILE = () => join(app.getPath('userData'), 'homepool-node.json');
+let hpNode = null;
+let hpLog = [];
+let hpIp = '';
+let hpIpTimer = null;
+function hpRead() {
+  try { return JSON.parse(readFileSync(HOMEPOOL_FILE(), 'utf8')) || {}; } catch { return {}; }
+}
+function hpWrite(cfg) {
+  try { writeFileSync(HOMEPOOL_FILE(), JSON.stringify(cfg, null, 2), { mode: 0o600 }); } catch (err) { appendLog(`[homepool] could not save: ${err.message}`); }
+}
+function hpDeviceId() {
+  const cfg = hpRead();
+  if (cfg.deviceId) return cfg.deviceId;
+  cfg.deviceId = 'pc-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  hpWrite(cfg);
+  return cfg.deviceId;
+}
+function hpAddLog(line) {
+  hpLog.push(`${new Date().toTimeString().slice(0, 8)}  ${line}`);
+  if (hpLog.length > 60) hpLog = hpLog.slice(-60);
+}
+async function hpRefreshIp() {
+  try {
+    const r = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(10000) });
+    if (r.ok) { const ip = (await r.text()).trim(); if (ip && ip !== hpIp) { hpIp = ip; hpNode?.sendInfo(); } }
+  } catch { /* offline: try again later */ }
+}
+function hpStart() {
+  const cfg = hpRead();
+  if (!cfg.server || !cfg.key || hpNode) return;
+  hpNode = startHomepoolNode({
+    server: cfg.server, key: cfg.key,
+    info: () => ({ platform: process.platform === 'win32' ? 'windows' : process.platform, app: 'crundi-desktop', version: app.getVersion(), network: 'PC', publicIp: hpIp }),
+    onState: (s, d) => { hpAddLog(s + (d ? ` (${d})` : '')); if (s === 'refused') { const c = hpRead(); c.enabled = false; hpWrite(c); hpNode = null; } },
+    onLog: (l) => { hpAddLog(l); appendLog(`[homepool] ${l}`); },
+  });
+  hpRefreshIp();
+  clearInterval(hpIpTimer);
+  hpIpTimer = setInterval(hpRefreshIp, 10 * 60 * 1000);
+  hpIpTimer.unref?.();
+}
+function hpStop() {
+  clearInterval(hpIpTimer); hpIpTimer = null;
+  if (hpNode) { try { hpNode.stop(); } catch { /* already down */ } hpNode = null; }
+}
+function hpStatus() {
+  const cfg = hpRead();
+  const st = hpNode ? hpNode.status() : null;
+  return {
+    supported: true, configured: !!(cfg.server && cfg.key), enabled: !!cfg.enabled, server: cfg.server || '',
+    deviceId: hpDeviceId(), name: (() => { try { return osHostname(); } catch { return 'PC'; } })(),
+    state: st ? st.state : (cfg.enabled ? 'stopped' : 'off'), connectedAt: st ? st.connectedAt : 0,
+    node: st ? st.node : null, streams: st ? st.streams : 0, bytesUp: st ? st.bytesUp : 0, bytesDown: st ? st.bytesDown : 0,
+    opened: st ? st.opened : 0, serverView: st ? st.server : null, publicIp: hpIp, log: hpLog.slice(-25),
+  };
+}
+ipcMain.handle('homepool:status', () => hpStatus());
+ipcMain.handle('homepool:share', (_e, c) => {
+  const server = String(c?.server || '').replace(/\/+$/, '');
+  const key = String(c?.key || '');
+  if (!/^https?:\/\//.test(server) || !/^hpn_/.test(key)) return { ok: false, error: 'Bad node settings.' };
+  hpStop();
+  hpWrite({ ...hpRead(), server, key, enabled: true });
+  hpStart();
+  return { ok: true, status: hpStatus() };
+});
+ipcMain.handle('homepool:start', () => { const c = hpRead(); if (!c.key) return { ok: false, error: 'Not set up.' }; c.enabled = true; hpWrite(c); hpStart(); return { ok: true, status: hpStatus() }; });
+ipcMain.handle('homepool:stop', () => { const c = hpRead(); c.enabled = false; hpWrite(c); hpStop(); return { ok: true, status: hpStatus() }; });
+ipcMain.handle('homepool:forget', () => { hpStop(); const c = hpRead(); hpWrite({ deviceId: c.deviceId }); return { ok: true, status: hpStatus() }; });
+app.whenReady().then(() => { if (hpRead().enabled) hpStart(); }).catch(() => {});
+app.on('before-quit', () => hpStop());
 
 // ─── Client / native-host IPC ───
 

@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <!-- Status -->
+        <TextView android:id="@+id/status"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textSize="26sp" android:textStyle="bold" android:text="Stopped" />
+        <TextView android:id="@+id/details"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:textSize="15sp" android:lineSpacingExtra="3dp" />
+        <!-- Controls -->
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="14dp" android:orientation="horizontal">
+            <Button android:id="@+id/startBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Start" />
+            <Button android:id="@+id/stopBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Stop" />
+        </LinearLayout>
+        <TextView android:id="@+id/serviceRow"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" android:textSize="14sp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/registerBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Register service" />
+            <Button android:id="@+id/unregisterBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Unregister service" />
+        </LinearLayout>
+
+        <!-- Configuration -->
+        <TextView style="@style/Section" android:text="Node code" />
+        <TextView android:id="@+id/configRow"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:textSize="14sp" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" android:textSize="13sp"
+            android:text="The owner makes a node in Crundi (Settings › Homepool › Nodes › Add node) and gives you its code or QR. The code only lets this phone carry traffic for that server; it is not a Crundi login." />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/scanBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Scan QR" />
+            <Button android:id="@+id/pasteBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Paste code" />
+        </LinearLayout>
+        <EditText android:id="@+id/codeEdit"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:inputType="textUri|textNoSuggestions" android:hint="crundi-homepool://node?s=…&amp;k=hpn_…"
+            android:textSize="13sp" android:importantForAutofill="no" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/useCodeBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Use this code" />
+            <Button android:id="@+id/forgetBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Forget" />
+        </LinearLayout>
+
+        <!-- Settings -->
+        <TextView style="@style/Section" android:text="Network rules" />
+        <Switch android:id="@+id/wifiOnly"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Wi-Fi only (pause on mobile data)" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" android:textSize="13sp"
+            android:text="Leave off to add a new IP: on the same home Wi-Fi as another node, this phone shares that node's IP. A VPN on this phone pauses the node." />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="10dp" android:orientation="horizontal" android:gravity="center_vertical">
+            <TextView android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
+                android:text="Mobile data cap per day (MB, 0 = none)" />
+            <EditText android:id="@+id/capEdit"
+                android:layout_width="90dp" android:layout_height="wrap_content"
+                android:inputType="number" android:gravity="end" android:importantForAutofill="no" />
+            <Button android:id="@+id/capSave" android:layout_width="wrap_content"
+                android:layout_height="wrap_content" android:text="Save" />
+        </LinearLayout>
+
+        <!-- Background -->
+        <TextView style="@style/Section" android:text="Running in the background" />
+        <TextView android:id="@+id/batteryRow"
+            android:layout_width="match_parent" android:layout_height="wrap_content" />
+        <Button android:id="@+id/batteryBtn"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Allow unrestricted background use" />
+        <TextView android:id="@+id/notifRow"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" />
+        <Button android:id="@+id/notifBtn"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="Allow notifications" />
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" android:textSize="13sp"
+            android:text="Xiaomi, Samsung, Oppo, Vivo and Huawei also kill background apps on their own. In App settings allow Autostart and set Battery to Unrestricted / No restrictions." />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <Button android:id="@+id/appSettingsBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="App settings" />
+            <Button android:id="@+id/oemBtn" android:layout_width="0dp" android:layout_weight="1"
+                android:layout_height="wrap_content" android:text="Phone-specific help" />
+        </LinearLayout>
+
+        <!-- Log -->
+        <TextView style="@style/Section" android:text="Activity" />
+        <TextView android:id="@+id/log"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:fontFamily="monospace" android:textSize="11sp" android:textIsSelectable="true" />
+    </LinearLayout>
+</ScrollView>

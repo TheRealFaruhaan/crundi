@@ -109,6 +109,7 @@ import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from 
 import { systemPromptArgs, collaboratorPromptLayer } from './system-prompt.js';
 import { attributionFor, attributionArgs } from './attribution.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
+import { chatToken } from './chat-token.js';
 
 const isWin = process.platform === 'win32';
 const MAX_MESSAGES = 2000;      // conversation entries kept per session
@@ -1403,7 +1404,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
             crundi: {
               command: 'node',
               args: [resolvePath(fileURLToPath(new URL('./mcp-stdio.js', import.meta.url)))],
-              env: { CRUNDI_API_URL: apiUrl, CRUNDI_API_KEY: apiKey || '', CRUNDI_PROJECT: key, CRUNDI_CHAT_ID: id },
+              env: { CRUNDI_API_URL: apiUrl, CRUNDI_API_KEY: apiKey || '', CRUNDI_PROJECT: key, CRUNDI_CHAT_ID: id, CRUNDI_CHAT_TOKEN: chatToken(id, key) },
             },
           },
         }, null, 2), { mode: 0o600 });
@@ -1427,8 +1428,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           // from the message stream, so the hooks intentionally no-op here.
           CRUNDI_UI_SESSION: '1',
           ...SUMMARY_ENV,
-          // Inherited by the tool bridge: which chat its calls belong to.
+          // Inherited by the tool bridge: which chat its calls belong to, and
+          // the proof of it for the calls that are granted per chat
+          // (homepool; src/chat-token.js).
           CRUNDI_CHAT_ID: id,
+          CRUNDI_CHAT_TOKEN: chatToken(id, key),
           ...(extraEnv && typeof extraEnv === 'object' ? extraEnv : {}),
           ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
           ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),

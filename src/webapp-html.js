@@ -3719,6 +3719,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
           <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
           <button class="tab-btn" data-tab="docker" title="Docker"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg><span class="tab-label">Docker</span></button>
+          <button class="tab-btn" data-tab="homepool" title="Homepool: where traffic leaves from"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M9 16a4 4 0 0 1 6 0"/><path d="M11 19h2"/></svg><span class="tab-label">Homepool</span></button>
           <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
           <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
           <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
@@ -3802,6 +3803,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="tab-panel docker-tab" id="docker-panel" data-panel="docker"></div>
+        <div class="tab-panel docker-tab" id="homepool-panel" data-panel="homepool"></div>
         <div class="tab-panel factories-tab" id="factories-panel" data-panel="factories"></div>
         <div class="factory-panel tab-panel" id="factory-panel" data-panel="factory"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
@@ -4011,6 +4013,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-chat-secrets.js?v=${vendorTag('crundi-chat-secrets.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
+  <script src="/vendor/crundi-homepool.js?v=${vendorTag('crundi-homepool.js')}"><\/script>
   <script src="/vendor/crundi-browser-drawer.js?v=${vendorTag('crundi-browser-drawer.js')}"><\/script>
   <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
@@ -10463,7 +10466,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
      * that is the control — this exists so they are not shown doors that open
      * onto a 403.
      */
-    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'info', 'settings', 'widgets', 'factories'];
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'homepool', 'info', 'settings', 'widgets', 'factories'];
     const COLLAB_HIDDEN_WB = ['git', 'factory'];
 
     function applyRoleToUi() {
@@ -11262,7 +11265,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // machine- or app-level. The
     // rest are meaningless without a project, so they stay hidden rather than
     // being shown and then erroring.
-    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'info', 'secrets', 'settings'];
+    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'homepool', 'info', 'secrets', 'settings'];
 
     function syncTabScope() {
       // Global panels (and their top bar chips) exist with or without a
@@ -11294,6 +11297,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (currentTab === 'notes' && tab !== 'notes') closeNotesTab();
       if (currentTab === 'widgets' && tab !== 'widgets' && window.CrundiWidgets) window.CrundiWidgets.unmountTab();
       if (currentTab === 'docker' && tab !== 'docker' && dockerView) dockerView.hide();
+      if (currentTab === 'homepool' && tab !== 'homepool' && homepoolView) homepoolView.hide();
       if (currentTab === 'factories' && tab !== 'factories' && factoriesView) factoriesView.hide();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -11301,6 +11305,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
       if (tab === 'docker') loadDockerTab();
+      if (tab === 'homepool') loadHomepoolTab();
       if (tab === 'factories') loadFactoriesTab();
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
@@ -14230,6 +14235,33 @@ export function getWebappHtml(botUsername, appVersion = '') {
       }
       dockerView.show();
     }
+
+    // ─── Homepool (app/vendor/crundi-homepool.js) ───
+    //
+    // The shared exit: networks, nodes, who may leave through which, and the
+    // requests chats made. Owner only (the routes refuse anyone else too).
+    let homepoolView = null;
+    function loadHomepoolTab() {
+      if (!window.CrundiHomepool) { toast('The Homepool view did not load. Reload the page.', 'error'); return; }
+      if (!homepoolView) {
+        homepoolView = window.CrundiHomepool.mount(document.getElementById('homepool-panel'), {
+          apiFetch: apiFetch,
+          toast: toast,
+          icon: ic,
+          projects: () => (projects || []).map(p => ({ alias: p.alias, name: p.name })),
+          desktop: (window.api && window.api.homepool) || null,
+        });
+      }
+      homepoolView.show();
+    }
+    // #homepool (the link in a request's notification).
+    function homepoolFromHash() {
+      if (String(location.hash || '').indexOf('#homepool') !== 0) return;
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (err) { /* fine */ }
+      if (userRole !== 'collaborator') switchTab('homepool');
+    }
+    window.addEventListener('hashchange', homepoolFromHash);
+    setTimeout(homepoolFromHash, 1500);
 
     // ─── Factories (app/vendor/crundi-factories.js) ───
     //

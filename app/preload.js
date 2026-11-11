@@ -44,6 +44,17 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeAllListeners('show:server');
   },
 
+  // Homepool: lend this PC's connection to the server as a node. The page
+  // gets the node key from the server (it is signed in) and hands it here;
+  // the main process keeps it and runs the node (app/homepool-node.js).
+  homepool: {
+    status: () => ipcRenderer.invoke('homepool:status'),
+    share: (cfg) => ipcRenderer.invoke('homepool:share', cfg),
+    start: () => ipcRenderer.invoke('homepool:start'),
+    stop: () => ipcRenderer.invoke('homepool:stop'),
+    forget: () => ipcRenderer.invoke('homepool:forget'),
+  },
+
   // Diagnostic: let the shell renderer append to crundi.log.
   shellLog: (m) => ipcRenderer.send('shell:log', String(m)),
 

@@ -79,6 +79,8 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
     val kid = KidApi(rpc, transport)
     /** Crundi's own inbox (capability "inbox"): what the server sent the owner. */
     val inbox = InboxApi(rpc)
+    /** Homepool, the shared exit (capability "homepool"): Settings > Homepool. Owner only. */
+    val homepool = HomepoolApi(rpc)
 
     /**
      * A chat, live: its whole conversation, then every change, as

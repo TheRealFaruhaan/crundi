@@ -132,6 +132,7 @@ import { checkInSandbox } from './widget-render.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 import { createTunnelEndpoint } from './net-tunnel.js';
+import { createHomepoolService, HOMEPOOL_MCP_TOOLS } from './homepool-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -997,6 +998,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   inbox.onChange((ev) => { try { broadcastOwnerSSE('inbox', ev); } catch { /* not up yet */ } });
   setTimeout(() => { inbox.sweepOrphans(); inbox.prune(); }, 20_000).unref?.();
   setInterval(() => inbox.prune(), 6 * 60 * 60 * 1000).unref?.();
+
+  // ─── Homepool: the shared exit (src/homepool-service.js, docs/homepool.md) ───
+  // Built here, started with the server (startHomepool), so a test that only
+  // builds the app binds nothing. Requests from chats reach the owner like an
+  // alert: in the inbox and on his channels.
+  const homepool = createHomepoolService({
+    dataDir: config.dataDir,
+    basePort: Number(process.env.HOMEPOOL_PORT) || (process.env.CRUNDI_DEV === '1' ? 7580 : 7480),
+    publicUrl: () => publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '',
+    notifyOwner: ({ title, body, chat }) => ownerMsg.tell({ kind: 'alert', title, text: body, chat: chat && chat.id ? chat : null, meta: { url: '/#homepool' } }),
+    chatInfo: (id) => {
+      const t = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
+      return t ? { title: t.longTitle || t.title || '', project: t.project || '' } : null;
+    },
+  });
+  let homepoolStarted = false;
+  function startHomepool() {
+    if (homepoolStarted || process.env.HOMEPOOL_DISABLE === '1') return;
+    homepoolStarted = true;
+    try { homepool.start(); } catch (err) { console.warn('[homepool] could not start:', err.message); }
+  }
 
   // ─── Claude agent state (driven by Claude Code lifecycle hooks) ───
   // terminalId → 'working' | 'needs-input' | 'idle'. Liveness is the source of
@@ -4608,6 +4630,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // session; the single-use ticket in the URL is the credential.
     if (path === '/api/widgets/harness' && req.method === 'GET') return widgetApi.handleHarness(req, res, url);
 
+    // The standalone homepool node's code: public, it is code and no data.
+    if (homepool.handlePublic(req, res, path)) return;
+
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
 
@@ -4653,6 +4678,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         collaborator: true,
       }, 403);
     }
+
+    // ─── Homepool (owner only; src/homepool-service.js) ───
+    if (path.startsWith('/api/homepool') && await homepool.handleApi(req, res, path, {
+      principal, readBody, json,
+      isOwner: (p) => !!p && p.role === ROLE_OWNER && !isConfined(p),
+    })) return;
 
     // ─── Media Claude showed in a chat (see chat-media.js) ───
     // Pictures, video, audio and their poster frames. Byte ranges are honoured:
@@ -8160,6 +8191,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
       const a = body.args = (body.args || {});
 
+      // Homepool: the owner's chats only, each within the key the owner gave
+      // it (or approved). Which chat is asking is proven by its chat token.
+      if (HOMEPOOL_MCP_TOOLS.includes(body.tool)) {
+        if (mcpCollabKey) return json(res, { ok: false, error: 'Homepool is not available to collaborator chats.' }, 403);
+        try { return json(res, await homepool.mcp(body.tool, a)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
       let mcpAllowedProjects = null;
       if (mcpCollabKey) {
         if (!COLLABORATOR_MCP_TOOLS.has(body.tool)) {
@@ -8913,6 +8952,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return;
       }
 
+      // A homepool node (signed in with its node key, not a Crundi login).
+      if (homepool.handleUpgrade(req, socket, head)) return;
+
       const url = new URL(req.url, 'http://localhost');
       // Live speech to text (voice/stream.js): the owner only.
       if (url.pathname === '/api/voice/listen') {
@@ -9231,6 +9273,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   return {
     async start(listenPort = 0) {
       if (server) throw new Error('Web app already running');
+      startHomepool();
 
       const onRequest = (req, res) => {
         handleRequest(req, res).catch(err => {
@@ -9417,6 +9460,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       sseClients.clear();
       if (wss) { wss.close(); wss = null; }
+      if (homepoolStarted) { try { homepool.stop(); } catch { /* shutting down anyway */ } homepoolStarted = false; }
       stopTunnel(TUNNEL_KEY);
       if (server) { server.close(); server = null; }
       if (localServer) { try { localServer.close(); } catch { /* ignore */ } localServer = null; }

@@ -55,6 +55,7 @@ import { missingSkills } from './factory-skills.js';
 import { checkCr, crMarkdown, crBrief, crText, normalizeTemplate } from './factory-cr.js';
 import { requestContext } from './factory-triggers.js';
 import { createSecretVault, decide as decideSecret } from './factory-secrets.js';
+import { chatToken } from './chat-token.js';
 
 /** Runs in these states hold their project: no second run can start. */
 export const UNFINISHED = UNFINISHED_SET;
@@ -2474,6 +2475,7 @@ export function claudeUiAgents(claudeUi, { dataDir }) {
                 CRUNDI_API_KEY: claudeUi.apiKey || '',
                 CRUNDI_PROJECT: o.project,
                 CRUNDI_CHAT_ID: id,
+                CRUNDI_CHAT_TOKEN: chatToken(id, o.project),
                 CRUNDI_FACTORY_RUN: o.runId,
               },
             },

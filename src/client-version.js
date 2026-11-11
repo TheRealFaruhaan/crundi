@@ -295,6 +295,12 @@ export const CAPABILITIES = Object.freeze([
   // inboxId. An older server has none of it, so a client shows the inbox
   // only when this is listed.
   'inbox',
+  // Homepool, the shared exit (docs/homepool.md): GET/POST /api/homepool for
+  // the owner's screen (networks, nodes, access keys, requests from chats),
+  // POST action 'self-node' for this device's own node key, and the node
+  // socket /api/homepool/node. A client shows Settings › Homepool and "Share
+  // this connection" only when this is listed.
+  'homepool',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));

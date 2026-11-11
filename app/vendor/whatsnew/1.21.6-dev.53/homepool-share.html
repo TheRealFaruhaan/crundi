@@ -1,0 +1,23 @@
+<div class="wna a-hps">
+  <div class="phone"><div class="st">Connected</div><i class="l l1"></i><i class="l l2"></i><i class="l l3"></i></div>
+  <div class="srv"><span class="lbl">Server</span></div>
+  <div class="pipe"><i class="d d1"></i><i class="d d2"></i></div>
+  <div class="qr"><i></i><i></i><i></i><i></i></div>
+  <style>
+    .a-hps{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-hps .phone{position:absolute;left:80px;top:70px;width:120px;height:230px;border-radius:18px;background:var(--bg-secondary);border:2px solid var(--border)}
+    .a-hps .st{position:absolute;left:12px;right:12px;top:22px;height:28px;border-radius:7px;font-size:12px;line-height:28px;text-align:center;color:#fff;background:var(--accent);animation:ahps-s 10s ease infinite}
+    .a-hps .l{position:absolute;left:14px;height:8px;border-radius:4px;background:var(--text-muted)}
+    .a-hps .l1{top:70px;width:90px}.a-hps .l2{top:88px;width:70px}.a-hps .l3{top:106px;width:80px}
+    .a-hps .srv{position:absolute;right:80px;top:110px;width:150px;height:140px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-hps .lbl{position:absolute;top:-22px;left:0;font-size:13px;color:var(--text-secondary)}
+    .a-hps .pipe{position:absolute;left:206px;right:236px;top:180px;height:6px;border-radius:3px;background:var(--border)}
+    .a-hps .d{position:absolute;top:-3px;width:12px;height:12px;border-radius:50%;background:var(--green);opacity:0;animation:ahps-d 10s linear infinite}
+    .a-hps .d2{animation-delay:.7s}
+    .a-hps .qr{position:absolute;left:300px;top:300px;width:44px;height:44px;border-radius:6px;background:#fff;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:7px;box-sizing:border-box;animation:ahps-q 10s ease infinite}
+    .a-hps .qr i{background:#111;border-radius:2px}
+    @keyframes ahps-s{0%,20%{background:var(--accent)}25%,100%{background:var(--green)}}
+    @keyframes ahps-d{0%,25%{right:100%;left:auto;opacity:0}30%{opacity:1}55%{left:100%;opacity:1}58%,100%{left:100%;opacity:0}}
+    @keyframes ahps-q{0%,60%{opacity:0;transform:translateY(10px)}68%,95%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

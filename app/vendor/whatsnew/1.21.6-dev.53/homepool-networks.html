@@ -1,0 +1,22 @@
+<div class="wna a-hpn">
+  <div class="net srv"><span class="lbl">Server</span><i class="box"></i></div>
+  <div class="net home"><span class="lbl">Home</span><i class="ph"></i><i class="pc"></i></div>
+  <div class="net fr"><span class="lbl">A friend's line</span><i class="pc2"></i></div>
+  <div class="key">key</div>
+  <i class="dot"></i>
+  <style>
+    .a-hpn{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-hpn .net{position:absolute;top:70px;width:150px;height:120px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-hpn .srv{left:40px}.a-hpn .home{left:245px;animation:ahpn-h 10s ease infinite}.a-hpn .fr{left:450px;animation:ahpn-f 10s ease infinite}
+    .a-hpn .lbl{position:absolute;top:-22px;left:0;font-size:13px;color:var(--text-secondary)}
+    .a-hpn .box{position:absolute;left:45px;top:35px;width:60px;height:50px;border-radius:6px;background:var(--bg-card);border:1px solid var(--border)}
+    .a-hpn .ph{position:absolute;left:30px;top:30px;width:26px;height:46px;border-radius:6px;background:var(--bg-card);border:2px solid var(--green)}
+    .a-hpn .pc,.a-hpn .pc2{position:absolute;left:72px;top:38px;width:50px;height:34px;border-radius:5px;background:var(--bg-card);border:2px solid var(--green)}
+    .a-hpn .pc2{left:50px}
+    .a-hpn .key{position:absolute;left:290px;top:290px;width:60px;height:30px;border-radius:15px;background:var(--accent);color:#fff;font:12px/30px var(--mono);text-align:center}
+    .a-hpn .dot{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--accent);left:314px;top:282px;animation:ahpn-d 10s ease infinite}
+    @keyframes ahpn-d{0%,10%{left:314px;top:282px;opacity:1}30%,45%{left:314px;top:190px;opacity:1}50%{opacity:0;left:314px;top:190px}55%{left:314px;top:282px;opacity:0}60%{opacity:1;left:314px;top:282px}80%,95%{left:519px;top:190px;opacity:1}100%{opacity:0;left:519px;top:190px}}
+    @keyframes ahpn-h{0%,25%{border-color:var(--border)}30%,48%{border-color:var(--accent)}52%,100%{border-color:var(--border)}}
+    @keyframes ahpn-f{0%,75%{border-color:var(--border)}80%,96%{border-color:var(--accent)}100%{border-color:var(--border)}}
+  </style>
+</div>

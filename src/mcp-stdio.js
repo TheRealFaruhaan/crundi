@@ -97,6 +97,47 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
 
+  // Homepool: leaving through a network the owner granted (docs/homepool.md)
+  {
+    name: 'homepool_status',
+    description: 'Homepool: what this chat may use to send traffic out through a network the owner chose: the server\'s own connection ("server"), one of his home networks (home nodes: his phone, PC, a friend\'s line), or the standalone homepool ("pool"). Says whether this chat has access, through which networks, what is up right now, and any request of this chat still waiting for the owner. Call it before homepool_proxy or homepool_fetch.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'homepool_request',
+    description: 'Homepool: ask the owner for access. Nothing is granted until he approves it; he may change what you asked for (another network, an expiry, a data cap) or refuse. kind "chat" is for this chat (homepool_proxy / homepool_fetch), "project" for every chat of this project, "software" for a key that a program, scraper or container uses on its own (a proxy login, or a port block if it cannot send a login; the secret is given to you once on approval: keep it in a secret or the software\'s .env, never in a committed file). Say plainly in reason what the traffic is for. Waits up to 10 minutes for his answer unless wait is false.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        networks: { type: 'array', items: { type: 'string' }, description: 'Network ids to ask for: "server" (the default), a home network id from homepool_status (for example "home"), or "pool". Ask only for what the work needs.' },
+        reason: { type: 'string', description: 'What it is for, in a sentence the owner can judge' },
+        kind: { type: 'string', enum: ['chat', 'project', 'software'], description: 'Default chat' },
+        name: { type: 'string', description: 'For kind software: what the key is for (for example "insta-scraper")' },
+        wait: { type: 'boolean', description: 'Wait for the owner\'s answer (default true)' },
+      },
+      required: ['reason'],
+    },
+  },
+  {
+    name: 'homepool_proxy',
+    description: 'Homepool: a proxy URL for this chat, within its granted access: socks5h for curl and scripts (DNS also leaves through the chosen network), http for Chromium/Playwright (which cannot send a SOCKS login). Works on this machine only, for 12 hours, and stops at once if the owner revokes the access. network pins one of the granted networks; slot (1-32) keeps one identity on one exit, as with the standalone homepool.',
+    inputSchema: { type: 'object', properties: { network: { type: 'string', description: 'One of the granted networks; default: any of them' }, slot: { type: 'number', description: 'Sticky slot for one identity' } } },
+  },
+  {
+    name: 'homepool_fetch',
+    description: 'Homepool: make one HTTP(S) request through this chat\'s granted network and get the answer (status, headers, body; up to 512 KB of body, binary as base64). Says which exit it left from.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' }, method: { type: 'string', description: 'Default GET' },
+        headers: { type: 'object', description: 'Request headers' }, body: { type: 'string' },
+        network: { type: 'string', description: 'One of the granted networks; default: any' }, slot: { type: 'number' },
+        timeoutMs: { type: 'number', description: 'Default 30000, at most 120000' },
+      },
+      required: ['url'],
+    },
+  },
+
   // Service tools
   { name: 'list_services', description: 'List all registered services and their status.', inputSchema: { type: 'object', properties: {} } },
   {
@@ -631,6 +672,14 @@ async function handleToolCall(name, args) {
     delete args.sessionId;
     if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
   }
+  // Homepool access is per chat and project: both are this process's own,
+  // with the token Crundi gave the chat to prove it (src/chat-token.js).
+  if (name.startsWith('homepool_')) {
+    delete args.sessionId;
+    if (process.env.CRUNDI_CHAT_ID) args.sessionId = process.env.CRUNDI_CHAT_ID;
+    args.project = PROJECT;
+    args.chatToken = process.env.CRUNDI_CHAT_TOKEN || '';
+  }
   // Which chat is handing off is this process's own, never an argument.
   if (FACTORY_RUN_TOOLS.has(name)) {
     delete args.sessionId;
@@ -701,6 +750,8 @@ const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
 // Tools that only mean anything inside a Crundi chat (UI mode): a terminal
 // session has no transcript for Crundi to draw into, so it is not told about them.
 const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed', 'speak']);
+// Homepool is granted per chat, so it exists only inside one (docs/homepool.md).
+const HOMEPOOL_TOOLS = new Set(['homepool_status', 'homepool_request', 'homepool_proxy', 'homepool_fetch']);
 const IN_CHAT = !!process.env.CRUNDI_CHAT_ID;
 // Only a factory run's chats are offered factory_handoff.
 const IN_FACTORY = !!process.env.CRUNDI_FACTORY_RUN;
@@ -710,6 +761,7 @@ const LISTED_TOOLS = (TOOL_SCOPE === 'collaborator'
   ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
   : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
 ).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
+  .filter(t => IN_CHAT || !HOMEPOOL_TOOLS.has(t.name))
   // A factory run's chats get the run tools; every other chat gets the tools
   // that build factories.
   .filter(t => IN_FACTORY ? !FACTORY_LIBRARY_TOOLS.has(t.name) : !FACTORY_RUN_TOOLS.has(t.name));

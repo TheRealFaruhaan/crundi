@@ -65,6 +65,7 @@ enum class SettingsPage(val route: String, val title: String, val icon: String, 
     Server("settings/server", "Server and Claude Code", "server", "Version, updates, release channel, restart", SettingsGroup.Server),
     Config("settings/config", "Configuration", "settings", "Telegram, projects folder, port, tunnel", SettingsGroup.Server),
     Backup("settings/backup", "Backup and restore", "upload", "Encrypted backups to S3-compatible storage, and restoring them", SettingsGroup.Server),
+    Homepool("settings/homepool", "Homepool", "network", "A shared exit through your home lines or the server: nodes, access, requests", SettingsGroup.Server),
     Machine("settings/machine", "This machine", "hard-drive", "CPU, memory, disk, and space to reclaim", SettingsGroup.Server),
     Logs("settings/logs", "Server logs", "file-text", "What the server is saying, live", SettingsGroup.Server),
     Prompt("settings/prompt", "System prompt", "message-square", "Added to every chat and terminal Crundi starts", SettingsGroup.Claude),
@@ -84,7 +85,13 @@ enum class SettingsPage(val route: String, val title: String, val icon: String, 
 
 // ─── Front page ───
 
-data class SettingsHome(val update: UpdateStatus? = null, val host: String = "", val appVersion: String = "")
+/**
+ * [homepool]: the server has homepool (capability "homepool") and this is
+ * its owner; without it the Homepool page is not listed. [homepoolStatus]:
+ * this phone's node in one line ("Sharing this phone: Connected, 120 MB
+ * today"), null when the phone is not a node.
+ */
+data class SettingsHome(val update: UpdateStatus? = null, val host: String = "", val appVersion: String = "", val homepool: Boolean = false, val homepoolStatus: String? = null)
 
 @Composable
 fun SettingsRoute() {
@@ -96,8 +103,11 @@ fun SettingsRoute() {
     val tour = LocalWhatsNew.current
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val role by app.api.events.state.collectAsStateWithLifecycle(initialValue = app.api.events.lastState)
+    val node by mv.obitech.crundi.homepool.Homepool.snapshot.collectAsStateWithLifecycle()
+    val homepool = mv.obitech.crundi.api.HomepoolApi.supported(shell.capabilities) && role?.role != "collaborator"
     SettingsScreen(
-        SettingsHome(update.value.valueOrNull, shell.serverHost, mv.obitech.crundi.BuildConfig.VERSION_NAME), onPage = { nav.to(it.route) }, onAppSettings = host::openAppSettings,
+        SettingsHome(update.value.valueOrNull, shell.serverHost, mv.obitech.crundi.BuildConfig.VERSION_NAME, homepool, homepoolStatusLine(node)), onPage = { nav.to(it.route) }, onAppSettings = host::openAppSettings,
         // As the web's "Show it again": the latest edition, and nothing marked seen.
         onWhatsNew = tour?.let { t -> { scope.launch { if (!t.showAgain()) android.widget.Toast.makeText(ctx.applicationContext, "Nothing new to show for this version.", android.widget.Toast.LENGTH_SHORT).show() } } },
     )
@@ -111,9 +121,10 @@ fun SettingsScreen(home: SettingsHome, onPage: (SettingsPage) -> Unit = {}, onAp
             val u = home.update?.update
             if (u != null && u.available) Banner("Version ${u.latest} is available. Open Server and Claude Code to update.", Modifier.padding(horizontal = Dimens.ScreenPad, vertical = 6.dp).fillMaxWidth(), BadgeKind.Accent, "download")
             for (g in SettingsGroup.entries) Group(g.title) {
-                for (p in SettingsPage.entries.filter { it.group == g }) {
+                for (p in SettingsPage.entries.filter { it.group == g && (it != SettingsPage.Homepool || home.homepool) }) {
                     ListRow(
-                        p.title, subtitle = if (p == SettingsPage.Server && u != null) "Version ${u.current}" + (if (u.available) " · ${u.latest} is available" else " · up to date") else p.blurb,
+                        p.title, subtitle = if (p == SettingsPage.Server && u != null) "Version ${u.current}" + (if (u.available) " · ${u.latest} is available" else " · up to date")
+                            else if (p == SettingsPage.Homepool && home.homepoolStatus != null) home.homepoolStatus else p.blurb,
                         icon = p.icon, onClick = { onPage(p) },
                         trailing = { CrundiIcon("chevron-right", size = Dimens.IconSm, tint = CrundiColors.TextMuted) },
                     )

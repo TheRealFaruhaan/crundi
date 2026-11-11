@@ -71,6 +71,73 @@
       ],
       "art": "browser-drawer-network.html",
       "artTitle": "Browser"
+    },
+    {
+      "id": "homepool-networks",
+      "tag": "Homepool",
+      "title": "Choose where traffic leaves from",
+      "body": "The new Homepool tab is a shared exit for chats, scripts and containers. Traffic can leave from the server's own connection, which is the default, or through one of your networks: your phone and PC at home, or a friend's line. You put each device in the network it is really on.",
+      "keys": [
+        {
+          "keys": [
+            "Homepool"
+          ],
+          "text": "the tab: networks, nodes, access, requests, activity"
+        },
+        {
+          "keys": [
+            "+ Network",
+            "+ Node"
+          ],
+          "text": "a place, and a device in it"
+        }
+      ],
+      "art": "homepool-networks.html",
+      "artTitle": "Homepool"
+    },
+    {
+      "id": "homepool-access",
+      "tag": "Homepool",
+      "title": "Nothing leaves without your say",
+      "body": "Only a key you made or approved can use homepool, and only through the networks you gave it. A chat asks for access through Crundi's tools and waits for you to approve, change or refuse it. Switch a key off or revoke it, and its connections end at once.",
+      "keys": [
+        {
+          "keys": [
+            "Requests"
+          ],
+          "text": "what chats asked for: approve, change or refuse"
+        },
+        {
+          "keys": [
+            "Access"
+          ],
+          "text": "every key, its networks, data used, on or off"
+        }
+      ],
+      "art": "homepool-access.html",
+      "artTitle": "Homepool"
+    },
+    {
+      "id": "homepool-share",
+      "tag": "Homepool",
+      "title": "Share a phone's or a PC's connection",
+      "body": "In the phone app and the PC app, share this device's connection with one switch, and see its status, network, public IP and data used. For a friend's line, add a node and give them its code: the Homepool Node app, or one Docker command, needs no Crundi sign-in.",
+      "keys": [
+        {
+          "keys": [
+            "Share this connection"
+          ],
+          "text": "in the app's Homepool screen, or This PC in the tab"
+        },
+        {
+          "keys": [
+            "+ Node"
+          ],
+          "text": "a code, a QR and a Docker line for a friend"
+        }
+      ],
+      "art": "homepool-share.html",
+      "artTitle": "Homepool"
     }
   ]
 }

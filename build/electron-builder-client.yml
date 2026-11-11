@@ -53,6 +53,8 @@ files:
   # Loaded by app/main.js: the browser drawer and its server-network tunnel.
   - app/browser-drawer.js
   - app/net-tunnel-client.js
+  # "Share this PC's connection" (homepool node; docs/homepool.md).
+  - app/homepool-node.js
   - app/index.html
   # "Hey Cru" while plugged in (D40); its engine and model are downloaded on
   # first use, not shipped. Unpacked so its utility process loads from disk.

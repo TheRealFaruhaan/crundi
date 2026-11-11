@@ -24,6 +24,14 @@
     <!-- The voice assistant holds the microphone in the foreground while it is
          open, so it can listen over the lock screen (voice/MicStream.kt). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Share this phone's connection (homepool node, mv.obitech.crundi.homepool):
+         back after a reboot when switched on, awake while it carries a
+         stream, and aware of Wi-Fi versus mobile data. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- The voice assistant's fallbacks: the phone's own voices and speech
@@ -196,6 +204,17 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps an open chat bubble and the live status card of the user's own self-hosted server connected while an AI agent works, so they open at once instead of reconnecting." />
         </service>
+        <!-- Homepool: this phone as a home node of the owner's server. -->
+        <service android:name=".homepool.HomepoolNodeService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Shares this device's internet connection with the owner's Crundi server (homepool node)" />
+        </service>
+        <receiver android:name=".homepool.HomepoolBootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:exported="false" />
         <receiver android:name=".KidAskReceiver" android:exported="false" />
