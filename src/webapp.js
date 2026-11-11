@@ -131,6 +131,7 @@ import { startHostWatch as startDeepgramHostWatch } from './voice/deepgram-host.
 import { checkInSandbox } from './widget-render.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
+import { createTunnelEndpoint } from './net-tunnel.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -8157,7 +8158,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (apiKey !== internalApiKey && !mcpCollabKey) return json(res, { error: 'Invalid API key' }, 403);
       const body = JSON.parse(await readBody(req));
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
-      const a = body.args || {};
+      const a = body.args = (body.args || {});
 
       let mcpAllowedProjects = null;
       if (mcpCollabKey) {
@@ -8178,6 +8179,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return json(res, { ok: false, error: 'Unknown project' }, 403);
         }
         mcpAllowedProjects = allowed;
+        // The browser drawer is the owner's own browser in the desktop app,
+        // signed in as them: not something a collaborator's Claude may drive.
+        a._noDrawer = true;
         // Service keys are `alias:name` and can name any project's service.
         if (['start_service', 'stop_service', 'restart_service', 'get_service_logs', 'delete_service'].includes(body.tool)
             && !allowed.includes(String(a.key || '').split(':')[0].toLowerCase())) {
@@ -9059,8 +9063,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Set when this socket is acting as the server's native host (a desktop
       // app lending us its GUI for the browser panel).
       let detachHost = null;
+      // Its browser tabs on this server's network: streams carried as binary
+      // frames on this same socket (see net-tunnel.js). Exists only once the
+      // app has registered as a native host, which a collaborator cannot.
+      let hostTunnel = null;
 
-      ws.on('message', (raw) => {
+      ws.on('message', (raw, isBinary) => {
+        if (isBinary) { if (hostTunnel) hostTunnel.handle(raw); return; }
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
 
@@ -9078,8 +9087,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             // exactly what it is here to tell us.
             capabilities: Array.isArray(msg.capabilities) ? msg.capabilities : [],
           });
+          hostTunnel = createTunnelEndpoint({
+            send: (b) => { if (ws.readyState === 1) ws.send(b, { binary: true }); },
+            buffered: () => ws.bufferedAmount,
+          });
           console.log('[crundi] Desktop app attached as native host');
-          ws.send(JSON.stringify({ type: 'native-host-ready' }));
+          // features: what this server offers the app (absent on older servers).
+          ws.send(JSON.stringify({ type: 'native-host-ready', features: ['net-tunnel', 'browser-drawer'] }));
           return;
         }
         // A reply coming back from that desktop app.
@@ -9191,6 +9205,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       });
 
       ws.on('close', () => {
+        if (hostTunnel) { hostTunnel.closeAll(); hostTunnel = null; }
         for (const [id, handler] of subs) claudeTerminals.off(id, handler);
         subs.clear();
         if (claudeUi) for (const [id, handler] of uiSubs) claudeUi.off(id, handler);

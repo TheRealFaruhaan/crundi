@@ -1,0 +1,27 @@
+<div class="wna a-brda">
+  <div class="pg">
+    <i class="h"></i><i class="l1"></i><i class="l2"></i><i class="btn"></i>
+    <span class="box"></span><span class="note">make this red</span>
+    <span class="pin">1</span><span class="cl">Claude: this one</span>
+  </div>
+  <div class="chat"><div class="msg"><i class="shot"></i><i class="ln"></i><i class="ln s"></i></div></div>
+  <style>
+    .a-brda{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-brda .pg{position:absolute;left:40px;top:40px;width:340px;height:320px;border-radius:10px;background:#f4f4f8;border:1px solid var(--border);overflow:hidden}
+    .a-brda .pg>i{position:absolute;left:24px;border-radius:4px;background:#c9cad6}
+    .a-brda .h{top:26px;width:200px;height:18px;background:#8b8ca3 !important}.a-brda .l1{top:60px;width:260px;height:10px}.a-brda .l2{top:80px;width:220px;height:10px}
+    .a-brda .btn{top:120px;width:96px;height:30px;background:var(--accent) !important}
+    .a-brda .box{position:absolute;left:16px;top:112px;width:0;height:0;border:3px solid #ea580c;border-radius:4px;opacity:0;animation:abrda-b 10s ease infinite}
+    .a-brda .note{position:absolute;left:16px;top:160px;padding:4px 9px;border-radius:6px;background:#ea580c;color:#fff;font-size:12px;opacity:0;animation:abrda-n 10s ease infinite}
+    .a-brda .pin{position:absolute;left:150px;top:228px;width:24px;height:24px;border-radius:50%;background:var(--accent);border:2px solid #fff;color:#fff;font:700 12px/24px system-ui;text-align:center;opacity:0;animation:abrda-p 10s ease infinite}
+    .a-brda .cl{position:absolute;left:182px;top:229px;padding:4px 9px;border-radius:6px;background:var(--accent);color:#fff;font-size:12px;opacity:0;animation:abrda-p 10s ease infinite}
+    .a-brda .chat{position:absolute;left:410px;top:40px;width:190px;height:320px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-brda .msg{position:absolute;left:12px;right:12px;bottom:14px;padding:8px;border-radius:8px;background:var(--bg-card);border:1px solid var(--border);opacity:0;transform:translateY(20px);animation:abrda-m 10s ease infinite}
+    .a-brda .shot{display:block;height:70px;border-radius:5px;background:linear-gradient(135deg,#f4f4f8,#c9cad6);border:2px solid #ea580c;margin-bottom:8px}
+    .a-brda .ln{display:block;height:7px;border-radius:4px;background:var(--text-muted);margin-top:5px}.a-brda .ln.s{width:60%}
+    @keyframes abrda-b{0%,8%{opacity:0;width:0;height:0}10%{opacity:1;width:0;height:0}24%,100%{opacity:1;width:114px;height:42px}}
+    @keyframes abrda-n{0%,26%{opacity:0}32%,100%{opacity:1}}
+    @keyframes abrda-m{0%,44%{opacity:0;transform:translateY(20px)}52%,100%{opacity:1;transform:none}}
+    @keyframes abrda-p{0%,64%{opacity:0;transform:scale(.6)}70%,96%{opacity:1;transform:none}100%{opacity:0}}
+  </style>
+</div>

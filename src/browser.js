@@ -12,6 +12,7 @@
 
 import * as headless from './browser-headless.js';
 import { planTouch, probeInstallScript, probeCollectScript, summarizeProbe } from './browser-touch.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 const MAX_WIDTH = 1920;
 const MAX_HEIGHT = 1080;
@@ -94,7 +95,7 @@ export function clearRemoteHost() {
   for (const [key, where] of keyBackend) {
     if (where !== 'remote') continue;
     keyBackend.delete(key);
-    const inst = browsers.get(key);
+    const inst = instFor(key);
     if (inst) { if (inst.idleTimer) clearTimeout(inst.idleTimer); browsers.delete(key); dropped = true; }
   }
   if (dropped) emitBrowserUpdate();
@@ -186,18 +187,28 @@ function chooseBackend(on) {
     if (hasParentIpc()) return { backend: 'parent' };
     return { error: 'No Crundi desktop app is connected to this server. Open the desktop app, or use on: "server".' };
   }
-  if (where) return { error: 'on must be "server" or "desktop"' };
+  if (where) return { error: 'on must be "server", "desktop" or "drawer"' };
   if (hasParentIpc()) return { backend: 'parent' };
   if (remoteHost) return { backend: 'remote' };
   if (headless.isSupported()) return { backend: 'headless' };
   return { error: backendUnavailableReason() };
 }
 
-function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS) {
+function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS, backendOverride = null) {
   // Each instance answers from where it was opened (see the note at the top).
   // An instance with no record (opened before this choice existed) falls back
   // to the old order: a desktop app when one is attached, else headless.
-  let backend = payload && payload.key ? keyBackend.get(payload.key) : null;
+  let backend = backendOverride || (payload && payload.key ? keyBackend.get(payload.key) : null);
+  if (payload && isDrawerKey(payload.key)) {
+    // A drawer tab lives in a desktop app's window and nowhere else, and it
+    // belongs to one project: say which project is asking, so the app can
+    // refuse another project's chat.
+    const ctx = callerContext.getStore() || {};
+    if (ctx.noDrawer) return Promise.reject(new Error('The browser drawer is not available on this project.'));
+    payload = { ...payload, alias: ctx.alias || payload.alias };
+    if (!backend) backend = drawerBackend();
+    if (!backend) return Promise.reject(new Error(drawerUnavailableReason()));
+  }
   if (!backend) backend = hasNativeHost() ? null : 'headless';
   if (backend === 'headless') {
     if (!headless.supports(type) || !headless.isSupported()) {
@@ -262,7 +273,7 @@ if (typeof process.on === 'function') {
 // ─── Idle Timer ───
 
 function resetIdleTimer(key) {
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return;
   inst.lastActivityAt = Date.now();
   if (inst.idleTimer) clearTimeout(inst.idleTimer);
@@ -287,7 +298,8 @@ function clampDimensions(width, height) {
 
 // ─── Public API ───
 
-export async function openBrowser({ alias, name, url, width, height, on }) {
+export async function openBrowser({ alias, name, url, width, height, on, network, show }) {
+  if (String(on || '').toLowerCase() === 'drawer') return openDrawerTab({ alias, url, network, show });
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const chosen = chooseBackend(on);
   if (chosen.error) return { ok: false, error: chosen.error };
@@ -340,7 +352,7 @@ export async function openBrowser({ alias, name, url, width, height, on }) {
 export async function closeBrowser(key) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -364,7 +376,7 @@ function placeOf(backend) {
 export async function navigateBrowser(key, url) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -382,7 +394,7 @@ export async function navigateBrowser(key, url) {
 export async function screenshotBrowser(key) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -398,7 +410,7 @@ export async function screenshotBrowser(key) {
 export async function readBrowserPage(key) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -428,7 +440,7 @@ export async function readBrowserPage(key) {
 export async function clickBrowser(key, selector) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -444,7 +456,7 @@ export async function clickBrowser(key, selector) {
 export async function typeBrowser(key, text, selector) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -460,7 +472,7 @@ export async function typeBrowser(key, text, selector) {
 export async function resizeBrowser(key, width, height) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   const dims = clampDimensions(width, height);
@@ -481,7 +493,7 @@ export async function resizeBrowser(key, width, height) {
 export async function mouseBrowser(key, x, y, action) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
 
   try {
@@ -512,7 +524,7 @@ function touchSupported(key) {
 
 export async function touchBrowser(key, opts = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   if (!touchSupported(key)) {
     return { ok: false, error: 'Touch is not supported by the desktop app this browser runs on. Update the Crundi app, or open the browser with on: "server".' };
@@ -556,7 +568,7 @@ function parseJson(v) {
 
 export async function evalBrowser(key, code) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserEval', { key, code });
@@ -570,7 +582,7 @@ export async function evalBrowser(key, code) {
 
 export async function getBrowserSource(key) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserSource', { key });
@@ -584,7 +596,7 @@ export async function getBrowserSource(key) {
 
 export async function getBrowserConsole(key, { clear = false, start, end, countOnly } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserConsole', { key, clear, start, end, countOnly });
@@ -604,7 +616,7 @@ export async function getBrowserConsole(key, { clear = false, start, end, countO
  */
 export async function browserNetwork(key, action, { start, end, countOnly } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserNetwork', { key, action, start, end, countOnly });
@@ -637,7 +649,7 @@ export function listBrowsers(alias) {
 
 export async function goBackBrowser(key) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserGoBack', { key });
@@ -649,7 +661,7 @@ export async function goBackBrowser(key) {
 
 export async function goForwardBrowser(key) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserGoForward', { key });
@@ -661,7 +673,7 @@ export async function goForwardBrowser(key) {
 
 export async function scrollBrowser(key, { x, y, selector } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserScroll', { key, x, y, selector });
@@ -673,7 +685,7 @@ export async function scrollBrowser(key, { x, y, selector } = {}) {
 
 export async function waitBrowser(key, { selector, timeout } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     // The page-side wait runs up to `timeout` ms; give the IPC channel extra
@@ -688,7 +700,7 @@ export async function waitBrowser(key, { selector, timeout } = {}) {
 
 export async function cookiesBrowser(key, { action, cookie, filter, url } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserCookies', { key, action: action || 'get', cookie, filter, url });
@@ -700,7 +712,7 @@ export async function cookiesBrowser(key, { action, cookie, filter, url } = {}) 
 
 export async function snapshotBrowser(key, { maxDepth, maxLength } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserSnapshot', { key, maxDepth, maxLength });
@@ -712,7 +724,7 @@ export async function snapshotBrowser(key, { maxDepth, maxLength } = {}) {
 
 export async function elementsBrowser(key, { start, end, countOnly, selector } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserElements', { key, start, end, countOnly, selector });
@@ -725,7 +737,7 @@ export async function elementsBrowser(key, { start, end, countOnly, selector } =
 
 export async function fillBrowser(key, selector, value) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserFill', { key, selector, value });
@@ -737,7 +749,7 @@ export async function fillBrowser(key, selector, value) {
 
 export async function selectBrowser(key, selector, value) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserSelect', { key, selector, value });
@@ -749,7 +761,7 @@ export async function selectBrowser(key, selector, value) {
 
 export async function pdfBrowser(key, { landscape } = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
-  const inst = browsers.get(key);
+  const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
   try {
     const result = await sendIpc('browserPdf', { key, landscape });
@@ -769,4 +781,179 @@ export async function closeAllBrowsers() {
 export function emitBrowserUpdate() {
   try { postToHost({ type: 'browsers', data: listBrowsers() }); }
   catch { /* channel closed */ }
+}
+
+// ─── The browser drawer: the desktop app's own tabs, shared with the chats ───
+//
+// The PC client has a browser drawer beside the project area. Its tabs belong
+// to a project, and that project's chats can use them with every browser_*
+// tool, by key "drawer:<tab id>" (browser_list shows them, browser_open with
+// on: "drawer" makes one). Unlike the hidden browsers above they are not ours
+// to track or idle-close: the person owns them, and the desktop app is the
+// only record of what is open. So nothing is kept here but which app holds
+// which tab, learned from browser_list / browser_open and re-learned on demand.
+//
+// Each tab also has a network: "client" (the desktop app's own, the default)
+// or "server" (this machine's, carried over the app's websocket; see
+// net-tunnel.js). The app does the routing; here it is just a field.
+
+/** Which project the current tool call is for, set by the MCP dispatcher. */
+export const callerContext = new AsyncLocalStorage();
+
+const DRAWER_CAPABILITY = 'browser-drawer';
+const DRAWER_PREFIX = 'drawer:';
+
+export function isDrawerKey(key) {
+  return typeof key === 'string' && key.startsWith(DRAWER_PREFIX);
+}
+
+/** A stand-in record for a drawer tab, so the browser_* functions above accept its key. */
+function instFor(key) {
+  const inst = browsers.get(key);
+  if (inst || !isDrawerKey(key)) return inst;
+  return { key, alias: (callerContext.getStore() || {}).alias || '', consoleLogs: [], drawer: true };
+}
+
+/** The desktop apps that can hold drawer tabs right now. */
+function drawerHosts() {
+  const out = [];
+  if (hasParentIpc()) out.push('parent');
+  if (remoteHost && hostSupports(DRAWER_CAPABILITY)) out.push('remote');
+  return out;
+}
+
+function drawerBackend() {
+  return drawerHosts()[0] || null;
+}
+
+function drawerUnavailableReason() {
+  if (remoteHost && !hostSupports(DRAWER_CAPABILITY)) return 'The browser drawer is not supported by the Crundi desktop app connected to this server. Update the app.';
+  return 'The browser drawer is in the Crundi desktop app, and none is connected to this server.';
+}
+
+const NETWORKS = ['client', 'server'];
+function normNetwork(n) {
+  const v = String(n || '').toLowerCase();
+  if (!v) return null;
+  return NETWORKS.includes(v) ? v : undefined;
+}
+
+/** The drawer tabs of a project (every connected app), with where each runs. */
+export async function listDrawerTabs(alias) {
+  const ctx = callerContext.getStore() || {};
+  if (ctx.noDrawer) return [];
+  const out = [];
+  for (const backend of drawerHosts()) {
+    try {
+      const r = await sendIpc('browserDrawerList', { alias }, 15000, backend);
+      if (!r || !r.ok || !Array.isArray(r.tabs)) continue;
+      for (const t of r.tabs) {
+        const key = DRAWER_PREFIX + t.tabId;
+        keyBackend.set(key, backend);
+        out.push({
+          key, alias: t.project, name: t.title || t.url || 'tab', url: t.url, on: 'drawer',
+          network: t.network, networkLabel: t.networkLabel, active: !!t.active, shown: !!t.shown,
+          device: t.device || null,
+        });
+      }
+    } catch { /* that app did not answer; list the rest */ }
+  }
+  return out;
+}
+
+/** browser_list: the hidden browsers plus this project's drawer tabs. */
+export async function listAllBrowsers(alias) {
+  const hidden = listBrowsers(alias);
+  let drawer = [];
+  try { drawer = await listDrawerTabs(alias); } catch { /* none */ }
+  return { browsers: [...hidden, ...drawer], drawer: drawerHosts().length ? 'available' : drawerUnavailableReason() };
+}
+
+export async function openDrawerTab({ alias, url, network, show }) {
+  const backend = drawerBackend();
+  if (!backend) return { ok: false, error: drawerUnavailableReason() };
+  const net = normNetwork(network);
+  if (net === undefined) return { ok: false, error: 'network must be "client" or "server"' };
+  try {
+    const r = await sendIpc('browserDrawerOpen', { alias, url: url || 'about:blank', network: net || 'client', show: !!show }, IPC_TIMEOUT_MS, backend);
+    if (!r.ok) return { ok: false, error: r.error };
+    const key = DRAWER_PREFIX + r.tabId;
+    keyBackend.set(key, backend);
+    return { ok: true, key, on: 'drawer', network: r.network, networkLabel: r.networkLabel, url: r.url, ...(r.warning ? { warning: r.warning } : {}) };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+function needDrawer(key) {
+  if (!isDrawerKey(key)) return { ok: false, error: `Only drawer tabs can do that (keys starting "${DRAWER_PREFIX}", see browser_list). Open one with browser_open on: "drawer".` };
+  return null;
+}
+
+/** Change a tab's network. The page reloads on the new one; cookies are kept per network. */
+export async function setDrawerNetwork(key, network) {
+  const bad = needDrawer(key); if (bad) return bad;
+  const net = normNetwork(network);
+  if (!net) return { ok: false, error: 'network must be "client" or "server"' };
+  try {
+    const r = await sendIpc('browserDrawerSetNetwork', { key, network: net });
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, network: r.network, networkLabel: r.networkLabel, url: r.url };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+const SHAPES = ['pin', 'box', 'arrow', 'label'];
+
+/** Validate the shapes a chat asks to draw; returns { shapes } or { error }. */
+export function cleanShapes(list) {
+  if (!Array.isArray(list)) return { error: 'shapes must be a list' };
+  if (list.length > 50) return { error: 'at most 50 shapes at a time' };
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 10) / 10 : undefined);
+  const out = [];
+  for (const raw of list) {
+    const sh = raw || {};
+    const kind = String(sh.kind || sh.type || 'pin').toLowerCase();
+    if (!SHAPES.includes(kind)) return { error: `shape kind must be one of ${SHAPES.join(', ')}` };
+    const c = { kind, text: typeof sh.text === 'string' ? sh.text.slice(0, 500) : '' };
+    if (typeof sh.selector === 'string' && sh.selector) c.selector = sh.selector.slice(0, 500);
+    for (const k of ['x', 'y', 'width', 'height', 'toX', 'toY']) { const v = num(sh[k]); if (v !== undefined) c[k] = v; }
+    if (!c.selector && (c.x === undefined || c.y === undefined)) return { error: `each ${kind} needs x and y (page CSS pixels in the viewport) or a selector` };
+    if (kind === 'box' && !c.selector && (!c.width || !c.height)) return { error: 'a box needs width and height (or a selector)' };
+    if (kind === 'arrow' && (c.toX === undefined || c.toY === undefined)) return { error: 'an arrow needs toX and toY' };
+    out.push(c);
+  }
+  return { shapes: out };
+}
+
+/** Draw on the overlay over a drawer tab, where the person sees it. */
+export async function annotateDrawer(key, { shapes, clear, show } = {}) {
+  const bad = needDrawer(key); if (bad) return bad;
+  const c = cleanShapes(shapes || []);
+  if (c.error) return { ok: false, error: c.error };
+  if (!c.shapes.length && !clear) return { ok: false, error: 'Give shapes to draw, or clear: true' };
+  try {
+    const r = await sendIpc('browserDrawerAnnotate', { key, shapes: c.shapes, clear: !!clear, show: show !== false });
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, drawn: r.drawn, total: r.total };
+  } catch (err) { return { ok: false, error: err.message }; }
+}
+
+/** Point at one spot (a pin with an optional label). */
+export function pointDrawer(key, { x, y, selector, label, show } = {}) {
+  return annotateDrawer(key, { shapes: [{ kind: 'pin', x, y, selector, text: label || '' }], show });
+}
+
+/**
+ * What is drawn on a tab: the person's marks and the chats', each with the
+ * element under it, and (image: true, the default) a screenshot with the
+ * marks drawn in. Answers as content blocks, text and image.
+ */
+export async function readDrawerAnnotations(key, { image = true } = {}) {
+  const bad = needDrawer(key); if (bad) return bad;
+  try {
+    const r = await sendIpc('browserDrawerAnnotations', { key, image: image !== false });
+    if (!r.ok) return { ok: false, error: r.error };
+    const info = { ok: true, url: r.url, title: r.title, viewport: r.viewport, annotations: r.annotations || [] };
+    const content = [{ type: 'text', text: JSON.stringify(info, null, 2) }];
+    if (r.image) content.push({ type: 'image', data: r.image, mimeType: 'image/png' });
+    return { ok: true, content };
+  } catch (err) { return { ok: false, error: err.message }; }
 }

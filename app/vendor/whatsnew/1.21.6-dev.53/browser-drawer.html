@@ -1,0 +1,35 @@
+<div class="wna a-brdw">
+  <div class="win">
+    <div class="tabs"><i></i><i></i><i></i><i></i></div>
+    <div class="area"><b></b><b></b><b class="w"></b></div>
+    <div class="split"></div>
+    <div class="drawer">
+      <div class="dt"><span class="t on"></span><span class="t"></span></div>
+      <div class="url"></div>
+      <div class="pg"><i class="h"></i><i class="l1"></i><i class="l2"></i><i class="btn"></i></div>
+    </div>
+  </div>
+  <style>
+    .a-brdw{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-brdw .win{position:absolute;left:40px;top:40px;width:560px;height:320px;border-radius:12px;background:var(--bg-primary);border:1px solid var(--border);overflow:hidden}
+    .a-brdw .tabs,.a-brdw .area{position:absolute;left:0;animation:abrdw-n 10s ease infinite}
+    .a-brdw .tabs{top:0;height:30px;width:560px;display:flex;gap:8px;padding:9px 12px;box-sizing:border-box;background:var(--bg-secondary);border-bottom:1px solid var(--border)}
+    .a-brdw .tabs i{display:block;width:44px;height:10px;border-radius:5px;background:var(--text-muted);opacity:.5}
+    .a-brdw .tabs i:first-child{background:var(--accent);opacity:1}
+    .a-brdw .area{top:31px;bottom:0;width:560px;padding:14px;box-sizing:border-box;display:flex;gap:10px}
+    .a-brdw .area b{flex:1;border-radius:8px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-brdw .area b.w{flex:.7}
+    .a-brdw .split{position:absolute;top:0;bottom:0;width:4px;background:var(--accent);left:560px;animation:abrdw-s 10s ease infinite}
+    .a-brdw .drawer{position:absolute;top:0;bottom:0;left:564px;width:260px;background:var(--bg-secondary);animation:abrdw-d 10s ease infinite}
+    .a-brdw .dt{height:30px;display:flex;gap:4px;align-items:flex-end;padding:0 8px;background:var(--bg-primary);border-bottom:1px solid var(--border)}
+    .a-brdw .t{width:70px;height:22px;border-radius:6px 6px 0 0;background:var(--bg-card)}.a-brdw .t.on{background:var(--bg-secondary);border:1px solid var(--border);border-bottom:none}
+    .a-brdw .url{margin:8px 10px;height:18px;border-radius:9px;background:var(--bg-primary);border:1px solid var(--border)}
+    .a-brdw .pg{position:absolute;left:10px;right:10px;top:66px;bottom:10px;border-radius:6px;background:#f4f4f8}
+    .a-brdw .pg i{position:absolute;left:14px;border-radius:4px;background:#c9cad6}
+    .a-brdw .h{top:16px;width:60%;height:14px;background:#8b8ca3 !important}.a-brdw .l1{top:42px;width:80%;height:8px}.a-brdw .l2{top:58px;width:70%;height:8px}
+    .a-brdw .btn{top:84px;width:64px;height:20px;background:var(--accent) !important}
+    @keyframes abrdw-n{0%,12%{width:560px}26%,46%{width:300px}56%,72%{width:220px}82%,100%{width:560px}}
+    @keyframes abrdw-s{0%,12%{left:560px}26%,46%{left:300px}56%,72%{left:220px}82%,100%{left:560px}}
+    @keyframes abrdw-d{0%,12%{left:564px;width:260px}26%,46%{left:304px;width:256px}56%,72%{left:224px;width:336px}82%,100%{left:564px;width:260px}}
+  </style>
+</div>

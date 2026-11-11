@@ -160,15 +160,17 @@ const TOOLS = [
 
   // Browser tools
   {
-    name: 'browser_open', description: 'Open a hidden browser at a URL. Up to 5 per project. on picks the machine it runs on, which decides what it can reach: "server" is the machine Crundi (and you) run on, so its localhost is your dev servers; "desktop" is the Crundi desktop app the person has open, on their network. Omitted: the desktop app when one is connected, else the server. Every later browser_* call on this instance runs in the same place.',
+    name: 'browser_open', description: 'Open a browser at a URL. on picks where, which decides what it can reach and who sees it: "server" is a hidden browser on the machine Crundi (and you) run on, so its localhost is your dev servers; "desktop" is a hidden browser in the Crundi desktop app the person has open, on their network; "drawer" opens a new tab in this project\'s browser drawer in the desktop app, which the person can see and use too (the tabs the person opened there are listed by browser_list, so use one of those when it is already on the right page). A drawer tab also takes network: "client" (default, the desktop app\'s own network) or "server" (this server\'s network, carried over the app\'s connection, so it reaches this machine\'s localhost and internal hosts even when the app is on another machine). Omitted on: the desktop app when one is connected, else the server. Up to 5 hidden browsers per project. Every later browser_* call on the key runs in the same place.',
     inputSchema: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'URL to open' },
-        name: { type: 'string', description: 'Instance name (default: "default")' },
-        width: { type: 'number', description: 'Viewport width (default: 1280, max: 1920)' },
-        height: { type: 'number', description: 'Viewport height (default: 720, max: 1080)' },
-        on: { type: 'string', enum: ['server', 'desktop'], description: 'Where to run it: "server" (this machine, reaches its localhost) or "desktop" (the person\'s connected desktop app). Default: desktop when connected, else server.' },
+        name: { type: 'string', description: 'Instance name (default: "default"; hidden browsers only)' },
+        width: { type: 'number', description: 'Viewport width (default: 1280, max: 1920; hidden browsers only)' },
+        height: { type: 'number', description: 'Viewport height (default: 720, max: 1080; hidden browsers only)' },
+        on: { type: 'string', enum: ['server', 'desktop', 'drawer'], description: 'Where: "server" (hidden, this machine), "desktop" (hidden, the person\'s desktop app) or "drawer" (a visible tab in this project\'s browser drawer). Default: desktop when connected, else server.' },
+        network: { type: 'string', enum: ['client', 'server'], description: 'Drawer tabs only: "client" (default, the desktop app\'s network) or "server" (this server\'s network, e.g. for localhost dev servers here). Change it later with browser_tab_network.' },
+        show: { type: 'boolean', description: 'Drawer tabs only: open the drawer on this tab so the person sees it. Default false (the tab opens in the background).' },
       },
       required: ['url'],
     },
@@ -196,7 +198,11 @@ const TOOLS = [
   { name: 'browser_snapshot', description: 'Get an accessibility tree snapshot of the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, maxDepth: { type: 'number' }, maxLength: { type: 'number' } }, required: ['key'] } },
   { name: 'browser_elements', description: 'List interactive elements on the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string' }, start: { type: 'number' }, end: { type: 'number' }, countOnly: { type: 'boolean' } }, required: ['key'] } },
   { name: 'browser_pdf', description: 'Export the current page as a PDF.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, landscape: { type: 'boolean' } }, required: ['key'] } },
-  { name: 'browser_list', description: 'List all open browser instances, with where each runs (on: server or desktop).', inputSchema: { type: 'object', properties: {} } },
+  { name: 'browser_list', description: 'List the open browsers: the hidden ones, with where each runs (on: server or desktop), and this project\'s browser drawer tabs in the desktop app (on: drawer, key "drawer:<id>", with network: client or server, and active / shown when the person is looking at it). Every browser_* tool works on a drawer tab\'s key.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'browser_point', description: 'Point at a spot on a drawer tab: a numbered pin, with an optional label, drawn on the overlay above the page where the person sees it. x/y are page CSS pixels in the viewport (as browser_screenshot shows it), or give a selector to point at an element. Opens the drawer on that tab unless show is false. Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, x: { type: 'number' }, y: { type: 'number' }, selector: { type: 'string', description: 'CSS selector instead of x/y' }, label: { type: 'string', description: 'Text beside the pin' }, show: { type: 'boolean', description: 'Open the drawer on the tab (default true)' } }, required: ['key'] } },
+  { name: 'browser_annotate', description: 'Draw on the overlay above a drawer tab, where the person sees it: shapes is a list of { kind: "pin" | "box" | "arrow" | "label", x, y, width, height (box), toX, toY (arrow), selector (instead of coordinates: the element\'s box), text }. Coordinates are page CSS pixels in the viewport. Marks stay until cleared or the page navigates; clear: true removes your marks (the person\'s stay). Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, shapes: { type: 'array', items: { type: 'object' } }, clear: { type: 'boolean', description: 'Remove your earlier marks first' }, show: { type: 'boolean', description: 'Open the drawer on the tab (default true)' } }, required: ['key'] } },
+  { name: 'browser_annotations', description: 'Read what is drawn on a drawer tab: the person\'s annotations (and your own), each with its text, its position in page CSS pixels and the element under it (selector, tag, text), plus a screenshot with the marks drawn in. Use it when the person says they marked something on the page. Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, image: { type: 'boolean', description: 'Include the annotated screenshot (default true)' } }, required: ['key'] } },
+  { name: 'browser_tab_network', description: 'Switch a drawer tab\'s network: "client" (the desktop app\'s own network) or "server" (this server\'s network, carried over the app\'s connection: reaches this machine\'s localhost and internal hosts). The page reloads on the new network; each network keeps its own cookies. Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, network: { type: 'string', enum: ['client', 'server'] } }, required: ['key', 'network'] } },
 
   // Screenshot / display tools
   { name: 'list_windows', description: 'List all open windows across virtual desktops.', inputSchema: { type: 'object', properties: {} } },
@@ -586,6 +592,9 @@ async function handleToolCall(name, args) {
   if (name === 'syntax_check') return runSyntaxCheck(args.files || []);
 
   if (ALIAS_TOOLS.has(name) && !args.alias) args.alias = PROJECT;
+  // A drawer tab belongs to one project: every browser call says which, from
+  // this process's own project, never from the arguments.
+  if (name.startsWith('browser_') && PROJECT) args.alias = PROJECT;
   // Which chat is asking, so an owner-run command's output goes back to it.
   if ((name === 'request_owner_command' || name === 'register_service') && process.env.CRUNDI_CHAT_ID) {
     args.sessionId = process.env.CRUNDI_CHAT_ID;

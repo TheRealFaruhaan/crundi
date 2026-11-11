@@ -133,6 +133,17 @@ async function mcpDispatch(tool, args) {
   // Browser tools
   if (tool.startsWith('browser_') || tool === 'list_browsers') {
     const b = await import('./browser.js');
+    // Which project is asking, for the drawer tabs (they belong to one), and
+    // whether the caller may use the drawer at all (a collaborator may not:
+    // it is the owner's own browser, signed in as them).
+    const ctx = { alias: args.alias || '', noDrawer: !!args._noDrawer };
+    delete args._noDrawer;
+    return b.callerContext.run(ctx, () => browserTool(b, tool, args));
+  }
+  return otherTool(tool, args);
+}
+
+async function browserTool(b, tool, args) {
     switch (tool) {
       case 'browser_open': {
         const r = await b.openBrowser(args);
@@ -170,12 +181,20 @@ async function mcpDispatch(tool, args) {
       case 'browser_elements': return b.elementsBrowser(args.key, { start: args.start, end: args.end, countOnly: args.countOnly, selector: args.selector });
       case 'browser_pdf': return b.pdfBrowser(args.key, { landscape: args.landscape });
       case 'browser_list':
-      case 'list_browsers':
-        return { ok: true, browsers: b.listBrowsers(args.alias) };
+      case 'list_browsers': {
+        const all = await b.listAllBrowsers(args.alias);
+        return { ok: true, ...all };
+      }
+      case 'browser_point': return b.pointDrawer(args.key, { x: args.x, y: args.y, selector: args.selector, label: args.label, show: args.show });
+      case 'browser_annotate': return b.annotateDrawer(args.key, { shapes: args.shapes, clear: args.clear, show: args.show });
+      case 'browser_annotations': return b.readDrawerAnnotations(args.key, { image: args.image });
+      case 'browser_tab_network': return b.setDrawerNetwork(args.key, args.network);
       default:
         return { ok: false, error: `Unknown browser tool: ${tool}` };
     }
-  }
+}
+
+async function otherTool(tool, args) {
 
   // Screenshot / display tools
   if (tool === 'list_windows' || tool === 'list_displays' ||

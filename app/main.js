@@ -16,6 +16,8 @@ import { spawn, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import electronUpdater from 'electron-updater';
+import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS } from './browser-drawer.js';
+import { createServerNetProxy } from './net-tunnel-client.js';
 const { autoUpdater } = electronUpdater;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -193,6 +195,9 @@ function createWindow() {
     if (/^https?:\/\//i.test(u)) { shell.openExternal(u).catch(() => {}); }
     return { action: 'deny' };
   });
+
+  // The browser drawer's <webview>s: hardened as the page creates them.
+  browserDrawer.hardenWindow(mainWindow);
 
   const htmlPath = join(__dirname, 'index.html');
   appendLog(`[lifecycle] Loading ${htmlPath}`);
@@ -1861,7 +1866,7 @@ function browserActionTimeout(msg) {
   // browser_wait runs up to msg.timeout in-page; give it that plus a small buffer.
   if (msg.type === 'browserWait') return (msg.timeout || 30000) + 3000;
   // Navigation can legitimately take a while to finish loading.
-  if (msg.type === 'browserOpen' || msg.type === 'browserNavigate') return 30000;
+  if (msg.type === 'browserOpen' || msg.type === 'browserNavigate' || msg.type === 'browserDrawerOpen' || msg.type === 'browserDrawerSetNetwork') return 35000;
   return 25000;
 }
 
@@ -1925,7 +1930,12 @@ function handleBotMessage(msg, reply) {
   if (!msg.requestId) return;
   const handler = browserIpcHandlers[msg.type];
   if (handler) {
-    withTimeout(handler(msg), browserActionTimeout(msg), msg.type).then(result => {
+    // A drawer tab: make sure it exists (the page may need to load it) and
+    // belongs to the project asking, before any handler touches it.
+    const run = isDrawerKey(msg.key) && msg.type !== 'browserClose' && msg.type !== 'browserResize'
+      ? browserDrawer.prepare(msg).then(() => handler(msg))
+      : handler(msg);
+    withTimeout(run, browserActionTimeout(msg), msg.type).then(result => {
       send({ type: 'browserResult', requestId: msg.requestId, ...result });
     }).catch(err => {
       send({ type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message });
@@ -2015,13 +2025,20 @@ function connectNativeHost() {
     appendLog('[nativehost] connected — registering as native host');
     // Tell the server what this build can do, so it does not offer the user a
     // notification channel that an older app would silently drop.
-    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch'] })); }
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'] })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
-  ws.on('message', (raw) => {
+  ws.on('message', (raw, isBinary) => {
     if (!isCurrent()) return;
+    // Binary frames are the drawer's server-network streams (net-tunnel-client.js).
+    if (isBinary) { if (serverProxy) serverProxy.handleFrame(raw); return; }
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
-    if (m.type === 'native-host-ready') { appendLog('[nativehost] registered'); return; }
+    if (m.type === 'native-host-ready') {
+      hostFeatures = Array.isArray(m.features) ? m.features : [];
+      appendLog(`[nativehost] registered${hostFeatures.length ? ' (server offers ' + hostFeatures.join(', ') + ')' : ''}`);
+      browserDrawer.notifyInfo();
+      return;
+    }
     if (m.type !== 'native-host') return;
     handleNativeHostMessage(m.payload, (payload) => {
       if (ws.readyState !== 1) return;
@@ -2033,6 +2050,9 @@ function connectNativeHost() {
     // An old socket closing must not null out the connection that replaced it.
     if (!isCurrent()) return;
     hostWs = null;
+    hostFeatures = [];
+    if (serverProxy) serverProxy.onDisconnect();
+    browserDrawer.notifyInfo();
     if (!hostClosing) { appendLog('[nativehost] disconnected'); scheduleHostRetry(); }
   });
   ws.on('error', (err) => appendLog(`[nativehost] socket error: ${err.message}`));
@@ -2085,6 +2105,69 @@ async function touchListenersAt(send, x, y) {
   } finally {
     send('Runtime.releaseObjectGroup', { objectGroup: GROUP }).catch(() => {});
   }
+}
+
+// ─── The browser drawer (see app/browser-drawer.js) ───
+//
+// "Server network" for a drawer tab: with the server on this machine it is
+// simply this machine's network; with a remote server, the tab's partition is
+// proxied through a loopback-only proxy whose streams ride the native-host
+// websocket (net-tunnel-client.js), so the server opens no port and this
+// machine exposes none.
+let hostFeatures = [];          // what the remote server offers (native-host-ready)
+let serverProxy = null;
+let serverNetConfigured = '';
+function remoteHostUp() { return !!(hostWs && hostWs.readyState === 1); }
+const serverNet = {
+  info() {
+    const remote = readClientConfig().mode === 'remote';
+    if (!remote) return { mode: 'local', status: 'direct' };
+    if (!remoteHostUp()) return { mode: 'remote', status: 'offline' };
+    if (!hostFeatures.includes('net-tunnel')) return { mode: 'remote', status: 'unsupported' };
+    return { mode: 'remote', status: 'tunnel' };
+  },
+  async ensure() {
+    const ses = session.fromPartition(DRAWER_PARTITIONS.server);
+    if (readClientConfig().mode !== 'remote') {
+      if (serverNetConfigured !== 'direct') { await ses.setProxy({ mode: 'direct' }); serverNetConfigured = 'direct'; }
+      return;
+    }
+    if (!serverProxy) {
+      serverProxy = createServerNetProxy({
+        send: (buf) => { if (!remoteHostUp()) throw new Error('not connected'); hostWs.send(buf, { binary: true }); },
+        isConnected: () => remoteHostUp() && hostFeatures.includes('net-tunnel'),
+        log: appendLog,
+      });
+    }
+    const port = await serverProxy.start();
+    const want = 'proxy:' + port;
+    if (serverNetConfigured !== want) {
+      // <-loopback> drops Chromium's built-in bypass, so localhost goes to the
+      // server's localhost too: that is the point of this network.
+      await ses.setProxy({ proxyRules: 'http://127.0.0.1:' + port, proxyBypassRules: '<-loopback>' });
+      await ses.closeAllConnections?.();
+      serverNetConfigured = want;
+      appendLog(`[server-net] drawer tabs on the server network use 127.0.0.1:${port}`);
+    }
+  },
+};
+// The proxy asks for its password; only ever answered for our own proxy.
+app.on('login', (event, _wc, _details, authInfo, callback) => {
+  if (serverProxy && serverProxy.isOurs(authInfo)) {
+    event.preventDefault();
+    callback(serverProxy.credentials.user, serverProxy.credentials.pass);
+  }
+});
+const browserDrawer = createBrowserDrawer({
+  ipcMain,
+  getWindow: () => mainWindow,
+  log: appendLog,
+  loadUrl: (wc, url) => loadUrlWithGrace(wc, url),
+  serverNet,
+});
+/** A hidden browser window's entry, or a drawer tab's (same shape for the handlers below). */
+function browserEntry(key) {
+  return browserWindows.get(key) || browserDrawer.getEntry(key);
 }
 
 const browserIpcHandlers = {
@@ -2170,6 +2253,7 @@ const browserIpcHandlers = {
   },
 
   async browserClose(msg) {
+    if (isDrawerKey(msg.key)) return browserDrawer.close(msg);
     const entry = browserWindows.get(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     // Release the per-instance webRequest listeners so closures don't pin the
@@ -2182,14 +2266,14 @@ const browserIpcHandlers = {
   },
 
   async browserNavigate(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await loadUrlWithGrace(entry.win.webContents, msg.url);
     return { ok: true, url: entry.win.webContents.getURL() };
   },
 
   async browserScreenshot(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const image = await entry.win.webContents.capturePage();
     const buf = image.toPNG();
@@ -2197,7 +2281,7 @@ const browserIpcHandlers = {
   },
 
   async browserReadPage(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const wc = entry.win.webContents;
     const html = await wc.executeJavaScript(`
@@ -2221,14 +2305,14 @@ const browserIpcHandlers = {
   },
 
   async browserSource(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const html = await entry.win.webContents.executeJavaScript('document.documentElement.outerHTML');
     return { ok: true, html };
   },
 
   async browserClick(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(
       `document.querySelector(${JSON.stringify(msg.selector)})?.click()`
@@ -2237,7 +2321,7 @@ const browserIpcHandlers = {
   },
 
   async browserType(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     if (msg.selector) {
       await entry.win.webContents.executeJavaScript(
@@ -2249,7 +2333,7 @@ const browserIpcHandlers = {
   },
 
   async browserFill(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(`
       (function() {
@@ -2265,7 +2349,7 @@ const browserIpcHandlers = {
   },
 
   async browserSelect(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(`
       (function() {
@@ -2279,14 +2363,14 @@ const browserIpcHandlers = {
   },
 
   async browserEval(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const result = await entry.win.webContents.executeJavaScript(msg.code);
     return { ok: true, result: typeof result === 'string' ? result : JSON.stringify(result) };
   },
 
   async browserMouse(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const wc = entry.win.webContents;
     if (msg.action === 'click') {
@@ -2303,7 +2387,7 @@ const browserIpcHandlers = {
   // events, so this goes through the debugger, with touch emulation switched
   // on first so the page sees a touch device.
   async browserTouch(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const wc = entry.win.webContents;
     _attachDbg(wc);
@@ -2340,6 +2424,7 @@ const browserIpcHandlers = {
   },
 
   async browserResize(msg) {
+    if (isDrawerKey(msg.key)) return browserDrawer.resize(msg);
     const entry = browserWindows.get(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     entry.win.setContentSize(msg.width, msg.height);
@@ -2347,7 +2432,7 @@ const browserIpcHandlers = {
   },
 
   async browserScroll(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(`
       (function() {
@@ -2359,7 +2444,7 @@ const browserIpcHandlers = {
   },
 
   async browserWait(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const timeout = msg.timeout || 30000;
     const result = await entry.win.webContents.executeJavaScript(`
@@ -2377,21 +2462,21 @@ const browserIpcHandlers = {
   },
 
   async browserGoBack(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     entry.win.webContents.goBack();
     return { ok: true };
   },
 
   async browserGoForward(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     entry.win.webContents.goForward();
     return { ok: true };
   },
 
   async browserConsole(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     let logs = entry.consoleLogs;
     if (msg.countOnly) return { ok: true, count: logs.length };
@@ -2403,7 +2488,7 @@ const browserIpcHandlers = {
   },
 
   async browserNetwork(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     if (msg.action === 'start') { entry.recording = true; entry.networkEntries = []; return { ok: true, recording: true }; }
     if (msg.action === 'stop') { entry.recording = false; return { ok: true, recording: false }; }
@@ -2418,7 +2503,7 @@ const browserIpcHandlers = {
   },
 
   async browserCookies(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const ses = entry.win.webContents.session;
     if (!msg.action || msg.action === 'get') {
@@ -2439,7 +2524,7 @@ const browserIpcHandlers = {
   },
 
   async browserSnapshot(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const tree = await entry.win.webContents.executeJavaScript(`
       (function walk(el, depth) {
@@ -2456,7 +2541,7 @@ const browserIpcHandlers = {
   },
 
   async browserElements(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const sel = msg.selector || 'a,button,input,select,textarea,[role="button"],[onclick]';
     const elements = await entry.win.webContents.executeJavaScript(`
@@ -2475,7 +2560,7 @@ const browserIpcHandlers = {
   },
 
   async browserPdf(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const buf = await entry.win.webContents.printToPDF({
       landscape: msg.landscape || false,
@@ -2484,6 +2569,9 @@ const browserIpcHandlers = {
     return { ok: true, data: Buffer.from(buf).toString('base64') };
   },
 };
+
+// The drawer's own server calls (list, open, annotate, network...).
+Object.assign(browserIpcHandlers, browserDrawer.handlers);
 
 // ─── App Lifecycle ───
 

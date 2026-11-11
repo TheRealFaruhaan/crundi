@@ -64,6 +64,18 @@ localhost is your dev servers) or `"desktop"` (the person's connected desktop
 app, on their network); omitted, the desktop app when one is connected. Every
 later call on that key runs in the same place; `browser_list` shows where.
 
+Drawer tabs: `on: "drawer"` opens a visible tab in this project's browser drawer
+in the PC client (`network?`: `"client"` default or `"server"`; `show?`).
+`browser_list` also returns the drawer tabs the person opened (key
+`drawer:<id>`, `network`, `active`, `shown`). Drawer-only tools:
+`browser_point` (`key`, `x`/`y` or `selector`, `label?`, `show?`),
+`browser_annotate` (`key`, `shapes`: `{ kind: pin|box|arrow|label, x, y, width?,
+height?, toX?, toY?, selector?, text? }`, `clear?`, `show?`),
+`browser_annotations` (`key`, `image?`: the person's and your marks, the element
+under each, and an annotated screenshot), `browser_tab_network` (`key`,
+`network`: the page reloads on the new network). Coordinates are page CSS pixels
+in the viewport. Collaborators' chats cannot use the drawer.
+
 Navigation: `browser_navigate`, `browser_go_back`, `browser_go_forward`,
 `browser_wait` (`selector`, `timeout?`), `browser_close`, `browser_list`.
 

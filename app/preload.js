@@ -99,6 +99,26 @@ contextBridge.exposeInMainWorld('api', {
     devtools: (id) => ipcRenderer.invoke('wbrowser:devtools', id),
     close: (id) => ipcRenderer.invoke('wbrowser:close', id),
     onState: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('wbrowser:state', h); return () => ipcRenderer.removeListener('wbrowser:state', h); },
+    // The browser drawer (app/browser-drawer.js): the web UI holds the
+    // <webview>s, the main process holds their webContents and the debugger.
+    // Its presence is how a newer web UI knows this app has the drawer.
+    drawer: {
+      ready: () => ipcRenderer.send('drawer:ready'),
+      attach: (a) => ipcRenderer.invoke('drawer:attach', a),
+      detach: (tabId) => ipcRenderer.invoke('drawer:detach', tabId),
+      navigate: (tabId, url) => ipcRenderer.invoke('drawer:navigate', tabId, url),
+      nav: (tabId, dir) => ipcRenderer.invoke('drawer:nav', tabId, dir),
+      emulate: (tabId, config, scale) => ipcRenderer.invoke('drawer:emulate', tabId, config, scale),
+      devtools: (tabId) => ipcRenderer.invoke('drawer:devtools', tabId),
+      capture: (tabId) => ipcRenderer.invoke('drawer:capture', tabId),
+      describe: (tabId, points) => ipcRenderer.invoke('drawer:describe', tabId, points),
+      info: () => ipcRenderer.invoke('drawer:info'),
+      onInfo: (cb) => { const h = (_e, i) => cb(i); ipcRenderer.on('drawer:info', h); return () => ipcRenderer.removeListener('drawer:info', h); },
+      onState: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('drawer:state', h); return () => ipcRenderer.removeListener('drawer:state', h); },
+      // Requests from the main process (the server's chats acting on a tab).
+      onRequest: (cb) => { const h = (_e, r) => cb(r); ipcRenderer.on('drawer:request', h); return () => ipcRenderer.removeListener('drawer:request', h); },
+      reply: (reqId, result) => ipcRenderer.send('drawer:reply', reqId, result),
+    },
   },
 
   onBotStatus: (cb) => {

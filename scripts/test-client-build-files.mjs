@@ -53,6 +53,24 @@ check('node_modules is excluded wholesale first', /^\s*-\s*["']?!node_modules\/\
 const allowed = [...yml.matchAll(/^\s*-\s*["']?node_modules\/((?:@[^/\s]+\/)?[^/\s"']+)\/\*\*\/\*["']?\s*$/gm)].map((m) => m[1]);
 check('allowlist is not empty', allowed.length > 0);
 
+// ─── The app's own files ───
+// The client build lists app files one by one, so a module app/main.js
+// imports that is not listed is left out of the installer and the client dies
+// at startup with "Cannot find module". (app/browser-drawer.js nearly was.)
+{
+  const listed = yml.split('\n').map((l) => l.trim().replace(/^-\s*["']?|["']?$/g, ''));
+  const covers = (rel) => listed.some((l) => l === rel || (l.endsWith('/**/*') && rel.startsWith(l.slice(0, -4))));
+  const absent = [];
+  for (const f of ['app/main.js']) {
+    const src = readFileSync(join(root, f), 'utf8');
+    for (const m of src.matchAll(/(?:\bfrom\s+|\bimport\(\s*)['"](\.\/[^'"]+)['"]/g)) {
+      const rel = join(dirname(f), m[1]).split(sep).join('/');
+      if (!covers(rel)) absent.push(rel);
+    }
+  }
+  check('every local module app/main.js imports is in the client build', absent.length === 0, absent.join(', '));
+}
+
 // ─── Everything reachable, resolved the way Node resolves it ───
 function resolvePkg(name, fromDir) {
   let d = fromDir;

@@ -189,6 +189,17 @@ Left out, it uses the desktop app when one is connected. Testing a dev server on
 this machine's localhost, say `on: "server"`: on the desktop app, localhost is
 the person's computer, where nothing of yours is listening.
 
+**The browser drawer.** In the PC client each project has a browser drawer: tabs
+the person sees and uses beside the project. `browser_list` lists them
+(`on: "drawer"`, key `drawer:<id>`); `browser_open` with `on: "drawer"` adds one
+(`show: true` to bring it up). Every `browser_*` tool works on them, plus
+`browser_point` / `browser_annotate` to mark the page where the person sees it
+and `browser_annotations` to read what they marked (with the element under each
+mark and a screenshot). A drawer tab's `network` is `"client"` (the desktop
+app's network, the default) or `"server"` (this server's network, carried over
+the app's connection, so `http://127.0.0.1:<port>` is your dev server even when
+the app is on another machine); switch it with `browser_tab_network`.
+
 ### Secrets
 
 ```
