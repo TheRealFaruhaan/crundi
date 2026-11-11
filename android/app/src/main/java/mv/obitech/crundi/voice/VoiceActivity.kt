@@ -118,7 +118,16 @@ open class VoiceActivity : ComponentActivity() {
     private var inFront = false
     private val letSleep = Runnable { keepOn(false) }
     /** After a short silence (the server's screenCloseSeconds): the voice screen closes, even on a phone that stays awake; "Hey Cru" opens it again. */
-    private val closeIdle = Runnable { finish() }
+    private val closeIdle = Runnable { done() }
+
+    /**
+     * The voice screen is done by itself (quiet, asleep out of view, Cru said goodbye): it closes.
+     * Not in a bubble: a bubble's activity that finishes takes the bubble with it (11 Nov, the
+     * owner, 1.1.3-dev.38: folding Cru's bubble away made it disappear, as folding stops the
+     * activity, which ended the session, which finished it). There the session just ends and the
+     * bubble stays, folded or open, until the owner drags it away (or taps its X), as a chat's does.
+     */
+    private fun done() { if (!inBubble) finish() }
 
     private fun keepOn(on: Boolean) {
         val f = android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
@@ -129,7 +138,7 @@ open class VoiceActivity : ComponentActivity() {
     private fun asleep() {
         // Asleep while a picker is open: the screen stays for the file coming back.
         if (!inFront && picking) return
-        if (!inFront) { finish(); return }
+        if (!inFront) { done(); return }
         waiting = true
         // Keyboard mode: no microphone at all, "Hey Cru" included; typing wakes it.
         if (!controller.ui.value.keyboard) HeyCrundi.screenWaiting { wake() }
@@ -165,7 +174,7 @@ open class VoiceActivity : ComponentActivity() {
         keepOn(true)
         // Asked to close: gone, not asleep listening for Hey Cru.
         if (intent?.getBooleanExtra(EXTRA_CHAT, false) == true) VoicePrefs.setChatView(this, true)
-        controller = VoiceController(this, if (inBubble) "Cru bubble" else "Cru", ::locked, onFinish = { asleep() }, onDismiss = { finish() })
+        controller = VoiceController(this, if (inBubble) "Cru bubble" else "Cru", ::locked, onFinish = { asleep() }, onDismiss = { done() })
         setContent {
             CrundiTheme {
                 val ui by controller.ui.collectAsStateWithLifecycle()
