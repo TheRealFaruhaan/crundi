@@ -25,6 +25,15 @@ class CruChatTest {
         assertTrue(m[0].key != m[1].key)
     }
 
+    @Test fun linesSaidDuringATurnAreMessagesOfTheirOwn() {
+        val m = CruChat.fromTurns(listOf(VoiceTurn(7, 7000, "show me how", "That's all.", "", updates = listOf("Open the Kanban tab.", "Now click Add card."))))
+        assertEquals(listOf("show me how", "", "", ""), m.map { it.said })
+        assertEquals(listOf("", "Open the Kanban tab.", "Now click Add card.", "That's all."), m.map { it.speak })
+        // Shown live here, then loaded: not twice.
+        val live = listOf(CruMsg(7000, "show me how", "", "", live = true, key = "q1"), CruMsg(7001, "", "Open the Kanban tab.", "", live = true), CruMsg(7002, "", "That's all.", "", live = true))
+        assertEquals(4, CruChat.merge(live, m, older = false).size)
+    }
+
     @Test fun olderPagesGoFirstAFreshLoadKeepsWhatHappenedHere() {
         val loaded = CruChat.fromTurns(turns.take(1))
         val older = CruChat.fromTurns(listOf(VoiceTurn(0, 500, "hello", "Sir.", "")))

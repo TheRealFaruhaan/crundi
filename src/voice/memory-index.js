@@ -84,7 +84,7 @@ export function fuse(lists, k = RRF_K) {
  * @param {object} [o.embedder] createEmbedder(); tests pass a fake
  */
 /** A remembered turn ("Owner: …" or "Owner (<device>): …", then "\nCru: …\n<detail>") as its parts. */
-export function splitTurn({ id, at, text, media = null }) {
+export function splitTurn({ id, at, text, media = null, updates = null }) {
   const s = String(text || '');
   // A reply with no words (only what it showed) is kept as "…\nCru:", its space trimmed off.
   let cut = s.indexOf('\nCru: ');
@@ -102,7 +102,10 @@ export function splitTurn({ id, at, text, media = null }) {
   // What the reply showed (pictures, files, frames, cards), when it showed any.
   let shown = null;
   if (media) { try { const j = JSON.parse(String(media)); if (Array.isArray(j) && j.length) shown = j; } catch { /* unreadable: left out */ } }
-  return { id: Number(id), at: Number(at), said: report ? '' : said, speak, show, report, ...(from ? { device: from[1] } : {}), ...(shown ? { media: shown } : {}) };
+  // What Cru said during the turn, before its reply (say-now.js): each its own message.
+  let said2 = null;
+  if (updates) { try { const j = JSON.parse(String(updates)); if (Array.isArray(j) && j.length) said2 = j.map((u) => String((u && u.speak) || u || '').trim()).filter(Boolean); } catch { /* unreadable: left out */ } }
+  return { id: Number(id), at: Number(at), said: report ? '' : said, speak, show, report, ...(from ? { device: from[1] } : {}), ...(shown ? { media: shown } : {}), ...(said2 && said2.length ? { updates: said2 } : {}) };
 }
 
 export function createMemoryIndex({ dir, embedder } = {}) {
@@ -117,6 +120,8 @@ export function createMemoryIndex({ dir, embedder } = {}) {
   `);
   // What a turn showed in its reply (reply-media.js), as JSON: added after the table first shipped.
   try { db.exec('ALTER TABLE entries ADD COLUMN media TEXT'); } catch { /* already there */ }
+  // What Cru said during a turn, before its reply (say-now.js), as JSON: added later still.
+  try { db.exec('ALTER TABLE entries ADD COLUMN updates TEXT'); } catch { /* already there */ }
   const emb = embedder || createEmbedder({ cacheDir: join(dir, 'models') });
   const queue = [];
   let draining = false;
@@ -139,12 +144,13 @@ export function createMemoryIndex({ dir, embedder } = {}) {
    * Remember something. kind: 'turn' | 'summary' | 'note'. ref: for notes,
    * the file path (an edit replaces the old entry).
    */
-  function add(kind, text, { ref = null, project = null, at = Date.now(), media = null } = {}) {
+  function add(kind, text, { ref = null, project = null, at = Date.now(), media = null, updates = null } = {}) {
     const t = String(text || '').trim();
     if (ref) db.prepare('DELETE FROM entries WHERE kind = ? AND ref = ?').run(kind, ref);
     if (!t) return null;
     const m = Array.isArray(media) && media.length ? JSON.stringify(media) : null;
-    const r = db.prepare('INSERT INTO entries (kind, ref, at, project, text, media) VALUES (?, ?, ?, ?, ?, ?)').run(kind, ref, at, project, t.slice(0, 8000), m);
+    const u = Array.isArray(updates) && updates.length ? JSON.stringify(updates.map((x) => ({ speak: String((x && x.speak) || x || '').slice(0, 1000) }))) : null;
+    const r = db.prepare('INSERT INTO entries (kind, ref, at, project, text, media, updates) VALUES (?, ?, ?, ?, ?, ?, ?)').run(kind, ref, at, project, t.slice(0, 8000), m, u);
     const id = Number(r.lastInsertRowid);
     queue.push({ id, text: t.slice(0, 2000) });
     drain().catch(() => {});
@@ -186,8 +192,8 @@ export function createMemoryIndex({ dir, embedder } = {}) {
     turns({ before = 0, limit = 50 } = {}) {
       const n = Math.max(1, Math.min(200, Number(limit) || 50));
       const rows = before > 0
-        ? db.prepare("SELECT id, at, text, media FROM entries WHERE kind = 'turn' AND at < ? ORDER BY at DESC, id DESC LIMIT ?").all(Number(before), n)
-        : db.prepare("SELECT id, at, text, media FROM entries WHERE kind = 'turn' ORDER BY at DESC, id DESC LIMIT ?").all(n);
+        ? db.prepare("SELECT id, at, text, media, updates FROM entries WHERE kind = 'turn' AND at < ? ORDER BY at DESC, id DESC LIMIT ?").all(Number(before), n)
+        : db.prepare("SELECT id, at, text, media, updates FROM entries WHERE kind = 'turn' ORDER BY at DESC, id DESC LIMIT ?").all(n);
       return rows.map(splitTurn);
     },
     async settle() { await drain(); },

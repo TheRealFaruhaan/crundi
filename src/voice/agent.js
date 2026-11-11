@@ -95,6 +95,7 @@ Acting on your own:
 - Closing a chat: read it first (read_chat) to know what it is doing; with chats ticked under "Cru on its own" you then close it without asking. Close only what is finished, idle or no longer wanted.
 - Projects he keeps control of (a production product, say): you may propose work there and do it, but only after telling him what and getting his yes. Reminders about them are welcome. "I want to be in control" means "ask me first", not "never touch it".
 - What he says while you are busy (thinking, or answering a wake-up) is queued and answered next: never tell him you are busy or that he must wait.
+- You can speak more than once in a turn: say_now puts a line in front of him at once, as its own message, while you carry on (a short update while something takes several steps, each step when you walk him through something, with point to ring what to click). Your answer still ends the turn; don't repeat what you already said. A quick request needs none.
 - When he sets a rule like these ("from now on…", "always…", "don't ask me about…"), write it into persona.md (how he wants you to be) or owner.md (facts about him) at once with the memory tool, so it lasts beyond this conversation. Then say it is noted.
 - Ask only when an instruction is truly unclear, or the step is destructive or risky; then ask one short question.
 
@@ -210,7 +211,8 @@ export function cleanHistory(history) {
 export async function runVoiceTool(t, name, input, signals) {
   if (!t) return { isError: true, content: `No tool called ${name}` };
   try {
-    let out = await t.run(input || {});
+    // The turn's signals too: say_now (say-now.js) needs to know whose turn it is.
+    let out = await t.run(input || {}, signals);
     // Text and pictures (view_widget): MCP-style blocks become the API's own.
     if (out && typeof out === 'object' && Array.isArray(out.content)) {
       const blocks = out.content.map((b) => (b && b.type === 'image' && b.data
@@ -225,6 +227,12 @@ export async function runVoiceTool(t, name, input, signals) {
       if (out.needsUnlock) signals.needsUnlock = true;
       if (out.phoneAction) signals.phoneActions.push(out.phoneAction);
       if (out.close) signals.close = true;
+      // Said during the turn (say-now.js): each its own message, kept with the turn.
+      if (out.update) {
+        if (signals.updates) signals.updates.push(out.update);
+        const { update, ...rest } = out;
+        out = rest;
+      }
       // Shown in the reply (reply-media.js): kept for the chat view, not handed back to the model.
       if (Array.isArray(out.media)) {
         if (signals.media) for (const m of out.media) if (signals.media.length < MAX_REPLY_MEDIA) signals.media.push(m);
@@ -333,7 +341,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
    * One spoken (or typed) request.
    * @returns {Promise<{ok:boolean, speak?:string, show?:string, tools?:string[], costUsd?:number, error?:string, limitReached?:boolean}>}
    */
-  async function turn(text, { where = '', device = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', device = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false, requestId = '', sayNow = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     const s = settings.getSettings();
@@ -348,7 +356,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
     const used = [];
     let cost = 0;
     const cache = { read: 0, written: 0, uncached: 0 };
-    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [], media: [] };
+    const signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [], media: [], updates: [], requestId: String(requestId || ''), sayNow: !!sayNow, report };
     const me = { abort: new AbortController(), cancelled: false, signals };
     inFlight = me;
     let start = history.length;
@@ -385,7 +393,7 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
         history.push({ role: 'assistant', content: withoutBlankText(res.content) });
 
         if (res.stop_reason === 'refusal') {
-          return { ok: true, speak: refusal, show: '', tools: used, costUsd: cost, cache };
+          return { ok: true, speak: refusal, show: '', tools: used, costUsd: cost, cache, updates: signals.updates };
         }
         if (res.stop_reason === 'tool_use') {
           const calls = res.content.filter(b => b.type === 'tool_use');
@@ -400,8 +408,8 @@ export function createVoiceAgent({ tools, client = (apiKey) => new Anthropic({ a
           return { ok: false, error: 'The answer ran out of room before it was finished', tools: used, costUsd: cost, cache };
         }
         const parts = splitReply(reply);
-        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, media: signals.media, device: report ? '' : device, at: now.getTime() }); } catch { /* memory is best effort */ }
-        return { ok: true, ...parts, media: signals.media, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close };
+        try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, media: signals.media, updates: signals.updates, device: report ? '' : device, at: now.getTime() }); } catch { /* memory is best effort */ }
+        return { ok: true, ...parts, media: signals.media, updates: signals.updates, tools: used, costUsd: cost, cache, pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close };
       }
       return { ok: false, error: 'Too many lookups for one request; try asking more specifically', tools: used, costUsd: cost, cache };
     } catch (e) {

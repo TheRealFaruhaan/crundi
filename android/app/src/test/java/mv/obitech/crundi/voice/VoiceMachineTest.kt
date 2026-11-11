@@ -216,6 +216,57 @@ class VoiceMachineTest {
         assertEquals(VoiceEffect.Say("Sunny, Sir."), fx3.last())
     }
 
+    // Cru speaks more than once in a turn (say_now): each line said as it comes, then the answer.
+    @Test fun linesOfTheTurnAreSaidThenTheAnswer() {
+        val (s1, _) = run(*listening(), VoiceEvent.Utterance("show me how to add a card", 30))
+        val (s2, fx2) = m.on(s1, VoiceEvent.Line("say1", "First, open the Kanban tab.", 40))
+        assertEquals(Phase.Speaking, s2.phase)
+        assertTrue(s2.midTurn)
+        assertEquals(VoiceEffect.Say("First, open the Kanban tab."), fx2.last())
+        // The next line waits for this one; the answer waits for both.
+        val (s3, _) = m.on(s2, VoiceEvent.Line("say2", "Now click Add card.", 45))
+        val (s4, fx4) = m.on(s3, VoiceEvent.Reply(true, "That's all, Sir.", "", "", 50))
+        assertEquals(Phase.Speaking, s4.phase)
+        assertTrue(fx4.none { it is VoiceEffect.Say })
+        // The first is said: told to the server; the answer is here, so the second is only shown.
+        val (s5, fx5) = m.on(s4, VoiceEvent.SpeechDone(60))
+        assertTrue(fx5.contains(VoiceEffect.LineDone("say1", "said")))
+        assertTrue(fx5.contains(VoiceEffect.LineDone("say2", "shown")))
+        assertEquals(VoiceEffect.Say("That's all, Sir."), fx5.last())
+        assertFalse(s5.midTurn)
+        val (s6, _) = m.on(s5, VoiceEvent.SpeechDone(70))
+        assertEquals(Phase.Listening, s6.phase)
+    }
+
+    @Test fun eachLineWaitsForTheOneBeforeWhenNoAnswerYet() {
+        val (s1, _) = run(*listening(), VoiceEvent.Utterance("walk me through it", 30), VoiceEvent.Line("a", "Step one.", 40), VoiceEvent.Line("b", "Step two.", 41))
+        val (s2, fx2) = m.on(s1, VoiceEvent.SpeechDone(50))
+        assertTrue(fx2.contains(VoiceEffect.LineDone("a", "said")))
+        assertEquals(VoiceEffect.Say("Step two."), fx2.last())
+        val (s3, fx3) = m.on(s2, VoiceEvent.SpeechDone(60))
+        assertTrue(fx3.contains(VoiceEffect.LineDone("b", "said")))
+        assertEquals(Phase.Thinking, s3.phase)
+    }
+
+    @Test fun aTypedTurnsLinesAreShownNotSaid() {
+        val (s1, _) = run(*listening(), VoiceEvent.Typed("check the server", 30))
+        val (s2, fx2) = m.on(s1, VoiceEvent.Line("a", "Checking the server.", 40, silent = true))
+        assertEquals(Phase.Thinking, s2.phase)
+        assertEquals(listOf<VoiceEffect>(VoiceEffect.LineDone("a", "shown")), fx2)
+    }
+
+    @Test fun talkingOverALineKeepsTheTurnGoing() {
+        val (s1, _) = run(VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10, live = true), VoiceEvent.Utterance("fix the server", 30), VoiceEvent.Line("a", "Checking the disk now, Sir.", 40))
+        val (s2, fx2) = m.on(s1, VoiceEvent.Utterance("and the logs too please", 45))
+        assertEquals(Phase.Thinking, s2.phase)
+        assertEquals("and the logs too please", s2.pending)
+        assertTrue(fx2.contains(VoiceEffect.LineDone("a", "cut")))
+        assertTrue(fx2.none { it is VoiceEffect.Ask })
+        // The answer comes: what he said goes next.
+        val (_, fx3) = m.on(s2, VoiceEvent.Reply(true, "Done, Sir.", "", "", 60))
+        assertTrue(fx3.contains(VoiceEffect.Ask("and the logs too please")))
+    }
+
     @Test fun speakingIsNeverCutOffByTheTimeout() {
         val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40), VoiceEvent.Tick(90_000))
         assertEquals(Phase.Speaking, s.phase)

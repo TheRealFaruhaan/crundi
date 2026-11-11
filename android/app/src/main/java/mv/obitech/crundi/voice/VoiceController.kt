@@ -363,6 +363,12 @@ class VoiceController(
 
     /** The next question asked was typed or tapped, not said: the server's voice check does not apply to it. */
     private var typedNext = false
+    /**
+     * The request this screen waits on (capability "voice-say-now"): its [id] matches the lines Cru says
+     * during it (ListenEvent.Update); [had] those already shown, [shown] any were, so the answer is its own message.
+     */
+    private class Asking(val id: String, val turn: Int, val typed: Boolean) { val had = HashSet<String>(); var shown = false }
+    private var asking: Asking? = null
 
     /** Cru's news heard on opening (CruBubble.takePending): said as a report is, once the session listens. */
     fun news(speak: String) { if (running && speak.isNotBlank()) dispatch(VoiceEvent.Report(speak, "", now())) }
@@ -402,6 +408,7 @@ class VoiceController(
     private fun run(fx: VoiceEffect) {
         when (fx) {
             is VoiceEffect.Ask -> ask(fx.text)
+            is VoiceEffect.LineDone -> if (fx.id.isNotEmpty()) api?.let { v -> scope.launch { v.updateAck(fx.id, fx.how) } }
             is VoiceEffect.Say -> {
                 speakingNow = true
                 barge.reset()
@@ -483,8 +490,10 @@ class VoiceController(
         val requestId = java.util.UUID.randomUUID().toString()
         val key = "q$requestId"
         _ui.update { it.copy(history = CruChat.asked(it.history, said, now(), key)) }
+        val sayNow = VoiceApi.SAY_NOW in _ui.value.caps && !_ui.value.state.kid
+        val me = Asking(requestId, turn, typed).also { asking = it }
         scope.launch {
-            val r = try { voice.turn(text, where, locked, typed = typed, attachments = att.attachments, refs = att.refs, requestId = requestId) } catch (e: ApiException) {
+            val r = try { voice.turn(text, where, locked, typed = typed, attachments = att.attachments, refs = att.refs, requestId = requestId, sayNow = sayNow) } catch (e: ApiException) {
                 VoiceReply(ok = false, error = when {
                     e.offline -> "I can't reach the server, Sir."
                     VoiceApi.unsupported(e) -> VoiceApi.UNSUPPORTED
@@ -496,9 +505,15 @@ class VoiceController(
             // Typed: read, not said (no speech made for it, so Cru works without Deepgram); the
             // speaker on its bubble says it. An older server has no chat view to tap it in: said as before.
             // The chat view: what was asked and the answer, when it is this turn's.
-            val current = _ui.value.state.let { it.phase == Phase.Thinking && it.turn == turn }
+            // Thinking, or saying a line of this turn (the answer waits for it in the machine).
+            val current = _ui.value.state.let { (it.phase == Phase.Thinking || (it.phase == Phase.Speaking && it.midTurn)) && it.turn == turn }
             if (r.cancelled) _ui.update { it.copy(history = CruChat.drop(it.history, key)) }
-            else if (current && r.ok) _ui.update { it.copy(history = CruChat.answered(it.history, key, said, r.speak, r.show, now(), r.media)) }
+            else if (current && r.ok) {
+                // Lines this screen never got (the socket dropped) go in first; after any lines, the answer is a message of its own.
+                for (u in r.updates) if (u.id.isNotEmpty() && me.had.add(u.id) && u.speak.isNotBlank()) { me.shown = true; chatAdd("", u.speak.trim(), "") }
+                if (me.shown) chatAdd("", r.speak, r.show, r.media)
+                else _ui.update { it.copy(history = CruChat.answered(it.history, key, said, r.speak, r.show, now(), r.media)) }
+            }
             dispatch(VoiceEvent.Reply(r.ok, r.speak, r.show, r.error, now(), r.pending.firstOrNull()?.question.orEmpty(), r.needsUnlock, r.close, turn = turn, cancelled = r.cancelled, acted = r.acted.map { it.what }.filter { it.isNotBlank() }, silent = typed && VoiceApi.HISTORY in _ui.value.caps))
             // The voice was not the owner's: Cru answered, but changed nothing.
             if (r.ok && !r.cancelled && r.speaker?.unrecognised == true && current) note(NOT_RECOGNISED)
@@ -620,7 +635,7 @@ class VoiceController(
             val s = voice.listenKeyboard(object : SocketListener {
                 override fun onMessage(text: String) {
                     val ev = ListenEvent.parse(text) ?: return
-                    if (ev is ListenEvent.Report || ev is ListenEvent.Settings || ev is ListenEvent.Screen || ev is ListenEvent.Kid || ev is ListenEvent.GameCommand) scope.launch { if (gen == kbGen && running) heard(ev) }
+                    if (ev is ListenEvent.Report || ev is ListenEvent.Update || ev is ListenEvent.Settings || ev is ListenEvent.Screen || ev is ListenEvent.Kid || ev is ListenEvent.GameCommand) scope.launch { if (gen == kbGen && running) heard(ev) }
                 }
                 override fun onClosed(code: Int, reason: String) {
                     scope.launch { if (gen == kbGen) kbSocket = null }
@@ -655,6 +670,12 @@ class VoiceController(
             // What it showed joins the chat view; only words are said (a report of media alone is just shown).
             is ListenEvent.Report -> { chatAdd("", ev.speak, ev.show, ev.media); if (ev.speak.isNotBlank() || ev.show.isNotBlank()) dispatch(VoiceEvent.Report(ev.speak, ev.show, now())) }
             is ListenEvent.Discard -> dispatch(VoiceEvent.Discard(now()))
+            // A line Cru says during the turn this screen waits on: its own message, said now (the machine).
+            is ListenEvent.Update -> asking?.let { a ->
+                if (a.id != ev.requestId || a.turn != _ui.value.state.turn || !a.had.add(ev.id)) return@let
+                if (ev.speak.isNotBlank()) { a.shown = true; chatAdd("", ev.speak.trim(), "") }
+                dispatch(VoiceEvent.Line(ev.id, ev.speak, now(), silent = a.typed && VoiceApi.HISTORY in _ui.value.caps))
+            }
             // A setting changed on the server (Cru's volume, say): picked up at once.
             ListenEvent.Settings -> api?.let { v -> scope.launch { refreshSettings(v) } }
             is ListenEvent.Screen -> _ui.update { it.copy(screen = ev.screen) }

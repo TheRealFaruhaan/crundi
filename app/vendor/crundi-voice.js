@@ -992,6 +992,7 @@
   function heard(e) {
     if (!S) return;
     if (e.type === 'ready') { S.wsLost = false; S.live = !!e.echoFilter; if (S.phase === 'start') { tone('listen'); S.phase = 'listen'; S.quietSince = Date.now(); if (S.reports.length) { var q = S.reports.shift(); tell(q.speak, q.show, q.media); } } }
+    else if (e.type === 'update') { sayUpdate(e); return; }
     else if (e.type === 'report') { if (e.kid && typeof e.expressivity === 'number') S.nextExpr = e.expressivity; tell(e.speak || '', e.show || '', e.media); }
     // Cru changed the live screen; kid mode switched; a command for the game on screen.
     else if (e.type === 'screen') { showScreen(e.screen || null); return; }
@@ -1056,9 +1057,9 @@
     // Cru says "wait a moment" (thinking) or shows its wait sign (talking), and
     // listens again once it has answered.
     if (S.kid && (S.phase === 'think' || S.phase === 'speak')) { kidWait(); return; }
-    if (S.phase === 'think') { S.pendingTyped = (S.pending ? S.pendingTyped : true) && !!typed; S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; if (S.heldReply) whenQuiet(); render(); return; }
-    // Said over Crundi (the stream stayed on): cut it off and ask that now.
+    // Said over Crundi (the stream stayed on): cut it off and ask that now (over a line of the turn: next, as below).
     if (S.phase === 'speak') { if (!typed && !(S.live && talksOver(t, S.lastSaid, 1))) return; cutIn(); }
+    if (S.phase === 'think') { S.pendingTyped = (S.pending ? S.pendingTyped : true) && !!typed; S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; if (S.heldReply) whenQuiet(); render(); return; }
     if (S.phase === 'ended' && !typed) return;
     // "Hey Cru" while already awake: here at once, without asking Claude.
     if (isCalling(t)) { var h = hereLine(); S.asked = t; S.heard = ''; S.reply = h; S.detail = ''; S.notice = ''; S.quietSince = Date.now(); if (speaks(S, 'reply', typed)) speak(h); render(); return; }
@@ -1087,12 +1088,27 @@
     var s = S, before = older && s.msgs && s.msgs.length ? s.msgs[0].at : 0;
     api('/api/voice/history?limit=40' + (before ? '&before=' + before : '')).then(function (r) {
       if (S !== s || !r || r.ok === false) return;
-      var got = r.turns || [];
-      var recent = got.slice(-3).map(function (m) { return String(m.said || '').trim(); });
-      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live && !(!m.speak && !m.show && !(m.media && m.media.length) && recent.indexOf(String(m.said || '').trim()) >= 0); }));
+      var raw = r.turns || [];
+      var recent = raw.slice(-3).map(function (m) { return String(m.said || '').trim(); });
+      // Lines said during a turn that is in the history now: not kept twice.
+      var said3 = [].concat.apply([], raw.slice(-3).map(function (m) { return (m.updates || []).concat(m.updates && m.updates.length ? [String(m.speak || '').trim()] : []); }));
+      var got = expandTurns(raw);
+      s.msgs = older ? got.concat(s.msgs || []) : got.concat((s.msgs || []).filter(function (m) { return m.live && !(!m.speak && !m.show && !(m.media && m.media.length) && recent.indexOf(String(m.said || '').trim()) >= 0) && !(!m.said && said3.indexOf(String(m.speak || '').trim()) >= 0); }));
       s.moreChat = !!r.more;
       renderChat(!older);
     });
+  }
+  /** A turn from the history with lines said during it (say_now): his words, each line, then the answer, each its own message. */
+  function expandTurns(list) {
+    var out = [];
+    (list || []).forEach(function (t) {
+      var ups = Array.isArray(t.updates) ? t.updates.filter(function (u) { return String(u || '').trim(); }) : [];
+      if (!ups.length) { out.push(t); return; }
+      if (t.said) out.push({ at: t.at, said: t.said, speak: '', show: '', device: t.device });
+      ups.forEach(function (u) { out.push({ at: t.at, said: '', speak: String(u).trim(), show: '', report: t.report }); });
+      out.push({ at: t.at, said: '', speak: t.speak || '', show: t.show || '', media: t.media, report: t.report });
+    });
+    return out;
   }
   /** A finished exchange (or Cru speaking up) joins the chat view as it happens. */
   function chatAdd(said, speak, show, media) {
@@ -1228,6 +1244,56 @@
    * He has stopped (his words came, or nothing came after the sign): the reply held for him goes on,
    * or the news waiting is told. Still talking: looked at again when his pause would be over.
    */
+  /**
+   * A line Cru says during its turn (say_now, voice/say-now.js), for the request this screen is waiting
+   * on: its own message in the conversation, and said now (Cru keeps working meanwhile). One being said:
+   * the next waits for it. He typed, Cru is muted, or he is speaking: only shown. The server is told
+   * once it has been said (or shown), so Cru's next step (the next ring, the next line) lines up with it.
+   */
+  function sayUpdate(e) {
+    var rq = S.req, text = String(e.speak || '').trim();
+    if (!rq || !e.id || e.requestId !== rq.id || rq.turn !== S.turn || rq.had[e.id]) return;
+    rq.had[e.id] = 1;
+    if (!text) { ackUpdate(e.id, 'shown'); return; }
+    rq.shown = true;
+    chatAdd('', text, '', null);
+    var mid = S.phase === 'speak' && S.midTurn === S.turn;
+    if (S.phase !== 'think' && !mid) { ackUpdate(e.id, 'shown'); render(); return; }
+    if (!speaks(S, 'reply', rq.typed) || talking(S)) { if (!mid) { S.reply = text; S.detail = ''; } ackUpdate(e.id, 'shown'); render(); return; }
+    if (mid) { S.updQ.push({ id: e.id, text: text }); return; }
+    sayLine(e.id, text);
+  }
+  function sayLine(id, text) {
+    S.midTurn = S.turn; S.updId = id; S.reply = text; S.detail = ''; S.notice = '';
+    clearTimeout(S.thinkTimer);
+    speak(text);
+    render();
+  }
+  function ackUpdate(id, how) { if (id) post('/api/voice/update/ack', { id: id, how: how }).catch(function () { /* the tool stops waiting by itself */ }); }
+  /** Lines still waiting to be said: only shown (the answer is here, or he cut in). */
+  function dropUpdQ() { var q = (S && S.updQ) || []; if (S) S.updQ = []; q.forEach(function (u) { ackUpdate(u.id, 'shown'); }); }
+  /** A line of the turn has been said: back to thinking (the turn goes on), then the next line, or the answer held for it. */
+  function afterLine() {
+    var id = S.updId; S.updId = ''; S.midTurn = 0;
+    ackUpdate(id, 'said');
+    S.speaking = false; S.saidUntil = Date.now(); S.unknownVoice = false;
+    S.phase = 'think'; S.heard = S.pending || ''; S.quietSince = Date.now();
+    resumeStream();
+    if (S.heldReply) { dropUpdQ(); whenQuiet(); render(); return; }
+    var nx = S.updQ.shift();
+    if (nx && !talking(S)) { sayLine(nx.id, nx.text); return; }
+    if (nx) { ackUpdate(nx.id, 'shown'); dropUpdQ(); }
+    // The calm pulse again while the answer is worked on.
+    var s0 = S, turn = S.turn, pulse = function () { if (S !== s0 || S.phase !== 'think' || S.turn !== turn) return; tone('think'); S.thinkTimer = setTimeout(pulse, 4000); };
+    clearTimeout(S.thinkTimer); S.thinkTimer = setTimeout(pulse, 4000);
+    render();
+  }
+  /** Crundi has stopped talking: the microphone goes back to the server (as afterSpeech). */
+  function resumeStream() {
+    if (S.live) { said(); releaseLater(); }
+    else setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
+  }
+
   function whenQuiet() {
     if (!S) return;
     clearTimeout(S.quietTimer); S.quietTimer = null;
@@ -1417,13 +1483,21 @@
     // "Yes" never appeared). The id makes a resend of this request get this turn's answer (voice/turns.js).
     var requestId = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10), mine = null;
     if (!hidden && S.asked) { mine = { at: Date.now(), said: S.asked, speak: '', show: '', live: true, key: requestId }; (S.msgs = S.msgs || []).push(mine); if (S.chat) renderChat(true); }
-    post('/api/voice/turn', { text: t, where: turnWhere(), page: S.opts.pageId || undefined, locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs, requestId: requestId }).then(function (r) {
+    // What Cru says during this turn (say_now) comes on the socket for this request (sayUpdate).
+    var rq = S.req = { id: requestId, turn: turn, typed: !!typed, had: {}, shown: false }; S.updQ = [];
+    post('/api/voice/turn', { text: t, where: turnWhere(), page: S.opts.pageId || undefined, locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs, requestId: requestId, sayNow: !S.kid }).then(function handle(r) {
       if (!S) return;
       // Cancelled: never said or shown as an error, just what it had already done; the message goes.
       if (r && r.cancelled) { if (mine && S.msgs) { S.msgs = S.msgs.filter(function (m) { return m !== mine; }); renderChat(); } if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }
+      // Cru is still saying a line of this turn (say_now): the answer comes once it has been said.
+      if (S.turn === turn && S.phase === 'speak' && S.midTurn === turn) { S.heldReply = function () { handle(r); }; return; }
       // Taken back meanwhile (or a newer question): not this answer's place.
       if (S.turn !== turn || S.phase !== 'think') return;
       var ok = r && r.ok;
+      // Lines of this turn not said yet are only shown now (the answer is here); any this screen never got
+      // (its socket dropped) join the conversation before the answer.
+      dropUpdQ();
+      if (ok && Array.isArray(r.updates)) r.updates.forEach(function (u) { if (u && u.id && !rq.had[u.id] && String(u.speak || '').trim()) { rq.had[u.id] = 1; rq.shown = true; chatAdd('', String(u.speak).trim(), '', null); } });
       S.reply = ok ? (r.speak || '') : ''; S.detail = ok ? (r.show || '') : ''; S.notice = ok ? '' : (r && r.error || 'Something went wrong');
       // The kid screen never shows a grown-up's error.
       if (!ok && S.kid) S.notice = 'Oops! I need a grown-up to help me. Let\'s try again soon!';
@@ -1439,7 +1513,9 @@
       // Kid Cru's mood: how lively its voice is.
       S.expr = ok && typeof r.expressivity === 'number' ? r.expressivity : null;
       var say = ok ? S.reply : S.notice;
-      if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; mine.media = mediaOf(r.media); if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail, r.media); }
+      // After lines said during the turn, the answer is a message of its own (below them), not under his words.
+      if (ok && rq.shown) { S.lastChatAsked = S.asked; chatAdd('', S.reply, S.detail, r.media); }
+      else if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; mine.media = mediaOf(r.media); if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail, r.media); }
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
       var go = function () {
         if (!S || S.turn !== turn || S.phase !== 'think') return;
@@ -1511,6 +1587,8 @@
 
   function afterSpeech() {
     if (!S) return;
+    // A line said during the turn (say_now): the turn goes on.
+    if (S.midTurn && S.midTurn === S.turn && S.phase === 'speak') { afterLine(); return; }
     if (S.closing) { close(); return; }
     // News that came while Cru was busy.
     var q = nextReport(S);
@@ -1518,8 +1596,7 @@
     S.speaking = false; S.saidUntil = Date.now(); S.unknownVoice = false;
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
     if (S.reportOnly && !S.reports.length) S.reportCloseAt = Date.now() + REPORT_LINGER_MS;
-    if (S.live) { said(); releaseLater(); }
-    else setTimeout(function () { if (S && (S.phase === 'listen' || S.phase === 'think')) { S.streaming = true; try { S.ws && S.ws.send(JSON.stringify({ type: 'resume' })); } catch (e) { /* gone */ } } }, PAUSE_AFTER_SPEECH_MS);
+    resumeStream();
     if (S.pending) { var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; ask(p, false, pt); }
     render();
   }
@@ -1937,13 +2014,18 @@
   /** Crundi stops talking now and listens: the owner talked over it (or tapped). */
   /** Cut off (a tap, muted) with words held while it spoke (holdUtterance): they are asked now. */
   function askHeld() {
+    // Cut off a line of the turn (a tap, muted): an answer that came meanwhile goes on.
+    if (S && S.phase === 'think' && S.heldReply) { whenQuiet(); return; }
     if (!S || !String(S.pending || '').trim() || S.phase !== 'listen') return;
     var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; ask(p, false, pt);
   }
 
   function cutIn() {
+    // Over a line said during the turn (say_now): it stops, the turn goes on (what he says waits for its answer).
+    var mid = S.midTurn && S.midTurn === S.turn && S.phase === 'speak';
     stopSpeaking(S);
-    S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); S.streaming = true; S.hintAt = 0;
+    S.saidUntil = Date.now(); S.phase = mid ? 'think' : 'listen'; S.heard = mid ? (S.pending || '') : ''; S.quietSince = Date.now(); S.streaming = true; S.hintAt = 0;
+    if (mid) { ackUpdate(S.updId, 'cut'); S.updId = ''; S.midTurn = 0; S.speaking = false; dropUpdQ(); }
     // Tapped: straight back to the server. Not the pre-roll: that is Cru's own voice.
     if (S.live) { said(); release(false); } else wsSend({ type: 'resume' });
   }
@@ -2619,7 +2701,7 @@
     tell(say, show, media);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive, canTell: canTell, nextReport: nextReport, holdUtterance: holdUtterance, talking: talking, speechSign: speechSign }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive, canTell: canTell, nextReport: nextReport, holdUtterance: holdUtterance, talking: talking, speechSign: speechSign, expandTurns: expandTurns }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

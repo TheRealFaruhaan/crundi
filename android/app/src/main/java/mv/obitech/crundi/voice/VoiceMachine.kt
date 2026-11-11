@@ -90,6 +90,12 @@ data class VoiceState(
     val speechAt: Long = 0,
     /** The answer that came while he was speaking: it goes on once he has finished (his words first). */
     val heldReply: VoiceEvent.Reply? = null,
+    /** Cru is saying a line of its turn (say_now, capability "voice-say-now"): the turn goes on after it. */
+    val midTurn: Boolean = false,
+    /** That line's id, for the server's ack. */
+    val lineId: String = "",
+    /** Lines of the turn that came while one was being said: said next (id to words). */
+    val lines: List<Pair<String, String>> = emptyList(),
 )
 
 /**
@@ -141,6 +147,8 @@ sealed interface VoiceEvent {
     data class Unlocked(val now: Long) : VoiceEvent
     data class Tick(val now: Long) : VoiceEvent
     data object Close : VoiceEvent
+    /** A line Cru says during the turn now being answered (say_now): its own message, said now. [silent]: the turn was typed. */
+    data class Line(val id: String, val text: String, val now: Long, val silent: Boolean = false) : VoiceEvent
     /** Cru has news, unasked: said now if it is just listening, else once it is free. */
     data class Report(val speak: String, val show: String, val now: Long) : VoiceEvent
     /** The owner is doing something that is not words heard (typing in keyboard mode): the microphone's timeout starts again. */
@@ -149,6 +157,8 @@ sealed interface VoiceEvent {
 
 sealed interface VoiceEffect {
     data class Ask(val text: String) : VoiceEffect
+    /** A line of the turn has been said ([how] "said"), only shown ("shown") or talked over ("cut"): the server is told, so Cru carries on. */
+    data class LineDone(val id: String, val how: String) : VoiceEffect
     data class Say(val text: String) : VoiceEffect
     data object StopSaying : VoiceEffect
     data object PauseStream : VoiceEffect
@@ -248,9 +258,12 @@ class VoiceMachine(
                 // Asked anew (Listening -> Thinking): a held answer is an older turn's, dropped by its turn number when it runs.
                 whenQuiet(n, e.now, fx)
             }
+            is VoiceEvent.Line -> line(s, e)
             is VoiceEvent.Reply -> {
                 // Cancelled: never said or shown as an error; just what had already been done.
                 if (e.cancelled) return (if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) else s) to emptyList()
+                // A line of this turn is still being said: the answer comes once it has been.
+                if (s.phase == Phase.Speaking && s.midTurn && (e.turn < 0 || e.turn == s.turn)) return s.copy(heldReply = e) to emptyList()
                 if (s.phase != Phase.Thinking || (e.turn >= 0 && e.turn != s.turn)) return s to emptyList()
                 // He has begun speaking again: he finishes first, then his words go (or this is said).
                 if (talking(s, e.now)) return s.copy(heldReply = e) to emptyList()
@@ -258,13 +271,16 @@ class VoiceMachine(
                 // Muted: nothing is said (kid mode always talks).
                 val say = if (e.silent || !s.speaks()) "" else if (e.ok) e.speak.trim() else e.error.trim()
                 val next = s.copy(reply = if (e.ok) e.speak.trim() else "", detail = if (e.ok) e.show.trim() else "", notice = if (e.ok) (if (e.needsUnlock) "Unlock the phone to do that." else "") else e.error.trim(), quietSince = e.now, activeSince = e.now, question = e.question, needsUnlock = e.needsUnlock, closing = e.ok && e.close, cue = "")
+                // Lines still waiting to be said: only shown (the answer is here).
+                val dropped = s.lines.map { VoiceEffect.LineDone(it.first, "shown") }
                 // The owner spoke again while Crundi thought: that goes now; the answer stays on screen, unsaid.
                 if (s.pending.isNotBlank()) {
-                    val (n, fx) = ask(next.copy(pending = "", closing = false), s.pending, e.now, keepReply = true)
-                    return n to fx
+                    val (n, fx) = ask(next.copy(pending = "", closing = false, lines = emptyList()), s.pending, e.now, keepReply = true)
+                    return n to (dropped + fx)
                 }
-                if (say.isEmpty()) afterSpeech(next, e.now)
-                else next.copy(phase = Phase.Speaking, lastSaid = say) to sayFx(next, say)
+                val (n, fx) = if (say.isEmpty()) afterSpeech(next.copy(lines = emptyList()), e.now)
+                else next.copy(phase = Phase.Speaking, lastSaid = say, lines = emptyList()) to sayFx(next, say)
+                n to (dropped + fx)
             }
             is VoiceEvent.Typed -> if (s.phase == Phase.Ended) s to emptyList() else typed(if (e.tap) s else s.copy(lastTyped = true), e)
             is VoiceEvent.VoiceOff -> {
@@ -276,7 +292,7 @@ class VoiceMachine(
                 val n = s.copy(phase = Phase.Speaking, lastSaid = t, quietSince = e.now, activeSince = e.now)
                 n to sayFx(n, t)
             }
-            is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
+            is VoiceEvent.SpeechDone -> if (s.phase == Phase.Speaking && s.midTurn) afterLine(s, e.now) else if (s.phase == Phase.Speaking) afterSpeech(s, e.now) else s to emptyList()
             is VoiceEvent.BargeIn -> if (s.phase == Phase.Speaking) cutIn(s, e.now).let { (c, fx) -> askHeld(c, e.now, fx) } else s to emptyList()
             // The stream is on: wait for his words (a cough is not an interruption). Paused: this is all there is.
             // The phone's gate heard the owner over Cru: stop it here and now, and listen from his first word.
@@ -327,8 +343,12 @@ class VoiceMachine(
             // Said over Crundi (the stream stayed on): cut it off and ask that now.
             s.phase == Phase.Speaking -> if (s.live && Speech.talksOver(t, s.lastSaid, 1)) {
                 val (cut, fx0) = cutIn(s, now)
-                val (n, fx) = if (Speech.isCalling(t)) calledHere(cut, t, now) else ask(cut, t, now)
-                n to (fx0 + fx)
+                // Over a line of the turn: his words wait for its answer, as when said while it thinks.
+                if (cut.phase == Phase.Thinking) cut.copy(pending = join(cut.pending, t), heard = join(cut.pending, t)) to fx0
+                else {
+                    val (n, fx) = if (Speech.isCalling(t)) calledHere(cut, t, now) else ask(cut, t, now)
+                    n to (fx0 + fx)
+                }
             } else s to emptyList()
             // "Hey Cru" while already awake: here at once, without asking Claude.
             Speech.isCalling(t) -> calledHere(s, t, now)
@@ -392,8 +412,9 @@ class VoiceMachine(
         return s.copy(phase = Phase.Thinking, turn = s.turn + 1, asked = text, heard = text, reply = if (keepReply) s.reply else "", detail = if (keepReply) s.detail else "", notice = if (s.offline) s.notice else "", quietSince = now, activeSince = now, question = "", needsUnlock = false) to listOf(VoiceEffect.Ask(text), VoiceEffect.Cue)
     }
 
-    /** Cut off (a tap, muted) with words held while it spoke: they are asked now. */
+    /** Cut off (a tap, muted) with words held while it spoke: they are asked now. Over a line of the turn: an answer that came meanwhile goes on. */
     private fun askHeld(s: VoiceState, now: Long, fx: List<VoiceEffect>): Pair<VoiceState, List<VoiceEffect>> {
+        if (s.phase == Phase.Thinking && s.heldReply != null) return whenQuiet(s, now, fx)
         if (s.phase != Phase.Listening || s.pending.isBlank()) return s to fx
         val (n, more) = ask(s, "", now)
         return n to (fx + more)
@@ -408,7 +429,10 @@ class VoiceMachine(
 
     /** Crundi stops talking now and listens (the owner talked over it, or tapped). */
     private fun cutIn(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> =
-        s.copy(phase = Phase.Listening, heard = "", quietSince = now, activeSince = now, saidUntil = now) to (listOf(VoiceEffect.StopSaying) + doneFx(s))
+        // Over a line of the turn (say_now): it stops, and the turn goes on; what he says waits for its answer.
+        if (s.midTurn && s.phase == Phase.Speaking) s.copy(phase = Phase.Thinking, heard = s.pending, midTurn = false, lineId = "", lines = emptyList(), quietSince = now, activeSince = now, saidUntil = now) to
+            (listOf<VoiceEffect>(VoiceEffect.StopSaying, VoiceEffect.LineDone(s.lineId, "cut")) + s.lines.map { VoiceEffect.LineDone(it.first, "shown") } + doneFx(s))
+        else s.copy(phase = Phase.Listening, heard = "", quietSince = now, activeSince = now, saidUntil = now) to (listOf(VoiceEffect.StopSaying) + doneFx(s))
 
     /** Start saying [text]: a live stream is told what Crundi says, an older one is paused. */
     private fun sayFx(s: VoiceState, text: String): List<VoiceEffect> = holdFx(s, text) + VoiceEffect.Say(text)
@@ -419,6 +443,35 @@ class VoiceMachine(
 
     /** Crundi has stopped talking: the stream resumes (a live one is told). */
     private fun doneFx(s: VoiceState): List<VoiceEffect> = if (s.live) listOf(VoiceEffect.Said, VoiceEffect.ResumeStream) else listOf(VoiceEffect.ResumeStream)
+
+    /**
+     * A line of the turn (say_now): its own message, said now while Cru works on. One being said: the next
+     * waits for it. Typed, muted, or he is speaking: only shown. Either way the server is told (LineDone).
+     */
+    private fun line(s: VoiceState, e: VoiceEvent.Line): Pair<VoiceState, List<VoiceEffect>> {
+        val t = e.text.trim()
+        val mid = s.phase == Phase.Speaking && s.midTurn
+        if (t.isEmpty() || (s.phase != Phase.Thinking && !mid)) return s to listOf(VoiceEffect.LineDone(e.id, "shown"))
+        if (e.silent || !s.speaks() || talking(s, e.now)) return (if (mid) s else s.copy(reply = t, detail = "")) to listOf(VoiceEffect.LineDone(e.id, "shown"))
+        if (mid) return s.copy(lines = s.lines + (e.id to t)) to emptyList()
+        return sayLine(s, e.id, t, e.now)
+    }
+
+    private fun sayLine(s: VoiceState, id: String, t: String, now: Long): Pair<VoiceState, List<VoiceEffect>> {
+        val n = s.copy(phase = Phase.Speaking, midTurn = true, lineId = id, reply = t, detail = "", notice = "", lastSaid = t, cue = "", quietSince = now, activeSince = now)
+        return n to ((if (s.cue.isNotEmpty()) listOf<VoiceEffect>(VoiceEffect.StopCue) else emptyList()) + sayFx(n, t))
+    }
+
+    /** A line of the turn has been said: back to thinking, then the next line, or the answer held for it. */
+    private fun afterLine(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {
+        val back = s.copy(phase = Phase.Thinking, midTurn = false, lineId = "", heard = s.pending, quietSince = now, activeSince = now, saidUntil = now)
+        val fx = listOf<VoiceEffect>(VoiceEffect.LineDone(s.lineId, "said")) + doneFx(s)
+        if (back.heldReply != null) return whenQuiet(back.copy(lines = emptyList()), now, fx + back.lines.map { VoiceEffect.LineDone(it.first, "shown") })
+        val nx = back.lines.firstOrNull() ?: return back to fx
+        if (talking(back, now)) return back.copy(lines = emptyList()) to (fx + back.lines.map { VoiceEffect.LineDone(it.first, "shown") })
+        val (n, more) = sayLine(back.copy(lines = back.lines.drop(1)), nx.first, nx.second, now)
+        return n to (fx + more)
+    }
 
     /** The answer has been said: listen again, or send what was said meanwhile. */
     private fun afterSpeech(s: VoiceState, now: Long): Pair<VoiceState, List<VoiceEffect>> {

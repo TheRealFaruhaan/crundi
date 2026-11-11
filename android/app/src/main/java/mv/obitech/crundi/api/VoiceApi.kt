@@ -82,7 +82,7 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
      * "side key"); [locked] tells Claude the phone is locked, so anything
      * that would change something waits for an unlock (spec §4).
      */
-    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false, attachments: List<String> = emptyList(), refs: List<String> = emptyList(), requestId: String = ""): VoiceReply {
+    suspend fun turn(text: String, where: String, locked: Boolean, typed: Boolean = false, attachments: List<String> = emptyList(), refs: List<String> = emptyList(), requestId: String = "", sayNow: Boolean = false): VoiceReply {
         // A failed turn comes back { ok:false, error } with 200: read it as a reply, not an exception.
         // [typed]: keyboard mode, words typed rather than heard (an older server ignores it).
         // [attachments]: ids from [attach]; [refs]: shared text or links (capability "voice-attach").
@@ -93,6 +93,9 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         // [requestId] (capability "voice-turn-id"): the same turn sent again (the HTTP client resends it
         // after a dropped connection) gets that turn's answer, never a second run or "still answering".
         if (requestId.isNotEmpty()) body["requestId"] = requestId
+        // [sayNow] (capability "voice-say-now"): what Cru says during the turn comes on the listen socket
+        // as ListenEvent.Update, each its own message; without it, the server puts it in front of the reply.
+        if (sayNow && requestId.isNotEmpty()) body["sayNow"] = true
         val r = transport.exchange(ApiRequest("POST", "/api/voice/turn", json = Uploads.toJson(body), slow = true))
         if (r.status == 404) throw ApiException(404, UNSUPPORTED)
         val obj = runCatching { CrundiJson.parseToJsonElement(r.text) as? JsonObject }.getOrNull()
@@ -127,6 +130,12 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         if (r.status !in 200..299) throw ApiException(r.status, OkHttpTransport.defaultMessage(r.status, r.text))
         return CrundiJson.decodeFromJsonElement(CancelReply.serializer(), CrundiJson.parseToJsonElement(r.text))
     }
+
+    /**
+     * A line Cru said during its turn has been said here ([how]: "said"), only shown ("shown": typed,
+     * muted, he was speaking) or talked over ("cut"): Cru carries on (capability "voice-say-now"). Best effort.
+     */
+    suspend fun updateAck(id: String, how: String) { runCatching { transport.exchange(ApiRequest("POST", "/api/voice/update/ack", json = Uploads.toJson(mapOf("id" to id, "how" to how)))) } }
 
     /** A voice session just opened: warm the server's prompt cache while the owner speaks. Best effort. */
     suspend fun warm() { runCatching { rpc.post("/api/voice/warm") } }
@@ -337,6 +346,8 @@ class VoiceApi internal constructor(private val rpc: Rpc, private val transport:
         const val COMPACT = "voice-compact"
         /** GET /api/voice/history: the voice screen's chat view. */
         const val HISTORY = "voice-history"
+        /** Cru says things during its turn, each its own message (sayNow, ListenEvent.Update, updateAck). */
+        const val SAY_NOW = "voice-say-now"
         /** /api/voice/listen?keyboard=1: reports and settings without a microphone. */
         const val KEYBOARD = "voice-keyboard"
         /** GET/POST /api/voice/wakeups and the 'voice-wakeups' event. */
@@ -525,7 +536,13 @@ data class VoiceReply(
     val speaker: SpeakerCheck? = null,
     /** What the reply showed (capability "voice-reply-media"): pictures, players, files, frames, cards. */
     val media: kotlinx.serialization.json.JsonArray? = null,
+    /** What Cru said during the turn, before this answer (capability "voice-say-now"), each its own message. */
+    val updates: List<VoiceLine> = emptyList(),
 )
+
+/** A line Cru said during its turn (say_now). */
+@Serializable
+data class VoiceLine(val id: String = "", val speak: String = "", val at: Long = 0)
 
 /** GET /api/voice/unread: Cru's reports nobody heard; [line] the latest one's words. */
 @Serializable
@@ -587,7 +604,7 @@ data class VoiceAttached(val ok: Boolean = false, val id: String = "", val name:
 
 /** One turn of Cru's conversation: what the owner [said] ("" for Cru speaking up on its own, [report]) and the answer. */
 @Serializable
-data class VoiceTurn(val id: Long = 0, val at: Long = 0, val said: String = "", val speak: String = "", val show: String = "", val report: Boolean = false, val media: kotlinx.serialization.json.JsonArray? = null)
+data class VoiceTurn(val id: Long = 0, val at: Long = 0, val said: String = "", val speak: String = "", val show: String = "", val report: Boolean = false, val media: kotlinx.serialization.json.JsonArray? = null, val updates: List<String> = emptyList())
 
 /** GET /api/voice/history: [turns] oldest first; [more] older ones to page back to. */
 @Serializable
@@ -686,6 +703,8 @@ sealed interface ListenEvent {
     data class Failed(val error: String) : ListenEvent
     /** Cru has news, unasked (a watched chat finished or waits on the owner): say it. */
     data class Report(val speak: String, val show: String, val media: JsonArray? = null) : ListenEvent
+    /** A line Cru says during the turn sent as [requestId] (capability "voice-say-now"): its own message, said now. */
+    data class Update(val requestId: String, val id: String, val speak: String) : ListenEvent
     /** The server dropped what the owner said ("scratch that"). */
     data class Discard(val text: String) : ListenEvent
     /** A setting changed on the server (Cru's volume, say): fetch them again. */
@@ -713,6 +732,7 @@ sealed interface ListenEvent {
                 "screen" -> Screen(LiveScreen.parse(o["screen"]))
                 "kid" -> KidStatus.of(o["kid"])?.let { Kid(it) }
                 "game-command" -> ((o["command"] as? JsonObject)?.get("action") as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }?.let { GameCommand(it) }
+                "update" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val rq = (o["requestId"] as? JsonPrimitive)?.contentOrNull.orEmpty(); val id = (o["id"] as? JsonPrimitive)?.contentOrNull.orEmpty(); if (rq.isEmpty() || id.isEmpty()) null else Update(rq, id, sp) }
                 "report" -> (o["speak"] as? JsonPrimitive)?.contentOrNull.orEmpty().let { sp -> val sh = (o["show"] as? JsonPrimitive)?.contentOrNull.orEmpty(); val md = (o["media"] as? JsonArray)?.takeIf { it.isNotEmpty() }; if (sp.isBlank() && sh.isBlank() && md == null) null else Report(sp, sh, md) }
                 else -> null
             }

@@ -120,6 +120,7 @@ import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cu
 import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
 import { makeReplyMediaTools } from './voice/reply-media.js';
 import { makeUiNavTools, createUiTarget, createAcks as createUiAcks } from './voice/ui-nav.js';
+import { makeSayNowTools, createSayAcks, foldUpdates } from './voice/say-now.js';
 import { parseYoutubeLine, parseInstructions as parseKidInstructions, KID_FILE, KID_SYSTEM_PROMPT, kidIntro, kidContextLine, makeKidTools, makeStartKidTool, createPinGuard, hashPin, PIN_RE as KID_PIN_RE, createHandleResolver, createGameWatch, splitMood, GAME_EVENTS, createParentNotes, createParentAsks } from './voice/kid.js';
 import { createSkills as createKidSkills, TAXONOMY as KID_TAXONOMY } from './voice/kid-skills.js';
 import { createGameLibrary } from './voice/kid-games.js';
@@ -2875,12 +2876,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (r && r.ok && (r.speak || r.show || (r.media && r.media.length))) {
         const media = Array.isArray(r.media) && r.media.length ? r.media : undefined;
+        // What Cru said during this turn (say_now), each its own message, just before the report (the screens' news queue keeps the order).
+        const before = (Array.isArray(r.updates) ? r.updates : []).map((u) => String((u && u.speak) || '').trim()).filter(Boolean);
         const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: chatId, media });
-        if (open.length) { for (const ws of open) { try { ws.send(msg); } catch { /* gone */ } } return { ok: true, said: 'screen' }; }
+        if (open.length) {
+          for (const ws of open) { try { for (const b of before) ws.send(JSON.stringify({ type: 'report', speak: b, show: '', chat: chatId })); ws.send(msg); } catch { /* gone */ } }
+          return { ok: true, said: 'screen' };
+        }
         // No voice screen open: the PC says it (its connection stays open)…
         // A question or a permission brings the PC window forward; a finished turn doesn't.
         const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: chatId, needsOwner, media });
-        for (const ws of pcs) { try { ws.send(pcMsg); } catch { /* gone */ } spoken = true; }
+        for (const ws of pcs) { try { for (const b of before) ws.send(JSON.stringify({ type: 'voice-report', speak: b, show: '', chat: chatId, needsOwner })); ws.send(pcMsg); } catch { /* gone */ } spoken = true; }
       }
     }
     // A wake-up's words are Cru's own.
@@ -2894,7 +2900,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!spoken) {
       try {
         // A wake-up's answer is already in the history (Cru said it); a report nobody heard yet is put there now.
-        if (!wake) voiceMemory.remember({ said: `[Report for the owner, not said by them] ${String(note || line).slice(0, 2000)}`, speak: line, show: detail || '' });
+        if (!wake) voiceMemory.remember({ said: `[Report for the owner, not said by them] ${String(note || line).slice(0, 2000)}`, speak: line, show: detail || '', updates: r && Array.isArray(r.updates) && r.updates.length ? r.updates : null });
         voiceUnread.add(line);
       } catch (err) { console.warn('[voice] could not keep the report:', err.message); }
     }
@@ -3511,10 +3517,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     projects: () => allProjects().map((p) => ({ alias: p.alias, name: p.name })),
     chats: () => (claudeUi ? claudeUi.list() : []).filter((c) => !c.collaborator).map((c) => ({ id: c.id, project: c.project, title: c.title })),
   });
+  // Cru says something now, during its turn, as its own message (voice/say-now.js):
+  // to the open voice screens (the one whose request it is shows it), with a ring through show_in_crundi.
+  const cruSayAcks = createSayAcks();
+  const cruSayTools = makeSayNowTools({
+    acks: cruSayAcks,
+    send: (msg) => {
+      const m = JSON.stringify(msg);
+      let n = 0;
+      for (const ws of voiceListeners) { if (ws.readyState !== 1) continue; try { ws.send(m); n++; } catch { /* gone */ } }
+      return n;
+    },
+    point: (args) => cruUiNavTools[0].run(args),
+  });
   const voiceBrainOpts = {
-    // Each step is counted for the routine nudge (cruStepDone).
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, ...cruUiNavTools, kidStartTool, kidProgressTool, pcLockTool]
-      .map((t) => ({ ...t, run: async (i) => { let out; try { out = await t.run(i); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
+    // Each step is counted for the routine nudge (cruStepDone). The turn's signals go through (say_now needs them).
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, ...cruUiNavTools, ...cruSayTools, kidStartTool, kidProgressTool, pcLockTool]
+      .map((t) => ({ ...t, run: async (i, sig) => { let out; try { out = await t.run(i, sig); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
     beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
     turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
     // Cru speaking up by itself: nobody spoke. Admin mode (when on) gives it full
@@ -5383,7 +5402,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (now - cruTapAt < 2000) return json(res, { ok: false, skipped: 'too soon' });
       cruTapAt = now;
       const line = what.startsWith('[') ? what : `[${kidOn() ? 'Kid' : 'Owner'} tapped on the live screen: ${what}]`;
-      const r = kidOn() ? await kidTurn(line, { where: 'the kid screen' }) : await voiceAgent.turn(line, { where: 'the live screen', unrecognised: true, speaker: 'a tap on the live screen, not speech' });
+      const r = kidOn() ? await kidTurn(line, { where: 'the kid screen' }) : foldUpdates(await voiceAgent.turn(line, { where: 'the live screen', unrecognised: true, speaker: 'a tap on the live screen, not speech' }));
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, r, r.ok || r.cancelled ? 200 : 400);
     }
@@ -5580,11 +5599,21 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const device = dev.label;
       // The page Cru may move (capability 'voice-ui-nav'): the web/PC page this came from, or the phone.
       cruUiTarget.note({ page: body.page, deviceId: dev.id, device });
-      const r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where, device, locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }));
+      // sayNow (capability 'voice-say-now'): this screen shows what Cru says during the turn as its own messages; else it is put in front of the reply.
+      const sayNow = body.sayNow === true && !!String(body.requestId || '').trim();
+      let r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where, device, locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who, requestId: String(body.requestId || '').trim().slice(0, 100), sayNow }));
+      if (!sayNow) r = foldUpdates(r);
       if (r && r.ok) r.speaker = rules.speaker;
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // A voice screen has said (or only shown) a line Cru said during its turn (voice/say-now.js): { id, how }.
+    if (path === '/api/voice/update/ack' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const how = ['said', 'shown', 'cut'].includes(body.how) ? body.how : 'said';
+      return json(res, { ok: true, known: cruSayAcks.answer(body.id, { how }) });
     }
     // The owner's page answers a show_in_crundi move (voice/ui-nav.js): { id, ok, error?, found?, where? }.
     if (path === '/api/voice/ui/ack' && req.method === 'POST') {
@@ -5795,7 +5824,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         } catch { verdict = voiceSpeaker.recent.lookup(r.text); }
       }
       const rules = voiceTurnRules({ typed: false, verdict });
-      const answer = r.text && kidOn() ? await kidTurn(r.text, { where: 'the kid screen' }, { child: true }) : r.text ? await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }) : { ok: false, error: 'Nothing was heard' };
+      const answer = r.text && kidOn() ? await kidTurn(r.text, { where: 'the kid screen' }, { child: true }) : r.text ? foldUpdates(await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who })) : { ok: false, error: 'Nothing was heard' };
       if (answer && answer.ok) answer.speaker = rules.speaker;
       if (answer && answer.ok) answer.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);

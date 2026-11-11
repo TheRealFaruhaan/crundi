@@ -23,8 +23,15 @@ val NoMedia = JsonArray(emptyList())
 object CruChat {
     /** GET /api/voice/history's turns (oldest first) as messages. */
     fun fromTurns(turns: List<VoiceTurn>): List<CruMsg> =
-        turns.map { CruMsg(it.at, if (it.report) "" else it.said.trim(), it.speak.trim(), it.show.trim(), key = "t" + it.id + "-" + it.at, media = it.media ?: NoMedia) }
-            .filter { it.said.isNotEmpty() || it.answered }
+        turns.flatMap { t ->
+            val said = if (t.report) "" else t.said.trim()
+            val key = "t" + t.id + "-" + t.at
+            val lines = t.updates.map { it.trim() }.filter { it.isNotEmpty() }
+            // Lines Cru said during the turn (capability "voice-say-now"): his words, each line, then the answer, each its own message.
+            if (lines.isEmpty()) listOf(CruMsg(t.at, said, t.speak.trim(), t.show.trim(), key = key, media = t.media ?: NoMedia))
+            else listOf(CruMsg(t.at, said, "", "", key = key)) + lines.mapIndexed { i, l -> CruMsg(t.at, "", l, "", key = "$key-u$i") } +
+                CruMsg(t.at, "", t.speak.trim(), t.show.trim(), key = "$key-a", media = t.media ?: NoMedia)
+        }.filter { it.said.isNotEmpty() || it.answered }
 
     /**
      * [got] from the server joined to what is shown: [older] pages go before

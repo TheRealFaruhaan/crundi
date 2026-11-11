@@ -238,6 +238,15 @@ export const CAPABILITIES = Object.freeze([
   // a turn that finds Cru busy waits for it (up to 3 min) instead of
   // answering "Still answering the last request".
   'voice-turn-id',
+  // Cru says things during its turn, each as its own message (voice/say-now.js):
+  // POST /api/voice/turn takes sayNow: true (with its requestId); each line comes
+  // as { type: 'update', requestId, id, speak } on /api/voice/listen, and the
+  // screen whose request it is answers POST /api/voice/update/ack { id, how:
+  // 'said' | 'shown' | 'cut' } once said. The turn's answer carries them all
+  // (updates: [{ id, speak, at }]); /api/voice/history turns carry updates:
+  // [text]. Reports send them as reports before the report. A screen without
+  // sayNow gets them in front of the reply's words.
+  'voice-say-now',
   // Cru's background-listening order (set_background_listening, confirmed on
   // any client) also goes to every open app as the owner SSE event
   // 'voice-phone-action' { type: 'background-listening', minutes } (0: off).

@@ -250,7 +250,7 @@ export function createCliVoiceAgent({
     });
   }
 
-  async function turn(text, { where = '', device = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false } = {}) {
+  async function turn(text, { where = '', device = '', locked = false, unrecognised = false, voice = null, confirmOk = false, speaker = '', now = new Date(), report = false, requestId = '', sayNow = false } = {}) {
     const said = String(text || '').trim();
     if (!said) return { ok: false, error: 'Nothing was said' };
     if (busy) return { ok: false, error: 'Still answering the last request' };
@@ -258,7 +258,7 @@ export function createCliVoiceAgent({
     busy = true;
     const s = settings.getSettings();
     const model = s.model || settings.DEFAULT_MODEL;
-    signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [], media: [] };
+    signals = { pending: [], needsUnlock: false, phoneActions: [], close: false, acted: [], media: [], updates: [], requestId: String(requestId || ''), sayNow: !!sayNow, report };
     const turnSignals = signals;
     const t0 = Date.now();
     // The last turn was cancelled and its end has not come yet: wait a moment, else start afresh (resumed).
@@ -286,9 +286,9 @@ export function createCliVoiceAgent({
       const parts = splitReply(reply);
       const u = res.usage || {};
       const cache = { read: u.cache_read_input_tokens || 0, written: u.cache_creation_input_tokens || 0, uncached: u.input_tokens || 0 };
-      try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, media: turnSignals.media, device: report ? '' : device, at: now.getTime() }); } catch { /* best effort */ }
+      try { onTurnDone({ said: report ? `(report) ${said}` : said, ...parts, media: turnSignals.media, updates: turnSignals.updates, device: report ? '' : device, at: now.getTime() }); } catch { /* best effort */ }
       return {
-        ok: true, ...parts, media: turnSignals.media, tools, costUsd: r.cost || 0, cache,
+        ok: true, ...parts, media: turnSignals.media, updates: turnSignals.updates, tools, costUsd: r.cost || 0, cache,
         pending: signals.pending, needsUnlock: signals.needsUnlock, phoneActions: signals.phoneActions, close: signals.close,
         brain: 'claude-code', ms: Date.now() - t0, apiMs: r.apiMs || 0, rounds: res.num_turns || 0, outputTokens: u.output_tokens || 0,
       };
