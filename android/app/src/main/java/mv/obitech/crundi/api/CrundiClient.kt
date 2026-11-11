@@ -100,7 +100,10 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
      * bubble opens again, the app comes back to the front, or the stream
      * goes quiet mid-turn (ChatWatchdog). False when nothing shows the chat.
      */
-    fun resyncChat(id: String): Boolean = socket.resync("ui:$id")
+    fun resyncChat(id: String): Boolean = socket.resync("ui:$id") {
+        // Its answer is the chat's history; none in time: the socket is dead, made again.
+        it.type() == "ui-history" && (it["id"] as? JsonPrimitive)?.contentOrNull == id
+    }
 
     /** A terminal's output and input. */
     fun terminal(id: String) = TerminalStream(socket, id)
@@ -132,8 +135,17 @@ class CrundiClient(val transport: Transport, scope: CoroutineScope = CoroutineSc
         }
     }
 
-    /** Try both connections again now. */
-    fun reconnect() { _signedOut.value = false; events.reconnect(); socket.reconnect() }
+    /** Try both connections again now (the app back in front, a retry). An open socket is kept. */
+    fun reconnect() { _signedOut.value = false; events.reconnect(); socket.retryNow() }
+
+    /**
+     * The phone's network changed (Wi-Fi to mobile data and back): both
+     * connections were made on the old one and are dead without knowing it,
+     * so both are made again now rather than when a ping notices, up to a
+     * minute later. Each chat then gets its history again, which brings the
+     * end of a reply and the turn's end it would otherwise have missed.
+     */
+    fun networkChanged() { events.reconnect(); socket.reconnect() }
 
     companion object {
         /** The client for a paired server, signed in with the phone's page login. */

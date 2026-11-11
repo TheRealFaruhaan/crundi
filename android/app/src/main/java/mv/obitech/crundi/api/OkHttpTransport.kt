@@ -178,6 +178,7 @@ class OkHttpTransport(
         return object : SocketConnection {
             override fun send(text: String) = ws.send(text)
             override fun close() { ws.close(1000, null) }
+            override fun cancel() = ws.cancel()
         }
     }
 

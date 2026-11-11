@@ -100,6 +100,12 @@ interface SocketListener {
 interface SocketConnection {
     fun send(text: String): Boolean
     fun close()
+    /**
+     * Drop it now, without the closing handshake: for a connection that may
+     * be dead (the phone changed network), where a polite close waits up to
+     * a minute for an answer that never comes.
+     */
+    fun cancel() = close()
 }
 
 /** A [SocketConnection] that also sends binary frames ([Transport.openSocket]). */

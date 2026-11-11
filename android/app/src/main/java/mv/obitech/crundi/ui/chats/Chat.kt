@@ -762,6 +762,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     // (ChatWatchdog). The header, the status line and Send then follow.
     val shownState by rememberUpdatedState(chat.state)
     val serverState by rememberUpdatedState(paneRow?.state)
+    val shownStreaming by rememberUpdatedState(chat.messages.takeLast(6).any { it.streaming })
     val inspecting = LocalInspectionMode.current
     val lifecycle = LocalLifecycleOwner.current
     LaunchedEffect(chatId, lifecycle) {
@@ -773,7 +774,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             val dog = ChatWatchdog()
             while (true) {
                 delay(2_000)
-                if (dog.check(shownState, serverState, System.currentTimeMillis(), heardAt[0])) api.resyncChat(chatId)
+                if (dog.check(shownState, serverState, System.currentTimeMillis(), heardAt[0], shownStreaming)) api.resyncChat(chatId)
             }
         }
     }

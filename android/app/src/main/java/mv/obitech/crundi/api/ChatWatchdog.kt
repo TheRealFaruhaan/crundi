@@ -13,7 +13,11 @@ import mv.obitech.crundi.api.model.AgentState
  *   end of the turn was missed;
  * - nothing at all has come for the chat in [QUIET_MS]: the stream may have
  *   gone quiet without closing (and a chat the list leaves out, a factory's
- *   employee, has only this one).
+ *   employee, has only this one);
+ * - a reply is streaming in and nothing has come for [STALL_MS]: text comes
+ *   several times a second while it is written, so a reply stopped mid-word
+ *   is a stream that died (a network change), even when the server's list,
+ *   on a connection of its own, has not said the turn ended.
  *
  * Pure, and the clock is passed in, so it is tested as it is.
  */
@@ -24,9 +28,10 @@ class ChatWatchdog {
     /**
      * [shown] is the state the screen has (from the socket), [server] the
      * state in the server's list (null when the list does not have it),
-     * [lastMessageAt] when the socket last said anything for this chat.
+     * [lastMessageAt] when the socket last said anything for this chat,
+     * [streaming] whether the screen has a reply still being written.
      */
-    fun check(shown: AgentState, server: AgentState?, now: Long, lastMessageAt: Long): Boolean {
+    fun check(shown: AgentState, server: AgentState?, now: Long, lastMessageAt: Long, streaming: Boolean = false): Boolean {
         if (shown != AgentState.Working) { disagreeSince = -1; return false }
         val last = lastResync
         if (server != null && server != AgentState.Working) {
@@ -37,6 +42,8 @@ class ChatWatchdog {
             if (now - disagreeSince >= DISAGREE_MS && (last == null || now - last >= gap)) return fired(now)
         } else disagreeSince = -1
         val heard = if (last == null) lastMessageAt else maxOf(lastMessageAt, last)
+        // Stalled mid-reply: soon; again only every RETRY_MS while a resync has not moved it.
+        if (streaming && now - heard >= (if (last == null || lastMessageAt > last) STALL_MS else RETRY_MS)) return fired(now)
         if (now - heard >= QUIET_MS) return fired(now)
         return false
     }
@@ -52,6 +59,8 @@ class ChatWatchdog {
         const val DISAGREE_MS = 8_000L
         /** Between resyncs while the server still disagrees. */
         const val RETRY_MS = 30_000L
+        /** A reply being written with nothing more of it for this long. */
+        const val STALL_MS = 15_000L
         /** A turn with nothing at all for this long (a long tool run is quiet too, so not short). */
         const val QUIET_MS = 120_000L
     }
