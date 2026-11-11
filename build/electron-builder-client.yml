@@ -89,6 +89,15 @@ files:
   - node_modules/ms/**/*
   - node_modules/sax/**/*
   - node_modules/tiny-typed-emitter/**/*
+  # "Hey Cru" for the owner only (app/voice-wake/owner.js, voiceprint.js): the
+  # voice model runs on onnxruntime-node, Windows x64 only (+13 MB compressed:
+  # onnxruntime.dll, DirectML.dll, the binding). Its install-time dependencies
+  # (global-agent, tar) are not loaded at runtime. Without these the spotter
+  # still works, for any voice. scripts/test-client-build-files.mjs checks them.
+  - node_modules/onnxruntime-common/**/*
+  - node_modules/onnxruntime-node/package.json
+  - node_modules/onnxruntime-node/dist/**/*
+  - node_modules/onnxruntime-node/bin/napi-v3/win32/x64/**/*
 
 # Chromium ships ~55 UI locales (47 MB unpacked). The app's own UI is English,
 # and the locale only affects Chromium's built-in strings (context menus,
