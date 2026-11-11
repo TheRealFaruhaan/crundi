@@ -133,13 +133,20 @@ export function makeActionTools(deps, ctx) {
     if (!p) throw new Error(`No project called "${alias}". Use list_projects.`);
     return p;
   };
-  const chat = (ref) => {
+  const match = (all, ref) => {
     const r = String(ref || '').trim().toLowerCase();
-    const all = deps.chats();
-    const hit = all.find(c => c.id === ref) || all.find(c => String(c.title || '').toLowerCase() === r)
+    return all.find(c => c.id === ref) || all.find(c => String(c.title || '').toLowerCase() === r)
       || all.filter(c => String(c.title || '').toLowerCase().includes(r))[0];
-    if (!hit) throw new Error(`No open chat matches "${ref}". Use list_panels for the chats and their ids.`);
-    return hit;
+  };
+  const parkedChats = () => (deps.parkedChats ? deps.parkedChats() : []).map(c => ({ ...c, status: 'parked', parked: true }));
+  /** An open chat; with { parked: true }, a parked (sleeping) one too. */
+  const chat = (ref, { parked = false } = {}) => {
+    const hit = match(deps.chats(), ref);
+    if (hit) return hit;
+    const asleep = match(parkedChats(), ref);
+    if (asleep && parked) return asleep;
+    if (asleep) throw new Error(`${chatName(asleep)} is parked (asleep): resume_chat it first, or close_chat closes it as it is.`);
+    throw new Error(`No open or parked chat matches "${ref}". Use list_panels for the chats and their ids.`);
   };
   const svc = (ref) => {
     const r = String(ref || '').toLowerCase();
@@ -260,14 +267,14 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'close_chat',
-      description: 'Close an open chat, as closing it in the app (its pane goes). With chats ticked under "Cru on its own", it closes at once with no yes, once you have checked what the chat is doing with read_chat in the last 15 minutes: read it first, and close only what is done with, idle or no longer wanted, never one working or waiting on the owner unless he asked. Otherwise it asks the owner first.',
+      description: 'Close a chat, open or parked (sleeping), as closing it in the app (its pane goes; a parked one is discarded without waking it). With chats ticked under "Cru on its own", an open chat closes at once with no yes, once you have checked what the chat is doing with read_chat in the last 15 minutes: read it first, and close only what is done with, idle or no longer wanted, never one working or waiting on the owner unless he asked. Otherwise, and always for a parked chat (it cannot be read), it asks the owner first.',
       input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
-      check: (i) => chat(i.chat),
+      check: (i) => chat(i.chat, { parked: true }),
       // "Cru on its own" with chats ticked, and the chat read: no yes needed (logged).
-      auto: (i) => { let c; try { c = chat(i.chat); } catch { return null; } return closeAllowed(ctx.away ? ctx.away() : null, !!deps.chatRead?.(c.id)) ? 'away' : null; },
-      confirm: (i) => { const c = chat(i.chat); return `Close ${chatName(c)}? It is ${c.status || 'open'}.`; },
+      auto: (i) => { let c; try { c = chat(i.chat, { parked: true }); } catch { return null; } if (c.parked) return null; return closeAllowed(ctx.away ? ctx.away() : null, !!deps.chatRead?.(c.id)) ? 'away' : null; },
+      confirm: (i) => { const c = chat(i.chat, { parked: true }); return `Close ${chatName(c)}? It is ${c.status || 'open'}.`; },
       run: async (i, o = {}) => {
-        const c = chat(i.chat);
+        const c = chat(i.chat, { parked: true });
         const r = await deps.closeChat(c.id);
         if (r && r.ok === false) return r;
         deps.chatReadForget?.(c.id);

@@ -2801,6 +2801,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     },
     secrets: () => secrets.listSecrets(),
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
+    // Parked (sleeping) chats: no process, so claudeUi does not list them.
+    parkedChats: () => panes.listParked().filter(p => p.paneKind === 'ui'),
     terminals: () => (claudeTerminals ? claudeTerminals.list() : []),
     chatHistory: (id) => {
       const c = claudeUi && claudeUi.list().find(x => x.id === id);
@@ -3176,7 +3178,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Admin mode, as the admin tools see it: on, a model that may hold it, and not another voice.
     adminOn: () => { const v = voiceOwnerVerdict; const owner = v && typeof v === 'object' ? v.owner : v; return voiceSettings.adminOn() && owner !== false; },
     logPromptAnswer: cruLogPromptAnswer,
+    parkedChats: () => panes.listParked().filter(p => p.paneKind === 'ui'),
     closeChat: (id) => {
+      // A parked chat has no process to close: discard its pane, as its Close button does.
+      if (panes.has(id) && !(claudeUi.list() || []).some(c => c.id === id)) {
+        try { chatSchedule.discardFor(id, panes.conversationOf(id)); } catch { /* best effort */ }
+        panes.forget(id); broadcastState();
+        return { ok: true };
+      }
       const conv = (claudeUi.meta(id) || {}).sessionId || '';
       const r = claudeUi.close(id);
       if (r && r.ok !== false) { try { chatSchedule.discardFor(id, conv); } catch { /* best effort */ } panes.forget(id); }

@@ -304,10 +304,13 @@ export function makeTools(deps) {
     },
     {
       name: 'list_panels',
-      description: 'The open chats (Claude Code conversations) and terminals, by project, with their state.',
+      description: 'The chats (Claude Code conversations) and terminals on the workbench, by project, with their state. Parked (sleeping) chats are listed too, with parked: true: they have no process, so read_chat and send_to_chat do not reach them until resume_chat; close_chat closes them as they are.',
       input_schema: obj(),
       run: () => ({
-        chats: deps.chats().map(c => { const w = (c.pending || []).map(pendingLine).filter(Boolean); return { id: c.id, project: c.project, title: c.title, status: c.status, state: c.agentState || null, model: c.model || '', ...(w.length ? { waitingFor: w } : {}) }; }),
+        chats: [
+          ...deps.chats().map(c => { const w = (c.pending || []).map(pendingLine).filter(Boolean); return { id: c.id, project: c.project, title: c.title, status: c.status, state: c.agentState || null, model: c.model || '', ...(w.length ? { waitingFor: w } : {}) }; }),
+          ...(deps.parkedChats ? deps.parkedChats() : []).map(c => ({ id: c.id, project: c.project, title: c.title, status: 'parked', parked: true, parkedAt: c.parkedAt ? new Date(c.parkedAt).toISOString() : null, reason: c.reason || '' })),
+        ],
         terminals: deps.terminals().map(t => ({ id: t.id, project: t.project, title: t.title, status: t.status })),
       }),
     },
@@ -317,7 +320,10 @@ export function makeTools(deps) {
       input_schema: obj({ id: str('Chat id from list_panels'), messages: num('How many recent messages (default 12, max 40)') }, ['id']),
       run: ({ id, messages = 12 }) => {
         const h = deps.chatHistory(String(id));
-        if (!h) throw new Error('No open chat with that id');
+        if (!h) {
+          if ((deps.parkedChats ? deps.parkedChats() : []).some(c => c.id === String(id))) throw new Error('That chat is parked (asleep): resume_chat it first to read it, or close_chat closes it as it is.');
+          throw new Error('No open chat with that id');
+        }
         // Cru has checked what this chat is doing: with "on its own" chats ticked, it may close it without a yes.
         deps.onReadChat?.(String(id));
         const n = Math.min(40, Math.max(1, Number(messages) || 12));
