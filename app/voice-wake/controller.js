@@ -35,7 +35,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, renameSync, unlinkSy
 import { ensureInstalled, isInstalled } from './install.js';
 import { validProfile, checkSample, SAMPLES_NEEDED, RATE } from './enroll.js';
 import { speakerDir, validVoice } from './owner.js';
-import { ensureModel as ensureVoiceModel } from '../../src/voice/speaker.js';
+import { ensureModel as ensureVoiceModel } from './voiceprint.js';
 
 const POLL_MS = 1000;
 const POWER_RECHECK_MS = 60 * 1000;

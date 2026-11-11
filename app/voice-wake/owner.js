@@ -5,7 +5,7 @@
  * was said; this says whether it was the owner who said it.
  *
  * The voice model is the one the server checks the owner's voice with
- * (src/voice/speaker.js: 3D-Speaker ERes2Net, 26 MB, run by onnxruntime-node,
+ * (src/voice/speaker.js, copied in voiceprint.js: 3D-Speaker ERes2Net, 26 MB, run by onnxruntime-node,
  * which the PC app ships), downloaded once into <userData>/voice-wake/speaker,
  * checked by size and SHA-256. Training keeps the owner's five "Hey Cru" takes
  * as voice embeddings (profile.voice); a wake is his when the mean of its
@@ -22,7 +22,7 @@
  */
 
 import { join } from 'path';
-import { createOnnxEmbedder, normalise, wordScore, MODEL } from '../../src/voice/speaker.js';
+import { createOnnxEmbedder, normalise, wordScore, MODEL } from './voiceprint.js';
 
 export const OWNER_THRESHOLD = 0.42;
 export const OWNER_K = 3;

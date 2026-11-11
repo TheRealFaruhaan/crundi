@@ -3,7 +3,10 @@
 //   node scripts/test-voice-wake-owner.mjs
 import { createOwnerCheck, validVoice, ownerScore, ownerVerdict, OWNER_THRESHOLD, OWNER_K, VOICE_MODEL } from '../app/voice-wake/owner.js';
 import { ownerChecked } from '../app/voice-wake/worker.js';
-import { MODEL } from '../src/voice/speaker.js';
+import * as Server from '../src/voice/speaker.js';
+import * as Copy from '../app/voice-wake/voiceprint.js';
+import { readFileSync } from 'fs';
+const MODEL = Server.MODEL;
 
 let failed = 0;
 const ok = (c, l) => { console.log((c ? 'PASS  ' : 'FAIL  ') + l); if (!c) failed++; };
@@ -39,6 +42,19 @@ ok(other.type === 'rejected' && /owner/.test(other.why) && typeof other.voice ==
 ok((await ownerChecked(wakeOf(0.9), {}, owner)).voice === 'off', 'a profile from before the voice check: woken as before');
 ok((await ownerChecked({ ok: false, keyword: 'HEY_CRU', score: 4, via: 'model' }, profile, owner)).type === 'rejected', 'a wake the phrase or model refused stays refused');
 ok(/no verdict/.test((await ownerChecked(wakeOf(0.9), profile, broken)).voice), 'the model unavailable: woken, said so');
+
+// The wake listener's copy of the voice model's code (voiceprint.js) is the server's (src/voice/speaker.js):
+// the client-only build has no src/, so it cannot import it; this keeps them the same.
+{
+  const same = ['fbank', 'subtractMean', 'normalise', 'cosine', 'wordScore', 'ensureModel', 'loadOrt', 'createOnnxEmbedder', 'numFrames'];
+  const differ = same.filter((n) => String(Copy[n]) !== String(Server[n]));
+  ok(!differ.length, 'voiceprint.js has the server\'s code' + (differ.length ? ' (differs: ' + differ.join(', ') + ')' : ''));
+  ok(JSON.stringify(Copy.MODEL) === JSON.stringify(Server.MODEL) && Copy.WORD_K === Server.WORD_K && Copy.SAMPLE_RATE === Server.SAMPLE_RATE, 'and the same model, pinned the same');
+  const raw = readFileSync(new URL('../test/fixtures/vad-speech.s16', import.meta.url));
+  const pcm = new Float32Array(raw.length >> 1); for (let i = 0; i < pcm.length; i++) pcm[i] = raw.readInt16LE(i * 2) / 32768;
+  const a = Copy.fbank(pcm.subarray(0, 16000)), b = Server.fbank(pcm.subarray(0, 16000));
+  ok(a.frames === b.frames && a.data.every((x, i) => x === b.data[i]), 'the same features for the same speech');
+}
 
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);
