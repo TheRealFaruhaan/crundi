@@ -156,6 +156,57 @@ ok(jobs.pauseAll() === 1 && jobs.list()[0].status === 'paused', 'stop everything
   ok(seen.join() === 'c9', 'read_chat records that Cru checked the chat');
 }
 
+// ─── parked (sleeping) chats: listed, and closed on its own when chats are ticked (12 Nov) ───
+{
+  const closed = [], acted = [];
+  let away = { on: true, allow: ['chats'] };
+  let unattended = false;
+  const parkedAt = Date.now() - 3 * 86400000;
+  const pctx = { pending: createPending(), locked: () => false, unrecognised: () => false, unattended: () => unattended, away: () => away };
+  const live = [{ id: 'c1', title: 'Working now', project: 'p', status: 'running' }];
+  const parked = [{ id: 'z1', title: 'Old parked fix', project: 'p', paneKind: 'ui', parkedAt, reason: 'idle' }];
+  const pdeps = {
+    listProjects: () => [{ alias: 'p' }], projectsDir: () => '',
+    chats: () => live, parkedChats: () => parked, terminals: () => [], chatHistory: () => null,
+    closeChat: async (id) => { closed.push(id); return { ok: true }; },
+    chatRead: () => false, chatReadForget: () => {},
+    onAwayAct: (tool) => acted.push(tool), askOwner: () => ({ ok: true, id: 'cru-x' }),
+  };
+  const VT = await import('../src/voice/tools.js');
+  const lp = VT.makeTools(pdeps).find((x) => x.name === 'list_panels').run();
+  const z = lp.chats.find((c) => c.id === 'z1');
+  ok(lp.chats.length === 2 && lp.chats[0].id === 'c1' && !lp.chats[0].parked, 'list_panels: the live chat, unmarked');
+  ok(z && z.parked === true && z.status === 'parked' && z.reason === 'idle', 'list_panels: the parked chat, marked parked, with why');
+  ok(z && z.parkedAt === new Date(parkedAt).toISOString() && z.parkedAgo === '3 days', 'list_panels: when it was parked, and how long ago');
+  const rc = VT.makeTools(pdeps).find((x) => x.name === 'read_chat');
+  let err = ''; try { rc.run({ id: 'z1' }); } catch (e) { err = e.message; }
+  ok(/parked/.test(err), 'read_chat on a parked chat says it is parked');
+
+  const tools = makeActionTools(pdeps, pctx);
+  const ct = tools.find((x) => x.name === 'close_chat');
+  ok(/parked chat cannot be read/.test(ct.description), 'close_chat tells Cru how to judge a parked chat');
+  let c = await ct.run({ chat: 'old parked fix' });
+  ok(c.ok && c.onMyOwn && c.wasParked && closed.join() === 'z1' && acted.includes('close_chat'), 'chats ticked: a parked chat closes at once, unread, no yes, logged');
+  c = await ct.run({ chat: 'c1' });
+  ok(c.needsConfirmation && closed.length === 1, 'an open chat still needs reading first');
+  away = { on: true, allow: ['kanban'] };
+  c = await ct.run({ chat: 'z1' });
+  ok(c.needsConfirmation && /parked/.test(c.ask) && closed.length === 1, 'chats not ticked: a parked chat is asked about');
+  away = { on: false, allow: ['chats'] };
+  c = await ct.run({ chat: 'z1' });
+  ok(c.needsConfirmation && closed.length === 1, '"Cru on its own" off: a parked chat is asked about');
+  away = { on: true, allow: ['chats'] }; unattended = true;
+  c = await ct.run({ chat: 'z1' });
+  ok(c.ok && c.onMyOwn && closed.length === 2, 'unattended (a wake-up) too');
+  pctx.unrecognised = () => true;
+  c = await ct.run({ chat: 'z1' });
+  ok(c.unrecognised && closed.length === 2, 'another voice still closes nothing');
+  pctx.unrecognised = () => false; unattended = false;
+  err = ''; try { await tools.find((x) => x.name === 'send_to_chat').run({ chat: 'z1', text: 'hi', intent: 'explicit' }); } catch (e) { err = e.message; }
+  ok(/parked/.test(err) && /resume_chat/.test(err), 'sending to a parked chat points to resume_chat');
+  ok(A.AWAY_CLASSES.chats.label.includes('parked'), 'the "on its own" tick says how parked chats are closed');
+}
+
 // ─── Cru's background-listening order reaches the phone (6 Nov) ───
 {
   const told = [];

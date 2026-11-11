@@ -133,6 +133,16 @@ const num = (description) => ({ type: 'number', description });
  *   docker?: { status(), listContainers({stats}), containerLogs(id, tail) }   (src/docker.js)
  * }
  */
+/** How long ago, in words: "3 days", "5 hours", "12 minutes". */
+function ago(ms) {
+  const m = Math.max(0, Math.round(ms / 60000));
+  if (m < 60) return `${m} minute${m === 1 ? '' : 's'}`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h} hour${h === 1 ? '' : 's'}`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? '' : 's'}`;
+}
+
 export function makeTools(deps) {
   const project = (alias) => {
     const a = String(alias || '').toLowerCase();
@@ -304,12 +314,12 @@ export function makeTools(deps) {
     },
     {
       name: 'list_panels',
-      description: 'The chats (Claude Code conversations) and terminals on the workbench, by project, with their state. Parked (sleeping) chats are listed too, with parked: true: they have no process, so read_chat and send_to_chat do not reach them until resume_chat; close_chat closes them as they are.',
+      description: 'The chats (Claude Code conversations) and terminals on the workbench, by project, with their state. Parked (sleeping) chats are listed too, with parked: true: they have no process, so read_chat and send_to_chat do not reach them until resume_chat; close_chat closes them as they are. reason says why it was parked: idle (sat unused), restart (Crundi restarted under it) or manual (someone parked it).',
       input_schema: obj(),
       run: () => ({
         chats: [
           ...deps.chats().map(c => { const w = (c.pending || []).map(pendingLine).filter(Boolean); return { id: c.id, project: c.project, title: c.title, status: c.status, state: c.agentState || null, model: c.model || '', ...(w.length ? { waitingFor: w } : {}) }; }),
-          ...(deps.parkedChats ? deps.parkedChats() : []).map(c => ({ id: c.id, project: c.project, title: c.title, status: 'parked', parked: true, parkedAt: c.parkedAt ? new Date(c.parkedAt).toISOString() : null, reason: c.reason || '' })),
+          ...(deps.parkedChats ? deps.parkedChats() : []).map(c => ({ id: c.id, project: c.project, title: c.title, status: 'parked', parked: true, parkedAt: c.parkedAt ? new Date(c.parkedAt).toISOString() : null, ...(c.parkedAt ? { parkedAgo: ago(Date.now() - c.parkedAt) } : {}), reason: c.reason || '' })),
         ],
         terminals: deps.terminals().map(t => ({ id: t.id, project: t.project, title: t.title, status: t.status })),
       }),

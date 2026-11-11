@@ -21,7 +21,7 @@
 
 /** What may be ticked, and the tools each covers. */
 export const AWAY_CLASSES = {
-  chats: { label: 'Message, start, park, resume and close Claude chats (a chat is closed only after Cru has read it)', tools: ['send_to_chat', 'start_chat', 'park_chat', 'resume_chat'] },
+  chats: { label: 'Message, start, park, resume and close Claude chats (an open chat is closed only after Cru has read it; a parked one is judged by its title, when and why it was parked)', tools: ['send_to_chat', 'start_chat', 'park_chat', 'resume_chat'] },
   kanban: { label: 'Add, change and move kanban cards (never to To do)', tools: ['add_kanban_task', 'update_kanban_task', 'move_kanban_task', 'add_kanban_todo', 'check_kanban_todo'] },
   notes: { label: 'Write notes and mindmap nodes', tools: ['create_note', 'append_to_note', 'add_mindmap_node', 'update_mindmap_node'] },
   services: { label: 'Start, stop and restart services', tools: ['service_control'] },

@@ -267,11 +267,12 @@ export function makeActionTools(deps, ctx) {
     },
     {
       name: 'close_chat',
-      description: 'Close a chat, open or parked (sleeping), as closing it in the app (its pane goes; a parked one is discarded without waking it). With chats ticked under "Cru on its own", an open chat closes at once with no yes, once you have checked what the chat is doing with read_chat in the last 15 minutes: read it first, and close only what is done with, idle or no longer wanted, never one working or waiting on the owner unless he asked. Otherwise, and always for a parked chat (it cannot be read), it asks the owner first.',
+      description: 'Close a chat, open or parked (sleeping), as closing it in the app (its pane goes; a parked one is discarded without waking it). With chats ticked under "Cru on its own" it closes at once with no yes: an open chat once you have checked what it is doing with read_chat in the last 15 minutes (read it first, and close only what is done with, idle or no longer wanted, never one working or waiting on the owner unless he asked); a parked chat cannot be read, so judge it from list_panels: its title, when it was parked and why (idle: it sat unused; restart: Crundi restarted under it; manual: someone parked it to keep), and close only what is plainly finished with or long abandoned, never one parked by hand recently. Otherwise it asks the owner first.',
       input_schema: obj({ chat: str('The chat: its id or title') }, ['chat']),
       check: (i) => chat(i.chat, { parked: true }),
       // "Cru on its own" with chats ticked, and the chat read: no yes needed (logged).
-      auto: (i) => { let c; try { c = chat(i.chat, { parked: true }); } catch { return null; } if (c.parked) return null; return closeAllowed(ctx.away ? ctx.away() : null, !!deps.chatRead?.(c.id)) ? 'away' : null; },
+      // A parked chat has no process to read: it is judged from its title, when and why it was parked (list_panels).
+      auto: (i) => { let c; try { c = chat(i.chat, { parked: true }); } catch { return null; } return closeAllowed(ctx.away ? ctx.away() : null, c.parked || !!deps.chatRead?.(c.id)) ? 'away' : null; },
       confirm: (i) => { const c = chat(i.chat, { parked: true }); return `Close ${chatName(c)}? It is ${c.status || 'open'}.`; },
       run: async (i, o = {}) => {
         const c = chat(i.chat, { parked: true });
@@ -279,7 +280,7 @@ export function makeActionTools(deps, ctx) {
         if (r && r.ok === false) return r;
         deps.chatReadForget?.(c.id);
         if (o.auto) deps.onAwayAct?.('close_chat', i, { ok: true, closed: c.title });
-        return { ok: true, closed: c.title, ...(o.auto ? { onMyOwn: true, say: 'Closed without asking (chats are ticked under "Cru on its own"); tell the owner briefly.' } : {}) };
+        return { ok: true, closed: c.title, ...(c.parked ? { wasParked: true } : {}), ...(o.auto ? { onMyOwn: true, say: 'Closed without asking (chats are ticked under "Cru on its own"); tell the owner briefly.' } : {}) };
       },
     },
     {
