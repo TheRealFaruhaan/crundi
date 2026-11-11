@@ -173,6 +173,15 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   ok(!T.talksOver('really', said), 'one stray word is not an interruption');
   ok(T.talksOver('stop', said) && T.talksOver('wait', said), '"stop" or "wait" alone is');
   ok(T.talksOver('which build was that', said), 'two or more of his own words are');
+  // Woken from sleep in the same window: Cru's output chain must be rebuilt in the new audio context (12 Nov: text, no voice).
+  {
+    const ctxA = { state: 'running' }, ctxB = { state: 'running' };
+    const out = { context: ctxA };
+    ok(!T.staleOutput({ out, ctx: ctxA }), 'the output chain of the context in use is kept');
+    ok(T.staleOutput({ out, ctx: ctxB }), 'a chain left from the context before waking is rebuilt');
+    ok(T.staleOutput({ out, ctx: null }) && T.staleOutput({ out, ctx: { state: 'closed' } }) && T.staleOutput({ out: { context: ctxA }, ctx: Object.assign(ctxA, { state: 'closed' }) }), 'and one whose context is gone or closed');
+    ok(!T.staleOutput({ out: null, ctx: ctxB }), 'no chain yet: nothing to rebuild');
+  }
   // Cru's voice: typed last, unprompted news is shown, not said; muted, nothing is said; kid mode always talks.
   {
     const sp = T.speaks;

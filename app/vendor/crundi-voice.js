@@ -863,8 +863,8 @@
       // Closed, or switched to typing (or muted) while the microphone was starting: let it go at once.
       if (!S || S.kb || S.muted) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       S.stream = stream;
-      var ctx = new (window.AudioContext || window.webkitAudioContext)();
-      S.ctx = ctx;
+      // The context Cru already plays in, if it is open (keyboard mode, the kid mute, a retry): one context, one output chain.
+      var ctx = audioCtx();
       outNode();
       loadCues();
       var src = ctx.createMediaStreamSource(stream);
@@ -1525,7 +1525,31 @@
     sendVolume();
   }
 
+  /**
+   * Cru's output chain belongs to another audio context than the one it plays in now
+   * (or that one is closed). 12 Nov, the owner (PC, 1.21.6-dev.52): after Cru slept and
+   * "Hey Cru" woke the open window, its replies came as text with no voice. Waking closed
+   * the audio context and made a new one, but kept the volume and meter nodes of the old:
+   * every line was then connected across contexts, which throws, and fell back to the
+   * device's own voice, which the PC has not got. Leaving keyboard mode (or the kid
+   * screen's mute) did the same: the microphone always made a new context.
+   */
+  function staleOutput(s) { return !!(s && s.out && (!s.ctx || s.ctx.state === 'closed' || s.out.context !== s.ctx)); }
+  /** Forget the output chain (and its loopback): the next sound builds it afresh in the context of now. */
+  function dropOutput(s) {
+    try { if (s.loop) s.loop.close(); } catch (e) { /* gone */ }
+    try { if (s.out) s.out.disconnect(); if (s.outGain) s.outGain.disconnect(); } catch (e) { /* gone */ }
+    s.loop = null; s.out = null; s.outGain = null; s.outBuf = null; s.outAnalyser = null; s.route = 'direct'; s.nodes = [];
+  }
+  /** The audio context to use: the open one (woken if suspended), else a new one. */
+  function audioCtx() {
+    if (S.ctx && S.ctx.state !== 'closed') { if (S.ctx.state === 'suspended' && S.ctx.resume) { try { S.ctx.resume(); } catch (e) { /* later */ } } return S.ctx; }
+    S.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    return S.ctx;
+  }
+
   function outNode() {
+    if (staleOutput(S)) dropOutput(S);
     if (S.out || !S.ctx) return S.outGain || S.out;
     // Cru's voice and cues -> its volume -> the level meter (the echo gate
     // measures what really plays) -> the speakers or the loopback.
@@ -1821,9 +1845,11 @@
   function wakeMic() {
     if (!S || !S.micOff) return;
     S.micOff = false;
-    try { if (S.loop) S.loop.close(); } catch (e) { /* gone */ }
+    // A fresh context for the microphone, and Cru's output chain with it (not the old one's nodes: see staleOutput).
+    stopSpeaking(S);
+    dropOutput(S);
     try { if (S.ctx) S.ctx.close(); } catch (e) { /* gone */ }
-    S.loop = null; S.ctx = null;
+    S.ctx = null;
     S.phase = 'start'; S.notice = ''; S.heard = ''; S.streaming = true; S.quietSince = Date.now();
     render();
     openMic();
@@ -2488,7 +2514,7 @@
     tell(say, show, media);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */
