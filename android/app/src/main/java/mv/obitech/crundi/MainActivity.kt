@@ -67,6 +67,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Cru's bubble moves this window out of the way while it is still hidden (CruBubble.request).
+        mv.obitech.crundi.voice.CruBubble.mainWindow = java.lang.ref.WeakReference(this)
         take(intent)
         setContent {
             CrundiTheme {
@@ -110,8 +112,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
      */
     override fun onResume() {
         super.onResume()
-        // The voice screen opened from the top bar just stepped back for Cru's bubble: step aside too,
-        // or this window stays in front and the bubble is folded away (CruBubble.request).
+        // The voice screen opened from the top bar just stepped back for Cru's bubble and this window
+        // surfaced anyway (it could not be moved first): step aside, or the bubble is folded away (CruBubble.request).
         if (mv.obitech.crundi.voice.CruBubble.mainShouldStepAside()) { moveTaskToBack(true); return }
         // Back from one of Android's pages the urgent alert setup opened: the next one, if any.
         UrgentSetup.next(this)

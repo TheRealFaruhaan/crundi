@@ -119,6 +119,9 @@ object CruBubble {
     @Volatile private var stepAsideUntil = 0L
     private const val STEP_ASIDE_MS = 3_000L
 
+    /** Crundi's main window (MainActivity sets it), moved behind first so stepping aside is one switch. */
+    @Volatile var mainWindow: java.lang.ref.WeakReference<Activity>? = null
+
     /** Called by the main window as it comes to the front: true (once) when it should step aside for Cru's bubble. */
     fun mainShouldStepAside(): Boolean {
         val due = System.currentTimeMillis() < stepAsideUntil
@@ -153,6 +156,12 @@ object CruBubble {
     fun request(activity: Activity, onBubbled: () -> Unit) {
         open(activity)?.let { problem -> android.widget.Toast.makeText(activity, problem, android.widget.Toast.LENGTH_LONG).show(); if (BubbleHelp.blocked(activity) || problem.contains("turned off")) explain(activity); return }
         stepAsideUntil = System.currentTimeMillis() + STEP_ASIDE_MS
+        // Opens by itself as a chat's bubble does (MainActivity.openBubble: post, then the app steps
+        // aside at once): one task switch, straight after the post, before Android opens the bubble.
+        // Opened from the top bar, Crundi's main window is under the voice screen: moved behind first,
+        // while still hidden, so that no second switch (the main window surfacing, then stepping aside)
+        // comes after the bubble has opened and folds it away.
+        mainWindow?.get()?.takeIf { it !== activity && !it.isFinishing && !it.isDestroyed }?.let { runCatching { it.moveTaskToBack(true) } }
         activity.moveTaskToBack(true)
         // Looked at a few times over about three seconds: Android marks the bubble shortly after the post.
         // On the app's context: the screen behind may be closed meanwhile (asleep, it closes when it leaves the front).
