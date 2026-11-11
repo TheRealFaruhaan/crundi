@@ -237,6 +237,16 @@ open class VoiceActivity : ComponentActivity() {
         } else controller.open()
     }
 
+    /**
+     * Home, or another app, with Cru open (not a picker, not the lock screen, not already a bubble):
+     * Cru becomes a folded bubble, as a chat at work does when he leaves Crundi (CruBubble.onLeave).
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (inBubble || picking || locked()) return
+        CruBubble.onLeave(this)
+    }
+
     override fun onStop() {
         inFront = false
         // A picker or the camera over it: the session carries on, and the screen

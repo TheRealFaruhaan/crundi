@@ -55,8 +55,8 @@ object CruBubble {
 
     fun available(ctx: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !BubbleHelp.blocked(ctx)
 
-    /** Open it; a sentence for the person when it can't be done, else null. */
-    fun open(ctx: Context): String? {
+    /** Open it ([expand]: open now; else folded, as on leaving); a sentence for the person when it can't be done, else null. */
+    fun open(ctx: Context, expand: Boolean = true): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return "Bubbles need Android 11 or newer."
         if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return "Allow notifications for Crundi first: a bubble is a kind of notification."
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -92,7 +92,7 @@ object CruBubble {
                 NotificationCompat.BubbleMetadata.Builder(pi, icon)
                     .setDesiredHeight(640)
                     // Asked for: open now, and no second copy in the shade.
-                    .setAutoExpandBubble(true)
+                    .setAutoExpandBubble(expand)
                     .setSuppressNotification(true)
                     .build()
             )
@@ -127,6 +127,33 @@ object CruBubble {
         val due = System.currentTimeMillis() < stepAsideUntil
         stepAsideUntil = 0L
         return due
+    }
+
+    /**
+     * The owner leaves the voice screen (home, or another app) with Cru open:
+     * Cru stays one touch away as a folded bubble, as a chat at work does when
+     * he leaves Crundi (MainActivity.onUserLeaveHint, same setting). Android
+     * lets an app raise a bubble only while it is in front, so it is posted on
+     * the way out. If Android does not make a bubble of it (bubbles off, or
+     * Cru not a selected conversation), the notification is taken down a
+     * moment later, quietly: leaving is not the time for a dialog.
+     */
+    fun onLeave(activity: Activity) {
+        if (!available(activity)) return
+        if (!activity.getSharedPreferences("crundi", Context.MODE_PRIVATE).getBoolean(mv.obitech.crundi.MainActivity.PREF_BUBBLE_ON_LEAVE, true)) return
+        if (open(activity, expand = false) != null) return
+        val app = activity.applicationContext
+        val h = android.os.Handler(android.os.Looper.getMainLooper())
+        var tries = 0
+        val look = object : Runnable {
+            override fun run() {
+                if (bubbled(app) == true) { Log.i(TAG, "folded bubble on leaving"); return }
+                if (++tries < CHECK_TRIES) { h.postDelayed(this, CHECK_MS); return }
+                Log.w(TAG, "not a bubble on leaving: " + diagnose(app))
+                cancel(app)
+            }
+        }
+        h.postDelayed(look, CHECK_MS)
     }
 
     /** On the voice screen's intent: the bubble was not made; show how to allow it (the value: what Android reported). */
