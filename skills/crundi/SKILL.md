@@ -48,10 +48,11 @@ running you. Defaults, on both platforms:
 | 443 | Crundi HTTPS (when TLS is on) | The site goes down |
 | 80 | ACME + HTTP redirect | Certificate renewal stops — silently, until expiry |
 | 8888 | Loopback API (`127.0.0.1`) | Every MCP call fails with "socket hang up" |
+| 7480–7579 | Homepool (loopback and Docker bridge addresses): 7480 SOCKS5, 7481 HTTP proxy, 7490–7579 access keys' port blocks | Traffic meant to leave through homepool fails; a key's ports cannot open. A dev instance uses 7580 and up |
 
 Other work on the box takes ports too, so check before binding — the command to
 check is platform-specific, see your platform file. Pick a high port (4000–9999,
-excluding Crundi's) and bind to loopback unless the thing must be reachable
+excluding Crundi's: 8888 and 7480–7599) and bind to loopback unless the thing must be reachable
 externally. A dev server on `0.0.0.0` on a public box is on the internet. To
 publish something, use `add_forward` — never an open firewall port.
 
