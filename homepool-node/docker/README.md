@@ -32,7 +32,17 @@ starts, so it is always the server's own version.
 
 ## Way 2: this image
 
-From the repository root:
+Published with every Crundi release as
+`ghcr.io/therealfaruhaan/crundi-homepool-node:<crundi version>`, with `:latest`
+following production releases and `:dev` the dev ones:
+
+```bash
+docker run -d --name crundi-homepool-node --restart unless-stopped \
+  -e HOMEPOOL_CODE='crundi-homepool://node?s=…&k=hpn_…' \
+  ghcr.io/therealfaruhaan/crundi-homepool-node:latest
+```
+
+Or build it yourself, from the repository root:
 
 ```bash
 docker build -f homepool-node/docker/Dockerfile -t crundi-homepool-node .

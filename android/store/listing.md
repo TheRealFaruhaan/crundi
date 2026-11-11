@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.40 (en-US)
+
+Version code 71. Internal track. Since 1.1.3-dev.39 (code 70): homepool (Settings: share this phone's network as an exit, with a foreground node service and boot start); Hey Cru wakes only for the owner's voice; Cru can speak more than once in a turn (say_now), finishes speaking before the answer or news, and a hum no longer wakes him; a chat no longer sticks mid-reply and "working" after a network switch (sockets remade on network change, stalled-reply catch-up); eye-off icon restored. Server 1.21.6-dev.53.
+
+```
+<en-US>
+- Homepool: share this phone's connection as an exit for your server.
+- Hey Cru now wakes only for your voice, and a hum no longer wakes him.
+- Cru can speak more than once while he works, and finishes talking before the answer comes.
+- Fixed: a chat stuck mid-reply after switching between Wi-Fi and mobile data.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.39 (en-US)
 
 Version code 70. Internal track. Since 1.1.3-dev.38 (code 69): Cru's bubble stays when folded (its activity no longer finishes itself); leaving the voice screen turns Cru into a folded bubble, as chats do; Cru's unheard news goes into its bubble (opens where Android allows, else a message beside it) and is said on opening. Server 1.21.6-dev.52 (pushes carry cruChat and the line to say).

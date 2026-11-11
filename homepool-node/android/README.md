@@ -38,7 +38,9 @@ JAVA_HOME=~/android-toolchain/jdk ./gradlew assembleDebug
 ```
 
 A debug build is signed with the SDK's debug key and installs as it is. A
-release build is not signed by this project; no keys are kept here.
+release build is signed only in CI (`.github/workflows/android.yml`), with the
+node's own key (never Crundi's Play or GitHub key), and attached to each Crundi
+release as `Crundi-Homepool-Node-<versionName>.apk`; no keys are kept here.
 
 ## Setting a phone up
 

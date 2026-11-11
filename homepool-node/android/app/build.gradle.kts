@@ -27,11 +27,26 @@ android {
         versionName = "2.0.0"
     }
 
-    // Debug builds only need the SDK's debug key. A release build is left
-    // unsigned: no key is created or kept in this repository.
+    // Debug builds only need the SDK's debug key. A release build is signed
+    // only when CI hands it the Homepool Node's OWN key (HOMEPOOL_NODE_*):
+    // never Crundi's Play upload key, nor Crundi's GitHub APK key. No key is
+    // kept in this repository; without one a release build comes out unsigned.
+    val nodeKey = System.getenv("HOMEPOOL_NODE_STORE_FILE").orEmpty()
+    val nodePassword = System.getenv("HOMEPOOL_NODE_STORE_PASSWORD").orEmpty()
+    signingConfigs {
+        if (nodeKey.isNotEmpty() && nodePassword.isNotEmpty()) {
+            create("node") {
+                storeFile = file(nodeKey)
+                storePassword = nodePassword
+                keyAlias = System.getenv("HOMEPOOL_NODE_KEY_ALIAS") ?: "homepool-node"
+                keyPassword = nodePassword
+            }
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("node")
         }
     }
 
