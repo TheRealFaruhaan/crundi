@@ -218,7 +218,7 @@ export function createVoiceWake(d) {
       if (me !== child || !m) return;
       if (m.type === 'ready') { childReady = true; emit(); }
       else if (m.type === 'error') { log('spotter: ' + m.message); }
-      else if (m.type === 'detected') heard(m.keyword, m.score);
+      else if (m.type === 'detected') heard(m.keyword, m.score, m.via);
       else if (m.type === 'rejected') log('heard ' + m.keyword + ' but not the trained voice (score ' + m.score + ', limit ' + (profile ? profile.limit : '?') + ')');
     });
     me.on('exit', (code) => {
@@ -331,9 +331,10 @@ export function createVoiceWake(d) {
     emit();
   }
 
-  function heard(keyword, score) {
+  function heard(keyword, score, via) {
     lastHeard = { keyword: String(keyword || ''), at: Date.now() };
-    log('heard ' + lastHeard.keyword + (score != null ? ' (voice score ' + score + ')' : ''));
+    // Which way it woke (enroll.js): 'phrase' (a burst matched the owner's takes, the model agreeing) or 'model' (the spotter fired, the voice matched).
+    log('heard ' + lastHeard.keyword + (score != null ? ' (voice score ' + score + ')' : '') + (via ? ' via ' + via : ''));
     // Listening only for an asleep voice screen (background listening off): a hit counts only if the
     // page still has one, asked now. The state polled each second can be stale just after Cru closed
     // the screen, and then a hit opened Cru again (12 Nov, the owner): after a close, only an
