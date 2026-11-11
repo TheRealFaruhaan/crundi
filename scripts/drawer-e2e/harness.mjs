@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBrowserDrawer, isDrawerKey, partitionOf } from '../../app/browser-drawer.js';
 import { createDrawerNet } from '../../app/drawer-net.js';
+import { runMouse } from '../../app/browser-pointer.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -63,6 +64,15 @@ const generic = {
     if (msg.selector) await e.win.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(msg.selector)})?.focus()`);
     e.win.webContents.insertText(msg.text); return { ok: true };
   },
+  async browserMouse(msg) {
+    const e = drawer.getEntry(msg.key); const wc = e.win.webContents;
+    try { wc.debugger.attach('1.3'); } catch (err) { if (!/already attached/i.test(err.message)) throw err; }
+    e.pointer = e.pointer || {};
+    try {
+      const r = await runMouse({ send: (m, p) => wc.debugger.sendCommand(m, p), state: e.pointer, show: (p) => drawer.cursor(msg.key, p), msg });
+      return { ok: true, url: wc.getURL(), ...r };
+    } catch (err) { return { ok: false, error: err.message }; }
+  },
   async browserEval(msg) { const e = drawer.getEntry(msg.key); const r = await e.win.webContents.executeJavaScript(msg.code); return { ok: true, result: typeof r === 'string' ? r : JSON.stringify(r) }; },
   async browserClose(msg) { return drawer.close(msg); },
   async browserResize(msg) { return drawer.resize(msg); },
@@ -93,7 +103,7 @@ async function testCall(m) {
 
 function connect() {
   ws = new WS(SERVER.replace(/^http/, 'ws') + '/ws');
-  ws.on('open', () => ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'], deviceId: process.env.DRAWER_DEVICE || '' })));
+  ws.on('open', () => ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer', 'browser-mouse'], deviceId: process.env.DRAWER_DEVICE || '' })));
   ws.on('message', (raw, isBinary) => {
     if (isBinary) { serverNet.handleFrame(raw); return; }
     const m = JSON.parse(raw.toString());

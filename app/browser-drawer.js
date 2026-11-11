@@ -68,6 +68,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   const pending = new Map();    // reqId → { resolve, reject, timer }
   let nextReq = 1;
   let readyId = null;           // webContents id of the page whose drawer is ready
+  let cursorMissing = false;    // that page has no chat cursor (an older web UI)
   const netHooked = new Set();  // sessions with the network-capture listeners
 
   function networkLabel(network) {
@@ -154,7 +155,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     if (result && result.ok === false) p.reject(new Error(result.error || 'failed'));
     else p.resolve(result || {});
   });
-  ipcMain.on('drawer:ready', (e) => { const w = win(); if (w && e.sender.id === w.webContents.id) { readyId = e.sender.id; log('[drawer] page ready'); } });
+  ipcMain.on('drawer:ready', (e) => { const w = win(); if (w && e.sender.id === w.webContents.id) { readyId = e.sender.id; cursorMissing = false; log('[drawer] page ready'); } });
 
   function emit(channel, payload) { const w = win(); if (w) { try { w.webContents.send(channel, payload); } catch { /* page gone */ } } }
 
@@ -606,8 +607,23 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     },
   };
 
+  // The chat's visible cursor (app/browser-pointer.js calls this before each
+  // step of browser_mouse): the page draws it over the tab and answers once
+  // it has arrived. A web UI without the cursor answers "unknown request":
+  // that is fine, the mouse works without the picture.
+  async function cursor(key, p) {
+    const en = getEntry(key);
+    if (!en || cursorMissing) return;
+    const ms = Math.max(0, Math.min(10000, Number(p.ms) || 0));
+    try {
+      await request('cursor', { tabId: en.tabId, x: p.x, y: p.y, pressed: !!p.pressed, ms, linear: !!p.linear, click: !!p.click }, ms + 3000);
+    } catch (err) {
+      if (/unknown request/.test(err.message)) { cursorMissing = true; log('[drawer] this web UI has no cursor; mouse input goes on without it'); }
+    }
+  }
+
   async function close(msg) { const en = await prepare(msg); await request('close', { tabId: en.tabId }); return { ok: true }; }
   async function resize(msg) { const en = await prepare(msg); await request('resize', { tabId: en.tabId, width: msg.width, height: msg.height }); return { ok: true }; }
 
-  return { hardenWindow, handlers, prepare, getEntry, close, resize, notifyInfo, isDrawerKey, networkLabel, _tabs: tabs };
+  return { hardenWindow, handlers, prepare, getEntry, close, resize, cursor, notifyInfo, isDrawerKey, networkLabel, _tabs: tabs };
 }

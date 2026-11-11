@@ -505,17 +505,51 @@ export async function resizeBrowser(key, width, height) {
   }
 }
 
-export async function mouseBrowser(key, x, y, action) {
+// ─── Mouse ───
+//
+// move, click, double_click, down (press and hold), up, drag. The pointer
+// remembers where it is and which button is held, per browser, so a press,
+// moves and a release can be separate calls. Desktop app browsers send the
+// events through their debugger (app/browser-pointer.js), and a drawer tab
+// shows the chat's cursor while it moves.
+
+const MOUSE_CAPABILITY = 'browser-mouse';
+const MOUSE_ACTIONS = ['move', 'click', 'double_click', 'down', 'up', 'drag'];
+const OLD_MOUSE_ACTIONS = ['move', 'click'];   // what a desktop app from before browser-mouse understood
+
+function mouseSupported(key, action) {
+  if (OLD_MOUSE_ACTIONS.includes(action)) return true;
+  let backend = keyBackend.get(key);
+  if (!backend) backend = isDrawerKey(key) ? drawerBackend() : (hasNativeHost() ? null : 'headless');
+  if (backend === 'headless' || backend === 'parent') return true;
+  return hostSupports(MOUSE_CAPABILITY);   // a remote app announces it
+}
+
+export async function mouseBrowser(key, x, y, action, opts = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
+  action = action || 'click';
+  if (!MOUSE_ACTIONS.includes(action)) return { ok: false, error: `action must be one of ${MOUSE_ACTIONS.join(', ')}` };
+  if (!mouseSupported(key, action)) {
+    return { ok: false, error: `The mouse action "${action}" is not supported by the desktop app this browser runs on. Update the Crundi app, or use "click" and "move".` };
+  }
+  const { button, toX, toY, duration } = opts;
+  const msg = { key, x, y, action };
+  if (button != null) msg.button = button;
+  if (toX != null) msg.toX = toX;
+  if (toY != null) msg.toY = toY;
+  if (duration != null) msg.duration = duration;
+  const ms = Math.min(10000, Math.max(0, Number(duration) || 0)) + (action === 'drag' ? 1000 : 0);
 
   try {
-    const result = await sendIpc('browserMouse', { key, x, y, action });
+    const result = await sendIpc('browserMouse', msg, ms + IPC_TIMEOUT_MS);
     if (!result.ok) return { ok: false, error: result.error };
     resetIdleTimer(key);
-    return { ok: true, url: result.url };
+    const out = { ok: true, url: result.url };
+    if (result.x != null) { out.x = result.x; out.y = result.y; out.held = result.held || null; }
+    return out;
   } catch (err) {
     return { ok: false, error: err.message };
   }

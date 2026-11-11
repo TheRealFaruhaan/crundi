@@ -81,7 +81,19 @@ Navigation: `browser_navigate`, `browser_go_back`, `browser_go_forward`,
 
 Interaction: `browser_click` (`selector`), `browser_type` (`text`, `selector?`),
 `browser_fill` (`selector`, `value`), `browser_select` (`selector`, `value`),
-`browser_mouse` (`x`, `y`, `action`), `browser_scroll`, `browser_resize`.
+`browser_mouse`, `browser_scroll`, `browser_resize`.
+
+Mouse: `browser_mouse` (`x`, `y`, `action`: move \| click \| double_click \|
+down \| up \| drag; `button` left \| right \| middle; `drag` takes `toX`/`toY`
+and `duration`). It is real mouse input, hit-tested like a person's mouse, so
+it reaches what selectors cannot: a cross-site `<iframe>` (a CodePen or
+JSFiddle preview, an embedded payment or sign-in form), a canvas, a slider. The
+pointer remembers where it is and which button is held, so `down`, any number
+of `move`s and `up` (with or without a point) can be separate calls; moves
+while held send the whole path, as a drag needs. In a drawer tab the person
+sees your cursor glide to each point, press and release; it hides by itself a
+moment after you stop, and stays while a button is held, so release it when
+you are done.
 
 Touch: `browser_touch` (`x`, `y`, `action`: tap \| double_tap \| long_press \|
 swipe \| pinch). A swipe takes `toX`/`toY`, or `direction` (where the finger

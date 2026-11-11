@@ -86,10 +86,11 @@ export function makeCruBrowserTools(deps) {
     },
     {
       name: 'browser_do',
-      description: 'Use a drawer tab: click (selector), type (text, into selector if given), fill (selector, text), scroll (y, or selector), back, forward, or network (switch the tab to client, server or homepool:<network>).',
+      description: 'Use a drawer tab: click (selector), type (text, into selector if given), fill (selector, text), scroll (y, or selector), back, forward, network (switch the tab to client, server or homepool:<network>), or mouse: real mouse input at x, y in page pixels (mouse: click, double_click, move, down, up, or drag to toX, toY), which reaches embedded pages a selector cannot, and the owner sees your cursor do it.',
       input_schema: obj({
-        key: str('Drawer tab key'), op: str('What to do', { enum: ['click', 'type', 'fill', 'scroll', 'back', 'forward', 'network'] }),
-        selector: str('CSS selector'), text: str('For type and fill'), y: num('For scroll: pixels down'), network: str('For network'),
+        key: str('Drawer tab key'), op: str('What to do', { enum: ['click', 'type', 'fill', 'scroll', 'back', 'forward', 'network', 'mouse'] }),
+        selector: str('CSS selector'), text: str('For type and fill'), y: num('For scroll: pixels down; for mouse: page y'), network: str('For network'),
+        x: num('For mouse: page x'), mouse: str('For mouse (default click)', { enum: ['click', 'double_click', 'move', 'down', 'up', 'drag'] }), toX: num('For a mouse drag: where to release, x'), toY: num('For a mouse drag: where to release, y'),
       }, ['key', 'op']),
       safe: true,
       check: (i) => { needKey(i.key); },
@@ -102,6 +103,7 @@ export function makeCruBrowserTools(deps) {
           case 'back': return call('browser_go_back', { key: i.key });
           case 'forward': return call('browser_go_forward', { key: i.key });
           case 'network': return call('browser_tab_network', { key: i.key, network: String(i.network || '') });
+          case 'mouse': return call('browser_mouse', { key: i.key, action: i.mouse || 'click', x: i.x, y: i.y, toX: i.toX, toY: i.toY });
           default: return { ok: false, error: 'Unknown op' };
         }
       },

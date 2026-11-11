@@ -18,6 +18,7 @@ import { tmpdir, homedir, hostname as osHostname } from 'os';
 import electronUpdater from 'electron-updater';
 import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS, partitionOf } from './browser-drawer.js';
 import { createDrawerNet } from './drawer-net.js';
+import { runMouse } from './browser-pointer.js';
 import { startNode as startHomepoolNode } from './homepool-node.js';
 const { autoUpdater } = electronUpdater;
 
@@ -2111,7 +2112,7 @@ function connectNativeHost() {
     appendLog('[nativehost] connected — registering as native host');
     // Tell the server what this build can do, so it does not offer the user a
     // notification channel that an older app would silently drop.
-    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'], deviceId: hpDeviceId() })); }
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer', 'browser-mouse'], deviceId: hpDeviceId() })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
   ws.on('message', (raw, isBinary) => {
@@ -2435,17 +2436,21 @@ const browserIpcHandlers = {
     return { ok: true, result: typeof result === 'string' ? result : JSON.stringify(result) };
   },
 
+  // Real mouse input through the debugger (app/browser-pointer.js), so it
+  // reaches cross-site frames too; a drawer tab shows the chat's cursor.
   async browserMouse(msg) {
     const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const wc = entry.win.webContents;
-    if (msg.action === 'click') {
-      wc.sendInputEvent({ type: 'mouseDown', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
-      wc.sendInputEvent({ type: 'mouseUp', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
-    } else {
-      wc.sendInputEvent({ type: 'mouseMove', x: msg.x, y: msg.y });
+    _attachDbg(wc);
+    entry.pointer = entry.pointer || {};
+    const show = isDrawerKey(msg.key) ? (p) => browserDrawer.cursor(msg.key, p) : null;
+    try {
+      const r = await runMouse({ send: (m, p) => wc.debugger.sendCommand(m, p), state: entry.pointer, show, msg });
+      return { ok: true, url: wc.getURL(), ...r };
+    } catch (err) {
+      return { ok: false, error: err.message };
     }
-    return { ok: true };
   },
 
   // Replays a gesture planned by the server (browser.js planTouch): a list of

@@ -74,6 +74,26 @@ const target = http.createServer((req, res) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
   if (req.url.startsWith('/whoami')) { res.end('<title>who</title><body>via-server ' + req.headers.host + '</body>'); return; }
+  // browser_mouse: a page whose iframe is another site (localhost inside
+  // 127.0.0.1, so a separate frame process), and a pad that records a drag.
+  if (req.url.startsWith('/inner')) {
+    res.removeHeader('X-Frame-Options'); res.removeHeader('Content-Security-Policy');
+    res.end('<body style="margin:0"><button id="b" style="width:300px;height:200px">inner</button><script>document.getElementById("b").onclick=function(){parent.postMessage("inner-click","*")}</script></body>');
+    return;
+  }
+  if (req.url.startsWith('/framed')) {
+    res.end(`<!doctype html><title>Framed</title><body style="margin:0">
+      <iframe id="f" src="http://localhost:${T}/inner" style="position:absolute;left:0;top:0;width:300px;height:200px;border:0"></iframe>
+      <div id="pad" style="position:absolute;left:310px;top:0;width:200px;height:250px;background:#eef"></div>
+      <script>window.innerClicks=0;addEventListener('message',function(e){if(e.data==='inner-click')innerClicks++;});
+      window.drag={moves:0};var pad=document.getElementById('pad');
+      pad.addEventListener('mousedown',function(e){drag={down:[e.clientX,e.clientY],moves:0};});
+      addEventListener('mousemove',function(e){if(e.buttons===1)drag.moves++;});
+      addEventListener('mouseup',function(e){drag.up=[e.clientX,e.clientY];});
+      window.ctx=0;pad.addEventListener('contextmenu',function(e){e.preventDefault();ctx++;});
+      window.dbl=0;pad.addEventListener('dblclick',function(){dbl++;});</script></body>`);
+    return;
+  }
   if (req.url.startsWith('/page2')) { res.end('<title>Second</title><body style="margin:0;background:#fff">second</body>'); return; }
   pageLoads++;
   res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Target page</title>
@@ -523,6 +543,53 @@ try {
   const c2 = await dispatchBrowserTool('browser_eval', { key: lhTab.key, code: 'document.cookie', _cru: true });
   const hist3 = await page('window.api.wbrowser.drawer.history("", 50)');
   check('"Only this site" (filled in from the tab) clears that site\'s cookies and history, and nothing else', prefilled === '127.0.0.1' && c1.result === '' && /b=2/.test(c2.result || '') && hist3.items.every((h) => !/127\.0\.0\.1/.test(h.url)) && hist3.items.some((h) => /localhost/.test(h.url)), `${prefilled} ${JSON.stringify(c1)} ${JSON.stringify(c2)} ${JSON.stringify(hist3.items.map((h) => h.url))}`);
+
+  // ── browser_mouse: real input, into a cross-site frame, with the chat's cursor ──
+  const fr = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/framed`, show: true }));
+  const fk = fr.key;
+  for (let i = 0; i < 20; i++) { const w = await proj(() => browser.evalBrowser(fk, 'innerWidth')); if (w.ok && Number(w.result) >= 520) break; await sleep(200); }
+  await sleep(600);
+  const vw = await proj(() => browser.evalBrowser(fk, 'innerWidth + "x" + innerHeight'));
+  check('setup: a drawer tab whose page has a cross-site iframe', fr.ok && vw.ok, JSON.stringify(fr) + ' ' + JSON.stringify(vw));
+  const curOn = () => page('document.querySelector(".brd-cur").classList.contains("on")');
+  const m1 = await proj(() => browser.mouseBrowser(fk, 150, 100, 'click'));
+  await sleep(250);
+  const ic1 = await proj(() => browser.evalBrowser(fk, 'window.innerClicks'));
+  check('browser_mouse click lands inside a cross-site iframe', m1.ok && ic1.result === '1', JSON.stringify(m1) + ' ' + JSON.stringify(ic1));
+  check('the click answers where the pointer is', m1.x === 150 && m1.y === 100 && m1.held === null, JSON.stringify(m1));
+  check('the chat\'s cursor shows in the drawer while it uses the mouse', await curOn() === true);
+  const tr = await page('document.querySelector(".brd-cur").style.transform');
+  check('...at the point it clicked', /translate\(150px, ?100px\)/.test(tr || ''), tr);
+  await sleep(2400);
+  check('...and hides by itself once the chat stops', await curOn() === false);
+  const t0m = Date.now();
+  const m2 = await proj(() => browser.mouseBrowser(fk, 290, 100, 'move'));
+  const glided = Date.now() - t0m;
+  check('a move glides the cursor there first (the call waits for it)', m2.ok && glided >= 140, `${glided} ms ${JSON.stringify(m2)}`);
+  const d1 = await proj(() => dispatchBrowserTool('browser_mouse', { key: fk, action: 'drag', x: 320, y: 30, toX: 480, toY: 200, duration: 300 }));
+  const dr1 = JSON.parse((await proj(() => browser.evalBrowser(fk, 'JSON.stringify(window.drag)'))).result || '{}');
+  check('drag (through the MCP tool): pressed at the start, moved holding the button, released at the end', d1.ok && String(dr1.down) === '320,30' && String(dr1.up) === '480,200' && dr1.moves >= 5, JSON.stringify(d1) + ' ' + JSON.stringify(dr1));
+  const dn = await proj(() => browser.mouseBrowser(fk, 330, 40, 'down'));
+  check('down holds the button, and the cursor shows it held', dn.ok && dn.held === 'left' && await page('document.querySelector(".brd-cur").classList.contains("down")'), JSON.stringify(dn));
+  await shot('12-mouse-held');
+  await sleep(2400);
+  check('a held cursor stays on screen', await curOn() === true);
+  await proj(() => browser.mouseBrowser(fk, 450, 120, 'move', { duration: 200 }));
+  const up1 = await proj(() => browser.mouseBrowser(fk, undefined, undefined, 'up'));
+  const dr2 = JSON.parse((await proj(() => browser.evalBrowser(fk, 'JSON.stringify(window.drag)'))).result || '{}');
+  check('down, move and up as separate calls make a drag', up1.ok && up1.held === null && String(dr2.down) === '330,40' && String(dr2.up) === '450,120' && dr2.moves >= 2, JSON.stringify(up1) + ' ' + JSON.stringify(dr2));
+  await proj(() => browser.mouseBrowser(fk, 400, 220, 'click', { button: 'right' }));
+  await proj(() => browser.mouseBrowser(fk, 400, 220, 'double_click'));
+  const cd = await proj(() => browser.evalBrowser(fk, 'ctx + "," + dbl'));
+  check('right click and double_click', cd.result === '1,1', JSON.stringify(cd));
+  const bad1 = await proj(() => browser.mouseBrowser(fk, 1, 1, 'drag'));
+  const bad2 = await proj(() => browser.mouseBrowser(fk, 1, 1, 'wiggle'));
+  check('a drag without an end, or an unknown action, is refused with a reason', !bad1.ok && /toX and toY/.test(bad1.error) && !bad2.ok && /action must be one of/.test(bad2.error), JSON.stringify([bad1, bad2]));
+  const cm = await cruTool('browser_do').run({ key: fk, op: 'mouse', mouse: 'click', x: 150, y: 100 });
+  await sleep(250);
+  const ic2 = await proj(() => browser.evalBrowser(fk, 'window.innerClicks'));
+  check('Cru clicks with the mouse too (browser_do op mouse), into the same iframe', cm.ok !== false && ic2.result === '2', JSON.stringify(cm) + ' ' + JSON.stringify(ic2));
+  await proj(() => browser.closeBrowser(fk));
 
   // ── Hardening ──
   const evil = await page(`new Promise(function(res){ var w=document.createElement('webview'); w.setAttribute('partition','persist:evil'); w.setAttribute('src','about:blank');

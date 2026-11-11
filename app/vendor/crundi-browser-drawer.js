@@ -128,6 +128,16 @@
     '.brd-hov span { position: absolute; left: -2px; bottom: 100%; margin-bottom: 2px; padding: 1px 6px; border-radius: 4px; background: #ea580c; color: #fff; font: 11px/1.4 var(--mono, monospace); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }',
     '.brd-tab.sleeping .brd-t { opacity: 0.5; font-style: italic; }',
     '.brd-ann svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }',
+    // The chat's cursor (browser_mouse): above the page and the marks, never in the way.
+    '.brd-cur { position: absolute; left: 0; top: 0; z-index: 5; pointer-events: none; opacity: 0; transition: opacity .2s ease; will-change: transform; }',
+    '.brd-cur.on { opacity: 1; }',
+    '.brd-cur svg { position: absolute; left: -5px; top: -2px; width: 24px; height: 24px; overflow: visible; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45)); }',
+    '.brd-cur svg path { fill: #6366f1; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; }',
+    '.brd-cur-tag { position: absolute; left: 15px; top: 21px; padding: 1px 7px; border-radius: 9px; background: #6366f1; color: #fff; font: 600 11px/1.5 system-ui, sans-serif; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.35); }',
+    '.brd-cur-ring { position: absolute; left: -11px; top: -11px; width: 22px; height: 22px; border-radius: 50%; border: 2px solid #6366f1; background: rgba(99,102,241,0.28); box-sizing: border-box; transform: scale(0); transition: transform .12s ease; }',
+    '.brd-cur.down .brd-cur-ring { transform: scale(1); }',
+    '.brd-rip { position: absolute; z-index: 5; width: 40px; height: 40px; margin: -20px 0 0 -20px; border-radius: 50%; border: 2px solid #6366f1; box-sizing: border-box; pointer-events: none; animation: brd-rip .45s ease-out forwards; }',
+    '@keyframes brd-rip { from { transform: scale(0.3); opacity: 0.9; } to { transform: scale(1.3); opacity: 0; } }',
     '.brd-lbl { position: absolute; max-width: 240px; padding: 3px 7px; border-radius: 6px; font: 12px/1.35 system-ui, sans-serif; color: #fff; white-space: pre-wrap; word-break: break-word; box-shadow: 0 2px 6px rgba(0,0,0,0.35); pointer-events: none; }',
     '.brd-lbl.you { background: #ea580c; } .brd-lbl.claude { background: #6366f1; }',
     '.brd-lbl .brd-who { font-weight: 700; opacity: 0.85; margin-right: 4px; }',
@@ -259,6 +269,7 @@
       + '<button class="brd-ibtn" data-ann="done" title="Done annotating">' + ic('check') + '</button>'
       + '</div>'
       + '<div class="brd-stage"><div class="brd-views"></div><div class="brd-ann"><svg xmlns="http://www.w3.org/2000/svg"></svg></div>'
+      + '<div class="brd-cur" aria-hidden="true"><span class="brd-cur-ring"></span><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M5 2v16.4l4.2-4 2.8 6.4 3-1.3-2.8-6.3h5.9z"/></svg><span class="brd-cur-tag">Claude</span></div>'
       + '<div class="brd-diag" hidden></div>'
       + '<div class="brd-empty" hidden><div>No browser tabs in this project yet.</div><button class="brd-btn" data-brd="new">Open a tab</button></div>'
       + '<div class="brd-panel" hidden></div></div>';
@@ -271,6 +282,7 @@
     var stage = root.querySelector('.brd-stage');
     var views = root.querySelector('.brd-views');
     var annEl = root.querySelector('.brd-ann');
+    var curEl = root.querySelector('.brd-cur');
     var svg = annEl.querySelector('svg');
     var diagEl = root.querySelector('.brd-diag');
     var emptyEl = root.querySelector('.brd-empty');
@@ -607,11 +619,70 @@
     // device scale: overlay px = page px * box.scale.
     function positionAnn() {
       var t = activeTab(); var r = t && runtime[t.id];
+      placeCursor(0);
       if (!st.open || !r || !r.box) { annEl.style.display = 'none'; return; }
       annEl.style.display = '';
       annEl.style.left = r.box.left + 'px'; annEl.style.top = r.box.top + 'px';
       annEl.style.width = r.box.width + 'px'; annEl.style.height = r.box.height + 'px';
       renderAnn();
+    }
+
+    // ─── The chat's cursor ───
+    // browser_mouse on a drawer tab (app/browser-pointer.js) asks for it
+    // before each step: it glides to where the chat is about to point, shows
+    // a ring while a button is held and a ripple on a press, and fades away
+    // once the chat stops using the mouse (it stays while a button is held).
+    // Kept per tab in page CSS pixels, like the annotations.
+    var CUR_IDLE_MS = 1800, CUR_HELD_MS = 60000;
+    var curTimer = null;
+    function curOnScreen(f) {
+      var t = activeTab();
+      return st.open && !!t && f.project === project && t.id === f.tab.id && document.visibilityState === 'visible';
+    }
+    function placeCursor(ms, linear) {
+      var t = activeTab(); var r = t && runtime[t.id]; var c = r && r.cur;
+      if (!st.open || !r || !r.box || !c || c.x == null || !(c.until > Date.now())) { curEl.classList.remove('on', 'down'); return; }
+      var k = r.box.scale || 1;
+      curEl.style.transition = ms > 0
+        ? 'transform ' + ms + 'ms ' + (linear ? 'linear' : 'cubic-bezier(.3,.7,.3,1)') + ', opacity .2s ease'
+        : 'opacity .2s ease';
+      curEl.style.transform = 'translate(' + Math.round(r.box.left + c.x * k) + 'px,' + Math.round(r.box.top + c.y * k) + 'px)';
+      curEl.classList.add('on');
+      curEl.classList.toggle('down', !!c.pressed);
+    }
+    function cursorRipple(r, c) {
+      var k = r.box.scale || 1;
+      var d = document.createElement('div');
+      d.className = 'brd-rip';
+      d.style.left = Math.round(r.box.left + c.x * k) + 'px'; d.style.top = Math.round(r.box.top + c.y * k) + 'px';
+      stage.appendChild(d);
+      setTimeout(function () { d.remove(); }, 600);
+    }
+    function moveCursor(f, a) {
+      var r = runtime[f.tab.id]; if (!r) return 0;
+      var c = r.cur || (r.cur = {});
+      var ms = clamp(Math.round(Number(a.ms) || 0), 0, 10000);
+      var x = Number(a.x), y = Number(a.y);
+      if (!isFinite(x) || !isFinite(y)) return 0;
+      if (!curOnScreen(f) || !r.box) {
+        // Nobody can see it: remember where it is, and do not hold the chat up.
+        c.x = x; c.y = y; c.pressed = !!a.pressed; c.until = 0;
+        return 0;
+      }
+      if (!curEl.classList.contains('on')) {
+        // Coming back after a pause: appear where it was, then glide; the
+        // first time, appear right where it is pointing.
+        if (c.x != null) { c.until = Date.now() + 1000; placeCursor(0); void curEl.offsetWidth; }
+        else ms = 0;
+      }
+      c.x = x; c.y = y; c.pressed = !!a.pressed;
+      var stay = ms + (c.pressed ? CUR_HELD_MS : CUR_IDLE_MS);
+      c.until = Date.now() + stay;
+      placeCursor(ms, !!a.linear);
+      if (a.click) cursorRipple(r, c);
+      clearTimeout(curTimer);
+      curTimer = setTimeout(function () { placeCursor(0); }, stay + 50);
+      return ms;
     }
     var SVGNS = 'http://www.w3.org/2000/svg';
     function el(name, attrs) { var e = document.createElementNS(SVGNS, name); Object.keys(attrs).forEach(function (k) { e.setAttribute(k, attrs[k]); }); return e; }
@@ -1180,6 +1251,12 @@
         if (a.show) showTab(f);
         else if (f.project === project) renderAnn();
         return { drawn: drawn, total: r.ann.length };
+      },
+      // browser_mouse, before each step: draw the chat's cursor, and answer
+      // once it has arrived so the page gets the event as the person sees it.
+      cursor: function (a) {
+        var ms = moveCursor(mustTab(a.tabId), a);
+        return ms > 0 ? new Promise(function (res) { setTimeout(function () { res({}); }, ms); }) : {};
       },
       annotations: function (a) {
         var f = mustTab(a.tabId);

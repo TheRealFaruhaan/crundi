@@ -41,7 +41,7 @@ export async function browserTool(b, tool, args, notifyEvent = () => {}) {
       case 'browser_fill': return b.fillBrowser(args.key, args.selector, args.value);
       case 'browser_select': return b.selectBrowser(args.key, args.selector, args.value);
       case 'browser_eval': return b.evalBrowser(args.key, args.code);
-      case 'browser_mouse': return b.mouseBrowser(args.key, args.x, args.y, args.action);
+      case 'browser_mouse': return b.mouseBrowser(args.key, args.x, args.y, args.action, { button: args.button, toX: args.toX, toY: args.toY, duration: args.duration });
       case 'browser_touch': return b.touchBrowser(args.key, { action: args.action, x: args.x, y: args.y, toX: args.toX, toY: args.toY, direction: args.direction, distance: args.distance, duration: args.duration, scale: args.scale, report: args.report });
       case 'browser_resize': return b.resizeBrowser(args.key, args.width, args.height);
       case 'browser_scroll': return b.scrollBrowser(args.key, { x: args.x, y: args.y, selector: args.selector });
