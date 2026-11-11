@@ -65,7 +65,8 @@ object CruChat {
      * What waits to be asked next while Cru answers (said or typed meanwhile):
      * shown on the screen as queued, then asked as soon as the answer comes.
      */
-    fun queued(s: VoiceState): String = if (s.phase == Phase.Thinking) s.pending.trim() else ""
+    // Also while Cru speaks: words held then stay in sight as queued, never vanish (12 Nov).
+    fun queued(s: VoiceState): String = if (s.phase == Phase.Thinking || s.phase == Phase.Speaking) s.pending.trim() else ""
 
     /** An exchange that just happened, at the end; nothing when it is empty. */
     fun add(current: List<CruMsg>, said: String, speak: String, show: String, at: Long, media: JsonArray? = null): List<CruMsg> {

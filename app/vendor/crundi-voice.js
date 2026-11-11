@@ -1014,11 +1014,26 @@
       else if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); }
       else if (S.phase === 'think') { if (S.kid) return; if (S.cue && talksOver(e.text, S.cue.text)) stopCue(); S.heard = (S.pending + ' ' + e.text).trim(); }
     }
+    // Said just before Cru began speaking (the server ended it while the stream was paused):
+    // asked once Cru has finished, never dropped and never cutting Cru off.
+    else if (e.type === 'utterance' && e.held && holdUtterance(S, e.text)) inputMode(false);
     else if (e.type === 'utterance') { if (S.phase === 'listen') S.pttSent = true; utter(e.text, false); }
     else if (e.type === 'error') { S.notice = e.error; }
     // A setting changed on the server (Cru's volume, say): picked up at once.
     else if (e.type === 'settings') { api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { S.settings = s; applyVolume(); render(); } }); return; }
     render();
+  }
+
+  /**
+   * A held utterance (see heard): while Cru speaks it waits as what he said
+   * meanwhile, and afterSpeech asks it. False when it is not for holding
+   * (Cru is not speaking, kid mode, a take-back): utter() has it as usual.
+   */
+  function holdUtterance(s, text) {
+    var t = String(text || '').trim();
+    if (!s || !t || s.kid || s.phase !== 'speak' || isDiscard(t)) return false;
+    s.pendingTyped = false; s.pending = (String(s.pending || '') + ' ' + t).trim(); s.heard = s.pending;
+    return true;
   }
 
   /** Crundi's own words heard back: while it speaks, or for ECHO_MS after. */
@@ -1030,7 +1045,7 @@
     if (!t || !S) return;
     if (!typed && echo(t)) { S.heard = ''; render(); return; }
     // "Scratch that" alone (an older server passes it on): take back, never ask it.
-    if (!typed && isDiscard(t)) { if (S.phase === 'speak') { if (S.live) cutIn(); } else takeBack(true); render(); return; }
+    if (!typed && isDiscard(t)) { if (S.phase === 'speak') { S.pending = ''; S.pendingTyped = false; if (S.live) cutIn(); } else takeBack(true); render(); return; }
     // A real message from the owner: how it came in decides whether Cru speaks up unprompted until the next.
     if (!tap) inputMode(!!typed);
     // Kid mode: one thing at a time. Said while Cru thinks or talks: not saved up;
@@ -1089,7 +1104,8 @@
    * coming in (what was asked is in the conversation already). As the
    * phone's CruChat.queued and CruChat.hearing.
    */
-  function queuedOf(st) { return st && st.phase === 'think' ? String(st.pending || '').trim() : ''; }
+  // Also while Cru speaks: words held then (holdUtterance) stay in sight as queued, never vanish (12 Nov).
+  function queuedOf(st) { return st && (st.phase === 'think' || st.phase === 'speak') ? String(st.pending || '').trim() : ''; }
   function hearingOf(st) {
     var h = String((st && st.heard) || '').trim();
     if (!h) return '';
@@ -1184,16 +1200,32 @@
     var m = S && S.msgs && S.msgs[i];
     if (!m || !m.speak) return;
     // Tapped while it says this one: stop, and listen (as tapping over Cru does).
-    if (S.phase === 'speak' && i === speakingIndex(S.msgs, S.phase, S.lastSaid)) { cutIn(); render(); return; }
+    if (S.phase === 'speak' && i === speakingIndex(S.msgs, S.phase, S.lastSaid)) { cutIn(); askHeld(); render(); return; }
     if (S.phase !== 'listen' || S.heard || S.pending || !speaks(S, 'tap')) return;
     S.quietSince = Date.now();
     speak(m.speak);
     render();
   }
 
+  /** Whether news can be told now: Cru is listening, and the owner is neither speaking nor waiting on an answer. */
+  function canTell(s) { return !!s && s.phase === 'listen' && !s.pending && !s.heard; }
+
+  /**
+   * The answer has been said (or shown): the next news waiting, if any, made
+   * ready to tell; null when there is none, or what he said meanwhile goes first.
+   * Cru is back to listening before it is told (12 Nov: told from 'think' or
+   * 'speak', tell() queued it again and the screen stayed thinking for good:
+   * the report never came, and what the owner said next waited for ever).
+   */
+  function nextReport(s) {
+    if (!s || !s.reports || !s.reports.length || s.pending) return null;
+    s.phase = 'listen'; s.heard = '';
+    return s.reports.shift();
+  }
+
   function tell(say, show, media) {
     if (!S) return;
-    if (S.phase !== 'listen' || S.pending || S.heard) { S.reports.push({ speak: say, show: show, media: media }); return; }
+    if (!canTell(S)) { S.reports.push({ speak: say, show: show, media: media }); return; }
     S.reply = say; S.detail = show; S.heard = ''; S.notice = ''; S.question = ''; S.quietSince = Date.now();
     chatAdd('', say, show, media);
     // Unprompted: said only while the owner is talking to Cru (his last message spoken) and its voice is on.
@@ -1237,7 +1269,7 @@
     try { localStorage.setItem(QUIET_KEY, S.voiceOff ? '1' : '0'); } catch (e) { /* private mode */ }
     S.ov.classList.toggle('quiet', S.voiceOff);
     quietButton();
-    if (S.voiceOff && S.phase === 'speak') cutIn();
+    if (S.voiceOff && S.phase === 'speak') { cutIn(); askHeld(); }
     render();
   }
 
@@ -1339,6 +1371,8 @@
   }
 
   function ask(t, keep, typed, hidden) {
+    // Words held while Cru spoke (holdUtterance), then he talked over it: one request, his words in order.
+    if (!hidden && S.phase !== 'think' && String(S.pending || '').trim()) { t = (S.pending + ' ' + (t || '')).trim(); typed = !!typed && !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; }
     S.waitSaid = false; if (S.kid) loadKidWait();
     if (!hidden) { S.reportOnly = false; S.reportCloseAt = 0; }
     // Sent: the chat view goes to it, wherever it was scrolled (renderChat, from render below).
@@ -1404,8 +1438,8 @@
   function dropLive(st, which) {
     if (!st) return false;
     if (which === 'queued') {
-      if (st.phase !== 'think' || !String(st.pending || '').trim()) return false;
-      var rest = hearingOf(st); st.pending = ''; st.heard = rest || st.asked || '';
+      if ((st.phase !== 'think' && st.phase !== 'speak') || !String(st.pending || '').trim()) return false;
+      var rest = hearingOf(st); st.pending = ''; st.heard = st.phase === 'speak' ? '' : (rest || st.asked || '');
       return true;
     }
     if (!hearingOf(st)) return false;
@@ -1447,7 +1481,8 @@
     if (!S) return;
     if (S.closing) { close(); return; }
     // News that came while Cru was busy.
-    if (S.reports.length && !S.pending) { var q = S.reports.shift(); S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show, q.media); return; }
+    var q = nextReport(S);
+    if (q) { S.speaking = false; S.saidUntil = Date.now(); tell(q.speak, q.show, q.media); return; }
     S.speaking = false; S.saidUntil = Date.now(); S.unknownVoice = false;
     S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now();
     if (S.reportOnly && !S.reports.length) S.reportCloseAt = Date.now() + REPORT_LINGER_MS;
@@ -1863,10 +1898,17 @@
 
   function bargeIn() {
     cutIn();
+    askHeld();
     render();
   }
 
   /** Crundi stops talking now and listens: the owner talked over it (or tapped). */
+  /** Cut off (a tap, muted) with words held while it spoke (holdUtterance): they are asked now. */
+  function askHeld() {
+    if (!S || !String(S.pending || '').trim() || S.phase !== 'listen') return;
+    var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; ask(p, false, pt);
+  }
+
   function cutIn() {
     stopSpeaking(S);
     S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); S.streaming = true; S.hintAt = 0;
@@ -2545,7 +2587,7 @@
     tell(say, show, media);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive, canTell: canTell, nextReport: nextReport, holdUtterance: holdUtterance }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

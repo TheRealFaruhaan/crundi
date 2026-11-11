@@ -11,10 +11,14 @@
 
 import { appendFileSync, existsSync, readFileSync, statSync, renameSync } from 'node:fs';
 import * as voiceSettings from './settings.js';
+import { createTurnQueue, TURN_WAIT_MS, BUSY_ERROR } from './turns.js';
 
 const LOG_MAX_BYTES = 4 * 1024 * 1024;
 
-export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile = '' } = {}) {
+/** How long a report or wake-up may wait behind other turns before it is given up as busy (the caller keeps it). */
+export const REPORT_WAIT_MS = 10 * 60 * 1000;
+
+export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile = '', ownerWaitMs = TURN_WAIT_MS, reportWaitMs = REPORT_WAIT_MS } = {}) {
   const which = () => (settings.getSettings().brain === 'claude-code' && cli ? 'claude-code' : 'api');
   const pick = () => (which() === 'claude-code' ? cli : api);
 
@@ -63,25 +67,39 @@ export function createVoiceBrain({ api, cli, settings = voiceSettings, logFile =
     next = null;
     if (!n) return r;
     const b = pick();
-    const job = n.kind === 'fresh' && b.fresh ? Promise.resolve(b.fresh(n.summary)) : b.compact({ force: true });
-    job.catch(() => {});
+    // Next in the queue, ahead of anything waiting: what comes after starts on the new conversation.
+    queue.run(() => (n.kind === 'fresh' && b.fresh ? b.fresh(n.summary) : b.compact({ force: true })), { front: true }).catch(() => {});
     return r;
   }
 
+  // One turn at a time (turns.js createTurnQueue): a report or a wake-up that
+  // comes while the owner is answered waits for his turn to end, and his turns
+  // go ahead of news still waiting. Neither is refused for being busy.
+  const queue = createTurnQueue();
+
   return {
     get which() { return which(); },
-    turn: (text, opts = {}) => timed(() => pick().turn(text, opts), { said: text, device: opts.device || '' }).then(afterTurn),
-    report: (note, opts = {}) => timed(() => pick().report(note, opts), { report: true, said: note }).then(afterTurn),
+    turn: (text, opts = {}) => queue.run(() => timed(() => pick().turn(text, opts), { said: text, device: opts.device || '' }).then(afterTurn), { owner: true, waitMs: ownerWaitMs }),
+    report: (note, opts = {}) => queue.run(() => timed(() => pick().report(note, opts), { report: true, said: note }).then(afterTurn), { waitMs: reportWaitMs })
+      .then((r) => (r && r.ok === false && r.error === BUSY_ERROR ? { ...r, error: 'busy' } : r)),
     /** Cru's own wish: 'compact' (summarise everything) or 'fresh' (only [summary] goes on). */
     requestAfterTurn(kind, summary = '') { next = { kind: kind === 'fresh' ? 'fresh' : 'compact', summary: String(summary || '').slice(0, 4000) }; },
     /** The owner cancelled what they said: whichever brain is answering stops. */
-    cancel: () => {
+    // His turns still waiting in the queue go first; the one running is stopped
+    // only when it is his (a report being said is not what he took back), or
+    // when [all] (kid mode starting: whatever runs stops).
+    cancel: ({ all = false } = {}) => {
+      const q = queue.cancel();
+      if (!all && q.running && !q.ownerRunning) return { ok: true, cancelled: q.dropped > 0, acted: [] };
       const a = api && api.cancel ? api.cancel() : { cancelled: false, acted: [] };
       const c = cli && cli.cancel ? cli.cancel() : { cancelled: false, acted: [] };
-      return { ok: true, cancelled: !!(a.cancelled || c.cancelled), acted: [...(a.acted || []), ...(c.acted || [])] };
+      return { ok: true, cancelled: !!(q.dropped || a.cancelled || c.cancelled), acted: [...(a.acted || []), ...(c.acted || [])] };
     },
     warm: (opts) => pick().warm(opts),
-    compact: (opts) => pick().compact(opts),
+    // In the queue too, so it never takes the brain from under a turn about to start. Idle compaction skips a busy queue.
+    compact: (opts = {}) => (!opts.force && (queue.busy || queue.waiting) ? Promise.resolve({ ok: false, skipped: 'busy' }) : queue.run(() => pick().compact(opts))),
+    /** Tests and diagnostics: turns running and waiting. */
+    get queue() { return { busy: queue.busy, waiting: queue.waiting }; },
     reset: () => pick().reset(),
     get lastActivity() { return pick().lastActivity; },
     /** Per brain and model, from the log: how many turns, how fast, what each cost. */

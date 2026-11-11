@@ -681,7 +681,8 @@ sealed interface ListenEvent {
     /** Words so far; may still change. */
     data class Interim(val text: String) : ListenEvent
     /** A finished sentence; [owner]: the voice check (capability "voice-speaker"), null when not checked. */
-    data class Utterance(val text: String, val owner: Boolean? = null) : ListenEvent
+    /** [held]: ended by the server while the stream was paused (said just before Cru began speaking): asked once Cru has finished. */
+    data class Utterance(val text: String, val owner: Boolean? = null, val held: Boolean = false) : ListenEvent
     data class Failed(val error: String) : ListenEvent
     /** Cru has news, unasked (a watched chat finished or waits on the owner): say it. */
     data class Report(val speak: String, val show: String, val media: JsonArray? = null) : ListenEvent
@@ -707,7 +708,7 @@ sealed interface ListenEvent {
                 "interim" -> Interim(t)
                 "discard" -> Discard(t)
                 "settings" -> Settings
-                "utterance" -> if (t.isBlank()) null else Utterance(t, (o["owner"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull())
+                "utterance" -> if (t.isBlank()) null else Utterance(t, (o["owner"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull(), (o["held"] as? JsonPrimitive)?.contentOrNull == "true")
                 "error" -> Failed((o["error"] as? JsonPrimitive)?.contentOrNull ?: "The stream stopped")
                 "screen" -> Screen(LiveScreen.parse(o["screen"]))
                 "kid" -> KidStatus.of(o["kid"])?.let { Kid(it) }

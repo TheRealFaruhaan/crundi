@@ -16,6 +16,9 @@
  *   { type: 'utterance', text, owner }        the owner finished a sentence;
  *                                             owner: the voice check (speaker.js),
  *                                             true / false / null (can't tell)
+ *   { type: 'utterance', text, held: true }   the same, ended here: the stream was
+ *                                             paused (Cru speaking) right after he
+ *                                             spoke, so Deepgram could not end it
  *   { type: 'speech' }                        the owner started speaking
  *   { type: 'error', error }                  and the socket closes
  *
@@ -232,6 +235,8 @@ export function createAssembler({ now = () => Date.now(), names = [] } = {}) {
     said() { const t = now(); for (const r of recent) if (r.saidAt === null) r.saidAt = t; },
     /** Whatever was heard but not yet sent (the stream is ending). */
     flush,
+    /** Words heard, not sent yet (the utterance has not ended). */
+    get pending() { return parts.length > 0; },
     /** The owner threw away what they had said so far (the x). */
     discard() { parts = []; spans = []; },
     get seconds() { return audioEnd; },
@@ -316,6 +321,26 @@ export function relay(client, { projects = [], services = [], audio = null, paus
   let paused = false;
   let lastAudio = Date.now();
   let done = false;
+  // Paused just after he spoke (Cru began saying something, a report say):
+  // no more audio reaches Deepgram, so its UtteranceEnd (timed on the audio)
+  // never comes, and his finished words waited until he spoke again, then went
+  // with his next sentence (12 Nov: "show me some factory settings"). So,
+  // paused with words waiting, they are sent after the same pause here, held:
+  // the client asks them once Cru has finished saying what it is saying.
+  const holdMs = Math.min(PAUSE_MS.max, Math.max(PAUSE_MS.min, Math.round(Number(pauseMs) || PAUSE_MS.default)));
+  let heldTimer = null;
+  const unhold = () => { clearTimeout(heldTimer); heldTimer = null; };
+  function holdFlush() {
+    unhold();
+    if (!paused || done || !asm.pending) return;
+    heldTimer = setTimeout(() => {
+      heldTimer = null;
+      if (!paused || done) return;
+      const ev = asm.flush();
+      if (ev) deliver(ev.type === 'utterance' ? { ...ev, held: true } : ev);
+    }, holdMs);
+    heldTimer.unref?.();
+  }
 
   const keepAlive = setInterval(() => {
     if (open && (paused || Date.now() - lastAudio > KEEPALIVE_MS - 500)) {
@@ -327,6 +352,7 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     if (done) return;
     done = true;
     clearInterval(keepAlive);
+    unhold();
     const rest = asm.flush();
     if (rest) deliver(rest);
     if (err) out({ type: 'error', error: err });
@@ -346,6 +372,8 @@ export function relay(client, { projects = [], services = [], audio = null, paus
     try { msg = JSON.parse(String(data)); } catch { return; }
     const ev = asm.push(msg);
     if (ev) deliver(ev);
+    // A phrase finalised after the pause (Deepgram was still on it): the wait starts again.
+    if (paused && (msg?.type === 'Results' || msg?.type === 'UtteranceEnd')) holdFlush();
   });
   dg.on('unexpected-response', (_req, res) => {
     finish(res.statusCode === 401 || res.statusCode === 403
@@ -360,11 +388,12 @@ export function relay(client, { projects = [], services = [], audio = null, paus
       let m = null;
       try { m = JSON.parse(String(data)); } catch { /* not ours */ }
       if (m?.type === 'stop') finish();
-      else if (m?.type === 'pause') paused = true;
-      else if (m?.type === 'resume') paused = false;
+      else if (m?.type === 'pause') { paused = true; holdFlush(); }
+      // Audio again: Deepgram ends the utterance itself.
+      else if (m?.type === 'resume') { paused = false; unhold(); }
       // Barge-in: audio keeps flowing while Cru talks; its own words are dropped.
-      else if (m?.type === 'saying') { paused = false; asm.saying(m.text); }
-      else if (m?.type === 'discard') asm.discard();
+      else if (m?.type === 'saying') { paused = false; unhold(); asm.saying(m.text); }
+      else if (m?.type === 'discard') { unhold(); asm.discard(); }
       else if (m?.type === 'said') asm.said();
       return;
     }

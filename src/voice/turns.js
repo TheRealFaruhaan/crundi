@@ -55,3 +55,75 @@ export function createTurnGate({ now = () => Date.now(), sleep = (ms) => new Pro
     get size() { return seen.size; },
   };
 }
+
+/**
+ * One turn of Cru's at a time, in order (12 Nov 2026).
+ *
+ * What happened: the owner asked something, and while Cru answered, a chat
+ * it watches finished its turn. The report waited (polling, 30 s at most)
+ * for Cru to be free and was then dropped as "busy", and the owner's own
+ * turns polled for Cru too, racing the reports for the moment it came free.
+ * (On the voice screen the report, queued behind the answer, also left the
+ * screen stuck thinking: crundi-voice.js nextReport.)
+ *
+ * So every turn (the owner's, a report, a wake-up, a compaction) goes through
+ * one queue:
+ *  - nothing is refused for being busy: it waits for the turn before it;
+ *  - the owner's turns go ahead of reports and wake-ups still waiting (his
+ *    answer is never held up by news), and in order among themselves;
+ *  - [front] goes next of all (a compaction Cru asked for in its turn);
+ *  - one that waits longer than its [waitMs] is answered BUSY_ERROR, never
+ *    started (a turn that never ends must not hold everything for ever);
+ *  - cancel() drops the owner's turns still waiting (answered cancelled),
+ *    and says whether the one running is his.
+ */
+export function createTurnQueue({ setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  const waiting = [];
+  let running = null;
+
+  function pump() {
+    if (running || !waiting.length) return;
+    const job = waiting.shift();
+    if (job.timer) clearTimer(job.timer);
+    running = job;
+    let p;
+    try { p = Promise.resolve(job.fn()); } catch (e) { p = Promise.reject(e); }
+    p.then(job.ok, job.fail).finally(() => { running = null; pump(); });
+  }
+
+  return {
+    /** [fn] runs when its turn comes; resolves with what it resolves with. */
+    run(fn, { owner = false, front = false, waitMs = 0 } = {}) {
+      return new Promise((ok, fail) => {
+        const job = { fn, ok, fail, owner, front, timer: null };
+        if (front) waiting.unshift(job);
+        else if (owner) { const i = waiting.findIndex((j) => !j.owner && !j.front); if (i < 0) waiting.push(job); else waiting.splice(i, 0, job); }
+        else waiting.push(job);
+        // Started at once (pump below), the timer is cleared there.
+        if (waitMs > 0) {
+          job.timer = setTimer(() => {
+            const i = waiting.indexOf(job);
+            if (i >= 0) { waiting.splice(i, 1); ok({ ok: false, error: BUSY_ERROR }); }
+          }, waitMs);
+          job.timer?.unref?.();
+        }
+        pump();
+      });
+    },
+    /** The owner's waiting turns are dropped; { dropped, ownerRunning }. */
+    cancel() {
+      let dropped = 0;
+      for (let i = waiting.length - 1; i >= 0; i--) {
+        const j = waiting[i];
+        if (!j.owner) continue;
+        waiting.splice(i, 1);
+        if (j.timer) clearTimer(j.timer);
+        j.ok({ ok: false, cancelled: true, acted: [] });
+        dropped++;
+      }
+      return { dropped, ownerRunning: !!(running && running.owner), running: !!running };
+    },
+    get busy() { return !!running; },
+    get waiting() { return waiting.length; },
+  };
+}

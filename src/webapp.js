@@ -2853,8 +2853,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     };
   })();
   async function cruDeliver({ note, wake = false, line = '', detail = '', chatId = '', project = '', chatTitle = '', needsOwner = false, tag = 'cru', url = '/' }) {
-    const open = [...voiceListeners].filter(ws => ws.readyState === 1);
-    const pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
+    let open = [...voiceListeners].filter(ws => ws.readyState === 1);
+    let pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
     let spoken = false;
     let r = null;
     // Kid mode: Cru's news for the owner is never said on the kid screen; it waits (a wake-up comes back later).
@@ -2866,6 +2866,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     if (wake || open.length || pcs.length) {
       r = await voiceAgent.report(note, wake ? { wake: true } : {}).catch(() => null);
+      // It may have waited behind the owner's turn (brain.js queue): said where Cru is open now.
+      open = [...voiceListeners].filter(ws => ws.readyState === 1);
+      pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
       if (wake) {
         if (!r || !r.ok) return { ok: false, busy: !!r && r.error === 'busy', error: (r && r.error) || 'Cru did not answer' };
         if (!String(r.speak || '').trim() && !String(r.show || '').trim() && !(r.media && r.media.length)) return { ok: true, quiet: true };
@@ -3346,7 +3349,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (!r.ok) return r;
     Object.assign(kidSession, { extraMinutes: 0, paused: false, onceVideos: [] });
     kidAsks.clear();
-    try { voiceAgent.cancel(); } catch { /* nothing running */ }
+    try { voiceAgent.cancel({ all: true }); } catch { /* nothing running */ }
     kidGames.endPlay(false);
     voiceScreen.clear();
     kidWatch.reset();

@@ -160,6 +160,29 @@ class VoiceMachineTest {
         assertTrue(s4.reports.isEmpty())
     }
 
+    // 12 Nov: "show me some factory settings", said as a report began, waited for his next sentence.
+    @Test fun wordsHeldByAPauseAreAskedOnceTheNewsIsSaid() {
+        val (s1, _) = run(*listening(), VoiceEvent.Report("Sir, the API chat has finished.", "", 20))
+        assertEquals(Phase.Speaking, s1.phase)
+        val (s2, fx2) = m.on(s1, VoiceEvent.Utterance("show me some factory settings", 25, held = true))
+        assertEquals(Phase.Speaking, s2.phase)
+        assertEquals("show me some factory settings", s2.pending)
+        assertTrue(fx2.none { it is VoiceEffect.StopSaying || it is VoiceEffect.Ask })
+        val (s3, fx3) = m.on(s2, VoiceEvent.SpeechDone(40))
+        assertEquals(Phase.Thinking, s3.phase)
+        assertEquals("", s3.pending)
+        assertTrue(fx3.contains(VoiceEffect.Ask("show me some factory settings")))
+    }
+
+    @Test fun heldWordsGoWithWhatHeSaysOverCru() {
+        val (s1, _) = run(VoiceEvent.Opened(false, 0), VoiceEvent.Ready(10, live = true), VoiceEvent.Report("Sir, the API chat has finished.", "", 20))
+        val (s2, _) = m.on(s1, VoiceEvent.Utterance("show me some factory settings", 25, held = true))
+        val (s3, fx3) = m.on(s2, VoiceEvent.BargeIn(30))
+        assertEquals(Phase.Thinking, s3.phase)
+        assertTrue(fx3.contains(VoiceEffect.Ask("show me some factory settings")))
+        assertEquals("", s3.pending)
+    }
+
     @Test fun speakingIsNeverCutOffByTheTimeout() {
         val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40), VoiceEvent.Tick(90_000))
         assertEquals(Phase.Speaking, s.phase)

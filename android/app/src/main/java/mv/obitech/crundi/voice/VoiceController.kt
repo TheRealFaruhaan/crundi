@@ -648,7 +648,7 @@ class VoiceController(
             ListenEvent.Speech -> {}
             is ListenEvent.Interim -> dispatch(VoiceEvent.Interim(ev.text, now()))
             is ListenEvent.Utterance -> {
-                dispatch(VoiceEvent.Utterance(ev.text, now()))
+                dispatch(VoiceEvent.Utterance(ev.text, now(), ev.held))
                 if (ev.owner == false && _ui.value.state.phase == Phase.Thinking) note(NOT_RECOGNISED)
             }
             is ListenEvent.Failed -> if (fallback != null) block("No speech recognition: ${ev.error}.") else lost(ev.error)
