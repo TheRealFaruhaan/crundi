@@ -83,7 +83,8 @@ const { handleMessage } = new Function('deps', `
 
 const states = [];
 const session = {
-  state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
+  // A live chat: its CLI process is running (a chat with none has nothing left that can run, so waits on nothing).
+  proc: { exitCode: null }, state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
   goal: null, emitter: { emit() {} }, onStateChange: (_id, st) => states.push(st),
 };
 
@@ -114,7 +115,7 @@ check('nothing left outstanding', session.waiting.size === 0, session.waiting.si
 {
   const st2 = [];
   const s2 = {
-    state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
+    proc: { exitCode: null }, state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
     goal: null, emitter: { emit() {} }, onStateChange: (_id, st) => st2.push(st), sessionId: 'S1', cwd: '/somewhere',
   };
   const file = join(deps.dir, 'S1.jsonl');
@@ -164,6 +165,13 @@ check('nothing left outstanding', session.waiting.size === 0, session.waiting.si
   say('An old one never heard its end.');
   handleMessage(s2, { type: 'result', subtype: 'success' });
   check('an entry older than six hours is not waited on', s2.state === 'idle', s2.state);
+  // The phantom "waiting" (11 Nov): a chat whose CLI process is gone has nothing still running.
+  s2.agents = new Map();
+  s2.waiting.set('ghost1', { until: 0 });
+  delete s2.proc;
+  say('Its process is gone.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('no CLI process: nothing is waited on', s2.state === 'idle' && s2.waiting.size === 0, s2.state + ' / ' + s2.waiting.size);
 }
 
 if (failures) {
