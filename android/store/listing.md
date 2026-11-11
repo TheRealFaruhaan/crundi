@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.38 (en-US)
+
+Version code 69. Internal track. Since 1.1.3-dev.37 (code 68): Cru's bubble stays open over the app you were in (the voice screen steps aside straight after posting, the main window moved behind first), and opens by itself as a chat's bubble does. Server 1.21.6-dev.51.
+
+```
+<en-US>
+Cru:
+- Cru's bubble opens by itself, as a chat's bubble does.
+- It stays open over the app you were in, instead of closing as Crundi came to the front.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.37 (en-US)
 
 Version code 68. Internal track. Since 1.1.3-dev.36 (code 67): Cru's bubble is a conversation (not a bot) and can bubble, with diagnostics; no Cru launcher icon; media in Cru's replies; mute Cru's voice, typed input keeps replies text; drop a queued phrase; full view back from the panel; statuses take no space (the blob, a ring round Send); chat picture gallery. Server 1.21.6-dev.50.
