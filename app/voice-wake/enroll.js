@@ -537,12 +537,21 @@ export function train(recordings, makeSpotter) {
  * VERIFY_SECONDS of audio, ending now.
  * @returns {{ ok: boolean, score: number }}
  */
+/**
+ * The voice check's limit when the model fired: the profile's limit with the phrase match's margin
+ * (STRICT_MARGIN, not LIMIT_MARGIN), in verify's own distance. 12 Nov, the owner: other people's
+ * speech woke Cru; the looser margin let another voice's "Hey Cru", once the model had heard the
+ * words, pass for the owner's. On the recordings tried every owner's own wakes stay under it, and
+ * fewer other voices' do (none, for one owner; this check alone cannot tell every voice apart).
+ */
+export function verifyLimit(profile) { return profile.limit / LIMIT_MARGIN * STRICT_MARGIN; }
+
 export function verify(profile, recent) {
   const clip = trim(recent, 60) || recent;
   const feats = mfcc(clip);
   let best = Infinity;
   for (const t of profile.templates) best = Math.min(best, distance(t, feats));
-  return { ok: best <= profile.limit, score: Math.round(best * 1000) / 1000 };
+  return { ok: best <= verifyLimit(profile), score: Math.round(best * 1000) / 1000 };
 }
 
 /**

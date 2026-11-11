@@ -25,5 +25,14 @@ ok(E.matchPhrase({ ...p, modelHeard: 5 }, owner, () => [E.WAKE, 'NOT_YOU']).ok, 
 ok(!E.matchPhrase({ ...p, modelHeard: 5 }, owner, () => []).ok, 'and it too needs the word');
 ok(!E.matchPhrase(p, signal(31, 260, 0.7), () => [E.WAKE]).ok, 'a very different voice does not wake, word or not');
 
+// The model fired: the voice check is as strict as the phrase match (other voices' "Hey Cru" passed the looser limit).
+{
+  const near = signal(30, 143, 1.0), far = signal(31, 260, 0.7);
+  ok(E.verify(p, near).ok, 'the owner\'s take passes the voice check');
+  const s = E.verify(p, near).score, lim = E.verifyLimit(p);
+  ok(lim < p.limit && E.verify({ ...p, limit: s / lim * p.limit * 0.99 }, near).ok === false, 'held to the phrase match\'s margin, under the old limit');
+  ok(!E.verify(p, far).ok, 'a very different voice fails it');
+}
+
 console.log(failed ? `\n${failed} FAILED` : '\nAll passed');
 process.exit(failed ? 1 : 0);

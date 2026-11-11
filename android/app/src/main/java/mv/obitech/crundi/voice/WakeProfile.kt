@@ -144,7 +144,8 @@ data class WakeProfile(
         val clip = CruWake.trim(recent, 60) ?: recent
         val f = CruWake.mfcc(clip)
         val t = feats.minOf { CruWake.distance(it, f) }
-        return CruWake.Verdict(t <= limit, (t * 1000).roundToInt() / 1000.0)
+        // The phrase match's margin, not the looser one (12 Nov: other people's "Hey Cru" passed). As enroll.js's verifyLimit.
+        return CruWake.Verdict(t <= limit / CruWake.LIMIT_MARGIN * CruWake.STRICT_MARGIN, (t * 1000).roundToInt() / 1000.0)
     }
 }
 
