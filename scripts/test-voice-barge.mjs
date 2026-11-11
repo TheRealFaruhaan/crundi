@@ -173,6 +173,25 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
   ok(!T.talksOver('really', said), 'one stray word is not an interruption');
   ok(T.talksOver('stop', said) && T.talksOver('wait', said), '"stop" or "wait" alone is');
   ok(T.talksOver('which build was that', said), 'two or more of his own words are');
+  // The end of Cru's line, from what is known (12 Nov: the speaking animation went on; sleep came at odd times).
+  {
+    const tok = {};
+    const base = { phase: 'speak', speakToken: tok, speakAt: 0, speakDeadline: 20000 };
+    const stream = (o) => ({ ...base, speakVia: 'stream', ...o });
+    ok(!T.speechOver(stream({ playEndsAt: 10000, streamDone: tok, streamLast: 9000 }), 9500, false), 'streamed: still playing, not over');
+    ok(T.speechOver(stream({ playEndsAt: 10000, streamDone: tok, streamLast: 9000 }), 10500, false), 'streamed: done and played, over at once (no waiting for the deadline)');
+    ok(T.speechOver(stream({ playEndsAt: 10000, streamDone: null, streamLast: 6000 }), 10500, false), 'the stream\'s end never came: over once it has played and gone quiet');
+    ok(!T.speechOver(stream({ playEndsAt: 10000, streamDone: null, streamLast: 9800 }), 10500, false), 'but not while chunks are still arriving');
+    ok(!T.speechOver(stream({ playEndsAt: 0, speakAt: 0 }), 5000, false) && T.speechOver(stream({ playEndsAt: 0, speakAt: 0 }), 16000, false), 'nothing ever arrived: over after 15 s');
+    ok(!T.speechOver({ ...base, speakVia: 'device', deviceAt: 0 }, 1000, false), 'device voice: a moment to start');
+    ok(T.speechOver({ ...base, speakVia: 'device', deviceAt: 0 }, 2000, false) && !T.speechOver({ ...base, speakVia: 'device', deviceAt: 0 }, 2000, true), 'device voice: over when it stops speaking, whatever its events did');
+    ok(T.speechOver({ ...base, speakVia: 'device', deviceAt: 0 }, 28001, true) && T.speechOver(stream({ playEndsAt: 40000, streamDone: null, streamLast: 39000 }), 48001, false), 'never past its deadline or playback plus 8 s');
+    ok(!T.speechOver({ ...base, phase: 'listen', speakVia: 'stream', playEndsAt: 1 }, 99999, false), 'only while speaking');
+    // Sleep counts from the last activity, never before playback really ends.
+    ok(T.idleSince({ quietSince: 5000, playEndsAt: 12000 }) === 12000, 'an end of speech reported early: idle counts from the real end of playback');
+    ok(T.idleSince({ quietSince: 30000, playEndsAt: 12000 }) === 30000, 'the owner speaking later: from then');
+    ok(T.idleSince({ quietSince: 7000 }) === 7000 && T.SILENCE_MS === 30000, 'no playback known: from the last activity; asleep after 30 s of it');
+  }
   // Woken from sleep in the same window: Cru's output chain must be rebuilt in the new audio context (12 Nov: text, no voice).
   {
     const ctxA = { state: 'running' }, ctxB = { state: 'running' };

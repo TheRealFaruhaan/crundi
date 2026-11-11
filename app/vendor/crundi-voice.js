@@ -1598,6 +1598,8 @@
     // A cue nearly done is let finish; otherwise the answer takes over now.
     if (!S.cue || !S.cue.node || cueLeft() > CUE_FINISH_MS) stopCue();
     var voice = S.settings && S.settings.ttsVoice;
+    // What is known of this line's playback, for speechOver() and idleSince(): not events alone (12 Nov).
+    S.speakAt = Date.now(); S.playEndsAt = 0; S.streamLast = Date.now(); S.streamDone = null; S.speakVia = voice ? 'stream' : 'device';
     if (voice) streamSpeech(text).catch(function () { browserSpeech(text); });
     else browserSpeech(text);
   }
@@ -1623,7 +1625,7 @@
       function pump() {
         return reader.read().then(function (r) {
           if (S && S.speakToken !== token) { try { reader.cancel(); } catch (e) { /* done */ } return; }
-          if (r.done) { var ends = Math.max(0, (at - ctx.currentTime) * 1000); setTimeout(function () { if (S && S.speakToken === token) { S.outAnalyser = null; afterSpeech(); } }, ends + 60); return; }
+          if (r.done) { if (S) S.streamDone = token; var ends = Math.max(0, (at - ctx.currentTime) * 1000); setTimeout(function () { if (S && S.speakToken === token) { S.outAnalyser = null; afterSpeech(); } }, ends + 60); return; }
           var bytes = r.value;
           if (carry) { var m = new Uint8Array(carry.length + bytes.length); m.set(carry); m.set(bytes, carry.length); bytes = m; carry = null; }
           if (bytes.length % 2) { carry = bytes.slice(bytes.length - 1); bytes = bytes.slice(0, bytes.length - 1); }
@@ -1633,6 +1635,8 @@
           for (var i = 0; i < n; i++) ch[i] = view.getInt16(i * 2, true) / 32768;
           var node = ctx.createBufferSource(); node.buffer = buf; node.connect(an);
           at = Math.max(at, ctx.currentTime + 0.02); node.start(at); at += buf.duration; any = true;
+          // When what is scheduled so far will have played, on the wall clock.
+          if (S && S.speakToken === token) { S.playEndsAt = Date.now() + Math.max(0, at - ctx.currentTime) * 1000; S.streamLast = Date.now(); }
           (S.nodes = S.nodes || []).push(node);
           return pump();
         });
@@ -1652,6 +1656,8 @@
     u.onboundary = function () { if (S) S.voiceBump = 0.6 + Math.random() * 0.35; };
     u.onend = function () { if (S && S.speaking) afterSpeech(); };
     u.onerror = function () { if (S && S.speaking) afterSpeech(); };
+    // Kept: Chromium drops an utterance nothing holds, and its end never comes. speechOver() watches it too.
+    if (S) { S.utter = u; S.speakVia = 'device'; S.deviceAt = Date.now(); }
     stopCue();
     // The browser's voice can't go through the loopback: the gate has only the mic to go by.
     if (S) S.unknownVoice = true;
@@ -1885,24 +1891,49 @@
     if (S.live) { S.hintAt = Date.now(); S.loudFor = 0; } else bargeIn();
   }
 
+  /**
+   * Has Cru finished saying its line? Read from what is known, checked every second, so a lost
+   * event cannot leave the screen "Speaking" (12 Nov, the owner, PC: the speaking animation went on
+   * after Cru stopped, until he spoke; the old net waited for the deadline plus 8 s, and took the
+   * played chunks, never cleared, for audio still playing). Streamed: the stream is done (or has
+   * sent nothing for 3 s) and what was scheduled has played. The device's voice: it says it is no
+   * longer speaking. Either way, never past the later of its deadline and its playback, plus 8 s.
+   */
+  function speechOver(s, now, synthBusy) {
+    if (!s || s.phase !== 'speak') return false;
+    var end = Math.max(s.speakDeadline || 0, s.playEndsAt || 0);
+    if (end && now > end + 8000) return true;
+    if (s.speakVia === 'stream') {
+      if (!s.playEndsAt) return typeof s.speakAt === 'number' && now - s.speakAt > 15000;
+      var finished = s.streamDone === s.speakToken || (typeof s.streamLast === 'number' && now - s.streamLast > 3000);
+      return finished && now > s.playEndsAt + 400;
+    }
+    if (s.speakVia === 'device') return typeof s.deviceAt === 'number' && now - s.deviceAt > 1500 && !synthBusy;
+    return false;
+  }
+  /**
+   * When the screen was last active: the owner spoke, typed or tapped, or Cru finished talking
+   * (quietSince), and never before Cru's playback really ends (playEndsAt). Sleep and closing count
+   * from here only: an end of speech reported early (or late) cannot make it sleep early or never.
+   */
+  function idleSince(s) { return Math.max(s.quietSince || 0, s.playEndsAt || 0); }
+
   function tick() {
     if (!S) return;
     // Stuck on "Speaking" with nothing playing: carry on listening.
     // (The device's own voice can report "speaking" for ever, on Linux in particular: past the deadline plus 3 s it is stopped anyway.)
-    if (S.phase === 'speak' && S.speakDeadline && Date.now() > S.speakDeadline && (!(window.speechSynthesis && speechSynthesis.speaking) || Date.now() > S.speakDeadline + 3000)) {
-      var playing = false;
-      try { playing = !!(S.ctx && (S.nodes || []).length && S.outAnalyser); } catch (e) { playing = false; }
-      if (!playing || Date.now() > S.speakDeadline + 8000) { S.speakDeadline = 0; stopSpeaking(S); afterSpeech(); }
-    }
+    var synthBusy = false;
+    try { synthBusy = !!(window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)); } catch (e) { synthBusy = false; }
+    if (S.phase === 'speak' && speechOver(S, Date.now(), synthBusy)) { S.speakDeadline = 0; stopSpeaking(S); afterSpeech(); if (!S) return; }
     // After a short silence (Settings, default a minute) the voice screen closes itself; "Hey Cru" opens it again.
     var idleMs = ((S.settings && S.settings.screenCloseSeconds) || 60) * 1000;
     // Kid mode stays, listening; a panel on screen keeps the screen open (the mic still sleeps).
     if (S.kid) return;
     // Opened by Cru's own news and said: closed again, unless the owner started talking.
     if (S.reportOnly && S.reportCloseAt && Date.now() > S.reportCloseAt && S.phase === 'listen' && !S.heard && !S.pending) { close(); return; }
-    if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && !S.screen && Date.now() - S.quietSince > idleMs) { close(); return; }
+    if ((S.phase === 'ended' || S.phase === 'listen') && !S.pending && !S.screen && Date.now() - idleSince(S) > idleMs) { close(); return; }
     // (Typing: there is no microphone to put to sleep; its socket brings Cru's news.)
-    if (S.phase === 'listen' && !S.kb && !S.pending && Date.now() - S.quietSince > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
+    if (S.phase === 'listen' && !S.kb && !S.pending && Date.now() - idleSince(S) > SILENCE_MS) { S.phase = 'ended'; sleepMic(); render(); }
   }
 
 
@@ -2514,7 +2545,7 @@
     tell(say, show, media);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */
