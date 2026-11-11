@@ -1,50 +1,6 @@
 {
   "steps": [
     {
-      "id": "cru-shows-in-crundi",
-      "tag": "Voice",
-      "title": "Cru can take you to things in Crundi",
-      "body": "Talking to Cru on the PC app or the web, ask it to show you something: a card on the board, a chat, a file, a setting. It switches project and tab, opens what you asked for, and rings it with a short note. It is the page you are talking from that moves, never another screen; on the phone Cru shows you a card instead.",
-      "keys": [
-        {
-          "keys": [
-            "Show me ..."
-          ],
-          "text": "Cru goes there and points at it"
-        },
-        {
-          "keys": [
-            "Click anywhere"
-          ],
-          "text": "clear the ring"
-        }
-      ],
-      "art": "cru-shows-in-crundi.html",
-      "artTitle": "Voice"
-    },
-    {
-      "id": "cru-reply-media",
-      "tag": "Voice",
-      "title": "Cru's replies can show pictures, files and data",
-      "body": "In Cru's conversation, a reply can now carry pictures, video and audio players, files to download, live frames such as a chart or a video link, and cards with tables, lists and progress. They stay in the conversation where Cru showed them, on the web, the PC app and the phone.",
-      "keys": [
-        {
-          "keys": [
-            "Tap a picture"
-          ],
-          "text": "open it large"
-        },
-        {
-          "keys": [
-            "Download"
-          ],
-          "text": "save a file Cru offered"
-        }
-      ],
-      "art": "cru-reply-media.html",
-      "artTitle": "Voice"
-    },
-    {
       "id": "cru-thinking-speaking-in-chat",
       "tag": "Voice",
       "title": "See Cru think and speak in the conversation",

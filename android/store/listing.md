@@ -61,6 +61,24 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.37 (en-US)
+
+Version code 68. Internal track. Since 1.1.3-dev.36 (code 67): Cru's bubble is a conversation (not a bot) and can bubble, with diagnostics; no Cru launcher icon; media in Cru's replies; mute Cru's voice, typed input keeps replies text; drop a queued phrase; full view back from the panel; statuses take no space (the blob, a ring round Send); chat picture gallery. Server 1.21.6-dev.50.
+
+```
+<en-US>
+Cru:
+- Cru's bubble now floats over other apps.
+- Pictures, players, files and cards inside Cru's replies.
+- Mute Cru's voice from the menu; typed messages get text replies.
+- Drop a queued phrase with its X.
+- The expand button brings Cru's full view back.
+- Status shows on the blob, or a ring round Send while typing.
+Chats:
+- A chat's pictures open as a gallery: swipe between them.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.36 (en-US)
 
 Version code 67. Internal track. Since 1.1.3-dev.35 (code 66): the Cru bubble checks it really bubbled and explains the bubble settings otherwise; the notification opens the normal voice screen; top bar in one menu (bubble, compact, chat view), admin as an icon, no status pill (the state on the blob, a word when needed); times on Cru's replies. Server 1.21.6-dev.49.

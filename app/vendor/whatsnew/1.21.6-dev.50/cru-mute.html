@@ -1,0 +1,18 @@
+<div class="wna a-cmut">
+  <div class="win">
+    <div class="menu"><span class="it">Voice view</span><span class="it on">Mute Cru's voice</span></div>
+    <div class="bub">Two services are running, Sir.</div>
+    <span class="spk"></span>
+  </div>
+  <style>
+    .a-cmut{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-cmut .win{position:absolute;left:150px;top:50px;width:340px;height:300px;border-radius:16px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-cmut .menu{position:absolute;right:14px;top:14px;display:flex;flex-direction:column;gap:4px;padding:6px;border-radius:10px;background:var(--bg-card);border:1px solid var(--border);animation:acmut-m 9s ease infinite}
+    .a-cmut .it{padding:6px 10px;border-radius:6px;color:var(--text-secondary)}.a-cmut .it.on{animation:acmut-o 9s ease infinite}
+    .a-cmut .bub{position:absolute;left:16px;bottom:40px;padding:9px 13px;border-radius:14px 14px 14px 4px;background:var(--bg-card);border:1px solid var(--border)}
+    .a-cmut .spk{position:absolute;left:290px;bottom:44px;width:22px;height:22px;border-radius:50%;border:2px solid var(--accent);animation:acmut-s 9s ease infinite}
+    @keyframes acmut-m{0%,8%{opacity:0}14%,46%{opacity:1}52%,100%{opacity:0}}
+    @keyframes acmut-o{0%,30%{background:transparent;color:var(--text-secondary)}36%,100%{background:var(--accent-dim);color:var(--text-primary)}}
+    @keyframes acmut-s{0%,48%{opacity:1}54%,100%{opacity:0}}
+  </style>
+</div>
