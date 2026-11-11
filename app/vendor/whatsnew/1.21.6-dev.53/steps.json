@@ -32,7 +32,7 @@
       "id": "browser-drawer-annotate",
       "tag": "Browser",
       "title": "Point at the page, or draw on it, for a chat",
-      "body": "Select an element and write a note on it, or draw over the page (pins, boxes, freehand), each mark with its own note. Then send it to a chat in the project: as CSS selectors (each element's note, selector and HTML, as text), or as the full screenshot with your marks drawn in. A drawing has no selector, so once you draw, the screenshot is how it goes. The project's chats can use the drawer's tabs too, and point at things where you can see them.",
+      "body": "Select an element and write a note on it, or draw over the page (pins, boxes, freehand), each mark with its own note. Then send it to one of the project's chats, or to Cru: as CSS selectors (each element's note, selector and HTML, as text), or as the full screenshot with your marks drawn in. A drawing has no selector, so once you draw, the screenshot is how it goes. The project's chats can use the drawer's tabs too, and Cru can use every project's, pointing at things where you can see them.",
       "keys": [
         {
           "keys": [
@@ -73,10 +73,32 @@
       "artTitle": "Browser"
     },
     {
+      "id": "browser-drawer-homepool",
+      "tag": "Browser",
+      "title": "Tabs that go out through homepool",
+      "body": "A drawer tab can leave through one of your homepool networks, your home line or a friend's, with the PC browser key you make in the drawer. Each network keeps one exit, so its tabs keep one address, and the tab shows which node it goes through and its IP, or plainly that no exit is up. Chats ask you before they use it, and a network this PC is itself a node of is not offered.",
+      "keys": [
+        {
+          "keys": [
+            "Network icon"
+          ],
+          "text": "This PC, Server, or a homepool network"
+        },
+        {
+          "keys": [
+            "Homepool settings..."
+          ],
+          "text": "the PC browser key, its networks, the chats you approved"
+        }
+      ],
+      "art": "browser-drawer-homepool.html",
+      "artTitle": "Browser"
+    },
+    {
       "id": "browser-drawer-history",
       "tag": "Browser",
       "title": "One browser, with history you can clear",
-      "body": "Every tab in every project shares one browser on this computer: sign in to a site once and every tab is signed in, and it stays that way after a restart. The drawer keeps a history, suggested as you type an address, and you can clear the history, cookies and site data, or cached files whenever you like.",
+      "body": "Every tab in every project shares one browser on this computer: sign in to a site once and every tab is signed in, and it stays that way after a restart. The drawer keeps a history, suggested as you type an address, and you can clear the history, cookies and site data, or cached files, for every site or just one.",
       "keys": [
         {
           "keys": [

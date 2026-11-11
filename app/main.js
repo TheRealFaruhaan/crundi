@@ -16,8 +16,8 @@ import { spawn, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
 import { tmpdir, homedir, hostname as osHostname } from 'os';
 import electronUpdater from 'electron-updater';
-import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS } from './browser-drawer.js';
-import { createServerNetProxy } from './net-tunnel-client.js';
+import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS, partitionOf } from './browser-drawer.js';
+import { createDrawerNet } from './drawer-net.js';
 import { startNode as startHomepoolNode } from './homepool-node.js';
 const { autoUpdater } = electronUpdater;
 
@@ -812,6 +812,9 @@ function startBot() {
   const isDev = !app.isPackaged && process.argv.includes('--dev');
   if (isDev) { spawnEnv.CRUNDI_DEV = '1'; appendLog('[electron] DEV mode: port 8889, Cloudflare disabled'); }
   delete spawnEnv.NODE_OPTIONS;
+  // Which device this is, so the server never offers this PC's browser a
+  // homepool network this PC is itself a node of.
+  try { spawnEnv.CRUNDI_DEVICE_ID = hpDeviceId(); } catch { /* no data folder yet */ }
 
   try {
     botProcess = spawn(nodeExe, ['--no-deprecation', entryScript], {
@@ -1998,6 +2001,8 @@ function handleBotMessage(msg, reply) {
 
   // Fire-and-forget: no requestId, nothing to reply to.
   if (msg.type === 'notify') { showServerNotification(msg); return; }
+  // Drawer tabs on a homepool network, with the bundled server: tunnel frames.
+  if (msg.type === 'netTunnel' && !reply) { if (typeof msg.b64 === 'string') routeTunnelFrame(Buffer.from(msg.b64, 'base64')); return; }
   // The server wants a fresh start (to apply a restored backup). Stopping it
   // and starting it again from here is the only way it can get one.
   if (msg.type === 'restart-server') {
@@ -2106,13 +2111,13 @@ function connectNativeHost() {
     appendLog('[nativehost] connected — registering as native host');
     // Tell the server what this build can do, so it does not offer the user a
     // notification channel that an older app would silently drop.
-    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'] })); }
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'], deviceId: hpDeviceId() })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
   ws.on('message', (raw, isBinary) => {
     if (!isCurrent()) return;
     // Binary frames are the drawer's server-network streams (net-tunnel-client.js).
-    if (isBinary) { if (serverProxy) serverProxy.handleFrame(raw); return; }
+    if (isBinary) { routeTunnelFrame(raw); return; }
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
     if (m.type === 'native-host-ready') {
       hostFeatures = Array.isArray(m.features) ? m.features : [];
@@ -2132,7 +2137,7 @@ function connectNativeHost() {
     if (!isCurrent()) return;
     hostWs = null;
     hostFeatures = [];
-    if (serverProxy) serverProxy.onDisconnect();
+    serverNet.dropped();
     browserDrawer.notifyInfo();
     if (!hostClosing) { appendLog('[nativehost] disconnected'); scheduleHostRetry(); }
   });
@@ -2196,48 +2201,23 @@ async function touchListenersAt(send, x, y) {
 // websocket (net-tunnel-client.js), so the server opens no port and this
 // machine exposes none.
 let hostFeatures = [];          // what the remote server offers (native-host-ready)
-let serverProxy = null;
-let serverNetConfigured = '';
-function remoteHostUp() { return !!(hostWs && hostWs.readyState === 1); }
-const serverNet = {
-  info() {
-    const remote = readClientConfig().mode === 'remote';
-    if (!remote) return { mode: 'local', status: 'direct' };
-    if (!remoteHostUp()) return { mode: 'remote', status: 'offline' };
-    if (!hostFeatures.includes('net-tunnel')) return { mode: 'remote', status: 'unsupported' };
-    return { mode: 'remote', status: 'tunnel' };
-  },
-  async ensure() {
-    const ses = session.fromPartition(DRAWER_PARTITIONS.server);
-    if (readClientConfig().mode !== 'remote') {
-      if (serverNetConfigured !== 'direct') { await ses.setProxy({ mode: 'direct' }); serverNetConfigured = 'direct'; }
-      return;
-    }
-    if (!serverProxy) {
-      serverProxy = createServerNetProxy({
-        send: (buf) => { if (!remoteHostUp()) throw new Error('not connected'); hostWs.send(buf, { binary: true }); },
-        isConnected: () => remoteHostUp() && hostFeatures.includes('net-tunnel'),
-        log: appendLog,
-      });
-    }
-    const port = await serverProxy.start();
-    const want = 'proxy:' + port;
-    if (serverNetConfigured !== want) {
-      // <-loopback> drops Chromium's built-in bypass, so localhost goes to the
-      // server's localhost too: that is the point of this network.
-      await ses.setProxy({ proxyRules: 'http://127.0.0.1:' + port, proxyBypassRules: '<-loopback>' });
-      await ses.closeAllConnections?.();
-      serverNetConfigured = want;
-      appendLog(`[server-net] drawer tabs on the server network use 127.0.0.1:${port}`);
-    }
-  },
-};
-// The proxy asks for its password; only ever answered for our own proxy.
+const serverNet = createDrawerNet({
+  isRemote: () => readClientConfig().mode === 'remote',
+  remoteUp: () => !!(hostWs && hostWs.readyState === 1),
+  remoteFeatures: () => hostFeatures,
+  sendRemote: (buf) => hostWs.send(buf, { binary: true }),
+  localUp: () => !!botProcess,
+  // The bundled server: the same frames over its IPC channel.
+  sendLocal: (buf) => botProcess.send({ type: 'netTunnel', b64: buf.toString('base64') }),
+  sessionFor: (part) => session.fromPartition(part),
+  partitionOf,
+  log: appendLog,
+});
+function routeTunnelFrame(buf) { serverNet.handleFrame(buf); }
+// The proxies ask for their password; only ever answered for our own.
 app.on('login', (event, _wc, _details, authInfo, callback) => {
-  if (serverProxy && serverProxy.isOurs(authInfo)) {
-    event.preventDefault();
-    callback(serverProxy.credentials.user, serverProxy.credentials.pass);
-  }
+  const c = serverNet.login(authInfo);
+  if (c) { event.preventDefault(); callback(c.user, c.pass); }
 });
 const browserDrawer = createBrowserDrawer({
   ipcMain,

@@ -12,8 +12,8 @@ import { app, BrowserWindow, ipcMain, session } from 'electron';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createBrowserDrawer, isDrawerKey, PARTITIONS } from '../../app/browser-drawer.js';
-import { createServerNetProxy } from '../../app/net-tunnel-client.js';
+import { createBrowserDrawer, isDrawerKey, partitionOf } from '../../app/browser-drawer.js';
+import { createDrawerNet } from '../../app/drawer-net.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -21,21 +21,15 @@ const WS = require('ws');
 const SERVER = process.env.SERVER_URL;
 const out = (m) => process.stdout.write('[harness] ' + m + '\n');
 
-let win = null, ws = null, features = [], proxy = null, configured = '';
+let win = null, ws = null, features = [];
 const up = () => !!(ws && ws.readyState === 1);
-
-const serverNet = {
-  info() { if (!up()) return { mode: 'remote', status: 'offline' }; return { mode: 'remote', status: features.includes('net-tunnel') ? 'tunnel' : 'unsupported' }; },
-  async ensure() {
-    if (!proxy) proxy = createServerNetProxy({ send: (b) => { if (!up()) throw new Error('down'); ws.send(b, { binary: true }); }, isConnected: () => up() && features.includes('net-tunnel'), log: out });
-    const port = await proxy.start();
-    if (configured !== String(port)) {
-      await session.fromPartition(PARTITIONS.server).setProxy({ proxyRules: 'http://127.0.0.1:' + port, proxyBypassRules: '<-loopback>' });
-      configured = String(port);
-    }
-  },
-};
-app.on('login', (event, _wc, _d, authInfo, cb) => { if (proxy && proxy.isOurs(authInfo)) { event.preventDefault(); cb(proxy.credentials.user, proxy.credentials.pass); } });
+// The real network plumbing of app/main.js (app/drawer-net.js), in remote mode.
+const serverNet = createDrawerNet({
+  isRemote: () => true, remoteUp: up, remoteFeatures: () => features,
+  sendRemote: (b) => ws.send(b, { binary: true }), localUp: () => false, sendLocal: () => { throw new Error('no local server'); },
+  sessionFor: (p) => session.fromPartition(p), partitionOf, log: out,
+});
+app.on('login', (event, _wc, _d, authInfo, cb) => { const c = serverNet.login(authInfo); if (c) { event.preventDefault(); cb(c.user, c.pass); } });
 
 // Same as app/main.js's loadUrlWithGrace.
 function loadUrlWithGrace(wc, url, graceMs = 15000) {
@@ -57,6 +51,12 @@ const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, lo
 const generic = {
   async browserNavigate(msg) { const e = drawer.getEntry(msg.key); await loadUrlWithGrace(e.win.webContents, msg.url); return { ok: true, url: e.win.webContents.getURL() }; },
   async browserScreenshot(msg) { const e = drawer.getEntry(msg.key); const img = await e.win.webContents.capturePage(); return { ok: true, data: img.toPNG().toString('base64') }; },
+  async browserReadPage(msg) {
+    const e = drawer.getEntry(msg.key); const wc = e.win.webContents;
+    const text = await wc.executeJavaScript('(document.body.innerText || "").substring(0, 50000)');
+    return { ok: true, title: wc.getTitle(), url: wc.getURL(), text, consoleLogs: e.consoleLogs.slice(-20) };
+  },
+  async browserScroll(msg) { const e = drawer.getEntry(msg.key); await e.win.webContents.executeJavaScript(`window.scrollBy(0, ${Number(msg.y) || 0})`); return { ok: true }; },
   async browserClick(msg) { const e = drawer.getEntry(msg.key); await e.win.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(msg.selector)})?.click()`); return { ok: true }; },
   async browserType(msg) {
     const e = drawer.getEntry(msg.key);
@@ -93,9 +93,9 @@ async function testCall(m) {
 
 function connect() {
   ws = new WS(SERVER.replace(/^http/, 'ws') + '/ws');
-  ws.on('open', () => ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'] })));
+  ws.on('open', () => ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer'], deviceId: process.env.DRAWER_DEVICE || '' })));
   ws.on('message', (raw, isBinary) => {
-    if (isBinary) { if (proxy) proxy.handleFrame(raw); return; }
+    if (isBinary) { serverNet.handleFrame(raw); return; }
     const m = JSON.parse(raw.toString());
     if (m.type === 'native-host-ready') { features = m.features || []; drawer.notifyInfo(); out('registered ' + features.join(',')); return; }
     if (m.type === 'test') { testCall(m).then((r) => ws.send(JSON.stringify({ type: 'test-result', id: m.id, ...r })), (err) => ws.send(JSON.stringify({ type: 'test-result', id: m.id, ok: false, error: err.message }))); return; }
@@ -104,7 +104,7 @@ function connect() {
     handle(msg).then((r) => ws.send(JSON.stringify({ type: 'native-host-result', payload: { type: 'browserResult', requestId: msg.requestId, ...r } })),
       (err) => ws.send(JSON.stringify({ type: 'native-host-result', payload: { type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message } })));
   });
-  ws.on('close', () => { features = []; if (proxy) proxy.onDisconnect(); drawer.notifyInfo(); if (process.env.EXIT_ON_CLOSE) app.exit(0); });
+  ws.on('close', () => { features = []; serverNet.dropped(); drawer.notifyInfo(); if (process.env.EXIT_ON_CLOSE) app.exit(0); });
 }
 
 app.whenReady().then(() => {

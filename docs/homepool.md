@@ -152,6 +152,37 @@ To switch, on a Crundi that has this:
 Moving to the Crundi nodes later is a change of the key's network in the tab;
 the scraper is not touched again.
 
+## The PC browser key (the desktop app's browser drawer)
+
+A drawer tab can go out through a homepool network. The owner makes **one**
+key of kind `browser` ("PC browser") in the drawer (network icon, Homepool:
+set up) or edits it there and in Access: which networks, on/off, fallback.
+
+- **How it flows.** The tab's profile (one per network: Chromium sets a proxy
+  per profile) uses a loopback proxy in the app that tags each stream
+  `hp|<network>|host:port` and sends it over the app's existing native-host
+  websocket (or, for a bundled server, its IPC channel). The server's
+  `net-tunnel.js` hands it to `browserConnect()`, which opens it with
+  `engine.open()` on that network's **slot 1** and `splice()`s it, so usage is
+  counted and switching the key off cuts it. No port is opened anywhere.
+- **One line per network.** Every tab on "Home" leaves through the same exit,
+  so its tabs keep one address. The drawer shows the exit (node and IP), or
+  "No exit is up"; with no exit the page says so and nothing leaves another
+  way unless the key's fallback is on.
+- **Chats ask first.** A chat opening or switching a tab onto homepool makes a
+  request of kind `browser` (proved by its chat token) and waits for the
+  owner. Approving adds the chat (or, changed so, its project) to the key's
+  `browserChats` / `browserProjects`; the drawer lists them and removes them.
+  A chat that is not approved cannot use an existing homepool tab either.
+  Cru is the owner's own assistant and is not asked.
+- **Not through itself.** A network the drawer's PC is a node of (a node whose
+  `deviceId` is the app's) is not offered, is refused to chats, and refused
+  by `browserConnect()`.
+- Code: `src/homepool-store.js` (kind, grants), `src/homepool-service.js`
+  (`browserStatus`, `browserConnect`, `browserAsk`, `/api/homepool/browser`),
+  `src/browser-gate.js`, `app/drawer-net.js`. Tested end to end in
+  `scripts/test-browser-drawer.mjs`.
+
 ## Later (not in this card)
 
 Devices *using* an exit: the PC app's tabs and the phone leaving through home

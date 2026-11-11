@@ -99,6 +99,8 @@ import * as voiceSettings from './voice/settings.js';
 import { makeTools as makeVoiceTools, pendingLine as cruPendingLine, answerable as cruAnswerable } from './voice/tools.js';
 import { createVoiceAgent } from './voice/agent.js';
 import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
+import { makeCruBrowserTools } from './voice/browser-tools.js';
+import { gateBrowserCall } from './browser-gate.js';
 import { createVoiceMemory } from './voice/memory.js';
 import { voiceDevice } from './voice/device.js';
 import { createCliVoiceAgent } from './voice/agent-cli.js';
@@ -1013,6 +1015,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return t ? { title: t.longTitle || t.title || '', project: t.project || '' } : null;
     },
   });
+  // With an Electron parent (the all-in-one install), its browser drawer's
+  // homepool tabs reach us over IPC rather than a websocket.
+  browserMod.setParentTunnel(createTunnelEndpoint({
+    send: (b) => browserMod.sendParentTunnel(b),
+    connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: process.env.CRUNDI_DEVICE_ID || '' }),
+  }));
   let homepoolStarted = false;
   function startHomepool() {
     if (homepoolStarted || process.env.HOMEPOOL_DISABLE === '1') return;
@@ -3195,7 +3203,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     cruSteps.nudge = n >= 5 || recovered ? `[Your last turn took ${n} steps${recovered ? ', and found the way past a failure' : ''}. If it is something he may ask for again, save it as a routine in /memories/routines/ in this same turn (or patch the routine you followed where it fell short): when to use it, then the steps. Skip it if it was a one-off.]` : '';
     cruSteps.n = 0; cruSteps.failed = false; cruSteps.recovered = false;
   }
+  // Cru and the browser drawer: every project's tabs (voice/browser-tools.js).
+  const cruBrowser = makeCruBrowserTools({ call: (tool, args) => (mcpDispatch ? mcpDispatch(tool, args) : Promise.resolve({ ok: false, error: 'Browser tools are not available on this server.' })) });
   const voiceActions = makeVoiceActionTools({
+    browserDefs: cruBrowser.actions,
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
     createChat: (alias, opts) => claudeUi.create(alias, opts),
@@ -3555,7 +3566,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   const voiceBrainOpts = {
     // Each step is counted for the routine nudge (cruStepDone). The turn's signals go through (say_now needs them).
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, ...cruUiNavTools, ...cruSayTools, kidStartTool, kidProgressTool, pcLockTool]
+    tools: [...voiceTools, ...cruBrowser.read, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, ...cruUiNavTools, ...cruSayTools, kidStartTool, kidProgressTool, pcLockTool]
       .map((t) => ({ ...t, run: async (i, sig) => { let out; try { out = await t.run(i, sig); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
     beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
     turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
@@ -8199,6 +8210,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
+      // The browser drawer's tabs on a homepool network go out through the
+      // owner's PC browser key: a chat uses them only once he approved it
+      // (browser-gate.js: asks him first, refuses this PC's own networks).
+      if (String(body.tool).startsWith('browser_')) {
+        const refused = await gateBrowserCall({ tool: body.tool, args: a, collaborator: !!mcpCollabKey, homepool, browser: browserMod });
+        if (refused) return json(res, refused);
+      }
+
       let mcpAllowedProjects = null;
       if (mcpCollabKey) {
         if (!COLLABORATOR_MCP_TOOLS.has(body.tool)) {
@@ -9128,14 +9147,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             // What this app version can do. Absent from older clients, which is
             // exactly what it is here to tell us.
             capabilities: Array.isArray(msg.capabilities) ? msg.capabilities : [],
+            // This app's device (as its homepool node knows it), if it says.
+            deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '',
           });
           hostTunnel = createTunnelEndpoint({
             send: (b) => { if (ws.readyState === 1) ws.send(b, { binary: true }); },
             buffered: () => ws.bufferedAmount,
+            // Drawer tabs on a homepool network: through the PC browser key.
+            connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '' }),
           });
           console.log('[crundi] Desktop app attached as native host');
           // features: what this server offers the app (absent on older servers).
-          ws.send(JSON.stringify({ type: 'native-host-ready', features: ['net-tunnel', 'browser-drawer'] }));
+          ws.send(JSON.stringify({ type: 'native-host-ready', features: ['net-tunnel', 'browser-drawer', 'browser-homepool'] }));
           return;
         }
         // A reply coming back from that desktop app.

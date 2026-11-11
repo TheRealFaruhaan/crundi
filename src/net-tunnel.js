@@ -9,7 +9,9 @@
  * connection here. No port is opened on this server.
  *
  * Frames are binary websocket messages: [type u8][stream id u32 BE][payload].
- *   OPEN   1  client → server  payload "host:port" (utf8, IPv6 in brackets)
+ *   OPEN   1  client → server  payload "host:port" (utf8, IPv6 in brackets),
+ *                              or "hp|<network>|host:port": open it through
+ *                              homepool, on that network (connectVia)
  *   DATA   2  both ways        payload bytes
  *   CLOSE  3  both ways        no payload (or a reason, ignored)
  *   OPENED 4  server → client  the TCP connection is up
@@ -57,7 +59,7 @@ const HIGH_WATER = 4 * 1024 * 1024;   // pause reading once the websocket holds 
  *   buffered()   bytes still queued on that websocket (for back-pressure)
  *   connect      injectable for tests; defaults to net.connect
  */
-export function createTunnelEndpoint({ send, buffered = () => 0, connect = (o) => net.connect(o), log = () => {} } = {}) {
+export function createTunnelEndpoint({ send, buffered = () => 0, connect = (o) => net.connect(o), connectVia = null, log = () => {} } = {}) {
   const streams = new Map();   // id → socket
   let drainTimer = null;
   const paused = new Set();
@@ -83,10 +85,45 @@ export function createTunnelEndpoint({ send, buffered = () => 0, connect = (o) =
     try { s.destroy(); } catch { /* gone */ }
   }
 
+  // Through homepool: connectVia resolves { stream } (a duplex: what is pushed
+  // into it goes out, its 'tab-data' comes back), or throws with the reason.
+  function openVia(id, spec) {
+    const m = /^hp\|([a-z0-9][a-z0-9_-]{0,39})\|(.+)$/.exec(spec);
+    const target = m && parseTarget(m[2]);
+    if (!target || !connectVia) { out(T.ERROR, id, connectVia ? 'bad target' : 'homepool is not available on this server'); out(T.CLOSE, id); return; }
+    const holder = { pending: [], ended: false, stream: null };
+    const shim = {
+      write: (d) => { if (holder.stream) holder.stream.push(d); else holder.pending.push(d); },
+      end: () => { if (holder.stream) holder.stream.push(null); else holder.ended = true; },
+      destroy: () => { if (holder.stream) holder.stream.destroy(); else holder.ended = true; },
+      pause() {}, resume() {},
+    };
+    streams.set(id, shim);
+    Promise.resolve().then(() => connectVia({ network: m[1], host: target.host, port: target.port })).then(({ stream }) => {
+      if (streams.get(id) !== shim) { stream.destroy(); return; }
+      holder.stream = stream;
+      let closed = false;
+      const done = () => { if (closed) return; closed = true; if (streams.get(id) === shim) { streams.delete(id); out(T.CLOSE, id); } };
+      stream.on('tab-data', (d) => out(T.DATA, id, d));
+      stream.on('tab-end', done);
+      stream.on('close', done);
+      stream.on('error', () => { /* close follows */ });
+      out(T.OPENED, id);
+      for (const d of holder.pending) stream.push(d);
+      holder.pending = [];
+      if (holder.ended) stream.push(null);
+    }, (err) => {
+      if (streams.get(id) === shim) streams.delete(id);
+      out(T.ERROR, id, String(err && err.message || err).slice(0, 300)); out(T.CLOSE, id);
+    });
+  }
+
   function open(id, payload) {
     if (streams.has(id)) { out(T.ERROR, id, 'stream id in use'); out(T.CLOSE, id); return; }
     if (streams.size >= MAX_STREAMS) { out(T.ERROR, id, 'too many connections'); out(T.CLOSE, id); return; }
-    const target = parseTarget(payload.toString('utf8'));
+    const spec = payload.toString('utf8');
+    if (spec.startsWith('hp|')) return openVia(id, spec);
+    const target = parseTarget(spec);
     if (!target) { out(T.ERROR, id, 'bad target'); out(T.CLOSE, id); return; }
     let sock;
     try { sock = connect({ host: target.host, port: target.port }); } catch (err) {

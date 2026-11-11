@@ -74,6 +74,24 @@
     '.brd-net-dot.client { color: var(--text-muted); border: 1px solid var(--border); }',
     '.brd-net-dot.server { color: #fff; background: var(--accent); }',
     '.brd-net-dot.bad { background: var(--red, #ef4444); }',
+    '.brd-net-dot.hp { color: #fff; background: #059669; }',
+    '.brd-net-dot.hp.bad { background: var(--red, #ef4444); }',
+    '.brd-exit { flex: 0 1 auto; min-width: 0; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem; padding: 3px 8px; border-radius: 999px; border: 1px solid #059669; color: var(--text-primary); }',
+    '.brd-exit.bad { border-color: var(--red, #ef4444); color: var(--red, #ef4444); }',
+    '.brd-exit[hidden], .brd-sel[hidden] { display: none !important; }',
+    '.brd-netbtn.server { color: var(--accent); border-color: var(--accent); }',
+    '.brd-netbtn.hp { color: #10b981; border-color: #059669; }',
+    '.brd-netbtn.bad { color: var(--red, #ef4444); border-color: var(--red, #ef4444); }',
+    '.brd-devbtn.on { color: var(--accent); border-color: var(--accent); }',
+    '.brd-pop { position: absolute; z-index: 7; min-width: 210px; max-height: 60vh; overflow: auto; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.45); font-size: 0.78rem; }',
+    '.brd-pop .brd-pi { display: flex; width: 100%; align-items: center; gap: 8px; padding: 6px 10px; border: none; background: none; color: var(--text-primary); border-radius: 5px; cursor: pointer; text-align: left; font-size: 0.78rem; }',
+    '.brd-pop .brd-pi:hover { background: var(--bg-tertiary); }',
+    '.brd-pop .brd-pi.on { color: var(--accent); font-weight: 600; }',
+    '.brd-pop .brd-pg { padding: 6px 10px 2px; color: var(--text-muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em; }',
+    '.brd-pop .brd-pn { padding: 2px 10px 6px; color: var(--text-muted); font-size: 0.72rem; }',
+    '.brd-hpnet { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--border); }',
+    '.brd-hpnet .brd-sp { flex: 1 1 auto; }',
+    '.brd-ok { color: #10b981; } .brd-bad { color: var(--red, #ef4444); }',
     '.brd-ibtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: 0 0 auto; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 6px; cursor: pointer; padding: 0; }',
     '.brd-ibtn:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }',
     '.brd-ibtn:disabled { opacity: 0.35; cursor: default; }',
@@ -145,12 +163,26 @@
     '@keyframes brd-spin { to { transform: rotate(360deg); } }',
   ].join('\n');
 
+  // A homepool network's tabs have a profile of their own (a proxy is per profile).
+  function partitionOf(n) {
+    if (PARTITIONS[n]) return PARTITIONS[n];
+    var m = /^hp:([a-z0-9][a-z0-9_-]{0,39})$/.exec(String(n || ''));
+    return m ? 'persist:crundi-browser-hp-' + m[1] : PARTITIONS.client;
+  }
+  function isHp(n) { return /^hp:/.test(String(n || '')); }
+
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
 
   function init(host) {
     var api = host.api;
-    var ic = host.ic || function () { return ''; };
+    // The app's icons, and the drawer's own few the app does not have (kept
+    // here so the shared set, which the Android app mirrors, is unchanged).
+    var OWN_ICONS = { smartphone: '<rect x="6" y="2" width="12" height="20" rx="2.5"/><line x1="11" y1="18" x2="13" y2="18"/>' };
+    var ic = function (n) {
+      if (OWN_ICONS[n]) return '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + OWN_ICONS[n] + '</svg>';
+      return host.ic ? host.ic(n) : '';
+    };
     var esc = host.esc || function (s) { return String(s); };
     var toast = host.toast || function () {};
     var root = host.root, split = host.split;
@@ -202,8 +234,11 @@
       + '<button class="brd-ibtn" data-brd="forward" title="Forward" disabled>' + ic('chevron-right') + '</button>'
       + '<button class="brd-ibtn" data-brd="reload" title="Reload">' + ic('refresh') + '</button>'
       + '<input class="brd-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search" list="brd-hist"><datalist id="brd-hist"></datalist>'
-      + '<select class="brd-sel brd-netsel" title="Which network this tab uses"><option value="client">This PC</option><option value="server">Server</option></select>'
-      + '<select class="brd-sel brd-dev" title="Emulate device"></select>'
+      + '<button class="brd-ibtn brd-netbtn" data-brd="netmenu" title="Network">' + ic('network') + '</button>'
+      + '<button class="brd-ibtn brd-devbtn" data-brd="devmenu" title="Device size">' + ic('smartphone') + '</button>'
+      + '<select class="brd-sel brd-netsel" hidden aria-hidden="true"></select>'
+      + '<span class="brd-exit" hidden></span>'
+      + '<select class="brd-sel brd-dev" hidden aria-hidden="true"></select>'
       + '<button class="brd-ibtn" data-brd="annotate" title="Annotate the page">' + ic('message-square') + '</button>'
       + '<button class="brd-ibtn" data-brd="devtools" title="DevTools">' + ic('terminal') + '</button>'
       + '</div>'
@@ -294,13 +329,18 @@
     split.addEventListener('dblclick', function () { st.width = DEFAULT_W; applyWidth(); layout(); persist(); if (host.onLayout) host.onLayout(); });
 
     // ─── Tabs ───
-    function netLabel(n) { return n === 'server' ? (info.labels && info.labels.server) || 'Server' : (info.labels && info.labels.client) || 'This PC'; }
+    function netLabel(n) {
+      if (isHp(n)) { var h = hpNet(n); return 'Homepool: ' + (h ? h.name : n.slice(3)); }
+      return n === 'server' ? (info.labels && info.labels.server) || 'Server' : (info.labels && info.labels.client) || 'This PC';
+    }
     function serverBad() { return info.mode === 'remote' && info.status !== 'tunnel'; }
     function renderTabs() {
       var ps = project ? proj(project) : { tabs: [] };
       var act = activeTab();
       var h = ps.tabs.map(function (t) {
-        var net = t.network === 'server' ? '<span class="brd-net-dot server' + (serverBad() ? ' bad' : '') + '" title="' + esc('Network: ' + netLabel('server')) + '">SRV</span>' : '';
+        var hn = isHp(t.network) ? hpNet(t.network) : null;
+        var net = t.network === 'server' ? '<span class="brd-net-dot server' + (serverBad() ? ' bad' : '') + '" title="' + esc('Network: ' + netLabel('server')) + '">SRV</span>'
+          : isHp(t.network) ? '<span class="brd-net-dot hp' + (!hn || !hn.exit ? ' bad' : '') + '" title="' + esc(netLabel(t.network) + ': ' + exitText(t.network)) + '">HP</span>' : '';
         var rt = runtime[t.id]; var gone = !!(rt && rt.unloaded); var zz = gone || !!(rt && rt.sleeping);
         return '<div class="brd-tab' + (act && act.id === t.id ? ' on' : '') + (zz ? ' sleeping' : '') + '" role="tab" data-tab="' + esc(t.id) + '" title="' + esc((t.title || t.url || '') + '\n' + (t.url || '') + '\nNetwork: ' + netLabel(t.network) + (gone ? '\nUnloaded after an hour asleep: loads again when shown or used' : zz ? '\nAsleep: wakes, as it was, when shown or used' : '')) + '">'
           + net + '<span class="brd-t">' + esc(t.title || t.url || 'New tab') + '</span>'
@@ -321,11 +361,24 @@
       root.querySelector('[data-brd="forward"]').disabled = !s.canGoForward;
       root.classList.toggle('brd-loading', !!s.loading);
       if (document.activeElement !== urlEl) urlEl.value = t ? (t.url && t.url !== 'about:blank' ? t.url : '') : '';
-      netSel.value = t ? (t.network || 'client') : 'client';
-      netSel.classList.toggle('server', !!t && t.network === 'server');
-      netSel.options[0].textContent = netLabel('client');
-      netSel.options[1].textContent = netLabel('server');
-      netSel.title = t ? 'This tab uses: ' + netLabel(t.network) + (t.network === 'server' ? ' (its traffic goes through the server)' : '') : '';
+      fillNetSel(t);
+      netSel.classList.toggle('server', !!t && t.network !== 'client' && !!t.network);
+      netSel.title = t ? 'This tab uses: ' + netLabel(t.network) + (t.network === 'server' ? ' (its traffic goes through the server)' : isHp(t.network) ? ' (out through homepool)' : '') : '';
+      var nb = root.querySelector('.brd-netbtn');
+      var netCls = !t ? '' : t.network === 'server' ? 'server' : isHp(t.network) ? 'hp' : '';
+      nb.classList.toggle('server', netCls === 'server'); nb.classList.toggle('hp', netCls === 'hp');
+      nb.classList.toggle('bad', !!t && ((isHp(t.network) && !(hpNet(t.network) || {}).exit) || (t.network === 'server' && serverBad())));
+      nb.title = t ? 'Network: ' + netLabel(t.network) + (isHp(t.network) ? '\n' + exitText(t.network) : '') : 'Network';
+      var db = root.querySelector('.brd-devbtn');
+      db.classList.toggle('on', !!t && !!t.device);
+      db.title = 'Device size: ' + (t ? (t.device === 'custom' ? (t.custom ? 'Custom ' + t.custom.w + 'x' + t.custom.h : 'Custom') : (DEVICES[t.device || 0] || DEVICES[0]).name) : 'Responsive');
+      nb.disabled = db.disabled = !t;
+      var ex = root.querySelector('.brd-exit');
+      if (t && isHp(t.network)) {
+        var hn = hpNet(t.network);
+        ex.hidden = true; ex.classList.toggle('bad', !hn || !hn.exit);
+        ex.textContent = exitText(t.network); ex.title = netLabel(t.network) + ': ' + exitText(t.network);
+      } else ex.hidden = true;
       devSel.value = t ? (t.device === 'custom' ? 'custom' : String(t.device || 0)) : '0';
       var custom = devSel.querySelector('option[value="custom"]');
       custom.hidden = !(t && t.device === 'custom');
@@ -336,13 +389,109 @@
       root.querySelector('[data-brd="annotate"]').classList.toggle('on', annotating);
     }
 
+    // ─── Homepool (the PC browser key; the server's /api/homepool/browser) ───
+    var hp = null;            // { key, networks: [{id, name, exit, refusal, selfNode}], available, chats, projects } or null
+    var hpTimer = null, hpDevice = '';
+    function hpNet(n) { var id = String(n).slice(3); return hp && hp.networks ? hp.networks.find(function (x) { return x.id === id; }) || null : null; }
+    function exitText(n) {
+      var h = hpNet(n);
+      if (!hp) return 'checking\u2026';
+      if (!hp.key) return 'homepool is not set up for this browser';
+      if (!h) return 'the PC browser key does not allow this network';
+      if (h.selfNode) return 'this PC is a node of this network';
+      if (!h.exit) return 'No exit is up' + (h.refusal ? ' (' + h.refusal + ')' : '');
+      return 'via ' + h.exit.name + (h.exit.publicIp ? ' \u00b7 ' + h.exit.publicIp : '') + (h.exit.fallback ? ' (server, fallback)' : '');
+    }
+    function refreshHp() {
+      if (!host.apiFetch) return Promise.resolve();
+      return Promise.resolve(hpDevice || (host.deviceId ? host.deviceId() : '')).then(function (dev) {
+        hpDevice = dev || '';
+        return host.apiFetch('/api/homepool/browser' + (hpDevice ? '?device=' + encodeURIComponent(hpDevice) : ''));
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        hp = d && d.ok ? d : null;
+        if (project) { renderTabs(); renderBar(); }
+        if (!panelEl.hidden && panelEl.dataset.pan === 'hp') showHp();
+      }, function () { /* an older server: no homepool */ });
+    }
+    function hpPoll() {
+      clearTimeout(hpTimer);
+      var need = st.open && project && proj(project).tabs.some(function (t) { return isHp(t.network); });
+      if (need || (!panelEl.hidden && panelEl.dataset.pan === 'hp')) refreshHp();
+      hpTimer = setTimeout(hpPoll, 15000);
+    }
+    function fillNetSel(t) {
+      var cur = t ? (t.network || 'client') : 'client';
+      var h = '<option value="client">' + esc(netLabel('client')) + '</option><option value="server">' + esc(netLabel('server')) + '</option>';
+      var nets = (hp && hp.key && hp.networks) || [];
+      var offered = nets.filter(function (n) { return !n.selfNode; });
+      if (offered.length) h += '<optgroup label="Homepool">' + offered.map(function (n) { return '<option value="hp:' + esc(n.id) + '">' + esc(n.name + (n.exit ? '' : ' (no exit up)')) + '</option>'; }).join('') + '</optgroup>';
+      if (isHp(cur) && !offered.some(function (n) { return 'hp:' + n.id === cur; })) h += '<option value="' + esc(cur) + '">' + esc(netLabel(cur)) + '</option>';
+      if (hp) h += '<option value="hp-panel">' + (hp.key ? 'Homepool settings\u2026' : 'Homepool: set up\u2026') + '</option>';
+      if (netSel.innerHTML !== h) netSel.innerHTML = h;
+      netSel.value = cur;
+    }
+    function hpAct(body) {
+      return host.apiFetch('/api/homepool', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(function (r) { return r.json(); }).then(function (d) { if (!d || !d.ok) throw new Error((d && d.error) || 'failed'); return d; });
+    }
+    function showHp() {
+      panelEl.hidden = false; panelEl.dataset.pan = 'hp';
+      var head = '<div class="brd-ph">Homepool for this browser<span class="brd-sp"></span><button class="brd-ibtn" data-pan="close" title="Close">' + ic('x') + '</button></div>';
+      if (!hp) { panelEl.innerHTML = head + '<div class="brd-pb"><div class="brd-note2">Homepool is not available on this server.</div></div>'; return; }
+      var avail = (hp.available || []).filter(function (n) { return n.id !== 'server'; });
+      var chk = function (n, on) {
+        return '<label class="brd-chk"><input type="checkbox" data-hpnet="' + esc(n.id) + '"' + (on ? ' checked' : '') + (n.selfNode ? ' disabled' : '') + '><span>' + esc(n.name)
+          + (n.selfNode ? '<small>This PC is a node of this network, so its browser does not use it</small>' : '') + '</span></label>';
+      };
+      if (!hp.key) {
+        panelEl.innerHTML = head + '<div class="brd-pb">'
+          + '<div class="brd-note2">Tabs can go out through your homepool networks: your home line, a friend\u2019s. This makes the PC browser key: you choose the networks it may use, and switch it off here or in Homepool \u203a Access at any time. Chats ask you before they use it.</div>'
+          + (avail.length ? avail.map(function (n) { return chk(n, !n.selfNode); }).join('') : '<div class="brd-note2">You have no homepool networks yet: make one in the Homepool tab.</div>')
+          + '<label class="brd-chk"><input type="checkbox" data-hpfb><span>Leave from the server when no exit is up<small>Off: with no node up, pages do not load (nothing leaves another way)</small></span></label>'
+          + '</div><div class="brd-pf"><button class="brd-btn" data-pan="close">Cancel</button><button class="brd-btn danger" data-pan="hp-create"' + (avail.length ? '' : ' disabled') + '>Make the PC browser key</button></div>';
+        return;
+      }
+      var k = hp.key;
+      var rows = (hp.networks || []).map(function (n) {
+        return '<div class="brd-hpnet"><span>' + esc(n.name) + '</span><span class="brd-sp"></span><span class="' + (n.exit ? 'brd-ok' : 'brd-bad') + '">' + esc(exitText('hp:' + n.id)) + '</span></div>';
+      }).join('');
+      var chats = (hp.chats || []).map(function (c) { return '<div class="brd-hpnet"><span>' + esc(c.title || 'Chat ' + c.id.slice(0, 8)) + (c.project ? ' <small class="brd-note2">' + esc(c.project) + '</small>' : '') + '</span><span class="brd-sp"></span><button class="brd-btn" data-hprm-chat="' + esc(c.id) + '">Remove</button></div>'; }).join('')
+        + (hp.projects || []).map(function (p) { return '<div class="brd-hpnet"><span>Every chat of ' + esc(p) + '</span><span class="brd-sp"></span><button class="brd-btn" data-hprm-proj="' + esc(p) + '">Remove</button></div>'; }).join('');
+      panelEl.innerHTML = head + '<div class="brd-pb">'
+        + '<label class="brd-chk"><input type="checkbox" data-hpon' + (k.enabled !== false ? ' checked' : '') + '><span>PC browser key on' + (hp.refusal ? '<small class="brd-bad">' + esc(hp.refusal) + '</small>' : '<small>Off: homepool tabs stop loading at once</small>') + '</span></label>'
+        + '<div class="brd-note2">Exits now (each network keeps one line, so its tabs keep one address):</div>' + (rows || '<div class="brd-note2">No networks.</div>')
+        + '<div class="brd-note2" style="margin-top:14px">Networks it may use:</div>' + avail.map(function (n) { return chk(n, k.networks.indexOf(n.id) >= 0); }).join('')
+        + '<label class="brd-chk"><input type="checkbox" data-hpfb' + (k.fallbackToServer ? ' checked' : '') + '><span>Leave from the server when no exit is up</span></label>'
+        + '<div class="brd-note2" style="margin-top:14px">Chats you approved (others ask you first; their requests are in Homepool \u203a Requests):</div>' + (chats || '<div class="brd-note2">None yet.</div>')
+        + '</div><div class="brd-pf"><button class="brd-btn" data-pan="close">Close</button><button class="brd-btn danger" data-pan="hp-save">Save</button></div>';
+    }
+    function hpPicked() {
+      var nets = []; panelEl.querySelectorAll('[data-hpnet]').forEach(function (c) { if (c.checked && !c.disabled) nets.push(c.dataset.hpnet); });
+      var fb = panelEl.querySelector('[data-hpfb]');
+      return { networks: nets, fallbackToServer: !!(fb && fb.checked) };
+    }
+    panelEl.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-pan="hp-create"],[data-pan="hp-save"],[data-hprm-chat],[data-hprm-proj]'); if (!b) return;
+      e.stopPropagation();
+      var job;
+      if (b.dataset.hprmChat) job = hpAct({ action: 'browser-revoke', chatId: b.dataset.hprmChat });
+      else if (b.dataset.hprmProj) job = hpAct({ action: 'browser-revoke', project: b.dataset.hprmProj });
+      else {
+        var pick = hpPicked();
+        if (!pick.networks.length) { toast('Choose at least one network', 'error'); return; }
+        if (b.dataset.pan === 'hp-create') job = hpAct({ action: 'key-add', key: { kind: 'browser', name: 'PC browser', networks: pick.networks, fallbackToServer: pick.fallbackToServer, slots: 2 } });
+        else { var on = panelEl.querySelector('[data-hpon]'); job = hpAct({ action: 'key-update', id: hp.key.id, key: { networks: pick.networks, fallbackToServer: pick.fallbackToServer, enabled: !!(on && on.checked) } }); }
+      }
+      job.then(function () { toast('Saved'); return refreshHp(); }, function (err) { toast(String(err && err.message || err), 'error'); });
+    });
+
     function newTab(url, network, activate, opts) {
       opts = opts || {};
       var p = opts.project || project;
       if (!p) { toast('Select a project first', 'error'); return null; }
       var ps = proj(p);
       if (ps.tabs.length >= MAX_TABS) { if (!opts.quiet) toast('At most ' + MAX_TABS + ' tabs per project', 'error'); return null; }
-      var t = { id: uid(), url: url || 'about:blank', title: '', device: 0, network: network === 'server' ? 'server' : 'client' };
+      var t = { id: uid(), url: url || 'about:blank', title: '', device: 0, network: network === 'server' ? 'server' : isHp(network) ? network : 'client' };
       ps.tabs.push(t);
       if (activate || !ps.active) ps.active = t.id;
       persist();
@@ -359,7 +508,7 @@
       r.unloaded = false; r.sleeping = false;
       var wv = document.createElement('webview');
       wv.className = 'brd-wv';
-      wv.setAttribute('partition', PARTITIONS[t.network] || PARTITIONS.client);
+      wv.setAttribute('partition', partitionOf(t.network));
       wv.setAttribute('src', 'about:blank');
       wv.setAttribute('tabindex', '-1');
       // Links that open a window become drawer tabs (the main process refuses the window itself).
@@ -756,7 +905,7 @@
       root.appendChild(menuEl);
       setTimeout(function () { document.addEventListener('pointerdown', menuOutside, true); }, 0);
     }
-    function closePanel() { panelEl.hidden = true; panelEl.innerHTML = ''; }
+    function closePanel() { panelEl.hidden = true; panelEl.innerHTML = ''; panelEl.dataset.pan = ''; }
     function showHistory(q) {
       panelEl.hidden = false;
       if (!panelEl.querySelector('.brd-hq')) {
@@ -776,20 +925,31 @@
     }
     function showClear() {
       panelEl.hidden = false;
+      var t0 = activeTab(); var here = '';
+      try { here = t0 && /^https?:/.test(t0.url || '') ? new URL(t0.url).hostname : ''; } catch (e) { here = ''; }
       panelEl.innerHTML = '<div class="brd-ph">Clear browsing data<span class="brd-sp"></span><button class="brd-ibtn" data-pan="close" title="Close">' + ic('x') + '</button></div>'
         + '<div class="brd-pb">'
+        + '<label class="brd-chk"><input type="radio" name="brd-scope" value="all" checked><span>Every site</span></label>'
+        + '<label class="brd-chk"><input type="radio" name="brd-scope" value="site"' + (here ? '' : '') + '><span>Only this site<small>Its subdomains too</small></span></label>'
+        + '<input class="brd-hq brd-site" type="text" spellcheck="false" placeholder="example.com" value="' + esc(here) + '">'
         + '<label class="brd-chk"><input type="checkbox" data-clr="history" checked><span>Browsing history<small>Every address visited, and each tab\u2019s back and forward list</small></span></label>'
         + '<label class="brd-chk"><input type="checkbox" data-clr="cookies"><span>Cookies and site data<small>Logins, local storage, databases, service workers. Signs you out of sites.</small></span></label>'
         + '<label class="brd-chk"><input type="checkbox" data-clr="cache" checked><span>Cached images and files<small>Pages load again from the network</small></span></label>'
-        + '<div class="brd-note2">For this computer\u2019s browser: every tab in every project, on both networks. Open tabs stay open.</div>'
+        + '<div class="brd-note2">For this computer\u2019s browser: every tab in every project, on every network. Open tabs stay open. For one site, the back and forward lists are left as they are.</div>'
         + '</div><div class="brd-pf"><button class="brd-btn" data-pan="close">Cancel</button><button class="brd-btn danger" data-pan="do-clear">Clear</button></div>';
     }
     function doClear() {
       var what = {};
       panelEl.querySelectorAll('[data-clr]').forEach(function (c) { what[c.dataset.clr] = c.checked; });
       if (!what.history && !what.cookies && !what.cache) { toast('Choose something to clear'); return; }
+      var scope = panelEl.querySelector('input[name="brd-scope"]:checked');
+      if (scope && scope.value === 'site') {
+        var site = String(panelEl.querySelector('.brd-site').value || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[\/?#].*$/, '').replace(/:\d+$/, '').replace(/^\.+/, '');
+        if (!/^[a-z0-9.-]+$/.test(site) || site.indexOf('.') < 0 && site !== 'localhost') { toast('Type a site, such as example.com', 'error'); return; }
+        what.site = site;
+      }
       api.clear(what).then(function (r) {
-        toast('Cleared: ' + (((r && r.cleared) || []).join(', ') || 'nothing'));
+        toast('Cleared' + (what.site ? ' for ' + what.site : '') + ': ' + (((r && r.cleared) || []).join(', ') || 'nothing'));
         closePanel();
       }, function (err) { toast('Could not clear: ' + (err && err.message || err), 'error'); });
     }
@@ -808,6 +968,50 @@
         if (t) go(row.dataset.url); else newTab(row.dataset.url, 'client', true);
       }
     });
+
+    // ─── The network and device menus (icon buttons; the hidden selects hold the value) ───
+    var popEl = null;
+    function closePop() { if (popEl) { popEl.remove(); popEl = null; document.removeEventListener('pointerdown', popOutside, true); } }
+    function popOutside(e) { if (popEl && !popEl.contains(e.target) && !e.target.closest('.brd-netbtn,.brd-devbtn')) closePop(); }
+    function openPop(btn, html, onPick) {
+      if (popEl && popEl.dataset.for === btn.dataset.brd) { closePop(); return; }
+      closePop();
+      popEl = document.createElement('div'); popEl.className = 'brd-pop'; popEl.dataset.for = btn.dataset.brd;
+      popEl.innerHTML = html;
+      root.appendChild(popEl);
+      var rb = btn.getBoundingClientRect(), rr = root.getBoundingClientRect();
+      popEl.style.top = (rb.bottom - rr.top + 4) + 'px';
+      popEl.style.left = Math.max(4, Math.min(rb.left - rr.left, rr.width - popEl.offsetWidth - 4)) + 'px';
+      popEl.addEventListener('click', function (e) { var it = e.target.closest('[data-v]'); if (!it) return; closePop(); onPick(it.dataset.v); });
+      setTimeout(function () { document.addEventListener('pointerdown', popOutside, true); }, 0);
+    }
+    function optItems(sel) {
+      var out = '';
+      [].forEach.call(sel.children, function (c) {
+        if (c.tagName === 'OPTGROUP') {
+          out += '<div class="brd-pg">' + esc(c.label) + '</div>';
+          [].forEach.call(c.children, function (o) { out += item(o); });
+        } else if (!c.hidden) out += item(c);
+      });
+      function item(o) { return '<button class="brd-pi' + (o.value === sel.value ? ' on' : '') + '" data-v="' + esc(o.value) + '">' + esc(o.textContent) + '</button>'; }
+      return out;
+    }
+    function pickInto(sel, v) { sel.value = v; sel.dispatchEvent(new Event('change')); }
+    function netMenu(btn) {
+      var t = activeTab(); if (!t) return;
+      if (popEl && popEl.dataset.for === 'netmenu') { closePop(); return; }
+      // Fresh exits first: a node may have come or gone since the last look.
+      refreshHp().then(function () { showNetMenu(btn, t); }, function () { showNetMenu(btn, t); });
+    }
+    function showNetMenu(btn, t) {
+      fillNetSel(t);
+      var note = isHp(t.network) ? '<div class="brd-pn">' + esc(netLabel(t.network) + ': ' + exitText(t.network)) + '</div>' : '';
+      openPop(btn, '<div class="brd-pg">This tab\u2019s network</div>' + note + optItems(netSel), function (v) { pickInto(netSel, v); });
+    }
+    function devMenu(btn) {
+      if (!activeTab()) return;
+      openPop(btn, '<div class="brd-pg">Device size</div>' + optItems(devSel), function (v) { pickInto(devSel, v); });
+    }
 
     // ─── Toolbar ───
     function go(v) {
@@ -829,7 +1033,12 @@
       layout(); renderBar();
     });
     chatSel.addEventListener('change', function () { renderMode(); });
-    netSel.addEventListener('change', function () { var t = activeTab(); if (t) setNetwork(t.id, netSel.value); });
+    netSel.addEventListener('change', function () {
+      var t = activeTab(); if (!t) return;
+      if (netSel.value === 'hp-panel') { fillNetSel(t); refreshHp().then(showHp); return; }
+      setNetwork(t.id, netSel.value);
+      if (isHp(netSel.value)) refreshHp();
+    });
     root.addEventListener('click', function (e) {
       var x = e.target.closest('[data-close]'); if (x) { e.stopPropagation(); closeTab(x.dataset.close); return; }
       var tb = e.target.closest('.brd-tab'); if (tb) { activate(tb.dataset.tab); return; }
@@ -849,6 +1058,8 @@
       if (a === 'new') newTab(START, t ? t.network : 'client', true);
       else if (a === 'hide') close();
       else if (a === 'menu') openMenu();
+      else if (a === 'netmenu') netMenu(b);
+      else if (a === 'devmenu') devMenu(b);
       else if (!t) return;
       else if (a === 'back' || a === 'forward' || a === 'reload') api.nav(t.id, a);
       else if (a === 'devtools') api.devtools(t.id);
@@ -860,7 +1071,7 @@
     // place of the old, not moved); the page reloads at its current address.
     function setNetwork(tabId, network) {
       var f = findTab(tabId); if (!f) return Promise.reject(new Error('no such tab'));
-      var t = f.tab; network = network === 'server' ? 'server' : 'client';
+      var t = f.tab; network = network === 'server' ? 'server' : isHp(network) ? network : 'client';
       if (t.network === network && runtime[tabId] && runtime[tabId].wv) return Promise.resolve();
       var r = runtime[tabId];
       var url = (r && r.state && r.state.url) || t.url;
@@ -898,6 +1109,7 @@
     function tabOut(t, p) {
       var r = runtime[t.id];
       return { tabId: t.id, project: p, url: (r && r.state && r.state.url) || t.url, title: t.title || '', network: t.network || 'client', sleeping: !!(r && r.sleeping),
+        exit: isHp(t.network) ? exitText(t.network) : undefined,
         active: proj(p).active === t.id, shown: st.open && p === project && (activeTab() || {}).id === t.id, loaded: !!(r && r.ready),
         device: t.device === 'custom' ? (t.custom ? 'custom ' + t.custom.w + 'x' + t.custom.h : 'custom') : (DEVICES[t.device || 0] || DEVICES[0]).name };
     }
@@ -909,6 +1121,11 @@
     var handlers = {
       list: function (a) {
         var p = String(a.project || '').toLowerCase();
+        if (!p && a.all) {
+          var all = [];
+          Object.keys(st.projects).forEach(function (q) { proj(q).tabs.forEach(function (t) { all.push(tabOut(t, q)); }); });
+          return { tabs: all };
+        }
         return { tabs: proj(p).tabs.map(function (t) { return tabOut(t, p); }) };
       },
       open: function (a) {
@@ -992,6 +1209,7 @@
 
     applyOpen();
     api.ready();
+    refreshHp(); hpPoll();
 
     return {
       setProject: setProject,

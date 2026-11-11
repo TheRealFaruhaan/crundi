@@ -620,6 +620,8 @@ export function makeActionTools(deps, ctx) {
     ...(deps.wakeupDefs || []),
     // Cru's jobs (voice/jobs.js): cards it takes on and sees through.
     ...(deps.jobDefs || []),
+    // The PC client's browser drawer (voice/browser-tools.js): safe, gated as such.
+    ...(deps.browserDefs || []),
   ];
 
   const byName = new Map(defs.map(d => [d.name, d]));

@@ -9314,10 +9314,27 @@ export function getWebappHtml(botUsername, appVersion = '') {
     const BRD_API = (window.api && window.api.wbrowser) || null;
     let brd = null;
     function brdChats(project) {
-      return terminals.filter(t => t.kind === 'ui' && t.status !== 'exited' && chatViews.has(t.id) && String(t.project || '').toLowerCase() === project)
+      const chats = terminals.filter(t => t.kind === 'ui' && t.status !== 'exited' && chatViews.has(t.id) && String(t.project || '').toLowerCase() === project)
         .map(t => ({ id: t.id, title: t.title || 'Chat', focused: t.id === focusedTermId }));
+      // Cru too, the owner's assistant across every project.
+      if (window.CrundiVoice && window.CrundiVoice.share && userRole !== 'collaborator') chats.unshift({ id: 'cru', title: 'Cru' });
+      return chats;
     }
     async function brdSendToChat(chatId, text, png) {
+      if (chatId === 'cru') {
+        // Cru's screen opens in typing mode with the picture attached and the words typed, for the owner to send.
+        const V = window.CrundiVoice;
+        if (!V || !V.share) throw new Error('Cru is not available here');
+        if (!V.share('', [])) V.open(voiceOpts());
+        const files = [];
+        if (png) {
+          const bin = atob(png); const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          files.push(new File([bytes], 'browser-' + Date.now() + '.png', { type: 'image/png' }));
+        }
+        if (!V.share(text, files)) throw new Error('Could not open Cru');
+        return;
+      }
       const view = chatViews.get(chatId);
       const t = terminals.find(x => x.id === chatId);
       if (!view || !t) throw new Error('That chat is not open');
@@ -9348,6 +9365,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         onLayout: () => { try { fitAllTerms(); } catch { /* no terminals */ } },
         listChats: brdChats,
         sendToChat: brdSendToChat,
+        // Homepool for this browser (owner only; an older server has none).
+        apiFetch: (path, init) => (userRole === 'collaborator' ? Promise.reject(new Error('owner only')) : apiFetch(path, init)),
+        deviceId: () => (window.api && window.api.homepool && window.api.homepool.status) ? window.api.homepool.status().then(s => (s && s.deviceId) || '', () => '') : '',
       });
       btn.addEventListener('click', () => { if (!currentProject) { toast('Select a project first', 'error'); return; } brd.toggle(); });
       if (currentProject) brd.setProject(currentProject);

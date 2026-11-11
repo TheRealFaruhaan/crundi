@@ -108,6 +108,18 @@ export function clearRemoteHost() {
   }
 }
 
+/** The device the drawer's app runs on (its homepool node's deviceId), if known. */
+export function drawerDeviceId() {
+  if (hasParentIpc()) return process.env.CRUNDI_DEVICE_ID || '';
+  return (remoteHost && remoteHost.deviceId) || '';
+}
+
+// The bundled server's end of the drawer's tunnel: with an Electron parent the
+// frames come over IPC (base64), not a websocket. Set by webapp.js.
+let parentTunnel = null;
+export function setParentTunnel(endpoint) { parentTunnel = endpoint; }
+export function sendParentTunnel(buf) { if (hasParentIpc()) process.send({ type: 'netTunnel', b64: buf.toString('base64') }); }
+
 export function hasNativeHost() {
   return hasParentIpc() || !!remoteHost;
 }
@@ -205,7 +217,9 @@ function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS, backendOverride = nu
     // refuse another project's chat.
     const ctx = callerContext.getStore() || {};
     if (ctx.noDrawer) return Promise.reject(new Error('The browser drawer is not available on this project.'));
-    payload = { ...payload, alias: ctx.alias || payload.alias };
+    // hpAllowed: may this caller use a tab on a homepool network (the owner
+    // approved this chat, or it is Cru)? The app refuses such a tab otherwise.
+    payload = { ...payload, alias: ctx.alias || payload.alias, hpAllowed: !!(ctx.hpAllowed || ctx.cru) };
     if (!backend) backend = drawerBackend();
     if (!backend) return Promise.reject(new Error(drawerUnavailableReason()));
   }
@@ -247,6 +261,7 @@ function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS, backendOverride = nu
 // Handle IPC replies from Electron main process
 function handleIpcMessage(msg) {
   if (!msg) return;
+  if (msg.type === 'netTunnel') { if (parentTunnel && typeof msg.b64 === 'string') parentTunnel.handle(Buffer.from(msg.b64, 'base64')); return; }
   // Renderer-initiated close — main process tells us to clean up local state
   if (msg.type === 'browserClosed' && msg.key) {
     const inst = browsers.get(msg.key);
@@ -832,10 +847,23 @@ function drawerUnavailableReason() {
 }
 
 const NETWORKS = ['client', 'server'];
+/** "client" | "server" | "homepool:<network>" (as chats say it) → the app's name: client, server, hp:<network>. */
 function normNetwork(n) {
   const v = String(n || '').toLowerCase();
   if (!v) return null;
-  return NETWORKS.includes(v) ? v : undefined;
+  if (NETWORKS.includes(v)) return v;
+  const m = /^(?:homepool|hp):([a-z0-9][a-z0-9_-]{0,39})$/.exec(v);
+  return m ? 'hp:' + m[1] : undefined;
+}
+const NETWORK_HINT = 'network must be "client", "server" or "homepool:<network>"';
+/** The app's name back to the chats' ("hp:home" → "homepool:home"). */
+const outNetwork = (n) => (typeof n === 'string' && n.startsWith('hp:') ? 'homepool:' + n.slice(3) : n);
+
+/** Can a drawer tab be had right now? { ok } or { ok: false, error } in words. */
+export function drawerAvailability() {
+  const ctx = callerContext.getStore() || {};
+  if (ctx.noDrawer) return { ok: false, error: 'The browser drawer is not available on this project.' };
+  return drawerHosts().length ? { ok: true } : { ok: false, error: drawerUnavailableReason() };
 }
 
 /** The drawer tabs of a project (every connected app), with where each runs. */
@@ -845,18 +873,19 @@ export async function listDrawerTabs(alias) {
   const out = [];
   for (const backend of drawerHosts()) {
     try {
-      const r = await sendIpc('browserDrawerList', { alias }, 15000, backend);
+      // Cru sees every project's tabs; a chat, its own project's.
+      const r = await sendIpc('browserDrawerList', { alias, all: !!ctx.cru && !alias }, 15000, backend);
       if (!r || !r.ok || !Array.isArray(r.tabs)) continue;
       for (const t of r.tabs) {
         const key = DRAWER_PREFIX + t.tabId;
         keyBackend.set(key, backend);
         out.push({
           key, alias: t.project, name: t.title || t.url || 'tab', url: t.url, on: 'drawer',
-          network: t.network, networkLabel: t.networkLabel, active: !!t.active, shown: !!t.shown, sleeping: !!t.sleeping, unloaded: !t.loaded,
+          network: outNetwork(t.network), networkLabel: t.networkLabel, exit: t.exit || undefined, active: !!t.active, shown: !!t.shown, sleeping: !!t.sleeping, unloaded: !t.loaded,
           device: t.device || null,
         });
       }
-    } catch { /* that app did not answer; list the rest */ }
+    } catch (err) { if (out.problems) out.problems.push(err.message); else Object.defineProperty(out, 'problems', { value: [err.message] }); }
   }
   return out;
 }
@@ -866,20 +895,24 @@ export async function listAllBrowsers(alias) {
   const hidden = listBrowsers(alias);
   let drawer = [];
   try { drawer = await listDrawerTabs(alias); } catch { /* none */ }
-  return { browsers: [...hidden, ...drawer], drawer: drawerHosts().length ? 'available' : drawerUnavailableReason() };
+  // Why there are no drawer tabs, when that is not simply "none open".
+  const why = !drawerHosts().length ? drawerUnavailableReason() : (drawer.problems && drawer.problems.length && !drawer.length ? drawer.problems[0] : '');
+  return { browsers: [...hidden, ...drawer], drawer: why || 'available' };
 }
 
 export async function openDrawerTab({ alias, url, network, show }) {
   const backend = drawerBackend();
   if (!backend) return { ok: false, error: drawerUnavailableReason() };
   const net = normNetwork(network);
-  if (net === undefined) return { ok: false, error: 'network must be "client" or "server"' };
+  if (net === undefined) return { ok: false, error: NETWORK_HINT };
+  const ctx = callerContext.getStore() || {};
+  if (ctx.noDrawer) return { ok: false, error: 'The browser drawer is not available on this project.' };
   try {
-    const r = await sendIpc('browserDrawerOpen', { alias, url: url || 'about:blank', network: net || 'client', show: !!show }, IPC_TIMEOUT_MS, backend);
+    const r = await sendIpc('browserDrawerOpen', { alias, url: url || 'about:blank', network: net || 'client', show: !!show, hpAllowed: !!(ctx.hpAllowed || ctx.cru) }, IPC_TIMEOUT_MS, backend);
     if (!r.ok) return { ok: false, error: r.error };
     const key = DRAWER_PREFIX + r.tabId;
     keyBackend.set(key, backend);
-    return { ok: true, key, on: 'drawer', network: r.network, networkLabel: r.networkLabel, url: r.url, ...(r.warning ? { warning: r.warning } : {}) };
+    return { ok: true, key, on: 'drawer', network: outNetwork(r.network), networkLabel: r.networkLabel, url: r.url, ...(r.warning ? { warning: r.warning } : {}) };
   } catch (err) { return { ok: false, error: err.message }; }
 }
 
@@ -892,11 +925,11 @@ function needDrawer(key) {
 export async function setDrawerNetwork(key, network) {
   const bad = needDrawer(key); if (bad) return bad;
   const net = normNetwork(network);
-  if (!net) return { ok: false, error: 'network must be "client" or "server"' };
+  if (!net) return { ok: false, error: NETWORK_HINT };
   try {
     const r = await sendIpc('browserDrawerSetNetwork', { key, network: net });
     if (!r.ok) return { ok: false, error: r.error };
-    return { ok: true, network: r.network, networkLabel: r.networkLabel, url: r.url };
+    return { ok: true, network: outNetwork(r.network), networkLabel: r.networkLabel, url: r.url };
   } catch (err) { return { ok: false, error: err.message }; }
 }
 

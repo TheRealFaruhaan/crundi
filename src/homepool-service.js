@@ -17,6 +17,7 @@ import tls from 'node:tls';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { Duplex } from 'node:stream';
 import { WebSocketServer } from 'ws';
 import { createHomepoolStore, SERVER_NETWORK, publicKey } from './homepool-store.js';
 import { createHomepool } from './homepool.js';
@@ -191,6 +192,10 @@ export function createHomepoolService({ dataDir, basePort, publicUrl = () => '',
         if (r.key) engine.keyChanged(r.key.id);
         return ok({ request: r.request });
       }
+      case 'browser-revoke': {
+        store.browserRevoke({ chatId: String(body.chatId || ''), project: String(body.project || '') });
+        return ok();
+      }
       case 'settings': {
         store.setSettings(body.settings || {});
         engine.pollPool();
@@ -204,6 +209,10 @@ export function createHomepoolService({ dataDir, basePort, publicUrl = () => '',
     if (!path.startsWith('/api/homepool')) return false;
     if (!isOwner(principal)) { json(res, { ok: false, error: 'Only the owner manages homepool.' }, 403); return true; }
     if (path === '/api/homepool' && req.method === 'GET') { json(res, { ok: true, ...overview() }); return true; }
+    if (path.startsWith('/api/homepool/browser') && req.method === 'GET') {
+      const dev = new URL(req.url, 'http://x').searchParams.get('device') || '';
+      json(res, { ok: true, ...browserStatus(dev.slice(0, 80)) }); return true;
+    }
     if (path === '/api/homepool' && req.method === 'POST') {
       let body = {};
       try { body = JSON.parse(await readBody(req) || '{}'); } catch { json(res, { ok: false, error: 'Bad JSON.' }, 400); return true; }
@@ -346,7 +355,104 @@ export function createHomepoolService({ dataDir, basePort, publicUrl = () => '',
     });
   }
 
+  // ── The PC browser key (the desktop app's browser drawer) ──
+  //
+  // A drawer tab on a homepool network sends each of its connections to this
+  // server over the app's own websocket (net-tunnel.js), which opens it here
+  // through the engine with the PC browser key, on that network's slot 1: one
+  // line per network, so the tabs on it keep one address. Chats use those tabs
+  // only once the owner approved them (a request of kind "browser").
+  const BROWSER_SLOT = 1;
+  const browserNetworks = () => [...store.networks().map(n => n.id), 'pool'];
+
+  function exitInfo(exit) {
+    if (!exit) return null;
+    if (exit.kind === 'node') {
+      const i = exit.link.info || {};
+      return { kind: 'node', name: exit.link.node.name, publicIp: i.publicIp || '', network: exit.network };
+    }
+    return { kind: exit.kind, name: engine.networkName(exit.network), publicIp: '', network: exit.network, fallback: !!exit.fallback };
+  }
+
+  /** Is this device itself a node of that network? Its browser is not offered it (it would leave through itself). */
+  function isSelfNode(deviceId, network) {
+    return !!deviceId && store.nodes().some(n => n.deviceId === deviceId && n.network === network && n.enabled !== false);
+  }
+
+  /** For the drawer: the key, each network it may use with the exit its tabs leave by now, and who may use it. */
+  function browserStatus(deviceId = '') {
+    const k = store.browserKey();
+    const known = browserNetworks().map(id => ({ id, name: engine.networkName(id), selfNode: isSelfNode(deviceId, id) }));
+    if (!k) return { key: null, available: known };
+    const refusal = store.keyRefusal(k);
+    const networks = k.networks.filter(n => n !== SERVER_NETWORK).map((id) => {
+      if (isSelfNode(deviceId, id)) return { id, name: engine.networkName(id), selfNode: true, exit: null, refusal: 'this PC is itself a node of this network' };
+      const c = refusal ? { refusal } : engine.choose(k, BROWSER_SLOT, id);
+      return { id, name: engine.networkName(id), exit: c.refusal ? null : exitInfo(c.exit), refusal: c.refusal || '' };
+    });
+    const chats = (k.browserChats || []).map(id => { const c = chatInfo(id) || {}; return { id, title: c.title || '', project: c.project || '' }; });
+    return { key: publicKey(k), refusal, networks, chats, projects: k.browserProjects || [], available: known };
+  }
+
+  /**
+   * Open host:port for a drawer tab on a homepool network. Resolves a duplex
+   * the tunnel writes the tab's bytes into (and reads the far end's from), or
+   * throws with the reason (no PC browser key, switched off, no exit up...).
+   */
+  async function browserConnect({ network, host, port, deviceId = '' }) {
+    if (isSelfNode(deviceId, network)) throw new Error(`homepool: this PC is itself a node of "${engine.networkName(network)}", so its browser does not leave through it`);
+    const k = store.browserKey();
+    if (!k) throw new Error('homepool: there is no PC browser key (set it up in the browser drawer)');
+    if (!k.networks.includes(network)) throw new Error(`homepool: the PC browser key may not use "${engine.networkName(network)}"`);
+    const { upstream, exit } = await engine.open(k, { slot: BROWSER_SLOT, network, host, port, via: 'browser' });
+    // The tunnel side, as a stream, so the engine counts the bytes against the
+    // key and node and cuts it when the key is switched off or capped.
+    const tab = new Duplex({
+      allowHalfOpen: false,
+      read() {},
+      write(chunk, _enc, cb) { tab.emit('tab-data', chunk); cb(); },
+      final(cb) { tab.emit('tab-end'); cb(); },
+    });
+    engine.splice(k, tab, upstream, exit);
+    return { stream: tab, exit: exitInfo(exit) };
+  }
+
+  /** Is this caller allowed to use the drawer's homepool tabs? */
+  function browserAllows(args = {}) {
+    const who = chatOf(args);
+    if (who.error) return { ok: false, error: who.error };
+    return { ok: store.browserAllows(who.chatId, who.project), ...who };
+  }
+
+  /** A chat asks to use the drawer's homepool tabs; waits for the owner like homepool_request. */
+  async function browserAsk(args = {}) {
+    const who = chatOf(args);
+    if (who.error) return { ok: false, error: who.error };
+    if (store.browserAllows(who.chatId, who.project)) return { ok: true, status: 'approved' };
+    if (!store.browserKey()) return { ok: false, status: 'no-key', error: 'The owner has not set up homepool for the PC browser yet (in the browser drawer, network menu, Homepool). Ask him to.' };
+    const net = String(args.network || '');
+    const r = store.addRequest({ chatId: who.chatId, project: who.project, kind: 'browser', name: 'PC browser', networks: net ? [net] : [], reason: String(args.reason || '') });
+    const chat = chatInfo(who.chatId) || {};
+    try {
+      notifyOwner({
+        title: 'Homepool: a chat asks to browse through it',
+        body: `${chat.title || 'A chat'}${who.project ? ` (${who.project})` : ''} asks to use the browser drawer's homepool tabs${net ? ` (${engine.networkName(net)})` : ''}.${r.reason ? ` Why: ${r.reason}` : ''} Approve or refuse in Settings › Homepool.`,
+        chat: { id: who.chatId, project: who.project, title: chat.title || '' },
+      });
+    } catch { /* the request is still listed */ }
+    if (args.wait === false) return { ok: false, status: 'pending', requestId: r.id, error: 'Asked the owner. Try again once he has approved it.' };
+    const t0 = Date.now();
+    while (Date.now() - t0 < REQUEST_WAIT_MS) {
+      const cur = store.requests().find(x => x.id === r.id);
+      if (!cur || cur.status === 'refused') return { ok: false, status: 'refused', error: 'The owner refused the request.' };
+      if (cur.status === 'approved') return { ok: true, status: 'approved' };
+      await new Promise(res => setTimeout(res, 1500));
+    }
+    return { ok: false, status: 'pending', requestId: r.id, error: 'The owner has not answered yet. The request stays in his list; try again later.' };
+  }
+
   return {
+    browserStatus, browserConnect, browserAllows, browserAsk, isSelfNode,
     store, engine, handleUpgrade, handlePublic, handleApi, mcp, overview,
     start: () => engine.start(), stop: () => engine.stop(),
   };

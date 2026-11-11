@@ -32,6 +32,18 @@ import { webContents as WC, session as Session } from 'electron';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 export const PARTITIONS = { client: 'persist:crundi-browser', server: 'persist:crundi-browser-srv' };
+// A tab on a homepool network ("hp:<network>") has a profile per network: a
+// proxy is set per profile, and each network's proxy tags its streams for
+// that network (net-tunnel-client.js).
+const HP_NET = /^hp:([a-z0-9][a-z0-9_-]{0,39})$/;
+export function partitionOf(network) {
+  if (PARTITIONS[network]) return PARTITIONS[network];
+  const m = HP_NET.exec(String(network || ''));
+  return m ? 'persist:crundi-browser-hp-' + m[1] : null;
+}
+const HP_PARTITION = /^persist:crundi-browser-hp-[a-z0-9][a-z0-9_-]{0,39}$/;
+const isHp = (n) => HP_NET.test(String(n || ''));
+const hpName = (n) => String(n).slice(3);
 const PREFIX = 'drawer:';
 const MOBILE_UA = 'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
 const REQUEST_TIMEOUT_MS = 20000;
@@ -59,6 +71,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   const netHooked = new Set();  // sessions with the network-capture listeners
 
   function networkLabel(network) {
+    if (isHp(network)) return 'Homepool: ' + hpName(network);
     if (network !== 'server') return 'This PC';
     const i = serverNet.info();
     if (i.mode === 'local') return 'Server (this PC)';
@@ -77,6 +90,15 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   const HISTORY_MAX = 5000;
   let history = [];
   try { if (historyFile) { const j = JSON.parse(readFileSync(historyFile, 'utf8')); if (Array.isArray(j)) history = j.filter((h) => h && typeof h.url === 'string'); } } catch { /* none yet */ }
+  // The homepool profiles this browser has used, so clearing reaches them too.
+  const profilesFile = historyFile ? historyFile.replace(/history\.json$/, 'profiles.json') : null;
+  let profiles = [];
+  try { if (profilesFile) { const j = JSON.parse(readFileSync(profilesFile, 'utf8')); if (Array.isArray(j)) profiles = j.filter((p) => HP_PARTITION.test(p)); } } catch { /* none yet */ }
+  function rememberProfile(part) {
+    if (profiles.includes(part)) return;
+    profiles.push(part);
+    try { if (profilesFile) writeFileSync(profilesFile, JSON.stringify(profiles)); } catch { /* next time */ }
+  }
   let historyTimer = null;
   function saveHistory() {
     if (!historyFile || historyTimer) return;
@@ -216,7 +238,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     const host = w.webContents;
     host.on('will-attach-webview', (event, prefs, params) => {
       const part = params.partition;
-      if (!Object.values(PARTITIONS).includes(part)) { log(`[drawer] refused a webview in partition ${part}`); event.preventDefault(); return; }
+      if (!Object.values(PARTITIONS).includes(part) && !HP_PARTITION.test(String(part || ''))) { log(`[drawer] refused a webview in partition ${part}`); event.preventDefault(); return; }
       if (params.src && !okUrl(params.src)) { log(`[drawer] refused a webview at ${String(params.src).slice(0, 80)}`); event.preventDefault(); return; }
       delete prefs.preload; delete prefs.preloadURL;
       prefs.nodeIntegration = false;
@@ -244,11 +266,13 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   ipcMain.handle('drawer:attach', async (e, a) => {
     const { tabId, project, network, wcId } = a || {};
     if (!TAB_ID.test(String(tabId || ''))) return { ok: false, error: 'bad tab id' };
-    if (!PARTITIONS[network]) return { ok: false, error: 'bad network' };
+    const part = partitionOf(network);
+    if (!part) return { ok: false, error: 'bad network' };
     const wc = WC.fromId(Number(wcId));
     if (!wc || !wc.hostWebContents || wc.hostWebContents.id !== e.sender.id) return { ok: false, error: 'not a guest of this window' };
-    if (wc.session !== Session.fromPartition(PARTITIONS[network])) return { ok: false, error: 'the tab is not in that network\'s partition' };
-    if (network === 'server') { try { await serverNet.ensure(); } catch (err) { log(`[drawer] server network setup: ${err.message}`); } }
+    if (wc.session !== Session.fromPartition(part)) return { ok: false, error: 'the tab is not in that network\'s partition' };
+    if (network !== 'client') { try { await serverNet.ensure(network); } catch (err) { log(`[drawer] ${network} network setup: ${err.message}`); } }
+    if (isHp(network)) rememberProfile(part);
     let entry = tabs.get(tabId);
     if (!entry) entry = newEntry(tabId, lc(project), network);
     entry.project = lc(project); entry.network = network;
@@ -317,12 +341,15 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   ipcMain.handle('drawer:clear', async (_e, what) => {
     const w = what || {};
     const done = [];
+    const site = w.site ? String(w.site).toLowerCase() : '';
+    if (site && !/^[a-z0-9.-]{1,253}$/.test(site)) return { ok: false, error: 'bad site' };
+    if (site) return clearSite(site, w);
     if (w.history) {
       history = []; saveHistory();
       for (const en of tabs.values()) { try { if (en.wc && !en.wc.isDestroyed()) en.wc.navigationHistory.clear(); } catch { /* old Electron */ } emitState(en); }
       done.push('history');
     }
-    for (const part of Object.values(PARTITIONS)) {
+    for (const part of [...Object.values(PARTITIONS), ...profiles]) {
       const ses = Session.fromPartition(part);
       if (w.cookies) { await ses.clearStorageData(); await ses.clearAuthCache(); }
       if (w.cache) { await ses.clearCache(); try { await ses.clearCodeCaches({}); } catch { /* not there */ } }
@@ -332,6 +359,40 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     log(`[drawer] cleared ${done.join(', ') || 'nothing'}`);
     return { ok: true, cleared: done };
   });
+
+  // One site (and its subdomains): its history entries, cookies, storage and
+  // cache, in every profile. Tabs' back/forward lists are left alone.
+  const onSite = (host, site) => host === site || host.endsWith('.' + site);
+  async function clearSite(site, w) {
+    const done = [];
+    if (w.history) {
+      history = history.filter((h) => { try { return !onSite(new URL(h.url).hostname, site); } catch { return true; } });
+      saveHistory(); done.push('history');
+    }
+    for (const part of [...Object.values(PARTITIONS), ...profiles]) {
+      const ses = Session.fromPartition(part);
+      if (w.cookies) {
+        for (const c of await ses.cookies.get({})) {
+          const dom = String(c.domain || '').replace(/^\./, '');
+          if (!onSite(dom, site)) continue;
+          const url = (c.secure ? 'https://' : 'http://') + dom + (c.path || '/');
+          try { await ses.cookies.remove(url, c.name); } catch { /* gone */ }
+        }
+      }
+      // Storage and cache for the site's origins, both schemes, via clearData
+      // where this Electron has it (33+), clearStorageData per origin otherwise.
+      const origins = [`https://${site}`, `http://${site}`];
+      const types = [...(w.cookies ? ['cookies', 'localStorage', 'indexedDB', 'serviceWorkers', 'fileSystems', 'webSQL'] : []), ...(w.cache ? ['cache'] : [])];
+      if (types.length) {
+        if (typeof ses.clearData === 'function') { try { await ses.clearData({ dataTypes: types, origins }); } catch (err) { log(`[drawer] clearData ${err.message}`); } }
+        else if (w.cookies) { for (const origin of origins) { try { await ses.clearStorageData({ origin }); } catch { /* not there */ } } }
+      }
+    }
+    if (w.cookies) done.push('cookies and site data');
+    if (w.cache) done.push('cached files');
+    log(`[drawer] cleared for ${site}: ${done.join(', ') || 'nothing'}`);
+    return { ok: true, cleared: done, site };
+  }
 
   ipcMain.handle('drawer:info', () => ({ ok: true, ...serverNet.info(), labels: { client: networkLabel('client'), server: networkLabel('server') } }));
 
@@ -475,6 +536,10 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     }
     if (!en) throw new Error('No such drawer tab');
     if (msg.alias && lc(msg.alias) !== en.project) throw new Error('That drawer tab belongs to another project.');
+    // A tab that leaves through homepool: only for a chat the owner approved (or Cru).
+    if (isHp(en.network) && !msg.hpAllowed) {
+      throw new Error(`This tab goes out through homepool (${hpName(en.network)}). A chat may use homepool tabs only once the owner approves it: switch a tab with browser_tab_network, network "homepool:${hpName(en.network)}", and he is asked.`);
+    }
     // A chat is using it: wake it first (and restart its idle time).
     try { await thaw(en); } catch (err) { log(`[drawer] wake ${err.message}`); }
     return en;
@@ -483,7 +548,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   function getEntry(key) { return isDrawerKey(key) ? getTab(tabIdOf(key)) : null; }
 
   async function openTab({ project, url, network, show, activate }) {
-    const r = await request('open', { project: lc(project), network: PARTITIONS[network] ? network : 'client', show: !!show, activate: activate !== false });
+    const r = await request('open', { project: lc(project), network: partitionOf(network) ? network : 'client', show: !!show, activate: activate !== false });
     let en = getTab(r.tabId);
     if (!en) throw new Error('The drawer tab did not load');
     if (url && url !== 'about:blank') {
@@ -494,19 +559,21 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
 
   const handlers = {
     async browserDrawerList(msg) {
-      const r = await request('list', { project: lc(msg.alias) });
+      const r = await request('list', { project: lc(msg.alias), all: !!msg.all });
       const list = (r.tabs || []).map((t) => { const en = tabs.get(t.tabId); return { ...t, networkLabel: networkLabel(t.network), sleeping: !!(en && en.frozen && en.wc) }; });
       return { ok: true, tabs: list };
     },
     async browserDrawerOpen(msg) {
       if (msg.url && !okUrl(msg.url)) return { ok: false, error: 'Only http and https addresses open in the drawer.' };
       if (!msg.alias) return { ok: false, error: 'Which project? (no alias)' };
+      if (isHp(msg.network) && !msg.hpAllowed) return { ok: false, error: 'A homepool tab needs the owner\'s approval for this chat.' };
       const o = await openTab({ project: msg.alias, url: msg.url, network: msg.network, show: msg.show, activate: !!msg.show });
       return { ok: true, tabId: o.tabId, network: o.entry.network, networkLabel: networkLabel(o.entry.network), url: o.entry.wc.getURL(), ...(o.warning ? { warning: o.warning } : {}) };
     },
     async browserDrawerSetNetwork(msg) {
       const en = await prepare(msg);
-      if (!PARTITIONS[msg.network]) return { ok: false, error: 'network must be "client" or "server"' };
+      if (!partitionOf(msg.network)) return { ok: false, error: 'network must be "client", "server" or "homepool:<network>"' };
+      if (isHp(msg.network) && !msg.hpAllowed) return { ok: false, error: 'A homepool tab needs the owner\'s approval for this chat.' };
       await request('set-network', { tabId: en.tabId, network: msg.network });
       const now = getTab(en.tabId);
       return { ok: true, network: msg.network, networkLabel: networkLabel(msg.network), url: now ? now.wc.getURL() : '' };

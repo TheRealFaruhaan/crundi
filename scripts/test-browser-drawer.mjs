@@ -24,6 +24,12 @@ import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import * as browser from '../src/browser.js';
 import { createTunnelEndpoint } from '../src/net-tunnel.js';
+import { createHomepoolService } from '../src/homepool-service.js';
+import { startNode } from '../app/homepool-node.js';
+import { chatToken } from '../src/chat-token.js';
+import { gateBrowserCall } from '../src/browser-gate.js';
+import { dispatchBrowserTool } from '../src/browser-dispatch.js';
+import { makeCruBrowserTools } from '../src/voice/browser-tools.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -87,6 +93,28 @@ const T = target.address().port;
 let tunnelOpens = 0;
 const serverConnect = (o) => { tunnelOpens++; return net.connect({ host: o.host === 'internal.test' ? '127.0.0.1' : o.host, port: o.port }); };
 
+// ─── Homepool: a "Home" network with a node, and a network this PC is a node of ───
+const hpDir = mkdtempSync(join(tmpdir(), 'crundi-drawer-hp-'));
+const told = [];
+const homepool = createHomepoolService({ dataDir: hpDir, basePort: 17650, log: () => {}, notifyOwner: (m) => told.push(m), chatInfo: () => ({ title: 'Test chat', project: 'proj' }) });
+const HOME = (homepool.store.networks().find((n) => n.id === 'home') || {}).id || homepool.store.addNetwork('Home');
+const ALIS = homepool.store.addNetwork("Ali's place");
+const phone = homepool.store.addNode({ name: 'phone', network: HOME });
+homepool.store.addNode({ name: 'this PC', network: ALIS, kind: 'crundi-app', deviceId: 'pc-test' });
+const DEVICE = 'pc-test';
+let phoneNode = null;
+// A chat as Crundi starts it: an id, its project, and the token that proves it.
+const chat = (id, project = 'proj') => ({ sessionId: id, alias: project, chatToken: chatToken(id, project) });
+// A chat's MCP call, the way /api/mcp/call runs it: gate, then dispatch.
+async function chatCall(tool, args, who) {
+  const a = { ...args, ...who };
+  const refused = await gateBrowserCall({ tool, args: a, homepool, browser });
+  if (refused) return refused;
+  return dispatchBrowserTool(tool, a);
+}
+const cru = makeCruBrowserTools({ call: (tool, args) => dispatchBrowserTool(tool, args) });
+const cruTool = (name) => [...cru.read, ...cru.actions].find((t) => t.name === name);
+
 // ─── The server ───
 // The app's own icon set, so the drawer looks as it does in Crundi.
 const ICONS = {};
@@ -105,15 +133,28 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
 <script>var ICONS=${JSON.stringify(ICONS)};window.sent=[];
 window.drawer=CrundiBrowserDrawer.init({root:document.getElementById('brd'),split:document.getElementById('brd-split'),api:window.api.wbrowser.drawer,
   ic:function(n){var p=ICONS[n];return p?'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>':''},toast:function(m){console.log('toast '+m)},listChats:function(){return [{id:'c1',title:'Chat one',focused:true}]},
-  sendToChat:function(id,text,png){window.sent.push({id:id,text:text,png:png?png.length:0});return Promise.resolve();}});
+  sendToChat:function(id,text,png){window.sent.push({id:id,text:text,png:png?png.length:0});return Promise.resolve();},
+  apiFetch:function(p,i){return fetch(p,i);},deviceId:function(){return 'pc-test';}});
 drawer.setProject('proj');</script></body></html>`;
 const web = http.createServer((req, res) => {
   if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); res.end(PAGE); return; }
   if (req.url === '/vendor/crundi-browser-drawer.js') { res.setHeader('Content-Type', 'application/javascript'); res.end(readFileSync(join(root, 'app', 'vendor', 'crundi-browser-drawer.js'))); return; }
+  if (req.url.startsWith('/api/homepool')) {
+    const path = new URL(req.url, 'http://x').pathname;
+    const readBody = () => new Promise((r) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => r(b)); });
+    const json = (r2, obj, code = 200) => { r2.statusCode = code; r2.setHeader('Content-Type', 'application/json'); r2.end(JSON.stringify(obj)); };
+    homepool.handleApi(req, res, path, { principal: {}, readBody, json, isOwner: () => true });
+    return;
+  }
   res.statusCode = 404; res.end();
 });
 await new Promise((r) => web.listen(0, '127.0.0.1', r));
-const wss = new WebSocketServer({ server: web, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+web.on('upgrade', (req, socket, head) => {
+  if (homepool.handleUpgrade(req, socket, head)) return;   // a homepool node
+  if (req.url.startsWith('/ws')) wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  else socket.destroy();
+});
 let hostWs = null; const testWaits = new Map(); let testSeq = 1;
 wss.on('connection', (ws) => {
   let tunnel = null;
@@ -121,10 +162,11 @@ wss.on('connection', (ws) => {
     if (isBinary) { if (tunnel) tunnel.handle(raw); return; }
     const msg = JSON.parse(raw.toString());
     if (msg.type === 'register-native-host') {
-      browser.setRemoteHost({ send: (m) => ws.send(JSON.stringify({ type: 'native-host', payload: m })), capabilities: msg.capabilities || [] });
-      tunnel = createTunnelEndpoint({ send: (b) => ws.send(b, { binary: true }), buffered: () => ws.bufferedAmount, connect: serverConnect });
+      browser.setRemoteHost({ send: (m) => ws.send(JSON.stringify({ type: 'native-host', payload: m })), capabilities: msg.capabilities || [], deviceId: msg.deviceId || '' });
+      tunnel = createTunnelEndpoint({ send: (b) => ws.send(b, { binary: true }), buffered: () => ws.bufferedAmount, connect: serverConnect,
+        connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: msg.deviceId || '' }) });
       hostWs = ws;
-      ws.send(JSON.stringify({ type: 'native-host-ready', features: ['net-tunnel', 'browser-drawer'] }));
+      ws.send(JSON.stringify({ type: 'native-host-ready', features: ['net-tunnel', 'browser-drawer', 'browser-homepool'] }));
       return;
     }
     if (msg.type === 'native-host-result') { browser.handleHostMessage(msg.payload); return; }
@@ -149,7 +191,7 @@ const proj = (fn) => as('proj', fn);
 // ─── Launch the client ───
 const userData = mkdtempSync(join(tmpdir(), 'crundi-drawer-ud-'));
 const args = [join(root, 'scripts', 'drawer-e2e', 'harness.mjs'), '--no-sandbox', `--user-data-dir=${userData}`];
-const env = { ...process.env, SERVER_URL: `http://127.0.0.1:${web.address().port}`, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', EXIT_ON_CLOSE: '1', DRAWER_SLEEP_MS: '3000', DRAWER_UNLOAD_MS: '4000' };
+const env = { ...process.env, SERVER_URL: `http://127.0.0.1:${web.address().port}`, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', EXIT_ON_CLOSE: '1', DRAWER_SLEEP_MS: '3000', DRAWER_UNLOAD_MS: '4000', DRAWER_DEVICE: DEVICE };
 // Its own process group, so the whole tree (xvfb-run, Xvfb, Electron) can be
 // stopped together: killing xvfb-run alone leaves Electron and Xvfb running.
 const child = needXvfb
@@ -169,6 +211,8 @@ const finish = async (code) => {
   try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ }
   rmSync(userData, { recursive: true, force: true });
   if (electron.cleanup) rmSync(electron.cleanup, { recursive: true, force: true });
+  try { phoneNode && phoneNode.stop(); } catch { /* gone */ }
+  rmSync(hpDir, { recursive: true, force: true });
   web.close(); target.close();
   process.exit(code);
 };
@@ -388,12 +432,121 @@ try {
   const afterClose = (await proj(() => browser.listAllBrowsers('proj'))).browsers;
   check('browser_close closes a drawer tab', cl.ok && !afterClose.some((b) => b.key === s1.key), JSON.stringify(cl));
 
+  // ── Homepool: the PC browser key, set up from the drawer ──
+  phoneNode = startNode({ server: `http://127.0.0.1:${web.address().port}`, key: phone.key, allowPrivate: true, info: () => ({ platform: 'test', network: 'Wi-Fi', publicIp: '203.0.113.7' }) });
+  for (let i = 0; i < 50 && !homepool.engine.links.has(phone.id); i++) await sleep(100);
+  check('a homepool node of Home is up', homepool.engine.links.has(phone.id));
+  await page(`document.querySelector('.brd-tab[data-tab="${key.slice(7)}"]').click()`);
+  check('network and device size are icon buttons, leaving the room to the address', await page(`getComputedStyle(document.querySelector('.brd-netsel')).display === 'none' && getComputedStyle(document.querySelector('.brd-dev')).display === 'none' && !!document.querySelector('.brd-netbtn') && !!document.querySelector('.brd-devbtn')`));
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`); await sleep(600);
+  const menu1 = await page(`[].map.call(document.querySelectorAll('.brd-pop .brd-pi'), function(b){ return b.dataset.v; }).join(',')`);
+  check('with no PC browser key, the network menu offers to set homepool up', /^client,server/.test(menu1) && /hp-panel/.test(menu1) && !/hp:/.test(menu1), menu1);
+  await page(`document.querySelector('.brd-pop [data-v="hp-panel"]').click()`); await sleep(800);
+  const setup = await page(`(function(){ var h = document.querySelector('[data-hpnet="${HOME}"]'), a = document.querySelector('[data-hpnet="${ALIS}"]'); return h && a ? [h.checked, h.disabled, a.checked, a.disabled].join(',') : 'none'; })()`);
+  check('set-up lists the networks; the one this PC is a node of is not offered', setup === 'true,false,false,true', setup);
+  await shot('8-homepool-setup');
+  await page(`document.querySelector('[data-pan="hp-create"]').click()`); await sleep(1000);
+  const bk = homepool.store.browserKey();
+  check('"Make the PC browser key" makes it, with the networks ticked (not the one this PC is a node of)', bk && bk.kind === 'browser' && bk.networks.includes(HOME) && !bk.networks.includes(ALIS), JSON.stringify(bk && bk.networks));
+  await page(`document.querySelector('[data-pan="close"]').click()`);
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`); await sleep(600);
+  const menu2 = await page(`[].map.call(document.querySelectorAll('.brd-pop .brd-pi'), function(b){ return b.dataset.v; }).join(',')`);
+  check('the menu now offers Home, and not the network this PC is a node of', menu2.includes('hp:' + HOME) && !menu2.includes('hp:' + ALIS), menu2);
+  await page(`document.querySelector('.brd-pop [data-v="hp:${HOME}"]').click()`); await sleep(1500);
+  const viaHome = await dispatchBrowserTool('browser_navigate', { key, url: `http://127.0.0.1:${T}/whoami`, _cru: true });
+  const homeText = await dispatchBrowserTool('browser_eval', { key, code: 'document.body.innerText', _cru: true });
+  check('a tab on Home loads through the home node, over the client\'s websocket', viaHome.ok && /via-server 127\.0\.0\.1/.test(homeText.result || '') && (homepool.store.usage().nodes[phone.id] || {}).conns > 0, JSON.stringify(homeText) + JSON.stringify(homepool.store.usage().nodes));
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`); await sleep(700);
+  const exitShown = await page(`(document.querySelector('.brd-pop .brd-pn') || {}).textContent + ' | ' + document.querySelector('.brd-netbtn').title + ' | ' + document.querySelector('.brd-netbtn').className + ' | ' + !!document.querySelector('.brd-tab .brd-net-dot.hp:not(.bad)')`);
+  check('it shows the exit: the node and its IP, tab marked HP', /via phone/.test(exitShown) && /203\.0\.113\.7/.test(exitShown) && /hp/.test(exitShown) && / \| true$/.test(exitShown), exitShown);
+  await shot('9-homepool-tab');
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`);
+
+  // ── Chats ask first ──
+  const denied = await chatCall('browser_eval', { key, code: '1' }, chat('chat-a'));
+  check('a chat not approved cannot use a homepool tab', !denied.ok && /homepool/.test(denied.error || ''), JSON.stringify(denied));
+  const t2 = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/page2` }));
+  const self = await chatCall('browser_tab_network', { key: t2.key, network: 'homepool:' + ALIS }, chat('chat-a'));
+  check('a network this PC is a node of is refused to chats', !self.ok && /itself a node/.test(self.error || ''), JSON.stringify(self));
+  const asking = chatCall('browser_tab_network', { key: t2.key, network: 'homepool:' + HOME, reason: 'check the shop from home' }, chat('chat-a'));
+  let req = null;
+  for (let i = 0; i < 40 && !req; i++) { await sleep(100); req = homepool.store.requests().find((r) => r.status === 'pending' && r.kind === 'browser'); }
+  check('switching onto homepool asks the owner (a request, and he is told)', !!req && told.some((m) => /browse through it/.test(m.title)) && req.reason === 'check the shop from home', JSON.stringify(req));
+  const dec = await (await fetch(`http://127.0.0.1:${web.address().port}/api/homepool`, { method: 'POST', body: JSON.stringify({ action: 'request-decide', id: req.id, approve: true }) })).json();
+  const asked = await asking;
+  check('once he approves, the switch goes ahead', dec.ok && asked.ok && asked.network === 'homepool:' + HOME, JSON.stringify(asked));
+  const usesIt = await chatCall('browser_eval', { key: t2.key, code: 'document.title' }, chat('chat-a'));
+  check('and that chat may use homepool tabs', usesIt.ok, JSON.stringify(usesIt));
+  const other2 = await chatCall('browser_eval', { key: t2.key, code: '1' }, chat('chat-b'));
+  check('another chat still may not', !other2.ok, JSON.stringify(other2));
+  const forged = await chatCall('browser_eval', { key: t2.key, code: '1' }, { sessionId: 'chat-a', alias: 'proj', chatToken: 'forged' });
+  check('a chat cannot pass for an approved one', !forged.ok, JSON.stringify(forged));
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`); await sleep(600);
+  await page(`document.querySelector('.brd-pop [data-v="hp-panel"]').click()`); await sleep(800);
+  check('the drawer lists the approved chat', await page(`!!document.querySelector('[data-hprm-chat="chat-a"]')`));
+  await page(`document.querySelector('[data-hprm-chat="chat-a"]').click()`); await sleep(800);
+  const revoked = await chatCall('browser_eval', { key: t2.key, code: '1' }, chat('chat-a'));
+  check('removing it there ends its access', !revoked.ok && !homepool.store.browserAllows('chat-a', 'proj'), JSON.stringify(revoked));
+  await page(`document.querySelector('[data-pan="close"]').click()`);
+
+  // ── Cru: every project's tabs ──
+  const cruOther = await cruTool('browser_go').run({ url: `http://127.0.0.1:${T}/page2`, project: 'other', show: false });
+  const cruTabs = await cruTool('browser_tabs').run({});
+  check('Cru sees the drawer tabs of every project', cruTabs.ok && cruTabs.tabs.some((t) => t.alias === 'proj') && cruTabs.tabs.some((t) => t.alias === 'other'), JSON.stringify(cruTabs).slice(0, 300));
+  const cruLook = await cruTool('browser_look').run({ key });
+  check('Cru can look at a homepool tab (its text and a picture)', cruLook.content && /via-server/.test(cruLook.content[0].text) && cruLook.content[1] && cruLook.content[1].type === 'image', JSON.stringify(cruLook).slice(0, 200));
+  const cruMark = await cruTool('browser_mark').run({ key: cruOther.key, selector: 'body', label: 'Cru was here' });
+  check('Cru can open a tab in any project and point at it', cruOther.ok && cruMark.ok, JSON.stringify(cruMark));
+
+  // ── No exit up ──
+  phoneNode.stop(); phoneNode = null;
+  for (let i = 0; i < 50 && homepool.engine.links.has(phone.id); i++) await sleep(100);
+  await dispatchBrowserTool('browser_navigate', { key, url: `http://127.0.0.1:${T}/whoami?again`, _cru: true });
+  const noExit = await dispatchBrowserTool('browser_eval', { key, code: 'document.body.innerText', _cru: true });
+  check('with no home node up, the page says no exit is up (nothing leaves another way)', /No exit is up/.test(noExit.result || ''), JSON.stringify(noExit));
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`); await sleep(700);
+  check('and the network icon and the tab badge turn red', await page(`document.querySelector('.brd-netbtn').classList.contains('bad') && !!document.querySelector('.brd-tab .brd-net-dot.hp.bad')`));
+  await shot('10-no-exit');
+  await page(`document.querySelector('[data-brd="netmenu"]').click()`);
+
+  // ── Clear one site ──
+  await dispatchBrowserTool('browser_eval', { key: cruOther.key, code: 'document.cookie = "a=1; max-age=3600"; 1', _cru: true });
+  const lhTab = await as('other', () => browser.openDrawerTab({ alias: 'other', url: `http://localhost:${T}/page2` }));
+  await dispatchBrowserTool('browser_eval', { key: lhTab.key, code: 'document.cookie = "b=2; max-age=3600"; 1', _cru: true });
+  await page(`document.querySelector('[data-brd="menu"]').click()`);
+  await page(`document.querySelector('[data-pan="clear"]').click()`);
+  const prefilled = await page(`document.querySelector('.brd-site').value`);
+  await page(`(function(){ document.querySelector('input[name="brd-scope"][value="site"]').checked = true; document.querySelector('[data-clr="cookies"]').checked = true; })()`);
+  await shot('11-clear-site');
+  await page(`document.querySelector('[data-pan="do-clear"]').click()`); await sleep(1200);
+  const c1 = await dispatchBrowserTool('browser_eval', { key: cruOther.key, code: 'document.cookie', _cru: true });
+  const c2 = await dispatchBrowserTool('browser_eval', { key: lhTab.key, code: 'document.cookie', _cru: true });
+  const hist3 = await page('window.api.wbrowser.drawer.history("", 50)');
+  check('"Only this site" (filled in from the tab) clears that site\'s cookies and history, and nothing else', prefilled === '127.0.0.1' && c1.result === '' && /b=2/.test(c2.result || '') && hist3.items.every((h) => !/127\.0\.0\.1/.test(h.url)) && hist3.items.some((h) => /localhost/.test(h.url)), `${prefilled} ${JSON.stringify(c1)} ${JSON.stringify(c2)} ${JSON.stringify(hist3.items.map((h) => h.url))}`);
+
   // ── Hardening ──
   const evil = await page(`new Promise(function(res){ var w=document.createElement('webview'); w.setAttribute('partition','persist:evil'); w.setAttribute('src','about:blank');
     document.body.appendChild(w); setTimeout(function(){ var ok=false; try{ w.getWebContentsId(); ok=true; }catch(e){} res(ok); }, 2500); })`);
   check('the page cannot create a webview outside the drawer\'s partitions', evil === false);
-  const nodeInGuest = await proj(() => browser.evalBrowser(key, 'typeof require + "," + typeof process'));
+  const nodeInGuest = await dispatchBrowserTool('browser_eval', { key, code: 'typeof require + "," + typeof process', _cru: true });
   check('drawer pages have no Node', nodeInGuest.result === 'undefined,undefined', JSON.stringify(nodeInGuest));
+
+  // ── No desktop app connected: every caller is told at once ──
+  await Promise.race([client('quit', {}), sleep(1500)]).catch(() => {});
+  for (let i = 0; i < 50 && browser.hasNativeHost(); i++) await sleep(100);
+  const t0g = Date.now();
+  const g1 = await proj(() => browser.listAllBrowsers('proj'));
+  const g2 = await proj(() => browser.openDrawerTab({ alias: 'proj', url: 'https://example.com' }));
+  const g3 = await cruTool('browser_tabs').run({});
+  const g4 = await chatCall('browser_open', { url: 'https://example.com', on: 'drawer', network: 'homepool:' + HOME }, chat('chat-c'));
+  const g5 = await chatCall('browser_eval', { key, code: '1' }, chat('chat-c'));
+  const quick = Date.now() - t0g < 3000;
+  check('with no desktop app connected, browser_list says why', /none is connected/.test(g1.drawer || ''), JSON.stringify(g1));
+  check('opening a tab says so', !g2.ok && /none is connected/.test(g2.error || ''), JSON.stringify(g2));
+  check('Cru is told the same', g3.ok && /none is connected/.test(g3.drawer || ''), JSON.stringify(g3));
+  check('a chat asking for homepool is told, not left waiting on an approval', !g4.ok && /none is connected/.test(g4.error || '') && !homepool.store.requests().some((r) => r.chatId === 'chat-c'), JSON.stringify(g4));
+  check('a call on a tab is refused with a reason', !g5.ok && !!g5.error, JSON.stringify(g5));
+  check('all of it at once, nothing hangs', quick, `${Date.now() - t0g} ms`);
 } catch (err) {
   check('no exceptions', false, err.stack);
 }

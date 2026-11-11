@@ -2711,6 +2711,20 @@
       if (S.kb && inp) { inp.value = (inp.value ? inp.value.replace(/\s*$/, ' ') : '') + ref + ' '; try { inp.focus(); } catch (e) { /* gone */ } S.quietSince = Date.now(); return true; }
       addRef(ref); return true;
     },
+    /**
+     * From elsewhere in Crundi (the browser drawer's "Send to Cru"): files and
+     * words for the next turn, in typing mode, for the owner to send. False
+     * when Cru's screen is not open (or is the kid screen).
+     */
+    share: function (text, files) {
+      if (!S || S.kid) return false;
+      if (files && files.length) attachFiles(files);
+      if (!S.kb) keyboard(true);
+      var inp = S.ov.querySelector('.cv-type');
+      if (inp && text) { inp.value = (inp.value ? inp.value.replace(/\s*$/, '\n') : '') + text; try { inp.focus(); } catch (e) { /* gone */ } }
+      S.quietSince = Date.now();
+      return true;
+    },
     shortcutLabel: function () { return label(); }, recordShortcut: recordShortcut, resetShortcut: resetShortcut, get isOpen() { return !!S; },
     // The own-voice tools, shared with a chat's voice mode (claude-chat.js), which talks over its replies the same way.
     kit: { createGate: createGate, createPreroll: createPreroll, voicedShare: voicedShare, makeLoopback: makeLoopback },

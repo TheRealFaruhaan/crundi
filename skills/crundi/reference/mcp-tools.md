@@ -65,7 +65,7 @@ app, on their network); omitted, the desktop app when one is connected. Every
 later call on that key runs in the same place; `browser_list` shows where.
 
 Drawer tabs: `on: "drawer"` opens a visible tab in this project's browser drawer
-in the PC client (`network?`: `"client"` default or `"server"`; `show?`).
+in the PC client (`network?`: `"client"` default, `"server"`, or `"homepool:<network>"`, which asks the owner first; `show?`).
 `browser_list` also returns the drawer tabs the person opened (key
 `drawer:<id>`, `network`, `active`, `shown`). Drawer-only tools:
 `browser_point` (`key`, `x`/`y` or `selector`, `label?`, `show?`),

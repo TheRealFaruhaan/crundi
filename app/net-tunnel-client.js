@@ -29,6 +29,9 @@ export function frame(type, id, payload) {
   return b;
 }
 
+/** Which proxy (idBase) a frame belongs to. */
+export function idRange(buf) { return buf && buf.length >= 5 ? (buf[1] & 0xff) : -1; }
+
 export function parseFrame(buf) {
   if (!buf) return null;
   if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf);
@@ -39,9 +42,9 @@ export function parseFrame(buf) {
 const MAX_HEAD = 64 * 1024;
 const OPEN_TIMEOUT_MS = 20000;
 
-function page(status, reason, text, extraHeaders = '') {
-  const body = `<!doctype html><meta charset="utf-8"><title>${reason}</title>`
-    + `<body style="font:14px system-ui;padding:32px;color:#444"><h3 style="margin:0 0 8px">Server network</h3>${text}</body>`;
+function page(status, reason, text, extraHeaders = '', heading = 'Server network', title = '') {
+  const body = `<!doctype html><meta charset="utf-8"><title>${title || reason}</title>`
+    + `<body style="font:14px system-ui;padding:32px;color:#444"><h3 style="margin:0 0 8px">${heading}</h3>${text}</body>`;
   return `HTTP/1.1 ${status} ${reason}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n${extraHeaders}\r\n${body}`;
 }
 
@@ -49,11 +52,19 @@ function page(status, reason, text, extraHeaders = '') {
  * send(buf)       write a binary frame to the server
  * isConnected()   is the native-host socket up, and does the server tunnel?
  */
-export function createServerNetProxy({ send, isConnected = () => true, log = () => {} } = {}) {
+/**
+ * targetPrefix  put before each OPEN target: "hp|<network>|" makes the server
+ *               open the tab's connections through that homepool network
+ * heading       the title of the error pages this proxy answers with
+ */
+export function createServerNetProxy({ send, isConnected = () => true, log = () => {}, targetPrefix = '', heading = 'Server network', idBase = 0 } = {}) {
   const user = 'crundi';
   const pass = randomBytes(18).toString('base64url');
   const expectAuth = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
   const streams = new Map();   // id → { sock, onOpened, onError }
+  // Several proxies can share one websocket: each takes stream ids in its own
+  // range (idBase << 24), and the socket's owner routes frames by it (idRange).
+  const base = (idBase & 0xff) * 0x1000000;
   let nextId = 1;
   let server = null;
   let port = 0;
@@ -61,14 +72,14 @@ export function createServerNetProxy({ send, isConnected = () => true, log = () 
   function out(type, id, payload) { try { send(frame(type, id, payload)); return true; } catch { return false; } }
 
   function openStream(target, sock, onOpened, onError) {
-    const id = nextId++;
-    if (nextId > 0xfffffff0) nextId = 1;
+    const id = base + nextId++;
+    if (nextId > 0xfffff0) nextId = 1;
     const st = { sock, onOpened, onError, open: false };
     streams.set(id, st);
     const timer = setTimeout(() => { if (!st.open) { streams.delete(id); onError('The server did not answer'); out(T.CLOSE, id); } }, OPEN_TIMEOUT_MS);
     timer.unref?.();
     st.timer = timer;
-    if (!out(T.OPEN, id, target)) { streams.delete(id); clearTimeout(timer); onError('Not connected to the server'); return null; }
+    if (!out(T.OPEN, id, targetPrefix + target)) { streams.delete(id); clearTimeout(timer); onError('Not connected to the server'); return null; }
     sock.on('data', (d) => { if (st.open) out(T.DATA, id, d); });
     sock.on('close', () => { if (streams.get(id) === st) { streams.delete(id); clearTimeout(timer); out(T.CLOSE, id); } });
     sock.on('error', () => { /* close follows */ });
@@ -113,14 +124,19 @@ export function createServerNetProxy({ send, isConnected = () => true, log = () 
       const headers = lines.slice(1);
       const auth = headers.find((h) => /^proxy-authorization:/i.test(h));
       if (!auth || auth.slice(auth.indexOf(':') + 1).trim() !== expectAuth) {
-        sock.end(page(407, 'Proxy Authentication Required', 'Sign-in needed.', 'Proxy-Authenticate: Basic realm="Crundi server network"\r\n'));
+        sock.end(page(407, 'Proxy Authentication Required', 'Sign-in needed.', 'Proxy-Authenticate: Basic realm="Crundi server network"\r\n', heading));
         return;
       }
       if (!isConnected()) {
-        sock.end(page(502, 'Bad Gateway', 'This tab uses the server\'s network, and the desktop app is not connected to the server right now.'));
+        sock.end(page(502, 'Bad Gateway', 'This tab goes out through the server, and the desktop app is not connected to the server right now.', '', heading));
         return;
       }
-      const fail = (why) => { try { sock.end(page(502, 'Bad Gateway', 'The server could not connect: ' + String(why).replace(/[<&]/g, ''))); } catch { /* gone */ } };
+      const fail = (why) => {
+        const w = String(why).replace(/[<&]/g, '');
+        // Homepool with no exit up: say that plainly, it is the usual case.
+        const text = /no (node|exit)/i.test(w) ? 'No exit is up: ' + w.replace(/^homepool:\s*/, '') + '. The page loads once a node of this network is online.' : 'The server could not connect: ' + w;
+        try { sock.end(page(502, 'Bad Gateway', text, '', heading, /^No exit/.test(text) ? 'No exit is up' : 'Could not connect')); } catch { /* gone */ }
+      };
       if (method === 'CONNECT') {
         openStream(target, sock, () => {
           sock.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -130,8 +146,8 @@ export function createServerNetProxy({ send, isConnected = () => true, log = () 
         return;
       }
       let u;
-      try { u = new URL(target); } catch { sock.end(page(400, 'Bad Request', 'Bad request.')); return; }
-      if (u.protocol !== 'http:') { sock.end(page(400, 'Bad Request', 'Only http and https are carried.')); return; }
+      try { u = new URL(target); } catch { sock.end(page(400, 'Bad Request', 'Bad request.', '', heading)); return; }
+      if (u.protocol !== 'http:') { sock.end(page(400, 'Bad Request', 'Only http and https are carried.', '', heading)); return; }
       const hostPort = (u.hostname.includes(':') ? `[${u.hostname}]` : u.hostname) + ':' + (u.port || 80);
       // One request per connection: the proxy pipes bytes, so a kept-alive
       // socket would carry a later request for another host to this one.

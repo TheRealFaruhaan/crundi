@@ -180,7 +180,7 @@ export function createHomepoolStore({ dataDir, now = () => Date.now(), file } = 
   // ── access keys ──
   function cleanKeyInput(k, prev = {}) {
     const kind = k.kind ?? prev.kind;
-    if (!['chat', 'project', 'software'].includes(kind)) throw new Error('kind must be chat, project or software.');
+    if (!KEY_KINDS.includes(kind)) throw new Error('kind must be chat, project, software or browser.');
     const nets = Array.isArray(k.networks) ? k.networks : (prev.networks || [SERVER_NETWORK]);
     const known = networkIds();
     const networks = [...new Set(nets.map(String))].filter(n => known.has(n));
@@ -200,16 +200,23 @@ export function createHomepoolStore({ dataDir, now = () => Date.now(), file } = 
       // sources listed in allowFrom may use it.
       portBlock: !!(k.portBlock ?? prev.portBlock),
       allowFrom: (Array.isArray(k.allowFrom) ? k.allowFrom : (prev.allowFrom || [])).map(s => String(s).trim()).filter(Boolean).slice(0, 10),
+      // The PC browser key (kind "browser"): the desktop app's browser drawer
+      // uses it for tabs on a homepool network. Chats use those tabs only once
+      // the owner has approved them, listed here.
+      browserChats: kind === 'browser' ? cleanIds(k.browserChats ?? prev.browserChats) : undefined,
+      browserProjects: kind === 'browser' ? cleanIds(k.browserProjects ?? prev.browserProjects).map(x => x.toLowerCase()) : undefined,
     };
+    if (kind === 'browser') { out.portBlock = false; out.allowFrom = []; }
     if (kind === 'chat' && !out.chatId) throw new Error('A chat key needs the chat.');
     if (kind === 'project' && !out.project) throw new Error('A project key needs the project.');
-    if (!out.name) out.name = kind === 'software' ? 'software' : (out.project || out.chatId);
+    if (!out.name) out.name = kind === 'software' ? 'software' : kind === 'browser' ? 'PC browser' : (out.project || out.chatId);
     if (out.portBlock && !out.allowFrom.length) out.allowFrom = ['loopback'];
     return out;
   }
 
   function addKey(input, { by = 'owner', requestId = '' } = {}) {
     const k = cleanKeyInput(input);
+    if (k.kind === 'browser' && d.keys.some(x => x.kind === 'browser')) throw new Error('There is already a PC browser key: change that one.');
     const id = `k${rid(5)}`;
     const secret = randomBytes(18).toString('base64url');
     const rec = { id, ...k, secretHash: hash(secret), createdAt: now(), createdBy: by, requestId, ports: null };
@@ -272,9 +279,26 @@ export function createHomepoolStore({ dataDir, now = () => Date.now(), file } = 
       || null;
   }
 
+  // ── the PC browser key ──
+  function browserKey() { return d.keys.find(k => k.kind === 'browser') || null; }
+  /** May this chat use the drawer's homepool tabs? Its own approval, or its project's. */
+  function browserAllows(chatId, project) {
+    const k = browserKey();
+    if (!k || keyRefusal(k)) return false;
+    return !!((chatId && (k.browserChats || []).includes(String(chatId))) || (project && (k.browserProjects || []).includes(String(project).toLowerCase())));
+  }
+  function browserRevoke({ chatId = '', project = '' } = {}) {
+    const k = browserKey(); if (!k) throw new Error('There is no PC browser key.');
+    if (chatId) k.browserChats = (k.browserChats || []).filter(x => x !== String(chatId));
+    if (project) k.browserProjects = (k.browserProjects || []).filter(x => x !== String(project).toLowerCase());
+    log('browser-revoked', { key: k.id, chatId, project });
+    save(true);
+    return k;
+  }
+
   // ── requests (a chat asks; the owner decides) ──
   function addRequest({ chatId = '', project = '', kind = 'chat', name = '', networks = [SERVER_NETWORK], reason = '' } = {}) {
-    if (!['chat', 'project', 'software'].includes(kind)) kind = 'chat';
+    if (!REQUEST_KINDS.includes(kind)) kind = 'chat';
     const pending = d.requests.find(r => r.status === 'pending' && r.chatId === chatId && r.kind === kind && r.name === String(name || ''));
     if (pending) return pending;
     const r = {
@@ -300,6 +324,18 @@ export function createHomepoolStore({ dataDir, now = () => Date.now(), file } = 
       log('request-refused', { request: id });
       save(true);
       return { request: r };
+    }
+    if (r.kind === 'browser') {
+      // Not a key of its own: the chat (or, changed so, its whole project)
+      // may use the PC browser key's homepool tabs.
+      const k = browserKey();
+      if (!k) throw new Error('Make the PC browser key first (in the browser drawer, or Access).');
+      if (changes.scope === 'project' && r.project) { k.browserProjects = [...new Set([...(k.browserProjects || []), r.project.toLowerCase()])]; }
+      else { k.browserChats = [...new Set([...(k.browserChats || []), r.chatId])]; }
+      r.status = 'approved'; r.keyId = k.id;
+      log('request-approved', { request: id, key: k.id, browser: changes.scope === 'project' ? 'project' : 'chat' });
+      save(true);
+      return { request: r, key: k };
     }
     const kind = changes.kind || r.kind;
     const made = addKey({
@@ -359,9 +395,16 @@ export function createHomepoolStore({ dataDir, now = () => Date.now(), file } = 
     networkIds, addNetwork, renameNetwork, removeNetwork,
     addNode, nodeByKey, updateNode, reissueNode, removeNode, seenNode,
     addKey, updateKey, reissueKey, removeKey, setKeyPorts, keyRefusal, keyBySecret, keyForChat,
+    browserKey, browserAllows, browserRevoke,
     addRequest, decideRequest, takeApprovedSecret,
     addUsage, setSettings, log, save,
   };
+}
+
+const KEY_KINDS = ['chat', 'project', 'software', 'browser'];
+const REQUEST_KINDS = ['chat', 'project', 'software', 'browser'];
+function cleanIds(v) {
+  return [...new Set((Array.isArray(v) ? v : []).map(x => String(x).trim()).filter(x => x && x.length <= 80))].slice(0, 200);
 }
 
 function pick(o, keys) {
