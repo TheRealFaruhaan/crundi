@@ -34,6 +34,8 @@ import { pathToFileURL } from 'url';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, renameSync, unlinkSync, existsSync } from 'fs';
 import { ensureInstalled, isInstalled } from './install.js';
 import { validProfile, checkSample, SAMPLES_NEEDED, RATE } from './enroll.js';
+import { speakerDir, validVoice } from './owner.js';
+import { ensureModel as ensureVoiceModel } from '../../src/voice/speaker.js';
 
 const POLL_MS = 1000;
 const POWER_RECHECK_MS = 60 * 1000;
@@ -188,6 +190,8 @@ export function createVoiceWake(d) {
       lastHeard,
       trained: !!profile,
       trainedAt: profile ? String(profile.trainedAt || '') : '',
+      // The owner's voice check on each "Hey Cru" (owner.js): 'on', or 'off' for a profile trained before it (or without the model).
+      voiceCheck: profile ? (validVoice(profile.voice) ? 'on' : 'off') : '',
       training,
     };
   }
@@ -218,7 +222,8 @@ export function createVoiceWake(d) {
       if (me !== child || !m) return;
       if (m.type === 'ready') { childReady = true; emit(); }
       else if (m.type === 'error') { log('spotter: ' + m.message); }
-      else if (m.type === 'detected') heard(m.keyword, m.score, m.via);
+      else if (m.type === 'detected') heard(m.keyword, m.score, m.via, m.voice);
+      else if (m.type === 'rejected' && m.why) log('heard ' + m.keyword + ' via ' + m.via + ', but ' + m.why + ' (voice score ' + m.voice + ')');
       else if (m.type === 'rejected') log('heard ' + m.keyword + ' but not the trained voice (score ' + m.score + ', limit ' + (profile ? profile.limit : '?') + ')');
     });
     me.on('exit', (code) => {
@@ -331,10 +336,10 @@ export function createVoiceWake(d) {
     emit();
   }
 
-  function heard(keyword, score, via) {
+  function heard(keyword, score, via, voice) {
     lastHeard = { keyword: String(keyword || ''), at: Date.now() };
     // Which way it woke (enroll.js): 'phrase' (a burst matched the owner's takes, the model agreeing) or 'model' (the spotter fired, the voice matched).
-    log('heard ' + lastHeard.keyword + (score != null ? ' (voice score ' + score + ')' : '') + (via ? ' via ' + via : ''));
+    log('heard ' + lastHeard.keyword + (score != null ? ' (match ' + score + ')' : '') + (via ? ' via ' + via : '') + (voice != null ? ', owner\'s voice ' + voice : ''));
     // Listening only for an asleep voice screen (background listening off): a hit counts only if the
     // page still has one, asked now. The state polled each second can be stale just after Cru closed
     // the screen, and then a hit opened Cru again (12 Nov, the owner): after a close, only an
@@ -441,6 +446,9 @@ export function createVoiceWake(d) {
     if (!Array.isArray(list) || list.length !== SAMPLES_NEEDED) return { ok: false, why: 'Needs ' + SAMPLES_NEEDED + ' recordings', redo: [] };
     const recs = list.map(f32).map((r) => (r.length > RATE * MAX_SAMPLE_SECONDS ? r.subarray(0, RATE * MAX_SAMPLE_SECONDS) : r));
     try { await installed(); } catch (err) { return { ok: false, why: String(err.message || err), redo: [] }; }
+    // The owner's voice model (owner.js), fetched here so training does not wait on the download; without it, training still works.
+    try { await ensureVoiceModel(speakerDir(d.dataDir), { fetchImpl: (u, o) => fetch(u, { ...(o || {}), signal: AbortSignal.timeout(90_000) }) }); }
+    catch (err) { log('voice model: ' + String(err.message || err)); }
     const r = await runTraining(recs);
     if (!r || !r.ok) {
       log('training: ' + ((r && r.why) || 'failed') + (r && r.redo && r.redo.length ? ' (again: ' + r.redo.map((i) => i + 1).join(', ') + ')' : ''));
@@ -449,10 +457,10 @@ export function createVoiceWake(d) {
     if (!validProfile(r.profile)) return { ok: false, why: 'Training gave an unusable result', redo: [] };
     try { saveProfile(r.profile); } catch (err) { return { ok: false, why: 'Could not save the profile: ' + err.message, redo: [] }; }
     profile = r.profile;
-    log('trained (threshold ' + profile.keywordsThreshold + ', limit ' + profile.limit + ')');
+    log('trained (threshold ' + profile.keywordsThreshold + ', limit ' + profile.limit + ', owner\'s voice check ' + (validVoice(profile.voice) ? 'on' : 'off: ' + (r.voiceWhy || '?')) + ')');
     if (child) { try { child.postMessage({ type: 'profile', profile }); } catch { /* the exit handler tidies up */ } }
     reconcile();
-    return { ok: true, trainedAt: String(profile.trainedAt || '') };
+    return { ok: true, trainedAt: String(profile.trainedAt || ''), voiceCheck: validVoice(profile.voice) ? 'on' : 'off', note: String(r.voiceWhy || '') };
   }
 
   function reconcile() {

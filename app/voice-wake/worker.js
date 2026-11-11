@@ -19,7 +19,8 @@
 
 import { createSpotter } from './spotter.js';
 import { TUNING, SAMPLE_RATE } from './manifest.js';
-import { train, verify, validProfile, VERIFY_SECONDS, createSegmenter, matchPhrase, confirmLines, listenLines, spotted, CONFIRM_THRESHOLD, WAKE } from './enroll.js';
+import { train, verify, validProfile, VERIFY_SECONDS, createSegmenter, matchPhrase, confirmLines, listenLines, spotted, checkSample, trim, CONFIRM_THRESHOLD, WAKE } from './enroll.js';
+import { createOwnerCheck, validVoice } from './owner.js';
 
 /** What the spotter is made with for this profile: its "Hey Cru" lines and the decoys competing with them. */
 export function profileTuning(profile) {
@@ -73,16 +74,20 @@ export function createWake(dir, profile, opts = {}) {
       // The owner's own phrase, whatever the model made of it.
       if (burst) {
         const p = matchPhrase(profile, burst, confirm);
-        if (p.ok) { lastHit = now(); return { ok: true, keyword: 'HEY_CRU', score: p.score, via: 'phrase' }; }
+        // The clip it matched goes with the wake: the owner's voice is checked on it (owner.js).
+        if (p.ok) { lastHit = now(); return { ok: true, keyword: 'HEY_CRU', score: p.score, via: 'phrase', clip: trim(burst) || burst }; }
       }
       // A decoy ("hey you", "hey who"...) won over "Hey Cru": not a call.
       if (!k || k !== WAKE) return null;
-      const v = verify(profile, recent());
+      const heardNow = recent();
+      const v = verify(profile, heardNow);
       // Only a wake starts the cooldown: a rejected "crew" must not hide the
       // owner's "Hey Cru" right after it.
       if (v.ok) lastHit = now();
-      return { ok: v.ok, keyword: k, score: v.score, via: 'model' };
+      return { ok: v.ok, keyword: k, score: v.score, via: 'model', clip: trim(heardNow, 60) || heardNow };
     },
+    /** A wake refused afterwards (not the owner's voice): no cooldown, so his own call right after counts. */
+    refused() { lastHit = -Infinity; },
     reset() { spot.reset(); seg.reset(); filled = 0; at = 0; },
     free() { spot.free(); if (loose) loose.free(); },
   };
@@ -94,14 +99,48 @@ export function trainIn(dir, recordings) {
   return train(recs, (tuning) => createSpotter(dir, { ...tuning, gate: false }));
 }
 
+/**
+ * trainIn, then the owner's voice from the same takes (owner.js), kept as
+ * profile.voice. The voice model not to be had (no network the first time,
+ * no onnxruntime): the profile is kept without it, and [voiceWhy] says why.
+ */
+export async function trainWithVoice(dir, recordings, owner = createOwnerCheck(dir)) {
+  const r = trainIn(dir, recordings);
+  if (!r.ok) return r;
+  try {
+    const clips = (recordings || []).map((x) => checkSample(x instanceof Float32Array ? x : new Float32Array(x || [])).clip).filter(Boolean);
+    r.profile.voice = await owner.enrol(clips);
+  } catch (err) {
+    r.voiceWhy = 'The voice check could not be set up (' + String((err && err.message) || err).slice(0, 120) + '): Hey Cru works, for any voice, until it is trained again.';
+  }
+  return r;
+}
+
+/**
+ * A wake from createWake, checked for the owner's voice when the profile has
+ * one: { type: 'detected' | 'rejected', ... } for the controller.
+ */
+export async function ownerChecked(r, profile, owner) {
+  const base = { keyword: r.keyword, score: r.score, via: r.via };
+  if (!r.ok) return { type: 'rejected', ...base };
+  if (!profile || !validVoice(profile.voice) || !owner || !r.clip) return { type: 'detected', ...base, voice: 'off' };
+  const v = await owner.check(profile.voice, r.clip);
+  if (v.ok === false) return { type: 'rejected', ...base, voice: v.score, why: 'not the owner\'s voice' };
+  return { type: 'detected', ...base, voice: v.ok ? v.score : 'no verdict: ' + v.why };
+}
+
 const port = process.parentPort;
 if (port) {
   let wake = null;
   let dir = '';
+  let current = null, owner = null;
 
   const load = (profile) => {
     if (wake) { try { wake.free(); } catch { /* gone */ } wake = null; }
-    if (validProfile(profile)) wake = createWake(dir, profile);
+    current = validProfile(profile) ? profile : null;
+    if (current) wake = createWake(dir, profile);
+    // The voice model ready before the first call (fetched once if missing).
+    if (current && validVoice(current.voice)) { if (!owner) owner = createOwnerCheck(dir); owner.load(); }
   };
 
   port.on('message', (e) => {
@@ -118,14 +157,19 @@ if (port) {
         const s = m.samples instanceof Float32Array ? m.samples : new Float32Array(m.samples || []);
         if (!s.length) return;
         const r = wake.accept(s);
-        if (r) port.postMessage({ type: r.ok ? 'detected' : 'rejected', keyword: r.keyword, score: r.score, via: r.via });
+        if (r) {
+          const w = wake, p = current;
+          ownerChecked(r, p, owner).then((msg) => {
+            if (msg.type === 'rejected' && r.ok && w === wake) w.refused();
+            port.postMessage(msg);
+          }, (err) => port.postMessage({ type: 'error', message: String((err && err.message) || err) }));
+        }
       } else if (m.type === 'reset' && wake) {
         wake.reset();
       } else if (m.type === 'train') {
-        let result;
-        try { result = trainIn(m.dir, m.recordings); }
-        catch (err) { result = { ok: false, why: 'Training failed: ' + String((err && err.message) || err), redo: [] }; }
-        port.postMessage({ type: 'trained', id: m.id, result });
+        trainWithVoice(m.dir, m.recordings)
+          .catch((err) => ({ ok: false, why: 'Training failed: ' + String((err && err.message) || err), redo: [] }))
+          .then((result) => port.postMessage({ type: 'trained', id: m.id, result }));
       }
     } catch (err) {
       port.postMessage({ type: 'error', message: String((err && err.message) || err) });

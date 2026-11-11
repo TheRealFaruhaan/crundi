@@ -6607,11 +6607,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">'
             + '<span style="font-size:0.78rem;color:var(--text-secondary);display:inline-flex;gap:6px;align-items:center;">' + ic('check') + 'Trained'
             + (when && !isNaN(when.getTime()) ? ' on ' + escHtml(when.toLocaleDateString()) : '') + '</span>'
+            // The owner's voice check on each Hey Cru (a client that reports it): on, or a profile from before it.
+            + (s.voiceCheck === 'on' ? '<span style="font-size:0.78rem;color:var(--text-secondary);">Only your voice wakes Cru</span>' : '')
             + '<button data-action="voice-wake-train" style="' + S.subtle + '">Train again</button>'
             + '<button data-action="voice-wake-forget" style="' + S.subtle + '">Forget</button></div>';
         } else {
           h += '<div style="margin-top:8px;"><button data-action="voice-wake-train" style="' + S.btn + '">Train Hey Cru</button></div>';
         }
+        if (s.trained && s.voiceCheck === 'off' && !vwt.msg) h += say('Train again so that only your voice wakes Cru: the voice check is not set up for this training.', false);
         el.innerHTML = h + say(vwt.msg, vwt.bad);
         return;
       }
@@ -6723,8 +6726,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       vwt.busy = false;
       if (!vwt.active) return;
       if (r && r.ok) {
-        vwt.msg = 'Done. With listening on, say “Hey Cru” while the computer is plugged in.';
-        vwt.bad = false;
+        vwt.msg = r.voiceCheck === 'on' ? 'Done. Only your voice wakes Cru. With listening on, say “Hey Cru” while the computer is plugged in.'
+          : r.note ? 'Done. ' + r.note : 'Done. With listening on, say “Hey Cru” while the computer is plugged in.';
+        vwt.bad = !!(r.note && r.voiceCheck !== 'on');
         vwStop();
         return;
       }

@@ -171,7 +171,7 @@ ok(isOpen({ CrundiVoice: { isOpen: true } }) === 'open' && isOpen({ CrundiVoice:
 ok(isOpen({ CrundiVoice: { isOpen: false }, CrundiChat: { voiceActive: true } }) === 'chat' && isOpen({ CrundiChat: { voiceActive: false } }) === 'closed' && isOpen({ CrundiChat: { mount() {} } }) === 'closed', 'a chat in voice mode takes the microphone: Hey Cru pauses, so "Hey Cru" in a sentence is words for that chat; an older page is as before');
 const ctl = read('app', 'voice-wake', 'controller.js');
 // 12 Nov: with background listening off, a closed screen is not opened again by a hit heard just after it closed.
-ok(/function heard\(keyword, score(, via)?\) \{[\s\S]{0,1100}if \(!on\(\)\) \{[\s\S]{0,400}executeJavaScript\(IS_OPEN_SCRIPT[\s\S]{0,200}if \(st !== 'asleep'\)/.test(ctl), 'with background listening off, a hit wakes only a voice screen that is still open and asleep, asked at that moment');
+ok(/function heard\(keyword, score[^)]*\) \{[\s\S]{0,1100}if \(!on\(\)\) \{[\s\S]{0,400}executeJavaScript\(IS_OPEN_SCRIPT[\s\S]{0,200}if \(st !== 'asleep'\)/.test(ctl), 'with background listening off, a hit wakes only a voice screen that is still open and asleep, asked at that moment');
 ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes("'chat-voice': 'Paused: a chat is listening'"), 'the listener pauses while a chat listens, says so, and resumes after');
 
 // ─── Cru's voice screen: chat view by default, typed turns read rather than said (10 Nov) ───
