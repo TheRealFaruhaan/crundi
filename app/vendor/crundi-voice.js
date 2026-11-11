@@ -1028,6 +1028,8 @@
   function utter(text, typed, tap) {
     var t = String(text || '').trim();
     if (!t || !S) return;
+    // Closing: nothing more is asked (only an explicit open brings Cru back).
+    if (S.closing && !S.kid) return;
     if (!typed && echo(t)) { S.heard = ''; render(); return; }
     // "Scratch that" alone (an older server passes it on): take back, never ask it.
     if (!typed && isDiscard(t)) { if (S.phase === 'speak') { if (S.live) cutIn(); } else takeBack(true); render(); return; }
@@ -1370,6 +1372,10 @@
       S.question = ok && r.pending && r.pending.length ? r.pending[0].question : '';
       // The owner is done: close once the goodbye has been said.
       S.closing = !!(ok && r.close);
+      // And from now on nothing more is heard (12 Nov, the owner, PC: closed by "you can go now", a
+      // "mhmm" still reached Cru and it answered): the microphone goes at once, what he said
+      // meanwhile is dropped, and talking or tapping over the goodbye just closes (cutIn).
+      if (S.closing && !S.kid) { S.closingAt = Date.now(); S.pending = ''; S.pendingTyped = false; S.heard = ''; stopMic(); }
       // Background listening is the phone's: the server tells every open app (voice-phone-action-push); an older server cannot.
       if (ok && r.phoneActions && r.phoneActions.length) S.notice = !(S.opts.capabilities && S.opts.capabilities.indexOf && S.opts.capabilities.indexOf('voice-phone-action-push') < 0) ? 'Sent to the phone: the Crundi app does it while it is open there.' : 'Background listening is for the phone: turn it on from the Crundi app.';
       // Another voice ("Only act on my voice"): answered, but nothing was changed.
@@ -1868,6 +1874,8 @@
 
   /** Crundi stops talking now and listens: the owner talked over it (or tapped). */
   function cutIn() {
+    // Closing: the goodbye cut short is the end, not a new turn.
+    if (S.closing && !S.kid) { close(); return; }
     stopSpeaking(S);
     S.saidUntil = Date.now(); S.phase = 'listen'; S.heard = ''; S.quietSince = Date.now(); S.streaming = true; S.hintAt = 0;
     // Tapped: straight back to the server. Not the pre-roll: that is Cru's own voice.
@@ -1920,6 +1928,8 @@
 
   function tick() {
     if (!S) return;
+    // Closing, and not saying its goodbye (any more): closed, whatever event was missed.
+    if (S.closing && !S.kid && S.phase !== 'speak') { close(); return; }
     // Stuck on "Speaking" with nothing playing: carry on listening.
     // (The device's own voice can report "speaking" for ever, on Linux in particular: past the deadline plus 3 s it is stopped anyway.)
     var synthBusy = false;

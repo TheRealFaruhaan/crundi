@@ -334,6 +334,23 @@ export function createVoiceWake(d) {
   function heard(keyword, score) {
     lastHeard = { keyword: String(keyword || ''), at: Date.now() };
     log('heard ' + lastHeard.keyword + (score != null ? ' (voice score ' + score + ')' : ''));
+    // Listening only for an asleep voice screen (background listening off): a hit counts only if the
+    // page still has one, asked now. The state polled each second can be stale just after Cru closed
+    // the screen, and then a hit opened Cru again (12 Nov, the owner): after a close, only an
+    // explicit open brings it back.
+    if (!on()) {
+      const wc0 = mainWc();
+      if (!wc0 || wc0.isLoading()) { log('ignored: no asleep voice screen'); return; }
+      wc0.executeJavaScript(IS_OPEN_SCRIPT, false).then((st) => {
+        if (st !== 'asleep') { screenAsleep = false; log('ignored: the voice screen is ' + st + ', and background listening is off'); reconcile(); emit(); return; }
+        wakeNow();
+      }, () => log('ignored: could not ask the page'));
+      return;
+    }
+    wakeNow();
+  }
+
+  function wakeNow() {
     // Hand the microphone over before the voice screen asks for it.
     voiceOpen = true; resumeAt = 0;
     reconcile();

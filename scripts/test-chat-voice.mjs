@@ -170,6 +170,14 @@ ok(isOpen({}) === 'closed' && isOpen({ CrundiVoice: { isOpen: false } }) === 'cl
 ok(isOpen({ CrundiVoice: { isOpen: true } }) === 'open' && isOpen({ CrundiVoice: { isOpen: true, holdsMic: false } }) === 'asleep', 'Cru\'s screen as before');
 ok(isOpen({ CrundiVoice: { isOpen: false }, CrundiChat: { voiceActive: true } }) === 'chat' && isOpen({ CrundiChat: { voiceActive: false } }) === 'closed' && isOpen({ CrundiChat: { mount() {} } }) === 'closed', 'a chat in voice mode takes the microphone: Hey Cru pauses, so "Hey Cru" in a sentence is words for that chat; an older page is as before');
 const ctl = read('app', 'voice-wake', 'controller.js');
+// 12 Nov: after Cru closed the screen, a hit (or a "mhmm") must not bring it back without an explicit open.
+ok(/function heard\(keyword, score\) \{[\s\S]{0,900}if \(!on\(\)\) \{[\s\S]{0,400}executeJavaScript\(IS_OPEN_SCRIPT[\s\S]{0,200}if \(st !== 'asleep'\)/.test(ctl), 'with background listening off, a hit wakes only a voice screen that is still open and asleep, asked at that moment');
+{
+  const cv = read('app', 'vendor', 'crundi-voice.js');
+  ok(/if \(S\.closing && !S\.kid\) \{ S\.closingAt = Date\.now\(\); S\.pending = ''; S\.pendingTyped = false; S\.heard = ''; stopMic\(\); \}/.test(cv), 'a close lets the microphone go at once and drops what was said meanwhile');
+  ok(/function cutIn\(\) \{\s*\/\/[^\n]*\n\s*if \(S\.closing && !S\.kid\) \{ close\(\); return; \}/.test(cv) && /function utter\(text, typed, tap\) \{[\s\S]{0,300}if \(S\.closing && !S\.kid\) return;/.test(cv), 'closing: talking or tapping over the goodbye closes, and nothing more is asked');
+  ok(/function tick\(\) \{\s*if \(!S\) return;\s*\/\/[^\n]*\n\s*if \(S\.closing && !S\.kid && S\.phase !== 'speak'\) \{ close\(\); return; \}/.test(cv), 'and the close happens even if the end of the goodbye is missed');
+}
 ok(/setVoiceOpen\(st === 'open' \|\| st === 'chat'\)/.test(ctl) && ctl.includes("'chat-voice': 'Paused: a chat is listening'"), 'the listener pauses while a chat listens, says so, and resumes after');
 
 // ─── Cru's voice screen: chat view by default, typed turns read rather than said (10 Nov) ───
