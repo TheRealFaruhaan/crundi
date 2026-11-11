@@ -209,6 +209,11 @@ open class VoiceActivity : ComponentActivity() {
         }
         if (intent?.getBooleanExtra(EXTRA_UNLOCK, false) == true) unlock()
         if (savedInstanceState == null) shared(intent)
+        // Opened again (it had closed) to say a bubble was not made: how to allow it.
+        if (savedInstanceState == null) intent?.getStringExtra(CruBubble.EXTRA_BUBBLE_HELP)?.let { why ->
+            intent.removeExtra(CruBubble.EXTRA_BUBBLE_HELP)
+            handler.post { if (!isFinishing) CruBubble.explain(this, why) }
+        }
         // Opened by "Hey Cru" from the background: its "tap to talk" is done.
         HeyCrundi.cancelWakeNotification(this)
     }
@@ -262,6 +267,11 @@ open class VoiceActivity : ComponentActivity() {
         setIntent(intent)
         if (intent.getBooleanExtra(EXTRA_CHAT, false)) controller.setChat(true)
         shared(intent)
+        // Back from stepping aside for a bubble Android did not make: say how to allow it.
+        intent.getStringExtra(CruBubble.EXTRA_BUBBLE_HELP)?.let { why ->
+            intent.removeExtra(CruBubble.EXTRA_BUBBLE_HELP)
+            handler.post { if (!isFinishing) CruBubble.explain(this, why) }
+        }
     }
 
     private fun unlock() {

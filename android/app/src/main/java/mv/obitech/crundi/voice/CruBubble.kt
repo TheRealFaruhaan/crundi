@@ -111,24 +111,67 @@ object CruBubble {
     fun cancel(ctx: Context) { runCatching { NotificationManagerCompat.from(ctx).cancel(ID) } }
 
     /**
-     * The voice screen's bubble button: post it, and a moment later look.
-     * A real bubble: [onBubbled] (the voice screen gets out of its way).
-     * Not one: the notification goes, and the owner is shown how to allow it.
+     * Until when Crundi's main window, coming to the front, steps aside again
+     * at once (MainActivity.onResume): the voice screen opened from its top bar
+     * has just stepped back for Cru's bubble, which would leave the main window
+     * on screen, and a task coming to the front folds an open bubble away.
+     */
+    @Volatile private var stepAsideUntil = 0L
+    private const val STEP_ASIDE_MS = 3_000L
+
+    /** Called by the main window as it comes to the front: true (once) when it should step aside for Cru's bubble. */
+    fun mainShouldStepAside(): Boolean {
+        val due = System.currentTimeMillis() < stepAsideUntil
+        stepAsideUntil = 0L
+        return due
+    }
+
+    /** On the voice screen's intent: the bubble was not made; show how to allow it (the value: what Android reported). */
+    const val EXTRA_BUBBLE_HELP = "cruBubbleHelp"
+
+    /**
+     * The voice screen's bubble button: post it, step out of the way at once,
+     * and a moment later look.
+     *
+     * 11 Nov 2026 (the owner, 1.1.3-dev.37: the bubble opened, Crundi came to
+     * the front and the bubble closed): the voice screen used to stay in front
+     * while it looked (up to three seconds) and only then finish(). By then
+     * Android had opened the bubble over it, and finishing sent the owner back
+     * to the task the screen was opened from (Crundi's main window, from its
+     * top bar). Android folds an open bubble away whenever another task comes
+     * to the front, so the bubble closed and Crundi was left on screen. Now the
+     * screen steps back right after posting, as a chat's bubble button does
+     * (MainActivity.openBubble), before the bubble opens, and the main window
+     * steps aside too if it surfaces ([mainShouldStepAside]): whatever app was
+     * under them stays on screen with the bubble over it.
+     *
+     * A real bubble: [onBubbled] (the voice screen, now behind, is finished:
+     * nothing comes to the front). Not one: the notification goes, the voice
+     * screen comes back (allowed a few seconds after it stepped back) and
+     * shows how to allow it ([EXTRA_BUBBLE_HELP]).
      */
     fun request(activity: Activity, onBubbled: () -> Unit) {
         open(activity)?.let { problem -> android.widget.Toast.makeText(activity, problem, android.widget.Toast.LENGTH_LONG).show(); if (BubbleHelp.blocked(activity) || problem.contains("turned off")) explain(activity); return }
+        stepAsideUntil = System.currentTimeMillis() + STEP_ASIDE_MS
+        activity.moveTaskToBack(true)
         // Looked at a few times over about three seconds: Android marks the bubble shortly after the post.
+        // On the app's context: the screen behind may be closed meanwhile (asleep, it closes when it leaves the front).
+        val app = activity.applicationContext
+        val screen = activity.javaClass
         val h = android.os.Handler(android.os.Looper.getMainLooper())
         var tries = 0
         val look = object : Runnable {
             override fun run() {
-                if (activity.isFinishing || activity.isDestroyed) return
-                if (bubbled(activity) == true) { Log.i(TAG, "bubbled after ${tries + 1} look(s)"); onBubbled(); return }
+                val gone = activity.isFinishing || activity.isDestroyed
+                if (bubbled(app) == true) { Log.i(TAG, "bubbled after ${tries + 1} look(s)"); stepAsideUntil = 0L; if (!gone) onBubbled(); return }
                 if (++tries < CHECK_TRIES) { h.postDelayed(this, CHECK_MS); return }
-                val why = diagnose(activity)
+                stepAsideUntil = 0L
+                val why = diagnose(app)
                 Log.w(TAG, "not a bubble: $why")
-                cancel(activity)
-                explain(activity, why)
+                cancel(app)
+                // Back in front to say why: the dialog needs the screen showing.
+                runCatching { app.startActivity(Intent(app, screen).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(EXTRA_BUBBLE_HELP, why)) }
+                    .onFailure { android.widget.Toast.makeText(app, "Android did not make a bubble of Cru: allow bubbles for Crundi in its notification settings.", android.widget.Toast.LENGTH_LONG).show() }
             }
         }
         h.postDelayed(look, CHECK_MS)

@@ -110,6 +110,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        // The voice screen opened from the top bar just stepped back for Cru's bubble: step aside too,
+        // or this window stays in front and the bubble is folded away (CruBubble.request).
+        if (mv.obitech.crundi.voice.CruBubble.mainShouldStepAside()) { moveTaskToBack(true); return }
         // Back from one of Android's pages the urgent alert setup opened: the next one, if any.
         UrgentSetup.next(this)
         val s = server ?: return
