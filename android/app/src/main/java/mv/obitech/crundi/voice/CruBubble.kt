@@ -55,8 +55,12 @@ object CruBubble {
 
     fun available(ctx: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !BubbleHelp.blocked(ctx)
 
-    /** Open it ([expand]: open now; else folded, as on leaving); a sentence for the person when it can't be done, else null. */
-    fun open(ctx: Context, expand: Boolean = true): String? {
+    /**
+     * Open it ([expand]: open now; else folded, as on leaving); a sentence for the person when it can't be done, else null.
+     * [message]: Cru's own news (an unprompted report), added to the conversation, with a sound unless
+     * [quiet], and kept in the shade too, as a chat's new message is: the bubble shows it beside itself.
+     */
+    fun open(ctx: Context, expand: Boolean = true, message: String? = null, quiet: Boolean = false): String? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return "Bubbles need Android 11 or newer."
         if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return "Allow notifications for Crundi first: a bubble is a kind of notification."
         val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -75,8 +79,12 @@ object CruBubble {
         runCatching { ShortcutManagerCompat.pushDynamicShortcut(ctx, shortcut) }.onFailure { Log.w(TAG, "shortcut not published: ${it.message}") }
         val pi = PendingIntent.getActivity(ctx, ID, target, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
         val open = PendingIntent.getActivity(ctx, ID + 1, screen, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build()).setConversationTitle("Cru")
-            .addMessage("Tap to talk to Cru", System.currentTimeMillis(), cru)
+        // News goes on after what is already showing (two reports in a row read as a conversation).
+        val showing = if (message == null) null else runCatching { nm.activeNotifications.firstOrNull { it.id == ID }?.notification }.getOrNull()
+        val style = (showing?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+            ?: NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())).setConversationTitle("Cru")
+        style.addMessage(message ?: "Tap to talk to Cru", System.currentTimeMillis(), cru)
+        val alert = message != null && !quiet
         val n = NotificationCompat.Builder(ctx, Notifier.CHATS)
             .setSmallIcon(R.drawable.ic_stat)
             .setColor(ctx.getColor(R.color.accent))
@@ -86,14 +94,15 @@ object CruBubble {
             .setLocusId(LocusIdCompat(KEY))
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .addPerson(cru)
-            .setSilent(true).setOnlyAlertOnce(true)
+            .setSilent(!alert).setOnlyAlertOnce(!alert)
             .setContentIntent(open)
             .setBubbleMetadata(
                 NotificationCompat.BubbleMetadata.Builder(pi, icon)
                     .setDesiredHeight(640)
-                    // Asked for: open now, and no second copy in the shade.
+                    // Asked for: open now, and no second copy in the shade. News: open if Android lets
+                    // it (only while Crundi is in front), and in the shade as well, as a chat's message.
                     .setAutoExpandBubble(expand)
-                    .setSuppressNotification(true)
+                    .setSuppressNotification(message == null)
                     .build()
             )
             .build()
@@ -154,6 +163,45 @@ object CruBubble {
             }
         }
         h.postDelayed(look, CHECK_MS)
+    }
+
+    // ─── Cru's unprompted news (11 Nov, the owner: the bubble should open on it, as a chat app's does) ───
+    private const val PENDING_PREFS = "crundi.cru.bubble"
+    private const val PENDING_FRESH_MS = 30 * 60_000L
+
+    /** A push from Cru (a report or a wake-up no screen heard): the server marks it cruChat, an older one only by its link. */
+    fun isNews(payload: org.json.JSONObject): Boolean =
+        payload.optBoolean("cruChat") || CruUnread.isChatPath(payload.optString("url"))
+
+    /**
+     * Cru's news, unheard by any screen: into Cru's bubble as a new message.
+     * Android opens a bubble by itself only while the app is in front; when it
+     * is not, the bubble shows the message beside itself with a sound, as a
+     * chat app's bubble does, and the first tap opens it. Whichever Cru screen
+     * opens next (the bubble, or the voice screen from the notification) then
+     * says [speak] ([takePending]). False: no bubble here (bubbles off, another
+     * server, Android 10): the caller shows the ordinary notification.
+     */
+    fun news(ctx: Context, serverId: String, speak: String, shown: String, quiet: Boolean): Boolean {
+        if (!available(ctx) || mv.obitech.crundi.Servers.current(ctx)?.id != serverId || speak.isBlank()) return false
+        if (open(ctx, expand = true, message = shown.ifBlank { speak }, quiet = quiet) != null) return false
+        // A Cru screen on show (the bubble open, Cru gone quiet): said there now; else on the next opening.
+        val here = onScreen
+        if (here != null) android.os.Handler(android.os.Looper.getMainLooper()).post { here(speak.take(400)) }
+        else ctx.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE).edit().putString("speak", speak.take(400)).putLong("at", System.currentTimeMillis()).apply()
+        return true
+    }
+
+    /** Set by a Cru screen while it is in front: news is handed to it at once. */
+    @Volatile var onScreen: ((String) -> Unit)? = null
+
+    /** What Cru has to say on opening (its last news, if fresh), once; null when nothing. */
+    fun takePending(ctx: Context): String? {
+        val p = ctx.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE)
+        val text = p.getString("speak", null) ?: return null
+        val at = p.getLong("at", 0L)
+        p.edit().remove("speak").remove("at").apply()
+        return text.takeIf { it.isNotBlank() && System.currentTimeMillis() - at in 0..PENDING_FRESH_MS }
     }
 
     /** On the voice screen's intent: the bubble was not made; show how to allow it (the value: what Android reported). */

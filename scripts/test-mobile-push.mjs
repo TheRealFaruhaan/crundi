@@ -256,6 +256,15 @@ ok(['/api/push/mobile', '/api/push/mobile/key', '/api/push/mobile/relay', '/api/
 rmSync(dataDir, { recursive: true, force: true });
 // Quiet: told while the owner is already at Crundi.
 {
+  {
+    // Cru's news: flagged, with the line to say, for the phone's Cru bubble; nothing of it on anything else.
+    const cru = JSON.parse(mp.buildPayload('Sir, the API chat finished. tests pass', { title: 'Cru', url: '/?cru=chat', tag: 'cru', cruChat: true, speak: 'Sir, the API chat finished.' }));
+    ok(cru.cruChat === true && cru.speak === 'Sir, the API chat finished.' && cru.url === '/?cru=chat', 'Cru\'s news carries cruChat and the line to say');
+    const other = JSON.parse(mp.buildPayload('done', { tag: 'finished', speak: 'ignored' }));
+    ok(!('cruChat' in other) && !('speak' in other), 'any other notification carries neither');
+    const huge = mp.buildPayload('y'.repeat(5000), { title: 'Cru', url: '/?cru=chat', tag: 'cru', cruChat: true, speak: 'z'.repeat(5000) });
+    ok(Buffer.byteLength(huge) <= mp.MAX_PAYLOAD_BYTES && JSON.parse(huge).speak.length <= 400, 'a long line is cut and the whole still fits the relay');
+  }
   const quiet = JSON.parse(mp.buildPayload('done', { tag: 'finished', quiet: true }));
   const loud = JSON.parse(mp.buildPayload('done', { tag: 'finished' }));
   ok(quiet.quiet === true && !('quiet' in loud), 'a notification sent while the owner is present says so, and no other does');

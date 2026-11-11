@@ -2895,7 +2895,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
     // …and the phone, whose connection drops when Cru is closed, gets a
     // notification, since the owner may not be at the PC. It opens Cru's chat view.
-    mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, chatId: chatId || undefined }).catch(() => {});
+    mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, speak: line, chatId: chatId || undefined }).catch(() => {});
     return { ok: true, said: spoken ? 'pc' : 'push' };
   }
   /**

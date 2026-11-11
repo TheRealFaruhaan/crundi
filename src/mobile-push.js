@@ -305,6 +305,10 @@ function payloadWith(text, meta, bodyMax) {
     // The item in Crundi's inbox this notification is a copy of (GET
     // /api/inbox). An app that does not know it ignores it.
     ...(meta.inboxId ? { inboxId: String(meta.inboxId).slice(0, 40) } : {}),
+    // Cru's own message (a report, a wake-up) that no screen heard: the phone
+    // opens Cru's bubble with it and says `speak` there (Android 1.1.3-dev.39).
+    // An app that does not know them goes by the url, as before.
+    ...(meta.cruChat ? { cruChat: true, ...(meta.speak ? { speak: clip(meta.speak, 400) } : {}) } : {}),
     ...(meta.inboxThread && /^[A-Za-z0-9_.:-]{1,100}$/.test(String(meta.inboxThread)) ? { inboxThread: String(meta.inboxThread) } : {}),
     ...(Array.isArray(meta.clear) ? { clear: meta.clear.map((k) => String(k).slice(0, 40)).slice(0, 10) } : {}),
     // Chats whose own request has been answered: their notifications go too.

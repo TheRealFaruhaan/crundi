@@ -626,6 +626,11 @@ object Notifier {
         if (body.isEmpty()) return
         val at = payload.optLong("at", System.currentTimeMillis())
         val chatJson = payload.optJSONObject("chat")
+        // Cru's news no screen heard: its bubble, opened where Android allows it, and said there.
+        if (mv.obitech.crundi.voice.CruBubble.isNews(payload) && mv.obitech.crundi.voice.CruBubble.news(ctx, server.id, plain(payload.optString("speak")).ifEmpty { body }, body, payload.optBoolean("quiet"))) {
+            PushLog.add(ctx, "From ${server.host}: Cru's news, into Cru's bubble")
+            return
+        }
         val route = InboxNotify.route(payload, bubblesOn(ctx))
         // Something sent to the owner, with bubbles allowed: its inbox thread's own conversation and bubble.
         if (route == InboxNotify.Route.InboxBubble) { showInbox(ctx, server, payload, body, at); return }

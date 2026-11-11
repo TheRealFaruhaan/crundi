@@ -364,6 +364,9 @@ class VoiceController(
     /** The next question asked was typed or tapped, not said: the server's voice check does not apply to it. */
     private var typedNext = false
 
+    /** Cru's news heard on opening (CruBubble.takePending): said as a report is, once the session listens. */
+    fun news(speak: String) { if (running && speak.isNotBlank()) dispatch(VoiceEvent.Report(speak, "", now())) }
+
     /** The phone has been unlocked since the session opened. */
     fun unlocked() = dispatch(VoiceEvent.Unlocked(now()))
 
