@@ -99,7 +99,7 @@ jobs:
           mkdir -p staging/crundi-server
           cp -r src scripts assets skills package.json package-lock.json staging/crundi-server/
           mkdir -p staging/crundi-server/app
-          cp -r app/vendor staging/crundi-server/app/
+          cp -r app/vendor app/homepool-node.js staging/crundi-server/app/
           cp docker/.env.example staging/crundi-server/.env.example
           # Same pinned browser as the Linux tarball. The Windows server is a
           # zip you extract and run — there is no installer to fetch one later,
@@ -192,7 +192,7 @@ jobs:
           mkdir -p staging/crundi
           cp -r src scripts assets skills package.json package-lock.json staging/crundi/
           mkdir -p staging/crundi/app
-          cp -r app/vendor staging/crundi/app/
+          cp -r app/vendor app/homepool-node.js staging/crundi/app/
           cp docker/.env.example staging/crundi/.env.example
           cd staging/crundi
           npm ci --omit=dev --no-audit --no-fund

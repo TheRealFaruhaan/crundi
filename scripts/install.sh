@@ -222,6 +222,8 @@ for item in src scripts assets skills package.json package-lock.json; do
 done
 mkdir -p "$PREFIX/app"
 [ -d "$SRC/app/vendor" ] && cp -r "$SRC/app/vendor" "$PREFIX/app/"
+# src/homepool*.js import the homepool node script from app/.
+[ -f "$SRC/app/homepool-node.js" ] && cp "$SRC/app/homepool-node.js" "$PREFIX/app/"
 
 if [ "$PREBUILT" -eq 1 ]; then
   say "Copying the prebuilt modules"

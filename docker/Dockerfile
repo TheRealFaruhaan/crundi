@@ -54,6 +54,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY package.json ./
 COPY src ./src
 COPY app/vendor ./app/vendor
+COPY app/homepool-node.js ./app/homepool-node.js
 COPY scripts ./scripts
 # install.sh copies these into the user's Claude config; without them the
 # skill block is a silent no-op.
