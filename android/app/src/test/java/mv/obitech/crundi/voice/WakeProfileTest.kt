@@ -90,6 +90,17 @@ class WakeProfileTest {
         lines.lines().any { it.startsWith("$sp :") && it.endsWith("@HEY_CRU") }
     }
 
+    /**
+     * The model as it hears a voice whose "Hey Cru" sounds to it like the decoy [name]: that decoy where it
+     * is listened for, and, where it is not (training dropped it), "Hey Cru", the nearest line left.
+     */
+    private fun hearsAs(name: String): (String, FloatArray) -> Boolean = { lines, _ ->
+        val sp = CruWake.DECOYS.first { it.first == name }.second
+        val ls = lines.lines()
+        if (ls.any { it.startsWith("$sp :") }) ls.any { it.startsWith("$sp :") && it.endsWith("@HEY_CRU") }
+        else ls.any { it.startsWith("▁HE Y ▁C RU ") && it.endsWith("@HEY_CRU") }
+    }
+
     @Test fun trainingTunesAndKeepsTheVoice() {
         // Five takes of one "voice", a spotter that hears them up to threshold 0.25.
         val takes = (1..5).map { signal(10 + it, 140.0 + it, 0.95 + it * 0.02) }
@@ -116,7 +127,7 @@ class WakeProfileTest {
         assertFalse("WHO" in p.decoys!!)
         assertTrue("YOU" in p.decoys!! && p.decoys!!.size == CruWake.DECOYS.size - 1)
         assertFalse(p.keywordLine().contains("@NOT_WHO"))
-        assertTrue("its own take still wakes", p.matchPhrase(signal(30, 143.0, 1.0), hearsDecoy("WHO")).ok)
+        assertTrue("its own take still wakes", p.matchPhrase(signal(30, 143.0, 1.0), hearsAs("WHO")).ok)
     }
 
     @Test fun anOlderProfileListensForEveryDecoy() {
@@ -138,8 +149,10 @@ class WakeProfileTest {
         assertEquals(0, p.modelHeard)
         assertTrue("the owner's take, on its own, wakes", p.matchPhrase(signal(30, 143.0, 1.0)).ok)
         assertFalse("a very different voice does not", p.matchPhrase(signal(31, 260.0, 0.7)).ok)
-        // Deaf to "Hey Cru", the model may still hear "hey you": that refuses it.
-        assertTrue("nothing heard: the phrase decides", p.matchPhrase(signal(30, 143.0, 1.0)) { _, _ -> false }.ok)
+        // The model's second opinion must hear "Hey Cru": a burst it hears no word in (a hum in the owner's
+        // own voice, 12 Nov) does not wake, however close it sounds; nor one it hears "hey you" in.
+        assertFalse("nothing heard: no word, no wake", p.matchPhrase(signal(30, 143.0, 1.0)) { _, _ -> false }.ok)
+        assertTrue("Hey Cru heard, if faintly: wakes", p.matchPhrase(signal(30, 143.0, 1.0), hearsCru(1.0)).ok)
         assertFalse("a decoy heard refuses it", p.matchPhrase(signal(30, 143.0, 1.0), hearsDecoy("YOU")).ok)
     }
 

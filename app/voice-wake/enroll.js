@@ -99,7 +99,7 @@ const STRICT_MARGIN = 1.3;
 const LENGTH_RANGE = [0.65, 1.5];
 /** At least this share of a burst's loud frames must be voiced (vowels have a pitch; noise has none). */
 const MIN_VOICED = 0.3;
-/** Below this many takes heard by the model, the phrase wakes without its second opinion (only a decoy heard refuses it). */
+/** Below this many takes heard by the model, its second opinion on the phrase must also hear no decoy beside "Hey Cru". */
 const MODEL_TRUSTED = 3;
 /**
  * The onset check: the closest the burst comes to a take in its worst 150 ms
@@ -579,8 +579,15 @@ export function matchPhrase(profile, segment, confirm = null) {
     // it can't, a decoy heard still refuses it.
     const r = confirm(levelled(c.clip));
     const names = Array.isArray(r) ? r : (r ? [WAKE] : []);
-    if ((profile.modelHeard ?? 0) >= MODEL_TRUSTED) { if (!names.includes(WAKE)) return no('model', score); }
-    else if (names.some(k => k !== WAKE)) return no('decoy', score);
+    // The model must hear "Hey Cru" in it, if only faintly, whatever the profile: a burst it hears
+    // no word in is not a call. 12 Nov, the owner (PC, background listening on): a "hmm hmm" woke
+    // Cru. A hum in the owner's own voice, as long as his takes, is voiced and close to them, and
+    // a profile the model had heard fewer than MODEL_TRUSTED of his takes in woke on that alone
+    // (only a decoy heard refused it, and a hum has no words). The model at its loosest hears no
+    // "Hey Cru" in a hum, and does in every "Hey Cru" and "Hey crew" of the recordings tried.
+    if (!names.includes(WAKE)) return no(names.length ? 'decoy' : 'no word', score);
+    // ...and where it hears this voice poorly, no decoy beside it either.
+    if ((profile.modelHeard ?? 0) < MODEL_TRUSTED && names.some(k => k !== WAKE)) return no('decoy', score);
   }
   return { ok: true, score };
 }

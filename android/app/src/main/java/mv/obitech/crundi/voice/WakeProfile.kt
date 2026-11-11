@@ -87,9 +87,9 @@ data class WakeProfile(
      * Cru"? As long as their takes, voiced (speech, not a noise), close to
      * them compared whole and both ways, every part close (the onset check),
      * and the model's second opinion from [hears] (did a keyword named
-     * HEY_CRU fire, on the clip as given): when the model can hear this
-     * voice, it must hear "Hey Cru" over the decoys, if only faintly; when it
-     * can't, a decoy heard still refuses it. As enroll.js's matchPhrase.
+     * HEY_CRU fire, on the clip as given): it must hear "Hey Cru" over the
+     * decoys, if only faintly, whatever the profile; where it hears this voice
+     * poorly, a decoy heard also refuses it. As enroll.js's matchPhrase.
      */
     fun matchPhrase(segment: FloatArray, hears: ((line: String, clip: FloatArray) -> Boolean)? = null): CruWake.Verdict {
         val no = CruWake.Verdict(false, Double.POSITIVE_INFINITY)
@@ -105,9 +105,13 @@ data class WakeProfile(
         if (window > 0 && feats.minOf { maxOf(CruWake.windowDistance(it, f), CruWake.windowDistance(f, it)) } > window) return CruWake.Verdict(false, score)
         if (hears != null) {
             val clip = CruWake.padded(CruWake.levelled(c.clip))
-            if (modelHeard >= 3) { if (!hears(confirmLines(), clip)) return CruWake.Verdict(false, score) }
-            // The decoys reported as HEY_CRU, "Hey Cru" as something else: the same contest, the other question.
-            else if (decoyList.isNotEmpty() && hears(CruWake.asWake(CruWake.CONFIRM_THRESHOLD, keywordsScore, decoyList, decoyList.map { it.first }.toSet()), clip)) return CruWake.Verdict(false, score)
+            // The model must hear "Hey Cru" in it, whatever the profile: a burst with no word in it is not a
+            // call (12 Nov, the owner: a "hmm hmm" woke Cru; a profile the model heard few takes of woke on
+            // the sound alone). As enroll.js's matchPhrase.
+            if (!hears(confirmLines(), clip)) return CruWake.Verdict(false, score)
+            // Where it hears this voice poorly, no decoy either. The decoys reported as HEY_CRU, "Hey Cru" as
+            // something else: the same contest, the other question.
+            if (modelHeard < 3 && decoyList.isNotEmpty() && hears(CruWake.asWake(CruWake.CONFIRM_THRESHOLD, keywordsScore, decoyList, decoyList.map { it.first }.toSet()), clip)) return CruWake.Verdict(false, score)
         }
         return CruWake.Verdict(true, score)
     }
