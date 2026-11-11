@@ -85,12 +85,16 @@
     '.brd-url { flex: 1 1 auto; min-width: 60px; height: 28px; padding: 0 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 999px; font-size: 0.78rem; font-family: var(--mono); outline: none; }',
     '.brd-url:focus { border-color: var(--accent); }',
     '.brd-sel { height: 28px; max-width: 130px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 6px; font-size: 0.72rem; cursor: pointer; padding: 0 4px; flex: 0 1 auto; min-width: 0; }',
+    '.brd-sel.brd-netsel { min-width: 84px; flex: 0 0 auto; }',
     '.brd-sel.brd-netsel.server { border-color: var(--accent); color: var(--text-primary); }',
     '.brd-annbar { background: var(--bg-tertiary); font-size: 0.74rem; color: var(--text-secondary); flex-wrap: wrap; }',
     '.brd-annbar[hidden] { display: none; }',
     '.brd-annbar .brd-btn { height: 26px; padding: 0 10px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; cursor: pointer; font-size: 0.74rem; }',
     '.brd-annbar .brd-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }',
     '.brd-annbar .brd-btn:disabled { opacity: 0.4; cursor: default; }',
+    '.brd-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }',
+    '.brd-sendlbl { color: var(--text-muted); margin-left: 2px; }',
+    '.brd-annbar .brd-send:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }',
     '.brd-stage { flex: 1 1 auto; min-height: 0; position: relative; overflow: hidden; background-color: var(--bg-primary); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 16px 16px; }',
     '.brd-views { position: absolute; inset: 0; }',
     // Every <webview>: laid out, rendering; only the shown one is visible and takes input.
@@ -99,10 +103,15 @@
     'body.brd-dragging .brd-wv, body.brd-dragging iframe { pointer-events: none !important; }',
     '.brd-ann { position: absolute; z-index: 2; pointer-events: none; overflow: hidden; }',
     '.brd-ann.drawing { pointer-events: auto; cursor: crosshair; }',
+    '.brd-ann.drawing.picking { cursor: pointer; }',
+    '.brd-hov { position: absolute; border: 2px solid #ea580c; background: rgba(234,88,12,0.12); pointer-events: none; border-radius: 2px; }',
+    '.brd-hov span { position: absolute; left: -2px; bottom: 100%; margin-bottom: 2px; padding: 1px 6px; border-radius: 4px; background: #ea580c; color: #fff; font: 11px/1.4 var(--mono, monospace); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }',
+    '.brd-tab.sleeping .brd-t { opacity: 0.5; font-style: italic; }',
     '.brd-ann svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }',
     '.brd-lbl { position: absolute; max-width: 240px; padding: 3px 7px; border-radius: 6px; font: 12px/1.35 system-ui, sans-serif; color: #fff; white-space: pre-wrap; word-break: break-word; box-shadow: 0 2px 6px rgba(0,0,0,0.35); pointer-events: none; }',
     '.brd-lbl.you { background: #ea580c; } .brd-lbl.claude { background: #6366f1; }',
     '.brd-lbl .brd-who { font-weight: 700; opacity: 0.85; margin-right: 4px; }',
+    '.brd-lbl .brd-css { display: block; font: 10px/1.35 var(--mono, monospace); opacity: 0.85; }',
     '.brd-note { position: absolute; z-index: 4; display: flex; gap: 4px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.4); pointer-events: auto; }',
     '.brd-note input { width: 220px; height: 26px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 5px; padding: 0 8px; font-size: 0.78rem; outline: none; }',
     '.brd-empty, .brd-diag { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.82rem; text-align: center; padding: 24px; z-index: 3; }',
@@ -145,7 +154,7 @@
     var project = null;
     var runtime = {};   // tabId → { wv, attached: Promise, ready: bool, state, ann: [], scale, box }
     var info = { mode: 'local', status: 'direct', labels: { client: 'This PC', server: 'Server' } };
-    var annotating = false, annTool = 'box';
+    var annotating = false, annTool = 'pick';
 
     function findTab(tabId) {
       var ps = Object.keys(st.projects);
@@ -176,13 +185,17 @@
       + '<button class="brd-ibtn" data-brd="devtools" title="DevTools">' + ic('terminal') + '</button>'
       + '</div>'
       + '<div class="brd-annbar" hidden>'
-      + '<button class="brd-ibtn" data-tool="pin" title="Pin a note">' + ic('pin') + '</button>'
-      + '<button class="brd-ibtn on" data-tool="box" title="Draw a box">' + ic('square') + '</button>'
-      + '<button class="brd-ibtn" data-tool="pen" title="Draw freehand">' + ic('pencil') + '</button>'
+      + '<button class="brd-ibtn on" data-tool="pick" title="Select an element and annotate it (its CSS selector goes with the note)">' + ic('layers') + '</button>'
+      + '<span class="brd-sep"></span>'
+      + '<button class="brd-ibtn" data-tool="pin" title="Draw: a pin with a note">' + ic('pin') + '</button>'
+      + '<button class="brd-ibtn" data-tool="box" title="Draw: a box">' + ic('square') + '</button>'
+      + '<button class="brd-ibtn" data-tool="pen" title="Draw: freehand">' + ic('pencil') + '</button>'
       + '<span class="brd-count"></span>'
       + '<span style="flex:1 1 auto"></span>'
       + '<select class="brd-sel brd-chat" title="Chat to send to"></select>'
-      + '<button class="brd-btn primary" data-ann="send" title="Attach a screenshot with these marks, and what they point at, to the chat">Send to chat</button>'
+      + '<span class="brd-sendlbl">Send</span>'
+      + '<button class="brd-ibtn brd-send" data-ann="send-css" title="">' + ic('file-text') + '</button>'
+      + '<button class="brd-ibtn brd-send" data-ann="send-shot" title="">' + ic('image') + '</button>'
       + '<button class="brd-btn" data-ann="clear" title="Remove your marks">Clear</button>'
       + '<button class="brd-btn" data-ann="done">Done</button>'
       + '</div>'
@@ -228,7 +241,7 @@
         var a = document.activeElement; if (a && root.contains(a)) { try { a.blur(); } catch (e) { /* ignore */ } }
       }
       applyWidth();
-      layout();
+      showActive();
       if (host.onLayout) host.onLayout();
     }
     function open() { if (!st.open) { st.open = true; persist(); applyOpen(); } if (project && !proj(project).tabs.length) newTab(START, 'client', true); else showActive(); }
@@ -261,7 +274,8 @@
       var act = activeTab();
       var h = ps.tabs.map(function (t) {
         var net = t.network === 'server' ? '<span class="brd-net-dot server' + (serverBad() ? ' bad' : '') + '" title="' + esc('Network: ' + netLabel('server')) + '">SRV</span>' : '';
-        return '<div class="brd-tab' + (act && act.id === t.id ? ' on' : '') + '" role="tab" data-tab="' + esc(t.id) + '" title="' + esc((t.title || t.url || '') + '\n' + (t.url || '') + '\nNetwork: ' + netLabel(t.network)) + '">'
+        var rt = runtime[t.id]; var zz = !!(rt && rt.sleeping);
+        return '<div class="brd-tab' + (act && act.id === t.id ? ' on' : '') + (zz ? ' sleeping' : '') + '" role="tab" data-tab="' + esc(t.id) + '" title="' + esc((t.title || t.url || '') + '\n' + (t.url || '') + '\nNetwork: ' + netLabel(t.network) + (zz ? '\nAsleep: wakes, as it was, when shown or used' : '')) + '">'
           + net + '<span class="brd-t">' + esc(t.title || t.url || 'New tab') + '</span>'
           + '<button class="brd-x" data-close="' + esc(t.id) + '" title="Close tab">' + ic('x') + '</button></div>';
       }).join('');
@@ -330,8 +344,8 @@
           var id; try { id = wv.getWebContentsId(); } catch (e) { reject(e); return; }
           api.attach({ tabId: t.id, project: p, network: t.network, wcId: id }).then(function (res) {
             if (!res || !res.ok) { reject(new Error((res && res.error) || 'attach failed')); return; }
-            r.ready = true; r.emuKey = '';
-            layout();
+            r.ready = true; r.emuKey = ''; r.shownSent = undefined;
+            layout(); showActive();
             if (load && t.url && t.url !== 'about:blank') api.navigate(t.id, t.url);
             resolve();
           }, reject);
@@ -367,7 +381,13 @@
     function showActive() {
       var t = st.open ? activeTab() : null;
       if (t) ensure(t, project);
-      Object.keys(runtime).forEach(function (id) { var r = runtime[id]; if (r.wv) r.wv.classList.toggle('on', !!t && id === t.id); });
+      Object.keys(runtime).forEach(function (id) {
+        var r = runtime[id]; if (!r.wv) return;
+        var on = !!t && id === t.id;
+        r.wv.classList.toggle('on', on);
+        // Which tab is on screen: the main process lets the others fall asleep.
+        if (r.ready && r.shownSent !== on && api.visible) { r.shownSent = on; api.visible(id, on); }
+      });
       renderBar(); renderAnn(); layout();
     }
 
@@ -433,6 +453,7 @@
       r.ann.forEach(function (a, i) {
         var c = colorOf(a);
         if (a.kind === 'box') svg.appendChild(el('rect', { x: a.x * k, y: a.y * k, width: a.width * k, height: a.height * k, fill: c + '22', stroke: c, 'stroke-width': 2.5, rx: 3 }));
+        else if (a.kind === 'element') svg.appendChild(el('rect', { x: a.x * k, y: a.y * k, width: a.width * k, height: a.height * k, fill: c + '18', stroke: c, 'stroke-width': 2, 'stroke-dasharray': '6 3', rx: 2 }));
         else if (a.kind === 'arrow') svg.appendChild(el('line', { x1: a.x * k, y1: a.y * k, x2: a.toX * k, y2: a.toY * k, stroke: c, 'stroke-width': 3, 'marker-end': 'url(#brd-arr' + (a.by === 'claude' ? 0 : 1) + ')' }));
         else if (a.kind === 'pen' && a.points) svg.appendChild(el('polyline', { points: a.points.map(function (p) { return (p[0] * k) + ',' + (p[1] * k); }).join(' '), fill: 'none', stroke: c, 'stroke-width': 3, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
         else if (a.kind === 'pin') {
@@ -441,27 +462,32 @@
           var tx = el('text', { x: a.x * k, y: a.y * k + 4, 'text-anchor': 'middle', fill: '#fff', 'font-size': 11, 'font-weight': 700, 'font-family': 'system-ui, sans-serif' });
           tx.textContent = String(i + 1); g.appendChild(tx); svg.appendChild(g);
         }
-        if (a.text || a.kind === 'label') {
+        if (a.text || a.kind === 'label' || a.kind === 'element') {
           var lbl = document.createElement('div');
           lbl.className = 'brd-lbl ' + (a.by === 'claude' ? 'claude' : 'you');
-          var ax = a.kind === 'box' ? a.x * k : (a.kind === 'arrow' ? a.x * k : a.x * k + 17);
-          var ay = a.kind === 'box' ? a.y * k + a.height * k + 4 : (a.kind === 'arrow' ? a.y * k - 24 : a.y * k - 11);
+          var boxy = a.kind === 'box' || a.kind === 'element';
+          var ax = boxy ? a.x * k : (a.kind === 'arrow' ? a.x * k : a.x * k + 17);
+          var ay = boxy ? a.y * k + a.height * k + 4 : (a.kind === 'arrow' ? a.y * k - 24 : a.y * k - 11);
           if (a.kind === 'pen' && a.points && a.points.length) { ax = a.points[a.points.length - 1][0] * k + 6; ay = a.points[a.points.length - 1][1] * k; }
           lbl.style.left = Math.max(0, Math.min(ax, r.box.width - 60)) + 'px';
           lbl.style.top = Math.max(0, Math.min(ay, r.box.height - 22)) + 'px';
-          lbl.innerHTML = '<span class="brd-who">' + (i + 1) + (a.by === 'claude' ? ' Claude' : '') + '</span>' + esc(a.text || '');
+          lbl.innerHTML = '<span class="brd-who">' + (i + 1) + (a.by === 'claude' ? ' Claude' : '') + '</span>' + esc(a.text || '')
+            + (a.kind === 'element' && a.selector ? '<span class="brd-css">' + esc(a.selector) + '</span>' : '');
           annEl.appendChild(lbl);
         }
       });
+      renderMode();
       var cnt = root.querySelector('.brd-count');
       var mine = r.ann.filter(function (a) { return a.by !== 'claude'; }).length;
-      cnt.textContent = r.ann.length ? (mine + ' yours' + (r.ann.length - mine ? ', ' + (r.ann.length - mine) + ' from Claude' : '')) : 'Draw on the page';
+      cnt.textContent = r.ann.length ? (mine + ' yours' + (r.ann.length - mine ? ', ' + (r.ann.length - mine) + ' from Claude' : '')) : 'Select an element, or draw';
     }
 
     function setAnnotating(on) {
       annotating = !!on && !!activeTab();
       annBar.hidden = !annotating;
       annEl.classList.toggle('drawing', annotating);
+      annEl.classList.toggle('picking', annotating && annTool === 'pick');
+      hideHover();
       if (annotating) fillChats();
       var b = root.querySelector('[data-brd="annotate"]'); if (b) b.classList.toggle('on', annotating);
       closeNote();
@@ -473,7 +499,48 @@
       chatSel.innerHTML = list.length ? list.map(function (c) { return '<option value="' + esc(c.id) + '">' + esc(c.title || 'Chat') + '</option>'; }).join('') : '<option value="">No chat open in this project</option>';
       var pick = list.find(function (c) { return c.id === keep; }) || list.find(function (c) { return c.focused; }) || list[0];
       if (pick) chatSel.value = pick.id;
-      root.querySelector('[data-ann="send"]').disabled = !list.length;
+      renderMode();
+    }
+
+    // Sending: "CSS selectors" sends the selected elements' notes and
+    // selectors as text; "Full screenshot" attaches the page with every mark
+    // drawn in (selected elements still listed with their selectors). Drawn
+    // marks (pin, box, freehand) have no selector, so once there is one only
+    // the screenshot can carry it.
+    function renderMode() {
+      var t = activeTab(); var r = t && runtime[t.id];
+      var anns = ((r && r.ann) || []).filter(function (a) { return a.by !== 'claude'; });
+      var drawn = anns.some(function (a) { return a.kind !== 'element' && !a.selector; });
+      var picked = anns.some(function (a) { return a.kind === 'element' || a.selector; });
+      var noChat = !chatSel.value;
+      var css = root.querySelector('[data-ann="send-css"]'), shot = root.querySelector('[data-ann="send-shot"]');
+      css.disabled = noChat || drawn || !picked;
+      css.title = noChat ? 'Open a chat in this project first'
+        : drawn ? 'CSS selectors: not available while something is drawn on the page (a drawing has no selector). Send the full screenshot, or clear the drawing.'
+        : !picked ? 'CSS selectors: select an element first'
+        : 'Send to the chat: the selected elements, with their notes and CSS selectors (no picture)';
+      shot.disabled = noChat;
+      shot.title = noChat ? 'Open a chat in this project first' : 'Send to the chat: the full screenshot with your marks drawn in' + (picked ? ', and the selected elements\' selectors' : '');
+    }
+
+    // Element picker: what is under the pointer, outlined with its selector.
+    var hovEl = null, hovBusy = false, hovNext = null;
+    function hideHover() { hovNext = null; if (hovEl) { hovEl.remove(); hovEl = null; } }
+    function showHover(e) {
+      var t = activeTab(); var r = t && runtime[t.id];
+      if (!e || !r || !r.box || !annotating || annTool !== 'pick') { hideHover(); return; }
+      var k = r.box.scale || 1;
+      if (!hovEl) { hovEl = document.createElement('div'); hovEl.className = 'brd-hov'; hovEl.innerHTML = '<span></span>'; annEl.appendChild(hovEl); }
+      hovEl.style.left = (e.rect.x * k) + 'px'; hovEl.style.top = (e.rect.y * k) + 'px';
+      hovEl.style.width = Math.max(2, e.rect.width * k) + 'px'; hovEl.style.height = Math.max(2, e.rect.height * k) + 'px';
+      hovEl.firstChild.textContent = e.selector;
+    }
+    function hoverLoop() {
+      if (!hovNext || hovBusy) return;
+      var t = activeTab(); if (!t) return;
+      var p = hovNext; hovNext = null; hovBusy = true;
+      api.describe(t.id, [p]).then(function (res) { hovBusy = false; if (annTool === 'pick' && annotating) showHover(res && res.elements && res.elements[0]); hoverLoop(); },
+        function () { hovBusy = false; });
     }
 
     // Drawing: pointer coordinates → page CSS px.
@@ -485,12 +552,22 @@
       var t = activeTab(); if (!t) return; var r = runtime[t.id];
       var p = toPage(ev);
       if (annTool === 'pin') { var a = { id: uid(), by: 'you', kind: 'pin', x: p[0], y: p[1], text: '' }; r.ann.push(a); renderAnn(); askNote(a); return; }
+      if (annTool === 'pick') {
+        api.describe(t.id, [p]).then(function (res) {
+          var e = res && res.elements && res.elements[0]; if (!e) return;
+          hideHover();
+          var m = { id: uid(), by: 'you', kind: 'element', x: e.rect.x, y: e.rect.y, width: e.rect.width, height: e.rect.height, text: '', element: e, selector: e.selector };
+          r.ann.push(m); renderAnn(); askNote(m);
+        });
+        return;
+      }
       var a2 = annTool === 'pen' ? { id: uid(), by: 'you', kind: 'pen', points: [p], x: p[0], y: p[1], text: '' } : { id: uid(), by: 'you', kind: 'box', x: p[0], y: p[1], width: 1, height: 1, text: '' };
       drag = { a: a2, start: p };
       r.ann.push(a2);
       try { annEl.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic pointer */ }
     });
     annEl.addEventListener('pointermove', function (ev) {
+      if (!drag && annotating && annTool === 'pick' && !ev.target.closest('.brd-note')) { hovNext = toPage(ev); hoverLoop(); return; }
       if (!drag) return;
       var p = toPage(ev); var a = drag.a;
       if (a.kind === 'pen') { a.points.push(p); }
@@ -516,7 +593,8 @@
       var t = activeTab(); var r = runtime[t.id]; var k = r.box.scale || 1;
       noteEl = document.createElement('div'); noteEl.className = 'brd-note';
       noteEl.innerHTML = '<input type="text" placeholder="Note (Enter to keep, Esc to skip)">';
-      var ax = (a.kind === 'box' ? a.x + a.width : a.x) * k, ay = (a.kind === 'box' ? a.y + a.height : a.y) * k;
+      var boxy = a.kind === 'box' || a.kind === 'element';
+      var ax = (boxy ? a.x + a.width : a.x) * k, ay = (boxy ? a.y + a.height : a.y) * k;
       noteEl.style.left = Math.max(0, Math.min(ax, r.box.width - 240)) + 'px';
       noteEl.style.top = Math.max(0, Math.min(ay + 6, r.box.height - 40)) + 'px';
       annEl.appendChild(noteEl);
@@ -531,8 +609,10 @@
     }
 
     // A screenshot of the page with the marks drawn in, as base64 PNG.
-    function composite(tabId) {
+    // only: which marks to draw (default all); numbered in that order.
+    function composite(tabId, only) {
       var r = runtime[tabId];
+      var marks = only ? r.ann.filter(only) : r.ann;
       return api.capture(tabId).then(function (cap) {
         if (!cap || !cap.ok) throw new Error((cap && cap.error) || 'capture failed');
         return new Promise(function (resolve, reject) {
@@ -541,13 +621,14 @@
             var cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
             var g = cv.getContext('2d'); g.drawImage(img, 0, 0);
             var k = (img.width / (r.box.width || img.width)) * (r.box.scale || 1);
-            r.ann.forEach(function (a, i) {
+            marks.forEach(function (a, i) {
               var c = colorOf(a);
               g.lineWidth = 3 * img.width / (r.box.width || img.width); g.strokeStyle = c; g.fillStyle = c;
               if (a.kind === 'box') { g.strokeRect(a.x * k, a.y * k, a.width * k, a.height * k); }
+              else if (a.kind === 'element') { g.setLineDash([6 * k, 3 * k]); g.strokeRect(a.x * k, a.y * k, a.width * k, a.height * k); g.setLineDash([]); }
               else if (a.kind === 'arrow') { g.beginPath(); g.moveTo(a.x * k, a.y * k); g.lineTo(a.toX * k, a.toY * k); g.stroke(); var ang = Math.atan2(a.toY - a.y, a.toX - a.x); var hl = 12 * k; g.beginPath(); g.moveTo(a.toX * k, a.toY * k); g.lineTo(a.toX * k - hl * Math.cos(ang - 0.45), a.toY * k - hl * Math.sin(ang - 0.45)); g.lineTo(a.toX * k - hl * Math.cos(ang + 0.45), a.toY * k - hl * Math.sin(ang + 0.45)); g.closePath(); g.fill(); }
               else if (a.kind === 'pen' && a.points) { g.beginPath(); a.points.forEach(function (p, j) { if (j) g.lineTo(p[0] * k, p[1] * k); else g.moveTo(p[0] * k, p[1] * k); }); g.stroke(); }
-              var lx = a.kind === 'box' ? a.x * k : a.x * k, ly = a.kind === 'box' ? a.y * k : a.y * k;
+              var lx = a.x * k, ly = a.y * k;
               var rad = 11 * img.width / (r.box.width || img.width);
               g.beginPath(); g.arc(a.kind === 'pin' ? lx : lx + rad, a.kind === 'pin' ? ly : ly + rad, rad, 0, Math.PI * 2); g.fill();
               g.fillStyle = '#fff'; g.font = 'bold ' + Math.round(rad * 1.1) + 'px system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
@@ -561,39 +642,58 @@
       });
     }
     function anchorOf(a) {
-      if (a.kind === 'box') return [a.x + a.width / 2, a.y + a.height / 2];
+      if (a.kind === 'box' || a.kind === 'element') return [a.x + a.width / 2, a.y + a.height / 2];
       if (a.kind === 'arrow') return [a.toX, a.toY];
       return [a.x, a.y];
     }
     function annList(r) {
       return r.ann.map(function (a, i) {
         var o = { n: i + 1, by: a.by === 'claude' ? 'claude' : 'person', kind: a.kind, text: a.text || '', x: a.x, y: a.y, anchor: anchorOf(a) };
-        if (a.kind === 'box') { o.width = a.width; o.height = a.height; }
+        if (a.kind === 'box' || a.kind === 'element') { o.width = a.width; o.height = a.height; }
+        if (a.kind === 'element' && a.element) o.picked = a.element;
+        else if (a.selector) o.picked = { selector: a.selector };
         if (a.kind === 'arrow') { o.toX = a.toX; o.toY = a.toY; }
         if (a.kind === 'pen') o.points = a.points.length;
         return o;
       });
     }
 
-    function sendToChat() {
+    function sendToChat(withShot) {
       var t = activeTab(); if (!t) return;
       var r = runtime[t.id]; var chatId = chatSel.value;
       if (!chatId) { toast('Open a chat in this project first', 'error'); return; }
-      var btn = root.querySelector('[data-ann="send"]'); btn.disabled = true;
-      var list = annList(r);
-      Promise.all([composite(t.id), api.describe(t.id, list.map(function (a) { return a.anchor; })).catch(function () { return { elements: [] }; })]).then(function (res) {
-        var png = res[0], els = (res[1] && res[1].elements) || [];
+      // What you send is your marks (a chat knows its own), numbered 1.. in
+      // the text and in the screenshot alike.
+      var mineOnly = function (a) { return a.by !== 'claude'; };
+      var list = annList(r).filter(function (a) { return a.by !== 'claude'; });
+      list.forEach(function (a, i) { a.n = i + 1; });
+      var drawn = list.filter(function (a) { return !a.picked; });
+      if (!withShot && (drawn.length || !list.length)) { renderMode(); return; }
+      root.querySelectorAll('.brd-send').forEach(function (b) { b.disabled = true; });
+      (withShot ? composite(t.id, mineOnly) : Promise.resolve(null)).then(function (png) {
         var s = (r.state && r.state.url) || t.url || '';
-        var lines = ['Browser: ' + s + (t.title ? ' (' + t.title + ')' : '') + ', viewport ' + Math.round(r.box.pageW) + 'x' + Math.round(r.box.pageH) + (t.network === 'server' ? ', server network' : '') + ' [drawer tab key: drawer:' + t.id + ']'];
-        list.forEach(function (a, i) {
-          var e = els[i];
-          var where = a.kind === 'box' ? 'box at ' + a.x + ',' + a.y + ' size ' + a.width + 'x' + a.height : a.kind + ' at ' + Math.round(a.anchor[0]) + ',' + Math.round(a.anchor[1]);
-          lines.push(a.n + '. ' + (a.by === 'claude' ? '(Claude) ' : '') + where + (e ? ' on <' + e.tag + '> ' + e.selector + (e.text ? ' "' + e.text.slice(0, 80) + '"' : '') : '') + (a.text ? ': ' + a.text : ''));
+        var lines = ['Browser: ' + s + (t.title ? ' (' + t.title + ')' : '') + ', viewport ' + Math.round(r.box.pageW) + 'x' + Math.round(r.box.pageH)
+          + (t.network === 'server' ? ', server network' : '') + ' [drawer tab key: drawer:' + t.id + ']'
+          + (withShot ? ', screenshot attached with the marks numbered' : '')];
+        list.forEach(function (a) {
+          var who = '';
+          if (a.picked) {
+            var e = a.picked;
+            lines.push(a.n + '. ' + who + (a.kind === 'element' ? 'element' : a.kind) + (a.text ? ': ' + a.text : ''));
+            lines.push('   selector: ' + e.selector);
+            if (e.tag) lines.push('   element: <' + e.tag + '>' + (e.text ? ' "' + e.text.slice(0, 100) + '"' : ''));
+            if (e.html) lines.push('   html: ' + e.html.slice(0, 200));
+          } else {
+            var where = a.kind === 'box' ? 'box at ' + Math.round(a.x) + ',' + Math.round(a.y) + ' size ' + Math.round(a.width) + 'x' + Math.round(a.height)
+              : a.kind === 'pen' ? 'drawing around ' + Math.round(a.anchor[0]) + ',' + Math.round(a.anchor[1])
+              : a.kind + ' at ' + Math.round(a.anchor[0]) + ',' + Math.round(a.anchor[1]);
+            lines.push(a.n + '. ' + who + where + ' (see the screenshot)' + (a.text ? ': ' + a.text : ''));
+          }
         });
         if (!list.length) lines.push('(no marks: the page as it is)');
         return host.sendToChat(chatId, lines.join('\n'), png);
       }).then(function () { toast('Added to the chat: press Send there'); }, function (err) { toast('Could not attach: ' + (err && err.message || err), 'error'); })
-        .then(function () { btn.disabled = false; });
+        .then(function () { renderMode(); });
     }
 
     // ─── Toolbar ───
@@ -615,18 +715,20 @@
       t.device = devSel.value === 'custom' ? 'custom' : (Number(devSel.value) || 0); persist();
       layout(); renderBar();
     });
+    chatSel.addEventListener('change', function () { renderMode(); });
     netSel.addEventListener('change', function () { var t = activeTab(); if (t) setNetwork(t.id, netSel.value); });
     root.addEventListener('click', function (e) {
       var x = e.target.closest('[data-close]'); if (x) { e.stopPropagation(); closeTab(x.dataset.close); return; }
       var tb = e.target.closest('.brd-tab'); if (tb) { activate(tb.dataset.tab); return; }
       var tool = e.target.closest('[data-tool]');
-      if (tool) { annTool = tool.dataset.tool; root.querySelectorAll('[data-tool]').forEach(function (b) { b.classList.toggle('on', b === tool); }); return; }
+      if (tool) { annTool = tool.dataset.tool; root.querySelectorAll('[data-tool]').forEach(function (b) { b.classList.toggle('on', b === tool); }); annEl.classList.toggle('picking', annTool === 'pick'); hideHover(); return; }
       var an = e.target.closest('[data-ann]');
       if (an) {
         var t0 = activeTab(); var r0 = t0 && runtime[t0.id];
         if (an.dataset.ann === 'done') setAnnotating(false);
         else if (an.dataset.ann === 'clear' && r0) { r0.ann = r0.ann.filter(function (a) { return a.by === 'claude'; }); renderAnn(); }
-        else if (an.dataset.ann === 'send') sendToChat();
+        else if (an.dataset.ann === 'send-css') sendToChat(false);
+        else if (an.dataset.ann === 'send-shot') sendToChat(true);
         return;
       }
       var b = e.target.closest('[data-brd]'); if (!b) return;
@@ -663,6 +765,7 @@
       var f = findTab(s.tabId); var r = runtime[s.tabId];
       if (!f || !r) return;
       if (s.diag) { r.diag = s.diag; if (f.project === project) renderBar(); return; }
+      if (typeof s.sleeping === 'boolean') r.sleeping = s.sleeping;
       var prev = r.state && r.state.url;
       r.state = s; r.diag = '';
       if (s.url && s.url !== 'about:blank') f.tab.url = s.url;
@@ -680,7 +783,7 @@
     // ─── Requests from the main process (the server's chats) ───
     function tabOut(t, p) {
       var r = runtime[t.id];
-      return { tabId: t.id, project: p, url: (r && r.state && r.state.url) || t.url, title: t.title || '', network: t.network || 'client',
+      return { tabId: t.id, project: p, url: (r && r.state && r.state.url) || t.url, title: t.title || '', network: t.network || 'client', sleeping: !!(r && r.sleeping),
         active: proj(p).active === t.id, shown: st.open && p === project && (activeTab() || {}).id === t.id, loaded: !!(r && r.ready),
         device: t.device === 'custom' ? (t.custom ? 'custom ' + t.custom.w + 'x' + t.custom.h : 'custom') : (DEVICES[t.device || 0] || DEVICES[0]).name };
     }
@@ -724,6 +827,7 @@
         var drawn = 0;
         (a.shapes || []).forEach(function (s) {
           var x = { id: uid(), by: 'claude', kind: s.kind, x: s.x, y: s.y, text: s.text || '' };
+          if (s.selector) x.selector = s.selector;
           if (s.kind === 'box') { x.width = s.width; x.height = s.height; }
           if (s.kind === 'arrow') { x.toX = s.toX; x.toY = s.toY; }
           if (s.kind === 'label' || s.kind === 'pin' || s.kind === 'box' || s.kind === 'arrow') { r.ann.push(x); drawn++; }

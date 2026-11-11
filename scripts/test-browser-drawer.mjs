@@ -141,7 +141,7 @@ const proj = (fn) => as('proj', fn);
 // ─── Launch the client ───
 const userData = mkdtempSync(join(tmpdir(), 'crundi-drawer-ud-'));
 const args = [join(root, 'scripts', 'drawer-e2e', 'harness.mjs'), '--no-sandbox', `--user-data-dir=${userData}`];
-const env = { ...process.env, SERVER_URL: `http://127.0.0.1:${web.address().port}`, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', EXIT_ON_CLOSE: '1' };
+const env = { ...process.env, SERVER_URL: `http://127.0.0.1:${web.address().port}`, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', EXIT_ON_CLOSE: '1', DRAWER_SLEEP_MS: '3000' };
 // Its own process group, so the whole tree (xvfb-run, Xvfb, Electron) can be
 // stopped together: killing xvfb-run alone leaves Electron and Xvfb running.
 const child = needXvfb
@@ -212,26 +212,43 @@ try {
   const pagePx = await client('pixel', await page('(function(){var r=document.querySelector(".brd-wv.on").getBoundingClientRect();return {x:r.right-20,y:r.bottom-20};})()'));
   check('and the page shows around them', pagePx.rgb && pagePx.rgb[1] > 200 && pagePx.rgb[0] < 60, JSON.stringify(pagePx.rgb));
 
-  // ── The person annotates and sends it to a chat ──
-  await page(`(function(){
-    document.querySelector('[data-brd="annotate"]').click();
+  // ── The person marks the page and sends it to a chat ──
+  const ptr = (tool, pts, note) => page(`(async function(){
+    var bar=document.querySelector('.brd-annbar'); if (bar.hidden) document.querySelector('[data-brd="annotate"]').click();
+    document.querySelector('[data-tool="${tool}"]').click();
     var a=document.querySelector('.brd-ann'); var b=a.getBoundingClientRect();
     function ev(t,x,y){ a.dispatchEvent(new PointerEvent(t,{bubbles:true,clientX:b.left+x,clientY:b.top+y,button:0,pointerId:1})); }
-    ev('pointerdown',30,120); ev('pointermove',90,160); ev('pointermove',160,200); ev('pointerup',160,200);
-    var inp=document.querySelector('.brd-note input'); inp.value='make this red';
+    var p=${JSON.stringify(pts)}; ev('pointerdown',p[0][0],p[0][1]); for (var i=1;i<p.length;i++) ev('pointermove',p[i][0],p[i][1]); ev('pointerup',p[p.length-1][0],p[p.length-1][1]);
+    for (var j=0;j<40 && !document.querySelector('.brd-note input');j++) await new Promise(function(r){setTimeout(r,50);});
+    var inp=document.querySelector('.brd-note input'); inp.value=${JSON.stringify(note)};
     inp.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
     return true; })()`);
+  const btnBox = await proj(() => browser.evalBrowser(key, 'JSON.stringify(document.getElementById("btn").getBoundingClientRect())'));
+  const bb = JSON.parse(btnBox.result);
+  await ptr('pick', [[bb.x + 10, bb.y + 10]], 'make this red');
+  const cssOn = await page('!document.querySelector(\'[data-ann="send-css"]\').disabled');
+  check('select an element: "CSS selectors" can be sent', cssOn === true);
+  await page('document.querySelector(\'[data-ann="send-css"]\').click()');
+  await sleep(800);
+  let sent = await page('window.sent');
+  check('"CSS selectors" sends the note, selector, tag and HTML, and no picture', sent.length === 1 && sent[0].png === 0 && /make this red/.test(sent[0].text) && /selector: #btn/.test(sent[0].text) && /<button>/.test(sent[0].text) && /html: <button id="btn"/.test(sent[0].text), JSON.stringify(sent).slice(0, 500));
+  await ptr('box', [[30, 120], [90, 160], [160, 200]], 'too much space');
+  const cssOff = await page('document.querySelector(\'[data-ann="send-css"]\').disabled && !document.querySelector(\'[data-ann="send-shot"]\').disabled');
+  check('once something is drawn, only "Full screenshot" can be sent', cssOff === true);
+  await page('document.querySelector(\'[data-ann="send-shot"]\').click()');
+  await sleep(1500);
+  sent = await page('window.sent');
+  const last = sent[sent.length - 1] || {};
+  check('"Full screenshot" attaches your marked-up page; the element keeps its selector, the drawing has none (Claude\'s own marks are not sent back)', sent.length === 2 && last.png > 1000 && /selector: #btn/.test(last.text) && /box at .*see the screenshot.*too much space/.test(last.text) && (last.text.match(/selector:/g) || []).length === 1 && !/Claude/.test(last.text), JSON.stringify(last).slice(0, 600));
   const read = await proj(() => browser.readDrawerAnnotations(key));
   const info = read.ok ? JSON.parse(read.content[0].text) : {};
-  const mine = (info.annotations || []).find((a) => a.by === 'person');
-  check('browser_annotations: the person\'s box, its note and the element under it', !!mine && mine.kind === 'box' && mine.text === 'make this red' && mine.element && mine.element.tag, JSON.stringify(info).slice(0, 400));
+  const mineEl = (info.annotations || []).find((a) => a.by === 'person' && a.kind === 'element');
+  const mineBox = (info.annotations || []).find((a) => a.by === 'person' && a.kind === 'box');
+  check('browser_annotations: the selected element with its note and selector', !!mineEl && mineEl.text === 'make this red' && mineEl.element && mineEl.element.selector === '#btn', JSON.stringify(info).slice(0, 400));
+  check('and the drawing, with its note and no selector', !!mineBox && mineBox.text === 'too much space' && !mineBox.element, JSON.stringify(mineBox));
   const pin = (info.annotations || []).find((a) => a.by === 'claude' && a.kind === 'pin');
-  check('a chat\'s pin reports the element it points at', pin && pin.element && pin.element.tag === 'button', JSON.stringify(pin));
+  check('a chat\'s pin made from a selector keeps it', pin && pin.element && pin.element.selector === '#btn', JSON.stringify(pin));
   check('browser_annotations includes the annotated screenshot', read.content[1] && read.content[1].type === 'image' && read.content[1].data.length > 1000);
-  await page('document.querySelector(\'[data-ann="send"]\').click()');
-  await sleep(1500);
-  const sent = await page('window.sent');
-  check('"Send to chat" attaches the marked-up screenshot and what each mark points at', sent.length === 1 && sent[0].id === 'c1' && sent[0].png > 1000 && /make this red/.test(sent[0].text) && /drawer:/.test(sent[0].text), JSON.stringify(sent).slice(0, 400));
   if (process.env.DRAWER_SHOT) { const sh = await client('shot', {}); (await import('node:fs')).writeFileSync(process.env.DRAWER_SHOT, Buffer.from(sh.data, 'base64')); }
   await page('document.querySelector(\'[data-ann="done"]\').click()');
 
@@ -288,6 +305,24 @@ try {
   check('the drawer shows which network each tab is on', await page('document.querySelectorAll(".brd-tab .brd-net-dot.server").length === 1'));
   await page(`(function(){var t=[].find.call(document.querySelectorAll(".brd-tab"),function(x){return x.querySelector(".brd-net-dot")});t.click();})()`);
   check('and the toolbar names it', await page('document.querySelector(".brd-netsel").value === "server" && /Server/.test(document.querySelector(".brd-netsel").selectedOptions[0].textContent)'));
+
+  // ── Sleep: a tab nobody looks at or uses is frozen, and wakes as it was ──
+  await proj(() => browser.navigateBrowser(key, `http://127.0.0.1:${T}/page`));
+  await page(`(function(){var t=[].find.call(document.querySelectorAll(".brd-tab"),function(x){return !x.querySelector(".brd-net-dot")});t.click();})()`);
+  await proj(() => browser.evalBrowser(key, 'window.__z = 42; window.__n = 0; setInterval(function(){ window.__n++; }, 100); 1'));
+  await page('drawer.close()');
+  const t0 = Date.now();
+  let slept = false;
+  for (let i = 0; i < 40 && !slept; i++) { await sleep(250); slept = (await proj(() => browser.listAllBrowsers('proj'))).browsers.some((b) => b.key === key && b.sleeping); }
+  const sleptAfter = Date.now() - t0;
+  check('a hidden tab falls asleep after its idle time (3 s here, 5 min by default)', slept && sleptAfter >= 2500, `slept=${slept} after ${sleptAfter} ms`);
+  await sleep(3000);
+  const woke = await proj(() => browser.evalBrowser(key, 'window.__z + ":" + window.__n'));
+  const [z, n] = String(woke.result || '').split(':').map(Number);
+  check('while asleep its scripts stopped; a chat using it wakes it first, with nothing reloaded', z === 42 && n > 10 && n < (Date.now() - t0) / 100 - 15, JSON.stringify(woke) + ` over ${Date.now() - t0} ms`);
+  const awake = (await proj(() => browser.listAllBrowsers('proj'))).browsers.find((b) => b.key === key);
+  check('and it is listed awake again', awake && !awake.sleeping, JSON.stringify(awake));
+  await page('drawer.open()');
 
   // ── Popups become tabs; closing ──
   await proj(() => browser.navigateBrowser(key, `http://127.0.0.1:${T}/page`));

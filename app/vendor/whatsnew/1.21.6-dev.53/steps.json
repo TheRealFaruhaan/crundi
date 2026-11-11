@@ -6,9 +6,24 @@
       "title": "A browser drawer beside your project",
       "body": "In the PC app, the browser now slides in at the right, next to the whole project: the tabs and every page narrow to make room, and you drag the divider to share the width. Each project keeps its own tabs. Hide it and bring it back at any time: the pages keep running and never reload.",
       "keys": [
-        { "keys": ["Browser"], "text": "at the end of the project's tabs: show or hide the drawer" },
-        { "keys": ["Drag the divider"], "text": "share the width; double-click to reset" },
-        { "keys": ["+"], "text": "a new tab in this project" }
+        {
+          "keys": [
+            "Browser"
+          ],
+          "text": "at the end of the project's tabs: show or hide the drawer"
+        },
+        {
+          "keys": [
+            "Drag the divider"
+          ],
+          "text": "share the width; double-click to reset"
+        },
+        {
+          "keys": [
+            "+"
+          ],
+          "text": "a new tab in this project"
+        }
       ],
       "art": "browser-drawer.html",
       "artTitle": "Browser"
@@ -16,11 +31,27 @@
     {
       "id": "browser-drawer-annotate",
       "tag": "Browser",
-      "title": "Mark up a page, and let Claude point back",
-      "body": "Draw boxes, pins and lines over the live page, write a note on each, and send it to a chat in the project: it gets the marked-up screenshot and what each mark is on. The project's chats can use the drawer's tabs too, to browse, click, type and take screenshots, and they point at things on the page where you can see them.",
+      "title": "Point at the page, or draw on it, for a chat",
+      "body": "Select an element and write a note on it, or draw over the page (pins, boxes, freehand), each mark with its own note. Then send it to a chat in the project: as CSS selectors (each element's note, selector and HTML, as text), or as the full screenshot with your marks drawn in. A drawing has no selector, so once you draw, the screenshot is how it goes. The project's chats can use the drawer's tabs too, and point at things where you can see them.",
       "keys": [
-        { "keys": ["Annotate"], "text": "draw on the page" },
-        { "keys": ["Send to chat"], "text": "the picture and your notes, into the chat's message" }
+        {
+          "keys": [
+            "Annotate"
+          ],
+          "text": "select elements or draw on the page"
+        },
+        {
+          "keys": [
+            "Send: selectors"
+          ],
+          "text": "the selected elements as text, no picture"
+        },
+        {
+          "keys": [
+            "Send: screenshot"
+          ],
+          "text": "the page with your marks and notes"
+        }
       ],
       "art": "browser-drawer-annotate.html",
       "artTitle": "Browser"
@@ -31,7 +62,12 @@
       "title": "Browse on the server's network",
       "body": "When the app is on another computer than the server, each tab can use this computer's network or the server's. On the server's, the tab reaches what only the server can: its localhost dev servers and internal hosts, carried over the app's own signed-in connection. A tab on the server's network is marked SRV.",
       "keys": [
-        { "keys": ["Network menu"], "text": "This PC or Server, per tab" }
+        {
+          "keys": [
+            "Network menu"
+          ],
+          "text": "This PC or Server, per tab"
+        }
       ],
       "art": "browser-drawer-network.html",
       "artTitle": "Browser"

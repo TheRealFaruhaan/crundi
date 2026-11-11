@@ -50,7 +50,7 @@ const lc = (s) => String(s || '').toLowerCase();
  *   serverNet: { info() → { mode: 'local'|'remote', status: 'direct'|'tunnel'|'offline'|'unsupported' },
  *                ensure() → Promise (the server partition's proxy is set) }
  */
-export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUrl, serverNet }) {
+export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUrl, serverNet, freezeAfterMs = 5 * 60 * 1000 }) {
   const tabs = new Map();       // tabId → entry
   const pending = new Map();    // reqId → { resolve, reject, timer }
   let nextReq = 1;
@@ -133,6 +133,8 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
       win: { webContents: null, setContentSize() { /* drawer tabs resize through browserResize */ } },
       ses: null, consoleLogs: [], networkEntries: [], recording: false,
       emu: undefined, waiters: [], drawer: true,
+      // Sleep: a tab nobody is looking at or using is frozen (see sweep).
+      visible: false, lastUse: Date.now(), frozen: false,
     };
     tabs.set(tabId, entry);
     return entry;
@@ -207,6 +209,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     if (!entry) entry = newEntry(tabId, lc(project), network);
     entry.project = lc(project); entry.network = network;
     entry.wc = wc; entry.win.webContents = wc; entry.ses = wc.session; entry.emu = undefined;
+    entry.frozen = false; entry.lastUse = Date.now();
     delete entry.touch; delete entry.castHooked;
     hookNetwork(wc.session);
     wire(entry, wc);
@@ -250,7 +253,64 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     const en = getTab(tabId); if (!en) return { ok: false, error: 'no such tab' };
     try { return { ok: true, elements: await describe(en.wc, points) }; } catch (err) { return { ok: false, error: err.message }; }
   });
+  // The page says which tab is on screen (at most one: the open drawer's
+  // shown tab). Showing a tab wakes it.
+  ipcMain.handle('drawer:visible', async (_e, tabId, visible) => {
+    const en = tabs.get(tabId); if (!en) return { ok: false };
+    en.visible = !!visible; en.lastUse = Date.now();
+    if (visible && en.wc && !en.wc.isDestroyed()) { try { await thaw(en); } catch (err) { log(`[drawer] wake ${err.message}`); } }
+    return { ok: true };
+  });
+
   ipcMain.handle('drawer:info', () => ({ ok: true, ...serverNet.info(), labels: { client: networkLabel('client'), server: networkLabel('server') } }));
+
+  // ─── Sleep ───
+  // Hidden tabs stay laid out and rendering (so a chat can use them), which
+  // costs CPU. One that has been neither on screen nor used for a while is
+  // frozen through the debugger (Page.setWebLifecycleState): its scripts,
+  // timers and painting stop, and the page stays in memory as it was, so
+  // nothing reloads. It wakes when shown, or before any server call on it.
+  // A tab playing sound, or with DevTools open, is left awake.
+  async function lifecycle(en, state) {
+    const dbg = en.wc.debugger;
+    try { dbg.attach('1.3'); } catch (err) { if (!/already attached/i.test(err.message)) throw err; }
+    await dbg.sendCommand('Page.setWebLifecycleState', { state });
+  }
+  async function freeze(en) {
+    if (en.frozen || !en.wc || en.wc.isDestroyed()) return;
+    await lifecycle(en, 'frozen');
+    en.frozen = true;
+    log(`[drawer] asleep tab=${en.tabId}`);
+    emitState(en, { sleeping: true });
+  }
+  async function thaw(en) {
+    en.lastUse = Date.now();
+    if (!en.frozen || !en.wc || en.wc.isDestroyed()) return;
+    await lifecycle(en, 'active');
+    en.frozen = false;
+    log(`[drawer] awake tab=${en.tabId}`);
+    emitState(en, { sleeping: false });
+  }
+  let windowHiddenSince = 0;
+  function sweep() {
+    const w = win();
+    const shown = !!(w && w.isVisible() && !w.isMinimized());
+    const now = Date.now();
+    if (shown) windowHiddenSince = 0; else if (!windowHiddenSince) windowHiddenSince = now;
+    for (const en of tabs.values()) {
+      if (en.frozen || !en.wc || en.wc.isDestroyed()) continue;
+      // On screen counts only while the window is; a hidden window's tab
+      // starts its idle time when the window went away.
+      const since = en.visible ? (shown ? now : Math.max(en.lastUse, windowHiddenSince)) : en.lastUse;
+      if (now - since < freezeAfterMs) continue;
+      let busy = false;
+      try { busy = en.wc.isCurrentlyAudible() || en.wc.isDevToolsOpened(); } catch { busy = true; }
+      if (busy) continue;
+      freeze(en).catch((err) => log(`[drawer] sleep ${err.message}`));
+    }
+  }
+  const sweepTimer = setInterval(sweep, Math.max(250, Math.min(30000, Math.floor(freezeAfterMs / 4))));
+  sweepTimer.unref?.();
 
   /** Tell the page that what "server network" means has changed (connected, dropped). */
   function notifyInfo() { emit('drawer:info', { ...serverNet.info(), labels: { client: networkLabel('client'), server: networkLabel('server') } }); }
@@ -270,7 +330,8 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
         width: config.width, height: config.height, deviceScaleFactor: config.deviceScaleFactor || 0, mobile: !!config.mobile,
         scale: scale || 1, screenWidth: config.width, screenHeight: config.height,
       });
-      await dbg.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: !!config.mobile, maxTouchPoints: config.mobile ? 5 : 0 });
+      // maxTouchPoints must be 1-16 even when switching touch off.
+      await dbg.sendCommand('Emulation.setTouchEmulationEnabled', config.mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
       await dbg.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: !!config.mobile, configuration: 'mobile' });
       if (changed) {
         await dbg.sendCommand('Emulation.setUserAgentOverride', { userAgent: config.ua || (config.mobile ? MOBILE_UA : '') });
@@ -279,7 +340,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
       }
     } else if (!first) {
       if (dbg.isAttached()) {
-        for (const [m, p] of [['Emulation.setEmitTouchEventsForMouse', { enabled: false }], ['Emulation.setTouchEmulationEnabled', { enabled: false, maxTouchPoints: 0 }], ['Emulation.setUserAgentOverride', { userAgent: '' }], ['Emulation.clearDeviceMetricsOverride', undefined]]) {
+        for (const [m, p] of [['Emulation.setEmitTouchEventsForMouse', { enabled: false }], ['Emulation.setTouchEmulationEnabled', { enabled: false }], ['Emulation.setUserAgentOverride', { userAgent: '' }], ['Emulation.clearDeviceMetricsOverride', undefined]]) {
           try { await dbg.sendCommand(m, p); } catch { /* ignore */ }
         }
       }
@@ -297,8 +358,9 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
         var par=e.parentElement; if(par){var same=[].filter.call(par.children,function(k){return k.tagName===e.tagName;}); if(same.length>1) s+=':nth-of-type('+(same.indexOf(e)+1)+')';}
         parts.unshift(s+c); e=par; } return parts.join(' > '); }
       return pts.map(function(p){ var el=document.elementFromPoint(p[0],p[1]); if(!el) return null; var r=el.getBoundingClientRect();
+        var open=el.outerHTML; var gt=open.indexOf('>'); open=(gt>0?open.slice(0,gt+1):open).slice(0,300);
         return { selector: sel(el), tag: el.tagName.toLowerCase(), text: String(el.innerText||el.value||el.alt||el.getAttribute('aria-label')||'').trim().replace(/\\s+/g,' ').slice(0,160),
-          rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } }; });
+          html: open, rect: { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) } }; });
     })(${JSON.stringify(pts)})`, true);
   }
 
@@ -329,6 +391,8 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     }
     if (!en) throw new Error('No such drawer tab');
     if (msg.alias && lc(msg.alias) !== en.project) throw new Error('That drawer tab belongs to another project.');
+    // A chat is using it: wake it first (and restart its idle time).
+    try { await thaw(en); } catch (err) { log(`[drawer] wake ${err.message}`); }
     return en;
   }
 
@@ -347,7 +411,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   const handlers = {
     async browserDrawerList(msg) {
       const r = await request('list', { project: lc(msg.alias) });
-      const list = (r.tabs || []).map((t) => ({ ...t, networkLabel: networkLabel(t.network) }));
+      const list = (r.tabs || []).map((t) => { const en = tabs.get(t.tabId); return { ...t, networkLabel: networkLabel(t.network), sleeping: !!(en && en.frozen) }; });
       return { ok: true, tabs: list };
     },
     async browserDrawerOpen(msg) {
@@ -383,11 +447,10 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     async browserDrawerAnnotations(msg) {
       const en = await prepare(msg);
       const r = await request('annotations', { tabId: en.tabId, image: msg.image !== false });
+      // A selected element (or a chat's mark made from a selector) carries its
+      // selector; a drawing does not: it is in the screenshot.
       const list = r.annotations || [];
-      const pts = list.map((a) => a.anchor || [a.x, a.y]);
-      let els = [];
-      try { els = await describe(en.wc, pts); } catch { /* page busy */ }
-      list.forEach((a, i) => { a.element = els[i] || null; delete a.anchor; });
+      list.forEach((a) => { a.element = a.picked || null; delete a.picked; delete a.anchor; });
       return { ok: true, url: en.wc.getURL(), title: en.wc.getTitle(), viewport: r.viewport, annotations: list, image: r.image || null };
     },
   };

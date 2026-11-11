@@ -1749,7 +1749,8 @@ ipcMain.handle('wbrowser:emulate', async (_e, id, config, scale) => {
         deviceScaleFactor: config.deviceScaleFactor || 0, mobile: !!config.mobile,
         scale: scale || 1, screenWidth: config.width, screenHeight: config.height,
       });
-      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: !!config.mobile, maxTouchPoints: config.mobile ? 5 : 0 });
+      // maxTouchPoints must be 1-16 even when switching touch off.
+      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', config.mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
       await wc.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: !!config.mobile, configuration: 'mobile' });
       if (deviceChanged) {
         await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: config.ua || (config.mobile ? BROWSER_MOBILE_UA : '') });
@@ -1760,7 +1761,7 @@ ipcMain.handle('wbrowser:emulate', async (_e, id, config, scale) => {
       try { wc.setZoomFactor(1); } catch { /* ignore */ }
       if (wc.debugger.isAttached()) {
         try { await wc.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: false }); } catch { /* ignore */ }
-        try { await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: false, maxTouchPoints: 0 }); } catch { /* ignore */ }
+        try { await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: false }); } catch { /* ignore */ }
         try { await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: '' }); } catch { /* ignore */ }
         try { await wc.debugger.sendCommand('Emulation.clearDeviceMetricsOverride'); } catch { /* ignore */ }
         try { wc.debugger.detach(); } catch { /* ignore */ }
@@ -2164,6 +2165,8 @@ const browserDrawer = createBrowserDrawer({
   log: appendLog,
   loadUrl: (wc, url) => loadUrlWithGrace(wc, url),
   serverNet,
+  // How long a tab nobody is looking at or using stays awake (default 5 min).
+  freezeAfterMs: Number(process.env.CRUNDI_DRAWER_SLEEP_MS) || undefined,
 });
 /** A hidden browser window's entry, or a drawer tab's (same shape for the handlers below). */
 function browserEntry(key) {

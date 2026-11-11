@@ -51,7 +51,7 @@ function loadUrlWithGrace(wc, url, graceMs = 15000) {
   });
 }
 
-const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, loadUrl: loadUrlWithGrace, serverNet });
+const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, loadUrl: loadUrlWithGrace, serverNet, freezeAfterMs: Number(process.env.DRAWER_SLEEP_MS) || undefined });
 
 // The generic handlers app/main.js runs on a drawer entry (copied from there).
 const generic = {

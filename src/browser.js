@@ -852,7 +852,7 @@ export async function listDrawerTabs(alias) {
         keyBackend.set(key, backend);
         out.push({
           key, alias: t.project, name: t.title || t.url || 'tab', url: t.url, on: 'drawer',
-          network: t.network, networkLabel: t.networkLabel, active: !!t.active, shown: !!t.shown,
+          network: t.network, networkLabel: t.networkLabel, active: !!t.active, shown: !!t.shown, sleeping: !!t.sleeping,
           device: t.device || null,
         });
       }
