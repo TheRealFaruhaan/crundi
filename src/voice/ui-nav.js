@@ -75,8 +75,9 @@ export function makeUiNavTools({ target, acks, send, projects = () => [], chats 
   return [{
     name: 'show_in_crundi',
     description: 'Take the owner\'s Crundi page (the PC app or the web, the one he is talking to you from) to a place and point at something there, when seeing it in Crundi itself helps more than a description: "show me the kanban", "where is that setting", "open that chat", "show me the file". '
-      + 'Give any of: project (switches project), tab, chat (a chat\'s id from list_panels: opens it on the workbench), card (a kanban task id: scrolls to it and flashes it), node (a mindmap node id), file (a path inside the project: opens it in the editor), widget (a panel id), '
+      + 'Give any of: project (switches project), tab, chat (a chat\'s id from list_panels: opens it on the workbench), card (a kanban task id: scrolls to it and flashes it), node (a mindmap node id: scrolls to it, selects and flashes it), file (a path inside the project: opens it in the editor), widget (a panel id), '
       + 'and highlight: words that appear on the page (a button, a setting\'s label, a card\'s title, a service\'s name): it is scrolled into view and ringed, with your note beside it. '
+      + 'A card or node is only shown, not opened: add open: true only when he asks for its details (a card\'s edit dialog, a node\'s note). '
       + 'Not on the phone: if the owner is on his phone it says so; use show_card or the live screen there. The answer says whether what you pointed at was found; say in a sentence where to look.',
     input_schema: {
       type: 'object', additionalProperties: false,
@@ -85,7 +86,8 @@ export function makeUiNavTools({ target, acks, send, projects = () => [], chats 
         tab: { type: 'string', enum: UI_TABS, description: 'The tab to show' },
         chat: { type: 'string', description: 'A chat\'s id (list_panels): opened on the workbench' },
         card: { type: 'string', description: 'A kanban task id: the board opens at it' },
-        node: { type: 'string', description: 'A mindmap node id' },
+        node: { type: 'string', description: 'A mindmap node id: the map scrolls to it, selects and flashes it' },
+        open: { type: 'boolean', description: 'With card or node: also open it (the card\'s details, the node\'s note). Leave it out to just show it' },
         file: { type: 'string', description: 'A file inside the project, relative to its folder: opened in the editor' },
         widget: { type: 'string', description: 'A panel (widget) id: the Panels tab opens at it' },
         highlight: { type: 'string', description: 'Words shown on the page to ring: a button, a label, a title' },
@@ -137,6 +139,10 @@ export function makeUiNavTools({ target, acks, send, projects = () => [], chats 
           msg.tab = 'files';
         }
       } catch (e) { return { ok: false, error: e.message }; }
+      if (input.open === true) {
+        if (!msg.card && !msg.node) return { ok: false, error: 'open goes with a card or a node' };
+        msg.open = true;
+      }
       if (input.highlight != null && String(input.highlight).trim()) msg.highlight = clip(input.highlight, 120);
       if (input.note != null && String(input.note).trim()) msg.note = clip(input.note, 300);
       if (!msg.project && !msg.tab && !msg.highlight) return { ok: false, error: 'Say where: a project, a tab, a chat, a card, a file, or words to highlight' };

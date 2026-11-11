@@ -39,12 +39,19 @@ assert.deepEqual({ ...sent[0], id: undefined }, { id: undefined, page: 'pg1', pr
 // A card puts the board up; a chat the workbench and its project.
 r = await tool.run({ card: 't9' });
 assert.equal(sent.at(-1).tab, 'kanban'); assert.equal(sent.at(-1).card, 't9');
+assert.equal(sent.at(-1).open, undefined); // shown, not opened, unless asked
+r = await tool.run({ node: 'n4' });
+assert.equal(sent.at(-1).tab, 'mindmap'); assert.equal(sent.at(-1).open, undefined);
+r = await tool.run({ node: 'n4', open: true });
+assert.equal(sent.at(-1).node, 'n4'); assert.equal(sent.at(-1).open, true);
+r = await tool.run({ card: 't9', open: true });
+assert.equal(sent.at(-1).open, true);
 r = await tool.run({ chat: 'c1' });
 assert.equal(sent.at(-1).project, 'shop'); assert.equal(sent.at(-1).tab, 'workbench');
 
 // Checked before sending.
 const n = sent.length;
-for (const bad of [{}, { project: 'nope' }, { tab: 'nowhere' }, { chat: 'zz' }, { chat: 'c1', project: 'crundi' }, { chat: 'c1', tab: 'git' }, { card: 't1', tab: 'git' }, { file: '/etc/passwd' }, { file: '../x' }, { card: 't1', node: 'n1' }]) {
+for (const bad of [{}, { project: 'nope' }, { tab: 'nowhere' }, { chat: 'zz' }, { chat: 'c1', project: 'crundi' }, { chat: 'c1', tab: 'git' }, { card: 't1', tab: 'git' }, { file: '/etc/passwd' }, { file: '../x' }, { card: 't1', node: 'n1' }, { tab: 'kanban', open: true }]) {
   r = await tool.run(bad);
   assert.equal(r.ok, false, JSON.stringify(bad));
 }

@@ -6878,12 +6878,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
           target = await cruWaitFor(() => { const p = $('#kanban-panel'); return p && p.querySelector('.kanban-card[data-task="' + d.card + '"]'); }, 2500);
           if (!target) return ack({ ok: false, error: 'No such card on this project\\'s board' });
           if (!d.highlight) flashKanbanTarget({ type: 'task', taskId: d.card });
+          // The card's details (its Edit dialog) only when Cru asked to open it.
+          if (d.open) { const eb = target.querySelector('[data-kact="edit-task"]'); if (eb) eb.click(); }
         }
         if (d.node) {
           await loadMindmap();
           await cruSleep(250);
-          flashMindmapNode(d.node);
-          target = $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + d.node + '"]');
+          if (!mindmapNodes.some(x => x.id === d.node)) return ack({ ok: false, error: 'No such idea on this project\\'s mindmap' });
+          // Shown and flashed; its note opens only when Cru asked to open it.
+          target = flashMindmapNode(d.node, !!d.open);
         }
         if (d.widget && window.CrundiWidgets && window.CrundiWidgets.selectInTab) window.CrundiWidgets.selectInTab(d.widget);
         if (d.file) {
@@ -6900,7 +6903,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (target) cruSpotlight(target, d.note || '');
           return ack({ ok: true, found: false });
         }
-        if (d.note && target) cruSpotlight(target, d.note);
+        // An opened note or card dialog sits over the ring: say the note in a toast then.
+        if (d.note && target && !d.open) cruSpotlight(target, d.note);
         else if (d.note) toast('Cru: ' + d.note);
         return ack({ ok: true });
       } catch (err) { return ack({ ok: false, error: String((err && err.message) || err) }); }
@@ -19123,7 +19127,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (it.link.type === 'node') {
         switchTab('mindmap');
         await loadMindmap();
-        setTimeout(() => flashMindmapNode(it.link.nodeId), 250);
+        // Jumping from a picture to the idea it hangs on: open the idea, where that picture is.
+        setTimeout(() => flashMindmapNode(it.link.nodeId, true), 250);
       } else {
         switchTab('kanban');
         await loadKanban();
@@ -19145,10 +19150,22 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const card = panel.querySelector('.kanban-card[data-task="' + link.taskId + '"]');
       flashEl(card);
     }
-    function flashMindmapNode(nodeId) {
-      const el = $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + nodeId + '"]');
-      if (el) { flashEl(el); openMmDetail(nodeId); }
-      else { openMmDetail(nodeId); }
+    /** Scroll to an idea, select and flash it; its note opens only when [open] says so. Folded ideas above it unfold. */
+    function flashMindmapNode(nodeId, open) {
+      const find = () => $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + nodeId + '"]');
+      let el = find();
+      if (!el) {
+        let unfolded = false;
+        let n = mindmapNodes.find(x => x.id === nodeId);
+        while (n && n.parentId) {
+          if (mindmapCollapsed[n.parentId]) { mindmapCollapsed[n.parentId] = false; unfolded = true; }
+          n = mindmapNodes.find(x => x.id === n.parentId);
+        }
+        if (unfolded) { renderMindmap(); el = find(); }
+      }
+      if (el) { mmSelect(nodeId, false); flashEl(el); }
+      if (open) openMmDetail(nodeId);
+      return el || null;
     }
 
     // ── One delegated handler for all media UI (tab, panel, modal, cards) ──
