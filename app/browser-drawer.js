@@ -29,6 +29,7 @@
  */
 
 import { webContents as WC, session as Session } from 'electron';
+import { readFileSync, writeFileSync, renameSync } from 'node:fs';
 
 export const PARTITIONS = { client: 'persist:crundi-browser', server: 'persist:crundi-browser-srv' };
 const PREFIX = 'drawer:';
@@ -50,7 +51,7 @@ const lc = (s) => String(s || '').toLowerCase();
  *   serverNet: { info() → { mode: 'local'|'remote', status: 'direct'|'tunnel'|'offline'|'unsupported' },
  *                ensure() → Promise (the server partition's proxy is set) }
  */
-export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUrl, serverNet, freezeAfterMs = 5 * 60 * 1000 }) {
+export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUrl, serverNet, freezeAfterMs = 5 * 60 * 1000, discardAfterMs = 60 * 60 * 1000, historyFile = null }) {
   const tabs = new Map();       // tabId → entry
   const pending = new Map();    // reqId → { resolve, reject, timer }
   let nextReq = 1;
@@ -67,6 +68,47 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   }
 
   function win() { const w = getWindow(); return w && !w.isDestroyed() ? w : null; }
+
+  // ─── History ───
+  // The drawer is one browser per client: every tab in every project shares
+  // its profile (cookies, logins, storage), and this history. Electron keeps
+  // none of its own beyond each tab's back/forward list, so it is kept here,
+  // in a file in the app's data folder: one entry per address, newest first.
+  const HISTORY_MAX = 5000;
+  let history = [];
+  try { if (historyFile) { const j = JSON.parse(readFileSync(historyFile, 'utf8')); if (Array.isArray(j)) history = j.filter((h) => h && typeof h.url === 'string'); } } catch { /* none yet */ }
+  let historyTimer = null;
+  function saveHistory() {
+    if (!historyFile || historyTimer) return;
+    historyTimer = setTimeout(() => {
+      historyTimer = null;
+      try { writeFileSync(historyFile + '.tmp', JSON.stringify(history)); renameSync(historyFile + '.tmp', historyFile); } catch (err) { log(`[drawer] history not saved: ${err.message}`); }
+    }, 1000);
+    historyTimer.unref?.();
+  }
+  function recordVisit(url, title) {
+    if (!/^https?:\/\//i.test(url)) return;
+    const i = history.findIndex((h) => h.url === url);
+    const old = i >= 0 ? history.splice(i, 1)[0] : null;
+    history.unshift({ url, title: title || (old && old.title) || '', at: Date.now(), visits: ((old && old.visits) || 0) + 1 });
+    if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+    saveHistory();
+  }
+  function retitle(url, title) {
+    const h = history.find((x) => x.url === url);
+    if (h && title && h.title !== title) { h.title = title; saveHistory(); }
+  }
+  function queryHistory(q, limit) {
+    const n = Math.max(1, Math.min(200, Number(limit) || 8));
+    const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const out = [];
+    for (const h of history) {
+      const hay = (h.url + ' ' + h.title).toLowerCase();
+      if (words.every((w) => hay.includes(w))) out.push(h);
+      if (out.length >= n) break;
+    }
+    return out;
+  }
 
   // ─── Requests to the page (main → renderer) ───
   function request(cmd, args, timeoutMs = REQUEST_TIMEOUT_MS) {
@@ -144,6 +186,8 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     const tabId = entry.tabId;
     const st = () => { if (entry.wc === wc) emitState(entry); };
     ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-stop-loading', 'did-start-loading'].forEach((ev) => wc.on(ev, st));
+    wc.on('did-navigate', (_e, url, code) => { if (!code || code < 400) recordVisit(url, wc.getTitle()); });
+    wc.on('page-title-updated', (_e, title) => { try { retitle(wc.getURL(), title); } catch { /* gone */ } });
     wc.on('did-fail-load', (_e, code, desc, url, isMain) => {
       if (isMain && code !== -3 && entry.wc === wc) { log(`[drawer] fail tab=${tabId} ${code} ${desc} ${url}`); emitState(entry, { diag: `Load failed (${code}): ${desc}` }); }
     });
@@ -262,6 +306,33 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     return { ok: true };
   });
 
+  ipcMain.handle('drawer:history', (_e, q, limit) => ({ ok: true, items: queryHistory(q, limit) }));
+
+  // Clear browsing data, for this client's browser (both its profiles: the
+  // one for this PC's network and the one for the server's).
+  //   history  the drawer's history, and every tab's back/forward list
+  //   cookies  cookies and site data: localStorage, IndexedDB, service
+  //            workers, cache storage (this signs you out of sites)
+  //   cache    cached images and files
+  ipcMain.handle('drawer:clear', async (_e, what) => {
+    const w = what || {};
+    const done = [];
+    if (w.history) {
+      history = []; saveHistory();
+      for (const en of tabs.values()) { try { if (en.wc && !en.wc.isDestroyed()) en.wc.navigationHistory.clear(); } catch { /* old Electron */ } emitState(en); }
+      done.push('history');
+    }
+    for (const part of Object.values(PARTITIONS)) {
+      const ses = Session.fromPartition(part);
+      if (w.cookies) { await ses.clearStorageData(); await ses.clearAuthCache(); }
+      if (w.cache) { await ses.clearCache(); try { await ses.clearCodeCaches({}); } catch { /* not there */ } }
+    }
+    if (w.cookies) done.push('cookies and site data');
+    if (w.cache) done.push('cached files');
+    log(`[drawer] cleared ${done.join(', ') || 'nothing'}`);
+    return { ok: true, cleared: done };
+  });
+
   ipcMain.handle('drawer:info', () => ({ ok: true, ...serverNet.info(), labels: { client: networkLabel('client'), server: networkLabel('server') } }));
 
   // ─── Sleep ───
@@ -279,7 +350,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   async function freeze(en) {
     if (en.frozen || !en.wc || en.wc.isDestroyed()) return;
     await lifecycle(en, 'frozen');
-    en.frozen = true;
+    en.frozen = true; en.frozenAt = Date.now();
     log(`[drawer] asleep tab=${en.tabId}`);
     emitState(en, { sleeping: true });
   }
@@ -291,6 +362,18 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     log(`[drawer] awake tab=${en.tabId}`);
     emitState(en, { sleeping: false });
   }
+  // Asleep for an hour (discardAfterMs): the page process is closed to give
+  // its memory back. The tab keeps its address, title, device and network,
+  // and loads again when it is shown or a chat uses it. That is the one
+  // time a drawer tab reloads.
+  function discard(en) {
+    if (en.discarding) return;
+    en.discarding = true;
+    request('discard', { tabId: en.tabId })
+      .then(() => { log(`[drawer] unloaded tab=${en.tabId} (asleep ${Math.round((Date.now() - en.frozenAt) / 60000)} min)`); en.frozen = false; })
+      .catch((err) => log(`[drawer] unload ${err.message}`))
+      .finally(() => { en.discarding = false; });
+  }
   let windowHiddenSince = 0;
   function sweep() {
     const w = win();
@@ -298,7 +381,8 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     const now = Date.now();
     if (shown) windowHiddenSince = 0; else if (!windowHiddenSince) windowHiddenSince = now;
     for (const en of tabs.values()) {
-      if (en.frozen || !en.wc || en.wc.isDestroyed()) continue;
+      if (!en.wc || en.wc.isDestroyed()) continue;
+      if (en.frozen) { if (now - en.frozenAt >= discardAfterMs) discard(en); continue; }
       // On screen counts only while the window is; a hidden window's tab
       // starts its idle time when the window went away.
       const since = en.visible ? (shown ? now : Math.max(en.lastUse, windowHiddenSince)) : en.lastUse;
@@ -411,7 +495,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
   const handlers = {
     async browserDrawerList(msg) {
       const r = await request('list', { project: lc(msg.alias) });
-      const list = (r.tabs || []).map((t) => { const en = tabs.get(t.tabId); return { ...t, networkLabel: networkLabel(t.network), sleeping: !!(en && en.frozen) }; });
+      const list = (r.tabs || []).map((t) => { const en = tabs.get(t.tabId); return { ...t, networkLabel: networkLabel(t.network), sleeping: !!(en && en.frozen && en.wc) }; });
       return { ok: true, tabs: list };
     },
     async browserDrawerOpen(msg) {

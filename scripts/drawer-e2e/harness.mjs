@@ -51,7 +51,7 @@ function loadUrlWithGrace(wc, url, graceMs = 15000) {
   });
 }
 
-const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, loadUrl: loadUrlWithGrace, serverNet, freezeAfterMs: Number(process.env.DRAWER_SLEEP_MS) || undefined });
+const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, loadUrl: loadUrlWithGrace, serverNet, freezeAfterMs: Number(process.env.DRAWER_SLEEP_MS) || undefined, discardAfterMs: Number(process.env.DRAWER_UNLOAD_MS) || undefined, historyFile: join(app.getPath('userData'), 'drawer-history.json') });
 
 // The generic handlers app/main.js runs on a drawer entry (copied from there).
 const generic = {

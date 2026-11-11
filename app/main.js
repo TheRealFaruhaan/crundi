@@ -2247,6 +2247,9 @@ const browserDrawer = createBrowserDrawer({
   serverNet,
   // How long a tab nobody is looking at or using stays awake (default 5 min).
   freezeAfterMs: Number(process.env.CRUNDI_DRAWER_SLEEP_MS) || undefined,
+  // How long a tab stays asleep before it is unloaded to free its memory (default 1 h).
+  discardAfterMs: Number(process.env.CRUNDI_DRAWER_UNLOAD_MS) || undefined,
+  historyFile: join(app.getPath('userData'), 'drawer-history.json'),
 });
 /** A hidden browser window's entry, or a drawer tab's (same shape for the handlers below). */
 function browserEntry(key) {

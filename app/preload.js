@@ -126,6 +126,9 @@ contextBridge.exposeInMainWorld('api', {
       info: () => ipcRenderer.invoke('drawer:info'),
       // Which tab is on screen; the others fall asleep after a while (app/browser-drawer.js).
       visible: (tabId, visible) => ipcRenderer.invoke('drawer:visible', tabId, visible),
+      // The drawer's history (one per client, shared by every tab), and clearing it all.
+      history: (q, limit) => ipcRenderer.invoke('drawer:history', q, limit),
+      clear: (what) => ipcRenderer.invoke('drawer:clear', what),
       onInfo: (cb) => { const h = (_e, i) => cb(i); ipcRenderer.on('drawer:info', h); return () => ipcRenderer.removeListener('drawer:info', h); },
       onState: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('drawer:state', h); return () => ipcRenderer.removeListener('drawer:state', h); },
       // Requests from the main process (the server's chats acting on a tab).

@@ -73,6 +73,28 @@
       "artTitle": "Browser"
     },
     {
+      "id": "browser-drawer-history",
+      "tag": "Browser",
+      "title": "One browser, with history you can clear",
+      "body": "Every tab in every project shares one browser on this computer: sign in to a site once and every tab is signed in, and it stays that way after a restart. The drawer keeps a history, suggested as you type an address, and you can clear the history, cookies and site data, or cached files whenever you like.",
+      "keys": [
+        {
+          "keys": [
+            "..."
+          ],
+          "text": "History, and Clear browsing data"
+        },
+        {
+          "keys": [
+            "Type an address"
+          ],
+          "text": "pages you have visited come up"
+        }
+      ],
+      "art": "browser-drawer-history.html",
+      "artTitle": "Browser"
+    },
+    {
       "id": "homepool-networks",
       "tag": "Homepool",
       "title": "Choose where traffic leaves from",

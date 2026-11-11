@@ -70,9 +70,15 @@ const target = http.createServer((req, res) => {
   if (req.url.startsWith('/whoami')) { res.end('<title>who</title><body>via-server ' + req.headers.host + '</body>'); return; }
   if (req.url.startsWith('/page2')) { res.end('<title>Second</title><body style="margin:0;background:#fff">second</body>'); return; }
   pageLoads++;
-  res.end(`<!doctype html><title>Target page</title><body style="margin:0;background:#00ff00;height:100vh">
-    <button id="btn" style="margin:40px;width:120px;height:40px">Press</button><input id="inp">
-    <a id="pop" href="/page2" target="_blank">new window</a>
+  res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Target page</title>
+    <body style="margin:0;min-height:100vh;font-family:system-ui,sans-serif;background:#f6f7fb;color:#1f2330">
+    <header style="height:48px;display:flex;align-items:center;gap:16px;padding:0 18px;background:#fff;border-bottom:1px solid #e3e5ee"><b style="color:#4f46e5">Acme</b><span style="color:#667">Shop</span><span style="color:#667">About</span></header>
+    <main style="padding:22px 18px 90px"><h2 style="margin:0 0 8px">Spring collection</h2><p style="margin:0 0 16px;color:#556;max-width:420px">Light jackets, linen shirts and canvas shoes, made to last.</p>
+    <button id="btn" style="width:130px;height:40px;border:none;border-radius:8px;background:#4f46e5;color:#fff;font-weight:600">Add to cart</button>
+    <input id="inp" placeholder="Email for updates" style="height:36px;margin-left:10px;padding:0 10px;border:1px solid #ccd;border-radius:8px">
+    <p><a id="pop" href="/page2" target="_blank">Size guide (new window)</a></p>
+    <div style="display:flex;gap:12px;margin-top:14px"><div style="width:140px;height:110px;border-radius:10px;background:#dfe3f3"></div><div style="width:140px;height:110px;border-radius:10px;background:#e8dff3"></div></div></main>
+    <footer style="position:fixed;left:0;right:0;bottom:0;height:56px;background:#00e000"></footer>
     <script>window.clicks=0;document.getElementById('btn').onclick=function(){window.clicks++;};</script></body>`);
 });
 await new Promise((r) => target.listen(0, '127.0.0.1', r));
@@ -92,8 +98,8 @@ const ICONS = {};
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
   :root{--bg-primary:#0a0a0f;--bg-secondary:#12121a;--bg-tertiary:#1a1a28;--border:#2a2a3d;--text-primary:#e8e8f0;--text-secondary:#8888a8;--text-muted:#5a5a78;--accent:#6366f1;}
   body{margin:0;height:100vh;display:flex;flex-direction:column;font-family:sans-serif} .top{height:40px;background:#333;flex:0 0 auto}
-  .main-layout{display:flex;flex:1;overflow:hidden} #area{flex:1;background:#123;color:#fff}</style></head>
-<body><div class="top"></div><div class="main-layout"><div id="area">project area</div>
+  .main-layout{display:flex;flex:1;overflow:hidden} #area{flex:1;background:#0a0a0f;color:#fff;min-width:0} .top{background:#12121a;border-bottom:1px solid #2a2a3d}</style></head>
+<body><div class="top"></div><div class="main-layout"><div id="area"><div style="height:38px;display:flex;gap:18px;align-items:center;padding:0 14px;border-bottom:1px solid #2a2a3d;background:#12121a;color:#8888a8;font-size:13px;white-space:nowrap;overflow:hidden"><span style="color:#6366f1">Workbench</span><span>Git</span><span>Files</span><span>Kanban</span><span>Notes</span><span>Mindmap</span><span>Media</span></div><div style="display:flex;gap:8px;padding:8px;height:calc(100% - 54px)"><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f;padding:10px;color:#8888a8;font-size:13px">Chat one</div><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f"></div></div></div>
 <div class="brd-split brd-closed" id="brd-split"></div><aside class="brd brd-closed" id="brd"></aside></div>
 <script src="/vendor/crundi-browser-drawer.js"></script>
 <script>var ICONS=${JSON.stringify(ICONS)};window.sent=[];
@@ -135,13 +141,15 @@ function client(op, extra) {
   });
 }
 const page = async (code) => (await client('exec', { code })).result;
+const SHOTS = process.env.DRAWER_SHOTS_DIR || '';
+const shot = async (name) => { if (!SHOTS) return; await sleep(400); const sh = await client('shot', {}); (await import('node:fs')).writeFileSync(join(SHOTS, name + '.png'), Buffer.from(sh.data, 'base64')); };
 const as = (alias, fn) => browser.callerContext.run({ alias }, fn);
 const proj = (fn) => as('proj', fn);
 
 // ─── Launch the client ───
 const userData = mkdtempSync(join(tmpdir(), 'crundi-drawer-ud-'));
 const args = [join(root, 'scripts', 'drawer-e2e', 'harness.mjs'), '--no-sandbox', `--user-data-dir=${userData}`];
-const env = { ...process.env, SERVER_URL: `http://127.0.0.1:${web.address().port}`, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', EXIT_ON_CLOSE: '1', DRAWER_SLEEP_MS: '3000' };
+const env = { ...process.env, SERVER_URL: `http://127.0.0.1:${web.address().port}`, ELECTRON_DISABLE_SECURITY_WARNINGS: '1', EXIT_ON_CLOSE: '1', DRAWER_SLEEP_MS: '3000', DRAWER_UNLOAD_MS: '4000' };
 // Its own process group, so the whole tree (xvfb-run, Xvfb, Electron) can be
 // stopped together: killing xvfb-run alone leaves Electron and Xvfb running.
 const child = needXvfb
@@ -188,8 +196,10 @@ try {
   await proj(() => browser.typeBrowser(key, 'hello', '#inp'));
   const typed = await proj(() => browser.evalBrowser(key, 'document.getElementById("inp").value'));
   check('browser_type', typed.result === 'hello', JSON.stringify(typed));
-  const shot = await proj(() => browser.screenshotBrowser(key));
-  check('browser_screenshot returns a PNG', shot.ok && Buffer.from(shot.data, 'base64').subarray(1, 4).toString() === 'PNG', shot.error);
+  const png = await proj(() => browser.screenshotBrowser(key));
+  check('browser_screenshot returns a PNG', png.ok && Buffer.from(png.data, 'base64').subarray(1, 4).toString() === 'PNG', png.error);
+  await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/page2` }));
+  await shot('1-drawer');
 
   // ── Scoped to the project ──
   const other = await as('other', () => browser.evalBrowser(key, '1'));
@@ -202,6 +212,7 @@ try {
   // ── Point and annotate, where the person sees it ──
   const pt = await proj(() => browser.pointDrawer(key, { selector: '#btn', label: 'this button' }));
   check('browser_point on a selector', pt.ok && pt.drawn === 1, JSON.stringify(pt));
+  const bb0 = JSON.parse((await proj(() => browser.evalBrowser(key, 'JSON.stringify(document.getElementById("inp").getBoundingClientRect())'))).result);
   const an = await proj(() => browser.annotateDrawer(key, { shapes: [{ kind: 'box', x: 200, y: 20, width: 120, height: 60, text: 'empty area' }, { kind: 'arrow', x: 300, y: 200, toX: 100, toY: 60 }] }));
   check('browser_annotate draws shapes', an.ok && an.total === 3, JSON.stringify(an));
   const bad = await proj(() => browser.annotateDrawer(key, { shapes: [{ kind: 'box', x: 1, y: 1 }] }));
@@ -211,6 +222,13 @@ try {
   check('the marks draw over the live page (overlay pixel is the mark\'s colour)', px.rgb && Math.abs(px.rgb[0] - 99) < 30 && Math.abs(px.rgb[2] - 241) < 30, JSON.stringify(px.rgb));
   const pagePx = await client('pixel', await page('(function(){var r=document.querySelector(".brd-wv.on").getBoundingClientRect();return {x:r.right-20,y:r.bottom-20};})()'));
   check('and the page shows around them', pagePx.rgb && pagePx.rgb[1] > 200 && pagePx.rgb[0] < 60, JSON.stringify(pagePx.rgb));
+  await page('document.querySelector(\'[data-brd="annotate"]\').click()');
+  await page(`(function(){var a=document.querySelector('.brd-ann'),b=a.getBoundingClientRect();a.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:b.left+${Math.round(bb0.x+20)},clientY:b.top+${Math.round(bb0.y+15)},pointerId:1}));})()`);
+  await sleep(500);
+  const hov = await page('(function(){var h=document.querySelector(".brd-hov");return h?h.textContent:("none:"+document.querySelector(".brd-ann").className);})()');
+  check('the element picker outlines what is under the pointer, with its selector', hov === '#inp', JSON.stringify(hov));
+  await shot('3-pick-hover');
+  await page('document.querySelector(\'[data-ann="done"]\').click()');
 
   // ── The person marks the page and sends it to a chat ──
   const ptr = (tool, pts, note) => page(`(async function(){
@@ -249,7 +267,7 @@ try {
   const pin = (info.annotations || []).find((a) => a.by === 'claude' && a.kind === 'pin');
   check('a chat\'s pin made from a selector keeps it', pin && pin.element && pin.element.selector === '#btn', JSON.stringify(pin));
   check('browser_annotations includes the annotated screenshot', read.content[1] && read.content[1].type === 'image' && read.content[1].data.length > 1000);
-  if (process.env.DRAWER_SHOT) { const sh = await client('shot', {}); (await import('node:fs')).writeFileSync(process.env.DRAWER_SHOT, Buffer.from(sh.data, 'base64')); }
+  await shot('2-annotate');
   await page('document.querySelector(\'[data-ann="done"]\').click()');
 
   // ── Hidden, and other projects: pages keep running, nothing reloads ──
@@ -275,6 +293,7 @@ try {
   await sleep(2500);
   const dev = await proj(() => browser.evalBrowser(key, 'innerWidth + "x" + innerHeight'));
   check('browser_resize emulates a device size', dev.result === '390x844', JSON.stringify(dev));
+  await shot('4-device');
   const box = await page('(function(){var w=document.querySelector(".brd-wv.on").getBoundingClientRect(),s=document.querySelector(".brd-stage").getBoundingClientRect();return [Math.round(w.width),Math.round(w.height),Math.round(s.height)];})()');
   check('the device is scaled to fit the drawer, in proportion', Math.abs(box[0] / box[1] - 390 / 844) < 0.02 && box[1] <= box[2], JSON.stringify(box));
   await page('(function(){var s=document.querySelector(".brd-dev");s.value="0";s.dispatchEvent(new Event("change"));})()');
@@ -305,6 +324,31 @@ try {
   check('the drawer shows which network each tab is on', await page('document.querySelectorAll(".brd-tab .brd-net-dot.server").length === 1'));
   await page(`(function(){var t=[].find.call(document.querySelectorAll(".brd-tab"),function(x){return x.querySelector(".brd-net-dot")});t.click();})()`);
   check('and the toolbar names it', await page('document.querySelector(".brd-netsel").value === "server" && /Server/.test(document.querySelector(".brd-netsel").selectedOptions[0].textContent)'));
+  await shot('5-server-network');
+
+  // ── One browser per client: logins and storage shared by every tab, in every project ──
+  await proj(() => browser.navigateBrowser(key, `http://127.0.0.1:${T}/page`));
+  await proj(() => browser.evalBrowser(key, 'document.cookie = "login=alice; max-age=3600"; localStorage.setItem("cart", "3"); 1'));
+  const oth = await as('other', () => browser.openDrawerTab({ alias: 'other', url: `http://127.0.0.1:${T}/page` }));
+  const seen = await as('other', () => browser.evalBrowser(oth.key, 'document.cookie + "|" + localStorage.getItem("cart")'));
+  check('a login made in one project\'s tab is there in another project\'s tab (one browser)', /login=alice/.test(seen.result || '') && /\|3$/.test(seen.result || ''), JSON.stringify(seen));
+  const hist = await page('window.api.wbrowser.drawer.history("Target page", 5)');
+  check('history: visits are kept, and found by title or address', hist.items && hist.items.some((h) => /\/page$/.test(h.url) && h.title === 'Target page' && h.visits >= 2), JSON.stringify(hist).slice(0, 300));
+  await page('document.querySelector(\'[data-brd="menu"]\').click()');
+  await page('document.querySelector(\'[data-pan="history"]\').click()');
+  await sleep(500);
+  check('the History view lists them', await page('document.querySelectorAll(".brd-hrow").length >= 2'));
+  await shot('6-history');
+  await page('document.querySelector(\'.brd-ph [data-pan="clear"]\').click()');
+  await page('(function(){var c=document.querySelector(\'[data-clr="cookies"]\');c.checked=true;})()');
+  await shot('7-clear');
+  await page('document.querySelector(\'[data-pan="do-clear"]\').click()');
+  await sleep(1000);
+  const after = await as('other', () => browser.evalBrowser(oth.key, 'document.cookie + "|" + localStorage.getItem("cart")'));
+  const hist2 = await page('window.api.wbrowser.drawer.history("", 50)');
+  check('"Clear browsing data" clears cookies, site storage and history', after.result === '|null' && hist2.items.length === 0, JSON.stringify(after) + ' ' + JSON.stringify(hist2).slice(0, 200));
+  check('and the open tabs stay open', (await as('other', () => browser.evalBrowser(oth.key, 'document.title'))).result === 'Target page');
+  await as('other', () => browser.closeBrowser(oth.key));
 
   // ── Sleep: a tab nobody looks at or uses is frozen, and wakes as it was ──
   await proj(() => browser.navigateBrowser(key, `http://127.0.0.1:${T}/page`));
@@ -322,6 +366,15 @@ try {
   check('while asleep its scripts stopped; a chat using it wakes it first, with nothing reloaded', z === 42 && n > 10 && n < (Date.now() - t0) / 100 - 15, JSON.stringify(woke) + ` over ${Date.now() - t0} ms`);
   const awake = (await proj(() => browser.listAllBrowsers('proj'))).browsers.find((b) => b.key === key);
   check('and it is listed awake again', awake && !awake.sleeping, JSON.stringify(awake));
+
+  // ── Unload: asleep for its unload time (4 s here, 1 h by default), the page is closed ──
+  const loadsBeforeUnload = pageLoads;
+  let unloaded = null;
+  for (let i = 0; i < 80 && !unloaded; i++) { await sleep(250); unloaded = (await proj(() => browser.listAllBrowsers('proj'))).browsers.find((b) => b.key === key && b.unloaded); }
+  check('a tab asleep for its unload time is unloaded (listed, page closed)', !!unloaded && /\/page$/.test(unloaded.url || ''), JSON.stringify(unloaded));
+  check('the tab strip still has it', await page('[].some.call(document.querySelectorAll(".brd-tab.sleeping"), function(x){ return /Unloaded/.test(x.title); })'));
+  const again = await proj(() => browser.evalBrowser(key, 'document.title + ":" + typeof window.__z'));
+  check('a chat using it loads it again at the same address (the one reload)', again.result === 'Target page:undefined' && pageLoads === loadsBeforeUnload + 1, JSON.stringify(again) + ` loads ${loadsBeforeUnload}->${pageLoads}`);
   await page('drawer.open()');
 
   // ── Popups become tabs; closing ──

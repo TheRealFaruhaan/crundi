@@ -87,7 +87,9 @@
     '.brd-sel { height: 28px; max-width: 130px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: 6px; font-size: 0.72rem; cursor: pointer; padding: 0 4px; flex: 0 1 auto; min-width: 0; }',
     '.brd-sel.brd-netsel { min-width: 84px; flex: 0 0 auto; }',
     '.brd-sel.brd-netsel.server { border-color: var(--accent); color: var(--text-primary); }',
-    '.brd-annbar { background: var(--bg-tertiary); font-size: 0.74rem; color: var(--text-secondary); flex-wrap: wrap; }',
+    '.brd-annbar { background: var(--bg-tertiary); font-size: 0.74rem; color: var(--text-secondary); flex-wrap: nowrap; gap: 4px; }',
+    '.brd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }',
+    '.brd-annbar .brd-chat { max-width: 110px; }',
     '.brd-annbar[hidden] { display: none; }',
     '.brd-annbar .brd-btn { height: 26px; padding: 0 10px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; cursor: pointer; font-size: 0.74rem; }',
     '.brd-annbar .brd-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }',
@@ -119,6 +121,27 @@
     '.brd-diag { pointer-events: none; z-index: 1; }',
     '.brd-empty .brd-btn { height: 30px; padding: 0 14px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; cursor: pointer; }',
     '.brd.brd-loading .brd-ibtn[data-brd="reload"] .ic { animation: brd-spin 0.8s linear infinite; }',
+    '.brd-menu { position: absolute; z-index: 6; right: 36px; top: 34px; min-width: 200px; padding: 4px; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.45); }',
+    '.brd-menu button { display: flex; width: 100%; align-items: center; gap: 8px; padding: 7px 10px; border: none; background: none; color: var(--text-primary); font-size: 0.78rem; border-radius: 5px; cursor: pointer; text-align: left; }',
+    '.brd-menu button:hover { background: var(--bg-tertiary); }',
+    '.brd-menu .ic { width: 14px; height: 14px; }',
+    '.brd-panel { position: absolute; inset: 0; z-index: 5; background: var(--bg-secondary); display: flex; flex-direction: column; font-size: 0.8rem; color: var(--text-primary); }',
+    '.brd-panel[hidden] { display: none; }',
+    '.brd-ph { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; }',
+    '.brd-ph .brd-sp { flex: 1 1 auto; }',
+    '.brd-pb { flex: 1 1 auto; overflow: auto; padding: 8px 12px; }',
+    '.brd-hq { width: 100%; height: 28px; margin-bottom: 8px; padding: 0 10px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; outline: none; box-sizing: border-box; }',
+    '.brd-hrow { display: flex; gap: 10px; align-items: baseline; padding: 6px 4px; border-radius: 5px; cursor: pointer; }',
+    '.brd-hrow:hover { background: var(--bg-tertiary); }',
+    '.brd-hrow .brd-ht { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.brd-hrow .brd-hu { display: block; color: var(--text-muted); font: 11px var(--mono, monospace); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.brd-hrow .brd-hw { flex: 0 0 auto; color: var(--text-muted); font-size: 0.72rem; }',
+    '.brd-chk { display: flex; gap: 10px; align-items: flex-start; padding: 8px 2px; cursor: pointer; }',
+    '.brd-chk small { display: block; color: var(--text-muted); margin-top: 2px; }',
+    '.brd-note2 { color: var(--text-muted); font-size: 0.74rem; margin: 8px 2px; line-height: 1.45; }',
+    '.brd-pf { display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }',
+    '.brd-pf .brd-btn, .brd-ph .brd-btn { height: 28px; padding: 0 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; cursor: pointer; font-size: 0.76rem; }',
+    '.brd-pf .brd-btn.danger { background: var(--red, #ef4444); border-color: var(--red, #ef4444); color: #fff; }',
     '@keyframes brd-spin { to { transform: rotate(360deg); } }',
   ].join('\n');
 
@@ -178,7 +201,7 @@
       + '<button class="brd-ibtn" data-brd="back" title="Back" disabled>' + ic('chevron-left') + '</button>'
       + '<button class="brd-ibtn" data-brd="forward" title="Forward" disabled>' + ic('chevron-right') + '</button>'
       + '<button class="brd-ibtn" data-brd="reload" title="Reload">' + ic('refresh') + '</button>'
-      + '<input class="brd-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search">'
+      + '<input class="brd-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search" list="brd-hist"><datalist id="brd-hist"></datalist>'
       + '<select class="brd-sel brd-netsel" title="Which network this tab uses"><option value="client">This PC</option><option value="server">Server</option></select>'
       + '<select class="brd-sel brd-dev" title="Emulate device"></select>'
       + '<button class="brd-ibtn" data-brd="annotate" title="Annotate the page">' + ic('message-square') + '</button>'
@@ -196,12 +219,14 @@
       + '<span class="brd-sendlbl">Send</span>'
       + '<button class="brd-ibtn brd-send" data-ann="send-css" title="">' + ic('file-text') + '</button>'
       + '<button class="brd-ibtn brd-send" data-ann="send-shot" title="">' + ic('image') + '</button>'
-      + '<button class="brd-btn" data-ann="clear" title="Remove your marks">Clear</button>'
-      + '<button class="brd-btn" data-ann="done">Done</button>'
+      + '<span class="brd-sep"></span>'
+      + '<button class="brd-ibtn" data-ann="clear" title="Remove your marks">' + ic('trash') + '</button>'
+      + '<button class="brd-ibtn" data-ann="done" title="Done annotating">' + ic('check') + '</button>'
       + '</div>'
       + '<div class="brd-stage"><div class="brd-views"></div><div class="brd-ann"><svg xmlns="http://www.w3.org/2000/svg"></svg></div>'
       + '<div class="brd-diag" hidden></div>'
-      + '<div class="brd-empty" hidden><div>No browser tabs in this project yet.</div><button class="brd-btn" data-brd="new">Open a tab</button></div></div>';
+      + '<div class="brd-empty" hidden><div>No browser tabs in this project yet.</div><button class="brd-btn" data-brd="new">Open a tab</button></div>'
+      + '<div class="brd-panel" hidden></div></div>';
     var tabsEl = root.querySelector('.brd-tabs');
     var urlEl = root.querySelector('.brd-url');
     var netSel = root.querySelector('.brd-netsel');
@@ -214,6 +239,8 @@
     var svg = annEl.querySelector('svg');
     var diagEl = root.querySelector('.brd-diag');
     var emptyEl = root.querySelector('.brd-empty');
+    var panelEl = root.querySelector('.brd-panel');
+    var histList = root.querySelector('#brd-hist');
     devSel.innerHTML = DEVICES.map(function (d, i) { return '<option value="' + i + '">' + esc(d.responsive ? 'Responsive' : d.name + '  ' + d.w + 'x' + d.h) + '</option>'; }).join('') + '<option value="custom" hidden>Custom</option>';
 
     // ─── Open / close / width ───
@@ -274,14 +301,15 @@
       var act = activeTab();
       var h = ps.tabs.map(function (t) {
         var net = t.network === 'server' ? '<span class="brd-net-dot server' + (serverBad() ? ' bad' : '') + '" title="' + esc('Network: ' + netLabel('server')) + '">SRV</span>' : '';
-        var rt = runtime[t.id]; var zz = !!(rt && rt.sleeping);
-        return '<div class="brd-tab' + (act && act.id === t.id ? ' on' : '') + (zz ? ' sleeping' : '') + '" role="tab" data-tab="' + esc(t.id) + '" title="' + esc((t.title || t.url || '') + '\n' + (t.url || '') + '\nNetwork: ' + netLabel(t.network) + (zz ? '\nAsleep: wakes, as it was, when shown or used' : '')) + '">'
+        var rt = runtime[t.id]; var gone = !!(rt && rt.unloaded); var zz = gone || !!(rt && rt.sleeping);
+        return '<div class="brd-tab' + (act && act.id === t.id ? ' on' : '') + (zz ? ' sleeping' : '') + '" role="tab" data-tab="' + esc(t.id) + '" title="' + esc((t.title || t.url || '') + '\n' + (t.url || '') + '\nNetwork: ' + netLabel(t.network) + (gone ? '\nUnloaded after an hour asleep: loads again when shown or used' : zz ? '\nAsleep: wakes, as it was, when shown or used' : '')) + '">'
           + net + '<span class="brd-t">' + esc(t.title || t.url || 'New tab') + '</span>'
           + '<button class="brd-x" data-close="' + esc(t.id) + '" title="Close tab">' + ic('x') + '</button></div>';
       }).join('');
       tabsEl.innerHTML = h
         + '<button class="brd-ibtn" data-brd="new" title="New tab">' + ic('plus') + '</button>'
         + '<span class="brd-sp"></span>'
+        + '<button class="brd-ibtn" data-brd="menu" title="History and browsing data">' + ic('more') + '</button>'
         + '<button class="brd-ibtn" data-brd="hide" title="Hide the browser (pages keep running)">' + ic('chevron-right') + '</button>';
       emptyEl.hidden = !!ps.tabs.length;
     }
@@ -328,6 +356,7 @@
       if (runtime[t.id] && runtime[t.id].wv) return runtime[t.id];
       opts = opts || {};
       var r = runtime[t.id] = runtime[t.id] || { ann: [], state: {} };
+      r.unloaded = false; r.sleeping = false;
       var wv = document.createElement('webview');
       wv.className = 'brd-wv';
       wv.setAttribute('partition', PARTITIONS[t.network] || PARTITIONS.client);
@@ -696,6 +725,90 @@
         .then(function () { renderMode(); });
     }
 
+    // ─── History and browsing data ───
+    // One browser per client: every tab in every project shares cookies,
+    // logins, site storage and this history (tabs on the server's network
+    // have a second profile: a profile is what a proxy is set on).
+    var histTimer = null;
+    urlEl.addEventListener('input', function () {
+      clearTimeout(histTimer);
+      var q = urlEl.value.trim();
+      histTimer = setTimeout(function () {
+        if (!api.history || !q) { histList.innerHTML = ''; return; }
+        api.history(q, 8).then(function (r) {
+          histList.innerHTML = ((r && r.items) || []).map(function (h) { return '<option value="' + esc(h.url) + '" label="' + esc(h.title || '') + '"></option>'; }).join('');
+        }, function () {});
+      }, 120);
+    });
+    function ago(t) {
+      var m = Math.round((Date.now() - t) / 60000);
+      if (m < 1) return 'now'; if (m < 60) return m + ' min'; var h = Math.round(m / 60); if (h < 24) return h + ' h';
+      return new Date(t).toLocaleDateString();
+    }
+    var menuEl = null;
+    function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; document.removeEventListener('pointerdown', menuOutside, true); } }
+    function menuOutside(e) { if (menuEl && !menuEl.contains(e.target) && !e.target.closest('[data-brd="menu"]')) closeMenu(); }
+    function openMenu() {
+      if (menuEl) { closeMenu(); return; }
+      menuEl = document.createElement('div'); menuEl.className = 'brd-menu';
+      menuEl.innerHTML = '<button data-pan="history">' + ic('clock') + 'History</button>'
+        + '<button data-pan="clear">' + ic('trash') + 'Clear browsing data\u2026</button>';
+      root.appendChild(menuEl);
+      setTimeout(function () { document.addEventListener('pointerdown', menuOutside, true); }, 0);
+    }
+    function closePanel() { panelEl.hidden = true; panelEl.innerHTML = ''; }
+    function showHistory(q) {
+      panelEl.hidden = false;
+      if (!panelEl.querySelector('.brd-hq')) {
+        panelEl.innerHTML = '<div class="brd-ph">History<span class="brd-sp"></span><button class="brd-btn" data-pan="clear">Clear browsing data\u2026</button><button class="brd-ibtn" data-pan="close" title="Close">' + ic('x') + '</button></div>'
+          + '<div class="brd-pb"><input class="brd-hq" type="search" placeholder="Search history"><div class="brd-hl"></div></div>';
+        var hq = panelEl.querySelector('.brd-hq');
+        hq.addEventListener('input', function () { showHistory(hq.value); });
+        setTimeout(function () { try { hq.focus(); } catch (e) { /* ignore */ } }, 0);
+      }
+      api.history(q || '', 200).then(function (r) {
+        var items = (r && r.items) || [];
+        var hl = panelEl.querySelector('.brd-hl'); if (!hl) return;
+        hl.innerHTML = items.length ? items.map(function (h) {
+          return '<div class="brd-hrow" data-url="' + esc(h.url) + '" title="' + esc(h.url) + '"><span class="brd-ht">' + esc(h.title || h.url) + '<span class="brd-hu">' + esc(h.url) + '</span></span><span class="brd-hw">' + esc(ago(h.at)) + '</span></div>';
+        }).join('') : '<div class="brd-note2">' + (q ? 'Nothing in the history matches.' : 'No history yet.') + '</div>';
+      });
+    }
+    function showClear() {
+      panelEl.hidden = false;
+      panelEl.innerHTML = '<div class="brd-ph">Clear browsing data<span class="brd-sp"></span><button class="brd-ibtn" data-pan="close" title="Close">' + ic('x') + '</button></div>'
+        + '<div class="brd-pb">'
+        + '<label class="brd-chk"><input type="checkbox" data-clr="history" checked><span>Browsing history<small>Every address visited, and each tab\u2019s back and forward list</small></span></label>'
+        + '<label class="brd-chk"><input type="checkbox" data-clr="cookies"><span>Cookies and site data<small>Logins, local storage, databases, service workers. Signs you out of sites.</small></span></label>'
+        + '<label class="brd-chk"><input type="checkbox" data-clr="cache" checked><span>Cached images and files<small>Pages load again from the network</small></span></label>'
+        + '<div class="brd-note2">For this computer\u2019s browser: every tab in every project, on both networks. Open tabs stay open.</div>'
+        + '</div><div class="brd-pf"><button class="brd-btn" data-pan="close">Cancel</button><button class="brd-btn danger" data-pan="do-clear">Clear</button></div>';
+    }
+    function doClear() {
+      var what = {};
+      panelEl.querySelectorAll('[data-clr]').forEach(function (c) { what[c.dataset.clr] = c.checked; });
+      if (!what.history && !what.cookies && !what.cache) { toast('Choose something to clear'); return; }
+      api.clear(what).then(function (r) {
+        toast('Cleared: ' + (((r && r.cleared) || []).join(', ') || 'nothing'));
+        closePanel();
+      }, function (err) { toast('Could not clear: ' + (err && err.message || err), 'error'); });
+    }
+    root.addEventListener('click', function (e) {
+      var pan = e.target.closest('[data-pan]');
+      if (pan) {
+        e.stopPropagation(); var a = pan.dataset.pan; closeMenu();
+        if (a === 'history') showHistory(''); else if (a === 'clear') showClear();
+        else if (a === 'close') closePanel(); else if (a === 'do-clear') doClear();
+        return;
+      }
+      var row = e.target.closest('.brd-hrow');
+      if (row) {
+        closePanel();
+        var t = activeTab();
+        if (t) go(row.dataset.url); else newTab(row.dataset.url, 'client', true);
+      }
+    });
+
     // ─── Toolbar ───
     function go(v) {
       var t = activeTab(); v = (v || '').trim(); if (!t || !v) return;
@@ -735,6 +848,7 @@
       var a = b.dataset.brd, t = activeTab();
       if (a === 'new') newTab(START, t ? t.network : 'client', true);
       else if (a === 'hide') close();
+      else if (a === 'menu') openMenu();
       else if (!t) return;
       else if (a === 'back' || a === 'forward' || a === 'reload') api.nav(t.id, a);
       else if (a === 'devtools') api.devtools(t.id);
@@ -812,6 +926,20 @@
         return r.attached.then(function () { return { project: f.project, network: f.tab.network }; });
       },
       close: function (a) { mustTab(a.tabId); closeTab(a.tabId); return {}; },
+      // An hour asleep (the main process decides): close the page, keep the tab.
+      discard: function (a) {
+        var f = mustTab(a.tabId); var r = runtime[a.tabId];
+        if (!r || !r.wv) return {};
+        var onScreen = st.open && f.project === project && (activeTab() || {}).id === a.tabId && document.visibilityState === 'visible';
+        if (onScreen) throw new Error('The tab is on screen');
+        var url = (r.state && r.state.url) || f.tab.url;
+        if (url && url !== 'about:blank') f.tab.url = url;
+        persist();
+        try { r.wv.remove(); } catch (e) { /* gone */ }
+        runtime[a.tabId] = { ann: [], state: { url: f.tab.url, title: f.tab.title }, unloaded: true };
+        if (f.project === project) renderTabs();
+        return {};
+      },
       resize: function (a) {
         var f = mustTab(a.tabId);
         var w = clamp(Math.round(Number(a.width) || 0), 200, 3840), h = clamp(Math.round(Number(a.height) || 0), 200, 3840);
