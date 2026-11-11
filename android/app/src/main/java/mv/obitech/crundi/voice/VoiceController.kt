@@ -645,7 +645,7 @@ class VoiceController(
         if (!running) return
         when (ev) {
             is ListenEvent.Ready -> dispatch(VoiceEvent.Ready(now(), ev.echoFilter && fallback == null))
-            ListenEvent.Speech -> {}
+            ListenEvent.Speech -> dispatch(VoiceEvent.SpeechStarted(now()))
             is ListenEvent.Interim -> dispatch(VoiceEvent.Interim(ev.text, now()))
             is ListenEvent.Utterance -> {
                 dispatch(VoiceEvent.Utterance(ev.text, now(), ev.held))

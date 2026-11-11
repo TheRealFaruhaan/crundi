@@ -86,6 +86,10 @@ data class VoiceState(
     val voiceOff: Boolean = false,
     /** Kid mode is on: Cru always talks (the child's screen). The controller keeps it as the server has it. */
     val kid: Boolean = false,
+    /** When the owner last showed he is speaking (speech started, words), 0 once his utterance is in: what arrives meanwhile waits for him. */
+    val speechAt: Long = 0,
+    /** The answer that came while he was speaking: it goes on once he has finished (his words first). */
+    val heldReply: VoiceEvent.Reply? = null,
 )
 
 /**
@@ -104,6 +108,8 @@ sealed interface VoiceEvent {
     /** [live]: the server drops Cru's own words (barge-in with the stream on). */
     data class Ready(val now: Long, val live: Boolean = false) : VoiceEvent
     data class Interim(val text: String, val now: Long) : VoiceEvent
+    /** The owner began speaking (Deepgram's speech started), before any words. */
+    data class SpeechStarted(val now: Long) : VoiceEvent
     /** [held]: the server ended it while the stream was paused (said just before Cru began speaking). */
     data class Utterance(val text: String, val now: Long, val held: Boolean = false) : VoiceEvent
     /** Claude's answer, or why there is none. */
@@ -176,7 +182,27 @@ class VoiceMachine(
     val echoMs: Long = 5_000,
     /** What to say when called while already listening: one of [Speech.HERE], never the same twice running. */
     val here: () -> String = Speech.hereLine(),
+    /** After a sign he is speaking, how long he counts as still speaking (the server's 2 s pause, and a margin). */
+    val talkMs: Long = 2_700,
 ) {
+    /**
+     * He has begun speaking and not finished (12 Nov, the owner: "first he should be able to finish
+     * his speaking, then the response arrives"). Talking over Cru while it speaks is barge-in, not this.
+     */
+    private fun talking(s: VoiceState, now: Long) = !s.kid && s.speechAt > 0 && now - s.speechAt < talkMs
+
+    /** He has stopped: the answer held for him goes on (his words, if any, asked first), or news waiting is told. */
+    private fun whenQuiet(s: VoiceState, now: Long, fx: List<VoiceEffect> = emptyList()): Pair<VoiceState, List<VoiceEffect>> {
+        if (talking(s, now)) return s to fx
+        s.heldReply?.let { r -> val (n, more) = on(s.copy(heldReply = null), r.copy(now = now)); return n to (fx + more) }
+        if (s.reports.isNotEmpty() && s.phase == Phase.Listening && s.pending.isEmpty() && s.heard.isEmpty()) {
+            val (sp, sh) = s.reports.first()
+            val (n, more) = tell(s.copy(reports = s.reports.drop(1)), sp, sh, now)
+            return n to (fx + more)
+        }
+        return s to fx
+    }
+
     fun on(s: VoiceState, e: VoiceEvent): Pair<VoiceState, List<VoiceEffect>> {
         if (s.phase == Phase.Ended) return s to emptyList()
         return when (e) {
@@ -197,29 +223,37 @@ class VoiceMachine(
                     n.copy(heard = e.text) to fx
                 } else s to emptyList()
                 echoOf(s, e.text, e.now) -> s to emptyList()
-                s.phase == Phase.Starting || s.phase == Phase.Listening -> s.copy(phase = Phase.Listening, heard = e.text, quietSince = e.now) to emptyList()
+                s.phase == Phase.Starting || s.phase == Phase.Listening -> s.copy(phase = Phase.Listening, heard = e.text, quietSince = e.now, speechAt = if (s.kid) 0 else e.now) to emptyList()
                 s.phase == Phase.Thinking -> {
-                    val n = s.copy(heard = join(s.pending, e.text), quietSince = e.now)
+                    val n = s.copy(heard = join(s.pending, e.text), quietSince = e.now, speechAt = if (s.kid) 0 else e.now)
                     // Talking over the cue stops it.
                     if (s.cue.isNotEmpty() && Speech.talksOver(e.text, s.cue)) n.copy(cue = "") to (listOf<VoiceEffect>(VoiceEffect.StopCue) + doneFx(s))
                     else n to emptyList()
                 }
                 else -> s to emptyList()
             }
+            // He began speaking: what arrives now waits for him to finish ([talking]).
+            is VoiceEvent.SpeechStarted -> if (!s.kid && (s.phase == Phase.Listening || s.phase == Phase.Thinking)) s.copy(speechAt = e.now) to emptyList() else s to emptyList()
             // Said just before Cru began speaking (12 Nov: it waited for his next sentence): it waits
             // as what he said meanwhile, and afterSpeech asks it. Never dropped, never cutting Cru off.
             is VoiceEvent.Utterance -> if (e.held && s.phase == Phase.Speaking && !s.kid && e.text.isNotBlank() && !Speech.isDiscard(e.text.trim())) {
                 join(s.pending, e.text).let { p -> s.copy(pending = p, heard = p, lastTyped = false) to emptyList<VoiceEffect>() }
             } else {
+                // His words are in: he has finished speaking; what was held for him goes after them.
+                val s1 = s.copy(speechAt = 0)
                 val t = e.text.trim()
                 // Something he really said (not an echo, not "scratch that"): Cru may speak up unprompted again.
-                val heardOwner = t.isNotEmpty() && !echoOf(s, t, e.now) && !Speech.isDiscard(t) && (s.phase != Phase.Speaking || (s.live && Speech.talksOver(t, s.lastSaid, 1)))
-                utterance(if (heardOwner) s.copy(lastTyped = false) else s, t, e.now)
+                val heardOwner = t.isNotEmpty() && !echoOf(s1, t, e.now) && !Speech.isDiscard(t) && (s1.phase != Phase.Speaking || (s1.live && Speech.talksOver(t, s1.lastSaid, 1)))
+                val (n, fx) = utterance(if (heardOwner) s1.copy(lastTyped = false) else s1, t, e.now)
+                // Asked anew (Listening -> Thinking): a held answer is an older turn's, dropped by its turn number when it runs.
+                whenQuiet(n, e.now, fx)
             }
             is VoiceEvent.Reply -> {
                 // Cancelled: never said or shown as an error; just what had already been done.
                 if (e.cancelled) return (if (s.phase == Phase.Listening && s.heard.isEmpty()) s.copy(notice = cancelledNotice(e.acted)) else s) to emptyList()
                 if (s.phase != Phase.Thinking || (e.turn >= 0 && e.turn != s.turn)) return s to emptyList()
+                // He has begun speaking again: he finishes first, then his words go (or this is said).
+                if (talking(s, e.now)) return s.copy(heldReply = e) to emptyList()
                 // [silent]: typed, so the answer is read, not said (no speech made: Cru works without Deepgram).
                 // Muted: nothing is said (kid mode always talks).
                 val say = if (e.silent || !s.speaks()) "" else if (e.ok) e.speak.trim() else e.error.trim()
@@ -265,6 +299,8 @@ class VoiceMachine(
             }
             is VoiceEvent.Unlocked -> s.copy(locked = false, notice = "", quietSince = e.now, activeSince = e.now) to emptyList()
             is VoiceEvent.Tick -> when {
+                // He has stopped without words (a cough): what was held for him goes on.
+                (s.heldReply != null || s.reports.isNotEmpty()) && s.speechAt > 0 && !talking(s, e.now) -> whenQuiet(s.copy(speechAt = 0), e.now)
                 s.phase == Phase.Starting && !s.offline && e.now - s.quietSince >= startMs ->
                     on(s, VoiceEvent.StreamLost("no answer from the server", e.now))
                 s.phase == Phase.Listening && s.pending.isEmpty() && e.now - s.activeSince >= silenceMs && e.now - s.quietSince >= graceMs ->
@@ -273,7 +309,7 @@ class VoiceMachine(
             }
             VoiceEvent.Close -> s.copy(phase = Phase.Ended) to listOf(VoiceEffect.StopSaying, VoiceEffect.Finish)
             is VoiceEvent.Active -> s.copy(activeSince = e.now, quietSince = e.now) to emptyList()
-            is VoiceEvent.Report -> if (s.phase == Phase.Listening && s.pending.isEmpty() && s.heard.isEmpty()) tell(s, e.speak, e.show, e.now)
+            is VoiceEvent.Report -> if (s.phase == Phase.Listening && s.pending.isEmpty() && s.heard.isEmpty() && !talking(s, e.now)) tell(s, e.speak, e.show, e.now)
                 else s.copy(reports = s.reports + (e.speak to e.show)) to emptyList()
         }
     }

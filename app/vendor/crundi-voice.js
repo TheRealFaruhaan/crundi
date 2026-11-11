@@ -1000,7 +1000,9 @@
     // An instant line from the server (a game being made, waiting for the parent): said if Cru is free.
     else if (e.type === 'say') { if (S.kid && e.text && S.phase === 'listen' && !S.heard && !S.video.playing && !S.paused) { S.reply = String(e.text); speak(String(e.text), { reflex: true, expressivity: typeof e.expressivity === 'number' ? e.expressivity : 1 }); render(); } return; }
     // The server dropped what he said ("scratch that"): clear it, or cancel the turn it started.
-    else if (e.type === 'discard') takeBack(true);
+    else if (e.type === 'discard') { S.speechAt = 0; takeBack(true); }
+    // He began speaking (Deepgram's speech started): what arrives now waits for him to finish.
+    else if (e.type === 'speech') { if (!S.paused && !(S.video && S.video.playing)) speechSign(S); return; }
     else if ((e.type === 'interim' || e.type === 'utterance') && S.paused) return;
     else if ((e.type === 'interim' || e.type === 'utterance') && S.video.playing) {
       if (e.type === 'utterance' && S.video.wake(e.text, recentMicPeak())) { talkOverVideo(); }
@@ -1011,8 +1013,8 @@
       // Kid mode: a child talks over Cru all the time; Cru finishes, then answers (utter keeps the words).
       if (S.phase === 'speak') { if (S.kid) return; if (S.live && talksOver(e.text, S.lastSaid, Date.now() - S.hintAt <= HINT_MS ? 1 : 2)) { cutIn(); S.heard = e.text; } else return; }
       else if (echo(e.text)) return;
-      else if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); }
-      else if (S.phase === 'think') { if (S.kid) return; if (S.cue && talksOver(e.text, S.cue.text)) stopCue(); S.heard = (S.pending + ' ' + e.text).trim(); }
+      else if (S.phase === 'listen' || S.phase === 'start') { S.phase = 'listen'; S.heard = e.text; S.quietSince = Date.now(); speechSign(S); }
+      else if (S.phase === 'think') { if (S.kid) return; if (S.cue && talksOver(e.text, S.cue.text)) stopCue(); S.heard = (S.pending + ' ' + e.text).trim(); speechSign(S); }
     }
     // Said just before Cru began speaking (the server ended it while the stream was paused):
     // asked once Cru has finished, never dropped and never cutting Cru off.
@@ -1043,7 +1045,9 @@
   function utter(text, typed, tap) {
     var t = String(text || '').trim();
     if (!t || !S) return;
-    if (!typed && echo(t)) { S.heard = ''; render(); return; }
+    // His words are in: he has finished speaking (a reply or news held for him goes after them).
+    if (!typed) S.speechAt = 0;
+    if (!typed && echo(t)) { S.heard = ''; render(); if (S.heldReply || S.reports.length) whenQuiet(); return; }
     // "Scratch that" alone (an older server passes it on): take back, never ask it.
     if (!typed && isDiscard(t)) { if (S.phase === 'speak') { S.pending = ''; S.pendingTyped = false; if (S.live) cutIn(); } else takeBack(true); render(); return; }
     // A real message from the owner: how it came in decides whether Cru speaks up unprompted until the next.
@@ -1052,7 +1056,7 @@
     // Cru says "wait a moment" (thinking) or shows its wait sign (talking), and
     // listens again once it has answered.
     if (S.kid && (S.phase === 'think' || S.phase === 'speak')) { kidWait(); return; }
-    if (S.phase === 'think') { S.pendingTyped = (S.pending ? S.pendingTyped : true) && !!typed; S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; render(); return; }
+    if (S.phase === 'think') { S.pendingTyped = (S.pending ? S.pendingTyped : true) && !!typed; S.pending = (S.pending + ' ' + t).trim(); S.heard = S.pending; if (S.heldReply) whenQuiet(); render(); return; }
     // Said over Crundi (the stream stayed on): cut it off and ask that now.
     if (S.phase === 'speak') { if (!typed && !(S.live && talksOver(t, S.lastSaid, 1))) return; cutIn(); }
     if (S.phase === 'ended' && !typed) return;
@@ -1207,8 +1211,30 @@
     render();
   }
 
+  /**
+   * He has begun speaking and not finished (12 Nov, the owner: "first he should be able to finish his
+   * speaking, then the response arrives"): speech started, or words heard, within his pause (the
+   * server's pauseMs, plus a margin), and no utterance since. Talking over Cru while it speaks is barge-in, not this.
+   */
+  function talkingMs(s) { return Math.min(5000, Math.max(1000, Number(s && s.settings && s.settings.pauseMs) || 2000)) + 700; }
+  function talking(s, now) { return !!(s && !s.kid && s.speechAt && (now || Date.now()) - s.speechAt < talkingMs(s)); }
+  /** A sign he is speaking (Deepgram's speech started, his words): only while Cru listens or thinks. */
+  function speechSign(s, now) { if (s && !s.kid && (s.phase === 'listen' || s.phase === 'think')) s.speechAt = now || Date.now(); }
+
   /** Whether news can be told now: Cru is listening, and the owner is neither speaking nor waiting on an answer. */
-  function canTell(s) { return !!s && s.phase === 'listen' && !s.pending && !s.heard; }
+  function canTell(s, now) { return !!s && s.phase === 'listen' && !s.pending && !s.heard && !talking(s, now); }
+
+  /**
+   * He has stopped (his words came, or nothing came after the sign): the reply held for him goes on,
+   * or the news waiting is told. Still talking: looked at again when his pause would be over.
+   */
+  function whenQuiet() {
+    if (!S) return;
+    clearTimeout(S.quietTimer); S.quietTimer = null;
+    if (talking(S)) { S.quietTimer = setTimeout(whenQuiet, Math.max(100, talkingMs(S) - (Date.now() - S.speechAt) + 50)); return; }
+    if (S.heldReply) { var f = S.heldReply; S.heldReply = null; f(); return; }
+    if (S.reports.length && canTell(S)) { var q = S.reports.shift(); tell(q.speak, q.show, q.media); }
+  }
 
   /**
    * The answer has been said (or shown): the next news waiting, if any, made
@@ -1225,7 +1251,7 @@
 
   function tell(say, show, media) {
     if (!S) return;
-    if (!canTell(S)) { S.reports.push({ speak: say, show: show, media: media }); return; }
+    if (!canTell(S)) { S.reports.push({ speak: say, show: show, media: media }); if (talking(S)) whenQuiet(); return; }
     S.reply = say; S.detail = show; S.heard = ''; S.notice = ''; S.question = ''; S.quietSince = Date.now();
     chatAdd('', say, show, media);
     // Unprompted: said only while the owner is talking to Cru (his last message spoken) and its voice is on.
@@ -1415,12 +1441,18 @@
       var say = ok ? S.reply : S.notice;
       if (ok) { S.lastChatAsked = S.asked; if (mine && S.msgs && S.msgs.indexOf(mine) >= 0) { mine.speak = S.reply; mine.show = S.detail; mine.media = mediaOf(r.media); if (S.chat) renderChat(true); } else chatAdd(S.asked, S.reply, S.detail, r.media); }
       api('/api/voice/settings').then(function (s) { if (S && s && s.ok !== false) { var v = S.settings && S.settings.ttsVoice, r = S.settings && S.settings.speechRate; S.settings = s; applyVolume(); refreshData(); if (s.ttsVoice !== v || s.speechRate !== r || s.deepgramLimitReached) loadCues(); } });
-      // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
-      if (S.pending) { var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; S.closing = false; stopCue(); ask(p, true, pt); render(); return; }
-      // Typed: the answer is read, not said (no speech is made for it, so Cru works
-      // without Deepgram); the speaker on its bubble says it. Muted, nothing is said. Kid mode always talks.
-      if (say && speaks(S, 'reply', typed)) speak(say); else { stopCue(); afterSpeech(); }
-      render();
+      var go = function () {
+        if (!S || S.turn !== turn || S.phase !== 'think') return;
+        // The owner spoke again while Crundi thought: that goes now, the answer stays on screen unsaid.
+        if (S.pending) { var p = S.pending, pt = !!S.pendingTyped; S.pending = ''; S.pendingTyped = false; S.closing = false; stopCue(); ask(p, true, pt); render(); return; }
+        // Typed: the answer is read, not said (no speech is made for it, so Cru works
+        // without Deepgram); the speaker on its bubble says it. Muted, nothing is said. Kid mode always talks.
+        if (say && speaks(S, 'reply', typed)) speak(say); else { stopCue(); afterSpeech(); }
+        render();
+      };
+      // He has begun speaking again: he finishes first (whenQuiet), then what he said goes, or this is said.
+      if (talking(S)) { S.heldReply = go; whenQuiet(); render(); return; }
+      go();
     }).catch(function (e) { if (!S || S.turn !== turn || S.phase !== 'think') return; S.notice = e.message || 'Could not reach the server'; afterSpeech(); render(); });
   }
 
@@ -2587,7 +2619,7 @@
     tell(say, show, media);
   }
 
-  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive, canTell: canTell, nextReport: nextReport, holdUtterance: holdUtterance }, open: open, close: function () { close(); },
+  window.CrundiVoice = { _test: { isEcho: isEcho, talksOver: talksOver, pickCue: pickCue, CUE_TEXTS: CUE_TEXTS, voicedShare: voicedShare, createGate: createGate, createPreroll: createPreroll, createVad: createVad, parseVad: parseVad, shownLevel: shownLevel, SPEECH_MS: SPEECH_MS, VAD_WARM: VAD_WARM, makeLoopback: makeLoopback, richOpus: richOpus, isDiscard: isDiscard, cancelledNotice: cancelledNotice, canCancel: canCancel, createVideoGate: createVideoGate, blocksHtml: blocksHtml, replyMediaHtml: replyMediaHtml, mediaOf: mediaOf, isCalling: isCalling, speakingIndex: speakingIndex, speaks: speaks, staleOutput: staleOutput, speechOver: speechOver, idleSince: idleSince, SILENCE_MS: SILENCE_MS, queuedOf: queuedOf, hearingOf: hearingOf, dropLive: dropLive, canTell: canTell, nextReport: nextReport, holdUtterance: holdUtterance, talking: talking, speechSign: speechSign }, open: open, close: function () { close(); },
     /** Kid mode from the page: { on, ... } (GET /api/voice/kid, SSE 'voice-kid'); opts as for open(). */
     kidMode: kidMode, get isKid() { return !!(S && S.kid); }, kidPaused: function (on) { kidPaused(on); }, attach: attach, icon: cruIcon, tone: tone, setUnread: setUnread, get unread() { return unread; }, report: report,
     /** A reference dragged from Crundi (a kanban card, a file row...): into the typing box when typing, else a chip for the next turn. */

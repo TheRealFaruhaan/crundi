@@ -198,6 +198,19 @@ const settings = { getSettings: () => ({ brain: 'api', model: 'test' }) };
   ok(T.queuedOf(h) === 'show me some factory settings', 'and stay in the chat view as queued (they used to vanish)');
   ok(!T.holdUtterance({ phase: 'listen', heard: '', pending: '' }, 'hi') && !T.holdUtterance({ phase: 'speak', kid: true, pending: '' }, 'hi') && !T.holdUtterance({ phase: 'speak', pending: '' }, 'scratch that'), 'not held when listening (asked at once), in kid mode, or for a take-back');
   ok(T.dropLive(h, 'queued') === true && h.pending === '' && h.heard === '', 'its X still takes it back while Cru speaks');
+  // He has begun speaking (speech started, before any words): news and answers wait for him.
+  const now = 1_000_000;
+  const l = { phase: 'listen', heard: '', pending: '', reports: [], settings: { pauseMs: 2000 } };
+  ok(T.canTell(l, now), 'listening and quiet: news is told at once');
+  T.speechSign(l, now);
+  ok(T.talking(l, now + 100) && !T.canTell(l, now + 100), 'speech started: he is talking, so news waits (it used to start over him)');
+  ok(T.talking(l, now + 2500) && !T.talking(l, now + 2800) && T.canTell(l, now + 2800), 'a sign with no words holds only for his pause and a little more');
+  const sp = { phase: 'speak', heard: '', pending: '', settings: {} };
+  T.speechSign(sp, now);
+  ok(!T.talking(sp, now + 10), 'not while Cru speaks (that is barge-in, which already stops it)');
+  const kd = { phase: 'listen', kid: true, heard: '', pending: '', settings: {} };
+  T.speechSign(kd, now);
+  ok(!T.talking(kd, now + 10), 'not in kid mode (it has its own wait)');
 }
 rmSync(dir, { recursive: true, force: true });
 

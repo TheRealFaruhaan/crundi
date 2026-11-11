@@ -183,6 +183,39 @@ class VoiceMachineTest {
         assertEquals("", s3.pending)
     }
 
+    // 12 Nov, the owner: "first he should be able to finish his speaking, then the response arrives".
+    @Test fun newsWaitsUntilHeHasFinishedSpeaking() {
+        val (s1, fx1) = run(*listening(), VoiceEvent.SpeechStarted(20), VoiceEvent.Report("Sir, the API chat has finished.", "", 25))
+        assertEquals(Phase.Listening, s1.phase)
+        assertEquals(1, s1.reports.size)
+        assertTrue(fx1.none { it is VoiceEffect.Say })
+        // His words come: they are asked; the news waits for the answer.
+        val (s2, fx2) = m.on(s1, VoiceEvent.Utterance("show me some factory settings", 1_500))
+        assertEquals(Phase.Thinking, s2.phase)
+        assertTrue(fx2.contains(VoiceEffect.Ask("show me some factory settings")))
+        assertEquals(1, s2.reports.size)
+    }
+
+    @Test fun anAnswerThatComesWhileHeSpeaksWaitsAndHisWordsGoFirst() {
+        val (s1, _) = run(*listening(), VoiceEvent.Utterance("what is the weather", 30), VoiceEvent.Interim("and show me", 40))
+        val (s2, fx2) = m.on(s1, VoiceEvent.Reply(true, "Sunny, Sir.", "", "", 45))
+        assertEquals(Phase.Thinking, s2.phase)
+        assertTrue(fx2.none { it is VoiceEffect.Say })
+        val (s3, fx3) = m.on(s2, VoiceEvent.Utterance("and show me some factory settings", 1_200))
+        assertTrue(fx3.contains(VoiceEffect.Ask("and show me some factory settings")))
+        assertEquals("Sunny, Sir.", s3.reply)
+        assertTrue(fx3.none { it is VoiceEffect.Say })
+    }
+
+    @Test fun aSpeechSignWithNoWordsHoldsOnlyForAMoment() {
+        val (s1, _) = run(*listening(), VoiceEvent.Utterance("what is the weather", 30), VoiceEvent.SpeechStarted(40))
+        val (s2, fx2) = m.on(s1, VoiceEvent.Reply(true, "Sunny, Sir.", "", "", 45))
+        assertTrue(fx2.none { it is VoiceEffect.Say })
+        val (s3, fx3) = m.on(s2, VoiceEvent.Tick(40 + m.talkMs + 10))
+        assertEquals(Phase.Speaking, s3.phase)
+        assertEquals(VoiceEffect.Say("Sunny, Sir."), fx3.last())
+    }
+
     @Test fun speakingIsNeverCutOffByTheTimeout() {
         val (s, _) = run(*listening(), VoiceEvent.Utterance("hi", 30), VoiceEvent.Reply(true, "A long answer.", "", "", 40), VoiceEvent.Tick(90_000))
         assertEquals(Phase.Speaking, s.phase)
