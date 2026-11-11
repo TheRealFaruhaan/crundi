@@ -61,6 +61,19 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.39 (en-US)
+
+Version code 70. Internal track. Since 1.1.3-dev.38 (code 69): Cru's bubble stays when folded (its activity no longer finishes itself); leaving the voice screen turns Cru into a folded bubble, as chats do; Cru's unheard news goes into its bubble (opens where Android allows, else a message beside it) and is said on opening. Server 1.21.6-dev.52 (pushes carry cruChat and the line to say).
+
+```
+<en-US>
+Cru:
+- Folding Cru's bubble keeps it on screen until you drag it away.
+- Leaving Cru's screen turns it into a bubble, as chats do.
+- Cru's news pops up in its bubble and is read out when you open it.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.38 (en-US)
 
 Version code 69. Internal track. Since 1.1.3-dev.37 (code 68): Cru's bubble stays open over the app you were in (the voice screen steps aside straight after posting, the main window moved behind first), and opens by itself as a chat's bubble does. Server 1.21.6-dev.51.
