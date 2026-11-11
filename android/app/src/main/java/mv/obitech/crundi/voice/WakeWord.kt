@@ -313,6 +313,18 @@ object HeyCrundi {
             var filled = 0
             // The owner's own phrase: each burst of speech on its own, matched against the recordings.
             val bursts = CruWake.Segmenter()
+            // The owner's voice (WakeVoice), when the profile has it and the model is on the phone.
+            val voice = profile.voice?.takeIf { it.valid() }
+            val owner = if (voice != null && WakeVoice.present(app)) WakeVoice.Extractor.load(WakeVoice.file(app)) else null
+            if (voice != null && owner == null) Log.w(TAG, "no voice check this time: the voice model is not ready")
+            /** Is [clip] the owner's? A refusal logs why; no verdict lets the wake stand, as before. */
+            fun theOwner(clip: FloatArray): Boolean {
+                if (voice == null || owner == null) return true
+                val e = owner.embed(clip)
+                val ok = WakeVoice.verdict(voice, e, clip.size.toDouble() / WakeWordEngine.RATE)
+                if (ok == false) Log.i(TAG, "Hey Cru heard, but not in the owner's voice (${"%.2f".format(WakeVoice.score(voice, e!!))} < ${WakeVoice.THRESHOLD}): ignored")
+                return ok != false
+            }
             try {
                 rec.startRecording()
                 while (running) {
@@ -326,11 +338,15 @@ object HeyCrundi {
                     val spotted = kws.feed(chunk)
                     val burst = bursts.accept(chunk)
                     val phrase = burst?.let { b -> profile.matchPhrase(b) { line, clip -> kws.hears(line, clip) } }
-                    if (phrase?.ok == true && running) { Log.i(TAG, "Hey Cru: the owner's phrase (${phrase.score})"); main.post { heard() } }
+                    if (phrase?.ok == true && running) {
+                        val clip = CruWake.trim(burst) ?: burst
+                        if (theOwner(clip)) { Log.i(TAG, "Hey Cru: the owner's phrase (${phrase.score})"); main.post { heard() } }
+                    }
                     else if (spotted && running) {
                         val recent = FloatArray(filled) { ring[(at - filled + it + keep) % keep] }
                         val v = profile.verify(recent)
-                        if (v.ok) main.post { heard() } else Log.i(TAG, "Hey Cru heard, but not like the owner's (${v.score} > ${profile.limit}): ignored")
+                        if (!v.ok) Log.i(TAG, "Hey Cru heard, but not like the owner's (${v.score} > ${profile.limit}): ignored")
+                        else if (theOwner(CruWake.trim(recent, 60) ?: recent)) main.post { heard() }
                     }
                     HeyCrundiService.tick()
                 }
@@ -338,6 +354,7 @@ object HeyCrundi {
                 Log.w(TAG, "wake word recording stopped: ${e.message}")
             } finally {
                 mic.release()
+                owner?.release()
             }
         }, "crundi-wake").apply { start() }
         Log.i(TAG, "listening for Hey Cru")

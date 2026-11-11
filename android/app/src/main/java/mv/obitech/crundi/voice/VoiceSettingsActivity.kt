@@ -115,6 +115,8 @@ data class WakeUi(
     val screenMinutes: Int = 2,
     /** "Hey Cru" has been trained on the owner's voice ("6 Nov"); empty until it has. */
     val trainedOn: String = "",
+    /** Only the owner's voice wakes Cru (the profile has his voice, WakeVoice). */
+    val ownerOnly: Boolean = false,
     /** Forget was tapped once: tap again to forget. */
     val confirmForget: Boolean = false,
 )
@@ -201,6 +203,7 @@ class VoiceSettingsActivity : ComponentActivity() {
             fullScreen = UrgentAlerts.fullScreenGranted(this),
             micSeconds = VoicePrefs.silenceSeconds(this),
             screenMinutes = VoicePrefs.screenAwakeMinutes(this),
+            ownerOnly = WakeProfiles.get(this)?.hasVoice() == true,
             trainedOn = WakeProfiles.get(this)?.let { p -> runCatching { java.time.format.DateTimeFormatter.ofPattern("d MMM").format(java.time.Instant.parse(p.trainedAt).atZone(java.time.ZoneId.systemDefault())) }.getOrDefault("yes").ifEmpty { "yes" } }.orEmpty(),
             confirmForget = ui.wake.confirmForget,
         ))
@@ -460,6 +463,12 @@ private fun HeyCrundiPart(w: WakeUi, isAssistant: Boolean, ev: VoiceSettingsEven
             CrundiButton("Train again", ev.onTrain, kind = ButtonKind.Ghost)
             CrundiButton(if (w.confirmForget) "Tap to forget" else "Forget", ev.onForget, kind = if (w.confirmForget) ButtonKind.Danger else ButtonKind.Ghost)
         }
+        // The owner's voice check on each Hey Cru (WakeVoice): on, or a training from before it (or without the model).
+        Text(
+            if (w.ownerOnly) "Only your voice wakes Cru." else "Train again so that only your voice wakes Cru: the voice check is not set up for this training.",
+            style = CrundiType.Small.copy(color = if (w.ownerOnly) CrundiColors.TextSecondary else CrundiColors.Yellow),
+            modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 6.dp),
+        )
         CrundiSwitchRow(
             "In the app", w.inApp, ev.onWakeInApp,
             detail = "While Crundi is open, say \"Hey Cru\" to open the voice screen. Heard on the phone; nothing is sent until it opens.",

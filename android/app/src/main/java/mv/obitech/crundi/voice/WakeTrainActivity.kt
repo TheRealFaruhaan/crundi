@@ -161,9 +161,13 @@ class WakeTrainActivity : ComponentActivity() {
             val r = withContext(Dispatchers.Default) { CruWake.train(clips.map { it!! }, now) { line, clip -> engine.hears(line, clip) } }
             when (r) {
                 is CruWake.Trained.Ok -> {
-                    WakeProfiles.save(this@WakeTrainActivity, r.profile)
+                    // The owner's voice from the same takes (WakeVoice): the model fetched once.
+                    ui = ui.copy(message = "Learning your voice…")
+                    val voice = withContext(Dispatchers.IO) { ownerVoice(clips.map { it!! }) }
+                    val profile = if (voice != null) r.profile.copy(voice = voice) else r.profile
+                    WakeProfiles.save(this@WakeTrainActivity, profile)
                     HeyCrundi.profileChanged()
-                    ui = ui.copy(working = false, doneOn = day(now), message = "")
+                    ui = ui.copy(working = false, doneOn = day(now), message = if (voice != null) "Only your voice wakes Cru." else "Hey Cru works, for any voice: the voice check could not be set up (no connection?). Train again to add it.", messageBad = voice == null)
                 }
                 is CruWake.Trained.Redo -> {
                     var takes = ui.takes
@@ -172,6 +176,16 @@ class WakeTrainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** The owner's takes as his voice (WakeVoice), or null when the model can't be had or run. */
+    private fun ownerVoice(takes: List<FloatArray>): WakeVoiceData? {
+        val model = WakeVoice.ensure(this) ?: return null
+        val ex = WakeVoice.Extractor.load(model) ?: return null
+        try {
+            val embs = takes.mapNotNull { t -> (CruWake.checkSample(t) as? CruWake.Sample.Ok)?.clip?.let { ex.embed(it) } }
+            return if (embs.size >= WakeVoice.K) WakeVoice.enrol(embs).takeIf { it.valid() } else null
+        } finally { ex.release() }
     }
 
     /** After training: listen for five seconds with the new profile and say what it made of it. */

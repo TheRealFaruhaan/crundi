@@ -36,8 +36,9 @@ import kotlin.math.sqrt
  * [CruWake.DECOYS]) competing with "Hey Cru": a decoy heard is no wake. The
  * phrase match also checks its worst 150 ms ([CruWake.windowDistance]).
  * No take is refused because the model didn't hear it.
- * Not a speaker check: someone else saying it the same way may pass. It
- * keeps out "crew" on the television and the near misses.
+ * The templates are not a speaker check: someone else saying it the same
+ * way may pass them. [voice] is ([WakeVoice]): the owner's voice, checked on
+ * each wake. They keep out "crew" on the television and the near misses.
  */
 @Serializable
 data class WakeProfile(
@@ -60,7 +61,12 @@ data class WakeProfile(
     val windowLimit: Double = 0.0,
     val templates: List<List<List<Double>>> = emptyList(),
     val trainedAt: String = "",
+    /** The owner's voice ([WakeVoice]), checked on each wake; null in a profile trained before it, or without the model. */
+    val voice: WakeVoiceData? = null,
 ) {
+    /** Only the owner's voice wakes Cru with this profile. */
+    fun hasVoice() = voice?.valid() == true
+
     // Version 4: deltas in the features; anything older must be trained again.
     fun valid() = version == 4 && phraseFrames > 0 && templates.size >= 3 && limit > 0 && keywordsThreshold > 0 && keyword.isNotBlank()
 
