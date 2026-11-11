@@ -5,7 +5,7 @@ package mv.obitech.crundi.ui.icons
 /** Each icon's shapes as SVG path data, on a 24 by 24 grid, drawn as 2-wide round strokes. */
 internal object IconPaths {
     /** Names that come from the desktop's ICON_PATHS (the rest are from icons-extra.json). */
-    val desktop: Set<String> = setOf("archive", "arrow-up", "bar-chart", "bell", "check", "chevron-left", "chevron-right", "chevrons-left", "clipboard", "clock", "copy", "docker", "download", "external-link", "eye", "eye-off", "factory", "file", "file-text", "film", "folder", "git-branch", "globe", "hard-drive", "help-circle", "image", "images", "info", "kanban", "layers", "list", "lock", "mail", "maximize", "menu", "message-square", "mic", "mindmap", "more", "music", "network", "note", "pages", "panel", "paperclip", "pause", "pencil", "pin", "play", "plus", "refresh", "rotate-ccw", "scissors", "send", "server", "settings", "shield-alert", "stop", "terminal", "trash", "upload", "x", "zap")
+    val desktop: Set<String> = setOf("archive", "arrow-up", "bar-chart", "bell", "check", "chevron-left", "chevron-right", "chevrons-left", "clipboard", "clock", "copy", "docker", "download", "external-link", "eye", "eye-off", "factory", "file", "file-text", "film", "folder", "git-branch", "globe", "hard-drive", "help-circle", "image", "images", "info", "kanban", "layers", "list", "lock", "mail", "maximize", "menu", "message-square", "mic", "mindmap", "more", "music", "network", "note", "pages", "panel", "paperclip", "pause", "pencil", "pin", "play", "plus", "refresh", "rotate-ccw", "scissors", "send", "server", "settings", "shield-alert", "square", "stop", "terminal", "trash", "upload", "x", "zap")
 
     val all: Map<String, List<String>> = mapOf(
         "alert-triangle" to listOf("M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z", "M12 9L12 13", "M12 17L12.01 17"),
@@ -98,6 +98,7 @@ internal object IconPaths {
         "speaking-head" to listOf("M4 21v-4.4C2.2 15.2 1.5 13 1.5 11 1.5 6.6 4.9 3.5 9 3.5c3.6 0 5.8 2.5 6 5.5l1.5 3-1.5.5v2c0 .8-.6 1.5-1.5 1.5h-2V21", "M18.5 10.5a4 4 0 0 1 0 5", "M21 8.5a7 7 0 0 1 0 9"),
         "split-down" to listOf("M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M3 12L21 12"),
         "split-right" to listOf("M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M12 4L12 20"),
+        "square" to listOf("M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z"),
         "stop" to listOf("M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2Z"),
         "terminal" to listOf("M4 17L10 11L4 5", "M12 19L20 19"),
         "trash" to listOf("M3 6L5 6L21 6", "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6", "M10 11v6M14 11v6", "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"),
