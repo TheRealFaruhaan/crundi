@@ -1,6 +1,28 @@
 {
   "steps": [
     {
+      "id": "cru-shows-in-crundi",
+      "tag": "Voice",
+      "title": "Cru can take you to things in Crundi",
+      "body": "Talking to Cru on the PC app or the web, ask it to show you something: a card on the board, a chat, a file, a setting. It switches project and tab, opens what you asked for, and rings it with a short note. It is the page you are talking from that moves, never another screen; on the phone Cru shows you a card instead.",
+      "keys": [
+        {
+          "keys": [
+            "Show me ..."
+          ],
+          "text": "Cru goes there and points at it"
+        },
+        {
+          "keys": [
+            "Click anywhere"
+          ],
+          "text": "clear the ring"
+        }
+      ],
+      "art": "cru-shows-in-crundi.html",
+      "artTitle": "Voice"
+    },
+    {
       "id": "cru-reply-media",
       "tag": "Voice",
       "title": "Cru's replies can show pictures, files and data",

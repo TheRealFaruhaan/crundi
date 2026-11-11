@@ -13,6 +13,9 @@
  *                                       service true (running) / false / null
  *   usage() -> { week, five }           0..1, or null
  *   host                                 shown at the top
+ *   pageId                               this page's own id, sent with each turn: Cru moves
+ *                                        this page (show_in_crundi) when the owner talked here
+ *   uiWhere() -> string                  what the page shows ("project x, kanban tab"), for Cru
  * }
  *
  * Same design and rules as the phone (android/…/voice/): the Crundi head at
@@ -966,6 +969,18 @@
     var ws = S.ws; S.ws = null;
     try { if (ws) { ws.send(JSON.stringify({ type: 'stop' })); ws.close(); } } catch (e) { /* gone */ }
   }
+  /**
+   * Where this turn comes from, for Cru's context line ("the owner is looking at"):
+   * the host, and what the page shows (its project and tab) so Cru can show him
+   * things there (show_in_crundi, capability 'voice-ui-nav'). Starts with "web":
+   * the server's device check (voice/device.js) reads that.
+   */
+  function turnWhere() {
+    var w = 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : '');
+    var ui = '';
+    try { ui = S.opts.uiWhere ? String(S.opts.uiWhere() || '') : ''; } catch (e) { ui = ''; }
+    return ui ? (w + ', ' + ui).slice(0, 200) : w;
+  }
   /** Keyboard mode's line to the server: Cru's reports and settings changes, no audio. */
   function reportSocket() {
     var proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1342,7 +1357,7 @@
     // "Yes" never appeared). The id makes a resend of this request get this turn's answer (voice/turns.js).
     var requestId = 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10), mine = null;
     if (!hidden && S.asked) { mine = { at: Date.now(), said: S.asked, speak: '', show: '', live: true, key: requestId }; (S.msgs = S.msgs || []).push(mine); if (S.chat) renderChat(true); }
-    post('/api/voice/turn', { text: t, where: 'web' + (S.opts.host ? ' (' + S.opts.host + ')' : ''), locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs, requestId: requestId }).then(function (r) {
+    post('/api/voice/turn', { text: t, where: turnWhere(), page: S.opts.pageId || undefined, locked: false, typed: !!typed, attachments: att.attachments, refs: att.refs, requestId: requestId }).then(function (r) {
       if (!S) return;
       // Cancelled: never said or shown as an error, just what it had already done; the message goes.
       if (r && r.cancelled) { if (mine && S.msgs) { S.msgs = S.msgs.filter(function (m) { return m !== mine; }); renderChat(); } if (S.phase === 'listen' && !S.heard) { S.notice = cancelledNotice(r.acted); render(); } return; }

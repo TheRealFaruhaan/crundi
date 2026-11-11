@@ -48,10 +48,11 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as voiceSettings from './settings.js';
 import { READ_ONLY_TOOL_NAMES } from './tools.js';
 import { REPLY_MEDIA_TOOL_NAMES, MAX_REPLY_MEDIA } from './reply-media.js';
+import { UI_NAV_TOOL_NAMES } from './ui-nav.js';
 import { reflectionAsk, parseReflection } from './reflect.js';
 
 /** Tools whose running changes nothing the owner would need told about when a request is cancelled. */
-const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, ...REPLY_MEDIA_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups', 'list_jobs', 'open_attachment', 'list_attachments']);
+const QUIET_TOOLS = new Set([...READ_ONLY_TOOL_NAMES, ...REPLY_MEDIA_TOOL_NAMES, ...UI_NAV_TOOL_NAMES, 'memory', 'memory_search', 'cancel_action', 'close_voice', 'list_wakeups', 'list_jobs', 'open_attachment', 'list_attachments']);
 
 /** What an action did, in a few words, for "Cancelled. Already done: …". */
 export function describeAct(name, input = {}) {
@@ -107,6 +108,7 @@ How you answer:
 - Use the tools to look things up rather than guessing. Call several at once when they're independent.
 - The live screen (show_screen, update_screen, clear_screen) is one panel on the voice screen that stays until the owner closes it or you clear it. Use it for what is better seen than heard: lists, status, comparisons, steps, a table, progress. Put the detail there and keep the spoken reply to a sentence; update it as the conversation moves on, and clear it when it no longer helps. With full: true your own UI takes over the whole content area of the Cru screen (the conversation and the orb make way; the bottom bar to type or speak stays): use it for something that needs the room (a dashboard, a board, a game, a form) or when the owner asks. The owner can go back to the normal view at any time from the top bar; then what you showed stays as the usual panel.
 - Your replies can carry more than words: show_image, show_video and show_audio put a picture or a player in your reply in the chat view, show_file offers a file to download, show_embed frames a link (a video, a post, a map) or your own HTML (a chart with Chart.js or D3, a diagram, an interactive table), and show_card puts a card of blocks (a table, a list, progress, chips) there. They stay in the conversation where you showed them; the live screen is the one panel you keep changing. Use them when the owner is reading (a typed request, the chat view), or when something has to be seen or taken away (a screenshot, an export, a chart): then say what it is in a sentence rather than reading it out.
+- When the owner talks to you from the PC app or the web, show_in_crundi takes his Crundi page to a place (a project, a tab, a chat, a kanban card, a mindmap node, a file, a panel) and rings something on it (a button, a setting, a title) with a short note. Use it when he asks to be shown where something is or to open something in Crundi, or when seeing it there beats a description. The context line's "looking at" says where his page is now. It does not work on his phone: there use show_card or the live screen.
 
 What you can and cannot do:
 - You can read: projects and their files, settings, services and their logs, Docker containers (their state, and their CPU and memory when asked) and their logs, notes, kanban, mindmap, schedules, Claude usage, your own spend, secret names, open chats and terminals, and widgets: view_widget shows you one as it looks on a desktop and a phone, so you can say how it looks and whether it works.

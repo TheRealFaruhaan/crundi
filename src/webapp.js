@@ -119,6 +119,7 @@ import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voic
 import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
 import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
 import { makeReplyMediaTools } from './voice/reply-media.js';
+import { makeUiNavTools, createUiTarget, createAcks as createUiAcks } from './voice/ui-nav.js';
 import { parseYoutubeLine, parseInstructions as parseKidInstructions, KID_FILE, KID_SYSTEM_PROMPT, kidIntro, kidContextLine, makeKidTools, makeStartKidTool, createPinGuard, hashPin, PIN_RE as KID_PIN_RE, createHandleResolver, createGameWatch, splitMood, GAME_EVENTS, createParentNotes, createParentAsks } from './voice/kid.js';
 import { createSkills as createKidSkills, TAXONOMY as KID_TAXONOMY } from './voice/kid-skills.js';
 import { createGameLibrary } from './voice/kid-games.js';
@@ -3484,9 +3485,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     media: chatMedia,
     roots: () => [...allProjects().map((p) => p.path).filter(Boolean), tmpdir(), join(config.dataDir, 'voice-memory')],
   });
+  // Cru moves the owner's Crundi page and rings things on it (voice/ui-nav.js):
+  // the page he last talked from, web or PC; owner-only SSE, answered on /api/voice/ui/ack.
+  const cruUiTarget = createUiTarget();
+  const cruUiAcks = createUiAcks();
+  const cruUiNavTools = makeUiNavTools({
+    target: cruUiTarget,
+    acks: cruUiAcks,
+    send: (msg) => {
+      const payload = `event: cru-ui\ndata: ${JSON.stringify(msg)}\n\n`;
+      for (const client of sseClients) { if (!client.principal || isConfined(client.principal)) continue; try { client.res.write(payload); } catch { sseClients.delete(client); } }
+    },
+    projects: () => allProjects().map((p) => ({ alias: p.alias, name: p.name })),
+    chats: () => (claudeUi ? claudeUi.list() : []).filter((c) => !c.collaborator).map((c) => ({ id: c.id, project: c.project, title: c.title })),
+  });
   const voiceBrainOpts = {
     // Each step is counted for the routine nudge (cruStepDone).
-    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, kidStartTool, kidProgressTool, pcLockTool]
+    tools: [...voiceTools, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, ...cruUiNavTools, kidStartTool, kidProgressTool, pcLockTool]
       .map((t) => ({ ...t, run: async (i) => { let out; try { out = await t.run(i); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
     beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
     turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
@@ -5549,12 +5564,22 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // A resend of the same turn (requestId) gets that turn's result; a turn that finds Cru busy waits its turn (voice/turns.js).
       // Which device it came from (voice/device.js): in Cru's context line and kept with the turn.
       const where = String(body.where || '').slice(0, 200);
-      const device = voiceDevice({ kind: clientVersion.identifyClient(req).kind, where, ua: req.headers['user-agent'] }).label;
+      const dev = voiceDevice({ kind: clientVersion.identifyClient(req).kind, where, ua: req.headers['user-agent'] });
+      const device = dev.label;
+      // The page Cru may move (capability 'voice-ui-nav'): the web/PC page this came from, or the phone.
+      cruUiTarget.note({ page: body.page, deviceId: dev.id, device });
       const r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where, device, locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who }));
       if (r && r.ok) r.speaker = rules.speaker;
       // The volume to say it at (Cru may have just changed it).
       if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
       return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // The owner's page answers a show_in_crundi move (voice/ui-nav.js): { id, ok, error?, found?, where? }.
+    if (path === '/api/voice/ui/ack' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const known = cruUiAcks.answer(body.id, { ok: body.ok !== false, error: String(body.error || '').slice(0, 300), found: body.found === false ? false : body.found === true ? true : undefined, where: String(body.where || '').slice(0, 200) });
+      return json(res, { ok: true, known });
     }
     // A file for Cru (capability 'voice-attach'): { name, type, data (base64), preview? (base64 JPEG of an image) } -> { ok, id, name, kind, size }.
     if (path === '/api/voice/attach' && req.method === 'POST') {

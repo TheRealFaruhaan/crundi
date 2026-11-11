@@ -3020,6 +3020,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     #media-modal .media-modal-body { display: flex; flex-direction: column; min-height: 0; flex: 1; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
     #media-modal .media-toolbar { border-bottom: 1px solid var(--border); }
     #media-modal .media-body { max-height: 58vh; }
+    /* Cru pointing at something on the page (show_in_crundi) */
+    #cru-spot { position: fixed; z-index: 2147483000; pointer-events: none; border: 2px solid var(--accent-hover); border-radius: 10px; box-shadow: 0 0 0 4px var(--accent-dim), 0 0 28px 6px var(--accent-dim); animation: cruSpot 1.6s ease-in-out infinite; transition: left .12s, top .12s, width .12s, height .12s; }
+    @keyframes cruSpot { 0%, 100% { box-shadow: 0 0 0 3px var(--accent-dim), 0 0 18px 4px var(--accent-dim); } 50% { box-shadow: 0 0 0 7px var(--accent-dim), 0 0 34px 10px var(--accent-dim); } }
+    #cru-spot-note { position: fixed; z-index: 2147483001; pointer-events: none; max-width: 320px; padding: 8px 12px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--accent); color: var(--text-primary); font-size: 13px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.45); display: flex; gap: 8px; align-items: baseline; }
+    #cru-spot-note b { color: var(--accent-hover); font-weight: 600; flex: none; }
     /* highlight pulse used by jump-to-source */
     .jump-flash { animation: jumpFlash 2.2s ease-out; }
     @keyframes jumpFlash {
@@ -6747,9 +6752,164 @@ export function getWebappHtml(botUsername, appVersion = '') {
         vwApply(s);
       } catch (err) { vwt.msg = 'Could not forget it: ' + ((err && err.message) || err); vwt.bad = true; renderVoiceTrain(); }
     }
+    // ─── Cru shows the owner things on this page (show_in_crundi, voice/ui-nav.js) ───
+    // This page's own id, sent with each turn: Cru moves only the page the owner talked from.
+    const crundiPageId = 'pg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    /** What the page shows, for Cru's "looking at": project, tab, and the focused chat. */
+    function cruUiWhere() {
+      const p = currentProject ? projects.find(x => x.alias === currentProject) : null;
+      const bits = [];
+      bits.push(p ? 'project ' + (p.name || p.alias) : 'no project open');
+      bits.push(currentTab + ' tab');
+      if (currentTab === 'workbench' && focusedTermId) {
+        const t = terminals.find(x => x.id === focusedTermId);
+        if (t && t.kind === 'ui') bits.push('chat "' + String(t.title || '').slice(0, 60) + '"');
+      }
+      return bits.join(', ');
+    }
+    const cruSleep = (ms) => new Promise(r => setTimeout(r, ms));
+    /** fn() until it gives something, for up to ms (a tab's content loads after the switch). */
+    async function cruWaitFor(fn, ms) {
+      const end = Date.now() + ms;
+      for (;;) { const v = fn(); if (v || Date.now() > end) return v || null; await cruSleep(150); }
+    }
+    function cruVisible(el) {
+      if (!el || !el.getBoundingClientRect || el.closest('.cv-ov, #cru-spot, #cru-spot-note')) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+    }
+    /** The element on the page that best shows [text]: exact text first, then the smallest that holds it. */
+    function cruFindText(text) {
+      const norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      const want = norm(text);
+      if (!want) return null;
+      const root = document.body;
+      const seen = new Set(), found = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (norm(n.nodeValue).indexOf(want) < 0) continue;
+        const el = n.parentElement;
+        if (!el || seen.has(el) || /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/.test(el.tagName)) continue;
+        seen.add(el); found.push(el);
+      }
+      document.querySelectorAll('[title], [aria-label], [placeholder]').forEach(el => {
+        if (seen.has(el)) return;
+        const a = norm(el.getAttribute('aria-label')), t = norm(el.getAttribute('title')), ph = norm(el.getAttribute('placeholder'));
+        if (a.indexOf(want) >= 0 || t.indexOf(want) >= 0 || ph.indexOf(want) >= 0) { seen.add(el); found.push(el); }
+      });
+      let best = null, bestScore = Infinity;
+      for (const el of found) {
+        if (!cruVisible(el) || el === document.body || el === document.documentElement) continue;
+        // A whole panel that merely contains the words is not the thing: small elements only.
+        const br = el.getBoundingClientRect();
+        if (br.width * br.height > window.innerWidth * window.innerHeight * 0.4) continue;
+        const own = norm(el.textContent);
+        if (own.length > want.length * 6 + 200) continue;
+        const label = norm(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder'));
+        const score = (own === want || label === want ? 0 : own.indexOf(want) === 0 ? 1 : 2) * 100000 + (own.length || label.length);
+        if (score < bestScore) { best = el; bestScore = score; }
+      }
+      if (!best) return null;
+      // Ring the thing itself (the button, the card, the row), not a word inside it, while it stays small.
+      const up = best.closest('button, a, label, .tab-btn, .kanban-card, .file-item, .term-cell, .mm-node, tr, li, .card, [role="button"]');
+      if (up && cruVisible(up)) { const r = up.getBoundingClientRect(); if (r.height <= 260 && r.width <= window.innerWidth * 0.9) return up; }
+      return best;
+    }
+    /** A ring around [el] with Cru's note beside it, following it as the page scrolls; gone after a while or on a click. */
+    function cruSpotlight(el, note) {
+      cruSpotOff();
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' }); } catch { el.scrollIntoView(); }
+      const ring = document.createElement('div'); ring.id = 'cru-spot';
+      document.body.appendChild(ring);
+      let tip = null;
+      if (note) { tip = document.createElement('div'); tip.id = 'cru-spot-note'; tip.innerHTML = '<b>Cru</b><span></span>'; tip.querySelector('span').textContent = note; document.body.appendChild(tip); }
+      const until = Date.now() + 12000;
+      const place = () => {
+        if (!ring.isConnected) return;
+        if (Date.now() > until || !el.isConnected) { cruSpotOff(); return; }
+        const r = el.getBoundingClientRect(), pad = 6;
+        ring.style.left = (r.left - pad) + 'px'; ring.style.top = (r.top - pad) + 'px';
+        ring.style.width = (r.width + pad * 2) + 'px'; ring.style.height = (r.height + pad * 2) + 'px';
+        if (tip) {
+          const tw = tip.offsetWidth, th = tip.offsetHeight;
+          let top = r.bottom + 12; if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 12);
+          tip.style.top = top + 'px'; tip.style.left = Math.max(8, Math.min(window.innerWidth - tw - 8, r.left)) + 'px';
+        }
+        cruSpotRaf = requestAnimationFrame(place);
+      };
+      place();
+      setTimeout(() => document.addEventListener('pointerdown', cruSpotOff, { once: true, capture: true }), 300);
+    }
+    let cruSpotRaf = 0;
+    function cruSpotOff() {
+      cancelAnimationFrame(cruSpotRaf);
+      ['cru-spot', 'cru-spot-note'].forEach(id => { const e = document.getElementById(id); if (e) e.remove(); });
+    }
+    /** One move from Cru: project, tab, then what to open, then what to ring. Answers the server. */
+    async function cruUiGo(d) {
+      const ack = (r) => apiFetch('/api/voice/ui/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: d.id, where: cruUiWhere(), ...r }) }).catch(() => {});
+      try {
+        // What would hide the move: the What's new tour, a picture shown large, the media browser.
+        if (window.CrundiWhatsNew && window.CrundiWhatsNew.isOpen()) window.CrundiWhatsNew.close();
+        const lb = document.getElementById('media-lightbox');
+        if (lb && lb.classList.contains('visible')) closeMediaLightbox();
+        if ($('#media-modal') && $('#media-modal').classList.contains('visible')) closeMediaModal();
+        if (d.project && d.project !== currentProject) {
+          if (!projects.find(p => p.alias === d.project)) return ack({ ok: false, error: 'That project is not on this page' });
+          await selectProject(d.project);
+        }
+        const tab = d.tab || '';
+        if (tab) {
+          if (!currentProject && GLOBAL_TABS.indexOf(tab) < 0 && tab !== 'inbox') return ack({ ok: false, error: 'No project is open on the page: say which project' });
+          const btn = document.querySelector('.tab-btn[data-tab="' + tab + '"]');
+          if (btn && btn.style.display === 'none') return ack({ ok: false, error: 'The ' + tab + ' tab is not shown here' });
+          if (tab !== currentTab) switchTab(tab);
+        }
+        let target = null;
+        if (d.chat) {
+          focusTerm(d.chat);
+          target = await cruWaitFor(() => document.querySelector('.term-cell[data-tid="' + d.chat + '"]'), 2500);
+          if (target && !d.highlight) flashEl(target);
+        }
+        if (d.card) {
+          await loadKanban();
+          target = await cruWaitFor(() => { const p = $('#kanban-panel'); return p && p.querySelector('.kanban-card[data-task="' + d.card + '"]'); }, 2500);
+          if (!target) return ack({ ok: false, error: 'No such card on this project\\'s board' });
+          if (!d.highlight) flashKanbanTarget({ type: 'task', taskId: d.card });
+        }
+        if (d.node) {
+          await loadMindmap();
+          await cruSleep(250);
+          flashMindmapNode(d.node);
+          target = $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + d.node + '"]');
+        }
+        if (d.widget && window.CrundiWidgets && window.CrundiWidgets.selectInTab) window.CrundiWidgets.selectInTab(d.widget);
+        if (d.file) {
+          if (!currentProject) return ack({ ok: false, error: 'No project is open on the page' });
+          await feOpen(currentProject, d.file);
+          // feOpen only toasts a failure: say it to Cru, which can look the path up (search_files) and try again.
+          const fext = (d.file.includes('.') ? d.file.slice(d.file.lastIndexOf('.') + 1) : '').toLowerCase();
+          const viewer = FE_IMAGE_EXTS.includes(fext) || fext === 'pdf';
+          if (!viewer && !feWins().some(w => w._fe && w._fe.project === currentProject && w._fe.file === d.file)) return ack({ ok: false, error: 'Could not open ' + d.file + ' in ' + currentProject + ': give its path from the project folder (search_files finds it)' });
+        }
+        if (d.highlight) {
+          const el = await cruWaitFor(() => cruFindText(d.highlight), 2500);
+          if (el) { cruSpotlight(el, d.note || ''); return ack({ ok: true, found: true }); }
+          if (target) cruSpotlight(target, d.note || '');
+          return ack({ ok: true, found: false });
+        }
+        if (d.note && target) cruSpotlight(target, d.note);
+        else if (d.note) toast('Cru: ' + d.note);
+        return ack({ ok: true });
+      } catch (err) { return ack({ ok: false, error: String((err && err.message) || err) }); }
+    }
     function voiceOpts() {
       return ({
         apiFetch, token: () => token, host: location.host,
+        // Cru may move this page and ring things on it (show_in_crundi); it knows where the page is.
+        pageId: crundiPageId, uiWhere: cruUiWhere,
         // The PC lock: Cru works as usual; only its history and files are out of view.
         isLocked: () => pcLockOn(),
         cells: () => projects.map(p => {
@@ -10988,6 +11148,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       es.addEventListener('pc-lock', (e) => { try { const st = JSON.parse(e.data || '{}'); applyPcLock(st); if (document.getElementById('vs-pin')) vsLoadPin(); } catch (err) { /* ignore */ } });
       es.addEventListener('voice-kid', (e) => { try { applyKidMode(JSON.parse(e.data || '{}')); } catch (err) { /* ignore */ } });
       es.addEventListener('voice-kid-games', () => { if (document.getElementById('vs-kid')) vsLoadKid(); });
+      // Cru moving a page (show_in_crundi): only the page the owner talked to Cru from acts.
+      es.addEventListener('cru-ui', (e) => { try { const d = JSON.parse(e.data || '{}'); if (d && d.page === crundiPageId && userRole !== 'collaborator') cruUiGo(d); } catch (err) { /* malformed */ } });
       // Cru's unread messages: the dot on its mark.
       es.addEventListener('voice-unread', (e) => { try { const d = JSON.parse(e.data || '{}'); if (window.CrundiVoice && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); } catch (err) { /* ignore */ } });
       // Factory runs and the factory library: the views refresh what they show.

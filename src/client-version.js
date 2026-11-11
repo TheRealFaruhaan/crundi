@@ -227,6 +227,12 @@ export const CAPABILITIES = Object.freeze([
   // (stored under the chat-media session 'cru-voice') and cards (blocks).
   // Older clients just show the words.
   'voice-reply-media',
+  // Cru moves the owner's Crundi page (voice/ui-nav.js, desktop and web
+  // only): POST /api/voice/turn takes page (the page's own id); the move is
+  // the owner SSE event 'cru-ui' { id, page, project?, tab?, chat?, card?,
+  // node?, file?, widget?, highlight?, note? }, acted on by that page alone,
+  // which answers POST /api/voice/ui/ack { id, ok, error?, found?, where? }.
+  'voice-ui-nav',
   // POST /api/voice/turn takes requestId: the same id sent again (a resend
   // after a dropped connection) gets that turn's result, never a second run;
   // a turn that finds Cru busy waits for it (up to 3 min) instead of
