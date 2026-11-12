@@ -39,6 +39,7 @@ const HELPERS = `
   function norm(s) { return String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase(); }
   // Everything a person might call it: its visible text, aria-label, title, value, alt, placeholder.
   function names(el) {
+    if (el.tagName === 'SELECT') return [selectName(el), el.name].map(norm).filter(function (x) { return x; });
     var out = [el.innerText || el.textContent || '', el.getAttribute('aria-label'), el.getAttribute('title'), el.value, el.getAttribute('alt'), el.getAttribute('placeholder')];
     var img = el.querySelector && el.querySelector('img[alt],svg[aria-label]'); if (img) out.push(img.getAttribute('alt') || img.getAttribute('aria-label'));
     return out.map(norm).filter(function (x) { return x; });
@@ -70,7 +71,28 @@ const HELPERS = `
     if (el.id) o.id = el.id;
     var href = el.getAttribute && el.getAttribute('href'); if (href) o.href = href.slice(0, 200);
     var d = el.closest && el.closest(${JSON.stringify(DIALOG)}); if (d) o.inDialog = true;
+    if (o.tag === 'select') {
+      // A native dropdown: its open list is drawn outside the page (no screenshot or
+      // click reaches it), so say what it holds; browser_select chooses.
+      o.text = selectName(el).slice(0, 120);
+      o.value = el.value;
+      o.options = Array.prototype.slice.call(el.options, 0, 60).map(function (op) { return { value: op.value, text: (op.text || '').trim().slice(0, 80), selected: op.selected || undefined, disabled: op.disabled || undefined }; });
+      o.selector = selectorOf(el);
+    }
     return o;
+  }
+  // What a person calls a form field: its <label>, aria-label, name or id.
+  function selectName(el) {
+    var t = '';
+    if (el.id) { var l = document.querySelector('label[for="' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id) + '"]'); if (l) t = l.innerText; }
+    if (!norm(t)) { var p = el.closest('label'); if (p) t = Array.prototype.filter.call(p.childNodes, function (n) { return n.nodeType === 3 || (n.tagName !== 'SELECT' && n.tagName !== 'OPTION'); }).map(function (n) { return n.textContent; }).join(' '); }
+    if (!norm(t)) t = el.getAttribute('aria-label') || el.getAttribute('title') || el.name || el.id || '';
+    return String(t).replace(/\\s+/g, ' ').trim();
+  }
+  function selectorOf(el) {
+    if (el.id) return '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id);
+    if (el.name) return el.tagName.toLowerCase() + '[name="' + el.name + '"]';
+    var all = document.querySelectorAll(el.tagName); return el.tagName.toLowerCase() + ':nth-of-type(' + (Array.prototype.indexOf.call(el.parentNode.children, el) + 1) + ')';
   }
   // The element a person would say they clicked: the nearest clickable around the target.
   function clickableOf(el) { return (el && el.closest && el.closest(${JSON.stringify(CLICKABLE)})) || el; }
@@ -143,6 +165,61 @@ export function findScript(opts = {}) {
   })})`;
 }
 
+/**
+ * Choose in a native <select> (browser_select). The dropdown: by selector, or
+ * by its label (label text, aria-label, name; an open dialog first). The
+ * option: by value, else by its visible text (exact, then partial; case and
+ * spacing ignored), else by index. Fires input and change, as a person's
+ * choice does, and reports what was chosen and what else there is.
+ */
+export function selectScript(opts = {}) {
+  return `(function (o) {${HELPERS}
+  var el = null;
+  if (o.selector) {
+    el = document.querySelector(o.selector);
+    if (!el) return JSON.stringify({ ok: false, error: 'Nothing on the page matches ' + o.selector });
+  } else {
+    var want = norm(o.label);
+    var ds = dialogs(); var roots = ds.length ? [ds[ds.length - 1], document] : [document];
+    for (var r = 0; r < roots.length && !el; r++) {
+      var sels = Array.prototype.filter.call(roots[r].querySelectorAll('select'), shown);
+      el = want ? (sels.filter(function (x) { return norm(selectName(x)) === want; })[0] || sels.filter(function (x) { return norm(selectName(x)).indexOf(want) >= 0; })[0] || null) : (sels.length === 1 ? sels[0] : null);
+    }
+    if (!el) {
+      var all = Array.prototype.filter.call(document.querySelectorAll('select'), shown).map(function (x) { return describe(x); });
+      return JSON.stringify({ ok: false, error: want ? 'No dropdown is labelled "' + o.label + '"' : 'Say which dropdown: a selector, or its label', dropdowns: all.map(function (d) { return { label: d.text, selector: d.selector, value: d.value }; }) });
+    }
+  }
+  if (el.tagName !== 'SELECT') {
+    var inner = el.querySelector && el.querySelector('select');
+    if (inner) el = inner;
+    else return JSON.stringify({ ok: false, error: 'That is a <' + el.tagName.toLowerCase() + '>, not a <select>: a custom dropdown. Click it open (browser_click), then click the option it shows.' });
+  }
+  var ops = Array.prototype.slice.call(el.options);
+  var wants = Array.isArray(o.value) ? o.value : [o.value];
+  var picked = [];
+  for (var w = 0; w < wants.length; w++) {
+    var v = wants[w], nv = norm(v), hit = null;
+    if (v != null) {
+      hit = ops.filter(function (op) { return op.value === String(v); })[0]
+        || ops.filter(function (op) { return norm(op.text) === nv; })[0]
+        || ops.filter(function (op) { return nv && norm(op.text).indexOf(nv) >= 0; })[0] || null;
+    }
+    if (!hit && o.index != null && w === 0) hit = ops[Number(o.index)] || null;
+    if (!hit) return JSON.stringify({ ok: false, error: 'No option ' + JSON.stringify(v != null ? v : o.index) + ' in ' + (selectName(el) || 'this dropdown'), options: describe(el).options });
+    if (hit.disabled) return JSON.stringify({ ok: false, error: 'The option "' + hit.text.trim() + '" is disabled', options: describe(el).options });
+    picked.push(hit);
+  }
+  if (el.multiple) ops.forEach(function (op) { op.selected = picked.indexOf(op) >= 0; });
+  else el.value = picked[0].value;
+  try { el.focus(); } catch (e) { /* not focusable */ }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  var d = describe(el);
+  return JSON.stringify({ ok: true, dropdown: d.text, selector: d.selector, chosen: picked.map(function (p) { return { value: p.value, text: p.text.trim() }; }), value: el.value, options: d.options });
+})(${JSON.stringify({ selector: opts.selector || null, label: opts.label || null, value: opts.value === undefined ? null : opts.value, index: opts.index == null ? null : Number(opts.index) })})`;
+}
+
 export function pointScript(x, y) {
   return `(function (x, y) {${HELPERS}
   var el = document.elementFromPoint(x, y);
@@ -159,7 +236,7 @@ export function clickablesScript(max = 60) {
   Array.prototype.forEach.call(root.querySelectorAll(${JSON.stringify(CLICKABLE)}), function (el) {
     if (!shown(el)) return;
     var d = describe(el);
-    if (!d.text && d.role !== 'textbox' && d.role !== 'checkbox' && d.role !== 'radio') return;
+    if (!d.text && d.role !== 'textbox' && d.role !== 'checkbox' && d.role !== 'radio' && d.tag !== 'select') return;
     var key = d.role + '|' + d.text; if (seen.indexOf(key) >= 0) return; seen.push(key);
     d.onScreen = d.x >= 0 && d.y >= 0 && d.x <= vw && d.y <= vh;
     out.push(d);
@@ -172,6 +249,7 @@ export function clickablesScript(max = 60) {
 /** One line per element, for a chat or Cru to read: [button] "Add to Shopping List" at 640,712. */
 export function formatClickables(r) {
   if (!r || !Array.isArray(r.items)) return '';
-  const lines = r.items.map((d) => `[${d.role}] ${d.text ? JSON.stringify(d.text.slice(0, 70)) : '(no text)'} at ${d.x},${d.y}${d.onScreen ? '' : ' (scroll to it)'}${d.href ? ' -> ' + d.href.slice(0, 60) : ''}`);
+  const opts = (d) => (Array.isArray(d.options) ? ` dropdown, now ${JSON.stringify(d.value)}: ${d.options.slice(0, 12).map((o) => JSON.stringify(o.text)).join(', ')}${d.options.length > 12 ? `, +${d.options.length - 12} more` : ''} (choose with browser_select, not a click)` : '');
+  const lines = r.items.map((d) => `[${d.role}] ${d.text ? JSON.stringify(d.text.slice(0, 70)) : '(no text)'} at ${d.x},${d.y}${d.onScreen ? '' : ' (scroll to it)'}${d.href ? ' -> ' + d.href.slice(0, 60) : ''}${opts(d)}`);
   return (r.dialog ? 'A dialog is open; what it holds:\n' : '') + lines.join('\n');
 }

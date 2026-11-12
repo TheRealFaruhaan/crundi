@@ -113,11 +113,12 @@ export function makeCruBrowserTools(deps) {
     },
     {
       name: 'browser_do',
-      description: 'Use a drawer tab, as a chat can. click: by visible text (with role, and within a CSS selector; an open dialog is searched first), by selector, or at x,y in page pixels; it says what it clicked, so check it is what you meant. double_click, right_click, hover: the same targets. drag: from a target to toX,toY. mouse_down / mouse_move / mouse_up: press, move holding, release. type (text, into selector), fill (selector, text), select (an option of a <select>: selector, text), scroll (y, or selector), wait (for selector), back, forward, touch (gesture tap, double_tap, long_press, swipe, pinch at x,y), resize (width, height), eval (code: JavaScript in the page), cookie (cookie_action get, set, delete, clear), record_network (network_action start, stop, clear; read it with browser_inspect), network (switch the tab to client, server or homepool:<network>), close (the tab). The owner sees your cursor when you use the mouse.',
+      description: 'Use a drawer tab, as a chat can. click: by visible text (with role, and within a CSS selector; an open dialog is searched first), by selector, or at x,y in page pixels; it says what it clicked, so check it is what you meant. double_click, right_click, hover: the same targets. drag: from a target to toX,toY. mouse_down / mouse_move / mouse_up: press, move holding, release. type (text, into selector), fill (selector, text), select (a native <select> dropdown, never by clicking it: selector or label for the dropdown, text for the option\'s text or value), scroll (y, or selector), wait (for selector), back, forward, touch (gesture tap, double_tap, long_press, swipe, pinch at x,y), resize (width, height), eval (code: JavaScript in the page), cookie (cookie_action get, set, delete, clear), record_network (network_action start, stop, clear; read it with browser_inspect), network (switch the tab to client, server or homepool:<network>), close (the tab). The owner sees your cursor when you use the mouse.',
       input_schema: obj({
         key: str('Drawer tab key'),
         op: str('What to do', { enum: ['click', 'double_click', 'right_click', 'hover', 'drag', 'mouse_down', 'mouse_move', 'mouse_up', 'type', 'fill', 'select', 'scroll', 'wait', 'back', 'forward', 'touch', 'resize', 'eval', 'cookie', 'record_network', 'network', 'close'] }),
         selector: str('CSS selector'), text: str('Visible text to click (click and the mouse ops); for type, fill and select the text to put in'),
+        label: str('For select: the dropdown\'s label, e.g. "Country" (instead of a selector)'),
         role: str('With a text target: button, link, checkbox, radio, tab, menuitem, option, textbox'), within: str('With a text target: search inside this CSS selector'), nth: num('Which match, when several (0 = first)'),
         x: num('Page x'), y: num('Page y (for scroll: pixels down)'), toX: num('drag: release at x'), toY: num('drag: release at y'),
         gesture: str('For touch', { enum: ['tap', 'double_tap', 'long_press', 'swipe', 'pinch'] }), direction: str('For a swipe instead of toX/toY', { enum: ['up', 'down', 'left', 'right'] }), scale: num('For a pinch'),
@@ -157,7 +158,7 @@ export function makeCruBrowserTools(deps) {
           case 'mouse_up': return call('browser_mouse', { key, action: 'up', ...(i.x != null && i.y != null ? { x: i.x, y: i.y } : {}) });
           case 'type': return call('browser_type', { key, text: String(i.text || ''), selector: i.selector });
           case 'fill': return call('browser_fill', { key, selector: i.selector, value: String(i.text || '') });
-          case 'select': return call('browser_select', { key, selector: i.selector, value: String(i.text || '') });
+          case 'select': return call('browser_select', { key, selector: i.selector, label: i.label, value: String(i.text || '') });
           case 'scroll': return call('browser_scroll', { key, y: Number(i.y) || 0, selector: i.selector });
           case 'wait': return call('browser_wait', { key, selector: i.selector, timeout: i.timeout });
           case 'back': return call('browser_go_back', { key });

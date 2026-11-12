@@ -10,7 +10,7 @@
 
 // ─── Constants ───
 
-import { findScript, pointScript } from './browser-find.js';
+import { findScript, pointScript, selectScript } from './browser-find.js';
 import * as headless from './browser-headless.js';
 import { planTouch, probeInstallScript, probeCollectScript, summarizeProbe } from './browser-touch.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -494,6 +494,7 @@ export async function clickBrowser(key, selector, opts = {}) {
     resetIdleTimer(key);
     const out = { ok: true, clicked: strip(f), matches: f.matches, searched: f.searched };
     if (f.matches > 1) out.note = `${f.matches} elements matched; clicked number ${(Number(nth) || 0) + 1} (nth picks another).`;
+    if (f.tag === 'select') out.note = `A native dropdown: clicking it shows nothing you can see or click. Choose with browser_select { selector: ${JSON.stringify(f.selector)}, value: "<an option's text or value>" }. Its options are in clicked.options.`;
     if (f.covered) out.warning = `Something else covers it at that point: ${f.covered.role} "${f.covered.text}". A person's click would land there; el.click() reached the element anyway.`;
     return out;
   } catch (err) {
@@ -577,6 +578,21 @@ export async function mouseBrowser(key, x, y, action, opts = {}) {
   if (duration != null) msg.duration = duration;
   const ms = Math.min(10000, Math.max(0, Number(duration) || 0)) + (action === 'drag' ? 1000 : 0);
 
+  // A press on a native <select> would open its list outside the page, where
+  // no screenshot or click reaches it (and it can stay open over the page).
+  // Answer with its options instead, for browser_select.
+  if ((action === 'click' || action === 'double_click' || action === 'down') && x != null && y != null && (opts.button || 'left') === 'left') {
+    try {
+      const at = await evalBrowser(key, pointScript(Number(x), Number(y)));
+      let d = null; try { d = JSON.parse(at && at.result); } catch { /* no answer */ }
+      if (d && d.ok && d.tag === 'select') {
+        await sendIpc('browserMouse', { key, x, y, action: 'move' }).catch(() => {});
+        resetIdleTimer(key);
+        const { ok, ...dropdown } = d;
+        return { ok: true, x, y, held: null, dropdown, note: `A native dropdown: its list opens outside the page, where you cannot see or click it, so it was not opened. Choose with browser_select { selector: ${JSON.stringify(d.selector)}, value: "<an option's text or value>" }.` };
+      }
+    } catch { /* fall through to the click */ }
+  }
   try {
     const result = await sendIpc('browserMouse', msg, ms + IPC_TIMEOUT_MS);
     if (!result.ok) return { ok: false, error: result.error };
@@ -830,15 +846,28 @@ export async function fillBrowser(key, selector, value) {
   } catch (err) { return { ok: false, error: err.message }; }
 }
 
-export async function selectBrowser(key, selector, value) {
+/**
+ * browser_select: choose in a native <select>. The dropdown by selector or by
+ * its label; the option by value or by its visible text (or index). Fires
+ * input and change and reports what was chosen; lists the options when none
+ * matches. (A <select>'s open list is drawn outside the page, where neither a
+ * screenshot nor a click reaches it, so this is how a chat chooses.)
+ */
+export async function selectBrowser(key, selector, value, opts = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
+  const { label, index } = opts || {};
+  if (!selector && !label) return { ok: false, error: 'Say which dropdown: selector, or label (its label text)' };
+  if ((value === undefined || value === null || value === '') && index == null) return { ok: false, error: 'Say which option: value (its value or its visible text), or index' };
   try {
-    const result = await sendIpc('browserSelect', { key, selector, value });
-    if (!result.ok) return { ok: false, error: result.error };
+    const r = await evalBrowser(key, selectScript({ selector, label, value, index }));
+    if (!r.ok) return { ok: false, error: r.error };
+    let f = null; try { f = JSON.parse(r.result); } catch { /* no answer */ }
+    if (!f) return { ok: false, error: 'The page did not answer' };
     resetIdleTimer(key);
-    return { ok: true, url: result.url };
+    if (!f.ok) { const { ok, ...rest } = f; return { ok: false, ...rest }; }
+    return f;
   } catch (err) { return { ok: false, error: err.message }; }
 }
 

@@ -85,6 +85,14 @@ const target = http.createServer((req, res) => {
       document.getElementById('f').remove();document.getElementById('msg').textContent='Welcome';});</script></body>`);
     return;
   }
+  // Native dropdowns: their open list is drawn outside the page.
+  if (req.url.startsWith('/form')) {
+    res.end(`<!doctype html><title>Form</title><body style="margin:20px;font-family:sans-serif">
+      <label for="country">Country</label> <select id="country"><option value="">Choose...</option><option value="mv">Maldives</option><option value="lk">Sri Lanka</option><option value="in" disabled>India</option></select>
+      <p><label>Size <select name="size"><option>S</option><option>M</option><option>L</option></select></label></p>
+      <script>window.ev=[];var c=document.getElementById('country');c.addEventListener('input',function(){ev.push('input:'+c.value)});c.addEventListener('change',function(){ev.push('change:'+c.value)});</script></body>`);
+    return;
+  }
   // Click by what a person sees: a product list and an open dialog with the same button text.
   if (req.url.startsWith('/shop')) {
     res.end(`<!doctype html><title>Shop</title><body style="margin:20px;font-family:sans-serif">
@@ -616,6 +624,31 @@ try {
   const ic2 = await proj(() => browser.evalBrowser(fk, 'window.innerClicks'));
   check('Cru clicks at a point too (browser_do click x,y: real mouse input), into the same iframe, and is told what is there', cm.ok !== false && ic2.result === '2' && cm.clicked && cm.clicked.tag === 'iframe', JSON.stringify(cm) + ' ' + JSON.stringify(ic2));
   await proj(() => browser.closeBrowser(fk));
+
+  // ── Native dropdowns (<select>): their list opens outside the page ──
+  const fm = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/form`, show: true }));
+  const fmk = fm.key; await sleep(500);
+  const dlookF = await cruTool('browser_look').run({ key: fmk, screenshot: false });
+  const dlookFt = (dlookF.content || [])[0]?.text || '';
+  check('the clickable list shows a dropdown with its options, and says to use browser_select', /\[combobox\] "Country" at \d+,\d+ dropdown, now "": "Choose\.\.\.", "Maldives", "Sri Lanka", "India" \(choose with browser_select/.test(dlookFt), dlookFt.slice(-500));
+  const dat = JSON.parse((await proj(() => browser.evalBrowser(fmk, 'JSON.stringify((function(r){return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})(document.getElementById("country").getBoundingClientRect()))'))).result);
+  const dmc = await proj(() => browser.mouseBrowser(fmk, dat.x, dat.y, 'click'));
+  check('a mouse click on a dropdown does not open its unseen list: it answers with the options and how to choose', dmc.ok && dmc.dropdown && dmc.dropdown.options.length === 4 && dmc.dropdown.selector === '#country' && /browser_select/.test(dmc.note), JSON.stringify(dmc).slice(0, 400));
+  const ds1 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, label: 'Country', value: 'sri lanka' }));
+  const devs = await proj(() => browser.evalBrowser(fmk, 'document.getElementById("country").value + "|" + ev.join(",")'));
+  check('browser_select by the dropdown\'s label and the option\'s text, firing input and change', ds1.ok && ds1.chosen[0].value === 'lk' && devs.result === 'lk|input:lk,change:lk', JSON.stringify(ds1).slice(0, 300) + ' ' + devs.result);
+  const ds2 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, selector: 'select[name="size"]', value: 'M' }));
+  check('...by selector and value', ds2.ok && ds2.value === 'M' && ds2.dropdown === 'Size', JSON.stringify(ds2).slice(0, 300));
+  const ds3 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, label: 'Country', value: 'Japan' }));
+  const ds4 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, label: 'Country', value: 'India' }));
+  check('no such option: refused with the options; a disabled one is refused too', !ds3.ok && /No option "Japan"/.test(ds3.error) && ds3.options.length === 4 && !ds4.ok && /disabled/.test(ds4.error), JSON.stringify([ds3.error, ds4.error]));
+  const ds5 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, label: 'Colour', value: 'red' }));
+  check('no such dropdown: refused with the dropdowns on the page', !ds5.ok && Array.isArray(ds5.dropdowns) && ds5.dropdowns.some((d) => d.label === 'Country'), JSON.stringify(ds5).slice(0, 300));
+  const dbc = await proj(() => dispatchBrowserTool('browser_click', { key: fmk, selector: '#country' }));
+  check('browser_click on a dropdown says to use browser_select, with its options', dbc.ok && /browser_select/.test(dbc.note || '') && dbc.clicked.options.length === 4, JSON.stringify(dbc).slice(0, 300));
+  const dcs = await cruTool('browser_do').run({ key: fmk, op: 'select', label: 'Size', text: 'L' });
+  check('Cru chooses in a dropdown by its label too', dcs.ok !== false && dcs.value === 'L', JSON.stringify(dcs).slice(0, 200));
+  await proj(() => browser.closeBrowser(fmk));
 
   // ── Clicking by what a person sees (browser_click text/role/within; Cru's browser_do) ──
   const sh = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/shop`, show: true }));

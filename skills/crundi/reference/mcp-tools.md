@@ -62,7 +62,11 @@ Use the browser drawer first: when `browser_list` says it is available, open a
 drawer tab, unless told otherwise; else `on: "server"`. A dev server on this
 machine needs no forward: a drawer tab with `network: "server"` (or
 `on: "server"`) opens `http://127.0.0.1:<port>` directly. Use the person's own
-network only when they ask to test through it.
+network only when they ask to test through it. When the PC app runs on this
+same machine (server network "Server (this PC)"), client and server are one
+network. For a phone or tablet layout, `browser_resize` the drawer tab to the
+device's size (it keeps a desktop user agent; the person can pick a full device
+profile in the drawer's device menu).
 
 `browser_open` (`url`, `name?`, `width?`, `height?`, `on?`) returns a `key` used
 by all the rest. Max 5 per project. `on` is `"server"` (this machine: its
@@ -91,7 +95,9 @@ open dialog is searched first; or `x`,`y` for a real mouse click; `nth` picks
 among several matches). It returns what it clicked (tag, role, text, x, y) and
 warns when something covers it: check it is what you meant. When nothing
 matches it lists what is clickable. `browser_type` (`text`, `selector?`),
-`browser_fill` (`selector`, `value`), `browser_select` (`selector`, `value`),
+`browser_fill` (`selector`, `value`), `browser_select` (`selector` or `label`;
+`value`: the option's text or value, or `index`; a native `<select>`'s list
+opens outside the page, so choose with this, never a click),
 `browser_mouse`, `browser_scroll`, `browser_resize`.
 
 Mouse: `browser_mouse` (`x`, `y`, `action`: move \| click \| double_click \|
