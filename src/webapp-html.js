@@ -15906,8 +15906,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // File-editor window arrange controls (tile / grid / cascade)
       const arrEl = e.target.closest('[data-fe-arrange]');
       if (arrEl) { feArrange(arrEl.dataset.feArrange); return; }
-      // Tab clicks (tolerate clicks on the icon/label inside the button)
-      const tabEl = e.target.closest('[data-tab]');
+      // Tab clicks (tolerate clicks on the icon/label inside the button). Only
+      // the project's own tab buttons: the browser drawer's tabs carry
+      // data-tab too, and taking one for a project tab blanked the page.
+      const tabEl = e.target.closest('.tab-btn[data-tab]');
       if (tabEl) { switchTab(tabEl.dataset.tab); return; }
       const actionEl = e.target.closest('[data-action]');
       const action = e.target.dataset.action || actionEl?.dataset.action;
