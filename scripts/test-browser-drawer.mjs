@@ -90,6 +90,7 @@ const target = http.createServer((req, res) => {
     res.end(`<!doctype html><title>Form</title><body style="margin:20px;font-family:sans-serif">
       <label for="country">Country</label> <select id="country"><option value="">Choose...</option><option value="mv">Maldives</option><option value="lk">Sri Lanka</option><option value="in" disabled>India</option></select>
       <p><label>Size <select name="size"><option>S</option><option>M</option><option>L</option></select></label></p>
+      <p><button id="after" onclick="window.afterClicks=(window.afterClicks||0)+1">After</button></p>
       <script>window.ev=[];var c=document.getElementById('country');c.addEventListener('input',function(){ev.push('input:'+c.value)});c.addEventListener('change',function(){ev.push('change:'+c.value)});</script></body>`);
     return;
   }
@@ -630,11 +631,16 @@ try {
   const fmk = fm.key; await sleep(500);
   const dlookF = await cruTool('browser_look').run({ key: fmk, screenshot: false });
   const dlookFt = (dlookF.content || [])[0]?.text || '';
-  check('the clickable list shows a dropdown with its options, and says to use browser_select', /\[combobox\] "Country" at \d+,\d+ dropdown, now "": "Choose\.\.\.", "Maldives", "Sri Lanka", "India" \(choose with browser_select/.test(dlookFt), dlookFt.slice(-500));
+  check('the clickable list shows a dropdown with its options, and says to use browser_select', /\[combobox\] "Country" at \d+,\d+ dropdown, now "": "Choose\.\.\.", "Maldives", "Sri Lanka", "India" \(a click opens it for the person; browser_select chooses/.test(dlookFt), dlookFt.slice(-500));
   const dat = JSON.parse((await proj(() => browser.evalBrowser(fmk, 'JSON.stringify((function(r){return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})(document.getElementById("country").getBoundingClientRect()))'))).result);
   const dmc = await proj(() => browser.mouseBrowser(fmk, dat.x, dat.y, 'click'));
-  check('a mouse click on a dropdown does not open its unseen list: it answers with the options and how to choose', dmc.ok && dmc.dropdown && dmc.dropdown.options.length === 4 && dmc.dropdown.selector === '#country' && /browser_select/.test(dmc.note), JSON.stringify(dmc).slice(0, 400));
+  check('a mouse click on a dropdown opens it (the person sees the list) and tells the chat its options and how to choose', dmc.ok && dmc.dropdown && dmc.dropdown.options.length === 4 && dmc.dropdown.selector === '#country' && /leave it open/.test(dmc.note) && /browser_select/.test(dmc.note), JSON.stringify(dmc).slice(0, 400));
+  await shot('16-dropdown-open');
   const ds1 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, label: 'Country', value: 'sri lanka' }));
+  const ab = JSON.parse((await proj(() => browser.evalBrowser(fmk, 'JSON.stringify((function(r){return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})(document.getElementById("after").getBoundingClientRect()))'))).result);
+  await proj(() => browser.mouseBrowser(fmk, ab.x, ab.y, 'click')); await sleep(300);
+  const abn = await proj(() => browser.evalBrowser(fmk, 'String(window.afterClicks||0)'));
+  check('choosing with browser_select closes the open list: the next click lands on the page', abn.result === '1', abn.result);
   const devs = await proj(() => browser.evalBrowser(fmk, 'document.getElementById("country").value + "|" + ev.join(",")'));
   check('browser_select by the dropdown\'s label and the option\'s text, firing input and change', ds1.ok && ds1.chosen[0].value === 'lk' && devs.result === 'lk|input:lk,change:lk', JSON.stringify(ds1).slice(0, 300) + ' ' + devs.result);
   const ds2 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, selector: 'select[name="size"]', value: 'M' }));

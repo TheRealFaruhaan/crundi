@@ -201,10 +201,11 @@ person's mouse, so it reaches cross-site iframes (a CodePen preview, a payment
 form) and canvases that selectors cannot. In a drawer tab the person watches
 your cursor do it. Release a held button when you are done.
 
-**Dropdowns.** A native `<select>` opens its list outside the page: no
-screenshot shows it and no click reaches it (a click on one returns its options
-instead). Choose with `browser_select`: the dropdown by `selector` or `label`,
-the option by its visible text or value. A custom dropdown (not a `<select>`)
+**Dropdowns.** A native `<select>` opens its list outside the page: the person
+sees it, but your screenshot does not and your clicks cannot reach it (a click
+on one opens it and returns its options). Click it open to let the person
+choose; to choose yourself use `browser_select`: the dropdown by `selector` or
+`label`, the option by its visible text or value (that closes the list). A custom dropdown (not a `<select>`)
 is clicked open, then its option clicked.
 
 **Phone and tablet sizes.** `browser_resize` a drawer tab to the device's size

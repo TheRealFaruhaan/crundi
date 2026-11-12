@@ -215,6 +215,8 @@ export function selectScript(opts = {}) {
   try { el.focus(); } catch (e) { /* not focusable */ }
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
+  // Close the list if a click left it open (Chromium closes it when the dropdown loses focus).
+  try { el.blur(); } catch (e) { /* gone */ }
   var d = describe(el);
   return JSON.stringify({ ok: true, dropdown: d.text, selector: d.selector, chosen: picked.map(function (p) { return { value: p.value, text: p.text.trim() }; }), value: el.value, options: d.options });
 })(${JSON.stringify({ selector: opts.selector || null, label: opts.label || null, value: opts.value === undefined ? null : opts.value, index: opts.index == null ? null : Number(opts.index) })})`;
@@ -249,7 +251,7 @@ export function clickablesScript(max = 60) {
 /** One line per element, for a chat or Cru to read: [button] "Add to Shopping List" at 640,712. */
 export function formatClickables(r) {
   if (!r || !Array.isArray(r.items)) return '';
-  const opts = (d) => (Array.isArray(d.options) ? ` dropdown, now ${JSON.stringify(d.value)}: ${d.options.slice(0, 12).map((o) => JSON.stringify(o.text)).join(', ')}${d.options.length > 12 ? `, +${d.options.length - 12} more` : ''} (choose with browser_select, not a click)` : '');
+  const opts = (d) => (Array.isArray(d.options) ? ` dropdown, now ${JSON.stringify(d.value)}: ${d.options.slice(0, 12).map((o) => JSON.stringify(o.text)).join(', ')}${d.options.length > 12 ? `, +${d.options.length - 12} more` : ''} (a click opens it for the person; browser_select chooses)` : '');
   const lines = r.items.map((d) => `[${d.role}] ${d.text ? JSON.stringify(d.text.slice(0, 70)) : '(no text)'} at ${d.x},${d.y}${d.onScreen ? '' : ' (scroll to it)'}${d.href ? ' -> ' + d.href.slice(0, 60) : ''}${opts(d)}`);
   return (r.dialog ? 'A dialog is open; what it holds:\n' : '') + lines.join('\n');
 }

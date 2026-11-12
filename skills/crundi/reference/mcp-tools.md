@@ -97,7 +97,8 @@ warns when something covers it: check it is what you meant. When nothing
 matches it lists what is clickable. `browser_type` (`text`, `selector?`),
 `browser_fill` (`selector`, `value`), `browser_select` (`selector` or `label`;
 `value`: the option's text or value, or `index`; a native `<select>`'s list
-opens outside the page, so choose with this, never a click),
+opens outside the page, where the person sees it but you cannot: click it
+open for the person to choose, or choose with this),
 `browser_mouse`, `browser_scroll`, `browser_resize`.
 
 Mouse: `browser_mouse` (`x`, `y`, `action`: move \| click \| double_click \|
