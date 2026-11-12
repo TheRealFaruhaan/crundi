@@ -19,6 +19,13 @@ export async function dispatchBrowserTool(tool, args = {}, { notifyEvent = () =>
 
 export async function browserTool(b, tool, args, notifyEvent = () => {}) {
     switch (tool) {
+      // The same as browser_open on: "drawer", under a name a chat finds when it
+      // looks for "a tab in the drawer" (one did not see it inside browser_open).
+      case 'browser_drawer_open': {
+        const r = await b.openBrowser({ ...args, on: 'drawer' });
+        if (r && r.ok !== false) notifyEvent('browserLaunch', `🌐 Drawer tab opened${args.url ? `: ${args.url}` : ''}.`);
+        return r;
+      }
       case 'browser_open': {
         const r = await b.openBrowser(args);
         if (r && r.ok !== false) notifyEvent('browserLaunch', `🌐 Browser launched${args.key ? ` "${args.key}"` : ''}${args.url ? `: ${args.url}` : ''}.`);

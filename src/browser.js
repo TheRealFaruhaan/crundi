@@ -10,7 +10,7 @@
 
 // ─── Constants ───
 
-import { findScript, pointScript, selectScript } from './browser-find.js';
+import { findScript, pointScript, selectScript, pickerScript } from './browser-find.js';
 import * as headless from './browser-headless.js';
 import { planTouch, probeInstallScript, probeCollectScript, summarizeProbe } from './browser-touch.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -494,7 +494,7 @@ export async function clickBrowser(key, selector, opts = {}) {
     resetIdleTimer(key);
     const out = { ok: true, clicked: strip(f), matches: f.matches, searched: f.searched };
     if (f.matches > 1) out.note = `${f.matches} elements matched; clicked number ${(Number(nth) || 0) + 1} (nth picks another).`;
-    if (f.tag === 'select') out.note = `A native dropdown: a click by selector or text does not open its list. To open it for the person to choose, click it at its position (browser_click x: ${f.x}, y: ${f.y}); its list is drawn outside the page, so you cannot see or click it. To choose yourself, browser_select { selector: ${JSON.stringify(f.selector)}, value: "<an option's text or value>" }. Its options are in clicked.options.`;
+    if (f.tag === 'select') out.note = `A native dropdown: a click by selector or text does not open its list. To show its options for the person to choose, click it at its position (browser_click x: ${f.x}, y: ${f.y}): Crundi draws the list in the page. To choose yourself, browser_select { selector: ${JSON.stringify(f.selector)}, value: "<an option's text or value>" }. Its options are in clicked.options.`;
     if (f.covered) out.warning = `Something else covers it at that point: ${f.covered.role} "${f.covered.text}". A person's click would land there; el.click() reached the element anyway.`;
     return out;
   } catch (err) {
@@ -578,16 +578,23 @@ export async function mouseBrowser(key, x, y, action, opts = {}) {
   if (duration != null) msg.duration = duration;
   const ms = Math.min(10000, Math.max(0, Number(duration) || 0)) + (action === 'drag' ? 1000 : 0);
 
-  // A press on a native <select> opens its list, which the person sees but a
-  // chat cannot: it is drawn outside the page (no screenshot shows it, no
-  // click reaches it). The click still happens; the answer carries the
-  // dropdown's options and says to choose with browser_select.
-  let dropdown = null;
+  // A press on a native <select>: its own list would close at once (the
+  // drawer gives the keyboard back to the person) and no screenshot shows it.
+  // So the cursor goes there and Crundi draws the options in the page, under
+  // the dropdown (pickerScript), where the person and the chat both see them;
+  // either can click one, or the chat chooses with browser_select.
   if ((action === 'click' || action === 'double_click' || action === 'down') && x != null && y != null && (opts.button || 'left') === 'left') {
     try {
       const at = await evalBrowser(key, pointScript(Number(x), Number(y)));
       let d = null; try { d = JSON.parse(at && at.result); } catch { /* no answer */ }
-      if (d && d.ok && d.tag === 'select') { const { ok, ...rest } = d; dropdown = rest; }
+      if (d && d.ok && d.tag === 'select') {
+        await sendIpc('browserMouse', { key, x, y, action: 'move' }).catch(() => {});
+        const pk = await evalBrowser(key, pickerScript(Number(x), Number(y)));
+        let shown = null; try { shown = JSON.parse(pk && pk.result); } catch { /* no answer */ }
+        resetIdleTimer(key);
+        const { ok, ...dropdown } = d;
+        return { ok: true, x, y, held: null, dropdown, listShown: !!(shown && shown.ok), note: `A dropdown: its options are shown in the page under it, where the person sees them and your screenshot does. To let the person choose, leave the list open and say so. To choose yourself, click an option in it (browser_click text: "<option>", role: "option") or browser_select { selector: ${JSON.stringify(d.selector)}, value: "<option text or value>" }.` };
+      }
     } catch { /* just click */ }
   }
   try {
@@ -596,10 +603,6 @@ export async function mouseBrowser(key, x, y, action, opts = {}) {
     resetIdleTimer(key);
     const out = { ok: true, url: result.url };
     if (result.x != null) { out.x = result.x; out.y = result.y; out.held = result.held || null; }
-    if (dropdown) {
-      out.dropdown = dropdown;
-      out.note = `A native dropdown: its list is open now, where the person sees it, but it is drawn outside the page, so you cannot see or click it. To let the person choose, leave it open and say so. To choose yourself, browser_select { selector: ${JSON.stringify(dropdown.selector)}, value: "<an option's text or value>" }.`;
-    }
     return out;
   } catch (err) {
     return { ok: false, error: err.message };
@@ -995,7 +998,10 @@ export async function listAllBrowsers(alias) {
   try { drawer = await listDrawerTabs(alias); } catch { /* none */ }
   // Why there are no drawer tabs, when that is not simply "none open".
   const why = !drawerHosts().length ? drawerUnavailableReason() : (drawer.problems && drawer.problems.length && !drawer.length ? drawer.problems[0] : '');
-  return { browsers: [...hidden, ...drawer], drawer: why || 'available' };
+  const out = { browsers: [...hidden, ...drawer], drawer: why || 'available' };
+  // Say how to open one, so "available" with no tabs is not a dead end.
+  if (!why) out.openTab = 'browser_drawer_open { url, network: "server" (this machine, its localhost) or "client" (the person\'s own network), show: true }';
+  return out;
 }
 
 export async function openDrawerTab({ alias, url, network, show }) {
@@ -1015,7 +1021,7 @@ export async function openDrawerTab({ alias, url, network, show }) {
 }
 
 function needDrawer(key) {
-  if (!isDrawerKey(key)) return { ok: false, error: `Only drawer tabs can do that (keys starting "${DRAWER_PREFIX}", see browser_list). Open one with browser_open on: "drawer".` };
+  if (!isDrawerKey(key)) return { ok: false, error: `Only drawer tabs can do that (keys starting "${DRAWER_PREFIX}", see browser_list). Open one with browser_drawer_open.` };
   return null;
 }
 

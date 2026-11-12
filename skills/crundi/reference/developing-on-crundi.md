@@ -103,7 +103,7 @@ start_service    { key: "<alias>::app-dev" }
 get_service_logs { key: "<alias>::app-dev", lines: 30 }   → "ready on 127.0.0.1:4300"
 
 # 3. check it yourself: in the drawer (the person sees it), on the server's network
-browser_open    { url: "http://127.0.0.1:4300", on: "drawer", network: "server", show: true }
+browser_drawer_open { url: "http://127.0.0.1:4300", network: "server", show: true }
                  # no drawer (browser_list says so)? { url, width: 420, height: 880, on: "server" }
 browser_console { key }                                   → no errors
 browser_screenshot { key }
@@ -125,7 +125,7 @@ When the thing has a browser UI, drive the real one rather than reasoning about
 it:
 
 ```
-browser_open    { url, on: "drawer", network: "server" }   # the drawer first: its server network reaches this machine's localhost
+browser_drawer_open { url, network: "server" }   # the drawer first: its server network reaches this machine's localhost
                                          # no drawer: { url, width, height, on: "server" }
 browser_console { key }                 → did it throw?
 browser_snapshot / browser_elements     → is the DOM what you think?

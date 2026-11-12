@@ -59,7 +59,7 @@ thing behind it has its own authentication.
 ## Browser
 
 Use the browser drawer first: when `browser_list` says it is available, open a
-drawer tab, unless told otherwise; else `on: "server"`. A dev server on this
+drawer tab with `browser_drawer_open`, unless told otherwise; else `on: "server"`. A dev server on this
 machine needs no forward: a drawer tab with `network: "server"` (or
 `on: "server"`) opens `http://127.0.0.1:<port>` directly. Use the person's own
 network only when they ask to test through it. When the PC app runs on this
@@ -74,7 +74,8 @@ localhost is your dev servers) or `"desktop"` (the person's connected desktop
 app, on their network); omitted, the desktop app when one is connected. Every
 later call on that key runs in the same place; `browser_list` shows where.
 
-Drawer tabs: `on: "drawer"` opens a visible tab in this project's browser drawer
+Drawer tabs: `browser_drawer_open` (`url`, `network?`, `show?`), the same as
+`browser_open` with `on: "drawer"`, opens a visible tab in this project's browser drawer
 in the PC client (`network?`: `"client"` default, `"server"`, or `"homepool:<network>"`, which asks the owner first; `show?`).
 `browser_list` also returns the drawer tabs the person opened (key
 `drawer:<id>`, `network`, `active`, `shown`). Drawer-only tools:
@@ -97,8 +98,8 @@ warns when something covers it: check it is what you meant. When nothing
 matches it lists what is clickable. `browser_type` (`text`, `selector?`),
 `browser_fill` (`selector`, `value`), `browser_select` (`selector` or `label`;
 `value`: the option's text or value, or `index`; a native `<select>`'s list
-opens outside the page, where the person sees it but you cannot: click it
-open for the person to choose, or choose with this),
+would not stay open, so a mouse click on one has Crundi draw its options in
+the page, for the person or you to click; or choose with this),
 `browser_mouse`, `browser_scroll`, `browser_resize`.
 
 Mouse: `browser_mouse` (`x`, `y`, `action`: move \| click \| double_click \|

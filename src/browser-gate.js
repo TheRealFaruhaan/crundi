@@ -20,7 +20,7 @@ export async function gateBrowserCall({ tool, args: a, collaborator = false, hom
   delete a.chatToken;
   if (collaborator || !homepool) return null;
 
-  const onto = (tool === 'browser_open' || tool === 'browser_tab_network') && /^homepool(:|$)/i.test(String(a.network || ''));
+  const onto = (tool === 'browser_open' || tool === 'browser_drawer_open' || tool === 'browser_tab_network') && /^homepool(:|$)/i.test(String(a.network || ''));
   if (onto && String(a.network).toLowerCase() === 'homepool') {
     const k = homepool.store.browserKey();
     const first = k && k.networks.find(n => n !== 'server');

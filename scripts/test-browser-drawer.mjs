@@ -283,6 +283,7 @@ try {
   // ── A chat opens a tab and uses it ──
   const list0 = await proj(() => browser.listAllBrowsers('proj'));
   check('browser_list: the drawer is available, no tabs yet', list0.drawer === 'available' && !list0.browsers.length, JSON.stringify(list0));
+  check('...and says how to open a tab in it (browser_drawer_open)', /browser_drawer_open/.test(list0.openTab || ''), JSON.stringify(list0));
   const o = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/page`, show: true }));
   check('browser_open on: "drawer" opens a tab (page that refuses framing loads)', o.ok && /^drawer:/.test(o.key) && o.network === 'client' && o.networkLabel === 'This PC', JSON.stringify(o));
   const key = o.key;
@@ -631,16 +632,21 @@ try {
   const fmk = fm.key; await sleep(500);
   const dlookF = await cruTool('browser_look').run({ key: fmk, screenshot: false });
   const dlookFt = (dlookF.content || [])[0]?.text || '';
-  check('the clickable list shows a dropdown with its options, and says to use browser_select', /\[combobox\] "Country" at \d+,\d+ dropdown, now "": "Choose\.\.\.", "Maldives", "Sri Lanka", "India" \(a click opens it for the person; browser_select chooses/.test(dlookFt), dlookFt.slice(-500));
+  check('the clickable list shows a dropdown with its options, and says to use browser_select', /\[combobox\] "Country" at \d+,\d+ dropdown, now "": "Choose\.\.\.", "Maldives", "Sri Lanka", "India" \(a click shows its list in the page; browser_select chooses/.test(dlookFt), dlookFt.slice(-500));
   const dat = JSON.parse((await proj(() => browser.evalBrowser(fmk, 'JSON.stringify((function(r){return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})(document.getElementById("country").getBoundingClientRect()))'))).result);
   const dmc = await proj(() => browser.mouseBrowser(fmk, dat.x, dat.y, 'click'));
-  check('a mouse click on a dropdown opens it (the person sees the list) and tells the chat its options and how to choose', dmc.ok && dmc.dropdown && dmc.dropdown.options.length === 4 && dmc.dropdown.selector === '#country' && /leave it open/.test(dmc.note) && /browser_select/.test(dmc.note), JSON.stringify(dmc).slice(0, 400));
-  await shot('16-dropdown-open');
+  check('a mouse click on a dropdown shows its options in the page (the person and the chat see them) and tells the chat how to choose', dmc.ok && dmc.listShown && dmc.dropdown && dmc.dropdown.options.length === 4 && dmc.dropdown.selector === '#country' && /leave the list open/.test(dmc.note) && await proj(() => browser.evalBrowser(fmk, 'document.querySelectorAll("[data-crundi-picker] [role=option]").length')).then((r) => r.result === '4'), JSON.stringify(dmc).slice(0, 400));
+  await shot('16-dropdown-drawn');
+  const pick = await proj(() => dispatchBrowserTool('browser_click', { key: fmk, text: 'Maldives', role: 'option' }));
+  const picked = await proj(() => browser.evalBrowser(fmk, 'document.getElementById("country").value + "|" + !!document.querySelector("[data-crundi-picker]") + "|" + ev.join(",")'));
+  check('clicking an option in that list chooses it (input and change) and closes the list', pick.ok && picked.result === 'mv|false|input:mv,change:mv', JSON.stringify(pick).slice(0, 200) + ' ' + picked.result);
+  await proj(() => browser.evalBrowser(fmk, 'ev.length = 0'));
+  await proj(() => browser.mouseBrowser(fmk, dat.x, dat.y, 'click'));
   const ds1 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, label: 'Country', value: 'sri lanka' }));
   const ab = JSON.parse((await proj(() => browser.evalBrowser(fmk, 'JSON.stringify((function(r){return{x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}})(document.getElementById("after").getBoundingClientRect()))'))).result);
   await proj(() => browser.mouseBrowser(fmk, ab.x, ab.y, 'click')); await sleep(300);
   const abn = await proj(() => browser.evalBrowser(fmk, 'String(window.afterClicks||0)'));
-  check('choosing with browser_select closes the open list: the next click lands on the page', abn.result === '1', abn.result);
+  check('choosing with browser_select closes the drawn list: the next click lands on the page', abn.result === '1', abn.result);
   const devs = await proj(() => browser.evalBrowser(fmk, 'document.getElementById("country").value + "|" + ev.join(",")'));
   check('browser_select by the dropdown\'s label and the option\'s text, firing input and change', ds1.ok && ds1.chosen[0].value === 'lk' && devs.result === 'lk|input:lk,change:lk', JSON.stringify(ds1).slice(0, 300) + ' ' + devs.result);
   const ds2 = await proj(() => dispatchBrowserTool('browser_select', { key: fmk, selector: 'select[name="size"]', value: 'M' }));
@@ -765,6 +771,16 @@ try {
   check('the X beside hide closes every tab of the project, without asking, and the drawer', z1.ok && left.browsers.length === 0 && await page('drawer.isOpen()') === false && !(await tg('brd-running')), JSON.stringify(left.browsers));
   await page('drawer.setProject("proj")');
 
+  // ── browser_drawer_open: a chat opens a drawer tab itself, on either network ──
+  {
+    const dsrv = await chatCall('browser_drawer_open', { url: 'http://internal.test:' + T + '/whoami', network: 'server' }, chat('chat-open'));
+    const who = dsrv.ok ? await proj(() => browser.evalBrowser(dsrv.key, 'document.body.innerText')) : {};
+    check('browser_drawer_open opens a drawer tab on the server\'s network (it reaches what only the server can)', dsrv.ok && /^drawer:/.test(dsrv.key) && dsrv.network === 'server' && /via-server/.test(who.result || ''), JSON.stringify(dsrv) + ' ' + JSON.stringify(who));
+    const dcl = await chatCall('browser_drawer_open', { url: `http://127.0.0.1:${T}/page2`, show: true }, chat('chat-open'));
+    check('...and on the person\'s own network by default, shown when asked', dcl.ok && dcl.network === 'client' && await page('drawer.isOpen()'), JSON.stringify(dcl));
+    for (const k of [dsrv.key, dcl.key]) if (k) await proj(() => browser.closeBrowser(k));
+  }
+
   // ── Typing in the app while a chat uses the drawer: the cursor stays where you type ──
   {
     const fk2 = (await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/login`, show: true }))).key;
@@ -810,6 +826,8 @@ try {
   check('Cru is told the same', g3.ok && /none is connected/.test(g3.drawer || ''), JSON.stringify(g3));
   check('a chat asking for homepool is told, not left waiting on an approval', !g4.ok && /none is connected/.test(g4.error || '') && !homepool.store.requests().some((r) => r.chatId === 'chat-c'), JSON.stringify(g4));
   check('a call on a tab is refused with a reason', !g5.ok && !!g5.error, JSON.stringify(g5));
+  const g6 = await chatCall('browser_drawer_open', { url: 'https://example.com' }, chat('chat-c'));
+  check('browser_drawer_open with no desktop app says why', !g6.ok && /none is connected/.test(g6.error || ''), JSON.stringify(g6));
   check('all of it at once, nothing hangs', quick, `${Date.now() - t0g} ms`);
 } catch (err) {
   check('no exceptions', false, err.stack);

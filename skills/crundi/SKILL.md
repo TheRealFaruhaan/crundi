@@ -185,7 +185,8 @@ a UI change. Works on both platforms (bundled headless browser, or the desktop
 app's webview). Up to 5 instances per project; close them when done.
 
 **Which browser.** Use the browser drawer first: when `browser_list` says the
-drawer is available, open a tab there (`browser_open` with `on: "drawer"`),
+drawer is available, open a tab there with `browser_drawer_open` (a new tab in
+the person's drawer, `network: "client"` or `"server"`),
 where the person sees what you do, unless they told you otherwise. Without one,
 use `on: "server"`, a hidden browser where Crundi and you run. (`"desktop"` is a
 hidden browser in the person's desktop app, on their network.)
@@ -201,11 +202,12 @@ person's mouse, so it reaches cross-site iframes (a CodePen preview, a payment
 form) and canvases that selectors cannot. In a drawer tab the person watches
 your cursor do it. Release a held button when you are done.
 
-**Dropdowns.** A native `<select>` opens its list outside the page: the person
-sees it, but your screenshot does not and your clicks cannot reach it (a click
-on one opens it and returns its options). Click it open to let the person
-choose; to choose yourself use `browser_select`: the dropdown by `selector` or
-`label`, the option by its visible text or value (that closes the list). A custom dropdown (not a `<select>`)
+**Dropdowns.** A mouse click on a `<select>` (`browser_mouse`, or
+`browser_click` at its x,y) shows its options in the page, under it: Crundi
+draws them, since the browser's own list would not stay open and no screenshot
+shows it. The person sees the list and can choose, and so can you (click an
+option, role `option`). Or choose directly with `browser_select`: the dropdown
+by `selector` or `label`, the option by its visible text or value. A custom dropdown (not a `<select>`)
 is clicked open, then its option clicked.
 
 **Phone and tablet sizes.** `browser_resize` a drawer tab to the device's size
@@ -223,7 +225,7 @@ server are one network: there is nothing to choose between.
 
 **The browser drawer.** In the PC client each project has a browser drawer: tabs
 the person sees and uses beside the project. `browser_list` lists them
-(`on: "drawer"`, key `drawer:<id>`); `browser_open` with `on: "drawer"` adds one
+(`on: "drawer"`, key `drawer:<id>`); `browser_drawer_open` adds one
 (`show: true` to bring it up). Every `browser_*` tool works on them, plus
 `browser_point` / `browser_annotate` to mark the page where the person sees it
 and `browser_annotations` to read what they marked (with the element under each

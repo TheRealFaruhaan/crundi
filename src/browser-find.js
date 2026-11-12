@@ -215,11 +215,72 @@ export function selectScript(opts = {}) {
   try { el.focus(); } catch (e) { /* not focusable */ }
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
-  // Close the list if a click left it open (Chromium closes it when the dropdown loses focus).
-  try { el.blur(); } catch (e) { /* gone */ }
+  // Close the list Crundi drew for a chat's click, if it is showing.
+  var pk = document.querySelector('[data-crundi-picker]'); if (pk) pk.remove();
   var d = describe(el);
   return JSON.stringify({ ok: true, dropdown: d.text, selector: d.selector, chosen: picked.map(function (p) { return { value: p.value, text: p.text.trim() }; }), value: el.value, options: d.options });
 })(${JSON.stringify({ selector: opts.selector || null, label: opts.label || null, value: opts.value === undefined ? null : opts.value, index: opts.index == null ? null : Number(opts.index) })})`;
+}
+
+/**
+ * A native <select>'s own list is a separate little window that closes as
+ * soon as its page loses focus, and the drawer gives the keyboard back to the
+ * person at once, so a chat's click never kept it open; nor does a screenshot
+ * show it. So when a chat clicks one, Crundi draws the options in the page,
+ * under the dropdown: part of the page, it needs no focus, the person sees it
+ * whenever they look at the tab, and the chat sees it in its screenshots.
+ * Clicking an option chooses it as a person's choice would (input and
+ * change); a click elsewhere, Escape or a scroll closes it. Its rows are
+ * [role=option], so browser_click text picks one.
+ */
+export function pickerScript(x, y) {
+  return `(function (x, y) {${HELPERS}
+  var old = document.querySelector('[data-crundi-picker]'); if (old) old.remove();
+  var hit = document.elementFromPoint(x, y);
+  var el = hit && (hit.tagName === 'SELECT' ? hit : hit.closest && hit.closest('select'));
+  if (!el) return JSON.stringify({ ok: false, error: 'No dropdown at ' + x + ',' + y });
+  var r = el.getBoundingClientRect();
+  var box = document.createElement('div');
+  box.setAttribute('data-crundi-picker', '');
+  box.setAttribute('role', 'listbox');
+  box.setAttribute('aria-label', selectName(el) || 'Options');
+  var below = innerHeight - r.bottom, h = Math.min(280, Math.max(120, Math.max(below, r.top) - 12));
+  var top = below >= 140 || below >= r.top ? r.bottom + 2 : Math.max(4, r.top - 2 - h);
+  box.style.cssText = 'all:initial;position:fixed;z-index:2147483647;left:' + Math.round(Math.max(4, r.left)) + 'px;top:' + Math.round(top) + 'px;min-width:' + Math.round(Math.max(r.width, 140)) + 'px;max-width:' + Math.round(Math.max(r.width, 360)) + 'px;max-height:' + Math.round(h) + 'px;overflow:auto;background:#fff;color:#111;border:1px solid #888;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.3);font:14px/1.3 system-ui,sans-serif;padding:4px 0;box-sizing:border-box';
+  function close() { box.remove(); document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', key, true); window.removeEventListener('scroll', onScroll, true); window.removeEventListener('resize', close, true); }
+  function outside(e) { if (!box.contains(e.target)) close(); }
+  function key(e) { if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+  function onScroll(e) { if (!box.contains(e.target)) close(); }
+  Array.prototype.forEach.call(el.options, function (op, i) {
+    var row = document.createElement('div');
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', op.selected ? 'true' : 'false');
+    if (op.disabled) row.setAttribute('aria-disabled', 'true');
+    row.textContent = (op.text || '').trim() || '\\u00a0';
+    row.style.cssText = 'all:initial;display:block;padding:6px 12px;font:inherit;color:' + (op.disabled ? '#999' : '#111') + ';background:' + (op.selected ? '#e0e7ff' : 'transparent') + ';cursor:' + (op.disabled ? 'default' : 'pointer') + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    if (!op.disabled) {
+      row.addEventListener('mouseenter', function () { row.style.background = '#c7d2fe'; });
+      row.addEventListener('mouseleave', function () { row.style.background = op.selected ? '#e0e7ff' : 'transparent'; });
+      row.addEventListener('click', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        el.selectedIndex = i;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        close();
+      });
+    }
+    box.appendChild(row);
+  });
+  document.body.appendChild(box);
+  var sel = box.querySelector('[aria-selected=true]'); if (sel) sel.scrollIntoView({ block: 'nearest' });
+  setTimeout(function () {
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', key, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close, true);
+  }, 0);
+  var d = describe(el); d.ok = true; d.listShown = true; return JSON.stringify(d);
+})(${Number(x) || 0}, ${Number(y) || 0})`;
 }
 
 export function pointScript(x, y) {
@@ -251,7 +312,7 @@ export function clickablesScript(max = 60) {
 /** One line per element, for a chat or Cru to read: [button] "Add to Shopping List" at 640,712. */
 export function formatClickables(r) {
   if (!r || !Array.isArray(r.items)) return '';
-  const opts = (d) => (Array.isArray(d.options) ? ` dropdown, now ${JSON.stringify(d.value)}: ${d.options.slice(0, 12).map((o) => JSON.stringify(o.text)).join(', ')}${d.options.length > 12 ? `, +${d.options.length - 12} more` : ''} (a click opens it for the person; browser_select chooses)` : '');
+  const opts = (d) => (Array.isArray(d.options) ? ` dropdown, now ${JSON.stringify(d.value)}: ${d.options.slice(0, 12).map((o) => JSON.stringify(o.text)).join(', ')}${d.options.length > 12 ? `, +${d.options.length - 12} more` : ''} (a click shows its list in the page; browser_select chooses)` : '');
   const lines = r.items.map((d) => `[${d.role}] ${d.text ? JSON.stringify(d.text.slice(0, 70)) : '(no text)'} at ${d.x},${d.y}${d.onScreen ? '' : ' (scroll to it)'}${d.href ? ' -> ' + d.href.slice(0, 60) : ''}${opts(d)}`);
   return (r.dialog ? 'A dialog is open; what it holds:\n' : '') + lines.join('\n');
 }
