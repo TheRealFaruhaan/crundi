@@ -1,0 +1,34 @@
+{
+  "steps": [
+    {
+      "id": "browser-drawer-side",
+      "tag": "Browser",
+      "title": "The browser on either side, and closed in one click",
+      "body": "The browser drawer can open on the left, next to your projects, instead of the right: choose it in the drawer's menu. While it is open, the Browser button in the project bar steps aside; the X beside the hide arrow closes the browser, every tab of the project, at once. Hidden with pages still open, the Browser button keeps a dot.",
+      "keys": [
+        {
+          "keys": [
+            "Open on the left"
+          ],
+          "text": "in the drawer's menu (and back on the right)"
+        },
+        {
+          "keys": [
+            "X"
+          ],
+          "text": "close this project's browser"
+        }
+      ],
+      "art": "browser-drawer-side.html",
+      "artTitle": "Browser"
+    },
+    {
+      "id": "cru-browser-everything",
+      "tag": "Cru",
+      "title": "Cru uses the browser as fully as a chat",
+      "body": "Ask Cru to press a button by its name (\"Add to Shopping List\"), click a spot, drag, pick from a list, fill a form, read the console or the page's requests. It looks in an open dialog first, tells you what it actually clicked, and sees what on a page can be clicked.",
+      "art": "cru-browser-everything.html",
+      "artTitle": "Cru"
+    }
+  ]
+}

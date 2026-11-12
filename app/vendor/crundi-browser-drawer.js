@@ -63,6 +63,16 @@
     // Closed: out of the flow, same size, behind the page and invisible, so its pages keep rendering.
     '.brd.brd-closed { position: absolute; top: 0; right: 0; bottom: 0; opacity: 0; pointer-events: none; z-index: 0; }',
     '.brd-split.brd-closed { display: none; }',
+    // On the left (the drawer's menu): between the projects list and the project, by flex order.
+    '.brd-on-left > * { order: 3; }',
+    '.brd-on-left > .sidebar, .brd-on-left > .sidebar-overlay { order: 0; }',
+    '.brd-on-left > .brd { order: 1; }',
+    '.brd-on-left > .brd-split { order: 2; }',
+    '.brd-on-left > .brd.brd-closed { right: auto; left: 0; }',
+    // The project bar's Browser button: gone while the drawer is open (the drawer has its own
+    // hide and close), and a dot while it is hidden with pages still open in this project.
+    '.brd-toggle.brd-open { display: none !important; }',
+    '.brd-toggle.brd-running::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg-secondary); margin-left: 1px; align-self: flex-start; margin-top: 2px; }',
     '.brd-tabs { display: flex; align-items: center; gap: 2px; padding: 4px 6px 0; background: var(--bg-primary); border-bottom: 1px solid var(--border); flex: 0 0 auto; min-height: 34px; overflow-x: auto; scrollbar-width: none; }',
     '.brd-tab { display: inline-flex; align-items: center; gap: 6px; max-width: 200px; min-width: 64px; height: 29px; padding: 0 6px 0 10px; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 0.76rem; flex: 0 1 auto; }',
     '.brd-tab:hover { background: var(--bg-tertiary); }',
@@ -219,11 +229,11 @@
     var root = host.root, split = host.split;
 
     // ─── State (persisted) ───
-    var st = { open: false, width: DEFAULT_W, projects: {} };
+    var st = { open: false, width: DEFAULT_W, projects: {}, side: 'right' };
     try { var saved = JSON.parse(localStorage.getItem(STORE) || 'null'); if (saved && typeof saved === 'object') st = Object.assign(st, saved); } catch (e) { /* fresh */ }
     if (!st.projects || typeof st.projects !== 'object') st.projects = {};
     function persist() {
-      var out = { open: st.open, width: st.width, projects: {} };
+      var out = { open: st.open, width: st.width, side: st.side === 'left' ? 'left' : 'right', projects: {} };
       Object.keys(st.projects).forEach(function (p) {
         var ps = st.projects[p];
         out.projects[p] = { active: ps.active, tabs: ps.tabs.map(function (t) { return { id: t.id, url: t.url, title: t.title, device: t.device, custom: t.custom || null, network: t.network }; }) };
@@ -340,8 +350,28 @@
         var a = document.activeElement; if (a && root.contains(a)) { try { a.blur(); } catch (e) { /* ignore */ } }
       }
       applyWidth();
+      applySide();
       showActive();
+      updateToggle();
       if (host.onLayout) host.onLayout();
+    }
+    function applySide() {
+      var left = st.side === 'left';
+      if (root.parentElement) root.parentElement.classList.toggle('brd-on-left', left);
+    }
+    function updateToggle() {
+      var b = host.toggleBtn; if (!b) return;
+      var running = !!project && proj(project).tabs.length > 0;
+      b.classList.toggle('brd-open', st.open);
+      b.classList.toggle('brd-running', !st.open && running);
+      b.title = !st.open && running ? 'Browser: hidden, its pages still open (click to show)' : 'Browser (desktop app)';
+    }
+    // The X beside hide: close this project's browser, every tab, at once.
+    function closeAll() {
+      if (!project) return;
+      proj(project).tabs.map(function (t) { return t.id; }).forEach(closeTab);
+      close();
+      updateToggle();
     }
     function open() { if (!st.open) { st.open = true; persist(); applyOpen(); } if (project && !proj(project).tabs.length) newTab(START, 'client', true); else showActive(); }
     function close() { if (st.open) { st.open = false; persist(); applyOpen(); } }
@@ -355,7 +385,8 @@
       shield.style.cssText = 'position:fixed;inset:0;z-index:2147483646;cursor:col-resize';
       document.body.appendChild(shield);
       document.body.classList.add('brd-dragging'); split.classList.add('on');
-      function move(ev) { st.width = clamp(startW + (startX - ev.clientX), MIN_W, maxWidth()); applyWidth(); layout(); }
+      var dir = st.side === 'left' ? -1 : 1;   // on the left, dragging right widens it
+      function move(ev) { st.width = clamp(startW + dir * (startX - ev.clientX), MIN_W, maxWidth()); applyWidth(); layout(); }
       function up() {
         shield.remove(); document.body.classList.remove('brd-dragging'); split.classList.remove('on');
         window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
@@ -387,7 +418,9 @@
         + '<button class="brd-ibtn" data-brd="new" title="New tab">' + ic('plus') + '</button>'
         + '<span class="brd-sp"></span>'
         + '<button class="brd-ibtn" data-brd="menu" title="History and browsing data">' + ic('more') + '</button>'
-        + '<button class="brd-ibtn" data-brd="hide" title="Hide the browser (pages keep running)">' + ic('chevron-right') + '</button>';
+        + '<button class="brd-ibtn" data-brd="hide" title="Hide the browser (pages keep running)">' + ic(st.side === 'left' ? 'chevron-left' : 'chevron-right') + '</button>'
+        + '<button class="brd-ibtn" data-brd="closeall" title="Close the browser: every tab in this project">' + ic('x') + '</button>';
+      updateToggle();
       emptyEl.hidden = !!ps.tabs.length;
     }
     function renderBar() {
@@ -957,7 +990,12 @@
             lines.push(a.n + '. ' + who + (a.kind === 'element' ? 'element' : a.kind) + (a.text ? ': ' + a.text : ''));
             lines.push('   selector: ' + e.selector);
             if (e.tag) lines.push('   element: <' + e.tag + '>' + (e.text ? ' "' + e.text.slice(0, 100) + '"' : ''));
-            if (e.html) lines.push('   html: ' + e.html.slice(0, 200));
+            if (e.html) {
+              // One line, whitespace collapsed, and cut at a tag's end where it can be (marked when cut).
+              var h = String(e.html).replace(/\s+/g, ' ').trim();
+              if (h.length > 200) { var cutAt = h.lastIndexOf('>', 200); h = h.slice(0, cutAt > 80 ? cutAt + 1 : 200) + ' \u2026'; }
+              lines.push('   html: ' + h);
+            }
           } else {
             var where = a.kind === 'box' ? 'box at ' + Math.round(a.x) + ',' + Math.round(a.y) + ' size ' + Math.round(a.width) + 'x' + Math.round(a.height)
               : a.kind === 'pen' ? 'drawing around ' + Math.round(a.anchor[0]) + ',' + Math.round(a.anchor[1])
@@ -999,7 +1037,8 @@
       menuEl = document.createElement('div'); menuEl.className = 'brd-menu';
       menuEl.innerHTML = '<button data-pan="history">' + ic('clock') + 'History</button>'
         + (pwApi ? '<button data-pan="passwords">' + ic('lock') + 'Passwords</button>' : '')
-        + '<button data-pan="clear">' + ic('trash') + 'Clear browsing data\u2026</button>';
+        + '<button data-pan="clear">' + ic('trash') + 'Clear browsing data\u2026</button>'
+        + '<button data-pan="side">' + ic(st.side === 'left' ? 'chevron-right' : 'chevron-left') + (st.side === 'left' ? 'Open on the right' : 'Open on the left') + '</button>';
       root.appendChild(menuEl);
       setTimeout(function () { document.addEventListener('pointerdown', menuOutside, true); }, 0);
     }
@@ -1063,6 +1102,7 @@
         e.stopPropagation(); var a = pan.dataset.pan; closeMenu();
         if (a === 'history') showHistory(''); else if (a === 'clear') showClear();
         else if (a === 'passwords') showPasswords();
+        else if (a === 'side') { st.side = st.side === 'left' ? 'right' : 'left'; persist(); applySide(); renderTabs(); applyWidth(); layout(); if (host.onLayout) host.onLayout(); }
         else if (a === 'close') closePanel(); else if (a === 'do-clear') doClear();
         return;
       }
@@ -1162,6 +1202,7 @@
       var a = b.dataset.brd, t = activeTab();
       if (a === 'new') newTab(START, t ? t.network : 'client', true);
       else if (a === 'hide') close();
+      else if (a === 'closeall') closeAll();
       else if (a === 'menu') openMenu();
       else if (a === 'netmenu') netMenu(b);
       else if (a === 'devmenu') devMenu(b);

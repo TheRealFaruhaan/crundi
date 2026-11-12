@@ -42,6 +42,8 @@
  */
 (function () {
   'use strict';
+  // Cru's typing box grows with what is in it (up to its max-height), as a chat's composer does.
+  function growType(el) { if (!el || el.tagName !== 'TEXTAREA') return; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight + 2, 160) + 'px'; }
   if (window.CrundiVoice) return;
 
   var C = { sky: '#38bdf8', accent: '#6366f1', hover: '#818cf8', deep: '#4f46e5', ask: '#c084fc', wait: '#d946ef', green: '#10b981', yellow: '#f59e0b', red: '#ef4444', muted: '#5a5a78', text: '#e8e8f0', text2: '#8888a8', border: '#2a2a3d', bg: '#0a0a0f', card: '#12121a' };
@@ -479,7 +481,7 @@
     '.cv-detail{margin-top:12px;text-align:left;background:' + C.card + ';border:1px solid ' + C.border + ';border-radius:14px;padding:12px 14px;font-size:14px;line-height:20px;white-space:pre-wrap}' +
     '.cv-note{margin-top:10px;font-size:13px;color:' + C.yellow + '}.cv-yesno{margin-top:8px;font-size:13px;color:' + C.hover + ';display:flex;gap:8px;align-items:center;justify-content:center}.cv-yesno[hidden]{display:none}.cv-yn{border:1px solid ' + C.border + ';background:#1a1a28;color:' + C.text + ';border-radius:16px;padding:6px 16px;font-size:13px;cursor:pointer}.cv-yn:hover{border-color:' + C.accent + '}' +
     '.cv-bot{width:100%;max-width:680px;display:flex;align-items:center;justify-content:center;gap:16px;padding:8px 24px 22px;box-sizing:border-box}' +
-    '.cv-type{flex:1;min-width:0;background:#1a1a28;border:1px solid ' + C.border + ';border-radius:20px;color:' + C.text + ';padding:10px 14px;font-size:14px;outline:none}.cv-type:focus{border-color:' + C.accent + '}' +
+    '.cv-type{flex:1;min-width:0;background:#1a1a28;border:1px solid ' + C.border + ';border-radius:20px;color:' + C.text + ';padding:10px 14px;font:inherit;font-size:14px;line-height:1.4;outline:none;resize:none;max-height:160px;overflow-y:auto;box-sizing:border-box}.cv-type:focus{border-color:' + C.accent + '}' +
     '.cv-mic{width:112px;height:112px;flex:none;cursor:pointer;position:relative}.cv-mic canvas{position:absolute;left:-80px;top:-20px;width:272px;height:152px;pointer-events:none}' +
     '.cv-ptt{display:none;font-size:11px;color:' + C.muted + ';text-align:center;padding-bottom:6px}' +
     // A wide screen (a PC): a dropdown under the top bar's mic button, the work in view around it.
@@ -588,7 +590,7 @@
       '<div class="cv-words"><div class="cv-heard"><span class="cv-ht"></span><button class="cv-cx" hidden title="Cancel what I said" aria-label="Cancel what I said"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div><div class="cv-q" hidden></div><div class="cv-reply"></div><div class="cv-detail" hidden></div><div class="cv-yesno" hidden><span>Say it, or tap:</span><button class="cv-yn" data-yn="Yes, go ahead.">Yes</button><button class="cv-yn" data-yn="No, don\'t.">No</button></div><div class="cv-note" hidden></div></div>' +
       '<div class="cv-ptt">Hold ' + esc(label()) + ' to talk · click the mic to keep this open</div><button class="cv-fs">Full screen</button>' +
       '<div class="cv-att" hidden></div><input class="cv-file" type="file" multiple hidden>' +
-      '<div class="cv-bot"><button class="cv-x cv-attb" title="Attach a file, photo or video (or drop it here)" aria-label="Attach"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><input class="cv-type" placeholder="Type to Cru…" aria-label="Type to Cru"><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
+      '<div class="cv-bot"><button class="cv-x cv-attb" title="Attach a file, photo or video (or drop it here)" aria-label="Attach"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button><button class="cv-x cv-kbb" title="Keyboard mode: type to Cru, no microphone" aria-label="Keyboard mode"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M18 13h.01M8 16h8M10 13h4"/></svg></button><textarea class="cv-type" rows="1" placeholder="Type to Cru…" aria-label="Type to Cru"></textarea><button class="cv-x cv-send" title="Send" aria-label="Send"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg></button>' +
       '<div class="cv-mic" role="button" aria-label="Talk"><canvas></canvas></div><span class="cv-stw" aria-live="polite"></span><button class="cv-x cv-mute" title="Mute the microphone" aria-label="Mute the microphone"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/><path class="sl" d="m2 2 20 20"/></svg></button></div>';
     document.body.appendChild(ov);
     var q = function (s) { return ov.querySelector(s); };
@@ -643,7 +645,8 @@
     q('.cv-chatb').onclick = function (e) { e.stopPropagation(); closeMenu(); chatView(!(S && S.chat)); };
     // The owner scrolling Cru's words himself: they stop following the speech until the next reply.
     ['wheel', 'touchstart', 'mousedown'].forEach(function (ev) { q('.cv-words').addEventListener(ev, function () { if (S) S.ownScroll = true; }, { passive: true }); });
-    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (S && (v || attReady())) { inp.value = ''; if (v) utter(v, true); else { inputMode(true); ask('', false, true); } inp.focus(); } };
+    q('.cv-type').addEventListener('input', function () { growType(this); });
+    q('.cv-send').onclick = function (e) { e.stopPropagation(); var inp = q('.cv-type'); var v = inp.value.trim(); if (S && (v || attReady())) { inp.value = ''; growType(inp); if (v) utter(v, true); else { inputMode(true); ask('', false, true); } inp.focus(); } };
     // Files for Cru (capability 'voice-attach'): the paperclip, a drop anywhere on Cru, a pasted picture.
     q('.cv-attb').onclick = function (e) { e.stopPropagation(); q('.cv-file').click(); };
     q('.cv-file').onchange = function () { var f = q('.cv-file'); attachFiles(f.files); f.value = ''; };
@@ -711,7 +714,8 @@
       var inp = S.ov.querySelector('.cv-type');
       if (e.target === inp) {
         e.stopPropagation(); S.quietSince = Date.now();
-        if (e.key === 'Enter' && (inp.value.trim() || attReady())) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; if (t) utter(t, true); else { inputMode(true); ask('', false, true); } }
+        // Enter sends; Shift+Enter is a new line (the box keeps lines: a drawer's marks come in several).
+        if (e.key === 'Enter' && !e.shiftKey && (inp.value.trim() || attReady())) { e.preventDefault(); var t = inp.value.trim(); inp.value = ''; growType(inp); if (t) utter(t, true); else { inputMode(true); ask('', false, true); } }
       } else if (S.ov.contains(e.target) || e.target === document.body) e.stopPropagation();
     };
     window.addEventListener('keydown', S.onKey, true);
@@ -2721,7 +2725,7 @@
       if (files && files.length) attachFiles(files);
       if (!S.kb) keyboard(true);
       var inp = S.ov.querySelector('.cv-type');
-      if (inp && text) { inp.value = (inp.value ? inp.value.replace(/\s*$/, '\n') : '') + text; try { inp.focus(); } catch (e) { /* gone */ } }
+      if (inp && text) { inp.value = (inp.value ? inp.value.replace(/\s*$/, '\n') : '') + text; growType(inp); try { inp.focus(); } catch (e) { /* gone */ } }
       S.quietSince = Date.now();
       return true;
     },

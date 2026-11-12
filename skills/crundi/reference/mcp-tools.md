@@ -79,7 +79,12 @@ in the viewport. Collaborators' chats cannot use the drawer.
 Navigation: `browser_navigate`, `browser_go_back`, `browser_go_forward`,
 `browser_wait` (`selector`, `timeout?`), `browser_close`, `browser_list`.
 
-Interaction: `browser_click` (`selector`), `browser_type` (`text`, `selector?`),
+Interaction: `browser_click` (`selector`; or `text` with `role?` and `within?`,
+as a person names it, e.g. text "Add to Shopping List", role button, and an
+open dialog is searched first; or `x`,`y` for a real mouse click; `nth` picks
+among several matches). It returns what it clicked (tag, role, text, x, y) and
+warns when something covers it: check it is what you meant. When nothing
+matches it lists what is clickable. `browser_type` (`text`, `selector?`),
 `browser_fill` (`selector`, `value`), `browser_select` (`selector`, `value`),
 `browser_mouse`, `browser_scroll`, `browser_resize`.
 

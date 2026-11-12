@@ -85,6 +85,16 @@ const target = http.createServer((req, res) => {
       document.getElementById('f').remove();document.getElementById('msg').textContent='Welcome';});</script></body>`);
     return;
   }
+  // Click by what a person sees: a product list and an open dialog with the same button text.
+  if (req.url.startsWith('/shop')) {
+    res.end(`<!doctype html><title>Shop</title><body style="margin:20px;font-family:sans-serif">
+      <div class="item"><span>Phone A</span> <button onclick="window.added=(window.added||[]).concat('A')">Add to Shopping List</button></div>
+      <div class="item"><span>Phone B</span> <button onclick="window.added=(window.added||[]).concat('B')">Add to Shopping List</button></div>
+      <div role="dialog" aria-modal="true" style="position:fixed;left:200px;top:120px;padding:20px;background:#fff;border:1px solid #888">
+        <h3>Phone C</h3><div class="btn" role="button" onclick="window.added=(window.added||[]).concat('C')"><span>Add to Shopping List</span></div>
+        <button aria-label="Close dialog" onclick="this.closest('[role=dialog]').remove()">x</button></div></body>`);
+    return;
+  }
   if (req.url.startsWith('/inner')) {
     res.removeHeader('X-Frame-Options'); res.removeHeader('Content-Security-Policy');
     res.end('<body style="margin:0"><button id="b" style="width:300px;height:200px">inner</button><script>document.getElementById("b").onclick=function(){parent.postMessage("inner-click","*")}</script></body>');
@@ -156,11 +166,11 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
   :root{--bg-primary:#0a0a0f;--bg-secondary:#12121a;--bg-tertiary:#1a1a28;--border:#2a2a3d;--text-primary:#e8e8f0;--text-secondary:#8888a8;--text-muted:#5a5a78;--accent:#6366f1;}
   body{margin:0;height:100vh;display:flex;flex-direction:column;font-family:sans-serif} .top{height:40px;background:#333;flex:0 0 auto}
   .main-layout{display:flex;flex:1;overflow:hidden} #area{flex:1;background:#0a0a0f;color:#fff;min-width:0} .top{background:#12121a;border-bottom:1px solid #2a2a3d}</style></head>
-<body><div class="top"></div><div class="main-layout"><div id="area"><div style="height:38px;display:flex;gap:18px;align-items:center;padding:0 14px;border-bottom:1px solid #2a2a3d;background:#12121a;color:#8888a8;font-size:13px;white-space:nowrap;overflow:hidden"><span style="color:#6366f1">Workbench</span><span>Git</span><span>Files</span><span>Kanban</span><span>Notes</span><span>Mindmap</span><span>Media</span></div><div style="display:flex;gap:8px;padding:8px;height:calc(100% - 54px)"><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f;padding:10px;color:#8888a8;font-size:13px">Chat one</div><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f"></div></div></div>
+<body><div class="top"><button id="brd-toggle" class="brd-toggle" style="display:inline-flex">Browser</button></div><div class="main-layout"><div id="area"><div style="height:38px;display:flex;gap:18px;align-items:center;padding:0 14px;border-bottom:1px solid #2a2a3d;background:#12121a;color:#8888a8;font-size:13px;white-space:nowrap;overflow:hidden"><span style="color:#6366f1">Workbench</span><span>Git</span><span>Files</span><span>Kanban</span><span>Notes</span><span>Mindmap</span><span>Media</span></div><div style="display:flex;gap:8px;padding:8px;height:calc(100% - 54px)"><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f;padding:10px;color:#8888a8;font-size:13px">Chat one</div><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f"></div></div></div>
 <div class="brd-split brd-closed" id="brd-split"></div><aside class="brd brd-closed" id="brd"></aside></div>
 <script src="/vendor/crundi-browser-drawer.js"></script>
 <script>var ICONS=${JSON.stringify(ICONS)};window.sent=[];
-window.drawer=CrundiBrowserDrawer.init({root:document.getElementById('brd'),split:document.getElementById('brd-split'),api:window.api.wbrowser.drawer,
+window.drawer=CrundiBrowserDrawer.init({root:document.getElementById('brd'),split:document.getElementById('brd-split'),toggleBtn:document.getElementById('brd-toggle'),api:window.api.wbrowser.drawer,
   ic:function(n){var p=ICONS[n];return p?'<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'+p+'</svg>':''},toast:function(m){console.log('toast '+m)},listChats:function(){return [{id:'c1',title:'Chat one',focused:true}]},
   sendToChat:function(id,text,png){window.sent.push({id:id,text:text,png:png?png.length:0});return Promise.resolve();},
   apiFetch:function(p,i){return fetch(p,i);},deviceId:function(){return 'pc-test';}});
@@ -601,11 +611,34 @@ try {
   const bad1 = await proj(() => browser.mouseBrowser(fk, 1, 1, 'drag'));
   const bad2 = await proj(() => browser.mouseBrowser(fk, 1, 1, 'wiggle'));
   check('a drag without an end, or an unknown action, is refused with a reason', !bad1.ok && /toX and toY/.test(bad1.error) && !bad2.ok && /action must be one of/.test(bad2.error), JSON.stringify([bad1, bad2]));
-  const cm = await cruTool('browser_do').run({ key: fk, op: 'mouse', mouse: 'click', x: 150, y: 100 });
+  const cm = await cruTool('browser_do').run({ key: fk, op: 'click', x: 150, y: 100 });
   await sleep(250);
   const ic2 = await proj(() => browser.evalBrowser(fk, 'window.innerClicks'));
-  check('Cru clicks with the mouse too (browser_do op mouse), into the same iframe', cm.ok !== false && ic2.result === '2', JSON.stringify(cm) + ' ' + JSON.stringify(ic2));
+  check('Cru clicks at a point too (browser_do click x,y: real mouse input), into the same iframe, and is told what is there', cm.ok !== false && ic2.result === '2' && cm.clicked && cm.clicked.tag === 'iframe', JSON.stringify(cm) + ' ' + JSON.stringify(ic2));
   await proj(() => browser.closeBrowser(fk));
+
+  // ── Clicking by what a person sees (browser_click text/role/within; Cru's browser_do) ──
+  const sh = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/shop`, show: true }));
+  const sk = sh.key; await sleep(500);
+  const kc1 = await proj(() => dispatchBrowserTool('browser_click', { key: sk, text: 'Add to Shopping List' }));
+  const kad1 = await proj(() => browser.evalBrowser(sk, 'String(window.added)'));
+  check('click by text looks in the open dialog first, and says what it clicked', kc1.ok && kad1.result === 'C' && kc1.searched === 'the open dialog' && kc1.clicked && /Add to Shopping List/.test(kc1.clicked.text) && kc1.clicked.inDialog, JSON.stringify(kc1) + ' ' + kad1.result);
+  const kc2 = await proj(() => dispatchBrowserTool('browser_click', { key: sk, text: 'add to shopping list', role: 'button', within: '.item', nth: 1 }));
+  const kad2 = await proj(() => browser.evalBrowser(sk, 'String(window.added)'));
+  check('within a part of the page, by role, the nth match (and the count is reported)', kc2.ok && kad2.result === 'C,B' && kc2.matches === 2 && /2 elements matched/.test(kc2.note || ''), JSON.stringify(kc2) + ' ' + kad2.result);
+  const kc3 = await proj(() => dispatchBrowserTool('browser_click', { key: sk, text: 'Checkout' }));
+  check('nothing matching: refused, with what is clickable on the page', !kc3.ok && /Nothing visible matches/.test(kc3.error) && Array.isArray(kc3.onPage) && kc3.onPage.some((t) => /Add to Shopping List/.test(t)), JSON.stringify(kc3));
+  const kcl = await cruTool('browser_look').run({ key: sk, screenshot: false });
+  const klookText = (kcl.content || [])[0]?.text || '';
+  check('Cru\'s browser_look lists what can be clicked, the dialog first, with x,y', /A dialog is open/.test(klookText) && /\[button\] "Add to Shopping List" at \d+,\d+/.test(klookText), klookText.slice(-400));
+  const kins = await cruTool('browser_inspect').run({ key: sk, what: 'source' });
+  check('Cru can read more of a tab (browser_inspect: the source here)', kins.ok !== false && /Phone C/.test(kins.html || ''), JSON.stringify(kins).slice(0, 300));
+  const kcd2 = await cruTool('browser_do').run({ key: sk, op: 'click', text: 'Close dialog', role: 'button' });
+  const kgone = await proj(() => browser.evalBrowser(sk, 'String(!document.querySelector("[role=dialog]"))'));
+  check('Cru clicks by visible text (an aria-label counts)', kcd2.ok !== false && kgone.result === 'true', JSON.stringify(kcd2));
+  const kev = await cruTool('browser_do').run({ key: sk, op: 'eval', code: 'document.title' });
+  check('Cru can run JavaScript in the tab, as a chat can', kev.result === 'Shop', JSON.stringify(kev));
+  await proj(() => browser.closeBrowser(sk));
 
   // ── Saved passwords: save after a sign-in, offer to fill, update, show with the PIN ──
   const lg = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/login`, show: true }));
@@ -667,6 +700,31 @@ try {
   const noChat = await proj(() => dispatchBrowserTool('browser_eval', { key: lk, code: 'typeof window.api' }));
   check('the page in the tab cannot reach the password API', noChat.result === 'undefined', JSON.stringify(noChat));
   await proj(() => browser.closeBrowser(lk));
+
+  // ── The project bar's Browser button, the drawer's side, and closing it all ──
+  const tg = (c) => page(`document.getElementById("brd-toggle").classList.contains(${JSON.stringify(c)})`);
+  check('while the drawer is open, the project bar\'s Browser button steps aside', await page('drawer.isOpen()') && await tg('brd-open') && await page('getComputedStyle(document.getElementById("brd-toggle")).display') === 'none');
+  await page('document.querySelector(\'[data-brd="hide"]\').click()'); await sleep(200);
+  check('hidden with pages open: the button is back, with a dot', !(await tg('brd-open')) && await tg('brd-running') && await page('getComputedStyle(document.getElementById("brd-toggle"),"::after").content') !== 'none');
+  await page('drawer.open()'); await sleep(300);
+  await page('document.querySelector(\'[data-brd="menu"]\').click()'); await sleep(150);
+  check('the menu offers to open it on the left', /Open on the left/.test(await page('document.querySelector(".brd-menu").textContent')));
+  await page('document.querySelector(\'[data-pan="side"]\').click()'); await sleep(400);
+  const sides = await page('(function(){var d=document.getElementById("brd").getBoundingClientRect(),a=document.getElementById("area").getBoundingClientRect();return [Math.round(d.left),Math.round(a.left)];})()');
+  check('on the left, it sits before the project area (and stays across a reload)', sides[0] < sides[1] && /"side":"left"/.test(await page('localStorage.getItem("crundi_brd")')), JSON.stringify(sides));
+  await shot('15-drawer-left');
+  await page('document.querySelector(\'[data-brd="menu"]\').click()'); await sleep(150);
+  await page('document.querySelector(\'[data-pan="side"]\').click()'); await sleep(400);
+  const sides2 = await page('(function(){var d=document.getElementById("brd").getBoundingClientRect(),a=document.getElementById("area").getBoundingClientRect();return [Math.round(d.left),Math.round(a.left)];})()');
+  check('...and back on the right', sides2[0] > sides2[1], JSON.stringify(sides2));
+  await page('drawer.setProject("closing")');
+  const z1 = await as('closing', () => browser.openDrawerTab({ alias: 'closing', url: `http://127.0.0.1:${T}/page2`, show: true }));
+  await as('closing', () => browser.openDrawerTab({ alias: 'closing', url: `http://127.0.0.1:${T}/page2?b` }));
+  await sleep(500);
+  await page('document.querySelector(\'[data-brd="closeall"]\').click()'); await sleep(500);
+  const left = await as('closing', () => browser.listAllBrowsers('closing'));
+  check('the X beside hide closes every tab of the project, without asking, and the drawer', z1.ok && left.browsers.length === 0 && await page('drawer.isOpen()') === false && !(await tg('brd-running')), JSON.stringify(left.browsers));
+  await page('drawer.setProject("proj")');
 
   // ── Hardening ──
   const evil = await page(`new Promise(function(res){ var w=document.createElement('webview'); w.setAttribute('partition','persist:evil'); w.setAttribute('src','about:blank');

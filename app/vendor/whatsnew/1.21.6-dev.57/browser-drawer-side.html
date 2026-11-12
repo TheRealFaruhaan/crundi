@@ -1,0 +1,22 @@
+<div class="wna a-brdside">
+  <div class="side"><i></i><i></i><i></i></div>
+  <div class="area"><i class="t"></i><i class="p"></i></div>
+  <div class="drw"><div class="bar"><i class="tab"></i><span class="hide"></span><span class="x"></span></div><i class="pg"></i></div>
+  <style>
+    .a-brdside{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-brdside .side{position:absolute;left:30px;top:40px;width:90px;height:320px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--border);padding:14px 10px;box-sizing:border-box}
+    .a-brdside .side i{display:block;height:9px;border-radius:5px;background:var(--text-muted);margin-bottom:12px;opacity:.6}
+    .a-brdside .area{position:absolute;top:40px;height:320px;border-radius:10px;background:var(--bg-card);border:1px solid var(--border);animation:abrds-area 10s ease infinite}
+    .a-brdside .area .t{position:absolute;left:14px;top:14px;width:140px;height:9px;border-radius:5px;background:var(--accent)}
+    .a-brdside .area .p{position:absolute;left:14px;right:14px;top:40px;bottom:14px;border-radius:8px;border:1px solid var(--border)}
+    .a-brdside .drw{position:absolute;top:40px;width:230px;height:320px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--accent);overflow:hidden;animation:abrds-drw 10s ease infinite}
+    .a-brdside .bar{position:absolute;left:0;right:0;top:0;height:34px;border-bottom:1px solid var(--border)}
+    .a-brdside .tab{position:absolute;left:10px;top:9px;width:80px;height:16px;border-radius:5px;background:var(--bg-card)}
+    .a-brdside .hide,.a-brdside .x{position:absolute;top:8px;width:18px;height:18px;border-radius:4px;border:1px solid var(--border)}
+    .a-brdside .hide{right:34px}
+    .a-brdside .x{right:10px;border-color:var(--accent);background:var(--accent-dim)}
+    .a-brdside .pg{position:absolute;left:10px;right:10px;top:46px;bottom:10px;border-radius:6px;background:#f4f4f8}
+    @keyframes abrds-drw{0%,8%{left:376px;opacity:1}18%,46%{left:376px;opacity:1}54%,86%{left:132px;opacity:1}94%,100%{left:132px;opacity:0}}
+    @keyframes abrds-area{0%,46%{left:132px;width:236px}54%,86%{left:370px;width:240px}94%,100%{left:132px;width:478px}}
+  </style>
+</div>

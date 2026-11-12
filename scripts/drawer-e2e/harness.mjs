@@ -82,6 +82,7 @@ const generic = {
     await e.win.webContents.executeJavaScript(`(function(){ const el = document.querySelector(${JSON.stringify(msg.selector)}); if (!el) throw new Error('Element not found'); el.focus(); el.value = ${JSON.stringify(msg.value)}; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); })()`);
     return { ok: true };
   },
+  async browserSource(msg) { const e = drawer.getEntry(msg.key); const wc = e.win.webContents; const html = await wc.executeJavaScript('document.documentElement.outerHTML'); return { ok: true, html, url: wc.getURL(), title: wc.getTitle() }; },
   async browserEval(msg) { const e = drawer.getEntry(msg.key); const r = await e.win.webContents.executeJavaScript(msg.code); return { ok: true, result: typeof r === 'string' ? r : JSON.stringify(r) }; },
   async browserClose(msg) { return drawer.close(msg); },
   async browserResize(msg) { return drawer.resize(msg); },

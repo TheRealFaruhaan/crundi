@@ -10,6 +10,7 @@
 
 // ─── Constants ───
 
+import { findScript, pointScript } from './browser-find.js';
 import * as headless from './browser-headless.js';
 import { planTouch, probeInstallScript, probeCollectScript, summarizeProbe } from './browser-touch.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -452,21 +453,54 @@ export async function readBrowserPage(key) {
   }
 }
 
-export async function clickBrowser(key, selector) {
+/**
+ * browser_click: by CSS selector (as ever), by what a person sees (text, with
+ * role and within to narrow it; an open dialog is searched first), or at x,y
+ * (real mouse input, like browser_mouse). Every way reports what it clicked
+ * (tag, role, text, where), and anything covering it, so a wrong hit shows.
+ * Built from browser_eval and browser_mouse, so every desktop app has it.
+ */
+export async function clickBrowser(key, selector, opts = {}) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
 
   const inst = instFor(key);
   if (!inst) return { ok: false, error: `No browser found with key '${key}'.` };
+  const { text, role, within, exact, nth, x, y } = opts || {};
+  const parse = (r) => { try { return JSON.parse(r && r.result); } catch { return null; } };
 
   try {
-    const result = await sendIpc('browserClick', { key, selector });
-    if (!result.ok) return { ok: false, error: result.error };
+    if (x != null || y != null) {
+      if (!Number.isFinite(Number(x)) || !Number.isFinite(Number(y))) return { ok: false, error: 'x and y must both be numbers' };
+      const at = parse(await evalBrowser(key, pointScript(Number(x), Number(y))));
+      const m = await mouseBrowser(key, Number(x), Number(y), 'click', { button: opts.button });
+      if (!m.ok) return m;
+      return { ok: true, url: m.url, clicked: at && at.ok ? strip(at) : null };
+    }
+    if (!selector && !text && !role) return { ok: false, error: 'Say what to click: selector, text (with role or within), or x and y' };
+    const r = await evalBrowser(key, findScript({ selector, text, role, within, exact, nth, click: true }));
+    if (!r.ok) return { ok: false, error: r.error };
+    const f = parse(r);
+    if (!f) return { ok: false, error: 'The page did not answer' };
+    if (!f.ok) {
+      // A selector that matches only something hidden: click it as before (el.click()).
+      if (selector && !text && !role) {
+        const old = await sendIpc('browserClick', { key, selector });
+        if (!old.ok) return { ok: false, error: old.error };
+        resetIdleTimer(key);
+        return { ok: true, url: old.url, clicked: null, note: 'Matched only a hidden element; clicked it anyway (el.click()).' };
+      }
+      return { ok: false, error: f.error, ...(f.near && f.near.length ? { onPage: f.near } : {}) };
+    }
     resetIdleTimer(key);
-    return { ok: true, url: result.url };
+    const out = { ok: true, clicked: strip(f), matches: f.matches, searched: f.searched };
+    if (f.matches > 1) out.note = `${f.matches} elements matched; clicked number ${(Number(nth) || 0) + 1} (nth picks another).`;
+    if (f.covered) out.warning = `Something else covers it at that point: ${f.covered.role} "${f.covered.text}". A person's click would land there; el.click() reached the element anyway.`;
+    return out;
   } catch (err) {
     return { ok: false, error: err.message };
   }
 }
+function strip(d) { const { ok, matches, searched, covered, clicked, ...rest } = d || {}; return rest; }
 
 export async function typeBrowser(key, text, selector) {
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };

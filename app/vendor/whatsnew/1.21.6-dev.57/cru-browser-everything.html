@@ -1,0 +1,31 @@
+<div class="wna a-crubr">
+  <div class="pg">
+    <i class="h"></i><i class="l1"></i>
+    <div class="dlg"><i class="dt"></i><span class="btn">Add to Shopping List</span></div>
+  </div>
+  <div class="cru"><span class="dot"></span><i class="w1"></i><i class="w2"></i></div>
+  <div class="cur"><svg viewBox="0 0 24 24"><path d="M5 2v16.4l4.2-4 2.8 6.4 3-1.3-2.8-6.3h5.9z"/></svg><span class="tag">Cru</span></div>
+  <span class="rip"></span>
+  <style>
+    .a-crubr{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-crubr .pg{position:absolute;left:40px;top:40px;width:380px;height:320px;border-radius:10px;background:#f4f4f8;border:1px solid var(--border);overflow:hidden}
+    .a-crubr .h{position:absolute;left:20px;top:20px;width:180px;height:14px;border-radius:4px;background:#8b8ca3}
+    .a-crubr .l1{position:absolute;left:20px;top:46px;width:260px;height:9px;border-radius:4px;background:#c9cad6}
+    .a-crubr .dlg{position:absolute;left:60px;top:90px;width:260px;height:150px;border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+    .a-crubr .dt{position:absolute;left:18px;top:20px;width:120px;height:12px;border-radius:4px;background:#5a5a78}
+    .a-crubr .btn{position:absolute;left:18px;bottom:22px;padding:8px 14px;border-radius:8px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;animation:abrcb-btn 9s ease infinite}
+    .a-crubr .cru{position:absolute;left:440px;top:120px;width:170px;height:110px;border-radius:12px;background:var(--bg-secondary);border:1px solid var(--border)}
+    .a-crubr .dot{position:absolute;left:14px;top:14px;width:22px;height:22px;border-radius:50%;background:var(--accent);animation:abrcb-dot 9s ease infinite}
+    .a-crubr .w1,.a-crubr .w2{position:absolute;left:14px;height:8px;border-radius:4px;background:var(--text-muted)}
+    .a-crubr .w1{top:52px;width:130px}.a-crubr .w2{top:70px;width:90px}
+    .a-crubr .cur{position:absolute;left:0;top:0;animation:abrcb-cur 9s infinite}
+    .a-crubr .cur svg{position:absolute;left:-5px;top:-2px;width:24px;height:24px;overflow:visible}
+    .a-crubr .cur path{fill:#6366f1;stroke:#fff;stroke-width:1.6;stroke-linejoin:round}
+    .a-crubr .tag{position:absolute;left:15px;top:21px;padding:1px 7px;border-radius:9px;background:#6366f1;color:#fff;font:600 11px/1.5 system-ui,sans-serif}
+    .a-crubr .rip{position:absolute;left:200px;top:255px;width:40px;height:40px;margin:-20px 0 0 -20px;border-radius:50%;border:2px solid #6366f1;box-sizing:border-box;opacity:0;animation:abrcb-rip 9s ease-out infinite}
+    @keyframes abrcb-dot{0%,10%{transform:scale(1)}14%{transform:scale(1.3)}18%,100%{transform:scale(1)}}
+    @keyframes abrcb-cur{0%,18%{transform:translate(520px,170px);opacity:0}24%{opacity:1}40%,60%{transform:translate(200px,255px);opacity:1}72%,100%{transform:translate(200px,255px);opacity:0}}
+    @keyframes abrcb-rip{0%,43%{opacity:0;transform:scale(.3)}45%{opacity:.9;transform:scale(.3)}54%,100%{opacity:0;transform:scale(1.3)}}
+    @keyframes abrcb-btn{0%,44%{filter:none}45%,50%{filter:brightness(1.3)}53%,100%{filter:none}}
+  </style>
+</div>

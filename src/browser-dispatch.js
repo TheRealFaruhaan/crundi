@@ -36,7 +36,7 @@ export async function browserTool(b, tool, args, notifyEvent = () => {}) {
       }
       case 'browser_read_page': return b.readBrowserPage(args.key);
       case 'browser_view_source': return b.getBrowserSource(args.key);
-      case 'browser_click': return b.clickBrowser(args.key, args.selector);
+      case 'browser_click': return b.clickBrowser(args.key, args.selector, { text: args.text, role: args.role, within: args.within, exact: args.exact, nth: args.nth, x: args.x, y: args.y, button: args.button });
       case 'browser_type': return b.typeBrowser(args.key, args.text, args.selector);
       case 'browser_fill': return b.fillBrowser(args.key, args.selector, args.value);
       case 'browser_select': return b.selectBrowser(args.key, args.selector, args.value);
