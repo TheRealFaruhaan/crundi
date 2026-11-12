@@ -61,6 +61,25 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3 (en-US)
+
+Version code 73. Production (first on the Internal track, promoted to
+production later), since 1.1.2 (code 31): everything from 1.1.3-dev.1 to
+1.1.3-dev.41. Server 1.21.6.
+
+```
+<en-US>
+Meet Cru, Crundi's assistant, on your phone.
+
+- Talk or type to Cru about your projects; it can act for you, and wakes to "Hey Cru" in your voice.
+- Cru floats as a bubble over other apps, and tells you when chats finish or need you.
+- Talk to a chat by voice, and Crundi's inbox on the phone.
+- Share this phone's connection with your server (Homepool).
+
+Needs a Crundi server, version 1.21.6 or newer.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.41 (en-US)
 
 Version code 72. Internal track. Since 1.1.3-dev.40 (code 71): Cru's news no longer speaks when Android opens the bubble by itself (shown, said when the owner opens it); Cru's Deepgram voice, speed and volume are kept on the phone and used from the first word (news waits for the settings); in keyboard (chat) mode unprompted news is shown, never said. Server 1.21.6-dev.60.
