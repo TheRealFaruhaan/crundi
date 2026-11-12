@@ -14,6 +14,7 @@
 #   Crundi-<version>-linux-x64.deb      desktop app for Ubuntu, with a server
 #   Crundi-Client-<version>-linux-x64.deb   desktop app for Ubuntu, client only
 #   ghcr.io/<owner>/crundi:<version>    Linux server image
+#   ghcr.io/<owner>/crundi-homepool-node:<version>   the Docker homepool node
 name: Release extras
 
 on:
@@ -98,7 +99,7 @@ jobs:
           mkdir -p staging/crundi-server
           cp -r src scripts assets skills package.json package-lock.json staging/crundi-server/
           mkdir -p staging/crundi-server/app
-          cp -r app/vendor staging/crundi-server/app/
+          cp -r app/vendor app/homepool-node.js staging/crundi-server/app/
           cp docker/.env.example staging/crundi-server/.env.example
           # Same pinned browser as the Linux tarball. The Windows server is a
           # zip you extract and run — there is no installer to fetch one later,
@@ -117,6 +118,8 @@ jobs:
           echo "bundled Chrome ${CHROME_VER} for Windows"
           cd staging/crundi-server
           npm ci --omit=dev --ignore-scripts=false
+          # The voice assistant's embeddings runtime: this platform's CPU library only (D47).
+          node scripts/prune-voice-deps.mjs
           cd ..
           cp ../docker/README.md crundi-server/DOCKER.md || true
 
@@ -189,10 +192,12 @@ jobs:
           mkdir -p staging/crundi
           cp -r src scripts assets skills package.json package-lock.json staging/crundi/
           mkdir -p staging/crundi/app
-          cp -r app/vendor staging/crundi/app/
+          cp -r app/vendor app/homepool-node.js staging/crundi/app/
           cp docker/.env.example staging/crundi/.env.example
           cd staging/crundi
           npm ci --omit=dev --no-audit --no-fund
+          # The voice assistant's embeddings runtime: this platform's CPU library only (D47).
+          node scripts/prune-voice-deps.mjs
           # Native code is tied to Node's ABI, so record which one these were
           # built against. install.sh compares it and rebuilds if it differs
           # rather than shipping modules that will not load.
@@ -386,6 +391,41 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  homepool-node-image:
+    name: Homepool node image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      # The node script is app/homepool-node.js, so the image carries
+      # Crundi's own version, and :dev / :latest move as the server's do.
+      - name: Read version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
+      - name: Lowercase the owner
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: homepool-node/docker/Dockerfile
+          push: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish }}
+          tags: |
+            ghcr.io/${{ env.OWNER }}/crundi-homepool-node:${{ env.VERSION }}
+            ghcr.io/${{ env.OWNER }}/crundi-homepool-node:${{ contains(env.VERSION, '-') && 'dev' || 'latest' }}
+          cache-from: type=gha,scope=homepool-node
+          cache-to: type=gha,mode=max,scope=homepool-node
+
   attach:
     name: Attach to the release
     needs: [client, server-windows, server-linux, desktop-linux]
@@ -395,6 +435,14 @@ jobs:
     # default. A test with an unbounded scan hung every Windows job here.
     timeout-minutes: 25
     steps:
+      # Only for scripts/release-upload.mjs (the upload and its check).
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/release-upload.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       # Named explicitly rather than "download everything". buildx also uploads
       # a .dockerbuild metadata artifact, which is not a release asset and
       # whose download failed the whole job once already.
@@ -444,5 +492,10 @@ jobs:
             fi
             sleep 10
           done
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.yml' \) -print0 \
-            | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"
+          # Uploaded, then checked: every asset must be on the release at its
+          # full size. dev.56's find | xargs gh release upload "succeeded" with
+          # the Linux .deb cut short and three files missing; this re-uploads a
+          # broken one (three tries) and fails the job if it stays broken.
+          mapfile -d '' FILES < <(find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.yml' \) -print0)
+          [ "${#FILES[@]}" -gt 0 ] || { echo "No artifacts to upload"; exit 1; }
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload "${FILES[@]}"

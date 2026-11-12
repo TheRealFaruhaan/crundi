@@ -132,49 +132,13 @@ const claudeUi = createClaudeUiSessions();
 async function mcpDispatch(tool, args) {
   // Browser tools
   if (tool.startsWith('browser_') || tool === 'list_browsers') {
-    const b = await import('./browser.js');
-    switch (tool) {
-      case 'browser_open': {
-        const r = await b.openBrowser(args);
-        if (r && r.ok !== false) webapp.notifyEvent('browserLaunch', `🌐 Browser launched${args.key ? ` "${args.key}"` : ''}${args.url ? `: ${args.url}` : ''}.`);
-        return r;
-      }
-      case 'browser_close': {
-        const r = await b.closeBrowser(args.key);
-        if (r && r.ok !== false) webapp.notifyEvent('browserStop', `🌐 Browser closed${args.key ? ` "${args.key}"` : ''}.`);
-        return r;
-      }
-      case 'browser_navigate': return b.navigateBrowser(args.key, args.url);
-      case 'browser_screenshot': {
-        const r = await b.screenshotBrowser(args.key);
-        return r; // data is already base64 from IPC
-      }
-      case 'browser_read_page': return b.readBrowserPage(args.key);
-      case 'browser_view_source': return b.getBrowserSource(args.key);
-      case 'browser_click': return b.clickBrowser(args.key, args.selector);
-      case 'browser_type': return b.typeBrowser(args.key, args.text, args.selector);
-      case 'browser_fill': return b.fillBrowser(args.key, args.selector, args.value);
-      case 'browser_select': return b.selectBrowser(args.key, args.selector, args.value);
-      case 'browser_eval': return b.evalBrowser(args.key, args.code);
-      case 'browser_mouse': return b.mouseBrowser(args.key, args.x, args.y, args.action);
-      case 'browser_resize': return b.resizeBrowser(args.key, args.width, args.height);
-      case 'browser_scroll': return b.scrollBrowser(args.key, { x: args.x, y: args.y, selector: args.selector });
-      case 'browser_wait': return b.waitBrowser(args.key, { selector: args.selector, timeout: args.timeout });
-      case 'browser_go_back': return b.goBackBrowser(args.key);
-      case 'browser_go_forward': return b.goForwardBrowser(args.key);
-      case 'browser_console': return b.getBrowserConsole(args.key, { clear: args.clear, start: args.start, end: args.end, countOnly: args.countOnly });
-      case 'browser_network': return b.browserNetwork(args.key, args.action, { start: args.start, end: args.end, countOnly: args.countOnly });
-      case 'browser_cookies': return b.cookiesBrowser(args.key, { action: args.action, cookie: args.cookie, filter: args.filter, url: args.url });
-      case 'browser_snapshot': return b.snapshotBrowser(args.key, { maxDepth: args.maxDepth, maxLength: args.maxLength });
-      case 'browser_elements': return b.elementsBrowser(args.key, { start: args.start, end: args.end, countOnly: args.countOnly, selector: args.selector });
-      case 'browser_pdf': return b.pdfBrowser(args.key, { landscape: args.landscape });
-      case 'browser_list':
-      case 'list_browsers':
-        return { ok: true, browsers: b.listBrowsers(args.alias) };
-      default:
-        return { ok: false, error: `Unknown browser tool: ${tool}` };
-    }
+    const { dispatchBrowserTool } = await import('./browser-dispatch.js');
+    return dispatchBrowserTool(tool, args, { notifyEvent: (k, m) => webapp.notifyEvent(k, m) });
   }
+  return otherTool(tool, args);
+}
+
+async function otherTool(tool, args) {
 
   // Screenshot / display tools
   if (tool === 'list_windows' || tool === 'list_displays' ||
@@ -346,7 +310,8 @@ try {
                 : outcome === 'start-failed' || outcome === 'no-prompt'
                   ? `⚠️ "${label}" could not start${proj}.`
                   : `⚠️ "${label}" did not finish${proj} (${outcome}) — left open.`;
-          webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head);
+          // Filed under its project's inbox thread.
+          webapp.notifyEvent('scheduledChat', body ? `${head}\n\n${body}` : head, sch.project ? { project: sch.project } : {});
         } catch { /* non-fatal */ }
       },
     });

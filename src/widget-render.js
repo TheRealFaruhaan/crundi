@@ -184,3 +184,39 @@ export function describeRender(r) {
   if (r.fixtures && r.fixtures.length) lines.push(`Fixtures available for states: ${r.fixtures.join(', ')}`);
   return { text: head + '\n\n' + lines.join('\n').trim(), errors, warns };
 }
+
+/**
+ * Draw a document the way Cru's live screen shows it (sandbox="allow-scripts",
+ * its own CSP inside) and report script errors and CSP violations. The kid
+ * games workshop's last check before a game goes live (voice/kid-games.js).
+ * @returns {Promise<{ok:boolean, problems:string[], png?:string, error?:string}>}
+ */
+export async function checkInSandbox({ baseUrl, doc, width = 900, height = 640, waitMs = 2000 }) {
+  if (!headless.isSupported()) return { ok: true, problems: [], skipped: 'no headless browser' };
+  const hook = '<script>(function(){var p=window.parent;function e(t){try{p.postMessage({cru:"error",text:String(t).slice(0,300)},"*")}catch(x){}}'
+    + 'window.addEventListener("error",function(ev){e(ev.message||"error")});window.addEventListener("unhandledrejection",function(ev){e("unhandled: "+(ev.reason&&ev.reason.message||ev.reason))});'
+    + 'document.addEventListener("securitypolicyviolation",function(ev){e("blocked by the sandbox: "+ev.violatedDirective+" "+(ev.blockedURI||""))});})();</script>';
+  const d = String(doc || '');
+  const i = d.indexOf('<title>');
+  const framed = i >= 0 ? d.slice(0, i) + hook + d.slice(i) : hook + d;
+  const page = '<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#0a0a0f">'
+    + '<iframe id="f" sandbox="allow-scripts" style="width:100%;height:100vh;border:0"></iframe>'
+    + '<script>window.__kg={errors:[],msgs:0};window.addEventListener("message",function(ev){var m=ev.data||{};if(m.cru==="error")__kg.errors.push(m.text);else __kg.msgs++;});'
+    + 'document.getElementById("f").srcdoc=' + JSON.stringify(framed).replace(/</g, '\\u003c') + ';</script></body></html>';
+  const key = '__kidgame:' + randomBytes(6).toString('hex');
+  const ticket = putHarnessPage(page);
+  const opened = await headless.handle({ type: 'browserOpen', key, url: `${baseUrl}/api/widgets/harness?ticket=${ticket}`, width, height });
+  if (!opened.ok) return { ok: false, problems: [`could not open: ${opened.error}`] };
+  try {
+    await sleep(waitMs);
+    const shot = await headless.handle({ type: 'browserScreenshot', key });
+    const r = await headless.handle({ type: 'browserEval', key, code: 'JSON.stringify(window.__kg||{})' });
+    let kg = {};
+    try { kg = JSON.parse(r && r.ok ? r.result : '{}'); } catch { kg = {}; }
+    const problems = (kg.errors || []).slice(0, 10);
+    return { ok: problems.length === 0, problems, png: shot.ok ? shot.data : undefined, messages: kg.msgs || 0 };
+  } finally {
+    await headless.handle({ type: 'browserClose', key }).catch(() => {});
+    tickets.delete(ticket);
+  }
+}

@@ -91,6 +91,9 @@ internal fun permissionInput(e: ChatEntry): String {
     return truncate(prettyJson(e.input), 2500)
 }
 
+/** Answered by Cru, the voice assistant (the server marks the card answeredBy "cru"). */
+fun byCru(e: ChatEntry): Boolean = (e.raw["answeredBy"] as? JsonPrimitive)?.contentOrNull == "cru"
+
 /** Allow, Allow always, Deny: the CLI's own choices. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -100,7 +103,9 @@ fun PermissionCard(e: ChatEntry, actions: EntryActions, busy: Boolean = false) {
         if (e.status != "pending") {
             val closed = e.status == "unanswered" || e.status == "cancelled"
             val always = (e.raw["always"] as? JsonPrimitive)?.let { it.booleanOrNull == true || it.contentOrNull == "session" } == true
-            val tag = when { e.status == "denied" -> "denied"; closed -> "never answered"; always -> "always allowed"; else -> "allowed" }
+            val base = when { e.status == "denied" -> "denied"; closed -> "never answered"; always -> "always allowed"; else -> "allowed" }
+            // Cru (the voice assistant) answered it, for the owner or on its own judgement.
+            val tag = if (byCru(e) && !closed) "$base by Cru" else base
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(name, style = ChatType.Small.copy(color = CrundiColors.TextPrimary, fontWeight = FontWeight.SemiBold))
                 Tag(tag, ok = !(e.status == "denied" || closed))
@@ -185,6 +190,7 @@ fun QuestionCard(
                     answered.isEmpty() -> Tag("answered")
                     else -> for ((_, v) in answered) Tag((v as? JsonPrimitive)?.contentOrNull ?: v.toString(), ok = true)
                 }
+                if (byCru(e)) Tag("by Cru")
             }
             val ann = (e.answeredInput?.get("annotations") as? JsonObject).orEmpty()
             for ((_, v) in ann) ((v as? JsonObject)?.get("notes") as? JsonPrimitive)?.contentOrNull?.let { Text("Note: $it", style = ChatType.Small.copy(color = CrundiColors.TextMuted), modifier = Modifier.padding(top = 4.dp)) }

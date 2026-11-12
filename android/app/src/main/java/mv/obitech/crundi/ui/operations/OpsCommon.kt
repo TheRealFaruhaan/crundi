@@ -257,3 +257,33 @@ fun Group(title: String, modifier: Modifier = Modifier, detail: String? = null, 
         ) { content() }
     }
 }
+
+/**
+ * One folded section of a settings page (Voice assistant, Sign-in): a header
+ * to tap (title, the state now, a chevron) and, unfolded, its card. Folded
+ * at first unless [key] is in [open]; kept folded or not while the page is
+ * in use. [summaryColor] null: the usual secondary text.
+ */
+@Composable
+fun FoldSection(
+    key: String, title: String, summary: String, open: Set<String> = emptySet(),
+    padding: androidx.compose.ui.unit.Dp = 14.dp, summaryColor: Color? = null, card: Boolean = true,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    var unfolded by androidx.compose.runtime.saveable.rememberSaveable(key) { mutableStateOf(key in open) }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgSecondary).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape)
+                .clickable(onClickLabel = if (unfolded) "Fold" else "Show") { unfolded = !unfolded }.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            if (summary.isNotEmpty()) Text(summary, style = CrundiType.Small.copy(color = summaryColor ?: CrundiColors.TextSecondary), maxLines = 1, modifier = Modifier.padding(start = 8.dp, end = 8.dp))
+            CrundiIcon(if (unfolded) "chevron-up" else "chevron-down", size = Dimens.IconSm, tint = CrundiColors.TextMuted)
+        }
+        if (unfolded) {
+            if (card) mv.obitech.crundi.ui.components.CrundiCard(Modifier.fillMaxWidth(), padding = padding) { content() }
+            else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) { content() }
+        }
+    }
+}

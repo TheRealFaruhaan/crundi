@@ -103,10 +103,13 @@ function collaboratorEnv(collaborator) {
   return env;
 }
 import { config } from './config.js';
+import { noteRateLimitEvent } from './usage.js';
 import { getProject } from './project-store.js';
 import { hasExistingConversation, writeMcpConfig, skipPermissionsBlocker } from './claude-terminals.js';
 import { systemPromptArgs, collaboratorPromptLayer } from './system-prompt.js';
+import { attributionFor, attributionArgs } from './attribution.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
+import { chatToken } from './chat-token.js';
 
 const isWin = process.platform === 'win32';
 const MAX_MESSAGES = 2000;      // conversation entries kept per session
@@ -766,7 +769,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         toolUseId, kind: kind || 'agent',
         taskId: '', description: '', step: '', subagentType: '', prompt: '',
         status: 'running', summary: '', usage: null, lastTool: '',
-        startedAt: Date.now(), endedAt: 0, messages: [],
+        startedAt: Date.now(), endedAt: 0, lastAt: Date.now(), messages: [],
       };
       s.agents.set(toolUseId, a);
       trimAgents(s);
@@ -842,8 +845,18 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return false;
   }
 
+  /** A sign of life from an entry we had guessed was over: running again. */
+  function revive(s, a) {
+    if (!a.retired) return;
+    a.retired = false; a.endedAt = 0; a.status = 'running'; a.dismissed = false; a.autoDismissed = false;
+    cancelAutoDismiss(s, a.toolUseId);
+    emitAgent(s, a);
+  }
+
   function agentEntry(s, a, entry) {
     entry.seq = nextSeq();
+    a.lastAt = Date.now();
+    if (s.proc) revive(s, a);
     a.messages.push(entry);
     if (a.messages.length > MAX_AGENT_MESSAGES) {
       a.messages.splice(0, a.messages.length - MAX_AGENT_MESSAGES);
@@ -902,7 +915,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * task_id only) and task_notification (final status, summary, usage).
    */
   function handleTaskEvent(s, msg) {
-    const toolUseId = msg.tool_use_id || s.agentsByTask.get(msg.task_id) || '';
+    // One entry per task. An agent resumed with a message (SendMessage)
+    // starts again under the new call's id, but its progress and its end
+    // come under the first: everything of a task the chat already knows
+    // goes to that task's entry, which is revived on a new start.
+    const known = msg.task_id ? s.agentsByTask.get(msg.task_id) : '';
+    const toolUseId = (known && s.agents.has(known) ? known : '') || msg.tool_use_id || known || '';
     if (!toolUseId) return;
     // These events cover every kind of background task the CLI tracks, not just
     // subagents — a background Bash command and a Monitor raise them too. Both
@@ -916,9 +934,13 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // A later event for a task we declined to track would resurrect it.
     if (msg.subtype !== 'task_started' && !s.agents.has(toolUseId)) return;
     const a = getAgent(s, toolUseId, kind);
+    a.lastAt = Date.now();
+    if (msg.subtype === 'task_progress' && s.proc) revive(s, a);
     if (msg.task_id) { a.taskId = msg.task_id; s.agentsByTask.set(msg.task_id, toolUseId); }
 
     if (msg.subtype === 'task_started') {
+      // Started again (resumed): running once more, its name kept.
+      if (a.endedAt) { a.endedAt = 0; a.retired = false; a.summary = ''; a.dismissed = false; a.autoDismissed = false; }
       // Long enough to identify the job, short enough that the bubble stays a
       // bubble. The full text is on the tool row in the transcript.
       a.description = String(msg.description || a.description).slice(0, MAX_LABEL);
@@ -955,6 +977,23 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
     scheduleAutoDismiss(s, a);
     emitAgent(s, a);
+    // An agent resumed with a message (SendMessage) gets a bubble of its own,
+    // but its finish can arrive keyed by the call that first started it: end
+    // every bubble of the same task, or the resumed one shows "running" for good.
+    const done = msg.subtype === 'task_notification' || (msg.subtype === 'task_updated' && msg.patch && msg.patch.status && msg.patch.status !== 'running');
+    if (done && msg.task_id && a.endedAt) {
+      for (const other of s.agents.values()) {
+        if (other === a || other.taskId !== msg.task_id || other.endedAt) continue;
+        if (other.kind === 'task' && a.kind === 'task' && a.status === 'running') continue;
+        other.status = a.status || other.status;
+        if (a.summary && !other.summary) other.summary = a.summary;
+        other.endedAt = a.endedAt;
+        scheduleAutoDismiss(s, other);
+        emitAgent(s, other);
+      }
+    }
+    // The last thing a waiting chat waited on has ended: it is idle now.
+    if (done && s.state === 'waiting' && !activeTriggers(s)) setState(s, 'idle');
   }
 
   /** Append a conversation entry and notify subscribers. */
@@ -1179,7 +1218,12 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (collaborator.cacheDir) {
         try { mkdirSync(collaborator.cacheDir, { recursive: true }); } catch { /* the sandbox will say */ }
       }
-      args.push('--settings', JSON.stringify(collaboratorSettings({
+      // One --settings only: the collaborator's sandbox and permissions, plus
+      // Crundi's commit/PR attribution unless the owner set their own.
+      const collabAttribution = attributionFor(workdir);
+      args.push('--settings', JSON.stringify({
+        ...(collabAttribution ? { attribution: collabAttribution } : {}),
+        ...collaboratorSettings({
         root: resolvePath(workdir),
         gitDir: gitPaths.gitDir || '',
         commonDir: gitPaths.commonDir || '',
@@ -1191,7 +1235,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
         projectsDir: config.projectsDir || '',
         dataDir: config.dataDir || '',
         home: homedir(),
-      })));
+      }),
+      }));
       // --strict-mcp-config means "ONLY servers named by --mcp-config". It was
       // passed alone, so every collaborator session started with ZERO MCP
       // servers — verified: 0 crundi tools, and 93 once --mcp-config was added.
@@ -1247,6 +1292,8 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       const deny = (Array.isArray(disallowedTools) ? disallowedTools : []).filter(Boolean).map(String);
       if (allow.length) args.push('--allowedTools', allow.join(','));
       if (deny.length) args.push('--disallowedTools', deny.join(','));
+      // Commits and PRs say they were made with Crundi (see attribution.js).
+      args.push(...attributionArgs(workdir, config.dataDir));
     }
     // What this Claude is told about the machine it woke up on. Unattended runs
     // get Crundi's layer only — see system-prompt.js.
@@ -1357,7 +1404,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
             crundi: {
               command: 'node',
               args: [resolvePath(fileURLToPath(new URL('./mcp-stdio.js', import.meta.url)))],
-              env: { CRUNDI_API_URL: apiUrl, CRUNDI_API_KEY: apiKey || '', CRUNDI_PROJECT: key, CRUNDI_CHAT_ID: id },
+              env: { CRUNDI_API_URL: apiUrl, CRUNDI_API_KEY: apiKey || '', CRUNDI_PROJECT: key, CRUNDI_CHAT_ID: id, CRUNDI_CHAT_TOKEN: chatToken(id, key) },
             },
           },
         }, null, 2), { mode: 0o600 });
@@ -1381,8 +1428,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           // from the message stream, so the hooks intentionally no-op here.
           CRUNDI_UI_SESSION: '1',
           ...SUMMARY_ENV,
-          // Inherited by the tool bridge: which chat its calls belong to.
+          // Inherited by the tool bridge: which chat its calls belong to, and
+          // the proof of it for the calls that are granted per chat
+          // (homepool; src/chat-token.js).
           CRUNDI_CHAT_ID: id,
+          CRUNDI_CHAT_TOKEN: chatToken(id, key),
           ...(extraEnv && typeof extraEnv === 'object' ? extraEnv : {}),
           ...(apiUrl ? { CRUNDI_API_URL: apiUrl } : {}),
           ...(apiKey ? { CRUNDI_API_KEY: apiKey } : {}),
@@ -1482,6 +1532,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       if (s.collaborator) sessionGoneCb?.(s.id);
       chatEnded(s.id, 'exit');
       if (s.recapTimer) { clearTimeout(s.recapTimer); s.recapTimer = null; }
+      // Its agents and background commands died with it.
+      endRunning(s, () => true);
+      s.waiting.clear();
       setState(s, 'idle');
       s.emitter.emit('event', { type: 'exit', code });
       // The transcript is nobody's now, so a later resume of it need not fork.
@@ -1596,6 +1649,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       case 'command_lifecycle': return handleCommandLifecycle(s, msg);
       case 'prompt_suggestion': return handlePromptSuggestion(s, msg);
       case 'tool_use_summary': return handleToolUseSummary(s, msg);
+      // The account's usage windows, as Claude Code saw them on this turn
+      // (usage.js): a reading that needs no Usage API call. Not a
+      // collaborator's, who may be signed in to an account of their own.
+      case 'rate_limit_event': if (!s.collaborator) { try { noteRateLimitEvent(msg); } catch { /* best effort */ } } return;
     }
   }
 
@@ -1692,10 +1749,11 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   // cards, but it was only re-sent on unrelated events — answering a card in
   // the chat left it in the inbox until the page reconnected. Anything that
   // adds, answers or clears a card now says so.
-  let pendingChangeCb = null;
-  function onPendingChange(cb) { pendingChangeCb = cb; }
+  // Several may listen (the approvals inbox, the voice assistant's watches).
+  const pendingChangeCbs = [];
+  function onPendingChange(cb) { if (typeof cb === 'function') pendingChangeCbs.push(cb); }
   function pendingChanged(s) {
-    try { pendingChangeCb?.(s.id); } catch { /* the inbox is a view, never fatal */ }
+    for (const cb of pendingChangeCbs) { try { cb(s.id); } catch { /* a view, never fatal */ } }
   }
 
   let escalationGoneCb = null;
@@ -2073,18 +2131,174 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   const BG_LAUNCH_RE = /(?:running in background with ID|moved to the background \(ID):\s*([a-z0-9]+)/i;
   const MONITOR_LAUNCH_RE = /Monitor started \(task ([a-z0-9]+), timeout (\d+)ms/i;
 
-  /** Note that this turn started something that will call back later. */
+  const TASK_STOPPED_RE = /stopped task:?\s*([a-z0-9]+)/i;
+  // A background agent (the Agent tool, run in the background): its finish
+  // reaches the transcript as a <task-notification> with its agentId.
+  const AGENT_LAUNCH_RE = /Async agent launched successfully[\s\S]{0,600}?agentId:\s*([a-z0-9]+)/i;
+  /** A background agent can work for hours; past this it is no longer waited on. */
+  const AGENT_MAX_MS = 6 * 60 * 60 * 1000;
+  /** The longest a background command may run (Claude Code's own cap). */
+  const BG_MAX_MS = 2 * 60 * 60 * 1000;
+
+  /** Note that this turn started something that will call back later (or that Claude stopped one). */
   function noteTriggerLaunch(s, text) {
     const t = String(text || '');
+    const now = Date.now();
     const mon = MONITOR_LAUNCH_RE.exec(t);
-    if (mon) { s.waiting.set(mon[1], 'monitor'); return; }
+    if (mon) { s.waiting.set(mon[1], { label: 'monitor', until: now + Math.min(Number(mon[2]) || BG_MAX_MS, BG_MAX_MS) + 5000 }); return; }
     const bg = BG_LAUNCH_RE.exec(t);
-    if (bg) s.waiting.set(bg[1], 'background command');
+    if (bg) { s.waiting.set(bg[1], { label: 'background command', until: now + BG_MAX_MS }); return; }
+    const ag = AGENT_LAUNCH_RE.exec(t);
+    if (ag) { s.waiting.set(ag[1], { label: 'background agent', until: now + AGENT_MAX_MS }); return; }
+    const stopped = TASK_STOPPED_RE.exec(t);
+    if (stopped) s.waiting.delete(stopped[1]);
   }
 
-  /** How many callbacks this turn armed. Reset by handleResult. */
+  /**
+   * Which background tasks have finished, from the CLI's own transcript: the
+   * completion is never sent over stream-json, but the CLI writes it there
+   * (a queue-operation / queued_command carrying <task-notification> with the
+   * <task-id>). null when the transcript cannot be read (an unknown session,
+   * another HOME): then nothing is known, and "waiting" falls back to lasting
+   * one turn.
+   *
+   * The whole file counts, not just its tail: a long chat's transcript runs
+   * to tens of MB, and a completion written early in it is still a
+   * completion (scanning only the last 512 KB left ids from earlier tasks in
+   * s.waiting for hours, so finished chats read "waiting"). The file is only
+   * ever appended to, so each look reads just the bytes added since the last
+   * one and adds to a per-session set. A first look at a huge file is spread
+   * over a few checks (TX_SCAN_MAX_BYTES each) rather than blocking at once.
+   */
+  const TX_SCAN_MAX_BYTES = 8 * 1024 * 1024;
+  const TX_CHUNK_BYTES = 1024 * 1024;
+  // Bytes kept from the end of one read and scanned again with the next, so a
+  // notification split across the boundary is still matched (the pattern is
+  // well under this).
+  const TX_OVERLAP_BYTES = 512;
+  const TASK_DONE_RE = /<task-notification>[\s\S]{0,40}?<task-id>([a-z0-9]+)<\/task-id>/g;
+  function finishedTasks(s) {
+    if (!s.sessionId || !s.cwd) return null;
+    const file = join(transcriptDir(s.cwd), s.sessionId + '.jsonl');
+    let fd;
+    try {
+      const size = statSync(file).size;
+      let tx = s.txScan;
+      // A new transcript (another session id) or one that shrank (rewritten):
+      // start again from the top.
+      if (!tx || tx.file !== file || size < tx.offset) tx = s.txScan = { file, offset: 0, carry: Buffer.alloc(0), done: new Set() };
+      if (size > tx.offset) {
+        fd = openSync(file, 'r');
+        const stop = Math.min(size, tx.offset + TX_SCAN_MAX_BYTES);
+        while (tx.offset < stop) {
+          const len = Math.min(TX_CHUNK_BYTES, stop - tx.offset);
+          const chunk = Buffer.alloc(len);
+          const got = readSync(fd, chunk, 0, len, tx.offset);
+          if (got <= 0) break;
+          const buf = tx.carry.length ? Buffer.concat([tx.carry, chunk.subarray(0, got)]) : chunk.subarray(0, got);
+          const text = buf.toString('latin1');   // the pattern is ASCII; no multibyte split to worry about
+          TASK_DONE_RE.lastIndex = 0;
+          let m;
+          while ((m = TASK_DONE_RE.exec(text))) tx.done.add(m[1]);
+          tx.carry = Buffer.from(buf.subarray(Math.max(0, buf.length - TX_OVERLAP_BYTES)));
+          tx.offset += got;
+        }
+      }
+      return tx.done;
+    } catch { return null; }
+    finally { if (fd !== undefined) { try { closeSync(fd); } catch { /* closed */ } } }
+  }
+
+  /**
+   * Cross off what has finished, been stopped or timed out. Returns false
+   * when finishing cannot be seen (no transcript): the caller then keeps the
+   * old one-turn scope.
+   */
+  function retireTriggers(s) {
+    if (!s.waiting.size) return true;
+    // No CLI process, nothing of its can still be running: background
+    // commands, monitors and agents all die with it.
+    if (!s.proc) { s.waiting.clear(); return true; }
+    const done = finishedTasks(s);
+    if (!done) return false;
+    const now = Date.now();
+    for (const [id, w] of s.waiting) if (done.has(id) || (w && w.until && now > w.until)) s.waiting.delete(id);
+    return true;
+  }
+
+  // A chat left "waiting" is looked at again now and then: its task may
+  // finish while nothing else happens (the CLI only speaks again if Claude
+  // decides to).
+  const WAITING_RECHECK_MS = 15 * 1000;
+  setInterval(() => {
+    for (const s of sessions.values()) {
+      retireAgents(s);
+      if (s.state !== 'waiting') continue;
+      retireTriggers(s);
+      if (!activeTriggers(s)) setState(s, 'idle');
+    }
+  }, WAITING_RECHECK_MS).unref?.();
+
+  // A working subagent reports every few seconds (each step, a progress line
+  // about every 30 s). One silent this long has ended without the end
+  // reaching us. Background commands may rightly be silent for hours, so
+  // they are only ended by their notification, the transcript or the cap.
+  const AGENT_SILENT_MS = 15 * 60 * 1000;
+  const TASK_CAP_MS = 6 * 60 * 60 * 1000;
+
+  function isStale(a, now = Date.now()) {
+    if (now - (a.startedAt || now) >= TASK_CAP_MS) return true;
+    return a.kind === 'agent' && now - (a.lastAt || a.startedAt || now) >= AGENT_SILENT_MS;
+  }
+
+  /** End every still-running entry that matches; returns how many. */
+  function endRunning(s, which) {
+    let n = 0;
+    for (const a of (s.agents ? s.agents.values() : [])) {
+      if (!a || a.endedAt || (a.status && a.status !== 'running') || !which(a)) continue;
+      a.status = 'stopped';
+      a.endedAt = Date.now();
+      a.retired = true;   // our guess, not the CLI's word: a later sign of life undoes it
+      scheduleAutoDismiss(s, a);
+      emitAgent(s, a);
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * Entries whose end never reached us: finished per the CLI's transcript
+   * (a <task-notification> carrying its task id), silent too long, or with
+   * no process left to run them.
+   */
+  function retireAgents(s) {
+    if (!s.agents || !s.agents.size) return 0;
+    let running = false;
+    for (const a of s.agents.values()) if (a && !a.endedAt && (!a.status || a.status === 'running')) { running = true; break; }
+    if (!running) return 0;
+    const done = finishedTasks(s);
+    const now = Date.now();
+    const n = endRunning(s, (a) => !s.proc || isStale(a, now) || !!(done && a.taskId && done.has(a.taskId) && a.kind !== 'task'));
+    if (n && s.state === 'waiting' && !activeTriggers(s)) setState(s, 'idle');
+    return n;
+  }
+
+  /**
+   * What the chat is still waiting on: the callbacks it armed, plus every
+   * agent and background task the CLI reports as still running (the same
+   * list the chat's agent and task counts are drawn from: started agents,
+   * agents resumed with a message, background commands, monitors).
+   */
+  function runningTasks(s) {
+    let n = 0;
+    const now = Date.now();
+    // Past six hours an entry that never heard its end is not waited on (a
+    // badge that never goes out was the old bug).
+    for (const a of (s.agents ? s.agents.values() : [])) if (a && !a.endedAt && (a.status === 'running' || !a.status) && !isStale(a, now)) n++;
+    return n;
+  }
   function activeTriggers(s) {
-    return s.waiting.size;
+    return s.waiting.size + runningTasks(s);
   }
 
   function handleResult(s, msg) {
@@ -2104,13 +2318,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       numTurns: msg.num_turns || 0, isError: !!msg.is_error,
       text: msg.subtype && msg.subtype !== 'success' ? String(msg.result || msg.subtype) : '',
     });
+    // Background work is followed across turns: a message the owner sends
+    // while a command runs must not make the chat read idle when its own turn
+    // ends. Finished tasks are crossed off from the CLI's transcript; where
+    // that cannot be read, the only honest scope is the turn that armed it.
+    const known = retireTriggers(s);
     setState(s, activeTriggers(s) ? 'waiting' : 'idle');
-    // Cleared every turn: the completion notification never reaches us, so the
-    // only honest scope for "waiting" is the turn that armed it.
-    s.waiting.clear();
+    if (!known) s.waiting.clear();
     s.turns = (s.turns || 0) + 1;
     scheduleIdleRecap(s);
-    if (turnEndCb && !s.factory && !s.background) { try { turnEndCb(s.id); } catch { /* the listener's problem */ } }
+    if (!s.factory && !s.background) for (const cb of turnEndCbs) { try { cb(s.id); } catch { /* the listener's problem */ } }
   }
 
   /**
@@ -2165,8 +2382,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function onRecap(cb) { recapCb = cb; }
   // Told when one of the person's chats finishes a turn (not a factory's or
   // a scheduled job's): the moment to see whether its title still fits.
-  let turnEndCb = null;
-  function onTurnEnd(cb) { turnEndCb = cb; }
+  // Several may listen: retitling, the voice assistant's watches. (One slot
+  // here let the second silently replace the first.)
+  const turnEndCbs = [];
+  function onTurnEnd(cb) { if (typeof cb === 'function') turnEndCbs.push(cb); }
 
   function handleControlRequest(s, msg) {
     const req = msg.request || {};
@@ -2641,6 +2860,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * @param {object} [answer.updatedInput]  edited tool input, or AskUserQuestion answers
    * @param {boolean} [answer.always]       also apply the CLI's permission suggestions
    * @param {string} [answer.message]       denial reason shown to Claude
+   * @param {string} [answer.by]            'cru' when Cru (the voice assistant) answered it: the card says so
    */
   /**
    * The permission requests a chat is waiting on, for somewhere that can only
@@ -2669,7 +2889,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     return out;
   }
 
-  function respond(id, { requestId, behavior, updatedInput, always, message } = {}) {
+  function respond(id, { requestId, behavior, updatedInput, always, message, by } = {}) {
     const s = sessions.get(id);
     if (!s) return { ok: false, error: `No session "${id}"` };
     const pending = s.pending.get(requestId);
@@ -2714,6 +2934,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       status: behavior === 'deny' ? 'denied' : 'allowed',
       answeredInput: response.updatedInput || null,
       always: !!always,
+      ...(by === 'cru' ? { answeredBy: 'cru' } : {}),
     });
     // Approving ExitPlanMode is what turns a proposal into the plan being
     // worked through; denying it sends Claude back to revise.
@@ -3022,6 +3243,19 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   const has = (id) => sessions.has(id);
+  /**
+   * The speak tool: Claude says [text] aloud to whoever is listening to this
+   * chat in voice mode. An event only (not part of the conversation), so a
+   * screen not in voice mode, or one opened later, never plays it.
+   */
+  function voiceSay(id, text) {
+    const s = sessions.get(id);
+    if (!s) return { ok: false, error: 'No such chat' };
+    const t = String(text || '').trim().slice(0, 2000);
+    if (!t) return { ok: false, error: 'Nothing to say' };
+    s.emitter.emit('event', { type: 'voice-say', id: genId(), text: t, at: Date.now() });
+    return { ok: true };
+  }
   const on = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.on('event', handler); };
   const off = (id, handler) => { const s = sessions.get(id); if (s) s.emitter.off('event', handler); };
 
@@ -3040,14 +3274,19 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function dismissAgents(sessionId, toolUseIds) {
     const s = sessions.get(sessionId);
     if (!s) return { ok: false, error: 'No such session' };
+    // "All" is "Dismiss finished": a running agent stays on show.
     const ids = toolUseIds === 'all'
-      ? [...s.agents.keys()]
+      ? [...s.agents.entries()].filter(([, a]) => a && a.status !== 'running').map(([id]) => id)
       : (Array.isArray(toolUseIds) ? toolUseIds : []);
     let n = 0;
     for (const id of ids) {
       const a = s.agents.get(id);
-      if (a && !a.dismissed) { a.dismissed = true; n++; }
       cancelAutoDismiss(s, id);
+      if (!a || a.dismissed) continue;
+      a.dismissed = true; n++;
+      // Every open view (this phone, other tabs, the PC) takes it away now,
+      // not on its next reload.
+      s.emitter.emit('event', { type: 'agent', agent: agentMeta(a) });
     }
     if (n) persistNow(s);   // survive a restart, not just this process
     return { ok: true, dismissed: n };
@@ -3060,6 +3299,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   }
 
   return {
+    voiceSay,
     list, create, close, closeProject, closeAll, rename, setOrder, clearHistory,
     sendMessage, cancelMessage, respond, pendingFor, answerClosed, interrupt, setPermissionMode, setModel,
     history, has, on, off, onAnyStateChange, onEscalation, onFactoryPermission, addCard, patchCard, setFirstChatHandler, onSessionGone, onChatEnded, onSuggestion, setBackground, closeCollaboratorSessions, lastTurnOutput, dismissAgents, dismissSuggestion, meta,

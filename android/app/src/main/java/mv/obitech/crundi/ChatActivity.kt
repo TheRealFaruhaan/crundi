@@ -68,6 +68,7 @@ class ChatActivity : androidx.fragment.app.FragmentActivity() {
                     mv.obitech.crundi.ui.mini.MiniStage(Modifier.fillMaxSize().background(CrundiColors.BgPrimary).safeDrawingPadding()) {
                         // The chat, and Claude asking for a secret from it (ui.chats.BubbleChat).
                         BubbleChat(startChat, shownChat)
+                        mv.obitech.crundi.ui.shell.KeyboardBackCloses()
                     }
                 }
             }
@@ -136,7 +137,7 @@ class ChatActivity : androidx.fragment.app.FragmentActivity() {
 
     override fun onDestroy() {
         if (openKey.isNotEmpty()) closed(openKey)
-        Link.hold(applicationContext, "bubbles", anyOpen())
+        Link.hold(applicationContext, "bubbles", anyOpen() || InboxBubbleActivity.anyOpen())
         super.onDestroy()
     }
 
@@ -150,6 +151,7 @@ class ChatActivity : androidx.fragment.app.FragmentActivity() {
         private fun opened(key: String) = synchronized(open) { open[key] = (open[key] ?: 0) + 1 }
         private fun closed(key: String) = synchronized(open) { val n = (open[key] ?: 0) - 1; if (n > 0) open[key] = n else open.remove(key) }
         private fun anyOpen() = synchronized(open) { open.isNotEmpty() }
+        fun anyOpenNow() = anyOpen()
         fun isOpen(serverId: String, chatId: String): Boolean = synchronized(open) { open.containsKey("$serverId:$chatId") }
     }
 }

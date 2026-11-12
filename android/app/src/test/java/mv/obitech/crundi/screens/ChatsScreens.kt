@@ -114,6 +114,37 @@ class ChatsScreens : ScreenshotTest() {
         ChatScreen(ChatUi(c, pane = parked(c), draft = "and the 401 renewal", isBubble = true, error = mv.obitech.crundi.ui.chats.ChatSleep.WAKE_FAILED + "project \"crundi\" no longer exists."), noChat)
     }
 
+    /** Voice mode on (ChatVoice): the mic lit beside Send, what it hears live over the buttons. */
+    @Test fun chatVoiceMode() = snap("chats-chat-voice-mode") {
+        ChatScreen(ChatUi(chat(0), voice = mv.obitech.crundi.ui.chats.ChatVoiceUi(mode = mv.obitech.crundi.ui.chats.ChatVoiceUi.Mode.On, interim = "and make the retry wait twice as long each time")), noChat)
+    }
+
+    private val levels = kotlinx.coroutines.flow.MutableStateFlow(listOf(0.05f, 0.1f, 0.3f, 0.55f, 0.4f, 0.7f, 0.85f, 0.6f, 0.35f, 0.5f, 0.75f, 0.9f, 0.65f, 0.4f, 0.2f, 0.45f, 0.7f, 0.55f, 0.3f, 0.6f, 0.8f, 0.5f, 0.25f, 0.4f, 0.65f, 0.45f, 0.2f, 0.1f))
+    private fun recording(cancel: Float) = mv.obitech.crundi.ui.chats.ChatVoiceUi(
+        mode = mv.obitech.crundi.ui.chats.ChatVoiceUi.Mode.Holding, interim = "and make the retry wait twice as long",
+        since = System.currentTimeMillis() - 7_400, cancelProgress = cancel,
+    )
+
+    /** Push to talk, held: the recording bar in Send's place, Cancel at the far right, the mic a send button. */
+    @Test fun chatVoiceHolding() = snap("chats-chat-voice-holding") {
+        ChatScreen(ChatUi(chat(0), voice = recording(0f), voiceLevels = levels), noChat)
+    }
+
+    /** Held and slid onto Cancel: letting go here sends nothing. */
+    @Test fun chatVoiceHoldingCancel() = snap("chats-chat-voice-holding-cancel") {
+        ChatScreen(ChatUi(chat(0), voice = recording(1f), voiceLevels = levels), noChat)
+    }
+
+    /** Turned on while Cru listens: the chat asks to take the microphone. */
+    @Test fun chatVoiceAskSwitch() = snap("chats-chat-voice-ask-switch") {
+        ChatScreen(ChatUi(chat(0), voice = mv.obitech.crundi.ui.chats.ChatVoiceUi(askSwitch = true)), noChat)
+    }
+
+    /** Cru opened on purpose: voice mode waits, and goes on by itself after. */
+    @Test fun chatVoicePausedForCru() = snap("chats-chat-voice-paused") {
+        ChatScreen(ChatUi(chat(0), voice = mv.obitech.crundi.ui.chats.ChatVoiceUi(mode = mv.obitech.crundi.ui.chats.ChatVoiceUi.Mode.Paused)), noChat)
+    }
+
     @Test fun chatLoading() = snap("chats-chat-loading") {
         ChatScreen(ChatUi(ChatState("a1b2c3d4e5f60718")), noChat)
     }

@@ -48,10 +48,11 @@ running you. Defaults, on both platforms:
 | 443 | Crundi HTTPS (when TLS is on) | The site goes down |
 | 80 | ACME + HTTP redirect | Certificate renewal stops — silently, until expiry |
 | 8888 | Loopback API (`127.0.0.1`) | Every MCP call fails with "socket hang up" |
+| 7480–7579 | Homepool (loopback and Docker bridge addresses): 7480 SOCKS5, 7481 HTTP proxy, 7490–7579 access keys' port blocks | Traffic meant to leave through homepool fails; a key's ports cannot open. A dev instance uses 7580 and up |
 
 Other work on the box takes ports too, so check before binding — the command to
 check is platform-specific, see your platform file. Pick a high port (4000–9999,
-excluding Crundi's) and bind to loopback unless the thing must be reachable
+excluding Crundi's: 8888 and 7480–7599) and bind to loopback unless the thing must be reachable
 externally. A dev server on `0.0.0.0` on a public box is on the internet. To
 publish something, use `add_forward` — never an open firewall port.
 
@@ -172,7 +173,8 @@ are actually on.
 - **`enable_tunnel`** — a Cloudflare tunnel for a local port. Hostname is not
   stable. Use when a forward will not do.
 
-Prefer a forward.
+Prefer a forward to a tunnel. Both are for letting people in: to test your own
+dev server you need neither (see Driving a browser).
 
 ### Driving a browser
 
@@ -182,12 +184,55 @@ Check what a page actually does rather than reasoning about it — especially af
 a UI change. Works on both platforms (bundled headless browser, or the desktop
 app's webview). Up to 5 instances per project; close them when done.
 
-`browser_open` takes `on`, which picks the machine: `"server"` runs it where
-Crundi and you run, so `http://127.0.0.1:<port>` is your own dev server;
-`"desktop"` runs it in the person's connected desktop app, on their network.
-Left out, it uses the desktop app when one is connected. Testing a dev server on
-this machine's localhost, say `on: "server"`: on the desktop app, localhost is
-the person's computer, where nothing of yours is listening.
+**Which browser.** Use the browser drawer first: when `browser_list` says the
+drawer is available, open a tab there with `browser_drawer_open` (a new tab in
+the person's drawer, `network: "client"` or `"server"`),
+where the person sees what you do, unless they told you otherwise. Without one,
+use `on: "server"`, a hidden browser where Crundi and you run. (`"desktop"` is a
+hidden browser in the person's desktop app, on their network.)
+
+**The mouse.** `browser_click` with a selector or visible text is the quick
+way to press something. When a page needs real pointer input, use
+`browser_mouse` at viewport `x`,`y` (from a screenshot, or what `browser_click`
+reported): `move` to hover (menus and tooltips that open on hover), `click`,
+`double_click`, `right_click` via `button: "right"`, `drag` from `x`,`y` to
+`toX`,`toY` (sliders, drag-and-drop, drawing), or `down`, any number of
+`move`s, then `up` to hold a button across calls. It is hit-tested like a
+person's mouse, so it reaches cross-site iframes (a CodePen preview, a payment
+form) and canvases that selectors cannot. In a drawer tab the person watches
+your cursor do it. Release a held button when you are done.
+
+**Dropdowns.** A mouse click on a `<select>` (`browser_mouse`, or
+`browser_click` at its x,y) shows its options in the page, under it: Crundi
+draws them, since the browser's own list would not stay open and no screenshot
+shows it. The person sees the list and can choose, and so can you (click an
+option, role `option`). Or choose directly with `browser_select`: the dropdown
+by `selector` or `label`, the option by its visible text or value. A custom dropdown (not a `<select>`)
+is clicked open, then its option clicked.
+
+**Phone and tablet sizes.** `browser_resize` a drawer tab to the device's size
+(390x844 iPhone, 412x915 Android, 820x1180 iPad) to see the mobile layout; the
+drawer's device menu shows it as Custom. Add `browser_touch` for touch. It keeps
+a desktop user agent, so for a full phone profile (user agent, pixel density)
+ask the person to pick it in the drawer's device menu.
+
+**Your dev server needs no forward.** It listens on this machine, so open
+`http://127.0.0.1:<port>` directly from a drawer tab with `network: "server"`
+(or `on: "server"`). Test through the person's own network (`network:
+"client"`, or a forward) only when they ask for that. When the PC app runs on
+this same machine (its server network reads "Server (this PC)"), client and
+server are one network: there is nothing to choose between.
+
+**The browser drawer.** In the PC client each project has a browser drawer: tabs
+the person sees and uses beside the project. `browser_list` lists them
+(`on: "drawer"`, key `drawer:<id>`); `browser_drawer_open` adds one
+(`show: true` to bring it up). Every `browser_*` tool works on them, plus
+`browser_point` / `browser_annotate` to mark the page where the person sees it
+and `browser_annotations` to read what they marked (with the element under each
+mark and a screenshot). A drawer tab's `network` is `"client"` (the desktop
+app's network, the default) or `"server"` (this server's network, carried over
+the app's connection, so `http://127.0.0.1:<port>` is your dev server even when
+the app is on another machine); switch it with `browser_tab_network`.
 
 ### Secrets
 
@@ -249,12 +294,14 @@ Full loop, with the platform differences called out:
    counts as "started".
 2. **If it listens on a port, take one that is safe.** Check it is free first,
    pick 4000–9999 avoiding Crundi's own, and bind `127.0.0.1`.
-3. **If the user needs to reach it, forward it.** `add_forward` gives a stable
-   URL on the server's certificate, private (sign-in required) by default. Send
-   them the URL.
+3. **Open it yourself without a forward.** A drawer tab on the server's network
+   (or `on: "server"`) reaches `http://127.0.0.1:<port>` as it is. Add a forward
+   (`add_forward`: a stable URL on the server's certificate, private by default)
+   only when the user wants a link to open themselves, or asks to test through
+   their own network.
 4. **Test what actually runs**, with the project's own tests or checks. If it has
-   a web interface, also open it with the browser tools and read
-   `browser_console` — a silent error looks exactly like a styling problem.
+   a web interface, also open it in the browser drawer (or `on: "server"`) and
+   read `browser_console`: a silent error looks exactly like a styling problem.
 5. **Show, don't describe.** The user is often on a phone and cannot see your
    terminal; `send_photo_to_user` with a screenshot settles a visual question in
    one round trip.

@@ -1,0 +1,22 @@
+<div class="wna a-vact">
+  <div class="disc"><div class="head"></div></div>
+  <div class="ask">"Close the API chat."</div>
+  <div class="q">Close the API chat in Crundi? It is idle.</div>
+  <div class="yes">"Yes."</div>
+  <div class="done">Closed, Master.</div>
+  <style>
+    .a-vact{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-vact .disc{position:absolute;left:50%;top:70px;width:120px;height:120px;margin-left:-60px;border-radius:50%;background:#05050a;box-shadow:0 0 0 2px var(--accent),0 0 0 9px var(--accent-dim),0 0 0 16px rgba(99,102,241,.08),0 0 40px var(--accent-dim);animation:avact-pulse 10s ease infinite}
+    .a-vact .head{position:absolute;left:30px;top:40px;width:60px;height:44px;border-radius:16px;background:linear-gradient(135deg,var(--accent-hover),var(--accent))}
+    .a-vact .ask,.a-vact .yes{position:absolute;left:0;right:0;text-align:center;font-size:15px;color:var(--text-secondary);opacity:0}
+    .a-vact .ask{top:220px;animation:avact-a 10s ease infinite}
+    .a-vact .q{position:absolute;left:120px;right:120px;top:250px;text-align:center;font-size:16px;font-weight:500;opacity:0;animation:avact-q 10s ease infinite}
+    .a-vact .yes{top:300px;animation:avact-y 10s ease infinite}
+    .a-vact .done{position:absolute;left:0;right:0;top:330px;text-align:center;font-size:16px;font-weight:500;color:var(--green);opacity:0;animation:avact-d 10s ease infinite}
+    @keyframes avact-pulse{0%,8%,30%,52%,72%,100%{transform:scale(1)}15%,40%,62%,80%{transform:scale(1.05)}}
+    @keyframes avact-a{0%,6%{opacity:0}12%,90%{opacity:1}96%,100%{opacity:0}}
+    @keyframes avact-q{0%,24%{opacity:0;transform:translateY(6px)}30%,90%{opacity:1;transform:none}96%,100%{opacity:0}}
+    @keyframes avact-y{0%,50%{opacity:0}56%,90%{opacity:1}96%,100%{opacity:0}}
+    @keyframes avact-d{0%,66%{opacity:0;transform:translateY(6px)}72%,90%{opacity:1;transform:none}96%,100%{opacity:0}}
+  </style>
+</div>

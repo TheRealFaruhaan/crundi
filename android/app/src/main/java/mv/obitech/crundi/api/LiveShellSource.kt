@@ -22,6 +22,8 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
@@ -84,8 +86,20 @@ class LiveShellSource(
         }
     }.onStart { emit(false) }
 
-    override val state: StateFlow<ShellData> = combine(base, panels, updateAvailable) { d, n, upd ->
-        d.copy(panels = n, tabBadges = if (upd) d.tabBadges + ("settings" to -1) else d.tabBadges)
+    /**
+     * The inbox's unread count (capability "inbox"): asked whenever the event
+     * stream (re)connects, which coming back to the app does, then followed
+     * from its `inbox` events. 0 from a server without an inbox.
+     */
+    private val inboxUnread: Flow<Int> = base.map { InboxApi.supported(it.capabilities) }.distinctUntilChanged().flatMapLatest { has ->
+        if (!has) flowOf(0) else channelFlow {
+            launch { client.events.changes(InboxEvent.NAME).collect { e -> InboxEvent.parse(e.data)?.let { send(it.unread) } } }
+            client.events.status.collect { st -> if (st == LiveStatus.Connected) runCatching { client.inbox.unread() }.getOrNull()?.let { send(it) } }
+        }
+    }.onStart { emit(0) }
+
+    override val state: StateFlow<ShellData> = combine(base, panels, updateAvailable, inboxUnread) { d, n, upd, inbox ->
+        d.copy(panels = n, tabBadges = if (upd) d.tabBadges + ("settings" to -1) else d.tabBadges, inboxUnread = inbox)
     }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ShellData(serverHost = serverHost, username = username, connection = Connection.Reconnecting))
 
     private suspend fun chipCount(project: String): Int = runCatching { client.widgets.list(project).count { it.isChip } }.getOrDefault(0)

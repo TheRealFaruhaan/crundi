@@ -52,6 +52,11 @@ class PushService : FirebaseMessagingService() {
                     // alert_user: rings until seen, or shown quietly. It logs
                     // its own line, with the outcome.
                     Notifier.alert(app, server, payload)
+                } else if (kind == KidNotify.ASK) {
+                    // Kid Cru asks the parent: the question with its answers as buttons.
+                    KidNotify.ask(app, server, payload)
+                } else if (kind == KidNotify.NOTE) {
+                    KidNotify.note(app, server, payload)
                 } else {
                     PushLog.add(app, "From ${server.host}: a notification ($kind)${if (payload.optBoolean("quiet")) ", quiet: you are at Crundi" else ""}")
                     Notifier.show(app, server, payload)

@@ -14,6 +14,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -60,6 +61,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import kotlin.reflect.KProperty
@@ -83,6 +85,7 @@ import kotlinx.coroutines.withContext
 import mv.obitech.crundi.Pickers
 import mv.obitech.crundi.api.ApiRequest
 import mv.obitech.crundi.api.ChatWatchdog
+import mv.obitech.crundi.api.VoiceApi
 import mv.obitech.crundi.api.model.AgentState
 import mv.obitech.crundi.api.model.ChatEntry
 import mv.obitech.crundi.api.model.ChatMedia
@@ -148,8 +151,8 @@ data class ChatUi(
     val stopArmed: Boolean = false,
     /** Mid-turn sends not yet echoed by the server. */
     val localPending: List<PendingInjection> = emptyList(),
-    /** How many log entries there were when each local one was sent (by its text), to tell when Claude took it. */
-    val localSentAt: Map<String, Int> = emptyMap(),
+    /** For each mid-turn send, the ids of your messages with that text already in the log when it went. */
+    val localSentAt: Map<String, Set<String>> = emptyMap(),
     /** Folded things the person opened (tool ids; "!id" closes a live thought). */
     val open: Set<String> = emptySet(),
     /** Cards whose answer is on its way. */
@@ -181,6 +184,10 @@ data class ChatUi(
     val asideOk: Boolean = false,
     /** The recap closed here or sent over (its key), hidden before the server's recap:null arrives. */
     val retiredRecap: String? = null,
+    /** The composer's mic and voice mode (ChatVoice); null hides the mic. */
+    val voice: ChatVoiceUi? = null,
+    /** The mic's last levels, for the recording bar (ChatVoiceSession.levels). */
+    val voiceLevels: kotlinx.coroutines.flow.StateFlow<List<Float>>? = null,
 ) {
     /** Put to sleep (parked): the live state's row for it says so (ChatSleep). */
     val asleep get() = ChatSleep.asleep(pane)
@@ -270,29 +277,34 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
             val act = activity(c)
             val list = rememberLazyListState(initialFirstVisibleItemIndex = (entries.size + 1).coerceAtLeast(0))
             val lastLen = entries.lastOrNull()?.let { it.text.length + it.status.length } ?: 0
-            // Sending goes to the bottom, wherever the log was, and keeps
-            // following what comes in for a while (the message and the reply
-            // arrive after the send).
-            var followUntil by remember { mutableStateOf(0L) }
+            val density = LocalDensity.current.density
+            // Following the end (ChatFollow in ChatJump.kt): only while the
+            // reader is at the bottom. Scrolling up stops it, so a reply being
+            // written never drags them back down; the bottom, the arrow or a
+            // send starts it again.
+            val follow = rememberChatFollow(list, density)
+            suspend fun toEnd(animate: Boolean) = follow.toEnd(list, animate)
+            // The keyboard opening keeps the newest message in view (ChatJump.kt).
+            KeepBottomInView(list, follow) { toEnd(animate = false) }
+            // Sending goes to the bottom, wherever the log was, and follows the reply.
             LaunchedEffect(ui.sentSeq) {
                 if (ui.sentSeq == 0) return@LaunchedEffect
-                followUntil = System.currentTimeMillis() + 8000
-                val n = list.layoutInfo.totalItemsCount
-                if (n > 0) list.animateScrollToItem(n - 1)
+                follow.jumped()
+                toEnd(animate = true)
             }
-            // Back to the newest message (ChatJump.kt): shown well up the log,
-            // with a dot once something has come in below.
-            val density = LocalDensity.current.density
+            // Back to the newest message (ChatJump.kt): shown well up the log, or
+            // whenever the log has stopped following, with a dot once something
+            // has come in below.
             val jumpFar by remember(list) { androidx.compose.runtime.derivedStateOf { ChatJump.far(list.layoutInfo, density) } }
+            val jumpShown by remember(list) { androidx.compose.runtime.derivedStateOf { jumpFar || (!follow.following && !ChatJump.atEnd(list.layoutInfo, density)) } }
             var newBelow by remember { mutableStateOf(false) }
             var dockPx by remember { mutableStateOf(0) }
-            LaunchedEffect(entries.size) { if (jumpFar) newBelow = true }
+            LaunchedEffect(entries.size) { if (jumpShown) newBelow = true }
             LaunchedEffect(list) { androidx.compose.runtime.snapshotFlow { ChatJump.atEnd(list.layoutInfo, density) }.collect { if (it) newBelow = false } }
             val jumpScope = rememberCoroutineScope()
-            LaunchedEffect(entries.size, lastLen, act) {
-                val info = list.layoutInfo
-                val nearEnd = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 3 } ?: true
-                if ((nearEnd || System.currentTimeMillis() < followUntil) && info.totalItemsCount > 0) list.animateScrollToItem(info.totalItemsCount - 1)
+            // New rows and a growing last one (a reply streaming in) keep the end in view, while following.
+            LaunchedEffect(entries.size, lastLen, act, c.exited) {
+                if (follow.shouldFollow) toEnd(animate = false)
             }
             Box(Modifier.weight(1f).fillMaxWidth()) {
               // Panels Claude docked to this chat sit above the conversation, at most 42% of it (ui.panels).
@@ -327,15 +339,10 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                     val sug = c.suggestion
                     if (sug != null && sugOn) SuggestionBubble(sug.text, { actions.useSuggestion(sug) }, actions::dismissSuggestion, Modifier.miniTarget(c.id, "sug"))
                 }
-                JumpToNewest(jumpFar, newBelow, {
+                JumpToNewest(jumpShown, newBelow, {
                     newBelow = false
-                    // To the last row, then the rest of it: a long last message would otherwise stop at its top.
-                    jumpScope.launch {
-                        val n = list.layoutInfo.totalItemsCount
-                        if (n > 0) list.animateScrollToItem(n - 1)
-                        val rest = ChatJump.distanceBelow(list.layoutInfo)
-                        if (rest > 0) list.animateScrollBy(rest.toFloat())
-                    }
+                    follow.jumped()
+                    jumpScope.launch { toEnd(animate = true) }
                 // Above the suggested reply, which runs across the dock; beside the badges alone it fits.
                 }, Modifier.align(Alignment.BottomCenter).padding(bottom = if (sugOn) with(LocalDensity.current) { dockPx.toDp() } + 16.dp else 8.dp))
               }
@@ -353,7 +360,7 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
                 model = c.model, stateWords = stateLine(c.state, c.exited, asleep, ui.waking != null), cost = c.totalCostUsd,
                 commands = ChatAside.commands(c.slashCommands, ui.asideOk), pending = ui.pending, suggestion = c.suggestion, uploads = ui.uploads,
                 scheduled = ui.schedule.items.size, scheduleOpen = ui.schedule.open, onSchedule = actions::schedule,
-                enterSends = ui.enterSends, miniId = c.id,
+                enterSends = ui.enterSends, miniId = c.id, voice = ui.voice.takeIf { !asleep }, voiceLevels = ui.voiceLevels,
             )
         }
         if (ui.schedule.open && c.loaded) SchedulePanel(
@@ -364,7 +371,13 @@ fun ChatScreen(ui: ChatUi, actions: ChatActions, modifier: Modifier = Modifier, 
         viewing?.let { p -> mv.obitech.crundi.ui.workspace.files.FileViewDialog(p) { viewing = null } }
         linkMenu?.let { u -> if (u.startsWith("code:")) CodeMenu(u.removePrefix("code:")) { linkMenu = null } else LinkMenu(u) { linkMenu = null } }
         ui.sheet?.let { s ->
-            if (s is ChatSheet.Picture) ImageViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-image")); actions.sheet(null) }, onClose = { actions.sheet(null) })
+            // A gallery of the chat's pictures (the owner, 11 Nov): swipe to the next or the one before.
+            if (s is ChatSheet.Picture) ImageViewer(
+                s.media,
+                onSave = { m -> actions.media(m.copy(kind = "file-image")); actions.sheet(null) },
+                onClose = { actions.sheet(null) },
+                gallery = remember(c.visible, c.id) { c.visible.filter { it.status == "done" }.flatMap { it.media(c.id) }.filter { it.kind == "image" && it.path != null } },
+            )
             else if (s is ChatSheet.Video) VideoViewer(s.media, onSave = { actions.media(s.media.copy(kind = "file-video")) }, onClose = { actions.sheet(null) })
             else if (s is ChatSheet.Secrets) SheetOverlay({ actions.sheet(null) }) { secretsSheet() }
             else if (s is ChatSheet.Aside) SheetOverlay({ actions.sheet(null) }) { AsideSheet(s, actions) { actions.sheet(null) } }
@@ -386,7 +399,7 @@ private fun SleepingChat(ui: ChatUi, actions: ChatActions) {
     val row = ui.pane ?: return
     val shown = ui.chat.visible
     ParkedBody(PaneView.ofPane(row), actions::wake, busy = ui.waking != null, busyMode = ui.waking ?: "resume", preview = {
-        if (ui.chat.loaded && shown.isNotEmpty()) ParkedChatCopy(shown) else ParkedChatPreview(row.id)
+        if (ui.chat.loaded && shown.isNotEmpty()) { if (it) ParkedChatPeek(shown) { actions.wake("resume") } else ParkedChatCopy(shown) } else ParkedChatPreview(row.id, peek = it) { actions.wake("resume") }
     })
 }
 
@@ -525,7 +538,7 @@ private fun ChatSheetContent(s: ChatSheet, ui: ChatUi, a: ChatActions, wide: Boo
         is ChatSheet.Agents -> SheetCard(if (s.kind == "task") "Background commands" else "Agents", close) {
             val agents = ui.chat.agents.values.filter { !it.dismissed && (it.kind == "task") == (s.kind == "task") }
             if (agents.isEmpty()) Text(if (s.kind == "task") "No background commands in this chat." else "No agents in this chat.", style = CrundiType.Small, modifier = Modifier.padding(10.dp))
-            Column(Modifier.heightIn(max = 420.dp)) {
+            Column(Modifier.heightIn(max = 420.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 for (ag in agents) Row(
                     Modifier.fillMaxWidth().clickable { a.sheet(ChatSheet.Agent(ag.toolUseId)) }.padding(horizontal = 8.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp),
@@ -666,7 +679,46 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     LaunchedEffect(chatId, secretsOk) {
         if (secretsOk) ChatSecretsBus.opens.collect { if (it == chatId) ui = ui.copy(sheet = ChatSheet.Secrets) }
     }
-    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size, recapOk = recapOk, asideOk = asideOk)
+    // Voice mode (ChatVoice): on a server with chat voice and its voice assistant set up, in the owner's own chat.
+    val voiceCollab = server?.role == "collaborator" || paneRow?.collaborator != null
+    val voiceSupported = ChatVoice.supported(shellData.capabilities, voiceCollab)
+    var voiceSettings by remember(chatId) { mutableStateOf<mv.obitech.crundi.api.VoiceSettings?>(null) }
+    LaunchedEffect(chatId, voiceSupported) {
+        if (voiceSupported && voiceSettings == null) voiceSettings = runCatching { api.voice.settings() }.getOrNull()
+    }
+    val voiceShown = ChatVoice.shown(shellData.capabilities, voiceCollab, voiceSettings?.deepgramKeySet)
+    // What a voice session sends goes the way a typed message does (sendText, below).
+    val sendSpoken = remember(chatId) { arrayOf<(String) -> Unit>({}) }
+    val voiceSession = remember(chatId) { ChatVoiceSession(ctx, api.voice) { sendSpoken[0](it) } }
+    DisposableEffect(voiceSession) { onDispose { voiceSession.close() } }
+    LaunchedEffect(voiceSettings) { voiceSession.configure(voiceSettings, VoiceApi.TTS_STREAM in shellData.capabilities) }
+    val voiceUi by voiceSession.ui.collectAsState()
+    // Leaving the chat, or the app going behind another, ends voice mode.
+    val voiceLifecycle = LocalLifecycleOwner.current
+    DisposableEffect(voiceLifecycle, voiceSession) {
+        val owner = voiceLifecycle
+        // Behind Cru's own screen it pauses and goes on when back; behind anything else it ends (ChatVoice.handover).
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == Lifecycle.Event.ON_STOP) voiceSession.foreground(false)
+            if (e == Lifecycle.Event.ON_START) voiceSession.foreground(true)
+        }
+        owner.lifecycle.addObserver(obs)
+        onDispose { owner.lifecycle.removeObserver(obs) }
+    }
+    if (!voiceShown && voiceUi.lit) LaunchedEffect(Unit) { voiceSession.stop() }
+    // Claude's speak tool: played in voice mode, or soon after a push-to-talk message; the rest are passed over.
+    val voiceSeen = remember(chatId) { HashSet<String>() }
+    LaunchedEffect(chat.voiceSays) {
+        for (say in ChatVoice.fresh(chat.voiceSays, voiceSeen)) {
+            voiceSeen += say.id
+            if (voiceShown && ChatVoice.plays(voiceUi.mode == ChatVoiceUi.Mode.On, voiceSession.lastPushToTalkAt, System.currentTimeMillis())) voiceSession.say(say.text)
+        }
+    }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) voiceSession.toggle() else voiceSession.note("Voice input needs the microphone. Allow it in the phone's settings to use it.")
+    }
+    fun micAllowed() = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    val view = ui.copy(chat = chat, pane = paneRow, inPane = inPane, projectIcon = shellData.projects.firstOrNull { it.alias == project }?.icon, panelDock = true, secretsOk = secretsOk, secretGrants = ChatSecretPreauth.active(grants, System.currentTimeMillis()).size, recapOk = recapOk, asideOk = asideOk, voice = voiceUi.takeIf { voiceShown }, voiceLevels = voiceSession.levels)
     // A new chat (or one back under a new id) with nothing of its own takes the project's draft, unless another open chat has it.
     LaunchedEffect(project) { composer.attach(project, ui.draft)?.let { ui = ui.copy(draft = it) } }
 
@@ -692,9 +744,10 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         if (chat.state != AgentState.Working) { ui = ui.copy(localPending = emptyList(), localSentAt = emptyMap()); return@LaunchedEffect }
         if (ui.localPending.isEmpty()) return@LaunchedEffect
         val left = ui.localPending.filter { p ->
-            val from = ui.localSentAt[p.text] ?: return@filter true
-            val msgs = chat.messages
-            (from until msgs.size).none { i -> msgs[i].kind == "user" && msgs[i].text.trim() == p.text.trim() }
+            // By id, not position: a long chat keeps only its newest entries, so the
+            // log's length stops growing and a position never moves past the send.
+            val seen = ui.localSentAt[p.text] ?: return@filter true
+            chat.messages.none { m -> m.kind == "user" && m.text.trim() == p.text.trim() && m.id !in seen }
         }
         if (left.size != ui.localPending.size) ui = ui.copy(localPending = left, localSentAt = ui.localSentAt.filterKeys { k -> left.any { it.text == k } })
     }
@@ -709,6 +762,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
     // (ChatWatchdog). The header, the status line and Send then follow.
     val shownState by rememberUpdatedState(chat.state)
     val serverState by rememberUpdatedState(paneRow?.state)
+    val shownStreaming by rememberUpdatedState(chat.messages.takeLast(6).any { it.streaming })
     val inspecting = LocalInspectionMode.current
     val lifecycle = LocalLifecycleOwner.current
     LaunchedEffect(chatId, lifecycle) {
@@ -720,7 +774,7 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
             val dog = ChatWatchdog()
             while (true) {
                 delay(2_000)
-                if (dog.check(shownState, serverState, System.currentTimeMillis(), heardAt[0])) api.resyncChat(chatId)
+                if (dog.check(shownState, serverState, System.currentTimeMillis(), heardAt[0], shownStreaming)) api.resyncChat(chatId)
             }
         }
     }
@@ -787,6 +841,43 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
         uploadUris(uris)
     }
 
+    /**
+     * A message to the chat, the way Send sends one: [fromBox] when it is the
+     * box's text (cleared now, put back if it does not go); a spoken one
+     * (ChatVoice) leaves the box alone, and if it does not go it is put in
+     * the box, so nothing said is lost.
+     */
+    fun sendText(text: String, fromBox: Boolean) {
+        if (text.isEmpty() || ui.waking != null) { if (!fromBox && text.isNotEmpty()) ui = ui.copy(draft = (ui.draft.trimEnd() + "\n" + text).trim()); return }
+        // Asleep: wake it, then send. The text stays in the box meanwhile.
+        if (ChatSleep.asleep(paneRowNow())) {
+            // Spoken: in the box meanwhile when it is empty (cleared once it has gone), else it goes as it is.
+            if (!fromBox && ui.draft.isBlank()) ui = ui.copy(draft = text)
+            wakeChat("resume", text, known = true); return
+        }
+        val wasBusy = ui.copy(chat = chat).busy
+        // Taken before the send: Claude can read it before the send has even answered.
+        val seenBefore = chat.messages.filter { it.kind == "user" && it.text.trim() == text.trim() }.mapTo(HashSet()) { it.id }
+        // The recap goes as a message does (the server clears it too, and says so a moment later).
+        ui = ui.copy(draft = if (fromBox) "" else ui.draft, stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion, retiredRecap = chat.recap?.key ?: ui.retiredRecap)
+        scope.launch {
+            try {
+                val r = api.chats.send(chatId, text)
+                if (r.injected || wasBusy) ui = ui.copy(
+                    localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"),
+                    localSentAt = ui.localSentAt + (text to seenBefore),
+                )
+            } catch (e: Exception) {
+                ui = ui.copy(draft = if (fromBox) text else (ui.draft.trimEnd() + "\n" + text).trim())
+                // Put to sleep a moment ago (the state has not said so yet), or
+                // gone: never the server's raw "No session". Wake it and try again.
+                if (ChatSleep.noSession(e)) wakeChat("resume", text, known = ChatSleep.asleep(paneRowNow()))
+                else ui = ui.copy(error = "The message did not go: " + errorText(e))
+            }
+        }
+    }
+    sendSpoken[0] = { sendText(it, fromBox = false) }
+
     ChatScreen(view, object : ChatActions {
         override fun pasteImages(uris: List<android.net.Uri>) = uploadUris(uris)
         override fun back() { if (host.isBubble) host.close() else nav.back() }
@@ -802,27 +893,18 @@ private fun ChatRouteAt(chatId: String, carry: ChatCarry, onMoved: (String, Chat
                 if (q.isEmpty()) ui = ui.copy(sheet = ChatSheet.Aside()) else askAside(q)
                 return
             }
-            // Asleep: wake it, then send. The text stays in the box meanwhile.
-            if (view.asleep) { wakeChat("resume", text, known = true); return }
-            val wasBusy = view.busy
-            // The recap goes as a message does (the server clears it too, and says so a moment later).
-            ui = ui.copy(draft = "", stopArmed = false, sentSeq = ui.sentSeq + 1, retiredSuggestion = chat.suggestion?.let { it.uuid.ifEmpty { it.text } } ?: ui.retiredSuggestion, retiredRecap = chat.recap?.key ?: ui.retiredRecap)
-            scope.launch {
-                try {
-                    val r = api.chats.send(chatId, text)
-                    if (r.injected || wasBusy) ui = ui.copy(
-                        localPending = ui.localPending + PendingInjection(text, r.uuid, if (r.uuid.isNotEmpty()) "queued" else "sent"),
-                        localSentAt = ui.localSentAt + (text to chat.messages.size),
-                    )
-                } catch (e: Exception) {
-                    ui = ui.copy(draft = text)
-                    // Put to sleep a moment ago (the state has not said so yet), or
-                    // gone: never the server's raw "No session". Wake it and try again.
-                    if (ChatSleep.noSession(e)) wakeChat("resume", text, known = ChatSleep.asleep(paneRowNow()))
-                    else ui = ui.copy(error = "The message did not go: " + errorText(e))
-                }
-            }
+            sendText(text, fromBox = true)
         }
+        override fun voicePress() { if (micAllowed()) voiceSession.press() else askMic.launch(android.Manifest.permission.RECORD_AUDIO) }
+        override fun voiceHold() = voiceSession.hold()
+        // A tap on the mic in voice mode with nothing heard yet sends what is typed, if anything.
+        override fun voiceRelease(heldMs: Long, overCancel: Boolean) { if (!voiceSession.release(heldMs, overCancel) && ui.draft.isNotBlank()) send() }
+        override fun voiceDrag(progress: Float) = voiceSession.drag(progress)
+        override fun voiceSendNow() { if (!voiceSession.sendNow() && ui.draft.isNotBlank()) send() }
+        override fun voiceCancel() = voiceSession.cancel()
+        override fun voiceOff() = voiceSession.stop()
+        override fun voiceSwitch(yes: Boolean) = voiceSession.switchAnswer(yes)
+        override fun voiceToggle() { if (micAllowed()) voiceSession.toggle() else askMic.launch(android.Manifest.permission.RECORD_AUDIO) }
         override fun wake(mode: String) = wakeChat(mode, null, known = true)
         override fun stop() {
             if (!ui.stopArmed) {

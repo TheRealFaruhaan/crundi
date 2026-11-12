@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice Lab (debug only): the assistant description Android reads. -->
+<voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="mv.obitech.crundi.voicelab.LabSessionService"
+    android:recognitionService="mv.obitech.crundi.voicelab.LabRecognitionService"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="true" />

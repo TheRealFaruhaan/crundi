@@ -54,11 +54,17 @@ if (iEnd >= lines.length) throw new Error('Could not find the end of handleResul
 const seg = (a, b) => lines.slice(a, b).join('\n');
 const setStateFn = src.match(/function setState\(s, state\) \{[^]*?\n {2}\}/)[0];
 
-const { handleMessage } = new Function(`
+import { mkdtempSync, writeFileSync, appendFileSync, statSync, openSync, readSync, closeSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+const deps = { join, statSync, openSync, readSync, closeSync, dir: mkdtempSync(join(tmpdir(), 'waiting-')) };
+const { handleMessage } = new Function('deps', `
+  const { join, statSync, openSync, readSync, closeSync } = deps;
+  function transcriptDir() { return deps.dir; }
+  const sessions = new Map();
   const MAX_TEXT = 4000, MAX_MESSAGES = 500;
   let n = 0; const nextSeq = () => ++n; const genId = () => 'i' + (++n);
   function handleAgentAssistant(){} function handleAgentUser(){} function handleHookFeedback(){}
-  function patchEntry(){} function emitGoal(){} function emitEntry(){} function noteUsage(){} function expireStalePending(){} function clearSuggestion(){} function scheduleIdleRecap(){} const turnEndCb = null; function clearRecap(){}
+  function patchEntry(){} function emitGoal(){} function emitEntry(){} function noteUsage(){} function expireStalePending(){} function clearSuggestion(){} function scheduleIdleRecap(){} const turnEndCbs = []; function clearRecap(){}
   ${setStateFn}
   ${seg(iAssist, iBlocks)}
   ${seg(iBlocks, iUser)}
@@ -73,11 +79,12 @@ const { handleMessage } = new Function(`
     }
   }
   return { handleMessage };
-`)();
+`)(deps);
 
 const states = [];
 const session = {
-  state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
+  // A live chat: its CLI process is running (a chat with none has nothing left that can run, so waits on nothing).
+  proc: { exitCode: null }, state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
   goal: null, emitter: { emit() {} }, onStateChange: (_id, st) => states.push(st),
 };
 
@@ -101,6 +108,71 @@ console.log(`replayed ${replayed} real wire messages`);
 check('state sequence', seen === want, seen);
 check('does not end stuck on waiting', session.state === 'idle', session.state);
 check('nothing left outstanding', session.waiting.size === 0, session.waiting.size);
+
+// The owner writes while a background command still runs: his turn ends, the
+// command has not, so the chat is still waiting; it settles once the CLI's
+// transcript says the task finished.
+{
+  const st2 = [];
+  const s2 = {
+    proc: { exitCode: null }, state: 'idle', waiting: new Map(), messages: [], blocks: new Map(), streamedQueue: [],
+    goal: null, emitter: { emit() {} }, onStateChange: (_id, st) => st2.push(st), sessionId: 'S1', cwd: '/somewhere',
+  };
+  const file = join(deps.dir, 'S1.jsonl');
+  writeFileSync(file, '{"type":"user"}\n');
+  const say = (text) => handleMessage(s2, { type: 'assistant', message: { content: [{ type: 'text', text }] } });
+  handleMessage(s2, { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 600', run_in_background: true } }] } });
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: b42fon2a4. Output is being written to: /tmp/x.output' }] } });
+  say('Started it.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a turn that started a command ends waiting', s2.state === 'waiting', s2.state);
+  say('Answering the owner\'s new message.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('the owner\'s next turn ends while it still runs: still waiting', s2.state === 'waiting', s2.state);
+  appendFileSync(file, JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: '<task-notification>\n<task-id>b42fon2a4</task-id>\n<status>completed</status>' }) + '\n');
+  say('The command finished.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('once the transcript says it finished, idle', s2.state === 'idle' && s2.waiting.size === 0, s2.state);
+  // Claude stopping it counts as finished too.
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't2', content: 'Command running in background with ID: c9x. Output…' }] } });
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't3', content: '{"message":"Successfully stopped task: c9x"}' }] } });
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a task Claude stopped is not waited on', s2.state === 'idle', s2.state);
+  // A background agent (the Agent tool): waited on until its notification arrives.
+  handleMessage(s2, { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't4', content: [{ type: 'text', text: 'Async agent launched successfully. (This tool result is internal metadata.)\nagentId: ad385e50c0d7da50d (internal ID)' }] }] } });
+  say('Three agents are working.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a turn that started a background agent ends waiting', s2.state === 'waiting', s2.state);
+  say('Answering something else meanwhile.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('and stays waiting while the agent works', s2.state === 'waiting', s2.state);
+  appendFileSync(file, JSON.stringify({ type: 'queue-operation', operation: 'enqueue', content: '<task-notification>\n<task-id>ad385e50c0d7da50d</task-id>\n<status>completed</status>' }) + '\n');
+  say('The agent finished.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('once the agent has reported, idle', s2.state === 'idle', s2.state);
+  // Whatever the CLI reports as still running (an agent resumed with a
+  // message, a background task) keeps the chat waiting, as the counts show.
+  s2.agents = new Map([['tu9', { kind: 'agent', status: 'running', endedAt: 0, startedAt: Date.now() }]]);
+  say('Resumed an agent.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('a running agent (even one resumed with a message) keeps the chat waiting', s2.state === 'waiting', s2.state);
+  s2.agents.get('tu9').endedAt = Date.now();
+  say('It reported.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('and when it has ended, idle', s2.state === 'idle', s2.state);
+  s2.agents = new Map([['tu10', { kind: 'agent', status: 'running', endedAt: 0, startedAt: Date.now() - 7 * 60 * 60 * 1000 }]]);
+  say('An old one never heard its end.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('an entry older than six hours is not waited on', s2.state === 'idle', s2.state);
+  // The phantom "waiting" (11 Nov): a chat whose CLI process is gone has nothing still running.
+  s2.agents = new Map();
+  s2.waiting.set('ghost1', { until: 0 });
+  delete s2.proc;
+  say('Its process is gone.');
+  handleMessage(s2, { type: 'result', subtype: 'success' });
+  check('no CLI process: nothing is waited on', s2.state === 'idle' && s2.waiting.size === 0, s2.state + ' / ' + s2.waiting.size);
+}
 
 if (failures) {
   console.error(`\n${failures} failure(s). Expected: ${want}`);

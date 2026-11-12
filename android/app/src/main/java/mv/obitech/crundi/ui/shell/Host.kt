@@ -26,6 +26,20 @@ interface Host {
      */
     fun chatMoved(from: String, to: String) {}
 
+    /**
+     * An inbox thread is in front of the person (true while its screen is
+     * resumed, said again every few seconds; false when it leaves): its
+     * notification goes, and new ones for it are left out.
+     */
+    fun inboxOnScreen(thread: String, onScreen: Boolean) {}
+
+    /**
+     * "Open chat" from somewhere with no navigation of its own (an inbox
+     * thread's bubble): open that chat the way this window can. False: not
+     * handled here, navigate to it.
+     */
+    fun openChat(chatId: String, title: String, project: String): Boolean = false
+
     /** "Open as bubble" from a chat's menu. Returns a reason if it could not. */
     fun openBubble(chatId: String) {}
 

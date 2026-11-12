@@ -20,6 +20,22 @@ object Routes {
     /** The "things waiting on you" list behind the top bar's counter (owned by ui.chats). */
     const val APPROVALS = "chats/approvals"
 
+    /** Crundi's inbox (ui.inbox): its threads, from the drawer's envelope. */
+    const val INBOX = "inbox"
+    fun inbox() = INBOX
+
+    /**
+     * One inbox thread as a conversation, at item [open] if given. A
+     * notification may know only the item: [key] empty, the screen asks the
+     * server for the item's thread.
+     */
+    const val INBOX_THREAD = "inbox/thread?key={key}&open={open}"
+    fun inboxThread(key: String?, open: String? = null): String {
+        val q = listOfNotNull(key?.takeIf { it.isNotEmpty() }?.let { "key=" + enc(it) }, open?.takeIf { it.isNotEmpty() }?.let { "open=" + enc(it) })
+        return "inbox/thread" + if (q.isEmpty()) "" else "?" + q.joinToString("&")
+    }
+    private fun enc(s: String) = java.net.URLEncoder.encode(s, "UTF-8")
+
     /** The area a route belongs to, or null. */
     fun areaOf(route: String?): Area? = Area.byKey(route?.substringBefore('/')?.substringBefore('?'))
 
@@ -60,10 +76,25 @@ val LocalNavigator = staticCompositionLocalOf { Navigator.None }
  */
 object DeepLinks {
     private val chat = Regex("^/chat/([A-Za-z0-9_-]{1,80})/?$")
+    private val inbox = Regex("^/inbox(?:/([A-Za-z0-9_.:-]{1,120}))?/?$")
+    private val inboxThreadKey = Regex("^[A-Za-z0-9_.:@-]{1,200}$")
 
     fun route(path: String?): String? {
         if (path.isNullOrEmpty() || !path.startsWith("/") || path.startsWith("//")) return null
         chat.find(path)?.let { return Routes.chat(it.groupValues[1]) }
+        // "/approvals": what is waiting on the owner (a kid-mode question from the phone's notification).
+        if (path.substringBefore('?').trimEnd('/') == "/approvals") return Routes.APPROVALS
+        // "/inbox", "/inbox?thread=<key>", "/inbox/<id>?thread=<key>": Crundi's inbox, at
+        // that thread and item (a notification that carries inboxThread / inboxId).
+        inbox.find(path.substringBefore('?'))?.let { m ->
+            val id = m.groupValues[1]
+            val thread = path.substringAfter('?', "").split('&').firstOrNull { it.startsWith("thread=") }
+                ?.let { runCatching { java.net.URLDecoder.decode(it.removePrefix("thread="), "UTF-8") }.getOrNull() }
+                ?.takeIf { inboxThreadKey.matches(it) }
+            return if (id.isEmpty() && thread == null) Routes.inbox() else Routes.inboxThread(thread, id)
+        }
+        // "/settings/voice": one of the Settings tab's pages (the phone's Voice settings links to Cru's).
+        mv.obitech.crundi.ui.operations.SettingsPage.byRoute(path.removePrefix("/").removeSuffix("/"))?.let { return it.route }
         // "/?tab=services" and the like: the desktop's own way to point at a tab.
         val tab = path.substringAfter('?', "").split('&').firstOrNull { it.startsWith("tab=") }?.removePrefix("tab=")
         Area.byKey(tab)?.let { return it.key }

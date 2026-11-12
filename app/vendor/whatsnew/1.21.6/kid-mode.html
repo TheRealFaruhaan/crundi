@@ -1,0 +1,14 @@
+<div class="wna a-ckm">
+  <div class="tiles"><i style="background:#fbbf24">A</i><i style="background:#38bdf8">B</i><i style="background:#f472b6">C</i></div>
+  <div class="say">"You found the B! B says buh!"</div>
+  <div class="lock">PIN to leave</div>
+  <style>
+    .a-ckm{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-ckm .tiles{position:absolute;left:170px;top:50px;display:flex;gap:14px}
+    .a-ckm .tiles i{display:flex;align-items:center;justify-content:center;width:70px;height:70px;border-radius:18px;font:800 34px system-ui;color:#1e1b4b;font-style:normal}
+    .a-ckm .tiles i:nth-child(2){animation:ackm 3s ease infinite}
+    @keyframes ackm{0%,30%{transform:none}40%{transform:scale(1.18) rotate(-6deg)}50%,100%{transform:none}}
+    .a-ckm .say{position:absolute;left:150px;top:150px;font-size:15px;color:var(--text-secondary)}
+    .a-ckm .lock{position:absolute;right:30px;top:20px;font-size:11px;color:var(--text-muted,#888);border:1px solid var(--border);border-radius:10px;padding:2px 8px}
+  </style>
+</div>

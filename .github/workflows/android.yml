@@ -20,6 +20,12 @@
 #   GOOGLE_SERVICES_JSON             android/app/google-services.json, base64
 #                                    (without it the app has no notifications)
 #
+# The standalone Homepool Node app (homepool-node/android, which compiles the
+# Crundi app's homepool package) is built and tested beside it, and on a tag
+# attached as Crundi-Homepool-Node-<its versionName>.apk, signed with its OWN
+# key (secrets HOMEPOOL_NODE_KEYSTORE, HOMEPOOL_NODE_KEYSTORE_PASSWORD; variable
+# HOMEPOOL_NODE_SIGNER_SHA256), never the Play or Crundi GitHub key.
+#
 # To attach an APK to a release that already exists, run this workflow by hand
 # (Actions, Android, Run workflow) and give it the tag.
 name: Android
@@ -28,12 +34,15 @@ on:
   push:
     paths:
       - 'android/**'
+      - 'homepool-node/android/**'
       - 'src/crundi-code.js'
+      - 'app/vendor/silero-vad-16k.bin'
       - '.github/workflows/android.yml'
   pull_request:
     paths:
       - 'android/**'
       - 'src/crundi-code.js'
+      - 'app/vendor/silero-vad-16k.bin'
   workflow_dispatch:
     inputs:
       tag:
@@ -157,4 +166,92 @@ jobs:
             fi
             sleep 10
           done
-          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" --clobber --repo "$GITHUB_REPOSITORY"
+          # Uploaded, then checked at its full size (scripts/release-upload.mjs).
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload "${{ steps.apk.outputs.path }}"
+
+  homepool-node-build:
+    name: Homepool Node app
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and build
+        working-directory: homepool-node/android
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+
+  homepool-node-release:
+    name: Signed Homepool Node APK on the release
+    needs: homepool-node-build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      # The Homepool Node's OWN key, never Crundi's Play upload key or its
+      # GitHub APK key. Its SHA-256 goes in the HOMEPOOL_NODE_SIGNER_SHA256
+      # repository variable once the owner has made the key.
+      SIGNER_SHA256: ${{ vars.HOMEPOOL_NODE_SIGNER_SHA256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - name: The key, from secrets
+        env:
+          KEYSTORE: ${{ secrets.HOMEPOOL_NODE_KEYSTORE }}
+        run: |
+          [ -n "$KEYSTORE" ] || { echo "HOMEPOOL_NODE_KEYSTORE is not set" >&2; exit 1; }
+          [ -n "$SIGNER_SHA256" ] || { echo "The HOMEPOOL_NODE_SIGNER_SHA256 variable is not set" >&2; exit 1; }
+          printf '%s' "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/homepool-node.jks"
+      - name: Build
+        working-directory: homepool-node/android
+        env:
+          HOMEPOOL_NODE_STORE_PASSWORD: ${{ secrets.HOMEPOOL_NODE_KEYSTORE_PASSWORD }}
+        run: |
+          export HOMEPOOL_NODE_STORE_FILE="$RUNNER_TEMP/homepool-node.jks"
+          ./gradlew --no-daemon assembleRelease
+      - name: Check what was built
+        id: apk
+        run: |
+          out=homepool-node/android/app/build/outputs/apk/release
+          apk="$out/app-release.apk"
+          [ -f "$apk" ] || { echo "No signed APK came out:" >&2; ls "$out" >&2; exit 1; }
+          signer=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          "$signer" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          got=$(grep -oE 'certificate SHA-256 digest: [0-9a-f]{64}' "$RUNNER_TEMP/certs.txt" | awk '{print $NF}' | sort -u)
+          if [ "$got" != "$SIGNER_SHA256" ]; then
+            echo "Signed with the wrong key: $got" >&2
+            exit 1
+          fi
+          version=$(jq -r '.elements[0].versionName' "$out/output-metadata.json")
+          named="$RUNNER_TEMP/Crundi-Homepool-Node-$version.apk"
+          cp "$apk" "$named"
+          echo "path=$named" >> "$GITHUB_OUTPUT"
+          echo "Crundi-Homepool-Node-$version.apk, $(wc -c < "$named") bytes, signer $got"
+      - name: Attach
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          for attempt in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "release $TAG exists (after ${attempt} check(s))"
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "The release $TAG never appeared: the Release workflow must have failed."
+              exit 1
+            fi
+            sleep 10
+          done
+          # Uploaded, then checked at its full size (scripts/release-upload.mjs).
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload "${{ steps.apk.outputs.path }}"

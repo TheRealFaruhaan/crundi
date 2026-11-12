@@ -27,15 +27,20 @@ const step = sh.slice(from, to) + '\nfi\n';
 ok(!/cp -r "\$SRC\/node_modules" "\$PREFIX\/"/.test(step), 'node_modules is not copied over the installed tree');
 
 // The rest needs a real "busy" file, which is a Linux behaviour.
-if (process.platform !== 'linux' || !existsSync('/bin/sleep')) {
+if (process.platform !== 'linux') {
   console.log('SKIP  the live check needs Linux');
 } else {
+  // The stand-in for cloudflared: a copy of Node, which runs under any name.
+  // Not /bin/sleep: on Ubuntu 26.04 that is uutils' one program for every tool,
+  // which picks the tool by its file's name and, as "cloudflared", exits at once.
+  const STANDIN = process.execPath;
+  const WAIT = ['-e', 'setTimeout(() => {}, 30000)'];
   const tmp = mkdtempSync(join(tmpdir(), 'crundi-busy-'));
   const SRC = join(tmp, 'src'), PREFIX = join(tmp, 'prefix');
   const bin = (base) => join(base, 'node_modules', 'cloudflared', 'bin');
   for (const base of [SRC, PREFIX]) {
     mkdirSync(bin(base), { recursive: true });
-    copyFileSync('/bin/sleep', join(bin(base), 'cloudflared'));
+    copyFileSync(STANDIN, join(bin(base), 'cloudflared'));
     chmodSync(join(bin(base), 'cloudflared'), 0o755);
     mkdirSync(join(base, 'node_modules', 'ws'), { recursive: true });
   }
@@ -46,12 +51,24 @@ if (process.platform !== 'linux' || !existsSync('/bin/sleep')) {
   mkdirSync(join(PREFIX, 'node_modules.old.999'));          // left by an install that was killed
 
   // A tunnel, as far as the kernel is concerned: a program running from the installed tree.
-  const tunnel = spawn(join(bin(PREFIX), 'cloudflared'), ['30'], { stdio: 'ignore' });
+  const tunnel = spawn(join(bin(PREFIX), 'cloudflared'), WAIT, { stdio: 'ignore' });
   await new Promise(r => setTimeout(r, 300));
+  ok(tunnel.exitCode === null && tunnel.signalCode === null, 'the stand-in tunnel is running');
 
-  // The old way, to prove the test would catch it.
-  const naive = spawnSync('cp', ['-r', join(SRC, 'node_modules'), PREFIX + '/'], { encoding: 'utf8' });
-  ok(naive.status !== 0 && /Text file busy/.test(naive.stderr), 'copying over a running program fails, as it did on the live server', naive.stderr.trim());
+  // The old way, to prove the test would catch it: on a copy of its own, so
+  // that where it does overwrite the program it can't harm the tunnel above.
+  // A system that lets a running program be overwritten can't fail it; there
+  // the proof doesn't apply and is skipped, and the checks below still do.
+  const probe = join(tmp, 'probe');
+  mkdirSync(bin(probe), { recursive: true });
+  copyFileSync(STANDIN, join(bin(probe), 'cloudflared'));
+  chmodSync(join(bin(probe), 'cloudflared'), 0o755);
+  const probeRun = spawn(join(bin(probe), 'cloudflared'), WAIT, { stdio: 'ignore' });
+  await new Promise(r => setTimeout(r, 300));
+  const naive = spawnSync('cp', ['-r', join(SRC, 'node_modules'), probe + '/'], { encoding: 'utf8' });
+  probeRun.kill();
+  if (naive.status === 0) console.log('SKIP  this kernel lets a running program be overwritten, so the old way does not fail here');
+  else ok(/Text file busy/.test(naive.stderr), 'copying over a running program fails, as it did on the live server', naive.stderr.trim());
 
   const script = `set -euo pipefail\nsay() { :; }\nPREBUILT=1\nSRC=${JSON.stringify(SRC)}\nPREFIX=${JSON.stringify(PREFIX)}\n${step}\necho carried-on\n`;
   const run = spawnSync('bash', ['-c', script], { encoding: 'utf8' });

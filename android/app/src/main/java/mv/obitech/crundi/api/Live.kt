@@ -250,26 +250,40 @@ class LiveSocket internal constructor(private val transport: Transport, private 
         }
     }
 
+    /**
+     * Which connection is the live one. A callback of an older connection
+     * (one dropped by a kick, or closed when the last user let go, whose
+     * close can land a minute later on a dead network) must not touch the
+     * new one: it used to mark it "not connected", after which no
+     * subscription or resync was sent on it again.
+     */
+    @Volatile private var gen = 0
+
     private suspend fun run() {
         var failures = 0
         while (true) {
             _status.value = if (failures == 0) LiveStatus.Connecting else if (failures >= 3) LiveStatus.Offline else LiveStatus.Reconnecting
             val closed = kotlinx.coroutines.CompletableDeferred<Int>()
-            synchronized(lock) { replayed = false; conn = null; connected = false }
+            val mine = synchronized(lock) { replayed = false; conn = null; connected = false; ++gen }
             val c = try {
                 transport.socket(object : SocketListener {
                     override fun onOpen() {
                         synchronized(lock) {
+                            if (gen != mine) return
                             connected = true
                             if (conn != null && !replayed) { replayed = true; for ((_, v) in subs) conn?.send(v.second) }
                         }
                         _status.value = LiveStatus.Connected
                     }
                     override fun onMessage(text: String) {
+                        if (gen != mine) return
                         val o = runCatching { CrundiJson.parseToJsonElement(text) as? JsonObject }.getOrNull() ?: return
                         for (l in listeners) runCatching { l(o) }
                     }
-                    override fun onClosed(code: Int, reason: String) { synchronized(lock) { connected = false; conn = null }; closed.complete(code) }
+                    override fun onClosed(code: Int, reason: String) {
+                        synchronized(lock) { if (gen == mine) { connected = false; conn = null } }
+                        closed.complete(code)
+                    }
                 })
             } catch (e: ApiException) {
                 if (e.signedOut) { _status.value = LiveStatus.SignedOut; onSignedOut(); waitKick(); failures = 0; continue }
@@ -281,7 +295,26 @@ class LiveSocket internal constructor(private val transport: Transport, private 
                     if (!closed.isCompleted) conn = c
                     if (connected && conn != null && !replayed) { replayed = true; for ((_, v) in subs) c.send(v.second) }
                 }
-                val code = try { closed.await() } catch (e: CancellationException) { c.close(); throw e }
+                // A kick while it is open drops it and connects again at once.
+                // After a network change the old connection is dead without
+                // knowing: what is sent on it goes nowhere, nothing comes back,
+                // and OkHttp's ping takes up to a minute to notice. A reply
+                // stopped mid-word and the chat stayed "working" all that while.
+                val d0 = drop.value
+                val code = try {
+                    coroutineScope {
+                        val watch = launch {
+                            drop.first { it != d0 }
+                            synchronized(lock) { if (gen == mine) { gen++; connected = false; conn = null } }
+                            closed.complete(KICKED)
+                            runCatching { c.cancel() }
+                        }
+                        val r = closed.await()
+                        watch.cancel()
+                        r
+                    }
+                } catch (e: CancellationException) { synchronized(lock) { if (gen == mine) gen++ }; c.close(); throw e }
+                if (code == KICKED) { failures = 0; continue }
                 if (_status.value == LiveStatus.Connected) failures = 0
                 if (code == 401) {
                     try { transport.renewLogin() } catch (e: ApiException) {
@@ -298,7 +331,19 @@ class LiveSocket internal constructor(private val transport: Transport, private 
 
     private suspend fun waitKick() { val k = kick.value; kick.first { it != k } }
 
-    fun reconnect() { kick.value++ }
+    /** Bumped to drop an open connection and make it again (see [reconnect]). */
+    private val drop = MutableStateFlow(0)
+
+    /** Waiting to retry: try now. An open connection is left as it is (the app back in front, a retry button). */
+    fun retryNow() { kick.value++ }
+
+    /**
+     * Connect again now, even if open: the connection is dropped and made
+     * again (every subscription is sent again, so each chat gets its
+     * history). For a network change, which leaves the old connection dead
+     * without knowing it, and a resync that got no answer.
+     */
+    fun reconnect() { drop.value++; kick.value++ }
 
     /**
      * Ask again for what [key] subscribes to, as a reconnect does: for a chat
@@ -306,14 +351,37 @@ class LiveSocket internal constructor(private val transport: Transport, private 
      * screen has (a bubble opened again, the app back in front, a stream that
      * went quiet). Not connected: try now rather than after the backoff, and
      * the connect replays it. False when nothing holds [key].
+     *
+     * With [answer], the reply is checked for: if none comes in [answerMs]
+     * the connection is taken to be dead (sending on it only queued the
+     * request) and is made again.
      */
-    fun resync(key: String): Boolean {
+    fun resync(key: String, answerMs: Long = RESYNC_ANSWER_MS, answer: ((JsonObject) -> Boolean)? = null): Boolean {
+        // Listening before it is sent: the answer can come before send returns.
+        val got = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val l: ((JsonObject) -> Unit)? = answer?.let { a -> { m: JsonObject -> if (a(m)) got.complete(Unit) } }
+        l?.let { listeners.add(it) }
+        var sentOn = 0
         val sent = synchronized(lock) {
-            val sub = subs[key] ?: return false
+            val sub = subs[key] ?: run { l?.let { listeners.remove(it) }; return false }
+            sentOn = gen
             connected && conn?.send(sub.second) == true
         }
-        if (!sent) reconnect()
+        if (!sent) { l?.let { listeners.remove(it) }; retryNow(); return true }
+        if (l != null) scope.launch {
+            try {
+                val ok = withTimeoutOrNull(answerMs) { got.await() } != null
+                // Still the connection it was sent on, and still silent: drop it.
+                if (!ok && gen == sentOn) reconnect()
+            } finally { listeners.remove(l) }
+        }
         return true
+    }
+
+    companion object {
+        private const val KICKED = -1
+        /** How long a resync waits for its answer before taking the connection for dead. */
+        const val RESYNC_ANSWER_MS = 20_000L
     }
 
     /**

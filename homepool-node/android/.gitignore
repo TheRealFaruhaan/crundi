@@ -1,0 +1,13 @@
+# Build outputs and machine-local files
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+.kotlin/
+# Never commit signing keys
+*.jks
+*.keystore
+keystore/

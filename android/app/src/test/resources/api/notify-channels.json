@@ -2,9 +2,18 @@
  "ok": true,
  "channels": [
   {
+   "id": "inbox",
+   "label": "Crundi inbox",
+   "describe": "Always on. Messages, pictures, files, questions and reports for you are kept here first, in the envelope at the bottom of the projects list.",
+   "available": true,
+   "unavailableReason": "",
+   "enabled": true,
+   "alwaysOn": true
+  },
+  {
    "id": "telegram",
    "label": "Telegram",
-   "describe": "Messages from your bot",
+   "describe": "Optional. Messages from your bot.",
    "available": false,
    "unavailableReason": "Set a bot token first",
    "enabled": false

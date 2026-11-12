@@ -9,6 +9,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import mv.obitech.crundi.api.model.AgentState
 import mv.obitech.crundi.api.model.ChatAgent
 import mv.obitech.crundi.api.model.ChatEntry
@@ -18,6 +19,7 @@ import mv.obitech.crundi.api.model.ChatState
 import mv.obitech.crundi.api.model.ChatSuggestion
 import mv.obitech.crundi.api.model.FactoryRole
 import mv.obitech.crundi.api.model.PendingInjection
+import mv.obitech.crundi.api.model.VoiceSay
 import mv.obitech.crundi.api.model.slashCommandsOf
 
 /**
@@ -131,9 +133,21 @@ object ChatReducer {
             "suggestion" -> s.copy(suggestion = suggestion(ev["suggestion"]))
             // Set when the chat has sat idle or was resumed; null once closed or a message went.
             "recap" -> s.copy(recap = recap(ev["recap"]))
+            // Claude's speak tool (capability "chat-voice"): said aloud by a screen in voice mode.
+            "voice-say" -> voiceSay(s, ev)
             else -> s
         }
     }
+
+    /** The newest [VOICE_SAYS] voice-say events are kept; one without an id or text is dropped, a repeated id is not added twice. */
+    private fun voiceSay(s: ChatState, ev: JsonObject): ChatState {
+        val id = (ev["id"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotEmpty() } ?: return s
+        val text = (ev["text"] as? JsonPrimitive)?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() } ?: return s
+        if (s.voiceSays.any { it.id == id }) return s
+        val at = (ev["at"] as? JsonPrimitive)?.let { it.longOrNull ?: it.doubleOrNull?.toLong() } ?: System.currentTimeMillis()
+        return s.copy(voiceSays = (s.voiceSays + VoiceSay(id, text, at)).takeLast(VOICE_SAYS))
+    }
+    private const val VOICE_SAYS = 20
 
     /** A message this phone just sent mid-turn: show it in the drawer until Claude takes it. */
     fun sentMidTurn(s: ChatState, text: String, uuid: String): ChatState =

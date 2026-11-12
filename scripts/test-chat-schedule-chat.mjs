@@ -88,6 +88,13 @@ await new Promise(res => setTimeout(res, 6000));
 ok(sent.at(-1).text === 'while closed' && sent.at(-1).id === 'A3', 'parked: delivered to the woken chat');
 ok(!cs2.hasPendingFor('A3'), 'parked: nothing left pending for it');
 
+// Closed on purpose: its messages still to come go with it (a park keeps them, above).
+ok(cs2.hasPendingFor('B'), 'before closing: B has a message to come');
+ok(cs2.discardFor('B', 'conv-B') === 1 && !cs2.hasPendingFor('B'), 'closing a chat drops its scheduled messages');
+cs2.add({ project: 'crundi', text: 'by conversation', trigger: { type: 'time', at: new Date(Date.now() + 3600_000).toISOString() }, chatId: 'B' });
+ok(cs2.discardFor('B-new-id', 'conv-B') === 1, 'found by its conversation too');
+ok(cs2.discardFor('nobody', '') === 0, 'nothing of its own: nothing dropped');
+
 rmSync(dir, { recursive: true, force: true });
 console.log(failed ? `\n${failed} FAILED` : '\nall passed');
 process.exit(failed ? 1 : 0);

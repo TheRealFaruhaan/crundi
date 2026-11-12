@@ -3,6 +3,7 @@ package mv.obitech.crundi
 import android.content.Context
 import mv.obitech.crundi.api.CrundiClient
 import mv.obitech.crundi.api.LiveShellSource
+import mv.obitech.crundi.api.NetworkChange
 import mv.obitech.crundi.ui.shell.AppServices
 import mv.obitech.crundi.ui.shell.ShellSource
 
@@ -15,7 +16,22 @@ object AppGraph {
     private val made = HashMap<String, AppServices>()
 
     fun forServer(ctx: Context, server: Server): AppServices = synchronized(made) {
+        watchNetwork(ctx.applicationContext)
         made.getOrPut(server.id) { create(ctx.applicationContext, server) }
+    }
+
+    private var watching = false
+    private val network = NetworkChange { synchronized(made) { made.values.toList() }.forEach { it.api.networkChanged() } }
+
+    /**
+     * Connections made again when the phone's network changes (Wi-Fi to
+     * mobile data and back): the old ones are dead without knowing it, and a
+     * chat on one stopped mid-reply and stayed "working" until a ping noticed.
+     */
+    private fun watchNetwork(app: Context) {
+        if (watching) return
+        watching = true
+        runCatching { app.getSystemService(android.net.ConnectivityManager::class.java).registerDefaultNetworkCallback(network.callback) }
     }
 
     /** The server was removed or paired again: drop what was built for it. */

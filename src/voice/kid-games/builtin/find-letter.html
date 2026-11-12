@@ -1,0 +1,35 @@
+<div class="k-title" id="ask"></div>
+<div class="k-grid" id="grid"></div>
+<div class="k-stars" id="stars"></div>
+<script>
+(function () {
+  var L = kid.letters(null, 'letters'), choices = Math.max(2, Math.min(6, Number(kid.opts.choices) || 4)), rounds = Math.max(1, Math.min(30, Number(kid.opts.rounds) || 8));
+  var round = 0, stars = 0, target = '', tries = 0;
+  function next() {
+    if (round >= rounds) { document.getElementById('ask').textContent = 'All done!'; document.getElementById('grid').innerHTML = ''; kid.done('found ' + stars + ' of ' + rounds + ' letters'); return; }
+    round++; tries = 0;
+    target = kid.pick(L);
+    var pool = kid.LETTERS.filter(function (x) { return x !== target; });
+    // Distractors from the letters being played, topped up from the rest of the alphabet.
+    var others = kid.sample(L.filter(function (x) { return x !== target; }), choices - 1);
+    if (others.length < choices - 1) others = others.concat(kid.sample(pool.filter(function (x) { return L.indexOf(x) < 0; }), choices - 1 - others.length));
+    var set = kid.shuffle([target].concat(others));
+    kid.ask('letters', target);
+    document.getElementById('ask').textContent = 'Find the letter ' + target + '!';
+    kid.say('Can you find the letter ' + target + '?');
+    var g = document.getElementById('grid'); g.innerHTML = '';
+    set.forEach(function (x, i) {
+      var b = kid.el('button', 'k-btn k-pop', x);
+      b.style.background = kid.BRIGHT[i % kid.BRIGHT.length]; b.style.width = b.style.height = '120px';
+      b.onclick = function () {
+        if (x === target) { stars++; b.style.transform = 'scale(1.2)'; kid.correct(target, 'Yes! That is ' + target + '!'); setTimeout(next, 1600); }
+        else { tries++; b.classList.add('k-shake', 'k-dim'); kid.wrong(x, tries >= 2 ? 'That is ' + x + '. Look for ' + target + '!' : 'That is ' + x + '. Try again!'); setTimeout(function () { b.classList.remove('k-shake'); }, 400);
+          if (tries >= 2) kid.hint(); if (tries >= 2) [].forEach.call(g.children, function (c) { if (c.textContent === target) c.classList.add('k-pop'); }); }
+      };
+      g.appendChild(b);
+    });
+    document.getElementById('stars').textContent = 'Round ' + round + ' of ' + rounds;
+  }
+  next();
+})();
+</script>

@@ -37,7 +37,7 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
                 val id = v.paneId
                 when {
                     id == null -> GhostLines()
-                    v.parkedAs == PaneKind.Chat -> mv.obitech.crundi.ui.chats.ParkedChatPreview(id)                 // ui.chats
+                    v.parkedAs == PaneKind.Chat -> mv.obitech.crundi.ui.chats.ParkedChatPreview(id, peek = it) { wb.resume(v, "resume") }   // ui.chats
                     else -> mv.obitech.crundi.ui.workspace.terminal.TerminalPreview(id)                          // ui.workspace
                 }
             }) // Lead

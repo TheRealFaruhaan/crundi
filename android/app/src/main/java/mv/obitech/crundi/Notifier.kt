@@ -24,6 +24,7 @@ import androidx.core.content.LocusIdCompat
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
+import androidx.compose.ui.graphics.toArgb
 import org.json.JSONObject
 
 /** One chat, as much of it as a notification or a bubble needs. */
@@ -156,7 +157,7 @@ object Notifier {
         val at = payload.optLong("at", System.currentTimeMillis())
         val chatJson = payload.optJSONObject("chat")?.takeIf { it.optString("id").isNotEmpty() }
         val chatId = chatJson?.optString("id").orEmpty()
-        val url = if (chatId.isNotEmpty()) "/chat/$chatId" else payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+        val url = if (payload.optBoolean("cruChat")) mv.obitech.crundi.voice.CruUnread.CHAT_PATH else if (chatId.isNotEmpty()) "/chat/$chatId" else inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
         // Its own notification each time: one that only updated an earlier
         // alert still in the shade would buzz but never open full screen
         // (Android opens that only for a notification that is new).
@@ -498,14 +499,145 @@ object Notifier {
         for (i in 0 until chats.length()) chats.optString(i).takeIf { it.isNotEmpty() }?.let { clearChat(ctx, server.id, it, why = "its request was answered") }
     }
 
+    /**
+     * A notification that is also in Crundi's inbox (its payload carries
+     * `inboxId` and/or `inboxThread`) opens that thread at that item, when
+     * it has no chat of its own to open. Null without either: the
+     * notification's own url, as before.
+     */
+    fun inboxPath(payload: JSONObject): String? {
+        val id = payload.optString("inboxId").takeIf { Regex("^[A-Za-z0-9_.:-]{1,120}$").matches(it) }
+        val thread = payload.optString("inboxThread").takeIf { Regex("^[A-Za-z0-9_.:@-]{1,200}$").matches(it) }
+        if (id == null && thread == null) return null
+        return "/inbox" + (id?.let { "/$it" } ?: "") + (thread?.let { "?thread=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+    }
+
+    // ─── Inbox threads as conversations of their own ───
+
+    const val EXTRA_THREAD = "inboxThread"
+    const val EXTRA_OPEN = "inboxOpen"
+
+    /** Android will show this app's bubbles (Android 11 and newer, not switched off). */
+    fun bubblesOn(ctx: Context): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && !BubbleHelp.blocked(ctx)
+
+    /** What an inbox thread's bubble opens: that thread by itself, at item [open]. */
+    fun inboxIntent(ctx: Context, ref: InboxRef, open: String? = null): Intent =
+        Intent(ctx, InboxBubbleActivity::class.java).setAction("inbox:${ref.key}")
+            .putExtra(EXTRA_SERVER, ref.serverId).putExtra(EXTRA_THREAD, ref.thread).putExtra(EXTRA_OPEN, open.orEmpty()).putExtra(ChatActivity.EXTRA_TITLE, ref.title)
+
+    /** The thread's picture: its project's icon (or the project's mark) for a chat or project thread, Crundi's own mark for Cru and Crundi. */
+    fun inboxBitmap(ctx: Context, ref: InboxRef, adaptive: Boolean): Bitmap {
+        val project = ref.project.ifEmpty { ref.thread.removePrefix("project:").takeIf { ref.thread.startsWith("project:") }.orEmpty() }
+        if (project.isNotEmpty() || ref.icon.isNotEmpty()) {
+            val mark = mv.obitech.crundi.ui.chats.projectMark(project.ifEmpty { ref.title })
+            fun hex(c: androidx.compose.ui.graphics.Color) = "#%06X".format(c.toArgb() and 0xFFFFFF)
+            return markBitmap(ctx, ChatRef(ref.serverId, ref.chatId, ref.title, project, mark.initials, hex(mark.color), hex(mark.colorDeep), ref.icon), adaptive)
+        }
+        val size = Ui.dp(ctx, 108)
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF14141F.toInt() }
+        if (adaptive) c.drawRect(0f, 0f, size.toFloat(), size.toFloat(), bg) else c.drawCircle(size / 2f, size / 2f, size / 2f, bg)
+        runCatching {
+            val d = androidx.core.content.ContextCompat.getDrawable(ctx, R.drawable.ic_logo)!!
+            val inset = (size * if (adaptive) 0.3f else 0.2f).toInt()
+            d.setBounds(inset, inset, size - inset, size - inset)
+            d.draw(c)
+        }
+        return bmp
+    }
+
+    private fun inboxPerson(ctx: Context, ref: InboxRef): Person =
+        Person.Builder().setName(ref.title).setKey(ref.key).setIcon(IconCompat.createWithBitmap(inboxBitmap(ctx, ref, adaptive = false))).setImportant(true).build()
+
+    /** The thread is a conversation to Android: needed before it can bubble, and cheap to repeat. */
+    private fun publishInboxShortcut(ctx: Context, ref: InboxRef, person: Person) {
+        val shortcut = ShortcutInfoCompat.Builder(ctx, ref.key)
+            .setLongLived(true)
+            .setShortLabel(ref.title.take(40))
+            .setLongLabel(if (ref.project.isNotEmpty() && ref.project != ref.title) "${ref.title} (${ref.project})".take(80) else ref.title.take(80))
+            .setIcon(IconCompat.createWithAdaptiveBitmap(inboxBitmap(ctx, ref, adaptive = true)))
+            .setPerson(person)
+            .setLocusId(LocusIdCompat(ref.key))
+            .setIntent(inboxIntent(ctx, ref).setAction(Intent.ACTION_VIEW))
+            .build()
+        runCatching { ShortcutManagerCompat.pushDynamicShortcut(ctx, shortcut) }
+    }
+
+    /**
+     * Something sent to the owner, shown as its inbox thread's own
+     * conversation: under the thread's name and picture, able to float as a
+     * bubble of its own (InboxBubbleActivity), apart from the chat's bubble.
+     * A tap on the notification opens the thread in the main window.
+     */
+    private fun showInbox(ctx: Context, server: Server, payload: JSONObject, body: String, at: Long) {
+        val thread = InboxNotify.thread(payload) ?: return
+        val chat = payload.optJSONObject("chat")?.takeIf { it.optString("id").isNotEmpty() }?.let { ChatRef.from(server.id, it) }
+        val ref = InboxRef(server.id, thread, InboxNotify.title(thread, payload), chat?.project ?: payload.optString("project"), chat?.icon.orEmpty())
+        // The thread is open in front of the owner (its bubble, or the main window's thread screen).
+        if (OnScreen.showing(ref.key)) { PushLog.add(ctx, "Not shown: the inbox thread ${ref.title} is open on screen"); return }
+        val who = inboxPerson(ctx, ref)
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val showing = nm.activeNotifications.firstOrNull { it.id == ref.notificationId }?.notification
+        val style = showing?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) } ?: NotificationCompat.MessagingStyle(me())
+        style.setConversationTitle(if (ref.project.isNotEmpty() && ref.project != ref.title) "${ref.title} · ${ref.project}" else ref.title)
+        val title = payload.optString("title").takeIf { it.isNotBlank() && it != ref.title && !body.startsWith(it) }
+        style.addMessage(if (title != null) "$title\n$body" else body, at, who)
+        publishInboxShortcut(ctx, ref, who)
+        val path = inboxPath(payload) ?: ("/inbox?thread=" + java.net.URLEncoder.encode(thread, "UTF-8"))
+        val b = NotificationCompat.Builder(ctx, CHATS)
+            .setSmallIcon(R.drawable.ic_stat).setColor(ctx.getColor(R.color.accent))
+            .setStyle(style)
+            .setShortcutId(ref.key)
+            .setLocusId(LocusIdCompat(ref.key))
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .addPerson(who)
+            .setAutoCancel(true)
+            .setWhen(at)
+            .setContentIntent(openMain(ctx, server.id, path, ref.notificationId))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val target = PendingIntent.getActivity(ctx, ref.notificationId, inboxIntent(ctx, ref, InboxNotify.inboxId(payload)), flags(true))
+            b.setBubbleMetadata(
+                NotificationCompat.BubbleMetadata.Builder(target, IconCompat.createWithAdaptiveBitmap(inboxBitmap(ctx, ref, adaptive = true)))
+                    .setDesiredHeight(640)
+                    .build()
+            )
+        }
+        if (payload.optBoolean("quiet")) b.setSilent(true)
+        post(ctx, ref.notificationId, b)
+    }
+
+    /**
+     * An inbox thread is being read: its notification can go, unless it is
+     * its bubble ([evenBubble]: the main window shows the same thread).
+     */
+    fun clearInbox(ctx: Context, serverId: String, thread: String, evenBubble: Boolean = false) {
+        val id = "inbox:$serverId:$thread".hashCode()
+        if (InboxBubbleActivity.isOpen(serverId, thread) && !evenBubble) return
+        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val showing = nm.activeNotifications.firstOrNull { it.id == id }?.notification ?: return
+        if (!evenBubble && (showing.flags and android.app.Notification.FLAG_BUBBLE) != 0) return
+        nm.cancel(id)
+    }
+
     /** A notification that has just arrived, opened and parsed. */
     fun show(ctx: Context, server: Server, payload: JSONObject) {
         val body = plain(payload.optString("body"))
         if (body.isEmpty()) return
         val at = payload.optLong("at", System.currentTimeMillis())
         val chatJson = payload.optJSONObject("chat")
+        // Cru's news no screen heard: its bubble, opened where Android allows it, and said there.
+        if (mv.obitech.crundi.voice.CruBubble.isNews(payload) && mv.obitech.crundi.voice.CruBubble.news(ctx, server.id, plain(payload.optString("speak")).ifEmpty { body }, body, payload.optBoolean("quiet"))) {
+            PushLog.add(ctx, "From ${server.host}: Cru's news, into Cru's bubble")
+            return
+        }
+        val route = InboxNotify.route(payload, bubblesOn(ctx))
+        // Something sent to the owner, with bubbles allowed: its inbox thread's own conversation and bubble.
+        if (route == InboxNotify.Route.InboxBubble) { showInbox(ctx, server, payload, body, at); return }
         if (chatJson == null || chatJson.optString("id").isEmpty()) {
-            val url = payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
+            // Cru's report nobody heard: its chat view, not the inbox.
+            val url = if (payload.optBoolean("cruChat")) mv.obitech.crundi.voice.CruUnread.CHAT_PATH
+                else inboxPath(payload) ?: payload.optString("url", "/").let { if (it.startsWith("/") && !it.startsWith("//")) it else "/" }
             val kind = payload.optString("kind", "crundi")
             post(
                 ctx, "srv:${server.id}:$kind".hashCode(),
@@ -538,6 +670,14 @@ object Notifier {
         val prompt = payload.optJSONObject("prompt")?.takeIf { it.optString("requestId").isNotEmpty() }
         style.addMessage(if (prompt != null) "$body\n${prompt.optString("tool")}: ${prompt.optString("summary")}" else body, at, who)
         val b = chatBuilder(ctx, chat, style, who).setWhen(at)
+        // Something the chat SENT the owner (a message, a picture, a file) is
+        // in the inbox: tapping it opens that thread at that item. A question
+        // or a permission request still opens the chat, where it is answered.
+        // (With bubbles allowed it went to its own inbox conversation above.)
+        val inbox = inboxPath(payload)
+        if (route == InboxNotify.Route.InboxMain && inbox != null) {
+            b.setContentIntent(openMain(ctx, server.id, inbox, chat.notificationId + 7))
+        }
         // The owner is at Crundi already (the server says so): the bubble
         // and the notification are still wanted, a buzz in the pocket is not.
         if (payload.optBoolean("quiet")) b.setSilent(true)

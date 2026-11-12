@@ -1,0 +1,190 @@
+{
+  "steps": [
+    {
+      "id": "voice-cru",
+      "tag": "Cru",
+      "title": "Meet Cru, your assistant",
+      "body": "Cru (said like \"crew\") is Crundi's assistant, on the phone, the web and the PC. Talk or type to it about any project: what is running, what changed, what is waiting on you. It answers briefly in the voice you choose, with the detail on screen, and the whole conversation stays as a chat you can scroll back through.",
+      "keys": [
+        {
+          "keys": [
+            "Cru's mark"
+          ],
+          "text": "in the top bar: open Cru"
+        },
+        {
+          "keys": [
+            "Keyboard"
+          ],
+          "text": "type instead of talking; Cru then stays quiet unless you ask"
+        }
+      ],
+      "art": "voice-cru.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "voice-actions",
+      "tag": "Cru",
+      "title": "Cru does it for you",
+      "body": "Ask and Cru acts across your projects: sends a message into a chat, starts, parks or closes chats, adds cards and notes, edits the mindmap, schedules jobs and uses the browser drawer. Anything weighty it asks first. Talk over it to interrupt, or end with \"scratch that\" to take back what you said.",
+      "art": "voice-actions.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "voice-wake-train",
+      "tag": "Cru",
+      "title": "\"Hey Cru\", in your voice",
+      "body": "On the PC and the phone, Cru can listen for \"Hey Cru\". Say it five times to train it, and read a few phrases to enrol your voice, all on your own server: it wakes for you, and with \"Only act on my voice\" on, Cru answers anyone else but changes nothing for them.",
+      "keys": [
+        {
+          "keys": [
+            "Settings",
+            "Voice assistant"
+          ],
+          "text": "train \"Hey Cru\" and enrol your voice"
+        }
+      ],
+      "art": "voice-wake-train.html",
+      "artTitle": "Settings"
+    },
+    {
+      "id": "voice-memory",
+      "tag": "Cru",
+      "title": "Cru remembers and learns",
+      "body": "One memory across every device: the conversation carries on after a restart, a notebook keeps your preferences and standing facts, and Cru can find anything said before. Correct it as you go (\"shorter\", \"stop saying that\") and it keeps to it; ask for the same things again and it saves them as a routine.",
+      "art": "voice-memory.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "voice-reports",
+      "tag": "Cru",
+      "title": "Cru keeps watch",
+      "body": "Cru tells you when the chats it started, or any you ask it to follow, finish or need you, and can answer a chat's question or permission request for you when you say so. It can also wake on its own, on a ticker, a trigger such as a service stopping, or a half-hourly heartbeat, and stays quiet unless something needs you. Switch on Cru on its own and it works while you are away, within what you allow.",
+      "art": "voice-reports.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-live-screen",
+      "tag": "Cru",
+      "title": "Cru shows you things",
+      "body": "Cru can put a live panel on its screen while you talk, or take the whole screen for a dashboard or a board. Its replies can carry pictures, files and tables, and on the PC or the web it can take you straight to a card, a chat, a file or a setting. Give it files too: the paperclip, a drop on the PC, or share to Cru from any app on the phone.",
+      "art": "live-screen.html",
+      "artTitle": "Voice"
+    },
+    {
+      "id": "cru-admin",
+      "tag": "Cru",
+      "title": "Cru's brain, its spend and admin mode",
+      "body": "Cru answers through the Claude API or through your own Claude Code on your subscription, with a thinking effort from Low to Max, and its Claude and Deepgram spend shows beside your usage. Admin mode lets it run any command and edit any file on the server without asking; once your voice is enrolled, only you can use it.",
+      "keys": [
+        {
+          "keys": [
+            "Settings",
+            "Voice assistant"
+          ],
+          "text": "everything about Cru, in one place"
+        }
+      ],
+      "art": "admin.html",
+      "artTitle": "Settings"
+    },
+    {
+      "id": "cru-kid-mode",
+      "tag": "Cru",
+      "title": "Kid mode",
+      "body": "Set a PIN, then start kid mode in Settings, Voice assistant, from the tray or by asking Cru. The PC goes full screen and locked, and a kid Cru becomes your child's friend: learning games for letters, matching and counting, a drawing pad it can look at, talking or typing. Only your PIN leaves it.",
+      "art": "kid-mode.html",
+      "artTitle": "Desktop"
+    },
+    {
+      "id": "chat-voice",
+      "tag": "Chats",
+      "title": "Talk to a chat",
+      "body": "Each chat has a mic beside Send. Tap it for voice mode: whenever you pause, what you said goes to Claude, and it answers in the chat and says a short version aloud. Talk over the reply and it waits for you. Or hold the mic, talk, and let go to send just that.",
+      "art": "chat-voice.html",
+      "artTitle": "Chats"
+    },
+    {
+      "id": "inbox",
+      "tag": "Inbox",
+      "title": "Crundi's own inbox",
+      "body": "Everything meant for you lands in Crundi's inbox first: what Claude sends you, alerts, questions and permission requests, Cru's reports and Crundi's own notices, in threads per chat, per project, Cru and Crundi. Tell it which of them should also reach your phone or Telegram.",
+      "art": "inbox.html",
+      "artTitle": "Inbox"
+    },
+    {
+      "id": "signin-google-github",
+      "tag": "Settings",
+      "title": "Sign in with Google or GitHub",
+      "body": "Sign in with your own Google or GitHub account, through an OAuth app you create. Only the account you set is let in, and a method switches on only after its test passes. In the PC app, sign-in opens in your browser.",
+      "art": "signin.html",
+      "artTitle": "Sign-in"
+    },
+    {
+      "id": "pc-lock",
+      "tag": "Desktop",
+      "title": "Lock the PC with your PIN",
+      "body": "Lock the PC app with the screen still visible behind a see-through overlay, or with a full lock screen. Only your PIN unlocks it, or your phone. It can also lock by itself after a while idle.",
+      "keys": [
+        {
+          "keys": [
+            "Ctrl",
+            "Shift",
+            "L"
+          ],
+          "text": "lock, screen visible"
+        },
+        {
+          "keys": [
+            "Super",
+            "Shift",
+            "L"
+          ],
+          "text": "full lock screen"
+        }
+      ],
+      "art": "pc-lock.html",
+      "artTitle": "Desktop"
+    },
+    {
+      "id": "browser-drawer",
+      "tag": "Browser",
+      "title": "A browser beside your project",
+      "body": "In the PC app a browser drawer slides in beside the project, on the right or the left, with tabs per project. It is one browser for the whole computer, with a history and your sign-ins kept. Each tab can browse on this computer's network or the server's (where your dev servers are), or go out through homepool. Hide it and its pages keep running; the X closes them.",
+      "art": "browser-drawer.html",
+      "artTitle": "Browser"
+    },
+    {
+      "id": "browser-drawer-annotate",
+      "tag": "Browser",
+      "title": "Point at the page for a chat",
+      "body": "Select an element and write a note on it, or draw over the page with pins, boxes and freehand. Then send your marks to one of the project's chats or to Cru, as CSS selectors with each element's HTML, or as a screenshot with your marks drawn in.",
+      "art": "browser-drawer-annotate.html",
+      "artTitle": "Browser"
+    },
+    {
+      "id": "browser-drawer-cursor",
+      "tag": "Browser",
+      "title": "Chats work in your browser, where you see them",
+      "body": "Chats and Cru open their own tabs in your drawer and test there, your dev servers included, with no forward to set up. When they use the mouse you see their cursor glide, click and drag; they can tap and swipe as a finger would, pick from dropdowns and press buttons by name. Your typing stays where it is.",
+      "art": "browser-drawer-cursor.html",
+      "artTitle": "Browser"
+    },
+    {
+      "id": "browser-drawer-passwords",
+      "tag": "Browser",
+      "title": "The browser remembers your passwords",
+      "body": "Sign in to a site in a drawer tab and the drawer offers to save the password, or to update it when it changed. Next time it offers to fill the login. They stay on this computer, encrypted for your account, as Chrome keeps them; showing one needs your PIN, and chats never see them.",
+      "art": "browser-drawer-passwords.html",
+      "artTitle": "Browser"
+    },
+    {
+      "id": "homepool-networks",
+      "tag": "Homepool",
+      "title": "Homepool: choose where traffic leaves from",
+      "body": "The Homepool tab is a shared exit for chats, scripts, containers and drawer tabs: the server's own connection by default, or one of your networks, your phone and PC at home or a friend's line. Share a device's connection with one switch in the phone or PC app; for a friend, give them a code for the Crundi Homepool Node app or a Docker container. Nothing uses it without your approval.",
+      "art": "homepool-networks.html",
+      "artTitle": "Homepool"
+    }
+  ]
+}

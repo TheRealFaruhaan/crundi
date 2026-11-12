@@ -1,0 +1,131 @@
+[
+ {
+  "id": "find-letter",
+  "title": "Find the letter",
+  "skills": [
+   "letters"
+  ],
+  "ageRange": "3-4",
+  "version": 1,
+  "options": "letters (e.g. \"ABC\"), choices 2-6, rounds 1-30"
+ },
+ {
+  "id": "letter-sounds",
+  "title": "Letter sounds",
+  "skills": [
+   "letters",
+   "letter-sounds"
+  ],
+  "ageRange": "2-3",
+  "version": 1,
+  "options": "letters (e.g. \"SATPIN\")"
+ },
+ {
+  "id": "big-little",
+  "title": "Big and little letters",
+  "skills": [
+   "letters",
+   "matching"
+  ],
+  "ageRange": "4-5",
+  "version": 1,
+  "options": "letters, pairs 2-6, rounds 1-10"
+ },
+ {
+  "id": "trace-letter",
+  "title": "Trace a letter",
+  "skills": [
+   "letters",
+   "writing"
+  ],
+  "ageRange": "4-5",
+  "version": 1,
+  "options": "letters"
+ },
+ {
+  "id": "a-is-for",
+  "title": "A is for apple",
+  "skills": [
+   "letters",
+   "letter-sounds",
+   "matching"
+  ],
+  "ageRange": "3-4",
+  "version": 1,
+  "options": "letters, choices 2-4, rounds 1-26"
+ },
+ {
+  "id": "memory-pairs",
+  "title": "Memory match",
+  "skills": [
+   "memory",
+   "matching",
+   "shapes",
+   "colours"
+  ],
+  "ageRange": "3-4",
+  "version": 1,
+  "options": "pairs 2-8, kind shapes|letters|pictures, letters"
+ },
+ {
+  "id": "shapes-colours",
+  "title": "Shapes and colours",
+  "skills": [
+   "shapes",
+   "colours"
+  ],
+  "ageRange": "2-3",
+  "version": 1,
+  "options": "mode both|shapes|colours, choices 2-6, rounds 1-20"
+ },
+ {
+  "id": "counting",
+  "title": "Let's count",
+  "skills": [
+   "counting",
+   "numbers"
+  ],
+  "ageRange": "3-4",
+  "version": 1,
+  "options": "max 3-10, rounds 1-20"
+ },
+ {
+  "id": "quiz",
+  "title": "Quiz with Cru",
+  "skills": [
+   "thinking"
+  ],
+  "ageRange": "4-5",
+  "version": 1,
+  "options": "questions: [{q, choices:[2-4 words], answer: index, pic?}] (choices that are picture words show pictures)"
+ },
+ {
+  "id": "drawing-pad",
+  "title": "Drawing pad",
+  "skills": [
+   "drawing",
+   "colours"
+  ],
+  "ageRange": "2-3",
+  "version": 1,
+  "options": "none"
+ },
+ {
+  "id": "picture-trivia",
+  "title": "Which one is it?",
+  "skills": [
+   "world.animals",
+   "world.body",
+   "world.everyday",
+   "world.nature",
+   "world.places",
+   "world.facts"
+  ],
+  "ageRange": "2-3",
+  "version": 1,
+  "uses": [
+   "trivia"
+  ],
+  "options": "area animals|body|everyday|nature|places, age (e.g. \"2-3\" or \"5-6\"), rounds 1-15"
+ }
+]

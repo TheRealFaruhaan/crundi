@@ -57,25 +57,45 @@ class FakeTransport(override val baseUrl: String = "https://dev.example.com") : 
     /** Off: the event stream connects and ends at once (screens that need no live data). */
     var eventsEnabled = true
 
+    /**
+     * A frame on the event stream. Like the server's, it reaches only a
+     * stream that is connected: with none listening yet it is dropped (see
+     * [eventListeners]).
+     */
     fun pushEvent(event: String, data: String) { sse.tryEmit(SseFrame(event, data)) }
+
+    /** How many event streams are connected and listening now. */
+    val eventListeners: Int get() = sse.subscriptionCount.value
+
+    /** Every connection the app opened, oldest first (a test can close an old one late). */
+    val sockets = CopyOnWriteArrayList<SocketListener>()
+    /** Connections that went dead without closing (a network change): nothing reaches them, what they send is lost. */
+    private val dead = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<SocketListener, Boolean>())
 
     override fun socket(listener: SocketListener): SocketConnection {
         this.listener = listener
+        sockets.add(listener)
         listener.onOpen()
         return object : SocketConnection {
             override fun send(text: String): Boolean {
+                // Sent on a dead connection: OkHttp queues it and says yes; it never arrives.
+                if (listener in dead) return true
                 socketSent.add(text)
                 // A server that answers: e.g. subscribe-ui gets the chat's history.
                 onSocketSend?.invoke(text)?.forEach { listener.onMessage(it) }
                 return true
             }
-            override fun close() { listener.onClosed(0, "closed") }
+            override fun close() { if (listener !in dead) listener.onClosed(0, "closed") }
+            override fun cancel() { dead.add(listener); listener.onClosed(0, "canceled") }
         }
     }
+
+    /** The open connection dies without closing, as when the phone changes network. */
+    fun killSocketSilently() { listener?.let { dead.add(it) } }
 
     /** What the fake server answers to a message the app sends on the socket (null: nothing). */
     var onSocketSend: ((String) -> List<String>?)? = null
 
     /** A message from the server on the socket. */
-    fun pushSocket(json: String) { listener?.onMessage(json) }
+    fun pushSocket(json: String) { listener?.takeIf { it !in dead }?.onMessage(json) }
 }

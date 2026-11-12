@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -27,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import mv.obitech.crundi.ui.chats.chatsGraph
+import mv.obitech.crundi.ui.inbox.inboxGraph
 import mv.obitech.crundi.ui.components.CrundiDialog
 import mv.obitech.crundi.ui.components.CrundiTextField
 import mv.obitech.crundi.ui.components.errorText
@@ -80,10 +82,19 @@ fun CrundiApp(
     }
     // Presence, reconnect on resume, pair again when signed out (API engineer).
     mv.obitech.crundi.api.LiveClientEffects(services.api, data.currentProject, host)
+    // Cru's unread reports (capability "voice-unread"): the count now, then as it changes.
+    val cruUnread = mv.obitech.crundi.api.VoiceApi.UNREAD in data.capabilities
+    LaunchedEffect(services.api, cruUnread) {
+        if (!cruUnread) { mv.obitech.crundi.voice.CruUnread.set(0); return@LaunchedEffect }
+        runCatching { services.api.voice.unread() }.getOrNull()?.let { mv.obitech.crundi.voice.CruUnread.set(it.count) }
+        services.api.events.changes("voice-unread").collect { ev -> mv.obitech.crundi.voice.CruUnread.countOf(ev.data)?.let { mv.obitech.crundi.voice.CruUnread.set(it) } }
+    }
 
     val atRoot = route == null || Routes.isAreaRoot(route)
     val ctx = LocalContext.current
     var lastBack by remember { mutableLongStateOf(0L) }
+    // Back with the keyboard up closes the keyboard (KeyboardBackCloses).
+    KeyboardBackCloses()
     BackHandler(enabled = atRoot && !drawer && !approvalsOpen && wb.full == null) {
         val now = System.currentTimeMillis()
         if (now - lastBack < 2000) host.close()
@@ -114,9 +125,14 @@ fun CrundiApp(
                 onProject = { services.shell.selectProject(it); navigator.area(Area.Workbench) },
                 onApprovals = { drawer = false; approvalsOpen = !approvalsOpen },
                 onUsage = { navigator.to(Area.Usage.key) },
+                // Shown when the server has the voice assistant (or before its capabilities are known).
+                onVoice = if (data.capabilities.isEmpty() || mv.obitech.crundi.api.VoiceApi.CAPABILITY in data.capabilities) {
+                    { ctx.startActivity(android.content.Intent(ctx, mv.obitech.crundi.voice.VoiceActivity::class.java)) }
+                } else null,
                 onPanels = { drawer = false; panelsOpen = true },
                 onAddProject = { addingProject = true },
                 onAppSettings = host::openAppSettings,
+                onInbox = { navigator.to(mv.obitech.crundi.ui.nav.Routes.inbox()) },
                 onPairAnother = host::pairAnother,
                 onAdd = { navigator.area(Area.Workbench); wb.add(it) },
                 onFit = wb::fit,
@@ -126,7 +142,13 @@ fun CrundiApp(
             drawerOpen = drawer,
             onDrawer = { drawer = it },
             addMenuOpen = addMenuOpenAtStart,
-            overlay = { if (approvalsOpen && atRoot) mv.obitech.crundi.ui.chats.ApprovalsDropdownRoute { approvalsOpen = false } },
+            overlay = {
+                // Kid mode on (on the PC): the parent's card, on the front pages (capability "voice-kid").
+                mv.obitech.crundi.voice.KidCardRoute(visible = atRoot && !approvalsOpen && !drawer)
+                // Cru's background-listening order confirmed on another device: done here too.
+                mv.obitech.crundi.voice.PhoneActionsRoute()
+                if (approvalsOpen && atRoot) mv.obitech.crundi.ui.chats.ApprovalsDropdownRoute { approvalsOpen = false }
+            },
             modifier = modifier,
         ) {
             NavHost(navController = nav, startDestination = Area.Workbench.key) {
@@ -135,6 +157,7 @@ fun CrundiApp(
                 workspaceGraph()
                 planningGraph()
                 operationsGraph()
+                inboxGraph()
             }
         }
         // The top bar's Panels button: its chips and their panels (ui.panels).
@@ -180,5 +203,35 @@ private fun AddProjectDialog(services: AppServices, onDone: (String?) -> Unit) {
             CrundiTextField(path, { path = it }, placeholder = "/home/you/projects/my-app (optional)", mono = true, modifier = Modifier.fillMaxWidth())
             error?.let { Text(it, style = CrundiType.Small.copy(color = mv.obitech.crundi.ui.theme.CrundiColors.Red)) }
         }
+    }
+}
+
+
+/**
+ * Back with the keyboard up closes the keyboard, on every screen, and
+ * nothing else: some keyboards hand the back press to the app instead of
+ * closing themselves. A callback is put on top of every other back handler
+ * the moment the keyboard shows (the last one added wins), and taken off when
+ * it goes. Used by the main window and the chat bubble.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun KeyboardBackCloses() {
+    val imeUp = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val dispatcher = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(imeUp, dispatcher, lifecycle) {
+        val cb = object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                keyboard?.hide()
+                androidx.core.view.ViewCompat.getWindowInsetsController(view)?.hide(androidx.core.view.WindowInsetsCompat.Type.ime())
+                focus.clearFocus()
+            }
+        }
+        if (imeUp && dispatcher != null) dispatcher.addCallback(lifecycle, cb)
+        onDispose { cb.remove() }
     }
 }

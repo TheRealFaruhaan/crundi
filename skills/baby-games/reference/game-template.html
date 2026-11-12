@@ -1,0 +1,273 @@
+<!doctype html>
+<!--
+  Kid game template (baby-games skill). One self-contained file: no network, no
+  external assets, no storage. Works inside Crundi's kid-games host (kit.js gives
+  window.kid) and opened on its own in a browser (the shim below stands in).
+
+  GAME: "Find it!"  BAND: 3-4 years  GOAL: recognise colours (shapes.colours)
+  Replace the CONTENT and ROUND parts; keep the rest. No meta tags: the
+  library validator refuses them (the host supplies charset and viewport).
+  Cursor image addresses are unquoted and %-encoded: the validator flags quoted ones.
+-->
+<html lang="en">
+<head>
+<title>Find it!</title>
+<style>
+  /* Bright palette (SKILL.md "Colour"): background, ink, and the checked set. */
+  :root { --bg:#FFF8E7; --ink:#1F2937; --a:#D55E00; --b:#0072B2; --c:#009E73; --d:#F0C808; --e:#CC79A7; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:800 min(6vmin,40px)/1.2 "Comic Sans MS","Chalkboard SE",system-ui,sans-serif;
+         user-select:none; -webkit-user-select:none; touch-action:manipulation; overflow:hidden;
+         display:flex; flex-direction:column; align-items:center; justify-content:flex-start; padding:3vmin 3vmin 12vh; box-sizing:border-box; }
+  #top { display:flex; align-items:center; gap:3vmin; min-height:16vmin; }
+  #ear { width:14vmin; height:14vmin; min-width:90px; min-height:90px; border-radius:50%; border:4px solid var(--ink); background:#fff; display:flex; align-items:center; justify-content:center; }
+  #board { flex:1; display:flex; gap:max(32px,5vmin); align-items:center; justify-content:center; flex-wrap:wrap; width:100%; }
+  .choice { width:min(30vmin,240px); height:min(30vmin,240px); min-width:120px; min-height:120px; border:0; background:none; padding:0;
+            border-radius:28px; display:flex; align-items:center; justify-content:center; transition:transform .25s ease-out, opacity .4s; }
+  .choice svg { width:100%; height:100%; }
+  .yay { transform:scale(1.15); }
+  .wobble { animation:wobble .5s ease-out; } @keyframes wobble { 30%{transform:rotate(-6deg)} 70%{transform:rotate(5deg)} }
+  .glow { animation:glow 1.2s ease-in-out infinite; } @keyframes glow { 50%{ box-shadow:0 0 0 10px rgba(240,200,8,.8), 0 0 40px 14px rgba(240,200,8,.6);} }
+  .gone { opacity:0; pointer-events:none; }
+  #stars { display:flex; gap:2vmin; min-height:8vmin; }
+  #stars span { width:7vmin; height:7vmin; }
+  .spark { position:fixed; width:18px; height:18px; border-radius:50%; pointer-events:none; animation:spark .8s ease-out forwards; }
+  @keyframes spark { to { transform:translate(var(--dx),var(--dy)) scale(.3); opacity:0; } }
+
+  /* Cursor: big yellow arrow; pink star over tappables; glow on real hover; ripple on touch. */
+  html,body,*{cursor:url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%2756%27%20height=%2756%27%20viewBox=%270%200%2056%2056%27%3E%3Cpath%20d=%27M5%204v42l11-10%208%2017%209-4-8-17h15z%27%20fill=%27%23FFD400%27%20stroke=%27%231F2937%27%20stroke-width=%274%27%20stroke-linejoin=%27round%27/%3E%3C/svg%3E) 6 5,auto}
+  button,button *,.k-btn,.k-btn *,[data-tap],[data-tap] *{cursor:url(data:image/svg+xml,%3Csvg%20xmlns=%27http://www.w3.org/2000/svg%27%20width=%2764%27%20height=%2764%27%20viewBox=%270%200%2064%2064%27%3E%3Cpath%20d=%27M32%206L39.1%2023.3L57.7%2024.7L43.4%2036.7L47.9%2054.8L32%2045L16.1%2054.8L20.6%2036.7L6.3%2024.7L24.9%2023.3Z%27%20fill=%27%23FF5FA8%27%20stroke=%27%231F2937%27%20stroke-width=%274%27%20stroke-linejoin=%27round%27/%3E%3Ccircle%20cx=%2732%27%20cy=%2734%27%20r=%274%27%20fill=%27%23fff%27/%3E%3C/svg%3E) 32 33,pointer}
+  @media (hover:hover){button:hover,.k-btn:hover,[data-tap]:hover{filter:brightness(1.08);box-shadow:0 0 0 6px rgba(255,255,255,.7),0 0 28px 8px rgba(240,200,8,.55)}}
+  .k-ripple{position:fixed;width:90px;height:90px;margin:-45px 0 0 -45px;border-radius:50%;border:6px solid #FFD400;pointer-events:none;animation:kripple .5s ease-out forwards}
+  @keyframes kripple{from{transform:scale(.3);opacity:.9}to{transform:scale(1.4);opacity:0}}
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration:.01ms !important; animation-iteration-count:1 !important; transition-duration:.01ms !important; }
+    .spark, .k-conf { display:none !important; }
+    .glow { outline:8px solid #F0C808; outline-offset:6px; }
+    .yay { transform:none; outline:8px solid #009E73; outline-offset:6px; }
+  }
+</style>
+</head>
+<body>
+<div id="top">
+  <button id="ear" aria-label="Say it again"><svg viewBox="0 0 100 100" width="70%" height="70%"><path d="M20 40h18l22-18v56L38 60H20z" fill="#1F2937"/><path d="M70 34c8 8 8 24 0 32M78 26c13 13 13 35 0 48" stroke="#1F2937" stroke-width="7" fill="none" stroke-linecap="round"/></svg></button>
+</div>
+<div id="board"></div>
+<div id="stars"></div>
+<script>
+(function () {
+  'use strict';
+  // ---- host bridge: kit.js's window.kid inside Crundi, a shim when opened alone ----
+  var standalone = window.parent === window;
+  var kid = window.kid || (function () {
+    function post(m) { if (!standalone) { try { window.parent.postMessage(m, '*'); } catch (e) {} } }
+    function speak(t) {
+      if (!standalone) return post({ cru: 'say', text: String(t || '').slice(0, 300) });
+      try { speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(t); u.rate = 0.9; u.pitch = 1.2; speechSynthesis.speak(u); } catch (e) {}
+    }
+    var o = {}; try { o = window.CRU_OPTIONS || {}; } catch (e) {}
+    return {
+      opts: o,
+      say: speak,
+      tell: function (t) { post({ cru: 'tell', text: String(t || '').slice(0, 300) }); },
+      event: function (k, d) { post({ cru: 'event', kind: String(k || 'tap'), detail: String(d == null ? '' : d).slice(0, 200) }); },
+      done: function (s) { this.event('finished', s || ''); this.tell('[Game: finished] ' + (s || '')); },
+    };
+  })();
+  var say = function (t) { kid.say(t); };
+
+  // ---- options (clamped, good defaults: the game must run with {}) ----
+  var opts = kid.opts || {};
+  var ROUNDS = Math.max(3, Math.min(10, Number(opts.rounds) || 6));
+  var level = Math.max(1, Math.min(3, Number(opts.level) || 1));     // 1: 2 choices, 2: 3, 3: 4
+
+  // ---- CONTENT: colours that look like their names, each on a circle with an outline ----
+  var COLOURS = [
+    { name: 'red', hex: '#E53935' }, { name: 'blue', hex: '#1E88E5' }, { name: 'yellow', hex: '#FDD835' },
+    { name: 'green', hex: '#43A047' }, { name: 'orange', hex: '#FB8C00' }, { name: 'purple', hex: '#8E24AA' },
+  ];
+  var PRAISE = ['Yes! That is {c}!', 'You found {c}!', 'Hooray, {c}!', 'That is it! {C}!', 'Well spotted, {c}!', 'You did it! {C}!'];
+  var lastPraise = -1;
+  function praise(c) {
+    var i; do { i = Math.floor(Math.random() * PRAISE.length); } while (i === lastPraise && PRAISE.length > 1);
+    lastPraise = i; return PRAISE[i].replace('{c}', c).replace('{C}', c.charAt(0).toUpperCase() + c.slice(1));
+  }
+  function blob(hex) { return '<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42" fill="' + hex + '" stroke="#1F2937" stroke-width="5"/></svg>'; }
+  function shuffle(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = Math.random() * (i + 1) | 0, t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+
+  // ---- sounds (Web Audio, made here; host mute/volume respected; never a buzzer) ----
+  var sfx = window.kid && kid.sfx || (function () {
+    var ac = null, vol = 0.7, muted = false, o = {};
+    try { o = (window.kid && kid.opts) || window.CRU_OPTIONS || {}; } catch (e) {}
+    if (o.sound === false || o.muted) muted = true;
+    if (typeof o.volume === 'number') vol = Math.max(0, Math.min(1, o.volume));
+    addEventListener('message', function (e) {
+      var d = e.data || {}; if (e.source !== window.parent) return;
+      if (d.cru === 'mute') muted = !!d.muted;
+      if (d.cru === 'volume') vol = Math.max(0, Math.min(1, Number(d.value) || 0));
+      if (d.type === 'command' && (d.action === 'mute' || d.action === 'unmute')) muted = d.action === 'mute';
+    });
+    function note(f, at, len, type, peak) {
+      if (muted || vol <= 0) return;
+      try {
+        ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+        if (ac.state === 'suspended') ac.resume();
+        var t = ac.currentTime + at, osc = ac.createOscillator(), g = ac.createGain();
+        osc.type = type || 'sine'; osc.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(Math.max(0.0002, (peak || 0.12) * vol), t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+        osc.connect(g); g.connect(ac.destination); osc.start(t); osc.stop(t + len + 0.05);
+      } catch (e) {}
+    }
+    return {
+      tap: function () { note(660, 0, 0.08, 'sine', 0.06); },
+      success: function () { note(523, 0, 0.18); note(659, 0.09, 0.18); note(784, 0.18, 0.32); },
+      miss: function () { note(392, 0, 0.2, 'triangle', 0.06); note(440, 0.13, 0.25, 'triangle', 0.06); },
+      step: function () { note(880, 0, 0.12, 'sine', 0.08); note(1175, 0.07, 0.16, 'sine', 0.08); },
+      fanfare: function () { [523, 659, 784, 1047].forEach(function (f, i) { note(f, i * 0.12, 0.25); }); note(1047, 0.62, 0.45, 'sine', 0.14); }
+    };
+  })();
+  function sparkle(el) {
+    var r = el.getBoundingClientRect(), cols = ['#D55E00', '#0072B2', '#009E73', '#F0C808', '#CC79A7'];
+    for (var i = 0; i < 14; i++) {
+      var s = document.createElement('div'), a = i / 14 * Math.PI * 2;
+      s.className = 'spark'; s.style.left = (r.left + r.width / 2) + 'px'; s.style.top = (r.top + r.height / 2) + 'px';
+      s.style.background = cols[i % cols.length]; s.style.setProperty('--dx', Math.cos(a) * 120 + 'px'); s.style.setProperty('--dy', Math.sin(a) * 120 + 'px');
+      document.body.appendChild(s); (function (s) { setTimeout(function () { s.remove(); }, 900); })(s);
+    }
+  }
+
+  // ---- events to the host: {type:'game', event, item, detail, streak?, seconds?} ----
+  // Emitted faithfully and at once; the kit's own play-log event is kept alongside.
+  var t0 = Date.now(), roundStart = Date.now(), lastTouch = Date.now(), lastProgress = Date.now(), idleSent = false, stuckSent = false, paused = false, ended = false;
+  var LOG = { correct: 'correct', miss: 'wrong', 'level-up': 'level', finished: 'finished', tap: 'tap' };
+  function emit(event, item, detail) {
+    var m = { type: 'game', event: event, item: item == null ? '' : String(item), detail: detail == null ? '' : String(detail).slice(0, 200),
+              streak: streak, seconds: Math.round((Date.now() - roundStart) / 1000) };
+    try { if (kid.game) kid.game(m); else if (!standalone) window.parent.postMessage(m, '*'); } catch (e) {}
+    if (LOG[event] && event !== 'finished') kid.event(LOG[event], 'colours: ' + m.item + (m.detail ? ' ' + m.detail : ''));
+  }
+  setInterval(function () {                           // idle: no touch ~30 s; stuck: no progress ~20 s
+    if (paused || ended) return;
+    var now = Date.now();
+    if (!idleSent && now - lastTouch > 30000) { idleSent = true; emit('idle', target && target.name, 'no touch for 30 s'); }
+    if (!stuckSent && now - lastTouch < 30000 && now - lastProgress > 20000) { stuckSent = true; emit('stuck', target && target.name, misses + ' misses this round'); }
+  }, 1000);
+
+  // ---- ROUND: show, ask, wrong-answer ladder (3-4 band), adapt, end ----
+  var board = document.getElementById('board'), stars = document.getElementById('stars');
+  var round = 0, firstTry = 0, streak = 0, helped = 0, target = null, misses = 0, hintStep = 0, busy = false, idleTimer = 0, question = '';
+  function ask() { say(question); }
+  function idle() { clearTimeout(idleTimer); idleTimer = setTimeout(function () { if (!paused) { ask(); hint(); } }, 9000); }
+  function glowAnswer() { var t = board.querySelector('[data-answer]'); if (t) t.classList.add('glow'); }
+  /** The next rung of the ladder: glow, then narrow, then show. */
+  function hint() {
+    if (!target || busy) return;
+    hintStep = Math.min(3, hintStep + 1);
+    if (hintStep === 1) glowAnswer();
+    else if (hintStep === 2) { var w = board.querySelector('.choice:not([data-answer]):not(.gone)'); if (w) w.classList.add('gone'); glowAnswer(); }
+    else { glowAnswer(); say('Here it is! ' + target.name + '! Tap it!'); }
+    emit('hint', target.name, ['', 'glow', 'narrow', 'show'][hintStep]);
+  }
+
+  function next() {
+    if (ended) return;
+    if (round >= ROUNDS) return finish();
+    round++; misses = 0; hintStep = 0; busy = false; roundStart = lastProgress = Date.now(); stuckSent = false;
+    var n = level + 1;
+    var set = shuffle(COLOURS).slice(0, n);
+    target = set[Math.random() * n | 0];
+    board.innerHTML = '';
+    set.forEach(function (c) {
+      var b = document.createElement('button');
+      b.className = 'choice'; b.innerHTML = blob(c.hex); b.setAttribute('aria-label', c.name);
+      if (c === target) b.setAttribute('data-answer', '1');
+      b.addEventListener('click', function () { tap(b, c); });
+      board.appendChild(b);
+    });
+    question = 'Where is ' + target.name + '?';
+    ask(); idle();
+  }
+
+  function setLevel(n, why) {
+    n = Math.max(1, Math.min(3, n));
+    if (n === level) return;
+    var up = n > level; level = n;
+    emit('level-up', String(level), up ? why || 'up' : 'down');
+  }
+
+  function tap(b, c) {
+    if (busy || paused || ended) return;
+    idle(); emit('tap', c.name);
+    if (c === target) {
+      busy = true; clearTimeout(idleTimer); lastProgress = Date.now();
+      b.classList.remove('glow'); b.classList.add('yay'); sparkle(b); sfx.success();
+      if (misses === 0 && hintStep === 0) { firstTry++; streak++; } else { streak = 0; helped++; }
+      emit('correct', c.name, misses || hintStep ? 'helped' : 'first try');
+      say(misses || hintStep ? 'You found it! ' + c.name.charAt(0).toUpperCase() + c.name.slice(1) + '!' : praise(c.name));
+      var st = document.createElement('span'); st.innerHTML = '<svg viewBox="0 0 64 64" width="100%" height="100%"><path d="M32 6L39.1 23.3L57.7 24.7L43.4 36.7L47.9 54.8L32 45L16.1 54.8L20.6 36.7L6.3 24.7L24.9 23.3Z" fill="#F0C808" stroke="#1F2937" stroke-width="4"/></svg>';
+      stars.appendChild(st); setTimeout(sfx.step, 450);
+      emit('round-done', target.name, round + '/' + ROUNDS);
+      // up slowly (4 first-try in a row), down fast (one helped round); never on the last round
+      if (streak >= 4 && round < ROUNDS - 1) { setLevel(level + 1); streak = 0; }
+      if ((misses || hintStep) && level > 1) setLevel(level - 1);
+      setTimeout(next, 1600);
+      return;
+    }
+    misses++;
+    emit('miss', c.name, 'wanted ' + target.name);
+    sfx.miss(); b.classList.add('wobble'); setTimeout(function () { b.classList.remove('wobble'); }, 500);
+    if (misses === 1) { say('That is ' + c.name + '. Good try! Where is ' + target.name + '?'); setTimeout(function () { if (!busy && hintStep < 1) hint(); }, 2000); }
+    else { if (hintStep < misses) hint(); if (misses === 2) say('Look for ' + target.name + '!'); }
+  }
+
+  function finish() {
+    if (ended) return;
+    ended = true; clearTimeout(idleTimer);
+    board.innerHTML = '';
+    var cols = ['#D55E00', '#0072B2', '#009E73', '#F0C808', '#CC79A7'];
+    for (var i = 0; i < 5; i++) { var d = document.createElement('div'); d.className = 'choice yay'; d.innerHTML = blob(cols[i]); d.style.width = d.style.height = '16vmin'; d.style.minWidth = d.style.minHeight = '60px'; board.appendChild(d); }
+    sfx.fanfare();
+    say('You found all the colours! Well done!');
+    var summary = 'found ' + round + ' colours, ' + firstTry + ' first time, level ' + level;
+    roundStart = t0;                                  // seconds on 'finished' = whole game
+    emit('finished', '', summary);
+    kid.done(summary);
+  }
+
+  // ---- commands from the host: {type:'command', action} (only from the parent) ----
+  addEventListener('message', function (e) {
+    var d = e.data || {};
+    if (e.source !== window.parent || d.type !== 'command') return;
+    switch (d.action) {
+      case 'next': if (!ended && !busy) { clearTimeout(idleTimer); next(); } break;     // skip, no penalty
+      case 'easier': setLevel(level - 1, 'host'); if (!busy && !ended) { round--; next(); } break;
+      case 'harder': setLevel(level + 1, 'host'); break;                                 // from the next round
+      case 'hint': if (!paused) hint(); break;
+      case 'pause': paused = true; clearTimeout(idleTimer); document.body.style.opacity = '.6'; break;
+      case 'resume': if (paused) { paused = false; document.body.style.opacity = ''; lastTouch = lastProgress = Date.now(); idle(); } break;
+      case 'end': finish(); break;
+      // 'mute' / 'unmute' are handled by sfx; anything unknown is ignored
+    }
+  });
+  addEventListener('pointerdown', function () { lastTouch = Date.now(); idleSent = false; }, { passive: true });
+
+  document.getElementById('ear').addEventListener('click', function () { sfx.tap(); ask(); });
+  addEventListener('pointerdown', function (e) {
+    sfx.tap();                                   // every tap/click: a soft tap sound
+    if (e.pointerType === 'mouse') return;      // the ripple is for fingers
+    var r = document.createElement('div'); r.className = 'k-ripple';
+    r.style.left = e.clientX + 'px'; r.style.top = e.clientY + 'px';
+    r.style.borderColor = ['#FFD400', '#FF5FA8', '#2F9BFF', '#2EE58A'][Math.random() * 4 | 0];
+    document.body.appendChild(r); setTimeout(function () { r.remove(); }, 600);
+  }, { passive: true });
+  window.addEventListener('error', function () { /* stay calm: never a blank screen */ });
+
+  emit('start', '', 'rounds ' + ROUNDS + ', level ' + level);
+  next();
+})();
+</script>
+</body>
+</html>

@@ -8,14 +8,19 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell } from 'electron';
-import { fileURLToPath } from 'url';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell, powerMonitor, utilityProcess, session, net, globalShortcut, safeStorage } from 'electron';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { spawn, execFileSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync } from 'fs';
-import { tmpdir, homedir } from 'os';
+import { tmpdir, homedir, hostname as osHostname } from 'os';
 import electronUpdater from 'electron-updater';
+import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS, partitionOf } from './browser-drawer.js';
+import { createDrawerNet } from './drawer-net.js';
+import { runMouse } from './browser-pointer.js';
+import { createPasswordStore, safeStorageBackend } from './drawer-passwords.js';
+import { startNode as startHomepoolNode } from './homepool-node.js';
 const { autoUpdater } = electronUpdater;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -194,6 +199,9 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // The browser drawer's <webview>s: hardened as the page creates them.
+  browserDrawer.hardenWindow(mainWindow);
+
   const htmlPath = join(__dirname, 'index.html');
   appendLog(`[lifecycle] Loading ${htmlPath}`);
   mainWindow.loadFile(htmlPath);
@@ -207,12 +215,283 @@ function createWindow() {
   });
 
   mainWindow.on('close', (e) => {
+    // Kid mode: the window stays (only the PIN, on the kid screen, unlocks it).
+    if (kidLocked) { e.preventDefault(); return; }
     if (!app.isQuitting) {
       e.preventDefault();
       mainWindow.hide();
     }
   });
+  wireKidLock(mainWindow);
+  wirePcLockKeys(mainWindow);
 }
+
+// ─── Kid mode: the window locked to the kid screen ───
+//
+// The page (crundi-voice.js) asks for it when the kid screen opens and lets
+// go once the server has accepted the PIN. While locked: kiosk and full
+// screen, above everything ('screen-saver' level), off the taskbar, focus
+// taken back whenever it is lost, and the keys that reload, close, quit,
+// open devtools or switch away are swallowed here, before the page sees
+// them. The OS keeps what it never hands to an app: Ctrl+Alt+Del and the
+// lock screen on Windows, the Super key and VT switching on Linux.
+let kidLocked = false;
+let kidRefocus = null;
+
+// Windows handles the Windows key, Alt+Tab and Ctrl+Esc before any window
+// sees them, so a kiosk window alone cannot keep a child in. While kid mode is
+// on, a small low-level keyboard filter (a hidden PowerShell running a few
+// lines of C#) swallows those keys. It ends with kid mode, and on its own if
+// this app goes away. Ctrl+Alt+Del and Win+L cannot be blocked by anything.
+let kidKeysProc = null;
+let kidKeysFails = 0;
+const KID_KEYS_PS = String.raw`
+$code = @"
+using System; using System.Diagnostics; using System.Runtime.InteropServices; using System.Windows.Forms;
+public static class CrundiKidKeys {
+  delegate IntPtr Proc(int n, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int id, Proc p, IntPtr h, uint t);
+  [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr h, int n, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int k);
+  [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string n);
+  static Proc keep; static IntPtr hook;
+  static IntPtr Cb(int n, IntPtr w, IntPtr l) {
+    if (n >= 0) {
+      int vk = Marshal.ReadInt32(l); int flags = Marshal.ReadInt32(l, 8);
+      bool alt = (flags & 0x20) != 0, ctrl = (GetAsyncKeyState(0x11) & 0x8000) != 0;
+      if (vk == 0x5B || vk == 0x5C || vk == 0x5D) return (IntPtr)1;
+      if (alt && (vk == 0x09 || vk == 0x1B || vk == 0x73 || vk == 0x20)) return (IntPtr)1;
+      if (ctrl && vk == 0x1B) return (IntPtr)1;
+    }
+    return CallNextHookEx(hook, n, w, l);
+  }
+  public static void Run(int parent) {
+    keep = Cb; hook = SetWindowsHookEx(13, keep, GetModuleHandle(null), 0);
+    var t = new System.Windows.Forms.Timer(); t.Interval = 2000;
+    t.Tick += (s, e) => { try { Process.GetProcessById(parent); } catch { Application.Exit(); } };
+    t.Start(); Application.Run();
+  }
+}
+"@
+Add-Type -TypeDefinition $code -ReferencedAssemblies System.Windows.Forms
+[CrundiKidKeys]::Run([int]$args[0])
+`;
+function kidKeys(on) {
+  if (process.platform !== 'win32') return;
+  if (!on) { kidKeysFails = 0; if (kidKeysProc) { try { kidKeysProc.kill(); } catch { /* gone */ } kidKeysProc = null; appendLog('[kid] keyboard filter off'); } return; }
+  if (kidKeysProc) return;
+  try {
+    const file = join(app.getPath('userData'), 'kid-keys.ps1');
+    writeFileSync(file, KID_KEYS_PS);
+    kidKeysProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', file, String(process.pid)], { windowsHide: true, stdio: 'ignore' });
+    kidKeysProc.on('exit', (code) => { appendLog(`[kid] keyboard filter ended (${code})`); kidKeysProc = null; if (kidLocked && ++kidKeysFails <= 5) setTimeout(() => kidKeys(true), 2000); });
+    appendLog('[kid] keyboard filter on (Windows key, Alt+Tab, Ctrl+Esc blocked)');
+  } catch (err) { appendLog(`[kid] keyboard filter: ${err.message}`); kidKeysProc = null; }
+}
+// Linux: no app can grab the Super key under Wayland, but the desktop's own
+// shortcuts can be switched off while kid mode is on (GNOME: gsettings; KDE:
+// the Meta key) and put back afterwards. The old values are kept in a file so
+// they come back even if the app was killed (restored at the next start).
+const KID_GNOME_KEYS = [
+  ['org.gnome.mutter', 'overlay-key', "''"],
+  ...['switch-applications', 'switch-applications-backward', 'switch-windows', 'switch-windows-backward', 'switch-group', 'switch-group-backward',
+    'cycle-windows', 'cycle-windows-backward', 'cycle-group', 'cycle-group-backward', 'panel-main-menu', 'panel-run-dialog', 'show-desktop', 'minimize',
+    'switch-to-workspace-left', 'switch-to-workspace-right', 'switch-to-workspace-up', 'switch-to-workspace-down', 'close']
+    .map((k) => ['org.gnome.desktop.wm.keybindings', k, '[]']),
+  ...['toggle-overview', 'toggle-application-view', 'toggle-message-tray', 'toggle-quick-settings', 'focus-active-notification', 'shift-overview-up', 'shift-overview-down']
+    .map((k) => ['org.gnome.shell.keybindings', k, '[]']),
+];
+function kidRestoreFile() { return join(app.getPath('userData'), 'kid-keys-restore.json'); }
+function sh(cmd, args) { try { return execFileSync(cmd, args, { encoding: 'utf8', timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } }
+function kidKeysLinux(on) {
+  if (process.platform !== 'linux') return;
+  const file = kidRestoreFile();
+  if (on) {
+    if (existsSync(file)) return;   // already off (or left off by a crash: kept as it was)
+    const saved = { gnome: [], kde: null };
+    if (sh('which', ['gsettings'])) {
+      for (const [schema, key, off] of KID_GNOME_KEYS) {
+        const cur = sh('gsettings', ['get', schema, key]);
+        if (cur == null) continue;   // no such key on this desktop
+        saved.gnome.push([schema, key, cur]);
+      }
+    }
+    const kw = sh('which', ['kwriteconfig6']) ? 'kwriteconfig6' : (sh('which', ['kwriteconfig5']) ? 'kwriteconfig5' : '');
+    if (kw && (process.env.XDG_CURRENT_DESKTOP || '').toUpperCase().includes('KDE')) {
+      const rd = kw.replace('write', 'read');
+      saved.kde = { tool: kw, meta: sh(rd, ['--file', 'kwinrc', '--group', 'ModifierOnlyShortcuts', '--key', 'Meta']) || '' };
+    }
+    try { writeFileSync(file, JSON.stringify(saved)); } catch { /* best effort */ }
+    for (const [schema, key] of saved.gnome) sh('gsettings', ['set', schema, key, KID_GNOME_KEYS.find((k) => k[0] === schema && k[1] === key)[2]]);
+    if (saved.kde) { sh(saved.kde.tool, ['--file', 'kwinrc', '--group', 'ModifierOnlyShortcuts', '--key', 'Meta', '']); sh('qdbus', ['org.kde.KWin', '/KWin', 'reconfigure']) || sh('qdbus6', ['org.kde.KWin', '/KWin', 'reconfigure']); }
+    appendLog(`[kid] desktop shortcuts off (${saved.gnome.length} GNOME keys${saved.kde ? ', KDE Meta' : ''})`);
+  } else {
+    if (!existsSync(file)) return;
+    let saved = null;
+    try { saved = JSON.parse(readFileSync(file, 'utf8')); } catch { saved = null; }
+    for (const [schema, key, val] of (saved && saved.gnome) || []) sh('gsettings', ['set', schema, key, val]);
+    if (saved && saved.kde) { sh(saved.kde.tool, ['--file', 'kwinrc', '--group', 'ModifierOnlyShortcuts', '--key', 'Meta', saved.kde.meta || '']); sh('qdbus', ['org.kde.KWin', '/KWin', 'reconfigure']) || sh('qdbus6', ['org.kde.KWin', '/KWin', 'reconfigure']); }
+    try { unlinkSync(file); } catch { /* gone */ }
+    appendLog('[kid] desktop shortcuts restored');
+  }
+}
+app.on('will-quit', () => { kidKeys(false); kidKeysLinux(false); });
+// Left off by a crash or a kill: put the desktop's shortcuts back at the next start.
+app.whenReady().then(() => { if (!kidLocked) kidKeysLinux(false); }).catch(() => {});
+
+// Windows touchpad gestures (three and four fingers: task view, switch apps,
+// show the desktop) are the shell's own: switched off for this user while kid
+// mode is on (HKCU, no admin), and put back after.
+const KID_TOUCHPAD = ['ThreeFingerSlideEnabled', 'FourFingerSlideEnabled', 'ThreeFingerTapEnabled', 'FourFingerTapEnabled', 'ThreeFingerGestureSetting', 'FourFingerGestureSetting'];
+const KID_TP_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\PrecisionTouchPad';
+function kidTouchpad(on) {
+  if (process.platform !== 'win32') return;
+  const file = join(app.getPath('userData'), 'kid-touchpad-restore.json');
+  try {
+    if (on) {
+      if (existsSync(file)) return;
+      const saved = {};
+      for (const k of KID_TOUCHPAD) {
+        const out = sh('reg', ['query', KID_TP_KEY, '/v', k]);
+        const m = out && /REG_DWORD\s+0x([0-9a-f]+)/i.exec(out);
+        saved[k] = m ? parseInt(m[1], 16) : null;
+      }
+      writeFileSync(file, JSON.stringify(saved));
+      for (const k of KID_TOUCHPAD) sh('reg', ['add', KID_TP_KEY, '/v', k, '/t', 'REG_DWORD', '/d', '0', '/f']);
+      appendLog('[kid] touchpad gestures off');
+    } else {
+      if (!existsSync(file)) return;
+      let saved = {};
+      try { saved = JSON.parse(readFileSync(file, 'utf8')); } catch { saved = {}; }
+      for (const k of KID_TOUCHPAD) {
+        if (saved[k] == null) sh('reg', ['delete', KID_TP_KEY, '/v', k, '/f']);
+        else sh('reg', ['add', KID_TP_KEY, '/v', k, '/t', 'REG_DWORD', '/d', String(saved[k]), '/f']);
+      }
+      try { unlinkSync(file); } catch { /* gone */ }
+      appendLog('[kid] touchpad gestures restored');
+    }
+  } catch (err) { appendLog(`[kid] touchpad: ${err.message}`); }
+}
+app.on('will-quit', () => kidTouchpad(false));
+app.whenReady().then(() => { if (!kidLocked) kidTouchpad(false); }).catch(() => {});
+
+// The PC lock (the page asks the server; the window locks like kid mode):
+// Ctrl+Shift+L the visible lock, Super+Shift+L (the Windows key) the full one.
+// System-wide where the desktop allows it (not under Wayland); always while
+// the window has focus (wirePcLockKeys).
+function pcLockAsk(mode, by = 'shortcut') {
+  if (kidLocked) return;
+  showWindow();
+  try { mainWindow?.webContents.send('pc-lock', mode, by); } catch { /* no page */ }
+}
+// Auto lock: the page passes the setting on ({ on, minutes, mode }); after that
+// long with no keyboard or mouse anywhere on the PC (or when the OS locks), the
+// app locks itself. Once per idle stretch.
+let pcAuto = { on: false, minutes: 10, mode: 'full' };
+let pcAutoFired = false;
+ipcMain.handle('pc-lock:auto', (_e, a) => { pcAuto = { on: !!(a && a.on), minutes: Math.max(1, Number(a && a.minutes) || 10), mode: a && a.mode === 'visible' ? 'visible' : 'full' }; return true; });
+setInterval(() => {
+  if (!pcAuto.on) return;
+  let idle = 0;
+  try { idle = powerMonitor.getSystemIdleTime(); } catch { return; }
+  if (idle < 5) { pcAutoFired = false; return; }
+  if (!pcAutoFired && !kidLocked && idle >= pcAuto.minutes * 60) { pcAutoFired = true; appendLog(`[lock] auto lock after ${pcAuto.minutes} min idle`); pcLockAsk(pcAuto.mode, 'auto'); }
+}, 15000).unref?.();
+app.whenReady().then(() => { try { powerMonitor.on('lock-screen', () => { if (pcAuto.on && !kidLocked) pcLockAsk(pcAuto.mode, 'auto'); }); } catch { /* not on this OS */ } }).catch(() => {});
+app.whenReady().then(() => {
+  for (const [acc, mode] of [['CommandOrControl+Shift+L', 'visible'], ['Super+Shift+L', 'full']]) {
+    try { if (!globalShortcut.register(acc, () => pcLockAsk(mode))) appendLog(`[lock] ${acc} is taken by another app`); } catch (err) { appendLog(`[lock] ${acc}: ${err.message}`); }
+  }
+}).catch(() => {});
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch { /* gone */ } });
+function wirePcLockKeys(w) {
+  w.webContents.on('before-input-event', (e, input) => {
+    if (input.type !== 'keyDown' || kidLocked || !input.shift || String(input.key).toLowerCase() !== 'l') return;
+    if (input.meta && !input.control) { e.preventDefault(); pcLockAsk('full'); }
+    else if (input.control && !input.meta && !input.alt) { e.preventDefault(); pcLockAsk('visible'); }
+  });
+}
+
+// Whatever got past the keys (a gesture, task view, a shortcut the OS keeps):
+// while kid mode is on, the window comes straight back to the front.
+let kidWatch = null;
+function kidWatchdog(on) {
+  clearInterval(kidWatch); kidWatch = null;
+  if (!on) return;
+  kidWatch = setInterval(() => {
+    const w = mainWindow;
+    if (!kidLocked || !w || w.isDestroyed()) return;
+    try {
+      if (w.isMinimized()) w.restore();
+      if (!w.isVisible()) w.show();
+      if (!w.isFullScreen()) w.setFullScreen(true);
+      if (!w.isFocused()) { w.setAlwaysOnTop(true, 'screen-saver'); w.moveTop(); w.focus(); }
+    } catch { /* closing */ }
+  }, 700);
+}
+
+function kidLockWindow(on) {
+  const w = mainWindow;
+  if (!w || w.isDestroyed()) return { ok: false };
+  kidLocked = !!on;
+  appendLog(`[kid] window ${kidLocked ? 'locked' : 'unlocked'}`);
+  kidKeys(kidLocked);
+  kidKeysLinux(kidLocked);
+  kidTouchpad(kidLocked);
+  kidWatchdog(kidLocked);
+  try {
+    if (kidLocked) {
+      w.show();
+      w.setSkipTaskbar(true);
+      w.setAlwaysOnTop(true, 'screen-saver');
+      w.setFullScreen(true);
+      w.setKiosk(true);
+      w.setMinimizable(false);
+      w.setClosable(false);
+      w.focus();
+      if (w.webContents.isDevToolsOpened()) w.webContents.closeDevTools();
+    } else {
+      w.setKiosk(false);
+      w.setFullScreen(false);
+      w.setAlwaysOnTop(false);
+      w.setSkipTaskbar(false);
+      w.setMinimizable(true);
+      w.setClosable(true);
+    }
+  } catch (err) { appendLog(`[kid] lock: ${err.message}`); }
+  updateTrayMenu();
+  return { ok: true, locked: kidLocked };
+}
+
+/** Keys that would leave or break the kid screen. */
+function kidBlockedKey(input) {
+  const k = String(input.key || '').toLowerCase();
+  const mod = input.control || input.meta;
+  if (['f5', 'f11', 'f12', 'escape', 'browserback', 'browserforward', 'browserrefresh', 'browserhome'].includes(k)) return true;
+  if (input.alt && ['f4', 'arrowleft', 'arrowright', 'tab', 'home'].includes(k)) return true;
+  if (mod && ['r', 'w', 'q', 'n', 't', 'p', 'l', 'o', 's', 'u', 'h', 'j', 'f', 'm', '+', '-', '=', '0', 'tab'].includes(k)) return true;
+  if (mod && input.shift && ['i', 'j', 'c', 'delete'].includes(k)) return true;
+  if (input.meta || k === 'meta' || k === 'os') return true;
+  return false;
+}
+
+function wireKidLock(w) {
+  w.webContents.on('before-input-event', (e, input) => {
+    if (kidLocked && input.type === 'keyDown' && kidBlockedKey(input)) e.preventDefault();
+  });
+  w.webContents.on('devtools-opened', () => { if (kidLocked) w.webContents.closeDevTools(); });
+  w.on('blur', () => {
+    if (!kidLocked) return;
+    clearTimeout(kidRefocus);
+    kidRefocus = setTimeout(() => { if (kidLocked && !w.isDestroyed()) { w.show(); w.setAlwaysOnTop(true, 'screen-saver'); w.moveTop(); w.focus(); } }, 150);
+  });
+  w.on('leave-full-screen', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) w.setFullScreen(true); }, 100); });
+  w.on('minimize', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) { w.restore(); w.focus(); } }, 50); });
+  w.on('hide', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) { w.show(); w.focus(); } }, 50); });
+  w.on('minimize', () => { if (kidLocked && !w.isDestroyed()) { w.restore(); w.focus(); } });
+  w.on('hide', () => { if (kidLocked && !w.isDestroyed()) setTimeout(() => { if (kidLocked) w.show(); }, 100); });
+}
+ipcMain.handle('kid:lock', (_e, on) => kidLockWindow(!!on));
 
 // ─── Downloads ───
 //
@@ -276,6 +555,14 @@ function updateTrayMenu() {
     { label: statusLabels[botStatus] || 'Unknown', enabled: false },
     { type: 'separator' },
     { label: 'Open', click: () => showWindow() },
+    // Kid mode: the page asks the server (the PIN must be set there) and locks this window.
+    { label: 'Lock (visible)', enabled: !kidLocked, accelerator: 'CommandOrControl+Shift+L', click: () => pcLockAsk('visible') },
+    { label: 'Lock (full)', enabled: !kidLocked, accelerator: 'Super+Shift+L', click: () => pcLockAsk('full') },
+    {
+      label: kidLocked ? 'Locked' : 'Kid mode',
+      enabled: !kidLocked,
+      click: () => { showWindow(); try { mainWindow?.webContents.send('kid:start'); } catch { /* no page */ } },
+    },
     {
       // In remote mode the window goes straight to the other server, so this is
       // the way back to the local shell to change or clear that setting.
@@ -301,17 +588,20 @@ function updateTrayMenu() {
     },
     {
       label: 'Stop',
-      enabled: botStatus === 'running' || botStatus === 'starting',
+      enabled: !kidLocked && (botStatus === 'running' || botStatus === 'starting'),
       click: () => stopBot(),
     },
     { type: 'separator' },
+    ...voiceWakeTrayItems(),
     updateState.downloaded
       ? { label: 'Restart to Install Update', click: () => confirmAndInstall() }
       : { label: 'Check for Updates…', click: () => checkForUpdates(true) },
     { type: 'separator' },
     {
       label: 'Quit',
-      click: () => gracefulShutdownAndExit(),
+      // Not while the kid screen is locked: only the PIN ends it.
+      enabled: !kidLocked,
+      click: () => { if (!kidLocked) gracefulShutdownAndExit(); },
     },
   ]);
 
@@ -379,10 +669,16 @@ function readClientConfig() {
   } catch { return fallback; }
 }
 
+function readClientConfigRaw() {
+  try { const d = JSON.parse(readFileSync(clientConfigFile(), 'utf8')); return d && typeof d === 'object' ? d : {}; } catch { return {}; }
+}
+
 function writeClientConfig(cfg) {
   try {
     mkdirSync(dataDir, { recursive: true });
+    // Other settings live in the same file (voiceWake): keep them.
     writeFileSync(clientConfigFile(), JSON.stringify({
+      ...readClientConfigRaw(),
       mode: cfg.mode === 'remote' ? 'remote' : 'local',
       serverUrl: String(cfg.serverUrl || '').replace(/\/+$/, ''),
     }, null, 2));
@@ -518,6 +814,9 @@ function startBot() {
   const isDev = !app.isPackaged && process.argv.includes('--dev');
   if (isDev) { spawnEnv.CRUNDI_DEV = '1'; appendLog('[electron] DEV mode: port 8889, Cloudflare disabled'); }
   delete spawnEnv.NODE_OPTIONS;
+  // Which device this is, so the server never offers this PC's browser a
+  // homepool network this PC is itself a node of.
+  try { spawnEnv.CRUNDI_DEVICE_ID = hpDeviceId(); } catch { /* no data folder yet */ }
 
   try {
     botProcess = spawn(nodeExe, ['--no-deprecation', entryScript], {
@@ -646,6 +945,7 @@ async function gracefulShutdownAndExit() {
   quitting = true;
   app.isQuitting = true;
   appendLog('[lifecycle] Quitting — stopping services, terminals, and tunnels...');
+  try { voiceWake?.stop(); } catch { /* ignore */ }
   try { await stopServerProcess(); } catch { /* ignore */ }
   app.exit(0);
 }
@@ -1161,7 +1461,170 @@ function showSetupWizard(oldConfig) {
   }
 }
 
+// ─── "Hey Cru" while plugged in (D40) ───
+//
+// An always-on microphone option for the PC, off by default and kept in
+// client.json as voiceWake. It listens only on AC power, only while the voice
+// screen is closed, and on the PC alone: a local keyword spotter
+// (sherpa-onnx, WebAssembly) in a hidden window and a utility process, its
+// files fetched on first use into <userData>/voice-wake. All of it lives in
+// app/voice-wake/; loaded with import() so a build without that folder still
+// starts, just without the option.
+let voiceWake = null;
+let voiceWakeStatus = { enabled: false, state: 'unavailable', onBattery: false, installed: false, error: '', lastHeard: null };
+const voiceWakeModuleDir = join(appRoot, 'app', 'voice-wake');
+
+function readVoiceWakeSetting() { return readClientConfigRaw().voiceWake === true; }
+function saveVoiceWakeSetting(on) {
+  try {
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(clientConfigFile(), JSON.stringify({ ...readClientConfigRaw(), voiceWake: !!on }, null, 2));
+    return true;
+  } catch (err) {
+    appendLog(`[voice-wake] Could not save the setting: ${err.message}`);
+    return false;
+  }
+}
+
+async function startVoiceWake() {
+  try {
+    const { createVoiceWake } = await import(pathToFileURL(join(voiceWakeModuleDir, 'controller.js')).href);
+    voiceWake = createVoiceWake({
+      electron: { BrowserWindow, utilityProcess, powerMonitor, session, net, ipcMain },
+      moduleDir: voiceWakeModuleDir,
+      dataDir: join(app.getPath('userData'), 'voice-wake'),
+      getEnabled: readVoiceWakeSetting,
+      saveEnabled: saveVoiceWakeSetting,
+      getMainWindow: () => mainWindow,
+      bringToFront: () => bringToFront(),
+      log: appendLog,
+      onStatus: (s) => {
+        voiceWakeStatus = s;
+        updateTrayMenu();
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('voice-wake:status', s);
+      },
+    });
+    voiceWakeStatus = voiceWake.status();
+    updateTrayMenu();
+  } catch (err) {
+    appendLog(`[voice-wake] Not available: ${err?.stack || err}`);
+  }
+}
+
+const VOICE_WAKE_NOTE = {
+  installing: 'Downloading the wake word model…',
+  'on-battery': 'Paused: on battery',
+  'voice-open': 'Paused: voice screen open',
+  paused: 'Paused: screen locked',
+  starting: 'Starting…',
+  listening: 'Listening',
+};
+
+function voiceWakeTrayItems() {
+  if (!voiceWake) return [];
+  const s = voiceWakeStatus;
+  const note = s.enabled ? (s.state === 'error' ? 'Not listening: ' + String(s.error || 'error').slice(0, 80) : VOICE_WAKE_NOTE[s.state] || '') : '';
+  // Not trained yet: the setting cannot be turned on (it is trained in Settings).
+  const untrained = s.trained === false;
+  return [
+    { label: 'Listen for "Hey Cru" while plugged in', type: 'checkbox', checked: !!s.enabled, enabled: !untrained, click: (item) => { voiceWake?.set(item.checked); } },
+    ...(untrained ? [{ label: '    Train it first in Settings, Voice assistant', enabled: false }] : note ? [{ label: '    ' + note, enabled: false }] : []),
+    { type: 'separator' },
+  ];
+}
+
+ipcMain.handle('voice-wake:get', () => !!(voiceWake ? voiceWake.get() : readVoiceWakeSetting()));
+ipcMain.handle('voice-wake:set', (_e, on) => voiceWake ? voiceWake.set(!!on) : { ...voiceWakeStatus, error: 'Not available in this build' });
+ipcMain.handle('voice-wake:status', () => voiceWake ? voiceWake.status() : voiceWakeStatus);
+// Training "Hey Cru" from the owner's voice: the page records, these check,
+// train and keep the profile (app/voice-wake/controller.js).
+const VOICE_WAKE_MISSING = { ok: false, why: 'Not available in this build', redo: [] };
+ipcMain.handle('voice-wake:check', (_e, samples) => voiceWake ? voiceWake.check(samples) : VOICE_WAKE_MISSING);
+ipcMain.handle('voice-wake:train-begin', () => voiceWake ? voiceWake.trainBegin() : { ...voiceWakeStatus, error: 'Not available in this build' });
+ipcMain.handle('voice-wake:train-end', () => voiceWake ? voiceWake.trainEnd() : voiceWakeStatus);
+ipcMain.handle('voice-wake:train', (_e, recordings) => voiceWake ? voiceWake.train(recordings) : VOICE_WAKE_MISSING);
+ipcMain.handle('voice-wake:forget', () => voiceWake ? voiceWake.forget() : { ...voiceWakeStatus, error: 'Not available in this build' });
+
 // ─── IPC Handlers ───
+
+// ─── Homepool: this PC as a node (docs/homepool.md) ───
+//
+// Off until the owner switches it on from the Homepool tab. The key is the
+// node's own (hpn_…), not a sign-in: it lets this PC lend its connection to
+// that one server and nothing else. Kept in userData, readable only by this
+// user; the node itself refuses to open anything on this PC's own network.
+const HOMEPOOL_FILE = () => join(app.getPath('userData'), 'homepool-node.json');
+let hpNode = null;
+let hpLog = [];
+let hpIp = '';
+let hpIpTimer = null;
+function hpRead() {
+  try { return JSON.parse(readFileSync(HOMEPOOL_FILE(), 'utf8')) || {}; } catch { return {}; }
+}
+function hpWrite(cfg) {
+  try { writeFileSync(HOMEPOOL_FILE(), JSON.stringify(cfg, null, 2), { mode: 0o600 }); } catch (err) { appendLog(`[homepool] could not save: ${err.message}`); }
+}
+function hpDeviceId() {
+  const cfg = hpRead();
+  if (cfg.deviceId) return cfg.deviceId;
+  cfg.deviceId = 'pc-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  hpWrite(cfg);
+  return cfg.deviceId;
+}
+function hpAddLog(line) {
+  hpLog.push(`${new Date().toTimeString().slice(0, 8)}  ${line}`);
+  if (hpLog.length > 60) hpLog = hpLog.slice(-60);
+}
+async function hpRefreshIp() {
+  try {
+    const r = await fetch('https://api.ipify.org', { signal: AbortSignal.timeout(10000) });
+    if (r.ok) { const ip = (await r.text()).trim(); if (ip && ip !== hpIp) { hpIp = ip; hpNode?.sendInfo(); } }
+  } catch { /* offline: try again later */ }
+}
+function hpStart() {
+  const cfg = hpRead();
+  if (!cfg.server || !cfg.key || hpNode) return;
+  hpNode = startHomepoolNode({
+    server: cfg.server, key: cfg.key,
+    info: () => ({ platform: process.platform === 'win32' ? 'windows' : process.platform, app: 'crundi-desktop', version: app.getVersion(), network: 'PC', publicIp: hpIp }),
+    onState: (s, d) => { hpAddLog(s + (d ? ` (${d})` : '')); if (s === 'refused') { const c = hpRead(); c.enabled = false; hpWrite(c); hpNode = null; } },
+    onLog: (l) => { hpAddLog(l); appendLog(`[homepool] ${l}`); },
+  });
+  hpRefreshIp();
+  clearInterval(hpIpTimer);
+  hpIpTimer = setInterval(hpRefreshIp, 10 * 60 * 1000);
+  hpIpTimer.unref?.();
+}
+function hpStop() {
+  clearInterval(hpIpTimer); hpIpTimer = null;
+  if (hpNode) { try { hpNode.stop(); } catch { /* already down */ } hpNode = null; }
+}
+function hpStatus() {
+  const cfg = hpRead();
+  const st = hpNode ? hpNode.status() : null;
+  return {
+    supported: true, configured: !!(cfg.server && cfg.key), enabled: !!cfg.enabled, server: cfg.server || '',
+    deviceId: hpDeviceId(), name: (() => { try { return osHostname(); } catch { return 'PC'; } })(),
+    state: st ? st.state : (cfg.enabled ? 'stopped' : 'off'), connectedAt: st ? st.connectedAt : 0,
+    node: st ? st.node : null, streams: st ? st.streams : 0, bytesUp: st ? st.bytesUp : 0, bytesDown: st ? st.bytesDown : 0,
+    opened: st ? st.opened : 0, serverView: st ? st.server : null, publicIp: hpIp, log: hpLog.slice(-25),
+  };
+}
+ipcMain.handle('homepool:status', () => hpStatus());
+ipcMain.handle('homepool:share', (_e, c) => {
+  const server = String(c?.server || '').replace(/\/+$/, '');
+  const key = String(c?.key || '');
+  if (!/^https?:\/\//.test(server) || !/^hpn_/.test(key)) return { ok: false, error: 'Bad node settings.' };
+  hpStop();
+  hpWrite({ ...hpRead(), server, key, enabled: true });
+  hpStart();
+  return { ok: true, status: hpStatus() };
+});
+ipcMain.handle('homepool:start', () => { const c = hpRead(); if (!c.key) return { ok: false, error: 'Not set up.' }; c.enabled = true; hpWrite(c); hpStart(); return { ok: true, status: hpStatus() }; });
+ipcMain.handle('homepool:stop', () => { const c = hpRead(); c.enabled = false; hpWrite(c); hpStop(); return { ok: true, status: hpStatus() }; });
+ipcMain.handle('homepool:forget', () => { hpStop(); const c = hpRead(); hpWrite({ deviceId: c.deviceId }); return { ok: true, status: hpStatus() }; });
+app.whenReady().then(() => { if (hpRead().enabled) hpStart(); }).catch(() => {});
+app.on('before-quit', () => hpStop());
 
 // ─── Client / native-host IPC ───
 
@@ -1263,6 +1726,8 @@ ipcMain.handle('bot:stop', () => stopBot());
 ipcMain.handle('bot:restart', () => { stopBot(); setTimeout(startBot, 2000); });
 
 ipcMain.handle('window:minimize', () => mainWindow?.minimize());
+// Cru has a question for the owner (a chat waits on them): to the front, as Hey Cru does.
+ipcMain.handle('window:show', () => showWindow());
 ipcMain.handle('window:maximize', () => {
   if (mainWindow?.isMaximized()) mainWindow.unmaximize();
   else mainWindow?.maximize();
@@ -1369,7 +1834,8 @@ ipcMain.handle('wbrowser:emulate', async (_e, id, config, scale) => {
         deviceScaleFactor: config.deviceScaleFactor || 0, mobile: !!config.mobile,
         scale: scale || 1, screenWidth: config.width, screenHeight: config.height,
       });
-      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: !!config.mobile, maxTouchPoints: config.mobile ? 5 : 0 });
+      // maxTouchPoints must be 1-16 even when switching touch off.
+      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', config.mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
       await wc.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: !!config.mobile, configuration: 'mobile' });
       if (deviceChanged) {
         await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: config.ua || (config.mobile ? BROWSER_MOBILE_UA : '') });
@@ -1380,7 +1846,7 @@ ipcMain.handle('wbrowser:emulate', async (_e, id, config, scale) => {
       try { wc.setZoomFactor(1); } catch { /* ignore */ }
       if (wc.debugger.isAttached()) {
         try { await wc.debugger.sendCommand('Emulation.setEmitTouchEventsForMouse', { enabled: false }); } catch { /* ignore */ }
-        try { await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: false, maxTouchPoints: 0 }); } catch { /* ignore */ }
+        try { await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: false }); } catch { /* ignore */ }
         try { await wc.debugger.sendCommand('Emulation.setUserAgentOverride', { userAgent: '' }); } catch { /* ignore */ }
         try { await wc.debugger.sendCommand('Emulation.clearDeviceMetricsOverride'); } catch { /* ignore */ }
         try { wc.debugger.detach(); } catch { /* ignore */ }
@@ -1486,7 +1952,7 @@ function browserActionTimeout(msg) {
   // browser_wait runs up to msg.timeout in-page; give it that plus a small buffer.
   if (msg.type === 'browserWait') return (msg.timeout || 30000) + 3000;
   // Navigation can legitimately take a while to finish loading.
-  if (msg.type === 'browserOpen' || msg.type === 'browserNavigate') return 30000;
+  if (msg.type === 'browserOpen' || msg.type === 'browserNavigate' || msg.type === 'browserDrawerOpen' || msg.type === 'browserDrawerSetNetwork') return 35000;
   return 25000;
 }
 
@@ -1537,6 +2003,8 @@ function handleBotMessage(msg, reply) {
 
   // Fire-and-forget: no requestId, nothing to reply to.
   if (msg.type === 'notify') { showServerNotification(msg); return; }
+  // Drawer tabs on a homepool network, with the bundled server: tunnel frames.
+  if (msg.type === 'netTunnel' && !reply) { if (typeof msg.b64 === 'string') routeTunnelFrame(Buffer.from(msg.b64, 'base64')); return; }
   // The server wants a fresh start (to apply a restored backup). Stopping it
   // and starting it again from here is the only way it can get one.
   if (msg.type === 'restart-server') {
@@ -1550,7 +2018,14 @@ function handleBotMessage(msg, reply) {
   if (!msg.requestId) return;
   const handler = browserIpcHandlers[msg.type];
   if (handler) {
-    withTimeout(handler(msg), browserActionTimeout(msg), msg.type).then(result => {
+    // A drawer tab: make sure it exists (the page may need to load it) and
+    // belongs to the project asking, before any handler touches it.
+    const run = isDrawerKey(msg.key) && msg.type !== 'browserClose' && msg.type !== 'browserResize'
+      ? browserDrawer.prepare(msg).then(() => handler(msg))
+      : handler(msg);
+    withTimeout(run, browserActionTimeout(msg), msg.type).then(result => {
+      // A drawer tab's saved or typed passwords never go back to a chat.
+      if (isDrawerKey(msg.key)) result = browserDrawer.redact(msg.key, result);
       send({ type: 'browserResult', requestId: msg.requestId, ...result });
     }).catch(err => {
       send({ type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message });
@@ -1640,13 +2115,20 @@ function connectNativeHost() {
     appendLog('[nativehost] connected — registering as native host');
     // Tell the server what this build can do, so it does not offer the user a
     // notification channel that an older app would silently drop.
-    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify'] })); }
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer', 'browser-mouse'], deviceId: hpDeviceId() })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
-  ws.on('message', (raw) => {
+  ws.on('message', (raw, isBinary) => {
     if (!isCurrent()) return;
+    // Binary frames are the drawer's server-network streams (net-tunnel-client.js).
+    if (isBinary) { routeTunnelFrame(raw); return; }
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
-    if (m.type === 'native-host-ready') { appendLog('[nativehost] registered'); return; }
+    if (m.type === 'native-host-ready') {
+      hostFeatures = Array.isArray(m.features) ? m.features : [];
+      appendLog(`[nativehost] registered${hostFeatures.length ? ' (server offers ' + hostFeatures.join(', ') + ')' : ''}`);
+      browserDrawer.notifyInfo();
+      return;
+    }
     if (m.type !== 'native-host') return;
     handleNativeHostMessage(m.payload, (payload) => {
       if (ws.readyState !== 1) return;
@@ -1658,6 +2140,9 @@ function connectNativeHost() {
     // An old socket closing must not null out the connection that replaced it.
     if (!isCurrent()) return;
     hostWs = null;
+    hostFeatures = [];
+    serverNet.dropped();
+    browserDrawer.notifyInfo();
     if (!hostClosing) { appendLog('[nativehost] disconnected'); scheduleHostRetry(); }
   });
   ws.on('error', (err) => appendLog(`[nativehost] socket error: ${err.message}`));
@@ -1667,6 +2152,100 @@ function scheduleHostRetry() {
   clearTimeout(hostRetry);
   // The server may simply be restarting; keep trying, but not in a tight loop.
   hostRetry = setTimeout(connectNativeHost, 5000);
+}
+
+// Touch, pointer and mouse listeners on the element under (x, y) and every
+// ancestor up to window — what the page has wired to receive a gesture there.
+// Only DevTools can list listeners, hence CDP rather than page script. Kept
+// identical in app/main.js and src/browser-headless.js.
+async function touchListenersAt(send, x, y) {
+  const GROUP = 'crundi-touch';
+  const TYPES = /^(touch|pointer|mouse|click|dblclick|contextmenu|wheel|gesture|drag)/;
+  try {
+    const arr = await send('Runtime.evaluate', {
+      objectGroup: GROUP, returnByValue: false,
+      expression: `(function(){var a=[],el=document.elementFromPoint(${Math.round(x)},${Math.round(y)});`
+        + 'while(el){a.push(el);el=el.parentElement||(el.getRootNode&&el.getRootNode().host)||null;}'
+        + 'a.push(document,window);return a;})()',
+    });
+    if (!arr?.result?.objectId) return [];
+    const props = await send('Runtime.getProperties', { objectId: arr.result.objectId, ownProperties: true });
+    const items = (props.result || []).filter((p) => /^\d+$/.test(p.name) && p.value?.objectId)
+      .sort((a, b) => a.name - b.name);
+    const out = [];
+    for (const it of items) {
+      const res = await send('DOMDebugger.getEventListeners', { objectId: it.value.objectId });
+      // Not our own probe's listeners (browser-touch.js names them crundiTouch*).
+      const ls = (res.listeners || []).filter((l) => TYPES.test(l.type)
+        && !/crundiTouch/.test(String(l.handler?.description || '')));
+      if (!ls.length) continue;
+      out.push({
+        el: it.value.description || it.value.className || '?',
+        listeners: ls.map((l) => ({
+          type: l.type,
+          ...(l.useCapture ? { capture: true } : {}),
+          ...(l.passive ? { passive: true } : {}),
+          handler: String(l.handler?.description || '').replace(/\s+/g, ' ').slice(0, 120),
+        })),
+      });
+    }
+    return out;
+  } catch (err) {
+    return [{ error: `listeners unavailable: ${err.message}` }];
+  } finally {
+    send('Runtime.releaseObjectGroup', { objectGroup: GROUP }).catch(() => {});
+  }
+}
+
+// ─── The browser drawer (see app/browser-drawer.js) ───
+//
+// "Server network" for a drawer tab: with the server on this machine it is
+// simply this machine's network; with a remote server, the tab's partition is
+// proxied through a loopback-only proxy whose streams ride the native-host
+// websocket (net-tunnel-client.js), so the server opens no port and this
+// machine exposes none.
+let hostFeatures = [];          // what the remote server offers (native-host-ready)
+const serverNet = createDrawerNet({
+  isRemote: () => readClientConfig().mode === 'remote',
+  remoteUp: () => !!(hostWs && hostWs.readyState === 1),
+  remoteFeatures: () => hostFeatures,
+  sendRemote: (buf) => hostWs.send(buf, { binary: true }),
+  localUp: () => !!botProcess,
+  // The bundled server: the same frames over its IPC channel.
+  sendLocal: (buf) => botProcess.send({ type: 'netTunnel', b64: buf.toString('base64') }),
+  sessionFor: (part) => session.fromPartition(part),
+  partitionOf,
+  log: appendLog,
+});
+function routeTunnelFrame(buf) { serverNet.handleFrame(buf); }
+// The proxies ask for their password; only ever answered for our own.
+app.on('login', (event, _wc, _details, authInfo, callback) => {
+  const c = serverNet.login(authInfo);
+  if (c) { event.preventDefault(); callback(c.user, c.pass); }
+});
+const browserDrawer = createBrowserDrawer({
+  ipcMain,
+  getWindow: () => mainWindow,
+  log: appendLog,
+  loadUrl: (wc, url) => loadUrlWithGrace(wc, url),
+  serverNet,
+  // How long a tab nobody is looking at or using stays awake (default 5 min).
+  freezeAfterMs: Number(process.env.CRUNDI_DRAWER_SLEEP_MS) || undefined,
+  // How long a tab stays asleep before it is unloaded to free its memory (default 1 h).
+  discardAfterMs: Number(process.env.CRUNDI_DRAWER_UNLOAD_MS) || undefined,
+  historyFile: join(app.getPath('userData'), 'drawer-history.json'),
+  // Saved passwords, on this computer only, encrypted with the OS's protection
+  // for this user (as Chrome keeps them). Read only once the app is ready.
+  passwords: createPasswordStore({
+    file: join(app.getPath('userData'), 'drawer-passwords.json'),
+    encrypt: (str) => safeStorage.encryptString(str),
+    decrypt: (buf) => safeStorage.decryptString(buf),
+    backend: () => safeStorageBackend(safeStorage),
+  }),
+});
+/** A hidden browser window's entry, or a drawer tab's (same shape for the handlers below). */
+function browserEntry(key) {
+  return browserWindows.get(key) || browserDrawer.getEntry(key);
 }
 
 const browserIpcHandlers = {
@@ -1752,25 +2331,27 @@ const browserIpcHandlers = {
   },
 
   async browserClose(msg) {
+    if (isDrawerKey(msg.key)) return browserDrawer.close(msg);
     const entry = browserWindows.get(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     // Release the per-instance webRequest listeners so closures don't pin the
     // destroyed window's session.
     try { entry.ses.webRequest.onBeforeSendHeaders(null); entry.ses.webRequest.onCompleted(null); entry.ses.webRequest.onErrorOccurred(null); } catch { /* ignore */ }
+    clearTimeout(entry.castTimer);
     try { entry.win.destroy(); } catch { /* ignore */ }
     browserWindows.delete(msg.key);
     return { ok: true };
   },
 
   async browserNavigate(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await loadUrlWithGrace(entry.win.webContents, msg.url);
     return { ok: true, url: entry.win.webContents.getURL() };
   },
 
   async browserScreenshot(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const image = await entry.win.webContents.capturePage();
     const buf = image.toPNG();
@@ -1778,7 +2359,7 @@ const browserIpcHandlers = {
   },
 
   async browserReadPage(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const wc = entry.win.webContents;
     const html = await wc.executeJavaScript(`
@@ -1802,14 +2383,14 @@ const browserIpcHandlers = {
   },
 
   async browserSource(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const html = await entry.win.webContents.executeJavaScript('document.documentElement.outerHTML');
     return { ok: true, html };
   },
 
   async browserClick(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(
       `document.querySelector(${JSON.stringify(msg.selector)})?.click()`
@@ -1818,7 +2399,7 @@ const browserIpcHandlers = {
   },
 
   async browserType(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     if (msg.selector) {
       await entry.win.webContents.executeJavaScript(
@@ -1830,7 +2411,7 @@ const browserIpcHandlers = {
   },
 
   async browserFill(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(`
       (function() {
@@ -1846,7 +2427,7 @@ const browserIpcHandlers = {
   },
 
   async browserSelect(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(`
       (function() {
@@ -1860,26 +2441,72 @@ const browserIpcHandlers = {
   },
 
   async browserEval(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const result = await entry.win.webContents.executeJavaScript(msg.code);
     return { ok: true, result: typeof result === 'string' ? result : JSON.stringify(result) };
   },
 
+  // Real mouse input through the debugger (app/browser-pointer.js), so it
+  // reaches cross-site frames too; a drawer tab shows the chat's cursor.
   async browserMouse(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const wc = entry.win.webContents;
-    if (msg.action === 'click') {
-      wc.sendInputEvent({ type: 'mouseDown', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
-      wc.sendInputEvent({ type: 'mouseUp', x: msg.x, y: msg.y, button: 'left', clickCount: 1 });
-    } else {
-      wc.sendInputEvent({ type: 'mouseMove', x: msg.x, y: msg.y });
+    _attachDbg(wc);
+    entry.pointer = entry.pointer || {};
+    const show = isDrawerKey(msg.key) ? (p) => browserDrawer.cursor(msg.key, p) : null;
+    try {
+      const r = await runMouse({ send: (m, p) => wc.debugger.sendCommand(m, p), state: entry.pointer, show, msg });
+      return { ok: true, url: wc.getURL(), ...r };
+    } catch (err) {
+      return { ok: false, error: err.message };
     }
-    return { ok: true };
+  },
+
+  // Replays a gesture planned by the server (browser.js planTouch): a list of
+  // CDP touch events, each followed by a wait. sendInputEvent has no touch
+  // events, so this goes through the debugger, with touch emulation switched
+  // on first so the page sees a touch device.
+  async browserTouch(msg) {
+    const entry = browserEntry(msg.key);
+    if (!entry) return { ok: false, error: 'Browser not found' };
+    const wc = entry.win.webContents;
+    _attachDbg(wc);
+    if (!entry.touch) {
+      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+      entry.touch = true;
+    }
+    // A hidden window produces no frames, so a fling or a scroll-snap stops
+    // dead where the finger lifted and a carousel looks broken when a phone
+    // would snap it. A tiny DevTools screencast makes it render; it runs
+    // through the gesture and a while after, for the server's settle check.
+    if (!entry.castHooked) {
+      entry.castHooked = true;
+      wc.debugger.on('message', (_e, method, params) => {
+        if (method === 'Page.screencastFrame') wc.debugger.sendCommand('Page.screencastFrameAck', { sessionId: params.sessionId }).catch(() => {});
+      });
+    }
+    clearTimeout(entry.castTimer);
+    try { await wc.debugger.sendCommand('Page.startScreencast', { format: 'jpeg', quality: 1, maxWidth: 40, maxHeight: 80 }); } catch { /* render as before */ }
+    const listeners = msg.listenersAt
+      ? await touchListenersAt((m, p) => wc.debugger.sendCommand(m, p), msg.listenersAt.x, msg.listenersAt.y)
+      : undefined;
+    for (const st of msg.steps || []) {
+      await wc.debugger.sendCommand('Input.dispatchTouchEvent', {
+        type: st.type,
+        touchPoints: (st.points || []).map((pt) => ({ x: pt.x, y: pt.y, id: pt.id })),
+      });
+      if (st.wait > 0) await new Promise((r) => setTimeout(r, st.wait));
+    }
+    entry.castTimer = setTimeout(() => {
+      if (!wc.isDestroyed()) wc.debugger.sendCommand('Page.stopScreencast').catch(() => {});
+    }, 1500);
+    return { ok: true, url: wc.getURL(), listeners };
   },
 
   async browserResize(msg) {
+    if (isDrawerKey(msg.key)) return browserDrawer.resize(msg);
     const entry = browserWindows.get(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     entry.win.setContentSize(msg.width, msg.height);
@@ -1887,7 +2514,7 @@ const browserIpcHandlers = {
   },
 
   async browserScroll(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     await entry.win.webContents.executeJavaScript(`
       (function() {
@@ -1899,7 +2526,7 @@ const browserIpcHandlers = {
   },
 
   async browserWait(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const timeout = msg.timeout || 30000;
     const result = await entry.win.webContents.executeJavaScript(`
@@ -1917,21 +2544,21 @@ const browserIpcHandlers = {
   },
 
   async browserGoBack(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     entry.win.webContents.goBack();
     return { ok: true };
   },
 
   async browserGoForward(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     entry.win.webContents.goForward();
     return { ok: true };
   },
 
   async browserConsole(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     let logs = entry.consoleLogs;
     if (msg.countOnly) return { ok: true, count: logs.length };
@@ -1943,7 +2570,7 @@ const browserIpcHandlers = {
   },
 
   async browserNetwork(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     if (msg.action === 'start') { entry.recording = true; entry.networkEntries = []; return { ok: true, recording: true }; }
     if (msg.action === 'stop') { entry.recording = false; return { ok: true, recording: false }; }
@@ -1958,7 +2585,7 @@ const browserIpcHandlers = {
   },
 
   async browserCookies(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const ses = entry.win.webContents.session;
     if (!msg.action || msg.action === 'get') {
@@ -1979,7 +2606,7 @@ const browserIpcHandlers = {
   },
 
   async browserSnapshot(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const tree = await entry.win.webContents.executeJavaScript(`
       (function walk(el, depth) {
@@ -1996,7 +2623,7 @@ const browserIpcHandlers = {
   },
 
   async browserElements(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const sel = msg.selector || 'a,button,input,select,textarea,[role="button"],[onclick]';
     const elements = await entry.win.webContents.executeJavaScript(`
@@ -2015,7 +2642,7 @@ const browserIpcHandlers = {
   },
 
   async browserPdf(msg) {
-    const entry = browserWindows.get(msg.key);
+    const entry = browserEntry(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
     const buf = await entry.win.webContents.printToPDF({
       landscape: msg.landscape || false,
@@ -2024,6 +2651,9 @@ const browserIpcHandlers = {
     return { ok: true, data: Buffer.from(buf).toString('base64') };
   },
 };
+
+// The drawer's own server calls (list, open, annotate, network...).
+Object.assign(browserIpcHandlers, browserDrawer.handlers);
 
 // ─── App Lifecycle ───
 
@@ -2065,6 +2695,7 @@ app.whenReady().then(() => {
   } catch (err) {
     appendLog(`[lifecycle] Window error: ${err.message}`);
   }
+  startVoiceWake();
   try {
     startBot();
     appendLog('[lifecycle] startBot() called');

@@ -1,0 +1,18 @@
+<div class="wna a-cv">
+  <div class="msg">voice input: what is left on the release checklist</div>
+  <div class="say">"Two items, Sir: the Android build and the notes."</div>
+  <div class="bar"><span class="in"></span><span class="mic"><i></i></span><span class="send">Send</span></div>
+  <style>
+    .a-cv{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary)}
+    .a-cv .msg{position:absolute;right:170px;top:50px;max-width:260px;padding:9px 12px;border-radius:10px;background:var(--bg-secondary);border:1px solid var(--accent);font-size:13px;opacity:0;animation:acv-m 8s ease infinite}
+    .a-cv .say{position:absolute;left:170px;top:120px;font-size:14px;color:var(--text-secondary);font-style:italic;opacity:0;animation:acv-s 8s ease infinite}
+    .a-cv .bar{position:absolute;left:170px;right:170px;top:210px;display:flex;gap:8px;align-items:center}
+    .a-cv .in{flex:1;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary)}
+    .a-cv .mic{width:34px;height:30px;border-radius:8px;background:var(--accent);display:flex;align-items:center;justify-content:center;animation:acv-p 1.6s ease infinite}
+    .a-cv .mic i{width:8px;height:13px;border-radius:5px;border:2px solid #fff;box-sizing:border-box}
+    .a-cv .send{padding:6px 16px;border-radius:8px;background:var(--accent);color:#fff;font-size:13px;opacity:.6}
+    @keyframes acv-p{0%,100%{box-shadow:0 0 0 0 rgba(124,108,240,.5)}50%{box-shadow:0 0 0 6px rgba(124,108,240,0)}}
+    @keyframes acv-m{0%,20%{opacity:0;transform:translateY(6px)}30%,92%{opacity:1;transform:none}100%{opacity:0}}
+    @keyframes acv-s{0%,45%{opacity:0}55%,92%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

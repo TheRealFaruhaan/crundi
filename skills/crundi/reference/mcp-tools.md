@@ -28,6 +28,7 @@ long-lived. See `platform-linux.md` / `platform-windows.md`.
 | `show_audio` | An audio player in the chat. Same arguments. MP3/WAV/OGG/M4A/FLAC/WebM, 60 MB each; copied. |
 | `show_file` | A download card in the chat: the file's icon, name, size and a Download button. Same arguments, any file. Not copied: it downloads the file as it is when the button is pressed. |
 | `show_embed` | A live, sandboxed frame in the chat. `url`: an ordinary https link; YouTube, Vimeo, Dailymotion, Loom, X, Instagram, TikTok, Facebook, Reddit, Spotify, SoundCloud, CodePen, gists and Google Maps embed links become proper embeds, anything else is framed as it is (many sites refuse). `html`: your own HTML/CSS/JS (max 512 KB), which cannot read files or call Crundi. Optional `title`, `caption`, `height` (80 to 1200). |
+| `speak` | Say something aloud to the person in this chat, in Crundi's voice. Only for a message that starts with "voice input:" (spoken in the chat's voice mode): a short spoken version of the answer, one to three sentences of plain speech. `text`. The written answer still goes in the chat. |
 
 The four `show_*` tools exist only in chat (UI) mode, in owner chats. **Prefer them over the `send_*_to_user` tools whenever the person is in the chat**: `send_*` goes to Telegram and is for reaching someone who is not looking.
 | `send_file_to_user` | Any file by path. Attached on Telegram up to 50 MB (a link beyond that); always returns a 30-minute download link and says how it was delivered. If nothing went out of band, put the link in your reply. |
@@ -57,18 +58,78 @@ thing behind it has its own authentication.
 
 ## Browser
 
+Use the browser drawer first: when `browser_list` says it is available, open a
+drawer tab with `browser_drawer_open`, unless told otherwise; else `on: "server"`. A dev server on this
+machine needs no forward: a drawer tab with `network: "server"` (or
+`on: "server"`) opens `http://127.0.0.1:<port>` directly. Use the person's own
+network only when they ask to test through it. When the PC app runs on this
+same machine (server network "Server (this PC)"), client and server are one
+network. For a phone or tablet layout, `browser_resize` the drawer tab to the
+device's size (it keeps a desktop user agent; the person can pick a full device
+profile in the drawer's device menu).
+
 `browser_open` (`url`, `name?`, `width?`, `height?`, `on?`) returns a `key` used
 by all the rest. Max 5 per project. `on` is `"server"` (this machine: its
 localhost is your dev servers) or `"desktop"` (the person's connected desktop
 app, on their network); omitted, the desktop app when one is connected. Every
 later call on that key runs in the same place; `browser_list` shows where.
 
+Drawer tabs: `browser_drawer_open` (`url`, `network?`, `show?`), the same as
+`browser_open` with `on: "drawer"`, opens a visible tab in this project's browser drawer
+in the PC client (`network?`: `"client"` default, `"server"`, or `"homepool:<network>"`, which asks the owner first; `show?`).
+`browser_list` also returns the drawer tabs the person opened (key
+`drawer:<id>`, `network`, `active`, `shown`). Drawer-only tools:
+`browser_point` (`key`, `x`/`y` or `selector`, `label?`, `show?`),
+`browser_annotate` (`key`, `shapes`: `{ kind: pin|box|arrow|label, x, y, width?,
+height?, toX?, toY?, selector?, text? }`, `clear?`, `show?`),
+`browser_annotations` (`key`, `image?`: the person's and your marks, the element
+under each, and an annotated screenshot), `browser_tab_network` (`key`,
+`network`: the page reloads on the new network). Coordinates are page CSS pixels
+in the viewport. Collaborators' chats cannot use the drawer.
+
 Navigation: `browser_navigate`, `browser_go_back`, `browser_go_forward`,
 `browser_wait` (`selector`, `timeout?`), `browser_close`, `browser_list`.
 
-Interaction: `browser_click` (`selector`), `browser_type` (`text`, `selector?`),
-`browser_fill` (`selector`, `value`), `browser_select` (`selector`, `value`),
-`browser_mouse` (`x`, `y`, `action`), `browser_scroll`, `browser_resize`.
+Interaction: `browser_click` (`selector`; or `text` with `role?` and `within?`,
+as a person names it, e.g. text "Add to Shopping List", role button, and an
+open dialog is searched first; or `x`,`y` for a real mouse click; `nth` picks
+among several matches). It returns what it clicked (tag, role, text, x, y) and
+warns when something covers it: check it is what you meant. When nothing
+matches it lists what is clickable. `browser_type` (`text`, `selector?`),
+`browser_fill` (`selector`, `value`), `browser_select` (`selector` or `label`;
+`value`: the option's text or value, or `index`; a native `<select>`'s list
+would not stay open, so a mouse click on one has Crundi draw its options in
+the page, for the person or you to click; or choose with this),
+`browser_mouse`, `browser_scroll`, `browser_resize`.
+
+Mouse: `browser_mouse` (`x`, `y`, `action`: move \| click \| double_click \|
+down \| up \| drag; `button` left \| right \| middle; `drag` takes `toX`/`toY`
+and `duration`). It is real mouse input, hit-tested like a person's mouse, so
+it reaches what selectors cannot: a cross-site `<iframe>` (a CodePen or
+JSFiddle preview, an embedded payment or sign-in form), a canvas, a slider. The
+pointer remembers where it is and which button is held, so `down`, any number
+of `move`s and `up` (with or without a point) can be separate calls; moves
+while held send the whole path, as a drag needs. In a drawer tab the person
+sees your cursor glide to each point, press and release; it hides by itself a
+moment after you stop, and stays while a button is held, so release it when
+you are done.
+
+Touch: `browser_touch` (`x`, `y`, `action`: tap \| double_tap \| long_press \|
+swipe \| pinch). A swipe takes `toX`/`toY`, or `direction` (where the finger
+moves: `"up"` scrolls the content down) and `distance`; a short `duration`
+flings, a long one drags. A pinch takes `scale` around `x`,`y`. Use it for
+carousels, bottom sheets, pull-to-refresh, swipe-to-dismiss: anything that
+listens for touch or pointer events from a finger, which `browser_mouse` and
+`browser_scroll` never fire. Resize to a phone size first; the first touch
+turns on touch emulation, so reload if the page only checks for touch at load.
+
+Every `browser_touch` returns a `report` of what took the gesture; read
+`report.summary` first. It names the element under the finger (and any overlay
+on top of the one you meant), `touch-action` up to the nearest scroller, each
+`preventDefault` / `stopPropagation` / `setPointerCapture` made during the
+gesture with the script line that made it, the touch and pointer listeners on
+that path (`report.listeners`), and what actually scrolled, moved or zoomed.
+When a swipe "does nothing", this is how to find out what swallowed it.
 
 Inspection: `browser_eval` (`code`), `browser_snapshot` (accessibility tree),
 `browser_elements`, `browser_read_page`, `browser_view_source`,

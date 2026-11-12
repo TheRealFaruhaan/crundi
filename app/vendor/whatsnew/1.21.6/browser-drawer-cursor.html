@@ -1,0 +1,40 @@
+<div class="wna a-brdc">
+  <div class="pg">
+    <i class="h"></i><i class="l1"></i><i class="l2"></i>
+    <div class="frame"><i class="fl"></i><i class="fb"></i></div>
+    <div class="track"><i class="fill"></i><i class="knob"></i></div>
+    <span class="rip"></span>
+    <div class="cur"><span class="ring"></span><svg viewBox="0 0 24 24"><path d="M5 2v16.4l4.2-4 2.8 6.4 3-1.3-2.8-6.3h5.9z"/></svg><span class="tag">Claude</span></div>
+  </div>
+  <style>
+    .a-brdc{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-brdc .pg{position:absolute;left:60px;top:30px;width:520px;height:340px;border-radius:10px;background:#f4f4f8;border:1px solid var(--border);overflow:hidden}
+    .a-brdc .pg>i{position:absolute;left:28px;border-radius:4px;background:#c9cad6}
+    .a-brdc .h{top:26px;width:220px;height:18px;background:#8b8ca3 !important}.a-brdc .l1{top:58px;width:300px;height:10px}.a-brdc .l2{top:78px;width:240px;height:10px}
+    .a-brdc .frame{position:absolute;left:28px;top:110px;width:220px;height:120px;border-radius:8px;background:#fff;border:2px dashed #c9cad6}
+    .a-brdc .fl{position:absolute;left:18px;top:20px;width:140px;height:10px;border-radius:4px;background:#dcdde6}
+    .a-brdc .fb{position:absolute;left:18px;top:60px;width:110px;height:34px;border-radius:8px;background:var(--accent);animation:abrdc-press 9s ease infinite}
+    .a-brdc .track{position:absolute;left:290px;top:262px;width:200px;height:8px;border-radius:4px;background:#dcdde6}
+    .a-brdc .fill{position:absolute;left:0;top:0;height:8px;border-radius:4px;background:var(--accent);width:10px;animation:abrdc-fill 9s ease infinite}
+    .a-brdc .knob{position:absolute;top:-8px;left:10px;width:24px;height:24px;margin-left:-12px;border-radius:50%;background:#fff;border:2px solid var(--accent);box-sizing:border-box;animation:abrdc-knob 9s ease infinite}
+    .a-brdc .rip{position:absolute;left:101px;top:187px;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:2px solid #6366f1;box-sizing:border-box;opacity:0;animation:abrdc-rip 9s ease-out infinite}
+    .a-brdc .cur{position:absolute;left:0;top:0;animation:abrdc-cur 9s infinite}
+    .a-brdc .cur svg{position:absolute;left:-5px;top:-2px;width:26px;height:26px;overflow:visible;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))}
+    .a-brdc .cur path{fill:#6366f1;stroke:#fff;stroke-width:1.6;stroke-linejoin:round}
+    .a-brdc .tag{position:absolute;left:16px;top:23px;padding:1px 8px;border-radius:9px;background:#6366f1;color:#fff;font:600 11px/1.5 system-ui,sans-serif;white-space:nowrap}
+    .a-brdc .ring{position:absolute;left:-12px;top:-12px;width:24px;height:24px;border-radius:50%;border:2px solid #6366f1;background:rgba(99,102,241,.28);box-sizing:border-box;transform:scale(0);animation:abrdc-ring 9s infinite}
+    @keyframes abrdc-cur{
+      0%{transform:translate(430px,60px);opacity:0;animation-timing-function:ease}
+      6%{transform:translate(430px,60px);opacity:1;animation-timing-function:cubic-bezier(.3,.7,.3,1)}
+      18%,30%{transform:translate(101px,187px);opacity:1;animation-timing-function:cubic-bezier(.3,.7,.3,1)}
+      44%,50%{transform:translate(300px,266px);opacity:1;animation-timing-function:linear}
+      70%,80%{transform:translate(460px,266px);opacity:1}
+      90%,100%{transform:translate(460px,266px);opacity:0}
+    }
+    @keyframes abrdc-rip{0%,19%{opacity:0;transform:scale(.3)}20%{opacity:.9;transform:scale(.3)}27%,100%{opacity:0;transform:scale(1.3)}}
+    @keyframes abrdc-press{0%,19%{filter:none}20%,24%{filter:brightness(1.3)}26%,100%{filter:none}}
+    @keyframes abrdc-ring{0%,46%{transform:scale(0)}49%,72%{transform:scale(1)}75%,100%{transform:scale(0)}}
+    @keyframes abrdc-knob{0%,50%{left:10px}70%,96%{left:170px}100%{left:10px}}
+    @keyframes abrdc-fill{0%,50%{width:10px}70%,96%{width:170px}100%{width:10px}}
+  </style>
+</div>

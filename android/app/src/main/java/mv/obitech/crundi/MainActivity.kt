@@ -67,6 +67,8 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Cru's bubble moves this window out of the way while it is still hidden (CruBubble.request).
+        mv.obitech.crundi.voice.CruBubble.mainWindow = java.lang.ref.WeakReference(this)
         take(intent)
         setContent {
             CrundiTheme {
@@ -110,6 +112,9 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
      */
     override fun onResume() {
         super.onResume()
+        // The voice screen opened from the top bar just stepped back for Cru's bubble and this window
+        // surfaced anyway (it could not be moved first): step aside, or the bubble is folded away (CruBubble.request).
+        if (mv.obitech.crundi.voice.CruBubble.mainShouldStepAside()) { moveTaskToBack(true); return }
         // Back from one of Android's pages the urgent alert setup opened: the next one, if any.
         UrgentSetup.next(this)
         val s = server ?: return
@@ -137,6 +142,16 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
         intent?.getStringExtra(AlertAnswers.EXTRA_ALERT)?.takeIf { it.isNotEmpty() }?.let { alertId ->
             intent.removeExtra(AlertAnswers.EXTRA_ALERT)
             AlertAnswers.report(this, id, alertId, "attended")
+        }
+        // Cru's unheard reports: the voice screen, straight into its chat view. Once.
+        if (mv.obitech.crundi.voice.CruUnread.isChatPath(path)) {
+            intent?.removeExtra(Notifier.EXTRA_PATH)
+            mv.obitech.crundi.voice.VoicePrefs.setChatView(this, true)
+            runCatching {
+                startActivity(Intent(this, mv.obitech.crundi.voice.VoiceActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK).putExtra(mv.obitech.crundi.voice.VoiceActivity.EXTRA_CHAT, true))
+            }
+            return
         }
         DeepLinks.route(path)?.let { pendingRoute = it }
     }
@@ -244,6 +259,13 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
             Notifier.clearChat(this@MainActivity, s.id, chatId, evenBubble = true, why = "the same chat is open in the main window")
         }
 
+        override fun inboxOnScreen(thread: String, onScreen: Boolean) {
+            val s = server ?: return
+            if (!onScreen || !hasWindowFocus()) return
+            OnScreen.seenInMain("inbox:${s.id}:$thread")
+            Notifier.clearInbox(this@MainActivity, s.id, thread, evenBubble = true)
+        }
+
         override fun openBubble(chatId: String) {
             withChat(chatId) { chat ->
                 if (BubbleHelp.blocked(this@MainActivity)) { BubbleHelp.show(this@MainActivity); return@withChat }
@@ -299,8 +321,14 @@ class MainActivity : androidx.fragment.app.FragmentActivity() {
     }
 
     /** Send the person to pair this phone with this server again. */
+    /** When the pairing screen was last opened: a sign-out and the stream noticing it must not open it twice. */
+    private var pairAgainAt = 0L
+
     private fun pairAgain(why: String = "") {
         val s = server ?: return
+        val now = System.currentTimeMillis()
+        if (now - pairAgainAt < 5_000) return
+        pairAgainAt = now
         if (why.isNotEmpty()) Toast.makeText(this, why, Toast.LENGTH_LONG).show()
         startActivity(Intent(this, PairActivity::class.java).putExtra(PairActivity.EXTRA_AGAIN, s.id))
     }

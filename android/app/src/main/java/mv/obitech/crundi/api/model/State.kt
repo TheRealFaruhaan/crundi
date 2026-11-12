@@ -135,7 +135,8 @@ data class Usage(
 /**
  * Something waiting on the person (SSE `approvals`, GET /api/approvals):
  * [source] secret (a secret request), chat (a permission or question in a
- * chat), collab (a collaborator asking).
+ * chat), collab (a collaborator asking), kid (kid Cru asking the parent),
+ * cru (Cru asking before it acts on its own).
  */
 @Serializable
 data class ApprovalItem(
@@ -155,9 +156,16 @@ data class ApprovalItem(
     val host: String = "",
     /** Epoch ms or ISO text, depending on source: read [createdAtMs]. */
     val createdAt: JsonElement? = null,
+    /**
+     * kid (kid Cru asking the parent, capability "voice-kid"): the answers it offers, for POST /api/voice/kid/ask.
+     * cru (Cru asking before it acts on its own, capability "voice-away"): yes (Approve) / no (Decline), for POST /api/voice/ask.
+     */
+    val choices: List<ApprovalChoice> = emptyList(),
 ) {
     val createdAtMs get() = timeMs(createdAt)
 }
+
+@Serializable data class ApprovalChoice(val id: String = "", val label: String = "")
 
 @Serializable data class Approvals(val items: List<ApprovalItem> = emptyList(), val count: Int = 0)
 

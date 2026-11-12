@@ -6,6 +6,8 @@
          page that wants the camera or microphone. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Cru speaks as speakerphone call audio, so the echo canceller takes it out of the microphone (voice/CallAudio.kt). -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Staying up and online while a bubble or a live card is showing (Link). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -19,7 +21,29 @@
     <!-- Full-screen urgent alerts, opt-in (android/URGENT-ALERTS.md). Play
          grants it only to calling and alarm apps; the person turns it on. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- The voice assistant holds the microphone in the foreground while it is
+         open, so it can listen over the lock screen (voice/MicStream.kt). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Share this phone's connection (homepool node, mv.obitech.crundi.homepool):
+         back after a reboot when switched on, awake while it carries a
+         stream, and aware of Wi-Fi versus mobile data. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- The voice assistant's fallbacks: the phone's own voices and speech
+         recognition (Android 11+ package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <!-- Plain http is allowed because a server on a home network often has
          nothing else. The app never uses it without the person saying so
@@ -42,6 +66,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Phase 5: the "Voice" shortcut on the icon (and for Gemini). -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
 
         <activity android:name=".PairActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
@@ -77,6 +103,98 @@
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- One inbox thread by itself: what an inbox thread's bubble opens.
+             Bubble-ready as ChatActivity is, and apart from it. -->
+        <activity
+            android:name=".InboxBubbleActivity"
+            android:exported="false"
+            android:resizeableActivity="true"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- ─── Voice assistant (specs/voice-assistant.md, D33) ─── -->
+        <!-- Mode B: the voice screen, over the lock screen. -->
+        <activity
+            android:name=".voice.VoiceActivity"
+            android:exported="false"
+            android:label="Cru"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="mv.obitech.crundi.voice"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
+        <!-- Cru as its own floating bubble (voice/CruBubble.kt): the voice
+             screen, bubble-ready as ChatActivity is; never over the lock screen. -->
+        <activity
+            android:name=".voice.CruBubbleActivity"
+            android:exported="false"
+            android:label="Cru"
+            android:resizeableActivity="true"
+            android:allowEmbedded="true"
+            android:documentLaunchMode="always"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode" />
+        <!-- No launcher icon of its own (the owner, 11 Nov): Cru opens from inside Crundi (the
+             top bar), as the phone's assistant (hold the side key), from "Hey Cru", or as its bubble. -->
+        <!-- "Cru" in Android's share sheet: a file, a picture or text shared
+             opens Cru with it attached (voice/CruFiles.kt). Turned off with
+             the assistant in App settings. -->
+        <activity-alias
+            android:name=".voice.ShareToCru"
+            android:targetActivity=".voice.VoiceActivity"
+            android:label="Cru"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity-alias>
+        <!-- A photo taken for Cru, and shared text made a file, handed out as content URIs. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.crufiles"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/cru_files" />
+        </provider>
+        <!-- Mode A: Crundi as the digital assistant app (hold the side key). -->
+        <service
+            android:name=".voice.CrundiVoiceService"
+            android:label="Crundi"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true">
+            <meta-data android:name="android.voice_interaction" android:resource="@xml/voice_interaction_service" />
+            <intent-filter>
+                <action android:name="android.service.voice.VoiceInteractionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".voice.CrundiSessionService"
+            android:permission="android.permission.BIND_VOICE_INTERACTION"
+            android:exported="true" />
+        <!-- Android requires an assistant to name one; it refuses every request. -->
+        <service android:name=".voice.CrundiRecognitionService" android:exported="true">
+            <intent-filter>
+                <action android:name="android.speech.RecognitionService" />
+            </intent-filter>
+        </service>
+        <service android:name=".voice.VoiceMicService" android:exported="false" android:foregroundServiceType="microphone" />
+        <!-- Phase 6: background listening for "Hey Cru" (D4-D7), started only from the foreground. -->
+        <service android:name=".voice.HeyCrundiService" android:exported="false" android:foregroundServiceType="microphone" />
+        <activity android:name=".voice.VoiceSettingsActivity" android:exported="false" android:label="Voice assistant" />
+        <activity android:name=".voice.WakeTrainActivity" android:exported="false" android:label="Train Hey Cru" />
+
         <service android:name=".PushService" android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
@@ -86,8 +204,20 @@
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps an open chat bubble and the live status card of the user's own self-hosted server connected while an AI agent works, so they open at once instead of reconnecting." />
         </service>
+        <!-- Homepool: this phone as a home node of the owner's server. -->
+        <service android:name=".homepool.HomepoolNodeService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Shares this device's internet connection with the owner's Crundi server (homepool node)" />
+        </service>
+        <receiver android:name=".homepool.HomepoolBootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <receiver android:name=".ReplyReceiver" android:exported="false" />
         <receiver android:name=".DecisionReceiver" android:exported="false" />
+        <receiver android:name=".KidAskReceiver" android:exported="false" />
         <receiver android:name=".AlertDismissReceiver" android:exported="false" />
         <receiver android:name=".SnoozeReceiver" android:exported="false" />
 

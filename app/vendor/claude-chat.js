@@ -12,6 +12,9 @@
  *   opts.apiFetch    (path, init) => Promise<Response>, adds the auth header
  *   opts.wsSend      (obj) => void, writes a frame on the shared WebSocket
  *   opts.onTitle     (title) => void, optional
+ *   opts.token       () => string, optional: the sign-in token for the voice
+ *                    input's WebSocket (/api/voice/listen). Without it (an older
+ *                    host) the composer has no mic.
  *
  * view.applyHistory(session)  render a full conversation (subscribe / reconnect)
  * view.applyEvent(ev)         apply one incremental server event
@@ -446,7 +449,60 @@
     '.cc-sched-item.next .cc-sched-when b{color:var(--accent-hover)}',
     '.cc-sched-text{color:var(--text-secondary);font-size:calc(12px*var(--cc-fs,1));white-space:pre-wrap;word-break:break-word;max-height:52px;overflow:hidden}',
     '.cc-sched-del{position:absolute;top:4px;right:4px;background:none;border:0;color:var(--text-muted);cursor:pointer;font-size:calc(12px*var(--cc-fs,1));line-height:1;padding:2px 4px}',
-    '.cc-sched-del:hover{color:var(--red)}'
+    '.cc-sched-del:hover{color:var(--red)}',
+    // Voice mode: the mic beside send (tap: voice mode, hold: push to talk),
+    // and the line above the box that shows what is being heard.
+    '.cc-mic{flex:none;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0;touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;transition:.15s}',
+    '.cc-mic:hover{color:var(--accent-hover);border-color:var(--accent)}',
+    '.cc-mic svg{width:16px;height:16px;pointer-events:none}',
+    '.cc-mic.on{color:#fff;background:var(--accent);border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim,rgba(99,102,241,.25));animation:cc-mic-pulse 1.6s ease-in-out infinite}',
+    '.cc-mic.on.speaking{animation:none;box-shadow:0 0 0 3px rgba(56,189,248,.35)}',
+    '@keyframes cc-mic-pulse{0%,100%{box-shadow:0 0 0 2px var(--accent-dim,rgba(99,102,241,.25))}50%{box-shadow:0 0 0 6px var(--accent-dim,rgba(99,102,241,.12))}}',
+    '.cc-narrow .cc-mic{flex:none}',
+    '.cc-vline{display:none;align-items:center;gap:7px;padding:0 2px 6px;font-size:calc(12px*var(--cc-fs,1));color:var(--text-secondary);min-width:0}',
+    '.cc-vline.on{display:flex}',
+    '.cc-vline-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent);animation:cc-mic-pulse 1.6s ease-in-out infinite}',
+    '.cc-vline.speaking .cc-vline-dot{background:var(--sky,#38bdf8)}',
+    '.cc-vline-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+    '.cc-vline-t.idle{color:var(--text-muted);font-style:italic}',
+    '.cc-vline.err{color:var(--red)}',
+    '.cc-vline.err .cc-vline-dot{display:none}',
+    // A neutral notice (paused for Cru, moved to another chat) and the
+    // "switch to this chat?" question with its two buttons.
+    '.cc-vline.note .cc-vline-dot{background:var(--yellow,#fbbf24);animation:none}',
+    '.cc-vline-ask{display:none;gap:6px;flex:none}',
+    '.cc-vline.ask .cc-vline-ask{display:inline-flex}',
+    '.cc-vline.ask .cc-vline-dot{background:var(--yellow,#fbbf24);animation:none}',
+    '.cc-vline-ask button{border:1px solid var(--border);background:var(--bg-primary);color:var(--text-primary);border-radius:var(--radius-sm);padding:3px 10px;font:inherit;font-size:calc(11.5px*var(--cc-fs,1));cursor:pointer}',
+    '.cc-vline-ask button.yes{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}',
+    '.cc-vline-ask button:hover{border-color:var(--accent)}',
+    '.cc-mic.on.away{animation:none;background:var(--bg-primary);color:var(--accent-hover);border-color:var(--accent);box-shadow:none}',
+    // Recording (a hold, or voice mode hearing words): Send's place shows the
+    // live level, the time and the words; a cancel sits at the far right.
+    '.cc-rec{display:none;align-items:center;justify-content:center;gap:7px;min-width:0;cursor:default;overflow:hidden;white-space:nowrap;font-variant-numeric:tabular-nums}',
+    '.cc-rec:hover{background:var(--accent)}',
+    '.cc-recording .cc-sendbtn{display:none!important}',
+    '.cc-recording .cc-rec{display:inline-flex}',
+    '.cc-rec-bars{display:inline-flex;align-items:center;gap:2px;height:16px;flex:none}',
+    '.cc-rec-bars i{display:block;width:3px;height:3px;border-radius:2px;background:#fff;transition:height .08s linear}',
+    '.cc-rec-t{flex:none;font-size:calc(11.5px*var(--cc-fs,1))}',
+    '.cc-rec-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#fff;animation:cc-rec-blink 1.2s ease-in-out infinite}',
+    '@keyframes cc-rec-blink{0%,100%{opacity:1}50%{opacity:.35}}',
+    '.cc-rec-s{flex:none;font-weight:500;font-size:calc(11px*var(--cc-fs,1));opacity:.92}',
+    // While recording the message box is the live transcript: read-only, it
+    // wraps and follows the newest words. The draft comes back afterwards.
+    '.cc-input.cc-input-rec{border-color:var(--accent);background:var(--accent-dim,rgba(99,102,241,.12));color:var(--text-primary);cursor:default;caret-color:transparent}',
+    '.cc-input.cc-input-rec::placeholder{color:var(--text-secondary);font-style:italic}',
+    // Narrow: Send's place is the rest of the row, less the cancel beside it.
+    '.cc-narrow .cc-actions .cc-rec{flex:1 1 0;min-width:0!important}',
+    '.cc-rec.cancelling{background:var(--red-dim);border-color:var(--red);color:var(--red)}',
+    '.cc-rec.cancelling .cc-rec-bars i{background:var(--red)}',
+    '.cc-rec-x{display:none;flex:none;width:34px;height:34px;align-items:center;justify-content:center;border:1px solid var(--border);background:var(--bg-primary);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;padding:0;transition:.12s}',
+    '.cc-rec-x svg{width:16px;height:16px;pointer-events:none}',
+    '.cc-recording .cc-rec-x{display:inline-flex}',
+    '.cc-rec-x:hover,.cc-rec-x.hot{color:#fff;background:var(--red);border-color:var(--red)}',
+    '.cc-rec-x.hot{transform:scale(1.12)}',
+    '.cc-narrow .cc-rec-x{flex:none}'
   ].join('');
 
   function ensureStyles() {
@@ -744,6 +800,164 @@
     try { localStorage.setItem(DIS_KEY, JSON.stringify({ t: Date.now(), ids: map })); } catch (e) {}
   }
 
+  // ─── Voice mode: the rules, kept apart so they can be tested in node ───
+  var VOICE_HOLD_MS = 350;              // pressed this long: push to talk, not a tap
+  var VOICE_PREFIX = 'voice input: ';
+  var VOICE_PTT_WINDOW_MS = 10 * 60 * 1000; // after push to talk, replies are said this long
+  var VOICE_STOP_WAIT_MS = 2500;        // after release, how long to wait for the last words
+  var voiceLogic = {
+    HOLD_MS: VOICE_HOLD_MS,
+    PREFIX: VOICE_PREFIX,
+    PTT_WINDOW_MS: VOICE_PTT_WINDOW_MS,
+    /** A press on the mic: 'tap' (voice mode on/off) or 'hold' (push to talk). */
+    pressKind: function (ms) { return ms >= VOICE_HOLD_MS ? 'hold' : 'tap'; },
+    /** What goes to Claude for [said], or null when nothing was heard. */
+    message: function (said) {
+      var t = String(said == null ? '' : said).replace(/\s+/g, ' ').trim();
+      return t ? VOICE_PREFIX + t : null;
+    },
+    /** Push to talk: the phrases heard while held, as one. */
+    join: function (parts) {
+      return (parts || []).map(function (p) { return String(p || '').trim(); }).filter(Boolean).join(' ');
+    },
+    /** Whether a 'voice-say' event is said aloud by this view. */
+    shouldSpeak: function (ev, st) {
+      if (!ev || ev.type !== 'voice-say' || !String(ev.text || '').trim()) return false;
+      st = st || {};
+      if (ev.id && st.seen && st.seen[ev.id]) return false;
+      if (st.voiceOn) return true;
+      var now = st.now || Date.now();
+      return !!st.lastPttAt && now - st.lastPttAt >= 0 && now - st.lastPttAt <= VOICE_PTT_WINDOW_MS;
+    },
+    /** GET /api/voice/settings answered: is there a voice assistant to listen with? */
+    available: function (status, body) {
+      return status === 200 && !!body && body.ok !== false && body.deepgramKeySet === true;
+    },
+    /** Deepgram's voice for replies, or '' for the browser's own. */
+    ttsVoice: function (s) { return s && s.ttsVoice && !s.deepgramLimitReached ? String(s.ttsVoice) : ''; },
+    /** Recording, so Send's place shows the level and a cancel: a hold, or voice mode hearing words. */
+    recording: function (st) {
+      st = st || {};
+      if (st.away && !st.ptt) return false;   // paused for Cru: nothing is being heard here
+      return !!st.ptt || !!st.sending || !!st.on;
+    },
+    // ─── Sharing the microphone with Cru and with other chats ───
+    /** This view has the microphone (CrundiChat.voiceActive, which the PC's "Hey Cru" listener checks). */
+    holdsMic: function (st) {
+      st = st || {};
+      return (!!st.on && !st.away) || !!st.ptt || !!st.sending;
+    },
+    /** Voice mode asked for: Cru's screen has the microphone, so ask first. */
+    startChoice: function (st) { return st && st.cruOpen ? 'ask' : 'start'; },
+    /** Cru's screen opened on purpose: voice mode pauses (stays on), a hold is dropped. */
+    onCruOpen: function (st) {
+      st = st || {};
+      if (st.ptt) return 'cancel-hold';
+      return st.on && !st.away ? 'pause' : 'none';
+    },
+    /** Cru's screen closed: voice mode paused for it carries on by itself. */
+    onCruClose: function (st) { return st && st.on && st.away === 'cru' ? 'resume' : 'none'; },
+    /** Another chat took voice mode (one at a time): this one goes off. */
+    onClaim: function (st) { return st && st.on ? 'off' : 'none'; },
+    /** What the message box shows while recording: every phrase of this recording, then the one in progress. */
+    transcript: function (heard, interim) {
+      return voiceLogic.join((heard || []).concat([interim]));
+    },
+    /** The short status in Send's place. */
+    status: function (st) {
+      st = st || {};
+      if (st.sending) return 'Sending';
+      if (st.playing) return st.paused ? 'Paused' : 'Speaking';
+      return 'Listening';
+    },
+    QUIET_MS: 1500,
+    /**
+     * Is the owner talking (so a reply waits, or a playing one pauses)? A hold
+     * or its send under way, or words heard within QUIET_MS. His utterance
+     * sent sets lastHeardAt to 0: done.
+     */
+    ownerTalking: function (st) {
+      st = st || {};
+      if (st.ptt || st.sending || st.away) return true;   // away: Cru (or another chat) has the microphone
+      var now = st.now || Date.now();
+      return !!st.lastHeardAt && now - st.lastHeardAt < voiceLogic.QUIET_MS;
+    },
+    /** Talking over the reply needs crundi-voice.js's gate (this page may not load it). */
+    gateKit: function (w) {
+      // The same code Cru's voice screen talks with (crundi-voice.js): a named
+      // export when it has one, else the helpers it lists for its tests.
+      var cv = w && w.CrundiVoice;
+      var t = cv && (cv.kit || cv._test);
+      return t && typeof t.createGate === 'function' && typeof t.createPreroll === 'function' && typeof t.voicedShare === 'function' ? t : null;
+    },
+    /** The browser's voice cannot always pause: start again from the sentence it was in. */
+    sentenceStart: function (text, at) {
+      text = String(text || '');
+      var i = Math.max(0, Math.min(text.length, Number(at) || 0)), best = 0, re = /[.!?;:]\s+/g, m;
+      while ((m = re.exec(text)) && m.index + m[0].length <= i) best = m.index + m[0].length;
+      return best;
+    },
+    /** A hold let go: over the cancel button it is dropped, anywhere else it is sent. */
+    releaseAction: function (overCancel) { return overCancel ? 'cancel' : 'send'; },
+    /** A tap (or Enter) on the mic: start voice mode, send what is heard now, or end voice mode. */
+    micClick: function (st) {
+      st = st || {};
+      if (!st.on) return 'on';
+      return String(st.interim || '').trim() ? 'send-now' : 'off';
+    },
+    /** Elapsed recording time, m:ss. */
+    elapsed: function (ms) {
+      var t = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+      return Math.floor(t / 60) + ':' + (t % 60 < 10 ? '0' : '') + (t % 60);
+    },
+    /** After "send now": a late utterance that is only words already sent is dropped. */
+    alreadySent: function (sent, text) {
+      var norm = function (x) { return String(x || '').toLowerCase().replace(/[^a-z0-9\u00c0-\uffff' ]+/g, ' ').replace(/\s+/g, ' ').trim(); };
+      var a = norm(sent), b = norm(text);
+      return !!b && (' ' + a + ' ').indexOf(' ' + b + ' ') >= 0;
+    },
+    /** The sample rate of a streamed reply (audio/L16; rate=N), 24 kHz when unsaid. */
+    pcmRate: function (contentType, header) {
+      var m = /rate=(\d+)/i.exec(contentType || '');
+      var n = Number(header) || (m ? Number(m[1]) : 0);
+      return n > 0 ? n : 24000;
+    },
+  };
+  // Every mounted chat's voice, so only one is in voice mode at a time
+  // (workbench cells here; other windows of this site through a channel), and
+  // so CrundiChat.voiceActive can say whether a chat has the microphone.
+  var voiceViews = [];
+  var VOICE_PAGE = Math.random().toString(36).slice(2);
+  var voiceChan = null;
+  function voiceChannel() {
+    if (voiceChan || typeof BroadcastChannel !== 'function') return voiceChan;
+    try {
+      voiceChan = new BroadcastChannel('crundi-chat-voice');
+      voiceChan.onmessage = function (m) {
+        var d = m && m.data;
+        if (d && d.type === 'claim' && d.page !== VOICE_PAGE) voiceViews.forEach(function (v) { v.yieldTo(); });
+      };
+    } catch (e) { voiceChan = null; }
+    return voiceChan;
+  }
+  function voiceClaim(self) {
+    voiceViews.forEach(function (v) { if (v !== self) v.yieldTo(); });
+    var ch = voiceChannel();
+    try { if (ch) ch.postMessage({ type: 'claim', page: VOICE_PAGE }); } catch (e) { /* alone */ }
+  }
+
+  // One settings answer shared by every chat on the page, for a minute.
+  var voiceSettingsMemo = null;
+  function voiceSettings(apiFetch, fresh) {
+    if (!fresh && voiceSettingsMemo && Date.now() - voiceSettingsMemo.at < 60000) return voiceSettingsMemo.p;
+    var p = Promise.resolve().then(function () { return apiFetch('/api/voice/settings'); }).then(function (res) {
+      if (!res || res.status !== 200) return null;
+      return res.json().then(function (b) { return voiceLogic.available(res.status, b) ? b : null; }, function () { return null; });
+    }).catch(function () { return null; });
+    voiceSettingsMemo = { at: Date.now(), p: p };
+    return p;
+  }
+
   // ─── Mount ───
 
   function mount(host, opts) {
@@ -764,7 +978,7 @@
     var input = el('textarea', 'cc-input');
     input.rows = 1;
     input.placeholder = 'Message Claude…  (Enter to send, Shift+Enter for newline)';
-    var sendBtn = el('button', 'cc-btn primary', 'Send');
+    var sendBtn = el('button', 'cc-btn primary cc-sendbtn', 'Send');
     // Icon button between attach and send. Interrupting mid-turn is
     // destructive and easy to hit by accident on a phone, so it arms on the
     // first tap and only fires on the second.
@@ -794,7 +1008,42 @@
     var actions = el('div', 'cc-actions');
     actions.appendChild(attachBtn);
     actions.appendChild(stopBtn);
+    // Voice input, beside send. Hidden until the server says Cru can listen
+    // (see "Voice mode" below).
+    var MIC_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>';
+    // While recording the mic is the send button: letting go, or a click, sends.
+    var MIC_SEND_IC = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+    var micBtn = el('button', 'cc-mic', MIC_IC);
+    micBtn.type = 'button';
+    micBtn.title = 'Voice input (tap: voice mode, hold: push to talk)';
+    micBtn.setAttribute('aria-label', 'Voice input (tap: voice mode, hold: push to talk)');
+    micBtn.setAttribute('aria-pressed', 'false');
+    micBtn.style.display = 'none';
+    actions.appendChild(micBtn);
     actions.appendChild(sendBtn);
+    // Recording: in Send's place, the level, the time and the words; then cancel.
+    var recBox = el('div', 'cc-btn primary cc-rec',
+      '<span class="cc-rec-dot" aria-hidden="true"></span><span class="cc-rec-bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span class="cc-rec-t">0:00</span><span class="cc-rec-s">Listening</span>');
+    recBox.setAttribute('role', 'status');
+    recBox.setAttribute('aria-label', 'Recording');
+    var recBars = recBox.querySelectorAll('.cc-rec-bars i');
+    var recTime = recBox.querySelector('.cc-rec-t');
+    var recStat = recBox.querySelector('.cc-rec-s');
+    var recCancel = el('button', 'cc-rec-x',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>');
+    recCancel.type = 'button';
+    recCancel.title = 'Cancel: drop what was heard (when holding, slide here and let go)';
+    recCancel.setAttribute('aria-label', 'Cancel voice input: drop what was heard');
+    actions.appendChild(recBox);
+    actions.appendChild(recCancel);
+    // What the microphone is hearing, live, above the message box.
+    var voiceLine = el('div', 'cc-vline', '<span class="cc-vline-dot"></span><span class="cc-vline-t"></span>');
+    voiceLine.setAttribute('aria-live', 'polite');
+    var voiceAskBox = el('span', 'cc-vline-ask',
+      '<button type="button" class="yes">Switch</button><button type="button" class="no">Not now</button>');
+    voiceLine.appendChild(voiceAskBox);
     inrow.appendChild(input);
     inrow.appendChild(actions);
     inrow.appendChild(fileInput);
@@ -924,6 +1173,7 @@
     meta.appendChild(modelLbl);
     meta.appendChild(costLbl);
 
+    wrap.appendChild(voiceLine);
     wrap.appendChild(inrow);
     wrap.appendChild(upRow);
     composer.appendChild(wrap);
@@ -1179,6 +1429,10 @@
     var lastH = 0;
     log.addEventListener('scroll', function () {
       if (!log.clientHeight) return; // a reset while hidden is not a user scroll
+      // The log changing height (the keyboard opening or closing) can scroll
+      // it before the resize observer below has heard: that is not the reader
+      // leaving the bottom. The observer settles it, and keeps lastH.
+      if (lastH && log.clientHeight !== lastH) return;
       stickBottom = atBottom();
       lastTop = log.scrollTop;
       syncJump();
@@ -1401,7 +1655,18 @@
         var h = log.clientHeight;
         if (h && !lastH) restoreScroll();          // 0 → visible: position wiped
         else if (h !== lastH && stickBottom) restoreScroll(); // resized while pinned
+        else if (h && h < lastH) {
+          // Shorter while reading up the log (the keyboard opening): keep
+          // what was at the bottom of the screen at the bottom, as chat apps
+          // do, instead of hiding it behind the keyboard.
+          var prev = log.style.scrollBehavior;
+          log.style.scrollBehavior = 'auto';
+          log.scrollTop += lastH - h;
+          log.style.scrollBehavior = prev;
+          lastTop = log.scrollTop;
+        }
         lastH = h;
+        if (h) syncJump();
       });
       try { logObserver.observe(log); } catch (e) { logObserver = null; }
     }
@@ -1698,6 +1963,8 @@
         var tag = e.status === 'denied' ? 'denied'
           : closed ? 'never answered'
             : e.always ? 'always allowed' : 'allowed';
+        // Cru (the voice assistant) answered it, for the owner or on its own judgement.
+        if (e.answeredBy === 'cru' && !closed) tag += ' by Cru';
         box.appendChild(el('div', 'cc-answered',
           '<b>' + esc(e.displayName || e.toolName) + '</b>'
           + '<span class="cc-tag ' + (e.status === 'denied' || closed ? 'no' : 'ok') + '">' + tag + '</span>'));
@@ -1918,6 +2185,7 @@
         Object.keys(ann).forEach(function (k) {
           if (ann[k] && ann[k].notes) html += '<div class="cc-ans-note">Note: ' + esc(ann[k].notes) + '</div>';
         });
+        if (e.answeredBy === 'cru') html += ' <span class="cc-tag">by Cru</span>';
         box.appendChild(el('div', 'cc-answered', html || '<span class="cc-tag">answered</span>'));
         return box;
       }
@@ -2552,6 +2820,8 @@
     }
 
     function doSend() {
+      // The box is showing the live transcript: that is not a message to send.
+      if (vc && vc.box) return;
       var text = input.value.replace(/\s+$/, '');
       if (!text.trim()) return;
       input.value = '';
@@ -2603,6 +2873,854 @@
       apiFetch('/api/ui-sessions/' + encodeURIComponent(sessionId) + '/interrupt', { method: 'POST' }).catch(function () {});
     }
     disarmStop();
+
+    // ─── Voice mode ───
+    // The mic beside send. A tap turns voice mode on for this chat: it
+    // listens, and each time the owner stops talking what he said is sent as
+    // "voice input: …" through the normal send path, until tapped off. A hold
+    // is push to talk: listen while held, send on release. While recording
+    // the message box shows the live transcript (read-only; the draft comes
+    // back after), Send's place shows the level, the time and a status, the
+    // mic is a send button and a cancel sits at the far right.
+    //
+    // Claude answers a voice input with its speak tool, which arrives here as
+    // 'voice-say' and is said aloud while in voice mode (or for a while after
+    // push to talk). A reply waits while the owner is talking, and pauses when
+    // he talks over it (crundi-voice.js's own-voice gate, the reply played
+    // through its WebRTC loopback so Chrome's echo canceller has it as the far
+    // end); it carries on from where it paused once he has finished.
+    //
+    // Speech to text is /api/voice/listen (Deepgram through the server), as on
+    // Cru's voice screen; the token for that socket comes from the host
+    // (opts.token), so an older host simply shows no mic.
+    var voiceToken = typeof opts.token === 'function' ? opts.token : null;
+    var PREROLL_MS = 1300, LEAD_MS = 600, RELEASE_AFTER_MS = 450;
+    var vc = {
+      ok: false,           // the server can listen (shown)
+      on: false,           // voice mode
+      ptt: false,          // push to talk, held
+      sending: false,      // push to talk let go: waiting for the last words
+      mic: null,           // { ws, stream, ctx, proc, pending[], closing, gate, preroll, held }
+      heard: [],           // push to talk: phrases so far
+      interim: '',
+      lastHeardAt: 0,      // words last heard (0: he has finished)
+      lastPttAt: 0,
+      seen: {},            // voice-say ids already taken
+      queue: [],           // replies waiting to be said
+      playing: null,       // the reply being said: { text, kind, paused, pause(), resume(), stop() }
+      tick: 0,             // the timer that pauses / resumes replies around the owner
+      out: null,           // AudioContext for Deepgram's voice
+      outAn: null, outBuf: null, loop: null,
+      settings: null,
+      press: null,         // { at, timer, id, held, over }
+      noteTimer: null,
+      level: 0,            // the microphone's level, 0..1
+      recAt: 0,            // when this recording began (0: not recording)
+      raf: 0,
+      sentNow: null,       // { text, at }: voice mode, sent before the pause
+      box: null,           // { draft, ph }: the message box while it shows the transcript
+      away: null,          // voice mode paused: 'cru' (its screen has the mic) or 'chat' (another chat's hold)
+      awayNote: '',
+      pausedOthers: [],    // views this one's hold paused
+    };
+
+    // The message box as the live transcript.
+    function boxOn() {
+      if (vc.box) return;
+      vc.box = { draft: input.value, ph: input.placeholder };
+      input.readOnly = true;
+      input.classList.add('cc-input-rec');
+      input.placeholder = 'Listening…';
+      input.setAttribute('aria-label', 'Live transcript of what you are saying');
+      input.value = '';
+      autoGrow();
+    }
+    function boxText(t) {
+      if (!vc.box || input.value === t) return;
+      input.value = t;
+      autoGrow();
+      input.scrollTop = input.scrollHeight;   // follow the newest words
+      // Again once the row has settled (Send's place changes width as recording starts).
+      setTimeout(function () { if (vc.box) { autoGrow(); input.scrollTop = input.scrollHeight; } }, 0);
+    }
+    function boxOff() {
+      var b = vc.box;
+      if (!b) return;
+      vc.box = null;
+      input.readOnly = false;
+      input.classList.remove('cc-input-rec');
+      input.removeAttribute('aria-label');
+      input.value = b.draft;
+      if (input.placeholder === 'Listening…') input.placeholder = b.ph;
+      autoGrow();
+    }
+
+    // Recording: Send's place shows the dot, the level, the time and a
+    // status, a cancel appears at the far right, and the mic becomes send.
+    function recPaint() {
+      var rec = voiceLogic.recording({ ptt: vc.ptt, on: vc.on, sending: vc.sending, away: vc.away });
+      var was = !!vc.recAt;
+      if (rec && !was) {
+        // The same size as Send: measured before it is hidden.
+        recBox.style.minWidth = (sendBtn.offsetWidth || 60) + 'px';
+        vc.recAt = Date.now();
+      }
+      if (!rec) { vc.recAt = 0; recCancel.classList.remove('hot'); recBox.classList.remove('cancelling'); }
+      root.classList.toggle('cc-recording', rec);
+      if (rec !== was) {
+        micBtn.innerHTML = rec ? MIC_SEND_IC : MIC_IC;
+        if (rec && !vc.raf) vc.raf = requestAnimationFrame(recTick);
+      }
+      var p = vc.playing;
+      var label = !rec ? 'Voice input (tap: voice mode, hold: push to talk)'
+        : p && !p.paused ? 'Pause what Claude is saying'
+        : vc.ptt ? 'Let go to send (slide to cancel to drop it)' : 'Send what was heard now';
+      micBtn.setAttribute('aria-label', label);
+      if (rec) micBtn.title = label;
+      if (rec) { boxOn(); boxText(voiceLogic.transcript(vc.heard, vc.interim)); } else boxOff();
+      recStat.textContent = voiceLogic.status({ sending: vc.sending, playing: !!p, paused: !!(p && p.paused) });
+      recBox.setAttribute('aria-label', 'Recording ' + voiceLogic.elapsed(rec ? Date.now() - vc.recAt : 0) + ', ' + recStat.textContent.toLowerCase());
+    }
+    function recTick() {
+      vc.raf = 0;
+      if (!vc.recAt || destroyed) return;
+      recTime.textContent = voiceLogic.elapsed(Date.now() - vc.recAt);
+      var t = Date.now() / 1000, lv = Math.min(1, vc.level * 2.2);
+      for (var i = 0; i < recBars.length; i++) {
+        var wob = 0.55 + 0.45 * Math.abs(Math.sin(t * (5 + i * 1.7) + i));
+        recBars[i].style.height = Math.max(3, Math.round(3 + 13 * lv * wob)) + 'px';
+      }
+      vc.raf = requestAnimationFrame(recTick);
+    }
+    function voiceShow(text, kind) {
+      clearTimeout(vc.noteTimer);
+      var t = voiceLine.querySelector('.cc-vline-t');
+      voiceLine.classList.remove('err', 'note', 'ask');
+      voiceLine.classList.toggle('speaking', kind === 'speaking');
+      if (kind === 'note' || kind === 'ask') {
+        voiceLine.classList.add('on', kind);
+        t.className = 'cc-vline-t';
+        t.textContent = text;
+        if (kind === 'note' && arguments[2]) vc.noteTimer = setTimeout(function () { if (voiceLine.classList.contains('note') && !vc.away) voiceShow('', 'off'); }, arguments[2]);
+        return;
+      }
+      if (kind === 'off') { voiceLine.classList.remove('on'); t.textContent = ''; return; }
+      voiceLine.classList.add('on');
+      if (kind === 'err') {
+        voiceLine.classList.add('err');
+        t.className = 'cc-vline-t';
+        t.textContent = text;
+        vc.noteTimer = setTimeout(function () { if (!vc.on && !vc.ptt) voiceShow('', 'off'); }, 6000);
+        return;
+      }
+      t.className = 'cc-vline-t' + (text ? '' : ' idle');
+      t.textContent = text || (kind === 'speaking' ? 'Speaking…' : 'Listening…');
+    }
+    function voicePaint() {
+      var active = vc.on || vc.ptt || vc.sending;
+      micBtn.classList.toggle('on', active);
+      micBtn.classList.toggle('speaking', active && !!vc.playing && !vc.playing.paused);
+      micBtn.classList.toggle('away', !!vc.away);
+      micBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      micBtn.title = vc.on ? 'Voice mode is on: tap to turn it off'
+        : 'Voice input (tap: voice mode, hold: push to talk)';
+      recPaint();
+      if (vc.away === 'cru') { micBtn.title = 'Voice mode is paused while Cru listens: tap to take the microphone back'; micBtn.setAttribute('aria-label', micBtn.title); }
+      if (active) {
+        if (vc.away && !vc.ptt) { voiceShow(vc.awayNote, 'note'); return; }
+        // The words are in the message box now; the line above is for notices only.
+        if (!voiceLine.classList.contains('err') && !voiceLine.classList.contains('ask')) voiceShow('', 'off');
+        return;
+      }
+      // After push to talk the reply is still said: show that, and let a tap on it stop it.
+      if (vc.playing) voiceShow(vc.playing.paused ? 'Paused' : '', 'speaking');
+      else if (voiceLine.classList.contains('speaking')) voiceShow('', 'off');
+    }
+    function voiceCheck() {
+      if (!voiceToken || !apiFetch) return;
+      voiceSettings(apiFetch).then(function (s) {
+        if (destroyed) return;
+        vc.ok = !!s;
+        if (s) vc.settings = s;
+        micBtn.style.display = vc.ok ? '' : 'none';
+      });
+    }
+    voiceCheck();
+    voiceLine.addEventListener('click', function () { if (vc.playing) { speakStop(); voicePaint(); } });
+
+    // Deepgram's voice is played through Web Audio; the context is made (or
+    // woken) on the press itself, while the browser counts it as the owner's.
+    // A reply paused by the owner keeps it suspended until it carries on.
+    function voiceOutCtx() {
+      try {
+        if (!vc.out) { var AC = window.AudioContext || window.webkitAudioContext; if (AC) vc.out = new AC(); }
+        var held = vc.playing && vc.playing.paused && vc.playing.kind === 'deepgram';
+        if (vc.out && vc.out.state === 'suspended' && !held) vc.out.resume();
+      } catch (e) { vc.out = null; }
+      return vc.out;
+    }
+    // Where Claude's voice is played into: an analyser (its level, for the
+    // gate), then crundi-voice.js's loopback when it connects, else the speakers.
+    function voiceOutNode() {
+      var ctx = voiceOutCtx();
+      if (!ctx) return null;
+      if (vc.outAn) return vc.outAn;
+      var an = ctx.createAnalyser();
+      an.fftSize = 512;
+      an.connect(ctx.destination);
+      vc.outAn = an;
+      vc.outBuf = new Float32Array(an.fftSize);
+      var kit = voiceLogic.gateKit(window);
+      if (kit && kit.makeLoopback) {
+        kit.makeLoopback(ctx, window, 3000).then(function (lb) {
+          if (destroyed || vc.outAn !== an) { lb.close(); return; }
+          try { an.disconnect(); } catch (e) { /* none */ }
+          an.connect(lb.dest);
+          vc.loop = lb;
+          lb.onlost = function () { if (vc.loop !== lb) return; vc.loop = null; try { an.disconnect(); } catch (e) { /* none */ } an.connect(ctx.destination); };
+        }).catch(function () { /* played directly: the gate does the work */ });
+      }
+      return an;
+    }
+    // Claude's level now, on the microphone's scale; null when it is the
+    // browser's voice (not ours to measure: the gate then goes by the mic alone).
+    function playLevel() {
+      var p = vc.playing;
+      if (!p || p.kind !== 'deepgram' || !vc.outAn) return null;
+      vc.outAn.getFloatTimeDomainData(vc.outBuf);
+      var sum = 0, b = vc.outBuf;
+      for (var i = 0; i < b.length; i++) sum += b[i] * b[i];
+      return Math.min(1, Math.sqrt(Math.sqrt(sum / b.length)) * 1.4);
+    }
+
+    // The microphone: 16 kHz Int16 PCM frames on /api/voice/listen.
+    function micOpen(onReady) {
+      var kit = voiceLogic.gateKit(window);
+      var m = {
+        ws: null, stream: null, ctx: null, proc: null, pending: [], closing: false, paused: false, ready: false,
+        gate: kit ? kit.createGate() : null, preroll: kit ? kit.createPreroll(PREROLL_MS) : null,
+        voiced: kit ? kit.voicedShare : null, ring: new Float32Array(6400), ringAt: 0, held: false,
+      };
+      vc.mic = m;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { voiceFail('This browser cannot use the microphone here.'); return; }
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+        if (vc.mic !== m || m.closing) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+        m.stream = stream;
+        var AC = window.AudioContext || window.webkitAudioContext;
+        var ctx = new AC();
+        m.ctx = ctx;
+        var src = ctx.createMediaStreamSource(stream);
+        var proc = ctx.createScriptProcessor(4096, 1, 1);
+        m.proc = proc;
+        var ratio = ctx.sampleRate / 16000;
+        var voicing = function () {
+          var r = m.ring, n = r.length, c = new Float32Array(n);
+          for (var k = 0; k < n; k++) c[k] = r[(m.ringAt + k) % n];
+          return m.voiced(c);
+        };
+        proc.onaudioprocess = function (ev) {
+          if (vc.mic !== m || m.closing) return;
+          var x = ev.inputBuffer.getChannelData(0);
+          var n = Math.floor(x.length / ratio), out = new Int16Array(n), sum = 0;
+          for (var i = 0; i < n; i++) {
+            var a = 0, from = Math.floor(i * ratio), to = Math.floor((i + 1) * ratio);
+            for (var j = from; j < to; j++) a += x[j];
+            var v = Math.max(-1, Math.min(1, a / Math.max(1, to - from)));
+            out[i] = v * 32767; sum += v * v;
+          }
+          var level = Math.sqrt(Math.sqrt(sum / Math.max(1, n)));
+          var ms = x.length / ctx.sampleRate * 1000;
+          vc.level = level;
+          if (m.held) {
+            // Claude is talking: nothing goes out. Is it him?
+            m.preroll.push(out.buffer, ms);
+            for (var q = 0; q < n; q++) { m.ring[m.ringAt] = out[q] / 32768; m.ringAt = (m.ringAt + 1) % m.ring.length; }
+            if (m.gate.hear(level, playLevel(), ms, voicing)) ownerSpoke();
+            return;
+          }
+          if (m.paused) return;
+          if (m.gate && !vc.playing) m.gate.learn(level);
+          if (m.ws && m.ws.readyState === 1) {
+            while (m.pending.length) m.ws.send(m.pending.shift());
+            m.ws.send(out.buffer);
+          } else if (m.pending.length < 40) m.pending.push(out.buffer); // the first words, while the socket opens
+        };
+        src.connect(proc); proc.connect(ctx.destination);
+        var proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        var tok = '';
+        try { tok = voiceToken() || ''; } catch (e) { tok = ''; }
+        var ws = new WebSocket(proto + '://' + location.host + '/api/voice/listen?encoding=linear16&sample_rate=16000&token=' + encodeURIComponent(tok));
+        ws.binaryType = 'arraybuffer';
+        m.ws = ws;
+        ws.onmessage = function (msg) {
+          var e;
+          try { e = JSON.parse(msg.data); } catch (x) { return; }
+          if (vc.mic === m || m.closing) micHeard(e, m);
+        };
+        ws.onclose = function () {
+          if (m.closing) { if (m.onClosed) m.onClosed(); return; }
+          if (vc.mic !== m) return;
+          voiceFail('Listening stopped (the connection closed).');
+        };
+        ws.onopen = function () {
+          if (vc.playing && !vc.playing.paused) micHold(vc.playing.text);
+          if (onReady) onReady();
+        };
+      }).catch(function () {
+        if (vc.mic === m) voiceFail('The microphone is not allowed. Allow it for this site to talk to this chat.');
+      });
+    }
+    function micSend(obj) { var m = vc.mic; try { if (m && m.ws && m.ws.readyState === 1) m.ws.send(JSON.stringify(obj)); } catch (e) { /* gone */ } }
+    // Without the gate (a page without crundi-voice.js): listening simply pauses while Claude talks.
+    function micPause(p) {
+      var m = vc.mic;
+      if (!m || m.paused === p) return;
+      m.paused = p;
+      micSend({ type: p ? 'pause' : 'resume' });
+    }
+    // Claude starts to talk: the mic stays here (into the gate and the
+    // pre-roll) and the server is told what is said, so its echo filter is
+    // the second net.
+    function micHold(text) {
+      var m = vc.mic;
+      if (!m) return;
+      if (!m.gate) { micPause(true); return; }
+      if (!m.held) { m.held = true; m.gate.start(); m.preroll.clear(); }
+      micSend({ type: 'saying', text: text });
+      micSend({ type: 'pause' });
+    }
+    // Back to the server: [withPreroll] the owner cut in, so what he said
+    // just before goes first.
+    function micRelease(withPreroll) {
+      var m = vc.mic;
+      if (!m) return;
+      if (!m.gate) { micPause(false); return; }
+      if (!m.held) return;
+      var chunks = m.preroll.drain(Math.min(PREROLL_MS, m.gate.loudMs + LEAD_MS));
+      m.held = false;
+      micSend({ type: 'resume' });
+      micSend({ type: 'said' });
+      if (withPreroll && m.ws && m.ws.readyState === 1) chunks.forEach(function (c) { try { m.ws.send(c); } catch (e) { /* gone */ } });
+    }
+    // The gate heard the owner over Claude: pause the reply now, and send
+    // what he is saying from its start. It carries on once he has finished.
+    function ownerSpoke() {
+      vc.lastHeardAt = Date.now();
+      var p = vc.playing;
+      if (p && !p.paused) p.pause();
+      micRelease(true);
+      voicePaint();
+      replyTick();
+    }
+    function micClose(which) {
+      var m = which || vc.mic;
+      if (vc.mic === m) vc.mic = null;
+      if (!m) return;
+      m.closing = true;
+      try { if (m.ws && m.ws.readyState <= 1) m.ws.close(); } catch (e) { /* gone */ }
+      try { if (m.proc) { m.proc.onaudioprocess = null; m.proc.disconnect(); } } catch (e) { /* gone */ }
+      try { if (m.stream) m.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* gone */ }
+      try { if (m.ctx) m.ctx.close(); } catch (e) { /* gone */ }
+    }
+    function micHeard(e, m) {
+      if (e.type === 'ready') { m.ready = true; cruTone('listen'); return; }
+      var late = vc.sentNow && Date.now() - vc.sentNow.at < 4000 && voiceLogic.alreadySent(vc.sentNow.text, e.text);
+      if (e.type === 'interim') {
+        if (late && vc.on && !vc.ptt) return;
+        vc.interim = String(e.text || '');
+        if (vc.interim.trim()) vc.lastHeardAt = Date.now();
+        voicePaint();
+        return;
+      }
+      if (e.type === 'discard') {
+        // "Scratch that": what was heard goes, nothing is sent.
+        vc.interim = '';
+        vc.lastHeardAt = 0;
+        if (vc.ptt || m.closing) vc.heard = [];
+        voicePaint();
+        replyTick();
+        return;
+      }
+      if (e.type === 'utterance') {
+        vc.interim = '';
+        if (vc.ptt || m.closing) { vc.heard.push(String(e.text || '')); voicePaint(); return; }
+        if (vc.on && !late) voiceSend(e.text, false);
+        vc.sentNow = null;
+        vc.lastHeardAt = 0;   // his utterance is sent: a waiting reply may go
+        if (vc.recAt) vc.recAt = Date.now();
+        voicePaint();
+        replyTick();
+        return;
+      }
+      if (e.type === 'error' && vc.mic === m) voiceFail(e.error || 'Listening stopped.');
+    }
+    function voiceSend(said, ptt) {
+      var text = voiceLogic.message(said);
+      if (!text || destroyed || input.disabled) return false;
+      if (ptt) vc.lastPttAt = Date.now();
+      stickBottom = true;
+      scrollDown(true);
+      sendText(text);
+      cruTone('sent');
+      return true;
+    }
+    // Cru's tones, as on its own screen: listening when the mic is live, sent when the words go.
+    function cruTone(kind) { try { if (window.CrundiVoice && window.CrundiVoice.tone) window.CrundiVoice.tone(kind); } catch (e) { /* no audio */ } }
+    function voiceFail(why) {
+      voiceStop();
+      voiceShow(why, 'err');
+    }
+
+    // Voice mode on and off.
+    function voiceStart() {
+      if (vc.on || destroyed) return;
+      if (input.disabled) { voiceShow('This chat has ended.', 'err'); return; }
+      // Cru's screen has the microphone: ask rather than take it.
+      if (voiceLogic.startChoice({ cruOpen: !!(window.CrundiVoice && window.CrundiVoice.isOpen) }) === 'ask') { voiceShow('Cru is listening. Switch to this chat?', 'ask'); return; }
+      voiceClaim(voiceSelf);   // one chat in voice mode at a time
+      vc.on = true;
+      vc.away = null;
+      vc.interim = '';
+      vc.lastHeardAt = 0;
+      voiceOutCtx();
+      voicePaint();
+      // The voice and talking speed may have changed since the mic was shown.
+      voiceSettings(apiFetch, true).then(function (s) { if (s) vc.settings = s; });
+      micOpen(null);
+    }
+    function voiceStop() {
+      vc.on = false;
+      vc.away = null;
+      othersResume();
+      vc.ptt = false;
+      vc.sending = false;
+      vc.heard = [];
+      vc.interim = '';
+      vc.lastHeardAt = 0;
+      vc.sentNow = null;
+      if (vc.press) { clearTimeout(vc.press.timer); vc.press = null; }
+      micClose();
+      speakStop();
+      voicePaint();
+      voiceShow('', 'off');
+    }
+
+    // Push to talk: listen while held, send on release.
+    function pttStart() {
+      if (destroyed || vc.on) return;
+      if (input.disabled) { voiceShow('This chat has ended.', 'err'); return; }
+      // Holding the mic is asking on purpose: Cru's screen gives it up, and a
+      // chat in voice mode elsewhere pauses until this hold is done.
+      if (window.CrundiVoice && window.CrundiVoice.isOpen) { try { window.CrundiVoice.close(); } catch (e) { /* closes itself */ } }
+      othersPause();
+      vc.ptt = true;
+      vc.heard = [];
+      vc.interim = '';
+      voiceOutCtx();
+      voicePaint();
+      replyTick();   // talking now: a reply being said pauses, one coming waits
+      micOpen(null);
+    }
+    function pttRelease() {
+      if (!vc.ptt) return;
+      vc.ptt = false;
+      vc.sending = true;
+      var m = vc.mic;
+      var sent = false;
+      var finish = function () {
+        if (sent) return;
+        sent = true;
+        clearTimeout(wait);
+        // The server's last utterance, or failing that what was on screen.
+        var said = voiceLogic.transcript(vc.heard.length ? vc.heard : [], vc.heard.length ? '' : vc.interim);
+        vc.heard = [];
+        vc.interim = '';
+        vc.sending = false;
+        vc.lastHeardAt = 0;
+        if (m) micClose(m);
+        othersResume();
+        voicePaint();
+        voiceSend(said, true);
+        replyTick();   // the hold is sent: the reply carries on
+      };
+      var wait = setTimeout(finish, VOICE_STOP_WAIT_MS);
+      if (!m || !m.ws || m.ws.readyState !== 1) { finish(); return; }
+      // 'stop' makes the server send what it has as a last utterance, then close.
+      m.closing = true;
+      m.onClosed = finish;
+      micSend({ type: 'stop' });
+      voicePaint();
+    }
+
+    // Tap or hold, told apart by how long the mic is pressed.
+    micBtn.addEventListener('pointerdown', function (e) {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();   // keep the keyboard where it is on a phone
+      try { micBtn.setPointerCapture(e.pointerId); } catch (x) { /* fine */ }
+      if (vc.press) clearTimeout(vc.press.timer);
+      var press = { at: Date.now(), id: e.pointerId, timer: null };
+      vc.press = press;
+      voiceOutCtx();
+      // In voice mode any press is a click; otherwise a long one is push to talk.
+      if (!vc.on) press.timer = setTimeout(function () { if (vc.press === press) { press.held = true; pttStart(); } }, VOICE_HOLD_MS);
+    });
+    // Holding: the pointer is captured, so a slide onto cancel is followed
+    // even outside the mic. Over it, cancel lights up; let go there to drop it.
+    function overCancel(e) {
+      if (!e || recCancel.offsetParent === null) return false;
+      var r = recCancel.getBoundingClientRect(), pad = 8;
+      return e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+    }
+    micBtn.addEventListener('pointermove', function (e) {
+      var press = vc.press;
+      if (!press || !press.held || e.pointerId !== press.id) return;
+      var over = overCancel(e);
+      if (over === !!press.over) return;
+      press.over = over;
+      recCancel.classList.toggle('hot', over);
+      recBox.classList.toggle('cancelling', over);
+      micBtn.setAttribute('aria-label', over ? 'Let go to cancel' : 'Let go to send (slide to cancel to drop it)');
+    });
+    function pressEnd(e, cancelled) {
+      var press = vc.press;
+      if (!press || (e && press.id !== undefined && e.pointerId !== press.id)) return;
+      vc.press = null;
+      clearTimeout(press.timer);
+      if (press.held) {
+        var over = !cancelled && (press.over || overCancel(e));
+        if (voiceLogic.releaseAction(over) === 'cancel') pttCancel(); else pttRelease();
+        return;
+      }
+      if (cancelled) return;
+      if (voiceLogic.pressKind(Date.now() - press.at) === 'tap' || vc.on) micAct();
+    }
+    // A tap or Enter: pause Claude if it is talking; otherwise voice mode on,
+    // "send what is heard now", or voice mode off.
+    function micAct() {
+      // Paused for Cru: a tap takes the microphone back (Cru's screen closes, this carries on).
+      if (vc.on && vc.away === 'cru') { try { window.CrundiVoice.close(); } catch (e) { voiceResumeFrom('cru'); } return; }
+      var p = vc.playing;
+      if (p && !p.paused) {
+        vc.lastHeardAt = Date.now();   // carries on after the same quiet as when he talks over it
+        p.pause();
+        micRelease(false);
+        voicePaint();
+        replyTick();
+        return;
+      }
+      var a = voiceLogic.micClick({ on: vc.on, interim: vc.interim });
+      if (a === 'on') voiceStart();
+      else if (a === 'send-now') voiceSendNow();
+      else voiceStop();
+    }
+    micBtn.addEventListener('pointerup', function (e) { pressEnd(e, false); });
+    micBtn.addEventListener('pointercancel', function (e) { pressEnd(e, true); });
+    micBtn.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // The keyboard (Enter / Space) has no hold.
+    micBtn.addEventListener('click', function (e) {
+      if (e.detail !== 0) return;   // a pointer press, handled above
+      micAct();
+    });
+    // Voice mode: send the words heard so far without waiting for the pause.
+    // The server is told to drop them, so they don't come back as an utterance.
+    function voiceSendNow() {
+      var text = vc.interim;
+      if (!vc.on || !String(text || '').trim()) return;
+      micSend({ type: 'discard' });
+      vc.sentNow = { text: text, at: Date.now() };
+      vc.interim = '';
+      vc.lastHeardAt = 0;
+      voiceSend(text, false);
+      if (vc.recAt) vc.recAt = Date.now();
+      voicePaint();
+      replyTick();
+    }
+    // Cancel: what was heard is dropped and nothing is sent, and Claude's
+    // reply stops for good. Voice mode keeps listening.
+    function voiceCancelWords() {
+      micSend({ type: 'discard' });
+      vc.interim = '';
+      vc.heard = [];
+      vc.sentNow = null;
+      vc.lastHeardAt = 0;
+      speakStop();
+      voicePaint();
+    }
+    function pttCancel() {
+      if (!vc.ptt) return;
+      var m = vc.mic;
+      voiceCancelWords();
+      vc.ptt = false;
+      if (m) micClose(m);
+      othersResume();
+      voicePaint();
+      voiceShow('', 'off');
+    }
+    recCancel.addEventListener('pointerdown', function (e) { e.preventDefault(); });
+    recCancel.addEventListener('click', function () { if (vc.ptt) pttCancel(); else voiceCancelWords(); });
+    // Escape ends voice mode (or drops a hold), from anywhere in this chat.
+    function onVoiceKey(e) {
+      if (e.key !== 'Escape' || !(vc.on || vc.ptt)) return;
+      var a = document.activeElement;
+      if (a && a !== document.body && !root.contains(a)) return;
+      if (vc.ptt) { vc.press = null; pttCancel(); } else voiceStop();
+    }
+    window.addEventListener('keydown', onVoiceKey);
+
+    // ─── Sharing the microphone ───
+    // With Cru: opened on purpose while this chat is in voice mode, Cru takes
+    // the microphone and voice mode pauses here until its screen closes.
+    // With other chats: one in voice mode at a time; a hold elsewhere pauses
+    // this one until it is done.
+    function voicePauseFor(by, note) {
+      if (!vc.on || vc.away) return;
+      vc.away = by;
+      vc.awayNote = note;
+      vc.interim = '';
+      vc.lastHeardAt = 0;
+      var p = vc.playing;
+      if (p && !p.paused) p.pause();
+      micClose();
+      voicePaint();
+    }
+    function voiceResumeFrom(by) {
+      if (vc.away !== by) return;
+      vc.away = null;
+      vc.awayNote = '';
+      if (!vc.on || destroyed) return;
+      voiceShow('', 'off');
+      voicePaint();
+      micOpen(null);
+      replyTick();
+    }
+    function othersPause() {
+      vc.pausedOthers = voiceViews.filter(function (v) { return v !== voiceSelf && v.pause(); });
+    }
+    function othersResume() {
+      var list = vc.pausedOthers;
+      vc.pausedOthers = [];
+      list.forEach(function (v) { v.resume(); });
+    }
+    var voiceSelf = {
+      active: function () { return voiceLogic.holdsMic({ on: vc.on, away: vc.away, ptt: vc.ptt, sending: vc.sending }); },
+      // Another chat (here or in another window) turned voice mode on.
+      yieldTo: function () {
+        if (voiceLogic.onClaim({ on: vc.on }) !== 'off') return;
+        voiceStop();
+        voiceShow('Voice mode moved to another chat.', 'note', 6000);
+      },
+      pause: function () {
+        if (!vc.on || vc.away) return false;
+        voicePauseFor('chat', 'Paused: listening in another chat');
+        return true;
+      },
+      resume: function () { voiceResumeFrom('chat'); },
+    };
+    voiceViews.push(voiceSelf);
+    voiceChannel();
+    function onCruOpen() {
+      var a = voiceLogic.onCruOpen({ on: vc.on, away: vc.away, ptt: vc.ptt });
+      if (a === 'cancel-hold') { vc.press = null; pttCancel(); }
+      else if (a === 'pause') voicePauseFor('cru', 'Paused: Cru is listening');
+      else if (!vc.on && vc.playing) speakStop();   // a reply after a hold: Cru talks now
+      if (voiceLine.classList.contains('ask')) voiceShow('', 'off');
+    }
+    function onCruClose() {
+      if (voiceLogic.onCruClose({ on: vc.on, away: vc.away }) === 'resume') voiceResumeFrom('cru');
+    }
+    window.addEventListener('crundi-voice-open', onCruOpen);
+    window.addEventListener('crundi-voice-close', onCruClose);
+    voiceAskBox.querySelector('.yes').addEventListener('click', function () {
+      voiceShow('', 'off');
+      try { if (window.CrundiVoice && window.CrundiVoice.isOpen) window.CrundiVoice.close(); } catch (e) { /* closes itself */ }
+      voiceStart();
+    });
+    voiceAskBox.querySelector('.no').addEventListener('click', function () { voiceShow('', 'off'); });
+
+    // ─── Claude's voice ───
+    function onVoiceSay(ev) {
+      var st = { voiceOn: vc.on, lastPttAt: vc.lastPttAt, seen: vc.seen, now: Date.now() };
+      var say = voiceLogic.shouldSpeak(ev, st);
+      if (ev && ev.id) vc.seen[ev.id] = 1;
+      if (!say) return;
+      vc.queue.push(String(ev.text).trim());
+      replyTick();
+    }
+    // Replies go around the owner: while he talks (a hold, its send, or words
+    // within QUIET_MS) a reply waits, and one being said pauses; once he has
+    // finished the paused one carries on from where it was, then the rest.
+    function replyTick() {
+      clearTimeout(vc.tick);
+      vc.tick = 0;
+      if (destroyed) return;
+      var p = vc.playing;
+      if (!p && !vc.queue.length) return;
+      if (voiceLogic.ownerTalking({ ptt: vc.ptt, sending: vc.sending, away: !!vc.away, lastHeardAt: vc.lastHeardAt, now: Date.now() })) {
+        if (p && !p.paused) { p.pause(); micRelease(false); voicePaint(); }
+        vc.tick = setTimeout(replyTick, 250);
+        return;
+      }
+      if (p && p.paused) { micHold(p.text); p.resume(); voicePaint(); }
+      else if (!p) speakNext();
+      if (vc.playing && vc.playing.paused) vc.tick = setTimeout(replyTick, 250);
+    }
+    function speakNext() {
+      if (vc.playing || destroyed) return;
+      var text = vc.queue.shift();
+      if (text == null) { voicePaint(); return; }
+      var voice = voiceLogic.ttsVoice(vc.settings);
+      var token = {
+        text: text, kind: voice ? 'deepgram' : 'browser', stopped: false, paused: false, nodes: [],
+        pause: function () { if (token.paused || token.stopped) return; token.paused = true; if (token.onPause) token.onPause(); },
+        resume: function () { if (!token.paused || token.stopped) return; token.paused = false; if (token.onResume) token.onResume(); },
+        stop: function () {
+          token.stopped = true;
+          token.paused = false;
+          token.nodes.forEach(function (n) { try { n.stop(); } catch (e) { /* ended */ } });
+          if (token.onStop) token.onStop();
+        },
+      };
+      vc.playing = token;
+      micHold(text);
+      voicePaint();
+      var done = function () {
+        if (vc.playing !== token) return;
+        vc.playing = null;
+        if (vc.queue.length) { replyTick(); return; }
+        voicePaint();
+        // The room's echo dies down a moment, then the mic goes back to the server.
+        setTimeout(function () { if (!vc.playing) micRelease(false); }, RELEASE_AFTER_MS);
+      };
+      if (voice) speakDeepgram(text, token).then(done, function () { if (!token.stopped) { token.kind = 'browser'; speakBrowser(text, token, done); } });
+      else speakBrowser(text, token, done);
+    }
+    function speakStop() {
+      vc.queue = [];
+      clearTimeout(vc.tick);
+      vc.tick = 0;
+      var p = vc.playing;
+      vc.playing = null;
+      if (p) p.stop();
+      micRelease(false);
+    }
+    // Deepgram's voice: streamed 16-bit PCM where the server can (an older one
+    // sends a whole mp3), played as it arrives. Paused by suspending its audio
+    // context, which keeps every scheduled piece where it was. Resolves when it
+    // has been said.
+    function speakDeepgram(text, token) {
+      var ctx = voiceOutCtx();
+      var dest = voiceOutNode();
+      if (!ctx || !dest) return Promise.reject(new Error('no audio'));
+      token.onPause = function () { try { ctx.suspend(); } catch (e) { /* no */ } };
+      token.onResume = function () { try { ctx.resume(); } catch (e) { /* no */ } };
+      token.onStop = function () { try { if (ctx.state === 'suspended') ctx.resume(); } catch (e) { /* no */ } };
+      var at = ctx.currentTime + 0.05, any = false;
+      var whenSaid = function () {
+        return new Promise(function (resolve) {
+          (function check() {
+            if (token.stopped || (!token.paused && ctx.currentTime >= at)) { setTimeout(resolve, 60); return; }
+            setTimeout(check, 100);
+          })();
+        });
+      };
+      var play = function (buf) {
+        var node = ctx.createBufferSource();
+        node.buffer = buf;
+        node.connect(dest);
+        at = Math.max(at, ctx.currentTime + 0.02);
+        node.start(at);
+        at += buf.duration;
+        token.nodes.push(node);
+        any = true;
+      };
+      return apiFetch('/api/voice/speak?stream=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'audio/L16' },
+        body: JSON.stringify({ text: text }),
+      }).then(function (res) {
+        if (!res || !res.ok) throw new Error('speak failed');
+        var ct = (res.headers && res.headers.get('Content-Type')) || '';
+        if (!/L16/i.test(ct) || !res.body || !res.body.getReader) {
+          return res.arrayBuffer().then(function (ab) {
+            return new Promise(function (resolve, reject) { ctx.decodeAudioData(ab, resolve, reject); });
+          }).then(function (buf) { if (!token.stopped) play(buf); return whenSaid(); });
+        }
+        var rate = voiceLogic.pcmRate(ct, res.headers.get('X-Sample-Rate'));
+        var reader = res.body.getReader(), carry = null;
+        var pump = function () {
+          return reader.read().then(function (r) {
+            if (token.stopped) { try { reader.cancel(); } catch (e) { /* done */ } return null; }
+            if (r.done) return whenSaid();
+            var bytes = r.value;
+            if (carry) { var j = new Uint8Array(carry.length + bytes.length); j.set(carry); j.set(bytes, carry.length); bytes = j; carry = null; }
+            if (bytes.length % 2) { carry = bytes.slice(bytes.length - 1); bytes = bytes.slice(0, bytes.length - 1); }
+            var n = bytes.length / 2;
+            if (!n) return pump();
+            var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+            var buf = ctx.createBuffer(1, n, rate), ch = buf.getChannelData(0);
+            for (var i = 0; i < n; i++) ch[i] = dv.getInt16(i * 2, true) / 32768;
+            play(buf);
+            return pump();
+          });
+        };
+        return pump();
+      }).catch(function (e) { if (any) return whenSaid(); throw e; });
+    }
+    // The browser's own voice (British where it has one), at Cru's talking
+    // speed. Paused with speechSynthesis.pause() where that works; where it
+    // does not (or it ends the utterance instead), it starts again from the
+    // sentence it was in.
+    function speakBrowser(text, token, done) {
+      var SS = window.speechSynthesis;
+      if (!SS || !window.SpeechSynthesisUtterance) { done(); return; }
+      var vs = [];
+      try { vs = SS.getVoices() || []; } catch (e) { vs = []; }
+      var voice = vs.find(function (v) { return /en-GB/i.test(v.lang) && /male|daniel|george|arthur|ryan/i.test(v.name); })
+        || vs.find(function (v) { return /en-GB/i.test(v.lang); }) || null;
+      var rate = (vc.settings && Number(vc.settings.speechRate)) || 1;
+      var cap = 0, charAt = 0, restartFrom = null;
+      var finish = function () { clearTimeout(cap); token.utter = null; done(); };
+      // onend is not always fired: a generous cap so the queue never sticks.
+      var arm = function (from) { clearTimeout(cap); cap = setTimeout(finish, 8000 + (text.length - from) * 120); };
+      var say = function (from) {
+        var u = new SpeechSynthesisUtterance(text.slice(from));
+        u.voice = voice; u.lang = 'en-GB'; u.rate = rate;
+        u.onboundary = function (e) { if (token.utter === u) charAt = from + (e.charIndex || 0); };
+        u.onend = u.onerror = function () {
+          if (token.utter !== u) return;
+          // A pause that ended it (some browsers): start again from its sentence on resume.
+          if (token.paused) { token.utter = null; restartFrom = voiceLogic.sentenceStart(text, charAt); return; }
+          finish();
+        };
+        token.utter = u;
+        charAt = from;
+        arm(from);
+        try { SS.cancel(); SS.speak(u); } catch (e) { finish(); }
+      };
+      token.onPause = function () {
+        clearTimeout(cap);
+        try { SS.pause(); } catch (e) { /* no */ }
+        setTimeout(function () {
+          // Not paused after all: stop it, and say the rest from its sentence later.
+          if (token.paused && token.utter && !SS.paused) {
+            restartFrom = voiceLogic.sentenceStart(text, charAt);
+            token.utter = null;
+            try { SS.cancel(); } catch (e) { /* no */ }
+          }
+        }, 150);
+      };
+      token.onResume = function () {
+        if (restartFrom != null || !token.utter) { var from = restartFrom || 0; restartFrom = null; say(from); return; }
+        try { SS.resume(); } catch (e) { /* no */ }
+        arm(charAt);
+      };
+      token.onStop = function () {
+        clearTimeout(cap);
+        token.utter = null;
+        try { SS.cancel(); } catch (e) { /* none */ }
+      };
+      say(0);
+    }
 
     function appendLocal(data) {
       data.id = 'local-' + Math.random().toString(16).slice(2);
@@ -2964,6 +4082,7 @@
       try { return JSON.parse(raw).v || ''; } catch (e) { return raw; }
     }
     function saveDraft() {
+      if (vc && vc.box) return;   // the live transcript is not the draft
       try {
         writeDraft(DRAFT_KEY, input.value);
         if (!DRAFT_PROJ_KEY) return;
@@ -3925,6 +5044,7 @@
           renderQueue();
           break;
         }
+        case 'voice-say': onVoiceSay(ev); break;
         case 'agent': applyAgent(ev.agent); break;
         case 'agent-entry': addAgentEntry(ev.toolUseId, ev.entry); break;
         case 'agent-patch': patchAgentEntry(ev.toolUseId, ev.id, ev.patch); break;
@@ -3954,6 +5074,7 @@
           // Nothing will flush the queue now, so hand the text back rather than
           // silently dropping what the user typed.
           if (queued.length) unqueue();
+          if (vc.on || vc.ptt) voiceStop();
           // Anything already handed over is beyond recall and will never be
           // acknowledged now, so stop implying it is still on its way.
           if (handedOver.length) { handedOver = []; renderQueue(); }
@@ -3994,6 +5115,15 @@
       insertText: function (text) { if (text) insertPath(text); },
       destroy: function () {
         closeModeModal();
+        voiceStop();
+        window.removeEventListener('keydown', onVoiceKey);
+        window.removeEventListener('crundi-voice-open', onCruOpen);
+        window.removeEventListener('crundi-voice-close', onCruClose);
+        var vi = voiceViews.indexOf(voiceSelf);
+        if (vi >= 0) voiceViews.splice(vi, 1);
+        clearTimeout(vc.tick);
+        try { if (vc.loop) vc.loop.close(); } catch (e) { /* gone */ }
+        try { if (vc.out) vc.out.close(); } catch (e) { /* gone */ }
         destroyed = true;
         if (mini) { try { mini.destroy(); } catch (e) {} mini = null; }
         // Let a later chat in this project pick the draft back up.
@@ -4019,5 +5149,9 @@
     };
   }
 
-  window.CrundiChat = { mount: mount };
+  window.CrundiChat = {
+    mount: mount, _voice: voiceLogic,
+    /** A chat has the microphone (voice mode, a hold): Cru's "Hey Cru" listener leaves it alone. */
+    get voiceActive() { return voiceViews.some(function (v) { return v.active(); }); },
+  };
 })();

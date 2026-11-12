@@ -1,8 +1,9 @@
 /**
  * auth-config.js — which ways in are switched on, and their secrets.
  *
- * Two methods: Telegram, and a password with a TOTP code. Either is enough,
- * both can be on, and at least one must stay on once any is configured.
+ * Four methods: Telegram, a password with a TOTP code, and Google or GitHub
+ * through the owner's own OAuth app (auth-oauth.js). Any one is enough, any
+ * mix can be on, and at least one must stay on once any is configured.
  *
  * ─── The open first run ───
  *
@@ -85,15 +86,41 @@ function telegramOn() {
   return s.telegram?.enabled !== false;
 }
 
+// ─── Google and GitHub ───
+
+export const OAUTH_PROVIDERS = ['google', 'github'];
+
+/** Client ID, secret and the allowed account all present. */
+function oauthConfigured(provider) {
+  const o = load()[provider];
+  if (!o || !o.clientId || !o.clientSecret) return false;
+  return provider === 'google' ? !!o.allowedEmail : !!(o.allowedLogin || o.allowedId);
+}
+
+function oauthOn(provider) {
+  return oauthConfigured(provider) && load()[provider].enabled === true;
+}
+
+/** Everything the flow needs, secret included. Server-side only. */
+export function oauthCreds(provider) {
+  if (!OAUTH_PROVIDERS.includes(provider)) return null;
+  const o = load()[provider];
+  return o ? { ...o } : null;
+}
+
 export function methods() {
   const password = !!passwordCreds();
   const telegram = telegramOn();
+  const google = oauthOn('google');
+  const github = oauthOn('github');
   return {
     telegram,
     password,
+    google,
+    github,
     // False puts the server in setup mode: unauthenticated, but able to do
     // nothing except configure a method (enforced in webapp.js).
-    anyConfigured: telegram || password,
+    anyConfigured: telegram || password || google || github,
   };
 }
 
@@ -137,7 +164,7 @@ export function setTelegramEnabled(enabled) {
     return { ok: false, error: 'Set a Telegram bot token and username first (Settings → Telegram Bot Token).' };
   }
   if (!want && !guardLastMethod('telegram')) {
-    return { ok: false, error: 'That is the only way to sign in. Set up password login first.' };
+    return { ok: false, error: 'That is the only way to sign in. Turn on another method first.' };
   }
   const s = load();
   s.telegram = { ...(s.telegram || {}), enabled: want };
@@ -152,7 +179,7 @@ export function setPasswordEnabled(enabled) {
     return { ok: false, error: 'Set a password first.' };
   }
   if (!want && !guardLastMethod('password')) {
-    return { ok: false, error: 'That is the only way to sign in. Set up Telegram login first.' };
+    return { ok: false, error: 'That is the only way to sign in. Turn on another method first.' };
   }
   s.password = { ...(s.password || {}), enabled: want };
   // An env-provided password cannot be switched off by deleting it, so record
@@ -168,8 +195,103 @@ export function setPasswordEnabled(enabled) {
 /** Would turning `which` off leave nothing to sign in with? */
 function guardLastMethod(which) {
   const m = methods();
-  const remaining = (which === 'telegram' ? m.password : m.telegram);
-  return remaining;   // true → safe to disable, something else is still on
+  // true → safe to disable, something else is still on
+  return ['telegram', 'password', ...OAUTH_PROVIDERS].some((k) => k !== which && m[k]);
+}
+
+const LABEL = { google: 'Google', github: 'GitHub' };
+
+/**
+ * Set the client ID, secret and allowed account. A blank secret keeps the
+ * stored one (the page never has it to send back). Any change to the
+ * credentials or the account marks the method untested again: it has to be
+ * shown to work before it can be turned on, so a typo in a secret cannot be
+ * what you are left signing in with.
+ */
+export function setOAuthConfig(provider, { clientId, clientSecret, allowed } = {}) {
+  if (!OAUTH_PROVIDERS.includes(provider)) return { ok: false, error: 'Unknown sign-in method' };
+  const s = load();
+  const prev = s[provider] || {};
+  const id = String(clientId ?? prev.clientId ?? '').trim();
+  const secret = String(clientSecret || '').trim() || prev.clientSecret || '';
+  let acct = String(allowed ?? (provider === 'google' ? prev.allowedEmail : prev.allowedLogin) ?? '').trim();
+  if (!id) return { ok: false, error: 'Enter the client ID.' };
+  if (!secret) return { ok: false, error: 'Enter the client secret.' };
+  if (id.length > 300 || secret.length > 300) return { ok: false, error: 'That is too long to be a client ID or secret.' };
+  const next = { ...prev, clientId: id, clientSecret: secret };
+  if (provider === 'google') {
+    acct = acct.toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(acct)) return { ok: false, error: 'Enter the Google email address allowed to sign in.' };
+    next.allowedEmail = acct;
+  } else {
+    acct = acct.replace(/^@/, '');
+    if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(acct)) return { ok: false, error: 'Enter the GitHub username allowed to sign in.' };
+    // A different username is a different person: forget the id learned
+    // from the old one.
+    if (String(prev.allowedLogin || '').toLowerCase() !== acct.toLowerCase()) delete next.allowedId;
+    next.allowedLogin = acct;
+  }
+  const changed = ['clientId', 'clientSecret', 'allowedEmail', 'allowedLogin'].some((k) => (prev[k] || '') !== (next[k] || ''));
+  if (changed) { next.verified = false; delete next.verifiedAs; }
+  s[provider] = next;
+  if (!save()) return { ok: false, error: 'Could not save the sign-in settings' };
+  return { ok: true };
+}
+
+/** A Test sign-in went through as the allowed account. */
+export function markOAuthVerified(provider, account) {
+  const s = load();
+  const o = s[provider];
+  if (!o) return false;
+  o.verified = true;
+  o.verifiedAs = provider === 'google' ? account.email : account.login;
+  // Pin GitHub to the numeric id: a username can be renamed and re-registered
+  // by someone else, the id cannot.
+  if (provider === 'github' && account.id) o.allowedId = String(account.id);
+  return save();
+}
+
+/** A real sign-in went through: pin the GitHub id if it is not yet known. */
+export function noteOAuthAccount(provider, account) {
+  const o = load()[provider];
+  if (provider === 'github' && o && !o.allowedId && account?.id) { o.allowedId = String(account.id); save(); }
+}
+
+export function setOAuthEnabled(provider, enabled) {
+  if (!OAUTH_PROVIDERS.includes(provider)) return { ok: false, error: 'Unknown sign-in method' };
+  const want = !!enabled;
+  const s = load();
+  if (want && !oauthConfigured(provider)) return { ok: false, error: `Fill in the ${LABEL[provider]} client ID, secret and allowed account first.` };
+  if (want && s[provider].verified !== true) return { ok: false, error: `Run Test first, so ${LABEL[provider]} sign-in is known to work before it is turned on.` };
+  if (!want && !guardLastMethod(provider)) return { ok: false, error: 'That is the only way to sign in. Turn on another method first.' };
+  if (!s[provider]) return { ok: true };
+  s[provider].enabled = want;
+  if (!save()) return { ok: false, error: 'Could not save the sign-in settings' };
+  return { ok: true };
+}
+
+/** Forget a provider altogether (refused if it is the last way in). */
+export function clearOAuth(provider) {
+  if (!OAUTH_PROVIDERS.includes(provider)) return { ok: false, error: 'Unknown sign-in method' };
+  if (methods()[provider] && !guardLastMethod(provider)) return { ok: false, error: 'That is the only way to sign in. Turn on another method first.' };
+  const s = load();
+  delete s[provider];
+  if (!save()) return { ok: false, error: 'Could not save the sign-in settings' };
+  return { ok: true };
+}
+
+/** What Settings may see of a provider: never the secret, only whether it is set. */
+function oauthView(provider) {
+  const o = load()[provider] || {};
+  return {
+    configured: oauthConfigured(provider),
+    clientId: o.clientId || '',
+    secretSet: !!o.clientSecret,
+    allowed: (provider === 'google' ? o.allowedEmail : o.allowedLogin) || '',
+    ...(provider === 'github' ? { idPinned: !!o.allowedId } : {}),
+    verified: o.verified === true,
+    verifiedAs: o.verifiedAs || '',
+  };
 }
 
 /** Everything Settings needs to render the sign-in section. */
@@ -181,6 +303,7 @@ export function status() {
     passwordFromEnv: !!(passwordCreds()?.fromEnv),
     telegramAvailable: !!config.telegramConfigured,
     passwordSet: !!(s.password?.hash || config.passwordHash),
+    oauth: { google: oauthView('google'), github: oauthView('github') },
   };
 }
 

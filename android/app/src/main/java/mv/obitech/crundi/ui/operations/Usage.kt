@@ -63,6 +63,10 @@ data class UsageState(
     val showWeek: Boolean = true,
     val showFive: Boolean = false,
     val now: Long = System.currentTimeMillis(),
+    /** The voice assistant's Claude API spend; null hides it (a server without it, a collaborator). */
+    val api: mv.obitech.crundi.api.VoiceSettings? = null,
+    /** What Anthropic reports the whole account has cost; null hides the line. */
+    val account: mv.obitech.crundi.api.AccountUsage? = null,
 )
 
 class UsageEvents(
@@ -99,11 +103,15 @@ fun UsageRoute() {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val first = rememberLoad { api.usage.now() }
     val history = rememberLoad(range) { api.usage.history(range) }
+    // The voice assistant's API spend, as the web's usage modal shows it. Hidden when
+    // the server has no assistant (404) or says no: never an error on this screen.
+    val voice = rememberLoad { runCatching { api.voice.settings() }.getOrNull() }
+    val account = rememberLoad { runCatching { api.voice.accountUsage() }.getOrNull() }
     LaunchedEffect(Unit) { while (true) { delay(30_000); now = System.currentTimeMillis() } }
     val usage: Load<Usage?> = live?.let { Load.Ready(it) } ?: first.value
     UsageScreen(
-        UsageState(usage, history.value, range, week, five, now),
-        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload() }, onBack = { nav.back() }),
+        UsageState(usage, history.value, range, week, five, now, api = voice.value.valueOrNull, account = account.value.valueOrNull),
+        UsageEvents(onRange = { range = it }, onShowWeek = { week = it }, onShowFive = { five = it }, onRefresh = { first.reload(); history.reload(); voice.reload(); account.reload() }, onBack = { nav.back() }),
     )
 }
 
@@ -130,6 +138,7 @@ fun UsageScreen(state: UsageState, events: UsageEvents = UsageEvents()) {
                     WindowCard("5-hour", "5h", usage.fiveHour, FIVE_HOURS, state.now)
                     usage.weekOpus?.let { WindowCard("Weekly · Opus", "opus", it, WEEK, state.now, compact = true) }
                     usage.weekSonnet?.let { WindowCard("Weekly · Sonnet", "sonnet", it, WEEK, state.now, compact = true) }
+                    state.api?.let { ApiSpendCard(it, state.account) }
                     HistoryCard(state, events)
                 }
             }
@@ -165,6 +174,55 @@ private fun WindowCard(title: String, tag: String, w: UsageWindow?, windowMs: Lo
             }
         }
         if (!compact) Text("$tag ${w?.utilization ?: 0}% used · ${(time * 100).toInt()}% of the window gone", style = CrundiType.Meta)
+    }
+}
+
+/**
+ * The voice assistant's metered spend, separate from the subscription above:
+ * Claude and Deepgram bill apart, so each has its own card, month and limit
+ * (D46). Under Claude, what Anthropic reports for the whole account.
+ */
+@Composable
+private fun ApiSpendCard(v: mv.obitech.crundi.api.VoiceSettings, account: mv.obitech.crundi.api.AccountUsage? = null) {
+    val sp = v.spend
+    SpendCard(
+        "Claude API · voice assistant", sp.claudeUsd, v.monthlyLimitUsd, v.limitReached,
+        "${sp.turns} request${if (sp.turns == 1) "" else "s"}" + (if (v.nextReset.isNotEmpty()) " · restarts ${v.nextReset}" else ""),
+        "limit reached: voice stops until it restarts",
+    ) {
+        account?.let { a ->
+            val line = when {
+                a.ok -> "Anthropic, whole account: ${usd(a.totalUsd)} since ${a.since.take(10)}"
+                a.needsKey -> "To see the whole account as Anthropic reports it, add an Admin API key in Settings > Voice assistant, under Keys."
+                else -> "Anthropic account usage: ${a.error.ifEmpty { "unavailable" }}"
+            }
+            Text(line, style = CrundiType.Small.copy(color = if (a.ok) CrundiColors.TextPrimary else CrundiColors.TextMuted))
+        }
+    }
+    SpendCard(
+        "Deepgram · voice assistant", sp.deepgramUsd, v.deepgramLimitUsd, v.deepgramLimitReached,
+        "listening and speaking" + (if (v.deepgramNextReset.isNotEmpty()) " · restarts ${v.deepgramNextReset}" else ""),
+        "limit reached: the phone's own voice and recogniser take over",
+    )
+}
+
+private fun usd(d: Double) = "$" + "%.2f".format(java.util.Locale.US, d)
+
+@Composable
+private fun SpendCard(title: String, used: Double, limit: Double, reached: Boolean, meta: String, warn: String, extra: @Composable () -> Unit = {}) {
+    val frac = if (limit > 0) (used / limit).toFloat().coerceIn(0f, 1f) else 1f
+    Column(
+        Modifier.fillMaxWidth().clip(Dimens.Shape).background(CrundiColors.BgCard).border(Dimens.Hairline, CrundiColors.Border, Dimens.Shape).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(title, style = CrundiType.Heading, modifier = Modifier.weight(1f))
+            Text(usd(used), style = CrundiType.Code.copy(fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = if (reached) CrundiColors.Red else levelColor(frac)))
+        }
+        Meter(frac, color = if (reached) CrundiColors.Red else CrundiColors.Accent, height = 12.dp)
+        Text("of ${usd(limit)} this billing month · $meta", style = CrundiType.Meta.copy(fontSize = 12.sp))
+        if (reached) StatusBadge(warn, BadgeKind.Bad)
+        extra()
     }
 }
 

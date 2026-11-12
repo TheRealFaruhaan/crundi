@@ -144,6 +144,7 @@ button{font:inherit;color:inherit}
 </div>
 <div id="cp-toast" role="status"></div>
 <script src="/vendor/crundi-mini.js?v=${esc(tag('crundi-mini.js'))}"></script>
+<script src="/vendor/crundi-voice.js?v=${esc(tag('crundi-voice.js'))}"></script>
 <script src="/vendor/claude-chat.js?v=${esc(tag('claude-chat.js'))}"></script>
 <script src="/vendor/crundi-widgets.js?v=${esc(tag('crundi-widgets.js'))}"></script>
 <script src="/vendor/crundi-secret-lock.js?v=${esc(tag('crundi-secret-lock.js'))}"></script>

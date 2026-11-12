@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 5 (D2, D33 mode B): long-press the Crundi icon, or ask Gemini,
+     for "Voice": the voice screen. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="voice"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_voice_short"
+        android:shortcutLongLabel="@string/shortcut_voice_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="mv.obitech.crundi"
+            android:targetClass="mv.obitech.crundi.voice.VoiceActivity" />
+        <capability-binding android:key="actions.intent.OPEN_APP_FEATURE" />
+    </shortcut>
+</shortcuts>

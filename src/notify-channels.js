@@ -59,6 +59,8 @@ export function register(channel) {
 export function isEnabled(id) {
   const ch = registry.get(id);
   if (!ch) return false;
+  // Crundi's own inbox: always on, nothing to switch off.
+  if (ch.alwaysOn) return true;
   if (ch.available && !ch.available()) return false;
   const s = load();
   const saved = s[id]?.enabled;
@@ -70,6 +72,9 @@ export function isEnabled(id) {
 export function setEnabled(id, enabled) {
   const ch = registry.get(id);
   if (!ch) return { ok: false, error: `Unknown channel "${id}"` };
+  if (ch.alwaysOn) {
+    return enabled ? { ok: true } : { ok: false, error: `${ch.label || id} is always on: everything for you lands there first.` };
+  }
   if (enabled && ch.available && !ch.available()) {
     return { ok: false, error: ch.unavailableReason?.() || 'That channel is not set up yet' };
   }
@@ -88,6 +93,7 @@ export function list() {
     available: ch.available ? !!ch.available() : true,
     unavailableReason: ch.available && !ch.available() ? (ch.unavailableReason?.() || '') : '',
     enabled: isEnabled(ch.id),
+    ...(ch.alwaysOn ? { alwaysOn: true } : {}),
   }));
 }
 
@@ -100,6 +106,8 @@ export function list() {
 export async function deliver(text, meta = {}, { only = null, except = null } = {}) {
   const results = [];
   for (const ch of registry.values()) {
+    // A passive channel (the inbox) is filled before delivery, not by it.
+    if (ch.passive) continue;
     if (!isEnabled(ch.id)) continue;
     // `only` names the channels this one is for; the rest are passed over.
     if (only && !only.includes(ch.id)) continue;
@@ -116,7 +124,10 @@ export async function deliver(text, meta = {}, { only = null, except = null } = 
   return results;
 }
 
-/** True if anything at all would receive a notification right now. */
+/**
+ * True if anything at all would receive a notification right now. The inbox
+ * (always on) counts: what is announced lands there.
+ */
 export function anyEnabled() {
   return [...registry.keys()].some(isEnabled);
 }

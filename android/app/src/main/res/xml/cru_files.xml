@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The app's own files for Cru (voice/CruFiles.kt): a photo the camera
+     saves, shared text made into a file. Removed once sent. -->
+<paths>
+    <cache-path name="cru" path="cru/" />
+</paths>

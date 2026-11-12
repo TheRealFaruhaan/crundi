@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Crundi</string>
+    <string name="shortcut_voice_short">Voice</string>
+    <string name="shortcut_voice_long">Talk to Cru</string>
 </resources>

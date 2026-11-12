@@ -199,7 +199,9 @@ check('their chat launches --restricted', /args\.push\('--restricted'\)/.test(ui
 check('their chat gets an exact tool allowlist',
   /args\.push\('--tools', COLLABORATOR_CLAUDE_TOOLS\.join\(','\)\)/.test(ui));
 check('their chat gets settings it cannot override',
-  /args\.push\('--settings', JSON\.stringify\(collaboratorSettings\(\{/.test(ui));
+  // collaboratorSettings is spread LAST, so nothing merged in beside it (the
+  // commit attribution) can loosen the sandbox or permissions.
+  /args\.push\('--settings', JSON\.stringify\(\{[^]{0,300}?\.\.\.collaboratorSettings\(\{[^]{0,600}?\}\),\s*\}\)\);/.test(ui));
 check('their chat cannot be launched with skip-permissions',
   /if \(skipPermissions && !collaborator\)/.test(ui));
 check('their chat gets its own MCP key, not the internal one',

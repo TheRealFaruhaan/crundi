@@ -7,6 +7,7 @@ import mv.obitech.crundi.ui.mini.miniTarget
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -40,6 +41,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -48,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
@@ -92,9 +96,13 @@ class ShellCallbacks(
     val onProject: (String) -> Unit = {},
     val onApprovals: () -> Unit = {},
     val onUsage: () -> Unit = {},
+    /** The mic: the voice assistant's screen. Null hides it (a server without the assistant). */
+    val onVoice: (() -> Unit)? = null,
     val onPanels: () -> Unit = {},
     val onAddProject: () -> Unit = {},
     val onAppSettings: () -> Unit = {},
+    /** The envelope beside App settings: Crundi's inbox (shown only when the server has one). */
+    val onInbox: () -> Unit = {},
     val onPairAnother: () -> Unit = {},
     /** The "+" beside the Workbench tab. */
     val onAdd: (PaneKind) -> Unit = {},
@@ -152,6 +160,7 @@ fun ShellScaffold(
                     onAddProject = { onDrawer(false); callbacks.onAddProject() },
                     onAppSettings = { onDrawer(false); callbacks.onAppSettings() },
                     onPairAnother = { onDrawer(false); callbacks.onPairAnother() },
+                    onInbox = { onDrawer(false); callbacks.onInbox() },
                 )
             }
             overlay()
@@ -179,7 +188,14 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
                 Modifier.fillMaxSize().padding(start = 2.dp, end = 10.dp),
                 left = {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CrundiIconButton("menu", onMenu, contentDescription = "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
+                        // A dot on the menu while the inbox has anything unread (the envelope is in the drawer).
+                        Box {
+                            CrundiIconButton("menu", onMenu, contentDescription = if (data.hasInbox && data.inboxUnread > 0) "Projects, ${data.inboxUnread} unread in the inbox" else "Projects", tint = CrundiColors.TextPrimary, size = 22.dp)
+                            if (data.hasInbox && data.inboxUnread > 0) Box(
+                                Modifier.align(Alignment.TopEnd).padding(top = 9.dp, end = 7.dp).size(8.dp)
+                                    .clip(androidx.compose.foundation.shape.CircleShape).background(CrundiColors.Red),
+                            )
+                        }
                         // Mini (ui.mini) comes out of this head and goes back into it; while it is out the spot is empty.
                         RobotHead(Modifier.miniLogo(), size = 24.dp, motion = when {
                             data.connection != Connection.Connected -> MarkMotion.Load
@@ -192,12 +208,38 @@ fun ShellTopBar(data: ShellData, onMenu: () -> Unit, callbacks: ShellCallbacks, 
                     }
                 },
                 name = {
-                    Text(
-                        data.project?.name ?: "No project",
-                        style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false,
-                        modifier = Modifier.clickable(onClick = onMenu),
-                    )
+                    // A new inbox message: the title area says so for a few
+                    // seconds (slides in, pulses), then gives the name back.
+                    // The dot on the menu stays until it is read.
+                    var lastUnread by remember { mutableStateOf(data.inboxUnread) }
+                    var flashAt by remember { mutableStateOf(0L) }
+                    LaunchedEffect(data.inboxUnread) {
+                        if (data.hasInbox && data.inboxUnread > lastUnread) flashAt = System.currentTimeMillis()
+                        lastUnread = data.inboxUnread
+                    }
+                    var flashing by remember { mutableStateOf(false) }
+                    LaunchedEffect(flashAt) {
+                        if (flashAt == 0L) return@LaunchedEffect
+                        flashing = true
+                        kotlinx.coroutines.delay(3500)
+                        flashing = false
+                    }
+                    androidx.compose.animation.AnimatedContent(
+                        targetState = flashing,
+                        transitionSpec = {
+                            (androidx.compose.animation.slideInVertically { it } + androidx.compose.animation.fadeIn())
+                                .togetherWith(androidx.compose.animation.slideOutVertically { -it } + androidx.compose.animation.fadeOut())
+                        },
+                        label = "inbox-flash",
+                    ) { now ->
+                        if (now) NewMessageFlash(callbacks.onInbox)
+                        else Text(
+                            data.project?.name ?: "No project",
+                            style = CrundiType.Body.copy(color = CrundiColors.TextSecondary),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, softWrap = false,
+                            modifier = Modifier.clickable(onClick = onMenu),
+                        )
+                    }
                 },
                 right = { compact -> TopBarRight(data, callbacks, compact) },
             )
@@ -218,6 +260,20 @@ private fun TopBarRight(data: ShellData, callbacks: ShellCallbacks, compact: Boo
             ) {
                 CrundiIcon("bar-chart", size = 13.dp, tint = CrundiColors.TextSecondary)
                 if (!compact) Text(fmtAgo(u.fetchedAt), style = CrundiType.Badge.copy(fontSize = 11.sp), maxLines = 1)
+            }
+        }
+        // The voice assistant, one tap away (as the web's top-bar mic).
+        callbacks.onVoice?.let { open ->
+            // Cru's mark, bare: no outline, no background.
+            Box(
+                Modifier.height(32.dp).clip(Dimens.ShapeSm).clickable(onClickLabel = "Talk to Cru", onClick = open)
+                    .semantics { contentDescription = "Talk to Cru" }.padding(horizontal = 2.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                mv.obitech.crundi.voice.CruIcon(24.dp)
+                // Cru said something nobody heard: a red dot until the chat view is opened.
+                val unread by mv.obitech.crundi.voice.CruUnread.count.collectAsState()
+                if (unread > 0) Box(Modifier.align(Alignment.TopEnd).size(8.dp).clip(CircleShape).background(CrundiColors.Red).semantics { contentDescription = "Cru has $unread unheard" })
             }
         }
         if (data.panels > 0) TopBarAct("panel", "Panels", data.panels.toString(), false, callbacks.onPanels)
@@ -497,7 +553,8 @@ fun AddMenuBody(callbacks: ShellCallbacks, onDone: () -> Unit = {}) {
  * The sidebar as a drawer (280dp, from the left, under the top bar): each
  * project with its icon or initials, state dot, name, the services
  * heartbeat, the schedule clock and the factory mark; then "Add project",
- * "App settings" and "Connect to another server".
+ * "App settings" (with the inbox's envelope and its unread count beside it,
+ * when the server has an inbox) and "Connect to another server".
  */
 @Composable
 fun ProjectDrawer(
@@ -507,6 +564,7 @@ fun ProjectDrawer(
     onAppSettings: () -> Unit,
     onPairAnother: () -> Unit,
     modifier: Modifier = Modifier,
+    onInbox: () -> Unit = {},
 ) {
     Column(
         modifier.width(280.dp).fillMaxHeight().background(CrundiColors.BgSecondary)
@@ -521,7 +579,10 @@ fun ProjectDrawer(
             }
         }
         Column(Modifier.drawBehind { drawLine(CrundiColors.BorderSubtle, Offset.Zero, Offset(size.width, 0f), 1.dp.toPx()) }.padding(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashedButton("smartphone", "App settings", onAppSettings)
+            Row(Modifier.height(androidx.compose.foundation.layout.IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                DashedButton("smartphone", "App settings", onAppSettings, Modifier.weight(1f))
+                if (data.hasInbox) InboxButton(data.inboxUnread, onInbox)
+            }
             DashedButton("plus", "Add project", onAddProject)
             DashedButton("link", "Connect to another server", onPairAnother)
         }
@@ -552,15 +613,57 @@ private fun ProjectRow(p: ProjectSummary, active: Boolean, onClick: () -> Unit) 
 
 /** .sidebar-footer button: dashed, muted, full width. */
 @Composable
-private fun DashedButton(icon: String, label: String, onClick: () -> Unit) {
+private fun DashedButton(icon: String, label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
-        Modifier.fillMaxWidth().clip(Dimens.ShapeSm).drawBehind {
+        modifier.fillMaxWidth().clip(Dimens.ShapeSm).drawBehind {
             drawRoundRect(CrundiColors.Border, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(Dimens.RadiusSm.toPx()))
         }.clickable(onClick = onClick).padding(10.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
     ) {
         CrundiIcon(icon, size = 15.dp, tint = CrundiColors.TextMuted)
         Text(label, style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
+    }
+}
+
+/** The top bar's "New message", for a few seconds after one arrives: the envelope and a gentle pulse; tap opens the inbox. */
+@Composable
+internal fun NewMessageFlash(onInbox: () -> Unit) {
+    // Still in previews and screenshot tests: an endless animation never lets Robolectric go idle.
+    val still = androidx.compose.ui.platform.LocalInspectionMode.current
+    val glow = if (still) 0.6f else {
+        val pulse = androidx.compose.animation.core.rememberInfiniteTransition(label = "inbox-pulse")
+        pulse.animateFloat(
+            initialValue = 0.25f, targetValue = 0.7f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(700), androidx.compose.animation.core.RepeatMode.Reverse),
+            label = "inbox-glow",
+        ).value
+    }
+    Row(
+        Modifier.clip(RoundedCornerShape(12.dp)).background(CrundiColors.Accent.copy(alpha = glow * 0.45f))
+            .clickable(onClickLabel = "Open the inbox", onClick = onInbox).padding(horizontal = 8.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        CrundiIcon("mail", size = 14.dp, tint = CrundiColors.TextPrimary)
+        Text("New message", style = CrundiType.Body.copy(color = CrundiColors.TextPrimary), maxLines = 1, softWrap = false)
+    }
+}
+
+/** The drawer's envelope: Crundi's inbox, with its unread count in a red badge on the corner. */
+@Composable
+private fun InboxButton(unread: Int, onClick: () -> Unit) {
+    val label = if (unread > 0) "Inbox, $unread unread" else "Inbox"
+    Box(
+        Modifier.width(52.dp).fillMaxHeight().clip(Dimens.ShapeSm).drawBehind {
+            drawRoundRect(CrundiColors.Border, style = Stroke(1.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))), cornerRadius = CornerRadius(Dimens.RadiusSm.toPx()))
+        }.clickable(onClickLabel = label, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        CrundiIcon("mail", size = 17.dp, tint = if (unread > 0) CrundiColors.TextPrimary else CrundiColors.TextMuted, contentDescription = label)
+        if (unread > 0) Text(
+            if (unread > 99) "99+" else unread.toString(),
+            style = CrundiType.Meta.copy(fontFamily = CrundiType.Sans, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White, lineHeight = 12.sp),
+            modifier = Modifier.align(Alignment.Center).offset(x = 11.dp, y = (-9).dp).clip(RoundedCornerShape(8.dp)).background(CrundiColors.Red).padding(horizontal = 4.dp),
+        )
     }
 }
 

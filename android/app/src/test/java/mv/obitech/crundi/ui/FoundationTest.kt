@@ -36,6 +36,9 @@ class FoundationTest {
         assertEquals(Routes.chat("abc_1-2"), DeepLinks.route("/chat/abc_1-2"))
         assertEquals("services", DeepLinks.route("/?tab=services"))
         assertNull(DeepLinks.route("/"))
+        // A Settings tab page (the phone's Voice settings opens Cru's): known pages only.
+        assertEquals("settings/voice", DeepLinks.route("/settings/voice"))
+        assertNull(DeepLinks.route("/settings/nope"))
         assertNull(DeepLinks.route("//evil.example/chat/x"))
         assertNull(DeepLinks.route("https://evil.example/chat/x"))
         assertNull(DeepLinks.route("/chat/../x"))

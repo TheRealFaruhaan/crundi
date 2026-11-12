@@ -1,0 +1,443 @@
+{
+ "ok": true,
+ "ports": {
+  "socks": 7580,
+  "http": 7581,
+  "blocks": [
+   7590,
+   7679
+  ],
+  "hosts": [
+   "127.0.0.1",
+   "172.21.0.1",
+   "172.20.0.1",
+   "172.17.0.1",
+   "172.26.0.1"
+  ]
+ },
+ "networks": [
+  {
+   "id": "server",
+   "name": "Server",
+   "builtin": true,
+   "live": 1
+  },
+  {
+   "id": "pool",
+   "name": "Standalone homepool",
+   "builtin": true,
+   "live": 2,
+   "pool": {
+    "up": true,
+    "liveCount": 2,
+    "nodes": [
+     {
+      "id": "1",
+      "name": "home-pc"
+     },
+     {
+      "id": "2",
+      "name": "phone"
+     }
+    ],
+    "checkedAt": 1794432361105,
+    "error": "",
+    "host": "172.21.0.3"
+   },
+   "enabled": true
+  },
+  {
+   "id": "home",
+   "name": "Home",
+   "createdAt": 1794431695740,
+   "live": 1
+  }
+ ],
+ "nodes": [
+  {
+   "id": "n1550e72f54",
+   "name": "test-docker",
+   "network": "home",
+   "kind": "standalone",
+   "deviceId": "",
+   "createdAt": 1794431712679,
+   "lastSeenAt": 1794432353289,
+   "enabled": true,
+   "platform": "docker",
+   "up": true,
+   "paused": false,
+   "info": {
+    "platform": "docker",
+    "app": "homepool-node",
+    "version": "1",
+    "network": "Ethernet",
+    "publicIp": "203.0.113.17",
+    "paused": false,
+    "pauseReason": "",
+    "bytesToday": 0,
+    "mobileBytesToday": 0,
+    "mobileCapMb": 0
+   },
+   "connectedAt": 1794432173230,
+   "streams": 0,
+   "slots": 1,
+   "usage": {
+    "bytes": 4371,
+    "conns": 1
+   }
+  },
+  {
+   "id": "n361f66be55",
+   "name": "Ali PC",
+   "network": "home",
+   "kind": "standalone",
+   "deviceId": "",
+   "createdAt": 1794432230054,
+   "lastSeenAt": 0,
+   "enabled": true,
+   "up": false,
+   "paused": false,
+   "info": null,
+   "connectedAt": 0,
+   "streams": 0,
+   "slots": 0,
+   "usage": {
+    "bytes": 0,
+    "conns": 0
+   }
+  }
+ ],
+ "keys": [
+  {
+   "id": "k1d27801ea2",
+   "kind": "software",
+   "name": "curl-test",
+   "chatId": "",
+   "project": "",
+   "networks": [
+    "home"
+   ],
+   "fallbackToServer": false,
+   "enabled": true,
+   "expiresAt": null,
+   "dailyCapMb": 0,
+   "slots": 8,
+   "portBlock": false,
+   "allowFrom": [],
+   "createdAt": 1794431712724,
+   "createdBy": "owner",
+   "requestId": "",
+   "ports": null,
+   "usage": {
+    "bytes": 4371,
+    "conns": 1,
+    "refused": 0,
+    "lastUsedAt": 1794431744295
+   },
+   "refusal": "",
+   "open": 0,
+   "status": {
+    "key": "curl-test",
+    "networks": [
+     {
+      "id": "home",
+      "name": "Home",
+      "live": 1
+     }
+    ],
+    "nodes": [
+     {
+      "id": "node:n1550e72f54",
+      "name": "test-docker",
+      "network": "home",
+      "up": true,
+      "conns": 0
+     }
+    ],
+    "liveCount": 1,
+    "slots": [
+     {
+      "slot": "0",
+      "node": "node:n1550e72f54",
+      "boundAt": "2026-11-11T21:15:44.113Z",
+      "rotatesInMs": 20981027
+     }
+    ],
+    "egressAvailable": true,
+    "allowFallback": false,
+    "fallbackInUse": false,
+    "refusal": "",
+    "bindTtlMs": 21600000
+   },
+   "use": {
+    "socks": "socks5h://k1d27801ea2:<secret>@127.0.0.1:7580",
+    "http": "http://k1d27801ea2:<secret>@127.0.0.1:7581",
+    "status": "http://k1d27801ea2:<secret>@127.0.0.1:7581/status",
+    "login": "user k1d27801ea2 (add @<network> to pin a network, #<n> for slot n), password: the key's secret",
+    "fromDocker": "host.docker.internal (with extra_hosts: [\"host.docker.internal:host-gateway\"]) or 172.17.0.1"
+   }
+  },
+  {
+   "id": "k2f075e4a06",
+   "kind": "software",
+   "name": "pool-test",
+   "chatId": "",
+   "project": "",
+   "networks": [
+    "pool"
+   ],
+   "fallbackToServer": false,
+   "enabled": true,
+   "expiresAt": null,
+   "dailyCapMb": 0,
+   "slots": 8,
+   "portBlock": false,
+   "allowFrom": [],
+   "createdAt": 1794431752047,
+   "createdBy": "owner",
+   "requestId": "",
+   "ports": null,
+   "usage": {
+    "bytes": 4349,
+    "conns": 1,
+    "refused": 0,
+    "lastUsedAt": 1794431753757
+   },
+   "refusal": "",
+   "open": 0,
+   "status": {
+    "key": "pool-test",
+    "networks": [
+     {
+      "id": "pool",
+      "name": "Standalone homepool",
+      "live": 1
+     }
+    ],
+    "nodes": [
+     {
+      "id": "pool",
+      "name": "pool",
+      "network": "pool",
+      "up": true
+     }
+    ],
+    "liveCount": 2,
+    "slots": [
+     {
+      "slot": "0",
+      "node": "pool",
+      "boundAt": "2026-11-11T21:15:52.105Z",
+      "rotatesInMs": 20989019
+     }
+    ],
+    "egressAvailable": true,
+    "allowFallback": false,
+    "fallbackInUse": false,
+    "refusal": "",
+    "bindTtlMs": 21600000
+   },
+   "use": {
+    "socks": "socks5h://k2f075e4a06:<secret>@127.0.0.1:7580",
+    "http": "http://k2f075e4a06:<secret>@127.0.0.1:7581",
+    "status": "http://k2f075e4a06:<secret>@127.0.0.1:7581/status",
+    "login": "user k2f075e4a06 (add @<network> to pin a network, #<n> for slot n), password: the key's secret",
+    "fromDocker": "host.docker.internal (with extra_hosts: [\"host.docker.internal:host-gateway\"]) or 172.17.0.1"
+   }
+  },
+  {
+   "id": "k6e67590509",
+   "kind": "software",
+   "name": "scraper-sim",
+   "chatId": "",
+   "project": "",
+   "networks": [
+    "pool"
+   ],
+   "fallbackToServer": false,
+   "enabled": true,
+   "expiresAt": null,
+   "dailyCapMb": 0,
+   "slots": 8,
+   "portBlock": true,
+   "allowFrom": [
+    "homepool"
+   ],
+   "createdAt": 1794431753770,
+   "createdBy": "owner",
+   "requestId": "",
+   "ports": {
+    "base": 7590,
+    "status": 7599
+   },
+   "usage": {
+    "bytes": 6558,
+    "conns": 1,
+    "refused": 0,
+    "lastUsedAt": 1794431764900
+   },
+   "refusal": "",
+   "open": 0,
+   "status": {
+    "key": "scraper-sim",
+    "networks": [
+     {
+      "id": "pool",
+      "name": "Standalone homepool",
+      "live": 1
+     }
+    ],
+    "nodes": [
+     {
+      "id": "pool",
+      "name": "pool",
+      "network": "pool",
+      "up": true
+     }
+    ],
+    "liveCount": 2,
+    "slots": [
+     {
+      "slot": "1",
+      "node": "pool",
+      "boundAt": "2026-11-11T21:16:03.589Z",
+      "rotatesInMs": 21000503
+     }
+    ],
+    "egressAvailable": true,
+    "allowFallback": false,
+    "fallbackInUse": false,
+    "refusal": "",
+    "bindTtlMs": 21600000
+   },
+   "use": {
+    "socks": "socks5h://k6e67590509:<secret>@127.0.0.1:7580",
+    "http": "http://k6e67590509:<secret>@127.0.0.1:7581",
+    "status": "http://k6e67590509:<secret>@127.0.0.1:7581/status",
+    "login": "user k6e67590509 (add @<network> to pin a network, #<n> for slot n), password: the key's secret",
+    "fromDocker": "host.docker.internal (with extra_hosts: [\"host.docker.internal:host-gateway\"]) or 172.17.0.1",
+    "block": {
+     "any": "socks5://host.docker.internal:7590",
+     "slots": "7591-7598 (slot N = 7590 + N)",
+     "status": "http://host.docker.internal:7599/",
+     "from": [
+      "homepool"
+     ],
+     "compose": [
+      "PROXY_URL: socks5://host.docker.internal:7590",
+      "PROXY_STATUS_URL: http://host.docker.internal:7599/",
+      "extra_hosts: [\"host.docker.internal:host-gateway\"]"
+     ]
+    }
+   }
+  }
+ ],
+ "requests": [
+  {
+   "id": "r0a1b2c3d4e",
+   "status": "pending",
+   "chatId": "a1b2c3d4e5f60718",
+   "project": "insta-scraper",
+   "kind": "software",
+   "name": "insta-scraper",
+   "networks": [
+    "home"
+   ],
+   "reason": "The scraper is blocked from the server's address; it needs a home line.",
+   "createdAt": 1794432241105,
+   "decidedAt": 0,
+   "keyId": ""
+  },
+  {
+   "id": "r9f8e7d6c5b",
+   "status": "refused",
+   "chatId": "0718a1b2c3d4e5f6",
+   "project": "crundi",
+   "kind": "chat",
+   "name": "",
+   "networks": [
+    "server"
+   ],
+   "reason": "",
+   "createdAt": 1794345961105,
+   "decidedAt": 1794346361105,
+   "keyId": ""
+  }
+ ],
+ "settings": {
+  "bindTtlMs": 21600000,
+  "poolBridge": {
+   "enabled": true,
+   "statusUrl": "http://127.0.0.1:1099/",
+   "relayHost": "",
+   "relayPort": 1080
+  }
+ },
+ "log": [
+  {
+   "at": 1794432331105,
+   "what": "refused-login",
+   "user": "kdeadbeef00",
+   "from": "172.21.0.5"
+  },
+  {
+   "at": 1794432301105,
+   "what": "request",
+   "request": "r0a1b2c3d4e",
+   "chatId": "a1b2c3d4e5f60718",
+   "project": "insta-scraper",
+   "kind": "software"
+  },
+  {
+   "at": 1794432230054,
+   "what": "node-added",
+   "node": "n361f66be55",
+   "network": "home"
+  },
+  {
+   "at": 1794432173231,
+   "what": "node-up",
+   "node": "n1550e72f54"
+  },
+  {
+   "at": 1794431753770,
+   "what": "key-added",
+   "key": "k6e67590509",
+   "by": "owner",
+   "networks": [
+    "pool"
+   ]
+  },
+  {
+   "at": 1794431752047,
+   "what": "key-added",
+   "key": "k2f075e4a06",
+   "by": "owner",
+   "networks": [
+    "pool"
+   ]
+  },
+  {
+   "at": 1794431736690,
+   "what": "node-up",
+   "node": "n1550e72f54"
+  },
+  {
+   "at": 1794431712724,
+   "what": "key-added",
+   "key": "k1d27801ea2",
+   "by": "owner",
+   "networks": [
+    "home"
+   ]
+  },
+  {
+   "at": 1794431712679,
+   "what": "node-added",
+   "node": "n1550e72f54",
+   "network": "home"
+  }
+ ],
+ "usageDay": "2026-11-11",
+ "publicUrl": "http://localhost:8889"
+}

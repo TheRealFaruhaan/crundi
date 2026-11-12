@@ -88,7 +88,7 @@ fun CrundiTextField(
 
 /** An on/off switch in the desktop's colours, with its label. */
 @Composable
-fun CrundiSwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, detail: String? = null) {
+fun CrundiSwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, detail: String? = null, enabled: Boolean = true) {
     Row(modifier.fillMaxWidth().padding(horizontal = Dimens.ScreenPad, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
             Text(label, style = CrundiType.Body)
@@ -97,6 +97,7 @@ fun CrundiSwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit
         Switch(
             checked = checked,
             onCheckedChange = onChange,
+            enabled = enabled,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = CrundiColors.TextPrimary,
                 checkedTrackColor = CrundiColors.Accent,
@@ -104,6 +105,10 @@ fun CrundiSwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit
                 uncheckedThumbColor = CrundiColors.TextSecondary,
                 uncheckedTrackColor = CrundiColors.BgTertiary,
                 uncheckedBorderColor = CrundiColors.Border,
+                // Locked on (the Crundi inbox): still reads as on.
+                disabledCheckedThumbColor = CrundiColors.TextPrimary.copy(alpha = 0.8f),
+                disabledCheckedTrackColor = CrundiColors.Accent.copy(alpha = 0.45f),
+                disabledCheckedBorderColor = CrundiColors.Accent.copy(alpha = 0.45f),
             ),
         )
     }

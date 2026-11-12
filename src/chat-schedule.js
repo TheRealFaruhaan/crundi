@@ -287,6 +287,26 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
     return true;
   }
 
+  /**
+   * The owner closed this chat (not a park, not a restart): its messages
+   * still to come go with it, as nothing will ever send them.
+   * @returns {number} how many were dropped
+   */
+  function discardFor(chatId, conversation = '') {
+    if (!chatId && !conversation) return 0;
+    load();
+    const before = items.length;
+    items = items.filter(it => !(it.status === 'pending' && it.chat
+      && ((chatId && it.chat.id === chatId) || (conversation && it.chat.conversation === conversation))));
+    const dropped = before - items.length;
+    if (dropped) {
+      save();
+      emit();
+      console.log(`[chat-schedule] the chat was closed: dropped ${dropped} scheduled message(s)`);
+    }
+    return dropped;
+  }
+
   /** Does this chat have a message still to come? Then it should not be put to sleep. */
   function hasPendingFor(chatId) {
     if (!chatId) return false;
@@ -475,5 +495,5 @@ export function createChatSchedule({ claudeUi, getLatestUsage, warmerActive = ()
 
   start();
 
-  return { list, recent, add, remove, onTurnEnd, hasPendingFor, onLimitReset, hasPendingLimitReset, countPendingLimitReset, clearLimitReset, onChange, tick, stop, TRIGGERS };
+  return { list, recent, add, remove, discardFor, onTurnEnd, hasPendingFor, onLimitReset, hasPendingLimitReset, countPendingLimitReset, clearLimitReset, onChange, tick, stop, TRIGGERS };
 }

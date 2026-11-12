@@ -327,6 +327,12 @@ data class ChatState(
     val factory: FactoryRole? = null,
     /** Set when the Claude process ended (exit code). */
     val exitCode: Int? = null,
+    /**
+     * What Claude asked to say aloud (its speak tool, capability "chat-voice"),
+     * newest last, the last few only. Events, never in the history: a screen
+     * in voice mode plays the ones it has not played yet.
+     */
+    val voiceSays: List<VoiceSay> = emptyList(),
 ) {
     val busy get() = state == AgentState.Working || pendingInjections.isNotEmpty()
     val exited get() = status == "exited" || exitCode != null
@@ -335,6 +341,9 @@ data class ChatState(
     /** The permission requests and questions waiting on the person, oldest first. */
     val waiting get() = messages.filter { it.isPending }
 }
+
+/** One `voice-say` event: [text] to say aloud, [at] when the server sent it (epoch ms). */
+data class VoiceSay(val id: String, val text: String, val at: Long)
 
 internal fun slashCommandsOf(el: JsonElement?): List<SlashCommand> = (el as? JsonArray)?.mapNotNull {
     when (it) {
@@ -357,6 +366,15 @@ object ChatMediaParser {
         if (e.kind != "tool" || e.status != "done" || e.isError || !TOOL.containsMatchIn(e.name)) return emptyList()
         val r = runCatching { CrundiJson.parseToJsonElement(e.result ?: "").jsonObject }.getOrNull() ?: return emptyList()
         val items = (r["items"] as? JsonArray) ?: (r["images"] as? JsonArray)?.let { arr -> JsonArray(arr.map { JsonObject((it as JsonObject) + ("kind" to JsonPrimitive("image"))) }) } ?: return emptyList()
+        return parseItems(chatId, items)
+    }
+
+    /**
+     * Stored items (as the server's chat-media.js answers them) for the media
+     * session [chatId]: a chat's show_* call, or what Cru showed in a reply
+     * (session "cru-voice"). Anything that does not look like ours is left out.
+     */
+    fun parseItems(chatId: String, items: JsonArray): List<ChatMedia> {
         val sid = java.net.URLEncoder.encode(chatId, "UTF-8")
         fun media(name: String) = "/api/chat-media?session=$sid&name=${java.net.URLEncoder.encode(name, "UTF-8")}"
         return items.mapNotNull { el ->

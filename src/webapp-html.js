@@ -235,7 +235,23 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .login-box.collab-mode #telegram-login-container,
     .login-box.collab-mode #login-or,
     .login-box.collab-mode #password-login,
-    .login-box.collab-mode #collab-login-link { display: none !important; }
+    .login-box.collab-mode #collab-login-link,
+    .login-box.collab-mode #oauth-login,
+    .login-box.restore-mode #oauth-login { display: none !important; }
+    /* Google / GitHub buttons: flat, the provider's mark in the text colour. */
+    #oauth-login { flex-direction: column; gap: 10px; width: 260px; }
+    .oauth-btn {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--bg-primary); color: var(--text-primary);
+      font: inherit; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    }
+    .oauth-btn:hover { border-color: var(--accent); background: var(--bg-tertiary, var(--bg-primary)); }
+    .oauth-btn:disabled { opacity: 0.55; cursor: default; }
+    .oauth-btn svg { width: 18px; height: 18px; flex: none; }
+    #oauth-wait { color: var(--text-secondary); font-size: 0.8rem; line-height: 1.5; text-align: center; }
+    #oauth-wait b { display: block; font-family: var(--mono); font-size: 1.4rem; letter-spacing: 0.3em; color: var(--text-primary); margin: 6px 0; }
+    #oauth-wait a { color: var(--accent-hover); cursor: pointer; }
 
     /* ─── Room for the on-screen keyboard ─── */
     /*
@@ -577,6 +593,94 @@ export function getWebappHtml(botUsername, appVersion = '') {
       background: var(--accent-dim);
     }
     .sidebar-footer .add-plus { font-weight: 700; }
+    /* The inbox: under "+ Add project", solid where that one is dashed. */
+    .sidebar-footer .inbox-btn {
+      margin-top: 8px; border-style: solid; border-color: var(--border-subtle);
+      display: flex; align-items: center; justify-content: center; gap: 8px; position: relative;
+    }
+    .sidebar-footer .inbox-btn .ic { width: 16px; height: 16px; }
+    .sidebar-footer .inbox-btn.has-unread { color: var(--text-primary); border-color: var(--accent); }
+    .inbox-badge {
+      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+      background: var(--accent); color: #fff; font-size: 0.68rem; font-weight: 700; line-height: 18px; text-align: center;
+    }
+    .sidebar.collapsed .sidebar-footer .inbox-badge { position: absolute; top: 2px; right: 6px; min-width: 16px; height: 16px; line-height: 16px; font-size: 0.6rem; padding: 0 4px; }
+
+    /* ─── Inbox view: threads on the left, the open one as a conversation ─── */
+    .inbox-panel { padding: 0; }
+    .ibx { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .ibx-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+    .ibx-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 1rem; color: var(--text-primary); }
+    .ibx-sub { color: var(--text-muted); font-size: 0.78rem; }
+    .ibx-head .spacer, .ibx-chead .spacer { flex: 1; }
+    .ibx-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.78rem; cursor: pointer; white-space: nowrap; }
+    .ibx-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+    .ibx-btn.danger:hover { border-color: var(--red); color: var(--red); }
+    .ibx-body { display: flex; flex: 1; min-height: 0; }
+    .ibx-list { width: 360px; flex-shrink: 0; overflow-y: auto; border-right: 1px solid var(--border-subtle); }
+    .ibx-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 12px 14px; border: 0; border-bottom: 1px solid var(--border-subtle); background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; font: inherit; }
+    .ibx-row:hover { background: var(--bg-hover); }
+    .ibx-row.active { background: var(--accent-dim); }
+    .ibx-ic { flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--bg-tertiary); color: var(--text-secondary); }
+    .ibx-ic { position: relative; }
+    .ibx-ic.has-pico { background: transparent; }
+    .ibx-ic .ibx-pico { width: 34px; height: 34px; border-radius: 9px; object-fit: cover; }
+    .ibx-ic .ibx-pbadge { position: absolute; right: -3px; bottom: -3px; width: 16px; height: 16px; border-radius: 5px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 8px; font-weight: 700; border: 1.5px solid var(--bg-secondary); }
+    .ibx-ic .ibx-pbadge img { width: 100%; height: 100%; object-fit: cover; }
+    .ibx-ic .ic { width: 16px; height: 16px; }
+    .ibx-ic.t-chat { color: var(--accent-hover); }
+    .ibx-ic.t-project { color: var(--sky); }
+    .ibx-ic.t-cru { color: var(--green); }
+    .ibx-ic.t-system { color: var(--amber); }
+    .ibx-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    .ibx-t { font-size: 0.86rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-row.unread .ibx-t { font-weight: 600; }
+    .ibx-s { font-size: 0.7rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-m { font-size: 0.76rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+    .ibx-row.unread .ibx-m { color: var(--text-secondary); }
+    .ibx-when { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; font-size: 0.7rem; color: var(--text-muted); }
+    .ibx-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 0.66rem; font-weight: 700; line-height: 18px; text-align: center; }
+    .ibx-more { width: 100%; padding: 10px; border: 0; background: transparent; color: var(--accent-hover); cursor: pointer; font-size: 0.8rem; }
+    .ibx-detail { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+    .ibx-chead { display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+    .ibx-chead .ibx-ct { display: flex; flex-direction: column; min-width: 0; }
+    .ibx-chead .ibx-ct b { color: var(--text-primary); font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-chead .ibx-ct span { color: var(--text-muted); font-size: 0.74rem; }
+    .ibx-back { display: none; }
+    .ibx-conv { flex: 1; overflow-y: auto; padding: 16px 18px 24px; display: flex; flex-direction: column; gap: 12px; }
+    .ibx-msg { position: relative; max-width: 760px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 10px 14px 12px; }
+    .ibx-msg.new { border-left: 3px solid var(--accent); }
+    .ibx-msg.focus { box-shadow: var(--ring); border-color: var(--accent); }
+    .ibx-mh { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; padding-right: 22px; }
+    .ibx-mh .ic { width: 14px; height: 14px; color: var(--text-muted); flex-shrink: 0; }
+    .ibx-mh .k-alert, .ibx-mh .k-permission { color: var(--amber); }
+    .ibx-mh .k-question { color: var(--sky); }
+    .ibx-mt { color: var(--text-primary); font-weight: 600; font-size: 0.86rem; word-break: break-word; }
+    .ibx-mtime { margin-left: auto; color: var(--text-muted); font-size: 0.7rem; white-space: nowrap; }
+    .ibx-mdel { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center; opacity: 0.55; }
+    .ibx-mdel:hover { opacity: 1; color: var(--red); background: var(--red-dim); }
+    .ibx-mdel .ic { width: 13px; height: 13px; }
+    .ibx-text { white-space: pre-wrap; word-break: break-word; color: var(--text-secondary); font-size: 0.85rem; line-height: 1.55; }
+    .ibx-media { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+    .ibx-img img { max-width: 100%; max-height: 50vh; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); display: block; }
+    .ibx-file { display: inline-flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); text-decoration: none; font-size: 0.82rem; max-width: 100%; }
+    .ibx-file:hover { border-color: var(--accent); }
+    .ibx-file .ibx-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ibx-file .ibx-fs { color: var(--text-muted); font-size: 0.74rem; }
+    .ibx-file.missing { color: var(--text-muted); }
+    .ibx-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--text-muted); text-align: center; padding: 24px; font-size: 0.84rem; }
+    .ibx-empty .ic { width: 34px; height: 34px; opacity: 0.6; }
+    .ibx-list .ibx-empty { padding: 40px 20px; }
+    @media (max-width: 768px) {
+      .ibx-head { padding: 10px 12px; }
+      .ibx-list { width: 100%; border-right: 0; }
+      .ibx.has-open .ibx-list { display: none; }
+      .ibx.has-open .ibx-head { display: none; }
+      .ibx:not(.has-open) .ibx-detail { display: none; }
+      .ibx-chead { padding: 10px 12px; }
+      .ibx-back { display: inline-flex; }
+      .ibx-conv { padding: 12px 10px 20px; }
+    }
 
     /* ─── Collapsed sidebar rail (desktop) ───
        A narrow rail of circular initial-avatars; each project's services ECG
@@ -1107,6 +1211,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     .appr-src.secret { color: var(--yellow); border-color: var(--yellow); }
     .appr-src.collab { color: var(--sky); border-color: var(--sky); }
+    .appr-src.kid { color: var(--yellow); border-color: var(--yellow); }
     .appr-src.chat { color: var(--accent-hover); border-color: var(--accent); }
     .appr-title { flex: 1; font-size: 0.8rem; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; }
     .appr-detail {
@@ -1213,23 +1318,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .wb-add-menu button .ic { font-size: 1rem; color: var(--accent-hover); }
     .wb-add-menu button:hover .ic { color: #fff; }
     /* ─── Interactive browser panel ─── */
-    .browser-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
-    .brz-bar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--bg-secondary); flex: 0 0 auto; }
-    .brz-nav { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; flex: 0 0 auto; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius-sm); cursor: pointer; padding: 0; }
-    .brz-nav:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
-    .brz-nav:disabled { opacity: 0.35; cursor: default; }
-    .brz-nav .ic { width: 15px; height: 15px; }
-    .brz-url { flex: 1 1 auto; min-width: 0; height: 30px; padding: 0 12px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 999px; font-size: 0.8rem; font-family: var(--mono); outline: none; }
-    .brz-url:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
-    .brz-device { height: 30px; max-width: 168px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); border-radius: var(--radius-sm); font-size: 0.74rem; cursor: pointer; padding: 0 6px; flex: 0 0 auto; }
-    .brz-device:hover { border-color: var(--accent); }
-    .brz-stage { flex: 1 1 auto; min-height: 0; position: relative; background-color: var(--bg-primary); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 16px 16px; overflow: hidden; }
-    .brz-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.8rem; pointer-events: none; }
-    .browser-panel.brz-loading .brz-nav[data-brz="reload"] .ic { animation: brz-spin 0.8s linear infinite; }
-    @keyframes brz-spin { to { transform: rotate(360deg); } }
-    .brz-unavail { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--text-muted); text-align: center; padding: 24px; line-height: 1.5; }
-    .brz-unavail .ic { width: 38px; height: 38px; opacity: 0.45; }
-    .brz-unavail b { color: var(--text-secondary); }
     /* "Layout" submenu flyout (desktop only) */
     .wb-sub { position: relative; }
     .wb-sub-caret { margin-left: auto; opacity: 0.55; }
@@ -1290,6 +1378,19 @@ export function getWebappHtml(botUsername, appVersion = '') {
       pointer-events: none; user-select: none; overflow: hidden;
     }
     .parked-cell .pk-view .xterm { height: 100%; padding: 4px 6px; }
+    .parked-cell .pk-go { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; }
+    .parked-cell .pk-peek-btn { display: inline-flex; align-items: center; gap: 6px; }
+    .parked-cell .pk-peek-btn .ic, .parked-cell .pk-unpeek .ic { width: 14px; height: 14px; }
+    /* Peek: the parked chat read as it is, without resuming it. */
+    .parked-cell.pk-peek .pk-view { filter: none; pointer-events: auto; user-select: text; overflow: auto; }
+    .parked-cell.pk-peek .pk-veil { display: none; }
+    .parked-cell .pk-unpeek { display: none; }
+    .parked-cell.pk-peek .pk-unpeek {
+      display: inline-flex; align-items: center; gap: 6px; position: absolute; top: 10px; right: 12px; z-index: 5;
+      padding: 7px 12px; border-radius: 16px; border: 1px solid var(--accent); background: var(--bg-card); color: var(--text-primary);
+      font: 600 0.78rem system-ui, sans-serif; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.45);
+    }
+    .parked-cell.pk-peek .pk-unpeek:hover { background: var(--accent-dim); }
     .parked-cell .pk-veil {
       position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
       background: radial-gradient(ellipse at center, rgba(10,10,15,0.55) 0%, rgba(10,10,15,0.15) 70%);
@@ -1460,6 +1561,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
     .tab-bar::-webkit-scrollbar { display: none; }
     .tab-bar.visible { display: flex; }
+    .brd-toggle { margin-left: auto; position: sticky; right: 0; display: inline-flex; align-items: center; gap: 6px; padding: 10px 14px; white-space: nowrap; border: none; background: var(--bg-secondary); color: var(--text-muted); font-size: 0.82rem; font-weight: 500; cursor: pointer; flex: 0 0 auto; }
+    .brd-toggle:hover { color: var(--text-primary); }
+    .brd-toggle.active { color: var(--accent); }
     .tab-btn {
       position: relative;
       display: inline-flex; align-items: center; gap: 6px;
@@ -1726,6 +1830,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
       color: var(--text-muted);
       margin-bottom: 10px;
     }
+    /* Settings: sections in groups, each collapsed until opened. */
+    .set-group { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 18px 2px 6px; }
+    .set-group:first-child { margin-top: 2px; }
+    .info-section.set-fold { padding: 0; }
+    .info-section.set-fold > h4 { display: flex; align-items: center; gap: 8px; margin: 0; padding: 13px 16px; cursor: pointer; user-select: none; color: var(--text-primary); text-transform: none; letter-spacing: 0; font-size: 0.88rem; font-weight: 500; }
+    .info-section.set-fold > h4:hover { color: var(--accent); }
+    .info-section.set-fold > h4 .ic { width: 14px; height: 14px; margin-left: auto; transition: transform 0.15s ease; }
+    .info-section.set-fold.open > h4 .ic { transform: rotate(90deg); }
+    .info-section.set-fold > .set-body { padding: 0 16px 16px; }
+    .info-section.set-fold:not(.open) > .set-body { display: none; }
     .info-row {
       display: flex;
       justify-content: space-between;
@@ -2892,6 +3006,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
     #media-modal .media-modal-body { display: flex; flex-direction: column; min-height: 0; flex: 1; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
     #media-modal .media-toolbar { border-bottom: 1px solid var(--border); }
     #media-modal .media-body { max-height: 58vh; }
+    /* Cru pointing at something on the page (show_in_crundi) */
+    #cru-spot { position: fixed; z-index: 2147483000; pointer-events: none; border: 2px solid var(--accent-hover); border-radius: 10px; box-shadow: 0 0 0 4px var(--accent-dim), 0 0 28px 6px var(--accent-dim); animation: cruSpot 1.6s ease-in-out infinite; transition: left .12s, top .12s, width .12s, height .12s; }
+    @keyframes cruSpot { 0%, 100% { box-shadow: 0 0 0 3px var(--accent-dim), 0 0 18px 4px var(--accent-dim); } 50% { box-shadow: 0 0 0 7px var(--accent-dim), 0 0 34px 10px var(--accent-dim); } }
+    #cru-spot-note { position: fixed; z-index: 2147483001; pointer-events: none; max-width: 320px; padding: 8px 12px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--accent); color: var(--text-primary); font-size: 13px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.45); display: flex; gap: 8px; align-items: baseline; }
+    #cru-spot-note b { color: var(--accent-hover); font-weight: 600; flex: none; }
     /* highlight pulse used by jump-to-source */
     .jump-flash { animation: jumpFlash 2.2s ease-out; }
     @keyframes jumpFlash {
@@ -3195,6 +3314,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
     .uc-legend i { width: 15px; height: 9px; border-radius: 3px; display: inline-block; }
     .uc-legend i.dash { height: 0; width: 15px; border-top: 2px dashed; background: none !important; border-radius: 0; }
     .uc-empty { padding: 60px 16px; text-align: center; color: var(--text-muted); font-size: 0.84rem; }
+    .uc-api { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-tertiary); }
+    .uc-api[hidden] { display: none; }
+    .uc-api-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 0.8rem; }
+    .uc-api-head b { font-weight: 600; color: var(--text-primary); }
+    .uc-api-amount { color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .uc-api-bar { height: 6px; border-radius: 3px; background: var(--bg-primary); margin: 8px 0 6px; overflow: hidden; }
+    .uc-api-bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.3s; }
+    .uc-api.over .uc-api-bar i { background: var(--red); }
+    .uc-api-meta { font-size: 0.74rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .uc-api-meta .uc-api-warn { color: var(--red); font-weight: 600; margin-left: 6px; }
 
     /* ─── Scrollbar ─── */
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -3398,6 +3527,24 @@ export function getWebappHtml(botUsername, appVersion = '') {
     <div class="login-box">
       <p id="login-prompt">Sign in to continue</p>
       <div id="telegram-login-container"></div>
+      <!-- Google / GitHub, through the owner's own OAuth app. Each button
+           shows only when that method is set up and turned on. -->
+      <div id="oauth-login" style="display:none;">
+        <button type="button" class="oauth-btn" id="oauth-btn-telegram" data-provider="telegram" style="display:none;">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+          <span>Sign in with Telegram</span>
+        </button>
+        <button type="button" class="oauth-btn" id="oauth-btn-google" data-provider="google" style="display:none;">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>
+          <span>Sign in with Google</span>
+        </button>
+        <button type="button" class="oauth-btn" id="oauth-btn-github" data-provider="github" style="display:none;">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>Sign in with GitHub</span>
+        </button>
+        <div id="oauth-wait" style="display:none;"></div>
+        <div id="oauth-error" style="color:var(--red);font-size:0.78rem;text-align:center;"></div>
+      </div>
       <div id="login-or" style="display:none;color:var(--text-muted);font-size:0.76rem;letter-spacing:0.08em;">OR</div>
       <!-- First run: nothing is configured, and nothing else is reachable
            until something is. -->
@@ -3532,6 +3679,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       <span class="status-badge disconnected" id="tg-badge" title="Telegram bot" style="display:none">tg: offline</span>
       <button class="topbar-act" id="collab-push" data-action="collab-push" title="Push your branch so the owner can see it"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg><span>Push</span></button>
       <button class="topbar-act" id="collab-merge" data-action="collab-merge" title="Ask the owner to merge your branch"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg><span>Ask to merge</span></button>
+      <button class="topbar-act" id="voice-btn" data-action="voice-open" title="Talk to Cru (voice assistant)" aria-label="Talk to Cru"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg></button>
       <button class="topbar-act" id="approvals-btn" data-action="approvals-toggle" title="Things waiting on you"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12.5"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span class="appr-count" id="approvals-count">0</span></button>
       <span class="status-badge disconnected" id="conn-badge">disconnected</span>
       <div id="reconn-line" aria-hidden="true"><i></i></div>
@@ -3552,6 +3700,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="sidebar-footer">
           <button data-action="app-settings" id="app-settings-btn" title="Settings for the app on this phone" style="display:none;margin-bottom:8px;"><span class="add-label">App settings</span></button>
           <button data-action="add-project" title="Add project"><span class="add-plus">+</span><span class="add-label"> Add project</span></button>
+          <button type="button" class="inbox-btn" id="inbox-btn" data-ibx="show" title="Inbox" aria-label="Inbox"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/></svg><span class="add-label">Inbox</span><span class="inbox-badge" id="inbox-badge" style="display:none">0</span></button>
         </div>
       </div>
       <div class="sidebar-overlay" id="sidebar-overlay" data-action="close-sidebar"></div>
@@ -3570,10 +3719,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button class="tab-btn" data-tab="schedule" title="Schedule"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 16 14"/></svg><span class="tab-label">Schedule</span></button>
           <button class="tab-btn" data-tab="services" title="Services"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="13" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="16" x2="6.01" y2="16"/></svg><span class="tab-label">Services</span></button>
           <button class="tab-btn" data-tab="docker" title="Docker"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg><span class="tab-label">Docker</span></button>
+          <button class="tab-btn" data-tab="homepool" title="Homepool: where traffic leaves from"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M9 16a4 4 0 0 1 6 0"/><path d="M11 19h2"/></svg><span class="tab-label">Homepool</span></button>
           <button class="tab-btn" data-tab="browsers" title="Browsers"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browsers</span></button>
           <button class="tab-btn" data-tab="info" title="Info"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg><span class="tab-label">Info</span></button>
           <button class="tab-btn" data-tab="secrets" title="Secrets"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><span class="tab-label">Secrets</span> <span class="secret-badge" id="secret-badge" style="display:none"></span></button>
           <button class="tab-btn" data-tab="settings" title="Settings"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="tab-label">Settings</span> <span class="update-badge" id="update-badge" style="display:none" title="Update available"></span></button>
+          <button class="brd-toggle" id="brd-toggle" type="button" title="Browser (desktop app)" style="display:none"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span class="tab-label">Browser</span></button>
         </div>
         <div class="wb-add-menu" id="wb-add-menu" style="display:none;">
           <button data-action="wb-add" data-kind="terminal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> Terminal</button>
@@ -3583,7 +3734,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
           <button data-action="wb-add" data-kind="notes"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg> Notes</button>
           <button data-action="wb-add" data-kind="mindmap"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg> Mindmap</button>
           <button data-action="wb-add" data-kind="media"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="3" width="14" height="14" rx="2"/><circle cx="11" cy="7.5" r="1.3"/><polyline points="21 13 17 9.5 9 17"/><path d="M3 7v12a2 2 0 0 0 2 2h12"/></svg> Media</button>
-          <button data-action="wb-add" data-kind="browser"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> Browser</button>
           <button data-action="wb-add" data-kind="factory" title="This project's factory run"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/></svg> Factory</button>
           <button data-action="wb-add" data-kind="widget" title="Open a panel Claude built"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg> Panel</button>
           <button data-action="wb-fit" title="Share the width out again so every pane fits the window (pinned panes keep their size)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="3" y1="12" x2="21" y2="12"/></svg> Fit to screen</button>
@@ -3650,16 +3800,21 @@ export function getWebappHtml(botUsername, appVersion = '') {
         <div class="mindmap-panel tab-panel" id="mindmap-panel" data-panel="mindmap"></div>
         <div class="media-panel tab-panel" id="media-panel" data-panel="media"></div>
         <div class="widgets-tab tab-panel" id="widgets-panel" data-panel="widgets"></div>
-        <div class="browser-panel tab-panel" id="browser-panel" data-panel="browser"></div>
         <div class="schedule-panel tab-panel" id="schedule-panel" data-panel="schedule"></div>
         <div class="services-panel tab-panel" id="services-panel" data-panel="services"></div>
         <div class="tab-panel docker-tab" id="docker-panel" data-panel="docker"></div>
+        <div class="tab-panel docker-tab" id="homepool-panel" data-panel="homepool"></div>
         <div class="tab-panel factories-tab" id="factories-panel" data-panel="factories"></div>
         <div class="factory-panel tab-panel" id="factory-panel" data-panel="factory"></div>
         <div class="services-panel tab-panel" id="browsers-panel" data-panel="browsers"></div>
         <div class="info-panel tab-panel" id="info-panel" data-panel="info"></div>
         <div class="info-panel tab-panel" id="settings-panel" data-panel="settings"></div>
+        <div class="inbox-panel tab-panel" id="inbox-panel" data-panel="inbox"></div>
       </div>
+      <!-- The browser drawer (desktop app): beside the whole project area, below the top bar.
+           Built by app/vendor/crundi-browser-drawer.js. Never re-rendered: its webviews must not move. -->
+      <div class="brd-split brd-closed" id="brd-split" title="Drag to resize; double-click to reset"></div>
+      <aside class="brd brd-closed" id="brd" aria-label="Browser" aria-hidden="true"></aside>
     </div>
   </div>
 
@@ -3830,6 +3985,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
       </div>
       <div class="uc-chart-wrap"><div class="uc-chart" id="uc-chart"></div><div class="uc-tip" id="uc-tip"></div></div>
       <div class="uc-legend" id="uc-legend"></div>
+      <div class="uc-api" id="uc-api" hidden>
+        <div class="uc-api-head"><b>Claude API · voice assistant</b><span class="uc-api-amount" id="uc-api-amount"></span></div>
+        <div class="uc-api-bar"><i id="uc-api-fill"></i></div>
+        <div class="uc-api-meta" id="uc-api-meta"></div>
+        <div class="uc-api-meta" id="uc-api-account" hidden></div>
+      </div>
+      <div class="uc-api" id="uc-dg" hidden>
+        <div class="uc-api-head"><b>Deepgram · voice assistant</b><span class="uc-api-amount" id="uc-dg-amount"></span></div>
+        <div class="uc-api-bar"><i id="uc-dg-fill"></i></div>
+        <div class="uc-api-meta" id="uc-dg-meta"></div>
+      </div>
       <div class="im-buttons"><button id="uc-close">Close</button></div>
     </div>
   </div>
@@ -3847,9 +4013,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
   <script src="/vendor/crundi-chat-secrets.js?v=${vendorTag('crundi-chat-secrets.js')}"><\/script>
   <script src="/vendor/crundi-notes.js?v=${vendorTag('crundi-notes.js')}"><\/script>
   <script src="/vendor/crundi-docker.js?v=${vendorTag('crundi-docker.js')}"><\/script>
+  <script src="/vendor/crundi-homepool.js?v=${vendorTag('crundi-homepool.js')}"><\/script>
+  <script src="/vendor/crundi-browser-drawer.js?v=${vendorTag('crundi-browser-drawer.js')}"><\/script>
   <script src="/vendor/crundi-factories.js?v=${vendorTag('crundi-factories.js')}"><\/script>
   <script src="/vendor/crundi-widgets.js?v=${vendorTag('crundi-widgets.js')}"><\/script>
   <script src="/vendor/crundi-whatsnew.js?v=${vendorTag('crundi-whatsnew.js')}"><\/script>
+  <script src="/vendor/crundi-voice.js?v=${vendorTag('crundi-voice.js')}"><\/script>
   <script src="/vendor/crundi-phone.js?v=${vendorTag('crundi-phone.js')}"><\/script>
   <script>
   (function() {
@@ -4013,7 +4182,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         wbByProject[wbStateProject] = { cells: wbCells, order: wbOrder, pending: pendingCells };
       }
       const s = wbByProject[currentProject] || {};
-      wbCells = Array.isArray(s.cells) ? s.cells.slice() : [];
+      // The browser is no longer a workbench pane (it is the drawer now).
+      wbCells = Array.isArray(s.cells) ? s.cells.filter(c => c && c.kind !== 'browser') : [];
       wbOrder = Array.isArray(s.order) ? s.order.slice() : [];
       pendingCells = Array.isArray(s.pending) ? s.pending.slice() : [];
       wbStateProject = currentProject; pendingProject = currentProject;
@@ -4574,8 +4744,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     // ─── Flat icon set (stroke icons, inherit currentColor) ───
     const ICON_PATHS = {
+      square: '<rect x="4" y="4" width="16" height="16" rx="2"/>',
       factory: '<path d="M2 20a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8l-7 5V8l-7 5V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M17 18h1"/><path d="M12 18h1"/><path d="M7 18h1"/>',
       'message-square': '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+      eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M9 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z"/>',
+      'eye-off': '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1L23 23"/>',
       scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
       clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
       panel: '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>',
@@ -4631,6 +4804,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
       zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
       layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
       'hard-drive': '<line x1="22" y1="12" x2="2" y2="12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" y1="16" x2="6.01" y2="16"/><line x1="10" y1="16" x2="10.01" y2="16"/>',
+      mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/>',
+      'help-circle': '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+      mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/>',
       network: '<rect x="9" y="2" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="16" y="16" width="6" height="6" rx="1"/><path d="M5 16v-3h14v3"/><line x1="12" y1="8" x2="12" y2="13"/>',
     };
     function ic(name) {
@@ -4684,16 +4860,184 @@ export function getWebappHtml(botUsername, appVersion = '') {
         return;
       }
 
-      if (methods.telegram) injectTelegramWidget();
+      // Telegram is a button like the others, driving Telegram's own widget
+      // script (Telegram.Login.auth, its popup flow). The old embedded widget
+      // stays the way in when that cannot work: no bot id from the server,
+      // or the desktop app, where a popup opens in the system browser and
+      // can never answer this page.
+      const tgButton = methods.telegram && /^[0-9]+$/.test(String(methods.telegramBotId || '')) && !isDesktopApp();
+      if (methods.telegram && !tgButton) injectTelegramWidget();
+      else $('#telegram-login-container').style.display = 'none';
+      if (tgButton) loadTelegramLib();
       if (methods.password) form.style.display = 'flex';
-      if (methods.telegram && methods.password) orEl.style.display = '';
+      // One button each, only for what is on. An older server sends no
+      // google/github field, so those do not show.
+      const oauthOn = ['google', 'github'].filter((k) => methods[k] === true);
+      if (tgButton || oauthOn.length) {
+        $('#oauth-login').style.display = 'flex';
+        if (tgButton) {
+          const tb = $('#oauth-btn-telegram');
+          tb.style.display = '';
+          tb.addEventListener('click', () => telegramLogin(methods.telegramBotId));
+        }
+        for (const k of oauthOn) {
+          const b = $('#oauth-btn-' + k);
+          b.style.display = '';
+          b.addEventListener('click', () => oauthLogin(k));
+        }
+        if (window.__crundiAuthErr) $('#oauth-error').textContent = window.__crundiAuthErr;
+      }
+      if ((methods.telegram || oauthOn.length) && methods.password) orEl.style.display = '';
 
-      prompt.textContent = methods.telegram && methods.password
+      prompt.textContent = (tgButton || oauthOn.length) ? 'Sign in to continue'
+        : methods.telegram && methods.password
         ? 'Sign in with Telegram, or with your password'
         : methods.password ? 'Sign in with your password and authenticator code'
         : 'Sign in with your Telegram account to continue';
 
       if (methods.password) setTimeout(() => { try { $('#login-password').focus(); } catch {} }, 60);
+    }
+
+    // ─── Google / GitHub sign-in ───
+    // The desktop app runs the flow in the system browser (Google refuses
+    // embedded browsers), and so does any page not on the server's public
+    // address, since the provider can only send people back there. Those wait
+    // by polling; an ordinary browser on the public address is redirected.
+    function isDesktopApp() {
+      return !!(window.api && typeof window.api === 'object') || navigator.userAgent.indexOf('Electron/') >= 0;
+    }
+    let oauthPollTimer = null;
+    function oauthStopWaiting() {
+      if (oauthPollTimer) { clearTimeout(oauthPollTimer); oauthPollTimer = null; }
+      const w = $('#oauth-wait');
+      if (w) { w.style.display = 'none'; w.textContent = ''; }
+      for (const b of document.querySelectorAll('.oauth-btn')) b.disabled = false;
+    }
+    async function oauthLogin(provider) {
+      const err = $('#oauth-error');
+      const wait = $('#oauth-wait');
+      err.textContent = '';
+      oauthStopWaiting();
+      for (const b of document.querySelectorAll('.oauth-btn')) b.disabled = true;
+      let d = null;
+      try {
+        const r = await fetch('/api/auth/oauth/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider, origin: location.origin, desktop: isDesktopApp() }),
+        });
+        d = await r.json();
+      } catch (ex) { err.textContent = 'Could not reach the server: ' + ex.message; oauthStopWaiting(); return; }
+      if (!d || !d.ok) { err.textContent = (d && d.error) || 'Could not start the sign-in'; oauthStopWaiting(); return; }
+      if (d.mode === 'redirect') { location.href = d.url; return; }
+      const label = provider === 'google' ? 'Google' : 'GitHub';
+      // A browser may block a window opened after an await, so the page also
+      // offers a link the person can click themselves.
+      wait.innerHTML = 'Finish signing in with ' + label + ' in your browser. When it asks, check it shows this code:'
+        + '<b>' + escHtml(d.confirmCode || '') + '</b>'
+        + '<a id="oauth-open">Open the sign-in page</a> &middot; <a id="oauth-cancel">Cancel</a>';
+      wait.style.display = '';
+      const openIt = () => { try { window.open(d.url, '_blank', 'noopener'); } catch (e) { /* the link is still there */ } };
+      $('#oauth-open').addEventListener('click', openIt);
+      $('#oauth-cancel').addEventListener('click', () => oauthStopWaiting());
+      openIt();
+      const until = Date.now() + 10 * 60 * 1000;
+      const tick = async () => {
+        oauthPollTimer = null;
+        if (Date.now() > until) { oauthStopWaiting(); err.textContent = 'The sign-in timed out. Try again.'; return; }
+        let p = null;
+        try {
+          const r = await fetch('/api/auth/oauth/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pollId: d.pollId }) });
+          p = await r.json();
+        } catch (ex) { /* the network blinked; try again */ }
+        if ($('#oauth-wait').style.display === 'none') return;   // cancelled meanwhile
+        if (p && p.status === 'done' && storeSession(p)) { oauthStopWaiting(); showApp(); return; }
+        if (p && (p.status === 'failed' || p.status === 'expired')) {
+          oauthStopWaiting();
+          err.textContent = p.status === 'expired' ? 'The sign-in expired. Try again.' : (p.error || 'Sign-in failed');
+          return;
+        }
+        oauthPollTimer = setTimeout(tick, 1500);
+      };
+      oauthPollTimer = setTimeout(tick, 1500);
+    }
+
+    // ─── Telegram sign-in ───
+    // Telegram's widget script, loaded on its own (no data-telegram-login, so
+    // it draws nothing) for its Telegram.Login.auth popup flow. The user it
+    // hands back is posted to /api/auth exactly as the widget's own data is,
+    // and the server checks it the same way (hash signed with the bot token,
+    // the allowed username).
+    let tgLibLoading = null;
+    function loadTelegramLib() {
+      if (window.Telegram && window.Telegram.Login && window.Telegram.Login.auth) return Promise.resolve(true);
+      if (tgLibLoading) return tgLibLoading;
+      tgLibLoading = new Promise((resolve) => {
+        const s = document.createElement('script');
+        s.async = true;
+        s.src = 'https://telegram.org/js/telegram-widget.js?22';
+        s.onload = () => resolve(!!(window.Telegram && window.Telegram.Login && window.Telegram.Login.auth));
+        s.onerror = () => { tgLibLoading = null; resolve(false); };
+        document.head.appendChild(s);
+      });
+      return tgLibLoading;
+    }
+    /** The old embedded widget, in place of the button, when the popup cannot be used. */
+    function telegramFallback(msg) {
+      const c = $('#telegram-login-container');
+      if (c && !c.childElementCount) injectTelegramWidget();
+      if (c) c.style.display = '';
+      const b = $('#oauth-btn-telegram');
+      if (b) b.style.display = 'none';
+      if (msg) $('#oauth-error').textContent = msg;
+    }
+    async function telegramLogin(botId) {
+      const err = $('#oauth-error');
+      err.textContent = '';
+      const ok = await loadTelegramLib();
+      if (!ok) { telegramFallback('Could not load Telegram’s sign-in. Use the Telegram button above.'); return; }
+      window.Telegram.Login.auth({ bot_id: botId, request_access: 'write' }, async (user) => {
+        // false: the popup was closed, cancelled, or blocked by the browser.
+        if (!user) { telegramFallback('Telegram sign-in did not finish. Try the Telegram button above.'); return; }
+        try {
+          const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ telegramLogin: user }) });
+          const d = await r.json();
+          if (d && d.ok && storeSession(d)) { showApp(); connectSSE(); checkImport(); return; }
+          err.textContent = (d && d.error) || 'Sign-in failed';
+        } catch (ex) { err.textContent = 'Could not reach the server: ' + ex.message; }
+      });
+    }
+    // Harmless leftover: a page that comes back with #tgAuthResult (Telegram
+    // can do that when its popup opens as a tab) is still signed in.
+    async function consumeTelegramResult() {
+      const m = location.hash.match(/[#&?]tgAuthResult=([A-Za-z0-9_=-]*)/);
+      if (!m) return false;
+      history.replaceState(null, '', location.pathname);
+      let data = null;
+      try { data = JSON.parse(decodeURIComponent(escape(atob(m[1].replace(/-/g, '+').replace(/_/g, '/'))))); } catch (e) { data = null; }
+      if (!data || typeof data !== 'object') { window.__crundiAuthErr = 'Telegram sign-in was cancelled.'; return false; }
+      try {
+        const r = await fetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ telegramLogin: data }) });
+        const d = await r.json();
+        if (d && d.ok) return storeSession(d);
+        window.__crundiAuthErr = (d && d.error) || 'Sign-in failed';
+      } catch (ex) { window.__crundiAuthErr = 'Could not reach the server: ' + ex.message; }
+      return false;
+    }
+
+    // Arrived back from the provider: swap the one-time code for a session.
+    // The code is cleared from the address bar before anything else.
+    async function consumeOAuthHandoff() {
+      const m = location.hash.match(/(?:^#|&)oauth=([A-Za-z0-9_-]+)/);
+      if (!m) return false;
+      history.replaceState(null, '', location.pathname);
+      try {
+        const r = await fetch('/api/auth/oauth/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: m[1] }) });
+        const d = await r.json();
+        if (d && d.ok) return storeSession(d);
+        window.__crundiAuthErr = (d && d.error) || 'Sign-in failed';
+      } catch (ex) { window.__crundiAuthErr = 'Could not reach the server: ' + ex.message; }
+      return false;
     }
 
     async function submitSetup(e) {
@@ -5381,12 +5725,1285 @@ export function getWebappHtml(botUsername, appVersion = '') {
       },
     };
 
+    // The voice assistant (D39): the same voice screen as the phone, over the
+    // page. Its field shows the projects as cells in their live state.
+    function openVoice() {
+      if (userRole === 'collaborator' || !window.CrundiVoice) return;
+      window.CrundiVoice.open(voiceOpts());
+    }
+    // On a wide screen the mic button is a dropdown: click, hover, or hold
+    // Ctrl+Space (push to talk). Attached once the page knows the role.
+    let voiceAttached = false;
+    function attachVoice() {
+      if (voiceAttached || userRole === 'collaborator' || !window.CrundiVoice || !window.CrundiVoice.attach) return;
+      const b = document.getElementById('voice-btn');
+      if (!b) return;
+      b.classList.add('on');   // top-bar buttons show only when switched on; the owner's alone
+      window.CrundiVoice.attach(b, voiceOpts);
+      voiceAttached = true;
+      // Kid mode on (started from another screen, or before this page loaded): the kid screen comes up.
+      checkKidMode();
+      // Unread messages from Cru, and a notification that asked for Cru's chat view (?cru=chat).
+      apiFetch('/api/voice/unread').then((r) => r.json()).then((d) => { if (d && d.ok && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); }).catch(() => {});
+      try {
+        const q = new URLSearchParams(location.search);
+        if (q.get('cru') === 'chat') {
+          try { localStorage.setItem('crundi_cru_chat_view', '1'); } catch (err) { /* private mode */ }
+          q.delete('cru'); history.replaceState(null, '', location.pathname + (q.toString() ? '?' + q.toString() : '') + location.hash);
+          setTimeout(() => b.click(), 300);
+        }
+      } catch (err) { /* ignore */ }
+    }
+    // The PC's wake word opens voice through this (app/voice-wake/controller.js).
+    window.crundiOpenVoice = () => { if (window.CrundiVoice && !window.CrundiVoice.isOpen) openVoice(); };
+    // The PC's wake word (app/voice-wake/controller.js). A client that can
+    // train it is told apart by its training calls; an older one has only
+    // get/set/status and listens for "Hey Crundi" untrained.
+    function vwCan() {
+      const v = window.api && window.api.voiceWake;
+      return !!(v && v.train && v.trainBegin && v.trainEnd && v.check && v.forget);
+    }
+    let vwStyles = { btn: '', subtle: '', hint: '', label: '' };
+    let vwLast = null;            // the client’s last status
+    let vwSubscribed = false;
+    async function showVoiceWake() {
+      const box = document.getElementById('voice-wake-on'), st = document.getElementById('voice-wake-status');
+      if (!box || !window.api || !window.api.voiceWake) return;
+      try {
+        if (!vwCan()) box.checked = !!(await window.api.voiceWake.get());
+        const s = await window.api.voiceWake.status();
+        if (!vwCan() && st) st.textContent = typeof s === 'string' ? s : (s && (s.label || s.state)) || '';
+        if (vwCan()) vwApply(s);
+        if (!vwSubscribed && vwCan() && window.api.voiceWake.onStatus) {
+          vwSubscribed = true;
+          window.api.voiceWake.onStatus((x) => vwApply(x));
+        }
+      } catch { /* an older client */ }
+    }
+    // Cru's settings, shared by every device (the server keeps them): the
+    // brain, model, voice, how it listens, when the screen closes, spending,
+    // keys, the conversation, the notebook, and the two brains compared.
+    // An older server reports fewer fields: those rows are left out.
+    let voiceModels = [];
+    let vsVoices = null, vsPlayer = null;
+    async function vsGet(path) { const r = await apiFetch(path); return r.json(); }
+    async function vsPost(path, body) { const r = await apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) }); return r.json(); }
+    function vsNote(id, text, bad) { const el = document.getElementById(id); if (el) { el.textContent = text || ''; el.style.color = bad ? 'var(--red)' : 'var(--text-muted)'; } }
+    async function showVoiceServer() {
+      const el = document.getElementById('voice-server-set');
+      if (!el) return;
+      let s;
+      try { s = await vsGet('/api/voice/settings'); } catch { return; }
+      if (!s || !s.ok) { el.innerHTML = ''; return; }
+      voiceModels = s.models || [];
+      const st = vwStyles;
+      const selStyle = 'width:100%;max-width:340px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary);';
+      const inStyle = 'width:100%;max-width:340px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);box-sizing:border-box;';
+      const opt = (v, label, cur) => '<option value="' + v + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + escHtml(label) + '</option>';
+      const choices = (list, cur) => { const l = list.slice(); if (cur && !l.some((x) => String(x) === String(cur))) l.push(cur); return l.sort((a, b) => a - b); };
+      const hint = (t) => t ? '<p style="' + st.hint + ';margin:4px 0 0;">' + t + '</p>' : '';
+      const row = (label, id, opts, h) => '<div style="margin-top:10px;"><label for="' + id + '" style="' + st.label + '">' + label + '</label><select id="' + id + '" style="' + selStyle + '">' + opts + '</select>' + hint(h) + '</div>';
+      const field = (label, id, type, value, attrs, h) => '<div style="margin-top:10px;"><label for="' + id + '" style="' + st.label + '">' + label + '</label><input id="' + id + '" type="' + type + '" value="' + escHtml(value == null ? '' : String(value)) + '" ' + (attrs || '') + ' style="' + inStyle + '">' + hint(h) + '</div>';
+      const sub = (t) => '<h5 style="margin:18px 0 2px;font-size:0.82rem;color:var(--text-primary);">' + t + '</h5>';
+      const secLabel = (n) => n < 60 ? n + ' seconds' : (n % 60 ? Math.floor(n / 60) + ' min ' + (n % 60) + ' s' : (n / 60) + (n === 60 ? ' minute' : ' minutes'));
+      const rateLabel = (r) => Math.abs(r - 1) < 0.001 ? 'Normal' : (Math.round(r * 100) / 100) + 'x';
+      const keyState = (on) => on ? '<span style="color:var(--green);">set</span>' : '<span style="color:var(--text-muted);">not set</span>';
+      const sp = s.spend || {};
+      let html = '';
+      // How Cru thinks
+      html += sub('Brain and model');
+      if (s.brain) html += row('Brain', 'vs-brain', opt('api', 'Claude API (the key)', s.brain) + opt('claude-code', 'Claude Code (your subscription)', s.brain), 'An experiment: the same tools, rules and notebook either way. Each keeps its own conversation.');
+      html += row('Model', 'vs-model', voiceModels.map((m) => opt(m.id, m.label, s.model)).join(''), 'Haiku is the quickest and cheapest. A change applies from the next conversation.');
+      // Thinking effort (capability 'voice-effort'): how hard the model thinks before it answers.
+      if (Array.isArray(s.efforts) && s.effort) {
+        const effortLabel = { low: 'Low (quickest)', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max (most thorough)' };
+        const cur = voiceModels.find((m) => m.id === s.model) || {};
+        const takes = Array.isArray(cur.efforts) && cur.efforts.length ? cur.efforts : s.efforts;
+        html += row('Thinking effort', 'vs-effort', takes.map((e) => opt(e, effortLabel[e] || e, s.effort)).join(''),
+          'How hard Cru thinks before it answers: lower is faster and cheaper, higher is more thorough. ' + (cur.label || 'This model') + ' takes every level' + (cur.apiDefaultEffort ? ' (its own default is ' + cur.apiDefaultEffort + '; Cru runs at low unless you choose)' : '') + '. You can also ask Cru to change it. It applies from the next answer.');
+      }
+      if (s.brain) html += row('Stop Claude Code after', 'vs-cidle', choices([5, 10, 15, 30, 60, 120], s.cliIdleMinutes).map((n) => opt(n, n + ' minutes idle', s.cliIdleMinutes)).join(''), 'Your next message starts it again and carries on the same conversation.');
+      // How Cru sounds and listens
+      html += sub('Voice and listening');
+      html += '<div style="margin-top:10px;"><span style="' + st.label + '">Voice</span><div id="vs-voice-now" style="font-size:0.82rem;"></div>'
+        + '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:0.78rem;color:var(--text-secondary);"><label><input type="checkbox" id="vs-brit" checked> British only</label><label><input type="checkbox" id="vs-male"> Male only</label><button type="button" class="svc-btn" id="vs-device">Use the device voice</button></div>'
+        + '<div id="vs-voices" style="margin-top:6px;max-height:260px;overflow-y:auto;"></div></div>';
+      html += row('Talking speed', 'vs-rate', choices([0.85, 1, 1.15, 1.3, 1.5], s.speechRate || 1).map((r) => opt(r, rateLabel(r), s.speechRate || 1)).join(''), '');
+      if (s.volume !== undefined) html += row('Volume', 'vs-vol', choices([25, 40, 55, 70, 85, 100], s.volume).map((v) => opt(v, v + '%', s.volume)).join(''), 'How loud Cru talks, everywhere. Cru can change it too: say louder or quieter.');
+      html += row('Pause before sending', 'vs-pause', choices([1500, 2000, 2500, 3000, 4000], s.pauseMs || 2000).map((ms) => opt(ms, (ms / 1000) + ' seconds', s.pauseMs || 2000)).join(''), 'How long you may pause before what you said is sent.');
+      if (s.screenCloseSeconds) html += row('Close the voice screen after', 'vs-sclose', choices([30, 45, 60, 120, 300], s.screenCloseSeconds).map((n) => opt(n, secLabel(n) + ' of silence', s.screenCloseSeconds)).join(''), 'On the phone, the web and the PC. Hey Cru opens it again.');
+      // Whose voice Cru acts on (capability 'voice-speaker'; an older server: left out), then admin mode.
+      html += '<details id="vs-spk-box" style="margin-top:14px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Your voice</summary><div id="vs-spk" style="margin-top:6px;"></div></details>';
+      if (s.adminMode !== undefined) {
+        html += '<div style="margin-top:12px;"><label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-admin"' + (s.adminMode ? ' checked' : '') + '> ' + ic('shield-alert') + ' Admin mode</label>'
+          + hint('Cru can run any command on this server as the Crundi user, with no confirmation, including on its own (the heartbeat, its tickers and triggers) to look after the server while you are away, every command logged. A spoken request is obeyed only in your voice. On its own it never restarts Crundi.' + (s.adminCapable === false ? ' It needs Sonnet or above: choose another model first.' : '')) + '</div>';
+      }
+      // Cru on its own (capability 'voice-away'): what it may do when nobody is talking to it.
+      if (s.away && Array.isArray(s.awayClasses)) {
+        html += '<div style="margin-top:12px;"><label style="display:flex;gap:8px;align-items:center;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-away"' + (s.away.on ? ' checked' : '') + '> ' + ic('zap') + ' Cru on its own</label>'
+          + hint('When nobody is talking to it (a wake-up, the heartbeat, a job it took on), Cru may do what is ticked below without asking. Anything else comes to your phone to approve or decline. With chats ticked, Cru also closes a chat without asking, even while you talk to it, once it has read what the chat is doing. Cru can switch this off, never on.')
+          + '<div id="vs-away-list" style="margin:6px 0 0 24px;' + (s.away.on ? '' : 'opacity:0.55;') + '">'
+          + s.awayClasses.map(function (c) { return '<label style="display:flex;gap:8px;align-items:center;font-size:0.8rem;color:var(--text-primary);margin:3px 0;"><input type="checkbox" class="vs-away-c" data-id="' + escHtml(c.id) + '"' + (s.away.allow.indexOf(c.id) >= 0 ? ' checked' : '') + '> ' + escHtml(c.label) + '</label>'; }).join('')
+          + '</div><div style="display:flex;gap:8px;align-items:center;margin-top:8px;"><button type="button" class="svc-btn danger" id="vs-away-stop">' + ic('pause') + ' Stop everything</button><span id="vs-away-note" style="font-size:0.78rem;"></span></div>'
+          + hint('Switches this off, pauses every ticker and trigger Cru keeps (the heartbeat too), drops its questions and pauses its jobs.') + '</div>';
+      }
+      // Spending
+      html += sub('Spending');
+      html += '<p style="' + st.hint + ';margin:4px 0 0;">Claude API: $' + (Number(sp.claudeUsd) || 0).toFixed(2) + ' of $' + s.monthlyLimitUsd + ', ' + (Number(sp.turns) || 0) + ' requests, restarts ' + escHtml(s.nextReset || '') + (s.limitReached ? ' (limit reached)' : '') + '. Deepgram: $' + (Number(sp.deepgramUsd) || 0).toFixed(2) + ' of $' + s.deepgramLimitUsd + ', restarts ' + escHtml(s.deepgramNextReset || '') + (s.deepgramLimitReached ? ' (limit reached)' : '') + '.</p>';
+      html += field('Claude API monthly limit (US$)', 'vs-limit', 'number', s.monthlyLimitUsd, 'min="0" step="1"', 'Cru stops answering through the API at it.');
+      html += field('Claude API billing day', 'vs-bday', 'number', s.billingDay || 1, 'min="1" max="31" step="1"', 'The day of the month the API is billed; its spend restarts then.');
+      html += field('Deepgram monthly limit (US$)', 'vs-dlimit', 'number', s.deepgramLimitUsd, 'min="0" step="1"', 'At it, the device voice and recogniser take over.');
+      html += field('Deepgram billing day', 'vs-dday', 'number', s.deepgramBillingDay || 1, 'min="1" max="31" step="1"', '');
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;"><button type="button" class="svc-btn" id="vs-save-spend">Save spending</button><span id="vs-spend-note" style="font-size:0.78rem;"></span></div>';
+      // Keys
+      html += sub('Keys');
+      html += field('Claude API key (' + keyState(s.anthropicKeySet) + ')', 'vs-akey', 'password', '', 'autocomplete="off" placeholder="Leave empty to keep the current key"', '');
+      html += field('Deepgram API key (' + keyState(s.deepgramKeySet) + ')', 'vs-dkey', 'password', '', 'autocomplete="off" placeholder="Leave empty to keep the current key"', 'Listening and speaking.');
+      html += field('Anthropic Admin API key, optional (' + keyState(s.anthropicAdminKeySet) + ')', 'vs-xkey', 'password', '', 'autocomplete="off" placeholder="Leave empty to keep the current key"', 'Only to show the whole account usage.');
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-top:10px;"><button type="button" class="svc-btn" id="vs-save-keys">Save keys</button><span id="vs-keys-note" style="font-size:0.78rem;"></span></div>';
+      // The conversation and the notebook
+      html += sub('Conversation and notebook');
+      html += '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap;"><button type="button" class="svc-btn" id="vs-reset">Start a fresh conversation</button><span id="vs-reset-note" style="font-size:0.78rem;"></span></div>' + hint('Nothing is lost: memory search keeps every earlier turn.');
+      html += '<div id="vs-mem-info" style="' + st.hint + ';margin-top:10px;"></div>';
+      html += field('Search what was said before', 'vs-mem-q', 'text', '', 'placeholder="e.g. the kanban card about the home screen"', '');
+      html += '<div id="vs-mem-hits"></div><div style="margin-top:10px;"><span style="' + st.label + '">Notebook (what Cru keeps for good; edit or empty a file to change it)</span><div id="vs-mem-files"></div></div>';
+      // Cru's own tickers and triggers (an older server has none: left out)
+      html += '<details id="vs-wake-box" style="margin-top:18px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Tickers and triggers</summary>'
+        + hint('Reasons for Cru to wake up on its own: a ticker repeats on a schedule, a trigger fires when something happens. Each is off until switched on; on each wake-up Cru decides whether to stay quiet, tell you, or alert you. Ask Cru to add one.')
+        + '<div id="vs-wake" style="margin-top:6px;"></div></details>';
+      // Kid mode (an older server has none: left out)
+      // Your PIN (kid mode and the PC lock) and the PC lock itself (capability 'pc-lock').
+      if (s.kidMode !== undefined) html += '<details id="vs-pin-box" style="margin-top:18px;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Your PIN and the PC lock</summary><div id="vs-pin" style="margin-top:6px;"></div></details>';
+      if (s.kidMode !== undefined) html += '<details id="vs-kid-box" style="margin-top:18px;display:none;"><summary style="cursor:pointer;font-size:0.82rem;font-weight:600;color:var(--text-primary);">Kid mode</summary><div id="vs-kid" style="margin-top:6px;"></div></details>';
+      // The experiment
+      if (s.brain) html += sub('Brains compared') + '<div id="vs-stats" style="margin-top:6px;"></div>';
+      html += '<div id="vs-status" style="font-size:0.78rem;color:var(--text-muted);margin-top:8px;"></div>';
+      el.innerHTML = html;
+
+      const save = async (body, note) => {
+        try { const d = await vsPost('/api/voice/settings', body); vsNote('vs-status', d && d.ok ? note : ((d && d.error) || 'Not saved'), !(d && d.ok)); return d; }
+        catch { vsNote('vs-status', 'Not saved', true); return null; }
+      };
+      const on = (id, fn) => { const x = document.getElementById(id); if (x) x.onchange = () => fn(x.value); };
+      on('vs-brain', (v) => save({ brain: v }, v === 'claude-code' ? 'Cru answers through Claude Code now' : 'Cru answers through the Claude API now').then(showVoiceStats));
+      on('vs-model', (v) => save({ model: v }, 'Model saved. It applies from the next conversation.'));
+      on('vs-effort', (v) => save({ effort: v }, 'Thinking effort saved. It applies from the next answer.'));
+      on('vs-cidle', (v) => save({ cliIdleMinutes: Number(v) }, 'Saved'));
+      on('vs-rate', (v) => save({ speechRate: Number(v) }, 'Cru talks at ' + rateLabel(Number(v))));
+      on('vs-vol', (v) => save({ volume: Number(v) }, 'Cru talks at ' + v + '%'));
+      on('vs-pause', (v) => save({ pauseMs: Number(v) }, 'Saved'));
+      on('vs-sclose', (v) => save({ screenCloseSeconds: Number(v) }, 'Saved'));
+      const val = (id) => (document.getElementById(id) || {}).value;
+      document.getElementById('vs-save-spend').onclick = async () => {
+        const d = await vsPost('/api/voice/settings', { monthlyLimitUsd: Number(val('vs-limit')), deepgramLimitUsd: Number(val('vs-dlimit')), billingDay: Number(val('vs-bday')) || 1, deepgramBillingDay: Number(val('vs-dday')) || 1 }).catch(() => null);
+        vsNote('vs-spend-note', d && d.ok ? 'Saved' : ((d && d.error) || 'Not saved'), !(d && d.ok));
+      };
+      document.getElementById('vs-save-keys').onclick = async () => {
+        const body = {};
+        for (const [id, k] of [['vs-akey', 'anthropicKey'], ['vs-dkey', 'deepgramKey'], ['vs-xkey', 'anthropicAdminKey']]) { const v = String(val(id) || '').trim(); if (v) body[k] = v; }
+        if (!Object.keys(body).length) { vsNote('vs-keys-note', 'Type a key to change it'); return; }
+        const d = await vsPost('/api/voice/settings', body).catch(() => null);
+        if (d && d.ok) showVoiceServer(); else vsNote('vs-keys-note', (d && d.error) || 'Not saved', true);
+      };
+      document.getElementById('vs-reset').onclick = async () => {
+        const d = await vsPost('/api/voice/reset', {}).catch(() => null);
+        vsNote('vs-reset-note', d && d.ok !== false ? 'Cru starts a fresh conversation' : 'Could not reset', !(d && d.ok !== false));
+      };
+      const away = document.getElementById('vs-away');
+      const awaySave = async (msg) => {
+        const allow = Array.prototype.slice.call(document.querySelectorAll('.vs-away-c')).filter(function (b) { return b.checked; }).map(function (b) { return b.dataset.id; });
+        const d = await save({ away: { on: !!(away && away.checked), allow: allow } }, msg);
+        const list = document.getElementById('vs-away-list');
+        if (list) list.style.opacity = away && away.checked ? '' : '0.55';
+        return d;
+      };
+      if (away) away.onchange = async () => {
+        const want = away.checked;
+        const d = await awaySave(want ? 'Cru may now act on its own, as ticked' : 'Cru asks before every change again');
+        if (!(d && d.ok)) away.checked = !want;
+      };
+      document.querySelectorAll('.vs-away-c').forEach(function (b) { b.onchange = function () { awaySave('Saved'); }; });
+      const awayStop = document.getElementById('vs-away-stop');
+      if (awayStop) awayStop.onclick = async () => {
+        if (!confirm('Stop everything Cru does on its own? Its tickers, triggers and jobs pause until switched on again.')) return;
+        const d = await vsPost('/api/voice/away/stop', { everything: true }).catch(() => null);
+        if (d && d.ok) { if (away) away.checked = false; const list = document.getElementById('vs-away-list'); if (list) list.style.opacity = '0.55'; vsNote('vs-away-note', 'Stopped: ' + (d.wakeupsPaused || 0) + ' wake-ups paused, ' + (d.jobsPaused || 0) + ' jobs paused'); vsLoadWakeups(); }
+        else vsNote('vs-away-note', (d && d.error) || 'Could not stop', true);
+      };
+      const adm = document.getElementById('vs-admin');
+      if (adm) adm.onchange = async () => {
+        const want = adm.checked;
+        const d = await save({ adminMode: want }, want ? 'Admin mode is on: Cru can run any command, also on its own; spoken requests need your voice' : 'Admin mode is off');
+        if (!(d && d.ok)) adm.checked = !want;
+      };
+      vsLoadSpeaker();
+      vsShowVoices(s);
+      vsLoadMemory();
+      vsLoadWakeups();
+      vsLoadPin();
+      vsLoadKid();
+      let memTimer = null;
+      const q = document.getElementById('vs-mem-q');
+      if (q) q.oninput = () => { clearTimeout(memTimer); memTimer = setTimeout(vsSearchMemory, 350); };
+      if (s.brain) showVoiceStats();
+    }
+    // The owner's voice (voice/speaker.js): enrolled here with this browser's
+    // microphone, one phrase at a time (16 kHz mono WAV), each checked by the
+    // server; "Only act on my voice"; forgetting it.
+    const spk = { st: null, active: false, mode: 'phrases', pos: 0, results: [], rec: null, mic: null, busy: false, msg: '', bad: false, watch: null };
+    const SPK_MAX_S = 15;
+    async function vsLoadSpeaker() {
+      const box = document.getElementById('vs-spk-box');
+      if (!box) return;
+      let r = null;
+      try { const res = await apiFetch('/api/voice/speaker'); r = res.ok ? await res.json() : null; } catch { r = null; }
+      if (!r || !r.ok) { box.style.display = 'none'; return; }
+      spk.st = r;
+      box.style.display = '';
+      vsSpkRender();
+    }
+    function vsSpkRender() {
+      const el = document.getElementById('vs-spk');
+      if (!el || !spk.st) return;
+      const st = spk.st, S = vwStyles;
+      const say = (t, bad) => t ? '<p style="' + S.hint + ';margin:8px 0 0;' + (bad ? 'color:var(--red);' : '') + '">' + escHtml(t) + '</p>' : '';
+      let h = '';
+      if (!spk.active) {
+        if (!st.available) h += say('The voice check is not available on this server: onnxruntime-node is not installed.', false);
+        else if (st.enrolled) {
+          const when = st.enrolledAt ? new Date(st.enrolledAt) : null;
+          h += '<div style="font-size:0.78rem;color:var(--text-secondary);display:flex;gap:6px;align-items:center;margin-top:4px;">' + ic('check') + 'Enrolled'
+            + (when && !isNaN(when.getTime()) ? ' on ' + escHtml(when.toLocaleDateString()) : '') + ': ' + st.phrases + ' phrases, ' + st.seconds + ' s of speech</div>';
+          // Short replies (capability 'voice-short-words'; an older server: no line).
+          if (st.shortWords) h += '<div style="font-size:0.78rem;color:var(--text-secondary);display:flex;gap:6px;align-items:center;margin-top:4px;">' + ic(st.shortWords.trained ? 'check' : 'info')
+            + (st.shortWords.trained ? 'Short replies taught: ' + st.shortWords.words + ' of ' + (st.wordPrompts || []).length + ', so a bare yes or no is recognised' : 'Short replies not taught: a bare yes or no is too short to tell') + '</div>';
+        } else h += say('Not enrolled yet: Cru acts on any voice. Read a few short phrases so it knows yours (about a minute).', false);
+        if (st.available) {
+          h += '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:0.82rem;color:var(--text-primary);"><input type="checkbox" id="vs-spk-only"' + (st.ownerOnly ? ' checked' : '') + (st.enrolled ? '' : ' disabled') + '> Only act on my voice</label>'
+            + '<p style="' + S.hint + ';margin:4px 0 0;">Anyone may still ask Cru questions; only your voice, or typing, changes anything. Admin mode always needs your voice.</p>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;"><button type="button" data-spk="start" style="' + (st.enrolled ? S.subtle : S.btn) + '">' + (st.enrolled ? 'Enrol again' : 'Enrol my voice') + '</button>'
+            + (st.enrolled && st.shortWords ? '<button type="button" data-spk="words" style="' + S.subtle + '">' + (st.shortWords.trained ? 'Teach short replies again' : 'Teach short replies') + '</button>' : '')
+            + (st.enrolled ? '<button type="button" data-spk="forget" style="' + S.subtle + '">Forget my voice</button>' : '') + '</div>';
+        }
+        el.innerHTML = h + say(spk.msg, spk.bad);
+      } else if (spk.mode === 'words') {
+        const words = st.wordPrompts || [], kept = spk.results.filter((r) => r.accepted).length, min = st.minWords || 5, times = st.wordRepeats || 3;
+        if (spk.pos < words.length) {
+          h += '<p style="' + S.label + ';margin-top:10px;">Short reply ' + (spk.pos + 1) + ' of ' + words.length + ': click Record, say it ' + times + ' times with a short pause between, then Stop</p>'
+            + '<p style="font-size:1.1rem;font-weight:600;color:var(--text-primary);margin:6px 0 10px;">' + escHtml(words[spk.pos]) + '</p>'
+            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="rec" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>' + (spk.rec ? ic('stop') + ' Stop' : ic('mic') + ' Record') + '</button>'
+            + '<div style="width:160px;height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;"><div id="vs-spk-meter" style="height:100%;width:0%;background:var(--accent);transition:width 60ms linear;"></div></div>'
+            + (!spk.rec ? '<button type="button" data-spk="skip" style="' + S.subtle + '"' + (spk.busy ? ' disabled' : '') + '>Skip</button>' : '')
+            + (kept >= min && !spk.rec ? '<button type="button" data-spk="finish" style="' + S.subtle + '">Finish now</button>' : '')
+            + '<button type="button" data-spk="cancel" style="' + S.subtle + '">' + (st.shortWords && st.shortWords.trained ? 'Cancel' : 'Not now') + '</button></div>';
+        } else if (kept >= min) {
+          h += '<p style="' + S.label + ';margin-top:10px;">All short replies said.</p><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="finish" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>Finish</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        } else {
+          h += '<p style="' + S.label + ';margin-top:10px;">At least ' + min + ' short replies are needed (' + kept + ' so far).</p><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="words" style="' + S.btn + '">Start over</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        }
+        h += spk.results.map((r) => '<div style="display:flex;gap:6px;align-items:center;font-size:0.75rem;margin-top:4px;color:' + (r.accepted ? 'var(--text-secondary)' : 'var(--red)') + ';">'
+          + ic(r.accepted ? 'check' : 'x') + escHtml(words[r.n] || '') + (r.accepted ? ': learnt from ' + r.sayings + ' saying' + (r.sayings === 1 ? '' : 's') : '')
+          + (r.problem ? ': ' + escHtml(r.problem) : '') + '</div>').join('');
+        el.innerHTML = h + say(spk.rec ? 'Listening…' : spk.msg, !spk.rec && spk.bad);
+      } else {
+        const prompts = st.prompts || [], kept = spk.results.filter((r) => r.accepted).length, min = st.minPhrases || 5;
+        if (spk.pos < prompts.length) {
+          h += '<p style="' + S.label + ';margin-top:10px;">Phrase ' + (spk.pos + 1) + ' of ' + prompts.length + ': click Record, read it as you would say it to Cru, then Stop</p>'
+            + '<p style="font-size:0.95rem;color:var(--text-primary);margin:6px 0 10px;">' + escHtml(prompts[spk.pos]) + '</p>'
+            + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="rec" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>' + (spk.rec ? ic('stop') + ' Stop' : ic('mic') + ' Record') + '</button>'
+            + '<div style="width:160px;height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;"><div id="vs-spk-meter" style="height:100%;width:0%;background:var(--accent);transition:width 60ms linear;"></div></div>'
+            + (kept >= min && !spk.rec ? '<button type="button" data-spk="finish" style="' + S.subtle + '">Finish now</button>' : '')
+            + '<button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        } else {
+          h += '<p style="' + S.label + ';margin-top:10px;">All phrases read.</p><div style="display:flex;gap:8px;flex-wrap:wrap;">'
+            + '<button type="button" data-spk="finish" style="' + S.btn + '"' + (spk.busy ? ' disabled' : '') + '>Finish</button><button type="button" data-spk="cancel" style="' + S.subtle + '">Cancel</button></div>';
+        }
+        h += spk.results.map((r, i) => '<div style="display:flex;gap:6px;align-items:center;font-size:0.75rem;margin-top:4px;color:' + (r.accepted ? 'var(--text-secondary)' : 'var(--red)') + ';">'
+          + ic(r.accepted ? 'check' : 'x') + 'Phrase ' + (r.n + 1) + ': ' + r.seconds + ' s of speech'
+          + (r.consistency != null ? ', ' + Math.round(r.consistency * 100) + '% like the others' : '') + (r.problem ? '. ' + escHtml(r.problem) : '') + '</div>').join('');
+        el.innerHTML = h + say(spk.rec ? 'Listening…' : spk.msg, !spk.rec && spk.bad);
+      }
+      const only = document.getElementById('vs-spk-only');
+      if (only) only.onchange = async () => {
+        const d = await vsPost('/api/voice/settings', { ownerOnly: only.checked }).catch(() => null);
+        if (d && d.ok) { st.ownerOnly = only.checked; vsNote('vs-status', only.checked ? 'Cru acts on your voice only' : 'Cru acts on any voice'); }
+        else { only.checked = !only.checked; vsNote('vs-status', (d && d.error) || 'Not saved', true); }
+      };
+      el.onclick = (e) => {
+        const b = e.target.closest('[data-spk]');
+        if (!b) return;
+        const a = b.getAttribute('data-spk');
+        if (a === 'start') vsSpkStart();
+        else if (a === 'rec') { if (spk.rec) vsSpkStop(); else vsSpkRecord(); }
+        else if (a === 'finish') vsSpkFinish();
+        else if (a === 'cancel') vsSpkEnd(spk.mode === 'words' ? 'Short replies not changed.' : 'Enrolment cancelled: nothing changed.', false);
+        else if (a === 'words') vsSpkStart('words');
+        else if (a === 'skip') { spk.pos++; spk.msg = ''; spk.bad = false; vsSpkRender(); }
+        else if (a === 'forget') vsSpkForget();
+      };
+    }
+    function vsSpkStart(mode, msg) {
+      Object.assign(spk, { active: true, mode: mode === 'words' ? 'words' : 'phrases', pos: 0, results: [], rec: null, busy: false, msg: msg || '', bad: false });
+      if (spk.watch) clearInterval(spk.watch);
+      // Closing Settings lets go of the microphone.
+      spk.watch = setInterval(() => { if (!document.getElementById('vs-spk')) vsSpkEnd('', false); }, 1000);
+      vsSpkRender();
+    }
+    function vsSpkEnd(msg, bad) {
+      vsSpkCloseMic();
+      if (spk.watch) { clearInterval(spk.watch); spk.watch = null; }
+      Object.assign(spk, { active: false, rec: null, busy: false, msg: msg || '', bad: !!bad });
+      vsSpkRender();
+    }
+    async function vsSpkOpenMic() {
+      if (spk.mic) return spk.mic;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false });
+      let ctx = null;
+      try {
+        // 16 kHz where the browser can; otherwise its own rate (the server resamples).
+        try { ctx = new AudioContext({ sampleRate: 16000 }); } catch { ctx = new AudioContext(); }
+        const src = ctx.createMediaStreamSource(stream);
+        const proc = ctx.createScriptProcessor(2048, 1, 1);
+        const mute = ctx.createGain(); mute.gain.value = 0;
+        src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+        proc.onaudioprocess = (e) => { if (spk.rec) vsSpkFeed(e.inputBuffer.getChannelData(0)); };
+        if (ctx.state === 'suspended') await ctx.resume();
+        spk.mic = { stream, ctx, proc };
+        return spk.mic;
+      } catch (err) {
+        stream.getTracks().forEach((t) => t.stop());
+        if (ctx) { try { ctx.close(); } catch { /* gone */ } }
+        throw err;
+      }
+    }
+    function vsSpkCloseMic() {
+      const m = spk.mic; spk.mic = null;
+      if (!m) return;
+      try { m.proc.onaudioprocess = null; } catch { /* gone */ }
+      try { m.stream.getTracks().forEach((t) => t.stop()); } catch { /* gone */ }
+      try { m.ctx.close(); } catch { /* gone */ }
+    }
+    async function vsSpkRecord() {
+      if (!spk.active || spk.busy || spk.rec) return;
+      try { await vsSpkOpenMic(); }
+      catch (err) { spk.msg = 'Could not open the microphone: ' + ((err && (err.message || err.name)) || err); spk.bad = true; vsSpkRender(); return; }
+      if (!spk.active) { vsSpkCloseMic(); return; }
+      spk.rec = { chunks: [], n: 0, rate: spk.mic.ctx.sampleRate };
+      vsSpkRender();
+    }
+    function vsSpkFeed(ch) {
+      const r = spk.rec;
+      const c = new Float32Array(ch);
+      r.chunks.push(c); r.n += c.length;
+      let sum = 0;
+      for (let k = 0; k < c.length; k++) sum += c[k] * c[k];
+      const m = document.getElementById('vs-spk-meter');
+      if (m) m.style.width = Math.min(100, Math.round(Math.sqrt(Math.sqrt(sum / (c.length || 1))) * 250)) + '%';
+      if (r.n >= r.rate * SPK_MAX_S) vsSpkStop();
+    }
+    // 16-bit mono WAV of the recording.
+    function vsSpkWav(chunks, n, rate) {
+      const buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+      const tag = (o, t) => { for (let i = 0; i < 4; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+      tag(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); tag(8, 'WAVE'); tag(12, 'fmt ');
+      v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, rate, true);
+      v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); tag(36, 'data'); v.setUint32(40, n * 2, true);
+      let o = 44;
+      for (const c of chunks) for (let i = 0; i < c.length; i++) { const x = Math.max(-1, Math.min(1, c[i])); v.setInt16(o, x < 0 ? x * 32768 : x * 32767, true); o += 2; }
+      return new Blob([buf], { type: 'audio/wav' });
+    }
+    async function vsSpkStop() {
+      const r = spk.rec;
+      if (!r) return;
+      spk.rec = null; spk.busy = true; spk.msg = 'Checking…'; spk.bad = false;
+      vsSpkRender();
+      const first = !spk.results.some((x) => x.accepted), words = spk.mode === 'words';
+      let d = null;
+      try {
+        const url = words ? '/api/voice/speaker/words?word=' + spk.pos + (first ? '&restart=1' : '') : '/api/voice/speaker/enrol' + (first ? '?restart=1' : '');
+        const res = await apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: vsSpkWav(r.chunks, r.n, r.rate) });
+        d = await res.json();
+      } catch { d = null; }
+      spk.busy = false;
+      if (!spk.active) return;
+      if (!d || !d.ok) { spk.msg = (d && d.error) || 'Could not reach the server'; spk.bad = true; vsSpkRender(); return; }
+      spk.results.push({ n: spk.pos, accepted: !!d.accepted, seconds: d.seconds, consistency: d.consistency, sayings: d.sayings || 0, likeYou: d.likeYou, problem: d.problem || '' });
+      if (d.accepted) { spk.pos++; spk.msg = ''; } else { spk.msg = d.problem || 'Try that one again.'; spk.bad = true; }
+      vsSpkRender();
+    }
+    async function vsSpkFinish() {
+      if (spk.busy) return;
+      spk.busy = true; vsSpkRender();
+      let d = null;
+      const words = spk.mode === 'words';
+      try { d = await vsPost(words ? '/api/voice/speaker/words/finish' : '/api/voice/speaker/finish', {}); } catch { d = null; }
+      spk.busy = false;
+      if (!d || !d.ok) { spk.msg = (d && d.error) || 'Not saved'; spk.bad = true; vsSpkRender(); return; }
+      spk.st = Object.assign({}, spk.st, d);
+      if (words) { vsSpkEnd('Cru knows your short replies now.', false); return; }
+      // Then the short replies, if this server takes them (optional: Not now ends it).
+      if (spk.st.shortWords && (spk.st.wordPrompts || []).length) { vsSpkStart('words', 'Cru knows your voice now. Next, optionally: short replies, so a bare yes or no is recognised too.'); return; }
+      vsSpkEnd('Cru knows your voice now.', false);
+    }
+    async function vsSpkForget() {
+      if (!confirm('Forget your voice? Cru will act on any voice again, and admin mode will not check who is speaking.')) return;
+      let d = null;
+      try { const res = await apiFetch('/api/voice/speaker', { method: 'DELETE' }); d = await res.json(); } catch { d = null; }
+      if (d && d.ok) { spk.st = Object.assign({}, spk.st, d); spk.msg = 'Your voice is forgotten.'; spk.bad = false; }
+      else { spk.msg = (d && d.error) || 'Not changed'; spk.bad = true; }
+      vsSpkRender();
+    }
+    async function vsShowVoices(s) {
+      const box = document.getElementById('vs-voices'), now = document.getElementById('vs-voice-now');
+      if (!box) return;
+      let current = s.ttsVoice || '';
+      if (!s.deepgramKeySet) { box.innerHTML = '<p style="' + vwStyles.hint + '">Add a Deepgram key below to hear its voices.</p>'; }
+      else if (!vsVoices) {
+        box.innerHTML = '<p style="' + vwStyles.hint + '">Loading voices...</p>';
+        try { const r = await vsGet('/api/voice/voices'); vsVoices = r && r.ok ? (r.voices || []) : []; } catch { vsVoices = []; }
+      }
+      const draw = () => {
+        const brit = (document.getElementById('vs-brit') || {}).checked, male = (document.getElementById('vs-male') || {}).checked;
+        const named = (vsVoices || []).find((v) => v.model === current);
+        if (now) now.textContent = 'Spoken with: ' + (current ? (named ? named.name : current) + ' (Deepgram)' : 'the device voice');
+        if (!s.deepgramKeySet) return;
+        const list = (vsVoices || []).filter((v) => (!brit || /brit|uk|england/i.test(v.accent || '') || !v.accent) && (!male || v.gender === 'male' || !v.gender));
+        box.innerHTML = list.length ? list.map((v) => '<div style="display:flex;gap:8px;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);"><div style="flex:1;min-width:0;"><div style="font-size:0.82rem;' + (v.model === current ? 'color:var(--accent);' : '') + '">' + escHtml(v.name) + '</div><div style="' + vwStyles.hint + '">' + escHtml([v.accent || 'accent not listed', v.gender].filter(Boolean).join(', ')) + '</div></div>'
+          + '<button type="button" class="svc-btn" data-vs-play="' + escHtml(v.model) + '">Hear</button><button type="button" class="svc-btn" data-vs-use="' + escHtml(v.model) + '"' + (v.model === current ? ' disabled' : '') + '>' + (v.model === current ? 'In use' : 'Use') + '</button></div>').join('') : '<p style="' + vwStyles.hint + '">No voices match. Untick the filters.</p>';
+      };
+      const use = async (model) => {
+        const d = await vsPost('/api/voice/settings', { ttsVoice: model }).catch(() => null);
+        if (d && d.ok) { current = d.ttsVoice || ''; draw(); vsNote('vs-status', 'Voice saved'); } else vsNote('vs-status', (d && d.error) || 'Not saved', true);
+      };
+      box.onclick = async (e) => {
+        const p = e.target.closest('[data-vs-play]'), u = e.target.closest('[data-vs-use]');
+        if (u) use(u.getAttribute('data-vs-use'));
+        if (p) {
+          try {
+            const r = await apiFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Yes, Sir. Your weekly usage is at forty two percent, and all four services are running.', voice: p.getAttribute('data-vs-play') }) });
+            if (!r.ok) { vsNote('vs-status', 'Could not play that voice', true); return; }
+            const url = URL.createObjectURL(await r.blob());
+            if (vsPlayer) vsPlayer.pause();
+            vsPlayer = new Audio(url);
+            vsPlayer.onended = () => URL.revokeObjectURL(url);
+            vsPlayer.play().catch(() => {});
+          } catch { vsNote('vs-status', 'Could not play that voice', true); }
+        }
+      };
+      const brit = document.getElementById('vs-brit'), male = document.getElementById('vs-male'), dev = document.getElementById('vs-device');
+      if (brit) brit.onchange = draw;
+      if (male) male.onchange = draw;
+      if (dev) dev.onclick = () => use('');
+      draw();
+    }
+    async function vsLoadMemory() {
+      const info = document.getElementById('vs-mem-info'), files = document.getElementById('vs-mem-files');
+      if (!files) return;
+      let r;
+      try { r = await vsGet('/api/voice/memory'); } catch { r = null; }
+      if (!r || !r.ok) { if (info) info.textContent = (r && r.error) || 'The notebook is not available on this server.'; return; }
+      if (info) info.textContent = r.entries + ' things remembered. Meaning search: ' + r.meaning + '.';
+      files.innerHTML = r.files.length ? '' : '<p style="' + vwStyles.hint + '">Nothing in the notebook yet.</p>';
+      for (const f of r.files) {
+        const box = document.createElement('div');
+        box.style.marginTop = '8px';
+        box.innerHTML = '<div style="font-family:var(--mono);font-size:0.75rem;color:var(--text-secondary);">' + escHtml(f.path) + '</div><textarea rows="5" spellcheck="false" style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-primary);color:var(--text-primary);font-size:0.78rem;"></textarea><div style="display:flex;gap:8px;align-items:center;"><button type="button" class="svc-btn">Save</button><span style="font-size:0.75rem;color:var(--text-muted);"></span></div>';
+        box.querySelector('textarea').value = f.text;
+        box.querySelector('button').onclick = async () => {
+          const d = await vsPost('/api/voice/memory', { path: f.path, text: box.querySelector('textarea').value }).catch(() => null);
+          box.querySelector('span').textContent = d && d.ok ? 'Saved' : ((d && d.error) || 'Not saved');
+          if (d && d.ok) setTimeout(vsLoadMemory, 600);
+        };
+        files.appendChild(box);
+      }
+    }
+    // Tickers and triggers: GET /api/voice/wakeups, POST { id, action }.
+    // Kid mode (capability 'voice-kid', voice/kid.js): the PIN, starting it,
+    // how kid Cru talks, the overnight games workshop, what the child is
+    // learning over time, the games, and kid Cru's notes about the child.
+    // Nothing here is ever shown on the kid screen.
+    let vsKidRange = 'month';
+    function vsSpark(series, w, h) {
+      const pts = (series || []).filter((p) => p && typeof p.mastery === 'number');
+      if (pts.length < 2) return '<span style="font-size:0.72rem;color:var(--text-muted);">' + (pts.length ? 'one day so far' : 'no play yet') + '</span>';
+      const x = (i) => Math.round((i / (pts.length - 1)) * (w - 4)) + 2;
+      const y = (v) => Math.round((1 - Math.max(0, Math.min(1, v))) * (h - 4)) + 2;
+      const d = pts.map((p, i) => (i ? 'L' : 'M') + x(i) + ' ' + y(p.mastery)).join(' ');
+      const last = pts[pts.length - 1];
+      return '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Mastery over time"><path d="M2 ' + (h - 2) + 'H' + (w - 2) + '" stroke="var(--border)" stroke-width="1"/><path d="' + d + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="' + x(pts.length - 1) + '" cy="' + y(last.mastery) + '" r="3" fill="var(--accent)"/></svg>';
+    }
+    /** Your PIN (one PIN: kid mode and the PC lock), and locking the PC. */
+    async function vsLoadPin() {
+      const el = document.getElementById('vs-pin');
+      if (!el) return;
+      let k = null, lock = null;
+      try { k = await vsGet('/api/voice/kid'); } catch { k = null; }
+      try { const r = await apiFetch('/api/lock'); lock = r.ok ? await r.json() : null; } catch { lock = null; }
+      if (!k || !k.ok) { document.getElementById('vs-pin-box').style.display = 'none'; return; }
+      const st = vwStyles;
+      const hint = (t) => '<p style="' + st.hint + ';margin:4px 0 0;">' + t + '</p>';
+      const sub = (t) => '<h5 style="margin:16px 0 4px;font-size:0.8rem;color:var(--text-primary);">' + t + '</h5>';
+      const inp = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary);width:160px;';
+      let h = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="vs-pin-in" type="password" inputmode="numeric" maxlength="8" autocomplete="new-password" placeholder="' + (k.pinSet ? 'New PIN (4-8 digits)' : '4-8 digits') + '" style="' + inp + '"' + (k.on ? ' disabled' : '') + '><button type="button" class="svc-btn" id="vs-pin-set"' + (k.on ? ' disabled' : '') + '>' + (k.pinSet ? 'Change PIN' : 'Set PIN') + '</button><span id="vs-pin-note" style="font-size:0.78rem;"></span></div>';
+      h += hint('One PIN for kid mode and the PC lock. Five wrong tries lock it for a minute, then longer.');
+      if (lock && lock.ok) {
+        h += sub('Lock the PC');
+        if (lock.on) h += '<p style="margin:6px 0 0;font-size:0.82rem;color:var(--yellow);">The PC is locked (' + (lock.mode === 'visible' ? 'visible' : 'full') + ') since ' + escHtml(new Date(lock.since).toLocaleTimeString()) + '.</p>';
+        h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;">'
+          + (lock.on ? '<button type="button" class="svc-btn" id="vs-lock-end">Unlock the PC</button>'
+            : '<button type="button" class="svc-btn" id="vs-lock-vis"' + (k.pinSet ? '' : ' disabled') + '>' + ic('lock') + ' Lock, visible</button><button type="button" class="svc-btn" id="vs-lock-full"' + (k.pinSet ? '' : ' disabled') + '>' + ic('lock') + ' Lock, full</button>')
+          + '</div>';
+        const au = lock.auto || { on: false, minutes: 10, mode: 'full' };
+        h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:0.8rem;color:var(--text-primary);"><label style="display:flex;gap:6px;align-items:center;"><input type="checkbox" id="vs-auto-on"' + (au.on ? ' checked' : '') + (k.pinSet ? '' : ' disabled') + '> Lock by itself after</label>'
+          + '<select id="vs-auto-min" style="' + inp.replace('width:160px;', '') + '">' + (lock.autoMinutes || [1, 2, 5, 10, 15, 30, 60]).map((m) => '<option value="' + m + '"' + (m === au.minutes ? ' selected' : '') + '>' + (m >= 60 ? (m / 60) + ' hour' : m + ' min') + '</option>').join('') + '</select>'
+          + '<span>idle, as</span><select id="vs-auto-mode" style="' + inp.replace('width:160px;', '') + '"><option value="full"' + (au.mode === 'full' ? ' selected' : '') + '>full lock</option><option value="visible"' + (au.mode === 'visible' ? ' selected' : '') + '>visible lock</option></select></div>';
+        h += hint('Idle: no keyboard or mouse on the PC. It also locks when the computer itself locks.');
+        h += hint('On the PC app: Ctrl+Shift+L locks it with the screen still visible behind a see-through overlay; Super+Shift+L (the Windows key) locks it with an opaque lock screen. Only your PIN unlocks it there; from here or your phone you can unlock it straight away. While it is locked, Hey Cru still works as usual: your voice recognition decides what Cru may change.');
+      }
+      el.innerHTML = h;
+      const note = (t, bad) => vsNote('vs-pin-note', t, bad);
+      const setBtn = document.getElementById('vs-pin-set');
+      if (setBtn) setBtn.onclick = async () => {
+        const v = String((document.getElementById('vs-pin-in') || {}).value || '').trim();
+        if (!/^[0-9]{4,8}$/.test(v)) { note('The PIN is 4 to 8 digits', true); return; }
+        const d = await vsPost('/api/voice/kid/pin', { pin: v }).catch(() => null);
+        if (d && d.ok) { vsLoadPin(); vsLoadKid(); } else note((d && d.error) || 'Not saved', true);
+      };
+      const lockWith = async (mode) => { const d = await vsPost('/api/lock/start', { mode: mode, by: 'settings' }).catch(() => null); if (d && d.ok) vsLoadPin(); else note((d && d.error) || 'Not locked', true); };
+      const lv = document.getElementById('vs-lock-vis'); if (lv) lv.onclick = () => lockWith('visible');
+      const lf = document.getElementById('vs-lock-full'); if (lf) lf.onclick = () => lockWith('full');
+      const autoSave = async () => {
+        const d = await vsPost('/api/lock/auto', { on: !!(document.getElementById('vs-auto-on') || {}).checked, minutes: Number((document.getElementById('vs-auto-min') || {}).value) || 10, mode: (document.getElementById('vs-auto-mode') || {}).value || 'full' }).catch(() => null);
+        note(d && d.ok ? (d.auto.on ? 'Auto lock on' : 'Auto lock off') : ((d && d.error) || 'Not saved'), !(d && d.ok));
+      };
+      ['vs-auto-on', 'vs-auto-min', 'vs-auto-mode'].forEach((id) => { const x = document.getElementById(id); if (x) x.onchange = autoSave; });
+      const le = document.getElementById('vs-lock-end'); if (le) le.onclick = async () => { const d = await vsPost('/api/lock/end', {}).catch(() => null); if (d && d.ok) vsLoadPin(); else note((d && d.error) || 'Not unlocked', true); };
+    }
+    async function vsLoadKid() {
+      const box = document.getElementById('vs-kid-box'), el = document.getElementById('vs-kid');
+      if (!box || !el) return;
+      let k = null, s = null, games = null, prog = null, friend = null;
+      try {
+        const res = await apiFetch('/api/voice/kid');
+        k = res.ok ? await res.json() : null;
+      } catch { k = null; }
+      if (!k || !k.ok) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      try { s = await vsGet('/api/voice/settings'); } catch { s = null; }
+      try { games = await vsGet('/api/voice/kid/games'); } catch { games = null; }
+      try { prog = await vsGet('/api/voice/kid/progress?range=' + vsKidRange); } catch { prog = null; }
+      try { friend = await vsGet('/api/voice/kid/friend'); } catch { friend = null; }
+      const st = vwStyles;
+      const hint = (t) => '<p style="' + st.hint + ';margin:4px 0 0;">' + t + '</p>';
+      const sub = (t) => '<h5 style="margin:16px 0 4px;font-size:0.8rem;color:var(--text-primary);">' + t + '</h5>';
+      const selStyle = 'padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);color:var(--text-primary);';
+      const opt = (v, label, cur) => '<option value="' + escHtml(String(v)) + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + escHtml(label) + '</option>';
+      let h = '';
+      h += hint('A locked, full-screen screen where Cru is your child\\'s friend: learning games (letters, sounds, matching, counting, shapes, colours, the world), chats and stories, and only the YouTube channels you approve. It has its own conversation and never sees your work. Only the PIN leaves it. If your child says something worrying (hurt, scared, unsafe), Cru answers kindly, tells them to find a grown-up they trust, and sends you a short note here and on your phone; nothing is recorded.');
+      if (k.on) h += '<p style="margin:10px 0 0;font-size:0.82rem;color:var(--yellow);">Kid mode is on' + (k.since ? ' since ' + escHtml(new Date(k.since).toLocaleTimeString()) : '') + '. On the kid screen it ends only with the PIN; from here you can end it, pause it or add time (the Kid mode card at the top).</p>';
+      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;"><button type="button" class="svc-btn" id="vs-kid-start"' + (k.on || !k.pinSet ? ' disabled' : '') + '>Start kid mode</button><span id="vs-kid-note" style="font-size:0.78rem;"></span></div>';
+      h += hint(k.pinSet ? 'Kid mode ends only with your PIN (set above, under Your PIN and the PC lock). Keep it from your child. Cru can also start kid mode when you ask it (typed, or in your recognised voice).' : 'Set your PIN first (above, under Your PIN and the PC lock): it is the only way out of kid mode.');
+      if (s && s.ok) {
+        h += sub('How kid Cru talks');
+        h += '<div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:0.8rem;">'
+          + '<label>Chattiness <select id="vs-kid-chat" style="' + selStyle + '">' + opt('quiet', 'Quiet', s.kidChattiness) + opt('normal', 'Normal', s.kidChattiness) + opt('chatty', 'Chatty', s.kidChattiness) + '</select></label>'
+          + '<label>Voice <select id="vs-kid-voice" style="' + selStyle + '">' + opt('flux-gemma-en', 'Gemma (lively)', s.kidVoice) + opt('flux-heather-en', 'Heather', s.kidVoice) + opt('flux-brooke-en', 'Brooke', s.kidVoice) + opt('flux-meghan-en', 'Meghan', s.kidVoice) + opt('flux-cole-en', 'Cole', s.kidVoice) + opt('', 'Same as Cru', s.kidVoice) + '</select></label>'
+          + '<label>Wait before answering <select id="vs-kid-pause" style="' + selStyle + '">' + [2500, 3200, 4000, 5000].map((n) => opt(n, (n / 1000) + ' s', s.kidPauseMs)).join('') + '</select></label>'
+          + '<label><input type="checkbox" id="vs-kid-reflex"' + (s.kidReflex !== false ? ' checked' : '') + '> Instant cheers in games</label></div>';
+        h += hint('Small children pause longer, so kid Cru waits longer before answering. Instant cheers are quick lines said the moment your child gets something right or tries again.');
+        const g = s.kidGames || {};
+        h += sub('Improve games overnight');
+        h += '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:0.8rem;"><label><input type="checkbox" id="vs-kid-ws"' + (g.improve !== false ? ' checked' : '') + '> On a night after kid mode was used</label>'
+          + '<label>from <input id="vs-kid-from" type="time" value="' + escHtml(g.from || '01:00') + '" style="' + selStyle + '"></label><label>to <input id="vs-kid-to" type="time" value="' + escHtml(g.to || '05:00') + '" style="' + selStyle + '"></label></div>';
+        h += hint('Your own Claude Code improves a game or two and makes one new learning game, from what your child played. Every change is safety-checked before it goes live; a failed one stays off.');
+      }
+      // Progress over time
+      h += sub('Progress');
+      h += '<div style="display:flex;gap:6px;margin-bottom:6px;">' + ['week', 'month', 'all'].map((r) => '<button type="button" class="svc-btn' + (r === vsKidRange ? ' active' : '') + '" data-kid-range="' + r + '"' + (r === vsKidRange ? ' style="border-color:var(--accent);color:var(--text-primary);"' : '') + '>' + (r === 'all' ? 'All' : r === 'week' ? 'Week' : 'Month') + '</button>').join('') + '</div>';
+      if (prog && prog.ok) {
+        const played = (prog.areas || []).filter((a) => a.level || a.series.length);
+        if (prog.notes && prog.notes.length) h += prog.notes.map((n) => '<p style="margin:2px 0;font-size:0.8rem;color:var(--text-secondary);">' + escHtml(n) + '</p>').join('');
+        const trendWord = { up: ['rising', 'var(--green)'], down: ['dipping', 'var(--yellow)'], steady: ['steady', 'var(--text-muted)'], none: ['', 'var(--text-muted)'] };
+        h += played.map((a) => {
+          const t = trendWord[a.trend] || trendWord.none;
+          return '<div style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-top:6px;">'
+            + '<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;"><div><div style="font-size:0.84rem;font-weight:600;color:var(--text-primary);">' + escHtml(a.label) + '</div><div style="font-size:0.72rem;color:var(--text-muted);">' + escHtml(a.about) + '</div></div>'
+            + '<div style="display:flex;gap:10px;align-items:center;"><span style="font-size:0.78rem;">Level ' + escHtml(String(a.level || '-')) + ' of 5</span>' + (t[0] ? '<span style="font-size:0.75rem;color:' + t[1] + ';">' + t[0] + '</span>' : '') + vsSpark(a.series, 140, 32) + '</div></div>'
+            + (a.mastered.length ? '<div style="font-size:0.76rem;margin-top:4px;"><span style="color:var(--green);">Mastered:</span> ' + escHtml(a.mastered.join('; ')) + '</div>' : '')
+            + (a.learning.length ? '<div style="font-size:0.76rem;margin-top:2px;"><span style="color:var(--accent);">Learning now:</span> ' + escHtml(a.learning.join('; ')) + '</div>' : '')
+            + '</div>';
+        }).join('') || hint('Nothing measured yet: levels come from the games your child plays.');
+        const pt = prog.playTime || [];
+        if (pt.length) {
+          const max = Math.max(1, ...pt.map((p) => p.minutes));
+          const total = Math.round(pt.reduce((x, p) => x + p.minutes, 0));
+          h += '<div style="margin-top:8px;font-size:0.76rem;color:var(--text-secondary);">Play time: ' + total + ' minutes in this period</div><div style="display:flex;gap:3px;align-items:flex-end;height:48px;margin-top:4px;">'
+            + pt.slice(-31).map((p) => '<div title="' + escHtml(p.date + ': ' + p.minutes + ' min') + '" style="flex:1;min-width:4px;max-width:18px;height:' + Math.max(2, Math.round((p.minutes / max) * 46)) + 'px;background:var(--accent);border-radius:2px 2px 0 0;opacity:.8;"></div>').join('') + '</div>';
+        }
+        h += '<div style="margin-top:8px;"><button type="button" class="svc-btn danger" id="vs-kid-reset"' + (k.on ? ' disabled' : '') + '>Reset progress</button></div>';
+      }
+      // Games
+      if (games && games.ok) {
+        h += sub('Games');
+        h += (games.games || []).map((g) => '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--border);font-size:0.8rem;">'
+          + '<span style="flex:1;min-width:140px;color:var(--text-primary);">' + escHtml(g.title) + (g.isNew ? ' <span style="font-size:0.68rem;padding:1px 6px;border-radius:999px;background:var(--accent);color:#fff;">new</span>' : '') + (g.changedByWorkshop ? ' <span style="font-size:0.68rem;color:var(--text-muted);">updated v' + escHtml(String(g.version)) + '</span>' : '') + '<br><span style="font-size:0.72rem;color:var(--text-muted);">' + escHtml((g.skills || []).join(', ')) + (g.ageRange ? ' · ages ' + escHtml(g.ageRange) : '') + (g.createdBy === 'workshop' ? ' · made overnight' : '') + '</span></span>'
+          + '<button type="button" class="sched-power' + (g.enabled !== false ? ' on' : '') + '" data-kid-game="' + (g.enabled !== false ? 'disable' : 'enable') + '" data-id="' + escHtml(g.id) + '" title="' + (g.enabled !== false ? 'On: click to switch off' : 'Off: click to switch on') + '"' + (k.on ? ' disabled' : '') + '></button>'
+          + (g.hasPrev ? '<button type="button" class="svc-btn" data-kid-game="rollback" data-id="' + escHtml(g.id) + '"' + (k.on ? ' disabled' : '') + '>Roll back</button>' : '') + '</div>').join('');
+        const run = games.workshop && games.workshop.runs && games.workshop.runs[0];
+        if (run) h += hint('Last overnight run ' + escHtml(new Date(run.at).toLocaleString()) + ': ' + (run.created || []).length + ' new, ' + (run.updated || []).length + ' improved, ' + (run.failed || []).length + ' refused by the checks.' + (run.summary ? ' ' + escHtml(run.summary.slice(0, 300)) : ''));
+      }
+      // Kid Cru's notes about the child, and the parent's instructions
+      h += sub('What kid Cru remembers');
+      h += '<pre style="white-space:pre-wrap;font-size:0.76rem;background:var(--bg-tertiary);border-radius:6px;padding:8px;margin:0;max-height:160px;overflow:auto;">' + escHtml((friend && friend.text) || 'Nothing yet.') + '</pre>';
+      h += '<div style="margin-top:6px;"><button type="button" class="svc-btn danger" id="vs-kid-forget"' + (k.on ? ' disabled' : '') + '>Clear it</button></div>';
+      h += hint('First name and likes only; kid Cru never keeps addresses, schools or other private details.');
+      h += sub('How your child calls you');
+      h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;"><input id="vs-kid-parent" type="text" maxlength="60" value="' + escHtml(k.parentName || '') + '" placeholder="e.g. Daddy, Mummy, Baba" style="' + selStyle + 'width:200px;"' + (k.on ? ' disabled' : '') + '><button type="button" class="svc-btn" id="vs-kid-parent-save"' + (k.on ? ' disabled' : '') + '>Save</button></div>';
+      h += hint('Kid Cru uses it when it asks you something ("Let me ask Daddy!"). Empty: "your grown-up".');
+      h += sub('Your instructions for kid Cru');
+      h += '<pre style="white-space:pre-wrap;font-size:0.76rem;background:var(--bg-tertiary);border-radius:6px;padding:8px;margin:0;max-height:200px;overflow:auto;">' + escHtml(k.instructions || '') + '</pre>';
+      h += hint('Tell Cru what to change outside kid mode ("the kid\\'s name is Sara", "add Blippi to the approved channels", "no videos after 7 pm"), or edit kid-mode.md in the notebook. Kid mode can only read it.');
+      el.innerHTML = h;
+
+      const note = (t, bad) => vsNote('vs-kid-note', t, bad);
+      const save = async (body, msg) => { const d = await vsPost('/api/voice/settings', body).catch(() => null); note(d && d.ok ? msg : ((d && d.error) || 'Not saved'), !(d && d.ok)); };
+      const on = (id, fn) => { const x = document.getElementById(id); if (x) x.onchange = () => fn(x); };
+      const startBtn = document.getElementById('vs-kid-start');
+      if (startBtn) startBtn.onclick = async () => {
+        const d = await vsPost('/api/voice/kid/start', { by: 'settings' }).catch(() => null);
+        if (d && d.ok) { markKidDevice(true); applyKidMode(d); } else note((d && d.error) || 'Not started', true);
+      };
+      on('vs-kid-chat', (x) => save({ kidChattiness: x.value }, 'Saved'));
+      on('vs-kid-voice', (x) => save({ kidVoice: x.value }, 'Saved'));
+      on('vs-kid-pause', (x) => save({ kidPauseMs: Number(x.value) }, 'Saved'));
+      on('vs-kid-reflex', (x) => save({ kidReflex: !!x.checked }, x.checked ? 'Instant cheers on' : 'Instant cheers off'));
+      const wsSave = () => save({ kidGames: { improve: !!(document.getElementById('vs-kid-ws') || {}).checked, from: (document.getElementById('vs-kid-from') || {}).value || '01:00', to: (document.getElementById('vs-kid-to') || {}).value || '05:00' } }, 'Saved');
+      on('vs-kid-ws', wsSave); on('vs-kid-from', wsSave); on('vs-kid-to', wsSave);
+      el.querySelectorAll('[data-kid-range]').forEach((b) => { b.onclick = () => { vsKidRange = b.getAttribute('data-kid-range'); vsLoadKid(); }; });
+      const pSave = document.getElementById('vs-kid-parent-save');
+      if (pSave) pSave.onclick = async () => { const d = await vsPost('/api/voice/kid/parent-name', { name: (document.getElementById('vs-kid-parent') || {}).value || '' }).catch(() => null); if (d && d.ok) vsLoadKid(); else note((d && d.error) || 'Not saved', true); };
+      const reset = document.getElementById('vs-kid-reset');
+      if (reset) reset.onclick = async () => { if (!confirm('Forget every level and the progress history?')) return; await vsPost('/api/voice/kid/progress/reset', {}).catch(() => null); vsLoadKid(); };
+      const forget = document.getElementById('vs-kid-forget');
+      if (forget) forget.onclick = async () => { if (!confirm('Clear what kid Cru remembers about your child?')) return; await apiFetch('/api/voice/kid/friend', { method: 'DELETE' }).catch(() => null); vsLoadKid(); };
+      el.querySelectorAll('[data-kid-game]').forEach((b) => {
+        b.onclick = async () => {
+          b.disabled = true;
+          const d = await vsPost('/api/voice/kid/games', { id: b.getAttribute('data-id'), action: b.getAttribute('data-kid-game') }).catch(() => null);
+          if (d && d.ok) vsLoadKid(); else { b.disabled = false; note((d && d.error) || 'Not changed', true); }
+        };
+      });
+      // Seen: new games stop being marked new.
+      if (games && games.ok && (games.games || []).some((g) => g.isNew) && !k.on) vsPost('/api/voice/kid/games', { action: 'seen', id: '' }).catch(() => {});
+    }
+    // Kid mode from the server (at load and on 'voice-kid'): the kid screen opens over everything, or goes.
+    // The kid screen comes up on the device kid mode runs on: the PC app, or
+    // the browser that started it. Every other signed-in device gets the
+    // parent's card instead: what is on, time used, Pause, Add time, End.
+    const KID_DEVICE_KEY = 'crundi_kid_device';
+    function isKidDevice() {
+      if (window.api && window.api.kidLock) return true;
+      try { return localStorage.getItem(KID_DEVICE_KEY) === '1'; } catch { return false; }
+    }
+    function markKidDevice(on) { try { if (on) localStorage.setItem(KID_DEVICE_KEY, '1'); else localStorage.removeItem(KID_DEVICE_KEY); } catch { /* private mode */ } }
+    let kidCardTimer = null;
+    function kidCard(st) {
+      let card = document.getElementById('kid-card');
+      if (!st || !st.on || isKidDevice()) { if (card) card.remove(); clearInterval(kidCardTimer); return; }
+      if (!card) {
+        card = document.createElement('div');
+        card.id = 'kid-card';
+        card.style.cssText = 'position:fixed;top:56px;left:50%;transform:translateX(-50%);z-index:8500;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.4);padding:10px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:0.82rem;max-width:calc(100vw - 24px);';
+        document.body.appendChild(card);
+      }
+      const draw = () => {
+        const mins = st.since ? Math.round((Date.now() - st.since) / 60000) : 0;
+        card.innerHTML = '<span style="color:var(--text-primary);font-weight:600;">Kid mode is on</span>'
+          + '<span style="color:var(--text-muted);">' + mins + ' min' + (st.extraMinutes ? ', +' + st.extraMinutes + ' added' : '') + (st.playing ? ' · ' + escHtml(st.playing) : '') + (st.paused ? ' · paused' : '') + '</span>'
+          + '<button type="button" class="svc-btn" data-kid-card="pause">' + (st.paused ? 'Resume' : 'Pause') + '</button>'
+          + '<button type="button" class="svc-btn" data-kid-card="time">Add 15 min</button>'
+          + '<button type="button" class="svc-btn danger" data-kid-card="end">End kid mode</button>';
+        card.querySelectorAll('[data-kid-card]').forEach((b) => {
+          b.onclick = async () => {
+            const a = b.getAttribute('data-kid-card');
+            if (a === 'end' && !confirm('End kid mode on the kid screen now?')) return;
+            const d = a === 'pause' ? await vsPost('/api/voice/kid/pause', { paused: !st.paused }).catch(() => null)
+              : a === 'time' ? await vsPost('/api/voice/kid/time', { minutes: 15 }).catch(() => null)
+                : await vsPost('/api/voice/kid/end', {}).catch(() => null);
+            if (!(d && d.ok)) toast((d && d.error) || 'That did not work', 'error');
+          };
+        });
+      };
+      draw();
+      clearInterval(kidCardTimer);
+      kidCardTimer = setInterval(draw, 30000);
+    }
+    function applyKidMode(st) {
+      if (userRole === 'collaborator' || !window.CrundiVoice || !window.CrundiVoice.kidMode) return;
+      st = st || {};
+      if (!st.on) markKidDevice(false);
+      if (isKidDevice() || !st.on) window.CrundiVoice.kidMode(st, voiceOpts());
+      if (window.CrundiVoice.kidPaused) window.CrundiVoice.kidPaused(!!st.paused);
+      kidCard(st);
+      if (document.getElementById('vs-kid')) vsLoadKid();
+    }
+    function checkKidMode() {
+      if (userRole === 'collaborator') return;
+      apiFetch('/api/voice/kid').then((r) => (r.ok ? r.json() : null)).then((d) => { if (d && d.ok) applyKidMode(d); }).catch(() => {});
+    }
+    // The PC app's tray "Kid mode" item.
+    // ─── The PC lock (capability 'pc-lock'): this app's window locked behind the owner's PIN ───
+    // "visible": the app stays in view behind a see-through overlay; "full": an
+    // opaque lock screen. Hey Cru still works as always (Cru's screen sits above
+    // it; the owner's voice check decides what it may change).
+    let pcLockState = null;
+    let pcLockTimer = null;
+    function pcLockOn() { return !!pcLockState; }
+    function applyPcLock(st) {
+      if (!window.api || !window.api.kidLock || userRole === 'collaborator') return;
+      st = st || {};
+      if (st.auto && window.api.setAutoLock) window.api.setAutoLock(st.auto);
+      const was = !!pcLockState;
+      pcLockState = st.on ? st : null;
+      let el = document.getElementById('pc-lock');
+      if (!st.on) {
+        clearInterval(pcLockTimer);
+        if (el) el.remove();
+        if (was && !kidDeviceLocked()) window.api.kidLock(false);
+        return;
+      }
+      if (!document.getElementById('pc-lock-css')) { const cs = document.createElement('style'); cs.id = 'pc-lock-css'; cs.textContent = '#pc-lock{position:fixed;inset:0;z-index:8990;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:7vh 0 5vh;color:#fff;font-family:system-ui,sans-serif;user-select:none}#pc-lock.full{background:radial-gradient(1200px 700px at 30% 20%,#3b3f8f 0,transparent 60%),radial-gradient(900px 600px at 80% 90%,#0e7490 0,transparent 60%),#0b1022}#pc-lock.vis{background:rgba(8,10,24,.38);justify-content:flex-end;padding-bottom:5vh}#pc-lock.vis .pcl-mid,#pc-lock.vis .pcl-keys{display:none}#pc-lock.vis{box-shadow:inset 0 0 0 4px rgba(165,180,252,.55)}#pc-lock.vis .pcl-box{flex-direction:row;padding:10px 14px;gap:10px}#pc-lock.vis .pcl-in{width:160px;font-size:18px;padding:8px 10px}#pc-lock.vis .pcl-hint{display:none}.pcl-top{position:absolute;top:18px;left:0;right:0;display:flex;justify-content:center}.pcl-badge{display:inline-flex;align-items:center;gap:8px;padding:8px 16px;border-radius:999px;background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.25);font-weight:600;font-size:14px}.pcl-badge svg{width:16px;height:16px}.pcl-mid{text-align:center;margin-top:3vh}.pcl-time{font-size:clamp(48px,min(11vw,14vh),140px);line-height:1.05;font-weight:300;letter-spacing:-2px;text-shadow:0 4px 30px rgba(0,0,0,.35)}.pcl-date{font-size:clamp(18px,2.2vw,28px);opacity:.9}.pcl-box{display:flex;flex-direction:column;align-items:center;gap:clamp(6px,1.4vh,12px);padding:clamp(12px,2.4vh,20px) 22px;border-radius:18px;background:rgba(15,18,40,.72);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.14);box-shadow:0 20px 60px rgba(0,0,0,.4)}.pcl-in{width:220px;text-align:center;font-size:24px;letter-spacing:8px;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.08);color:#fff;outline:none}.pcl-in:focus{border-color:#a5b4fc}.pcl-keys{display:grid;grid-template-columns:repeat(3,64px);gap:10px}.pcl-keys button{height:clamp(38px,6.5vh,52px);border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center}.pcl-keys button:hover{background:rgba(255,255,255,.16)}.pcl-keys svg{width:20px;height:20px}.pcl-err{min-height:18px;font-size:13px;color:#fca5a5}.pcl-hint{font-size:12px;opacity:.7}#pc-lock.shake .pcl-box{animation:pclsh .4s}@keyframes pclsh{20%,60%{transform:translateX(-8px)}40%,80%{transform:translateX(8px)}}'; document.head.appendChild(cs); }
+      if (!el) {
+        el = document.createElement('div'); el.id = 'pc-lock';
+        el.innerHTML = '<div class="pcl-top"><span class="pcl-badge">' + ic('lock') + ' Locked</span></div>'
+          + '<div class="pcl-mid"><div class="pcl-time"></div><div class="pcl-date"></div></div>'
+          + '<div class="pcl-box"><div class="pcl-dots"></div><input class="pcl-in" type="password" inputmode="numeric" maxlength="8" autocomplete="off" aria-label="PIN" placeholder="PIN">'
+          + '<div class="pcl-keys">' + ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'del', '0', 'ok'].map(function (k) { return '<button type="button" data-k="' + k + '">' + (k === 'del' ? ic('chevron-left') : k === 'ok' ? ic('check') : k) + '</button>'; }).join('') + '</div>'
+          + '<div class="pcl-err"></div><div class="pcl-hint">Say Hey Cru to talk to Cru</div></div>';
+        document.body.appendChild(el);
+        const inp = el.querySelector('.pcl-in'), err = el.querySelector('.pcl-err');
+        const tryPin = async () => {
+          const v = inp.value.trim(); if (!v) return;
+          const d = await vsPost('/api/lock/unlock', { pin: v }).catch(() => null);
+          inp.value = '';
+          if (d && d.ok) { applyPcLock(d); return; }
+          err.textContent = (d && d.error) || 'That did not work'; el.classList.add('shake'); setTimeout(() => el.classList.remove('shake'), 450);
+        };
+        el.querySelectorAll('.pcl-keys button').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const k = b.getAttribute('data-k'); if (k === 'del') inp.value = inp.value.slice(0, -1); else if (k === 'ok') tryPin(); else if (inp.value.length < 8) inp.value += k; err.textContent = ''; inp.focus(); }; });
+        inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { e.preventDefault(); tryPin(); } else err.textContent = ''; });
+        el.addEventListener('mousedown', (e) => { if (!e.target.closest('.pcl-box')) { e.preventDefault(); } setTimeout(() => { try { inp.focus(); } catch { /* gone */ } }, 0); });
+      }
+      el.className = st.mode === 'visible' ? 'vis' : 'full';
+      const tick = () => { const n = new Date(); el.querySelector('.pcl-time').textContent = n.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); el.querySelector('.pcl-date').textContent = n.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }); };
+      tick(); clearInterval(pcLockTimer); pcLockTimer = setInterval(tick, 10000);
+      window.api.kidLock(true);
+      setTimeout(() => { try { el.querySelector('.pcl-in').focus(); } catch { /* gone */ } }, 50);
+    }
+    function kidDeviceLocked() { try { return !!(window.CrundiVoice && window.CrundiVoice.isKid); } catch { return false; } }
+    // Every key and click outside the lock screen and Cru's screen goes nowhere while it is locked.
+    ['keydown', 'keyup', 'keypress'].forEach((t) => document.addEventListener(t, (e) => {
+      if (!pcLockState) return;
+      const ok = e.target && e.target.closest && (e.target.closest('#pc-lock') || e.target.closest('.cv-ov'));
+      if (!ok) { e.stopPropagation(); e.preventDefault(); }
+    }, true));
+    // After the whole page script has run (userRole is declared further down:
+    // reading it here, at load, stopped the PC app's page at its splash screen).
+    if (window.api && window.api.kidLock) setTimeout(() => {
+      if (userRole === 'collaborator') return;
+      apiFetch('/api/lock').then((r) => r.ok ? r.json() : null).then((st) => { if (st && st.ok) { if (st.on) applyPcLock(st); else if (st.auto && window.api.setAutoLock) window.api.setAutoLock(st.auto); } }).catch(() => {});
+    }, 0);
+    // The PC app's shortcuts (Ctrl+Shift+L visible, Super+Shift+L full) and its tray items.
+    if (window.api && window.api.onPcLock) window.api.onPcLock((mode, by) => {
+      if (pcLockState) return;
+      vsPost('/api/lock/start', { mode: mode === 'visible' ? 'visible' : 'full', by: by === 'auto' ? 'auto' : 'shortcut' }).then((d) => { if (d && d.ok) applyPcLock(d); else toast((d && d.error) || 'The PC lock needs your PIN: set it in Settings, Voice assistant', 'error'); }).catch(() => {});
+    });
+    if (window.api && window.api.onKidStart) window.api.onKidStart(() => { vsPost('/api/voice/kid/start', { by: 'tray' }).then((d) => { if (d && d.ok) { markKidDevice(true); applyKidMode(d); } else toast((d && d.error) || 'Kid mode needs a PIN: set one in Settings, Voice assistant, Kid mode'); }).catch(() => {}); });
+    async function vsLoadWakeups(r) {
+      const el = document.getElementById('vs-wake'), box = document.getElementById('vs-wake-box');
+      if (!el || !box) return;
+      if (!r) { try { r = await vsGet('/api/voice/wakeups'); } catch { r = null; } }
+      if (!r || !r.ok) { box.style.display = 'none'; return; }
+      box.style.display = '';
+      const when = (ms) => ms ? new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'never';
+      const item = (x) => '<div class="sched-item' + (x.enabled ? '' : ' off') + '" style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border);">'
+        + '<button type="button" class="sched-power' + (x.enabled ? ' on' : '') + '" data-vs-wake="' + (x.enabled ? 'disable' : 'enable') + '" data-id="' + escHtml(x.id) + '" title="' + (x.enabled ? 'On: click to switch off' : 'Off: click to switch on') + '"></button>'
+        + '<div style="flex:1;min-width:0;"><div style="font-size:0.82rem;color:var(--text-primary);">' + escHtml(x.name) + '</div>'
+        + '<div style="' + vwStyles.hint + '">' + escHtml(x.summary || '') + '</div>'
+        + '<div style="' + vwStyles.hint + '">' + escHtml(x.purpose || '') + '</div>'
+        + '<div style="' + vwStyles.hint + '">Last woke Cru: ' + escHtml(when(x.lastFiredAt)) + (x.fires ? ' (' + x.fires + ' in all)' : '') + ' · made by ' + (x.createdBy === 'owner' ? 'you' : 'Cru') + '</div></div>'
+        + (x.builtin ? '' : '<button type="button" class="svc-btn danger" data-vs-wake="delete" data-id="' + escHtml(x.id) + '" title="Delete">' + ic('trash') + '</button>') + '</div>';
+      const group = (title, list, none) => '<div style="' + vwStyles.label + ';margin-top:10px;">' + title + '</div>' + (list.length ? list.map(item).join('') : '<p style="' + vwStyles.hint + ';margin:4px 0 0;">' + none + '</p>');
+      const lim = r.limits || {};
+      el.innerHTML = group('Tickers', r.tickers || [], 'No tickers yet. Try: Cru, wake me with a briefing at half seven on weekdays.')
+        + group('Triggers', r.triggers || [], 'No triggers yet. Try: Cru, tell me if the CPU stays above 90 percent.')
+        + '<p style="' + vwStyles.hint + ';margin:8px 0 0;">At most ' + (lim.perHour || 12) + ' wake-ups an hour (' + (lim.firedLastHour || 0) + ' in the last hour), and none once the monthly limit is reached.</p><div id="vs-wake-note" style="font-size:0.75rem;"></div>';
+      el.onclick = async (e) => {
+        const b = e.target.closest('[data-vs-wake]');
+        if (!b) return;
+        const action = b.getAttribute('data-vs-wake');
+        if (action === 'delete' && !confirm('Delete this? Cru can make it again if you ask.')) return;
+        b.disabled = true;
+        const d = await vsPost('/api/voice/wakeups', { id: b.getAttribute('data-id'), action }).catch(() => null);
+        if (d && d.ok) vsLoadWakeups(d); else { b.disabled = false; vsNote('vs-wake-note', (d && d.error) || 'Not changed', true); }
+      };
+    }
+    async function vsSearchMemory() {
+      const q = String((document.getElementById('vs-mem-q') || {}).value || '').trim(), out = document.getElementById('vs-mem-hits');
+      if (!out) return;
+      if (!q) { out.innerHTML = ''; return; }
+      let r;
+      try { r = await vsGet('/api/voice/memory/search?q=' + encodeURIComponent(q)); } catch { r = null; }
+      out.innerHTML = (r && r.results || []).map((h) => '<div style="' + vwStyles.hint + ';margin-top:6px;"><b>' + escHtml(h.kind) + '</b> ' + escHtml(String(h.at || '').slice(0, 16).replace('T', ' ')) + '<br>' + escHtml(String(h.text || '').slice(0, 400)) + '</div>').join('') || '<p style="' + vwStyles.hint + '">Nothing found.</p>';
+    }
+    async function showVoiceStats() {
+      const el = document.getElementById('vs-stats');
+      if (!el) return;
+      let r;
+      try { r = await (await apiFetch('/api/voice/brain-stats')).json(); } catch { return; }
+      if (!r || !r.ok || !r.stats || !r.stats.length) { el.innerHTML = '<p style="' + vwStyles.hint + ';margin:0;">The two brains are compared here once Cru has answered with them.</p>'; return; }
+      const sec = (ms) => (ms / 1000).toFixed(1) + ' s';
+      const td = 'padding:4px 6px;border-bottom:1px solid var(--border);white-space:nowrap;';
+      const name = (id) => ((voiceModels.find((m) => m.id === id) || {}).label || String(id || '')).replace(/^Claude /, '');
+      el.innerHTML = '<div style="overflow-x:auto;"><table style="border-collapse:collapse;font-size:0.78rem;"><tr><th style="' + td + 'text-align:left;">Brain</th><th style="' + td + '">Turns</th><th style="' + td + '">Time</th><th style="' + td + '">Per turn</th></tr>'
+        + r.stats.map((g) => '<tr><td style="' + td + '">' + (g.brain === 'claude-code' ? 'Claude Code' : 'API') + '<br><span style="color:var(--text-muted);font-size:0.7rem;">' + escHtml(name(g.model)) + '</span></td><td style="' + td + 'text-align:right;">' + g.turns + (g.failed ? '<br><span style="color:var(--text-muted);font-size:0.7rem;">' + g.failed + ' failed</span>' : '') + '</td><td style="' + td + 'text-align:right;">' + sec(g.medianMs) + '<br><span style="color:var(--text-muted);font-size:0.7rem;">up to ' + sec(g.p90Ms) + '</span></td><td style="' + td + 'text-align:right;">$' + g.costPerTurnUsd.toFixed(4) + '<br><span style="color:var(--text-muted);font-size:0.7rem;">' + Math.round(g.cacheReadShare * 100) + '% cached</span></td></tr>').join('')
+        + '</table></div><p style="' + vwStyles.hint + ';margin:4px 0 0;">Time: the median turn, and up to the slowest tenth. Claude Code costs are list prices, for comparison: your subscription pays them, within its usage limits.</p>';
+    }
+    function vwApply(s) {
+      if (s && typeof s === 'object') vwLast = s;
+      s = vwLast || {};
+      const box = document.getElementById('voice-wake-on'), st = document.getElementById('voice-wake-status');
+      const hint = document.getElementById('voice-wake-hint');
+      if (box) { box.checked = !!s.enabled; box.disabled = !s.trained || vwt.active; }
+      if (hint) hint.style.display = s.trained ? 'none' : '';
+      if (st) st.textContent = vwt.active ? '' : (s.enabled ? (s.label || '') : (s.error || ''));
+      renderVoiceTrain();
+    }
+
+    // Training "Hey Cru": five recordings of the owner, made here (16 kHz
+    // mono, as the client’s listener hears it), each checked by the client,
+    // then trained there (app/voice-wake/enroll.js). The client lets go of
+    // the microphone while this runs and takes it back after.
+    const VW_N = 5, VW_RATE = 16000;
+    const VW_MAX = VW_RATE * 3, VW_TAIL = VW_RATE * 0.6;
+    const vwt = { active: false, recs: [], todo: [], pos: 0, rec: null, mic: null, msg: '', bad: false, busy: false, watch: null };
+    function renderVoiceTrain() {
+      const el = document.getElementById('voice-wake-train');
+      if (!el) return;
+      const s = vwLast || {}, S = vwStyles;
+      const say = (t, bad) => t ? '<p style="' + S.hint + 'font-size:0.78rem;margin-top:8px;' + (bad ? 'color:var(--red);' : '') + '">' + escHtml(t) + '</p>' : '';
+      let h = '';
+      if (!vwt.active) {
+        if (s.trained) {
+          const when = s.trainedAt ? new Date(s.trainedAt) : null;
+          h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;">'
+            + '<span style="font-size:0.78rem;color:var(--text-secondary);display:inline-flex;gap:6px;align-items:center;">' + ic('check') + 'Trained'
+            + (when && !isNaN(when.getTime()) ? ' on ' + escHtml(when.toLocaleDateString()) : '') + '</span>'
+            // The owner's voice check on each Hey Cru (a client that reports it): on, or a profile from before it.
+            + (s.voiceCheck === 'on' ? '<span style="font-size:0.78rem;color:var(--text-secondary);">Only your voice wakes Cru</span>' : '')
+            + '<button data-action="voice-wake-train" style="' + S.subtle + '">Train again</button>'
+            + '<button data-action="voice-wake-forget" style="' + S.subtle + '">Forget</button></div>';
+        } else {
+          h += '<div style="margin-top:8px;"><button data-action="voice-wake-train" style="' + S.btn + '">Train Hey Cru</button></div>';
+        }
+        if (s.trained && s.voiceCheck === 'off' && !vwt.msg) h += say('Train again so that only your voice wakes Cru: the voice check is not set up for this training.', false);
+        el.innerHTML = h + say(vwt.msg, vwt.bad);
+        return;
+      }
+      if (vwt.busy) {
+        el.innerHTML = '<p style="' + S.label + 'margin-top:10px;">Setting up…</p>'
+          + say(s.installing ? 'Downloading the wake word model first, then a few seconds more.' : 'This takes a few seconds.', false);
+        return;
+      }
+      const i = vwt.todo[vwt.pos];
+      h += '<p style="' + S.label + 'margin-top:10px;font-size:0.9rem;color:var(--text-primary);">Say “Hey Cru” — ' + (i + 1) + ' of ' + VW_N + '</p>'
+        + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        + '<button data-action="voice-wake-rec" style="' + S.btn + '">' + (vwt.rec ? ic('stop') + ' Stop' : 'Record') + '</button>'
+        + '<div style="width:160px;height:6px;border-radius:3px;background:var(--bg-tertiary);overflow:hidden;">'
+        + '<div id="voice-wake-meter" style="height:100%;width:0%;background:var(--accent);transition:width 60ms linear;"></div></div>'
+        + '<button data-action="voice-wake-cancel" style="' + S.subtle + '">Cancel</button></div>';
+      el.innerHTML = h + say(vwt.rec ? 'Listening…' : vwt.msg, !vwt.rec && vwt.bad);
+    }
+    async function vwStart() {
+      if (!vwCan() || vwt.active) return;
+      Object.assign(vwt, { active: true, recs: new Array(VW_N).fill(null), todo: [0, 1, 2, 3, 4], pos: 0, rec: null, busy: false, bad: false,
+        msg: 'Click Record, then say “Hey Cru” the way you normally would.' });
+      vwApply();
+      try { const s = await window.api.voiceWake.trainBegin(); if (s) vwLast = s; } catch { /* it will say so on Record */ }
+      // Closing Settings ends it, so the client listens again.
+      if (vwt.watch) clearInterval(vwt.watch);
+      vwt.watch = setInterval(() => { if (!document.getElementById('voice-wake-train')) vwStop(); }, 1000);
+      vwApply();
+    }
+    async function vwOpenMic() {
+      if (vwt.mic) return vwt.mic;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false,
+      });
+      let ctx = null;
+      try {
+        ctx = new AudioContext({ sampleRate: VW_RATE });
+        if (ctx.sampleRate !== VW_RATE) throw new Error('This device cannot record at 16 kHz');
+        const src = ctx.createMediaStreamSource(stream);
+        const proc = ctx.createScriptProcessor(1024, 1, 1);
+        const mute = ctx.createGain(); mute.gain.value = 0;
+        src.connect(proc); proc.connect(mute); mute.connect(ctx.destination);
+        proc.onaudioprocess = (e) => { if (vwt.rec) vwFeed(e.inputBuffer.getChannelData(0)); };
+        if (ctx.state === 'suspended') await ctx.resume();
+        vwt.mic = { stream, ctx, proc };
+        return vwt.mic;
+      } catch (err) {
+        stream.getTracks().forEach((t) => t.stop());
+        if (ctx) { try { ctx.close(); } catch { /* gone */ } }
+        throw err;
+      }
+    }
+    function vwCloseMic() {
+      const m = vwt.mic; vwt.mic = null;
+      if (!m) return;
+      try { m.proc.onaudioprocess = null; } catch { /* gone */ }
+      try { m.stream.getTracks().forEach((t) => t.stop()); } catch { /* gone */ }
+      try { m.ctx.close(); } catch { /* gone */ }
+    }
+    async function vwRecord() {
+      if (!vwt.active || vwt.busy || vwt.rec) return;
+      try { await vwOpenMic(); }
+      catch (err) { vwt.msg = 'Could not open the microphone: ' + ((err && (err.message || err.name)) || err); vwt.bad = true; renderVoiceTrain(); return; }
+      if (!vwt.active) { vwCloseMic(); return; }
+      vwt.rec = { chunks: [], n: 0, floor: 1, spoke: false, quiet: 0 };
+      renderVoiceTrain();
+    }
+    // Each piece from the microphone: kept, shown on the meter, and the
+    // recording ends at 3 s or after a short quiet once something was said.
+    function vwFeed(ch) {
+      const r = vwt.rec;
+      const c = new Float32Array(ch);
+      r.chunks.push(c); r.n += c.length;
+      let sum = 0;
+      for (let k = 0; k < c.length; k++) sum += c[k] * c[k];
+      const rms = Math.sqrt(sum / (c.length || 1));
+      const m = document.getElementById('voice-wake-meter');
+      if (m) m.style.width = Math.min(100, Math.round(Math.sqrt(rms) * 250)) + '%';
+      if (rms < r.floor) r.floor = rms;
+      if (rms > Math.max(0.02, r.floor * 4)) { r.spoke = true; r.quiet = 0; } else if (r.spoke) r.quiet += c.length;
+      if ((r.spoke && r.quiet >= VW_TAIL) || r.n >= VW_MAX) vwFinish();
+    }
+    async function vwFinish() {
+      const r = vwt.rec;
+      if (!r) return;
+      vwt.rec = null;
+      const all = new Float32Array(r.n);
+      let o = 0;
+      for (const c of r.chunks) { all.set(c, o); o += c.length; }
+      const i = vwt.todo[vwt.pos];
+      vwt.msg = 'Checking…'; vwt.bad = false;
+      renderVoiceTrain();
+      let c;
+      try { c = await window.api.voiceWake.check(all); }
+      catch (err) { c = { ok: false, why: 'Could not check it: ' + ((err && err.message) || err) }; }
+      if (!vwt.active) return;
+      if (!c || !c.ok) { vwt.msg = ((c && c.why) || 'That did not work.') + ' Record it again.'; vwt.bad = true; renderVoiceTrain(); return; }
+      vwt.recs[i] = all;
+      vwt.pos++;
+      if (vwt.pos < vwt.todo.length) { vwt.msg = 'Got it.'; renderVoiceTrain(); return; }
+      vwTrain();
+    }
+    async function vwTrain() {
+      vwt.busy = true; vwt.msg = '';
+      vwCloseMic();
+      renderVoiceTrain();
+      let r;
+      try { r = await window.api.voiceWake.train(vwt.recs); }
+      catch (err) { r = { ok: false, why: 'Setting up failed: ' + ((err && err.message) || err), redo: [] }; }
+      vwt.busy = false;
+      if (!vwt.active) return;
+      if (r && r.ok) {
+        vwt.msg = r.voiceCheck === 'on' ? 'Done. Only your voice wakes Cru. With listening on, say “Hey Cru” while the computer is plugged in.'
+          : r.note ? 'Done. ' + r.note : 'Done. With listening on, say “Hey Cru” while the computer is plugged in.';
+        vwt.bad = !!(r.note && r.voiceCheck !== 'on');
+        vwStop();
+        return;
+      }
+      const redo = r && Array.isArray(r.redo) ? r.redo.filter((n) => n >= 0 && n < VW_N) : [];
+      vwt.todo = redo.length ? redo : [0, 1, 2, 3, 4];
+      vwt.pos = 0;
+      vwt.msg = (r && r.why) || 'That did not work. Record them again.';
+      vwt.bad = true;
+      renderVoiceTrain();
+    }
+    async function vwStop() {
+      if (!vwt.active) return;
+      vwt.active = false; vwt.rec = null;
+      if (vwt.watch) { clearInterval(vwt.watch); vwt.watch = null; }
+      vwCloseMic();
+      try { const s = await window.api.voiceWake.trainEnd(); if (s) vwLast = s; } catch { /* the client gives it back by itself */ }
+      showVoiceWake();
+    }
+    async function vwForget() {
+      if (!vwCan() || vwt.active) return;
+      if (!confirm('Forget your “Hey Cru” training? Listening turns off until you train it again.')) return;
+      try {
+        const s = await window.api.voiceWake.forget();
+        vwt.msg = s && s.error ? s.error : ''; vwt.bad = !!(s && s.error);
+        vwApply(s);
+      } catch (err) { vwt.msg = 'Could not forget it: ' + ((err && err.message) || err); vwt.bad = true; renderVoiceTrain(); }
+    }
+    // ─── Cru shows the owner things on this page (show_in_crundi, voice/ui-nav.js) ───
+    // This page's own id, sent with each turn: Cru moves only the page the owner talked from.
+    const crundiPageId = 'pg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    /** What the page shows, for Cru's "looking at": project, tab, and the focused chat. */
+    function cruUiWhere() {
+      const p = currentProject ? projects.find(x => x.alias === currentProject) : null;
+      const bits = [];
+      bits.push(p ? 'project ' + (p.name || p.alias) : 'no project open');
+      bits.push(currentTab + ' tab');
+      if (currentTab === 'workbench' && focusedTermId) {
+        const t = terminals.find(x => x.id === focusedTermId);
+        if (t && t.kind === 'ui') bits.push('chat "' + String(t.title || '').slice(0, 60) + '"');
+      }
+      return bits.join(', ');
+    }
+    const cruSleep = (ms) => new Promise(r => setTimeout(r, ms));
+    /** fn() until it gives something, for up to ms (a tab's content loads after the switch). */
+    async function cruWaitFor(fn, ms) {
+      const end = Date.now() + ms;
+      for (;;) { const v = fn(); if (v || Date.now() > end) return v || null; await cruSleep(150); }
+    }
+    function cruVisible(el) {
+      if (!el || !el.getBoundingClientRect || el.closest('.cv-ov, #cru-spot, #cru-spot-note')) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 2 || r.height < 2) return false;
+      const cs = getComputedStyle(el);
+      return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05;
+    }
+    /** The element on the page that best shows [text]: exact text first, then the smallest that holds it. */
+    function cruFindText(text) {
+      const norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+      const want = norm(text);
+      if (!want) return null;
+      const root = document.body;
+      const seen = new Set(), found = [];
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (norm(n.nodeValue).indexOf(want) < 0) continue;
+        const el = n.parentElement;
+        if (!el || seen.has(el) || /^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/.test(el.tagName)) continue;
+        seen.add(el); found.push(el);
+      }
+      document.querySelectorAll('[title], [aria-label], [placeholder]').forEach(el => {
+        if (seen.has(el)) return;
+        const a = norm(el.getAttribute('aria-label')), t = norm(el.getAttribute('title')), ph = norm(el.getAttribute('placeholder'));
+        if (a.indexOf(want) >= 0 || t.indexOf(want) >= 0 || ph.indexOf(want) >= 0) { seen.add(el); found.push(el); }
+      });
+      let best = null, bestScore = Infinity;
+      for (const el of found) {
+        if (!cruVisible(el) || el === document.body || el === document.documentElement) continue;
+        // A whole panel that merely contains the words is not the thing: small elements only.
+        const br = el.getBoundingClientRect();
+        if (br.width * br.height > window.innerWidth * window.innerHeight * 0.4) continue;
+        const own = norm(el.textContent);
+        if (own.length > want.length * 6 + 200) continue;
+        const label = norm(el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder'));
+        const score = (own === want || label === want ? 0 : own.indexOf(want) === 0 ? 1 : 2) * 100000 + (own.length || label.length);
+        if (score < bestScore) { best = el; bestScore = score; }
+      }
+      if (!best) return null;
+      // Ring the thing itself (the button, the card, the row), not a word inside it, while it stays small.
+      const up = best.closest('button, a, label, .tab-btn, .kanban-card, .file-item, .term-cell, .mm-node, tr, li, .card, [role="button"]');
+      if (up && cruVisible(up)) { const r = up.getBoundingClientRect(); if (r.height <= 260 && r.width <= window.innerWidth * 0.9) return up; }
+      return best;
+    }
+    /** A ring around [el] with Cru's note beside it, following it as the page scrolls; gone after a while or on a click. */
+    function cruSpotlight(el, note) {
+      cruSpotOff();
+      try { el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' }); } catch { el.scrollIntoView(); }
+      const ring = document.createElement('div'); ring.id = 'cru-spot';
+      document.body.appendChild(ring);
+      let tip = null;
+      if (note) { tip = document.createElement('div'); tip.id = 'cru-spot-note'; tip.innerHTML = '<b>Cru</b><span></span>'; tip.querySelector('span').textContent = note; document.body.appendChild(tip); }
+      const until = Date.now() + 12000;
+      const place = () => {
+        if (!ring.isConnected) return;
+        if (Date.now() > until || !el.isConnected) { cruSpotOff(); return; }
+        const r = el.getBoundingClientRect(), pad = 6;
+        ring.style.left = (r.left - pad) + 'px'; ring.style.top = (r.top - pad) + 'px';
+        ring.style.width = (r.width + pad * 2) + 'px'; ring.style.height = (r.height + pad * 2) + 'px';
+        if (tip) {
+          const tw = tip.offsetWidth, th = tip.offsetHeight;
+          let top = r.bottom + 12; if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 12);
+          tip.style.top = top + 'px'; tip.style.left = Math.max(8, Math.min(window.innerWidth - tw - 8, r.left)) + 'px';
+        }
+        cruSpotRaf = requestAnimationFrame(place);
+      };
+      place();
+      setTimeout(() => document.addEventListener('pointerdown', cruSpotOff, { once: true, capture: true }), 300);
+    }
+    let cruSpotRaf = 0;
+    function cruSpotOff() {
+      cancelAnimationFrame(cruSpotRaf);
+      ['cru-spot', 'cru-spot-note'].forEach(id => { const e = document.getElementById(id); if (e) e.remove(); });
+    }
+    /** One move from Cru: project, tab, then what to open, then what to ring. Answers the server. */
+    async function cruUiGo(d) {
+      const ack = (r) => apiFetch('/api/voice/ui/ack', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: d.id, where: cruUiWhere(), ...r }) }).catch(() => {});
+      try {
+        // What would hide the move: the What's new tour, a picture shown large, the media browser.
+        if (window.CrundiWhatsNew && window.CrundiWhatsNew.isOpen()) window.CrundiWhatsNew.close();
+        const lb = document.getElementById('media-lightbox');
+        if (lb && lb.classList.contains('visible')) closeMediaLightbox();
+        if ($('#media-modal') && $('#media-modal').classList.contains('visible')) closeMediaModal();
+        if (d.project && d.project !== currentProject) {
+          if (!projects.find(p => p.alias === d.project)) return ack({ ok: false, error: 'That project is not on this page' });
+          await selectProject(d.project);
+        }
+        const tab = d.tab || '';
+        if (tab) {
+          if (!currentProject && GLOBAL_TABS.indexOf(tab) < 0 && tab !== 'inbox') return ack({ ok: false, error: 'No project is open on the page: say which project' });
+          const btn = document.querySelector('.tab-btn[data-tab="' + tab + '"]');
+          if (btn && btn.style.display === 'none') return ack({ ok: false, error: 'The ' + tab + ' tab is not shown here' });
+          if (tab !== currentTab) switchTab(tab);
+        }
+        let target = null;
+        if (d.chat) {
+          focusTerm(d.chat);
+          target = await cruWaitFor(() => document.querySelector('.term-cell[data-tid="' + d.chat + '"]'), 2500);
+          if (target && !d.highlight) flashEl(target);
+        }
+        if (d.card) {
+          await loadKanban();
+          target = await cruWaitFor(() => { const p = $('#kanban-panel'); return p && p.querySelector('.kanban-card[data-task="' + d.card + '"]'); }, 2500);
+          if (!target) return ack({ ok: false, error: 'No such card on this project\\'s board' });
+          if (!d.highlight) flashKanbanTarget({ type: 'task', taskId: d.card });
+          // The card's details (its Edit dialog) only when Cru asked to open it.
+          if (d.open) { const eb = target.querySelector('[data-kact="edit-task"]'); if (eb) eb.click(); }
+        }
+        if (d.node) {
+          await loadMindmap();
+          await cruSleep(250);
+          if (!mindmapNodes.some(x => x.id === d.node)) return ack({ ok: false, error: 'No such idea on this project\\'s mindmap' });
+          // Shown and flashed; its note opens only when Cru asked to open it.
+          target = flashMindmapNode(d.node, !!d.open);
+        }
+        if (d.widget && window.CrundiWidgets && window.CrundiWidgets.selectInTab) window.CrundiWidgets.selectInTab(d.widget);
+        if (d.file) {
+          if (!currentProject) return ack({ ok: false, error: 'No project is open on the page' });
+          await feOpen(currentProject, d.file);
+          // feOpen only toasts a failure: say it to Cru, which can look the path up (search_files) and try again.
+          const fext = (d.file.includes('.') ? d.file.slice(d.file.lastIndexOf('.') + 1) : '').toLowerCase();
+          const viewer = FE_IMAGE_EXTS.includes(fext) || fext === 'pdf';
+          if (!viewer && !feWins().some(w => w._fe && w._fe.project === currentProject && w._fe.file === d.file)) return ack({ ok: false, error: 'Could not open ' + d.file + ' in ' + currentProject + ': give its path from the project folder (search_files finds it)' });
+        }
+        if (d.highlight) {
+          const el = await cruWaitFor(() => cruFindText(d.highlight), 2500);
+          if (el) { cruSpotlight(el, d.note || ''); return ack({ ok: true, found: true }); }
+          if (target) cruSpotlight(target, d.note || '');
+          return ack({ ok: true, found: false });
+        }
+        // An opened note or card dialog sits over the ring: say the note in a toast then.
+        if (d.note && target && !d.open) cruSpotlight(target, d.note);
+        else if (d.note) toast('Cru: ' + d.note);
+        return ack({ ok: true });
+      } catch (err) { return ack({ ok: false, error: String((err && err.message) || err) }); }
+    }
+    function voiceOpts() {
+      return ({
+        apiFetch, token: () => token, host: location.host,
+        // Cru may move this page and ring things on it (show_in_crundi); it knows where the page is.
+        pageId: crundiPageId, uiWhere: cruUiWhere,
+        // The PC lock: Cru works as usual; only its history and files are out of view.
+        isLocked: () => pcLockOn(),
+        cells: () => projects.map(p => {
+          const ts = terminals.filter(t => t.project === p.alias && t.status === 'running');
+          const svc = services.filter(sv => sv.alias === p.alias);
+          const kind = ts.some(t => t.agentState === 'needs-input') ? 'needs'
+            : ts.some(t => t.agentState === 'working') ? 'working'
+            : ts.some(t => t.agentState === 'waiting') ? 'waiting'
+            : svc.some(sv => sv.status === 'running') || ts.length ? 'running' : 'idle';
+          return { name: p.name || p.alias, kind, service: svc.length ? svc.some(sv => sv.status === 'running') : null };
+        }),
+        usage: () => usageData ? { week: usageData.week ? (usageData.week.utilization || 0) / 100 : null, five: usageData.fiveHour ? (usageData.fiveHour.utilization || 0) / 100 : null } : null,
+        // What Cru showed in a reply, drawn by the chat panel's code (crundi-widgets.js), set up first if need be.
+        replyMedia: (items) => ((widgetsReady || widgetsOn()) && window.CrundiWidgets.replyMedia ? window.CrundiWidgets.replyMedia('cru-voice', items) : null),
+      });
+    }
     function openUsageModal() {
       // The chart is the account's usage history. Collaborators get their own
       // bar and nothing else (the server refuses /api/usage to them as well).
       if (userRole === 'collaborator') return;
       $('#usage-modal').classList.add('visible');
       loadUsageChart(usageChartRange);
+      loadApiSpend();
+    }
+    // The voice assistant's spend on the Claude API (and Deepgram), this
+    // month, under the subscription chart. Owner only; hidden on a server
+    // without the voice assistant (404) or on any error.
+    function fmtUsd(n) {
+      const v = Number(n) || 0;
+      return '$' + (v > 0 && v < 0.01 ? v.toFixed(4) : v.toFixed(2));
+    }
+    async function loadApiSpend() {
+      const box = $('#uc-api');
+      if (!box) return;
+      if (userRole === 'collaborator') { box.hidden = true; return; }
+      try {
+        const r = await apiFetch('/api/voice/settings');
+        if (!r.ok) { box.hidden = true; return; }
+        const d = await r.json();
+        if (!d || !d.ok || !d.spend) { box.hidden = true; return; }
+        const sp = d.spend;
+        const day = (iso) => iso ? new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '';
+        // Claude and Deepgram bill apart: each its own month, bar and limit (D46).
+        const bar = (fillId, used, limit) => { const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : (used > 0 ? 100 : 0); $(fillId).style.width = pct.toFixed(1) + '%'; };
+        const climit = Number(d.monthlyLimitUsd) || 0, cused = Number(sp.claudeUsd) || 0;
+        const dlimit = Number(d.deepgramLimitUsd) || 0, dused = Number(sp.deepgramUsd) || 0;
+        const turns = Number(sp.turns) || 0;
+        $('#uc-api-amount').textContent = fmtUsd(cused) + ' of ' + fmtUsd(climit);
+        bar('#uc-api-fill', cused, climit);
+        const meta = $('#uc-api-meta');
+        meta.textContent = turns + (turns === 1 ? ' request' : ' requests') + (d.nextReset ? ' · restarts ' + day(d.nextReset) : '');
+        if (d.limitReached) {
+          const w = document.createElement('span');
+          w.className = 'uc-api-warn';
+          w.textContent = 'Limit reached';
+          meta.appendChild(w);
+        }
+        const dg = $('#uc-dg');
+        if (dg) {
+          $('#uc-dg-amount').textContent = fmtUsd(dused) + ' of ' + fmtUsd(dlimit);
+          bar('#uc-dg-fill', dused, dlimit);
+          $('#uc-dg-meta').textContent = 'Listening and speaking' + (d.deepgramNextReset ? ' · restarts ' + day(d.deepgramNextReset) : '') + (d.deepgramLimitReached ? ' · limit reached: the phone voice takes over' : '');
+          dg.classList.toggle('over', !!d.deepgramLimitReached);
+          dg.hidden = false;
+        }
+        box.classList.toggle('over', !!d.limitReached);
+        box.hidden = false;
+        loadAccountUsage(d);
+      } catch { box.hidden = true; }
+    }
+    // What Anthropic itself reports the whole account has cost this billing
+    // month (every key, not only the voice assistant). Needs an Admin API key;
+    // without one, a hint where to add it.
+    async function loadAccountUsage(d) {
+      const el = $('#uc-api-account');
+      if (!el) return;
+      el.hidden = true;
+      try {
+        const r = await apiFetch('/api/voice/account-usage');
+        if (!r.ok) return;
+        const a = await r.json();
+        if (a && a.ok) {
+          const since = new Date(a.since).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+          el.textContent = 'Anthropic, whole account: ' + fmtUsd(a.totalUsd) + ' since ' + since;
+        } else if (a && a.needsKey) {
+          el.textContent = 'To see the whole account as Anthropic reports it, add an Admin API key in Settings, Voice assistant.';
+        } else {
+          el.textContent = 'Anthropic account usage: ' + ((a && a.error) || 'unavailable');
+        }
+        el.hidden = false;
+      } catch { /* leave it hidden */ }
     }
     function closeUsageModal() { $('#usage-modal').classList.remove('visible'); }
     async function loadUsageChart(range) {
@@ -5645,6 +7262,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function showApp() {
       hideBoot();
       appReady = true;
+      // The voice assistant's mic button: only once signed in, the owner's alone.
+      setTimeout(attachVoice, 0);
       // Arrived from a factory link (the phone's chat page): open that run.
       const fxRun = (location.hash.match(/^#factory-run=([A-Za-z0-9_-]+)$/) || [])[1];
       if (fxRun) {
@@ -5669,13 +7288,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (window.api) {
         document.querySelector('.topbar').style.webkitAppRegion = 'drag';
         $('#win-controls').style.display = 'flex';
-        $('#tg-badge').style.display = '';
-        // Poll telegram status via server
+        // Poll telegram status via server. Shown only where a bot is set up:
+        // Telegram is one optional channel, and its absence is not a fault.
         async function updateTgBadge() {
           try {
             const r = await apiFetch('/api/status');
             const d = await r.json();
             const el = $('#tg-badge');
+            el.style.display = (d.botConfigured === false && !d.botConnected) ? 'none' : '';
             if (d.botConnected) {
               el.className = 'status-badge connected';
               el.textContent = 'tg: @' + (d.botUsername || 'bot');
@@ -5873,6 +7493,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     async function selectProject(alias) {
       currentProject = alias;
+      if (typeof brdSetProject === 'function') brdSetProject(alias);
       // Being at a project is what keeps its chats awake: say where we are now.
       reportPresence(true);
       widgetsOn();
@@ -6271,7 +7892,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (animate) grid.classList.add('mosaic-easing');
       for (const [el, flex] of jobs) el.style.flex = flex;
       clearTimeout(grid._easeTimer);
-      grid._easeTimer = setTimeout(() => { grid.classList.remove('mosaic-easing'); fitAllTerms(); if (typeof brzSync === 'function') brzSync(); }, animate ? LAYOUT_MS + 40 : 0);
+      grid._easeTimer = setTimeout(() => { grid.classList.remove('mosaic-easing'); fitAllTerms(); }, animate ? LAYOUT_MS + 40 : 0);
       return true;
     }
     /** Where every pane is right now, by key. */
@@ -6340,6 +7961,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const _ae = document.activeElement;
       const _focusedCell = _ae && _ae.closest ? _ae.closest('.term-cell[data-tid]') : null;
       const refocusTid = _focusedCell ? _focusedCell.dataset.tid : null;
+      // A chat's composer (or any field in a cell) is not a terminal: remember the
+      // element itself, so typing in a chat survives a rebuild too (one runs
+      // whenever any chat opens, closes or changes, in any project).
+      const refocusEl = _ae && _ae !== document.body ? _ae : null;
       const live = liveTermsForProject();
       // "Terminal by default opens in one column": seed a single placeholder when
       // a project has no cells of any kind yet.
@@ -6412,7 +8037,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
       // Restore the cursor to the terminal the user was typing in, if it survived
       // the rebuild — the re-parent above blurred it.
-      if (refocusTid && live.some(t => t.id === refocusTid)) {
+      if (refocusEl && refocusEl.isConnected && document.activeElement !== refocusEl) {
+        try { refocusEl.focus({ preventScroll: true }); } catch { /* gone */ }
+      } else if (refocusTid && document.activeElement !== refocusEl && live.some(t => t.id === refocusTid)) {
         const v = termViews.get(refocusTid);
         if (v && v.term) { try { v.term.focus(); } catch { /* ignore */ } }
       }
@@ -6534,7 +8161,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (grid) grid.scrollLeft = 0;
       setTimeout(() => {
         fitAllTerms();
-        if (typeof brzSync === 'function') brzSync();
+       
         const g = document.getElementById('term-grid');
         if (g && g.scrollWidth > g.clientWidth + 2) {
           toast(mosaicHasPin(tree) ? 'Does not fit: the pinned panes plus the others at their minimum width are wider than the window'
@@ -6623,11 +8250,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           : (d.t.hasSession ? 'Resume picks up this conversation.' : 'Resume starts a new Claude session.');
         body.innerHTML = '<div class="pk-view"></div>'
           + '<div class="pk-veil"><div class="pk-card">'
-          + '<button class="pk-resume" data-action="pane-resume" data-tid="' + d.t.id + '">' + ic('play') + 'Resume</button>'
+          + '<div class="pk-go"><button class="pk-resume" data-action="pane-resume" data-tid="' + d.t.id + '">' + ic('play') + 'Resume</button>'
+          + (d.t.paneKind === 'ui' && d.t.hasSession ? '<button class="pk-alt pk-peek-btn" data-action="pane-peek" data-tid="' + d.t.id + '" title="Read the conversation without resuming it">' + ic('eye') + 'Peek</button>' : '') + '</div>'
           + '<div class="pk-why">' + escHtml(why) + (when ? ' \u00b7 ' + escHtml(when) : '') + '</div>'
           + '<div class="pk-what">' + escHtml(what) + '</div>'
           + parkedChoicesHtml(d.t)
-          + '</div></div>';
+          + '</div></div>'
+          // Peeking: the conversation readable, and this back to the parked view (anything done in it resumes the chat).
+          + '<button class="pk-unpeek" data-action="pane-unpeek" data-tid="' + d.t.id + '" title="Back to the parked view">' + ic('eye-off') + 'Parked view</button>';
       } else if (d.type === 'chat') {
         el.dataset.tid = d.t.id;
         el.dataset.chat = '1';
@@ -6743,6 +8373,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // The token lives here, not in the chat component, so the uploader is
         // passed in rather than the credential.
         apiUpload: uploadWithProgress,
+        // For the voice input's own socket (/api/voice/listen), as Cru's screen has it.
+        token: () => token,
         toast,
         wsSend: (obj) => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); },
         onChatMeta: (patch) => applyChatMeta(t.id, patch),
@@ -6889,7 +8521,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       notes: { icon: 'note', label: 'Notes' },
       mindmap: { icon: 'mindmap', label: 'Mindmap' },
       media: { icon: 'images', label: 'Media' },
-      browser: { icon: 'globe', label: 'Browser' },
       factory: { icon: 'factory', label: 'Factory' },
     };
     // Pin toggle shared by every pane header. Which pane it acts on comes from
@@ -7115,9 +8746,17 @@ export function getWebappHtml(botUsername, appVersion = '') {
       } else if (window.CrundiChat) {
         // The chat view itself, fed the stored transcript and never connected.
         // Its draft is keyed by this same id, so what you had typed shows too.
+        // Peeking (the Peek button): a reply, a prompt, an answer, anything that would change the chat,
+        // resumes it first and then goes through as usual. Reads while parked come back empty.
+        const peekFetch = (path, init) => {
+          const changes = init && init.method && String(init.method).toUpperCase() !== 'GET';
+          if (!changes || !cellEl.classList.contains('pk-peek')) return Promise.resolve(new Response('{}'));
+          return apiFetch('/api/panes/' + t.id + '/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'resume' }) })
+            .then((r) => r.json()).then((d) => { if (!d.ok) throw new Error(d.error || 'Could not resume'); return apiFetch(path, init); });
+        };
         const v = window.CrundiChat.mount(view, {
           sessionId: t.id, project: t.project,
-          apiFetch: () => Promise.resolve(new Response('{}')),
+          apiFetch: peekFetch,
           wsSend: () => {}, toast: () => {},
           // What Claude showed in the chat is part of the conversation, so it
           // is here too. Live panels are not: nothing is running behind this.
@@ -7625,7 +9264,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       else if (kind === 'kanban') loadKanban();
       else if (kind === 'mindmap') loadMindmap();
       else if (kind === 'media') loadMedia();
-      else if (kind === 'browser') initBrowserPanel();
       else if (kind === 'factory') loadFactoryPanel();
     }
     // Move each workbench cell's panel node into its body (if not already there)
@@ -7661,7 +9299,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
     function closeWbCell(wbid) {
       const cell = wbCells.find(c => c.id === wbid);
       if (cell) {
-        if (cell.kind === 'browser') brzPost('close');
         const node = cell.kind === 'notes' ? null : document.getElementById(cell.kind + '-panel');
         const body = document.querySelector('.wb-cell-body[data-wb="' + wbid + '"]');
         if (node && body && node.parentNode === body) parkPanelNode(node);
@@ -7676,179 +9313,73 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (cell) wbLoad(cell.kind);
     }
 
-    // ─── Interactive browser panel (desktop app only) ───────────────────────────
-    // A real Chromium WebContentsView is managed in the Electron main process and
-    // overlaid on this panel's stage (see app/main.js). In the desktop app the web
-    // UI is the top-level page, so the preload's window.api.wbrowser is available
-    // and we call it directly (rect / navigation / device-emulation), and receive
-    // page state via api.wbrowser.onState. Picking a device constrains the view
-    // (scaled + centered + touch); "Responsive" fills the panel.
-    const BRZ_API = () => (window.api && window.api.wbrowser) || null;
-    const BRZ_DESKTOP = !!BRZ_API();
-    const BRZ_ID = 'wb';
-    const BRZ_START = 'https://www.google.com';
-    const BRZ_DEVICES = [
-      { name: 'Responsive', responsive: true },
-      { name: 'iPhone SE', w: 375, h: 667, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPhone 12 Pro', w: 390, h: 844, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPhone 15 Pro', w: 393, h: 852, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPhone 16 Pro', w: 393, h: 852, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPhone 16 Pro Max', w: 430, h: 932, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPad Mini', w: 768, h: 1024, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPad Air', w: 820, h: 1180, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
-      { name: 'iPad Pro', w: 1024, h: 1366, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' },
-      { name: 'Pixel 5', w: 393, h: 851, dpr: 2.75, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36' },
-      { name: 'Pixel 7', w: 412, h: 915, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
-      { name: 'Pixel 8 Pro', w: 430, h: 932, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
-      { name: 'Galaxy S22', w: 360, h: 800, dpr: 3, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
-      { name: 'Galaxy S24 Ultra', w: 412, h: 915, dpr: 2.625, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36' },
-      { name: 'Galaxy Z Fold 5', w: 344, h: 882, dpr: 2.8, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36' },
-      { name: 'Galaxy Z Flip 5', w: 264, h: 844, dpr: 2.8, mobile: true, ua: 'Mozilla/5.0 (Linux; Android 13; SM-F731B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36' },
-      { name: 'Surface Pro 9', w: 1200, h: 1800, dpr: 2, mobile: true, ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
-      { name: 'Desktop 1280', w: 1280, h: 800, dpr: 1, mobile: false, ua: '' },
-      { name: 'Full HD 1920', w: 1920, h: 1080, dpr: 1, mobile: false, ua: '' },
-    ];
-    let brzUrl = BRZ_START, brzDevice = 0, brzLastEmu = '', brzSyncTimer = null;
-
-    function brzPost(action, extra) {
-      const w = BRZ_API(); extra = extra || {};
-      if (w) {
-        if (action === 'open') w.open(BRZ_ID, extra.url);
-        else if (action === 'sync') w.sync(BRZ_ID, extra.rect, extra.visible);
-        else if (action === 'navigate') w.navigate(BRZ_ID, extra.url);
-        else if (action === 'nav') w.nav(BRZ_ID, extra.dir);
-        else if (action === 'emulate') w.emulate(BRZ_ID, extra.config, extra.scale);
-        else if (action === 'devtools') w.devtools(BRZ_ID);
-        else if (action === 'close') w.close(BRZ_ID);
+    // ─── Browser drawer (desktop app only; app/vendor/crundi-browser-drawer.js) ───
+    // A drawer at the right of the project area, below the top bar. Its tabs
+    // are Electron <webview>s owned by the drawer: nothing here may move or
+    // re-render #brd, or the pages in it reload.
+    const BRD_API = (window.api && window.api.wbrowser) || null;
+    let brd = null;
+    function brdChats(project) {
+      const chats = terminals.filter(t => t.kind === 'ui' && t.status !== 'exited' && chatViews.has(t.id) && String(t.project || '').toLowerCase() === project)
+        .map(t => ({ id: t.id, title: t.title || 'Chat', focused: t.id === focusedTermId }));
+      // Cru too, the owner's assistant across every project.
+      if (window.CrundiVoice && window.CrundiVoice.share && userRole !== 'collaborator') chats.unshift({ id: 'cru', title: 'Cru' });
+      return chats;
+    }
+    async function brdSendToChat(chatId, text, png) {
+      if (chatId === 'cru') {
+        // Cru's screen opens in typing mode with the picture attached and the words typed, for the owner to send.
+        const V = window.CrundiVoice;
+        if (!V || !V.share) throw new Error('Cru is not available here');
+        if (!V.share('', [])) V.open(voiceOpts());
+        const files = [];
+        if (png) {
+          const bin = atob(png); const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          files.push(new File([bytes], 'browser-' + Date.now() + '.png', { type: 'image/png' }));
+        }
+        if (!V.share(text, files)) throw new Error('Could not open Cru');
         return;
       }
-      // Fallback: if ever embedded in a shell parent, post to it instead.
-      try { if (window.parent && window.parent !== window) window.parent.postMessage(Object.assign({ ns: 'crundi-browser', id: BRZ_ID, action }, extra), '*'); } catch { /* ignore */ }
-    }
-    function brzStage() { return document.getElementById('brz-stage'); }
-    function brzModalOpen() { return !!document.querySelector('.input-modal.visible, .lightbox.visible, #image-lightbox.visible, .modal.visible'); }
-    // A native WebContentsView floats above the DOM, so it must hide whenever
-    // something should appear over the panel: an open dropdown, a drag, a resize.
-    function brzOverlayActive() {
-      const menu = document.getElementById('wb-add-menu');
-      if (menu && menu.classList.contains('visible')) return true;
-      if (document.body.classList.contains('mosaic-cell-drag') || document.body.classList.contains('mosaic-resizing')) return true;
-      // A right-click / "more" menu (Files rows, links) or an enlarged picture.
-      if (document.querySelector('.ctx-menu, .wg-zoom')) return true;
-      return false;
-    }
-    function brzVisibleNow() {
-      if (!BRZ_DESKTOP || currentTab !== 'workbench' || brzModalOpen() || brzOverlayActive()) return false;
-      const st = brzStage(); if (!st || !st.closest('.wb-cell-body')) return false;
-      const r = st.getBoundingClientRect();
-      if (r.width < 2 || r.height < 2) return false;
-      // A native webview floats above the page, so hide it if a floating editor
-      // window overlaps the stage (otherwise it would cover the editor).
-      for (const w of document.querySelectorAll('.fe-window')) {
-        const wr = w.getBoundingClientRect();
-        if (wr.left < r.right && wr.right > r.left && wr.top < r.bottom && wr.bottom > r.top) return false;
+      const view = chatViews.get(chatId);
+      const t = terminals.find(x => x.id === chatId);
+      if (!view || !t) throw new Error('That chat is not open');
+      let path = '';
+      if (png) {
+        const d = await uploadWithProgress('/api/attachments/upload', { project: t.project || currentProject, name: 'browser-' + Date.now() + '.png', data: png }, null);
+        if (!d || !d.ok || !d.path) throw new Error((d && d.error) || 'upload failed');
+        path = d.path;
       }
-      return true;
+      view.insertText(text + (path ? ' ' + path : ''));
+      view.focus();
     }
-    function brzComputeRect() {
-      const st = brzStage(); if (!st) return null;
-      const r = st.getBoundingClientRect();
-      const dev = BRZ_DEVICES[brzDevice];
-      if (!dev || dev.responsive) {
-        return { left: r.left, top: r.top, width: Math.round(r.width), height: Math.round(r.height), scale: 1, config: null };
-      }
-      const pad = 10;
-      const availW = Math.max(40, r.width - pad * 2), availH = Math.max(40, r.height - pad * 2);
-      const scale = Math.min(availW / dev.w, availH / dev.h); // fit both dims (may zoom in for small devices)
-      const bw = Math.round(dev.w * scale), bh = Math.round(dev.h * scale);
-      return {
-        left: r.left + (r.width - bw) / 2, top: r.top + (r.height - bh) / 2, width: bw, height: bh, scale,
-        config: { width: dev.w, height: dev.h, deviceScaleFactor: dev.dpr || 0, mobile: !!dev.mobile, ua: dev.ua || '' },
-      };
-    }
-    function brzSync() {
-      if (!BRZ_DESKTOP) return;
-      if (!brzVisibleNow()) { brzPost('sync', { rect: null, visible: false }); return; }
-      const c = brzComputeRect(); if (!c) { brzPost('sync', { rect: null, visible: false }); return; }
-      // The web UI is the top-level page, so getBoundingClientRect coords map
-      // directly to the window content (WebContentsView setBounds) — no offset.
-      // scale rides along so the view zooms to fit on resize (no reload needed).
-      brzPost('sync', { rect: { x: c.left, y: c.top, width: c.width, height: c.height }, visible: true });
-      // Re-apply emulation when the device OR the fit-scale changes. Main rescales
-      // the image for a scale-only change and reloads only when the device itself
-      // changes (so the site re-serves the right mobile/desktop markup).
-      const key = JSON.stringify(c.config) + '|' + (c.scale ? c.scale.toFixed(3) : '');
-      if (key !== brzLastEmu) { brzLastEmu = key; brzPost('emulate', { config: c.config, scale: c.scale }); }
-    }
-    function brzGo(v) {
-      v = (v || '').trim(); if (!v) return;
-      let url = v;
-      const hasScheme = /^https?:\\/\\//i.test(v) || v.indexOf('about:') === 0;
-      const looksDomain = v.indexOf(' ') < 0 && v.indexOf('.') > 0;
-      if (!hasScheme && !looksDomain) url = 'https://www.google.com/search?q=' + encodeURIComponent(v);
-      else if (!hasScheme) url = 'https://' + v;
-      brzUrl = url;
-      brzPost('navigate', { url });
-      const inp = document.querySelector('#browser-panel .brz-url'); if (inp) inp.blur();
-    }
-    function brzDeviceOptions() {
-      return BRZ_DEVICES.map((d, i) => '<option value="' + i + '">' + escHtml(d.responsive ? 'Responsive (fill)' : (d.name + '  ' + d.w + '×' + d.h)) + '</option>').join('');
-    }
-    function initBrowserPanel() {
-      const node = document.getElementById('browser-panel');
-      if (!node) return;
-      if (!BRZ_DESKTOP) {
-        node.innerHTML = '<div class="brz-unavail">' + ic('globe') + '<div>The interactive browser runs a real Chromium view on the host, so it is available in the <b>Crundi desktop app</b> only \\u2014 not over the web.</div></div>';
+    function initBrowserDrawer() {
+      const btn = document.getElementById('brd-toggle');
+      if (!BRD_API || !btn) return;   // a web browser: there is no drawer
+      btn.style.display = '';
+      if (!BRD_API.drawer || !window.CrundiBrowserDrawer) {
+        // An older desktop app: it has only the old panel API.
+        btn.addEventListener('click', () => toast('The browser drawer needs a newer Crundi desktop app. Update the app.', 'error'));
         return;
       }
-      if (!node.querySelector('.brz-bar')) {
-        node.innerHTML = ''
-          + '<div class="brz-bar">'
-          + '<button class="brz-nav" data-brz="back" title="Back" disabled>' + ic('chevron-left') + '</button>'
-          + '<button class="brz-nav" data-brz="forward" title="Forward" disabled>' + ic('chevron-right') + '</button>'
-          + '<button class="brz-nav" data-brz="reload" title="Reload">' + ic('refresh') + '</button>'
-          + '<input class="brz-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search\\u2026">'
-          + '<select class="brz-device" title="Emulate device">' + brzDeviceOptions() + '</select>'
-          + '<button class="brz-nav" data-brz="devtools" title="Toggle DevTools">' + ic('terminal') + '</button>'
-          + '</div>'
-          + '<div class="brz-stage" id="brz-stage"><div class="brz-hint">Loading\\u2026</div></div>';
-        const inp = node.querySelector('.brz-url');
-        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') brzGo(inp.value); });
-        node.querySelector('.brz-device').addEventListener('change', (e) => { brzDevice = Number(e.target.value) || 0; brzLastEmu = '__force__'; brzSync(); });
-        node.addEventListener('click', (e) => {
-          const b = e.target.closest('[data-brz]'); if (!b) return;
-          const a = b.dataset.brz;
-          if (a === 'reload') brzPost('nav', { dir: 'reload' });
-          else if (a === 'back') brzPost('nav', { dir: 'back' });
-          else if (a === 'forward') brzPost('nav', { dir: 'forward' });
-          else if (a === 'devtools') brzPost('devtools');
-        });
-        const sel = node.querySelector('.brz-device'); if (sel) sel.value = String(brzDevice);
-      }
-      brzPost('open', { url: brzUrl || BRZ_START });
-      brzLastEmu = '__force__';
-      if (!brzSyncTimer) brzSyncTimer = setInterval(brzSync, 200);
-      brzSync();
+      brd = window.CrundiBrowserDrawer.init({
+        root: document.getElementById('brd'),
+        split: document.getElementById('brd-split'),
+        toggleBtn: btn,
+        api: BRD_API.drawer,
+        ic, esc: escHtml, toast,
+        onLayout: () => { try { fitAllTerms(); } catch { /* no terminals */ } },
+        listChats: brdChats,
+        sendToChat: brdSendToChat,
+        // Homepool for this browser (owner only; an older server has none).
+        apiFetch: (path, init) => (userRole === 'collaborator' ? Promise.reject(new Error('owner only')) : apiFetch(path, init)),
+        deviceId: () => (window.api && window.api.homepool && window.api.homepool.status) ? window.api.homepool.status().then(s => (s && s.deviceId) || '', () => '') : '',
+      });
+      btn.addEventListener('click', () => { if (!currentProject) { toast('Select a project first', 'error'); return; } brd.toggle(); });
+      if (currentProject) brd.setProject(currentProject);
     }
-    // Reflect page state (url/title/loading/history or a diagnostic) in the toolbar.
-    function brzApplyState(d) {
-      if (!d || (d.id && d.id !== BRZ_ID)) return;
-      const node = document.getElementById('browser-panel'); if (!node) return;
-      if (d.diag) { const hint = node.querySelector('.brz-hint'); if (hint) { hint.style.display = 'flex'; hint.textContent = d.diag; } return; }
-      const inp = node.querySelector('.brz-url');
-      if (inp && document.activeElement !== inp && d.url) { inp.value = d.url; brzUrl = d.url; }
-      const back = node.querySelector('[data-brz="back"]'); if (back) back.disabled = !d.canGoBack;
-      const fwd = node.querySelector('[data-brz="forward"]'); if (fwd) fwd.disabled = !d.canGoForward;
-      node.classList.toggle('brz-loading', !!d.loading);
-      const hint = node.querySelector('.brz-hint'); if (hint && d.url && d.url !== 'about:blank') hint.style.display = 'none';
-    }
-    // Desktop: receive state directly from the main process via the preload.
-    if (BRZ_API() && BRZ_API().onState) { try { BRZ_API().onState(brzApplyState); } catch { /* ignore */ } }
-    // Fallback: state relayed from a shell parent (if ever embedded in an iframe).
-    window.addEventListener('message', (ev) => {
-      const d = ev.data; if (!d || d.ns !== 'crundi-browser-evt') return;
-      brzApplyState(d.type === 'diag' ? { id: d.id, diag: d.text } : d);
-    });
+    function brdSetProject(alias) { if (brd) brd.setProject(alias || null); }
+    initBrowserDrawer();
 
     // ─── Mosaic workbench layout (desktop only; always-on; persisted per project) ─
     // Tree node: { t:'split', dir:'row'|'col', sizes:[%..], kids:[node..] }
@@ -8013,14 +9544,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
       menu.style.left = Math.max(6, Math.min(r.left, window.innerWidth - 166)) + 'px';
       menu.style.display = 'flex';
       menu.classList.add('visible');
-      if (typeof brzSync === 'function') brzSync(); // hide the browser view behind the dropdown
       setTimeout(() => document.addEventListener('click', wbAddMenuOutside, true), 0);
     }
     function hideWbAddMenu() {
       const menu = $('#wb-add-menu'); if (!menu) return;
-      const wasVisible = menu.classList.contains('visible');
       menu.classList.remove('visible'); menu.style.display = 'none';
-      if (wasVisible && typeof brzSync === 'function') setTimeout(brzSync, 0); // restore the browser view
       document.removeEventListener('click', wbAddMenuOutside, true);
     }
     function wbAddMenuOutside(e) {
@@ -8157,7 +9685,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const mobileMosaicOn = () => mosaicActive() && isMobileTerm();
       const clearLeaf = () => { if (leafEl) { leafEl.classList.remove('drop-hover'); leafEl = null; } };
       return {
-        onStart: () => { if (mosaicMode()) { document.body.classList.add('mosaic-cell-drag'); if (typeof brzSync === 'function') brzSync(); } },
+        onStart: () => { if (mosaicMode()) { document.body.classList.add('mosaic-cell-drag'); } },
         onMove: (x, y) => {
           if (mobileMosaicOn()) return;
           // Mosaic: highlight the leaf under the pointer (drop = place cell there).
@@ -8180,7 +9708,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (mobileMosaicOn()) return;
           if (mosaicMode()) {
             document.body.classList.remove('mosaic-cell-drag');
-            if (typeof brzSync === 'function') setTimeout(brzSync, 0);
+            
             const lid = leafEl && leafEl.dataset.leafId;
             clearLeaf();
             const srcLeaf = mosaicLeaves(currentMosaic()).find(l => l.key === key);
@@ -8255,7 +9783,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const sA0 = sizes[gi - 1], sB0 = sizes[gi], totalS = sA0 + sB0;
         const start = horiz ? e.clientX : e.clientY;
         document.body.classList.add('mosaic-resizing');
-        if (typeof brzSync === 'function') brzSync();
+       
         const mv = (ev) => {
           const cur = horiz ? ev.clientX : ev.clientY;
           const frac = totalPx ? (cur - start) / totalPx : 0;
@@ -8268,7 +9796,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
         const up = () => {
           document.removeEventListener('pointermove', mv); document.removeEventListener('pointerup', up);
           document.body.classList.remove('mosaic-resizing');
-          if (typeof brzSync === 'function') setTimeout(brzSync, 0);
+          
           saveMosaic(); fitAllTerms();
         };
         document.addEventListener('pointermove', mv); document.addEventListener('pointerup', up);
@@ -8539,12 +10067,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // A notes page takes text too; the caret follows the pointer there.
       if (el.closest('.nt-root') && window.CrundiNotes && window.CrundiNotes.dropPreview(x, y)) return { kind: 'notes', x, y };
       if (el.closest('#term-input')) return { kind: 'input' };
+      // Cru's screen (voice and chat view): the reference goes to Cru (crundi-voice.js dropRef).
+      if (el.closest('.cv-ov') && window.CrundiVoice && window.CrundiVoice.dropRef) return { kind: 'cru' };
       const cell = el.closest('.term-cell[data-tid]');
       if (cell) return { kind: 'term', id: cell.dataset.tid };
       return null;
     }
     function insertRefToTarget(target, ref) {
       if (!ref || !target) return;
+      if (target.kind === 'cru') { if (window.CrundiVoice.dropRef(ref)) toast('Added for Cru'); return; }
       if (target.kind === 'notes') {
         if (window.CrundiNotes && window.CrundiNotes.dropText(target.x, target.y, ref)) toast('Added to the note');
         return;
@@ -8884,6 +10415,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if (msg.type === 'server-log') {
           appendServerLog(msg);
         }
+        // The PC app: Cru has news (a watched chat finished or waits on the
+        // owner) and no voice screen is open, so it opens and says it.
+        if (msg.type === 'voice-report' && window.api && window.CrundiVoice && window.CrundiVoice.report && userRole !== 'collaborator') {
+          // Only a question or a permission comes to the front (as Hey Cru does); a finished turn is just said.
+          if (msg.needsOwner && window.api.showWindow) window.api.showWindow();
+          window.CrundiVoice.report(String(msg.speak || ''), String(msg.show || ''), voiceOpts(), Array.isArray(msg.media) ? msg.media : null);
+        }
+        if (msg.type === 'kid-mode' && msg.kid) applyKidMode(msg.kid);
+        if (msg.type === 'pc-lock' && msg.lock) { applyPcLock(msg.lock); if (document.getElementById('vs-pin')) vsLoadPin(); }
         if (typeof msg.type === 'string' && msg.type.indexOf('docker-') === 0 && window.CrundiDocker) {
           window.CrundiDocker.handleMessage(msg);
         }
@@ -8952,12 +10492,13 @@ export function getWebappHtml(botUsername, appVersion = '') {
      * that is the control — this exists so they are not shown doors that open
      * onto a 403.
      */
-    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'info', 'settings', 'widgets', 'factories'];
+    const COLLAB_HIDDEN_TABS = ['git', 'secrets', 'schedule', 'docker', 'homepool', 'info', 'settings', 'widgets', 'factories'];
     const COLLAB_HIDDEN_WB = ['git', 'factory'];
 
     function applyRoleToUi() {
       const collab = userRole === 'collaborator';
       document.body.classList.toggle('is-collab', collab);
+      { const vb = document.getElementById('voice-btn'); if (vb && collab) vb.classList.remove('on'); }
       for (const b of $$('.tab-btn')) {
         const hide = collab && COLLAB_HIDDEN_TABS.indexOf(b.dataset.tab) >= 0;
         b.classList.toggle('collab-hide', hide);
@@ -8976,6 +10517,302 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const appr = document.getElementById('approvals-btn');
       if (appr && collab) appr.classList.remove('on');   // the inbox is the owner's
     }
+
+    // ─── Crundi's inbox ───
+    //
+    // Everything the server meant for the owner, kept on the server whatever
+    // channels are on, in THREADS: one per chat, one per project (what came
+    // with no chat), Cru's reports, and Crundi itself. Opened from the
+    // envelope at the bottom of the projects list. The server pushes
+    // 'inbox' { unread, item?, thread? } whenever it changes.
+    const IBX_KIND = {
+      message: ['message-square', 'Message'], photo: ['image', 'Picture'], file: ['file', 'File'],
+      alert: ['bell', 'Alert'], question: ['help-circle', 'Question'], permission: ['shield-alert', 'Permission'],
+      report: ['mic', 'Report'], schedule: ['clock', 'Scheduled job'], system: ['info', 'Crundi'],
+    };
+    const IBX_THREAD_IC = { chat: 'message-square', project: 'folder', cru: 'mic', system: 'info' };
+    const IBX_INLINE = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+    const ibx = { threads: [], unread: 0, openKey: '', msgs: [], fresh: {}, more: false, focusId: '', pin: true, loading: false, supported: true, hashDone: false, timer: null };
+    function ibxKind(k) { return IBX_KIND[k] || IBX_KIND.message; }
+    function ibxWhen(at, full) {
+      const d = new Date(Number(at) || 0);
+      if (full) return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const s = (Date.now() - d.getTime()) / 1000;
+      if (s < 60) return 'now';
+      if (s < 3600) return Math.floor(s / 60) + 'm';
+      if (s < 86400) return Math.floor(s / 3600) + 'h';
+      if (s < 6 * 86400) return d.toLocaleDateString(undefined, { weekday: 'short' });
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+    function ibxSize(n) {
+      n = Number(n) || 0;
+      if (n < 1024) return n + ' B';
+      if (n < 1048576) return Math.round(n / 1024) + ' KB';
+      return (n / 1048576).toFixed(1) + ' MB';
+    }
+    function ibxMediaUrl(m, download) {
+      return m.url + (m.url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(token || '') + (download ? '&download=1' : '');
+    }
+    function ibxBadge() {
+      const btn = document.getElementById('inbox-btn');
+      const b = document.getElementById('inbox-badge');
+      if (btn) {
+        btn.style.display = (ibx.supported && userRole !== 'collaborator') ? '' : 'none';
+        btn.classList.toggle('has-unread', ibx.unread > 0);
+        btn.title = ibx.unread ? 'Inbox: ' + ibx.unread + ' unread' : 'Inbox';
+      }
+      if (b) { b.textContent = ibx.unread > 99 ? '99+' : String(ibx.unread); b.style.display = ibx.unread > 0 ? '' : 'none'; }
+      const sub = document.getElementById('ibx-sub');
+      if (sub) sub.textContent = ibx.unread ? (ibx.unread + ' unread') : (ibx.threads.length ? 'All read' : '');
+    }
+    function ibxGet(path) {
+      return apiFetch(path).then(r => {
+        // 404: a server from before the inbox. 403: a collaborator's page.
+        if (r.status === 404 || r.status === 403) { ibx.supported = false; ibxBadge(); return null; }
+        return r.json();
+      });
+    }
+    function ibxPost(path, body) {
+      return apiFetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        .then(r => r.json())
+        .then(d => { if (d && typeof d.unread === 'number') { ibx.unread = d.unread; ibxBadge(); } return d; });
+    }
+    // The thread list (and the unread total).
+    async function ibxLoad() {
+      if (userRole === 'collaborator') { ibxBadge(); return; }
+      try {
+        const d = await ibxGet('/api/inbox/threads');
+        if (!d || !d.ok) return;
+        ibx.threads = d.threads || [];
+        ibx.unread = d.unread || 0;
+        ibxBadge();
+        if (currentTab === 'inbox') ibxRender();
+      } catch (err) { /* the badge catches up on the next push */ }
+    }
+    // The open thread's items, newest first as the server gives them.
+    async function ibxLoadThread(more) {
+      const key = ibx.openKey;
+      if (!key || ibx.loading) return;
+      ibx.loading = true;
+      try {
+        const oldest = more && ibx.msgs.length ? ibx.msgs[ibx.msgs.length - 1].id : '';
+        const d = await ibxGet('/api/inbox?limit=100&thread=' + encodeURIComponent(key) + (oldest ? '&before=' + encodeURIComponent(oldest) : ''));
+        if (!d || !d.ok || key !== ibx.openKey) return;
+        const got = d.items || [];
+        ibx.msgs = more ? ibx.msgs.concat(got) : got;
+        ibx.more = got.length >= 100;
+        for (const it of got) if (!it.read) ibx.fresh[it.id] = true;
+      } catch (err) { /* shown as it was */ }
+      finally { ibx.loading = false; }
+    }
+    // A thread's picture: a project thread shows the project's own icon where
+    // it has one; a chat thread keeps its glyph with the project's icon (or
+    // initials) as a small badge, as the phone app does.
+    function ibxThreadIcon(t) {
+      const glyph = ic(IBX_THREAD_IC[t.kind] || 'mail');
+      if (t.kind !== 'chat' && t.kind !== 'project') return '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + glyph + '</span>';
+      const key = String(t.project || '').toLowerCase();
+      const p = projects.find(x => String(x.alias || '').toLowerCase() === key) || projects.find(x => String(x.name || '').toLowerCase() === key);
+      const src = p ? projIconSrc(p.icon) : '';
+      if (t.kind === 'project' && src) return '<span class="ibx-ic has-pico t-project"><img class="ibx-pico" src="' + escHtml(src) + '" alt=""></span>';
+      const badge = '<span class="ibx-pbadge">' + (src ? '<img src="' + escHtml(src) + '" alt="">' : escHtml(projectInitials((p && (p.name || p.alias)) || t.project || '?'))) + '</span>';
+      return '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + glyph + (t.project ? badge : '') + '</span>';
+    }
+    function ibxThreadRow(t) {
+      return '<button type="button" class="ibx-row' + (t.unread ? ' unread' : '') + (t.key === ibx.openKey ? ' active' : '') + '" data-ibx="thread" data-key="' + escHtml(t.key) + '">'
+        + ibxThreadIcon(t)
+        + '<span class="ibx-main"><span class="ibx-t">' + escHtml(t.title) + '</span>'
+        + (t.subtitle ? '<span class="ibx-s">' + escHtml(t.subtitle) + '</span>' : '')
+        + '<span class="ibx-m">' + escHtml(t.last ? t.last.title : '') + '</span></span>'
+        + '<span class="ibx-when">' + escHtml(ibxWhen(t.last && t.last.at)) + (t.unread ? '<span class="ibx-count">' + (t.unread > 99 ? '99+' : t.unread) + '</span>' : '') + '</span>'
+        + '</button>';
+    }
+    function ibxMediaHtml(it) {
+      return (it.media || []).map(m => {
+        if (!m.url) return '<div class="ibx-file missing">' + ic('file') + '<span class="ibx-fn">' + escHtml(m.name) + '</span><span class="ibx-fs">not kept</span></div>';
+        if (IBX_INLINE.indexOf(m.mime) >= 0) {
+          return '<a class="ibx-img" href="' + escHtml(ibxMediaUrl(m)) + '" target="_blank" rel="noopener"><img src="' + escHtml(ibxMediaUrl(m)) + '" alt="' + escHtml(m.name) + '"></a>';
+        }
+        return '<a class="ibx-file" href="' + escHtml(ibxMediaUrl(m, true)) + '" download="' + escHtml(m.name) + '">' + ic('file') + '<span class="ibx-fn">' + escHtml(m.name) + '</span><span class="ibx-fs">' + ibxSize(m.size) + '</span>' + ic('download') + '</a>';
+      }).join('');
+    }
+    function ibxMsgHtml(it) {
+      const k = ibxKind(it.kind);
+      const media = ibxMediaHtml(it);
+      return '<div class="ibx-msg' + (ibx.fresh[it.id] ? ' new' : '') + (it.id === ibx.focusId ? ' focus' : '') + '" id="ibx-msg-' + escHtml(it.id) + '">'
+        + '<div class="ibx-mh"><span class="k-' + escHtml(it.kind) + '" title="' + escHtml(k[1]) + '">' + ic(k[0]) + '</span>'
+        + '<span class="ibx-mt">' + escHtml(it.title) + '</span><span class="ibx-mtime">' + escHtml(ibxWhen(it.at, true)) + '</span></div>'
+        + '<button type="button" class="ibx-mdel" data-ibx="del-msg" data-id="' + escHtml(it.id) + '" title="Delete this message" aria-label="Delete this message">' + ic('x') + '</button>'
+        + (it.text ? '<div class="ibx-text">' + escHtml(it.text) + '</div>' : '')
+        + (media ? '<div class="ibx-media">' + media + '</div>' : '')
+        + '</div>';
+    }
+    function ibxConvHtml(t) {
+      if (!t) {
+        return '<div class="ibx-empty">' + ic('mail') + '<p>' + (ibx.threads.length ? 'Choose a conversation to read it.' : 'Nothing here yet.') + '</p></div>';
+      }
+      const msgs = ibx.msgs.slice().reverse();
+      return '<div class="ibx-chead">'
+        + '<button type="button" class="ibx-btn ibx-back" data-ibx="back" aria-label="Back to the inbox">' + ic('chevron-left') + '</button>'
+        + '<span class="ibx-ic t-' + escHtml(t.kind) + '">' + ic(IBX_THREAD_IC[t.kind] || 'mail') + '</span>'
+        + '<span class="ibx-ct"><b>' + escHtml(t.title) + '</b>' + (t.subtitle ? '<span>' + escHtml(t.subtitle) + '</span>' : '') + '</span>'
+        + '<span class="spacer"></span>'
+        + (t.kind === 'chat' && t.chatId ? '<button type="button" class="ibx-btn" data-ibx="chat" data-id="' + escHtml(t.chatId) + '">' + ic('message-square') + ' Open chat</button>' : '')
+        + '<button type="button" class="ibx-btn" data-ibx="read-thread">' + ic('check') + ' Mark read</button>'
+        + '<button type="button" class="ibx-btn danger" data-ibx="del-thread">' + ic('trash') + ' Delete thread</button>'
+        + '</div>'
+        + '<div class="ibx-conv" id="ibx-conv">'
+        + (ibx.more ? '<button type="button" class="ibx-more" data-ibx="older">Show older</button>' : '')
+        + msgs.map(ibxMsgHtml).join('')
+        + '</div>';
+    }
+    function ibxRender(scroll) {
+      const panel = document.getElementById('inbox-panel');
+      if (!panel) return;
+      if (!document.getElementById('ibx')) {
+        panel.innerHTML = '<div class="ibx" id="ibx">'
+          + '<div class="ibx-head"><span class="ibx-title">' + ic('mail') + ' Inbox</span><span class="ibx-sub" id="ibx-sub"></span><span class="spacer"></span>'
+          + '<button type="button" class="ibx-btn" data-ibx="read-all">' + ic('check') + ' Mark all read</button></div>'
+          + '<div class="ibx-body"><div class="ibx-list" id="ibx-list"></div><div class="ibx-detail" id="ibx-detail"></div></div></div>';
+      }
+      const list = document.getElementById('ibx-list');
+      const keep = list.scrollTop;
+      list.innerHTML = ibx.threads.length
+        ? ibx.threads.map(ibxThreadRow).join('')
+        : '<div class="ibx-empty">' + ic('mail') + '<p>Nothing here yet. Messages, pictures and files from your chats land here, with questions, alerts and reports.</p></div>';
+      list.scrollTop = keep;
+      const t = ibx.threads.find(x => x.key === ibx.openKey) || null;
+      const det = document.getElementById('ibx-detail');
+      const conv0 = document.getElementById('ibx-conv');
+      const was = conv0 ? { top: conv0.scrollTop, atEnd: conv0.scrollHeight - conv0.scrollTop - conv0.clientHeight < 40 } : null;
+      det.innerHTML = ibxConvHtml(t);
+      document.getElementById('ibx').classList.toggle('has-open', !!t);
+      const conv = document.getElementById('ibx-conv');
+      if (conv) {
+        // Kept at the newest message (or at the one a link named) until the
+        // owner scrolls away; pictures take their height as they load.
+        if (scroll) ibx.pin = true;
+        else if (was && !was.atEnd && !ibx.focusId) ibx.pin = false;
+        const place = () => {
+          const f = ibx.focusId && document.getElementById('ibx-msg-' + ibx.focusId);
+          if (f) f.scrollIntoView({ block: 'center' });
+          else if (ibx.pin) conv.scrollTop = conv.scrollHeight;
+          else if (was) conv.scrollTop = was.top;
+        };
+        place();
+        conv.querySelectorAll('img').forEach(im => { if (!im.complete) im.addEventListener('load', () => { if (ibx.pin || ibx.focusId) place(); }, { once: true }); });
+        conv.addEventListener('wheel', () => { ibx.focusId = ''; }, { once: true, passive: true });
+        conv.addEventListener('touchmove', () => { ibx.focusId = ''; }, { once: true, passive: true });
+        conv.addEventListener('scroll', () => { if (!ibx.focusId) ibx.pin = conv.scrollHeight - conv.scrollTop - conv.clientHeight < 40; }, { passive: true });
+      }
+      ibxBadge();
+    }
+    async function ibxOpenThread(key, focusId) {
+      ibx.openKey = key || '';
+      ibx.focusId = focusId || '';
+      ibx.msgs = [];
+      ibx.fresh = {};
+      ibx.more = false;
+      ibxRender();
+      if (!ibx.openKey) return;
+      await ibxLoadThread(false);
+      const t = ibx.threads.find(x => x.key === key);
+      const unread = t && t.unread;
+      if (t) t.unread = 0;
+      ibx.msgs.forEach(x => { x.read = true; });
+      ibxRender(true);
+      if (unread) ibxPost('/api/inbox/read', { thread: key }).then(() => ibxLoad()).catch(() => {});
+    }
+    function openInbox(itemId) {
+      if (typeof closeSidebar === 'function') closeSidebar();
+      switchTab('inbox');
+      ibxRender();
+      ibxLoad().then(async () => {
+        if (!itemId) return;
+        // A link to one item opens its thread, scrolled to it.
+        try {
+          const d = await ibxGet('/api/inbox/' + encodeURIComponent(itemId));
+          if (d && d.ok && d.item) { await ibxLoad(); ibxOpenThread(d.item.thread, d.item.id); }
+          else toast('That message is no longer in the inbox');
+        } catch (err) { /* stays on the list */ }
+      });
+    }
+    // #inbox or #inbox/<id> (the link in a Telegram copy, a browser push).
+    function ibxFromHash() {
+      const h = String(location.hash || '');
+      if (h.indexOf('#inbox') !== 0) return;
+      let id = h.length > 7 ? h.slice(7) : '';
+      try { id = decodeURIComponent(id); } catch (err) { id = ''; }
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (err) { /* fine */ }
+      openInbox(id);
+    }
+    window.addEventListener('hashchange', ibxFromHash);
+    function ibxOnEvent(d) {
+      if (!d) return;
+      if (typeof d.unread === 'number') { ibx.unread = d.unread; ibxBadge(); }
+      // Coalesced: one answer can change several items at once.
+      clearTimeout(ibx.timer);
+      ibx.timer = setTimeout(async () => {
+        const open = currentTab === 'inbox' && ibx.openKey && (!d.thread || d.thread === ibx.openKey);
+        if (open) {
+          await ibxLoadThread(false);
+          // Arriving in the thread being read: read.
+          if (d.item && document.visibilityState === 'visible') ibxPost('/api/inbox/read', { thread: ibx.openKey }).catch(() => {});
+        }
+        await ibxLoad();
+      }, 150);
+    }
+    document.addEventListener('click', (e) => {
+      const el = e.target && e.target.closest ? e.target.closest('[data-ibx]') : null;
+      if (!el) return;
+      const act = el.getAttribute('data-ibx');
+      const key = ibx.openKey;
+      if (act === 'show') { openInbox(''); return; }
+      if (act === 'thread') { ibxOpenThread(el.getAttribute('data-key'), ''); return; }
+      if (act === 'back') { ibx.openKey = ''; ibx.focusId = ''; ibxRender(); return; }
+      if (act === 'older') { ibx.focusId = ''; ibxLoadThread(true).then(() => ibxRender()); return; }
+      if (act === 'read-all') {
+        ibx.threads.forEach(t => { t.unread = 0; });
+        ibx.unread = 0;
+        ibxRender();
+        ibxPost('/api/inbox/read', { all: true }).then(() => ibxLoad()).catch(err => toast('Could not mark them read: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'read-thread' && key) {
+        ibxPost('/api/inbox/read', { thread: key }).then(() => ibxLoad()).catch(err => toast('Could not mark it read: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'del-thread' && key) {
+        if (!confirm('Delete this whole conversation from the inbox?')) return;
+        ibxPost('/api/inbox/delete', { thread: key })
+          .then(d => { if (!d.ok) throw new Error(d.error || 'failed'); ibx.openKey = ''; ibx.msgs = []; return ibxLoad(); })
+          .then(() => ibxRender())
+          .catch(err => toast('Could not delete: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'del-msg') {
+        const id = el.getAttribute('data-id');
+        ibxPost('/api/inbox/delete', { ids: [id] })
+          .then(d => {
+            if (!d.ok) throw new Error(d.error || 'failed');
+            ibx.msgs = ibx.msgs.filter(x => x.id !== id);
+            if (!ibx.msgs.length) ibx.openKey = '';
+            return ibxLoad();
+          })
+          .then(() => ibxRender())
+          .catch(err => toast('Could not delete: ' + err.message, 'error'));
+        return;
+      }
+      if (act === 'chat') {
+        const sid = el.getAttribute('data-id');
+        const t = ibx.threads.find(x => x.key === key);
+        switchTab('workbench');
+        if (!goToChat(sid)) {
+          if (t && t.project && typeof selectProject === 'function') selectProject(t.project);
+          toast('That chat is not open any more');
+        }
+      }
+    });
 
     // ─── Approvals inbox ───
     //
@@ -9029,6 +10866,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         } else if (it.source === 'collab') {
           h += '<button class="yes" data-action="appr-yes" data-id="' + escHtml(it.id) + '">Approve</button>'
             + '<button class="no" data-action="appr-no" data-id="' + escHtml(it.id) + '">Decline</button>';
+        } else if (it.source === 'kid' || it.source === 'cru') {
+          // Kid Cru asking the parent, or Cru asking from a wake-up: each answer the question offers.
+          h += (it.choices || []).map(function (c) { return '<button class="' + (c.id === 'no' ? 'no' : 'yes') + '" data-action="' + (it.source === 'cru' ? 'appr-cru' : 'appr-kid') + '" data-id="' + escHtml(it.id) + '" data-choice="' + escHtml(c.id) + '">' + escHtml(c.label) + '</button>'; }).join('');
         } else if (it.source === 'chat') {
           // Answered in the chat, where the full input and the always-allow
           // choice live. Duplicating that here would mean two half-answers.
@@ -9174,6 +11014,12 @@ export function getWebappHtml(botUsername, appVersion = '') {
           }
         } catch { /* ignore */ }
       });
+      es.addEventListener('inbox', (e) => {
+        try { ibxOnEvent(JSON.parse(e.data)); } catch (err) { /* a malformed frame must not stop the stream */ }
+      });
+      // The unread count now (and again after every reconnect), and a link
+      // that opened the page on #inbox.
+      ibxLoad().then(() => { if (!ibx.hashDone) { ibx.hashDone = true; ibxFromHash(); } });
       es.addEventListener('approvals', (e) => {
         try {
           const d = JSON.parse(e.data);
@@ -9195,6 +11041,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
         } catch { /* ignore */ }
       });
       es.addEventListener('schedule', () => { if (currentTab === 'schedule') loadSchedules(); });
+      es.addEventListener('voice-wakeups', () => { if (document.getElementById('vs-wake')) vsLoadWakeups(); });
+      // Kid mode switched on or off anywhere: the kid screen follows.
+      es.addEventListener('pc-lock', (e) => { try { const st = JSON.parse(e.data || '{}'); applyPcLock(st); if (document.getElementById('vs-pin')) vsLoadPin(); } catch (err) { /* ignore */ } });
+      es.addEventListener('voice-kid', (e) => { try { applyKidMode(JSON.parse(e.data || '{}')); } catch (err) { /* ignore */ } });
+      es.addEventListener('voice-kid-games', () => { if (document.getElementById('vs-kid')) vsLoadKid(); });
+      // Cru moving a page (show_in_crundi): only the page the owner talked to Cru from acts.
+      es.addEventListener('cru-ui', (e) => { try { const d = JSON.parse(e.data || '{}'); if (d && d.page === crundiPageId && userRole !== 'collaborator') cruUiGo(d); } catch (err) { /* malformed */ } });
+      // Cru's unread messages: the dot on its mark.
+      es.addEventListener('voice-unread', (e) => { try { const d = JSON.parse(e.data || '{}'); if (window.CrundiVoice && window.CrundiVoice.setUnread) window.CrundiVoice.setUnread(d.count || 0); } catch (err) { /* ignore */ } });
       // Factory runs and the factory library: the views refresh what they show.
       es.addEventListener('factoryRun', (e) => { try { if (window.CrundiFactories) window.CrundiFactories.runEvent(JSON.parse(e.data)); } catch (err) { /* malformed */ } });
       es.addEventListener('factories', () => { if (window.CrundiFactories) window.CrundiFactories.runEvent({ kind: 'factories' }); });
@@ -9436,7 +11291,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
     // machine- or app-level. The
     // rest are meaningless without a project, so they stay hidden rather than
     // being shown and then erroring.
-    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'info', 'secrets', 'settings'];
+    const GLOBAL_TABS = ['media', 'mindmap', 'widgets', 'docker', 'homepool', 'info', 'secrets', 'settings'];
 
     function syncTabScope() {
       // Global panels (and their top bar chips) exist with or without a
@@ -9456,6 +11311,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (global && GLOBAL_TABS.indexOf(currentTab) < 0) switchTab('info');
     }
 
+    // Is the person typing in a field (Cru's box, a chat's composer, a form)?
+    // Then a switch that Cru or a state change made must not take the cursor.
+    // A terminal's own input does not count: moving between terminals is fine.
+    function typingElsewhere() {
+      const a = document.activeElement;
+      if (!a || a === document.body) return false;
+      if (a.classList && a.classList.contains('xterm-helper-textarea')) return false;
+      if (a.tagName === 'TEXTAREA' || a.isContentEditable) return true;
+      return a.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image|hidden)$/i.test(a.type || '');
+    }
     function switchTab(tab) {
       // Leaving the Secrets tab — forget any revealed values for safety.
       if (currentTab === 'secrets' && tab !== 'secrets') {
@@ -9468,13 +11333,15 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (currentTab === 'notes' && tab !== 'notes') closeNotesTab();
       if (currentTab === 'widgets' && tab !== 'widgets' && window.CrundiWidgets) window.CrundiWidgets.unmountTab();
       if (currentTab === 'docker' && tab !== 'docker' && dockerView) dockerView.hide();
+      if (currentTab === 'homepool' && tab !== 'homepool' && homepoolView) homepoolView.hide();
       if (currentTab === 'factories' && tab !== 'factories' && factoriesView) factoriesView.hide();
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
-      if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
+      if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); if (typingElsewhere()) return; const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
       if (tab === 'docker') loadDockerTab();
+      if (tab === 'homepool') loadHomepoolTab();
       if (tab === 'factories') loadFactoriesTab();
       if (tab === 'browsers') loadBrowsers();
       if (tab === 'git') loadGitInfo();
@@ -10215,12 +12082,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
     // ─── Context menu (used by file rows) ───
     let ctxMenuEl = null;
-    // The desktop app's browser pane is a native view that floats above the
-    // page, so it steps aside while a menu is open (see brzOverlayActive).
-    function ctxSyncBrowser() { if (typeof brzSync === 'function') { try { brzSync(); } catch { /* no browser pane */ } } }
-    function closeCtxMenu() { if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; ctxSyncBrowser(); } }
-    // The enlarged-picture viewer comes and goes on the page body too.
-    if (window.MutationObserver) new MutationObserver(ctxSyncBrowser).observe(document.body, { childList: true });
+    function closeCtxMenu() { if (ctxMenuEl) { ctxMenuEl.remove(); ctxMenuEl = null; } }
     /** items: [{ label, icon, run, danger }] or '-' for a divider. */
     function openCtxMenu(x, y, items) {
       closeCtxMenu();
@@ -10245,7 +12107,6 @@ export function getWebappHtml(botUsername, appVersion = '') {
       m.style.left = Math.max(6, Math.min(x, vw - r.width - 6)) + 'px';
       m.style.top = Math.max(6, Math.min(y, vh - r.height - 6)) + 'px';
       ctxMenuEl = m;
-      ctxSyncBrowser();
     }
     document.addEventListener('pointerdown', (e) => { if (ctxMenuEl && !ctxMenuEl.contains(e.target)) closeCtxMenu(); }, true);
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxMenu(); });
@@ -12411,6 +14272,33 @@ export function getWebappHtml(botUsername, appVersion = '') {
       dockerView.show();
     }
 
+    // ─── Homepool (app/vendor/crundi-homepool.js) ───
+    //
+    // The shared exit: networks, nodes, who may leave through which, and the
+    // requests chats made. Owner only (the routes refuse anyone else too).
+    let homepoolView = null;
+    function loadHomepoolTab() {
+      if (!window.CrundiHomepool) { toast('The Homepool view did not load. Reload the page.', 'error'); return; }
+      if (!homepoolView) {
+        homepoolView = window.CrundiHomepool.mount(document.getElementById('homepool-panel'), {
+          apiFetch: apiFetch,
+          toast: toast,
+          icon: ic,
+          projects: () => (projects || []).map(p => ({ alias: p.alias, name: p.name })),
+          desktop: (window.api && window.api.homepool) || null,
+        });
+      }
+      homepoolView.show();
+    }
+    // #homepool (the link in a request's notification).
+    function homepoolFromHash() {
+      if (String(location.hash || '').indexOf('#homepool') !== 0) return;
+      try { history.replaceState(null, '', location.pathname + location.search); } catch (err) { /* fine */ }
+      if (userRole !== 'collaborator') switchTab('homepool');
+    }
+    window.addEventListener('hashchange', homepoolFromHash);
+    setTimeout(homepoolFromHash, 1500);
+
     // ─── Factories (app/vendor/crundi-factories.js) ───
     //
     // The Factories tab (library, runs, cleanup, and the editor and live graph
@@ -13409,6 +15297,223 @@ export function getWebappHtml(botUsername, appVersion = '') {
       try { const d = await (await apiFetch('/api/backup')).json(); if (d.ok) { backupState = Object.assign(backupState || {}, d); drawBackupNotice(); } } catch { /* ignore */ }
     }
 
+    // The Settings page in groups, in this order; each section collapsed
+    // until opened. Which are open is kept while the page is in use, so a
+    // section re-rendered after a save stays open; a fresh visit starts closed.
+    const SETTINGS_GROUPS = [
+      ['Crundi', ['Server', 'Claude Code', 'What\u2019s new']],
+      ['Claude', ['System prompt', 'Skills', 'Usage']],
+      ['Cru', ['Voice assistant']],
+      ['Notifications', ['Notification Channels', 'Notification Settings']],
+      ['Access', ['Sign-in', 'Phone app', 'Session']],
+      ['This server', ['Configuration', 'Terminal', 'Backup & restore']],
+    ];
+    const settingsOpen = new Set();
+    function organizeSettings(panel) {
+      const byTitle = new Map();
+      for (const sec of Array.from(panel.children)) {
+        const h = sec.classList && sec.classList.contains('info-section') ? sec.querySelector(':scope > h4') : null;
+        if (h) byTitle.set(h.textContent.trim(), sec);
+      }
+      const fold = (sec, title) => {
+        const h = sec.querySelector(':scope > h4');
+        const body = document.createElement('div');
+        body.className = 'set-body';
+        while (h.nextSibling) body.appendChild(h.nextSibling);
+        sec.appendChild(body);
+        sec.classList.add('set-fold');
+        h.insertAdjacentHTML('beforeend', ic('chevron-right'));
+        h.setAttribute('role', 'button');
+        h.setAttribute('tabindex', '0');
+        const set = (open) => { sec.classList.toggle('open', open); h.setAttribute('aria-expanded', open ? 'true' : 'false'); if (open) settingsOpen.add(title); else settingsOpen.delete(title); };
+        set(settingsOpen.has(title));
+        h.onclick = () => set(!sec.classList.contains('open'));
+        h.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.onclick(); } };
+      };
+      const frag = document.createDocumentFragment();
+      const placed = new Set();
+      for (const [group, titles] of SETTINGS_GROUPS) {
+        const secs = titles.map((t) => [t, byTitle.get(t)]).filter((x) => x[1]);
+        if (!secs.length) continue;
+        const g = document.createElement('div');
+        g.className = 'set-group';
+        g.textContent = group;
+        frag.appendChild(g);
+        for (const [t, sec] of secs) { fold(sec, t); frag.appendChild(sec); placed.add(sec); }
+      }
+      // Anything not listed (a section added later) still shows, at the end.
+      const rest = Array.from(byTitle.entries()).filter((x) => !placed.has(x[1]));
+      if (rest.length) {
+        const g = document.createElement('div');
+        g.className = 'set-group';
+        g.textContent = 'More';
+        frag.appendChild(g);
+        for (const [t, sec] of rest) { fold(sec, t); frag.appendChild(sec); }
+      }
+      panel.appendChild(frag);
+    }
+
+    // ─── Settings → Sign-in: Google and GitHub ───
+    // The client secret is write-only: the server says only whether one is
+    // saved, and a blank field keeps it. A method must pass Test before its
+    // switch can be turned on.
+    const OAUTH_MARKS = {
+      google: '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"/></svg>',
+      github: '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>',
+    };
+    const TELEGRAM_MARK = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true" style="vertical-align:-2px;margin-right:6px;"><path fill="currentColor" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>';
+    // Settings → Sign-in → Telegram. The bot it uses is also the Telegram
+    // notification channel's, so it is entered once, here.
+    function authTelegramSettings(authCfg, st) {
+      const tb = authCfg.telegramBot;
+      const on = !!authCfg.telegram;
+      const canOn = !!authCfg.telegramAvailable;
+      const toggle = '<button type="button" class="set-tgl' + (on ? ' on' : '') + '" id="auth-tgl-telegram"'
+        + ((canOn || on) ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+        + ' role="switch" aria-checked="' + (on ? 'true' : 'false') + '" data-action="auth-toggle" data-method="telegram"><span class="set-tgl-knob"></span></button>';
+      // An older server: only the switch, as before.
+      if (!tb) return '<div class="seg-pref-row" style="margin-top:14px;"><div><div class="set-tgl-lbl">' + TELEGRAM_MARK + 'Telegram</div></div>' + toggle + '</div>';
+      const status = !tb.tokenSet
+        ? 'Not set up. Create a bot with @BotFather, then enter its token and your Telegram username, and Save.'
+        : tb.restartRequired
+          ? 'Saved. Restart Crundi to start the bot with these settings; it can be turned on after that.'
+          : tb.status === 'connected'
+            ? 'Bot ' + (tb.botUsername ? '@' + escHtml(tb.botUsername) + ' ' : '') + 'is connected. Sign in with the Telegram account you set here.'
+            : 'The bot is offline. Check the token, and that no other server is using the same bot.';
+      return '<div id="auth-telegram-block" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">'
+        + '<div class="seg-pref-row" style="margin-bottom:10px;">'
+        + '<div><div class="set-tgl-lbl">' + TELEGRAM_MARK + 'Telegram</div>'
+        + '<p style="' + st.hintStyle + '">' + status + '</p></div>'
+        + toggle
+        + '</div>'
+        + '<p style="' + st.hintStyle + ';margin-bottom:10px;">In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel. <a href="https://t.me/BotFather" target="_blank" rel="noopener" style="color:var(--accent-hover);">Open</a></p>'
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">'
+        + '<div><label style="' + st.labelStyle + '">Bot token</label><input id="auth-telegram-token" type="password" autocomplete="new-password" spellcheck="false" placeholder="' + (tb.tokenSet ? 'Saved (leave blank to keep)' : '123456:ABC-DEF...') + '" style="' + st.monoStyle + '"></div>'
+        + '<div><label style="' + st.labelStyle + '">Allowed Telegram username</label><input id="auth-telegram-user" value="' + escHtml(tb.allowedUsername || '') + '" placeholder="your-username" autocomplete="off" spellcheck="false" style="' + st.inputStyle + '"></div>'
+        + '</div>'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">'
+        + '<button type="button" data-action="auth-telegram-save" style="' + st.btnStyle + '">Save</button>'
+        + (tb.restartRequired ? '<button type="button" class="kanban-btn" data-action="srv-restart">Restart now</button>' : '')
+        + (tb.tokenSet ? '<button type="button" class="kanban-btn" data-action="auth-telegram-clear">Remove</button>' : '')
+        + '</div>'
+        + '</div>';
+    }
+    // Settings → Notification Channels → Telegram: the bot's state, and the
+    // chat it sends to. The bot is the one set under Sign-in → Telegram.
+    function telegramChannelExtra(t, st) {
+      const dot = (c) => '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + c + ';margin-right:6px;vertical-align:1px;"></span>';
+      const state = !t.tokenSet
+        ? dot('var(--text-muted)') + 'Not set up'
+        : t.restartRequired
+          ? dot('var(--yellow)') + 'Saved, waiting for a restart'
+          : t.botStatus === 'connected'
+            ? dot('var(--green)') + 'Connected' + (t.botUsername ? ' as @' + escHtml(t.botUsername) : '')
+            : dot('var(--red)') + 'Offline';
+      return '<div style="margin-top:8px;font-size:0.78rem;color:var(--text-secondary);">Bot: ' + state
+        + ' <span style="color:var(--text-muted);">&middot; token ' + (t.tokenSet ? 'set' : 'not set') + ',</span> '
+        + '<button type="button" class="lr-link" data-action="goto-signin-telegram" style="padding:0;font-size:0.78rem;">' + (t.tokenSet ? 'edit under Sign-in' : 'set it up under Sign-in') + '</button></div>'
+        + '<div style="display:flex;gap:8px;align-items:center;margin-top:8px;">'
+        + '<input id="tg-chat-id" value="' + escHtml(t.chatId || '') + '" placeholder="Chat ID (filled in when you send /start)" inputmode="numeric" spellcheck="false" style="' + st.monoStyle + 'max-width:260px;">'
+        + '<button type="button" data-action="telegram-chat-save" style="' + st.btnSubtleStyle + '">Save</button>'
+        + '</div>'
+        + '<p style="' + st.hintStyle + '">Where messages go. Send /start to the bot and it fills itself in, or enter it by hand.</p>';
+    }
+    /** Open Settings → Sign-in and bring the Telegram block into view. */
+    function gotoSigninTelegram() {
+      const h = Array.from(document.querySelectorAll('#settings-panel h4')).find((x) => x.textContent.trim().indexOf('Sign-in') === 0);
+      if (h && h.parentElement && !h.parentElement.classList.contains('open')) h.click();
+      const b = $('#auth-telegram-block');
+      if (b) setTimeout(() => { try { b.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { b.scrollIntoView(); } }, 60);
+    }
+    function authOAuthSettings(authCfg, st) {
+      // An older server sends no oauth block: say nothing rather than offer
+      // fields it cannot save.
+      if (!authCfg || !authCfg.oauth) return '';
+      const P = [
+        { k: 'google', label: 'Google', acct: 'Allowed Google email', ph: 'you@gmail.com',
+          where: 'Google Cloud console, APIs and Services, Credentials: create an OAuth client ID of type Web application, and add this as an authorised redirect URI.',
+          link: 'https://console.cloud.google.com/apis/credentials' },
+        { k: 'github', label: 'GitHub', acct: 'Allowed GitHub username', ph: 'your-username',
+          where: 'GitHub, Settings, Developer settings, OAuth Apps, New OAuth App: use this as the authorisation callback URL.',
+          link: 'https://github.com/settings/applications/new' },
+      ];
+      const urls = authCfg.callbackUrls || {};
+      return P.map((p) => {
+        const o = authCfg.oauth[p.k] || {};
+        const on = !!authCfg[p.k];
+        const canOn = !!(o.configured && o.verified);
+        const status = !o.configured
+          ? 'Not set up. Create an OAuth app with ' + p.label + ', then fill this in, Save and Test.'
+          : !o.verified
+            ? 'Saved, not tested since the last change. Run Test before turning it on.'
+            : 'Tested: signed in as ' + escHtml(o.verifiedAs || o.allowed) + '.' + (o.idPinned ? ' Pinned to that account\\u2019s id, so a renamed username cannot take it over.' : '');
+        const url = urls[p.k] || '';
+        const local = /^http:\\/\\/localhost[:\\/]/.test(url);
+        return '<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);">'
+          + '<div class="seg-pref-row" style="margin-bottom:10px;">'
+          + '<div><div class="set-tgl-lbl">' + OAUTH_MARKS[p.k] + p.label + '</div>'
+          + '<p style="' + st.hintStyle + '">' + status + '</p></div>'
+          + '<button type="button" class="set-tgl' + (on ? ' on' : '') + '" id="auth-tgl-' + p.k + '"'
+          + ((canOn || on) ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+          + ' role="switch" aria-checked="' + (on ? 'true' : 'false') + '" data-action="auth-toggle" data-method="' + p.k + '"><span class="set-tgl-knob"></span></button>'
+          + '</div>'
+          + '<label style="' + st.labelStyle + '">Callback URL to give ' + p.label + '</label>'
+          + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px;">'
+          + '<code id="auth-' + p.k + '-cb" style="flex:1;min-width:0;font-family:var(--mono);font-size:0.74rem;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:8px 10px;word-break:break-all;color:var(--text-primary);">' + escHtml(url || 'Unknown until this server has a public address') + '</code>'
+          + (url ? '<button type="button" class="kanban-btn" data-action="auth-oauth-copy" data-provider="' + p.k + '">Copy</button>' : '')
+          + '</div>'
+          + '<p style="' + st.hintStyle + ';margin-bottom:10px;">' + escHtml(p.where) + ' <a href="' + p.link + '" target="_blank" rel="noopener" style="color:var(--accent-hover);">Open</a>'
+          + (local ? ' This is a local address: it only works when signing in on this computer.' : '') + '</p>'
+          + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">'
+          + '<div><label style="' + st.labelStyle + '">Client ID</label><input id="auth-' + p.k + '-id" value="' + escHtml(o.clientId || '') + '" autocomplete="off" spellcheck="false" style="' + st.monoStyle + '"></div>'
+          + '<div><label style="' + st.labelStyle + '">Client secret</label><input id="auth-' + p.k + '-secret" type="password" autocomplete="new-password" placeholder="' + (o.secretSet ? 'Saved (leave blank to keep)' : 'Not set') + '" style="' + st.monoStyle + '"></div>'
+          + '</div>'
+          + '<div style="margin-bottom:10px;"><label style="' + st.labelStyle + '">' + p.acct + '</label><input id="auth-' + p.k + '-allowed" value="' + escHtml(o.allowed || '') + '" placeholder="' + p.ph + '" autocomplete="off" spellcheck="false" style="' + st.inputStyle + '"></div>'
+          + '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+          + '<button type="button" data-action="auth-oauth-save" data-provider="' + p.k + '" style="' + st.btnStyle + '">Save</button>'
+          + '<button type="button" class="kanban-btn" data-action="auth-oauth-test" data-provider="' + p.k + '"' + (o.configured ? '' : ' disabled style="opacity:0.5;"') + '>Test</button>'
+          + (o.configured ? '<button type="button" class="kanban-btn" data-action="auth-oauth-clear" data-provider="' + p.k + '">Remove</button>' : '')
+          + '<span id="auth-' + p.k + '-test" style="font-size:0.78rem;color:var(--text-muted);align-self:center;"></span>'
+          + '</div>'
+          + '</div>';
+      }).join('');
+    }
+    async function authOAuthTest(provider) {
+      const out = $('#auth-' + provider + '-test');
+      const label = provider === 'google' ? 'Google' : 'GitHub';
+      // Opened now, while the click still counts as one, then pointed at the
+      // provider once the server has made the URL. The desktop app cannot
+      // open a blank window, so it opens the real one afterwards instead.
+      const desktop = isDesktopApp();
+      let win = null;
+      if (!desktop) { try { win = window.open('about:blank', '_blank'); } catch (e) { win = null; } }
+      let d = null;
+      try {
+        const r = await apiFetch('/api/auth/oauth/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider, purpose: 'test', origin: location.origin, desktop }) });
+        d = await r.json();
+      } catch (ex) { d = { ok: false, error: ex.message }; }
+      if (!d || !d.ok) { if (win) win.close(); toast((d && d.error) || 'Could not start the test', 'error'); return; }
+      if (win && !win.closed) { try { win.opener = null; win.location.href = d.url; } catch (e) { window.open(d.url, '_blank', 'noopener'); } }
+      else window.open(d.url, '_blank', 'noopener');
+      if (out) out.textContent = 'Waiting for the sign-in in the other window\\u2026';
+      const until = Date.now() + 10 * 60 * 1000;
+      const tick = async () => {
+        if (Date.now() > until) { if (out) out.textContent = 'The test timed out.'; return; }
+        let p = null;
+        try { p = await (await apiFetch('/api/auth/oauth/poll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pollId: d.pollId }) })).json(); } catch (e) { p = null; }
+        if (p && p.status === 'done') { toast(label + ' sign-in works (' + (p.account || '') + ')', 'success'); renderSettings(); return; }
+        if (p && p.status === 'failed') {
+          const msg = (p.error || 'The test did not pass') + (p.account ? ' (signed in as ' + p.account + ')' : '');
+          if (out) out.textContent = msg;
+          toast(msg, 'error');
+          return;
+        }
+        if (p && p.status === 'expired') { if (out) out.textContent = 'The test expired.'; return; }
+        setTimeout(tick, 1500);
+      };
+      setTimeout(tick, 1500);
+    }
+
     async function renderSettings() {
       const panel = $('#settings-panel');
       panel.innerHTML = '<div class="info-section"><h4>Loading...</h4></div>';
@@ -13493,17 +15598,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
             + '<p style="' + hintStyle + '">Read last, so it wins where it disagrees with the box above.</p></div>')
           : ('<p style="' + hintStyle + ';margin-bottom:14px;">Open a project to give it its own additional prompt.</p>');
 
-        let html = '<div class="info-section"><h4>Settings</h4>'
+        let html = '<div class="info-section"><h4>Configuration</h4>'
           + '<p style="color:var(--text-muted);font-size:0.78rem;margin-bottom:16px;">Changes are saved to <code style="font-family:var(--mono);font-size:0.72rem;background:var(--bg-tertiary);padding:2px 5px;border-radius:3px;">' + escHtml(data.envPath) + '</code></p>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Bot Token <span style="color:var(--red);">*</span></label>'
-          + '<input type="password" id="set-bot-token" style="' + monoStyle + '" value="' + escHtml(s.TELEGRAM_BOT_TOKEN || '') + '" placeholder="123456:ABC-DEF..." />'
-          + '<p style="' + hintStyle + '">From @BotFather. Used for login + notifications.</p></div>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Allowed Username <span style="color:var(--red);">*</span></label>'
-          + '<input type="text" id="set-username" style="' + inputStyle + '" value="' + escHtml(s.ALLOWED_USERNAME || '') + '" placeholder="your-telegram-username" />'
-          + '<p style="' + hintStyle + '">Only this Telegram user can access Crundi.</p></div>'
-          + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Telegram Chat ID</label>'
-          + '<input type="text" id="set-chat-id" style="' + monoStyle + '" value="' + escHtml(data.chatId || '') + '" placeholder="(auto-set when you send /start to the bot)" />'
-          + '<p style="' + hintStyle + '">Required for notifications. Auto-discovered when you send /start, or enter manually.</p></div>'
           + '<div style="' + fieldStyle + '"><label style="' + labelStyle + '">Projects Directory</label>'
           + '<input type="text" id="set-projects-dir" style="' + monoStyle + '" value="' + escHtml(s.PROJECTS_DIR || '') + '" placeholder="C:\\\\Projects" />'
           + '<p style="' + hintStyle + '">Single mode: subfolders auto-discovered. Leave empty for multi mode (add projects individually).</p></div>'
@@ -13537,22 +15633,33 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<button data-action="sysprompt-save" style="' + btnStyle + '">Save prompts</button>'
           + '<span id="sysprompt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
           + '</div></div>'
+          // The voice assistant on this device: the push-to-talk shortcut (kept
+          // per device), and where its server settings live.
+          + (window.CrundiVoice ? '<div class="info-section"><h4>Voice assistant</h4>'
+          + '<p style="' + hintStyle + ';margin-bottom:12px;">Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Cru, the voice assistant. What follows applies to Cru on every device.</p>'
+          + '<div id="voice-server-set" style="margin-bottom:12px;"></div>'
+          + '<h5 style="margin:18px 0 8px;font-size:0.82rem;color:var(--text-primary);">On this device</h5>'
+          + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+          + '<span style="' + labelStyle + ';margin:0;">Push to talk</span>'
+          + '<kbd id="voice-ptt-key" style="font-family:var(--mono);font-size:0.8rem;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-tertiary);">' + escHtml(window.CrundiVoice.shortcutLabel()) + '</kbd>'
+          + '<button data-action="voice-ptt-change" style="' + btnStyle + '">Change</button>'
+          + '<button data-action="voice-ptt-reset" style="' + btnStyle + '">Reset</button>'
+          + '<span id="voice-ptt-status" style="font-size:0.78rem;color:var(--text-muted);"></span>'
+          + '</div>'
+          // The PC client only (D40): its wake word, while the PC is on charge.
+          // A client that can train it (vwCan) listens for "Hey Cru" only once
+          // trained from the owner's voice; an older one still listens for
+          // "Hey Crundi" and has no training.
+          + (window.api && window.api.voiceWake ? '<div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+            + '<label style="' + labelStyle + ';margin:0;display:flex;gap:8px;align-items:center;cursor:pointer;"><input type="checkbox" id="voice-wake-on" data-action="voice-wake-toggle"' + (vwCan() ? ' disabled' : '') + '> Listen for “' + (vwCan() ? 'Hey Cru' : 'Hey Crundi') + '” while plugged in</label>'
+            + '<span id="voice-wake-status" style="font-size:0.78rem;color:var(--text-muted);"></span></div>'
+            + (vwCan() ? '<p id="voice-wake-hint" style="' + hintStyle + '">Train Hey Cru first: say it five times so it knows your voice.</p>'
+              + '<div id="voice-wake-train"></div>' : '') : '')
+          + '</div>' : '')
           // Sign-in methods. At least one must stay on; the server refuses to
           // disable the last, so these toggles can fail and say why.
           + '<div class="info-section"><h4>Sign-in</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:14px;">Two ways in. Either is enough, both can be on, and one must always stay on.</p>'
-
-          + '<div class="seg-pref-row" style="margin-bottom:14px;">'
-          + '<div><div class="set-tgl-lbl">Telegram</div>'
-          + '<p style="' + hintStyle + '">'
-          + (authCfg.telegramAvailable
-              ? 'Sign in with the Telegram account set above.'
-              : 'Needs a bot token and username above before it can be turned on.')
-          + '</p></div>'
-          + '<button type="button" class="set-tgl' + (authCfg.telegram ? ' on' : '') + '" id="auth-tgl-telegram"'
-          + (authCfg.telegramAvailable ? '' : ' disabled style="opacity:0.4;cursor:default;"')
-          + ' role="switch" aria-checked="' + (authCfg.telegram ? 'true' : 'false') + '" data-action="auth-toggle" data-method="telegram"><span class="set-tgl-knob"></span></button>'
-          + '</div>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Any one of these is enough, any mix can be on, and one must always stay on.</p>'
 
           + '<div class="seg-pref-row" style="margin-bottom:10px;">'
           + '<div><div class="set-tgl-lbl">Password + authenticator code</div>'
@@ -13575,12 +15682,14 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<p style="' + hintStyle + ';margin-bottom:8px;">Shown once. Without it you will not be able to sign in with the new password.</p>'
           + '<code id="auth-enrol-secret" style="display:block;font-family:var(--mono);font-size:0.95rem;letter-spacing:0.12em;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:9px;text-align:center;word-break:break-all;"></code>'
           + '</div>'
+          + authTelegramSettings(authCfg, { inputStyle, monoStyle, labelStyle, hintStyle, btnStyle })
+          + authOAuthSettings(authCfg, { inputStyle, monoStyle, labelStyle, hintStyle, btnStyle })
           + '</div>'
 
           // Where notifications go. Unlike sign-in, having none on is a valid
           // choice — it means "do not tell me".
           + '<div class="info-section"><h4>Notification Channels</h4>'
-          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which of these get told. Turn on as many as you like, or none at all. The table below decides <em>which events</em> are worth telling you about.</p>'
+          + '<p style="' + hintStyle + ';margin-bottom:14px;">Which of these get told. Everything for you lands in the Crundi inbox first, and it is always on; turn on as many of the others as you like, or none at all. The table below decides <em>which events</em> are worth telling you about.</p>'
           + chans.map(c =>
               '<div class="seg-pref-row" style="margin-bottom:12px;">'
               + '<div><div class="set-tgl-lbl">' + escHtml(c.label) + '</div>'
@@ -13591,10 +15700,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
                     + (c.available ? '<button type="button" data-action="push-test" style="' + btnSubtleStyle + '">Send a test</button>' : '')
                     + '</div>'
                   : '')
+              + (c.id === 'telegram' && c.telegram ? telegramChannelExtra(c.telegram, { monoStyle, hintStyle, btnSubtleStyle }) : '')
               + '</div>'
               + '<button type="button" class="set-tgl' + (c.enabled ? ' on' : '') + '"'
               + ' id="chan-tgl-' + escHtml(c.id) + '"'
-              + (c.available ? '' : ' disabled style="opacity:0.4;cursor:default;"')
+              + (c.alwaysOn ? ' disabled title="Always on" style="opacity:0.75;cursor:default;"' : c.available ? '' : ' disabled style="opacity:0.4;cursor:default;"')
               + ' role="switch" aria-checked="' + (c.enabled ? 'true' : 'false')
               + '" data-action="channel-toggle" data-id="' + escHtml(c.id) + '"><span class="set-tgl-knob"></span></button>'
               + '</div>').join('')
@@ -13698,7 +15808,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '<div id="sess-body" style="display:none"></div>'
           + '</div>';
 
+        vwStyles = { btn: btnStyle, subtle: btnSubtleStyle, hint: hintStyle, label: labelStyle };
         panel.innerHTML = html;
+        organizeSettings(panel);
+        showVoiceWake();
+        showVoiceServer();
         const pushHost = document.getElementById('phone-push');
         if (pushHost && window.CrundiPhone) window.CrundiPhone.renderPush(pushHost, { apiFetch, toast });
         renderSkillsSection();
@@ -13727,27 +15841,22 @@ export function getWebappHtml(botUsername, appVersion = '') {
     }
 
     async function saveSettings() {
+      // The Telegram bot is not here any more: it is set under Sign-in, and
+      // where it sends under Notification Channels. Keys left out are kept.
       const settings = {
-        TELEGRAM_BOT_TOKEN: ($('#set-bot-token') || {}).value || '',
-        ALLOWED_USERNAME: ($('#set-username') || {}).value || '',
         PROJECTS_DIR: ($('#set-projects-dir') || {}).value || '',
         WEB_PORT: ($('#set-web-port') || {}).value || '',
         CLOUDFLARE_TUNNEL_TOKEN: ($('#set-tunnel-token') || {}).value || '',
         CLOUDFLARE_TUNNEL_URL: ($('#set-tunnel-url') || {}).value || '',
         DATA_DIR: ($('#set-data-dir') || {}).value || '',
       };
-      if (!settings.TELEGRAM_BOT_TOKEN || !settings.ALLOWED_USERNAME) {
-        toast('Bot Token and Allowed Username are required', 'error');
-        return;
-      }
-      const chatId = ($('#set-chat-id') || {}).value || '';
       const status = $('#settings-status');
       if (status) status.textContent = 'Saving...';
       try {
         const r = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ settings, chatId }),
+          body: JSON.stringify({ settings }),
         });
         const data = await r.json();
         if (data.ok) {
@@ -13813,8 +15922,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       // File-editor window arrange controls (tile / grid / cascade)
       const arrEl = e.target.closest('[data-fe-arrange]');
       if (arrEl) { feArrange(arrEl.dataset.feArrange); return; }
-      // Tab clicks (tolerate clicks on the icon/label inside the button)
-      const tabEl = e.target.closest('[data-tab]');
+      // Tab clicks (tolerate clicks on the icon/label inside the button). Only
+      // the project's own tab buttons: the browser drawer's tabs carry
+      // data-tab too, and taking one for a project tab blanked the page.
+      const tabEl = e.target.closest('.tab-btn[data-tab]');
       if (tabEl) { switchTab(tabEl.dataset.tab); return; }
       const actionEl = e.target.closest('[data-action]');
       const action = e.target.dataset.action || actionEl?.dataset.action;
@@ -13977,11 +16088,81 @@ export function getWebappHtml(botUsername, appVersion = '') {
               if (!dd.ok) { toast(dd.error || 'Could not change that', 'error'); return; }
               btn.classList.toggle('on', on);
               btn.setAttribute('aria-checked', on ? 'true' : 'false');
-              toast(method === 'telegram'
-                ? (on ? 'Telegram sign-in enabled' : 'Telegram sign-in disabled')
-                : (on ? 'Password sign-in enabled' : 'Password sign-in disabled'), 'success');
+              const mlabel = { telegram: 'Telegram', password: 'Password', google: 'Google', github: 'GitHub' }[method] || method;
+              toast(mlabel + ' sign-in ' + (on ? 'enabled' : 'disabled'), 'success');
             })
             .catch(err => toast('Could not change that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-oauth-save': {
+          const k = d.provider;
+          const sec = $('#auth-' + k + '-secret');
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'oauth-save', provider: k, clientId: $('#auth-' + k + '-id').value, clientSecret: sec ? sec.value : '', allowed: $('#auth-' + k + '-allowed').value }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not save that', 'error'); return; }
+              toast('Saved. Run Test to check it works.', 'success');
+              renderSettings();
+            })
+            .catch(err => toast('Could not save that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-oauth-test': {
+          authOAuthTest(d.provider);
+          break;
+        }
+        case 'auth-oauth-clear': {
+          const k = d.provider;
+          if (!confirm('Remove ' + (k === 'google' ? 'Google' : 'GitHub') + ' sign-in and forget its client ID and secret?')) break;
+          apiFetch('/api/auth/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'oauth-clear', provider: k }) })
+            .then(r => r.json())
+            .then(dd => { if (!dd.ok) { toast(dd.error || 'Could not remove that', 'error'); return; } toast('Removed', 'success'); renderSettings(); })
+            .catch(err => toast('Could not remove that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-oauth-copy': {
+          const el = $('#auth-' + d.provider + '-cb');
+          const txt = el ? el.textContent : '';
+          if (navigator.clipboard && txt) navigator.clipboard.writeText(txt).then(() => toast('Copied', 'success'), () => toast('Select it and copy it by hand', 'error'));
+          break;
+        }
+        case 'auth-telegram-save': {
+          const tok = $('#auth-telegram-token');
+          apiFetch('/api/auth/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'telegram-save', botToken: tok ? tok.value : '', allowedUsername: ($('#auth-telegram-user') || {}).value || '' }),
+          })
+            .then(r => r.json())
+            .then(dd => {
+              if (!dd.ok) { toast(dd.error || 'Could not save that', 'error'); return; }
+              toast(dd.restartRequired ? 'Saved. Restart required for the bot to use it.' : 'Saved', 'success');
+              renderSettings();
+            })
+            .catch(err => toast('Could not save that: ' + err.message, 'error'));
+          break;
+        }
+        case 'auth-telegram-clear': {
+          if (!confirm('Remove the Telegram bot? Telegram sign-in and Telegram notifications both stop after the next restart.')) break;
+          apiFetch('/api/auth/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'telegram-clear' }) })
+            .then(r => r.json())
+            .then(dd => { if (!dd.ok) { toast(dd.error || 'Could not remove that', 'error'); return; } toast('Removed. Restart required.', 'success'); renderSettings(); })
+            .catch(err => toast('Could not remove that: ' + err.message, 'error'));
+          break;
+        }
+        case 'goto-signin-telegram': {
+          gotoSigninTelegram();
+          break;
+        }
+        case 'telegram-chat-save': {
+          apiFetch('/api/notify/telegram/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatId: ($('#tg-chat-id') || {}).value || '' }) })
+            .then(r => r.json())
+            .then(dd => { if (!dd.ok) { toast(dd.error || 'Could not save that', 'error'); return; } toast('Chat ID saved', 'success'); renderSettings(); })
+            .catch(err => toast('Could not save that: ' + err.message, 'error'));
           break;
         }
         case 'auth-set-password': {
@@ -14111,6 +16292,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'notes-font': { setNotesFont(parseInt(d.dir, 10) || 0); break; }
         case 'notes-switch': { if (d.wbid) notesSwitchPage(d.wbid); break; }
         case 'pane-resume': { if (d.tid) resumePane(d.tid, actionEl, d.mode || 'resume'); break; }
+        case 'pane-peek': { const c = actionEl.closest('.parked-cell'); if (c) c.classList.add('pk-peek'); break; }
+        case 'pane-unpeek': { const c = actionEl.closest('.parked-cell'); if (c) c.classList.remove('pk-peek'); break; }
         case 'pane-pin': { if (actionEl) togglePanePin(actionEl); break; }
         case 'pane-full': {
           e.stopPropagation();
@@ -14148,6 +16331,30 @@ export function getWebappHtml(botUsername, appVersion = '') {
         case 'term-close': if (d.tid) { e.stopPropagation(); tryCloseTerminal(e.target.closest('.term-close'), d.tid); } break;
         case 'term-close-pending': if (d.lid) { e.stopPropagation(); closePendingCell(d.lid); } break;
         case 'term-rename': if (d.tid) renameTerminal(d.tid); break;
+        case 'voice-ptt-change': {
+          const st = document.getElementById('voice-ptt-status');
+          if (st) st.textContent = 'Press the keys you want (Esc to cancel)';
+          window.CrundiVoice && window.CrundiVoice.recordShortcut((lbl) => {
+            if (lbl) { const k = document.getElementById('voice-ptt-key'); if (k) k.textContent = lbl; }
+            if (st) st.textContent = lbl ? 'Saved on this device' : '';
+          });
+          break;
+        }
+        case 'voice-wake-toggle': {
+          const on = !!(document.getElementById('voice-wake-on') || {}).checked;
+          if (window.api && window.api.voiceWake) window.api.voiceWake.set(on).then(() => showVoiceWake());
+          break;
+        }
+        case 'voice-wake-train': vwStart(); break;
+        case 'voice-wake-rec': if (vwt.rec) vwFinish(); else vwRecord(); break;
+        case 'voice-wake-cancel': vwt.msg = ''; vwStop(); break;
+        case 'voice-wake-forget': vwForget(); break;
+        case 'voice-ptt-reset': {
+          const lbl = window.CrundiVoice && window.CrundiVoice.resetShortcut();
+          const k = document.getElementById('voice-ptt-key'); if (k && lbl) k.textContent = lbl;
+          break;
+        }
+        case 'voice-open': if (!(window.CrundiVoice && window.CrundiVoice.attach && voiceAttached)) openVoice(); break;
         case 'approvals-toggle': {
           e.stopPropagation();
           const p = document.getElementById('appr-panel');
@@ -14163,6 +16370,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
           break;
         }
         case 'appr-yes': if (d.id) decideApproval(d.id, true); break;
+        case 'appr-cru': if (d.id) vsPost('/api/voice/ask', { id: d.id, choice: d.choice || 'no' }).then(function (r) { if (!(r && r.ok)) toast((r && r.error) || 'That could not be applied', 'error'); }).catch(function () { toast('That could not be applied', 'error'); }); break;
+        case 'appr-kid': if (d.id) vsPost('/api/voice/kid/ask', { id: d.id, choice: d.choice || 'no' }).then(function (r) { if (!(r && r.ok)) toast((r && r.error) || 'That could not be applied', 'error'); }).catch(function () { toast('That could not be applied', 'error'); }); break;
         case 'appr-yes-session': if (d.id) decideApproval(d.id, true, 'session'); break;
         case 'appr-yes-always': if (d.id) decideApproval(d.id, true, 'always'); break;
         case 'appr-no': if (d.id) decideApproval(d.id, false); break;
@@ -16847,7 +19056,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (it.link.type === 'node') {
         switchTab('mindmap');
         await loadMindmap();
-        setTimeout(() => flashMindmapNode(it.link.nodeId), 250);
+        // Jumping from a picture to the idea it hangs on: open the idea, where that picture is.
+        setTimeout(() => flashMindmapNode(it.link.nodeId, true), 250);
       } else {
         switchTab('kanban');
         await loadKanban();
@@ -16869,10 +19079,22 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const card = panel.querySelector('.kanban-card[data-task="' + link.taskId + '"]');
       flashEl(card);
     }
-    function flashMindmapNode(nodeId) {
-      const el = $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + nodeId + '"]');
-      if (el) { flashEl(el); openMmDetail(nodeId); }
-      else { openMmDetail(nodeId); }
+    /** Scroll to an idea, select and flash it; its note opens only when [open] says so. Folded ideas above it unfold. */
+    function flashMindmapNode(nodeId, open) {
+      const find = () => $('#mindmap-panel') && $('#mindmap-panel').querySelector('.mm-node[data-node="' + nodeId + '"]');
+      let el = find();
+      if (!el) {
+        let unfolded = false;
+        let n = mindmapNodes.find(x => x.id === nodeId);
+        while (n && n.parentId) {
+          if (mindmapCollapsed[n.parentId]) { mindmapCollapsed[n.parentId] = false; unfolded = true; }
+          n = mindmapNodes.find(x => x.id === n.parentId);
+        }
+        if (unfolded) { renderMindmap(); el = find(); }
+      }
+      if (el) { mmSelect(nodeId, false); flashEl(el); }
+      if (open) openMmDetail(nodeId);
+      return el || null;
     }
 
     // ── One delegated handler for all media UI (tab, panel, modal, cards) ──
@@ -17577,6 +19799,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (err) {
         history.replaceState(null, '', location.pathname);
         toast('Login failed: ' + err, 'error');
+        window.__crundiAuthErr = err;   // shown under the Google / GitHub buttons too
       }
       return false;
     }
@@ -17632,7 +19855,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (APP_LOGIN && !token) {
         if (!takeAppLogin(await askAppLogin('get'))) takeAppLogin(await askAppLogin('renew'));
       }
-      if (consumeRedirectToken() && await checkAuth()) {
+      if (((await consumeOAuthHandoff()) || (await consumeTelegramResult()) || consumeRedirectToken()) && await checkAuth()) {
         showApp(); connectSSE(); checkImport();
         return;
       }

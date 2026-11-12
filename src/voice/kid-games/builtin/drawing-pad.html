@@ -1,0 +1,35 @@
+<div class="k-row" id="pal" style="margin-bottom:10px"></div>
+<canvas id="c" width="800" height="560" style="display:block;width:100%;max-width:800px;margin:0 auto;aspect-ratio:10/7;background:#fff;border-radius:22px;touch-action:none"></canvas>
+<script>
+(function () {
+  var c = document.getElementById('c'), g = c.getContext('2d'), col = '#ef4444', size = 18, down = false, last = null, strokes = 0;
+  var pal = document.getElementById('pal');
+  kid.COLOURS.concat([{ name: 'black', hex: '#111827' }]).forEach(function (k) {
+    var b = kid.el('button', 'k-btn', ''); b.style.background = k.hex; b.style.minWidth = b.style.minHeight = '64px'; b.style.borderRadius = '50%';
+    b.onclick = function () { col = k.hex; [].forEach.call(pal.children, function (x) { x.style.outline = ''; }); b.style.outline = '5px solid #fff'; kid.say(k.name + '!'); };
+    pal.appendChild(b);
+  });
+  var clear = kid.el('button', 'k-btn', 'New'); clear.style.background = '#64748b'; clear.style.fontSize = '24px'; clear.style.minHeight = '64px';
+  clear.onclick = function () { g.clearRect(0, 0, 800, 560); kid.event('tap', 'new page'); kid.say('A fresh page!'); };
+  pal.appendChild(clear);
+  // Show Cru: the drawing (on white) goes to Cru, who looks at it and says what it sees.
+  var show = kid.el('button', 'k-btn', '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>');
+  show.style.background = '#6366f1'; show.style.minHeight = show.style.minWidth = '64px'; show.title = 'Show Cru';
+  var shownAt = 0;
+  show.onclick = function () {
+    if (Date.now() - shownAt < 4000) return;
+    shownAt = Date.now();
+    var o = document.createElement('canvas'); o.width = 400; o.height = 280;
+    var og = o.getContext('2d'); og.fillStyle = '#fff'; og.fillRect(0, 0, 400, 280); og.drawImage(c, 0, 0, 400, 280);
+    kid.sound && kid.sound('tap');
+    kid.share(o.toDataURL('image/png'), 'The child\'s drawing');
+  };
+  pal.appendChild(show);
+  pal.children[0].style.outline = '5px solid #fff';
+  function pos(e) { var r = c.getBoundingClientRect(); return [(e.clientX - r.left) * 800 / r.width, (e.clientY - r.top) * 560 / r.height]; }
+  c.onpointerdown = function (e) { down = true; last = pos(e); c.setPointerCapture(e.pointerId); g.fillStyle = col; g.beginPath(); g.arc(last[0], last[1], size / 2, 0, 7); g.fill(); };
+  c.onpointermove = function (e) { if (!down) return; var p = pos(e); g.strokeStyle = col; g.lineWidth = size; g.lineCap = 'round'; g.lineJoin = 'round'; g.beginPath(); g.moveTo(last[0], last[1]); g.lineTo(p[0], p[1]); g.stroke(); last = p; };
+  c.onpointerup = c.onpointercancel = function () { if (down) { strokes++; if (strokes % 15 === 0) kid.say(kid.pick(['What a lovely picture!', 'Beautiful colours!', 'You are a great artist!'])); if (strokes % 8 === 0) kid.event('tap', 'draw'); if (strokes === 6) kid.say('When you are done, tap the camera to show me!'); } down = false; };
+  kid.say('Pick a colour and draw anything you like!');
+})();
+</script>

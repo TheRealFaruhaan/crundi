@@ -529,7 +529,21 @@
     }
   }
   window.addEventListener('offline', function () { if (connShowing) connLine('on'); });
-  window.addEventListener('online', function () { if (connShowing) connLine('on'); });
+  window.addEventListener('online', function () { if (connShowing) connLine('on'); netChanged(); });
+  // The phone changed network (Wi-Fi to mobile data and back): the open
+  // socket was made on the old one and is dead without knowing it, so what
+  // the reply still had to say, and the turn's end, would go nowhere. A new
+  // socket now (it replays the conversation on open).
+  var netChangedAt = 0;
+  function netChanged() {
+    if (stopped || Date.now() - netChangedAt < 1000) return;
+    netChangedAt = Date.now(); retry = 0; connect();
+  }
+  // Only a change of kind (wifi, cellular): the event also fires when just its speed estimate moves.
+  try {
+    var nc = navigator.connection, ncType = nc && nc.type;
+    if (nc && nc.addEventListener) nc.addEventListener('change', function () { if (nc.type !== ncType) { ncType = nc.type; netChanged(); } });
+  } catch (e) { /* not offered */ }
 
   function connect() {
     clearTimeout(retryTimer);
@@ -551,6 +565,7 @@
       heardAt = Date.now();
       if (msg.type === 'ui-history') {
         view.applyHistory(msg.session);
+        streamingNow = !!(msg.session && (msg.session.messages || []).slice(-6).some(function (m) { return m && m.streaming; }));
         // The Manager of a factory run: a way to its live graph.
         var fb = $('cp-factory');
         // Not when shown inside the live graph itself (?in=graph): it is right there.
@@ -564,6 +579,9 @@
       if (msg.type === 'ui-event') {
         view.applyEvent(msg.event);
         var ev = msg.event || {};
+        if (ev.type === 'delta') streamingNow = true;
+        else if (ev.type === 'patch' && ev.patch && ev.patch.streaming === false) streamingNow = false;
+        else if (ev.type === 'state' && ev.state !== 'working') streamingNow = false;
         if (ev.type === 'state' && typeof ev.state === 'string') { meta.state = ev.state; paintHead(); }
         if (ev.type === 'exit') { meta.state = ''; paintHead(); }
         // A new title arrives as a change to the session's details; the list
@@ -601,7 +619,9 @@
   // conversation on open): the server's own list, on the event stream, has
   // said for a while that the chat is not working; or nothing at all has come
   // for it in two minutes (a long tool run is quiet too, so not sooner).
-  var heardAt = Date.now(), serverState = null, disagreeSince = 0, caughtUpAt = 0;
+  // A third: a reply being written (text comes several times a second) has
+  // had nothing more for fifteen seconds; it stopped mid-word.
+  var heardAt = Date.now(), serverState = null, disagreeSince = 0, caughtUpAt = 0, streamingNow = false;
   function catchUp() { caughtUpAt = Date.now(); disagreeSince = 0; heardAt = caughtUpAt; retry = 0; connect(); }
   setInterval(function () {
     if (stopped || !view || document.visibilityState !== 'visible') return;
@@ -611,7 +631,9 @@
       if (!disagreeSince) disagreeSince = now;
       if (now - disagreeSince >= 8000 && (!caughtUpAt || now - caughtUpAt >= 30000)) { catchUp(); return; }
     } else disagreeSince = 0;
-    if (now - Math.max(heardAt, caughtUpAt) >= 120000) catchUp();
+    var quiet = now - Math.max(heardAt, caughtUpAt);
+    if (streamingNow && quiet >= (!caughtUpAt || heardAt > caughtUpAt ? 15000 : 30000)) { catchUp(); return; }
+    if (quiet >= 120000) catchUp();
   }, 2000);
 
   // ─── Buttons ───
@@ -718,6 +740,8 @@
         project: meta.project,
         apiFetch: apiFetch,
         apiUpload: apiUpload,
+        // For the voice input's own socket (/api/voice/listen).
+        token: function () { return token; },
         toast: toast,
         wsSend: wsSend,
         toolExtra: toolExtra,

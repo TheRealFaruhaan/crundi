@@ -146,6 +146,161 @@ export const CAPABILITIES = Object.freeze([
   // label), and an agent `progress` (its model-written status line).
   'chat-recap',
   'chat-aside',
+  // The owner's voice assistant (specs/voice-assistant.md): /api/voice/*
+  // (settings, turn with optional locked, warm, speak, voices, transcribe
+  // with optional ?locked=1) and the WebSocket /api/voice/listen, which takes
+  // optional ?encoding=linear16&sample_rate=N for raw PCM (a browser's WebM
+  // needs neither). An older server has none of it, so a client offers voice
+  // (and its spend in the usage view) only when this is listed.
+  'voice-assistant',
+  // Speech streamed as it is made: POST /api/voice/speak?stream=1 answers
+  // raw 16-bit mono PCM (audio/L16, rate in X-Sample-Rate) piped from
+  // Deepgram. An older server ignores ?stream and sends a whole mp3, so a
+  // client streams only when this is listed.
+  'voice-tts-stream',
+  // GET /api/voice/account-usage: what Anthropic reports the whole account
+  // has cost this billing month (an Admin API key in Voice assistant
+  // settings); clients show it only when this is listed.
+  'voice-account-usage',
+  // The voice assistant's memory (Phase 2): GET/POST /api/voice/memory (the
+  // notebook's files), GET /api/voice/memory/search?q=.
+  'voice-memory',
+  // Phase 6: a turn's reply may carry phoneActions, e.g.
+  // { type: 'background-listening', minutes } (0 = off), for the phone to do.
+  'voice-phone-actions',
+  // Talking over Cru: /api/voice/listen's 'ready' carries echoFilter: true,
+  // and the stream takes { type: 'saying', text } / { type: 'said' } so audio
+  // keeps flowing while Cru speaks with its own words dropped. A client
+  // checks the 'ready' flag (an older server just pauses, as before).
+  'voice-barge-in',
+  // GET /api/voice/cues (the "one moment, Sir" clips for the voice in use)
+  // and GET /api/voice/cues/clip. An older server has neither: a client
+  // plays no cue, or says it with the device's own voice.
+  'voice-cues',
+  // POST /api/voice/cancel stops the turn in progress (the owner's "scratch
+  // that" or the x); a cancelled /api/voice/turn answers { ok: false,
+  // cancelled: true, acted } with 200. The listen socket sends
+  // { type: 'discard' } for a phrase the owner cancelled, and takes
+  // { type: 'discard' } to drop what it has heard so far.
+  'voice-cancel',
+  // Cru's volume (settings.volume, set_volume) and the voice screen's Compact button (POST /api/voice/compact).
+  'voice-volume',
+  'voice-compact',
+  // GET /api/voice/history: Cru's turns as chat messages (the voice screen's chat view).
+  'voice-history',
+  // Keyboard mode: /api/voice/listen?keyboard=1 carries reports and settings only (no mic, no Deepgram).
+  'voice-keyboard',
+  // Cru's unread reports: GET /api/voice/unread, POST /api/voice/seen, SSE 'voice-unread' {count}; pushes carry cruChat (open Cru's chat view), not the inbox.
+  'voice-unread',
+  // Cru's own tickers and triggers (src/voice/wakeups.js): GET /api/voice/wakeups,
+  // POST /api/voice/wakeups { id, action: 'enable'|'disable'|'delete' }, SSE 'voice-wakeups'.
+  'voice-wakeups',
+  // The owner's voice (src/voice/speaker.js): GET /api/voice/speaker,
+  // POST /api/voice/speaker/enrol (one phrase, audio/wav or audio/L16;rate=N;
+  // ?restart=1 starts over), POST /api/voice/speaker/finish, DELETE
+  // /api/voice/speaker; settings ownerOnly. Utterances on /api/voice/listen
+  // carry owner (true/false/null); /api/voice/turn takes typed:true for typed
+  // text and answers with speaker { owner, unrecognised }.
+  'voice-speaker',
+  // Short replies (voice/speaker.js ENROL_WORDS): GET /api/voice/speaker adds
+  // shortWords { trained, words, clips, at }, wordPrompts, wordRepeats,
+  // minWords; POST /api/voice/speaker/words?word=N[&restart=1] (one reply said
+  // a few times, audio as for enrol), POST /api/voice/speaker/words/finish,
+  // DELETE /api/voice/speaker/words. With them taught, a bare "yes" is checked.
+  'voice-short-words',
+  // Cru's live screen (voice/screen.js): GET /api/voice/screen -> { screen },
+  // POST /api/voice/screen/close, POST /api/voice/screen/event { text } (a
+  // tap on Cru's page, answered as a turn), and { type: 'screen', screen } on
+  // /api/voice/listen whenever it changes (screen null: gone).
+  'voice-screen',
+  // Cru's UI over the whole content area of the Cru screen: `full: true` on
+  // the screen (show_screen / update_screen full), the bottom bar kept; the
+  // top bar's button POSTs /api/voice/screen/normal (back to the normal view,
+  // the content kept as the panel). Older clients just show the panel.
+  'voice-screen-full',
+  // POST /api/voice/screen/full: the live panel's expand button puts it back
+  // over the whole content area (not in kid mode, not a video).
+  'voice-screen-expand',
+  // Cru's replies carry what it showed in them (voice/reply-media.js):
+  // media: [...] on /api/voice/turn, on a 'report', and on each turn of
+  // /api/voice/history: pictures, video, audio, files to download, frames
+  // (stored under the chat-media session 'cru-voice') and cards (blocks).
+  // Older clients just show the words.
+  'voice-reply-media',
+  // Cru moves the owner's Crundi page (voice/ui-nav.js, desktop and web
+  // only): POST /api/voice/turn takes page (the page's own id); the move is
+  // the owner SSE event 'cru-ui' { id, page, project?, tab?, chat?, card?,
+  // node?, file?, widget?, highlight?, note? }, acted on by that page alone,
+  // which answers POST /api/voice/ui/ack { id, ok, error?, found?, where? }.
+  'voice-ui-nav',
+  // POST /api/voice/turn takes requestId: the same id sent again (a resend
+  // after a dropped connection) gets that turn's result, never a second run;
+  // a turn that finds Cru busy waits for it (up to 3 min) instead of
+  // answering "Still answering the last request".
+  'voice-turn-id',
+  // Cru says things during its turn, each as its own message (voice/say-now.js):
+  // POST /api/voice/turn takes sayNow: true (with its requestId); each line comes
+  // as { type: 'update', requestId, id, speak } on /api/voice/listen, and the
+  // screen whose request it is answers POST /api/voice/update/ack { id, how:
+  // 'said' | 'shown' | 'cut' } once said. The turn's answer carries them all
+  // (updates: [{ id, speak, at }]); /api/voice/history turns carry updates:
+  // [text]. Reports send them as reports before the report. A screen without
+  // sayNow gets them in front of the reply's words.
+  'voice-say-now',
+  // Cru's background-listening order (set_background_listening, confirmed on
+  // any client) also goes to every open app as the owner SSE event
+  // 'voice-phone-action' { type: 'background-listening', minutes } (0: off).
+  'voice-phone-action-push',
+  // Cru's thinking effort: settings effort (low|medium|high|xhigh|max,
+  // default low), efforts, and models[].efforts / apiDefaultEffort; set with
+  // POST /api/voice/settings { effort }, or by voice (set_voice_setting effort).
+  'voice-effort',
+  // Kid mode (voice/kid.js): GET /api/voice/kid, POST /api/voice/kid/pin
+  // { pin } | { remove }, /kid/start { by }, /kid/exit { pin } (429 locked),
+  // /kid/play (game events -> { reflex }), GET /kid/progress?range=&area=,
+  // POST /kid/progress/reset, GET|POST /kid/games, GET|DELETE /kid/friend;
+  // settings kidMode, kidVoice, kidSpeechRate, kidReflex, kidChattiness,
+  // kidPauseMs, kidGames; SSE 'voice-kid', socket { type: 'kid' },
+  // { type: 'game-command' }, desktop { type: 'kid-mode' }.
+  'voice-kid',
+  // Cru on its own (voice/autonomy.js, jobs.js): settings away { on, allow }
+  // and awayClasses [{ id, label }]; /api/approvals items with source 'cru'
+  // (choices yes/no) answered by POST /api/voice/ask { id, choice };
+  // POST /api/voice/away/stop { everything } (stop everything);
+  // GET /api/voice/jobs -> { jobs }, SSE 'voice-jobs'; push tag 'cru-ask'.
+  // The heartbeat is a built-in ticker (id 'heartbeat', builtin: true) in
+  // /api/voice/wakeups: it can be switched off, not deleted.
+  'voice-away',
+  // Files for Cru (voice/attachments.js): POST /api/voice/attach { name, type,
+  // data (base64), preview? (base64 JPEG of a picture, up to 4 MB), from } ->
+  // { ok, id, name, kind, size }; GET /api/voice/attach?id=&preview=1 (the file);
+  // POST /api/voice/turn takes attachments: [id] and refs: [text] (a dragged
+  // card or file: "[Kanban Task ID: …]"); the history shows them as lines
+  // "[The owner attached: "name" (kind, …), id att_…]" / "[The owner dropped in: …]".
+  'voice-attach',
+  // The PC lock (one PIN with kid mode): GET /api/lock -> { on, mode
+  // ('visible'|'full'), since, by, pinSet }; POST /api/lock/start { mode, by };
+  // POST /api/lock/unlock { pin } (429 locked out); POST /api/lock/end (from
+  // the owner's other device, no PIN); SSE 'pc-lock', desktop { type: 'pc-lock', lock }.
+  'pc-lock',
+  // Voice mode in a chat: the composer's mic sends "voice input: …" (spoken
+  // through /api/voice/listen), and the chat's 'voice-say' events (Claude's
+  // speak tool) are said aloud by the screen in voice mode, through
+  // /api/voice/speak. Shown only when the voice assistant has a Deepgram key.
+  'chat-voice',
+  // Crundi's own inbox (contract at the top of src/inbox-store.js):
+  // GET /api/inbox?limit=&before=, POST /api/inbox/read { ids } | { all },
+  // POST /api/inbox/delete { ids } | { allRead }, GET /api/inbox/media/<id>/<name>,
+  // and the SSE event 'inbox' { type, unread, item? }. Pushes may carry
+  // inboxId. An older server has none of it, so a client shows the inbox
+  // only when this is listed.
+  'inbox',
+  // Homepool, the shared exit (docs/homepool.md): GET/POST /api/homepool for
+  // the owner's screen (networks, nodes, access keys, requests from chats),
+  // POST action 'self-node' for this device's own node key, and the node
+  // socket /api/homepool/node. A client shows Settings › Homepool and "Share
+  // this connection" only when this is listed.
+  'homepool',
 ]);
 
 const KINDS = new Set(Object.keys(MIN_CLIENT));
@@ -260,7 +415,7 @@ export function isGated(path) {
  * collaborator's phrase, first-run setup. Renewing, signing out and asking
  * which methods exist are not sign-ins and are not listed.
  */
-const SIGN_IN_PATHS = new Set(['/api/auth', '/auth/telegram/callback', '/api/auth/webapp', '/api/auth/password', '/api/auth/collab', '/api/auth/setup']);
+const SIGN_IN_PATHS = new Set(['/api/auth', '/auth/telegram/callback', '/api/auth/webapp', '/api/auth/password', '/api/auth/collab', '/api/auth/setup', '/api/auth/oauth/start', '/api/auth/oauth/exchange', '/api/auth/oauth/poll']);
 
 /**
  * Is this the phone app trying to sign in some way other than pairing?

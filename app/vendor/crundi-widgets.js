@@ -195,6 +195,9 @@
       '.wg-zoom-bar{position:absolute;top:max(10px,env(safe-area-inset-top));right:10px;display:flex;align-items:center;gap:2px;padding:3px;border-radius:999px;background:rgba(20,20,28,.88);border:1px solid var(--border);cursor:default}',
       '.wg-zoom-btn{appearance:none;border:0;background:transparent;color:var(--text-primary);min-width:34px;height:34px;padding:0 8px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font:600 12px var(--mono,monospace);cursor:pointer}',
       '.wg-zoom-btn:hover{background:rgba(255,255,255,.1)}.wg-zoom-btn .ic{width:16px;height:16px}.wg-zoom-btn.pct{min-width:52px;color:var(--text-secondary)}',
+      '.wg-zoom-count{position:absolute;top:max(14px,env(safe-area-inset-top));left:14px;padding:4px 10px;border-radius:999px;background:rgba(20,20,28,.88);border:1px solid var(--border);color:var(--text-secondary);font:600 12px var(--mono,monospace);cursor:default}',
+      '.wg-zoom-side{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:1px solid var(--border);background:rgba(20,20,28,.78);color:var(--text-primary);display:flex;align-items:center;justify-content:center;cursor:pointer}.wg-zoom-side:hover{background:rgba(40,40,56,.95)}.wg-zoom-side .ic{width:20px;height:20px}.wg-zoom-side[hidden]{display:none}',
+      '.wg-zoom-side.prev{left:12px}.wg-zoom-side.next{right:12px}@media (pointer:coarse){.wg-zoom-side{width:38px;height:38px;opacity:.75}}',
       '.wg-zoom img{max-width:100%;max-height:100%;border-radius:8px;border:1px solid var(--border);cursor:zoom-in;transform-origin:center center;will-change:transform;-webkit-user-drag:none}',
       // chips
       // In the desktop app the whole top bar is a window-drag area, and a drag
@@ -802,13 +805,24 @@
     while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
     return (i ? v.toFixed(v < 10 ? 1 : 0) : String(v)) + ' ' + u[i];
   }
+  /** The pictures shown with [from] (the same chat), in order, that have loaded: what the gallery moves through. */
+  function galleryOf(from) {
+    if (!from || !from.closest) return [];
+    var root = from.closest('.cc-root') || from.closest('.wg-media') || from.parentNode;
+    if (!root) return [];
+    return Array.prototype.filter.call(root.querySelectorAll('.wg-mbox img'), function (i) { return !!(i.getAttribute('src') || i.getAttribute('data-wg-url')); });
+  }
   /**
    * An image, opened large. Zoom: ctrl + wheel (a trackpad pinch arrives as
    * that too), two fingers, a double click or double tap, or the buttons.
-   * Move: drag. Close: the backdrop, the cross, or Escape.
+   * Move: drag. Close: the backdrop, the cross, or Escape. Opened from a
+   * picture in a chat ([from]), it is a gallery of that chat's pictures:
+   * swipe left or right (when not zoomed in), the side buttons, or the arrow keys.
    */
-  function zoomImage(src, alt) {
+  function zoomImage(src, alt, from) {
     var z = el('div', 'wg-zoom'); var big = document.createElement('img'); big.src = src; big.alt = alt || ''; big.draggable = false;
+    var list = galleryOf(from), at = Math.max(0, list.indexOf(from));
+    if (list.length < 2) list = [];
     var bar = el('div', 'wg-zoom-bar');
     var mk = function (label, title, body) { var b = el('button', 'wg-zoom-btn'); b.type = 'button'; b.title = title; b.setAttribute('aria-label', title); if (body) b.innerHTML = svg(body); else b.textContent = label; bar.appendChild(b); return b; };
     var bOut = mk('', 'Zoom out', '<line x1="5" y1="12" x2="19" y2="12"/>');
@@ -817,6 +831,32 @@
     var bClose = mk('', 'Close', '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>');
     z.appendChild(big); z.appendChild(bar);
     var s = 1, x = 0, y = 0, MAX = 8;
+    // The gallery: a counter, and a button on each side.
+    var count0 = null, bPrev = null, bNext = null;
+    if (list.length) {
+      count0 = el('div', 'wg-zoom-count'); z.appendChild(count0);
+      bPrev = el('button', 'wg-zoom-side prev'); bPrev.type = 'button'; bPrev.title = 'Previous picture'; bPrev.setAttribute('aria-label', 'Previous picture'); bPrev.innerHTML = svg('<polyline points="15 18 9 12 15 6"/>');
+      bNext = el('button', 'wg-zoom-side next'); bNext.type = 'button'; bNext.title = 'Next picture'; bNext.setAttribute('aria-label', 'Next picture'); bNext.innerHTML = svg('<polyline points="9 18 15 12 9 6"/>');
+      z.appendChild(bPrev); z.appendChild(bNext);
+    }
+    var showAt = function (n) {
+      if (!list.length) return;
+      at = (n + list.length) % list.length;
+      var p = list[at]; big.alt = p.alt || '';
+      if (p.getAttribute('src')) big.src = p.getAttribute('src');
+      else {
+        // Not loaded where it sits (far up the chat): fetched for the viewer, and let go when it moves on.
+        var want = at;
+        big.removeAttribute('src');
+        cfg.apiFetch(p.getAttribute('data-wg-url')).then(function (r) { return r.ok ? r.blob() : null; }).then(function (b) {
+          if (!b || want !== at || !z.isConnected) return;
+          if (big._wgUrl) URL.revokeObjectURL(big._wgUrl);
+          big._wgUrl = URL.createObjectURL(b); big.src = big._wgUrl;
+        }).catch(function () { /* shown as nothing; the next picture still works */ });
+      }
+      s = 1; x = 0; y = 0; apply(false);
+      count0.textContent = (at + 1) + ' / ' + list.length;
+    };
     var apply = function (smooth) {
       // Never dragged further than the picture's own edge, plus a little.
       var mx = Math.max(0, (big.offsetWidth * s - z.clientWidth) / 2) + (s > 1 ? 40 : 0);
@@ -826,6 +866,7 @@
       big.style.transform = 'translate(' + x + 'px,' + y + 'px) scale(' + s + ')';
       z.classList.toggle('zoomed', s > 1.001);
       bPct.textContent = Math.round(s * 100) + '%';
+      if (bPrev) { bPrev.hidden = s > 1.001; bNext.hidden = s > 1.001; }
     };
     /** Zoom to ns, keeping the point (cx, cy) of the screen under the same spot of the picture. */
     var zoomAt = function (cx, cy, ns, smooth) {
@@ -836,12 +877,14 @@
       apply(smooth);
     };
     var centre = function () { var r = z.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
-    var close = function () { document.removeEventListener('keydown', onKey, true); z.remove(); };
+    var close = function () { document.removeEventListener('keydown', onKey, true); if (big._wgUrl) URL.revokeObjectURL(big._wgUrl); z.remove(); };
     var onKey = function (e) {
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); }
       else if (e.key === '+' || e.key === '=') { var c = centre(); zoomAt(c[0], c[1], s * 1.4, true); }
       else if (e.key === '-') { var c2 = centre(); zoomAt(c2[0], c2[1], s / 1.4, true); }
       else if (e.key === '0') { zoomAt(0, 0, 1, true); }
+      else if (list.length && e.key === 'ArrowLeft') { e.preventDefault(); e.stopPropagation(); showAt(at - 1); }
+      else if (list.length && e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); showAt(at + 1); }
     };
     document.addEventListener('keydown', onKey, true);
     bar.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
@@ -849,6 +892,11 @@
     bIn.addEventListener('click', function () { var c = centre(); zoomAt(c[0], c[1], s * 1.4, true); });
     bPct.addEventListener('click', function () { zoomAt(0, 0, 1, true); });
     bClose.addEventListener('click', close);
+    if (bPrev) {
+      [bPrev, bNext].forEach(function (b) { b.addEventListener('pointerdown', function (e) { e.stopPropagation(); }); });
+      bPrev.addEventListener('click', function (e) { e.stopPropagation(); showAt(at - 1); });
+      bNext.addEventListener('click', function (e) { e.stopPropagation(); showAt(at + 1); });
+    }
 
     z.addEventListener('wheel', function (e) {
       e.preventDefault();                       // or ctrl + wheel zooms the whole page
@@ -856,12 +904,12 @@
       else if (s > 1) { x -= e.deltaX; y -= e.deltaY; apply(); }
     }, { passive: false });
 
-    var pts = {}, count = 0, moved = 0, downOn = null, lastTap = 0, pinch = null;
+    var pts = {}, count = 0, moved = 0, downOn = null, lastTap = 0, pinch = null, swipe = null;
     var two = function () { var k = Object.keys(pts), a = pts[k[0]], b = pts[k[1]]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
     z.addEventListener('pointerdown', function (e) {
       if (e.button) return;
       e.preventDefault();
-      if (!count) { moved = 0; downOn = e.target; }
+      if (!count) { moved = 0; downOn = e.target; swipe = { x: e.clientX, y: e.clientY }; }
       pts[e.pointerId] = { x: e.clientX, y: e.clientY }; count = Object.keys(pts).length;
       try { z.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
       if (count === 2) { pinch = two(); moved = 99; }
@@ -886,6 +934,11 @@
       delete pts[e.pointerId]; count = Object.keys(pts).length; pinch = null;
       if (count) return;
       z.classList.remove('grabbing');
+      // Not zoomed in: a sideways swipe moves through the gallery.
+      if (list.length && swipe && s <= 1.001 && e.type !== 'pointercancel') {
+        var sx = e.clientX - swipe.x, sy = e.clientY - swipe.y;
+        if (Math.abs(sx) > 50 && Math.abs(sx) > Math.abs(sy) * 1.5) { showAt(at + (sx < 0 ? 1 : -1)); return; }
+      }
       if (e.type === 'pointercancel' || moved > 6) return;
       // A plain tap or click.
       if (downOn !== big) { close(); return; }
@@ -897,6 +950,7 @@
     z._close = close;   // the back button closes it through this
     document.body.appendChild(z);
     apply();
+    if (list.length) count0.textContent = (at + 1) + ' / ' + list.length;
   }
 
   /** The box an image or video sits in: the right shape from the first frame. */
@@ -920,6 +974,8 @@
     var img = document.createElement('img');
     img.alt = it.caption || it.filename || 'Image';
     img.decoding = 'async';
+    // Where it comes from, so the gallery can show it even while it is scrolled out of reach (not loaded).
+    if (it.url) img.setAttribute('data-wg-url', it.url);
     box.appendChild(img);
     var objUrl = '';
     watchMedia(box, function () {
@@ -938,7 +994,8 @@
       img.removeAttribute('src');
       if (objUrl) { URL.revokeObjectURL(objUrl); objUrl = ''; }
     });
-    img.addEventListener('click', function () { if (img.src) zoomImage(img.src, img.alt); });
+    // A gallery (the owner, 11 Nov): the chat's other pictures are a swipe or an arrow away.
+    img.addEventListener('click', function () { if (img.src) zoomImage(img.src, img.alt, img); });
     return box;
   }
 
@@ -1634,13 +1691,22 @@
     if (!/show_(image|video|audio|file|embed)$/.test(String(entry.name || ''))) return null;
     var r = null;
     try { r = JSON.parse(String(entry.result || '')); } catch (e) { return null; }
+    // 1.19.19 answered show_image with { images: [{ name, caption }] }.
+    var raw = r && Array.isArray(r.items) ? r.items
+      : ((r && Array.isArray(r.images)) ? r.images.map(function (i) { var c = {}; for (var k in i) c[k] = i[k]; c.kind = 'image'; return c; }) : []);
+    return itemsMedia(sessionId, raw, String((r && r.caption) || '').slice(0, 300));
+  }
+
+  /**
+   * Stored items (as chat-media.js answers them) as the node mediaNode draws,
+   * or null when none is usable. Shared by a chat's show_* calls and by
+   * what Cru showed in its replies (replyMedia).
+   */
+  function itemsMedia(sessionId, raw, caption) {
     var sid = encodeURIComponent(sessionId);
     var NAME = /^[0-9a-f]{16}([.]poster)?[.](png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$/;
     var EMBED = /^[0-9a-f]{16}[.]embed$/;
     var num = function (v, max) { var n = Number(v); return isFinite(n) && n > 0 && n <= max ? n : 0; };
-    // 1.19.19 answered show_image with { images: [{ name, caption }] }.
-    var raw = r && Array.isArray(r.items) ? r.items
-      : ((r && Array.isArray(r.images)) ? r.images.map(function (i) { var c = {}; for (var k in i) c[k] = i[k]; c.kind = 'image'; return c; }) : []);
     var items = [];
     raw.forEach(function (i) {
       if (!i) return;
@@ -1674,7 +1740,24 @@
         items.push(base);
       }
     });
-    return items.length ? mediaNode(items, String((r && r.caption) || '').slice(0, 300)) : null;
+    return items.length ? mediaNode(items, caption || '') : null;
+  }
+
+  /**
+   * What Cru showed in one of its replies (voice/reply-media.js), drawn as a
+   * chat's: the items of its media session [sessionId] ('cru-voice'). Cards
+   * are Cru's own and are not drawn here.
+   */
+  function replyMedia(sessionId, items) {
+    var list = (Array.isArray(items) ? items : []).filter(function (i) { return i && i.kind !== 'card'; });
+    // As Android's MediaGroup: pictures, clips and frames share one row; sounds and files are stacked after it.
+    var visual = list.filter(function (i) { return i.kind === 'image' || i.kind === 'video' || i.kind === 'embed'; });
+    var rest = list.filter(function (i) { return visual.indexOf(i) < 0; });
+    var nodes = [itemsMedia(sessionId, visual, '')].concat(rest.map(function (i) { return itemsMedia(sessionId, [i], ''); })).filter(Boolean);
+    if (nodes.length < 2) return nodes[0] || null;
+    var box = el('div', 'wg-reply-media'); box.style.cssText = 'display:flex;flex-direction:column;gap:8px;min-width:0';
+    nodes.forEach(function (n) { box.appendChild(n); });
+    return box;
   }
 
   window.CrundiWidgets = {
@@ -1701,6 +1784,7 @@
     shotsNode: shotsNode,
     mediaNode: mediaNode,
     toolMedia: toolMedia,
+    replyMedia: replyMedia,
     setChipHost: function (n) { chipEl = n; renderChips(); },
     mountPicker: mountPicker,
     mountTab: mountTab,

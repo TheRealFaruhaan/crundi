@@ -1,0 +1,15 @@
+<div class="wna a-vwt">
+  <div class="dots"><i class="t1"></i><i class="t2"></i><i class="t3"></i><i class="t4"></i><i class="t5"></i></div>
+  <div class="mic"></div>
+  <div class="say">Say "Hey Cru" five times</div>
+  <style>
+    .a-vwt{position:absolute;inset:0;font-family:system-ui,sans-serif}
+    .a-vwt .dots{position:absolute;left:0;right:0;top:60px;display:flex;justify-content:center;gap:14px}
+    .a-vwt .dots i{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--border);animation:avwt-d 10s ease infinite}
+    .a-vwt .t2{animation-delay:1.2s!important}.a-vwt .t3{animation-delay:2.4s!important}.a-vwt .t4{animation-delay:3.6s!important}.a-vwt .t5{animation-delay:4.8s!important}
+    .a-vwt .mic{position:absolute;left:270px;top:110px;width:100px;height:100px;border-radius:50%;background:var(--accent-dim);border:1.5px solid var(--accent);box-shadow:0 0 0 10px rgba(56,189,248,.08),0 0 0 22px rgba(56,189,248,.05);animation:avwt-m 1.2s ease-in-out infinite}
+    .a-vwt .say{position:absolute;left:0;right:0;top:250px;text-align:center;font-size:17px;color:var(--text-secondary)}
+    @keyframes avwt-d{0%,8%{background:transparent;border-color:var(--border)}14%,90%{background:var(--accent);border-color:var(--accent)}100%{background:transparent}}
+    @keyframes avwt-m{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}
+  </style>
+</div>

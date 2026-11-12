@@ -1,0 +1,32 @@
+<div class="k-title" id="ask"></div>
+<div class="k-row" id="pic" style="min-height:10px"></div>
+<div class="k-grid" id="grid" style="margin-top:12px"></div>
+<div class="k-stars" id="stars"></div>
+<script>
+(function () {
+  var qs = Array.isArray(kid.opts.questions) ? kid.opts.questions.filter(function (q) { return q && q.q && Array.isArray(q.choices) && q.choices.length >= 2; }).slice(0, 20) : [];
+  if (!qs.length) qs = [{ q: 'Which one is red?', choices: ['apple', 'leaf', 'moon'], answer: 0 }, { q: 'Which one can swim?', choices: ['fish', 'kite', 'hat'], answer: 0 }, { q: 'Which one shines in the sky?', choices: ['drum', 'sun', 'jar'], answer: 1 }];
+  var i = 0, stars = 0;
+  function next() {
+    if (i >= qs.length) { document.getElementById('ask').textContent = 'Quiz done!'; document.getElementById('grid').innerHTML = ''; document.getElementById('pic').innerHTML = ''; kid.done('quiz: ' + stars + ' of ' + qs.length + ' right'); return; }
+    var q = qs[i], ans = Math.max(0, Math.min(q.choices.length - 1, Number(q.answer) || 0));
+    document.getElementById('ask').textContent = String(q.q).slice(0, 120);
+    document.getElementById('pic').innerHTML = q.pic && kid.WORDS && Object.keys(kid.WORDS).some(function (k) { return kid.WORDS[k] === q.pic; }) ? kid.pic(q.pic, 110) : '';
+    kid.say(String(q.q).slice(0, 200));
+    var g = document.getElementById('grid'); g.innerHTML = '';
+    q.choices.slice(0, 4).forEach(function (c, k) {
+      var label = String(c).slice(0, 40), known = Object.keys(kid.WORDS).some(function (x) { return kid.WORDS[x] === label.toLowerCase(); });
+      var b = kid.el('button', 'k-btn k-pop', known ? kid.pic(label, 90) + '<div style="font-size:20px;margin-top:4px">' + label.replace(/</g, '&lt;') + '</div>' : label.replace(/</g, '&lt;'));
+      b.style.background = kid.BRIGHT[k % 8]; b.style.flexDirection = 'column'; b.style.fontSize = known ? '20px' : '30px'; b.style.minWidth = '150px';
+      b.onclick = function () {
+        kid.tell('answered "' + label + '" to "' + q.q + '" (' + (k === ans ? 'right' : 'not right') + ')');
+        if (k === ans) { stars++; kid.correct(label); i++; setTimeout(next, 1800); }
+        else { b.classList.add('k-shake', 'k-dim'); kid.wrong(label); }
+      };
+      g.appendChild(b);
+    });
+    document.getElementById('stars').textContent = 'Question ' + (i + 1) + ' of ' + qs.length;
+  }
+  next();
+})();
+</script>

@@ -1,0 +1,40 @@
+<div class="k-title" id="ask">How many?</div>
+<div class="k-grid" id="things" style="min-height:200px;max-width:600px;margin:0 auto"></div>
+<div class="k-row" id="nums" style="margin-top:16px"></div>
+<div class="k-stars" id="stars"></div>
+<script>
+(function () {
+  var max = Math.max(3, Math.min(10, Number(kid.opts.max) || [0, 3, 5, 7, 10, 10][kid.level('counting')])), rounds = Math.max(1, Math.min(20, Number(kid.opts.rounds) || 6));
+  var round = 0, stars = 0, NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  function next() {
+    if (round >= rounds) { document.getElementById('ask').textContent = 'Great counting!'; document.getElementById('things').innerHTML = ''; document.getElementById('nums').innerHTML = ''; kid.done('counted ' + stars + ' of ' + rounds + ' right, up to ' + max); return; }
+    round++;
+    var n = 1 + Math.floor(Math.random() * max), w = kid.pick(['apple', 'ball', 'fish', 'sun', 'egg', 'kite', 'pear', 'orange']);
+    var th = document.getElementById('things'); th.innerHTML = '';
+    var counted = 0;
+    for (var i = 0; i < n; i++) {
+      (function () {
+        var d = kid.el('div', 'k-pop', kid.pic(w, n > 6 ? 70 : 90)); d.style.cursor = 'pointer'; d.style.transition = 'transform .2s';
+        d.onclick = function () { if (d.dataset.c) return; d.dataset.c = 1; counted++; d.style.transform = 'scale(.8)'; d.style.opacity = '.55'; kid.say(NUM[counted]); kid.event('tap', 'count ' + counted); };
+        th.appendChild(d);
+      })();
+    }
+    kid.ask('counting', n);
+    document.getElementById('ask').textContent = 'How many ' + w + 's?';
+    kid.say('Let us count! How many ' + w + 's can you see? Tap each one to count.');
+    var nb = document.getElementById('nums'); nb.innerHTML = '';
+    for (var k = 1; k <= max; k++) {
+      (function (k) {
+        var b = kid.el('button', 'k-btn', String(k)); b.style.background = kid.BRIGHT[k % 8]; b.style.fontSize = '40px'; b.style.minWidth = b.style.minHeight = '78px';
+        b.onclick = function () {
+          if (k === n) { stars++; kid.correct(String(n), 'Yes! ' + NUM[n] + ' ' + w + (n > 1 ? 's' : '') + '!'); setTimeout(next, 1700); }
+          else { b.classList.add('k-shake'); setTimeout(function () { b.classList.remove('k-shake'); }, 400); kid.wrong(String(k), 'Let us count them together. Tap each one!'); }
+        };
+        nb.appendChild(b);
+      })(k);
+    }
+    document.getElementById('stars').textContent = 'Round ' + round + ' of ' + rounds;
+  }
+  next();
+})();
+</script>

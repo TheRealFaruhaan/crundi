@@ -9,14 +9,15 @@
  * It's the primary user interface — Telegram is only for login + notifications.
  */
 
+import { Readable } from 'node:stream';
 import { createServer } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import * as tls from './tls.js';
-import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { createReadStream, readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, renameSync, appendFileSync } from 'node:fs';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { basename, join, dirname, resolve, isAbsolute, sep } from 'node:path';
-import { homedir } from 'node:os';
+import { homedir, tmpdir, cpus as osCpus } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { getWebappHtml } from './webapp-html.js';
@@ -32,7 +33,6 @@ import {
 import * as dockerMod from './docker.js';
 import { runWithSecret, isValidEnvName } from './secret-run.js';
 import * as claudeUpdate from './claude-update.js';
-import { decodeImage } from './image-input.js';
 import { registerService, listRegisteredForProject, updateRegistered, getRegistered, checkRegistration, listAllRegistered } from './service-registry.js';
 import { startTunnel, startNamedTunnel, stopTunnel, getTunnelInfo, getAllTunnelInfo, waitForTunnel } from './tunnel.js';
 import * as browserMod from './browser.js';
@@ -64,8 +64,11 @@ import { createPanes, MIN_TIMEOUT_MIN, DEFAULT_TIMEOUT_MIN } from './panes.js';
 import { createLimitWarmer } from './limit-warmer.js';
 import { createLimitResetNotifier } from './limit-reset-notify.js';
 import * as authConfig from './auth-config.js';
+import { createOAuth, PROVIDERS as OAUTH_PROVIDERS, NOT_ALLOWED as OAUTH_NOT_ALLOWED, callbackPath as oauthCallbackPath, oauthPage } from './auth-oauth.js';
 import telegramify from 'telegramify-markdown';
 import * as channels from './notify-channels.js';
+import { createInboxStore } from './inbox-store.js';
+import { createOwnerMessenger, INBOX_EVENTS } from './inbox-send.js';
 import { createBackups } from './backup.js';
 import * as skills from './skills-store.js';
 import * as skillsGithub from './skills-github.js';
@@ -92,8 +95,46 @@ import { publicBaseUrl } from './public-url.js';
 import { cleanAutoTitle, cleanLongTitle } from './chat-title.js';
 import { createAutoTitler, titlesFromChat, isDefaultTitle } from './chat-autotitle.js';
 import * as chatMedia from './chat-media.js';
+import * as voiceSettings from './voice/settings.js';
+import { makeTools as makeVoiceTools, pendingLine as cruPendingLine, answerable as cruAnswerable } from './voice/tools.js';
+import { createVoiceAgent } from './voice/agent.js';
+import { makeActionTools as makeVoiceActionTools, createPending as createVoicePending } from './voice/actions.js';
+import { makeCruBrowserTools } from './voice/browser-tools.js';
+import { gateBrowserCall } from './browser-gate.js';
+import { createVoiceMemory } from './voice/memory.js';
+import { voiceDevice } from './voice/device.js';
+import { createCliVoiceAgent } from './voice/agent-cli.js';
+import { createVoiceBrain } from './voice/brain.js';
+import { transcribe as voiceTranscribe } from './voice/stt.js';
+import { accountUsage as voiceAccountUsage } from './voice/account-usage.js';
+import { relay as voiceRelay } from './voice/stream.js';
+import { fixNames } from './voice/names.js';
+import { makeAdminTools as makeVoiceAdminTools } from './voice/admin.js';
+import { selfNote as voiceSelfNote, capCheck as voiceCapCheck, ROUTINES_DIR as VOICE_ROUTINES_DIR } from './voice/reflect.js';
+import { createSpeaker as createVoiceSpeaker, decodeAudio as decodeVoiceAudio, turnPolicy as voiceTurnPolicy, ADMIN_FOLLOW_MS as VOICE_ADMIN_FOLLOW_MS, trimSilence as trimVoiceSilence } from './voice/speaker.js';
+import { createWakeupStore, createWakeupEngine, wakeupToolDefs, listProcessNames, cpuPercent, memoryPercent, KINDS as WAKE_KINDS } from './voice/wakeups.js';
+import { createTurnGate } from './voice/turns.js';
+import { createOwnerAsks, createDailyLog, createChatReads, HEARTBEAT_ID, HEARTBEAT_FILE, HEARTBEAT_DEFAULT, checklistEmpty } from './voice/autonomy.js';
+import { createJobStore, jobToolDefs } from './voice/jobs.js';
+import { createAttachmentStore, attachmentToolDefs, attachmentLine, passOn as passOnAttachments, MAX_FILE as CRU_ATTACH_MAX } from './voice/attachments.js';
+import { listVoices as voiceListVoices, speak as voiceSpeak, speakStream as voiceSpeakStream } from './voice/tts.js';
+import { listCues as voiceListCues, readClip as voiceReadClip } from './voice/cues.js';
+import { createScreen as createVoiceScreen, makeScreenTools as makeVoiceScreenTools, screenDoc as voiceScreenDoc } from './voice/screen.js';
+import { makeReplyMediaTools } from './voice/reply-media.js';
+import { makeUiNavTools, createUiTarget, createAcks as createUiAcks } from './voice/ui-nav.js';
+import { makeSayNowTools, createSayAcks, foldUpdates } from './voice/say-now.js';
+import { parseYoutubeLine, parseInstructions as parseKidInstructions, KID_FILE, KID_SYSTEM_PROMPT, kidIntro, kidContextLine, makeKidTools, makeStartKidTool, createPinGuard, hashPin, PIN_RE as KID_PIN_RE, createHandleResolver, createGameWatch, splitMood, GAME_EVENTS, createParentNotes, createParentAsks } from './voice/kid.js';
+import { createSkills as createKidSkills, TAXONOMY as KID_TAXONOMY } from './voice/kid-skills.js';
+import { createGameLibrary } from './voice/kid-games.js';
+import { createWorkshop as createKidWorkshop } from './voice/kid-workshop.js';
+import { createReflex as createKidReflex, clipKey as kidClipKey } from './voice/kid-reflex.js';
+import { speakKidStream, MOOD_EXPRESSIVITY } from './voice/tts.js';
+import { startHostWatch as startDeepgramHostWatch } from './voice/deepgram-host.js';
+import { checkInSandbox } from './widget-render.js';
 import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.js';
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
+import { createTunnelEndpoint } from './net-tunnel.js';
+import { createHomepoolService, HOMEPOOL_MCP_TOOLS } from './homepool-service.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -293,6 +334,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   let server = null;
   let acmeServer = null;
   let wss = null;
+  let voiceWss = null;
   let port = null;
   // Plain-HTTP loopback listener, only when TLS has taken the main port.
   let localPort = null;
@@ -403,10 +445,26 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     return tok;
   }
 
+  /** A link that opens one inbox item on the page, or '' with no public URL. */
+  function inboxWebLink(id) {
+    const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
+    return base ? `${base}/#inbox/${encodeURIComponent(id)}` : '';
+  }
+
   function getFileShareUrl(token) {
     const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
     if (!base) return null;
     return base + '/dl/' + token;
+  }
+
+  // ─── Google / GitHub sign-in (src/auth-oauth.js) ───
+  // The callback URL has to match what the owner registered at the provider
+  // exactly, so it is built from the one public address, never from whatever
+  // host a request happened to arrive on.
+  const oauth = createOAuth();
+  function oauthCallbackUrl(provider) {
+    const base = publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port });
+    return base ? base + oauthCallbackPath(provider) : '';
   }
 
   let htmlCache = getWebappHtml(config.botUsername || '', APP_VERSION);
@@ -924,6 +982,52 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // ─── SSE ───
   const sseClients = new Set();
 
+  // ─── Crundi's inbox (inbox-store.js, inbox-send.js) ───
+  // Everything meant for the owner lands here first; copies then go to the
+  // notification channels that are on. Created this early because factory
+  // runs and schedules can have something to say as soon as they load.
+  // convOf: a chat's Claude conversation id, so a chat that comes back under
+  // a new id (resumed) keeps its inbox thread. claudeUi is a parameter of
+  // createWebApp, so it is there already.
+  const inbox = createInboxStore({ dataDir: config.dataDir, convOf: (id) => { try { return (claudeUi && claudeUi.meta && claudeUi.meta(id) || {}).sessionId || ''; } catch { return ''; } } });
+  const ownerMsg = createOwnerMessenger({
+    inbox,
+    deliver: (text, meta, opts) => channels.deliver(text, meta, opts),
+    labelOf: (id) => (channels.list().find((c) => c.id === id) || {}).label || id,
+  });
+  // Live to the owner's pages (never a collaborator's): the unread count, and
+  // the new item when one was added.
+  inbox.onChange((ev) => { try { broadcastOwnerSSE('inbox', ev); } catch { /* not up yet */ } });
+  setTimeout(() => { inbox.sweepOrphans(); inbox.prune(); }, 20_000).unref?.();
+  setInterval(() => inbox.prune(), 6 * 60 * 60 * 1000).unref?.();
+
+  // ─── Homepool: the shared exit (src/homepool-service.js, docs/homepool.md) ───
+  // Built here, started with the server (startHomepool), so a test that only
+  // builds the app binds nothing. Requests from chats reach the owner like an
+  // alert: in the inbox and on his channels.
+  const homepool = createHomepoolService({
+    dataDir: config.dataDir,
+    basePort: Number(process.env.HOMEPOOL_PORT) || (process.env.CRUNDI_DEV === '1' ? 7580 : 7480),
+    publicUrl: () => publicBaseUrl({ tunnelUrl, tlsMode: config.tlsMode, tlsDomain: config.tlsDomain, tlsPort: config.tlsPort, port }) || '',
+    notifyOwner: ({ title, body, chat }) => ownerMsg.tell({ kind: 'alert', title, text: body, chat: chat && chat.id ? chat : null, meta: { url: '/#homepool' } }),
+    chatInfo: (id) => {
+      const t = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
+      return t ? { title: t.longTitle || t.title || '', project: t.project || '' } : null;
+    },
+  });
+  // With an Electron parent (the all-in-one install), its browser drawer's
+  // homepool tabs reach us over IPC rather than a websocket.
+  browserMod.setParentTunnel(createTunnelEndpoint({
+    send: (b) => browserMod.sendParentTunnel(b),
+    connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: process.env.CRUNDI_DEVICE_ID || '' }),
+  }));
+  let homepoolStarted = false;
+  function startHomepool() {
+    if (homepoolStarted || process.env.HOMEPOOL_DISABLE === '1') return;
+    homepoolStarted = true;
+    try { homepool.start(); } catch (err) { console.warn('[homepool] could not start:', err.message); }
+  }
+
   // ─── Claude agent state (driven by Claude Code lifecycle hooks) ───
   // terminalId → 'working' | 'needs-input' | 'idle'. Liveness is the source of
   // truth: states are reconciled against the live terminal list (see
@@ -1163,7 +1267,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return Date.now() - lastPresentAt >= ms;
     },
     broadcast: (st) => broadcastOwnerSSE('backup', st),
-    notify: (text) => { channels.deliver(text).catch(() => {}); },
+    notify: (text) => { ownerMsg.post({ kind: 'system', text, channelText: text, meta: { tag: 'backup' } }); },
   });
   backups.start();
 
@@ -1234,6 +1338,19 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // ─── Notification channels ───
   // Registered once here; notifyEvent fans out to whichever are enabled. Adding
   // another channel later means writing its send(), not touching call sites.
+  //
+  // Crundi's own inbox comes first and is always on. It is passive: things
+  // are written to it (ownerMsg) BEFORE the copies go out, so deliver()
+  // skips it. Listed so Settings shows where everything lands.
+  channels.register({
+    id: 'inbox',
+    label: 'Crundi inbox',
+    alwaysOn: true,
+    passive: true,
+    enabledByDefault: true,
+    describe: () => 'Always on. Messages, pictures, files, questions and reports for you are kept here first, in the envelope at the bottom of the projects list.',
+    send: async () => true,
+  });
   channels.register({
     id: 'telegram',
     label: 'Telegram',
@@ -1246,6 +1363,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: async (text, meta = {}) => {
       const chatId = getChatId ? getChatId() : null;
       if (!chatId || !bot) return false;
+      // Where the inbox copy can be opened, for the things Claude sent.
+      const link = meta.inboxLink && meta.inboxId ? inboxWebLink(meta.inboxId) : '';
+      if (link) text = `${text}\n\nIn Crundi's inbox: ${link}`;
+      // A picture or a file kept in the inbox goes as itself; past Telegram's
+      // bot limit (50 MB) or when the upload fails, as a line with a link.
+      const att = meta.attach;
+      if (att && (att.path || att.shareUrl)) {
+        const caption = String(text).slice(0, 1024);
+        try {
+          const { InputFile } = await import('grammy');
+          if (att.path && att.kind === 'photo') {
+            await bot.api.sendPhoto(chatId, new InputFile(att.path, att.name), caption ? { caption } : undefined);
+            return true;
+          }
+          if (att.path && att.size > 0 && att.size <= 49 * 1024 * 1024) {
+            await bot.api.sendDocument(chatId, new InputFile(att.path, att.name), { caption: att.shareUrl ? `${caption}\nDownload (30 min): ${att.shareUrl}`.slice(0, 1024) : caption });
+            return true;
+          }
+        } catch (err) {
+          console.warn('[channels] Telegram could not attach the file, sending a line instead:', err.message);
+        }
+        await bot.api.sendMessage(chatId, att.shareUrl ? `${text}\nDownload (30 min): ${att.shareUrl}` : text);
+        return true;
+      }
       // Claude answers in markdown, which Telegram shows literally unless we
       // translate it into its own dialect. That parser is strict — one stray
       // character rejects the whole message — so a failure falls back to the
@@ -1324,7 +1465,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return { ok: true };
     },
     push: (text, meta) => mobilePush.send(text, meta),
-    deliver: (text, meta, opts) => channels.deliver(text, meta, opts),
+    // No phone to ring: the alert lands in Crundi's inbox and goes out on
+    // the other channels, so it always reaches the owner somewhere.
+    deliver: async (text, meta, opts) => {
+      const nl = String(text).indexOf('\n');
+      const { results } = await ownerMsg.tell({
+        kind: 'alert', title: nl < 0 ? text : String(text).slice(0, nl), text: nl < 0 ? '' : String(text).slice(nl + 1),
+        chat: meta && meta.chat ? meta.chat : null, channelText: text, meta: meta || {}, deliverOpts: opts || {},
+      });
+      return [{ id: 'inbox', ok: true }, ...results];
+    },
   });
 
   // Single entry point for every Telegram notification. Honors the per-event
@@ -1337,15 +1487,29 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // phone, would stop that ringing (Android plays one sound at a time), so
     // it goes to the phone app only, quietly: still listed, never heard.
     const hushed = meta.chat && meta.chat.id && alerter.hushing(meta.chat.id);
+    // The ones that are for the owner rather than live state also land in
+    // Crundi's inbox first (INBOX_EVENTS), whether or not anyone is here;
+    // the copies follow the same rules as before.
+    let kind = INBOX_EVENTS[key];
+    if (kind === 'question' && meta.prompt) kind = 'permission';
+    // A factory run's news belongs to its project, not to its Manager's chat.
+    const proj = String(meta.project || (meta.chat && meta.chat.project) || '').toLowerCase();
+    const thread = key === 'factory' ? (proj ? 'project:' + proj : 'system') : '';
+    const toInbox = (quiet) => ownerMsg.post({
+      kind, text: message, chat: meta.chat || null, channelText: message, collapse: kind === 'system', thread, project: proj,
+      meta: { tag: key, ...meta, ...(quiet ? { quiet: true } : {}) }, deliverOpts: quiet ? { only: ['mobile'] } : {},
+    });
     if (hushed || (mode === 'away' && anyClientPresent())) {
       // The owner is here, so nothing needs to ping them. The phone app is
       // told all the same, marked quiet: its bubbles, its live card and its
       // list of what happened are kept from these, and a phone that only
       // heard of things while nobody was at a desk would have gaps in all
       // three. Quiet means shown without sound or vibration.
+      if (kind) { toInbox(true); return; }
       channels.deliver(message, { tag: key, ...meta, quiet: true }, { only: ['mobile'] }).catch(() => { /* non-fatal */ });
       return;
     }
+    if (kind) { toInbox(false); return; }
     // Fire and forget: a slow or dead channel must not hold up whatever was
     // being notified about.
     channels.deliver(message, { tag: key, ...meta }).catch(() => { /* non-fatal */ });
@@ -1369,7 +1533,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (s.status === 'running' && prev !== 'running') {
         notifyEvent('serviceUp', `▶️ Service "${name}"${proj} started.`);
       } else if (prev === 'running' && s.status !== 'running') {
-        notifyEvent('serviceDown', `⏹️ Service "${name}"${proj} ${s.status === 'error' ? 'crashed' : 'stopped'}.`);
+        notifyEvent('serviceDown', `⏹️ Service "${name}"${proj} ${s.status === 'error' ? 'crashed' : 'stopped'}.`, s.alias ? { project: s.alias } : {});
       }
     }
     for (const k of [...prevServiceStatus.keys()]) if (!seen.has(k)) prevServiceStatus.delete(k);
@@ -1413,7 +1577,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const fails = prev.fails + 1;
         if (prev.up && fails >= 2) {
           console.log(`[forwards] ${f.host} is down: ${why}`);
-          notifyEvent('forwardDown', `⏹️ Forward "${f.host}" is down: ${why}.`, { url: f.url });
+          notifyEvent('forwardDown', `⏹️ Forward "${f.host}" is down: ${why}.`, { url: f.url, ...(f.project ? { project: f.project } : {}) });
           forwardHealth.set(f.host, { up: false, fails });
           return;
         }
@@ -1761,10 +1925,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     if (u.over && !collabLimitNotified.has(u.identity)) {
       collabLimitNotified.add(u.identity);
       console.log(`[crundi] Collaborator ${u.name} reached their token limit (${u.used}/${u.limit})`);
-      channels.deliver(
-        `${u.name || 'A collaborator'} reached their token limit on ${collab.project} (${fmtTok(u.used)} of ${fmtTok(u.limit)}). Their chat was stopped. Raise it in Info → Outside collaborators.`,
-        { tag: 'collab-limit' },
-      ).catch(() => { /* non-fatal */ });
+      const said = `${u.name || 'A collaborator'} reached their token limit on ${collab.project} (${fmtTok(u.used)} of ${fmtTok(u.limit)}). Their chat was stopped. Raise it in Info → Outside collaborators.`;
+      ownerMsg.post({ kind: 'system', text: said, channelText: said, project: collab.project || '', meta: { tag: 'collab-limit' } });
       broadcastState();
     } else if (!u.over) {
       collabLimitNotified.delete(u.identity);
@@ -1828,10 +1990,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // Delivered unconditionally rather than through notifyEvent: this is a
     // person sitting blocked, not an event about the machine, and "away" is
     // exactly when it matters most.
-    channels.deliver(
-      `${rec.name} asks: ${rec.title}${rec.project ? ` (${rec.project})` : ''}`,
-      { tag: 'collabRequest' },
-    ).catch(() => { /* a dead channel must not fail the request */ });
+    const asks = `${rec.name} asks: ${rec.title}${rec.project ? ` (${rec.project})` : ''}`;
+    ownerMsg.post({ kind: 'question', text: asks, channelText: asks, project: rec.project || '', meta: { tag: 'collabRequest' } });
   });
 
   /** Like broadcastSSE, to the owner's pages only (never a collaborator's). */
@@ -2338,7 +2498,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }));
     // Forget dismissals for cards that no longer exist, so the set cannot grow.
     for (const id of dismissedChatCards) if (!liveChatIds.has(id)) dismissedChatCards.delete(id);
-    const items = [...secrets, ...chat, ...collab].sort((a, b) => a.createdAt - b.createdAt);
+    // Kid Cru asking the parent (capability 'voice-kid'): answered with POST /api/voice/kid/ask.
+    let kidItems = [];
+    try { kidItems = kidAsks.pending().map((a) => ({ id: a.id, source: 'kid', kind: a.kind, title: a.title, detail: a.why || '', choices: a.choices, createdAt: a.createdAt })); } catch { kidItems = []; }
+    // Cru asking from an unattended turn (capability 'voice-away'): answered with POST /api/voice/ask.
+    let cruItems = [];
+    try { cruItems = cruAsks.pending().map((a) => ({ id: a.id, source: 'cru', kind: a.tool, title: a.title, detail: a.detail || '', choices: a.choices, createdAt: a.createdAt })); } catch { cruItems = []; }
+    const items = [...secrets, ...chat, ...collab, ...kidItems, ...cruItems].sort((a, b) => a.createdAt - b.createdAt);
     return { items, count: items.length };
   }
   const dismissedChatCards = new Set();
@@ -2529,6 +2695,1130 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     res.end(content);
   }
 
+  // ─── Telegram: one sign-in method and one notification channel ───
+  // The bot (token + allowed username) is shared by both and lives in the
+  // .env as always (TELEGRAM_BOT_TOKEN / ALLOWED_USERNAME), so existing
+  // installs need nothing. It is read at start-up: a change needs a restart.
+  const TOKEN_KEPT = '__crundi_token_kept__';
+  /** A key's value as written in the .env file, or undefined if it is not there. */
+  function envFileValue(key) {
+    try {
+      const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+      const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
+      return m ? m[1].trim() : undefined;
+    } catch { return undefined; }
+  }
+  /**
+   * The bot as Settings shows it. Never the token itself.
+   * status: 'not-set-up' (no bot running), 'connected' (polling), 'offline'
+   * (configured but not polling: bad token, network, another poller).
+   */
+  function telegramBotInfo() {
+    const fileToken = envFileValue('TELEGRAM_BOT_TOKEN');
+    const fileUser = envFileValue('ALLOWED_USERNAME');
+    const savedToken = fileToken !== undefined ? fileToken : (config.botToken || '');
+    const savedUser = (fileUser !== undefined ? fileUser : (config.allowedUsername || '')).replace(/^@/, '');
+    const restartRequired = savedToken !== (config.botToken || '')
+      || savedUser.toLowerCase() !== String(config.allowedUsername || '').replace(/^@/, '').toLowerCase();
+    let running = false;
+    try { running = !!(bot && typeof bot.isRunning === 'function' && bot.isRunning()); } catch { running = false; }
+    const chatId = getChatId ? getChatId() : null;
+    return {
+      tokenSet: !!savedToken,
+      allowedUsername: savedUser,
+      botUsername: config.botUsername || '',
+      status: !bot ? 'not-set-up' : running ? 'connected' : 'offline',
+      restartRequired,
+      chatId: chatId ? String(chatId) : '',
+    };
+  }
+  /** Where the Telegram channel sends. Live, and kept across restarts. */
+  function saveTelegramChatId(raw) {
+    const s = String(raw ?? '').trim();
+    if (s && !/^-?\d{1,20}$/.test(s)) return { ok: false, error: 'A Telegram chat ID is a number.' };
+    const stateFile = join(config.dataDir, '.crundi-state.json');
+    let state = {};
+    try { if (existsSync(stateFile)) state = JSON.parse(readFileSync(stateFile, 'utf-8')) || {}; } catch { state = {}; }
+    const newId = s ? Number(s) : null;
+    state.chatId = newId;
+    writeFileSync(stateFile, JSON.stringify(state), { mode: 0o600 });
+    if (setChatId) setChatId(newId);
+    return { ok: true };
+  }
+
+  /** Settings as GET /api/settings returns them (also read by the voice assistant, redacted). */
+  function settingsView() {
+    const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
+    const settings = {};
+    const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
+    for (const key of KEYS) {
+      const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
+      settings[key] = m ? m[1].trim() : '';
+    }
+    // The bot token is write-only now (Settings > Sign-in > Telegram). Older
+    // clients still load this and post every field back, so they are given a
+    // placeholder that the save path recognises and leaves alone; a blank
+    // would wipe the token on their next save.
+    if (settings.TELEGRAM_BOT_TOKEN) settings.TELEGRAM_BOT_TOKEN = TOKEN_KEPT;
+    const chatId = getChatId ? getChatId() : '';
+    return {
+      settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
+      limitWarmup: limitWarmer.status(),
+      // So the UI can warn before switching it off, not after.
+      queuedLimitReset: chatSchedule.countPendingLimitReset(),
+      systemPrompt: globalPrompt(),
+      systemPromptMax: MAX_LAYER,
+      autoParkMinutes, autoParkMin: MIN_TIMEOUT_MIN,
+    };
+  }
+
+  // ─── Voice assistant (specs/voice-assistant.md) ───
+  //
+  // The owner's voice assistant: a Claude API conversation (its own key,
+  // metered, separate from the subscription the chats use) with read-only
+  // tools over this server's state. Owner only — collaborators never reach
+  // /api/voice/* (not in their allowlist).
+  const allProjects = () => Object.values(listProjects()).map(p => ({ alias: p.alias, name: p.name || p.alias, path: p.path }));
+  // The chats Cru has read (read_chat): with "Cru on its own" chats ticked, it may close those without a yes.
+  const cruChatReads = createChatReads();
+  // The owner's turns: safe to send again, and they wait while Cru is busy (voice/turns.js).
+  const cruTurnGate = createTurnGate();
+  const voiceTools = makeVoiceTools({
+    listProjects: allProjects,
+    onReadChat: (id) => cruChatReads.mark(id),
+    // Widgets (list_widgets, view_widget): the ones in each project and the
+    // global ones once; a view is widget_render's screenshots and checks.
+    widgets: {
+      list: async (alias = '') => {
+        const seen = new Set(), list = [];
+        for (const a of alias ? [alias] : allProjects().map(p => p.alias)) {
+          let r = null;
+          try { r = await widgetApi.handleMcp('widget_list', { alias: a }); } catch { /* skip this project */ }
+          for (const w of (r && r.widgets) || []) {
+            const project = w.global ? '_global' : a;
+            if (seen.has(project + '/' + w.id)) continue;
+            seen.add(project + '/' + w.id);
+            list.push({ project, id: w.id, title: w.title, slot: w.slot, state: w.state, faults: w.faults, needsApproval: w.needsApproval });
+          }
+        }
+        return list;
+      },
+      view: (alias, id) => widgetApi.handleMcp('widget_render', { alias, id }),
+    },
+    settings: () => settingsView(),
+    voiceSpend: () => voiceSettings.publicSettings(),
+    services: () => getAllServiceStatus().map(sv => ({
+      key: sv.key, name: sv.name, project: sv.alias, status: sv.status,
+      cpuPct: sv.cpuPct, memoryMB: sv.memoryBytes ? Math.round(sv.memoryBytes / 1048576) : null,
+      uptime: sv.startedAt ? formatUptime(Date.now() - new Date(sv.startedAt).getTime()) : null,
+    })),
+    serviceLogs: (key, lines) => getServiceLogs(key, lines),
+    notes, kanban, mindmap,
+    schedules: (project) => schedule.listSchedules(project),
+    // Live when it can be had; otherwise the last good reading (what the top
+    // bar shows), so a rate-limited usage API never leaves voice with nothing.
+    usage: async () => {
+      const live = await usage.getUsage();
+      if (live && live.ok) return live;
+      const last = usage.getLatestStored();
+      // Claude Code's own report (rate_limit_event) when it is newer than the last API reading.
+      const cc = usage.getLatestReading();
+      const lastAt = last.ok ? Date.parse(last.fetchedAt) || 0 : 0;
+      if (cc.at > lastAt && (cc.fiveHour || cc.week)) {
+        const pick = (w, old) => (w ? { utilization: w.utilization, resetsAt: w.resetsAt } : old || null);
+        const at = new Date(cc.at).toISOString();
+        return { ok: true, fromClaude: true, fetchedAt: at, fiveHour: pick(cc.fiveHour, last.fiveHour), week: pick(cc.week, last.week), note: `The usage API could not be read (${live?.error || 'unavailable'}); these figures are from Claude Code's own report at ${at}.` };
+      }
+      return last.ok ? { ...last, note: `The live usage could not be read (${live?.error || 'unavailable'}); these are the last figures, from ${last.fetchedAt}.` } : live;
+    },
+    secrets: () => secrets.listSecrets(),
+    chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
+    // Parked (sleeping) chats: no process, so claudeUi does not list them.
+    parkedChats: () => panes.listParked().filter(p => p.paneKind === 'ui'),
+    terminals: () => (claudeTerminals ? claudeTerminals.list() : []),
+    chatHistory: (id) => {
+      const c = claudeUi && claudeUi.list().find(x => x.id === id);
+      if (!c || c.collaborator) return null;
+      return claudeUi.history(id);
+    },
+    terminalScrollback: (id) => (claudeTerminals && claudeTerminals.getScrollback ? claudeTerminals.getScrollback(id) : ''),
+    docker: dockerMod,
+  });
+  // What voice may change (Phase 4, voice/actions.js): every action behind the
+  // same gate: a locked phone waits for an unlock; anything that needs the owner's
+  // yes is parked until their next message.
+  const voicePending = createVoicePending();
+  const voiceCtx = { pending: voicePending, locked: () => false, unrecognised: () => false, unattended: () => false, away: () => voiceSettings.getSettings().away || null };
+  // Chats Cru reports on: those it set going (one turn), and those the owner
+  // asked it to follow (every turn). chat id -> { title, project, follow, told: Set of pending ids }
+  const voiceWatches = new Map();
+  // Where a report can be said: open voice screens (their listen sockets), and
+  // the PC app, whose connection is always open even with the dropdown shut.
+  const voiceListeners = new Set();
+  const desktopSockets = new Set();
+  const lastSaidBy = (id) => {
+    const h = claudeUi && claudeUi.history ? claudeUi.history(id) : null;
+    const m = (h && h.messages || []).filter(x => x.kind === 'assistant-text' && String(x.text || '').trim()).pop();
+    return m ? String(m.text).replace(/\s+/g, ' ').trim().slice(0, 1500) : '';
+  };
+  /**
+   * Something from Cru for the owner: said by Cru where a voice screen is
+   * open, else by the PC (it opens its dropdown and says it), else kept in
+   * Crundi's inbox; and a phone notification, since the owner may not be at
+   * the PC.
+   *
+   * A report (a watched chat) is always told: when no screen is open the
+   * fixed [line] goes out without asking Cru. A wake-up (wake: a ticker or a
+   * trigger) always asks Cru, and Cru may say nothing: then nothing is said,
+   * kept or pushed. Answers { ok, quiet?, said?, busy? }.
+   */
+  // Cru's messages nobody has read yet: counted until the owner opens Cru's chat view.
+  const voiceUnread = (() => {
+    const file = join(config.dataDir, 'voice-memory', 'unread.json');
+    let st = { count: 0, latestAt: 0, line: '' };
+    try { st = { ...st, ...JSON.parse(readFileSync(file, 'utf-8')) }; } catch { /* none yet */ }
+    const save = () => { try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(st), { mode: 0o600 }); } catch { /* best effort */ } broadcastSSE('voice-unread', { count: st.count, latestAt: st.latestAt }); };
+    return {
+      add(line) { st.count += 1; st.latestAt = Date.now(); st.line = String(line || '').slice(0, 200); save(); },
+      seen() { if (st.count) { st.count = 0; save(); } },
+      get state() { return { count: st.count, latestAt: st.latestAt, line: st.line }; },
+    };
+  })();
+  async function cruDeliver({ note, wake = false, line = '', detail = '', chatId = '', project = '', chatTitle = '', needsOwner = false, tag = 'cru', url = '/' }) {
+    let open = [...voiceListeners].filter(ws => ws.readyState === 1);
+    let pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
+    let spoken = false;
+    let r = null;
+    // Kid mode: Cru's news for the owner is never said on the kid screen; it waits (a wake-up comes back later).
+    if (kidOn()) {
+      if (wake) return { ok: false, busy: true, error: 'kid mode' };
+      try { voiceMemory.remember({ said: `[Report for the owner, not said by them] ${String(note || line).slice(0, 2000)}`, speak: line, show: detail || '' }); voiceUnread.add(line); } catch { /* best effort */ }
+      mobilePush.send(line, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, chatId: chatId || undefined }).catch(() => {});
+      return { ok: true, said: 'push' };
+    }
+    if (wake || open.length || pcs.length) {
+      r = await voiceAgent.report(note, wake ? { wake: true } : {}).catch(() => null);
+      // It may have waited behind the owner's turn (brain.js queue): said where Cru is open now.
+      open = [...voiceListeners].filter(ws => ws.readyState === 1);
+      pcs = [...desktopSockets].filter(ws => ws.readyState === 1);
+      if (wake) {
+        if (!r || !r.ok) return { ok: false, busy: !!r && r.error === 'busy', error: (r && r.error) || 'Cru did not answer' };
+        if (!String(r.speak || '').trim() && !String(r.show || '').trim() && !(r.media && r.media.length)) return { ok: true, quiet: true };
+      }
+      if (r && r.ok && (r.speak || r.show || (r.media && r.media.length))) {
+        const media = Array.isArray(r.media) && r.media.length ? r.media : undefined;
+        // What Cru said during this turn (say_now), each its own message, just before the report (the screens' news queue keeps the order).
+        const before = (Array.isArray(r.updates) ? r.updates : []).map((u) => String((u && u.speak) || '').trim()).filter(Boolean);
+        const msg = JSON.stringify({ type: 'report', speak: r.speak || '', show: r.show || '', chat: chatId, media });
+        if (open.length) {
+          for (const ws of open) { try { for (const b of before) ws.send(JSON.stringify({ type: 'report', speak: b, show: '', chat: chatId })); ws.send(msg); } catch { /* gone */ } }
+          return { ok: true, said: 'screen' };
+        }
+        // No voice screen open: the PC says it (its connection stays open)…
+        // A question or a permission brings the PC window forward; a finished turn doesn't.
+        const pcMsg = JSON.stringify({ type: 'voice-report', speak: r.speak || '', show: r.show || '', chat: chatId, needsOwner, media });
+        for (const ws of pcs) { try { for (const b of before) ws.send(JSON.stringify({ type: 'voice-report', speak: b, show: '', chat: chatId, needsOwner })); ws.send(pcMsg); } catch { /* gone */ } spoken = true; }
+      }
+    }
+    // A wake-up's words are Cru's own.
+    if (wake) {
+      const said = String(r.speak || r.show).replace(/\s+/g, ' ').trim();
+      line = said.slice(0, 200);
+      detail = r.speak ? String(r.show || '') : (said.length > 200 ? said : '');
+    }
+    // Not said anywhere: kept in Cru's own history (its chat view) as unread,
+    // not in the inbox; the Cru mark shows a dot until it is read.
+    if (!spoken) {
+      try {
+        // A wake-up's answer is already in the history (Cru said it); a report nobody heard yet is put there now.
+        if (!wake) voiceMemory.remember({ said: `[Report for the owner, not said by them] ${String(note || line).slice(0, 2000)}`, speak: line, show: detail || '', updates: r && Array.isArray(r.updates) && r.updates.length ? r.updates : null });
+        voiceUnread.add(line);
+      } catch (err) { console.warn('[voice] could not keep the report:', err.message); }
+    }
+    // …and the phone, whose connection drops when Cru is closed, gets a
+    // notification, since the owner may not be at the PC. It opens Cru's chat view.
+    mobilePush.send(`${line}${detail ? ' ' + detail.slice(0, 120) : ''}`, { title: 'Cru', url: '/?cru=chat', tag, cruChat: true, speak: line, chatId: chatId || undefined }).catch(() => {});
+    return { ok: true, said: spoken ? 'pc' : 'push' };
+  }
+  /**
+   * What Cru may do about prompts a chat waits on: answer them itself (a chat
+   * it runs; a permission in admin mode), or read them out to the owner and
+   * answer as he says. '' when none can be answered from here.
+   */
+  function cruPromptHowTo(id, cards) {
+    const ok = (cards || []).filter(cruAnswerable);
+    if (!ok.length) return '';
+    const own = cruRunsChat(id);
+    const admin = voiceSettings.adminOn();
+    const ids = ok.map(p => p.requestId).join(', ');
+    if (own) return ` It is a chat you run: answer it yourself on your own judgement (answer_chat_prompt, requestId ${ids}) when the answer is plain and safe; it is logged. Ask the owner only when it really is his call.`;
+    if (admin && ok.every(p => p.kind === 'permission')) return ` Admin mode is on: you may allow or deny it yourself on your own judgement (answer_chat_prompt, requestId ${ids}); it is logged. Tell the owner briefly what you answered.`;
+    return ` Read it out to the owner in plain words (the choices, or what it wants to do) and answer as he says (answer_chat_prompt, requestId ${ids}; read_chat has it in full).${admin ? ' Admin mode is on: a permission you may allow or deny yourself.' : ''}`;
+  }
+  // A watched chat, only when it finishes its turn or needs the owner, never
+  // at every step, so Cru doesn't chatter.
+  async function voiceReport(id, w, what, { needsOwner = false, tries = 0, howTo = '' } = {}) {
+    const name = `the "${w.title || 'untitled'}" chat in ${w.project}`;
+    const last = lastSaidBy(id);
+    const term = claudeUi ? claudeUi.list().find((x) => x.id === id) : null;
+    // One of Cru's jobs: what to do with it (jobs.js).
+    const job = cruJobs.forChat(id);
+    const jobLine = job ? ` This chat is your job ${job.id} on the card "${job.title}" (${job.project}): check what it did (read_chat if you need more than its last message). More to do: send_to_chat the next step. Finished and checked: finish_job done. Blocked on the owner: finish_job stuck and tell him what is needed. Say nothing to him for an ordinary step. All of this is your own work: it needs no yes from him.${cruJobs.queue().length ? ` Your queue from the owner has ${cruJobs.queue().length} card${cruJobs.queue().length === 1 ? '' : 's'} next (list_jobs): when this job is done, start the next with start_job, without asking him.` : ''}` : '';
+    // A job's ordinary turn is Cru's to handle (a wake-up: it may stay quiet);
+    // one waiting on the owner is still told to him.
+    // A prompt in a chat Cru runs is Cru's to answer (howTo says so): handled as a wake-up too.
+    const asWake = !!job && (!needsOwner || !!howTo);
+    const r = await cruDeliver({
+      note: `${name} ${what}.${last ? ` Its last message: "${last}"` : ''}${jobLine}${howTo}`,
+      ...(asWake ? { wake: true } : {}),
+      line: `${(w.title || 'The chat')} in ${w.project} ${what}.`, detail: last,
+      chatId: id, project: w.project || '', chatTitle: (term && (term.longTitle || term.title)) || w.title || '',
+      needsOwner, tag: `voice-watch-${id}`, url: `/chat/${id}`,
+    });
+    // Cru was busy talking: a job's step is not lost, it is tried again shortly.
+    if (asWake && r && r.busy && tries < 6) setTimeout(() => { voiceReport(id, w, what, { needsOwner, howTo, tries: tries + 1 }).catch(() => {}); }, 20000).unref?.();
+    return r;
+  }
+  if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
+    const w = voiceWatches.get(id);
+    if (!w) return;
+    if (!w.follow) voiceWatches.delete(id);
+    w.told = new Set();
+    voiceReport(id, w, 'has finished its turn').catch(() => {});
+  });
+  // Waiting on the owner (a permission or a question): said once per card.
+  // Admin mode: a permission prompt in any of the owner's chats (not a
+  // collaborator's, not a factory's) wakes Cru, who may answer it on its own
+  // judgement or leave it to him. Once per card.
+  const cruAdminTold = new Map();
+  function cruAdminPrompt(id, tries = 0) {
+    const c = claudeUi.list().find(x => x.id === id);
+    const cards = ((c && c.pending) || []).filter(p => cruAnswerable(p) && p.kind === 'permission');
+    if (!cards.length) { cruAdminTold.delete(id); return; }
+    if (!voiceSettings.adminOn() || c.collaborator || c.factory || c.background) return;
+    const told = cruAdminTold.get(id) || new Set();
+    const fresh = tries ? cards : cards.filter(p => !told.has(p.id));
+    for (const p of fresh) told.add(p.id);
+    cruAdminTold.set(id, told);
+    if (!fresh.length) return;
+    const name = `the "${c.longTitle || c.title || 'untitled'}" chat in ${c.project}`;
+    cruDeliver({
+      note: `${name} is waiting on the owner: ${fresh.map(p => cruPendingLine(p)).join('; and ')}.${cruPromptHowTo(id, fresh)} If it is plainly safe and what the chat is there to do, allow it; if it is risky or not plainly what he wants, leave it to him (reply QUIET, or tell him briefly).`,
+      wake: true, chatId: id, project: c.project, tag: `voice-admin-${id}`, url: `/chat/${id}`,
+    }).then((r) => {
+      // Cru was busy talking: tried again shortly, while it still waits.
+      if (r && r.busy && tries < 6) setTimeout(() => cruAdminPrompt(id, tries + 1), 20000).unref?.();
+    }).catch(() => {});
+  }
+  if (claudeUi && claudeUi.onPendingChange) claudeUi.onPendingChange((id) => {
+    const w = voiceWatches.get(id);
+    if (!w) { cruAdminPrompt(id); return; }
+    const c = claudeUi.list().find(x => x.id === id);
+    const cards = (c && c.pending) || [];
+    const fresh = cards.filter(p => p && p.id && !(w.told || (w.told = new Set())).has(p.id));
+    if (!fresh.length) return;
+    for (const p of fresh) w.told.add(p.id);
+    const what = fresh.map(p => cruPendingLine(p) || 'something').join('; and ');
+    voiceReport(id, w, `is waiting on the owner: ${what}`, { needsOwner: true, howTo: cruPromptHowTo(id, fresh) }).catch(() => {});
+  });
+  // Cru's own tickers and triggers (voice/wakeups.js): built-in, read-only
+  // reasons to wake Cru, each off until switched on. A wake-up asks Cru, who
+  // may stay quiet, say something (cruDeliver) or alert the owner.
+  const wakeStore = createWakeupStore({
+    file: join(config.dataDir, 'voice-wakeups.json'), onChange: () => broadcastSSE('voice-wakeups', {}),
+    // The heartbeat (autonomy.js): Cru's regular look round, off until switched on.
+    builtins: [{ id: HEARTBEAT_ID, name: 'Heartbeat', every: 30, from: '08:00', to: '22:00', purpose: `Your regular look round: go through your checklist (${HEARTBEAT_FILE}), your jobs and what is waiting; act where you may, and say nothing unless something needs the owner.` }],
+  });
+  const wakeEngine = createWakeupEngine({
+    store: wakeStore,
+    prepare: (item) => (item.id === HEARTBEAT_ID ? heartbeatNote() : ''),
+    overLimit: () => voiceAgent.which === 'api' && voiceSettings.overLimit(),
+    report: async (note, item) => {
+      const r = await cruDeliver({ note, wake: true, tag: `voice-wake-${item.id}`, url: '/' });
+      if (!r.busy) console.log(`[voice] ${item.type} "${item.name}" woke Cru: ${r.quiet ? 'stayed quiet' : r.ok ? `said it (${r.said})` : (r.error || 'no answer')}`);
+      return r;
+    },
+  });
+  const wakeDefs = wakeupToolDefs({
+    store: wakeStore, engine: wakeEngine,
+    // Cru's alert: the alert_user path (its per-hour limits), without waiting for the answer.
+    alert: async ({ title, body, urgent }) => {
+      const r = await alerter.alert({ title, body, level: urgent ? 'urgent' : 'normal' }, { url: '/' });
+      if (r.ok && r.delivered === 'phone') {
+        try { inbox.add({ kind: 'alert', cru: true, title: String(title || 'Alert'), text: String(body || '') }); } catch (err) { console.warn('[inbox] could not keep the alert:', err.message); }
+      }
+      const { alertId, ...rest } = r;
+      return rest;
+    },
+  });
+  // Every usage reading, for the usage_above triggers: the Usage API ones
+  // (broadcastUsage reads it each minute anyway) and Claude Code's own
+  // rate_limit_event from any chat or Cru turn, which keeps coming while the
+  // API answers 429. Pushed, not polled: a crossing wakes Cru at once.
+  usage.onUsageReading((r) => { try { wakeEngine.usage(r); } catch (err) { console.warn('[voice] usage trigger check failed:', err.message); } });
+  // What chats do, for the chat_finished / chat_waiting / collaborator triggers.
+  const wakeTold = new Map();   // chat id -> pending card ids already told
+  if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
+    const c = claudeUi.list().find(x => x.id === id);
+    if (c) wakeEngine.event('chat_finished', { chat: c });
+  });
+  if (claudeUi && claudeUi.onPendingChange) claudeUi.onPendingChange((id) => {
+    const c = claudeUi.list().find(x => x.id === id);
+    const cards = ((c && c.pending) || []).filter(p => p && p.id);
+    const told = wakeTold.get(id) || new Set();
+    const fresh = cards.filter(p => !told.has(p.id));
+    wakeTold.set(id, new Set(cards.map(p => p.id)));
+    if (!cards.length) wakeTold.delete(id);
+    if (!c || !fresh.length) return;
+    wakeEngine.event('chat_waiting', { chat: c, what: `${fresh.map(p => cruPendingLine(p) || 'something').join('; and ')}.${cruPromptHowTo(id, fresh)}` });
+  });
+  // Every 30 s: the times, and a reading of the machine. Docker and the
+  // process list are read only while a trigger needs them.
+  let wakeCpus = osCpus();
+  setInterval(async () => {
+    try {
+      wakeEngine.scan();
+      const kinds = wakeEngine.kindsOn();
+      const cur = osCpus();
+      const sample = { cpuPct: cpuPercent(wakeCpus, cur), memPct: memoryPercent() };
+      wakeCpus = cur;
+      if (!kinds.size) return;
+      sample.chats = (claudeUi ? claudeUi.list() : []).map(c => ({ id: c.id, title: c.longTitle || c.title || '', project: c.project, collaborator: c.collaborator || null }));
+      sample.services = getAllServiceStatus().map(sv => ({ key: sv.key, name: sv.name, status: sv.status }));
+      if (kinds.has('container_unhealthy')) {
+        const d = await dockerMod.listContainers().catch(() => null);
+        if (d && d.ok) sample.containers = d.containers.map(c => ({ name: c.name, health: c.health || '' }));
+      }
+      if (kinds.has('process_started') || kinds.has('process_stopped')) sample.processes = await listProcessNames().catch(() => null) || undefined;
+      wakeEngine.sample(sample);
+    } catch (err) { console.warn('[voice] wake-up check failed:', err.message); }
+  }, 30 * 1000).unref();
+  // Files the owner gives Cru (voice/attachments.js, capability 'voice-attach').
+  const cruFiles = createAttachmentStore({ dir: join(config.dataDir, 'voice-memory', 'attachments') });
+  // ─── Cru on its own (voice/autonomy.js, jobs.js) ───
+  // The day's log (/memories/log/YYYY-MM-DD.md): what Cru did by itself.
+  const cruLog = createDailyLog({ read: (p) => voiceMemory.notebook.read(p), save: (p, t) => voiceMemory.notebook.save(p, t), list: () => voiceMemory.notebook.list() });
+  const cruJobs = createJobStore({ file: join(config.dataDir, 'voice-jobs.json'), onChange: () => broadcastSSE('voice-jobs', {}) });
+  // The chats Cru started itself (start_chat): with its jobs' chats, the ones
+  // it runs, whose prompts it may answer on its own judgement. Kept across
+  // restarts (a chat keeps its id when resumed); the latest 200.
+  const cruStartedFile = join(config.dataDir, 'voice-started-chats.json');
+  const cruStarted = (() => { try { return new Set(JSON.parse(readFileSync(cruStartedFile, 'utf8')).chats || []); } catch { return new Set(); } })();
+  function cruMarkStarted(id) {
+    if (!id || cruStarted.has(id)) return;
+    cruStarted.add(id);
+    const keep = [...cruStarted].slice(-200);
+    cruStarted.clear(); for (const x of keep) cruStarted.add(x);
+    try { writePrivateFile(cruStartedFile, JSON.stringify({ chats: keep })); } catch (err) { console.warn('[voice] could not keep the chats Cru started:', err.message); }
+  }
+  const cruRunsChat = (id) => !!cruJobs.forChat(id) || cruStarted.has(id);
+  // Every prompt Cru answers is written to the day's log; one it approved on
+  // its own in admin mode, to the admin log as well.
+  function cruLogPromptAnswer(r) {
+    const answer = typeof r.answer === 'string' ? r.answer : Object.values(r.answer || {}).join('; ');
+    cruLog.add(`Answered the "${r.title || 'untitled'}" chat in ${r.project} (${r.asked}): ${answer}${r.message ? ` ("${String(r.message).slice(0, 80)}")` : ''}, ${r.why}`);
+    if (r.admin) {
+      try { mkdirSync(join(config.dataDir, 'voice-memory'), { recursive: true }); appendFileSync(join(config.dataDir, 'voice-memory', 'admin-log.jsonl'), JSON.stringify({ at: new Date().toISOString(), tool: 'answer_chat_prompt', chat: r.chat, project: r.project, title: r.title, asked: r.asked, answer: r.answer }) + '\n', { mode: 0o600 }); } catch { /* best effort */ }
+    }
+  }
+  // Questions from an unattended turn: Approve / Decline on every device.
+  const cruAsks = createOwnerAsks({
+    onAsk: (a) => {
+      broadcastApprovals();
+      mobilePush.send(a.title, { title: 'Cru asks', url: '/', tag: 'cru-ask' }).catch(() => {});
+    },
+    onDone: async (a, choice) => {
+      broadcastApprovals();
+      let note;
+      if (choice === 'yes') {
+        let r;
+        try { r = await a.run(); } catch (e) { r = { ok: false, error: e.message }; }
+        cruLog.add(`Owner approved: ${a.title} -> ${r && r.ok === false ? 'failed: ' + (r.error || '') : 'done'}`);
+        note = `[The owner approved on his phone: "${a.title}"] It was carried out. Result: ${JSON.stringify(r || {}).slice(0, 600)}. Carry on with what it was for; say something only if he needs to know.`;
+      } else {
+        cruLog.add(`Owner ${choice === 'no' ? 'declined' : 'did not answer'}: ${a.title}`);
+        note = `[The owner ${choice === 'no' ? 'declined' : 'did not answer, in 12 hours,'} on his phone: "${a.title}"] Nothing was done. Don't ask again for the same thing; leave it, or mention it when he is next talking to you.`;
+      }
+      setTimeout(() => { cruDeliver({ note, wake: true, tag: 'cru-ask-done', url: '/' }).catch(() => {}); }, 300);
+    },
+  });
+  setInterval(() => cruAsks.expire(), 60 * 1000).unref();
+  /** Switch Cru on its own off; everything: also pause the wake-ups, drop the asks, pause the jobs. */
+  function cruAwayOff({ everything = false } = {}) {
+    const was = voiceSettings.getSettings().away || {};
+    voiceSettings.updateSettings({ away: { ...was, on: false } });
+    let paused = 0, dropped = 0, jobs = 0;
+    if (everything) {
+      for (const x of wakeStore.enabled()) { try { wakeStore.setEnabled(x.id, false); paused++; } catch { /* gone */ } }
+      dropped = cruAsks.clear();
+      jobs = cruJobs.pauseAll();
+      broadcastApprovals();
+    }
+    cruLog.add(everything ? `Stopped everything: on-my-own off, ${paused} wake-ups paused, ${dropped} questions dropped, ${jobs} jobs paused` : 'On-my-own switched off');
+    for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } }
+    broadcastSSE('voice-settings', {});
+    return { ok: true, away: false, ...(everything ? { wakeupsPaused: paused, questionsDropped: dropped, jobsPaused: jobs } : {}) };
+  }
+  // A routine of Cru's as a Claude skill (share_routine).
+  function cruRoutineText(name) {
+    const n = String(name || '').replace(/\.md$/, '').replace(/[^A-Za-z0-9._-]/g, '');
+    return n ? voiceMemory.notebook.read(`/memories/routines/${n}.md`) : '';
+  }
+  function cruShareRoutine(name, alias = '') {
+    const text = cruRoutineText(name);
+    if (!text) return { ok: false, error: `No routine called "${name}"` };
+    const n = ('cru-' + skills.slug(String(name).replace(/\.md$/, ''))).slice(0, 60);
+    const scope = alias || 'global';
+    const first = text.split('\n').map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean) || n;
+    const content = `---\nname: ${n}\ndescription: ${JSON.stringify(('Cru\'s routine: ' + first).slice(0, 300))}\n---\n\n${text.trim()}\n`;
+    const have = skills.get(scope, n);
+    if (!have || have.ok === false) { const c = skills.create(scope, { name: n, description: first.slice(0, 300) }); if (!c.ok) return c; }
+    const w = skills.writeFile(scope, n, 'SKILL.md', { content });
+    if (w && w.ok === false) return w;
+    cruLog.add(`Shared the routine "${name}" as the skill ${n} (${alias || 'every project'})`);
+    return { ok: true, skill: n, where: alias || 'every project' };
+  }
+  // The heartbeat: a built-in ticker that reads Cru's checklist; an empty one skips the call.
+  function heartbeatNote() {
+    const list = voiceMemory.notebook.read(HEARTBEAT_FILE);
+    const open = cruJobs.list();
+    if (checklistEmpty(list) && !open.length) return null;
+    const chats = new Map((claudeUi ? claudeUi.list() : []).map((c) => [c.id, c]));
+    const jobs = open.map((j) => { const c = chats.get(j.chatId); const last = (j.notes || []).slice(-1)[0]; return `- ${j.id} "${j.title}" (${j.project}), ${j.status}, ${Math.round((Date.now() - j.startedAt) / 60000)} min, chat ${c ? (c.status || 'open') : 'gone'}${last ? `; last note: ${last.text}` : ''}`; }).join('\n');
+    const asks = cruAsks.pending().map((a) => `- ${a.title}`).join('\n');
+    const log = cruLog.tail(10);
+    return `\n[Your checklist, ${HEARTBEAT_FILE}:\n${String(list || '(empty)').trim().slice(0, 2500)}]${jobs ? `\n[Your open jobs:\n${jobs}]` : ''}${asks ? `\n[Waiting on the owner's phone:\n${asks}]` : ''}${log ? `\n[Today so far (/memories/log):\n${log}]` : ''}\nGo through the checklist now, quickly, with the fewest lookups that answer it. Act where you may. If nothing needs him (the usual case), reply with just QUIET: that word alone, nothing is said. Never report that all is well. Keep the checklist current: add what he asks you to keep an eye on, drop what is over.`;
+  }
+  // Routine nudges (after Hermes): a turn that took many steps, or found the
+  // way past a failure, may be worth keeping as a routine.
+  const cruSteps = { n: 0, failed: false, recovered: false, nudge: '' };
+  function cruStepDone(name, out) {
+    if (['memory', 'memory_search', 'list_wakeups', 'close_voice', 'cancel_action'].includes(name)) return;
+    cruSteps.n++;
+    const bad = !out || out.ok === false || !!out.error;
+    if (bad) cruSteps.failed = true; else if (cruSteps.failed) cruSteps.recovered = true;
+  }
+  function cruTurnBegins() {
+    const { n, recovered } = cruSteps;
+    cruSteps.nudge = n >= 5 || recovered ? `[Your last turn took ${n} steps${recovered ? ', and found the way past a failure' : ''}. If it is something he may ask for again, save it as a routine in /memories/routines/ in this same turn (or patch the routine you followed where it fell short): when to use it, then the steps. Skip it if it was a one-off.]` : '';
+    cruSteps.n = 0; cruSteps.failed = false; cruSteps.recovered = false;
+  }
+  // Cru and the browser drawer: every project's tabs (voice/browser-tools.js).
+  const cruBrowser = makeCruBrowserTools({ call: (tool, args) => (mcpDispatch ? mcpDispatch(tool, args) : Promise.resolve({ ok: false, error: 'Browser tools are not available on this server.' })) });
+  const voiceActions = makeVoiceActionTools({
+    browserDefs: cruBrowser.actions,
+    chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
+    sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
+    createChat: (alias, opts) => claudeUi.create(alias, opts),
+    markStarted: cruMarkStarted,
+    chatRead: (id) => cruChatReads.fresh(id),
+    chatReadForget: (id) => cruChatReads.forget(id),
+    // A chat's question or permission prompt, answered by Cru (the card says so).
+    respondChat: (id, answer) => claudeUi.respond(id, answer),
+    cruRuns: cruRunsChat,
+    // A card Cru is working: one of its open jobs, or in the owner's queue (its housekeeping runs on a wake-up without asking).
+    cruCard: (alias, taskId) => cruJobs.list().some(j => j.project === alias && j.taskId === String(taskId)) || cruJobs.queued(alias, taskId),
+    // Admin mode, as the admin tools see it: on, a model that may hold it, and not another voice.
+    adminOn: () => { const v = voiceOwnerVerdict; const owner = v && typeof v === 'object' ? v.owner : v; return voiceSettings.adminOn() && owner !== false; },
+    logPromptAnswer: cruLogPromptAnswer,
+    parkedChats: () => panes.listParked().filter(p => p.paneKind === 'ui'),
+    closeChat: (id) => {
+      // A parked chat has no process to close: discard its pane, as its Close button does.
+      if (panes.has(id) && !(claudeUi.list() || []).some(c => c.id === id)) {
+        try { chatSchedule.discardFor(id, panes.conversationOf(id)); } catch { /* best effort */ }
+        panes.forget(id); broadcastState();
+        return { ok: true };
+      }
+      const conv = (claudeUi.meta(id) || {}).sessionId || '';
+      const r = claudeUi.close(id);
+      if (r && r.ok !== false) { try { chatSchedule.discardFor(id, conv); } catch { /* best effort */ } panes.forget(id); }
+      return r;
+    },
+    parkChat: (id) => { const r = panes.park(id, 'manual'); broadcastState(); return r; },
+    resumeChat: async (id) => { const r = await panes.resume(id, {}); broadcastState(); return r; },
+    // A chat Cru set going (auto) is reported on for its turn; one the owner
+    // asked to follow keeps being reported on. Auto never turns a follow off.
+    watch: (id, title, project, { follow = false, auto = false } = {}) => {
+      const was = voiceWatches.get(id);
+      voiceWatches.set(id, { title: title || was?.title || '', project, follow: follow || (auto && !!was?.follow), told: was?.told || new Set() });
+    },
+    unwatch: (id) => voiceWatches.delete(id),
+    listProjects: allProjects,
+    projectsDir: () => getProjectMode().projectsDir || '',
+    registerProject: (alias, path, name) => { const r = registerProject(alias, path, name, { create: true }); broadcastState(); return r; },
+    kanban, notes, mindmap, chatSchedule,
+    // Cru compacting or restarting its own conversation (after the turn).
+    conversation: { requestAfterTurn: (kind, summary) => voiceAgent.requestAfterTurn(kind, summary) },
+    onSettingsChanged: () => { for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } } },
+    schedules: schedule,
+    services: () => getAllServiceStatus().map(sv => ({ key: sv.key, name: sv.name })),
+    voiceSettings,
+    wakeupDefs: wakeDefs,
+    jobDefs: jobToolDefs({
+      jobs: cruJobs, kanban,
+      project: (alias) => { const p = allProjects().find(x => x.alias === String(alias || '').toLowerCase()); if (!p) throw new Error(`No project called "${alias}". Use list_projects.`); return p; },
+      createChat: (alias, opts) => claudeUi.create(alias, opts),
+      sendMessage: (id, text) => claudeUi.sendMessage(id, text, { by: 'owner' }),
+      watch: (id, title, project, { follow = false } = {}) => { const was = voiceWatches.get(id); voiceWatches.set(id, { title: title || was?.title || '', project, follow, told: was?.told || new Set() }); },
+      unwatch: (id) => voiceWatches.delete(id),
+      chats: () => (claudeUi ? claudeUi.list() : []),
+      log: (line) => cruLog.add(line),
+    }),
+    serviceOp: (key, op) => (op === 'start' ? startService(key) : op === 'stop' ? stopService(key) : restartService(key)),
+    routineText: cruRoutineText,
+    // Attachments passed on to a chat: copied into its project's attachments folder.
+    passOn: (ids, alias) => { const p = allProjects().find(x => x.alias === String(alias || '').toLowerCase()); if (!p || !p.path) throw new Error(`No project folder for ${alias}`); return passOnAttachments(cruFiles, ids, p.path, ensureAttachmentsDir); },
+    shareRoutine: cruShareRoutine,
+    awayOff: cruAwayOff,
+    askOwner: (q) => cruAsks.ask(q),
+    // At a voice screen now (Cru's reply is said there): a wake-up's question is asked there first,
+    // and goes to his phone only if he does not answer (actions.js ESCALATE_MS).
+    ownerHere: () => [...voiceListeners].some((ws) => ws.readyState === 1),
+    onAwayAct: (tool, input) => cruLog.add(`On my own: ${tool.replace(/_/g, ' ')} ${JSON.stringify(input).slice(0, 160)}`),
+    broadcast: (tool, input = {}) => {
+      // Background listening is the phone's: every open app is told, so the order reaches the
+      // phone even when it was confirmed on the PC or the web (capability 'voice-phone-action-push').
+      if (tool === 'set_background_listening') { broadcastOwnerSSE('voice-phone-action', { type: 'background-listening', minutes: input.minutes === undefined ? 30 : Number(input.minutes) || 0 }); return; }
+      if (/kanban/.test(tool)) broadcastKanban(input.project);
+      else if (/note/.test(tool)) broadcastNotes(input.project, {});
+      else if (/mindmap/.test(tool)) broadcastMindmap();
+      else if (/schedule/.test(tool)) broadcastSSE('schedule', {});
+      else broadcastState();
+    },
+  }, voiceCtx);
+  // Full admin mode (switched on by hand in Settings): run_command, write_file.
+  // voiceOwnerVerdict is the speaker check of the turn being answered:
+  // true (the owner), false (another voice), null (typed, or no check).
+  let voiceOwnerVerdict = null;
+  // Is it the owner speaking? (voice/speaker.js: his enrolled voice, each
+  // utterance checked as it is heard, the verdict looked up by its turn.)
+  const voiceSpeaker = createVoiceSpeaker({ dir: join(config.dataDir, 'voice-memory') });
+  /**
+   * The voice rules for one turn: sets the admin tools' verdict and says
+   * whether changes are held back ("Only act on my voice").
+   * @param verdict  { owner, reason } of what was heard, or null (none found)
+   */
+  // The last full-length turn in the owner's recognised voice (or typed): a
+  // taught short reply just after it may answer in admin mode. Another voice resets it.
+  let voiceOwnerFullAt = 0;
+  function voiceTurnRules({ typed = false, verdict = null } = {}) {
+    const recentOwner = Date.now() - voiceOwnerFullAt <= VOICE_ADMIN_FOLLOW_MS;
+    const p = voiceTurnPolicy({ enrolled: voiceSpeaker.enrolled, ownerOnly: voiceSettings.getSettings().ownerOnly !== false, typed, verdict, answering: voicePending.verifiedWaiting(120_000), recentOwner });
+    if (typed || (verdict && verdict.owner === true && !verdict.brief)) voiceOwnerFullAt = Date.now();
+    else if (verdict && verdict.owner === false) voiceOwnerFullAt = 0;
+    // admin: set as the turn starts (beforeTurn), never while another still runs.
+    // Who spoke, in words for Cru's context line.
+    const who = typed ? 'typed by the signed-in owner'
+      : !voiceSpeaker.enrolled ? 'no voice enrolled yet, so you cannot tell voices apart (the owner can enrol in Settings, Voice assistant, Your voice)'
+        : verdict && verdict.owner === true ? 'spoken in the owner\'s recognised voice'
+          : verdict && verdict.owner === false ? 'spoken in a voice not recognised as the owner\'s'
+            : 'spoken, too short (or not checkable) to tell whose voice';
+    return { unrecognised: p.unrecognised, confirmOk: p.confirmOk, voice: p.admin, who, speaker: { owner: verdict ? verdict.owner ?? null : null, unrecognised: p.unrecognised } };
+  }
+  const voiceAdminTools = makeVoiceAdminTools({
+    ownerVoice: () => voiceOwnerVerdict,
+    locked: () => voiceCtx.locked(),
+    logFile: join(config.dataDir, 'voice-memory', 'admin-log.jsonl'),
+    unattended: () => !!voiceCtx.unattended(),
+    onOwnAct: (tool, what, r) => cruLog.add(tool === 'run_command'
+      ? `On my own (admin): ran a command (${r && r.timedOut ? 'stopped, took too long' : r && r.error ? `failed: ${String(r.error).slice(0, 80)}` : `exit ${r ? r.exitCode : '?'}`}) in ${what.cwd}: \`${String(what.command).replace(/\s+/g, ' ').slice(0, 200)}\``
+      : `On my own (admin): ${what.append ? 'appended to' : 'wrote'} ${what.path} (${what.bytes} bytes)`),
+    onChanged: () => { for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'settings' })); } catch { /* gone */ } } },
+  });
+  // ─── Cru's live screen and kid mode (voice/screen.js, voice/kid*.js) ───
+  // Something for every open voice screen, down its /api/voice/listen socket.
+  const voiceListenSend = (msg) => { const t = JSON.stringify(msg); for (const ws of voiceListeners) { try { if (ws.readyState === 1) ws.send(t); } catch { /* gone */ } } };
+  const kidDir = join(config.dataDir, 'kid-games');
+  const kidPrivDir = join(config.dataDir, 'voice-memory', 'kid');
+  const kidSkills = createKidSkills({ file: join(kidDir, 'skills.json'), historyFile: join(kidDir, 'progress.jsonl') });
+  let kidWorkshop = null;
+  const kidGames = createGameLibrary({
+    dir: kidDir,
+    initFor: (skills) => kidSkills.initFor(skills),
+    onPlay: (p) => { kidSkills.addPlayTime(p.seconds); if (kidWorkshop) kidWorkshop.markKidUse(); },
+  });
+  const voiceScreen = createVoiceScreen({
+    file: join(config.dataDir, 'voice-memory', 'screen.json'),
+    onChange: (screen) => voiceListenSend({ type: 'screen', screen }),
+    kid: () => voiceSettings.kidOn(),
+    gameDoc: (id, o) => kidGames.doc(id, o),
+  });
+  // Kid Cru's own notes about its friend: written only in kid mode, by kid Cru.
+  const kidFriendFile = join(kidPrivDir, 'friend.md');
+  const kidFriend = {
+    read: () => { try { return readFileSync(kidFriendFile, 'utf-8'); } catch { return ''; } },
+    write: (t) => {
+      if (!voiceSettings.kidOn()) throw new Error('Only in kid mode');
+      mkdirSync(kidPrivDir, { recursive: true, mode: 0o700 });
+      writeFileSync(kidFriendFile, t, { mode: 0o600 });
+    },
+    clear: () => { try { writeFileSync(kidFriendFile, '', { mode: 0o600 }); } catch { /* none */ } },
+  };
+  const kidFirstName = () => { const m = /^\s*-?\s*(?:first )?name:\s*([A-Za-z][A-Za-z' -]{0,30})\s*$/im.exec(kidFriend.read()); return m ? m[1].trim().split(/\s+/)[0] : ''; };
+  const kidPins = createPinGuard();
+  const kidHandles = createHandleResolver({ file: join(kidDir, 'youtube-handles.json') });
+  const kidWatch = createGameWatch({ chattiness: () => voiceSettings.getSettings().kidChattiness || 'normal' });
+  const kidReflex = createKidReflex({ dir: kidDir });
+  const kidOn = () => voiceSettings.kidOn();
+  let cruTapAt = 0;
+  // A session's extras from the parent: time added, a pause, videos allowed once.
+  const kidSession = { extraMinutes: 0, paused: false, onceVideos: [] };
+  const kidPublic = () => ({ ...voiceSettings.kidState(), paused: kidSession.paused, extraMinutes: kidSession.extraMinutes, playing: (voiceScreen.get() || {}).title || '', asks: kidAsks.pending().map(({ id, kind, title, choices, createdAt }) => ({ id, kind, title, choices, createdAt })) });
+  /** The server writes the parent's instructions (an "Always allow"): the only write allowed while kid mode is on. */
+  let kidServerWrite = false;
+  // The workshop's news for the owner, said at his next turn outside kid mode.
+  const kidNewsFile = join(kidPrivDir, 'news.txt');
+  const kidNews = () => {
+    if (kidOn()) return '';
+    let t = '';
+    try { t = readFileSync(kidNewsFile, 'utf-8').trim(); } catch { return ''; }
+    if (t) { try { writeFileSync(kidNewsFile, ''); } catch { /* next time */ } }
+    return t ? `[News from the kid games workshop last night, not said by the owner: mention it briefly when it fits] ${t}` : '';
+  };
+  /** Kid mode changed: every screen, the web pages and the PC apps hear of it. */
+  function kidBroadcast() {
+    const st = kidPublic();
+    broadcastSSE('voice-kid', st);
+    voiceListenSend({ type: 'kid', kid: st });
+    const m = JSON.stringify({ type: 'kid-mode', kid: st });
+    for (const ws of desktopSockets) { try { if (ws.readyState === 1) ws.send(m); } catch { /* gone */ } }
+  }
+  function kidStart(by) {
+    if (kidOn()) return { ok: true, ...kidPublic() };
+    const r = voiceSettings.setKidOn(true, by);
+    if (!r.ok) return r;
+    Object.assign(kidSession, { extraMinutes: 0, paused: false, onceVideos: [] });
+    kidAsks.clear();
+    try { voiceAgent.cancel({ all: true }); } catch { /* nothing running */ }
+    kidGames.endPlay(false);
+    voiceScreen.clear();
+    kidWatch.reset();
+    kidPicture = null;
+    if (kidWorkshop) kidWorkshop.markKidUse();
+    console.log(`[voice] kid mode on (${by || 'owner'})`);
+    kidBroadcast();
+    return { ok: true, ...kidPublic() };
+  }
+  function kidStop(how = 'PIN') {
+    try { kidAgent.cancel(); } catch { /* nothing running */ }
+    kidGames.endPlay(false);
+    voiceScreen.clear();
+    const r = voiceSettings.setKidOn(false);
+    kidAsks.clear();
+    broadcastApprovals();
+    console.log(`[voice] kid mode off (${how})`);
+    kidBroadcast();
+    return r;
+  }
+  // ─── The PC lock (capability 'pc-lock'): the PC app's screen locked behind
+  // the owner's PIN (the same PIN as kid mode), "visible" (the app shows
+  // through a see-through overlay) or "full" (an opaque lock screen). Not a
+  // lockdown of Cru: "Hey Cru" works as always, and the owner's voice check
+  // decides what it may change. Kept across a restart, so a restarted app locks again.
+  const pcLockFile = join(config.dataDir, 'pc-lock.json');
+  let pcLock = { on: false, mode: 'full', since: 0, by: '' };
+  // Auto lock (optional): the PC app locks itself after this many idle minutes, in this mode.
+  const AUTO_MINUTES = [1, 2, 5, 10, 15, 30, 60];
+  let pcAuto = { on: false, minutes: 10, mode: 'full' };
+  try {
+    const d = JSON.parse(readFileSync(pcLockFile, 'utf-8'));
+    if (d && d.on) pcLock = { on: true, mode: d.mode === 'visible' ? 'visible' : 'full', since: d.since || Date.now(), by: String(d.by || '') };
+    if (d && d.auto) pcAuto = { on: d.auto.on === true, minutes: AUTO_MINUTES.includes(d.auto.minutes) ? d.auto.minutes : 10, mode: d.auto.mode === 'visible' ? 'visible' : 'full' };
+  } catch { /* unlocked */ }
+  const pcLockPublic = () => ({ ...pcLock, pinSet: !!voiceSettings.kidPinHash(), auto: { ...pcAuto }, autoMinutes: AUTO_MINUTES });
+  function pcLockBroadcast() {
+    try { writeFileSync(pcLockFile, JSON.stringify({ ...pcLock, auto: pcAuto }), { mode: 0o600 }); } catch { /* best effort */ }
+    const st = pcLockPublic();
+    broadcastSSE('pc-lock', st);
+    const m = JSON.stringify({ type: 'pc-lock', lock: st });
+    for (const ws of desktopSockets) { try { if (ws.readyState === 1) ws.send(m); } catch { /* gone */ } }
+  }
+  function pcLockStart(mode = 'full', by = 'settings') {
+    if (!voiceSettings.kidPinHash()) return { ok: false, error: 'Set your PIN first (Settings, Voice assistant, Your PIN): it is the only way to unlock.' };
+    if (kidOn()) return { ok: false, error: 'Kid mode is on: the PC is already locked.' };
+    pcLock = { on: true, mode: mode === 'visible' ? 'visible' : 'full', since: Date.now(), by: String(by || '').slice(0, 20) };
+    console.log(`[lock] the PC is locked (${pcLock.mode}, ${pcLock.by || 'owner'})`);
+    pcLockBroadcast();
+    return { ok: true, ...pcLockPublic() };
+  }
+  function pcLockStop(how = 'PIN') {
+    if (!pcLock.on) return { ok: true, ...pcLockPublic() };
+    pcLock = { on: false, mode: pcLock.mode, since: 0, by: '' };
+    console.log(`[lock] the PC is unlocked (${how})`);
+    pcLockBroadcast();
+    return { ok: true, ...pcLockPublic() };
+  }
+  const pcLockTool = {
+    name: 'lock_computer',
+    description: 'Lock the PC app\'s screen when the owner asks ("lock the PC", "lock my screen"): mode "full" (an opaque lock screen, the default) or "visible" (the screen stays in view behind a see-through "locked" overlay). Only the owner\'s PIN unlocks it, at the PC or from his phone; you can never unlock it. While it is locked you work as usual ("Hey Cru" still works; the voice check decides what you may change).',
+    input_schema: { type: 'object', additionalProperties: false, properties: { mode: { type: 'string', enum: ['full', 'visible'] } } },
+    run: ({ mode } = {}) => {
+      if (pcLock.on) return { ok: true, already: true, mode: pcLock.mode };
+      const r = pcLockStart(mode === 'visible' ? 'visible' : 'full', 'cru');
+      return r.ok ? { ok: true, locked: true, mode: r.mode } : r;
+    },
+  };
+  /** Is it the owner asking (typed, or his recognised voice when one is enrolled)? Set per turn in beforeTurn. */
+  let voiceTurnOwner = false;
+  const kidStartTool = makeStartKidTool({
+    canStart: () => (!voiceSettings.kidPinHash() ? 'No kid-mode PIN is set yet. The owner sets one in Settings, Voice assistant, Kid mode; say so.'
+      : kidOn() ? 'Kid mode is already on.'
+        : voiceCtx.locked() ? 'The phone is locked: kid mode waits for an unlock.'
+          : !voiceTurnOwner ? 'Only the owner can switch kid mode on: typed, or said in his recognised voice.' : ''),
+    start: (by) => setTimeout(() => kidStart(by), 1500),
+  });
+  /** How the child is doing, for the owner (read only). */
+  const kidProgressTool = {
+    name: 'kid_progress',
+    description: 'How the child is doing in kid mode: per development area (language, numbers, shapes-colours, memory, logic, motor, feelings, creative, world) the level, the trend, what is mastered and being learnt, play time, notes; and the games, with any the overnight workshop added or changed. Read only. area: an area id or label; range: week, month or all.',
+    input_schema: { type: 'object', additionalProperties: false, properties: { area: { type: 'string' }, range: { type: 'string', enum: ['week', 'month', 'all'] } } },
+    run: ({ area = '', range = 'month' } = {}) => {
+      const p = kidSkills.progress({ range, area });
+      return {
+        ...p, areas: p.areas.filter((a) => a.series.length || a.skills.length).map(({ series, ...a }) => ({ ...a, days: series.length, first: series[0] || null, latest: series[series.length - 1] || null })),
+        summary: kidSkills.summary(),
+        games: kidGames.list().map((g) => ({ id: g.id, title: g.title, skills: g.skills, enabled: g.enabled !== false, createdBy: g.createdBy, version: g.version, isNew: !!g.isNew })),
+        playsLastWeek: kidGames.plays({ since: Date.now() - 7 * 86400000 }).length,
+      };
+    },
+  };
+  // One memory (Phase 2): the conversation on disk, the notebook, search.
+  // Kid mode makes the parent's instructions read only.
+  const voiceMemory = createVoiceMemory({ dataDir: config.dataDir, guard: (p) => (kidOn() && !kidServerWrite && p === KID_FILE ? 'Kid mode is on: the parent instructions (kid-mode.md) are read only until it is switched off.' : '') });
+  // The heartbeat's checklist, written once; Cru and the owner keep it after that.
+  try { if (!voiceMemory.notebook.read(HEARTBEAT_FILE) && !existsSync(join(config.dataDir, 'voice-memory', '.heartbeat-seeded'))) { voiceMemory.notebook.save(HEARTBEAT_FILE, HEARTBEAT_DEFAULT); writeFileSync(join(config.dataDir, 'voice-memory', '.heartbeat-seeded'), ''); } } catch (err) { console.warn('[voice] could not write the heartbeat checklist:', err.message); }
+  // Kid Cru asking the parent (ask_parent): an approval on every signed-in device and the phone.
+  const kidAsks = createParentAsks({
+    onAsk: (a) => {
+      // The wait: a message flying to the parent, bubbles to pop, a friendly line every ~9 s.
+      const who = kidParent() || 'your grown-up';
+      if (kidOn() && !(voiceScreen.get() && voiceScreen.get().video)) { try { voiceScreen.game('_waiting', { theme: 'message', line: 'Asking ' + who + '...', steps: ['Sending the message...', 'Flying to ' + who + '...', 'Waiting for ' + who + '...'], progress: 0.3 }, 'Asking your grown-up'); } catch { /* none */ } }
+      clearInterval(kidAskTalk);
+      kidAskTalk = setInterval(() => { if (kidOn() && kidAsks.pending().length) kidSay('ask-waiting'); else clearInterval(kidAskTalk); }, 9000);
+      kidAskTalk.unref?.();
+      broadcastApprovals();
+      kidBroadcast();
+      mobilePush.send(a.title, { title: 'Kid mode', url: '/', tag: 'kid-ask' }).catch(() => {});
+    },
+    onDone: (a, choice) => {
+      broadcastApprovals();
+      if (!kidOn()) return;
+      clearInterval(kidAskTalk);
+      { const sc = voiceScreen.get(); if (sc && sc.game && sc.game.id === '_waiting' && sc.title === 'Asking your grown-up') voiceScreen.clear(); }
+      // The instant line first (kind, never blaming the parent), then kid Cru carries on.
+      kidSay(!choice ? 'ask-timeout' : choice === 'no' ? 'ask-no' : 'ask-yes');
+      const label = choice ? (a.choices.find((c) => c.id === choice) || {}).label || choice : '';
+      if (choice === 'once' || choice === 'always') {
+        const item = parseYoutubeLine(a.what) || { kind: 'handle', id: String(a.what).replace(/[^A-Za-z0-9._-]/g, '').slice(0, 30), label: a.what };
+        item.label = item.label || a.what;
+        kidSession.onceVideos.push(item);
+        if (choice === 'always') kidAlwaysAllow(a.what, item);
+      }
+      if (choice === 'add-15' || choice === 'add-30') kidSession.extraMinutes += choice === 'add-15' ? 15 : 30;
+      kidBroadcast();
+      const line = choice ? `[Parent answered: ${label} — to "${a.title}"] Not said by the child.` : `[Parent answered: no answer came — to "${a.title}"] Not said by the child: say kindly that the grown-up is busy, and offer something allowed.`;
+      setTimeout(() => kidGameWake(line, { force: true }), 200);
+    },
+  });
+  // Time asked for: an expired question still gets its friendly answer.
+  setInterval(() => kidAsks.expire(), 30 * 1000).unref();
+  /** "Always allow": the server adds the channel to the parent's instructions (never kid Cru). */
+  function kidAlwaysAllow(what, item) {
+    try {
+      const text = (voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '';
+      const line = `- ${item.kind === 'handle' ? '@' + item.id : item.kind === 'channel' ? item.id : item.kind === 'video' ? 'https://youtu.be/' + item.id : 'playlist: ' + item.id} (${String(item.label || what).replace(/[()]/g, '').slice(0, 60)})`;
+      const next = /^## Approved YouTube\s*$/m.test(text) ? text.replace(/^## Approved YouTube\s*$/m, (h) => `${h}\n${line}`) : `${text.trimEnd()}\n\n## Approved YouTube\n${line}\n`;
+      kidServerWrite = true;
+      try { voiceMemory.notebook.save(KID_FILE, next); } finally { kidServerWrite = false; }
+    } catch (e) { console.warn('[voice] could not add the approved channel:', e.message); }
+  }
+  // What Cru shows inside its replies (voice/reply-media.js): files from the projects, the temporary folder or its own folder.
+  const cruReplyMediaTools = makeReplyMediaTools({
+    media: chatMedia,
+    roots: () => [...allProjects().map((p) => p.path).filter(Boolean), tmpdir(), join(config.dataDir, 'voice-memory')],
+  });
+  // Cru moves the owner's Crundi page and rings things on it (voice/ui-nav.js):
+  // the page he last talked from, web or PC; owner-only SSE, answered on /api/voice/ui/ack.
+  const cruUiTarget = createUiTarget();
+  const cruUiAcks = createUiAcks();
+  const cruUiNavTools = makeUiNavTools({
+    target: cruUiTarget,
+    acks: cruUiAcks,
+    send: (msg) => {
+      const payload = `event: cru-ui\ndata: ${JSON.stringify(msg)}\n\n`;
+      for (const client of sseClients) { if (!client.principal || isConfined(client.principal)) continue; try { client.res.write(payload); } catch { sseClients.delete(client); } }
+    },
+    projects: () => allProjects().map((p) => ({ alias: p.alias, name: p.name })),
+    chats: () => (claudeUi ? claudeUi.list() : []).filter((c) => !c.collaborator).map((c) => ({ id: c.id, project: c.project, title: c.title })),
+  });
+  // Cru says something now, during its turn, as its own message (voice/say-now.js):
+  // to the open voice screens (the one whose request it is shows it), with a ring through show_in_crundi.
+  const cruSayAcks = createSayAcks();
+  const cruSayTools = makeSayNowTools({
+    acks: cruSayAcks,
+    send: (msg) => {
+      const m = JSON.stringify(msg);
+      let n = 0;
+      for (const ws of voiceListeners) { if (ws.readyState !== 1) continue; try { ws.send(m); n++; } catch { /* gone */ } }
+      return n;
+    },
+    point: (args) => cruUiNavTools[0].run(args),
+  });
+  const voiceBrainOpts = {
+    // Each step is counted for the routine nudge (cruStepDone). The turn's signals go through (say_now needs them).
+    tools: [...voiceTools, ...cruBrowser.read, ...voiceActions, voiceMemory.notebook.tool, voiceMemory.searchTool, ...attachmentToolDefs(cruFiles), ...voiceAdminTools, ...makeVoiceScreenTools(voiceScreen), ...cruReplyMediaTools, ...cruUiNavTools, ...cruSayTools, kidStartTool, kidProgressTool, pcLockTool]
+      .map((t) => ({ ...t, run: async (i, sig) => { let out; try { out = await t.run(i, sig); } catch (e) { cruStepDone(t.name, null); throw e; } try { cruStepDone(t.name, out); } catch { /* counting only */ } return out; } })),
+    beforeTurn: ({ locked, unrecognised, voice, confirmOk }) => { voiceCtx.locked = () => !!locked; voiceCtx.unrecognised = () => !!unrecognised; voiceCtx.confirmOk = () => !!confirmOk; voiceCtx.verified = () => !unrecognised && !!(voice && voice.owner === true); voiceOwnerVerdict = voice || null; voiceTurnOwner = !locked && !unrecognised && !!(voice && voice.owner === true); voiceCtx.unattended = () => false; cruTurnBegins(); voicePending.newTurn(); },
+    turnNote: () => [kidNews(), cruSteps.nudge].filter(Boolean).join('\n'),
+    // Cru speaking up by itself: nobody spoke. Admin mode (when on) gives it full
+    // access then too, to look after the server unattended (the owner, 10 Nov):
+    // no voice to check; every command it runs is in the day's log (admin.js).
+    beforeReport: () => { voiceCtx.unrecognised = () => false; voiceCtx.unattended = () => true; cruTurnBegins(); voiceTurnOwner = false; voiceOwnerVerdict = { owner: true, reason: 'nobody spoke: Cru on its own' }; },
+    onTurnDone: (t) => voiceMemory.remember(t),
+    onCompacted: (summary, at) => voiceMemory.rememberSummary(summary, at),
+    persona: () => (voiceMemory.notebook.list().find(f => f.path === '/memories/persona.md') || {}).text || '',
+    // Who the owner is and Cru's routines go with the persona (reflect.js).
+    selfNote: () => { const files = voiceMemory.notebook.list(); const at = (p) => (files.find(f => f.path === p) || {}).text || ''; return voiceSelfNote({ persona: at('/memories/persona.md'), owner: at('/memories/owner.md'), routines: files.filter(f => f.path.startsWith(VOICE_ROUTINES_DIR)) }); },
+    selfFiles: () => { const files = voiceMemory.notebook.list(); const at = (p) => (files.find(f => f.path === p) || {}).text || ''; return { persona: at('/memories/persona.md'), owner: at('/memories/owner.md') }; },
+    // What a compaction taught: the two files rewritten whole, within their limits.
+    onReflected: ({ persona, owner }) => {
+      const files = voiceMemory.notebook.list(); const at = (p) => (files.find(f => f.path === p) || {}).text || '';
+      for (const [path, text] of [['/memories/persona.md', persona], ['/memories/owner.md', owner]]) {
+        if (!text || !String(text).trim()) continue;
+        if (voiceCapCheck(path, at(path), text)) { console.warn(`[voice] reflection left ${path} as it was (over its limit)`); continue; }
+        try { voiceMemory.notebook.save(path, String(text).trim() + '\n'); console.log(`[voice] reflection updated ${path}`); } catch (e) { console.warn(`[voice] reflection could not write ${path}: ${e.message}`); }
+      }
+    },
+  };
+  // The experiment (brain setting): the same tools and rules, answered by the
+  // owner's own Claude Code in JSON mode, running in Cru's notes folder.
+  const voiceCli = createCliVoiceAgent({
+    ...voiceBrainOpts,
+    workdir: join(config.dataDir, 'voice-memory', 'memories'),
+    stateDir: join(config.dataDir, 'voice-memory', 'cli'),
+    apiUrl: () => `http://127.0.0.1:${localPort || port}`,
+    claudeBin: () => resolveClaudeBin(),
+  });
+  // Speech goes to the nearer Deepgram region (a far one stutters mid-reply).
+  startDeepgramHostWatch({ log: (m) => console.log(`[voice] ${m}`) });
+  const voiceAgent = createVoiceBrain({
+    api: createVoiceAgent({ ...voiceBrainOpts, store: voiceMemory.store }),
+    cli: voiceCli,
+    logFile: join(config.dataDir, 'voice-memory', 'brain-log.jsonl'),
+  });
+  // Compaction while idle: ten quiet minutes, at most once a minute's check.
+  setInterval(() => {
+    if (!kidOn() && Date.now() - voiceAgent.lastActivity > 10 * 60 * 1000) voiceAgent.compact().catch(() => {});
+  }, 60 * 1000).unref();
+
+  // ─── Kid Cru: the child's friend, a conversation of its own ───
+  // Its own history, store and notes; the parent's instructions read only;
+  // only the live screen, games, approved videos and its friend notes.
+  const kidInstructions = () => (voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '';
+  // What the child last showed kid Cru (the drawing pad's "Show Cru"): kept in memory only, never saved.
+  let kidPicture = null;
+  const kidTools = makeKidTools({
+    picture: () => kidPicture,
+    screen: voiceScreen,
+    instructions: kidInstructions,
+    games: kidGames,
+    resolveHandle: (h) => kidHandles.resolve(h),
+    onGame: (id, o) => { kidGames.startPlay(id, o); kidWarmGame(id, o); },
+    friend: kidFriend,
+    watch: kidWatch,
+    sendCommand: (cmd) => voiceListenSend({ type: 'game-command', command: cmd }),
+    // Something worrying the child said: a short note for the parent (inbox and phone), never a recording.
+    asks: kidAsks,
+    makeGame: (idea, skill) => kidMakeGame(idea, skill),
+    childName: () => kidFirstName(),
+    extraApproved: () => kidSession.onceVideos,
+    tellParent: createParentNotes({
+      send: (note) => {
+        console.log('[voice] kid Cru told the parent:', note);
+        try { inbox.add({ kind: 'alert', cru: true, title: 'Kid mode: a note for you', text: note }); } catch (err) { console.warn('[inbox] could not keep the note:', err.message); }
+        mobilePush.send(note, { title: 'Kid mode', url: '/', tag: 'kid-note' }).catch(() => {});
+      },
+    }),
+  });
+  const kidStore = (() => {
+    const f = join(kidPrivDir, 'conversation.json');
+    return {
+      load() { try { const h = JSON.parse(readFileSync(f, 'utf-8')); return Array.isArray(h.history) ? h.history : []; } catch { return []; } },
+      save(history) { mkdirSync(kidPrivDir, { recursive: true, mode: 0o700 }); writeFileSync(f, JSON.stringify({ savedAt: new Date().toISOString(), history }), { mode: 0o600 }); },
+    };
+  })();
+  const kidBrainOpts = {
+    tools: kidTools,
+    systemPrompt: KID_SYSTEM_PROMPT,
+    intro: () => kidIntro(kidInstructions(), { friend: kidFriend.read(), learning: kidSkills.summary() }),
+    // What is on the kid screen right now, every turn: a fresh kid mode never thinks an old game is still up.
+    context: ({ now }) => { const sc = voiceScreen.get(); return kidContextLine({ now, since: voiceSettings.kidState().since, extraMinutes: kidSession.extraMinutes, onScreen: sc ? String(sc.title || (sc.video ? 'a video' : 'a game')).slice(0, 80) : '' }); },
+    noCompact: true,
+    refusal: '[mood: gentle] Hmm, let\'s do something else! How about a game?',
+    beforeTurn: () => { if (kidWorkshop) kidWorkshop.markKidUse(); },
+  };
+  const kidCli = createCliVoiceAgent({
+    ...kidBrainOpts,
+    workdir: join(kidPrivDir, 'cli-work'),
+    stateDir: join(kidPrivDir, 'cli'),
+    apiUrl: () => `http://127.0.0.1:${localPort || port}`,
+    claudeBin: () => resolveClaudeBin(),
+  });
+  const kidAgent = createVoiceBrain({
+    api: createVoiceAgent({ ...kidBrainOpts, store: kidStore }),
+    cli: kidCli,
+    logFile: join(kidPrivDir, 'brain-log.jsonl'),
+  });
+  /** Whichever Cru is answering now: the child's friend in kid mode, else the owner's. */
+  const cru = () => (kidOn() ? kidAgent : voiceAgent);
+  /** A kid turn: its mood marker taken off and turned into how lively it sounds. */
+  // One kid turn at a time, in order: what the child says while kid Cru is
+  // still answering (a game event, or their own last words) waits its turn
+  // instead of being refused. Game events step aside while the child waits.
+  let kidChain = Promise.resolve();
+  let kidChildWaiting = 0;
+  let kidLastChildAt = 0;
+  function kidTurn(text, opts = {}, { child = false } = {}) {
+    if (child) { kidChildWaiting++; kidLastChildAt = Date.now(); }
+    const run = kidChain.then(() => { if (child) kidChildWaiting--; return kidTurnNow(text, opts); });
+    kidChain = run.catch(() => {});
+    return run;
+  }
+  async function kidTurnNow(text, opts = {}) {
+    const r = await kidAgent.turn(text, opts);
+    if (r && r.ok) {
+      const m = splitMood(r.speak || '');
+      r.speak = m.text.trim();
+      r.show = splitMood(r.show || '').text.trim();
+      r.mood = m.mood;
+      r.expressivity = MOOD_EXPRESSIVITY[m.mood];
+      r.kid = true;
+    }
+    return r;
+  }
+  /** Something from a game for kid Cru (a watched event): its answer goes to the open screens. */
+  let kidEventBusy = false;
+  async function kidGameWake(line, { force = false } = {}) {
+    // The child is talking with Cru: a game's own nudges (idle, a cheer) wait, so Cru never answers out of turn.
+    if (!line || (kidEventBusy && !force) || kidSession.paused || (!force && (kidChildWaiting || Date.now() - kidLastChildAt < 20000))) return;
+    for (let i = 0; i < 40 && kidEventBusy; i++) await new Promise((ok) => setTimeout(ok, 500));
+    kidEventBusy = true;
+    try {
+      const r = await kidTurn(line, { where: 'the game on the kid screen' });
+      if (r && r.ok && (r.speak || r.show)) voiceListenSend({ type: 'report', speak: r.speak || '', show: r.show || '', kid: true, mood: r.mood, expressivity: r.expressivity });
+    } finally {
+      kidEventBusy = false;
+      setTimeout(() => { const due = kidWatch.due({ busy: kidEventBusy }); if (due && kidOn()) kidGameWake(due); }, 3100).unref?.();
+    }
+  }
+
+  // ─── A game made now, for the child (make_game) ───
+  // The waiting scene (kid-games/waiting.html) shows meanwhile, moved on by
+  // the build's real steps, with a cheerful line every ~9 s and bubbles to pop.
+  let kidMakes = [];
+  /** An instant line said on the kid screen (no model). */
+  const kidParent = () => { try { return parseKidInstructions((voiceMemory.notebook.list().find((f) => f.path === KID_FILE) || {}).text || '').parent; } catch { return ''; } };
+  const kidSay = (event) => { const l = kidReflex.pick(event, { name: kidFirstName(), parent: kidParent() }); if (l) voiceListenSend({ type: 'say', text: l.text, expressivity: l.expressivity }); return l; };
+  let kidAskTalk = null;
+  function kidMakeGame(idea, skill) {
+    if (!idea) return { ok: false, error: 'Say what the game is about' };
+    if (!kidWorkshop || kidWorkshop.building) return { ok: false, error: 'A game is already being made: wait for it.' };
+    const t = Date.now();
+    kidMakes = kidMakes.filter((x) => t - x < 3600 * 1000);
+    if (kidMakes.length >= 3) return { ok: false, error: 'Enough new games this hour: offer one that is there already.' };
+    kidMakes.push(t);
+    kidGames.endPlay(false);
+    voiceScreen.game('_waiting', { theme: idea, line: 'Cru is making your game!', progress: 0.05 }, 'Making your game');
+    const talk = setInterval(() => { if (kidOn()) kidSay('making'); }, 9000);
+    talk.unref?.();
+    kidWorkshop.buildLive({
+      idea, skill,
+      onStep: (value, step) => voiceListenSend({ type: 'game-command', command: { action: 'progress', value, step } }),
+    }).then((r) => {
+      clearInterval(talk);
+      if (!kidOn()) return;
+      if (r.ok) {
+        voiceListenSend({ type: 'game-command', command: { action: 'ready' } });
+        setTimeout(() => {
+          if (!kidOn()) return;
+          try { voiceScreen.game(r.id, {}, r.title); kidGames.startPlay(r.id, {}); kidWatch.reset(); } catch { /* gone */ }
+          kidGameWake(`[New game ready: "${r.title}" (id ${r.id}), about ${idea}. It is on the screen now: present it with a happy ta-da, in a sentence.]`, { force: true });
+        }, 1800);
+      } else {
+        voiceScreen.clear();
+        kidGameWake(`[New game failed: the ${idea} game could not be made this time. Cheerfully offer the closest game there is (list_games) and start it if they want.]`, { force: true });
+      }
+    }).catch(() => { clearInterval(talk); });
+    return { ok: true, making: true, note: 'It is being made now (a minute or two). Say so excitedly; a waiting screen with bubbles is up meanwhile.' };
+  }
+
+  // Kid speech, kept on disk by voice + expressivity + text, so a line said once is instant.
+  const kidClipDir = join(kidPrivDir, 'clips');
+  const kidVoiceNow = () => voiceSettings.getSettings().kidVoice || voiceSettings.getSettings().ttsVoice || '';
+  const kidClipFile = (text, ex) => join(kidClipDir, kidClipKey(kidVoiceNow(), ex, text) + '.pcm');
+  /** Make (and keep) the clip for [text], quietly; a clip already made is left. */
+  async function kidMakeClip(text, ex) {
+    const f = kidClipFile(text, ex);
+    if (existsSync(f) || !voiceSettings.getSettings().deepgramKey || voiceSettings.deepgramOverLimit()) return;
+    const st = await speakKidStream(text, { expressivity: ex, rate: voiceSettings.getSettings().kidSpeechRate || 1 });
+    if (!st.ok) return;
+    const buf = Buffer.from(await new Response(st.body).arrayBuffer());
+    if (buf.length > 2000) { mkdirSync(kidClipDir, { recursive: true, mode: 0o700 }); writeFileSync(f, buf, { mode: 0o600 }); }
+  }
+  // The instant lines for a game, made in the background as it starts (one at a time).
+  let kidWarming = Promise.resolve();
+  function kidWarmGame(id, o = {}) {
+    if (voiceSettings.getSettings().kidReflex === false) return;
+    const g = kidGames.get(id);
+    const letters = typeof o.letters === 'string' ? o.letters.toUpperCase().replace(/[^A-Z]/g, '').split('') : [];
+    const items = letters.length ? letters : (g && (g.skills || []).some((k) => /letter|upper/.test(k)) ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('') : []);
+    const lines = kidReflex.warmLines({ name: kidFirstName(), items }).slice(0, 120);
+    kidWarming = kidWarming.then(async () => { for (const l of lines) { if (!kidOn()) return; await kidMakeClip(l.text, MOOD_EXPRESSIVITY[l.mood]).catch(() => {}); } }).catch(() => {});
+  }
+
+  // The games workshop: on a night after kid mode was used, while nobody is about.
+  kidWorkshop = createKidWorkshop({
+    lib: kidGames,
+    dir: kidDir,
+    settings: () => { const g = voiceSettings.getSettings().kidGames || {}; return { enabled: g.improve !== false, from: g.from, to: g.to }; },
+    kidOn,
+    lastActivity: () => {
+      const busy = (claudeUi ? claudeUi.list() : []).some((c) => c.agentState === 'working');
+      return busy ? Date.now() : Math.max(voiceAgent.lastActivity || 0, kidAgent.lastActivity || 0);
+    },
+    claudeBin: () => { try { return resolveClaudeBin(); } catch { return null; } },
+    render: async (id) => {
+      const d = kidGames.doc(id, {});
+      if (!d) return { ok: false, problems: ['could not be built (meta.json missing or broken?)'] };
+      return checkInSandbox({ baseUrl: `http://127.0.0.1:${localPort || port}`, doc: voiceScreenDoc(d.html, { title: d.title, kid: true }) });
+    },
+    onDone: (r) => {
+      kidReflex.reload();
+      const titles = (ids) => ids.map((id) => (kidGames.get(id) || {}).title || id).join(', ');
+      const bits = [];
+      if (r.created.length) bits.push(`new game${r.created.length > 1 ? 's' : ''}: ${titles(r.created)}`);
+      if (r.updated.length) bits.push(`improved: ${titles(r.updated)}`);
+      if (r.failed.length) bits.push(`${r.failed.length} change${r.failed.length > 1 ? 's' : ''} refused by the safety checks`);
+      if (bits.length) { try { mkdirSync(kidPrivDir, { recursive: true, mode: 0o700 }); writeFileSync(kidNewsFile, `${bits.join('; ')}. ${r.summary || ''}`.slice(0, 1500), { mode: 0o600 }); } catch { /* best effort */ } }
+      broadcastSSE('voice-kid-games', {});
+    },
+  });
+  setInterval(() => { try { kidWorkshop.tick(); } catch (e) { console.warn('[kid-workshop]', e.message); } }, 5 * 60 * 1000).unref();
+
+  function readBodyBuffer(req, max) {
+    return new Promise((resolve, reject) => {
+      const parts = [];
+      let n = 0;
+      req.on('data', (c) => {
+        n += c.length;
+        if (n > max) { reject(new Error('Too large')); req.destroy(); return; }
+        parts.push(c);
+      });
+      req.on('end', () => resolve(Buffer.concat(parts)));
+      req.on('error', reject);
+    });
+  }
+
   async function handleRequest(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
@@ -2603,6 +3893,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // the API calls it goes on to make.
     if (/^\/chat\/[A-Za-z0-9_-]{1,80}\/?$/.test(path) && req.method === 'GET') {
       html(res, chatPageHtml());
+      return;
+    }
+    // The voice assistant's old test page: its settings are in Settings now.
+    if (path === '/voice' && req.method === 'GET') {
+      res.writeHead(302, { Location: '/' });
+      res.end();
       return;
     }
 
@@ -2822,6 +4118,134 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
     }
 
+    // ─── Google / GitHub sign-in ───
+    // All above the auth gate: they ARE the way past it. See auth-oauth.js for
+    // the two ways the session reaches the page (redirect, poll).
+    if (path === '/api/auth/oauth/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+      const provider = String(body.provider || '');
+      const p = OAUTH_PROVIDERS[provider];
+      if (!p) return json(res, { ok: false, error: 'Unknown sign-in method' }, 400);
+      if (oauth.limited(clientIp(req))) {
+        console.warn(`[crundi] Too many ${p.label} sign-in starts from ${clientIp(req)}`);
+        return json(res, { ok: false, error: 'Too many sign-in attempts. Wait a few minutes and try again.' }, 429);
+      }
+      // A test runs the flow with what is saved, before it is turned on, so
+      // only the signed-in owner may start one.
+      const purpose = body.purpose === 'test' ? 'test' : 'login';
+      if (purpose === 'test') {
+        const who = validateToken(req);
+        if (!who || who.role !== ROLE_OWNER) return json(res, { error: 'Unauthorized' }, 401);
+      } else if (!authConfig.methods()[provider]) {
+        return json(res, { ok: false, error: `${p.label} sign-in is not turned on here` }, 400);
+      }
+      const redirectUri = oauthCallbackUrl(provider);
+      if (!redirectUri) return json(res, { ok: false, error: 'This server does not know its own address yet.' }, 409);
+      // The redirect lands on the callback's origin, so it can only hand the
+      // session to a page on that origin in an ordinary browser. Anything
+      // else (the desktop app, another address, a test) waits by polling.
+      let sameOrigin = false;
+      try { sameOrigin = new URL(String(body.origin || '')).origin === new URL(redirectUri).origin; } catch { /* not same */ }
+      const mode = (purpose === 'test' || body.desktop || !sameOrigin) ? 'poll' : 'redirect';
+      const r = oauth.start(provider, { creds: authConfig.oauthCreds(provider), redirectUri, purpose, mode });
+      if (!r.ok) return json(res, r, 400);
+      return json(res, { ok: true, url: r.url, mode: r.mode, ...(r.pollId ? { pollId: r.pollId, confirmCode: r.confirmCode } : {}) });
+    }
+
+    {
+      const m = /^\/api\/auth\/oauth\/(google|github)\/callback$/.exec(path);
+      if (m && req.method === 'GET') {
+        const provider = m[1];
+        const label = OAUTH_PROVIDERS[provider].label;
+        const page = (o, status = 200) => {
+          res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+          res.end(oauthPage(o));
+        };
+        const r = await oauth.complete(provider, Object.fromEntries(url.searchParams.entries()), () => authConfig.oauthCreds(provider));
+        const entry = r.entry;
+        if (!r.ok) {
+          const who = r.account ? (r.account.email || r.account.login || '?') : '';
+          console.warn(`[crundi] ${label} sign-in${entry?.purpose === 'test' ? ' test' : ''} refused from ${clientIp(req)}: ${r.notAllowed ? `account not allowed (${who})` : r.error}`);
+          // Never which part failed: the wrong account, an unverified email
+          // and a changed id all read the same.
+          const msg = r.notAllowed ? OAUTH_NOT_ALLOWED : r.error;
+          if (r.notAllowed) await new Promise(rs => setTimeout(rs, 400 + Math.floor(Math.random() * 300)));
+          if (entry && entry.mode === 'redirect') {
+            res.writeHead(302, { Location: '/?auth_error=' + encodeURIComponent(msg), 'Cache-Control': 'no-store' });
+            res.end();
+            return;
+          }
+          return page({ title: entry?.purpose === 'test' ? `${label} test did not pass` : 'Not signed in', text: msg, ok: false }, 403);
+        }
+        if (entry.purpose === 'test') {
+          authConfig.markOAuthVerified(provider, r.account);
+          const as = r.account.email || r.account.login;
+          console.log(`[crundi] ${label} sign-in test passed (${as})`);
+          return page({ title: `${label} sign-in works`, text: `Signed in as ${as}. You can close this tab; ${label} sign-in can now be turned on in Settings.` });
+        }
+        // Turned off between the start and now: the switch wins.
+        if (!authConfig.methods()[provider]) return page({ title: 'Not signed in', text: `${label} sign-in is not turned on here.`, ok: false }, 403);
+        authConfig.noteOAuthAccount(provider, r.account);
+        console.log(`[crundi] ${label} sign-in succeeded (${r.account.email || r.account.login}) from ${clientIp(req)}`);
+        if (entry.mode === 'poll') {
+          const rec = oauth.pollStatus(entry.pollId);
+          return page({
+            title: 'Sign in the Crundi app?',
+            text: 'Continue only if Crundi on this computer is showing this code. If you did not just choose to sign in there, close this tab.',
+            code: rec?.confirmCode || '',
+            form: { action: '/api/auth/oauth/confirm', fields: { t: oauth.confirmTokenFor(entry.pollId) }, button: 'Yes, sign it in' },
+          });
+        }
+        res.writeHead(302, { Location: '/#oauth=' + oauth.issueHandoff({ provider }), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+        res.end();
+        return;
+      }
+    }
+
+    // The browser that signed in says the waiting app shows the same code.
+    if (path === '/api/auth/oauth/confirm' && req.method === 'POST') {
+      const t = new URLSearchParams(String(await readBody(req) || '')).get('t') || '';
+      const ok = oauth.confirmPoll(t);
+      res.writeHead(ok ? 200 : 410, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(oauthPage(ok
+        ? { title: 'Signed in', text: 'Crundi is signed in. You can close this tab and go back to it.' }
+        : { title: 'Not signed in', text: 'This sign-in has expired or was already used. Start again from Crundi.', ok: false }));
+      return;
+    }
+
+    // The redirected page swaps its one-time code for a session.
+    if (path === '/api/auth/oauth/exchange' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+      const grant = oauth.redeemHandoff(body.code);
+      if (!grant) return json(res, { ok: false, error: 'This sign-in has expired. Start again.' }, 401);
+      setForwardCookie(res);
+      return json(res, { ok: true, ...createSession(config.localUsername, undefined, req) });
+    }
+
+    // The desktop app (or a Settings test) waiting on a flow in another window.
+    if (path === '/api/auth/oauth/poll' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse((await readBody(req)) || '{}') || {}; } catch { body = {}; }
+      const peek = oauth.pollStatus(body.pollId);
+      if (!peek) return json(res, { ok: true, status: 'expired' });
+      if (peek.purpose === 'test') {
+        // What account a test signed in as is for the owner's eyes only.
+        const who = validateToken(req);
+        if (!who || who.role !== ROLE_OWNER) return json(res, { error: 'Unauthorized' }, 401);
+        const rec = oauth.collectPoll(body.pollId);
+        const as = rec.account ? (rec.account.email || rec.account.login || '') : '';
+        return json(res, { ok: true, status: rec.status, ...(rec.error ? { error: rec.error } : {}), ...(as ? { account: as } : {}) });
+      }
+      if (peek.status === 'waiting' || peek.status === 'confirm') return json(res, { ok: true, status: peek.status });
+      const rec = oauth.collectPoll(body.pollId);
+      if (rec.status === 'failed') return json(res, { ok: true, status: 'failed', error: rec.notAllowed ? OAUTH_NOT_ALLOWED : (rec.error || 'Sign-in failed') });
+      if (!authConfig.methods()[rec.provider]) return json(res, { ok: true, status: 'failed', error: 'That sign-in method is not turned on here' });
+      setForwardCookie(res);
+      return json(res, { ok: true, status: 'done', ...createSession(config.localUsername, undefined, req) });
+    }
+
     // ─── Collaborator sign-in ───
     //
     // Their own door, deliberately separate from the owner's. It grants a
@@ -2923,8 +4347,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         ok: true,
         telegram: m.telegram,
         password: m.password,
+        // Only whether each is on: the client ID, secret and allowed account
+        // are nothing a stranger needs before signing in.
+        google: m.google,
+        github: m.github,
         setupRequired: !m.anyConfigured,
         botUsername: m.telegram ? (config.botUsername || '') : '',
+        // The bot's public numeric id (the part of the token before the
+        // colon, which is not secret): the login page's Telegram button
+        // goes straight to Telegram's sign-in page with it.
+        telegramBotId: m.telegram ? (String(config.botToken || '').split(':')[0].replace(/\D/g, '') || '') : '',
       });
     }
 
@@ -3209,6 +4641,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     // session; the single-use ticket in the URL is the credential.
     if (path === '/api/widgets/harness' && req.method === 'GET') return widgetApi.handleHarness(req, res, url);
 
+    // The standalone homepool node's code: public, it is code and no data.
+    if (homepool.handlePublic(req, res, path)) return;
+
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
 
@@ -3229,7 +4664,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // MCP call + hook status endpoints use their own X-Api-Key auth (not tokens)
-    const keyAuthed = path === '/api/mcp/call' || path === '/api/terminal-status';
+    const keyAuthed = path === '/api/mcp/call' || path === '/api/terminal-status' || path === '/api/voice/cli-tool';
     let principal = null;
     if (!authConfig.isOpen() && !keyAuthed) {
       principal = validateToken(req);
@@ -3254,6 +4689,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         collaborator: true,
       }, 403);
     }
+
+    // ─── Homepool (owner only; src/homepool-service.js) ───
+    if (path.startsWith('/api/homepool') && await homepool.handleApi(req, res, path, {
+      principal, readBody, json,
+      isOwner: (p) => !!p && p.role === ROLE_OWNER && !isConfined(p),
+    })) return;
 
     // ─── Media Claude showed in a chat (see chat-media.js) ───
     // Pictures, video, audio and their poster frames. Byte ranges are honoured:
@@ -3432,6 +4873,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         projectCount: projects.length,
         botConnected: !!config.botUsername,
         botUsername: config.botUsername || '',
+        // Telegram is one optional channel: a server without it is not "offline".
+        botConfigured: !!config.botToken,
       });
     }
 
@@ -3934,6 +5377,512 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Claude usage (real, account-wide) ───
+    // ─── Voice assistant ───
+    if (path === '/api/voice/settings' && req.method === 'GET') {
+      return json(res, { ok: true, ...voiceSettings.publicSettings() });
+    }
+    if (path === '/api/voice/settings' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, kidMode: true, error: 'Kid mode is on: settings wait until it is switched off with the PIN.' }, 423);
+      const r = voiceSettings.updateSettings({
+        model: body.model, monthlyLimitUsd: body.monthlyLimitUsd, deepgramLimitUsd: body.deepgramLimitUsd,
+        anthropicKey: body.anthropicKey, deepgramKey: body.deepgramKey, anthropicAdminKey: body.anthropicAdminKey,
+        ttsVoice: body.ttsVoice, billingDay: body.billingDay, deepgramBillingDay: body.deepgramBillingDay, pauseMs: body.pauseMs, speechRate: body.speechRate, volume: body.volume,
+        brain: body.brain, screenCloseSeconds: body.screenCloseSeconds, cliIdleMinutes: body.cliIdleMinutes, effort: body.effort,
+        adminMode: typeof body.adminMode === 'boolean' ? body.adminMode : undefined,
+        ownerOnly: typeof body.ownerOnly === 'boolean' ? body.ownerOnly : undefined,
+        kidVoice: body.kidVoice, kidSpeechRate: body.kidSpeechRate, kidGames: body.kidGames, kidChattiness: body.kidChattiness, kidPauseMs: body.kidPauseMs,
+        kidReflex: typeof body.kidReflex === 'boolean' ? body.kidReflex : undefined,
+        away: body.away && typeof body.away === 'object' ? body.away : undefined,
+      });
+      if (r.ok && body.away && typeof body.away === 'object') { cruLog.add(`Owner set on-my-own ${voiceSettings.getSettings().away.on ? 'on: ' + voiceSettings.getSettings().away.allow.join(', ') : 'off'}`); broadcastSSE('voice-settings', {}); }
+      return json(res, r.ok ? { ok: true, ...voiceSettings.publicSettings() } : r, r.ok ? 200 : 400);
+    }
+    // ─── Cru on its own (capability 'voice-away') ───
+    if (path === '/api/voice/ask' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const a = cruAsks.answer(String(body.id || ''), String(body.choice || ''));
+      return json(res, a ? { ok: true } : { ok: false, error: 'That question is no longer waiting' }, a ? 200 : 404);
+    }
+    if (path === '/api/voice/away/stop' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      return json(res, { ...cruAwayOff({ everything: body.everything !== false }), ...voiceSettings.publicSettings() });
+    }
+    if (path === '/api/voice/jobs' && req.method === 'GET') {
+      const chats = new Map((claudeUi ? claudeUi.list() : []).map((c) => [c.id, c]));
+      return json(res, { ok: true, jobs: cruJobs.list(true).map((j) => ({ ...j, chatOpen: chats.has(j.chatId) })) });
+    }
+    // ─── Cru's live screen (capability 'voice-screen') ───
+    if (path === '/api/voice/screen' && req.method === 'GET') return json(res, { ok: true, screen: voiceScreen.get() });
+    if (path === '/api/voice/screen/close' && req.method === 'POST') {
+      kidGames.endPlay(false);
+      voiceScreen.clear();
+      return json(res, { ok: true, screen: null });
+    }
+    // The owner's top-bar button while Cru's UI has the whole content area
+    // (capability 'voice-screen-full'): back to the normal view on every
+    // screen, what Cru showed kept as the usual panel.
+    // The panel's expand button (capability 'voice-screen-expand'): the full view again.
+    if (path === '/api/voice/screen/full' && req.method === 'POST') {
+      voiceScreen.expand();
+      return json(res, { ok: true, screen: voiceScreen.get() });
+    }
+    if (path === '/api/voice/screen/normal' && req.method === 'POST') {
+      voiceScreen.normal();
+      return json(res, { ok: true, screen: voiceScreen.get() });
+    }
+    // Something tapped on Cru's own page (window.cru.tell): Cru hears it, as a
+    // tap and never as the owner speaking, so it changes nothing.
+    if (path === '/api/voice/screen/event' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const what = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+      if (!what) return json(res, { ok: false, error: 'Nothing tapped' }, 400);
+      const now = Date.now();
+      if (now - cruTapAt < 2000) return json(res, { ok: false, skipped: 'too soon' });
+      cruTapAt = now;
+      const line = what.startsWith('[') ? what : `[${kidOn() ? 'Kid' : 'Owner'} tapped on the live screen: ${what}]`;
+      const r = kidOn() ? await kidTurn(line, { where: 'the kid screen' }) : foldUpdates(await voiceAgent.turn(line, { where: 'the live screen', unrecognised: true, speaker: 'a tap on the live screen, not speech' }));
+      if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
+      return json(res, r, r.ok || r.cancelled ? 200 : 400);
+    }
+    // ─── Kid mode (capability 'voice-kid') ───
+    if (path === '/api/voice/kid' && req.method === 'GET') {
+      return json(res, { ok: true, ...kidPublic(), ...kidPins.state, instructions: kidOn() ? undefined : kidInstructions(), parentName: kidOn() ? undefined : kidParent() });
+    }
+    if (path === '/api/voice/kid/pin' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, error: 'The PIN cannot change while kid mode is on' }, 423);
+      const pin = String(body.pin ?? '');
+      if (body.remove === true) { voiceSettings.setKidPinHash(''); return json(res, { ok: true, ...voiceSettings.kidState() }); }
+      if (!KID_PIN_RE.test(pin)) return json(res, { ok: false, error: 'The PIN is 4 to 8 digits' }, 400);
+      const r = voiceSettings.setKidPinHash(hashPin(pin));
+      kidPins.reset();
+      return json(res, r.ok ? { ok: true, ...voiceSettings.kidState() } : r, r.ok ? 200 : 400);
+    }
+    // ─── The PC lock (capability 'pc-lock') ───
+    if (path === '/api/lock' && req.method === 'GET') return json(res, { ok: true, ...pcLockPublic() });
+    if (path === '/api/lock/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      const r = pcLockStart(body.mode, ['settings', 'tray', 'shortcut', 'phone', 'auto'].includes(body.by) ? body.by : 'settings');
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    // At the PC: the PIN (the same tries and lockout as kid mode).
+    if (path === '/api/lock/unlock' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (!pcLock.on) return json(res, { ok: true, ...pcLockPublic() });
+      const r = kidPins.attempt(String(body.pin ?? ''), voiceSettings.kidPinHash());
+      if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
+      return json(res, pcLockStop('PIN'));
+    }
+    // Check the owner's PIN without changing anything (the browser drawer
+    // asks it before showing a saved password). The same tries and lockout.
+    if (path === '/api/lock/check' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (!voiceSettings.kidPinHash()) return json(res, { ok: false, noPin: true, error: 'Set your PIN first (Settings, Voice assistant, Your PIN).' }, 400);
+      const r = kidPins.attempt(String(body.pin ?? ''), voiceSettings.kidPinHash());
+      if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
+      return json(res, { ok: true });
+    }
+    // Auto lock: { on, minutes (AUTO_MINUTES), mode }.
+    if (path === '/api/lock/auto' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      if (body.on === true && !voiceSettings.kidPinHash()) return json(res, { ok: false, error: 'Set your PIN first: it is the only way to unlock.' }, 400);
+      const minutes = Number(body.minutes);
+      pcAuto = { on: body.on === undefined ? pcAuto.on : body.on === true, minutes: AUTO_MINUTES.includes(minutes) ? minutes : pcAuto.minutes, mode: body.mode === undefined ? pcAuto.mode : (body.mode === 'visible' ? 'visible' : 'full') };
+      pcLockBroadcast();
+      return json(res, { ok: true, ...pcLockPublic() });
+    }
+    // From the owner's other signed-in device (the phone): no PIN, as for kid mode.
+    if (path === '/api/lock/end' && req.method === 'POST') return json(res, pcLockStop('remotely'));
+    if (path === '/api/voice/kid/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      const r = kidStart(['settings', 'tray', 'screen'].includes(body.by) ? body.by : 'settings');
+      return json(res, r, r.ok ? 200 : 400);
+    }
+    // The only way out: the PIN, a few tries, then a lockout that grows.
+    if (path === '/api/voice/kid/exit' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (!kidOn()) return json(res, { ok: true, on: false });
+      const r = kidPins.attempt(String(body.pin ?? ''), voiceSettings.kidPinHash());
+      if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
+      kidStop();
+      return json(res, { ok: true, ...voiceSettings.kidState() });
+    }
+    // What a game reports: the play log and the child's levels, the instant
+    // line to say now, and (when kid Cru watches that event) a word from Cru later.
+    // The child showed kid Cru a picture (capability 'voice-kid'): kept in memory, then Cru is asked to look.
+    if (path === '/api/voice/kid/picture' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse((await readBodyBuffer(req, 3 * 1024 * 1024)).toString('utf8')); } catch { return json(res, { ok: false, error: 'Too large or not a picture' }, 400); }
+      const m = String(body.data || '').match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+      if (!m || m[2].length > 2.5 * 1024 * 1024) return json(res, { ok: false, error: 'Not a picture' }, 400);
+      kidPicture = { mime: m[1], data: m[2], label: String(body.label || 'The child\'s drawing').slice(0, 80), at: Date.now() };
+      return json(res, { ok: true });
+    }
+    if (path === '/api/voice/kid/play' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const ev = String(body.event || body.kind || '');
+      const e = { event: ev === 'wrong' ? 'miss' : ev === 'level' ? 'level-up' : ev, item: String(body.item ?? '').slice(0, 40), detail: String(body.detail ?? '').slice(0, 200), streak: Number(body.streak) || 0, game: (kidGames.playing || {}).game || '' };
+      kidGames.event({ kind: ev === 'miss' ? 'wrong' : ev === 'level-up' ? 'level' : ev, detail: e.detail || e.item });
+      if (ev === 'result' && body.skill) kidSkills.record(String(body.skill), String(body.item ?? ''), body.ok === true);
+      if (kidWorkshop && kidOn()) kidWorkshop.markKidUse();
+      const out = { ok: true };
+      if (GAME_EVENTS.includes(e.event)) {
+        const speaking = body.speaking === true || kidEventBusy;
+        // The instant line (no model), unless Cru asked to say something itself.
+        if (voiceSettings.getSettings().kidReflex !== false && !kidWatch.takeQuiet() && kidReflex.gate(e.event, { speaking })) {
+          const line = kidReflex.pick(e.event, { name: kidFirstName(), item: e.item });
+          if (line) out.reflex = { ...line, cached: existsSync(kidClipFile(line.text, line.expressivity)) };
+        }
+        if (kidOn()) { const wake = kidWatch.offer(e, { busy: speaking }); if (wake) kidGameWake(wake); }
+      }
+      return json(res, out);
+    }
+    // The parent's side, from any signed-in device (no PIN: the owner is signed in).
+    if (path === '/api/voice/kid/ask' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const a = kidAsks.answer(String(body.id || ''), String(body.choice || ''));
+      return json(res, a ? { ok: true } : { ok: false, error: 'That question was already answered, or has expired' }, a ? 200 : 404);
+    }
+    // What the child calls the parent (Settings): a line of the parent's instructions.
+    if (path === '/api/voice/kid/parent-name' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      const name = String(body.name || '').replace(/[^\p{L} ,'-]/gu, '').trim().slice(0, 60);
+      const text = kidInstructions();
+      const line = `- What the child calls you: ${name || '(not set, e.g. Daddy, Mummy, Baba, Mama)'}`;
+      const next = /^-?\s*what the child calls you:.*$/im.test(text) ? text.replace(/^-?\s*what the child calls you:.*$/im, line)
+        : /^## About the kid\s*$/m.test(text) ? text.replace(/^## About the kid\s*$/m, (h) => `${h}\n${line}`) : `${text.trimEnd()}\n\n## About the kid\n${line}\n`;
+      try { voiceMemory.notebook.save(KID_FILE, next); } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      return json(res, { ok: true, parent: name });
+    }
+    if (path === '/api/voice/kid/end' && req.method === 'POST') {
+      if (!kidOn()) return json(res, { ok: true, on: false });
+      kidStop('the parent, remotely');
+      return json(res, { ok: true, ...voiceSettings.kidState() });
+    }
+    if (path === '/api/voice/kid/pause' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      if (!kidOn()) return json(res, { ok: false, error: 'Kid mode is off' }, 409);
+      kidSession.paused = body.paused !== false;
+      if (kidSession.paused) { try { kidAgent.cancel(); } catch { /* none */ } }
+      kidBroadcast();
+      return json(res, { ok: true, ...kidPublic() });
+    }
+    if (path === '/api/voice/kid/time' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { body = {}; }
+      if (!kidOn()) return json(res, { ok: false, error: 'Kid mode is off' }, 409);
+      const m = Math.round(Number(body.minutes));
+      if (!Number.isFinite(m) || m < 1 || m > 240) return json(res, { ok: false, error: 'minutes: 1 to 240' }, 400);
+      kidSession.extraMinutes += m;
+      kidBroadcast();
+      setTimeout(() => kidGameWake(`[A grown-up added ${m} more minutes of time] Not said by the child: tell them happily, in a few words.`, { force: true }), 100);
+      return json(res, { ok: true, ...kidPublic() });
+    }
+    if (path === '/api/voice/kid/progress' && req.method === 'GET') {
+      const range = ['week', 'month', 'all'].includes(url.searchParams.get('range')) ? url.searchParams.get('range') : 'month';
+      return json(res, { ok: true, ...kidSkills.progress({ range, area: String(url.searchParams.get('area') || '') }), taxonomy: KID_TAXONOMY.map((a) => ({ id: a.id, label: a.label, about: a.about, skills: a.skills.map(([id, label]) => ({ id, label })) })) });
+    }
+    if (path === '/api/voice/kid/progress/reset' && req.method === 'POST') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      kidSkills.reset();
+      return json(res, { ok: true });
+    }
+    if (path === '/api/voice/kid/games' && req.method === 'GET') {
+      return json(res, { ok: true, games: kidGames.list(), workshop: kidWorkshop ? kidWorkshop.state : null });
+    }
+    if (path === '/api/voice/kid/games' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      const id = String(body.id || '');
+      const r = body.action === 'enable' ? kidGames.setEnabled(id, true) : body.action === 'disable' ? kidGames.setEnabled(id, false)
+        : body.action === 'rollback' ? kidGames.rollback(id) : body.action === 'seen' ? (kidGames.markSeen(), { ok: true }) : { ok: false, error: 'action: enable, disable, rollback or seen' };
+      return json(res, r.ok ? { ok: true, games: kidGames.list() } : r, r.ok ? 200 : 400);
+    }
+    if (path === '/api/voice/kid/friend' && req.method === 'GET') return json(res, { ok: true, text: kidOn() ? '' : kidFriend.read() });
+    if (path === '/api/voice/kid/friend' && req.method === 'DELETE') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not while kid mode is on' }, 423);
+      kidFriend.clear();
+      return json(res, { ok: true });
+    }
+    if (path === '/api/voice/turn' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      // Optional (capability 'voice-assistant'): locked, the phone is on its lock screen.
+      // The phone's own recogniser (over the Deepgram limit) mishears the names too.
+      // Kid mode: the child's friend answers, in its own conversation.
+      if (kidOn()) {
+        const r = await kidTurn(String(body.text || '').slice(0, 2000), { where: 'the kid screen' }, { child: true });
+        if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
+        return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+      }
+      // Attached files and dragged items (capability 'voice-attach'): a line each, before what was said.
+      const attached = (Array.isArray(body.attachments) ? body.attachments : []).slice(0, 10).map((x) => cruFiles.get(String((x && x.id) || x || ''))).filter(Boolean);
+      const refs = (Array.isArray(body.refs) ? body.refs : []).slice(0, 20).map((x) => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 400)).filter(Boolean);
+      const lead = [...attached.map(attachmentLine), ...refs.map((x) => `[The owner dropped in: ${x}]`)].join('\n');
+      // Whose voice (capability 'voice-speaker'): typed turns say typed:true;
+      // a spoken one finds the verdict its utterance got on /api/voice/listen.
+      const typed = body.typed === true;
+      // Misheard names are put right in speech only: what the owner typed is
+      // exactly what he meant ("sent by" must not become a project called "sentiq").
+      const spoken = typed ? String(body.text || '') : fixNames(String(body.text || ''), { projects: allProjects().flatMap(p => [p.alias, p.name]), services: getAllServiceStatus().map(sv => sv.name) });
+      const said = lead ? `${lead}\n${spoken || '(nothing said: look at what was attached and respond to it)'}` : spoken;
+      const rules = voiceTurnRules({ typed, verdict: typed ? null : (voiceSpeaker.recent.lookup(body.text) || voiceSpeaker.recent.lookup(said)) });
+      // A resend of the same turn (requestId) gets that turn's result; a turn that finds Cru busy waits its turn (voice/turns.js).
+      // Which device it came from (voice/device.js): in Cru's context line and kept with the turn.
+      const where = String(body.where || '').slice(0, 200);
+      const dev = voiceDevice({ kind: clientVersion.identifyClient(req).kind, where, ua: req.headers['user-agent'] });
+      const device = dev.label;
+      // The page Cru may move (capability 'voice-ui-nav'): the web/PC page this came from, or the phone.
+      cruUiTarget.note({ page: body.page, deviceId: dev.id, device });
+      // sayNow (capability 'voice-say-now'): this screen shows what Cru says during the turn as its own messages; else it is put in front of the reply.
+      const sayNow = body.sayNow === true && !!String(body.requestId || '').trim();
+      let r = await cruTurnGate.run(body.requestId, () => voiceAgent.turn(said, { where, device, locked: body.locked === true, unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who, requestId: String(body.requestId || '').trim().slice(0, 100), sayNow }));
+      if (!sayNow) r = foldUpdates(r);
+      if (r && r.ok) r.speaker = rules.speaker;
+      // The volume to say it at (Cru may have just changed it).
+      if (r && r.ok) r.volume = voiceSettings.getSettings().volume ?? 100;
+      return json(res, r, r.ok || r.cancelled ? 200 : (r.limitReached ? 402 : 400));
+    }
+    // A voice screen has said (or only shown) a line Cru said during its turn (voice/say-now.js): { id, how }.
+    if (path === '/api/voice/update/ack' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const how = ['said', 'shown', 'cut'].includes(body.how) ? body.how : 'said';
+      return json(res, { ok: true, known: cruSayAcks.answer(body.id, { how }) });
+    }
+    // The owner's page answers a show_in_crundi move (voice/ui-nav.js): { id, ok, error?, found?, where? }.
+    if (path === '/api/voice/ui/ack' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      const known = cruUiAcks.answer(body.id, { ok: body.ok !== false, error: String(body.error || '').slice(0, 300), found: body.found === false ? false : body.found === true ? true : undefined, where: String(body.where || '').slice(0, 200) });
+      return json(res, { ok: true, known });
+    }
+    // A file for Cru (capability 'voice-attach'): { name, type, data (base64), preview? (base64 JPEG of an image) } -> { ok, id, name, kind, size }.
+    if (path === '/api/voice/attach' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse((await readBodyBuffer(req, Math.ceil(CRU_ATTACH_MAX * 1.4) + 6 * 1024 * 1024)).toString('utf8')); } catch { return json(res, { ok: false, error: `Too large (files up to ${Math.round(CRU_ATTACH_MAX / 1048576)} MB)` }, 413); }
+      try {
+        const m = cruFiles.add({ name: body.name, mime: body.type, data: Buffer.from(String(body.data || ''), 'base64'), preview: body.preview ? Buffer.from(String(body.preview), 'base64') : null, from: String(body.from || '') });
+        return json(res, { ok: true, id: m.id, name: m.name, kind: m.kind, size: m.size });
+      } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    }
+    if (path === '/api/voice/attach' && req.method === 'GET') {
+      const id = String(url.searchParams.get('id') || '');
+      const m = cruFiles.get(id);
+      if (!m) return json(res, { ok: false, error: 'Not found' }, 404);
+      const f = url.searchParams.get('preview') === '1' && m.previewFile ? m.previewFile : m.file;
+      res.writeHead(200, { 'Content-Type': url.searchParams.get('preview') === '1' && m.previewFile ? 'image/jpeg' : (m.mime || 'application/octet-stream'), 'Content-Disposition': `inline; filename="${m.name.replace(/"/g, '')}"`, 'Cache-Control': 'private, max-age=86400' });
+      return createReadStream(f).pipe(res);
+    }
+    // The owner's voice (capability 'voice-speaker', voice/speaker.js): its
+    // status, enrolment one phrase at a time, and forgetting it.
+    if (path === '/api/voice/speaker' && req.method === 'GET') {
+      return json(res, { ok: true, ...(await voiceSpeaker.status()), ownerOnly: voiceSettings.getSettings().ownerOnly !== false });
+    }
+    if (path === '/api/voice/speaker' && req.method === 'DELETE') {
+      return json(res, { ...voiceSpeaker.forget(), ...(await voiceSpeaker.status()) });
+    }
+    if (path === '/api/voice/speaker/enrol' && req.method === 'POST') {
+      let audio;
+      try { audio = await readBodyBuffer(req, 4 * 1024 * 1024); } catch { return json(res, { ok: false, error: 'Recording too large (4 MB at most)' }, 413); }
+      let samples;
+      try { samples = decodeVoiceAudio(audio, String(req.headers['content-type'] || '')); } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      if (samples.length > 16000 * 20) return json(res, { ok: false, error: 'One phrase at a time: 20 seconds at most' }, 400);
+      const r = await voiceSpeaker.enrolPhrase(samples, { restart: url.searchParams.get('restart') === '1' });
+      return json(res, r, r.ok ? 200 : 503);
+    }
+    // Short replies (capability 'voice-short-words'): one at a time, each said a few times.
+    if (path === '/api/voice/speaker/words' && req.method === 'POST') {
+      let audio;
+      try { audio = await readBodyBuffer(req, 4 * 1024 * 1024); } catch { return json(res, { ok: false, error: 'Recording too large (4 MB at most)' }, 413); }
+      let samples;
+      try { samples = decodeVoiceAudio(audio, String(req.headers['content-type'] || '')); } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      if (samples.length > 16000 * 20) return json(res, { ok: false, error: 'One reply at a time: 20 seconds at most' }, 400);
+      const r = await voiceSpeaker.enrolWord(samples, { word: url.searchParams.get('word'), restart: url.searchParams.get('restart') === '1' });
+      return json(res, r, r.ok ? 200 : (/first|such/.test(r.error || '') ? 400 : 503));
+    }
+    if (path === '/api/voice/speaker/words/finish' && req.method === 'POST') {
+      const r = voiceSpeaker.finishWords();
+      return json(res, r.ok ? { ...r, ...(await voiceSpeaker.status()), ok: true } : r, r.ok ? 200 : 400);
+    }
+    if (path === '/api/voice/speaker/words' && req.method === 'DELETE') {
+      return json(res, { ...voiceSpeaker.forgetWords(), ...(await voiceSpeaker.status()) });
+    }
+    if (path === '/api/voice/speaker/finish' && req.method === 'POST') {
+      const r = voiceSpeaker.finish();
+      return json(res, r.ok ? { ...r, ...(await voiceSpeaker.status()), ok: true } : r, r.ok ? 200 : 400);
+    }
+    // What Anthropic reports the whole account has cost this billing month
+    // (needs an Admin API key; capability 'voice-account-usage').
+    if (path === '/api/voice/account-usage' && req.method === 'GET') {
+      return json(res, await voiceAccountUsage({ force: url.searchParams.get('force') === '1' }));
+    }
+    // The voice assistant's notebook (Phase 2): read and edited by the owner in Settings.
+    if (path === '/api/voice/memory' && req.method === 'GET') {
+      return json(res, { ok: true, files: voiceMemory.notebook.list(), entries: voiceMemory.index.count(), meaning: voiceMemory.index.embedder });
+    }
+    if (path === '/api/voice/memory' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      try { return json(res, voiceMemory.notebook.save(String(body.path || ''), body.text)); }
+      catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+    }
+    // Cru's tickers and triggers (capability 'voice-wakeups', contract at the
+    // top of voice/wakeups.js): listed, switched on or off, or deleted by the owner.
+    if (path === '/api/voice/wakeups' && (req.method === 'GET' || req.method === 'POST')) {
+      if (req.method === 'POST') {
+        let body;
+        try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+        const id = String(body.id || '');
+        if (!wakeStore.find(id)) return json(res, { ok: false, error: 'No ticker or trigger with that id' }, 404);
+        try {
+          if (body.action === 'enable' || body.action === 'disable') wakeStore.setEnabled(id, body.action === 'enable');
+          else if (body.action === 'delete') wakeStore.remove(id);
+          else return json(res, { ok: false, error: 'action must be enable, disable or delete' }, 400);
+        } catch (e) { return json(res, { ok: false, error: e.message }, 400); }
+      }
+      return json(res, { ok: true, ...wakeStore.list(), kinds: WAKE_KINDS, limits: wakeEngine.limits() });
+    }
+    // Cru's conversation as chat bubbles (the voice screen's chat view): the
+    // latest turns, oldest first, paged back with ?before=<ms>.
+    // Cru's unread messages (the dot on its mark), and marking them read.
+    if (path === '/api/voice/unread' && req.method === 'GET') return json(res, { ok: true, ...voiceUnread.state });
+    if (path === '/api/voice/seen' && req.method === 'POST') { voiceUnread.seen(); return json(res, { ok: true, ...voiceUnread.state }); }
+    // Kid mode: the owner's conversation is never shown on the kid screen.
+    if (path === '/api/voice/history' && req.method === 'GET' && kidOn()) return json(res, { ok: true, turns: [], more: false, kid: true });
+    if (path === '/api/voice/history' && req.method === 'GET') {
+      const turns = voiceMemory.turns({ before: Number(url.searchParams.get('before')) || 0, limit: Number(url.searchParams.get('limit')) || 50 });
+      // Cru's own reports and wake-ups are not something the owner said: shown as Cru's news only (report: true).
+      const shown = turns.map((t) => (/^\s*(\(report\)|\[Report for the owner|\[Wake-up)/.test(String(t.said || '')) ? { ...t, said: '', report: true } : t));
+      return json(res, { ok: true, turns: shown.reverse(), more: turns.length >= (Number(url.searchParams.get('limit')) || 50) });
+    }
+    if (path === '/api/voice/memory/search' && req.method === 'GET') {
+      return json(res, { ok: true, ...(await voiceMemory.index.search(String(url.searchParams.get('q') || ''))) });
+    }
+    // The "one moment, Sir" cues (capability 'voice-cues', voice/cues.js):
+    // the list for the voice in use, then each clip, made once and kept.
+    if (path === '/api/voice/cues' && req.method === 'GET') {
+      return json(res, voiceListCues());
+    }
+    if (path === '/api/voice/cues/clip' && req.method === 'GET') {
+      const clip = voiceReadClip(url.searchParams.get('voice'), url.searchParams.get('rate'), url.searchParams.get('id'));
+      if (!clip) return json(res, { ok: false, error: 'No such cue' }, 404);
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': clip.length, 'Cache-Control': 'private, max-age=86400' });
+      return res.end(clip);
+    }
+    // Deepgram's voices, for the picker.
+    if (path === '/api/voice/voices' && req.method === 'GET') {
+      return json(res, await voiceListVoices({ force: url.searchParams.get('force') === '1' }));
+    }
+    // Text in, speech out (audio/mpeg), with the chosen voice or ?voice=.
+    if (path === '/api/voice/speak' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      // ?stream=1 (capability 'voice-tts-stream'): raw PCM piped as Deepgram
+      // makes it, so the phone starts playing after the first bytes.
+      // Kid mode: kid Cru's voice (Flux, lively by mood), each line kept on disk so a repeat is instant.
+      if (kidOn() && !body.voice) {
+        const ex = Number.isFinite(Number(body.expressivity)) ? Math.max(-2, Math.min(2, Math.round(Number(body.expressivity)))) : (MOOD_EXPRESSIVITY[body.mood] ?? 2);
+        const text = String(body.text || '').trim().slice(0, 2000);
+        const f = kidClipFile(text, ex);
+        if (existsSync(f)) {
+          res.writeHead(200, { 'Content-Type': 'audio/L16; rate=24000; channels=1', 'Cache-Control': 'no-store', 'X-Sample-Rate': '24000', 'X-Clip': 'cached' });
+          return createReadStream(f).pipe(res);
+        }
+        const st = await speakKidStream(text, { expressivity: ex, rate: voiceSettings.getSettings().kidSpeechRate || 1 });
+        if (!st.ok) return json(res, st, 400);
+        res.writeHead(200, { 'Content-Type': `audio/L16; rate=${st.rate}; channels=1`, 'Cache-Control': 'no-store', 'X-Sample-Rate': String(st.rate) });
+        // Kept as it streams; only a whole clip is saved.
+        const parts = [];
+        const src = Readable.fromWeb(st.body);
+        src.on('data', (c) => parts.push(c));
+        src.on('end', () => { if (text.length <= 200) { try { mkdirSync(kidClipDir, { recursive: true, mode: 0o700 }); writeFileSync(f, Buffer.concat(parts), { mode: 0o600 }); } catch { /* next time */ } } });
+        src.on('error', () => { try { res.end(); } catch { /* gone */ } });
+        req.on('close', () => { try { src.destroy(); } catch { /* done */ } });
+        src.pipe(res);
+        return;
+      }
+      if (url.searchParams.get('stream') === '1') {
+        const st = await voiceSpeakStream(body.text, body.voice ? String(body.voice) : '');
+        if (!st.ok) return json(res, st, 400);
+        res.writeHead(200, { 'Content-Type': `audio/L16; rate=${st.rate}; channels=1`, 'Cache-Control': 'no-store', 'X-Sample-Rate': String(st.rate) });
+        const src = Readable.fromWeb(st.body);
+        src.on('error', () => { try { res.end(); } catch { /* gone */ } });
+        req.on('close', () => { try { src.destroy(); } catch { /* done */ } });
+        src.pipe(res);
+        return;
+      }
+      const r = await voiceSpeak(body.text, body.voice ? String(body.voice) : '');
+      if (!r.ok) return json(res, r, 400);
+      res.writeHead(200, { 'Content-Type': r.mime, 'Content-Length': r.audio.length, 'Cache-Control': 'no-store' });
+      return res.end(r.audio);
+    }
+    // A voice session just opened: warm the prompt cache while the owner speaks.
+    // The brain experiment: turns, speed, cost and cache use per brain and model.
+    if (path === '/api/voice/brain-stats' && req.method === 'GET') {
+      return json(res, { ok: true, brain: voiceAgent.which, stats: voiceAgent.stats({ since: Date.parse(url.searchParams.get('since') || '') || 0 }) });
+    }
+    // The owner cancelled what they said ("scratch that", the x): the turn in
+    // progress stops, unanswered; what it already did is listed (acted).
+    if (path === '/api/voice/cancel' && req.method === 'POST') {
+      return json(res, cru().cancel());
+    }
+    if (path === '/api/voice/warm' && req.method === 'POST') {
+      return json(res, await cru().warm());
+    }
+    // The voice screen's Compact button: the conversation so far becomes a summary.
+    if (path === '/api/voice/compact' && req.method === 'POST') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not in kid mode' }, 423);
+      const r = await voiceAgent.compact({ force: true });
+      return json(res, r.ok ? { ok: true } : { ok: false, error: r.skipped || 'Could not compact' });
+    }
+    if (path === '/api/voice/reset' && req.method === 'POST') {
+      if (kidOn()) return json(res, { ok: false, error: 'Not in kid mode' }, 423);
+      voiceAgent.reset();
+      return json(res, { ok: true });
+    }
+    // Audio in (raw body, its own Content-Type), text out. ?turn=1 also answers it.
+    if (path === '/api/voice/transcribe' && req.method === 'POST') {
+      let audio;
+      try { audio = await readBodyBuffer(req, 10 * 1024 * 1024); } catch { return json(res, { ok: false, error: 'Recording too large (10 MB at most)' }, 413); }
+      const r = await voiceTranscribe(audio, String(req.headers['content-type'] || ''), {
+        projects: allProjects().flatMap(p => [p.alias, p.name]),
+        services: getAllServiceStatus().map(sv => sv.name),
+      });
+      if (!r.ok || url.searchParams.get('turn') !== '1') return json(res, r, r.ok ? 200 : 400);
+      // Whose voice: a PCM recording is checked itself; anything else by what was heard.
+      let verdict = null;
+      if (r.text && voiceSpeaker.enrolled) {
+        try {
+          const sp = trimVoiceSilence(decodeVoiceAudio(audio, String(req.headers['content-type'] || '')));
+          verdict = await voiceSpeaker.verify(sp.samples, { seconds: sp.seconds });
+        } catch { verdict = voiceSpeaker.recent.lookup(r.text); }
+      }
+      const rules = voiceTurnRules({ typed: false, verdict });
+      const answer = r.text && kidOn() ? await kidTurn(r.text, { where: 'the kid screen' }, { child: true }) : r.text ? foldUpdates(await voiceAgent.turn(r.text, { where: String(url.searchParams.get('where') || '').slice(0, 200), locked: url.searchParams.get('locked') === '1', unrecognised: rules.unrecognised, confirmOk: rules.confirmOk, voice: rules.voice, speaker: rules.who })) : { ok: false, error: 'Nothing was heard' };
+      if (answer && answer.ok) answer.speaker = rules.speaker;
+      if (answer && answer.ok) answer.volume = voiceSettings.getSettings().volume ?? 100;
+      return json(res, { ...answer, heard: r.text, heardAlternatives: r.alternatives, heardConfidence: r.confidence }, answer.ok || answer.cancelled ? 200 : 400);
+    }
+
     if (path === '/api/usage' && req.method === 'GET') {
       const force = url.searchParams.get('force') === '1';
       return json(res, await usage.getUsage({ force }));
@@ -4154,6 +6103,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           if (!id) continue;
           const src = String((it && it.source) || '');
           if (src === 'chat') { dismissedChatCards.add(id); done++; continue; }
+          if (src === 'kid') { if (kidAsks.answer(id, 'no')) done++; continue; }
+          if (src === 'cru') { if (cruAsks.answer(id, 'no')) done++; continue; }
           if (src === 'secret') {
             const entry = pendingSecretRequests.get(id);
             if (entry) { entry.reject('The owner dismissed this secret access request.'); done++; }
@@ -4325,7 +6276,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return json(res, r);
       }
       if (act === 'park') { const r = panes.park(pid, 'manual'); broadcastState(); return json(res, r); }
-      if (act === 'discard') { panes.forget(pid); broadcastState(); return json(res, { ok: true }); }
+      if (act === 'discard') {
+        // Closed for good: its scheduled messages have nowhere to go.
+        try { chatSchedule.discardFor(pid, panes.conversationOf(pid)); } catch { /* best effort */ }
+        panes.forget(pid); broadcastState(); return json(res, { ok: true });
+      }
     }
 
     const termMatch = path.match(/^\/api\/terminals\/([^/]+)\/(close|resize|rename)$/);
@@ -4510,7 +6465,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // employee) would end the run's work behind its back. Stop it first.
         const guard = factoryRunner && factoryRunner.guardsChat(sid);
         if (guard) return json(res, { ok: false, factoryGuard: true, runId: guard.id, error: `This chat belongs to the factory "${guard.factoryName}", which is still ${guard.status}. Stop the factory first.` }, 409);
+        // Closed on purpose (a park closes too, but keeps them): its
+        // scheduled messages go with it.
+        const conv = (claudeUi.meta(sid) || {}).sessionId || panes.conversationOf(sid);
         const result = claudeUi.close(sid);
+        if (result && result.ok !== false) { try { chatSchedule.discardFor(sid, conv); } catch { /* best effort */ } }
         panes.forget(sid);
         broadcastState();
         return json(res, result);
@@ -5009,9 +6968,89 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return json(res, r, r.ok ? 200 : 404);
     }
 
+    // ─── Crundi's inbox (contract at the top of inbox-store.js) ───
+    // The owner's only: access-policy.js does not list these for
+    // collaborators, and each one says no to a confined caller again.
+    if (path === '/api/inbox' || path.startsWith('/api/inbox/')) {
+      if (isConfined(principal)) return json(res, { ok: false, error: 'Not available to collaborator access.', collaborator: true }, 403);
+      if (path === '/api/inbox/threads' && req.method === 'GET') {
+        return json(res, { ok: true, threads: inbox.threads(), unread: inbox.unread() });
+      }
+      if (path === '/api/inbox' && req.method === 'GET') {
+        const r = inbox.list({ limit: url.searchParams.get('limit'), before: url.searchParams.get('before'), thread: url.searchParams.get('thread') || '' });
+        return json(res, { ok: true, items: r.items, unread: r.unread });
+      }
+      if ((path === '/api/inbox/read' || path === '/api/inbox/delete') && req.method === 'POST') {
+        let body;
+        try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, { ok: false, error: 'Bad JSON' }, 400); }
+        const ids = Array.isArray(body.ids) ? body.ids.map(String).slice(0, 2000) : [];
+        const thread = typeof body.thread === 'string' ? body.thread : '';
+        if (path === '/api/inbox/read') {
+          if (!body.all && !ids.length && !thread) return json(res, { ok: false, error: 'Give ids, thread, or all: true' }, 400);
+          // read: false marks them unread again.
+          const changed = inbox.markRead({ ids, thread, all: !!body.all, read: body.read !== false });
+          return json(res, { ok: true, changed, unread: inbox.unread() });
+        }
+        if (!body.allRead && !ids.length && !thread) return json(res, { ok: false, error: 'Give ids, thread, or allRead: true' }, 400);
+        const removed = inbox.remove({ ids, thread, allRead: !!body.allRead });
+        return json(res, { ok: true, removed, unread: inbox.unread() });
+      }
+      // One item, so a notification can open it directly.
+      const one = req.method === 'GET' && /^\/api\/inbox\/([a-z0-9]{6,40})$/.exec(path);
+      if (one) {
+        const it = inbox.get(one[1]);
+        return it ? json(res, { ok: true, item: it, unread: inbox.unread() }) : json(res, { ok: false, error: 'No such inbox item' }, 404);
+      }
+      const mm = req.method === 'GET' && /^\/api\/inbox\/media\/([a-z0-9]{6,40})\/([^/]+)$/.exec(path);
+      if (mm) {
+        let name;
+        try { name = decodeURIComponent(mm[2]); } catch { name = ''; }
+        const f = name && inbox.mediaPath(mm[1], name);
+        if (!f) { res.writeHead(404); res.end('Not found'); return; }
+        try {
+          const st = statSync(f.path);
+          const download = url.searchParams.get('download') === '1';
+          // Inline only for kinds a browser shows safely; anything else
+          // (HTML, SVG, scripts) downloads, so it never runs on this origin.
+          const inlineOk = /^(image\/(png|jpeg|gif|webp)|video\/(mp4|webm)|audio\/|application\/pdf|text\/plain)/.test(f.mime);
+          res.writeHead(200, {
+            'Content-Type': inlineOk ? f.mime : 'application/octet-stream',
+            'Content-Length': st.size,
+            'Content-Disposition': `${download || !inlineOk ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'private, max-age=3600',
+          });
+          createReadStream(f.path).pipe(res);
+        } catch (err) { res.writeHead(500); res.end(err.message); }
+        return;
+      }
+      return json(res, { ok: false, error: 'Not found' }, 404);
+    }
+
     // ─── Notification channels ───
+    // GET /api/notify/channels -> { ok, channels: [ { id, label, describe, available,
+    //   unavailableReason, enabled, ... } ] }. The 'telegram' entry also carries
+    //   telegram: { chatId, botStatus: 'not-set-up'|'connected'|'offline',
+    //               tokenSet, botUsername, restartRequired }
+    //   (the bot itself is edited under Sign-in: /api/auth/config telegram-save).
+    // POST /api/notify/channels { id, enabled } -> { ok }   (on/off, as before)
+    // POST /api/notify/telegram/chat { chatId: '123' | '' } -> { ok }  (where it sends)
     if (path === '/api/notify/channels' && req.method === 'GET') {
-      return json(res, { ok: true, channels: channels.list() });
+      const tg = telegramBotInfo();
+      return json(res, {
+        ok: true,
+        channels: channels.list().map((c) => (c.id === 'telegram'
+          ? { ...c, telegram: { chatId: tg.chatId, botStatus: tg.status, tokenSet: tg.tokenSet, botUsername: tg.botUsername, restartRequired: tg.restartRequired } }
+          : c)),
+      });
+    }
+
+    if (path === '/api/notify/telegram/chat' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { body = null; }
+      if (!body || body.chatId === undefined) return json(res, { ok: false, error: 'Which chat ID?' }, 400);
+      const r = saveTelegramChatId(body.chatId);
+      return json(res, r, r.ok ? 200 : 400);
     }
 
     if (path === '/api/notify/channels' && req.method === 'POST') {
@@ -5288,8 +7327,33 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Sign-in methods (authenticated) ───
+    //
+    // GET /api/auth/config ->
+    //   { ok, telegram, password, google, github, anyConfigured,      (bool: each method on)
+    //     passwordFromEnv, telegramAvailable, passwordSet,
+    //     oauth: { google|github: { configured, clientId, secretSet, allowed,
+    //              verified, verifiedAs, idPinned (github only) } },
+    //     callbackUrls: { google, github },
+    //     telegramBot: { tokenSet, allowedUsername, botUsername,
+    //                    status: 'not-set-up'|'connected'|'offline',
+    //                    restartRequired, chatId } }
+    //   Secrets (client secrets, the bot token) are never in it.
+    //
+    // POST /api/auth/config, by action:
+    //   { action:'set-password', password }            -> { ok, totpSecret, uri }
+    //   { action:'enable'|'disable', method:'telegram'|'password'|'google'|'github' } -> { ok }
+    //   { action:'oauth-save', provider, clientId, clientSecret ('' keeps), allowed } -> { ok }
+    //   { action:'oauth-clear', provider }               -> { ok }
+    //   { action:'telegram-save', botToken ('' keeps), allowedUsername } -> { ok, restartRequired }
+    //   { action:'telegram-clear' }                       -> { ok, restartRequired }
+    //   Refusals are { ok:false, error } with 400.
+    //
+    // The old path still works: POST /api/settings { settings: { TELEGRAM_BOT_TOKEN,
+    // ALLOWED_USERNAME, ... }, chatId }. GET /api/settings now gives the token as
+    // a placeholder that the same POST recognises and keeps.
     if (path === '/api/auth/config' && req.method === 'GET') {
-      return json(res, { ok: true, ...authConfig.status() });
+      // The exact address each provider must be told to send people back to.
+      return json(res, { ok: true, ...authConfig.status(), callbackUrls: { google: oauthCallbackUrl('google'), github: oauthCallbackUrl('github') }, telegramBot: telegramBotInfo() });
     }
 
     if (path === '/api/auth/config' && req.method === 'POST') {
@@ -5297,23 +7361,63 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       try { body = JSON.parse(await readBody(req)); } catch { body = null; }
       if (!body) return json(res, { ok: false, error: 'Bad request body' }, 400);
 
+      // The Telegram bot: shared by the sign-in method and the notification
+      // channel. Written to the .env the way the Configuration form always
+      // did, so it takes effect at the next restart.
+      if (body.action === 'telegram-save') {
+        const token = String(body.botToken || '').trim();
+        const user = String(body.allowedUsername || '').trim().replace(/^@/, '');
+        const haveToken = !!token || !!telegramBotInfo().tokenSet;
+        if (token && !/^\d{3,20}:[A-Za-z0-9_-]{20,100}$/.test(token)) return json(res, { ok: false, error: 'That does not look like a bot token. It comes from @BotFather and looks like 123456:ABC-DEF...' }, 400);
+        if (!/^[A-Za-z0-9_]{3,32}$/.test(user)) return json(res, { ok: false, error: 'Enter your Telegram username (letters, digits and _).' }, 400);
+        if (!haveToken) return json(res, { ok: false, error: 'Enter the bot token from @BotFather.' }, 400);
+        const w = writeEnvKeys(token ? { TELEGRAM_BOT_TOKEN: token, ALLOWED_USERNAME: user } : { ALLOWED_USERNAME: user });
+        if (!w.ok) return json(res, { ok: false, error: `Could not save: ${w.error}` }, 500);
+        console.log(`[crundi] Telegram bot settings saved${token ? ' (new token)' : ''}; restart to apply`);
+        return json(res, { ok: true, restartRequired: telegramBotInfo().restartRequired });
+      }
+      if (body.action === 'telegram-clear') {
+        // Taking the bot away takes the sign-in with it, so the last-method
+        // rule applies here too.
+        if (authConfig.methods().telegram) {
+          const off = authConfig.setTelegramEnabled(false);
+          if (!off.ok) return json(res, off, 400);
+        }
+        const w = writeEnvKeys({ TELEGRAM_BOT_TOKEN: '', ALLOWED_USERNAME: '' });
+        if (!w.ok) return json(res, { ok: false, error: `Could not save: ${w.error}` }, 500);
+        console.log('[crundi] Telegram bot removed; restart to apply');
+        return json(res, { ok: true, restartRequired: telegramBotInfo().restartRequired });
+      }
+
       // Setting a password always (re)mints the TOTP secret, so the response
       // carries the new one to enrol.
       if (body.action === 'set-password') {
         const r = authConfig.setPassword(body.password);
         return json(res, r, r.ok ? 200 : 400);
       }
+      // Google / GitHub: the client ID, secret and allowed account. The
+      // secret is write-only: never sent back, blank keeps the stored one.
+      if (body.action === 'oauth-save') {
+        const r = authConfig.setOAuthConfig(String(body.provider || ''), { clientId: body.clientId, clientSecret: body.clientSecret, allowed: body.allowed });
+        if (r.ok) console.log(`[crundi] ${OAUTH_PROVIDERS[body.provider]?.label || body.provider} sign-in settings saved`);
+        return json(res, r, r.ok ? 200 : 400);
+      }
+      if (body.action === 'oauth-clear') {
+        const r = authConfig.clearOAuth(String(body.provider || ''));
+        if (r.ok) console.log(`[crundi] ${OAUTH_PROVIDERS[body.provider]?.label || body.provider} sign-in removed`);
+        return json(res, r, r.ok ? 200 : 400);
+      }
       if (body.action === 'enable') {
-        const r = body.method === 'telegram'
-          ? authConfig.setTelegramEnabled(true)
+        const r = body.method === 'telegram' ? authConfig.setTelegramEnabled(true)
+          : (body.method === 'google' || body.method === 'github') ? authConfig.setOAuthEnabled(body.method, true)
           : authConfig.setPasswordEnabled(true);
         return json(res, r, r.ok ? 200 : 400);
       }
       // Refused when it would leave nothing to sign in with — the server must
       // never fall back to the open state once it has left it.
       if (body.action === 'disable') {
-        const r = body.method === 'telegram'
-          ? authConfig.setTelegramEnabled(false)
+        const r = body.method === 'telegram' ? authConfig.setTelegramEnabled(false)
+          : (body.method === 'google' || body.method === 'github') ? authConfig.setOAuthEnabled(body.method, false)
           : authConfig.setPasswordEnabled(false);
         return json(res, r, r.ok ? 200 : 400);
       }
@@ -5322,23 +7426,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     if (path === '/api/settings' && req.method === 'GET') {
       try {
-        const content = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : '';
-        const settings = {};
-        const KEYS = ['TELEGRAM_BOT_TOKEN', 'ALLOWED_USERNAME', 'PROJECTS_DIR', 'WEB_PORT', 'CLOUDFLARE_TUNNEL_TOKEN', 'CLOUDFLARE_TUNNEL_URL', 'DATA_DIR'];
-        for (const key of KEYS) {
-          const m = content.match(new RegExp(`^${key}=(.*)$`, 'm'));
-          settings[key] = m ? m[1].trim() : '';
-        }
-        const chatId = getChatId ? getChatId() : '';
-        return json(res, {
-          ok: true, settings, envPath, chatId: chatId ? String(chatId) : '', notifyPrefs,
-          limitWarmup: limitWarmer.status(),
-          // So the UI can warn before switching it off, not after.
-          queuedLimitReset: chatSchedule.countPendingLimitReset(),
-          systemPrompt: globalPrompt(),
-          systemPromptMax: MAX_LAYER,
-          autoParkMinutes, autoParkMin: MIN_TIMEOUT_MIN,
-        });
+        return json(res, { ok: true, ...settingsView() });
       } catch (err) { return json(res, { ok: false, error: err.message }); }
     }
 
@@ -5370,6 +7458,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           for (const key of KEYS) {
             if (settings[key] !== undefined) pairs[key] = settings[key];
           }
+          // An older client posting back the placeholder it was given: keep
+          // the stored token (see settingsView).
+          if (pairs.TELEGRAM_BOT_TOKEN === TOKEN_KEPT) delete pairs.TELEGRAM_BOT_TOKEN;
           const w = writeEnvKeys(pairs);
           if (!w.ok) return json(res, { ok: false, error: `Could not save settings: ${w.error}` }, 500);
           restartRequired = true;
@@ -6093,6 +8184,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     }
 
     // ─── Internal MCP dispatch (from stdio MCP servers) ───
+    // Cru's tools, called by Claude Code through voice/mcp-cru.js (the Claude
+    // Code brain). Its own token, made at start: it reaches these tools only.
+    if (path === '/api/voice/cli-tool' && req.method === 'POST') {
+      const tok = String(req.headers['x-cru-token'] || '');
+      // The owner's Cru and kid Cru each have their own token, and reach only their own tools.
+      const same = (t) => tok.length === t.length && timingSafeEqual(Buffer.from(tok), Buffer.from(t));
+      const brain = tok && same(voiceCli.token) ? voiceCli : tok && same(kidCli.token) ? kidCli : null;
+      if (!brain) return json(res, { error: 'Invalid token' }, 403);
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { isError: true, content: 'Bad request body' }, 400); }
+      return json(res, await brain.callTool(String(body.tool || '').replace(/^mcp__cru__/, ''), body.args || {}));
+    }
     if (path === '/api/mcp/call' && req.method === 'POST') {
       // Auth via internal API key (not user token) — or a collaborator's own.
       //
@@ -6107,7 +8210,23 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (apiKey !== internalApiKey && !mcpCollabKey) return json(res, { error: 'Invalid API key' }, 403);
       const body = JSON.parse(await readBody(req));
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
-      const a = body.args || {};
+      const a = body.args = (body.args || {});
+
+      // Homepool: the owner's chats only, each within the key the owner gave
+      // it (or approved). Which chat is asking is proven by its chat token.
+      if (HOMEPOOL_MCP_TOOLS.includes(body.tool)) {
+        if (mcpCollabKey) return json(res, { ok: false, error: 'Homepool is not available to collaborator chats.' }, 403);
+        try { return json(res, await homepool.mcp(body.tool, a)); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
+      }
+
+      // The browser drawer's tabs on a homepool network go out through the
+      // owner's PC browser key: a chat uses them only once he approved it
+      // (browser-gate.js: asks him first, refuses this PC's own networks).
+      if (String(body.tool).startsWith('browser_')) {
+        const refused = await gateBrowserCall({ tool: body.tool, args: a, collaborator: !!mcpCollabKey, homepool, browser: browserMod });
+        if (refused) return json(res, refused);
+      }
 
       let mcpAllowedProjects = null;
       if (mcpCollabKey) {
@@ -6128,6 +8247,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           return json(res, { ok: false, error: 'Unknown project' }, 403);
         }
         mcpAllowedProjects = allowed;
+        // The browser drawer is the owner's own browser in the desktop app,
+        // signed in as them: not something a collaborator's Claude may drive.
+        a._noDrawer = true;
         // Service keys are `alias:name` and can name any project's service.
         if (['start_service', 'stop_service', 'restart_service', 'get_service_logs', 'delete_service'].includes(body.tool)
             && !allowed.includes(String(a.key || '').split(':')[0].toLowerCase())) {
@@ -6243,6 +8365,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           ...(a.caption && items.length > 1 ? { caption: String(a.caption).slice(0, 300) } : {}),
           note: NOTE[kind],
         });
+      }
+
+      // ─── speak: said aloud to whoever listens to this chat in voice mode ───
+      if (body.tool === 'speak') {
+        const sid = String(a.sessionId || '');
+        if (!sid || !claudeUi || !claudeUi.has(sid)) return json(res, { ok: false, error: 'speak only works in a Crundi chat (UI mode).' });
+        const r = claudeUi.voiceSay(sid, a.text);
+        return json(res, r.ok ? { ok: true, note: 'Said aloud where the person listens to this chat in voice mode. Keep the written answer in the chat as usual.' } : r);
       }
 
       // ─── show_embed: a web address or Claude's own HTML, framed in the chat ───
@@ -6652,6 +8782,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
           : null;
         try {
           const r = await alerter.alert({ title: a.title, body: a.body, level: a.level }, chat ? { chat } : {});
+          // Kept in Crundi's inbox too. (Without a phone it went through the
+          // inbox already: see the alerter's deliver.)
+          if (r.ok && r.delivered === 'phone') {
+            try { inbox.add({ kind: 'alert', title: String(a.title || 'Alert'), text: String(a.body || ''), project: chat ? chat.project : '', chatId: chat ? chat.id : '', chatTitle: chat ? chat.title : '' }); }
+            catch (err) { console.warn('[inbox] could not keep the alert:', err.message); }
+          }
           // An alert that rings: wait for the person's answer (or the end of
           // the ring time) and give it to the caller.
           if (!r.ok || !r.alertId) return json(res, r);
@@ -6662,74 +8798,30 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
-      if (body.tool === 'send_message_to_user' && bot) {
+      // Messages, pictures and files for the owner: Crundi's inbox first, then
+      // copies to the channels that are on (Telegram attaches the picture or
+      // the file itself). They used to go only to the Telegram bot, so without
+      // it they reached nobody. The chat they come from is the bridge's own
+      // (CRUNDI_CHAT_ID), never Claude's say.
+      if (body.tool === 'send_message_to_user' || body.tool === 'send_photo_to_user' || body.tool === 'send_file_to_user'
+          || body.tool === 'send_window_screenshot_to_user' || body.tool === 'send_display_screenshot_to_user') {
+        const sid = String(a.sessionId || '');
+        const term = sid && claudeUi ? claudeUi.list().find((x) => x.id === sid) : null;
+        const chat = term && !term.collaborator
+          ? { id: sid, title: term.longTitle || term.title || 'Chat', project: term.project || '', mark: markOf(term.project || '', term.title) }
+          : null;
         try {
-          const chatId = getChatId ? getChatId() : null;
-          if (!chatId) return json(res, { ok: false, error: 'No chat ID configured' });
-          await bot.api.sendMessage(chatId, body.args?.message || '(empty)');
-          return json(res, { ok: true });
+          if (body.tool === 'send_message_to_user') return json(res, await ownerMsg.sendMessage(a, { chat }));
+          if (body.tool === 'send_photo_to_user') return json(res, await ownerMsg.sendPhoto(a, { chat }));
+          if (body.tool === 'send_file_to_user') return json(res, await ownerMsg.sendFile(a, { chat, shareUrl: (p) => getFileShareUrl(shareFile(p)) }));
+          // A screenshot: captured by the machine's own tools, then sent as a picture.
+          if (!mcpDispatch) return json(res, { ok: false, error: 'Screen capture is not available on this server.' });
+          const cap = await mcpDispatch(body.tool === 'send_window_screenshot_to_user' ? 'capture_window' : 'capture_display', a);
+          if (!cap || !cap.ok || !cap.data) return json(res, { ok: false, error: (cap && cap.error) || 'Could not capture the screen' });
+          return json(res, await ownerMsg.sendPhoto({ data: cap.data, caption: body.tool === 'send_window_screenshot_to_user' ? 'Screenshot of a window' : 'Screenshot of the screen' }, { chat }));
         } catch (err) {
           return json(res, { ok: false, error: err.message });
         }
-      }
-
-      if (body.tool === 'send_photo_to_user' && bot) {
-        try {
-          const chatId = getChatId ? getChatId() : null;
-          if (!chatId) return json(res, { ok: false, error: 'No chat ID configured' });
-          // Path or bytes. Sending the bytes either way means one code path,
-          // and a bad path now fails with "no such file" rather than whatever
-          // the Telegram client makes of a missing stream.
-          const img = decodeImage({ path: body.args?.path, data: body.args?.data });
-          if (!img.ok) return json(res, { ok: false, error: img.error });
-          const { InputFile } = await import('grammy');
-          await bot.api.sendPhoto(chatId, new InputFile(img.buffer, img.filename),
-            body.args?.caption ? { caption: String(body.args.caption).slice(0, 1024) } : undefined);
-          return json(res, { ok: true, sent: img.ext, bytes: img.buffer.length });
-        } catch (err) {
-          return json(res, { ok: false, error: err.message });
-        }
-      }
-
-      if (body.tool === 'send_file_to_user') {
-        const filePath = body.args?.path;
-        if (!filePath || !existsSync(filePath)) return json(res, { ok: false, error: 'File not found' });
-        const tok = shareFile(filePath);
-        const url = getFileShareUrl(tok);
-        // The name says "send", and it only ever made a link and handed it
-        // back to Claude: nothing reached the person unless Claude then pasted
-        // it into a reply they happened to be reading. Deliver it. Telegram
-        // takes the file itself up to its bot limit; past that, or if the
-        // upload fails, the link goes instead.
-        let delivered = 'link';
-        let note = 'Nothing was sent out of band (no Telegram chat is linked). Give the person this link in your reply; it works for 30 minutes.';
-        const chatId = bot && getChatId ? getChatId() : null;
-        if (chatId) {
-          let size = 0;
-          try { size = statSync(filePath).size; } catch { /* sent as a link */ }
-          const caption = url ? `Download (30 min): ${url}` : undefined;
-          try {
-            if (size > 0 && size <= 49 * 1024 * 1024) {
-              const { InputFile } = await import('grammy');
-              await bot.api.sendDocument(chatId, new InputFile(filePath, basename(filePath)), caption ? { caption } : undefined);
-              delivered = 'telegram-file';
-              note = 'Sent to the person on Telegram as a file, with the download link.';
-            } else {
-              await bot.api.sendMessage(chatId, `${basename(filePath)}\n${caption || ''}`.trim());
-              delivered = 'telegram-link';
-              note = 'Too large to attach on Telegram (50 MB limit), so the download link was sent there instead.';
-            }
-          } catch (err) {
-            try {
-              await bot.api.sendMessage(chatId, `${basename(filePath)}\n${caption || ''}`.trim());
-              delivered = 'telegram-link';
-              note = `Could not attach the file on Telegram (${err.message}); the download link was sent there instead.`;
-            } catch (err2) {
-              note = `Telegram delivery failed (${err2.message}). Give the person this link in your reply; it works for 30 minutes.`;
-            }
-          }
-        }
-        return json(res, { ok: true, url, delivered, note });
       }
 
       // Service tools
@@ -6869,6 +8961,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
   function setupWebSocket() {
     wss = new WebSocketServer({ noServer: true });
+    voiceWss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
     server.on('upgrade', (req, socket, head) => {
       // A forward's own WebSocket — hot reload, dev tooling, whatever the app
@@ -6888,7 +8981,42 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         return;
       }
 
+      // A homepool node (signed in with its node key, not a Crundi login).
+      if (homepool.handleUpgrade(req, socket, head)) return;
+
       const url = new URL(req.url, 'http://localhost');
+      // Live speech to text (voice/stream.js): the owner only.
+      if (url.pathname === '/api/voice/listen') {
+        const who = validateToken(req);
+        if (!who || isConfined(who)) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        voiceWss.handleUpgrade(req, socket, head, (ws) => {
+          // An open voice screen: reports are said here.
+          voiceListeners.add(ws);
+          ws.on('close', () => voiceListeners.delete(ws));
+          // Keyboard mode: no microphone and no Deepgram, only Cru's reports
+          // and settings changes come down this socket.
+          if (url.searchParams.get('keyboard') === '1') {
+            try { ws.send(JSON.stringify({ type: 'ready', keyboard: true })); } catch { /* gone */ }
+            ws.on('message', (data, isBinary) => { if (!isBinary && /"stop"/.test(String(data))) { try { ws.close(); } catch { /* gone */ } } });
+            return;
+          }
+          voiceRelay(ws, {
+            projects: allProjects().flatMap(p => [p.alias, p.name]),
+            services: getAllServiceStatus().map(sv => sv.name),
+            // The phone streams raw 16-bit PCM and says so; a browser sends WebM.
+            audio: { encoding: url.searchParams.get('encoding'), sample_rate: url.searchParams.get('sample_rate') },
+            // Small children pause longer: kid mode waits longer before sending.
+            pauseMs: kidOn() ? (voiceSettings.getSettings().kidPauseMs || 3200) : voiceSettings.getSettings().pauseMs,
+            // Each utterance's voice checked against the owner's (voice/speaker.js).
+            speaker: voiceSpeaker,
+          });
+        });
+        return;
+      }
       if (url.pathname !== '/ws') {
         socket.destroy();
         return;
@@ -6930,6 +9058,11 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // whole server log.
       const principal = req ? validateToken(req) : null;
       const confined = isConfined(principal);
+      // The owner's PC app: its connection is always open, so Cru can speak there unasked.
+      if (!confined && req && clientVersion.identifyClient(req).kind === 'desktop') {
+        desktopSockets.add(ws);
+        ws.on('close', () => desktopSockets.delete(ws));
+      }
       /** A chat this caller is allowed to watch. */
       const ownsUiSession = (sid) => {
         if (!confined) return true;
@@ -7001,8 +9134,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Set when this socket is acting as the server's native host (a desktop
       // app lending us its GUI for the browser panel).
       let detachHost = null;
+      // Its browser tabs on this server's network: streams carried as binary
+      // frames on this same socket (see net-tunnel.js). Exists only once the
+      // app has registered as a native host, which a collaborator cannot.
+      let hostTunnel = null;
 
-      ws.on('message', (raw) => {
+      ws.on('message', (raw, isBinary) => {
+        if (isBinary) { if (hostTunnel) hostTunnel.handle(raw); return; }
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
 
@@ -7019,9 +9157,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             // What this app version can do. Absent from older clients, which is
             // exactly what it is here to tell us.
             capabilities: Array.isArray(msg.capabilities) ? msg.capabilities : [],
+            // This app's device (as its homepool node knows it), if it says.
+            deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '',
+          });
+          hostTunnel = createTunnelEndpoint({
+            send: (b) => { if (ws.readyState === 1) ws.send(b, { binary: true }); },
+            buffered: () => ws.bufferedAmount,
+            // Drawer tabs on a homepool network: through the PC browser key.
+            connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '' }),
           });
           console.log('[crundi] Desktop app attached as native host');
-          ws.send(JSON.stringify({ type: 'native-host-ready' }));
+          // features: what this server offers the app (absent on older servers).
+          ws.send(JSON.stringify({ type: 'native-host-ready', features: ['net-tunnel', 'browser-drawer', 'browser-homepool'] }));
           return;
         }
         // A reply coming back from that desktop app.
@@ -7133,6 +9280,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       });
 
       ws.on('close', () => {
+        if (hostTunnel) { hostTunnel.closeAll(); hostTunnel = null; }
         for (const [id, handler] of subs) claudeTerminals.off(id, handler);
         subs.clear();
         if (claudeUi) for (const [id, handler] of uiSubs) claudeUi.off(id, handler);
@@ -7158,6 +9306,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   return {
     async start(listenPort = 0) {
       if (server) throw new Error('Web app already running');
+      startHomepool();
 
       const onRequest = (req, res) => {
         handleRequest(req, res).catch(err => {
@@ -7344,6 +9493,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       sseClients.clear();
       if (wss) { wss.close(); wss = null; }
+      if (homepoolStarted) { try { homepool.stop(); } catch { /* shutting down anyway */ } homepoolStarted = false; }
       stopTunnel(TUNNEL_KEY);
       if (server) { server.close(); server = null; }
       if (localServer) { try { localServer.close(); } catch { /* ignore */ } localServer = null; }

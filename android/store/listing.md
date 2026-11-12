@@ -61,6 +61,549 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3 (en-US)
+
+Version code 73. Production (first on the Internal track, promoted to
+production later), since 1.1.2 (code 31): everything from 1.1.3-dev.1 to
+1.1.3-dev.41. Server 1.21.6.
+
+```
+<en-US>
+Meet Cru, Crundi's assistant, on your phone.
+
+- Talk or type to Cru about your projects; it can act for you, and wakes to "Hey Cru" in your voice.
+- Cru floats as a bubble over other apps, and tells you when chats finish or need you.
+- Talk to a chat by voice, and Crundi's inbox on the phone.
+- Share this phone's connection with your server (Homepool).
+
+Needs a Crundi server, version 1.21.6 or newer.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.41 (en-US)
+
+Version code 72. Internal track. Since 1.1.3-dev.40 (code 71): Cru's news no longer speaks when Android opens the bubble by itself (shown, said when the owner opens it); Cru's Deepgram voice, speed and volume are kept on the phone and used from the first word (news waits for the settings); in keyboard (chat) mode unprompted news is shown, never said. Server 1.21.6-dev.60.
+
+```
+<en-US>
+- Cru no longer reads its news out when the bubble opens by itself: it is shown, and said when you open it.
+- Cru speaks in your chosen voice from the first word.
+- In chat mode, Cru's news is shown, not read out.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.40 (en-US)
+
+Version code 71. Internal track. Since 1.1.3-dev.39 (code 70): homepool (Settings: share this phone's network as an exit, with a foreground node service and boot start); Hey Cru wakes only for the owner's voice; Cru can speak more than once in a turn (say_now), finishes speaking before the answer or news, and a hum no longer wakes him; a chat no longer sticks mid-reply and "working" after a network switch (sockets remade on network change, stalled-reply catch-up); eye-off icon restored. Server 1.21.6-dev.53.
+
+```
+<en-US>
+- Homepool: share this phone's connection as an exit for your server.
+- Hey Cru now wakes only for your voice, and a hum no longer wakes him.
+- Cru can speak more than once while he works, and finishes talking before the answer comes.
+- Fixed: a chat stuck mid-reply after switching between Wi-Fi and mobile data.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.39 (en-US)
+
+Version code 70. Internal track. Since 1.1.3-dev.38 (code 69): Cru's bubble stays when folded (its activity no longer finishes itself); leaving the voice screen turns Cru into a folded bubble, as chats do; Cru's unheard news goes into its bubble (opens where Android allows, else a message beside it) and is said on opening. Server 1.21.6-dev.52 (pushes carry cruChat and the line to say).
+
+```
+<en-US>
+Cru:
+- Folding Cru's bubble keeps it on screen until you drag it away.
+- Leaving Cru's screen turns it into a bubble, as chats do.
+- Cru's news pops up in its bubble and is read out when you open it.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.38 (en-US)
+
+Version code 69. Internal track. Since 1.1.3-dev.37 (code 68): Cru's bubble stays open over the app you were in (the voice screen steps aside straight after posting, the main window moved behind first), and opens by itself as a chat's bubble does. Server 1.21.6-dev.51.
+
+```
+<en-US>
+Cru:
+- Cru's bubble opens by itself, as a chat's bubble does.
+- It stays open over the app you were in, instead of closing as Crundi came to the front.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.37 (en-US)
+
+Version code 68. Internal track. Since 1.1.3-dev.36 (code 67): Cru's bubble is a conversation (not a bot) and can bubble, with diagnostics; no Cru launcher icon; media in Cru's replies; mute Cru's voice, typed input keeps replies text; drop a queued phrase; full view back from the panel; statuses take no space (the blob, a ring round Send); chat picture gallery. Server 1.21.6-dev.50.
+
+```
+<en-US>
+Cru:
+- Cru's bubble now floats over other apps.
+- Pictures, players, files and cards inside Cru's replies.
+- Mute Cru's voice from the menu; typed messages get text replies.
+- Drop a queued phrase with its X.
+- The expand button brings Cru's full view back.
+- Status shows on the blob, or a ring round Send while typing.
+Chats:
+- A chat's pictures open as a gallery: swipe between them.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.36 (en-US)
+
+Version code 67. Internal track. Since 1.1.3-dev.35 (code 66): the Cru bubble checks it really bubbled and explains the bubble settings otherwise; the notification opens the normal voice screen; top bar in one menu (bubble, compact, chat view), admin as an icon, no status pill (the state on the blob, a word when needed); times on Cru's replies. Server 1.21.6-dev.49.
+
+```
+<en-US>
+Cru:
+- Float as a bubble now really floats. If bubbles are off for Cru, it shows where to turn them on.
+- The top bar is tidier: everything but close is in one menu, and admin mode is an icon.
+- The blob at the bottom shows Cru's state by colour, with a word only when needed.
+- Cru's replies show their time.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.35 (en-US)
+
+Version code 66. Internal track. Since 1.1.3-dev.34 (code 65): Cru's full-area UI with Normal view; Cru as its own bubble; call audio kept on the loudspeaker; typed and queued messages shown at once; thinking effort setting; Cru's off order stops every wake listener; parked chat Peek; mic level moves for speech only; request ids on turns. Server 1.21.6-dev.49.
+
+```
+<en-US>
+Cru:
+- Cru can fill its whole screen with its own UI; Normal view takes you back.
+- Float Cru as a bubble over any app.
+- Clearer, louder replies on the loudspeaker.
+- What you type shows at once; things said while Cru thinks show as queued.
+- Choose Cru's thinking effort in Settings.
+- "Stop listening" now stops every Hey Cru listener.
+- Peek at a parked chat without resuming it.
+- The mic moves only when you speak.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.34 (en-US)
+
+Version code 65. Internal track. Since 1.1.3-dev.33 (code 64): Cru's screen opens as a chat, typed replies are read not said, a speaker on each reply; background noise no longer cuts Cru off; Cru answers a chat's questions and permission prompts (cards say "by Cru"); admin mode wording. Server 1.21.6-dev.48.
+
+```
+<en-US>
+Cru:
+- Cru's screen opens as a chat. Replies to what you type are shown, not spoken: tap the speaker on a reply to hear it.
+- Background noise no longer cuts Cru off mid-sentence.
+- Cru can read out and answer a chat's questions and permission prompts; the card says "by Cru".
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.33 (en-US)
+
+Version code 64. Internal track. Since 1.1.3-dev.32 (code 63): Cru's close button moved to the top bar; reports no longer shown as the owner's messages. Server 1.21.6-dev.44.
+
+```
+<en-US>
+Cru:
+- The close button is in the top bar now, so the typing box has room.
+- Cru's own reports no longer show as if you had said them.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.32 (en-US)
+
+Version code 63. Internal track. Since 1.1.3-dev.31 (code 62): files for Cru (voice-attach: camera, gallery, file picker, share target), PIN moved to Your PIN and the PC lock, PC lock and auto lock controls (pc-lock), short-reply training without rejections. Server 1.21.6-dev.43.
+
+```
+<en-US>
+Cru:
+- Give Cru files: camera, photos and videos, any file, or share to Cru from other apps. Cru looks at pictures and reads documents.
+- One PIN for kid mode and the PC lock, under Your PIN and the PC lock.
+- Lock or unlock the PC from here, and set it to lock by itself when idle.
+- Teaching short replies no longer rejects recordings.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.31 (en-US)
+
+Version code 62. Internal track. Since 1.1.3-dev.30 (code 61): Cru on its own settings and stop-everything (voice-away), Cru's approvals (source cru), built-in heartbeat ticker, short-reply voice training (voice-short-words). Server 1.21.6-dev.39.
+
+```
+<en-US>
+Cru:
+- Cru on its own: tick what Cru may do while you're away; anything else comes here to approve or decline. Stop everything pauses it all.
+- Cru's questions in approvals, with Approve and Decline.
+- The heartbeat ticker can be switched on and off, not deleted.
+- Teach short replies: say yes, no, go ahead and a few more, so a one-word answer is recognised as you.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.30 (en-US)
+
+Version code 61. Internal track. Since 1.1.3-dev.29 (code 60): Cru live screen (voice-screen), kid mode parent controls, approvals and status card (voice-kid; kid screen itself stays PC-only), Compact confirmation. Server 1.21.6-dev.37.
+
+```
+<en-US>
+Cru:
+- Its live screen: lists, status and more, shown while you talk.
+- Kid mode, for parents: PIN, start/pause/end, add time, approvals with buttons, progress by area, games list.
+- Compact now asks first.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.29 (en-US)
+
+Version code 60. Internal track. Since 1.1.3-dev.28 (code 59): keyboard-mode inset fix (VoiceActivity adjustResize), Cru unread dot and cruChat pushes (server 1.21.6-dev.35).
+
+```
+<en-US>
+Cru:
+- Keyboard mode: the text box now sits right above the keyboard.
+- A red dot on Cru's mark when it has unread messages; its notifications open Cru's chat view.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.28 (en-US)
+
+Version code 59. Internal track. Since 1.1.3-dev.27 (code 58): Cru parity with server 1.21.6-dev.33/34 (volume, compact, chat view, keyboard mode, new mark, tones, auto-scroll, admin mode, tickers and triggers, voice enrolment, usage in the top row) and the chat scroll fix.
+
+```
+<en-US>
+Cru, the voice assistant:
+- New mark, calm tones instead of spoken cues, reply scrolls as it is spoken.
+- Chat view of the whole conversation, and a keyboard mode.
+- Volume, compact, admin mode, tickers and triggers, and voice enrolment in its settings.
+- Usage now in the top row.
+Chats: scrolling up while Claude writes stays put.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.27 (en-US)
+
+Version code 58. Internal track. Since 1.1.3-dev.26 (code 57): agents panel scrolls; Dismiss finished takes effect at once (server 1.21.6-dev.31 sends the change).
+
+```
+<en-US>
+- Dismiss finished in a chat's agents panel now clears them at once; running agents stay.
+- The agents and background commands panels scroll when the list is long.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.26 (en-US)
+
+Version code 57. Internal track. Since 1.1.3-dev.25 (code 56): Telegram moved out of Configuration: bot under Sign-in > Telegram, chat ID and bot status under Notifications (servers with telegramBot); older servers as before.
+
+```
+<en-US>
+Telegram is one method among the others.
+
+- Its bot is set up under Settings, Sign-in, Telegram, and its chat under Notifications. Configuration no longer has Telegram fields.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.25 (en-US)
+
+Version code 56. Internal track. Since 1.1.3-dev.24 (code 55): Settings > Sign-in (AuthApi, SignIn.kt) and Backup and restore (BackupApi, Backup.kt); Sign out this phone; inbox channel first; Telegram optional.
+
+```
+<en-US>
+Sign-in, backups and sign-out in the app.
+
+- Settings has Sign-in (Telegram, password, Google, GitHub) and Backup and restore pages, as on the web.
+- Signed-in devices can sign this phone out.
+- Notifications lists Crundi's inbox first, always on.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.24 (en-US)
+
+Version code 55. Internal track. Since 1.1.3-dev.23 (code 54): LiveTranscript in the message box; talking over the reply pauses it (OwnerGate, call audio, pre-roll), resumes sentence by sentence; replies wait behind the owner; mic hand-over with Cru (ask to switch, pause/resume, wake word off).
+
+```
+<en-US>
+Talk over the reply.
+
+- In voice mode, talk while Claude speaks: the reply pauses and carries on after you. A reply that arrives while you talk waits for you.
+- The message box shows your whole live transcript.
+- Chat voice and Cru share the mic sensibly: it asks before taking over, and pauses and resumes.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.23 (en-US)
+
+Version code 54. Internal track. Since 1.1.3-dev.22 (code 53): hold-to-record composer (recording bar, mic as send, slide to cancel); inbox bubbles (InboxBubbleActivity, InboxNotify); notification opens the inbox thread; menu dot and NewMessageFlash; project icons in inbox rows.
+
+```
+<en-US>
+Hold to talk, slide to cancel; inbox bubbles.
+
+- Hold the mic in a chat to record: the Send button becomes a live recording bar, the mic becomes Send, and sliding onto the x cancels. In voice mode, tap the mic to send what you said straight away.
+- With bubbles on, a message in Crundi's inbox opens as its own bubble. Tapping a message notification opens its inbox thread.
+- A dot on the menu and a short "New message" in the top bar when a message arrives; project icons in the inbox.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.22 (en-US)
+
+Version code 53. Internal track. Since 1.1.3-dev.21 (code 52): KeyboardBackCloses: a top back callback while the IME shows (main window and bubble).
+
+```
+<en-US>
+Back closes the keyboard.
+
+- With the keyboard open, back now closes it, in the app and in chat bubbles, instead of being taken as "back to exit".
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.21 (en-US)
+
+Version code 52. Internal track. Since 1.1.3-dev.20 (code 51): the inbox (capability inbox) in threads; back with the keyboard up only closes it.
+
+```
+<en-US>
+Crundi's own inbox.
+
+- Everything meant for you lands in Crundi's inbox, in threads: one per chat, per project, Cru and Crundi. Find it by the envelope next to App settings. Telegram is now optional.
+- Pressing back to close the keyboard no longer counts as "back to exit".
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.20 (en-US)
+
+Version code 51. Internal track. Since 1.1.3-dev.19 (code 50): per-chat voice mode (capability chat-voice): tap for voice mode, hold to talk; voice-say events spoken.
+
+```
+<en-US>
+Talk to a chat.
+
+- Each chat has a mic beside Send. Tap it for voice mode: whenever you pause, what you said goes to Claude, and it answers in the chat and says a short version aloud. Or hold it, talk, and let go.
+- Shown once the voice assistant has a Deepgram key on your server.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.19 (en-US)
+
+Version code 50. Internal track. Since 1.1.3-dev.18 (code 49): decoy keywords (30 near phrases) in listening and the second opinion, the owner's own takes drop decoys, a worst-150-ms DTW check, level-normalised confirm.
+
+```
+<en-US>
+Hey Cru wakes only for Hey Cru.
+
+- Near phrases such as "hey you", "hey who" or "hey two" no longer wake Cru. Your real "Hey Cru" still does; retrain once if it seems harder to trigger.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.18 (en-US)
+
+Version code 49. Internal track. Since 1.1.3-dev.17 (code 48): cancel (voice-cancel): the x and the discard phrases; /api/voice/cancel while thinking.
+
+```
+<en-US>
+Take back what you said.
+
+- End with "scratch that" or "never mind", or tap the x by your words, and nothing is asked.
+- Right after you have spoken it still works: Cru stops before answering, and tells you if it had already done something.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.17 (en-US)
+
+Version code 48. Internal track. Since 1.1.3-dev.16 (code 47): local own-voice gate (OwnerGate.kt) with pre-roll; Cru plays as speakerphone call audio (CallAudio.kt) so the AEC removes it; nothing is streamed while Cru speaks until the gate opens.
+
+```
+<en-US>
+Cru no longer hears itself.
+
+- The phone now tells Cru's own voice apart from yours before anything is sent: Cru plays as speakerphone call audio so the phone's echo cancelling removes it, and only your voice interrupts it.
+- When you talk over Cru, it stops at once and keeps your first words.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.16 (en-US)
+
+Version code 47. Internal track. Since 1.1.3-dev.15 (code 46): barge-in on transcripts with the stream open while speaking (capability voice-barge-in), thinking cues (voice-cues).
+
+```
+<en-US>
+Talk over Cru, and hear when it has your words.
+
+- Start speaking while Cru is talking and it stops at once and answers what you just said. Its own voice, a cough or a clap does not count.
+- The moment Cru has your words it says so with a short phrase like "One moment, Sir", in its own voice.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.15 (en-US)
+
+Version code 46. Internal track. Since 1.1.3-dev.14 (code 45): server voice settings moved to Settings > Voice assistant (CruSettings.kt, folded sections); Voice settings keeps device-only things; Settings front page regrouped.
+
+```
+<en-US>
+Cru's settings in one place.
+
+- Settings has a Voice assistant page with everything shared by your devices: brain, model, voice, talking speed, keys, spending and the notebook. Each section is folded until you open it.
+- Voice settings now holds only what belongs to this phone: the side key, how long the microphone stays on, and Hey Cru.
+- Settings is grouped more clearly.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.14 (en-US)
+
+Version code 45. Internal track. Since 1.1.3-dev.13 (code 44): the voice screen closes after the server's screenCloseSeconds of silence (Voice settings chips).
+
+```
+<en-US>
+Cru closes when you go quiet.
+
+- After a minute of silence the voice screen closes itself, even when the phone stays awake. "Hey Cru" opens it again. Change the time in Voice settings.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.13 (en-US)
+
+Version code 44. Internal track. Since 1.1.3-dev.12 (code 43): reports said unasked on the voice screen, close_voice.
+
+```
+<en-US>
+Cru reports back, and closes when you're done.
+
+- Chats Cru sets going, and any you ask it to follow, are reported on when they finish or need you: said aloud if the voice screen is open, otherwise a notification.
+- Say "that's all" or "goodbye" and Cru closes its own screen.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.12 (en-US)
+
+Version code 43. Internal track. Since 1.1.3-dev.11 (code 42): call-mode microphone for Hey Cru (AEC, NS, AGC), noise subtraction, voicing and length checks, the model's second opinion; Try it judges like listening.
+
+```
+<en-US>
+"Hey Cru" hears you, not the room.
+
+- Training and listening record like a phone call: the phone's echo cancelling, noise suppression and level control, so how you hold it matters less.
+- Background noise is taken out before your voice is compared, and noises and short words no longer wake it.
+- Train Hey Cru again after updating.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.11 (en-US)
+
+Version code 42. Internal track. Since 1.1.3-dev.10 (code 41): Hey Cru learns from the owner's recordings (phrase match), never refuses a take the model missed.
+
+```
+<en-US>
+"Hey Cru" learns your voice properly.
+
+- Training no longer refuses a take because the built-in model didn't hear it: your five recordings are what it learns from.
+- Said on its own, "Hey Cru" wakes when it matches your recordings, whatever your accent.
+- Train again after updating.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.10 (en-US)
+
+Version code 41. Internal track. Since 1.1.3-dev.9 (code 40): Cru (rename, Sir, its name, persona, Docker), Cru's mark in the top bar, Hey Cru trained on the owner's voice.
+
+```
+<en-US>
+Meet Cru, and train "Hey Cru" on your voice.
+
+- The voice assistant is Cru (said like "crew") and calls you Sir. Say "Hey Cru" while it listens and it answers at once.
+- Cru's mark replaces the mic in the top bar.
+- "Hey Cru" listens only after you train it: say it five times in Voice assistant settings, then Try it.
+- Cru learns how you like it to behave, and can see Docker containers.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.9 (en-US)
+
+Version code 40. Internal track. Since 1.1.3-dev.8 (code 39): a mid-turn message's card leaves when Claude reads it, in long chats too.
+
+```
+<en-US>
+A fix for messages sent while Claude is working.
+
+- In a long chat, a message Claude had already read stayed under the box as "Sending, not read yet" until the turn ended. It now leaves as soon as Claude reads it.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.8 (en-US)
+
+Version code 39. Internal track. Since 1.1.3-dev.7 (code 38): the mic in the top bar, the voice screen's microphone timeout, Hey Crundi on the sleeping voice screen, and the screen kept awake.
+
+```
+<en-US>
+A mic in the top bar, and the voice screen winds down gently.
+
+- Tap the mic next to the usage badge to talk to Crundi from anywhere in the app.
+- The microphone turns off after a set time; noise in the room no longer keeps it on.
+- Then the voice screen stays open, listening only for "Hey Crundi" to start again, before letting the phone sleep.
+- Both times are in Voice assistant settings, under On the voice screen.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.7 (en-US)
+
+Version code 38. Internal track. Since 1.1.3-dev.6 (code 37): Hey Crundi (Phase 6), actions (Phase 4), memory (Phase 2), the Voice shortcut (Phase 5), the visualizer and liquid mic, pause before sending (D44), Claude and Deepgram apart (D46).
+
+```
+<en-US>
+Crundi's voice assistant, complete for testing.
+
+- "Hey Crundi": listen in the app, or in the background for 15 minutes to 2 hours.
+- It acts: chats, cards, notes, schedules; asks first for weighty things, answer yes or no aloud.
+- It remembers: a notebook, and anything said before.
+- A live visualizer round the Crundi head; a liquid mic; your projects as cells.
+- Speak slowly, it waits. Claude and Deepgram spend apart.
+
+Needs Crundi server 1.21.6-dev.8.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.6 (en-US)
+
+Version code 37. Internal track. Since 1.1.3-dev.5 (code 36): the voice screen as a field of projects, streamed speech, the echo fix.
+
+```
+<en-US>
+A new voice screen, and Crundi stops hearing itself.
+
+- The Crundi head at the centre, voice lines that move as it listens and talks, your usage as arcs, and every project as a living cell showing its real state.
+- Speech streams: Crundi starts talking almost at once.
+- Crundi no longer takes its own voice for yours; talk over it to interrupt.
+
+Needs Crundi server 1.21.6-dev.5 or newer for streamed speech.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.5 (en-US)
+
+Version code 36. Internal track. Since 1.1.3-dev.4 (code 35): billing days for Claude and Deepgram (D42).
+
+```
+<en-US>
+Voice assistant: the spend limit follows your API billing month.
+
+- App settings, Voice assistant: set the days Claude and Deepgram bill you; each part of the spend restarts on its own day.
+- The Usage screen says when the voice spend restarts.
+
+Needs Crundi server 1.21.6-dev.2 or newer for the voice assistant.
+</en-US>
+```
+
+## Release notes, 1.1.3-dev.4 (en-US)
+
+Version code 35. Internal track. Since 1.1.3-dev.3 (code 34): the voice
+assistant (specs/voice-assistant.md, Phase 3) and its API spend on the
+Usage screen.
+
+```
+<en-US>
+Crundi's voice assistant, for testing.
+
+- Hold the side key with Crundi as the digital assistant, or open Crundi Voice and keep Gemini.
+- Live listening, spoken answers, talk over it to interrupt. Works on the lock screen.
+- App settings, Voice assistant: setup, voice, model, monthly limit.
+- The Usage screen shows the voice assistant's API spend.
+
+Needs a Crundi server with the voice assistant; older servers say so.
+</en-US>
+```
+
 ## Release notes, 1.1.2 (en-US)
 
 Version code 31. Production, since 1.1.1 (code 28): everything from

@@ -2,7 +2,10 @@ package mv.obitech.crundi.ui.chats
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,10 +47,16 @@ import mv.obitech.crundi.ui.theme.CrundiType
  * A picture Claude showed, on the whole screen: pinch to zoom, drag to look
  * around, double-tap to zoom in or back out. It was a small card inside the
  * chat pane, no bigger than the picture in the log, and could not zoom.
+ *
+ * With [gallery] (the chat's pictures, in order; the owner, 11 Nov) it is a
+ * gallery: swipe left or right when not zoomed in, or the side buttons.
  */
 @Composable
-fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
+fun ImageViewer(first: ChatMedia, onSave: (ChatMedia) -> Unit, onClose: () -> Unit, gallery: List<ChatMedia> = emptyList()) {
     Dialog(onClose, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        val list = gallery.takeIf { g -> g.size > 1 && g.any { it.path == first.path } } ?: emptyList()
+        var at by remember { mutableStateOf(list.indexOfFirst { it.path == first.path }.coerceAtLeast(0)) }
+        val media = if (list.isEmpty()) first else list[at]
         // The preview's copy (already in memory from the chat) at once, then
         // the full one in its place when it arrives; it had shown a bare icon
         // until the 4096px copy came, or for good if that one failed.
@@ -56,6 +65,13 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
         val img = fullLoad.image ?: preview.image
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
+        // A sideways drag at 1x, measured over one gesture: a swipe to the next picture.
+        var swipe by remember { mutableFloatStateOf(0f) }
+        fun go(step: Int) {
+            if (list.isEmpty()) return
+            at = (at + step + list.size) % list.size
+            scale = 1f; offset = Offset.Zero
+        }
         var box by remember { mutableStateOf(IntSize.Zero) }
         // Keep the picture on screen: at 1x it is centred; zoomed, it can be
         // dragged only as far as its edges.
@@ -90,8 +106,21 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                             }
                         })
                     }
+                    // After the pinch handler has seen it: a gesture that ends having moved far sideways, not zoomed in, is a swipe.
+                    .pointerInput(list.size) {
+                        if (list.isEmpty()) return@pointerInput
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            swipe = 0f
+                            do { val e = awaitPointerEvent(PointerEventPass.Final) } while (e.changes.any { it.pressed })
+                            val far = 64.dp.toPx()
+                            if (scale <= 1.01f && kotlin.math.abs(swipe) > far) go(if (swipe < 0) 1 else -1)
+                            swipe = 0f
+                        }
+                    }
                     .pointerInput(Unit) {
                         detectTransformGestures { centroid, pan, zoom, _ ->
+                            if (zoom == 1f && scale <= 1.01f) swipe += pan.x
                             val ns = (scale * zoom).coerceIn(1f, 8f)
                             val c = Offset(box.width / 2f, box.height / 2f)
                             // Zoom about the fingers, then follow the drag.
@@ -110,6 +139,15 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                 )
                 else if (fullLoad.failed && preview.failed) Box(Modifier.size(220.dp, 140.dp)) { LoadFailed({ preview.retry(); fullLoad.retry() }) }
                 else Box(Modifier.fillMaxSize().shimmer())
+                // The gallery: where it is, and a button on each side (hidden while zoomed in).
+                if (list.isNotEmpty()) {
+                    Text("${at + 1} / ${list.size}", style = CrundiType.Small.copy(color = CrundiColors.TextSecondary),
+                        modifier = Modifier.align(Alignment.TopStart).padding(14.dp).background(Color.Black.copy(alpha = 0.6f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 4.dp))
+                    if (scale <= 1.01f) {
+                        CrundiIconButton("chevron-left", { go(-1) }, Modifier.align(Alignment.CenterStart).padding(6.dp), contentDescription = "Previous picture", tint = CrundiColors.TextPrimary)
+                        CrundiIconButton("chevron-right", { go(1) }, Modifier.align(Alignment.CenterEnd).padding(6.dp), contentDescription = "Next picture", tint = CrundiColors.TextPrimary)
+                    }
+                }
             }
             // A slim bar: the caption on one line (tap for all of it), then icons.
             var whole by remember { mutableStateOf(false) }
@@ -122,7 +160,7 @@ fun ImageViewer(media: ChatMedia, onSave: () -> Unit, onClose: () -> Unit) {
                     maxLines = if (whole) 6 else 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).clickable(enabled = media.caption.isNotEmpty()) { whole = !whole },
                 )
-                CrundiIconButton("download", onSave, contentDescription = "Save to Downloads", tint = CrundiColors.TextPrimary)
+                CrundiIconButton("download", { onSave(media) }, contentDescription = "Save to Downloads", tint = CrundiColors.TextPrimary)
                 CrundiIconButton("x", onClose, contentDescription = "Close", tint = CrundiColors.TextPrimary)
             }
         }

@@ -52,6 +52,10 @@ const files = [
   join(root, 'app', 'vendor', 'crundi-secret-lock.js'),
   join(root, 'app', 'vendor', 'crundi-phone.js'),
   join(root, 'app', 'vendor', 'crundi-docker.js'),
+  join(root, 'app', 'vendor', 'crundi-browser-drawer.js'),
+  join(root, 'app', 'browser-drawer.js'),
+  join(root, 'app', 'net-tunnel-client.js'),
+  join(root, 'app', 'drawer-net.js'),
   join(root, 'app', 'vendor', 'crundi-factories.js'),
 ];
 

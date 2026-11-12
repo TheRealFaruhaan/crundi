@@ -5,7 +5,7 @@ package mv.obitech.crundi.ui.icons
 /** Each icon's shapes as SVG path data, on a 24 by 24 grid, drawn as 2-wide round strokes. */
 internal object IconPaths {
     /** Names that come from the desktop's ICON_PATHS (the rest are from icons-extra.json). */
-    val desktop: Set<String> = setOf("archive", "arrow-up", "bar-chart", "bell", "check", "chevron-left", "chevron-right", "chevrons-left", "clipboard", "clock", "copy", "docker", "download", "external-link", "factory", "file", "file-text", "film", "folder", "git-branch", "globe", "hard-drive", "image", "images", "info", "kanban", "layers", "list", "lock", "maximize", "menu", "message-square", "mindmap", "more", "music", "network", "note", "pages", "panel", "paperclip", "pause", "pencil", "pin", "play", "plus", "refresh", "rotate-ccw", "scissors", "send", "server", "settings", "shield-alert", "stop", "terminal", "trash", "upload", "x", "zap")
+    val desktop: Set<String> = setOf("archive", "arrow-up", "bar-chart", "bell", "check", "chevron-left", "chevron-right", "chevrons-left", "clipboard", "clock", "copy", "docker", "download", "external-link", "eye", "eye-off", "factory", "file", "file-text", "film", "folder", "git-branch", "globe", "hard-drive", "help-circle", "image", "images", "info", "kanban", "layers", "list", "lock", "mail", "maximize", "menu", "message-square", "mic", "mindmap", "more", "music", "network", "note", "pages", "panel", "paperclip", "pause", "pencil", "pin", "play", "plus", "refresh", "rotate-ccw", "scissors", "send", "server", "settings", "shield-alert", "square", "stop", "terminal", "trash", "upload", "x", "zap")
 
     val all: Map<String, List<String>> = mapOf(
         "alert-triangle" to listOf("M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z", "M12 9L12 13", "M12 17L12.01 17"),
@@ -54,15 +54,19 @@ internal object IconPaths {
         "info" to listOf("M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0Z", "M12 11L12 16", "M12 8L12.01 8"),
         "kanban" to listOf("M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2Z", "M9 3L9 21", "M15 3L15 21"),
         "key" to listOf("M2 15.5a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0Z", "M21 2l-9.6 9.6", "M15.5 7.5l3 3L22 7l-3-3"),
+        "keyboard" to listOf("M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-16a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2Z", "M6 9h.01", "M10 9h.01", "M14 9h.01", "M18 9h.01", "M6 12.5h.01", "M18 12.5h.01", "M10 12.5h.01", "M14 12.5h.01", "M7 16h10"),
         "layers" to listOf("M12 2L2 7L12 12L22 7L12 2Z", "M2 17L12 22L22 17", "M2 12L12 17L22 12"),
         "link" to listOf("M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71", "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"),
         "list" to listOf("M8 6L21 6", "M8 12L21 12", "M8 18L21 18", "M3 6L3.01 6", "M3 12L3.01 12", "M3 18L3.01 18"),
         "lock" to listOf("M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-7a2 2 0 0 1 2 -2Z", "M7 11V7a5 5 0 0 1 10 0v4"),
+        "mail" to listOf("M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-16a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M22 6L12 13L2 6"),
         "maximize" to listOf("M8 3H5a2 2 0 0 0-2 2v3", "M16 3h3a2 2 0 0 1 2 2v3", "M21 16v3a2 2 0 0 1-2 2h-3", "M3 16v3a2 2 0 0 0 2 2h3"),
         "menu" to listOf("M3 6L21 6", "M3 12L21 12", "M3 18L21 18"),
+        "message-circle" to listOf("M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"),
         "message-square" to listOf("M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"),
-        "mic" to listOf("M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z", "M19 10v2a7 7 0 0 1-14 0v-2", "M12 19L12 23", "M8 23L16 23"),
+        "mic" to listOf("M12 2h0a3 3 0 0 1 3 3v6a3 3 0 0 1 -3 3h0a3 3 0 0 1 -3 -3v-6a3 3 0 0 1 3 -3Z", "M5 10v1a7 7 0 0 0 14 0v-1", "M12 18L12 22"),
         "mindmap" to listOf("M15 5a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z", "M3 12a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z", "M15 19a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z", "M8.59 13.51L15.42 17.49", "M15.41 6.51L8.59 10.49"),
+        "minimize-2" to listOf("M4 14h6v6", "M20 10h-6V4", "M14 10l7-7", "M3 21l7-7"),
         "minus" to listOf("M5 12L19 12"),
         "more" to listOf("M3.6 12a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0 -2.8 0Z", "M10.6 12a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0 -2.8 0Z", "M17.6 12a1.4 1.4 0 1 0 2.8 0a1.4 1.4 0 1 0 -2.8 0Z"),
         "music" to listOf("M9 18V5l12-2v13", "M3 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z", "M15 16a3 3 0 1 0 6 0a3 3 0 1 0 -6 0Z"),
@@ -91,8 +95,10 @@ internal object IconPaths {
         "shield-alert" to listOf("M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z", "M12 8L12 12.5", "M12 16L12.01 16"),
         "sliders" to listOf("M4 21L4 14", "M4 10L4 3", "M12 21L12 12", "M12 8L12 3", "M20 21L20 16", "M20 12L20 3", "M1 14L7 14", "M9 8L15 8", "M17 16L23 16"),
         "smartphone" to listOf("M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-16a2 2 0 0 1 2 -2Z", "M12 18L12.01 18"),
+        "speaking-head" to listOf("M4 21v-4.4C2.2 15.2 1.5 13 1.5 11 1.5 6.6 4.9 3.5 9 3.5c3.6 0 5.8 2.5 6 5.5l1.5 3-1.5.5v2c0 .8-.6 1.5-1.5 1.5h-2V21", "M18.5 10.5a4 4 0 0 1 0 5", "M21 8.5a7 7 0 0 1 0 9"),
         "split-down" to listOf("M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M3 12L21 12"),
         "split-right" to listOf("M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z", "M12 4L12 20"),
+        "square" to listOf("M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12a2 2 0 0 1 2 -2Z"),
         "stop" to listOf("M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-10a2 2 0 0 1 2 -2Z"),
         "terminal" to listOf("M4 17L10 11L4 5", "M12 19L20 19"),
         "trash" to listOf("M3 6L5 6L21 6", "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6", "M10 11v6M14 11v6", "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"),
@@ -100,6 +106,8 @@ internal object IconPaths {
         "upload" to listOf("M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "M17 8L12 3L7 8", "M12 3L12 15"),
         "user" to listOf("M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2", "M8 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z"),
         "users" to listOf("M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2", "M5 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0Z", "M23 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"),
+        "volume-2" to listOf("M11 5L6 9L2 9L2 15L6 15L11 19L11 5Z", "M15.54 8.46a5 5 0 0 1 0 7.07", "M19.07 4.93a10 10 0 0 1 0 14.14"),
+        "volume-x" to listOf("M11 5L6 9L2 9L2 15L6 15L11 19L11 5Z", "M23 9L17 15", "M17 9L23 15"),
         "x" to listOf("M18 6L6 18", "M6 6L18 18"),
         "zap" to listOf("M13 2L3 14L12 14L11 22L21 10L12 10L13 2Z"),
     )

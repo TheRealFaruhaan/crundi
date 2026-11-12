@@ -79,3 +79,16 @@ jobs:
           # which a dev build is the latest release.
           EP_PRE_RELEASE: ${{ contains(github.ref_name, '-') && 'true' || 'false' }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # electron-builder uploads the installer, its .blockmap and latest.yml
+      # (what the updater reads). Check each is on the release at its full
+      # size, and upload any that are not again (scripts/release-upload.mjs):
+      # an updater offered a truncated installer cannot install it.
+      - name: Check the uploads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          node scripts/release-upload.mjs --tag "${GITHUB_REF_NAME}" --repo "$GITHUB_REPOSITORY" \
+            "dist/Crundi-Setup-${VERSION}.exe" "dist/Crundi-Setup-${VERSION}.exe.blockmap" dist/latest.yml

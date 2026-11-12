@@ -409,6 +409,49 @@ async function closePage(key) {
   try { await cdpSend('Target.disposeBrowserContext', { browserContextId: entry.contextId }); } catch { /* ditto */ }
 }
 
+// Touch, pointer and mouse listeners on the element under (x, y) and every
+// ancestor up to window — what the page has wired to receive a gesture there.
+// Only DevTools can list listeners, hence CDP rather than page script. Kept
+// identical in app/main.js and src/browser-headless.js.
+async function touchListenersAt(send, x, y) {
+  const GROUP = 'crundi-touch';
+  const TYPES = /^(touch|pointer|mouse|click|dblclick|contextmenu|wheel|gesture|drag)/;
+  try {
+    const arr = await send('Runtime.evaluate', {
+      objectGroup: GROUP, returnByValue: false,
+      expression: `(function(){var a=[],el=document.elementFromPoint(${Math.round(x)},${Math.round(y)});`
+        + 'while(el){a.push(el);el=el.parentElement||(el.getRootNode&&el.getRootNode().host)||null;}'
+        + 'a.push(document,window);return a;})()',
+    });
+    if (!arr?.result?.objectId) return [];
+    const props = await send('Runtime.getProperties', { objectId: arr.result.objectId, ownProperties: true });
+    const items = (props.result || []).filter((p) => /^\d+$/.test(p.name) && p.value?.objectId)
+      .sort((a, b) => a.name - b.name);
+    const out = [];
+    for (const it of items) {
+      const res = await send('DOMDebugger.getEventListeners', { objectId: it.value.objectId });
+      // Not our own probe's listeners (browser-touch.js names them crundiTouch*).
+      const ls = (res.listeners || []).filter((l) => TYPES.test(l.type)
+        && !/crundiTouch/.test(String(l.handler?.description || '')));
+      if (!ls.length) continue;
+      out.push({
+        el: it.value.description || it.value.className || '?',
+        listeners: ls.map((l) => ({
+          type: l.type,
+          ...(l.useCapture ? { capture: true } : {}),
+          ...(l.passive ? { passive: true } : {}),
+          handler: String(l.handler?.description || '').replace(/\s+/g, ' ').slice(0, 120),
+        })),
+      });
+    }
+    return out;
+  } catch (err) {
+    return [{ error: `listeners unavailable: ${err.message}` }];
+  } finally {
+    send('Runtime.releaseObjectGroup', { objectGroup: GROUP }).catch(() => {});
+  }
+}
+
 // ─── Operations ───
 //
 // One entry per message type in app/main.js's browserIpcHandlers, returning the
@@ -577,17 +620,39 @@ const ops = {
     return { ok: true, result: typeof result === 'string' ? result : JSON.stringify(result) };
   },
 
+  // The same actions as the desktop app's app/browser-pointer.js (the server
+  // packages ship no app/ code but the node script), without a cursor to draw.
   async browserMouse(msg) {
     const entry = page(msg.key);
     if (!entry) return { ok: false, error: 'Browser not found' };
-    const base = { x: msg.x, y: msg.y, button: 'left', clickCount: 1 };
-    if (msg.action === 'click') {
-      await cdpSend('Input.dispatchMouseEvent', { ...base, type: 'mousePressed' }, entry.sessionId);
-      await cdpSend('Input.dispatchMouseEvent', { ...base, type: 'mouseReleased' }, entry.sessionId);
-    } else {
-      await cdpSend('Input.dispatchMouseEvent', { type: 'mouseMoved', x: msg.x, y: msg.y }, entry.sessionId);
+    try {
+      const r = await headlessMouse((m, p) => cdpSend(m, p, entry.sessionId), entry.pointer || (entry.pointer = {}), msg);
+      return { ok: true, ...r };
+    } catch (err) {
+      return { ok: false, error: err.message };
     }
-    return { ok: true };
+  },
+
+  // Replays a gesture planned by browser.js (planTouch): a list of CDP touch
+  // events, each followed by a wait. Touch emulation goes on first so the page
+  // sees a touch device rather than touch events from a mouse-only one.
+  async browserTouch(msg) {
+    const entry = page(msg.key);
+    if (!entry) return { ok: false, error: 'Browser not found' };
+    if (!entry.touch) {
+      await cdpSend('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 }, entry.sessionId);
+      entry.touch = true;
+    }
+    const send = (m, p) => cdpSend(m, p, entry.sessionId);
+    const listeners = msg.listenersAt ? await touchListenersAt(send, msg.listenersAt.x, msg.listenersAt.y) : undefined;
+    for (const st of msg.steps || []) {
+      await cdpSend('Input.dispatchTouchEvent', {
+        type: st.type,
+        touchPoints: (st.points || []).map((pt) => ({ x: pt.x, y: pt.y, id: pt.id })),
+      }, entry.sessionId);
+      if (st.wait > 0) await new Promise((r) => setTimeout(r, st.wait));
+    }
+    return { ok: true, listeners };
   },
 
   async browserResize(msg) {
@@ -776,4 +841,52 @@ export async function handle(msg) {
   } finally {
     armIdleShutdown();
   }
+}
+
+// ─── browser_mouse (see browserMouse) ───
+const MOUSE_BUTTONS = { left: 1, right: 2, middle: 4 };
+const finiteOrNull = (v) => (v == null || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
+export async function headlessMouse(send, state, msg) {
+  const action = msg.action || 'click';
+  const button = msg.button || 'left';
+  if (!['move', 'click', 'double_click', 'down', 'up', 'drag'].includes(action)) throw new Error('unknown mouse action ' + action);
+  if (!MOUSE_BUTTONS[button]) throw new Error('button must be "left", "right" or "middle"');
+  const x = finiteOrNull(msg.x), y = finiteOrNull(msg.y);
+  if (action !== 'up' && (x == null || y == null)) throw new Error(`${action} needs x and y`);
+  if (action === 'drag' && (finiteOrNull(msg.toX) == null || finiteOrNull(msg.toY) == null)) throw new Error('drag needs toX and toY (where to release)');
+  const ev = (type, px, py, extra) => send('Input.dispatchMouseEvent', { type, x: px, y: py, ...extra });
+  const held = () => (state.down ? { button: state.down, buttons: MOUSE_BUTTONS[state.down] } : { button: 'none', buttons: 0 });
+  async function travel(tx, ty, ms) {
+    if (state.down && state.x != null) {
+      const n = Math.max(2, Math.min(120, Math.round((ms || 0) / 16)));
+      const fx = state.x, fy = state.y;
+      for (let i = 1; i <= n; i++) {
+        await ev('mouseMoved', fx + ((tx - fx) * i) / n, fy + ((ty - fy) * i) / n, held());
+        if (ms > 0) await new Promise((r) => setTimeout(r, ms / n));
+      }
+    } else {
+      await ev('mouseMoved', tx, ty, held());
+    }
+    state.x = tx; state.y = ty;
+  }
+  const press = async (n = 1) => { state.down = button; await ev('mousePressed', state.x, state.y, { button, buttons: MOUSE_BUTTONS[button], clickCount: n }); };
+  const release = async (n = 1) => { const b = state.down || button; state.down = null; await ev('mouseReleased', state.x, state.y, { button: b, buttons: 0, clickCount: n }); };
+  const dur = Math.min(10000, Math.max(0, finiteOrNull(msg.duration) ?? 0));
+  if (action === 'move') await travel(x, y, dur);
+  else if (action === 'click' || action === 'double_click') {
+    if (state.down) await release();
+    await travel(x, y, 0); await press(1); await release(1);
+    if (action === 'double_click') { await press(2); await release(2); }
+  } else if (action === 'down') { if (state.down) await release(); await travel(x, y, 0); await press(1); }
+  else if (action === 'up') {
+    if (x != null && y != null) await travel(x, y, dur);
+    if (state.x == null) throw new Error('up needs x and y: the pointer has not been anywhere yet');
+    if (state.down) await release();
+  } else if (action === 'drag') {
+    if (state.down) await release();
+    await travel(x, y, 0); await press(1);
+    await travel(finiteOrNull(msg.toX), finiteOrNull(msg.toY), finiteOrNull(msg.duration) ?? 500);
+    await release(1);
+  }
+  return { x: state.x, y: state.y, held: state.down || null };
 }

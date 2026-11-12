@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Voice Lab: the Phase 0 device checks for the voice assistant
+     (specs/voice-assistant-plan.md). Debug builds only: none of this is in a
+     release or Play build. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Text-to-speech engines and speech recognisers the lab lists (Android 11+
+         package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+    <application>
+
+        <activity
+            android:name="mv.obitech.crundi.voicelab.VoiceLabActivity"
+            android:exported="false"
+            android:label="Crundi Voice Lab"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="mv.obitech.crundi.voicelab"
+            android:launchMode="singleTask" />
+
+        <!-- Phase 0 is done: the real assistant (voice/) now owns the
+             digital-assistant registration and the "Crundi Voice" name. The
+             lab stays reachable as its own launcher entry. -->
+        <activity-alias
+            android:name="mv.obitech.crundi.voicelab.CrundiVoiceLab"
+            android:targetActivity="mv.obitech.crundi.voicelab.VoiceLabActivity"
+            android:label="Crundi Voice Lab"
+            android:icon="@mipmap/ic_launcher"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <service
+            android:name="mv.obitech.crundi.voicelab.LabMicService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+    </application>
+</manifest>
