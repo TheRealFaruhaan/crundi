@@ -166,7 +166,8 @@ jobs:
             fi
             sleep 10
           done
-          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" --clobber --repo "$GITHUB_REPOSITORY"
+          # Uploaded, then checked at its full size (scripts/release-upload.mjs).
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload "${{ steps.apk.outputs.path }}"
 
   homepool-node-build:
     name: Homepool Node app
@@ -252,4 +253,5 @@ jobs:
             fi
             sleep 10
           done
-          gh release upload "$TAG" "${{ steps.apk.outputs.path }}" --clobber --repo "$GITHUB_REPOSITORY"
+          # Uploaded, then checked at its full size (scripts/release-upload.mjs).
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload "${{ steps.apk.outputs.path }}"

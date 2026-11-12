@@ -435,6 +435,14 @@ jobs:
     # default. A test with an unbounded scan hung every Windows job here.
     timeout-minutes: 25
     steps:
+      # Only for scripts/release-upload.mjs (the upload and its check).
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/release-upload.mjs
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       # Named explicitly rather than "download everything". buildx also uploads
       # a .dockerbuild metadata artifact, which is not a release asset and
       # whose download failed the whole job once already.
@@ -484,5 +492,10 @@ jobs:
             fi
             sleep 10
           done
-          find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.yml' \) -print0 \
-            | xargs -0 -I{} gh release upload "$TAG" "{}" --clobber --repo "$GITHUB_REPOSITORY"
+          # Uploaded, then checked: every asset must be on the release at its
+          # full size. dev.56's find | xargs gh release upload "succeeded" with
+          # the Linux .deb cut short and three files missing; this re-uploads a
+          # broken one (three tries) and fails the job if it stays broken.
+          mapfile -d '' FILES < <(find artifacts -type f \( -name '*.exe' -o -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' -o -name '*.yml' \) -print0)
+          [ "${#FILES[@]}" -gt 0 ] || { echo "No artifacts to upload"; exit 1; }
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload "${FILES[@]}"
