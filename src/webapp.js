@@ -5481,6 +5481,16 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
       return json(res, pcLockStop('PIN'));
     }
+    // Check the owner's PIN without changing anything (the browser drawer
+    // asks it before showing a saved password). The same tries and lockout.
+    if (path === '/api/lock/check' && req.method === 'POST') {
+      let body;
+      try { body = JSON.parse(await readBody(req)); } catch { return json(res, { ok: false, error: 'Bad request body' }, 400); }
+      if (!voiceSettings.kidPinHash()) return json(res, { ok: false, noPin: true, error: 'Set your PIN first (Settings, Voice assistant, Your PIN).' }, 400);
+      const r = kidPins.attempt(String(body.pin ?? ''), voiceSettings.kidPinHash());
+      if (!r.ok) return json(res, { ok: false, ...r, error: r.locked ? `Too many tries. Try again in ${Math.ceil(r.retryInMs / 1000)} seconds.` : 'That is not the PIN' }, r.locked ? 429 : 403);
+      return json(res, { ok: true });
+    }
     // Auto lock: { on, minutes (AUTO_MINUTES), mode }.
     if (path === '/api/lock/auto' && req.method === 'POST') {
       let body = {};

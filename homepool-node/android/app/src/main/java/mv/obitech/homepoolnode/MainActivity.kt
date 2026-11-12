@@ -244,11 +244,11 @@ class MainActivity : Activity() {
         status.text = s.label()
         status.setTextColor(
             when (s.phase) {
-                NodePhase.STOPPED -> 0xFF777777.toInt()
-                NodePhase.CONNECTED -> 0xFF1B8A3A.toInt()
-                NodePhase.PAUSED -> 0xFFB26A00.toInt()
-                NodePhase.REFUSED -> 0xFFB3261E.toInt()
-                NodePhase.CONNECTING -> 0xFF1F5FBF.toInt()
+                NodePhase.STOPPED -> 0xFF8888A8.toInt()
+                NodePhase.CONNECTED -> 0xFF10B981.toInt()
+                NodePhase.PAUSED -> 0xFFFBBF24.toInt()
+                NodePhase.REFUSED -> 0xFFEF4444.toInt()
+                NodePhase.CONNECTING -> 0xFF818CF8.toInt()
             }
         )
 

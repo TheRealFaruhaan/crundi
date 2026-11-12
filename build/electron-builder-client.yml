@@ -54,6 +54,8 @@ files:
   - app/browser-drawer.js
   # browser_mouse as real input, with the chat's cursor in a drawer tab.
   - app/browser-pointer.js
+  # Saved passwords for the drawer (encrypted with the OS's safeStorage).
+  - app/drawer-passwords.js
   - app/net-tunnel-client.js
   - app/drawer-net.js
   # "Share this PC's connection" (homepool node; docs/homepool.md).

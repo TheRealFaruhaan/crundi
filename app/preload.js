@@ -134,6 +134,22 @@ contextBridge.exposeInMainWorld('api', {
       // Requests from the main process (the server's chats acting on a tab).
       onRequest: (cb) => { const h = (_e, r) => cb(r); ipcRenderer.on('drawer:request', h); return () => ipcRenderer.removeListener('drawer:request', h); },
       reply: (reqId, result) => ipcRenderer.send('drawer:reply', reqId, result),
+      // Saved passwords (app/drawer-passwords.js): on this computer, encrypted
+      // by the OS. Its presence is how a newer web UI knows this app has them.
+      pw: {
+        status: () => ipcRenderer.invoke('drawer:pw-status'),
+        list: () => ipcRenderer.invoke('drawer:pw-list'),
+        answer: (offerId, action, username) => ipcRenderer.invoke('drawer:pw-answer', offerId, action, username),
+        fill: (tabId, id) => ipcRenderer.invoke('drawer:pw-fill', tabId, id),
+        dismissFill: (origin) => ipcRenderer.invoke('drawer:pw-fill-dismiss', origin),
+        reveal: (id) => ipcRenderer.invoke('drawer:pw-reveal', id),
+        update: (id, fields) => ipcRenderer.invoke('drawer:pw-update', id, fields),
+        remove: (id) => ipcRenderer.invoke('drawer:pw-remove', id),
+        unnever: (origin) => ipcRenderer.invoke('drawer:pw-unnever', origin),
+        clear: () => ipcRenderer.invoke('drawer:pw-clear'),
+        onOffer: (cb) => { const h = (_e, o) => cb(o); ipcRenderer.on('drawer:pw-offer', h); return () => ipcRenderer.removeListener('drawer:pw-offer', h); },
+        onFillOffer: (cb) => { const h = (_e, o) => cb(o); ipcRenderer.on('drawer:pw-fill-offer', h); return () => ipcRenderer.removeListener('drawer:pw-fill-offer', h); },
+      },
     },
   },
 

@@ -30,6 +30,8 @@
 
 import { webContents as WC, session as Session } from 'electron';
 import { readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { WORLD as PW_WORLD, captureScript, fillScript, originOf, redactSecrets } from './drawer-passwords.js';
 
 export const PARTITIONS = { client: 'persist:crundi-browser', server: 'persist:crundi-browser-srv' };
 // A tab on a homepool network ("hp:<network>") has a profile per network: a
@@ -62,8 +64,9 @@ const lc = (s) => String(s || '').toLowerCase();
  *   loadUrl(wc, url) → Promise, resolves when loaded enough (main.js loadUrlWithGrace)
  *   serverNet: { info() → { mode: 'local'|'remote', status: 'direct'|'tunnel'|'offline'|'unsupported' },
  *                ensure() → Promise (the server partition's proxy is set) }
+ *   passwords: app/drawer-passwords.js createPasswordStore, or null (no saved passwords)
  */
-export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUrl, serverNet, freezeAfterMs = 5 * 60 * 1000, discardAfterMs = 60 * 60 * 1000, historyFile = null }) {
+export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUrl, serverNet, freezeAfterMs = 5 * 60 * 1000, discardAfterMs = 60 * 60 * 1000, historyFile = null, passwords = null }) {
   const tabs = new Map();       // tabId → entry
   const pending = new Map();    // reqId → { resolve, reject, timer }
   let nextReq = 1;
@@ -166,7 +169,9 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     const wc = entry.wc; if (!wc || wc.isDestroyed()) return;
     let url = '', title = '', loading = false;
     try { url = wc.getURL(); title = wc.getTitle(); loading = wc.isLoading(); } catch { /* ignore */ }
-    emit('drawer:state', Object.assign({ tabId: entry.tabId, url, title, loading, canGoBack: canGo(wc, 'back'), canGoForward: canGo(wc, 'forward') }, extra || {}));
+    let logins = 0;
+    if (passwords) { try { logins = passwords.count(originOf(url)); } catch { /* unreadable */ } }
+    emit('drawer:state', Object.assign({ tabId: entry.tabId, url, title, loading, canGoBack: canGo(wc, 'back'), canGoForward: canGo(wc, 'forward'), logins }, extra || {}));
   }
 
   // ─── Network capture for browser_network, per tab ───
@@ -210,6 +215,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     const st = () => { if (entry.wc === wc) emitState(entry); };
     ['did-navigate', 'did-navigate-in-page', 'page-title-updated', 'did-stop-loading', 'did-start-loading'].forEach((ev) => wc.on(ev, st));
     wc.on('did-navigate', (_e, url, code) => { if (!code || code < 400) recordVisit(url, wc.getTitle()); });
+    wc.on('did-navigate', () => { if (entry.pwPending) entry.pwPending.navigated = true; });
     wc.on('page-title-updated', (_e, title) => { try { retitle(wc.getURL(), title); } catch { /* gone */ } });
     wc.on('did-fail-load', (_e, code, desc, url, isMain) => {
       if (isMain && code !== -3 && entry.wc === wc) { log(`[drawer] fail tab=${tabId} ${code} ${desc} ${url}`); emitState(entry, { diag: `Load failed (${code}): ${desc}` }); }
@@ -219,6 +225,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
       const ev = a[0] || {};
       const text = typeof a[2] === 'string' ? a[2] : (ev.message || '');
       if (entry.wc !== wc) return;
+      if (passwords && text.startsWith(PW_PREFIX)) { pwConsole(entry, wc, text); return; }   // saved passwords; never in the log
       entry.consoleLogs.push({ time: Date.now(), text });
       if (entry.consoleLogs.length > MAX_CONSOLE) entry.consoleLogs.splice(0, entry.consoleLogs.length - MAX_CONSOLE);
     });
@@ -282,6 +289,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     delete entry.touch; delete entry.castHooked;
     hookNetwork(wc.session);
     wire(entry, wc);
+    pwSetup(entry, wc).catch((err) => log(`[drawer] passwords tab=${tabId}: ${err.message}`));
     log(`[drawer] attach tab=${tabId} project=${entry.project} network=${network}`);
     const w = entry.waiters.splice(0); w.forEach((fn) => fn());
     return { ok: true, networkLabel: networkLabel(network) };
@@ -622,8 +630,131 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     }
   }
 
+
+  // ─── Saved passwords (app/drawer-passwords.js) ───
+  //
+  // A script in an isolated world of each tab's pages (captureScript) reports,
+  // as prefixed console messages nobody else can forge: a login form on the page,
+  // a login being submitted, and whether the form went away afterwards. Only
+  // the main window's page can save, fill, list or show; no chat can (the
+  // browser tools never reach these), and what a chat reads back from a tab
+  // has its filled or typed passwords taken out (redact).
+  const PW_OFFER_MS = 5 * 60 * 1000;
+  const PW_VERDICT_MS = 20000;
+  const pwOffers = new Map();         // offerId → { tabId, origin, username, password, kind, at }
+  const pwFillDismissed = new Set();  // sites whose fill prompt was dismissed (until the app restarts)
+  const fromWindow = (e) => { const w = win(); return !!w && e.sender.id === w.webContents.id; };
+
+  // The page script reports as console messages that start with this, random
+  // for each run of the app (see captureScript); wire() hands them here and
+  // keeps them out of the tab's console.
+  const PW_PREFIX = '\u2063crundi-pw:' + randomUUID() + ':';
+  async function pwSetup(entry, wc) {
+    if (!passwords) return;
+    const dbg = wc.debugger;
+    try { dbg.attach('1.3'); } catch (err) { if (!/already attached/i.test(err.message)) throw err; }
+    entry.pwSecrets = entry.pwSecrets || new Set();
+    // Page.enable: without it the script is not put into new documents. Not
+    // Runtime.enable, which anti-bot scripts can detect.
+    await dbg.sendCommand('Page.enable');
+    await dbg.sendCommand('Page.addScriptToEvaluateOnNewDocument', { source: captureScript(PW_PREFIX), worldName: PW_WORLD, runImmediately: true });
+  }
+  function pwConsole(entry, wc, text) {
+    let m; try { m = JSON.parse(text.slice(PW_PREFIX.length)); } catch { return; }
+    try { pwReport(entry, wc, m); } catch (err) { log(`[drawer] passwords: ${err.message}`); }
+  }
+
+  function pwReport(entry, wc, m) {
+    if (!m || typeof m !== 'object') return;
+    const here = originOf(wc.getURL());
+    const origin = originOf(m.origin);
+    if (!m.top || !origin) return;
+    const p = entry.pwPending;
+    if (m.t === 'submit') {
+      if (origin !== here || typeof m.password !== 'string' || !m.password) return;
+      const username = String(m.username || '').slice(0, 300);
+      entry.pwSecrets.add(m.password);   // what this tab was given, kept out of chats' reads
+      const kind = passwords.check(origin, username, m.password);
+      if (kind === 'never' || kind === 'same') { entry.pwPending = null; return; }
+      if (p) clearTimeout(p.timer);
+      const pend = { origin, username, password: m.password, kind, at: Date.now(), navigated: false };
+      pend.timer = setTimeout(() => { if (entry.pwPending === pend) pwVerdict(entry, pend.kind === 'new'); }, PW_VERDICT_MS);
+      entry.pwPending = pend;
+      return;
+    }
+    if (m.t === 'after' && p) { pwVerdict(entry, !m.stillForm); return; }
+    if (m.t === 'page') {
+      // A login submitted, then a page without a login form: it worked. The
+      // login form again on a new page: it did not (a wrong password).
+      if (p && !m.hasLogin) { pwVerdict(entry, true); return; }
+      if (p && m.hasLogin && p.navigated) { pwVerdict(entry, false); return; }
+      if (m.hasLogin && origin === here && !p && !pwFillDismissed.has(origin)) {
+        const logins = passwords.list(origin).map((l) => ({ id: l.id, username: l.username }));
+        if (logins.length) emit('drawer:pw-fill-offer', { tabId: entry.tabId, origin, logins });
+      }
+    }
+  }
+
+  // Signed in (ok) or not: offer to save a new login or update a changed one.
+  function pwVerdict(entry, ok) {
+    const p = entry.pwPending; if (!p) return;
+    clearTimeout(p.timer); entry.pwPending = null;
+    if (!ok) { log(`[drawer] login on ${p.origin} looks refused: nothing offered`); return; }
+    const offerId = randomUUID();
+    pwOffers.set(offerId, { tabId: entry.tabId, origin: p.origin, username: p.username, password: p.password, kind: p.kind, at: Date.now() });
+    for (const [id, o] of pwOffers) if (Date.now() - o.at > PW_OFFER_MS) pwOffers.delete(id);
+    emit('drawer:pw-offer', { offerId, tabId: entry.tabId, origin: p.origin, username: p.username, kind: p.kind, ...passwords.status() });
+  }
+
+  const pwHandle = (name, fn) => ipcMain.handle(name, async (e, ...a) => {
+    if (!fromWindow(e)) return { ok: false, error: 'not the drawer\'s page' };
+    if (!passwords) return { ok: false, error: 'Saved passwords are not available in this app.' };
+    try { return { ok: true, ...(await fn(...a)) }; } catch (err) { return { ok: false, error: err.message }; }
+  });
+  pwHandle('drawer:pw-status', () => ({ ...passwords.status(), count: passwords.list().length }));
+  pwHandle('drawer:pw-list', () => ({ logins: passwords.list(), never: passwords.neverList(), ...passwords.status() }));
+  // The page asked the person: save (or update), never for this site, or not now.
+  pwHandle('drawer:pw-answer', (offerId, action, username) => {
+    const o = pwOffers.get(offerId);
+    if (!o) throw new Error('That offer has expired');
+    pwOffers.delete(offerId);
+    if (action === 'never') { passwords.never(o.origin); return { done: 'never' }; }
+    if (action !== 'save') return { done: 'dismissed' };
+    const u = typeof username === 'string' ? username.slice(0, 300) : o.username;
+    const saved = passwords.save({ origin: o.origin, username: u, password: o.password });
+    log(`[drawer] password ${o.kind === 'update' ? 'updated' : 'saved'} for ${o.origin}`);
+    const en = tabs.get(o.tabId); if (en) emitState(en);
+    return { done: o.kind === 'update' ? 'updated' : 'saved', login: saved };
+  });
+  // Fill a saved login into a tab: only the site it was saved for.
+  pwHandle('drawer:pw-fill', async (tabId, id) => {
+    const en = getTab(tabId); if (!en) throw new Error('No such tab');
+    const l = passwords.password(id);
+    if (originOf(en.wc.getURL()) !== l.origin) throw new Error('This tab is not on ' + l.origin);
+    en.pwSecrets = en.pwSecrets || new Set();
+    en.pwSecrets.add(l.password);
+    const r = await en.wc.executeJavaScriptInIsolatedWorld(1999, [{ code: fillScript(l.origin, l.username, l.password) }]);
+    if (!r || !r.ok) throw new Error((r && r.error) || 'Could not fill this page');
+    passwords.used(id);
+    return { filled: { user: !!r.user, password: !!r.password } };
+  });
+  pwHandle('drawer:pw-fill-dismiss', (origin) => { if (originOf(origin)) pwFillDismissed.add(originOf(origin)); return {}; });
+  // The page has checked the owner's PIN with the server first.
+  pwHandle('drawer:pw-reveal', (id) => ({ password: passwords.password(id).password }));
+  pwHandle('drawer:pw-update', (id, fields) => ({ login: passwords.update(id, fields || {}) }));
+  pwHandle('drawer:pw-remove', (id) => { const r = passwords.remove(id); for (const en of tabs.values()) emitState(en); return { removed: r }; });
+  pwHandle('drawer:pw-unnever', (origin) => { passwords.unnever(String(origin || '')); return {}; });
+  pwHandle('drawer:pw-clear', () => { passwords.clear(); for (const en of tabs.values()) emitState(en); log('[drawer] saved passwords cleared'); return {}; });
+
+  /** What a chat reads back from a tab, with that tab's passwords taken out. */
+  function redact(key, result) {
+    const en = isDrawerKey(key) ? tabs.get(tabIdOf(key)) : null;
+    if (!en || !en.pwSecrets || !en.pwSecrets.size) return result;
+    return redactSecrets(result, en.pwSecrets);
+  }
+
   async function close(msg) { const en = await prepare(msg); await request('close', { tabId: en.tabId }); return { ok: true }; }
   async function resize(msg) { const en = await prepare(msg); await request('resize', { tabId: en.tabId, width: msg.width, height: msg.height }); return { ok: true }; }
 
-  return { hardenWindow, handlers, prepare, getEntry, close, resize, cursor, notifyInfo, isDrawerKey, networkLabel, _tabs: tabs };
+  return { hardenWindow, handlers, prepare, getEntry, close, resize, cursor, redact, notifyInfo, isDrawerKey, networkLabel, _tabs: tabs };
 }

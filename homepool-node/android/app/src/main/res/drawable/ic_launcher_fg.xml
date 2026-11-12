@@ -1,7 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Three nodes on one line out: white, with the top one (the exit) in
+     Crundi's amber, as the robot's antenna is on Crundi's own icon. Scaled to
+     sit inside the part of an adaptive icon every launcher shows. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <group android:translateX="30" android:translateY="30">
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateX="24.6" android:translateY="24.6" android:scaleX="1.225" android:scaleY="1.225">
         <path android:fillColor="#FFFFFFFF"
-            android:pathData="M24,4a6,6 0,1 1,0 12a6,6 0,1 1,0 -12zM10,32a6,6 0,1 1,0 12a6,6 0,1 1,0 -12zM38,32a6,6 0,1 1,0 12a6,6 0,1 1,0 -12zM22,16h4v6.4l10.2,8.6 -2.6,3L24,26l-9.6,8 -2.6,-3L22,22.4z" />
+            android:pathData="M10,32a6,6 0,1 1,0 12a6,6 0,1 1,0 -12zM38,32a6,6 0,1 1,0 12a6,6 0,1 1,0 -12zM22,16h4v6.4l10.2,8.6 -2.6,3L24,26l-9.6,8 -2.6,-3L22,22.4z" />
+        <path android:fillColor="#FFFBBF24"
+            android:pathData="M24,4a6,6 0,1 1,0 12a6,6 0,1 1,0 -12z" />
     </group>
 </vector>

@@ -106,6 +106,27 @@
     '.brd-sel.brd-netsel { min-width: 84px; flex: 0 0 auto; }',
     '.brd-sel.brd-netsel.server { border-color: var(--accent); color: var(--text-primary); }',
     '.brd-annbar { background: var(--bg-tertiary); font-size: 0.74rem; color: var(--text-secondary); flex-wrap: nowrap; gap: 4px; }',
+    // Saved passwords: the save / update / fill prompt under the address bar, and the list.
+    '.brd-pwbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); background: var(--bg-tertiary); font-size: 0.76rem; color: var(--text-primary); flex: 0 0 auto; flex-wrap: wrap; }',
+    '.brd-pwbar[hidden] { display: none; }',
+    '.brd-pwbar .ic { width: 15px; height: 15px; color: var(--accent); flex: 0 0 auto; }',
+    '.brd-pwbar .brd-pwmsg { flex: 1 1 160px; min-width: 0; }',
+    '.brd-pwbar .brd-pwmsg b { font-weight: 600; }',
+    '.brd-pwbar input, .brd-pwbar select { height: 26px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 5px; padding: 0 8px; font-size: 0.76rem; max-width: 180px; }',
+    '.brd-pwbar .brd-btn { height: 26px; padding: 0 10px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; cursor: pointer; font-size: 0.74rem; }',
+    '.brd-pwbar .brd-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }',
+    '.brd-ibtn.brd-pwbtn { color: var(--accent); }',
+    '.brd-ibtn.brd-pwbtn[hidden] { display: none; }',
+    '.brd-pwrow { display: flex; gap: 8px; align-items: center; padding: 7px 2px; border-bottom: 1px solid var(--border); }',
+    '.brd-pwrow .brd-pwwho { flex: 1 1 auto; min-width: 0; overflow: hidden; }',
+    '.brd-pwrow .brd-pwwho small { display: block; color: var(--text-muted); font-family: var(--mono); font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+    '.brd-pwrow code { font-family: var(--mono); font-size: 0.74rem; background: var(--bg-primary); padding: 2px 6px; border-radius: 4px; user-select: all; }',
+    '.brd-pwrow .brd-btn { height: 24px; padding: 0 8px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 5px; cursor: pointer; font-size: 0.72rem; }',
+    '.brd-pinrow { display: flex; gap: 8px; align-items: center; margin: 8px 0; }',
+    '.brd-pinrow[hidden] { display: none; }',
+    '.brd-pinrow .brd-btn { height: 28px; padding: 0 12px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 6px; cursor: pointer; font-size: 0.76rem; }',
+    '.brd-pwrow .brd-btn .ic { width: 13px; height: 13px; vertical-align: -2px; }',
+    '.brd-pinrow input { width: 140px; height: 28px; border: 1px solid var(--border); background: var(--bg-primary); color: var(--text-primary); border-radius: 6px; padding: 0 10px; letter-spacing: 3px; }',
     '.brd-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }',
     '.brd-annbar .brd-chat { max-width: 110px; }',
     '.brd-annbar[hidden] { display: none; }',
@@ -244,6 +265,7 @@
       + '<button class="brd-ibtn" data-brd="forward" title="Forward" disabled>' + ic('chevron-right') + '</button>'
       + '<button class="brd-ibtn" data-brd="reload" title="Reload">' + ic('refresh') + '</button>'
       + '<input class="brd-url" type="text" spellcheck="false" autocomplete="off" placeholder="Enter URL or search" list="brd-hist"><datalist id="brd-hist"></datalist>'
+      + '<button class="brd-ibtn brd-pwbtn" data-brd="pw" title="Saved passwords for this site" hidden>' + ic('lock') + '</button>'
       + '<button class="brd-ibtn brd-netbtn" data-brd="netmenu" title="Network">' + ic('network') + '</button>'
       + '<button class="brd-ibtn brd-devbtn" data-brd="devmenu" title="Device size">' + ic('smartphone') + '</button>'
       + '<select class="brd-sel brd-netsel" hidden aria-hidden="true"></select>'
@@ -268,6 +290,7 @@
       + '<button class="brd-ibtn" data-ann="clear" title="Remove your marks">' + ic('trash') + '</button>'
       + '<button class="brd-ibtn" data-ann="done" title="Done annotating">' + ic('check') + '</button>'
       + '</div>'
+      + '<div class="brd-pwbar" hidden></div>'
       + '<div class="brd-stage"><div class="brd-views"></div><div class="brd-ann"><svg xmlns="http://www.w3.org/2000/svg"></svg></div>'
       + '<div class="brd-cur" aria-hidden="true"><span class="brd-cur-ring"></span><svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M5 2v16.4l4.2-4 2.8 6.4 3-1.3-2.8-6.3h5.9z"/></svg><span class="brd-cur-tag">Claude</span></div>'
       + '<div class="brd-diag" hidden></div>'
@@ -283,6 +306,8 @@
     var views = root.querySelector('.brd-views');
     var annEl = root.querySelector('.brd-ann');
     var curEl = root.querySelector('.brd-cur');
+    var pwBar = root.querySelector('.brd-pwbar');
+    var pwApi = api.pw || null;   // an older desktop app has no saved passwords
     var svg = annEl.querySelector('svg');
     var diagEl = root.querySelector('.brd-diag');
     var emptyEl = root.querySelector('.brd-empty');
@@ -399,6 +424,7 @@
       diagEl.hidden = !diag; diagEl.textContent = diag || '';
       [netSel, devSel, urlEl].forEach(function (x) { x.disabled = !t; });
       root.querySelector('[data-brd="annotate"]').classList.toggle('on', annotating);
+      renderPw();
     }
 
     // ─── Homepool (the PC browser key; the server's /api/homepool/browser) ───
@@ -972,6 +998,7 @@
       if (menuEl) { closeMenu(); return; }
       menuEl = document.createElement('div'); menuEl.className = 'brd-menu';
       menuEl.innerHTML = '<button data-pan="history">' + ic('clock') + 'History</button>'
+        + (pwApi ? '<button data-pan="passwords">' + ic('lock') + 'Passwords</button>' : '')
         + '<button data-pan="clear">' + ic('trash') + 'Clear browsing data\u2026</button>';
       root.appendChild(menuEl);
       setTimeout(function () { document.addEventListener('pointerdown', menuOutside, true); }, 0);
@@ -1006,13 +1033,19 @@
         + '<label class="brd-chk"><input type="checkbox" data-clr="history" checked><span>Browsing history<small>Every address visited, and each tab\u2019s back and forward list</small></span></label>'
         + '<label class="brd-chk"><input type="checkbox" data-clr="cookies"><span>Cookies and site data<small>Logins, local storage, databases, service workers. Signs you out of sites.</small></span></label>'
         + '<label class="brd-chk"><input type="checkbox" data-clr="cache" checked><span>Cached images and files<small>Pages load again from the network</small></span></label>'
+        + (pwApi ? '<label class="brd-chk brd-clr-pw"><input type="checkbox" data-clr="passwords"><span>Saved passwords<small>Every saved login, on every site (not limited to one site)</small></span></label>' : '')
         + '<div class="brd-note2">For this computer\u2019s browser: every tab in every project, on every network. Open tabs stay open. For one site, the back and forward lists are left as they are.</div>'
         + '</div><div class="brd-pf"><button class="brd-btn" data-pan="close">Cancel</button><button class="brd-btn danger" data-pan="do-clear">Clear</button></div>';
     }
     function doClear() {
       var what = {};
       panelEl.querySelectorAll('[data-clr]').forEach(function (c) { what[c.dataset.clr] = c.checked; });
-      if (!what.history && !what.cookies && !what.cache) { toast('Choose something to clear'); return; }
+      if (!what.history && !what.cookies && !what.cache && !what.passwords) { toast('Choose something to clear'); return; }
+      if (what.passwords && pwApi) {
+        if (!confirm('Delete every saved password on this computer?')) return;
+        pwApi.clear().then(function () { toast('Saved passwords deleted'); });
+        if (!what.history && !what.cookies && !what.cache) { closePanel(); return; }
+      }
       var scope = panelEl.querySelector('input[name="brd-scope"]:checked');
       if (scope && scope.value === 'site') {
         var site = String(panelEl.querySelector('.brd-site').value || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/[\/?#].*$/, '').replace(/:\d+$/, '').replace(/^\.+/, '');
@@ -1029,6 +1062,7 @@
       if (pan) {
         e.stopPropagation(); var a = pan.dataset.pan; closeMenu();
         if (a === 'history') showHistory(''); else if (a === 'clear') showClear();
+        else if (a === 'passwords') showPasswords();
         else if (a === 'close') closePanel(); else if (a === 'do-clear') doClear();
         return;
       }
@@ -1133,6 +1167,7 @@
       else if (a === 'devmenu') devMenu(b);
       else if (!t) return;
       else if (a === 'back' || a === 'forward' || a === 'reload') api.nav(t.id, a);
+      else if (a === 'pw') pwSiteMenu();
       else if (a === 'devtools') api.devtools(t.id);
       else if (a === 'annotate') setAnnotating(!annotating);
     });
@@ -1189,6 +1224,174 @@
       proj(f.project).active = f.tab.id; persist();
       if (f.project === project) { if (!st.open) { st.open = true; persist(); applyOpen(); } renderTabs(); showActive(); }
     }
+    // ─── Saved passwords (app/drawer-passwords.js, in the desktop app) ───
+    // The desktop app notices a login, and once it looks signed in offers to
+    // save it (or to update a saved one whose password changed). On a page
+    // with a login form and a saved login it offers to fill it. Both prompts
+    // sit under the address bar, for that tab, and can be dismissed. Saving
+    // needs the owner's PIN to be set; showing a saved password asks for it.
+    function hostOf(o) { try { return new URL(o).host; } catch (e) { return String(o || ''); } }
+    function originOfUrl(u) { try { var x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin : ''; } catch (e) { return ''; } }
+    function pinState() {
+      if (!host.apiFetch) return Promise.resolve({ pinSet: false });
+      return host.apiFetch('/api/lock').then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; });
+    }
+    function checkPin(pin) {
+      return host.apiFetch('/api/lock/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: pin }) })
+        .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'No answer' }; }); });
+    }
+    function renderPw() {
+      if (!pwApi) return;
+      var t = activeTab(); var r = t && runtime[t.id];
+      var btn = root.querySelector('[data-brd="pw"]');
+      var s = (r && r.state) || {};
+      btn.hidden = !(t && s.logins > 0);
+      btn.title = s.logins > 1 ? s.logins + ' saved logins for this site' : 'A saved login for this site';
+      var here = t ? originOfUrl(t.url) : '';
+      var offer = r && r.pwOffer && r.pwOffer.origin === here ? r.pwOffer : null;
+      var fill = !offer && r && r.pwFill && r.pwFill.origin === here ? r.pwFill : null;
+      if (r && r.pwOffer && !offer) r.pwOffer = null;
+      if (r && r.pwFill && !fill && !offer) r.pwFill = null;
+      var key = offer ? 'o' + offer.offerId : fill ? 'f' + fill.origin + fill.logins.length : '';
+      if (pwBar.dataset.key === key) return;
+      pwBar.dataset.key = key;
+      if (!offer && !fill) { pwBar.hidden = true; pwBar.innerHTML = ''; return; }
+      pwBar.hidden = false;
+      if (offer) {
+        var upd = offer.kind === 'update';
+        pwBar.innerHTML = ic('lock')
+          + '<span class="brd-pwmsg">' + (upd ? 'Update the saved password for <b>' + esc(offer.username || 'this login') + '</b> on ' + esc(hostOf(offer.origin)) + '?'
+            : 'Save the password for ' + esc(hostOf(offer.origin)) + '?') + '</span>'
+          + (upd ? '' : '<input class="brd-pwuser" type="text" spellcheck="false" placeholder="Username" value="' + esc(offer.username) + '" title="Username">')
+          + '<button class="brd-btn primary" data-pw="save">' + (upd ? 'Update' : 'Save') + '</button>'
+          + (upd ? '' : '<button class="brd-btn" data-pw="never" title="Never offer to save passwords for this site">Never</button>')
+          + '<button class="brd-ibtn" data-pw="dismiss" title="Not now">' + ic('x') + '</button>';
+      } else {
+        pwBar.innerHTML = ic('lock')
+          + '<span class="brd-pwmsg">Fill your saved login for ' + esc(hostOf(fill.origin)) + '?</span>'
+          + (fill.logins.length > 1 ? '<select class="brd-pwpick">' + fill.logins.map(function (l) { return '<option value="' + esc(l.id) + '">' + esc(l.username || '(no username)') + '</option>'; }).join('') + '</select>'
+            : '<span class="brd-pwmsg" style="flex:0 1 auto"><b>' + esc(fill.logins[0].username || '(no username)') + '</b></span>')
+          + '<button class="brd-btn primary" data-pw="fill">Fill</button>'
+          + '<button class="brd-ibtn" data-pw="nofill" title="Not for this site (until the app restarts)">' + ic('x') + '</button>';
+      }
+    }
+    function pwFill(tabId, id) {
+      return pwApi.fill(tabId, id).then(function (res) {
+        if (!res || !res.ok) { toast((res && res.error) || 'Could not fill', 'error'); return; }
+        var r = runtime[tabId]; if (r) r.pwFill = null; renderPw();
+      });
+    }
+    pwBar.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-pw]'); if (!b) return;
+      var t = activeTab(); var r = t && runtime[t.id]; if (!r) return;
+      var a = b.dataset.pw;
+      if (a === 'fill' && r.pwFill) {
+        var pick = pwBar.querySelector('.brd-pwpick');
+        pwFill(t.id, pick ? pick.value : r.pwFill.logins[0].id);
+      } else if (a === 'nofill' && r.pwFill) {
+        pwApi.dismissFill(r.pwFill.origin); r.pwFill = null; renderPw();
+      } else if (r.pwOffer) {
+        var o = r.pwOffer;
+        if (a === 'dismiss' || a === 'never') { pwApi.answer(o.offerId, a); r.pwOffer = null; renderPw(); if (a === 'never') toast('Passwords for ' + hostOf(o.origin) + ' will not be offered again (Passwords, in the menu, undoes it)'); return; }
+        if (a === 'save') {
+          var u = pwBar.querySelector('.brd-pwuser');
+          b.disabled = true;
+          pinState().then(function (st) {
+            if (!st || !st.pinSet) { b.disabled = false; toast('Set your PIN first (Settings, Voice assistant, Your PIN): it protects your saved passwords.', 'error'); return; }
+            return pwApi.answer(o.offerId, 'save', u ? u.value : undefined).then(function (res) {
+              r.pwOffer = null; renderPw();
+              if (res && res.ok) toast(res.done === 'updated' ? 'Password updated' : 'Password saved'); else toast((res && res.error) || 'Not saved', 'error');
+            });
+          });
+        }
+      }
+    });
+    pwBar.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.classList.contains('brd-pwuser')) { var s2 = pwBar.querySelector('[data-pw="save"]'); if (s2) s2.click(); } });
+    if (pwApi) {
+      pwApi.onOffer(function (o) {
+        var r = runtime[o.tabId]; if (!r || !findTab(o.tabId)) return;
+        if (o.available === false) { toast('A login was not saved: ' + (o.reason || 'no safe storage on this computer'), 'error'); return; }
+        r.pwOffer = o; r.pwFill = null; pwBar.dataset.key = ''; renderPw();
+      });
+      pwApi.onFillOffer(function (o) {
+        var r = runtime[o.tabId]; if (!r || !findTab(o.tabId) || r.pwOffer) return;
+        r.pwFill = o; pwBar.dataset.key = ''; renderPw();
+      });
+    }
+    // The lock button: this site's saved logins, to fill.
+    function pwSiteMenu() {
+      var t = activeTab(); if (!t || !pwApi) return;
+      var here = originOfUrl(t.url);
+      pwApi.list().then(function (res) {
+        var mine = ((res && res.logins) || []).filter(function (l) { return l.origin === here; });
+        if (!mine.length) { toast('No saved login for this site'); return; }
+        if (mine.length === 1) { pwFill(t.id, mine[0].id); return; }
+        var r = runtime[t.id]; if (!r) return;
+        r.pwFill = { origin: here, logins: mine.map(function (l) { return { id: l.id, username: l.username }; }) };
+        r.pwOffer = null; pwBar.dataset.key = ''; renderPw();
+      });
+    }
+    // Menu, Passwords: every saved login; show (with the PIN), delete; the
+    // sites that are never offered.
+    var pwUnlocked = 0;   // a correct PIN shows passwords for 5 minutes
+    function showPasswords() {
+      if (!pwApi) return;
+      panelEl.hidden = false; panelEl.dataset.pan = 'pw-list';   // not "passwords": that is the menu entry's action
+      pwApi.list().then(function (res) {
+        var head = '<div class="brd-ph">Saved passwords<span class="brd-sp"></span><button class="brd-ibtn" data-pan="close" title="Close">' + ic('x') + '</button></div>';
+        if (!res || !res.ok) { panelEl.innerHTML = head + '<div class="brd-pb"><div class="brd-note2">' + esc((res && res.error) || 'Not available') + '</div></div>'; return; }
+        var rows = (res.logins || []).map(function (l) {
+          return '<div class="brd-pwrow" data-pwid="' + esc(l.id) + '"><span class="brd-pwwho">' + esc(l.username || '(no username)') + '<small>' + esc(hostOf(l.origin)) + '</small></span>'
+            + '<code class="brd-pwval">••••••••</code>'
+            + '<button class="brd-btn" data-pwact="show">Show</button><button class="brd-btn" data-pwact="del" title="Delete">' + ic('trash') + '</button></div>';
+        }).join('');
+        var never = (res.never || []).map(function (o) { return '<div class="brd-pwrow"><span class="brd-pwwho">' + esc(hostOf(o)) + '</span><button class="brd-btn" data-pwnever="' + esc(o) + '">Remove</button></div>'; }).join('');
+        panelEl.innerHTML = head + '<div class="brd-pb">'
+          + (res.available === false ? '<div class="brd-note2">' + esc(res.reason || '') + '</div>' : '')
+          + '<div class="brd-note2">Kept on this computer only, encrypted for your account on it, as Chrome keeps them. Filling needs no PIN; showing one does. Chats can never read them.</div>'
+          + '<div class="brd-pinrow" hidden><input type="password" inputmode="numeric" maxlength="8" placeholder="PIN" class="brd-pin"><button class="brd-btn" data-pwact="pin">Unlock</button></div>'
+          + (rows || '<div class="brd-note2">No saved passwords yet. Sign in to a site in a drawer tab and choose Save.</div>')
+          + (never ? '<div class="brd-note2" style="margin-top:14px">Never offered for:</div>' + never : '')
+          + '</div>';
+      });
+    }
+    function revealRow(row) {
+      pwApi.reveal(row.dataset.pwid).then(function (res) {
+        var v = row.querySelector('.brd-pwval');
+        if (res && res.ok) { v.textContent = res.password; var b = row.querySelector('[data-pwact="show"]'); if (b) b.textContent = 'Hide'; }
+        else toast((res && res.error) || 'Could not show it', 'error');
+      });
+    }
+    var pwWanted = null;
+    panelEl.addEventListener('click', function (e) {
+      if (panelEl.dataset.pan !== 'pw-list') return;
+      var nv = e.target.closest('[data-pwnever]');
+      if (nv) { pwApi.unnever(nv.dataset.pwnever).then(showPasswords); return; }
+      var b = e.target.closest('[data-pwact]'); if (!b) return;
+      var row = b.closest('.brd-pwrow');
+      var act = b.dataset.pwact;
+      if (act === 'del') {
+        if (!confirm('Delete this saved password?')) return;
+        pwApi.remove(row.dataset.pwid).then(showPasswords);
+      } else if (act === 'show') {
+        var v = row.querySelector('.brd-pwval');
+        if (b.textContent === 'Hide') { v.textContent = '••••••••'; b.textContent = 'Show'; return; }
+        if (Date.now() - pwUnlocked < 5 * 60 * 1000) { revealRow(row); return; }
+        pwWanted = row;
+        var pr = panelEl.querySelector('.brd-pinrow'); pr.hidden = false;
+        var inp = pr.querySelector('.brd-pin'); inp.value = ''; setTimeout(function () { try { inp.focus(); } catch (x) { /* ignore */ } }, 0);
+      } else if (act === 'pin') {
+        var pin = panelEl.querySelector('.brd-pin').value;
+        checkPin(pin).then(function (res) {
+          if (!res || !res.ok) { toast((res && res.error) || 'That is not the PIN', 'error'); return; }
+          pwUnlocked = Date.now();
+          panelEl.querySelector('.brd-pinrow').hidden = true;
+          if (pwWanted) revealRow(pwWanted);
+        });
+      }
+    });
+    panelEl.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.classList.contains('brd-pin')) { var u2 = panelEl.querySelector('[data-pwact="pin"]'); if (u2) u2.click(); } });
+
     var handlers = {
       list: function (a) {
         var p = String(a.project || '').toLowerCase();

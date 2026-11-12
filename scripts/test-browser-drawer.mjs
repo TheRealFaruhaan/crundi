@@ -76,6 +76,15 @@ const target = http.createServer((req, res) => {
   if (req.url.startsWith('/whoami')) { res.end('<title>who</title><body>via-server ' + req.headers.host + '</body>'); return; }
   // browser_mouse: a page whose iframe is another site (localhost inside
   // 127.0.0.1, so a separate frame process), and a pad that records a drag.
+  // Saved passwords: a sign-in page that works unless the password is "bad".
+  if (req.url.startsWith('/login')) {
+    res.end(`<!doctype html><title>Sign in</title><body style="margin:20px;font-family:sans-serif">
+      <form id="f"><input id="u" name="username" type="text" placeholder="Username"><input id="p" name="password" type="password" placeholder="Password"><button id="go" type="submit">Sign in</button></form><div id="msg"></div>
+      <script>window.lastPw='';document.getElementById('f').addEventListener('submit',function(e){e.preventDefault();var p=document.getElementById('p').value;window.lastPw=p;
+      if(p==='bad'){document.getElementById('msg').textContent='Wrong password';document.getElementById('p').value='';return;}
+      document.getElementById('f').remove();document.getElementById('msg').textContent='Welcome';});</script></body>`);
+    return;
+  }
   if (req.url.startsWith('/inner')) {
     res.removeHeader('X-Frame-Options'); res.removeHeader('Content-Security-Policy');
     res.end('<body style="margin:0"><button id="b" style="width:300px;height:200px">inner</button><script>document.getElementById("b").onclick=function(){parent.postMessage("inner-click","*")}</script></body>');
@@ -159,6 +168,13 @@ drawer.setProject('proj');</script></body></html>`;
 const web = http.createServer((req, res) => {
   if (req.url === '/') { res.setHeader('Content-Type', 'text/html'); res.end(PAGE); return; }
   if (req.url === '/vendor/crundi-browser-drawer.js') { res.setHeader('Content-Type', 'application/javascript'); res.end(readFileSync(join(root, 'app', 'vendor', 'crundi-browser-drawer.js'))); return; }
+  // The owner's PIN (src/webapp.js /api/lock, /api/lock/check), here 1234.
+  if (req.url === '/api/lock') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok: true, on: false, pinSet: true })); return; }
+  if (req.url === '/api/lock/check' && req.method === 'POST') {
+    let b = ''; req.on('data', (d) => { b += d; });
+    req.on('end', () => { let pin = ''; try { pin = JSON.parse(b).pin; } catch { /* bad body */ } res.statusCode = pin === '1234' ? 200 : 403; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(pin === '1234' ? { ok: true } : { ok: false, error: 'That is not the PIN' })); });
+    return;
+  }
   if (req.url.startsWith('/api/homepool')) {
     const path = new URL(req.url, 'http://x').pathname;
     const readBody = () => new Promise((r) => { let b = ''; req.on('data', (d) => { b += d; }); req.on('end', () => r(b)); });
@@ -590,6 +606,67 @@ try {
   const ic2 = await proj(() => browser.evalBrowser(fk, 'window.innerClicks'));
   check('Cru clicks with the mouse too (browser_do op mouse), into the same iframe', cm.ok !== false && ic2.result === '2', JSON.stringify(cm) + ' ' + JSON.stringify(ic2));
   await proj(() => browser.closeBrowser(fk));
+
+  // ── Saved passwords: save after a sign-in, offer to fill, update, show with the PIN ──
+  const lg = await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/login`, show: true }));
+  const lk = lg.key;
+  await sleep(800);
+  const pwApi = 'window.api.wbrowser.drawer.pw';
+  const bar = () => page('(function(){var b=document.querySelector(".brd-pwbar");return b&&!b.hidden?b.textContent:"";})()');
+  const waitBar = async (re, ms = 6000) => { for (let i = 0; i < ms / 200; i++) { const t = await bar(); if (re.test(t)) return t; await sleep(200); } return await bar(); };
+  const signIn = async (user, pw) => {
+    await proj(() => browser.fillBrowser(lk, '#u', user));
+    await proj(() => browser.fillBrowser(lk, '#p', pw));
+    const r = JSON.parse((await proj(() => browser.evalBrowser(lk, 'JSON.stringify(document.getElementById("go").getBoundingClientRect())'))).result);
+    return proj(() => browser.mouseBrowser(lk, Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2), 'click'));
+  };
+  await signIn('ali', 'hunter2-secret');
+  const pt1 = await waitBar(/Save the password/);
+  await shot('14-pw-offer');
+  check('after a sign-in that worked, the drawer offers to save the password', /Save the password for 127\.0\.0\.1/.test(pt1), pt1);
+  check('...with the username filled in', await page('document.querySelector(".brd-pwuser").value') === 'ali');
+  await page('document.querySelector(\'[data-pw="save"]\').click()'); await sleep(600);
+  const pl1 = await page(`${pwApi}.list()`);
+  check('Save keeps it (on this computer, encrypted)', pl1.ok && pl1.logins.length === 1 && pl1.logins[0].username === 'ali' && pl1.logins[0].origin === `http://127.0.0.1:${T}`, JSON.stringify(pl1));
+  const stored = await page(`${pwApi}.list().then(function(){return 1})`);
+  const leak = await proj(() => browser.evalBrowser(lk, 'window.lastPw + " | " + document.title'));
+  check('a chat reading the page never gets the password back', leak.ok && !/hunter2-secret/.test(leak.result) && /\u2022{8}/.test(leak.result), JSON.stringify(leak));
+  check('the lock button shows on a site with a saved login', await page('!document.querySelector(\'[data-brd="pw"]\').hidden') === true && stored === 1);
+  await proj(() => browser.navigateBrowser(lk, `http://127.0.0.1:${T}/login?again`));
+  const pt2 = await waitBar(/Fill your saved login/);
+  check('on the sign-in page again it offers to fill the saved login', /Fill your saved login for 127\.0\.0\.1/.test(pt2) && /ali/.test(pt2), pt2);
+  await page('document.querySelector(\'[data-pw="fill"]\').click()'); await sleep(500);
+  const filled = await proj(() => browser.evalBrowser(lk, 'document.getElementById("u").value + "|" + document.getElementById("p").value.split("").reverse().join("")'));
+  check('Fill puts the username and password in', filled.result === 'ali|' + 'hunter2-secret'.split('').reverse().join(''), JSON.stringify(filled));
+  check('...and the prompt goes', !(await bar()));
+  // A changed password: asked to update, once the sign-in worked.
+  await proj(() => browser.navigateBrowser(lk, `http://127.0.0.1:${T}/login?bad`)); await sleep(500);
+  await page('(function(){var x=document.querySelector(\'[data-pw="nofill"]\');if(x)x.click();})()');
+  await signIn('ali', 'bad');
+  await sleep(9000);
+  check('a refused sign-in (the form stays) offers nothing', !/Save|Update/.test(await bar()), await bar());
+  await signIn('ali', 'hunter3-new');
+  const pt3 = await waitBar(/Update the saved password/);
+  check('a new password for a saved username asks to update it', /Update the saved password for ali/.test(pt3), pt3);
+  await page('document.querySelector(\'[data-pw="save"]\').click()'); await sleep(600);
+  const pid1 = pl1.logins[0].id;
+  const prv = await page(`${pwApi}.reveal(${JSON.stringify(pid1)})`);
+  check('Update saves the new password over the old', prv.ok && prv.password === 'hunter3-new', JSON.stringify(prv));
+  // The list: showing a password asks for the PIN.
+  await page('document.querySelector(\'[data-brd="menu"]\').click()'); await sleep(200);
+  await page('document.querySelector(\'[data-pan="passwords"]\').click()'); await sleep(500);
+  await page('document.querySelector(\'[data-pwact="show"]\').click()'); await sleep(200);
+  check('Passwords, Show asks for the PIN first', await page('!document.querySelector(".brd-pinrow").hidden && /\u2022/.test(document.querySelector(".brd-pwval").textContent)') === true);
+  await page('document.querySelector(".brd-pin").value="9999"; document.querySelector(\'[data-pwact="pin"]\').click()'); await sleep(500);
+  check('...a wrong PIN shows nothing', await page('/\u2022/.test(document.querySelector(".brd-pwval").textContent)') === true);
+  await page('document.querySelector(".brd-pin").value="1234"; document.querySelector(\'[data-pwact="pin"]\').click()'); await sleep(600);
+  check('...the PIN shows it', await page('document.querySelector(".brd-pwval").textContent') === 'hunter3-new');
+  check('...and the PIN box goes away', await page('getComputedStyle(document.querySelector(".brd-pinrow")).display') === 'none');
+  await shot('13-passwords');
+  await page('document.querySelector(\'[data-pan="close"]\').click()');
+  const noChat = await proj(() => dispatchBrowserTool('browser_eval', { key: lk, code: 'typeof window.api' }));
+  check('the page in the tab cannot reach the password API', noChat.result === 'undefined', JSON.stringify(noChat));
+  await proj(() => browser.closeBrowser(lk));
 
   // ── Hardening ──
   const evil = await page(`new Promise(function(res){ var w=document.createElement('webview'); w.setAttribute('partition','persist:evil'); w.setAttribute('src','about:blank');

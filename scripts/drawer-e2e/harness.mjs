@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { createBrowserDrawer, isDrawerKey, partitionOf } from '../../app/browser-drawer.js';
 import { createDrawerNet } from '../../app/drawer-net.js';
 import { runMouse } from '../../app/browser-pointer.js';
+import { createPasswordStore } from '../../app/drawer-passwords.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -46,7 +47,10 @@ function loadUrlWithGrace(wc, url, graceMs = 15000) {
   });
 }
 
-const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, loadUrl: loadUrlWithGrace, serverNet, freezeAfterMs: Number(process.env.DRAWER_SLEEP_MS) || undefined, discardAfterMs: Number(process.env.DRAWER_UNLOAD_MS) || undefined, historyFile: join(app.getPath('userData'), 'drawer-history.json') });
+const drawer = createBrowserDrawer({ ipcMain, getWindow: () => win, log: out, loadUrl: loadUrlWithGrace, serverNet, freezeAfterMs: Number(process.env.DRAWER_SLEEP_MS) || undefined, discardAfterMs: Number(process.env.DRAWER_UNLOAD_MS) || undefined, historyFile: join(app.getPath('userData'), 'drawer-history.json'),
+  // Test only: a reversible stand-in for safeStorage (a display under xvfb has no keyring).
+  passwords: createPasswordStore({ file: join(app.getPath('userData'), 'drawer-passwords.json'),
+    encrypt: (s) => Buffer.from('test:' + Buffer.from(s, 'utf8').toString('base64')), decrypt: (b) => Buffer.from(String(b).slice(5), 'base64').toString('utf8'), backend: () => ({ ok: true }) }) });
 
 // The generic handlers app/main.js runs on a drawer entry (copied from there).
 const generic = {
@@ -73,6 +77,11 @@ const generic = {
       return { ok: true, url: wc.getURL(), ...r };
     } catch (err) { return { ok: false, error: err.message }; }
   },
+  async browserFill(msg) {
+    const e = drawer.getEntry(msg.key);
+    await e.win.webContents.executeJavaScript(`(function(){ const el = document.querySelector(${JSON.stringify(msg.selector)}); if (!el) throw new Error('Element not found'); el.focus(); el.value = ${JSON.stringify(msg.value)}; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); })()`);
+    return { ok: true };
+  },
   async browserEval(msg) { const e = drawer.getEntry(msg.key); const r = await e.win.webContents.executeJavaScript(msg.code); return { ok: true, result: typeof r === 'string' ? r : JSON.stringify(r) }; },
   async browserClose(msg) { return drawer.close(msg); },
   async browserResize(msg) { return drawer.resize(msg); },
@@ -83,7 +92,8 @@ async function handle(msg) {
   const h = generic[msg.type];
   if (!h) return { ok: false, error: 'unsupported ' + msg.type };
   if (isDrawerKey(msg.key) && msg.type !== 'browserClose' && msg.type !== 'browserResize') await drawer.prepare(msg);
-  return h(msg);
+  const r = await h(msg);
+  return isDrawerKey(msg.key) ? drawer.redact(msg.key, r) : r;   // as app/main.js does
 }
 
 // Test-only: run code in the drawer's page, or read a pixel of the window.

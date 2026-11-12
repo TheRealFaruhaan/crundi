@@ -1,9 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="@android:style/Theme.Material.Light.DarkActionBar">
-        <item name="android:colorPrimary">#1F5FBF</item>
-        <item name="android:colorPrimaryDark">#174A94</item>
-        <item name="android:colorAccent">#1F5FBF</item>
+    <!-- Crundi's colours (android/app/.../values/colors.xml): the dark
+         ground, light text and the indigo accent. -->
+    <style name="AppTheme" parent="@android:style/Theme.Material">
+        <item name="android:colorPrimary">#12121A</item>
+        <item name="android:colorPrimaryDark">#0A0A0F</item>
+        <item name="android:colorAccent">#6366F1</item>
+        <item name="android:colorBackground">#0A0A0F</item>
+        <item name="android:windowBackground">@color/node_bg</item>
+        <item name="android:statusBarColor">#0A0A0F</item>
+        <item name="android:navigationBarColor">#0A0A0F</item>
+        <item name="android:textColorPrimary">#E8E8F0</item>
+        <item name="android:textColorSecondary">#8888A8</item>
+        <item name="android:colorControlActivated">#6366F1</item>
+        <item name="android:colorButtonNormal">#1A1A28</item>
     </style>
     <style name="Section">
         <item name="android:layout_width">match_parent</item>
@@ -13,13 +23,13 @@
         <item name="android:textSize">13sp</item>
         <item name="android:textStyle">bold</item>
         <item name="android:textAllCaps">true</item>
-        <item name="android:textColor">#1F5FBF</item>
+        <item name="android:textColor">#818CF8</item>
     </style>
     <style name="Label">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>
         <item name="android:layout_marginTop">8dp</item>
         <item name="android:textSize">12sp</item>
-        <item name="android:textColor">#666666</item>
+        <item name="android:textColor">#8888A8</item>
     </style>
 </resources>

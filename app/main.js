@@ -8,7 +8,7 @@
  *   4. Setup wizard for first-time .env configuration
  */
 
-import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell, powerMonitor, utilityProcess, session, net, globalShortcut } from 'electron';
+import { app, BrowserWindow, WebContentsView, Tray, Menu, ipcMain, nativeImage, dialog, clipboard, Notification, shell, powerMonitor, utilityProcess, session, net, globalShortcut, safeStorage } from 'electron';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
@@ -19,6 +19,7 @@ import electronUpdater from 'electron-updater';
 import { createBrowserDrawer, isDrawerKey, PARTITIONS as DRAWER_PARTITIONS, partitionOf } from './browser-drawer.js';
 import { createDrawerNet } from './drawer-net.js';
 import { runMouse } from './browser-pointer.js';
+import { createPasswordStore, safeStorageBackend } from './drawer-passwords.js';
 import { startNode as startHomepoolNode } from './homepool-node.js';
 const { autoUpdater } = electronUpdater;
 
@@ -2023,6 +2024,8 @@ function handleBotMessage(msg, reply) {
       ? browserDrawer.prepare(msg).then(() => handler(msg))
       : handler(msg);
     withTimeout(run, browserActionTimeout(msg), msg.type).then(result => {
+      // A drawer tab's saved or typed passwords never go back to a chat.
+      if (isDrawerKey(msg.key)) result = browserDrawer.redact(msg.key, result);
       send({ type: 'browserResult', requestId: msg.requestId, ...result });
     }).catch(err => {
       send({ type: 'browserResult', requestId: msg.requestId, ok: false, error: err.message });
@@ -2231,6 +2234,14 @@ const browserDrawer = createBrowserDrawer({
   // How long a tab stays asleep before it is unloaded to free its memory (default 1 h).
   discardAfterMs: Number(process.env.CRUNDI_DRAWER_UNLOAD_MS) || undefined,
   historyFile: join(app.getPath('userData'), 'drawer-history.json'),
+  // Saved passwords, on this computer only, encrypted with the OS's protection
+  // for this user (as Chrome keeps them). Read only once the app is ready.
+  passwords: createPasswordStore({
+    file: join(app.getPath('userData'), 'drawer-passwords.json'),
+    encrypt: (str) => safeStorage.encryptString(str),
+    decrypt: (buf) => safeStorage.decryptString(buf),
+    backend: () => safeStorageBackend(safeStorage),
+  }),
 });
 /** A hidden browser window's entry, or a drawer tab's (same shape for the handlers below). */
 function browserEntry(key) {
