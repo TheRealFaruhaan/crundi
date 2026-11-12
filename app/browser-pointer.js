@@ -102,6 +102,7 @@ export async function runMouse({ send, state, show = null, msg }) {
 
   const x = num(msg.x), y = num(msg.y);
   const dur = num(msg.duration);
+  try {
   switch (action) {
     case 'move':
       await travel(x, y, dur);
@@ -131,6 +132,11 @@ export async function runMouse({ send, state, show = null, msg }) {
       await release(1);
       break;
     }
+  }
+  } finally {
+    // Done: the drawer gives the person's text field its focus back (real
+    // input focused the tab).
+    if (state.x != null) await draw({ x: state.x, y: state.y, pressed: !!state.down, ms: 0, end: true });
   }
   return { x: state.x, y: state.y, held: state.down || null };
 }

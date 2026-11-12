@@ -174,7 +174,7 @@ const PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
   :root{--bg-primary:#0a0a0f;--bg-secondary:#12121a;--bg-tertiary:#1a1a28;--border:#2a2a3d;--text-primary:#e8e8f0;--text-secondary:#8888a8;--text-muted:#5a5a78;--accent:#6366f1;}
   body{margin:0;height:100vh;display:flex;flex-direction:column;font-family:sans-serif} .top{height:40px;background:#333;flex:0 0 auto}
   .main-layout{display:flex;flex:1;overflow:hidden} #area{flex:1;background:#0a0a0f;color:#fff;min-width:0} .top{background:#12121a;border-bottom:1px solid #2a2a3d}</style></head>
-<body><div class="top"><button id="brd-toggle" class="brd-toggle" style="display:inline-flex">Browser</button></div><div class="main-layout"><div id="area"><div style="height:38px;display:flex;gap:18px;align-items:center;padding:0 14px;border-bottom:1px solid #2a2a3d;background:#12121a;color:#8888a8;font-size:13px;white-space:nowrap;overflow:hidden"><span style="color:#6366f1">Workbench</span><span>Git</span><span>Files</span><span>Kanban</span><span>Notes</span><span>Mindmap</span><span>Media</span></div><div style="display:flex;gap:8px;padding:8px;height:calc(100% - 54px)"><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f;padding:10px;color:#8888a8;font-size:13px">Chat one</div><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f"></div></div></div>
+<body><div class="top"><button id="brd-toggle" class="brd-toggle" style="display:inline-flex">Browser</button></div><div class="main-layout"><div id="area"><div style="height:38px;display:flex;gap:18px;align-items:center;padding:0 14px;border-bottom:1px solid #2a2a3d;background:#12121a;color:#8888a8;font-size:13px;white-space:nowrap;overflow:hidden"><span style="color:#6366f1">Workbench</span><span>Git</span><span>Files</span><span>Kanban</span><span>Notes</span><span>Mindmap</span><span>Media</span></div><div style="display:flex;gap:8px;padding:8px;height:calc(100% - 54px)"><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f;padding:10px;color:#8888a8;font-size:13px">Chat one<textarea id="typing" style="display:block;width:90%;margin-top:8px"></textarea></div><div style="flex:1;border:1px solid #2a2a3d;border-radius:8px;background:#0a0a0f"></div></div></div>
 <div class="brd-split brd-closed" id="brd-split"></div><aside class="brd brd-closed" id="brd"></aside></div>
 <script src="/vendor/crundi-browser-drawer.js"></script>
 <script>var ICONS=${JSON.stringify(ICONS)};window.sent=[];
@@ -758,6 +758,29 @@ try {
   const left = await as('closing', () => browser.listAllBrowsers('closing'));
   check('the X beside hide closes every tab of the project, without asking, and the drawer', z1.ok && left.browsers.length === 0 && await page('drawer.isOpen()') === false && !(await tg('brd-running')), JSON.stringify(left.browsers));
   await page('drawer.setProject("proj")');
+
+  // ── Typing in the app while a chat uses the drawer: the cursor stays where you type ──
+  {
+    const fk2 = (await proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/login`, show: true }))).key;
+    await sleep(600);
+    const typing = () => page('document.activeElement && document.activeElement.id === "typing"');
+    const focusIt = () => page('(function(){var t=document.getElementById("typing");t.focus();t.value="hello";t.setSelectionRange(5,5);return document.activeElement===t;})()');
+    const steps = [
+      ['a chat opening a tab in the background', () => proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/page2` }))],
+      ['navigating', () => proj(() => browser.navigateBrowser(fk2, `http://127.0.0.1:${T}/login?x`))],
+      ['a mouse click in the page', () => proj(() => browser.mouseBrowser(fk2, 30, 30, 'click'))],
+      ['clicking by selector', () => proj(() => dispatchBrowserTool('browser_click', { key: fk2, selector: '#go' }))],
+      ['typing into the page', () => proj(() => browser.typeBrowser(fk2, 'abc', '#u'))],
+      ['filling a field', () => proj(() => browser.fillBrowser(fk2, '#u', 'ali'))],
+      ['a screenshot', () => proj(() => browser.screenshotBrowser(fk2))],
+      ['a tab opened on show', () => proj(() => browser.openDrawerTab({ alias: 'proj', url: `http://127.0.0.1:${T}/page2?s`, show: true }))],
+    ];
+    for (const [what, fn] of steps) {
+      const ok0 = await focusIt();
+      await fn(); await sleep(400);
+      check(`you keep typing where you were while a chat does: ${what}`, ok0 && await typing(), await page('document.activeElement && (document.activeElement.id || document.activeElement.tagName)'));
+    }
+  }
 
   // ── Hardening ──
   const evil = await page(`new Promise(function(res){ var w=document.createElement('webview'); w.setAttribute('partition','persist:evil'); w.setAttribute('src','about:blank');

@@ -7961,6 +7961,10 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const _ae = document.activeElement;
       const _focusedCell = _ae && _ae.closest ? _ae.closest('.term-cell[data-tid]') : null;
       const refocusTid = _focusedCell ? _focusedCell.dataset.tid : null;
+      // A chat's composer (or any field in a cell) is not a terminal: remember the
+      // element itself, so typing in a chat survives a rebuild too (one runs
+      // whenever any chat opens, closes or changes, in any project).
+      const refocusEl = _ae && _ae !== document.body ? _ae : null;
       const live = liveTermsForProject();
       // "Terminal by default opens in one column": seed a single placeholder when
       // a project has no cells of any kind yet.
@@ -8033,7 +8037,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
 
       // Restore the cursor to the terminal the user was typing in, if it survived
       // the rebuild — the re-parent above blurred it.
-      if (refocusTid && live.some(t => t.id === refocusTid)) {
+      if (refocusEl && refocusEl.isConnected && document.activeElement !== refocusEl) {
+        try { refocusEl.focus({ preventScroll: true }); } catch { /* gone */ }
+      } else if (refocusTid && document.activeElement !== refocusEl && live.some(t => t.id === refocusTid)) {
         const v = termViews.get(refocusTid);
         if (v && v.term) { try { v.term.focus(); } catch { /* ignore */ } }
       }
@@ -11305,6 +11311,16 @@ export function getWebappHtml(botUsername, appVersion = '') {
       if (global && GLOBAL_TABS.indexOf(currentTab) < 0) switchTab('info');
     }
 
+    // Is the person typing in a field (Cru's box, a chat's composer, a form)?
+    // Then a switch that Cru or a state change made must not take the cursor.
+    // A terminal's own input does not count: moving between terminals is fine.
+    function typingElsewhere() {
+      const a = document.activeElement;
+      if (!a || a === document.body) return false;
+      if (a.classList && a.classList.contains('xterm-helper-textarea')) return false;
+      if (a.tagName === 'TEXTAREA' || a.isContentEditable) return true;
+      return a.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image|hidden)$/i.test(a.type || '');
+    }
     function switchTab(tab) {
       // Leaving the Secrets tab — forget any revealed values for safety.
       if (currentTab === 'secrets' && tab !== 'secrets') {
@@ -11322,7 +11338,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       currentTab = tab;
       $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.tab-panel').forEach(p => p.classList.toggle('visible', p.dataset.panel === tab));
-      if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
+      if (tab === 'workbench') { renderTermGrid(); setTimeout(() => { fitAllTerms(); if (typingElsewhere()) return; const v = focusedTermId && termViews.get(focusedTermId); if (v) v.term.focus(); }, 30); }
       if (tab === 'services') loadServices();
       if (tab === 'docker') loadDockerTab();
       if (tab === 'homepool') loadHomepoolTab();

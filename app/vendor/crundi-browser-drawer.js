@@ -578,6 +578,7 @@
       var r = runtime[t.id] = runtime[t.id] || { ann: [], state: {} };
       r.unloaded = false; r.sleeping = false;
       var wv = document.createElement('webview');
+      wv.addEventListener('focus', function () { if (curHold) setTimeout(giveBackFocus, 0); });
       wv.className = 'brd-wv';
       wv.setAttribute('partition', partitionOf(t.network));
       wv.setAttribute('src', 'about:blank');
@@ -716,6 +717,26 @@
       d.style.left = Math.round(r.box.left + c.x * k) + 'px'; d.style.top = Math.round(r.box.top + c.y * k) + 'px';
       stage.appendChild(d);
       setTimeout(function () { d.remove(); }, 600);
+    }
+    // A chat's mouse input focuses the tab it lands in (it is real input), which
+    // took the cursor out of whatever the person was typing in elsewhere in the
+    // app. While a chat's mouse action runs, a text field the person is in is
+    // remembered and given its focus back (the tab can still take focus when
+    // nobody is typing).
+    var curHold = null, curHoldTimer = null;
+    function typingField(el) {
+      if (!el || el === document.body || root.contains(el)) return false;
+      if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
+      return el.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image|hidden)$/i.test(el.type || '');
+    }
+    function holdFocus() {
+      if (!curHold && typingField(document.activeElement)) curHold = { el: document.activeElement };
+      clearTimeout(curHoldTimer);
+      curHoldTimer = setTimeout(function () { curHold = null; }, 15000);
+    }
+    function giveBackFocus() {
+      var h = curHold; if (!h || !h.el.isConnected || document.activeElement === h.el) return;
+      try { h.el.focus({ preventScroll: true }); } catch (e) { /* gone */ }
     }
     function moveCursor(f, a) {
       var r = runtime[f.tab.id]; if (!r) return 0;
@@ -1499,6 +1520,13 @@
       // browser_mouse, before each step: draw the chat's cursor, and answer
       // once it has arrived so the page gets the event as the person sees it.
       cursor: function (a) {
+        holdFocus();
+        if (a.end) {
+          giveBackFocus();
+          // A late focus change still comes back; then the hold ends.
+          setTimeout(function () { giveBackFocus(); curHold = null; clearTimeout(curHoldTimer); }, 250);
+          return {};
+        }
         var ms = moveCursor(mustTab(a.tabId), a);
         return ms > 0 ? new Promise(function (res) { setTimeout(function () { res({}); }, ms); }) : {};
       },

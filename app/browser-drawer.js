@@ -624,7 +624,7 @@ export function createBrowserDrawer({ ipcMain, getWindow, log = () => {}, loadUr
     if (!en || cursorMissing) return;
     const ms = Math.max(0, Math.min(10000, Number(p.ms) || 0));
     try {
-      await request('cursor', { tabId: en.tabId, x: p.x, y: p.y, pressed: !!p.pressed, ms, linear: !!p.linear, click: !!p.click }, ms + 3000);
+      await request('cursor', { tabId: en.tabId, x: p.x, y: p.y, pressed: !!p.pressed, ms, linear: !!p.linear, click: !!p.click, end: !!p.end }, ms + 3000);
     } catch (err) {
       if (/unknown request/.test(err.message)) { cursorMissing = true; log('[drawer] this web UI has no cursor; mouse input goes on without it'); }
     }
