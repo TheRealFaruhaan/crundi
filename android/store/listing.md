@@ -61,6 +61,18 @@ app has been run on one.
   `docs/privacy.html`; it is live once that file is on `main`).
 - The steps to a public release are in `PLAY_RELEASE.md`, beside this file.
 
+## Release notes, 1.1.3-dev.41 (en-US)
+
+Version code 72. Internal track. Since 1.1.3-dev.40 (code 71): Cru's news no longer speaks when Android opens the bubble by itself (shown, said when the owner opens it); Cru's Deepgram voice, speed and volume are kept on the phone and used from the first word (news waits for the settings); in keyboard (chat) mode unprompted news is shown, never said. Server 1.21.6-dev.60.
+
+```
+<en-US>
+- Cru no longer reads its news out when the bubble opens by itself: it is shown, and said when you open it.
+- Cru speaks in your chosen voice from the first word.
+- In chat mode, Cru's news is shown, not read out.
+</en-US>
+```
+
 ## Release notes, 1.1.3-dev.40 (en-US)
 
 Version code 71. Internal track. Since 1.1.3-dev.39 (code 70): homepool (Settings: share this phone's network as an exit, with a foreground node service and boot start); Hey Cru wakes only for the owner's voice; Cru can speak more than once in a turn (say_now), finishes speaking before the answer or news, and a hum no longer wakes him; a chat no longer sticks mid-reply and "working" after a network switch (sockets remade on network change, stalled-reply catch-up); eye-off icon restored. Server 1.21.6-dev.53.
