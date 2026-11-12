@@ -227,23 +227,31 @@ open class VoiceActivity : ComponentActivity() {
         HeyCrundi.cancelWakeNotification(this)
     }
 
+    /** Opened by Android for Cru's news, not by the owner: shown, not said (CruBubble.takeAutoOpen). */
+    private var autoOpened = false
+
     override fun onStart() {
         super.onStart()
         inFront = true
+        autoOpened = inBubble && CruBubble.takeAutoOpen()
         // Keyboard mode chosen on this phone: it needs no microphone, so none is asked for.
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED && !asked && VoicePrefs.keyboard(this) != true) {
             asked = true
             askMic.launch(Manifest.permission.RECORD_AUDIO)
         } else {
             controller.open()
-            // Cru's news that brought the owner here (its bubble, or the notification): said now.
-            CruBubble.takePending(this)?.let { controller.news(it) }
+            // Cru's news that brought the owner here (its bubble, or the notification): said now,
+            // when he opened it; an opening Android made by itself leaves it for his.
+            if (!autoOpened) CruBubble.takePending(this)?.let { controller.news(it) }
         }
         // News while this screen shows (asleep or not): woken, and said here.
         CruBubble.onScreen = newsHere
     }
 
-    private val newsHere: (String) -> Unit = { text -> if (inFront && !isFinishing) { if (waiting) wake(); controller.news(text) } }
+    private val newsHere: (String) -> Unit = { text ->
+        if (autoOpened) CruBubble.keepPending(this, text)
+        else if (inFront && !isFinishing) { if (waiting) wake(); controller.news(text) }
+    }
 
     /**
      * Home, or another app, with Cru open (not a picker, not the lock screen, not already a bubble):
@@ -257,6 +265,8 @@ open class VoiceActivity : ComponentActivity() {
 
     override fun onStop() {
         inFront = false
+        // Folded away: his next opening is his own.
+        autoOpened = false
         if (CruBubble.onScreen === newsHere) CruBubble.onScreen = null
         // A picker or the camera over it: the session carries on, and the screen
         // stays (it is not closed for being quiet meanwhile).

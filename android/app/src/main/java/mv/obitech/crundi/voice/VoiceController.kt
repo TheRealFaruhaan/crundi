@@ -171,7 +171,7 @@ class VoiceController(
         if (caps.isNotEmpty() && VoiceApi.CAPABILITY !in caps && "handshake" in caps) { block(VoiceApi.UNSUPPORTED); return }
         // Voice or keyboard: keyboard when voice can't work here, else the owner's last choice.
         if (!ownerChose) keyboard = CruMode.startInKeyboard(VoicePrefs.keyboard(ctx), voiceUnavailable(VoicePrefs.deepgramKeySet(ctx), VoicePrefs.deepgramLimitReached(ctx)))
-        _ui.update { it.copy(keyboard = keyboard) }
+        _ui.update { it.copy(keyboard = keyboard, state = it.state.copy(typing = keyboard)) }
         if (!keyboard && !micGranted()) {
             _ui.update { it.copy(needsMic = true) }
             return
@@ -179,6 +179,9 @@ class VoiceController(
         val voice = AppGraph.forServer(ctx, server).api.voice
         api = voice
         speaker.api = voice
+        // Cru's voice from the last session until the server's settings arrive (checkServer).
+        settingsIn = false
+        VoicePrefs.cruVoice(ctx)?.let { (v, r, g) -> speaker.deepgramVoice = v; speaker.rate = r; speaker.volume = g }
         speaker.streams = VoiceApi.TTS_STREAM in caps
         running = true
         streaming = true
@@ -250,7 +253,7 @@ class VoiceController(
     private fun switchMode(on: Boolean) {
         if (on == keyboard && running) return
         keyboard = on
-        _ui.update { it.copy(keyboard = on, needsMic = false) }
+        _ui.update { it.copy(keyboard = on, needsMic = false, state = it.state.copy(typing = on)) }
         val v = api
         if (!running || v == null) {
             // Asleep, or stopped for the microphone: start again in the mode chosen.
@@ -371,7 +374,17 @@ class VoiceController(
     private var asking: Asking? = null
 
     /** Cru's news heard on opening (CruBubble.takePending): said as a report is, once the session listens. */
-    fun news(speak: String) { if (running && speak.isNotBlank()) dispatch(VoiceEvent.Report(speak, "", now())) }
+    fun news(speak: String) {
+        if (!running || speak.isBlank()) return
+        // Said in Cru's own voice: wait for the server's settings (a few seconds at most) if they are not in yet.
+        if (settingsIn) { dispatch(VoiceEvent.Report(speak, "", now())); return }
+        scope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(4_000L) { while (!settingsIn) delay(100) }
+            if (running) dispatch(VoiceEvent.Report(speak, "", now()))
+        }
+    }
+    /** The server's voice settings have come in this session (applySettings). */
+    @Volatile private var settingsIn = false
 
     /** The phone has been unlocked since the session opened. */
     fun unlocked() = dispatch(VoiceEvent.Unlocked(now()))
@@ -536,6 +549,8 @@ class VoiceController(
         speaker.rate = s.speechRate.toFloat()
         speaker.deepgramVoice = s.ttsVoice
         speaker.volume = mv.obitech.crundi.api.volumeGain(s.volume)
+        VoicePrefs.setCruVoice(ctx, s.ttsVoice, speaker.rate, speaker.volume)
+        settingsIn = true
         VoicePrefs.setDeepgram(ctx, s.deepgramKeySet, s.deepgramLimitReached)
         _ui.update { it.copy(spend = s) }
     }

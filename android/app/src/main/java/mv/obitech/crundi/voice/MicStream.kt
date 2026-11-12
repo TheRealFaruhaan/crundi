@@ -176,6 +176,17 @@ object VoicePrefs {
     fun deepgramKeySet(ctx: Context): Boolean? = p(ctx).takeIf { it.contains("voice.dgKeySet") }?.getBoolean("voice.dgKeySet", true)
     fun deepgramLimitReached(ctx: Context) = p(ctx).getBoolean("voice.dgLimit", false)
     fun setDeepgram(ctx: Context, keySet: Boolean, limitReached: Boolean) = p(ctx).edit().putBoolean("voice.dgKeySet", keySet).putBoolean("voice.dgLimit", limitReached).apply()
+    /**
+     * Cru's voice as last heard from the server (its Deepgram voice, speed and
+     * volume), so the first words of a session are in it too: the settings come
+     * from the server a moment after the screen opens, and Cru's news is said
+     * straight away (in the phone's own voice, before this).
+     */
+    fun cruVoice(ctx: Context): Triple<String, Float, Float>? = p(ctx).takeIf { it.contains("voice.ttsVoice") }?.let {
+        Triple(it.getString("voice.ttsVoice", "") ?: "", it.getFloat("voice.ttsRate", 1f), it.getFloat("voice.ttsGain", 1f))
+    }
+    fun setCruVoice(ctx: Context, voice: String, rate: Float, gain: Float) =
+        p(ctx).edit().putString("voice.ttsVoice", voice).putFloat("voice.ttsRate", rate).putFloat("voice.ttsGain", gain).apply()
 
     // ─── "Hey Cru" (Phase 6) ───
 

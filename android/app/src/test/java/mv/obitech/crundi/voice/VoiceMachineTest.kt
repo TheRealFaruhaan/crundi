@@ -775,6 +775,16 @@ class VoiceOffTest {
         assertEquals(VoiceEffect.Say("Sir, done."), fx2.last())
     }
 
+    // 13 Nov (the owner): Cru's news was read out while he was in keyboard mode ("chat").
+    @Test fun keyboardModeShowsNewsWithoutSayingIt() {
+        val (s, fx) = from(VoiceState(typing = true), *listening(), VoiceEvent.Report("Sir, the build is done.", "", 20))
+        assertTrue(fx.none { it is VoiceEffect.Say })
+        assertEquals("Sir, the build is done.", s.reply)
+        // Out of keyboard mode, with his last message spoken: said, as before.
+        val (_, fx2) = from(VoiceState(typing = false), *listening(), VoiceEvent.Report("Sir, done.", "", 20))
+        assertEquals(VoiceEffect.Say("Sir, done."), fx2.last())
+    }
+
     @Test fun kidModeAlwaysTalks() {
         val (_, fx) = from(VoiceState(voiceOff = true, lastTyped = true, kid = true), *listening(), VoiceEvent.Report("Well done!", "", 20))
         assertEquals(VoiceEffect.Say("Well done!"), fx.last())

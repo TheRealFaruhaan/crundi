@@ -208,6 +208,7 @@ const R = (text, f = {}) => ({ type: 'Results', start: 0, duration: 1, is_final:
     ok(!sp({ lastTyped: true }, 'unprompted'), 'typed last: news (a wake-up, a report) is text only');
     ok(sp({ lastTyped: true }, 'reply', false) && !sp({ lastTyped: false }, 'reply', true), 'a reply follows how its own question came in');
     ok(sp({ lastTyped: true }, 'tap'), 'the speaker on a bubble still says it');
+    ok(!sp({ kb: true }, 'unprompted') && sp({ kb: true }, 'tap'), 'keyboard mode: news is shown, not said (the speaker still says it)');
     ok(!sp({ voiceOff: true }, 'reply', false) && !sp({ voiceOff: true }, 'unprompted') && !sp({ voiceOff: true }, 'tap'), 'muted: nothing is said');
     ok(sp({ kid: true, voiceOff: true, lastTyped: true }, 'unprompted') && sp({ kid: true }, 'reply', true), 'kid mode always talks');
   }

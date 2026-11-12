@@ -620,8 +620,12 @@
       // voiceOff: Cru's voice muted on this device. lastTyped: the owner's last message was typed, so what
       // Cru says unprompted (news, a wake-up, a report) is shown, not said, until he speaks again. Both kept.
       voiceOff: quietPref(), lastTyped: typedPref(),
+      // Keyboard mode chosen last time on this device: from the first moment, not once the settings
+      // load (13 Nov, the owner: it showed voice mode at start; news in that gap would be said).
+      kb: kbPref() && !opts.kid,
     };
     ov.classList.toggle('quiet', S.voiceOff && !S.kid); quietButton();
+    if (S.kb) { ov.classList.add('kb'); var kbb = ov.querySelector('.cv-kbb'); if (kbb) { kbb.classList.add('on'); kbb.title = 'Back to voice'; } }
     if (S.kid) ov.classList.add('kid');
     watchChatScroll(S);
     ov.addEventListener('mouseenter', function () { if (S) clearTimeout(S.leaveTimer); });
@@ -1339,7 +1343,8 @@
     if (s.kid) return true;
     if (s.voiceOff) return false;
     if (kind === 'reply') return !typed;
-    if (kind === 'unprompted') return !s.lastTyped;
+    // Keyboard mode (S.kb, no microphone: chat): shown, never said (as on the phone).
+    if (kind === 'unprompted') return !s.lastTyped && !s.kb;
     return true;
   }
 

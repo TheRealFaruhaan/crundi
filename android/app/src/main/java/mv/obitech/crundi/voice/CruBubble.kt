@@ -184,12 +184,37 @@ object CruBubble {
      */
     fun news(ctx: Context, serverId: String, speak: String, shown: String, quiet: Boolean): Boolean {
         if (!available(ctx) || mv.obitech.crundi.Servers.current(ctx)?.id != serverId || speak.isBlank()) return false
-        if (open(ctx, expand = true, message = shown.ifBlank { speak }, quiet = quiet) != null) return false
-        // A Cru screen on show (the bubble open, Cru gone quiet): said there now; else on the next opening.
+        // Android expands the bubble by itself only while the app is in front. That
+        // opening is not the owner's (13 Nov, the owner: it read the news out, in the
+        // phone's voice, when he had not opened it): the screen shows the news and
+        // keeps it to say when he opens the bubble himself (takeAutoOpen).
         val here = onScreen
+        if (here == null && appInFront(ctx)) autoOpenAt = System.currentTimeMillis()
+        if (open(ctx, expand = true, message = shown.ifBlank { speak }, quiet = quiet) != null) { autoOpenAt = 0L; return false }
+        // A Cru screen on show (the bubble open, Cru gone quiet): handed to it (it says it if the
+        // owner opened it); else kept for the next opening.
         if (here != null) android.os.Handler(android.os.Looper.getMainLooper()).post { here(speak.take(400)) }
-        else ctx.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE).edit().putString("speak", speak.take(400)).putLong("at", System.currentTimeMillis()).apply()
+        else keepPending(ctx, speak)
         return true
+    }
+
+    /** Keep Cru's news to say on the owner's next opening. */
+    fun keepPending(ctx: Context, speak: String) =
+        ctx.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE).edit().putString("speak", speak.take(400)).putLong("at", System.currentTimeMillis()).apply()
+
+    @Volatile private var autoOpenAt = 0L
+    private const val AUTO_OPEN_MS = 10_000L
+
+    /** The Cru screen starting now: opened by Android for news (not by the owner)? Asked once. */
+    fun takeAutoOpen(): Boolean {
+        val t = autoOpenAt; autoOpenAt = 0L
+        return t > 0 && System.currentTimeMillis() - t in 0..AUTO_OPEN_MS
+    }
+
+    private fun appInFront(ctx: Context): Boolean {
+        val st = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(st)
+        return st.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 
     /** Set by a Cru screen while it is in front: news is handed to it at once. */

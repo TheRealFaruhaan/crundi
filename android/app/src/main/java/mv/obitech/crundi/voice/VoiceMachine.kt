@@ -82,6 +82,11 @@ data class VoiceState(
     val turn: Int = 0,
     /** The owner's last message was typed (not said): what Cru says unprompted is shown, not said, until he speaks again. Kept on the phone. */
     val lastTyped: Boolean = false,
+    /**
+     * Keyboard mode ("chat"): he chose to type, with no microphone. Unprompted news
+     * is shown, not said (13 Nov, the owner: news was read out while he was in it).
+     */
+    val typing: Boolean = false,
     /** Cru's voice muted on this phone (the menu): nothing is said, replies are text only, until turned back on. */
     val voiceOff: Boolean = false,
     /** Kid mode is on: Cru always talks (the child's screen). The controller keeps it as the server has it. */
@@ -100,10 +105,11 @@ data class VoiceState(
 
 /**
  * Whether Cru says this aloud (as crundi-voice.js speaks). [unprompted]: news, a wake-up, a
- * report, a panel's word: said only while the owner's last message was spoken. Muted, nothing is
+ * report, a panel's word: said only while the owner's last message was spoken, and never in
+ * keyboard mode. Muted, nothing is
  * said. Kid mode always talks. A reply to a typed question is made silent by the controller.
  */
-fun VoiceState.speaks(unprompted: Boolean = false): Boolean = kid || (!voiceOff && !(unprompted && lastTyped))
+fun VoiceState.speaks(unprompted: Boolean = false): Boolean = kid || (!voiceOff && !(unprompted && (lastTyped || typing)))
 
 /** The × by the owner's words: while they can still be taken back. */
 val VoiceState.canCancel: Boolean get() = cancellable && heard.isNotBlank() && (phase == Phase.Listening || phase == Phase.Thinking)
