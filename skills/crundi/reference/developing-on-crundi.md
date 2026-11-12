@@ -59,7 +59,8 @@ itself may hold it, and the loser of that race fails silently.
 2. Check it is free — the command is in your platform file.
 3. Bind `127.0.0.1`, not `0.0.0.0`. On a box with a public IP, `0.0.0.0` puts it
    on the internet with nothing in front of it.
-4. Expose it deliberately with `add_forward` — never by opening a firewall port.
+4. Expose it deliberately with `add_forward`, never by opening a firewall port,
+   and only when someone else needs to reach it: you can test it without one.
 
 If the port is taken, pick another and say which. Do not kill whatever holds it;
 it probably belongs to someone else's work.
@@ -87,7 +88,9 @@ Remove the forward when the work is done.
 
 ### A worked example
 
-A dev server on a Linux host, from nothing to a URL the user can open:
+A dev server on a Linux host, from nothing to a URL the user can open. You can
+check it yourself without step 4: a drawer tab on the server's network reaches
+it as it is. The forward is for a link the user opens elsewhere.
 
 ```
 # 1. is the port free?  (Bash)
@@ -99,14 +102,15 @@ register_service { name: "app-dev", command: "npm run dev -- --port 4300 --host 
 start_service    { key: "<alias>::app-dev" }
 get_service_logs { key: "<alias>::app-dev", lines: 30 }   → "ready on 127.0.0.1:4300"
 
-# 3. give the user a way in
-add_forward { name: "app-dev", port: 4300, mode: "subdomain" }
-             → https://app-dev.<domain>   (private: needs a Crundi sign-in)
-
-# 4. check it yourself before sending it
-browser_open    { url: "http://127.0.0.1:4300", width: 420, height: 880, on: "server" }
+# 3. check it yourself: in the drawer (the person sees it), on the server's network
+browser_open    { url: "http://127.0.0.1:4300", on: "drawer", network: "server", show: true }
+                 # no drawer (browser_list says so)? { url, width: 420, height: 880, on: "server" }
 browser_console { key }                                   → no errors
 browser_screenshot { key }
+
+# 4. only if the user wants a link of their own, or to test through their network
+add_forward { name: "app-dev", port: 4300, mode: "subdomain" }
+             → https://app-dev.<domain>   (private: needs a Crundi sign-in)
 
 # 5. when the work is done
 remove_forward { host: "app-dev" }
@@ -121,7 +125,8 @@ When the thing has a browser UI, drive the real one rather than reasoning about
 it:
 
 ```
-browser_open    { url, width, height, on: "server" }   # "server": reaches this machine's localhost
+browser_open    { url, on: "drawer", network: "server" }   # the drawer first: its server network reaches this machine's localhost
+                                         # no drawer: { url, width, height, on: "server" }
 browser_console { key }                 → did it throw?
 browser_snapshot / browser_elements     → is the DOM what you think?
 browser_screenshot { key }              → what it actually looks like

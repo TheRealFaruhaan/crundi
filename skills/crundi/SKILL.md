@@ -173,7 +173,8 @@ are actually on.
 - **`enable_tunnel`** — a Cloudflare tunnel for a local port. Hostname is not
   stable. Use when a forward will not do.
 
-Prefer a forward.
+Prefer a forward to a tunnel. Both are for letting people in: to test your own
+dev server you need neither (see Driving a browser).
 
 ### Driving a browser
 
@@ -183,12 +184,27 @@ Check what a page actually does rather than reasoning about it — especially af
 a UI change. Works on both platforms (bundled headless browser, or the desktop
 app's webview). Up to 5 instances per project; close them when done.
 
-`browser_open` takes `on`, which picks the machine: `"server"` runs it where
-Crundi and you run, so `http://127.0.0.1:<port>` is your own dev server;
-`"desktop"` runs it in the person's connected desktop app, on their network.
-Left out, it uses the desktop app when one is connected. Testing a dev server on
-this machine's localhost, say `on: "server"`: on the desktop app, localhost is
-the person's computer, where nothing of yours is listening.
+**Which browser.** Use the browser drawer first: when `browser_list` says the
+drawer is available, open a tab there (`browser_open` with `on: "drawer"`),
+where the person sees what you do, unless they told you otherwise. Without one,
+use `on: "server"`, a hidden browser where Crundi and you run. (`"desktop"` is a
+hidden browser in the person's desktop app, on their network.)
+
+**The mouse.** `browser_click` with a selector or visible text is the quick
+way to press something. When a page needs real pointer input, use
+`browser_mouse` at viewport `x`,`y` (from a screenshot, or what `browser_click`
+reported): `move` to hover (menus and tooltips that open on hover), `click`,
+`double_click`, `right_click` via `button: "right"`, `drag` from `x`,`y` to
+`toX`,`toY` (sliders, drag-and-drop, drawing), or `down`, any number of
+`move`s, then `up` to hold a button across calls. It is hit-tested like a
+person's mouse, so it reaches cross-site iframes (a CodePen preview, a payment
+form) and canvases that selectors cannot. In a drawer tab the person watches
+your cursor do it. Release a held button when you are done.
+
+**Your dev server needs no forward.** It listens on this machine, so open
+`http://127.0.0.1:<port>` directly from a drawer tab with `network: "server"`
+(or `on: "server"`). Test through the person's own network (`network:
+"client"`, or a forward) only when they ask for that.
 
 **The browser drawer.** In the PC client each project has a browser drawer: tabs
 the person sees and uses beside the project. `browser_list` lists them
@@ -261,12 +277,14 @@ Full loop, with the platform differences called out:
    counts as "started".
 2. **If it listens on a port, take one that is safe.** Check it is free first,
    pick 4000–9999 avoiding Crundi's own, and bind `127.0.0.1`.
-3. **If the user needs to reach it, forward it.** `add_forward` gives a stable
-   URL on the server's certificate, private (sign-in required) by default. Send
-   them the URL.
+3. **Open it yourself without a forward.** A drawer tab on the server's network
+   (or `on: "server"`) reaches `http://127.0.0.1:<port>` as it is. Add a forward
+   (`add_forward`: a stable URL on the server's certificate, private by default)
+   only when the user wants a link to open themselves, or asks to test through
+   their own network.
 4. **Test what actually runs**, with the project's own tests or checks. If it has
-   a web interface, also open it with the browser tools and read
-   `browser_console` — a silent error looks exactly like a styling problem.
+   a web interface, also open it in the browser drawer (or `on: "server"`) and
+   read `browser_console`: a silent error looks exactly like a styling problem.
 5. **Show, don't describe.** The user is often on a phone and cannot see your
    terminal; `send_photo_to_user` with a screenshot settles a visual question in
    one round trip.

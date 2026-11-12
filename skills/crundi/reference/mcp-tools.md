@@ -58,6 +58,12 @@ thing behind it has its own authentication.
 
 ## Browser
 
+Use the browser drawer first: when `browser_list` says it is available, open a
+drawer tab, unless told otherwise; else `on: "server"`. A dev server on this
+machine needs no forward: a drawer tab with `network: "server"` (or
+`on: "server"`) opens `http://127.0.0.1:<port>` directly. Use the person's own
+network only when they ask to test through it.
+
 `browser_open` (`url`, `name?`, `width?`, `height?`, `on?`) returns a `key` used
 by all the rest. Max 5 per project. `on` is `"server"` (this machine: its
 localhost is your dev servers) or `"desktop"` (the person's connected desktop
