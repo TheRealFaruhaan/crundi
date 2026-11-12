@@ -100,16 +100,21 @@ files:
   - node_modules/sax/**/*
   - node_modules/tiny-typed-emitter/**/*
   # "Hey Cru" for the owner only (app/voice-wake/owner.js, voiceprint.js): the
-  # voice model runs on onnxruntime-node. Its JavaScript is here; each platform
-  # adds its own native files (win: and linux: below), and nothing else of the
-  # package: its install-time dependencies (global-agent, tar) are not loaded at
-  # runtime, and Linux's CUDA and TensorRT providers (340 MB) are not used.
-  # Without them the spotter still works, for any voice (13 Nov: the Linux client
-  # had only the Windows binding, so its voice check never set up).
-  # scripts/test-client-build-files.mjs checks them.
+  # voice model runs on onnxruntime-node: its JavaScript and the native files of
+  # both platforms (Windows x64: the binding, onnxruntime.dll, DirectML.dll;
+  # Linux x64: the binding and the CPU runtime, 22 MB, not the 340 MB of CUDA
+  # and TensorRT providers). Both in every package: per-platform `files` (win:,
+  # linux:) were tried in 1.21.6 and shipped neither, as this list's
+  # "!node_modules/**/*" overrides them. Its install-time dependencies
+  # (global-agent, tar) are not loaded at runtime. Without the native files the
+  # spotter still works, for any voice. scripts/test-client-build-files.mjs
+  # checks the list.
   - node_modules/onnxruntime-common/**/*
   - node_modules/onnxruntime-node/package.json
   - node_modules/onnxruntime-node/dist/**/*
+  - node_modules/onnxruntime-node/bin/napi-v3/win32/x64/**/*
+  - node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node
+  - node_modules/onnxruntime-node/bin/napi-v3/linux/x64/libonnxruntime.so.1
 
 # Chromium ships ~55 UI locales (47 MB unpacked). The app's own UI is English,
 # and the locale only affects Chromium's built-in strings (context menus,
@@ -134,10 +139,6 @@ win:
   target:
     - nsis
   icon: assets/icon.ico
-  # The voice check's native runtime on Windows x64 (+13 MB compressed:
-  # onnxruntime.dll, DirectML.dll, the binding).
-  files:
-    - node_modules/onnxruntime-node/bin/napi-v3/win32/x64/**/*
 
 nsis:
   oneClick: true
@@ -161,11 +162,6 @@ linux:
   icon: assets/icon_512x512.png
   category: Development
   executableName: crundi-client
-  # The voice check's native runtime on Linux x64: the binding and the CPU
-  # runtime it links to (22 MB), not the GPU providers.
-  files:
-    - node_modules/onnxruntime-node/bin/napi-v3/linux/x64/onnxruntime_binding.node
-    - node_modules/onnxruntime-node/bin/napi-v3/linux/x64/libonnxruntime.so.1
   synopsis: Desktop app for a Crundi server running elsewhere
   artifactName: Crundi-Client-${version}-linux-x64.${ext}
 
