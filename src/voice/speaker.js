@@ -561,10 +561,18 @@ export async function ensureModel(dir, { fetchImpl = globalThis.fetch, model = M
   return file;
 }
 
-/** onnxruntime-node, or null when it is not installed (an optional dependency). */
+/**
+ * onnxruntime-node, or null when it cannot be loaded; [ortError] says why (not
+ * there at all, or its native files missing or refused by the system).
+ */
 let ortPromise = null;
+export let ortError = '';
 export function loadOrt() {
-  if (!ortPromise) ortPromise = import('onnxruntime-node').then((m) => m.default || m, () => null);
+  if (!ortPromise) ortPromise = import('onnxruntime-node').then((m) => m.default || m, (e) => {
+    const msg = String((e && e.message) || e).split('\n')[0];
+    ortError = /Cannot find (package|module) 'onnxruntime-node'/.test(msg) ? 'onnxruntime-node is not installed' : 'onnxruntime-node did not load: ' + msg.slice(0, 160);
+    return null;
+  });
   return ortPromise;
 }
 
@@ -579,7 +587,7 @@ export function createOnnxEmbedder({ modelDir, fetchImpl } = {}) {
     if (!loading) loading = (async () => {
       try {
         ort = await loadOrt();
-        if (!ort) throw new Error('onnxruntime-node is not installed');
+        if (!ort) throw new Error(ortError || 'onnxruntime-node is not installed');
         const file = await ensureModel(modelDir, { fetchImpl });
         session = await ort.InferenceSession.create(file, { intraOpNumThreads: 2, interOpNumThreads: 1, graphOptimizationLevel: 'all' });
         failed = '';

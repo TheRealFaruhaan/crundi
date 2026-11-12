@@ -25,7 +25,7 @@ const SERVER_ONLY = new Set(['node-pty']);
 // other dependencies are for its install script). Each file pattern must be in
 // the allowlist, and its runtime code must require nothing else.
 const PARTIAL = {
-  'onnxruntime-node': { files: ['package.json', 'dist/**/*', 'bin/napi-v3/win32/x64/**/*'], deps: ['onnxruntime-common'] },
+  'onnxruntime-node': { files: ['package.json', 'dist/**/*', 'bin/napi-v3/win32/x64/**/*', 'bin/napi-v3/linux/x64/onnxruntime_binding.node', 'bin/napi-v3/linux/x64/libonnxruntime.so.1'], deps: ['onnxruntime-common'] },
 };
 
 // ─── What the app loads ───
