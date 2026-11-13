@@ -61,6 +61,13 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      excepted). One review round checks that phase 1 and 2.1-2.4 keep their
      layout, states and behaviour, and look consistent. From here on, every
      screen follows the rule.
+   - [ ] **2.C Theme consolidation** (the owner, 14 Nov 2026). Theme keeps
+     only the scales (spacing 2/4/6/8/10/12/16/20/24/32/40/48, radius
+     4/6/8/10/12/pill, font 10/11/12/13/14/15/16/20/26, at most two
+     letter-spacings) and named sizes for structural parts (window, top bar,
+     sidebar, tab bar, pane header, controls, icons); every other size snaps
+     to a scale step; old pixel-measurement comments go. Layout, order,
+     states and behaviour unchanged; one review round and CI.
    - [ ] **2.5 Composer and Stop.** The composer at rest, typing (auto-grow),
      the Enter-mode switch (`cc-sw`), the meta row (mode button, model label,
      session id, clock), Send, Stop arming to "Sure?" (`cc-armed`) and
