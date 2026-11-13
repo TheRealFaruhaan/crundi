@@ -88,10 +88,18 @@ pub fn head_content(pane_w: f32) -> f32 {
     pane_w - 8.0
 }
 
-/// The header folds its tools into "…" when its content box is under 560px:
-/// a pane of 567px is narrow, 568px wide (specs/pane-header-narrow.md).
+/// The header folds its tools into "…" when its content box is at most
+/// 559px (the web's @container (max-width: 559px)): a pane of 567px is
+/// narrow, 568px wide (specs/pane-header-narrow.md).
 pub fn narrow(pane_w: f32) -> bool {
-    head_content(pane_w) < 560.0
+    head_content(pane_w) <= 559.0
+}
+
+/// The long title needs a content box of at least 560px (@container
+/// (min-width: 560px)). Between 559 and 560 (a fractional pane) neither rule
+/// holds: the web shows the tools inline with the short title.
+fn long_fits(pane_w: f32) -> bool {
+    head_content(pane_w) >= 560.0
 }
 
 /// No cap: the title takes what the row leaves it.
@@ -104,7 +112,7 @@ pub const NO_CAP: f32 = 100_000.0;
 pub fn title_shown(title: &str, long: &str, pane_w: f32) -> (String, f32) {
     let content = head_content(pane_w);
     if narrow(pane_w) { return (title.to_string(), NO_CAP); }
-    if !long.is_empty() { (long.to_string(), 440f32.min(content * 0.62)) } else { (title.to_string(), 160.0) }
+    if !long.is_empty() && long_fits(pane_w) { (long.to_string(), 440f32.min(content * 0.62)) } else { (title.to_string(), 160.0) }
 }
 
 #[cfg(test)]
@@ -167,6 +175,9 @@ mod tests {
         assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 567.0), ("Fruit list".into(), NO_CAP));
         assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 568.0).0, "Fruit list and directory listing");
         assert!(narrow(567.0) && !narrow(568.0));
+        // Between the two rules (content 559–560): tools inline, short title.
+        assert!(!narrow(567.5));
+        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 567.5), ("Fruit list".into(), 160.0));
         assert_eq!(title_shown("Typed", "", 1148.0), ("Typed".into(), 160.0));
         assert_eq!(title_shown("Fruit list and directory", "", 378.0), ("Fruit list and directory".into(), NO_CAP));
         assert_eq!(close_refused(""), "This chat cannot be closed right now.");

@@ -191,7 +191,7 @@ pub fn init(window: &MainWindow) {
     window.on_sign_out(|| sign_out(""));
     window.on_select_project(|a| select_project(a.as_str()));
     window.on_wb_area(|w, h| { with(|a| a.area = (w, h)); render(); });
-    window.on_focus_pane(|id| { with(|a| a.focused = id as u32); render(); });
+    window.on_focus_pane(|id| focus_pane(id as u32));
     window.on_close_pane(|id| close_pane(id as u32));
     window.on_gutter_drag(|sp, i, d, span| { with(|a| a.mosaic.drag(sp as u32, i as usize, d, span)); layout_changed(); });
     window.on_gutter_even(|sp, i| { with(|a| a.mosaic.even(sp as u32, i as usize)); layout_changed(); });
@@ -878,6 +878,18 @@ pub fn pane_full(leaf: u32) {
     let Some(key) = leaf_rect(leaf).and_then(|l| l.key) else { return };
     with(|a| { a.full = if a.full.as_deref() == Some(key.as_str()) { None } else { Some(key) }; a.armed = 0; a.menu = 0; });
     render();
+}
+
+/// Focus a pane (any press in it). While one pane is full screen, only it:
+/// the panes under it are out of reach.
+fn focus_pane(leaf: u32) {
+    let changed = with(|a| {
+        let covered = a.full.as_ref().is_some_and(|k| a.mosaic.leaf_of(k) != Some(leaf));
+        if covered || a.focused == leaf { return false; }
+        a.focused = leaf;
+        true
+    }).unwrap_or(false);
+    if changed { render(); }
 }
 
 /// Open or close a narrow header's "…" menu. Opening one closes any other,

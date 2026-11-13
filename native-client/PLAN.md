@@ -194,6 +194,11 @@ Phase 1 left these, each with its workaround in place:
 - **No split items in the narrow header's menu** (2.2). The web hides them
   (`.head-split`) outside its phone layout, which the native window (900px or
   wider) never reaches; a narrow pane splits from the hover controls (2.3).
+- **The narrow header's menu shadow** (2.2): shadow-md in four soft layers
+  (`HeadMenu`), within one grey level of the web's at each row below the menu.
+- **Selection height in the rename input** (2.1): Slint draws the selection
+  at the font's line height, 1px shorter than Chromium's (y98–110 against
+  98–111); its width and the scroll to the end match.
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

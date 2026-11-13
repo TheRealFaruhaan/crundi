@@ -4,7 +4,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon } from "widgets.slint";
+import { Icon, Pointer } from "widgets.slint";
 import { ChatPane, PaneHead, HeadMenu, EntryView } from "chat.slint";
 
 export struct PaneView {
@@ -194,8 +194,17 @@ export component PaneCard inherits Rectangle {
         background: Theme.bg-primary;
         border-radius: p.full ? 0px : 9px;
         clip: true;
-        // A click anywhere in the pane focuses it (behind its content).
-        TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-me(); } } }
+        // Any press in the pane focuses it, buttons and the right button too
+        // (the web's capture-phase mousedown on .term-cell): every press is
+        // counted (Pointer), so one on a button or the header counts as well.
+        property <int> presses: Pointer.presses;
+        changed presses => {
+            if Pointer.x >= self.absolute-position.x && Pointer.x <= self.absolute-position.x + self.width
+                    && Pointer.y >= self.absolute-position.y && Pointer.y <= self.absolute-position.y + self.height
+                    && !p.focused {
+                root.focus-me();
+            }
+        }
         VerticalLayout {
         ph := PaneHead {
             title: p.title;

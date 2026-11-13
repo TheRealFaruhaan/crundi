@@ -379,6 +379,15 @@ await sleep(300);
 await key('Picked');
 await key('Return');
 await until('…and the press still acts (the rename opened)', (q) => pane(q, chatD).title === 'Picked') && check('a press outside closes the menu and still acts', true);
+check('a press on a pane\'s title focuses that pane', pane(await props(), chatD).focused);
+// Any press in a pane focuses it, its header buttons included.
+await ui('focus-pane', pane(await props(), chatC).id);
+await until('pane C focused', (q) => pane(q, chatC).focused);
+await mouse('move', 800, 700);
+await mouse('click', moreX(a) - 25 - 4, nHeadY(a));   // A's full screen
+p = await until('a press on a header button focuses its pane', (q) => pane(q, chatA).focused || q.full?.key === 'live:' + chatA);
+if (p) check('a press on a header button focuses its pane', pane(p, chatA).focused);
+if (p?.full) { await key('Escape'); await until('left full screen', (q) => q.full === null); }
 // Full screen closes it (and the full-screen header is wide).
 await mouse('click', moreX(a), nHeadY(a));
 await until('menu open', (q) => pane(q, chatA).menu);

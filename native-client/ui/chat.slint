@@ -278,14 +278,16 @@ export component PaneHead inherits Rectangle {
                 // The 146px text box (padding 6px and the 1px border), clipped;
                 // the text scrolls to keep the caret in view, as a browser's
                 // input does (it opens scrolled to the end, all selected).
-                // As std LineEdit (lineedit-base.slint), but with the 2px a
-                // browser keeps for the caret at the end (Slint's caret is wider).
+                // As std LineEdit (lineedit-base.slint), but with the room a
+                // browser keeps for its caret, not Slint's caret width.
                 Rectangle {
                     x: 7px; width: parent.width - 14px;
                     clip: true;
                     ti := TextInput {
                         property <length> scroll;
-                        property <length> caret-room: 2px;
+                        // A browser keeps a 1px caret in view at the end, none
+                        // while text is selected (the caret isn't drawn).
+                        property <length> caret-room: self.anchor-position-byte-offset != self.cursor-position-byte-offset ? 0px : 1px;
                         x: min(0px, max(parent.width - self.width - self.caret-room, self.scroll));
                         width: max(parent.width - self.caret-room, self.preferred-width);
                         font-size: 12px; font-weight: 600; color: Theme.text-primary;
@@ -325,8 +327,10 @@ export component PaneHead inherits Rectangle {
                 clicked => { root.open-secrets(); }
             }
             // A- / reset / A+: 11px, padding 3px 6px; 19px high (reset 19.6).
+            // A- and A+ at the web's measured widths (25.3, 30.8): its buttons
+            // are Arial, a hair narrower than the UI sans.
             if root.chat && !root.narrow: HeadBtn {
-                y: 4px; height: 19px; width: am.preferred-width + 14px;
+                y: 4px; height: 19px; width: 25.3px;
                 label: "A-"; tip: "Smaller text";
                 am := Text { visible: false; text: "A-"; font-size: 11px; }
                 clicked => { root.font(-1); }
@@ -338,7 +342,7 @@ export component PaneHead inherits Rectangle {
                 clicked => { root.font-reset(); }
             }
             if root.chat && !root.narrow: HeadBtn {
-                y: 4px; height: 19px; width: ap.preferred-width + 14px;
+                y: 4px; height: 19px; width: 30.8px;
                 label: "A+"; tip: "Larger text";
                 ap := Text { visible: false; text: "A+"; font-size: 11px; }
                 clicked => { root.font(1); }
@@ -412,21 +416,27 @@ export component HeadMenu inherits Rectangle {
     property <length> lock-w: 7px + 12px + 4px + (root.secrets-n > 0 ? cnt-m.preferred-width + 4px : 0px) + lbl-m.preferred-width + 7px;
     property <length> natural: 16px + (root.kind-tag != "" ? tag-m.preferred-width + 16px + 6px : 0px)
         + (root.secrets ? self.lock-w + 6px : 0px)
-        + am-m.preferred-width + 14px + 6px + 25px + 6px + ap-m.preferred-width + 14px + 6px + 27px;
+        + 25.3px + 6px + 25px + 6px + 30.8px + 6px + 27px;
     width: min(root.max-w, self.natural + 2px);
     height: fl.preferred-height + 2px;
     tag-m := Text { visible: false; text: root.kind-tag; font-size: 11px; font-weight: 700; letter-spacing: -0.4px; }
     cnt-m := Text { visible: false; text: root.secrets-n; font-size: 11px; }
     lbl-m := Text { visible: false; text: "Secrets for this chat"; font-size: 11px; }
-    am-m := Text { visible: false; text: "A-"; font-size: 11px; }
-    ap-m := Text { visible: false; text: "A+"; font-size: 11px; }
-    background: Theme.bg-secondary;
-    border-radius: 6px;
-    border-width: 1px;
-    border-color: Theme.border;
-    drop-shadow-blur: 20px;
-    drop-shadow-offset-y: 6px;
-    drop-shadow-color: #00000080;
+    // shadow-md (0 6px 20px rgba(0,0,0,.5)) in soft layers: the software
+    // renderer drops drop-shadow-blur (PLAN.md, Known gaps). Each is the box
+    // moved 6px down and grown, fainter as it grows.
+    for l in [{ e: 2px, c: #00000016 }, { e: 7px, c: #0000000e }, { e: 12px, c: #0000000e }, { e: 18px, c: #00000005 }]: Rectangle {
+        x: -l.e; y: 6px - l.e;
+        width: root.width + 2 * l.e; height: root.height + 2 * l.e;
+        border-radius: 6px + l.e;
+        background: l.c;
+    }
+    Rectangle {
+        background: Theme.bg-secondary;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Theme.border;
+    }
     property <int> presses: Pointer.presses;
     changed presses => {
         let ax = self.absolute-position.x;
@@ -446,6 +456,10 @@ export component HeadMenu inherits Rectangle {
         fl := FlexboxLayout {
             x: 1px; y: 1px;
             width: parent.width - 2px;
+            // Its own height, and lines packed at the top: a stretched line
+            // would push the items down.
+            height: self.preferred-height;
+            cross-axis-line-alignment: start;
             padding: 8px;
             spacing: 6px;
             flex-wrap: wrap;
@@ -465,7 +479,7 @@ export component HeadMenu inherits Rectangle {
                 clicked => { root.open-secrets(); }
             }
             HeadBtn {
-                height: 19px; width: am.preferred-width + 14px;
+                height: 19px; width: 25.3px;
                 label: "A-"; tip: "Smaller text";
                 am := Text { visible: false; text: "A-"; font-size: 11px; }
                 clicked => { root.font(-1); }
@@ -477,7 +491,7 @@ export component HeadMenu inherits Rectangle {
                 clicked => { root.font-reset(); }
             }
             HeadBtn {
-                height: 19px; width: ap.preferred-width + 14px;
+                height: 19px; width: 30.8px;
                 label: "A+"; tip: "Larger text";
                 ap := Text { visible: false; text: "A+"; font-size: 11px; }
                 clicked => { root.font(1); }
