@@ -63,6 +63,8 @@ fn on_message(text: &str, tx: mpsc::Sender<Value>, shown: &str) {
         Some("native-host") => {
             let payload = m.get("payload").cloned().unwrap_or(Value::Null);
             let request_id = payload.get("requestId").cloned().unwrap_or(Value::Null);
+            // A notice (no requestId, e.g. "browsers"): nothing to answer.
+            if request_id.is_null() { return; }
             trace(&format!("request {} {}", payload.get("type").and_then(|t| t.as_str()).unwrap_or("?"), request_id));
             let _ = slint::invoke_from_event_loop(move || {
                 let reply: Reply = Box::new(move |mut result: Value| {
