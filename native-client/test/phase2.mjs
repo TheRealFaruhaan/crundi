@@ -27,6 +27,13 @@
 //       an empty pane's Terminal chip puts a launcher in that pane and the
 //       chat it starts takes the same leaf; × removes an empty pane; each
 //       project keeps its own layout, and the sizes survive a restart.
+//   2.4 live state: real Claude turns make a chat working, needs input
+//       (a question), waiting (a background task), idle and exited; each
+//       pane's dot and badge are checked in the app's own picture, with the
+//       project dot (needs input over working; running; none, active or
+//       not) and the folded rail's initials and avatar rings; titles set by
+//       Claude (rename_chat, the long form in a wide header) and renames in
+//       another client arrive live.
 //
 // Needs a FRESH test server with no sign-in set up (this sets a password on
 // it), started through tools/test-server.sh <port> --bare, never by hand; it
@@ -43,6 +50,7 @@ import { mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
+import { readPng, count } from './png.mjs';
 
 const SERVER = process.env.CRUNDI_TEST_SERVER || 'http://localhost:8889';
 const BIN = process.env.NATIVE_BIN;
@@ -775,6 +783,19 @@ check('the other project\'s sizes survive a restart too', p && JSON.stringify(ot
 const send = (id, text) => http('POST', `/api/ui-sessions/${id}/send`, { text }, token);
 const make = async (project, title, skip) => (await http('POST', '/api/ui-sessions/create', { project, title, skipPermissions: !!skip }, token)).body?.id;
 const dot = (q, alias) => q.projectDots?.find((x) => x.alias === alias)?.state;
+// What is drawn, from the app's snapshot: the state colours (theme.slint).
+const C = { green: '#10b981', yellow: '#f59e0b', accent: '#6366f1', hover: '#818cf8', sky: '#38bdf8', muted: '#5a5a78' };
+const shot = async () => readPng(Buffer.from((await d.send({ cmd: 'snapshot' })).data, 'base64'));
+const tally = (img, box) => Object.fromEntries(Object.entries(C).map(([k, c]) => [k, count(img, ...box, c)]));
+// A pane's header: the dot (8px, 25-45 from the pane's left) and what follows
+// it (the title and the badge; the header's buttons are further right).
+const headDot = (img, q) => tally(img, [WB.x + q.x + 25, headY(q) - 7, WB.x + q.x + 45, headY(q) + 7]);
+const headRest = (img, q) => tally(img, [WB.x + q.x + 46, headY(q) - 8, WB.x + q.x + Math.min(q.w - 100, 245), headY(q) + 8]);
+// The sidebar's rows (34 apart from y116; the dot at x25), and the folded rail's avatars (50 apart from y124, x30).
+const rowDot = (img, q, alias) => tally(img, [14, 116 + 34 * q.projectDots.findIndex((x) => x.alias === alias) - 7, 36, 116 + 34 * q.projectDots.findIndex((x) => x.alias === alias) + 7]);
+const avatar = (img, q, alias) => { const y = 124 + 50 * q.projectDots.findIndex((x) => x.alias === alias); return tally(img, [6, y - 24, 54, y + 24]); };
+const only = (t, k) => t[k] >= 20 && Object.entries(t).every(([n, v]) => n === k || n === 'muted' || v === 0);
+const FOLD = [211, 71], UNFOLD = [30, 71];
 // A chat's claude process: the one whose environment names the chat.
 const chatProc = (id) => {
   for (const pid of readdirSync('/proc').filter((x) => /^\d+$/.test(x))) {
@@ -797,18 +818,67 @@ await send(liveW, 'Run exactly this shell command in the foreground with timeout
 p = await until('a working chat', (q) => pane(q, liveW)?.state === 'working' && dot(q, 'demo') === 'working', 120000);
 if (p) check('a working chat: its pane and the project dot say working', true);
 await snap('2.4-working');
+{
+  const img = await shot(), q = pane(p || await props(), liveW);
+  const dt = headDot(img, q), rest = headRest(img, q), row = rowDot(img, p || await props(), 'demo');
+  check('working: the pane dot is yellow, with a yellow WORKING badge', only(dt, 'yellow') && rest.yellow >= 20, { dt, rest });
+  check('working: the project dot is yellow', only(row, 'yellow'), row);
+}
 // Needs input: a question. Needs input wins over working on the project's dot.
 const liveQ = await make('demo', 'Question', false);
 await send(liveQ, 'Use the AskUserQuestion tool to ask me one question: "Which colour do you prefer?" with the options Red, Green and Blue. Do nothing else.');
 p = await until('a question: needs input', (q) => pane(q, liveQ)?.state === 'needs-input' && dot(q, 'demo') === 'needs-input', 120000);
 if (p) check('a question makes the pane and the project needs input (over working)', true);
 await snap('2.4-needs-input');
+{
+  const q0 = p || await props(), img = await shot(), q = pane(q0, liveQ);
+  const row = rowDot(img, q0, 'demo'), w = headDot(img, pane(q0, liveW));
+  // The fourth pane may run past the window's edge: then look at it full screen.
+  if (WB.x + q.x + 250 <= 1400) {
+    const dt = headDot(img, q), rest = headRest(img, q);
+    check('needs input: the pane dot is accent, with a NEEDS INPUT badge (accent-hover text)', only(dt, 'accent') && rest.hover >= 50, { dt, rest });
+  } else {
+    await ui('pane-full', q.id);
+    await until('full screen', (x) => x.full?.key === 'live:' + liveQ, 5000);
+    await sleep(400);
+    const fi = await shot(), dt = tally(fi, [0, 0, 60, 30]), rest = tally(fi, [61, 0, 700, 30]);
+    check('needs input (full screen): an accent dot, and a NEEDS INPUT badge (accent-hover text)', dt.accent >= 20 && rest.hover >= 50, { dt, rest });
+    await key('Escape');
+    await until('left full screen', (x) => x.full === null);
+  }
+  check('…the working pane beside it stays yellow', only(w, 'yellow'), w);
+  check('needs input wins on the project dot (accent)', only(row, 'accent'), row);
+  // The folded rail: two-letter initials, Demo's avatar ringed in accent.
+  await mouse('click', ...FOLD);
+  await sleep(700);
+  const f = await props(), fi = await shot(), av = avatar(fi, f, 'demo');
+  check('folded: the rail shows the projects\' initials', f.projectDots.find((x) => x.alias === 'demo')?.initials === 'DE' && f.projectDots.find((x) => x.alias === 'other')?.initials === 'OT', f.projectDots);
+  check('folded: a needs-input project\'s avatar has an accent ring', av.accent >= 20 && av.yellow === 0 && av.green === 0, av);
+  await snap('2.4-folded-needs-input');
+  await mouse('click', ...UNFOLD);
+  await sleep(700);
+}
 // Waiting, in another (inactive) project: a background task armed, the turn over.
 const liveO = await make('other', 'Background', true);
 await send(liveO, 'Run the shell command `timeout 120 tail -f /dev/null` with run_in_background set to true. Do not wait for it; just reply "started" and end your turn.');
 p = await until('the other project waits', (q) => dot(q, 'other') === 'waiting', 120000);
 if (p) check('an inactive project shows waiting', dot(p, 'demo') === 'needs-input');
 await snap('2.4-sidebar-mixed');
+{
+  const img = await shot(), q0 = await props(), row = rowDot(img, q0, 'other');
+  check('an inactive waiting project: a sky dot', only(row, 'sky'), row);
+  // Its pane: open Other, then back to Demo.
+  await ui('select-project', 'other');
+  const qo = await until('Other open, its chat waiting', (q) => q.currentProject === 'other' && pane(q, liveO)?.state === 'waiting', 30000);
+  if (qo) {
+    const im = await shot(), dt = headDot(im, pane(qo, liveO)), rest = headRest(im, pane(qo, liveO)), r2 = rowDot(im, qo, 'other'), r1 = rowDot(im, qo, 'demo');
+    check('waiting: the pane dot is sky, with a sky WAITING badge', only(dt, 'sky') && rest.sky >= 20, { dt, rest });
+    check('…the active row keeps its waiting (sky) dot, and Demo stays accent', only(r2, 'sky') && only(r1, 'accent'), { r2, r1 });
+    await snap('2.4-waiting');
+  }
+  await ui('select-project', 'demo');
+  await until('back on Demo', (q) => q.currentProject === 'demo' && pane(q, liveQ) && pane(q, liveW));
+}
 // The answer is not drawn ahead of the server: the project goes back to working (W still runs).
 const qEntry = (await d.send({ cmd: 'state' })).state;
 const qe = await (async () => { for (let i = 0; i < 20; i++) { const st = (await http('GET', '/api/ui-sessions', null, token)).body?.sessions?.find((x) => x.id === liveQ); const pend = st?.pending?.[0]; if (pend) return pend; await sleep(500); } return null; })();
@@ -827,6 +897,41 @@ if (check('the working chat has a claude process', !!procLW)) {
   await snap('2.4-exited');
   p = await until('…and no longer counts on the project dot', (q) => dot(q, 'demo') !== 'working', 30000);
   if (p) check('an exited chat no longer counts on the project dot', true);
+}
+// Idle and exited, drawn: the answered chat ends its turn (green, no badge),
+// the killed one is grey; Demo's dot is running (green: an idle chat whose
+// process lives), and folded, its avatar has a green ring.
+p = await until('the answered chat goes idle, Demo running', (q) => pane(q, liveQ)?.state === 'idle' && dot(q, 'demo') === 'running', 120000);
+if (p) {
+  const img = await shot(), qi = pane(p, liveQ), qx = pane(p, liveW);
+  const di = headDot(img, qi), ri = headRest(img, qi), dx = headDot(img, qx), rx = headRest(img, qx), row = rowDot(img, p, 'demo');
+  check('idle: a green dot and no badge', only(di, 'green') && ri.yellow + ri.accent + ri.hover + ri.sky === 0, { di, ri });
+  check('exited: a grey dot and no badge', dx.muted >= 20 && dx.green + dx.yellow + dx.accent + dx.sky === 0 && rx.yellow + rx.accent + rx.hover + rx.sky === 0, { dx, rx });
+  check('running: the project dot is green', only(row, 'green'), row);
+  await snap('2.4-idle-exited');
+  await mouse('click', ...FOLD);
+  await sleep(700);
+  const f = await props(), fi = await shot(), av = avatar(fi, f, 'demo'), ao = avatar(fi, f, 'other');
+  check('folded: a running project\'s avatar has a green ring', av.green >= 20 && av.yellow === 0, av);
+  // Other's background task (120 s) may have ended by now: then it is running.
+  if (dot(f, 'other') === 'waiting') check('folded: a waiting project looks like one with nothing running (no sky, no ring colour)', ao.sky + ao.green + ao.yellow + ao.accent === 0, ao);
+  else check('folded: an inactive running project has a green ring', dot(f, 'other') === 'running' && ao.green >= 20, { other: dot(f, 'other'), ao });
+  await snap('2.4-folded-running');
+  await mouse('click', ...UNFOLD);
+  await sleep(700);
+}
+// A project with nothing in it: a grey dot; active, green; folded, "FI".
+await http('POST', '/api/projects', { alias: 'fifth', name: 'Fifth', path: join(tmpdir(), 'crundi-native-fifth2'), create: true }, token);
+p = await until('Fifth in the sidebar', (q) => q.projectDots.some((x) => x.alias === 'fifth'));
+if (p) {
+  const img = await shot(), row = rowDot(img, p, 'fifth');
+  check('none, inactive: a grey project dot', dot(p, 'fifth') === '' && row.muted >= 20 && row.green + row.yellow + row.accent + row.sky === 0, row);
+  check('a new project gets its initials live', p.projectDots.find((x) => x.alias === 'fifth').initials === 'FI', p.projectDots);
+  await ui('select-project', 'fifth');
+  const q5 = await until('Fifth open', (q) => q.currentProject === 'fifth');
+  if (q5) { const r5 = rowDot(await shot(), q5, 'fifth'); check('none, active: a green project dot', only(r5, 'green'), r5); }
+  await ui('select-project', 'demo');
+  await until('back on Demo', (q) => q.currentProject === 'demo' && pane(q, liveQ));
 }
 // Claude names its chat (rename_chat): the short title live, the long one in a wide header.
 const procLQ = chatProc(liveQ) || chatProc(liveO);

@@ -72,7 +72,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
-            "projectDots": w.get_projects().iter().map(|p| json!({ "alias": p.alias.as_str(), "state": p.state.as_str() })).collect::<Vec<_>>(),
+            "projectDots": w.get_projects().iter().map(|p| json!({ "alias": p.alias.as_str(), "state": p.state.as_str(), "initials": p.initials.as_str() })).collect::<Vec<_>>(),
             "dragOn": w.get_drag_on(),
             "lockedGutters": w.get_gutters().iter().filter(|g| g.locked).count(),
             "gutters": w.get_gutters().row_count(),
