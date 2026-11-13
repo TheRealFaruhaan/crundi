@@ -18,7 +18,12 @@ and not anyone's taste.
    same server, project and chat.
 4. **Every visible element counts**, down to a badge's padding or a dot's
    ring. If it can be seen, it's in scope.
-5. **What Slint can't do** gets the closest equivalent, plus a comment in the
+5. **Copy what the design means, not a CSS slip.** If the old screen shows an
+   obvious accident (Electron's Server card stretches its radio buttons), draw
+   what was meant and note it. Electron is being replaced, not fixed.
+6. **Leave out invitee-only parts.** Invitees (collaborators) use the web UI,
+   not the client, so their screens and links stay out.
+7. **What Slint can't do** gets the closest equivalent, plus a comment in the
    code naming the gap. Examples: dashes drawn as rectangles; a glow drawn in
    layers; padding inside inline code as thin spaces. List these gaps in the
    report too.
