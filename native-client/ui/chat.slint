@@ -241,16 +241,33 @@ export component PaneHead inherits Rectangle {
                     if ev.text == Key.Escape { root.renaming = false; return accept; }
                     return reject;
                 }
-                ti := TextInput {
+                // The 146px text box (padding 6px and the 1px border), clipped;
+                // the text scrolls to keep the caret in view, as a browser's
+                // input does (it opens scrolled to the end, all selected).
+                // As std LineEdit (lineedit-base.slint).
+                Rectangle {
                     x: 7px; width: parent.width - 14px;
-                    font-size: 12px; font-weight: 600; color: Theme.text-primary;
-                    vertical-alignment: center; height: parent.height;
-                    single-line: true;
-                    selection-background-color: Theme.selection;
-                    selection-foreground-color: white;
-                    init => { self.text = root.short-title; self.focus(); self.select-all(); }
-                    accepted => { if root.renaming { root.renaming = false; root.rename(self.text); } }
-                    changed has-focus => { if !self.has-focus && root.renaming { root.renaming = false; root.rename(self.text); } }
+                    clip: true;
+                    ti := TextInput {
+                        property <length> scroll;
+                        x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.scroll));
+                        width: max(parent.width - self.text-cursor-width, self.preferred-width);
+                        font-size: 12px; font-weight: 600; color: Theme.text-primary;
+                        vertical-alignment: center; height: parent.height;
+                        single-line: true;
+                        selection-background-color: Theme.selection;
+                        selection-foreground-color: white;
+                        init => { self.text = root.short-title; self.focus(); self.select-all(); }
+                        cursor-position-changed(at) => {
+                            if at.x + self.scroll < 0 {
+                                self.scroll = - at.x;
+                            } else if at.x + self.scroll > parent.width - self.text-cursor-width {
+                                self.scroll = parent.width - at.x - self.text-cursor-width;
+                            }
+                        }
+                        accepted => { if root.renaming { root.renaming = false; root.rename(self.text); } }
+                        changed has-focus => { if !self.has-focus && root.renaming { root.renaming = false; root.rename(self.text); } }
+                    }
                 }
             }
         }
