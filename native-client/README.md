@@ -189,6 +189,14 @@ them; each has a spec in `specs/`). So far:
   does: an exited chat is grey whatever its stream last said, and a factory's
   employees don't light a project.
 
+- **2.T One theme** (DESIGN.md, rule 2): every size and colour is a token
+  in `ui/theme.slint` (spacing 2–48, radii, font sizes, weights, line
+  heights, tracking, recurring sizes, motion, opacities, colours, gradients,
+  and shadows as soft-layer lists). Screens type no number but 0 and 1px;
+  `tools/tokens.sh` lists any that are left. The Rust layout numbers that
+  match a token are named constants (`mosaic::{PAD, GUTTER, MIN_W}`,
+  `head::{PANE_FOLD, TITLE_CAP, LONG_CAP}`).
+
 The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
 `test/phase2.mjs` drives each feature against a fresh server (the same setup
 as phase 1's test), by the pointer and keys where it matters.

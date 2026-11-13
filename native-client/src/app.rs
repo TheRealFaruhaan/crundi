@@ -678,7 +678,7 @@ fn show_projects() {
         let rows: Vec<ProjectItem> = a.projects.iter().map(|p| {
             let alias = s(p, "alias");
             ProjectItem {
-                initials: { let n = s(p, "name"); let n = if n.is_empty() { alias.clone() } else { n }; n.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).take(2).filter_map(|w| w.chars().next()).collect::<String>().to_uppercase() }.into(),
+                initials: head::project_initials(&{ let n = s(p, "name"); if n.is_empty() { alias.clone() } else { n } }).into(),
                 name: { let n = s(p, "name"); if n.is_empty() { alias.clone() } else { n } }.into(),
                 state: project_state(a, &alias).into(),
                 alias: alias.into(),
@@ -778,12 +778,15 @@ fn mode_label(m: &str) -> &'static str {
     }
 }
 
+/// The grid's sideways scrollbar (ui/theme.slint sp-6).
+const SCROLLBAR: f32 = 6.0;
+
 /// The grid's content size: as wide as the panes need (wider than the area,
 /// it scrolls sideways), and then 6px less tall for the scrollbar under it.
 fn grid(a: &App) -> (f32, f32) {
     let (w, h) = a.area;
     let cw = a.mosaic.content_width(w);
-    (cw, if cw > w + 0.5 { h - 6.0 } else { h })
+    (cw, if cw > w + 0.5 { h - SCROLLBAR } else { h })
 }
 
 /// Lay the panes out and put them on screen (only rows that changed are rewritten).

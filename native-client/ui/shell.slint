@@ -4,7 +4,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon } from "widgets.slint";
+import { Icon, AccentFill } from "widgets.slint";
 
 export struct ProjectItem {
     alias: string,
@@ -29,10 +29,10 @@ export global ProjectDot {
 /// A 1px dashed outline (CSS "1px dashed"): 3px dashes, 3px gaps.
 export component Dashed inherits Rectangle {
     in property <color> line: Theme.border;
-    for i in ceil(self.width / 6px): Rectangle { x: i * 6px; y: 0px; width: min(3px, root.width - i * 6px); height: 1px; background: root.line; }
-    for i in ceil(self.width / 6px): Rectangle { x: i * 6px; y: root.height - 1px; width: min(3px, root.width - i * 6px); height: 1px; background: root.line; }
-    for i in ceil(self.height / 6px): Rectangle { x: 0px; y: i * 6px; width: 1px; height: min(3px, root.height - i * 6px); background: root.line; }
-    for i in ceil(self.height / 6px): Rectangle { x: root.width - 1px; y: i * 6px; width: 1px; height: min(3px, root.height - i * 6px); background: root.line; }
+    for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; y: 0px; width: min(Theme.sp-4, root.width - i * Theme.sp-6); height: 1px; background: root.line; }
+    for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; y: root.height - 1px; width: min(Theme.sp-4, root.width - i * Theme.sp-6); height: 1px; background: root.line; }
+    for i in ceil(self.height / Theme.sp-6): Rectangle { x: 0px; y: i * Theme.sp-6; width: 1px; height: min(Theme.sp-4, root.height - i * Theme.sp-6); background: root.line; }
+    for i in ceil(self.height / Theme.sp-6): Rectangle { x: root.width - 1px; y: i * Theme.sp-6; width: 1px; height: min(Theme.sp-4, root.height - i * Theme.sp-6); background: root.line; }
 }
 
 /// One row of the usage bars behind the top bar (the web UI's .urow).
@@ -42,20 +42,20 @@ component UsageRow inherits Rectangle {
     in property <string> tag;
     in property <string> left;
     // Time behind usage: how much of the window has passed.
-    Rectangle { x: 0px; width: parent.width * root.passed / 100; background: #7daaff29; }
-    Rectangle { x: 0px; width: parent.width * root.used / 100; background: #6366f138; }
+    Rectangle { x: 0px; width: parent.width * root.passed / 100; background: Theme.usage-time; }
+    Rectangle { x: 0px; width: parent.width * root.used / 100; background: Theme.usage-used; }
     Text {
-        x: parent.width * root.used / 100 + 6px; y: 1px;
+        x: parent.width * root.used / 100 + Theme.sp-6; y: 1px;
         text: root.tag + " " + round(root.used) + "%";
-        font-size: 8.96px; font-weight: 700; color: Theme.text-primary;
+        font-size: Theme.text-10; font-weight: Theme.w-bold; color: Theme.text-primary;
     }
     HorizontalLayout {
-        x: parent.width * root.passed / 100 + 6px; y: 12px;
-        height: 10px;
-        spacing: 3px;
-        opacity: 0.7;
-        Icon { source: Icons.clock; width: 8px; height: 8px; y: 1px; tint: Theme.text-secondary; }
-        Text { text: root.left; font-size: 8.96px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; }
+        x: parent.width * root.passed / 100 + Theme.sp-6; y: Theme.sp-12;
+        height: Theme.sp-10;
+        spacing: Theme.sp-4;
+        opacity: Theme.o-usage;
+        Icon { source: Icons.clock; width: Theme.sp-8; height: Theme.sp-8; y: 1px; tint: Theme.text-secondary; }
+        Text { text: root.left; font-size: Theme.text-10; font-weight: Theme.w-bold; color: Theme.text-secondary; vertical-alignment: center; }
     }
 }
 
@@ -63,13 +63,13 @@ component UsageRow inherits Rectangle {
 component WinBtn inherits Rectangle {
     in property <int> kind;
     callback clicked();
-    width: 36px;
-    height: 28px;
-    border-radius: 6px;
-    background: ta.has-hover ? (root.kind == 2 ? #ef4444 : Theme.bg-hover) : transparent;
-    if root.kind == 0: Rectangle { width: 10px; height: 1px; background: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
-    if root.kind == 1: Rectangle { width: 9px; height: 9px; border-width: 1px; border-color: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
-    if root.kind == 2: Icon { source: Icons.x; width: 13px; height: 13px; tint: ta.has-hover ? white : Theme.text-secondary; }
+    width: Theme.sz-36;
+    height: Theme.sz-28;
+    border-radius: Theme.r-control;
+    background: ta.has-hover ? (root.kind == 2 ? Theme.red : Theme.bg-hover) : transparent;
+    if root.kind == 0: Rectangle { width: Theme.sp-10; height: 1px; background: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
+    if root.kind == 1: Rectangle { width: Theme.sp-10; height: Theme.sp-10; border-width: 1px; border-color: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
+    if root.kind == 2: Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: ta.has-hover ? white : Theme.text-secondary; }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
@@ -99,68 +99,68 @@ export component TopBar inherits Rectangle {
         double-clicked => { root.maximize(); }
     }
     if root.usage-on: Rectangle {
-        height: 47px;
-        UsageRow { y: 0px; height: 23px; used: root.wk-used; passed: root.wk-time; tag: "wk"; left: root.wk-left; }
-        Rectangle { y: 23px; height: 1px; background: #ffffff0d; }
-        UsageRow { y: 24px; height: 23px; used: root.fh-used; passed: root.fh-time; tag: "5h"; left: root.fh-left; }
+        height: Theme.sp-48;
+        UsageRow { y: 0px; height: Theme.sp-24; used: root.wk-used; passed: root.wk-time; tag: "wk"; left: root.wk-left; }
+        Rectangle { y: Theme.sp-24; height: 1px; background: Theme.hairline-light; }
+        UsageRow { y: Theme.sp-24; height: Theme.sp-24; used: root.fh-used; passed: root.fh-time; tag: "5h"; left: root.fh-left; }
     }
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
 
     HorizontalLayout {
-        padding-left: 16px;
-        padding-right: 16px;
-        spacing: 12px;
+        padding-left: Theme.sp-16;
+        padding-right: Theme.sp-16;
+        spacing: Theme.sp-12;
         HorizontalLayout {
-            spacing: 9px;
-            Image { source: @image-url("brand/head.svg"); width: 24px; height: 24px; y: 12px; }
-            Image { source: @image-url("brand/wordmark.svg"); width: 60px; height: 15px; y: 16px; image-fit: contain; }
+            spacing: Theme.sp-10;
+            Image { source: @image-url("brand/head.svg"); width: Theme.sp-24; height: Theme.sp-24; y: Theme.sp-12; }
+            Image { source: @image-url("brand/wordmark.svg"); width: Theme.wordmark-w; height: Theme.wordmark-h; y: Theme.sp-16; image-fit: contain; }
         }
-        Text { text: "/"; color: Theme.text-muted; vertical-alignment: center; font-size: 14.4px; }
-        Text { text: root.project-name == "" ? "No project" : root.project-name; color: Theme.text-secondary; vertical-alignment: center; font-size: 14.4px; }
+        Text { text: "/"; color: Theme.text-muted; vertical-alignment: center; font-size: Theme.text-14; }
+        Text { text: root.project-name == "" ? "No project" : root.project-name; color: Theme.text-secondary; vertical-alignment: center; font-size: Theme.text-14; }
         Rectangle { horizontal-stretch: 1; }
         // How old the usage numbers are.
         if root.usage-on && root.usage-age != "": Rectangle {
-            y: 14px; height: 20px;
-            width: age.preferred-width + 20px;
-            border-radius: 12px;
+            y: Theme.sz-14; height: Theme.sp-20;
+            width: age.preferred-width + Theme.sp-20;
+            border-radius: Theme.r-bubble;
             background: Theme.slate-dim;
             age := HorizontalLayout {
-                x: 10px;
-                spacing: 6px;
-                Icon { source: Icons.bar-chart; width: 12px; height: 12px; y: 4px; tint: Theme.text-secondary; }
-                Text { text: root.usage-age; font-family: Theme.mono; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                x: Theme.sp-10;
+                spacing: Theme.sp-6;
+                Icon { source: Icons.bar-chart; width: Theme.icon-sm; height: Theme.icon-sm; y: Theme.sp-4; tint: Theme.text-secondary; }
+                Text { text: root.usage-age; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; vertical-alignment: center; }
             }
         }
         // Cru's mark (the voice assistant; it opens in a later phase).
         Rectangle {
-            y: 10px; width: 44px; height: 28px;
-            border-radius: 99px;
-            Image { source: @image-url("brand/cru.svg"); width: 40px; height: 24px; }
+            y: Theme.sp-10; width: Theme.sz-44; height: Theme.sz-28;
+            border-radius: Theme.r-pill;
+            Image { source: @image-url("brand/cru.svg"); width: Theme.sp-40; height: Theme.sp-24; }
         }
         // The connection badge: 3px 10px, a 6px dot (with its ring) and a 6px gap, mono 12px.
         Rectangle {
-            y: 14px;
-            height: 20px;
-            width: badge.preferred-width + 20px;
-            border-radius: 12px;
+            y: Theme.sz-14;
+            height: Theme.sp-20;
+            width: badge.preferred-width + Theme.sp-20;
+            border-radius: Theme.r-bubble;
             background: root.online ? Theme.green-dim : Theme.red-dim;
             badge := HorizontalLayout {
-                x: 10px;
-                spacing: 6px;
+                x: Theme.sp-10;
+                spacing: Theme.sp-6;
                 Rectangle {
-                    width: 6px; height: 6px; y: 7px;
+                    width: Theme.sp-6; height: Theme.sp-6; y: Theme.sp-8;
                     // The pulsing ring, at rest.
-                    Rectangle { width: 13px; height: 13px; border-radius: 6.5px; background: root.online ? #10b98134 : #ef444434; }
-                    Rectangle { border-radius: 3px; background: root.online ? Theme.green : Theme.red; }
+                    Rectangle { width: Theme.sz-14; height: Theme.sz-14; border-radius: Theme.r-pill; background: root.online ? Theme.green-ring : Theme.red-ring; }
+                    Rectangle { border-radius: Theme.r-chip; background: root.online ? Theme.green : Theme.red; }
                 }
-                Text { text: root.online ? "connected" : "disconnected"; color: root.online ? Theme.green : Theme.red; font-size: 12px; font-family: Theme.mono; vertical-alignment: center; }
+                Text { text: root.online ? "connected" : "disconnected"; color: root.online ? Theme.green : Theme.red; font-size: Theme.text-12; font-family: Theme.mono; vertical-alignment: center; }
             }
         }
         HorizontalLayout {
             spacing: 0px;
-            WinBtn { y: 10px; kind: 0; clicked => { root.minimize(); } }
-            WinBtn { y: 10px; kind: 1; clicked => { root.maximize(); } }
-            WinBtn { y: 10px; kind: 2; clicked => { root.close(); } }
+            WinBtn { y: Theme.sp-10; kind: 0; clicked => { root.minimize(); } }
+            WinBtn { y: Theme.sp-10; kind: 1; clicked => { root.maximize(); } }
+            WinBtn { y: Theme.sp-10; kind: 2; clicked => { root.close(); } }
         }
     }
 }
@@ -173,7 +173,7 @@ export component ProjectSidebar inherits Rectangle {
     in property <int> inbox-unread;
     in-out property <bool> folded;
     callback select(string);
-    width: root.folded ? 60px : Theme.sidebar-width;
+    width: root.folded ? Theme.sidebar-folded : Theme.sidebar-width;
     background: Theme.bg-secondary;
     Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
 
@@ -181,29 +181,29 @@ export component ProjectSidebar inherits Rectangle {
         width: parent.width - 1px;
         // Header: 49px, padding 12px 16px, a subtle line under it.
         Rectangle {
-            height: 49px;
+            height: Theme.topbar-height;
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
-            if !root.folded: Text { x: 16px; y: 17px; text: "PROJECTS"; color: Theme.text-muted; font-size: 12px; font-weight: 600; letter-spacing: 0.6px; }
+            if !root.folded: Text { x: Theme.sp-16; y: Theme.sz-18; text: "PROJECTS"; color: Theme.text-muted; font-size: Theme.text-12; font-weight: Theme.w-semibold; letter-spacing: Theme.track-caps; }
             Rectangle {
-                x: root.folded ? (parent.width - 24px) / 2 : 199px; y: 12px;
-                width: 24px; height: 24px;
-                border-radius: 6px;
+                x: root.folded ? (parent.width - Theme.sp-24) / 2 : Theme.sidebar-width - Theme.sp-40; y: Theme.sp-12;
+                width: Theme.sp-24; height: Theme.sp-24;
+                border-radius: Theme.r-control;
                 background: ct.has-hover ? Theme.bg-hover : transparent;
-                Icon { source: root.folded ? Icons.chevron-right : Icons.chevrons-left; width: 14px; height: 14px; tint: ct.has-hover ? Theme.text-primary : Theme.text-muted; }
+                Icon { source: root.folded ? Icons.chevron-right : Icons.chevrons-left; width: Theme.icon-md; height: Theme.icon-md; tint: ct.has-hover ? Theme.text-primary : Theme.text-muted; }
                 ct := TouchArea { mouse-cursor: pointer; clicked => { root.folded = !root.folded; } }
             }
         }
         Flickable {
             vertical-stretch: 1;
             VerticalLayout {
-                padding-top: 4px;
-                padding-bottom: 4px;
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 2px;
+                padding-top: Theme.sp-4;
+                padding-bottom: Theme.sp-4;
+                padding-left: Theme.sp-8;
+                padding-right: Theme.sp-8;
+                spacing: Theme.sp-2;
                 alignment: start;
                 for p in root.projects: Rectangle {
-                    height: root.folded ? 46px : 32px;
+                    height: root.folded ? Theme.sp-48 : Theme.sp-32;
                     // Folded: a 38px round avatar with the project's initials
                     // (.proj-initials). Its state wins over the active look:
                     // running a green edge, working a yellow edge and glow,
@@ -212,55 +212,57 @@ export component ProjectSidebar inherits Rectangle {
                     if root.folded: av := Rectangle {
                         property <bool> active: p.alias == root.current;
                         property <string> st: p.state == "waiting" ? "" : p.state;
-                        width: 38px; height: 38px;
+                        width: Theme.sz-38; height: Theme.sz-38;
                         // The glows (0 0 10px -2px yellow, 0 0 12px -2px accent;
                         // the active look's own) in soft rings.
-                        for l in [{ e: 2px, a: 0.28 }, { e: 4px, a: 0.14 }, { e: 6px, a: 0.06 }]: Rectangle {
-                            visible: parent.st == "working" || parent.st == "needs-input" || (parent.active && parent.st == "");
-                            x: -l.e; y: -l.e; width: 38px + 2 * l.e; height: 38px + 2 * l.e; border-radius: 19px + l.e;
-                            background: (parent.st == "working" ? Theme.yellow : Theme.accent).with-alpha(l.a);
+                        for l in (av.st == "working" ? Theme.glow-yellow : Theme.glow-accent): Rectangle {
+                            visible: av.st == "working" || av.st == "needs-input" || (av.active && av.st == "");
+                            x: -l.e; y: l.y - l.e; width: Theme.sz-38 + 2 * l.e; height: Theme.sz-38 + 2 * l.e; border-radius: Theme.r-pill;
+                            background: l.c;
                         }
                         // The active look's 1px ring (0 0 0 1px accent), none or running.
-                        if self.active && (self.st == "" || self.st == "running"): Rectangle { x: -1px; y: -1px; width: 40px; height: 40px; border-radius: 20px; background: Theme.accent; }
+                        if self.active && (self.st == "" || self.st == "running"): Rectangle { x: -1px; y: -1px; width: Theme.sp-40; height: Theme.sp-40; border-radius: Theme.r-pill; background: Theme.accent; }
+                        // Active: the accent gradient as a circle (AccentFill), under the edge.
+                        if self.active: AccentFill { round: true; }
                         Rectangle {
-                            border-radius: 19px;
-                            background: parent.active ? @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%) : Theme.bg-tertiary;
+                            border-radius: Theme.r-pill;
+                            background: parent.active ? transparent : Theme.bg-tertiary;
                             border-width: 1px;
                             border-color: parent.st == "running" ? Theme.green : parent.st == "working" ? Theme.yellow
                                 : parent.st == "needs-input" || parent.active || ta.has-hover ? Theme.accent : Theme.border;
                             Text {
-                                text: p.initials; font-family: Theme.mono; font-size: 11.84px; font-weight: 700; letter-spacing: 0.3552px;
+                                text: p.initials; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-bold; letter-spacing: Theme.track-caps;
                                 color: av.st == "running" || av.st == "working" ? Theme.text-primary
                                     : av.st == "needs-input" || av.active ? white
                                     : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-                                overflow: elide; width: 26px; horizontal-alignment: center;
+                                overflow: elide; width: Theme.sz-26; horizontal-alignment: center;
                             }
                         }
                     }
                     if !root.folded: Rectangle {
-                        border-radius: 6px;
+                        border-radius: Theme.r-control;
                         background: p.alias == root.current ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : transparent;
                         // The active row's gradient bar: 3px, inset 7px.
                         if p.alias == root.current: Rectangle {
-                            x: 0px; y: 7px; width: 3px; height: parent.height - 14px;
-                            border-top-right-radius: 3px; border-bottom-right-radius: 3px;
-                            background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
+                            x: 0px; y: Theme.sp-8; width: Theme.sp-4; height: parent.height - Theme.sz-14;
+                            border-top-right-radius: Theme.r-chip; border-bottom-right-radius: Theme.r-chip;
+                            background: Theme.grad-accent;
                         }
                         // The dot: 8px at 12px; needs input, working and waiting wear
                         // a 3px ring. The active row with nothing running is green.
                         if p.state == "needs-input" || p.state == "working" || p.state == "waiting": Rectangle {
-                            x: 9px; y: 9px; width: 14px; height: 14px; border-radius: 7px;
+                            x: Theme.sp-12 + (Theme.dot - self.width) / 2; y: Theme.sp-12 + (Theme.dot - self.height) / 2; width: Theme.sz-14; height: Theme.sz-14; border-radius: Theme.r-pill;
                             background: p.state == "needs-input" ? Theme.accent-dim : p.state == "working" ? Theme.yellow-dim : Theme.sky-ring;
                         }
                         Rectangle {
-                            x: 12px; y: 12px; width: 8px; height: 8px; border-radius: 4px;
+                            x: Theme.sp-12; y: Theme.sp-12; width: Theme.dot; height: Theme.dot; border-radius: Theme.r-pill;
                             background: p.state == "" && p.alias == root.current ? Theme.green : ProjectDot.color(p.state);
                         }
                         Text {
-                            x: 30px; width: parent.width - 42px;
+                            x: Theme.sz-30; width: parent.width - Theme.sz-44;
                             text: p.name;
                             color: p.alias == root.current ? Theme.accent-hover : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-                            font-size: 14.08px;
+                            font-size: Theme.text-14;
                             vertical-alignment: center;
                             overflow: elide;
                         }
@@ -271,34 +273,34 @@ export component ProjectSidebar inherits Rectangle {
         }
         // Footer: padding 8, a subtle line above.
         Rectangle {
-            height: 95px;
+            height: Theme.sidebar-foot;
             Rectangle { height: 1px; background: Theme.border-subtle; }
             if !root.folded: Rectangle {
-                x: 8px; y: 9px; width: parent.width - 16px; height: 34px;
-                border-radius: 6px;
+                x: Theme.sp-8; y: Theme.sp-10; width: parent.width - Theme.sp-16; height: Theme.sz-34;
+                border-radius: Theme.r-control;
                 background: ap.has-hover ? Theme.accent-dim : transparent;
                 Dashed { line: ap.has-hover ? Theme.accent : Theme.border; }
-                Text { text: "+ Add project"; color: ap.has-hover ? Theme.accent-hover : Theme.text-muted; font-size: 13.6px; }
+                Text { text: "+ Add project"; color: ap.has-hover ? Theme.accent-hover : Theme.text-muted; font-size: Theme.text-14; }
                 ap := TouchArea { mouse-cursor: pointer; }
             }
             Rectangle {
-                x: 8px; y: root.inbox-unread > 0 ? 51px : 52px;
-                width: parent.width - 16px; height: root.inbox-unread > 0 ? 36px : 34px;
-                border-radius: 6px;
+                x: Theme.sp-8; y: Theme.sp-48 + Theme.sp-4;
+                width: parent.width - Theme.sp-16; height: root.inbox-unread > 0 ? Theme.sz-36 : Theme.sz-34;
+                border-radius: Theme.r-control;
                 border-width: 1px;
                 border-color: root.inbox-unread > 0 ? Theme.accent : Theme.border-subtle;
                 background: ib.has-hover ? Theme.bg-hover : transparent;
                 HorizontalLayout {
                     alignment: center;
-                    spacing: 8px;
-                    Icon { source: Icons.mail; width: 16px; height: 16px; y: (parent.height - 16px) / 2; tint: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; }
-                    if !root.folded: Text { text: "Inbox"; color: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; font-size: 13.6px; vertical-alignment: center; }
+                    spacing: Theme.sp-8;
+                    Icon { source: Icons.mail; width: Theme.icon-lg; height: Theme.icon-lg; y: (parent.height - Theme.sp-16) / 2; tint: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; }
+                    if !root.folded: Text { text: "Inbox"; color: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; font-size: Theme.text-14; vertical-alignment: center; }
                     if root.inbox-unread > 0: Rectangle {
-                        y: (parent.height - 18px) / 2;
-                        height: 18px; width: max(18px, ib-n.preferred-width + 10px);
-                        border-radius: 9px;
+                        y: (parent.height - Theme.sz-18) / 2;
+                        height: Theme.sz-18; width: max(Theme.sz-18, ib-n.preferred-width + Theme.sp-10);
+                        border-radius: Theme.r-field;
                         background: Theme.accent;
-                        ib-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: white; font-size: 10.88px; font-weight: 700; }
+                        ib-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: white; font-size: Theme.text-11; font-weight: Theme.w-bold; }
                     }
                 }
                 ib := TouchArea { mouse-cursor: pointer; }
@@ -322,12 +324,12 @@ export component TabBar inherits Rectangle {
     callback select(string);
     callback add-menu();
     callback toggle-browser();
-    height: 36px;
+    height: Theme.sz-36;
     background: Theme.bg-secondary;
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: Theme.sp-12;
+        padding-right: Theme.sp-12;
         // The tabs scroll sideways when they do not fit; they never widen the window.
         Flickable {
             horizontal-stretch: 1;
@@ -336,33 +338,33 @@ export component TabBar inherits Rectangle {
                 for t[i] in root.tabs: HorizontalLayout {
                     // A tab: padding 10px 14px, gap 6, a 15px icon, 13.12px/500.
                     Rectangle {
-                        width: tab.preferred-width + 28px;
-                        height: 35px;
+                        width: tab.preferred-width + Theme.sz-28;
+                        height: Theme.sz-36;
                         tab := HorizontalLayout {
-                            x: 14px;
-                            spacing: 6px;
-                            Icon { source: t.icon; width: 15px; height: 15px; y: 10px; tint: t.id == root.current ? Theme.accent-hover : th.has-hover ? Theme.text-secondary : Theme.text-muted; }
-                            Text { text: t.label; color: t.id == root.current ? Theme.accent-hover : th.has-hover ? Theme.text-secondary : Theme.text-muted; font-size: 13.12px; font-weight: 500; vertical-alignment: center; }
+                            x: Theme.sz-14;
+                            spacing: Theme.sp-6;
+                            Icon { source: t.icon; width: Theme.icon-lg; height: Theme.icon-lg; y: Theme.sp-10; tint: t.id == root.current ? Theme.accent-hover : th.has-hover ? Theme.text-secondary : Theme.text-muted; }
+                            Text { text: t.label; color: t.id == root.current ? Theme.accent-hover : th.has-hover ? Theme.text-secondary : Theme.text-muted; font-size: Theme.text-13; font-weight: Theme.w-medium; vertical-alignment: center; }
                         }
                         // The active tab's 2px gradient underline, inset 12px.
                         if t.id == root.current: Rectangle {
-                            x: 12px; y: parent.height - 2px; width: parent.width - 24px; height: 2px;
-                            border-top-left-radius: 2px; border-top-right-radius: 2px;
-                            background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
+                            x: Theme.sp-12; y: parent.height - Theme.sp-2; width: parent.width - Theme.sp-24; height: Theme.sp-2;
+                            border-top-left-radius: Theme.r-chip; border-top-right-radius: Theme.r-chip;
+                            background: Theme.grad-accent;
                         }
                         th := TouchArea { mouse-cursor: pointer; clicked => { root.select(t.id); } }
                     }
                     // The "+": 24px, bg-tertiary, 1px border, radius 6, a 17px "+", 6px after it.
                     if i == 0: Rectangle {
-                        width: 30px;
+                        width: Theme.sz-30;
                         Rectangle {
-                            x: 0px; y: 5.5px;
-                            width: 24px; height: 24px;
-                            border-radius: 6px;
+                            x: 0px; y: Theme.sp-6;
+                            width: Theme.sp-24; height: Theme.sp-24;
+                            border-radius: Theme.r-control;
                             background: pl.has-hover ? Theme.accent : Theme.bg-tertiary;
                             border-width: 1px;
                             border-color: pl.has-hover ? Theme.accent : Theme.border;
-                            Text { text: "+"; font-size: 17px; color: pl.has-hover ? white : Theme.text-secondary; }
+                            Text { text: "+"; font-size: Theme.text-16; color: pl.has-hover ? white : Theme.text-secondary; }
                             pl := TouchArea { mouse-cursor: pointer; clicked => { root.add-menu(); } }
                         }
                     }
@@ -371,18 +373,18 @@ export component TabBar inherits Rectangle {
         }
         // Browser, pinned right; gone while the drawer is open.
         if !root.drawer-open: Rectangle {
-            width: bl.preferred-width + 28px;
+            width: bl.preferred-width + Theme.sz-28;
             bl := HorizontalLayout {
-                x: 14px;
-                spacing: 6px;
-                Icon { source: Icons.globe; width: 15px; height: 15px; y: 10px; tint: bh.has-hover ? Theme.text-secondary : Theme.text-muted; }
-                Text { text: "Browser"; color: bh.has-hover ? Theme.text-secondary : Theme.text-muted; font-size: 13.12px; font-weight: 500; vertical-alignment: center; }
+                x: Theme.sz-14;
+                spacing: Theme.sp-6;
+                Icon { source: Icons.globe; width: Theme.icon-lg; height: Theme.icon-lg; y: Theme.sp-10; tint: bh.has-hover ? Theme.text-secondary : Theme.text-muted; }
+                Text { text: "Browser"; color: bh.has-hover ? Theme.text-secondary : Theme.text-muted; font-size: Theme.text-13; font-weight: Theme.w-medium; vertical-alignment: center; }
             }
             // Pages still open behind a hidden drawer: a 7px accent dot with a 2px ring.
             if root.drawer-has-tabs: Rectangle {
-                x: parent.width - 14px; y: 8px; width: 11px; height: 11px; border-radius: 5.5px;
+                x: parent.width - Theme.sz-14; y: Theme.sp-8; width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-control;
                 background: Theme.bg-secondary;
-                Rectangle { width: 7px; height: 7px; border-radius: 3.5px; background: Theme.accent; }
+                Rectangle { width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.r-chip; background: Theme.accent; }
             }
             bh := TouchArea { mouse-cursor: pointer; clicked => { root.toggle-browser(); } }
         }

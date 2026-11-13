@@ -15,12 +15,12 @@ export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Them
 
 export component MainWindow inherits Window {
     title: "Crundi";
-    preferred-width: 1400px;
-    preferred-height: 860px;
-    min-width: 900px;
-    min-height: 520px;
+    preferred-width: Theme.window-w;
+    preferred-height: Theme.window-h;
+    min-width: Theme.window-min-w;
+    min-height: Theme.window-min-h;
     background: Theme.bg-primary;
-    default-font-size: 13px;
+    default-font-size: Theme.text-13;
     // No system frame, as the Electron client: the top bar has the window buttons.
     no-frame: !root.browser-only;
 
@@ -139,7 +139,7 @@ export component MainWindow inherits Window {
     // ─── The browser drawer ───
     in property <[PanelData]> panels;
     in-out property <bool> drawer-open;
-    in-out property <length> drawer-width: 560px;
+    in-out property <length> drawer-width: Theme.drawer-w;
     in-out property <int> drawer-active;
     in-out property <bool> annotating;
     in property <string> status;
@@ -261,16 +261,16 @@ export component MainWindow inherits Window {
                     }
                     if root.current-tab != "workbench": VerticalLayout {
                         alignment: center;
-                        spacing: 14px;
-                        Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+                        spacing: Theme.sz-14;
+                        Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: Theme.text-13; horizontal-alignment: center; }
                         // Settings: signing out lives here, as in the PC client.
                         if root.current-tab == "settings": HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: so.preferred-width + 28px; height: 34px;
-                                border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                                width: so.preferred-width + Theme.sz-28; height: Theme.sz-34;
+                                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                                 background: sh.has-hover ? Theme.red-dim : Theme.bg-tertiary;
-                                so := Text { text: "Sign out of " + root.server; font-size: 12px; font-weight: 600; color: sh.has-hover ? Theme.red : Theme.text-primary; }
+                                so := Text { text: "Sign out of " + root.server; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: sh.has-hover ? Theme.red : Theme.text-primary; }
                                 sh := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.sign-out(); } }
                             }
                         }
@@ -292,7 +292,7 @@ export component MainWindow inherits Window {
                 history(i, h) => { root.history(i, h); }
                 hide => { root.drawer-open = false; }
                 close-all => { root.drawer-open = false; }
-                drag-width(d) => { root.drawer-width = max(320px, min(root.width - Theme.sidebar-width - 420px, root.drawer-width + d)); }
+                drag-width(d) => { root.drawer-width = max(Theme.drawer-min, min(root.width - Theme.sidebar-width - Theme.drawer-reserve, root.drawer-width + d)); }
             }
         }
     }
@@ -334,9 +334,9 @@ export component MainWindow inherits Window {
         y: Pointer.y - root.drag-dy;
         width: root.drag-pane.w;
         height: root.drag-pane.h;
-        opacity: 0.92;
-        for l in [{ e: 4px, c: #00000024 }, { e: 12px, c: #00000016 }, { e: 20px, c: #0000000c }, { e: 30px, c: #00000006 }]: Rectangle {
-            x: -l.e; y: 12px - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: 10px + l.e; background: l.c;
+        opacity: Theme.o-clone;
+        for l in Theme.shadow-clone: Rectangle {
+            x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-card + l.e; background: l.c;
         }
         PaneCard { p: root.drag-pane; clone: true; blocked: true; }
     }
@@ -345,23 +345,23 @@ export component MainWindow inherits Window {
     // a 1px border with a 3px accent (red: an error) left edge, radius 6,
     // padding 12px 20px, 13.6px text, shadow-md (0 6px 20px rgba(0,0,0,.5)).
     if root.toast != "": Rectangle {
-        property <length> w: min(420px, tm.preferred-width + 40px + 3px);
-        x: root.width - 16px - self.w;
-        y: Theme.topbar-height + 10px;
+        property <length> w: min(Theme.toast-max, tm.preferred-width + Theme.sp-40 + Theme.sp-4);
+        x: root.width - Theme.sp-16 - self.w;
+        y: Theme.topbar-height + Theme.sp-10;
         width: self.w;
-        height: tt.preferred-height + 24px + 2px;
+        height: tt.preferred-height + Theme.sp-24 + Theme.sp-2;
         background: Theme.bg-secondary;
         border-radius: Theme.radius-sm;
         border-width: 1px;
         border-color: root.toast-error ? Theme.red : Theme.border;
-        drop-shadow-blur: 20px;
-        drop-shadow-offset-y: 6px;
-        drop-shadow-color: #00000080;
-        Rectangle { x: 0; width: 3px; border-top-left-radius: Theme.radius-sm; border-bottom-left-radius: Theme.radius-sm; background: root.toast-error ? Theme.red : Theme.accent; }
-        tm := Text { visible: false; text: root.toast; font-size: 13.6px; }
+        drop-shadow-blur: Theme.sp-20;
+        drop-shadow-offset-y: Theme.sp-6;
+        drop-shadow-color: Theme.shadow;
+        Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.radius-sm; border-bottom-left-radius: Theme.radius-sm; background: root.toast-error ? Theme.red : Theme.accent; }
+        tm := Text { visible: false; text: root.toast; font-size: Theme.text-14; }
         tt := Text {
-            x: 23px; y: 13px; width: parent.width - 43px;
-            text: root.toast; font-size: 13.6px; color: Theme.text-primary; wrap: word-wrap;
+            x: Theme.sp-24; y: Theme.sz-14; width: parent.width - Theme.sz-44;
+            text: root.toast; font-size: Theme.text-14; color: Theme.text-primary; wrap: word-wrap;
         }
     }
 
@@ -371,8 +371,8 @@ export component MainWindow inherits Window {
     }
     // At the "+" (24×24 at 374.4, 53.5): its left, its bottom + 4.
     if root.signed-in && root.add-menu-open: AddMenu {
-        x: Theme.sidebar-width + 134.4px;
-        y: Theme.topbar-height + 5.5px + 24px + 4px;
+        x: Theme.sidebar-width + Theme.add-menu-x;
+        y: Theme.topbar-height + Theme.sp-6 + Theme.sp-24 + Theme.sp-4;
         pick(k) => { root.add-menu-open = false; root.add-pane(k); }
     }
 }

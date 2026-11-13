@@ -11,6 +11,16 @@ pub const FONT_BASE: i32 = 13;
 pub const FONT_MIN: i32 = 9;
 pub const FONT_MAX: i32 = 24;
 
+// The header's layout numbers, as ui/theme.slint has them (tokens of the same
+// name): the fold (pane-fold), the short title's cap (title-cap), the long
+// form's cap; and the header's box around its content (the pane's 1px edge on
+// each side, padding 2 left and 4 right).
+pub const PANE_FOLD: f32 = 560.0;
+pub const TITLE_CAP: f32 = 160.0;
+pub const LONG_CAP: f32 = 440.0;
+pub const LONG_SHARE: f32 = 0.62;
+pub const HEAD_INSET: f32 = 8.0;
+
 /// What a rename saves: trimmed, "Terminal" when empty; None when nothing
 /// changed (nothing is sent).
 pub fn rename_value(input: &str, current: &str) -> Option<String> {
@@ -104,25 +114,45 @@ pub fn project_dot(list: &[Value], alias: &str) -> &'static str {
     else { "" }
 }
 
+/// A project's initials for the folded rail (the web's projectInitials):
+/// the first letters of the first two words (split on spaces, `_`, `.`
+/// and `-`), or a one-word name's first two letters; only ASCII letters
+/// and digits are kept, topped up from the whole name when short; "?" if none.
+pub fn project_initials(name: &str) -> String {
+    let alnum = |t: &str| t.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    let parts: Vec<&str> = name.split(|c: char| c.is_whitespace() || c == '_' || c == '.' || c == '-').filter(|w| !w.is_empty()).collect();
+    let mut ini = match parts.len() {
+        0 => String::new(),
+        1 => parts[0].chars().take(2).collect(),
+        _ => parts[0].chars().take(1).chain(parts[1].chars().take(1)).collect(),
+    };
+    ini = alnum(&ini);
+    if ini.chars().count() < 2 {
+        let an = alnum(name);
+        if !an.is_empty() { ini = an.chars().take(2).collect(); }
+    }
+    if ini.is_empty() { "?".into() } else { ini.to_uppercase() }
+}
+
 /// The header's content box: the pane less its 1px border each side and the
 /// header's padding (2 left, 4 right). The web's header is a size container,
 /// so its rules (@container, 62cqw) read this.
 pub fn head_content(pane_w: f32) -> f32 {
-    pane_w - 8.0
+    pane_w - HEAD_INSET
 }
 
 /// The header folds its tools into "…" when its content box is at most
 /// 559px (the web's @container (max-width: 559px)): a pane of 567px is
 /// narrow, 568px wide (specs/pane-header-narrow.md).
 pub fn narrow(pane_w: f32) -> bool {
-    head_content(pane_w) <= 559.0
+    head_content(pane_w) <= PANE_FOLD - 1.0
 }
 
 /// The long title needs a content box of at least 560px (@container
 /// (min-width: 560px)). Between 559 and 560 (a fractional pane) neither rule
 /// holds: the web shows the tools inline with the short title.
 fn long_fits(pane_w: f32) -> bool {
-    head_content(pane_w) >= 560.0
+    head_content(pane_w) >= PANE_FOLD
 }
 
 /// No cap: the title takes what the row leaves it.
@@ -135,7 +165,7 @@ pub const NO_CAP: f32 = 100_000.0;
 pub fn title_shown(title: &str, long: &str, pane_w: f32) -> (String, f32) {
     let content = head_content(pane_w);
     if narrow(pane_w) { return (title.to_string(), NO_CAP); }
-    if !long.is_empty() && long_fits(pane_w) { (long.to_string(), 440f32.min(content * 0.62)) } else { (title.to_string(), 160.0) }
+    if !long.is_empty() && long_fits(pane_w) { (long.to_string(), LONG_CAP.min(content * LONG_SHARE)) } else { (title.to_string(), TITLE_CAP) }
 }
 
 #[cfg(test)]
@@ -186,6 +216,17 @@ mod tests {
         assert_eq!(close_outcome(Err(ApiError::Status(404, String::new()))), Closed::Yes);
         assert_eq!(close_outcome(Err(ApiError::SignedOut)), Closed::SignedOut);
         assert_eq!(close_outcome(Err(ApiError::Net("refused".into()))), Closed::No("Failed to close terminal: Cannot reach the server: refused".into()));
+    }
+
+    #[test]
+    fn initials_as_the_web() {
+        for (name, want) in [
+            ("Demo", "DE"), ("Other", "OT"), ("Third", "TH"), ("Fourth", "FO"), ("Fifth", "FI"),
+            ("crundi factory", "CF"), ("my-project", "MP"), ("a_b.c", "AB"), ("x", "X"),
+            ("é chat", "CH"), ("!!", "?"), ("", "?"), ("  web  ui ", "WU"), ("1st", "1S"),
+        ] {
+            assert_eq!(project_initials(name), want, "{name}");
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer } from "widgets.slint";
+import { Icon, Pointer, AccentFill } from "widgets.slint";
 import { ListView } from "std-widgets.slint";
 
 export struct ToolView {
@@ -48,12 +48,12 @@ export global PaneState {
 export component TipBox inherits Rectangle {
     in property <string> text;
     background: Theme.bg-tertiary;
-    border-radius: 4px;
+    border-radius: Theme.r-chip;
     border-width: 1px;
     border-color: Theme.border;
-    width: tt.preferred-width + 16px;
-    height: tt.preferred-height + 8px;
-    tt := Text { text: root.text; font-size: 12px; color: Theme.text-primary; }
+    width: tt.preferred-width + Theme.sp-16;
+    height: tt.preferred-height + Theme.sp-8;
+    tt := Text { text: root.text; font-size: Theme.text-12; color: Theme.text-primary; }
 }
 
 /// A pane header button (.term-font-btn and its kin): 1px border, bg-primary,
@@ -63,8 +63,8 @@ component HeadBtn inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     in property <bool> has-icon;
-    in property <length> icon-size: 11px;
-    in property <length> label-size: 11px;
+    in property <length> icon-size: Theme.icon-sm;
+    in property <length> label-size: Theme.text-11;
     in property <string> tip;
     // rest | on (yellow: secrets granted) | pinned (accent fill) | lit (accent: full screen)
     // | armed (red: "Sure?") | close (the ×: red on hover)
@@ -80,7 +80,7 @@ component HeadBtn inherits Rectangle {
         : root.look == "pinned" || root.look == "lit" ? Theme.accent-hover
         : root.look == "close" && root.hover ? Theme.red
         : root.hover ? Theme.text-primary : Theme.text-secondary;
-    border-radius: 6px;
+    border-radius: Theme.r-control;
     border-width: 1px;
     border-color: root.look == "on" ? Theme.yellow
         : root.look == "armed" ? Theme.red
@@ -97,9 +97,9 @@ component HeadBtn inherits Rectangle {
     }
     // The lock with its count (and label): icon at 7px, then each 4px apart.
     if root.has-icon && (root.count != "" || root.after != ""): HorizontalLayout {
-        x: 7px;
+        x: Theme.sp-8;
         width: self.preferred-width;
-        spacing: 4px;
+        spacing: Theme.sp-4;
         alignment: start;
         Image {
             y: (parent.height - self.height) / 2;
@@ -107,8 +107,8 @@ component HeadBtn inherits Rectangle {
             width: root.icon-size; height: root.icon-size;
             colorize: root.ink;
         }
-        if root.count != "": Text { text: root.count; font-size: 11px; color: root.ink; vertical-alignment: center; }
-        if root.after != "": Text { text: root.after; font-size: 11px; color: root.ink; vertical-alignment: center; }
+        if root.count != "": Text { text: root.count; font-size: Theme.text-11; color: root.ink; vertical-alignment: center; }
+        if root.after != "": Text { text: root.after; font-size: Theme.text-11; color: root.ink; vertical-alignment: center; }
     }
     if !root.has-icon: Text { text: root.label; font-size: root.label-size; color: root.ink; }
     ta := TouchArea {
@@ -128,15 +128,17 @@ component CardBtn inherits Rectangle {
     in property <bool> danger;
     callback clicked();
     // .cc-btn: padding 6px 12px and a 1px border round a 12px × fs line.
-    height: 14px + 14px * root.fs;
-    width: t.preferred-width + 24px;
-    border-radius: 6px;
+    height: Theme.sz-14 + Theme.sz-14 * root.fs;
+    width: t.preferred-width + Theme.sp-24;
+    border-radius: Theme.r-control;
     border-width: root.primary ? 0px : 1px;
     border-color: root.danger && ta.has-hover ? Theme.red : Theme.border;
-    background: root.primary ? @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%)
+    background: root.primary ? transparent
         : root.danger && ta.has-hover ? Theme.red-dim
         : ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
-    t := Text { text: root.text; font-size: 12px * root.fs; font-weight: 600; color: root.primary ? white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
+    // Primary: the accent gradient in its rounded shape (AccentFill).
+    if root.primary: AccentFill { }
+    t := Text { text: root.text; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: root.primary ? white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -168,7 +170,7 @@ component HeadGrab inherits TouchArea {
     }
     moved => {
         if self.pressed && self.can-drag {
-            if !self.dragging && (abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px) {
+            if !self.dragging && (abs(self.mouse-x - self.pressed-x) > Theme.sp-6 || abs(self.mouse-y - self.pressed-y) > Theme.sp-6) {
                 self.dragging = true;
                 self.did-drag = true;
                 root.drag(0, self.absolute-position.x + self.pressed-x, self.absolute-position.y + self.pressed-y);
@@ -181,16 +183,16 @@ component HeadGrab inherits TouchArea {
 /// The CHAT tag: a 15px pill, 9.92px/700 upper case, .6px tracking, padding 1px 7px.
 component KindTag inherits Rectangle {
     in property <string> text;
-    height: 15px;
-    width: tag.preferred-width + 16px;
-    border-radius: 99px;
+    height: Theme.sp-16;
+    width: tag.preferred-width + Theme.sp-16;
+    border-radius: Theme.r-pill;
     border-width: 1px;
     border-color: Theme.border;
     // The web asks for 9.92px/700 with .6px tracking; Chromium's hinting
     // draws DejaVu Sans Bold's capitals 8px tall and 29.2px across.
     // Slint draws 9.92px at 7px, so the size is what matches the glyphs
     // (caps 8px, C 6px wide) and the tracking keeps the text 31.6px.
-    tag := Text { text: root.text; font-size: 11px; font-weight: 700; color: Theme.accent-hover; letter-spacing: -0.4px; }
+    tag := Text { text: root.text; font-size: Theme.text-11; font-weight: Theme.w-bold; color: Theme.accent-hover; letter-spacing: Theme.track-tag; }
 }
 
 /// The pane header (.term-head): 28px (27 and a 1px line), bg-secondary;
@@ -202,7 +204,7 @@ export component PaneHead inherits Rectangle {
     // The title shown (the long form on a wide header), its cap, and the
     // short title a rename starts from.
     in property <string> title;
-    in property <length> title-max: 160px;
+    in property <length> title-max: Theme.title-cap;
     in property <string> short-title;
     in property <string> state;
     in property <string> kind-tag;
@@ -223,8 +225,8 @@ export component PaneHead inherits Rectangle {
     // No pin button (the drag's clone).
     in property <bool> no-pin;
     // Where "…" sits (from the header's left), for the menu's outside-press test.
-    out property <length> more-left: self.width - 4px - (root.armed ? sure-m.preferred-width + 14px : 27.7px) - 4px - 25px;
-    out property <length> more-top: 3px;
+    out property <length> more-left: self.width - Theme.sp-4 - (root.armed ? sure-m.preferred-width + Theme.sz-14 : Theme.sz-28) - Theme.sp-4 - Theme.sz-26;
+    out property <length> more-top: (self.height - 1px - Theme.sp-20) / 2;
     callback close();
     callback full-screen();
     callback font(int);
@@ -237,14 +239,13 @@ export component PaneHead inherits Rectangle {
     // The header dragged (HeadGrab): 0 start, 1 move, 2 release.
     callback drag(int, length, length);
     property <bool> renaming;
-    // Narrow: 1px higher.
-    property <length> dy: root.narrow ? -1px : 0px;
+    // Items are centred on the row, so a narrow (26px) header has them 1px higher.
     // The agent badge's text, upper case (none for idle and exited).
     property <string> badge: !root.chat ? "" : root.state == "working" ? "WORKING" : root.state == "needs-input" ? "NEEDS INPUT" : root.state == "waiting" ? "WAITING" : "";
-    badge-m := Text { visible: false; text: root.badge; font-size: 11px; font-weight: 700; letter-spacing: -0.8px; }
-    height: root.narrow ? 26px : 28px;
+    badge-m := Text { visible: false; text: root.badge; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-badge; }
+    height: root.narrow ? Theme.sz-26 : Theme.sz-28;
     background: Theme.bg-secondary;
-    sure-m := Text { visible: false; text: "Sure?"; font-size: 11px; }
+    sure-m := Text { visible: false; text: "Sure?"; font-size: Theme.text-11; }
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     // Double-click the header (its background, handle, dot, tag: not the
     // buttons) to maximise the pane in its split. The whole header is the
@@ -258,14 +259,14 @@ export component PaneHead inherits Rectangle {
         x: 0; y: 0;
         width: parent.width;
         height: parent.height - 1px;
-        padding-left: 2px;
-        padding-right: 4px;
-        spacing: 4px;
+        padding-left: Theme.sp-2;
+        padding-right: Theme.sp-4;
+        spacing: Theme.sp-4;
         // The drag handle "⋮⋮": 12px, -2px tracking, padding 0 3px; 26×12 at y 7.5.
         // Hidden in full screen.
         if !root.full: Rectangle {
-            y: 7.5px + root.dy; width: 26px; height: 12px;
-            Text { x: 3px; text: "⋮⋮"; font-size: 12px; letter-spacing: -2px; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
+            y: (parent.height - self.height) / 2; width: Theme.sz-26; height: Theme.sp-12;
+            Text { x: Theme.sp-4; text: "⋮⋮"; font-size: Theme.text-12; letter-spacing: Theme.track-grip; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
             dh := HeadGrab {
                 rest-cursor: MouseCursor.grab;
                 double-clicked => { root.maximize(); }
@@ -277,9 +278,9 @@ export component PaneHead inherits Rectangle {
         // needs input (with a 3px accent-dim ring), sky waiting, muted exited.
         // Its tooltip is the raw state.
         if root.chat: Rectangle {
-            y: 10px + root.dy; width: 7px; height: 7px;
-            if root.state == "needs-input": Rectangle { x: -3px; y: -3px; width: 13px; height: 13px; border-radius: 6.5px; background: Theme.accent-dim; }
-            Rectangle { border-radius: 3.5px; background: PaneState.color(root.state); }
+            y: (parent.height - self.height) / 2; width: Theme.sp-8; height: Theme.sp-8;
+            if root.state == "needs-input": Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: Theme.sz-14; height: Theme.sz-14; border-radius: Theme.r-pill; background: Theme.accent-dim; }
+            Rectangle { border-radius: Theme.r-chip; background: PaneState.color(root.state); }
             dt := TouchArea {
                 Tooltip { TipBox { text: root.state == "" ? "idle" : root.state; } }
             }
@@ -289,15 +290,15 @@ export component PaneHead inherits Rectangle {
         // narrow), nor than the row leaves it: the spacer goes to 0 first, but
         // its two 4px gaps stay.
         if !root.renaming: Rectangle {
-            property <length> room: root.width - 2px - (root.full ? 0px : 30px) - (root.chat ? 11px : 0px) - 8px - tools.preferred-width - 4px
-                - (root.badge != "" ? badge-m.preferred-width + 14px + 4px : 0px);
-            y: 4.5px + root.dy; height: 18px;
-            width: max(0px, min(tt.preferred-width + 12px, root.title-max, self.room));
-            border-radius: 6px;
+            property <length> room: root.width - Theme.sp-2 - (root.full ? 0px : Theme.sz-30) - (root.chat ? Theme.sp-12 : 0px) - Theme.sp-8 - tools.preferred-width - Theme.sp-4
+                - (root.badge != "" ? badge-m.preferred-width + Theme.sz-14 + Theme.sp-4 : 0px);
+            y: (parent.height - self.height) / 2; height: Theme.sz-18;
+            width: max(0px, min(tt.preferred-width + Theme.sp-12, root.title-max, self.room));
+            border-radius: Theme.r-control;
             background: th.has-hover ? Theme.bg-tertiary : transparent;
             tt := Text {
-                x: 6px; width: parent.width - 12px;
-                text: root.title; font-size: 12px; font-weight: 600; color: Theme.text-primary;
+                x: Theme.sp-6; width: parent.width - Theme.sp-12;
+                text: root.title; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary;
                 vertical-alignment: center; height: parent.height;
                 overflow: elide; wrap: no-wrap;
             }
@@ -314,7 +315,7 @@ export component PaneHead inherits Rectangle {
         // selected; an accent border and a 3px ring. Enter or leaving it
         // saves; Esc puts the title back.
         if root.renaming: ri := Rectangle {
-            y: 3.5px + root.dy; width: 160px; height: 20px;
+            y: (parent.height - self.height) / 2; width: Theme.title-cap; height: Theme.sp-20;
             // A press anywhere outside the input saves it, as the web's blur.
             property <int> presses: Pointer.presses;
             changed presses => {
@@ -325,9 +326,9 @@ export component PaneHead inherits Rectangle {
                 }
             }
             // The ring: 0 0 0 3px rgba(99,102,241,.28).
-            Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f147; }
+            Rectangle { x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4; border-radius: Theme.r-field; background: Theme.accent-ring; }
             Rectangle {
-                border-radius: 6px; border-width: 1px; border-color: Theme.accent;
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent;
                 background: Theme.bg-primary;
             }
             FocusScope {
@@ -341,7 +342,7 @@ export component PaneHead inherits Rectangle {
                 // As std LineEdit (lineedit-base.slint), but with the room a
                 // browser keeps for its caret, not Slint's caret width.
                 Rectangle {
-                    x: 7px; width: parent.width - 14px;
+                    x: Theme.sp-8; width: parent.width - Theme.sz-14;
                     clip: true;
                     ti := TextInput {
                         property <length> scroll;
@@ -350,7 +351,7 @@ export component PaneHead inherits Rectangle {
                         property <length> caret-room: self.anchor-position-byte-offset != self.cursor-position-byte-offset ? 0px : 1px;
                         x: min(0px, max(parent.width - self.width - self.caret-room, self.scroll));
                         width: max(parent.width - self.caret-room, self.preferred-width);
-                        font-size: 12px; font-weight: 600; color: Theme.text-primary;
+                        font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary;
                         vertical-alignment: center; height: parent.height;
                         single-line: true;
                         selection-background-color: Theme.selection;
@@ -373,31 +374,31 @@ export component PaneHead inherits Rectangle {
         // WAITING; a 13px pill, 9.6px/700, .384px tracking, padding 1px 7px.
         // It never hides: the title elides first.
         if root.badge != "": Rectangle {
-            y: 6px + root.dy; height: 13px;
-            width: badge-m.preferred-width + 14px;
-            border-radius: 6.5px;
+            y: (parent.height - self.height) / 2; height: Theme.sz-14;
+            width: badge-m.preferred-width + Theme.sz-14;
+            border-radius: Theme.r-pill;
             background: root.state == "working" ? Theme.yellow-dim : root.state == "waiting" ? Theme.sky-dim : Theme.accent-dim;
             // The web's 9.6px/700 with .384px tracking comes out with 8px
             // capitals in Chromium (its hinting); Slint draws them 6px. As the
             // CHAT tag: the size that matches the glyphs, the tracking that
             // keeps the width (PLAN.md, "Small bold text").
             Text {
-                text: root.badge; font-size: 11px; font-weight: 700; letter-spacing: -0.8px;
+                text: root.badge; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-badge;
                 color: root.state == "working" ? Theme.yellow : root.state == "waiting" ? Theme.sky : Theme.accent-hover;
             }
         }
         // The rest is pushed right (the spacer can shrink to 0).
         Rectangle { horizontal-stretch: 1; min-width: 0; }
         // The tools: inline when wide; folded into "…" when narrow, leaving full
-        // screen, "…" and ×. (Their y: from the header's top, as the row's.)
+        // screen, "…" and ×. (Each is centred on the row.)
         tools := HorizontalLayout {
-            spacing: 4px;
-            if root.kind-tag != "" && !root.narrow: KindTag { y: 6px; text: root.kind-tag; }
+            spacing: Theme.sp-4;
+            if root.kind-tag != "" && !root.narrow: KindTag { y: (parent.height - self.height) / 2; text: root.kind-tag; }
             // The secrets lock: 26×20 (37×20 with a count) at y 3.5; yellow with grants.
             if root.chat && root.secrets && !root.narrow: HeadBtn {
-                y: 3.5px; height: 20px;
-                width: root.secrets-n > 0 ? 37px : 26px;
-                has-icon: true; icon: Icons.lock; icon-size: 12px;
+                y: (parent.height - self.height) / 2; height: Theme.sp-20;
+                width: root.secrets-n > 0 ? Theme.sz-38 : Theme.sz-26;
+                has-icon: true; icon: Icons.lock; icon-size: Theme.icon-sm;
                 look: root.secrets-n > 0 ? "on" : "rest";
                 count: root.secrets-n > 0 ? "" + root.secrets-n : "";
                 tip: root.secrets-tip;
@@ -407,44 +408,44 @@ export component PaneHead inherits Rectangle {
             // A- and A+ at the web's measured widths (25.3, 30.8): its buttons
             // are Arial, a hair narrower than the UI sans.
             if root.chat && !root.narrow: HeadBtn {
-                y: 4px; height: 19px; width: 25.3px;
+                y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sz-26;
                 label: "A-"; tip: "Smaller text";
-                am := Text { visible: false; text: "A-"; font-size: 11px; }
+                am := Text { visible: false; text: "A-"; font-size: Theme.text-11; }
                 clicked => { root.font(-1); }
             }
             if root.chat && !root.narrow: HeadBtn {
-                y: 3.7px; height: 19.6px; width: 25px;
-                has-icon: true; icon: Icons.rotate-ccw; icon-size: 11px;
+                y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sz-26;
+                has-icon: true; icon: Icons.rotate-ccw; icon-size: Theme.icon-sm;
                 tip: "Reset text size";
                 clicked => { root.font-reset(); }
             }
             if root.chat && !root.narrow: HeadBtn {
-                y: 4px; height: 19px; width: 30.8px;
+                y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sz-30;
                 label: "A+"; tip: "Larger text";
-                ap := Text { visible: false; text: "A+"; font-size: 11px; }
+                ap := Text { visible: false; text: "A+"; font-size: Theme.text-11; }
                 clicked => { root.font(1); }
             }
             // Pin: 27×21 at y 3, a 13px icon; pinned: accent on accent-dim, turned −30°.
             if !root.narrow && !root.no-pin: HeadBtn {
-                y: 3px; height: 21px; width: 27px;
+                y: (parent.height - self.height) / 2; height: Theme.sz-22; width: Theme.sz-28;
                 // Pinned, the icon is turned −30° (drawn turned: pin-turned).
-                has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
+                has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: Theme.icon-md;
                 look: root.pinned ? "pinned" : "rest";
                 tip: root.pinned ? "Unpin (size and position are locked)" : "Pin size and position";
                 clicked => { root.pin(); }
             }
             // Full screen: 25×19 at y 4, an 11px maximize; accent while on.
             if root.chat: HeadBtn {
-                y: 4px + root.dy; height: 19px; width: 25px;
-                has-icon: true; icon: Icons.maximize; icon-size: 11px;
+                y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sz-26;
+                has-icon: true; icon: Icons.maximize; icon-size: Theme.icon-sm;
                 look: root.full ? "lit" : "rest";
                 tip: "Full screen";
                 clicked => { root.full-screen(); }
             }
             // "…": 25×19, an 11px "more"; accent while its menu is open, hovered or not.
             if root.narrow: HeadBtn {
-                y: 4px + root.dy; height: 19px; width: 25px;
-                has-icon: true; icon: Icons.more; icon-size: 11px;
+                y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sz-26;
+                has-icon: true; icon: Icons.more; icon-size: Theme.icon-sm;
                 look: root.menu-open ? "lit" : "rest";
                 tip: "More";
                 clicked => { root.more(); }
@@ -453,14 +454,14 @@ export component PaneHead inherits Rectangle {
             // armed: "Sure?" 11px, padding 1px 6px, 15px high at y 6, red.
             // Hidden in full screen.
             if !root.full: HeadBtn {
-                y: (root.armed ? 6px : 4.5px) + root.dy;
-                height: root.armed ? 15px : 18px;
-                width: root.armed ? sure.preferred-width + 14px : 27.7px;
+                y: (parent.height - self.height) / 2;
+                height: root.armed ? Theme.sp-16 : Theme.sz-18;
+                width: root.armed ? sure.preferred-width + Theme.sz-14 : Theme.sz-28;
                 label: root.armed ? "Sure?" : "×";
-                label-size: root.armed ? 11px : 14px;
+                label-size: root.armed ? Theme.text-11 : Theme.sz-14;
                 look: root.armed ? "armed" : "close";
                 tip: root.armed ? "Click again to close" : "Close chat";
-                sure := Text { visible: false; text: "Sure?"; font-size: 11px; }
+                sure := Text { visible: false; text: "Sure?"; font-size: Theme.text-11; }
                 clicked => { root.close(); }
             }
         }
@@ -490,27 +491,27 @@ export component HeadMenu inherits Rectangle {
     callback dismiss();
     // As wide as its items on one line (padding 8 and 6 between), but no
     // wider than the header − 8: then it wraps.
-    property <length> lock-w: 7px + 12px + 4px + (root.secrets-n > 0 ? cnt-m.preferred-width + 4px : 0px) + lbl-m.preferred-width + 7px;
-    property <length> natural: 16px + (root.kind-tag != "" ? tag-m.preferred-width + 16px + 6px : 0px)
-        + (root.secrets ? self.lock-w + 6px : 0px)
-        + 25.3px + 6px + 25px + 6px + 30.8px + 6px + 27px;
-    width: min(root.max-w, self.natural + 2px);
-    height: fl.preferred-height + 2px;
-    tag-m := Text { visible: false; text: root.kind-tag; font-size: 11px; font-weight: 700; letter-spacing: -0.4px; }
-    cnt-m := Text { visible: false; text: root.secrets-n; font-size: 11px; }
-    lbl-m := Text { visible: false; text: "Secrets for this chat"; font-size: 11px; }
+    property <length> lock-w: Theme.sp-8 + Theme.sp-12 + Theme.sp-4 + (root.secrets-n > 0 ? cnt-m.preferred-width + Theme.sp-4 : 0px) + lbl-m.preferred-width + Theme.sp-8;
+    property <length> natural: Theme.sp-16 + (root.kind-tag != "" ? tag-m.preferred-width + Theme.sp-16 + Theme.sp-6 : 0px)
+        + (root.secrets ? self.lock-w + Theme.sp-6 : 0px)
+        + Theme.sz-26 + Theme.sp-6 + Theme.sz-26 + Theme.sp-6 + Theme.sz-30 + Theme.sp-6 + Theme.sz-28;
+    width: min(root.max-w, self.natural + Theme.sp-2);
+    height: fl.preferred-height + Theme.sp-2;
+    tag-m := Text { visible: false; text: root.kind-tag; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-tag; }
+    cnt-m := Text { visible: false; text: root.secrets-n; font-size: Theme.text-11; }
+    lbl-m := Text { visible: false; text: "Secrets for this chat"; font-size: Theme.text-11; }
     // shadow-md (0 6px 20px rgba(0,0,0,.5)) in soft layers: the software
     // renderer drops drop-shadow-blur (PLAN.md, Known gaps). Each is the box
     // moved 6px down and grown, fainter as it grows.
-    for l in [{ e: 2px, c: #00000016 }, { e: 7px, c: #0000000e }, { e: 12px, c: #0000000e }, { e: 18px, c: #00000005 }]: Rectangle {
-        x: -l.e; y: 6px - l.e;
+    for l in Theme.shadow-head-menu: Rectangle {
+        x: -l.e; y: l.y - l.e;
         width: root.width + 2 * l.e; height: root.height + 2 * l.e;
-        border-radius: 6px + l.e;
+        border-radius: Theme.r-control + l.e;
         background: l.c;
     }
     Rectangle {
         background: Theme.bg-secondary;
-        border-radius: 6px;
+        border-radius: Theme.r-control;
         border-width: 1px;
         border-color: Theme.border;
     }
@@ -519,7 +520,7 @@ export component HeadMenu inherits Rectangle {
         let ax = self.absolute-position.x;
         let ay = self.absolute-position.y;
         let inside = Pointer.press-x >= ax && Pointer.press-x <= ax + self.width && Pointer.press-y >= ay && Pointer.press-y <= ay + self.height;
-        let on-more = Pointer.press-x >= root.more-x && Pointer.press-x <= root.more-x + 25px && Pointer.press-y >= root.more-y && Pointer.press-y <= root.more-y + 19px;
+        let on-more = Pointer.press-x >= root.more-x && Pointer.press-x <= root.more-x + Theme.sz-26 && Pointer.press-y >= root.more-y && Pointer.press-y <= root.more-y + Theme.sp-20;
         if !inside && !on-more { root.dismiss(); }
     }
     // Clicks on the menu's own padding stay in it.
@@ -532,13 +533,13 @@ export component HeadMenu inherits Rectangle {
         }
         fl := FlexboxLayout {
             x: 1px; y: 1px;
-            width: parent.width - 2px;
+            width: parent.width - Theme.sp-2;
             // Its own height, and lines packed at the top: a stretched line
             // would push the items down.
             height: self.preferred-height;
             cross-axis-line-alignment: start;
-            padding: 8px;
-            spacing: 6px;
+            padding: Theme.sp-8;
+            spacing: Theme.sp-6;
             flex-wrap: wrap;
             alignment: end;
             cross-axis-alignment: center;
@@ -546,9 +547,9 @@ export component HeadMenu inherits Rectangle {
             // The lock with its label: icon 12, the count if any, "Secrets for
             // this chat"; gap 4, padding 3px 6px; 20px high.
             if root.secrets: HeadBtn {
-                height: 20px;
+                height: Theme.sp-20;
                 width: root.lock-w;
-                has-icon: true; icon: Icons.lock; icon-size: 12px;
+                has-icon: true; icon: Icons.lock; icon-size: Theme.icon-sm;
                 look: root.secrets-n > 0 ? "on" : "rest";
                 count: root.secrets-n > 0 ? "" + root.secrets-n : "";
                 after: "Secrets for this chat";
@@ -556,26 +557,26 @@ export component HeadMenu inherits Rectangle {
                 clicked => { root.open-secrets(); }
             }
             HeadBtn {
-                height: 19px; width: 25.3px;
+                height: Theme.sp-20; width: Theme.sz-26;
                 label: "A-"; tip: "Smaller text";
-                am := Text { visible: false; text: "A-"; font-size: 11px; }
+                am := Text { visible: false; text: "A-"; font-size: Theme.text-11; }
                 clicked => { root.font(-1); }
             }
             HeadBtn {
-                height: 19.6px; width: 25px;
-                has-icon: true; icon: Icons.rotate-ccw; icon-size: 11px;
+                height: Theme.sp-20; width: Theme.sz-26;
+                has-icon: true; icon: Icons.rotate-ccw; icon-size: Theme.icon-sm;
                 tip: "Reset text size";
                 clicked => { root.font-reset(); }
             }
             HeadBtn {
-                height: 19px; width: 30.8px;
+                height: Theme.sp-20; width: Theme.sz-30;
                 label: "A+"; tip: "Larger text";
-                ap := Text { visible: false; text: "A+"; font-size: 11px; }
+                ap := Text { visible: false; text: "A+"; font-size: Theme.text-11; }
                 clicked => { root.font(1); }
             }
             HeadBtn {
-                height: 21px; width: 27px;
-                has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
+                height: Theme.sz-22; width: Theme.sz-28;
+                has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: Theme.icon-md;
                 look: root.pinned ? "pinned" : "rest";
                 tip: root.pinned ? "Unpin (size and position are locked)" : "Pin size and position";
                 clicked => { root.pin(); }
@@ -590,9 +591,9 @@ component Prose inherits TextInput {
     in property <float> fs: 1;
     read-only: true;
     wrap: word-wrap;
-    line-height-factor: 1.33;
+    line-height-factor: Theme.lh-chat;
     color: Theme.text-primary;
-    font-size: 13px * root.fs;
+    font-size: Theme.text-13 * root.fs;
     selection-background-color: Theme.accent-dim;
 }
 
@@ -602,39 +603,39 @@ component ToolRow inherits Rectangle {
     in property <ToolView> t;
     property <bool> open;
     background: Theme.bg-secondary;
-    border-radius: 6px;
+    border-radius: Theme.r-control;
     border-width: 1px;
     border-color: Theme.border-subtle;
     height: col.preferred-height;
     col := VerticalLayout {
         Rectangle {
-            height: 32px + (root.fs - 1) * 18.6px;
+            height: Theme.sp-32 + (root.fs - 1) * Theme.sz-18;
             HorizontalLayout {
-                padding-left: 9px;
-                padding-right: 9px;
-                spacing: 7px;
+                padding-left: Theme.sp-10;
+                padding-right: Theme.sp-10;
+                spacing: Theme.sp-8;
                 Rectangle {
-                    width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                    width: Theme.sp-6; height: Theme.sp-6; y: (parent.height - self.height) / 2; border-radius: Theme.r-chip;
                     background: t.status == "running" ? Theme.yellow : t.error ? Theme.red : Theme.green;
                 }
-                Text { text: t.title; font-family: Theme.mono; font-size: 12px * root.fs; font-weight: 600; color: t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
-                Text { text: t.detail; font-size: 12px * root.fs; color: Theme.text-secondary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
-                Text { text: root.open ? "▾" : "▸"; font-size: 10px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: t.title; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
+                Text { text: t.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                Text { text: root.open ? "▾" : "▸"; font-size: Theme.text-10 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
             }
             TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
         }
         if root.open && t.text != "": Rectangle {
-            height: min(out.preferred-height + 14px, 340px);
+            height: min(out.preferred-height + Theme.sz-14, Theme.tool-max);
             Rectangle { height: 1px; background: Theme.border-subtle; }
             Flickable {
                 y: 1px;
                 height: parent.height - 1px;
-                content-height: out.preferred-height + 14px;
+                content-height: out.preferred-height + Theme.sz-14;
                 out := TextInput {
-                    x: 9px; y: 7px; width: parent.width - 18px;
+                    x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sz-18;
                     read-only: true; wrap: word-wrap;
                     text: t.text;
-                    font-family: Theme.mono; font-size: 11.5px * root.fs;
+                    font-family: Theme.mono; font-size: Theme.text-12 * root.fs;
                     color: Theme.text-secondary;
                 }
             }
@@ -657,17 +658,17 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "user": HorizontalLayout {
         alignment: end;
         Rectangle {
-            width: min(ub-measure.preferred-width + 24px, root.avail * 0.86);
+            width: min(ub-measure.preferred-width + Theme.sp-24, root.avail * 0.86);
             background: Theme.accent-dim;
             border-width: 1px;
-            border-color: #6366f159;
-            border-top-left-radius: 12px;
-            border-top-right-radius: 12px;
-            border-bottom-right-radius: 3px;
-            border-bottom-left-radius: 12px;
-            height: ub.preferred-height + 16px;
-            ub-measure := Text { visible: false; text: e.text; font-size: 13px * root.fs; }
-            ub := Prose { fs: root.fs; x: 11px; y: 7px; width: parent.width - 22px; text: e.text; }
+            border-color: Theme.accent-edge;
+            border-top-left-radius: Theme.r-bubble;
+            border-top-right-radius: Theme.r-bubble;
+            border-bottom-right-radius: Theme.r-chip;
+            border-bottom-left-radius: Theme.r-bubble;
+            height: ub.preferred-height + Theme.sp-16;
+            ub-measure := Text { visible: false; text: e.text; font-size: Theme.text-13 * root.fs; }
+            ub := Prose { fs: root.fs; x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sz-22; text: e.text; }
         }
     }
 
@@ -675,7 +676,7 @@ component EntryRow inherits VerticalLayout {
     // height, so its one line is padded to that box: half the difference
     // above and below (the font's own line measured, so any system font fits).
     if e.kind == "assistant" && e.status != "li": pl := VerticalLayout {
-        property <length> size: (e.status == "h" ? 14px : 13px) * root.fs;
+        property <length> size: (e.status == "h" ? Theme.sz-14 : Theme.sz-14) * root.fs;
         padding-top: max(0px, (self.size * 1.55 - pm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         Rectangle { height: 0; pm := Text { visible: false; text: "X"; font-size: pl.size; } }
@@ -685,20 +686,20 @@ component EntryRow inherits VerticalLayout {
             width: root.avail;
             text: e.md;
             default-color: Theme.text-primary;
-            default-font-size: (e.status == "h" ? 14px : 13px) * root.fs;
+            default-font-size: (e.status == "h" ? Theme.text-14 : Theme.sz-14) * root.fs;
             link-color: Theme.accent-hover;
         }
     }
     if e.kind == "assistant" && e.status == "li": HorizontalLayout {
-        padding-top: max(0px, (13px * root.fs * 1.55 - lm.preferred-height) / 2);
+        padding-top: max(0px, (Theme.sz-14 * root.fs * 1.55 - lm.preferred-height) / 2);
         padding-bottom: self.padding-top;
-        Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: 13px * root.fs; } }
-        Text { width: 20px; text: e.title; font-size: 13px * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
+        Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: Theme.text-13 * root.fs; } }
+        Text { width: Theme.sp-20; text: e.title; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
         StyledText {
-            width: root.avail - 20px;
+            width: root.avail - Theme.sp-20;
             text: e.md;
             default-color: Theme.text-primary;
-            default-font-size: 13px * root.fs;
+            default-font-size: Theme.text-13 * root.fs;
             link-color: Theme.accent-hover;
         }
     }
@@ -707,27 +708,27 @@ component EntryRow inherits VerticalLayout {
         background: Theme.bg-secondary;
         border-width: 1px;
         border-color: Theme.border-subtle;
-        border-radius: 6px;
-        height: code.preferred-height + 18px;
+        border-radius: Theme.r-control;
+        height: code.preferred-height + Theme.sz-18;
         code := TextInput {
-            x: 11px; y: 9px; width: parent.width - 22px;
+            x: Theme.sp-12; y: Theme.sp-10; width: parent.width - Theme.sz-22;
             read-only: true; wrap: word-wrap;
             text: e.text;
-            font-family: Theme.mono; font-size: 12px * root.fs;
+            font-family: Theme.mono; font-size: Theme.text-12 * root.fs;
             color: Theme.text-primary;
         }
     }
 
     if e.kind == "thinking": HorizontalLayout {
-        spacing: 6px;
-        Rectangle { width: 5px; height: 5px; border-radius: 2.5px; y: 7px; background: Theme.text-muted; }
+        spacing: Theme.sp-6;
+        Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-chip; y: Theme.sp-8; background: Theme.text-muted; }
         VerticalLayout {
             Text {
                 text: "Thought";
-                font-size: 12px * root.fs; font-italic: true; color: Theme.text-muted;
+                font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted;
                 TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
             }
-            if root.open: Text { text: e.text; font-size: 12px * root.fs; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
+            if root.open: Text { text: e.text; font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
         }
     }
 
@@ -736,28 +737,28 @@ component EntryRow inherits VerticalLayout {
     }
 
     if e.kind == "tools": VerticalLayout {
-        spacing: 6px;
+        spacing: Theme.sp-6;
         Rectangle {
-            height: 34px + (root.fs - 1) * 18.6px;
+            height: Theme.sz-34 + (root.fs - 1) * Theme.sz-18;
             background: Theme.bg-secondary;
-            border-radius: 6px;
+            border-radius: Theme.r-control;
             border-width: 1px;
             border-color: Theme.border-subtle;
             HorizontalLayout {
-                padding-left: 9px;
-                padding-right: 9px;
-                spacing: 7px;
+                padding-left: Theme.sp-10;
+                padding-right: Theme.sp-10;
+                spacing: Theme.sp-8;
                 Rectangle {
-                    width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
+                    width: Theme.sp-6; height: Theme.sp-6; y: (parent.height - self.height) / 2; border-radius: Theme.r-chip;
                     background: e.status == "running" ? Theme.yellow : e.error ? Theme.red : Theme.green;
                 }
-                Text { text: e.title; font-size: 12px * root.fs; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
-                Text { text: e.detail + (root.open ? "  ▾" : "  ▸"); font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: e.title; font-size: Theme.text-12 * root.fs; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                Text { text: e.detail + (root.open ? "  ▾" : "  ▸"); font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
             }
             TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
         }
         if root.open: VerticalLayout {
-            spacing: 6px;
+            spacing: Theme.sp-6;
             for t in e.tools: ToolRow { t: t; fs: root.fs; }
         }
     }
@@ -766,26 +767,26 @@ component EntryRow inherits VerticalLayout {
         background: e.status == "pending" ? Theme.yellow-dim : Theme.bg-secondary;
         border-width: 1px;
         border-color: e.status == "pending" ? Theme.yellow : Theme.border-subtle;
-        border-radius: 10px;
+        border-radius: Theme.r-card;
         height: perm.preferred-height;
         perm := VerticalLayout {
-            padding-top: 11px; padding-bottom: 11px; padding-left: 12px; padding-right: 12px;
-            spacing: 7px;
-            Text { text: e.title; font-weight: 650; font-size: 13px * root.fs; color: Theme.text-primary; wrap: word-wrap; }
+            padding-top: Theme.sp-12; padding-bottom: Theme.sp-12; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            spacing: Theme.sp-8;
+            Text { text: e.title; font-weight: Theme.w-semibold; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
             if e.detail != "": Rectangle {
                 background: Theme.bg-primary;
-                border-radius: 6px;
-                height: pd.preferred-height + 14px;
-                pd := Text { x: 9px; width: parent.width - 18px; text: e.detail; font-family: Theme.mono; font-size: 12px * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                border-radius: Theme.r-control;
+                height: pd.preferred-height + Theme.sz-14;
+                pd := Text { x: Theme.sp-10; width: parent.width - Theme.sz-18; text: e.detail; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
             }
             if e.status == "pending": HorizontalLayout {
-                spacing: 7px;
+                spacing: Theme.sp-8;
                 alignment: start;
                 CardBtn { fs: root.fs; text: "Allow"; primary: true; clicked => { root.respond(e.request-id, "allow", false); } }
                 CardBtn { fs: root.fs; text: "Allow always"; clicked => { root.respond(e.request-id, "allow", true); } }
                 CardBtn { fs: root.fs; text: "Deny"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
             }
-            if e.status != "pending": Text { text: e.status == "allowed" ? "Allowed" : e.status == "denied" ? "Denied" : e.status; font-size: 12px * root.fs; color: Theme.text-muted; }
+            if e.status != "pending": Text { text: e.status == "allowed" ? "Allowed" : e.status == "denied" ? "Denied" : e.status; font-size: Theme.text-12 * root.fs; color: Theme.text-muted; }
         }
     }
 
@@ -793,41 +794,41 @@ component EntryRow inherits VerticalLayout {
         background: e.status == "pending" ? Theme.accent-dim : Theme.bg-secondary;
         border-width: 1px;
         border-color: e.status == "pending" ? Theme.accent : Theme.border-subtle;
-        border-radius: 10px;
+        border-radius: Theme.r-card;
         height: q.preferred-height;
         q := VerticalLayout {
-            padding-top: 11px; padding-bottom: 11px; padding-left: 12px; padding-right: 12px;
-            spacing: 7px;
-            if e.title != "": Text { text: e.title; font-size: 10.5px * root.fs; font-weight: 700; color: Theme.accent-hover; letter-spacing: 0.5px; }
-            Text { text: e.text; font-weight: 600; font-size: 13px * root.fs; color: Theme.text-primary; wrap: word-wrap; }
+            padding-top: Theme.sp-12; padding-bottom: Theme.sp-12; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            spacing: Theme.sp-8;
+            if e.title != "": Text { text: e.title; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-bold; color: Theme.accent-hover; letter-spacing: Theme.track-caps; }
+            Text { text: e.text; font-weight: Theme.w-semibold; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
             if e.status == "pending": VerticalLayout {
-                spacing: 6px;
+                spacing: Theme.sp-6;
                 for o in e.options: Rectangle {
-                    height: 32px + (root.fs - 1) * 20.15px;
-                    border-radius: 6px;
+                    height: Theme.sp-32 + (root.fs - 1) * Theme.sp-20;
+                    border-radius: Theme.r-control;
                     border-width: 1px;
                     border-color: root.picked == o ? Theme.accent : Theme.border;
                     background: root.picked == o ? Theme.accent-dim : oh.has-hover ? Theme.bg-hover : Theme.bg-primary;
                     HorizontalLayout {
-                        padding-left: 10px;
-                        spacing: 8px;
+                        padding-left: Theme.sp-10;
+                        spacing: Theme.sp-8;
                         Rectangle {
-                            width: 12px; height: 12px; y: (parent.height - self.height) / 2; border-radius: 6px;
+                            width: Theme.sp-12; height: Theme.sp-12; y: (parent.height - self.height) / 2; border-radius: Theme.r-control;
                             border-width: 1px; border-color: root.picked == o ? Theme.accent : Theme.text-muted;
-                            Rectangle { width: 6px; height: 6px; border-radius: 3px; background: root.picked == o ? Theme.accent : transparent; }
+                            Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-chip; background: root.picked == o ? Theme.accent : transparent; }
                         }
-                        Text { text: o; font-size: 13px * root.fs; color: Theme.text-primary; vertical-alignment: center; }
+                        Text { text: o; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; vertical-alignment: center; }
                     }
                     oh := TouchArea { mouse-cursor: pointer; clicked => { root.picked = o; } }
                 }
                 HorizontalLayout {
-                    spacing: 7px;
+                    spacing: Theme.sp-8;
                     alignment: start;
                     CardBtn { fs: root.fs; text: "Submit"; primary: true; clicked => { if root.picked != "" { root.answer(e.id, root.picked); } } }
                     CardBtn { fs: root.fs; text: "Dismiss"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
                 }
             }
-            if e.status != "pending": Text { text: "Answered"; font-size: 12px * root.fs; color: Theme.text-muted; }
+            if e.status != "pending": Text { text: "Answered"; font-size: Theme.text-12 * root.fs; color: Theme.text-muted; }
         }
     }
 
@@ -835,12 +836,12 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "result": VerticalLayout {
         Rectangle {
             height: 1px;
-            for i in ceil(self.width / 6px): Rectangle { x: i * 6px; width: 3px; height: 1px; background: Theme.border-subtle; }
+            for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; width: Theme.sp-4; height: 1px; background: Theme.border-subtle; }
         }
         Text {
             text: e.error ? (e.text != "" ? e.text : "Error") : e.detail;
-            height: 23px + (root.fs - 1) * 17px;
-            font-size: 11px * root.fs;
+            height: Theme.sp-24 + (root.fs - 1) * Theme.sz-18;
+            font-size: Theme.text-11 * root.fs;
             color: e.error ? Theme.red : Theme.text-muted;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -850,13 +851,13 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "error": Rectangle {
         background: Theme.red-dim;
         border-width: 1px;
-        border-color: #ef444466;
-        border-radius: 6px;
-        height: et.preferred-height + 16px;
-        et := Text { x: 10px; width: parent.width - 20px; text: e.text; color: #fca5a5; wrap: word-wrap; font-size: 12px * root.fs; }
+        border-color: Theme.error-edge;
+        border-radius: Theme.r-control;
+        height: et.preferred-height + Theme.sp-16;
+        et := Text { x: Theme.sp-10; width: parent.width - Theme.sp-20; text: e.text; color: Theme.error-text; wrap: word-wrap; font-size: Theme.text-12 * root.fs; }
     }
 
-    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: 11px * root.fs; horizontal-alignment: center; wrap: word-wrap; }
+    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: Theme.text-11 * root.fs; horizontal-alignment: center; wrap: word-wrap; }
 }
 
 /// The message box: grows with its text (34–180px); Enter sends.
@@ -868,8 +869,8 @@ component InputBox inherits Rectangle {
     in property <bool> ctrl-enter;
     callback send(string);
     // At least one line (the web's 1.45 line height, scaled) and 18px of padding.
-    height: max(18px + 18.85px * root.fs, min(180px, te.preferred-height + 18px));
-    border-radius: 6px;
+    height: max(Theme.sz-18 + Theme.sz-18 * root.fs, min(Theme.composer-max, te.preferred-height + Theme.sz-18));
+    border-radius: Theme.r-control;
     border-width: 1px;
     border-color: te.has-focus ? Theme.accent : Theme.border;
     background: Theme.bg-primary;
@@ -882,22 +883,22 @@ component InputBox inherits Rectangle {
             return reject;
         }
         te := TextInput {
-            line-height-factor: 1.25;
-            x: 10px; y: 9px;
-            width: parent.width - 20px;
-            height: parent.height - 18px;
+            line-height-factor: Theme.lh-chat;
+            x: Theme.sp-10; y: Theme.sp-10;
+            width: parent.width - Theme.sp-20;
+            height: parent.height - Theme.sz-18;
             text <=> root.draft;
             wrap: word-wrap;
-            font-size: 13px * root.fs;
+            font-size: Theme.text-13 * root.fs;
             color: Theme.text-primary;
             selection-background-color: Theme.accent-dim;
         }
     }
     if root.draft == "": Text {
-        x: 10px; y: 9px;
-        width: parent.width - 20px;
+        x: Theme.sp-10; y: Theme.sp-10;
+        width: parent.width - Theme.sp-20;
         text: root.ctrl-enter ? "Message Claude…  (Ctrl+Enter to send, Enter for newline)" : "Message Claude…  (Enter to send, Shift+Enter for newline)";
-        font-size: 13px * root.fs;
+        font-size: Theme.text-13 * root.fs;
         color: Theme.text-muted;
         overflow: elide;
     }
@@ -936,25 +937,25 @@ export component ChatPane inherits Rectangle {
         list := ListView {
             vertical-stretch: 1;
             for e in root.entries: HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
+                padding-left: Theme.sp-12;
+                padding-right: Theme.sp-12;
                 EntryRow {
                     e: e;
                     fs: root.fs;
-                    avail: list.visible-width - 24px;
+                    avail: list.visible-width - Theme.sp-24;
                     respond(id, b, a) => { root.respond(id, b, a); }
                     answer(id, o) => { root.answer(id, o); }
                 }
             }
             changed content-height => {
-                if root.stick { self.content-y = min(0px, self.visible-height - self.content-height - 4px); }
+                if root.stick { self.content-y = min(0px, self.visible-height - self.content-height - Theme.sp-4); }
             }
-            scrolled => { root.stick = self.content-y <= self.visible-height - self.content-height + 60px; }
+            scrolled => { root.stick = self.content-y <= self.visible-height - self.content-height + Theme.stick-zone; }
         }
         if root.error != "": Rectangle {
             background: Theme.red-dim;
-            height: errt.preferred-height + 10px;
-            errt := Text { x: 12px; width: parent.width - 24px; text: root.error; color: #fca5a5; wrap: word-wrap; font-size: 11px * root.fs; }
+            height: errt.preferred-height + Theme.sp-10;
+            errt := Text { x: Theme.sp-12; width: parent.width - Theme.sp-24; text: root.error; color: Theme.error-text; wrap: word-wrap; font-size: Theme.text-11 * root.fs; }
         }
         // The composer: bg-secondary, a line above, padding 8.
         Rectangle {
@@ -962,44 +963,44 @@ export component ChatPane inherits Rectangle {
             height: comp.preferred-height;
             Rectangle { height: 1px; background: Theme.border; }
             comp := VerticalLayout {
-                padding: 8px;
-                spacing: 6px;
+                padding: Theme.sp-8;
+                spacing: Theme.sp-6;
                 if !root.narrow: HorizontalLayout {
-                    spacing: 7px;
+                    spacing: Theme.sp-8;
                     InputBox { fs: root.fs; horizontal-stretch: 1; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
                     VerticalLayout {
                         alignment: end;
                         Rectangle {
-                            width: 34px; height: 34px;
-                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            width: Theme.sz-34; height: Theme.sz-34;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                             background: at.has-hover ? Theme.bg-hover : Theme.bg-primary;
-                            Icon { source: Icons.paperclip; width: 16px; height: 16px; tint: Theme.text-secondary; }
+                            Icon { source: Icons.paperclip; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.text-secondary; }
                             at := TouchArea { mouse-cursor: pointer; }
                         }
                     }
                     if root.state == "working": VerticalLayout {
                         alignment: end;
                         Rectangle {
-                            width: 34px; height: 34px;
-                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            width: Theme.sz-34; height: Theme.sz-34;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                             background: sp.has-hover ? Theme.red-dim : Theme.bg-primary;
-                            Rectangle { width: 11px; height: 11px; border-radius: 2px; background: Theme.red; }
+                            Rectangle { width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-chip; background: Theme.red; }
                             sp := TouchArea { mouse-cursor: pointer; clicked => { root.stop(); } }
                         }
                     }
                     VerticalLayout {
                         alignment: end;
-                        padding-bottom: 3px;
+                        padding-bottom: Theme.sp-4;
                         // Send is a .cc-btn: padding 6px 12px, a 1px border, 12px × the text size.
                         Rectangle {
-                            width: st.preferred-width + 26px; height: 14px + 14px * root.fs;
+                            width: st.preferred-width + Theme.sz-26; height: Theme.sz-14 + Theme.sz-14 * root.fs;
                             // The glow (0 2px 12px rgba(99,102,241,.35)), in soft layers.
-                            Rectangle { x: -6px; y: -4px; width: parent.width + 12px; height: parent.height + 12px; border-radius: 12px; background: #6366f10f; }
-                            Rectangle { x: -3px; y: -1px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f11f; }
+                            for l in Theme.glow-send: Rectangle { x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-control + l.e; background: l.c; }
                             Rectangle {
-                            border-radius: 6px;
-                            background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
-                            st := Text { text: "Send"; font-size: 12px * root.fs; font-weight: 600; color: white; }
+                            border-radius: Theme.r-control;
+                            // The accent gradient in its rounded shape (AccentFill).
+                            AccentFill { }
+                            st := Text { text: "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: white; }
                             TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { if root.draft != "" { root.send(root.draft); root.draft = ""; } }
@@ -1011,40 +1012,40 @@ export component ChatPane inherits Rectangle {
                 // A narrow pane: the box on its own row, the buttons under it.
                 if root.narrow: InputBox { fs: root.fs; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
                 if root.narrow: HorizontalLayout {
-                    spacing: 7px;
+                    spacing: Theme.sp-8;
                     alignment: end;
                     VerticalLayout {
                         alignment: end;
                         Rectangle {
-                            width: 34px; height: 34px;
-                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            width: Theme.sz-34; height: Theme.sz-34;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                             background: at2.has-hover ? Theme.bg-hover : Theme.bg-primary;
-                            Icon { source: Icons.paperclip; width: 16px; height: 16px; tint: Theme.text-secondary; }
+                            Icon { source: Icons.paperclip; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.text-secondary; }
                             at2 := TouchArea { mouse-cursor: pointer; }
                         }
                     }
                     if root.state == "working": VerticalLayout {
                         alignment: end;
                         Rectangle {
-                            width: 34px; height: 34px;
-                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            width: Theme.sz-34; height: Theme.sz-34;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                             background: sp2.has-hover ? Theme.red-dim : Theme.bg-primary;
-                            Rectangle { width: 11px; height: 11px; border-radius: 2px; background: Theme.red; }
+                            Rectangle { width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-chip; background: Theme.red; }
                             sp2 := TouchArea { mouse-cursor: pointer; clicked => { root.stop(); } }
                         }
                     }
                     VerticalLayout {
                         alignment: end;
-                        padding-bottom: 3px;
+                        padding-bottom: Theme.sp-4;
                         Rectangle {
-                            width: st2.preferred-width + 26px; height: 14px + 14px * root.fs;
+                            width: st2.preferred-width + Theme.sz-26; height: Theme.sz-14 + Theme.sz-14 * root.fs;
                             // The glow (0 2px 12px rgba(99,102,241,.35)), in soft layers.
-                            Rectangle { x: -6px; y: -4px; width: parent.width + 12px; height: parent.height + 12px; border-radius: 12px; background: #6366f10f; }
-                            Rectangle { x: -3px; y: -1px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f11f; }
+                            for l in Theme.glow-send: Rectangle { x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-control + l.e; background: l.c; }
                             Rectangle {
-                            border-radius: 6px;
-                            background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
-                            st2 := Text { text: "Send"; font-size: 12px * root.fs; font-weight: 600; color: white; }
+                            border-radius: Theme.r-control;
+                            // The accent gradient in its rounded shape (AccentFill).
+                            AccentFill { }
+                            st2 := Text { text: "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: white; }
                             TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { if root.draft != "" { root.send(root.draft); root.draft = ""; } }
@@ -1055,58 +1056,58 @@ export component ChatPane inherits Rectangle {
                 }
                 // The meta row: 22px, gap 7, 11px muted (the web chat's .cc-meta).
                 HorizontalLayout {
-                    height: max(22px, 22px * root.fs);
-                    spacing: 7px;
-                    Text { text: root.state == "" ? "idle" : root.state; font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                    height: max(Theme.sz-22, Theme.sz-22 * root.fs);
+                    spacing: Theme.sp-8;
+                    Text { text: root.state == "" ? "idle" : root.state; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
                     // The permission mode: 22px, 0 6px, gap 5, radius 5.
                     Rectangle {
                         y: (parent.height - self.height) / 2;
-                        height: 22px * root.fs;
-                        width: max(26px * root.fs, mr.preferred-width + 12px);
-                        border-radius: 5px; border-width: 1px; border-color: Theme.border;
+                        height: Theme.sz-22 * root.fs;
+                        width: max(Theme.sz-26 * root.fs, mr.preferred-width + Theme.sp-12);
+                        border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                         background: Theme.bg-primary;
                         mr := HorizontalLayout {
-                            x: 6px;
-                            spacing: 5px;
-                            Icon { source: Icons.shield-alert; width: 13px * root.fs; height: 13px * root.fs; y: (parent.height - self.height) / 2; tint: Theme.text-secondary; }
-                            Text { text: root.mode; font-size: 11px * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
+                            x: Theme.sp-6;
+                            spacing: Theme.sp-6;
+                            Icon { source: Icons.shield-alert; width: Theme.icon-md * root.fs; height: Theme.icon-md * root.fs; y: (parent.height - self.height) / 2; tint: Theme.text-secondary; }
+                            Text { text: root.mode; font-size: Theme.text-11 * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
                         }
                     }
                     // Which key sends: a 56×19 switch, then "sends".
                     HorizontalLayout {
                         horizontal-stretch: 0;
-                        spacing: 5px;
+                        spacing: Theme.sp-6;
                         Rectangle {
-                            y: 1.5px; width: 56px; height: 19px;
-                            border-radius: 999px;
+                            y: Theme.sp-2; width: Theme.switch-w; height: Theme.sp-20;
+                            border-radius: Theme.r-pill;
                             background: Theme.bg-tertiary;
                             Rectangle {
-                                x: root.ctrl-enter ? 24px : 2px; y: 2px;
-                                width: root.ctrl-enter ? 30px : 23px; height: 15px;
-                                border-radius: 999px; border-width: 1px; border-color: Theme.accent;
+                                x: root.ctrl-enter ? Theme.sp-24 : Theme.sp-2; y: Theme.sp-2;
+                                width: root.ctrl-enter ? Theme.sz-30 : Theme.sp-24; height: Theme.sp-16;
+                                border-radius: Theme.r-pill; border-width: 1px; border-color: Theme.accent;
                                 background: Theme.accent-dim;
                             }
-                            Text { x: 10px; text: "⏎"; font-size: 11px; font-weight: 700; color: root.ctrl-enter ? Theme.text-secondary : Theme.accent-hover; vertical-alignment: center; height: parent.height; }
-                            Text { x: 32px; text: "⌃⏎"; font-size: 11px; font-weight: 700; color: root.ctrl-enter ? Theme.accent-hover : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
+                            Text { x: Theme.sp-10; text: "⏎"; font-size: Theme.text-11; font-weight: Theme.w-bold; color: root.ctrl-enter ? Theme.text-secondary : Theme.accent-hover; vertical-alignment: center; height: parent.height; }
+                            Text { x: Theme.sp-32; text: "⌃⏎"; font-size: Theme.text-11; font-weight: Theme.w-bold; color: root.ctrl-enter ? Theme.accent-hover : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
                             TouchArea { mouse-cursor: pointer; clicked => { root.ctrl-enter = !root.ctrl-enter; } }
                         }
-                        Text { text: "sends"; font-size: 11px * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
+                        Text { text: "sends"; font-size: Theme.text-11 * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
                     }
                     // Schedule this message: 25×21, 3px 5px, border, radius 6.
                     Rectangle {
-                        y: 0.5px; width: 25px; height: 21px;
-                        border-radius: 6px; border-width: 1px; border-color: Theme.border;
-                        Icon { source: Icons.clock; width: 13px; height: 13px; tint: Theme.text-secondary; }
+                        y: Theme.sp-2; width: Theme.sz-26; height: Theme.sz-22;
+                        border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                        Icon { source: Icons.clock; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     // The session id: mono 10.5px, a dotted line under it.
                     Rectangle {
                         width: sid.preferred-width;
-                        sid := Text { text: root.session; font-family: Theme.mono; font-size: 10.5px * root.fs; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
-                        for i in ceil(sid.preferred-width / 3px): Rectangle { x: i * 3px; y: parent.height - 3px; width: 1px; height: 1px; background: Theme.border; }
+                        sid := Text { text: root.session; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
+                        for i in ceil(sid.preferred-width / Theme.sp-4): Rectangle { x: i * Theme.sp-4; y: parent.height - Theme.sp-4; width: 1px; height: 1px; background: Theme.border; }
                     }
-                    Text { text: root.model; font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
-                    Text { text: root.cost; font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: root.model; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: root.cost; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
                 }
             }
         }

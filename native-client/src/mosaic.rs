@@ -10,9 +10,12 @@
 
 use serde::{Deserialize, Serialize};
 
+// As ui/theme.slint's tokens: sp-6 round the grid, gutter, pane-min.
 pub const PAD: f32 = 6.0;
 pub const GUTTER: f32 = 7.0;
 pub const MIN_W: f32 = 340.0;
+/// The share each sibling keeps when a pane is maximised in its split (%).
+pub const MAX_SIBLING: f32 = 8.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "t")]
@@ -450,10 +453,10 @@ impl Mosaic {
             let Node::Split { sizes, kids, .. } = n else { return false };
             if let Some(i) = kids.iter().position(|k| node_id(k) == leaf) {
                 let len = kids.len();
-                let big = 100.0 - (len as f32 - 1.0) * 8.0;
+                let big = 100.0 - (len as f32 - 1.0) * MAX_SIBLING;
                 let total: f32 = sizes.iter().sum::<f32>().max(0.0001);
                 let already = sizes[i] * 100.0 / total >= big - 0.5;
-                *sizes = (0..len).map(|j| if already { 100.0 / len as f32 } else if j == i { big } else { 8.0 }).collect();
+                *sizes = (0..len).map(|j| if already { 100.0 / len as f32 } else if j == i { big } else { MAX_SIBLING }).collect();
                 return true;
             }
             kids.iter_mut().any(|k| go(k, leaf))

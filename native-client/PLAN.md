@@ -244,6 +244,12 @@ Phase 1 left these, each with its workaround in place:
   cells belong to Cru on the PC (phase 6).
 - **The folded rail's glows** (2.4): the avatar's 0 0 10px / 12px glows
   are three soft rings (the software renderer has no blur).
+- **Round gradients** (2.T): the software renderer fills a gradient as a
+  square and ignores a radius on it or on a clip, so the accent gradient's
+  round shapes are SVGs drawn at their size (`AccentFill` in
+  `ui/widgets.slint`, `ui/shapes/`): the folded rail's active avatar (a
+  circle) and Send and the cards' primary buttons (a radius-6 rectangle drawn
+  for 60×28; at other text sizes its corners stretch a little).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

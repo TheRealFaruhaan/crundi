@@ -19,11 +19,23 @@ export global Pointer {
     in-out property <bool> press-on-menu;
 }
 
+/// The accent gradient (135°, accent to accent-hover) in a round shape:
+/// a circle, or a control's rounded rectangle (radius 6). The software
+/// renderer fills a gradient square and ignores a radius on it or on a clip,
+/// so the shape is an SVG drawn at its size (ui/shapes/; its two colours are
+/// Theme.accent and Theme.accent-hover). The control shape is drawn for
+/// 60×28: at other sizes its corners stretch a little (PLAN.md, Known gaps).
+export component AccentFill inherits Image {
+    in property <bool> round;
+    source: root.round ? @image-url("shapes/accent-round.svg") : @image-url("shapes/accent-control.svg");
+    image-fit: fill;
+}
+
 /// A flat icon from Icons, tinted.
 export component Icon inherits Image {
     in property <color> tint: Theme.text-secondary;
-    width: 16px;
-    height: 16px;
+    width: Theme.sp-16;
+    height: Theme.sp-16;
     colorize: root.tint;
     image-fit: contain;
 }
@@ -34,7 +46,7 @@ export component IconButton inherits Rectangle {
     in property <string> tooltip;
     in property <bool> enabled: true;
     in property <color> tint: Theme.text-secondary;
-    in property <length> size: 30px;
+    in property <length> size: Theme.sz-30;
     callback clicked();
     width: root.size;
     height: root.size;
@@ -64,7 +76,7 @@ export component Btn inherits Rectangle {
     in property <bool> danger: false;
     in property <bool> enabled: true;
     callback clicked();
-    height: 34px;
+    height: Theme.sz-34;
     min-width: lay.preferred-width;
     border-radius: Theme.radius-sm;
     background: !root.enabled ? Theme.bg-tertiary
@@ -76,9 +88,9 @@ export component Btn inherits Rectangle {
     accessible-role: button;
     accessible-label: root.text;
     lay := HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        spacing: 6px;
+        padding-left: Theme.sz-14;
+        padding-right: Theme.sz-14;
+        spacing: Theme.sp-6;
         alignment: center;
         if root.has-icon: Icon {
             y: (parent.height - self.height) / 2;
@@ -89,8 +101,8 @@ export component Btn inherits Rectangle {
             text: root.text;
             vertical-alignment: center;
             color: !root.enabled ? Theme.text-muted : root.primary || root.danger ? white : Theme.text-primary;
-            font-weight: 600;
-            font-size: 13px;
+            font-weight: Theme.w-semibold;
+            font-size: Theme.text-13;
         }
     }
     ta := TouchArea {
@@ -108,14 +120,14 @@ export component Field inherits Rectangle {
     in property <bool> enabled: true;
     callback accepted(string);
     callback edited(string);
-    height: 38px;
+    height: Theme.sz-38;
     border-radius: Theme.radius-sm;
     background: Theme.bg-tertiary;
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.border;
     HorizontalLayout {
-        padding-left: 12px;
-        padding-right: 12px;
+        padding-left: Theme.sp-12;
+        padding-right: Theme.sp-12;
         input := TextInput {
             text <=> root.text;
             enabled: root.enabled;
@@ -130,7 +142,7 @@ export component Field inherits Rectangle {
         }
     }
     if root.text == "" : Text {
-        x: 12px;
+        x: Theme.sp-12;
         height: parent.height;
         vertical-alignment: center;
         text: root.placeholder;
@@ -143,9 +155,9 @@ export component Field inherits Rectangle {
 /// A small coloured dot (state of a chat, the connection).
 export component Dot inherits Rectangle {
     in property <color> fill: Theme.text-muted;
-    width: 8px;
-    height: 8px;
-    border-radius: 4px;
+    width: Theme.sp-8;
+    height: Theme.sp-8;
+    border-radius: Theme.r-chip;
     background: root.fill;
 }
 
@@ -176,8 +188,8 @@ export global States {
 export component DashedBox inherits Rectangle {
     in property <color> line: Theme.border;
     in property <length> thick: 1px;
-    in property <length> dash: 3px;
-    in property <length> gap: 2px;
+    in property <length> dash: Theme.sp-4;
+    in property <length> gap: Theme.sp-2;
     in property <length> inset: 0px;
     in property <length> corner: 0px;
     property <length> w: self.width - 2 * self.inset;
