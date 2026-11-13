@@ -8,8 +8,10 @@
 //       arriving live), text size (clamped, saved, the new-chat default,
 //       kept across a restart), pin (locked dividers, kept across a
 //       restart), full screen (Esc leaves), the two-click × (disarms after
-//       3 s; closes the chat on the server), double-click to maximise, and
-//       the secrets lock's count, live.
+//       3 s and on a layout change; closes the chat on the server),
+//       double-click to maximise (nothing on a lone pane), presets keeping a
+//       pin, one full-screen pane at a time, leaving a rename input saves,
+//       and the secrets lock's count, live.
 //
 // Needs a FRESH dev server with no sign-in set up (this sets a password on it):
 //
@@ -113,6 +115,9 @@ const closeX = (q) => WB.x + q.x + q.w - 1 - 4 - 13.85;   // the ×: 27.7 wide, 
 const titleX = (q) => WB.x + q.x + 1 + 43 + 20;            // inside the title (it starts 43px in)
 
 let app = launch('run1');
+// Never leave the app behind (it would hold the driver's port for the next run).
+process.on('exit', () => { try { app.kill(); } catch {} });
+process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 d = await driver();
 
 // Sign in, open the project.
@@ -156,6 +161,17 @@ await http('POST', `/api/ui-sessions/${chatA}/rename`, { title: 'Meanwhile' }, t
 await sleep(1500);
 await key('Return');
 await until('an open rename survives a server push', async (q) => pane(q, chatA).title === 'Mine' && (await serverChat(chatA))?.title === 'Mine') && check('an open rename survives a server push', true);
+// Leaving the input (a click in the chat's log) saves too.
+await mouse('click', titleX(a), headY(a));
+await sleep(300);
+await key('Blurred');
+await mouse('click', WB.x + a.x + a.w / 2, WB.y + a.y + a.h / 2);
+await sleep(500);
+await snap('2.1-rename-blur');
+await until('a click in the chat log leaves the input and saves the rename', async (q) => pane(q, chatA).title === 'Blurred' && (await serverChat(chatA))?.title === 'Blurred', 5000) && check('a click in the chat log saves the rename', true);
+// Focus moving to the composer saves it too.
+await mouse('click', WB.x + a.x + 100, WB.y + a.y + a.h - 56);
+await until('focus moving to the composer saves the rename', async (q) => pane(q, chatA).title === 'Blurred' && (await serverChat(chatA))?.title === 'Blurred') && check('focus moving to the composer saves the rename', true);
 
 // Text size: A+ / A- step, clamp at 9…24, reset to 13; saved per chat and as the new-chat default.
 await ui('pane-font', a.id, 1);
@@ -184,6 +200,14 @@ const leaves = (n) => (n.t === 'leaf' ? [n] : n.kids.flatMap(leaves));
 const savedLeaf = leaves(saved().layouts?.demo?.root || { t: 'split', kids: [] }).find((l) => l.key === 'live:' + chatA);
 check('the pin is saved with the layout', savedLeaf?.pin?.w === pinW && savedLeaf.pin.h > 0, saved().layouts);
 await snap('2.1-pinned');
+// Layout presets keep the pin.
+await ui('add-pane', 'layout:rows');
+p = await until('the rows preset keeps the pin', (q) => pane(q, chatA)?.pinned && pane(q, chatB) && pane(q, chatA).y < pane(q, chatB).y);
+if (p) check('a layout preset keeps the pin', true);
+await ui('add-pane', 'layout:cols');
+p = await until('back to two columns, still pinned', (q) => pane(q, chatA)?.pinned && pane(q, chatB) && Math.abs(pane(q, chatA).y - pane(q, chatB).y) < 1 && q.panes.length === 2);
+if (p) check('another preset keeps it too', Math.round(pane(p, chatA).w) === pinW, p.panes);
+a = pane(p, chatA);   // a preset makes new leaves (new ids)
 
 // Double-click the header's background: 92 / 8, again: even. (Unpinned
 // first: a pinned neighbour keeps its size.)
@@ -213,6 +237,13 @@ check('full screen covers the window', p.full && p.full.w >= 1000 && p.full.h >=
 await snap('2.1-full');
 await key('Escape');
 await until('Esc leaves full screen', (q) => q.full === null) && check('Esc leaves full screen', true);
+// Only one pane is full at a time, and the button leaves it.
+await ui('pane-full', a.id);
+await until('full screen again', (q) => q.full?.key === 'live:' + chatA);
+await ui('pane-full', pane(await props(), chatB).id);
+await until('another pane full replaces the first', (q) => q.full?.key === 'live:' + chatB) && check('only one pane is full at a time', true);
+await ui('pane-full', pane(await props(), chatB).id);
+await until('the button leaves full screen', (q) => q.full === null) && check('the full button leaves full screen', true);
 
 // The secrets lock: its count follows the server live.
 const caps = (await http('GET', '/api/handshake')).body?.server?.capabilities || [];
@@ -256,6 +287,14 @@ await ui('pane-close', bq.id);
 p = await props();
 check('only one pane is armed', pane(p, chatB).armed && !pane(p, chatA).armed, p.panes);
 await sleep(3300);
+// A layout change disarms it, so a click after a redraw never closes unwarned.
+await ui('pane-close', bq.id);
+await until('armed again', (q) => pane(q, chatB).armed);
+await ui('pane-pin', bq.id);
+p = await until('a layout change disarms the ×', (q) => !pane(q, chatB).armed && pane(q, chatB).pinned);
+if (p) check('a layout change disarms the ×', true);
+await ui('pane-pin', bq.id);
+await until('unpinned again', (q) => !pane(q, chatB).pinned);
 bq = pane(await props(), chatB);
 await mouse('click', closeX(bq), headY(bq));
 await sleep(200);
@@ -263,6 +302,13 @@ await mouse('click', WB.x + bq.x + bq.w - 1 - 4 - 22.4, headY(bq));   // "Sure?"
 await until('two clicks close the pane', (q) => !pane(q, chatB));
 await until('the chat is closed on the server', async () => { const c = await serverChat(chatB); return !c || c.status === 'exited'; }) && check('two clicks close the chat', true);
 check('a closed chat forgets its text size', !(chatB in (saved().font || {})), saved().font);
+// A lone pane: a double-click on its header changes nothing.
+p = await props();
+const lone = pane(p, chatA);
+await mouse('dblclick', WB.x + lone.x + lone.w / 2 + 60, headY(lone));
+await sleep(600);
+p = await props();
+check('a double-click on a lone pane changes nothing', p.panes.length === 1 && Math.abs(pane(p, chatA).w - lone.w) < 1 && Math.abs(pane(p, chatA).h - lone.h) < 1 && p.full === null, p.panes);
 
 d.close();
 app.kill();
