@@ -74,8 +74,8 @@ the web page it shows; this one has no such page.
 - **The saved login:** the refresh token, in the user's config folder, readable
   by the user only (`src/store.rs`). Access tokens are never written down. A
   restart signs in again on its own.
-- **The window copies the PC client's design exactly** (src/webapp-html.js,
-  measured from the running page):
+- **The window keeps the PC client's layout and user experience** (src/webapp-html.js),
+  drawn with one constant theme (`ui/theme.slint`, DESIGN.md):
   - the 48px top bar, with the logo, the project and the connection badge;
   - the 240px projects sidebar, with Add project and Inbox;
   - the tab bar, with Workbench and its "+", the other tabs, and Browser on
@@ -160,8 +160,9 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
 
 ## Adding a screen
 
-**Read `DESIGN.md` first.** Every screen copies the PC client's design
-exactly: measured, compared side by side, and reviewed against a checklist.
+**Read `DESIGN.md` first.** Every screen keeps the PC client's layout and
+user experience (same parts, arrangement, controls, behaviour and states),
+drawn with the theme's tokens, not the web's pixel values.
 
 Each screen follows the same pattern, so they stay alike:
 
