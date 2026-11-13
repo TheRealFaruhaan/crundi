@@ -1907,6 +1907,20 @@ export function getWebappHtml(botUsername, appVersion = '') {
     #add-project-modal button.primary { background: var(--accent); border-color: var(--accent); }
     #add-project-modal button.primary:hover { background: var(--accent-hover); }
 
+    /* ─── An app signing in through this page (src/app-login.js) ───
+       Above the What's-new tour (5000): someone signing an app in came for this. */
+    #app-login-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 5100; align-items: center; justify-content: center; }
+    #app-login-modal.visible { display: flex; }
+    #app-login-modal .modal { background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; width: 90%; max-width: 400px; }
+    #app-login-modal h3 { margin-bottom: 10px; font-size: 1.1rem; }
+    #app-login-modal p { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 14px; }
+    #app-login-modal .al-code { font-family: var(--mono); font-size: 1.4rem; letter-spacing: 0.3em; text-align: center; color: var(--text-primary); margin: 4px 0 18px; }
+    #app-login-modal .modal-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+    #app-login-modal button { padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer; font-size: 0.88rem; }
+    #app-login-modal button:hover { background: var(--bg-hover); }
+    #app-login-modal button.primary { background: var(--accent); border-color: var(--accent); }
+    #app-login-modal button.primary:hover { background: var(--accent-hover); }
+
     /* ─── Notification Toast ─── */
     /* Info messages come in at the top: at the bottom they sat on the message
        box and the Send button. Just under the top bar, on the right, on a
@@ -3836,6 +3850,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
   </div>
 
   <!-- ─── Add Project Modal ─── -->
+  <div id="app-login-modal">
+    <div class="modal">
+      <h3 id="al-title">Sign in an app?</h3>
+      <p id="al-text"></p>
+      <div class="al-code" id="al-code"></div>
+      <div id="al-err" style="color:var(--red);font-size:0.8rem;margin-bottom:10px;"></div>
+      <div class="modal-buttons">
+        <button id="al-deny">Deny</button>
+        <button id="al-allow" class="primary">Allow</button>
+      </div>
+    </div>
+  </div>
   <div id="add-project-modal">
     <div class="modal">
       <h3>Add Project</h3>
@@ -7259,9 +7285,58 @@ export function getWebappHtml(botUsername, appVersion = '') {
       const b = document.getElementById('boot');
       if (b) b.classList.add('gone');
     }
+    // ─── An app signing in through this page (src/app-login.js) ───
+    // The native PC client opens <server>/?app=<id>. Kept across a sign-in
+    // provider's redirect, and taken out of the address bar.
+    (function () {
+      try {
+        var m = location.search.match(/[?&]app=([a-f0-9]{24})/);
+        if (m) { sessionStorage.setItem('crundi_app_login', m[1]); history.replaceState(null, '', location.pathname + location.hash); }
+      } catch (e) { /* no storage: the request just waits for another try */ }
+    })();
+    // Once signed in: "Sign in Crundi on <device>?", with the code to compare.
+    async function checkAppLogin() {
+      var id = null;
+      try { id = sessionStorage.getItem('crundi_app_login'); sessionStorage.removeItem('crundi_app_login'); } catch (e) { /* none */ }
+      if (!id || userRole === 'collaborator') return;
+      var r = null;
+      try { r = await (await apiFetch('/api/auth/app/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })).json(); } catch (e) { return; }
+      var modal = document.getElementById('app-login-modal');
+      var live = !!(r && r.ok);
+      var name = (live && r.device && r.device.name) || 'this computer';
+      document.getElementById('al-title').textContent = live ? 'Sign in Crundi on ' + name + '?' : 'Sign-in request';
+      document.getElementById('al-text').textContent = live
+        ? 'The Crundi app on ' + name + ' asked to sign in as you. Allow it only if you started this, and the code below matches the one the app shows.'
+        : ((r && r.error) || 'This sign-in request has expired.');
+      document.getElementById('al-code').textContent = live ? r.confirmCode : '';
+      document.getElementById('al-err').textContent = '';
+      var allow = document.getElementById('al-allow'), deny = document.getElementById('al-deny');
+      allow.style.display = live ? '' : 'none';
+      deny.textContent = live ? 'Deny' : 'Close';
+      var answer = async function (yes) {
+        if (!live) { modal.classList.remove('visible'); return; }
+        allow.disabled = deny.disabled = true;
+        try {
+          var a = await (await apiFetch('/api/auth/app/' + (yes ? 'approve' : 'deny'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: id }) })).json();
+          if (a && a.ok) {
+            modal.classList.remove('visible');
+            toast(yes ? 'Crundi on ' + name + ' is signed in. You can go back to the app.' : 'Sign-in denied', yes ? 'success' : '');
+          } else {
+            document.getElementById('al-err').textContent = (a && a.error) || 'That did not work.';
+          }
+        } catch (e) { document.getElementById('al-err').textContent = 'Could not reach the server.'; }
+        allow.disabled = deny.disabled = false;
+      };
+      allow.onclick = function () { answer(true); };
+      deny.onclick = function () { answer(false); };
+      modal.classList.add('visible');
+    }
+
     function showApp() {
       hideBoot();
       appReady = true;
+      // An app waiting to be signed in through this page.
+      setTimeout(checkAppLogin, 400);
       // The voice assistant's mic button: only once signed in, the owner's alone.
       setTimeout(attachVoice, 0);
       // Arrived from a factory link (the phone's chat page): open that run.

@@ -79,6 +79,7 @@ import * as serverUpdate from './server-update.js';
 import * as whatsNew from './whatsnew.js';
 import * as clientVersion from './client-version.js';
 import { createPairing, pairingLink, cleanDevice } from './pairing.js';
+import { createAppLogins } from './app-login.js';
 import { gitLog, gitShow } from './git-log.js';
 import { toSvg as qrSvg } from './qr.js';
 import { toSvg as crundiCodeSvg, doneClass as crundiCodeDoneClass, DONE_MS as CRUNDI_CODE_DONE_MS } from './crundi-code.js';
@@ -373,6 +374,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const families = new Map();   // familyId -> { username, createdAt, lastSeenAt, userAgent, ip, device? }
   // One-time codes that let a phone become a signed-in device. See pairing.js.
   const pairing = createPairing();
+  // Apps signing in through the browser (src/app-login.js).
+  const appLogins = createAppLogins();
 
   /**
    * Would anything bring this process back if it stopped?
@@ -4571,6 +4574,49 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!who.collabKey) setForwardCookie(res);
       const paired = pairDevice(who, body.device, req);
       return json(res, { ok: true, username: who.username, ...paired, server: clientVersion.handshake(req, APP_VERSION).server });
+    }
+
+    // ─── An app signing in through the browser (src/app-login.js) ───
+    // The native PC client opens this server's web page in the person's
+    // browser; they sign in there with any method this server offers and
+    // allow the app, which collects a device login of its own.
+    if (path === '/api/auth/app/start' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* defaults */ }
+      // The address the app reached this server at: known to work from there.
+      let base = '';
+      try { const u = new URL(String(body.origin || '')); if (/^https?:$/.test(u.protocol)) base = u.origin; } catch { /* below */ }
+      if (!base) {
+        const proto = String(req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http')).split(',')[0].trim();
+        base = proto + '://' + String(req.headers.host || 'localhost');
+      }
+      const started = appLogins.start(body.device);
+      if (!started) return json(res, { ok: false, error: 'Too many sign-ins waiting. Try again in a few minutes.' }, 429);
+      return json(res, { ok: true, url: base + '/?app=' + started.id, pollId: started.pollId, confirmCode: started.confirmCode, expiresIn: started.expiresIn });
+    }
+    if (path === '/api/auth/app/info' && req.method === 'POST') {
+      if (!validateToken(req)) return json(res, { error: 'Unauthorized' }, 401);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as gone */ }
+      const info = appLogins.info(body.id);
+      return json(res, info ? { ok: true, ...info } : { ok: false, error: 'This sign-in request has expired or was already answered.' });
+    }
+    if ((path === '/api/auth/app/approve' || path === '/api/auth/app/deny') && req.method === 'POST') {
+      const principal = validateToken(req);
+      if (!principal) return json(res, { error: 'Unauthorized' }, 401);
+      // Invitees use the web UI, not the client.
+      if (principal.collabKey) return json(res, { ok: false, error: 'Only the owner can sign an app in.' }, 403);
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as gone */ }
+      const done = path.endsWith('/approve')
+        ? appLogins.approve(body.id, (device) => ({ username: principal.username, ...pairDevice({ username: principal.username, collabKey: '' }, device, req), server: clientVersion.handshake(req, APP_VERSION).server }))
+        : appLogins.deny(body.id);
+      return json(res, done ? { ok: true } : { ok: false, error: 'This sign-in request has expired or was already answered.' });
+    }
+    if (path === '/api/auth/app/poll' && req.method === 'POST') {
+      let body = {};
+      try { body = JSON.parse(await readBody(req) || '{}'); } catch { /* reads as expired */ }
+      return json(res, { ok: true, ...appLogins.poll(body.pollId) });
     }
 
     // A page login for a paired phone, asked for by the phone itself.

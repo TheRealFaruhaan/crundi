@@ -16,7 +16,7 @@
 
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, openSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
@@ -55,9 +55,11 @@ check('a project to work in', proj.status < 300, proj.body);
 
 // ─── The app and its driver ───
 const configDir = mkdtempSync(join(tmpdir(), 'crundi-native-config-'));
+// The app writes the browser address here instead of opening a browser.
+const URL_FILE = join(configDir, 'open-url.txt');
 function launch(tag) {
   const log = openSync(join(OUT, `native-${tag}.log`), 'w');
-  const app = spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank' }, stdio: ['ignore', log, log] });
+  const app = spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: URL_FILE, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank' }, stdio: ['ignore', log, log] });
   return app;
 }
 
@@ -156,6 +158,26 @@ const link = SERVER + '/pair#' + String(pair.body?.link || '').split('#')[1];
 await ui(d, 'sign-in-pair', link);
 await until(d, 'signed in by pairing', (x) => x.props.signedIn) && check('signed in by pairing', true);
 await snap(d, '5-paired');
+
+// 4b. Through the browser: the app opens the server's page, the person signs in
+// there and allows it (here: the page's "Allow", through the API), and the
+// app collects a login of its own.
+await ui(d, 'sign-out');
+await until(d, 'signed out again', (x) => !x.props.signedIn) && check('signed out again', true);
+await ui(d, 'check-server', SERVER);
+await until(d, 'the login step again', (x) => x.props.signinChecked);
+await ui(d, 'sign-in-browser', SERVER, 'telegram');
+const waiting = await until(d, 'the app shows the code to compare', (x) => x.props.oauthCode !== '');
+let pageUrl = '';
+for (let i = 0; i < 20 && !pageUrl; i++) { try { pageUrl = readFileSync(URL_FILE, 'utf8'); } catch { await sleep(250); } }
+check('the app opens the server page for it', /\/\?app=[a-f0-9]{24}$/.test(pageUrl), pageUrl);
+const appId = (pageUrl.match(/app=([a-f0-9]{24})/) || [])[1];
+const info = await http('POST', '/api/auth/app/info', { id: appId }, token);
+check('the page sees this computer and the same code', waiting && info.body?.ok && info.body.confirmCode === waiting.props.oauthCode, [info.body, waiting?.props.oauthCode]);
+const allowed = await http('POST', '/api/auth/app/approve', { id: appId }, token);
+check('allowing it on the page', allowed.body?.ok, allowed.body);
+await until(d, 'signed in through the browser', (x) => x.props.signedIn) && check('signed in through the browser', true);
+await snap(d, '5b-browser');
 
 // 5. A restart picks the login up again.
 d.close();

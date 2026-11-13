@@ -156,7 +156,8 @@ export component SignInPage inherits Rectangle {
     in property <bool> offer-password;
     in property <bool> offer-google;
     in property <bool> offer-github;
-    // Google / GitHub: the code the browser page shows too, while waiting.
+    in property <bool> offer-telegram;
+    // Signing in through the browser: the code the browser page shows too, while waiting.
     in property <string> oauth-code;
     callback save-server(string);
     callback change-server();
@@ -175,7 +176,7 @@ export component SignInPage inherits Rectangle {
     property <string> code;
     property <string> url: root.server;
     property <bool> pairing;
-    property <bool> buttons: root.offer-google || root.offer-github;
+    property <bool> buttons: root.offer-telegram || root.offer-google || root.offer-github;
     // The card's prompt, as the web login words it for what is on.
     property <string> prompt: root.pairing ? "Paste the pairing link from a signed-in device"
         : root.buttons ? "Sign in to continue"
@@ -334,7 +335,7 @@ export component SignInPage inherits Rectangle {
                         // Google / GitHub, waiting on the browser.
                         if root.oauth-code != "": VerticalLayout {
                             spacing: 6px;
-                            Text { text: "Finish signing in in your browser. Check that it shows this code:"; font-size: 12.8px; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: 260px; }
+                            Text { text: "Sign in and allow this computer in your browser. Check that it shows this code:"; font-size: 12.8px; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: 260px; }
                             Text { text: root.oauth-code; font-family: Theme.mono; font-size: 22.4px; letter-spacing: 6.7px; color: Theme.text-primary; horizontal-alignment: center; }
                             QuietLink { text: "Cancel"; color: Theme.accent-hover; clicked => { root.cancel(); } }
                         }
@@ -348,6 +349,7 @@ export component SignInPage inherits Rectangle {
 
                         if root.oauth-code == "" && !root.pairing && root.buttons: VerticalLayout {
                             spacing: 10px;
+                            if root.offer-telegram: OAuthButton { logo: @image-url("brand/telegram.svg"); text: "Sign in with Telegram"; clicked => { root.sign-in-oauth(root.server, "telegram"); } }
                             if root.offer-google: OAuthButton { logo: @image-url("brand/google.svg"); text: "Sign in with Google"; clicked => { root.sign-in-oauth(root.server, "google"); } }
                             if root.offer-github: OAuthButton { logo: @image-url("brand/github.svg"); text: "Sign in with GitHub"; clicked => { root.sign-in-oauth(root.server, "github"); } }
                         }

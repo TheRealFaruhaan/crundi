@@ -126,13 +126,22 @@ jobs:
           PKG="$RUNNER_TEMP/pkg/crundi-native"
           mkdir -p "$PKG"
           case "$RUNNER_OS" in
-            macOS)   cp -R target/release/crundi-native.app "$PKG/" ;;
-            Windows) cp -R target/release/*.dll target/release/*.pak target/release/*.dat target/release/*.bin target/release/*.json \
-                       target/release/locales target/release/crundi-native.exe "$PKG/" ;;
-            Linux)   for f in target/release/*; do
-                       case "$(basename "$f")" in build|deps|examples|incremental|*.d|.*) ;; *) cp -RL "$f" "$PKG/" ;; esac
-                     done
-                     strip --strip-unneeded "$PKG/libcef.so" ;;
+            macOS)
+              cp -R target/release/crundi-native.app "$PKG/"
+              ;;
+            Windows)
+              cp -R target/release/*.dll target/release/*.pak target/release/*.dat target/release/*.bin target/release/*.json \
+                target/release/locales target/release/crundi-native.exe "$PKG/"
+              ;;
+            Linux)
+              for f in target/release/*; do
+                case "$(basename "$f")" in
+                  build|deps|examples|incremental|*.d|.*) ;;
+                  *) cp -RL "$f" "$PKG/" ;;
+                esac
+              done
+              strip --strip-unneeded "$PKG/libcef.so"
+              ;;
           esac
           cp README.md "$PKG/"
 

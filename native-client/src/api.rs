@@ -119,7 +119,6 @@ pub fn methods(base: &str) -> ApiResult {
 }
 
 /// The server's version and what it can do (no auth).
-#[allow(dead_code)] // for the client-version check (phase 7: shipping as "desktop")
 pub fn handshake(base: &str) -> ApiResult {
     open_call(base, "GET", "/api/handshake", None)
 }
@@ -167,6 +166,20 @@ pub fn oauth_start(base: &str, provider: &str) -> ApiResult {
 /// {status: waiting|confirm|failed|expired} or {status: done, token, refreshToken, expiresIn}.
 pub fn oauth_poll(base: &str, poll_id: &str) -> ApiResult {
     open_call(base, "POST", "/api/auth/oauth/poll", Some(&json!({ "pollId": poll_id })))
+}
+
+/// Signing in through the browser (the server's src/app-login.js): a
+/// pending login for this computer. Answers {url, pollId, confirmCode}: open
+/// url in the browser, where the person signs in with any method the server
+/// offers and allows this app; then [app_login_poll] collects the login.
+pub fn app_login_start(base: &str) -> ApiResult {
+    let name = gethostname::gethostname().to_string_lossy().to_string();
+    open_call(base, "POST", "/api/auth/app/start", Some(&json!({ "origin": base, "device": { "name": name, "platform": "desktop" } })))
+}
+
+/// {status: waiting|denied|expired}, or {status: approved, username, sessions: {page, background}}.
+pub fn app_login_poll(base: &str, poll_id: &str) -> ApiResult {
+    open_call(base, "POST", "/api/auth/app/poll", Some(&json!({ "pollId": poll_id })))
 }
 
 /// A saved login: a new access token (and refresh token) from the refresh token.

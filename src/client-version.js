@@ -69,6 +69,9 @@ export const MIN_CLIENT = Object.freeze({
 export const CAPABILITIES = Object.freeze([
   'handshake',
   'pairing',
+  // An app may sign in through the browser: /api/auth/app/start, the web
+  // page's "Sign in … on this computer?", /api/auth/app/poll (src/app-login.js).
+  'app-login',
   'mobile-push',
   // The phone app may hold its page's login itself and renew it for every
   // page it shows (POST /api/pair/page-login gives it one), instead of

@@ -55,6 +55,7 @@ export component MainWindow inherits Window {
     in property <bool> offer-password;
     in property <bool> offer-google;
     in property <bool> offer-github;
+    in property <bool> offer-telegram;
     in property <string> oauth-code;
     callback check-server(string);
     callback change-server();
@@ -145,6 +146,7 @@ export component MainWindow inherits Window {
         offer-password: root.offer-password;
         offer-google: root.offer-google;
         offer-github: root.offer-github;
+        offer-telegram: root.offer-telegram;
         oauth-code: root.oauth-code;
         save-server(s) => { root.check-server(s); }
         change-server => { root.change-server(); }

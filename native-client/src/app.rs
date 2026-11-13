@@ -65,6 +65,8 @@ pub struct App {
     sessions_dirty: bool,
     /// The last usage numbers, and when they came.
     usage: Option<(Value, std::time::Instant)>,
+    /// The server signs apps in through the browser ("app-login").
+    app_login: bool,
 }
 
 thread_local! {
@@ -135,6 +137,7 @@ pub fn init(window: &MainWindow) {
             sessions_busy: false,
             sessions_dirty: false,
             usage: None,
+            app_login: false,
         })
     });
 
@@ -207,12 +210,21 @@ fn check_server(input: &str) {
         return resume(saved);
     }
     busy(true, "");
-    bg(move || api::methods(&base).map(|m| (base, m)), |r| {
+    bg(move || {
+        let m = api::methods(&base)?;
+        // Whether it signs apps in through the browser (an older server does not).
+        let caps = api::handshake(&base).ok().and_then(|h| h.pointer("/server/capabilities").cloned()).unwrap_or(Value::Null);
+        let app_login = caps.as_array().map(|c| c.iter().any(|x| x == "app-login")).unwrap_or(false);
+        Ok::<_, ApiError>((base, m, app_login))
+    }, |r| {
         busy(false, "");
         let Some(w) = ui() else { return };
         match r {
-            Ok((base, m)) => {
+            Ok((base, m, app_login)) => {
+                with(|a| a.app_login = app_login);
                 let on = |k: &str| m.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+                // Telegram signs in through its web widget: only through the browser.
+                w.set_offer_telegram(app_login && on("telegram"));
                 w.set_signin_server(host_of(&base).into());
                 w.set_offer_password(on("password"));
                 w.set_offer_google(on("google"));
@@ -249,6 +261,9 @@ fn sign_in_password(server: String, password: String, code: String) {
 fn sign_in_oauth(server: String, provider: String) {
     busy(true, "");
     let base = api::normalize_base(&server);
+    if with(|a| a.app_login).unwrap_or(false) {
+        return sign_in_browser(base);
+    }
     let cancel = Arc::new(AtomicBool::new(false));
     with(|a| a.oauth_cancel = Some(cancel.clone()));
     bg(move || api::oauth_start(&base, &provider).map(|v| (base, v)), move |r| {
@@ -275,6 +290,57 @@ fn sign_in_oauth(server: String, provider: String) {
                 }
             }
             Err(ApiError::Status(0, "Sign-in timed out".into()))
+        }, |r| {
+            if let Some(w) = ui() { w.set_oauth_code("".into()); }
+            match r {
+                Err(ApiError::Status(0, m)) if m.is_empty() => busy(false, ""),
+                r => signed_in(r),
+            }
+        });
+    });
+}
+
+/// Through the browser, as other apps sign in with an OAuth service: the
+/// server's own web page, where the person signs in with any method it offers
+/// (Telegram, Google, GitHub, a password…) and allows this computer; this app
+/// waits for its login (the server's src/app-login.js).
+fn sign_in_browser(base: String) {
+    let cancel = Arc::new(AtomicBool::new(false));
+    with(|a| a.oauth_cancel = Some(cancel.clone()));
+    bg(move || api::app_login_start(&base).map(|v| (base, v)), move |r| {
+        let (base, v) = match r {
+            Ok(x) => x,
+            Err(e) => return busy(false, &e.to_string()),
+        };
+        let (url, poll_id, code) = (s(&v, "url"), s(&v, "pollId"), s(&v, "confirmCode"));
+        if url.is_empty() || poll_id.is_empty() { return busy(false, "The server did not start the sign-in"); }
+        // Tests (no desktop browser): CRUNDI_OPEN_URL_FILE gets the address instead.
+        let opened = match std::env::var_os("CRUNDI_OPEN_URL_FILE") {
+            Some(f) => std::fs::write(f, &url).map_err(|e| e.to_string()),
+            None => open::that(&url).map_err(|e| e.to_string()),
+        };
+        if let Err(e) = opened { return busy(false, &format!("Could not open the browser: {e}")); }
+        if let Some(w) = ui() { w.set_oauth_code(code.into()); w.set_signin_busy(false); }
+        bg(move || {
+            // The request lives ten minutes on the server.
+            for _ in 0..300 {
+                if cancel.load(Ordering::Relaxed) { return Err(ApiError::Status(0, String::new())); }
+                std::thread::sleep(Duration::from_secs(2));
+                match api::app_login_poll(&base, &poll_id) {
+                    Ok(v) => match s(&v, "status").as_str() {
+                        "approved" => {
+                            let tokens = v.pointer("/sessions/page").and_then(api::Tokens::from_answer).ok_or(ApiError::Status(0, "The server sent no session".into()))?;
+                            return Ok(SignedIn { base: base.clone(), tokens, username: s(&v, "username") });
+                        }
+                        "denied" => return Err(ApiError::Status(0, "The sign-in was denied in the browser.".into())),
+                        "expired" => return Err(ApiError::Status(0, "The sign-in request expired. Try again.".into())),
+                        _ => {}
+                    },
+                    Err(ApiError::Net(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Err(ApiError::Status(0, "The sign-in request expired. Try again.".into()))
         }, |r| {
             if let Some(w) = ui() { w.set_oauth_code("".into()); }
             match r {
