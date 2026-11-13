@@ -35,10 +35,14 @@ struct ChatPaneState {
 #[derive(Clone, PartialEq, Debug)]
 enum Row {
     Entry(Shown),
-    /// Claude's text, split at code fences: prose (markdown) or a code block.
-    Prose(String, String),
-    Code(String, String),
-    Tools(String, Vec<Shown>),
+    /// Claude's text in blocks: a paragraph, a list item (with its marker) or a
+    /// heading, as markdown; or a fenced code block. The last flag: the
+    /// message's last block (the gap after it is an entry's, 10px).
+    Prose(String, String, &'static str, String, bool),
+    Code(String, String, bool),
+    /// Tool calls: one on its own, or a batch Claude Code summed up (the summary).
+    Tool(String, Shown),
+    Tools(String, String, Vec<Shown>),
 }
 
 pub struct App {
@@ -59,6 +63,8 @@ pub struct App {
     oauth_cancel: Option<Arc<AtomicBool>>,
     sessions_busy: bool,
     sessions_dirty: bool,
+    /// The last usage numbers, and when they came.
+    usage: Option<(Value, std::time::Instant)>,
 }
 
 thread_local! {
@@ -128,6 +134,7 @@ pub fn init(window: &MainWindow) {
             oauth_cancel: None,
             sessions_busy: false,
             sessions_dirty: false,
+            usage: None,
         })
     });
 
@@ -301,6 +308,13 @@ fn start_session(si: SignedIn) {
         w.set_signin_checked(false);
     }
     load_all(saved.project);
+    // The usage bars now, not at the server's next push (as the web UI: latest, then fresh).
+    call(|api| api.get("/api/usage/latest").or_else(|_| api.get("/api/usage")), |r| {
+        if let Ok(u) = r { with(|a| a.usage = Some((u, std::time::Instant::now()))); show_usage(); }
+    });
+    call(|api| api.get("/api/inbox/threads"), |r| {
+        if let Ok(v) = r { if let (Some(n), Some(w)) = (v.get("unread").and_then(|n| n.as_i64()), ui()) { w.set_inbox_unread(n as i32); } }
+    });
 }
 
 pub fn sign_out(why: &str) {
@@ -351,7 +365,61 @@ fn on_live(e: Event) {
             load_sessions();
         }
         Event::Chat(m) => on_chat_message(&m),
+        Event::Usage(u) => { with(|a| a.usage = Some((u, std::time::Instant::now()))); show_usage(); }
+        Event::Inbox(v) => { if let Some(n) = v.get("unread").and_then(|n| n.as_i64()) { if let Some(w) = ui() { w.set_inbox_unread(n as i32); } } }
     }
+}
+
+// ─── The top bar: usage ───
+
+/// The usage bars (the web UI's renderUsage): per window, how much is used and
+/// how much of the window has passed; labels, and how old the numbers are.
+pub fn show_usage() {
+    let Some((u, at)) = with(|a| a.usage.clone()).flatten() else { return };
+    let Some(w) = ui() else { return };
+    if !u.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) { return; }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let window = |k: &str, span: f64| -> (f32, f32, String) {
+        let used = u.pointer(&format!("/{k}/utilization")).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let resets = u.pointer(&format!("/{k}/resetsAt")).and_then(|v| v.as_str()).and_then(parse_iso).unwrap_or(0.0);
+        let left = (resets - now).max(0.0);
+        let passed = if resets > 0.0 { (100.0 * (1.0 - left / span)).clamp(0.0, 100.0) } else { 0.0 };
+        let (d, h, m) = ((left / 86400.0) as u64, ((left % 86400.0) / 3600.0) as u64, ((left % 3600.0) / 60.0) as u64);
+        let label = if d > 0 { format!("{d}d {h}h") } else if h > 0 { format!("{h}h {m}m") } else { format!("{m}m") };
+        (used.min(100.0) as f32, passed as f32, label)
+    };
+    let (wu, wt, wl) = window("week", 7.0 * 86400.0);
+    let (fu, ft, fl) = window("fiveHour", 5.0 * 3600.0);
+    w.set_usage_on(true);
+    w.set_wk_used(wu); w.set_wk_time(wt); w.set_wk_left(wl.into());
+    w.set_fh_used(fu); w.set_fh_time(ft); w.set_fh_left(fl.into());
+    let mins = at.elapsed().as_secs() / 60;
+    w.set_usage_age(if mins == 0 { "just now".into() } else if mins < 60 { format!("{mins}m ago").into() } else { format!("{}h ago", mins / 60).into() });
+}
+
+/// Seconds since 1970 from an ISO date ("2026-11-19T01:59:59.000Z" or with an offset).
+fn parse_iso(s: &str) -> Option<f64> {
+    let (date, rest) = s.split_once('T')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>());
+    let (y, mo, da) = (d.next()?.ok()?, d.next()?.ok()?, d.next()?.ok()?);
+    let (time, zone) = match rest.find(['Z', '+', '-']) { Some(i) => (&rest[..i], &rest[i..]), None => (rest, "Z") };
+    let mut t = time.split(':');
+    let (hh, mm) = (t.next()?.parse::<i64>().ok()?, t.next()?.parse::<i64>().ok()?);
+    let ss: f64 = t.next().unwrap_or("0").parse().ok()?;
+    let offset = if zone == "Z" || zone.is_empty() { 0 } else {
+        let sign = if zone.starts_with('-') { -1 } else { 1 };
+        let z = &zone[1..];
+        let (zh, zm) = z.split_once(':').unwrap_or((z.get(..2).unwrap_or("0"), z.get(2..).unwrap_or("0")));
+        sign * (zh.parse::<i64>().unwrap_or(0) * 3600 + zm.parse::<i64>().unwrap_or(0) * 60)
+    };
+    // Days from civil (Howard Hinnant).
+    let (y2, m2) = if mo <= 2 { (y - 1, mo + 9) } else { (y, mo - 3) };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * m2 + 2) / 5 + da - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some((days * 86400 + hh * 3600 + mm * 60 - offset) as f64 + ss)
 }
 
 // ─── Projects ───
@@ -413,6 +481,7 @@ fn show_projects() {
         let rows: Vec<ProjectItem> = a.projects.iter().map(|p| {
             let alias = s(p, "alias");
             ProjectItem {
+                initials: { let n = s(p, "name"); let n = if n.is_empty() { alias.clone() } else { n }; n.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).take(2).filter_map(|w| w.chars().next()).collect::<String>().to_uppercase() }.into(),
                 name: { let n = s(p, "name"); if n.is_empty() { alias.clone() } else { n } }.into(),
                 state: project_state(a, &alias).into(),
                 alias: alias.into(),
@@ -621,81 +690,126 @@ fn on_chat_message(m: &Value) {
     }
 }
 
-/// Claude's text as rows: prose (markdown) and fenced code blocks.
-fn split_fences(id: &str, text: &str) -> Vec<Row> {
-    let mut out = vec![];
-    let mut prose = String::new();
+/// Claude's text as rows: markdown blocks (paragraphs, list items, headings)
+/// and fenced code blocks, so each gets the web chat's spacing.
+fn split_blocks(id: &str, text: &str) -> Vec<Row> {
+    let mut out: Vec<Row> = vec![];
+    let mut para = String::new();
     let mut code: Option<String> = None;
+    let n = |out: &Vec<Row>| format!("{id}#{}", out.len());
+    let flush = |para: &mut String, out: &mut Vec<Row>| {
+        if !para.trim().is_empty() { out.push(Row::Prose(n(out), para.trim_end().to_string(), "p", String::new(), false)); }
+        para.clear();
+    };
     for line in text.split('\n') {
-        if line.trim_start().starts_with("```") {
+        let t = line.trim_start();
+        if t.starts_with("```") {
             match code.take() {
-                Some(c) => out.push(Row::Code(format!("{id}#{}", out.len()), c.trim_end().to_string())),
-                None => {
-                    if !prose.trim().is_empty() { out.push(Row::Prose(format!("{id}#{}", out.len()), prose.trim_end().to_string())); }
-                    prose.clear();
-                    code = Some(String::new());
-                }
+                Some(c) => out.push(Row::Code(n(&out), c.trim_end().to_string(), false)),
+                None => { flush(&mut para, &mut out); code = Some(String::new()); }
             }
             continue;
         }
-        match &mut code {
-            Some(c) => { c.push_str(line); c.push('\n'); }
-            None => { prose.push_str(line); prose.push('\n'); }
+        if let Some(c) = &mut code { c.push_str(line); c.push('\n'); continue; }
+        if t.is_empty() { flush(&mut para, &mut out); continue; }
+        // A list item: "- ", "* ", "+ ", or "1. ".
+        let bullet = ["- ", "* ", "+ "].iter().find_map(|b| t.strip_prefix(b)).map(|r| ("•".to_string(), r));
+        let numbered = t.split_once(". ").filter(|(d, _)| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit())).map(|(d, r)| (format!("{d}."), r));
+        if let Some((marker, rest)) = bullet.or(numbered) {
+            flush(&mut para, &mut out);
+            out.push(Row::Prose(n(&out), rest.to_string(), "li", marker, false));
+            continue;
         }
+        if let Some(h) = t.strip_prefix("#") {
+            flush(&mut para, &mut out);
+            out.push(Row::Prose(n(&out), format!("**{}**", h.trim_start_matches('#').trim()), "h", String::new(), false));
+            continue;
+        }
+        para.push_str(line);
+        para.push('\n');
     }
-    if let Some(c) = code { out.push(Row::Code(format!("{id}#{}", out.len()), c)); }
-    if !prose.trim().is_empty() { out.push(Row::Prose(format!("{id}#{}", out.len()), prose.trim_end().to_string())); }
+    if let Some(c) = code { out.push(Row::Code(n(&out), c, false)); }
+    flush(&mut para, &mut out);
+    match out.last_mut() {
+        Some(Row::Prose(_, _, _, _, last)) | Some(Row::Code(_, _, last)) => *last = true,
+        _ => {}
+    }
     out
 }
 
-/// The log's rows: consecutive tool calls in one group ("N tools"), Claude's
-/// text split at code fences.
+/// The log's rows: tool calls on their own, or folded into the batch Claude
+/// Code summed up; Claude's text in blocks.
 fn rows_of(shown: &[Shown]) -> Vec<Row> {
     let mut rows = vec![];
-    let mut group: Vec<Shown> = vec![];
-    let flush = |group: &mut Vec<Shown>, rows: &mut Vec<Row>| {
-        if !group.is_empty() {
-            rows.push(Row::Tools(group[0].id.clone(), std::mem::take(group)));
+    let mut i = 0;
+    while i < shown.len() {
+        let e = &shown[i];
+        if e.kind == "tool" && !e.group.is_empty() && !e.group_summary.is_empty() {
+            let mut batch = vec![e.clone()];
+            while i + 1 < shown.len() && shown[i + 1].kind == "tool" && shown[i + 1].group == e.group { i += 1; batch.push(shown[i].clone()); }
+            rows.push(Row::Tools(e.id.clone(), e.group_summary.clone(), batch));
+        } else if e.kind == "tool" {
+            rows.push(Row::Tool(e.id.clone(), e.clone()));
+        } else if e.kind == "assistant" {
+            rows.extend(split_blocks(&e.id, &e.text));
+        } else {
+            rows.push(Row::Entry(e.clone()));
         }
-    };
-    for e in shown {
-        if e.kind == "tool" { group.push(e.clone()); continue; }
-        flush(&mut group, &mut rows);
-        if e.kind == "assistant" { rows.extend(split_fences(&e.id, &e.text)); } else { rows.push(Row::Entry(e.clone())); }
+        i += 1;
     }
-    flush(&mut group, &mut rows);
     rows
 }
 
+/// Inline code gets the web chat's 5px padding inside its chip (thin spaces:
+/// StyledText draws the chip around the text only).
+fn pad_code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut inside = false;
+    for c in text.chars() {
+        if c == '`' {
+            if inside { out.push('\u{2009}'); out.push('`'); } else { out.push('`'); out.push('\u{2009}'); }
+            inside = !inside;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn md(text: &str) -> StyledText {
+    let text = &pad_code(text);
     StyledText::from_markdown(text).unwrap_or_else(|_| StyledText::from_markdown(&text.replace(['<', '>', '*', '_', '`', '[', ']'], "")).unwrap_or_default())
+}
+
+fn tool_view(t: &Shown) -> ToolView {
+    ToolView { title: t.title.clone().into(), detail: t.detail.clone().into(), text: t.text.clone().into(), status: t.status.clone().into(), error: t.error }
 }
 
 fn to_view(r: &Row) -> EntryView {
     match r {
-        Row::Prose(id, t) => EntryView { id: id.clone().into(), kind: "assistant".into(), text: t.clone().into(), md: md(t), ..Default::default() },
-        Row::Code(id, t) => EntryView { id: id.clone().into(), kind: "code".into(), text: t.clone().into(), ..Default::default() },
-        Row::Tools(id, tools) => {
-            let running = tools.iter().any(|t| t.status == "running");
-            let error = tools.iter().any(|t| t.error);
-            let first = &tools[0];
-            EntryView {
-                id: id.clone().into(),
-                kind: "tools".into(),
-                title: (if !first.note.is_empty() { first.note.clone() } else if first.detail.is_empty() { first.title.clone() } else { format!("{} {}", first.title, first.detail) }).into(),
-                detail: format!("{} tool{}", tools.len(), if tools.len() == 1 { "" } else { "s" }).into(),
-                status: if running { "running".into() } else { "done".into() },
-                error,
-                tools: ModelRc::new(VecModel::from(tools.iter().map(|t| ToolView {
-                    title: t.title.clone().into(),
-                    detail: t.detail.clone().into(),
-                    text: t.text.clone().into(),
-                    status: t.status.clone().into(),
-                    error: t.error,
-                }).collect::<Vec<_>>())),
-                ..Default::default()
-            }
-        }
+        Row::Prose(id, t, kind, marker, last) => EntryView {
+            id: id.clone().into(), kind: "assistant".into(), text: t.clone().into(), md: md(t),
+            status: (*kind).into(), title: marker.clone().into(),
+            // Paragraphs 8px apart, list items 4px (their 2px margins), the message 10px.
+            gap: if *last { 10.0 } else if *kind == "li" { 2.0 } else { 8.0 },
+            ..Default::default()
+        },
+        Row::Code(id, t, last) => EntryView { id: id.clone().into(), kind: "code".into(), text: t.clone().into(), gap: if *last { 10.0 } else { 8.0 }, ..Default::default() },
+        Row::Tool(id, t) => EntryView {
+            id: id.clone().into(), kind: "tool".into(), status: t.status.clone().into(), error: t.error,
+            tools: ModelRc::new(VecModel::from(vec![tool_view(t)])), gap: 10.0, ..Default::default()
+        },
+        Row::Tools(id, summary, tools) => EntryView {
+            id: id.clone().into(),
+            kind: "tools".into(),
+            title: summary.clone().into(),
+            detail: format!("{} tool{}", tools.len(), if tools.len() == 1 { "" } else { "s" }).into(),
+            status: if tools.iter().any(|t| t.status == "running") { "running".into() } else { "done".into() },
+            error: tools.iter().any(|t| t.error),
+            tools: ModelRc::new(VecModel::from(tools.iter().map(tool_view).collect::<Vec<_>>())),
+            gap: 10.0,
+            ..Default::default()
+        },
         Row::Entry(e) => EntryView {
             id: e.id.clone().into(),
             kind: e.kind.into(),
@@ -706,6 +820,7 @@ fn to_view(r: &Row) -> EntryView {
             error: e.error,
             request_id: e.request_id.clone().into(),
             options: ModelRc::new(VecModel::from(e.options.iter().map(|o| SharedString::from(o.as_str())).collect::<Vec<_>>())),
+            gap: 10.0,
             ..Default::default()
         },
     }

@@ -10,7 +10,7 @@ import { Workbench, AddMenu, PaneView, GutterView } from "workbench.slint";
 import { EntryView, ToolView } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme }
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -20,6 +20,8 @@ export component MainWindow inherits Window {
     min-height: 520px;
     background: Theme.bg-primary;
     default-font-size: 13px;
+    // No system frame, as the Electron client: the top bar has the window buttons.
+    no-frame: root.signed-in && !root.browser-only;
 
     // ─── The session ───
     in property <bool> signed-in;
@@ -28,6 +30,20 @@ export component MainWindow inherits Window {
     in property <string> username;
     in property <string> server;
     callback sign-out();
+    // The top bar: usage, the inbox, the window buttons.
+    in property <bool> usage-on;
+    in property <float> wk-used;
+    in property <float> wk-time;
+    in property <string> wk-left;
+    in property <float> fh-used;
+    in property <float> fh-time;
+    in property <string> fh-left;
+    in property <string> usage-age;
+    in property <int> inbox-unread;
+    callback win-drag();
+    callback win-min();
+    callback win-max();
+    callback win-close();
 
     // ─── Signing in ───
     in-out property <string> signin-server;
@@ -134,12 +150,24 @@ export component MainWindow inherits Window {
     }
 
     if !root.browser-only && root.signed-in: VerticalLayout {
-        TopBar { project-name: root.project-name; online: root.online; }
+        TopBar {
+            project-name: root.project-name;
+            online: root.online;
+            usage-on: root.usage-on;
+            wk-used: root.wk-used; wk-time: root.wk-time; wk-left: root.wk-left;
+            fh-used: root.fh-used; fh-time: root.fh-time; fh-left: root.fh-left;
+            usage-age: root.usage-age;
+            drag => { root.win-drag(); }
+            minimize => { root.win-min(); }
+            maximize => { root.win-max(); }
+            close => { root.win-close(); }
+        }
         HorizontalLayout {
             vertical-stretch: 1;
             ProjectSidebar {
                 projects: root.projects;
                 current: root.current-project;
+                inbox-unread: root.inbox-unread;
                 select(a) => { root.select-project(a); }
             }
             VerticalLayout {

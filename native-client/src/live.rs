@@ -53,6 +53,9 @@ pub enum Event {
     Chat(Value),
     /// The event stream's "state": projects, chats (terminals), services…
     State(Value),
+    /// The account's usage (the top bar's bars) and the inbox's unread count.
+    Usage(Value),
+    Inbox(Value),
     SignedOut,
 }
 
@@ -150,8 +153,12 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, to_ui: impl Fn(Event)) {
     while !stop.load(Ordering::Relaxed) {
         let r = api.events(|name, data| {
             if stop.load(Ordering::Relaxed) { return; }
-            if name == "state" {
-                if let Ok(v) = serde_json::from_str::<Value>(data) { to_ui(Event::State(v)); }
+            let Ok(v) = serde_json::from_str::<Value>(data) else { return };
+            match name {
+                "state" => to_ui(Event::State(v)),
+                "usage" => to_ui(Event::Usage(v)),
+                "inbox" => to_ui(Event::Inbox(v)),
+                _ => {}
             }
         });
         match r {

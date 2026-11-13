@@ -194,7 +194,7 @@ export component Workbench inherits Rectangle {
                 // A click anywhere in the pane focuses it (behind its content).
                 TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-pane(p.id); } } }
                 // The focused pane's 1px accent ring.
-                if p.focused: Rectangle { border-radius: 11px; border-width: 1px; border-color: #6366f166; x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; }
+                if p.focused: Rectangle { border-radius: 11px; border-width: 1px; border-color: Theme.accent; x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; }
                 VerticalLayout {
                     padding: 1px;
                     PaneHead {

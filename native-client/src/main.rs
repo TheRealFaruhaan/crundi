@@ -156,6 +156,27 @@ fn main() {
             app::init(&ui);
         }
     }
+    // The web UI's mono stack (Cascadia Code, Fira Code, JetBrains Mono,
+    // Consolas, monospace) as it lands on each system.
+    let mono = if cfg!(target_os = "windows") { "Consolas" } else if cfg!(target_os = "macos") { "Menlo" } else { "DejaVu Sans Mono" };
+    ui.global::<Theme>().set_mono(mono.into());
+
+    // The window has no system frame (as the Electron client): the top bar
+    // moves it, and has the window buttons.
+    let w = ui.as_weak();
+    ui.on_win_drag(move || {
+        use slint::winit_030::WinitWindowAccessor;
+        if let Some(u) = w.upgrade() { u.window().with_winit_window(|ww| { let _ = ww.drag_window(); }); }
+    });
+    let w = ui.as_weak();
+    ui.on_win_min(move || { if let Some(u) = w.upgrade() { u.window().set_minimized(true); } });
+    let w = ui.as_weak();
+    ui.on_win_max(move || { if let Some(u) = w.upgrade() { let m = u.window().is_maximized(); u.window().set_maximized(!m); } });
+    ui.on_win_close(|| { let _ = slint::quit_event_loop(); });
+    // "1m ago" on the usage, kept current.
+    let usage_tick = slint::Timer::default();
+    usage_tick.start(slint::TimerMode::Repeated, Duration::from_secs(30), app::show_usage);
+
     if let Some(port) = std::env::var("CRUNDI_TEST_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
         testctl::start(port, ui.as_weak());
     }

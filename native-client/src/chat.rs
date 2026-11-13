@@ -102,8 +102,11 @@ pub struct Shown {
     pub request_id: String,
     /// question: the first question's choices.
     pub options: Vec<String>,
-    /// tool: Claude's own description of the call (the group's title).
+    /// tool: Claude's own description of the call.
     pub note: String,
+    /// tool: the batch Claude Code summed up in one line (its id, and the line).
+    pub group: String,
+    pub group_summary: String,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -179,6 +182,8 @@ fn shown(e: &Value) -> Option<Shown> {
                 status: s(e, "status"),
                 error: e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false),
                 note: input.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
+                group: s(e, "group"),
+                group_summary: s(e, "groupSummary"),
                 ..base
             }
         }
@@ -206,8 +211,8 @@ fn shown(e: &Value) -> Option<Shown> {
             let cost = e.get("costUsd").and_then(|v| v.as_f64());
             let secs = e.get("durationMs").and_then(|v| v.as_f64()).map(|ms| ms / 1000.0);
             let mut parts = Vec::new();
-            if let Some(sec) = secs { parts.push(format!("{sec:.0}s")); }
-            if let Some(c) = cost { if c > 0.0 { parts.push(format!("${c:.2}")); } }
+            if let Some(sec) = secs { parts.push(format!("{sec:.1}s")); }
+            if let Some(c) = cost { if c > 0.0 { parts.push(format!("${c:.4}")); } }
             let error = e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
             Shown { kind: "result", detail: parts.join(" · "), error, text: if error { s(e, "text") } else { String::new() }, ..base }
         }

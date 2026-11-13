@@ -42,5 +42,7 @@ export global Theme {
     out property <length> font-size: 14px;
     out property <length> font-size-sm: 12px;
     out property <length> font-size-xs: 11px;
-    out property <string> mono: "JetBrains Mono";
+    // Set at start for the system (src/main.rs).
+    in-out property <string> mono: "DejaVu Sans Mono";
+    out property <color> slate-dim: #94a3b826;
 }

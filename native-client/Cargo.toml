@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 cef = "156.4.0"
-slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software"] }
+slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "unstable-winit-030"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
