@@ -39,6 +39,21 @@ for (const [n, [base, deg]] of Object.entries(TURNED)) {
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(${deg} 12 12)">${icons[base]}</g></svg>\n`);
   names.push(n);
 }
+// Icons the web draws inline rather than from ICON_PATHS (the workbench's
+// split controls, Fit to screen, the Layout presets), as drawn there.
+const svg = (vb, sw, body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>\n`;
+const INLINE = {
+  'split-right': svg('0 0 24 18', 1.8, '<rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="12" y1="1" x2="12" y2="17"/>'),
+  'split-down': svg('0 0 24 18', 1.8, '<rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="1" y1="9" x2="23" y2="9"/>'),
+  'fit': svg('0 0 24 24', 2, '<polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="3" y1="12" x2="21" y2="12"/>'),
+  'columns': svg('0 0 24 24', 2, '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>'),
+  'lay-cols2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="16" rx="1.5"/><rect x="13" y="1" width="10" height="16" rx="1.5"/>'),
+  'lay-cols3': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="6.3" height="16" rx="1.2"/><rect x="8.85" y="1" width="6.3" height="16" rx="1.2"/><rect x="16.7" y="1" width="6.3" height="16" rx="1.2"/>'),
+  'lay-cross4': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+  'lay-left-right2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="16" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+  'lay-top-bottom2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="22" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+};
+for (const [n, body] of Object.entries(INLINE)) { writeFileSync(join(dir, `${n}.svg`), body); names.push(n); }
 names.sort();
 // Slint names: a leading digit or a keyword gets a prefix.
 const slintName = (n) => (/^[0-9]/.test(n) || ['if', 'for', 'in', 'out', 'property', 'callback', 'import', 'export'].includes(n) ? `i-${n}` : n);

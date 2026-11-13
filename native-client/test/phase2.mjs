@@ -207,10 +207,10 @@ const savedLeaf = leaves(saved().layouts?.demo?.root || { t: 'split', kids: [] }
 check('the pin is saved with the layout', savedLeaf?.pin?.w === pinW && savedLeaf.pin.h > 0, saved().layouts);
 await snap('2.1-pinned');
 // Layout presets keep the pin.
-await ui('add-pane', 'layout:rows');
+await ui('add-pane', 'layout:top-bottom2');
 p = await until('the rows preset keeps the pin', (q) => pane(q, chatA)?.pinned && pane(q, chatB) && pane(q, chatA).y < pane(q, chatB).y);
 if (p) check('a layout preset keeps the pin', true);
-await ui('add-pane', 'layout:cols');
+await ui('add-pane', 'layout:cols2');
 p = await until('back to two columns, still pinned', (q) => pane(q, chatA)?.pinned && pane(q, chatB) && Math.abs(pane(q, chatA).y - pane(q, chatB).y) < 1 && q.panes.length === 2);
 if (p) check('another preset keeps it too', Math.round(pane(p, chatA).w) === pinW, p.panes);
 a = pane(p, chatA);   // a preset makes new leaves (new ids)
@@ -495,6 +495,131 @@ check('a wide header again shows the long form or the 160 cap', p && pane(p, cha
     }
   }
 }
+
+// ─── 2.3 Moving panes ───
+const chatG = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Fifth chat' }, token)).body?.id;
+const chatH = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Sixth chat' }, token)).body?.id;
+const four = [chatA, chatE, chatG, chatH];
+p = await until('four chats, four panes', (q) => four.every((id) => pane(q, id)));
+const savedTree = () => saved().layouts?.demo?.root;
+const shapeOf = (n) => (n.t === 'leaf' ? (n.key ? four.indexOf(n.key.slice(5)) : '∅') : `${n.dir}[${n.kids.map(shapeOf).join(', ')}]`);
+const presetCase = async (name, want, boxes) => {
+  await ui('add-pane', 'layout:' + name);
+  const q = await until(`preset ${name}`, (x) => shapeOf(savedTree()) === want);
+  if (!q) return;
+  const ok = boxes.every(([i, x, y, w, h]) => { const b = pane(q, four[i]); return Math.abs(b.x - (x - WB.x)) < 1 && Math.abs(b.y - (y - WB.y)) < 1 && Math.abs(b.w - w) < 1 && Math.abs(b.h - h) < 1; });
+  check(`preset ${name} with four chats: ${want}`, ok, q.panes.map((b) => [b.title, b.x + WB.x, b.y + WB.y, b.w, b.h]));
+};
+// Display order is the tree's: cols2 first puts the chats in order 0..3.
+await ui('add-pane', 'layout:cols2');
+await until('cols2', (q) => savedTree()?.t === 'split');
+const order = JSON.stringify(saved().layouts.demo).match(/live:[0-9a-f]+/g).map((k) => k.slice(5));
+four.splice(0, 4, ...order);
+await presetCase('cross4', 'row[col[0, 2], col[1, 3]]', [[0, 246, 90, 570.5, 378.5], [2, 246, 475.5, 570.5, 378.5], [1, 823.5, 90, 570.5, 378.5], [3, 823.5, 475.5, 570.5, 378.5]]);
+await presetCase('left-right2', 'row[0, col[1, 2], 3]', [[0, 246, 90, 378, 764], [1, 631, 90, 378, 378.5], [2, 631, 475.5, 378, 378.5], [3, 1016, 90, 378, 764]]);
+await presetCase('top-bottom2', 'col[0, row[1, 2], 3]', [[0, 246, 90, 1148, 250], [1, 246, 347, 570.5, 250], [2, 823.5, 347, 570.5, 250], [3, 246, 604, 1148, 250]]);
+// Four in a row: 340 each, the grid scrolls (panes 758 tall over its scrollbar).
+await presetCase('cols3', 'row[0, 1, 2, 3]', [[0, 246, 90, 340, 758], [1, 593, 90, 340, 758], [2, 940, 90, 340, 758], [3, 1287, 90, 340, 758]]);
+await snap('2.3-four-row');
+// Fit that can't fit: the error toast.
+await ui('add-pane', 'fit');
+p = await until('Fit says it does not fit', (q) => q.toast.startsWith('Does not fit: too many panes'));
+if (p) check('Fit that cannot fit shows the error toast', true);
+// Back to 2 + 2: cross4. Fit after a gutter drag brings the shares back even.
+await ui('add-pane', 'layout:cross4');
+p = await until('cross4 again', (q) => shapeOf(savedTree()) === 'row[col[0, 2], col[1, 3]]');
+const g0 = p.gutterViews.find((g) => g.row);
+await mouse('down', WB.x + g0.x + 3, WB.y + g0.y + 200);
+await mouse('move', WB.x + g0.x + 60, WB.y + g0.y + 200);
+await mouse('move', WB.x + g0.x + 120, WB.y + g0.y + 200);
+await mouse('up', WB.x + g0.x + 120, WB.y + g0.y + 200);
+p = await until('a gutter drag resizes', (q) => pane(q, four[0]).w > 600);
+check('dragging a gutter resizes the panes', !!p);
+await ui('add-pane', 'fit');
+p = await until('Fit evens the shares', (q) => Math.abs(pane(q, four[0]).w - 570.5) < 1);
+if (p) check('Fit brings the shares back even', true);
+// The hover split controls: split down on pane 0 (by the mouse).
+let b = pane(p, four[0]);
+await mouse('move', WB.x + b.x + 100, WB.y + b.y + 200);
+await sleep(300);
+await mouse('click', WB.x + b.x + b.w / 2 + 12, WB.y + b.y + 3 + 9);
+p = await until('split down from the hover controls', (q) => q.panes.some((x) => x.kind === 'empty'));
+check('split down makes an empty pane under it', p && shapeOf(savedTree()) === 'row[col[col[0, ∅], 2], col[1, 3]]' || shapeOf(savedTree()) === 'row[col[0, ∅, 2], col[1, 3]]', shapeOf(savedTree()));
+await snap('2.3-split-result');
+// Drag pane 3 into the empty pane: it moves, its old leaf collapses.
+let empty = p.panes.find((x) => x.kind === 'empty');
+b = pane(p, four[3]);
+await mouse('down', WB.x + b.x + 230, WB.y + b.y + 13);
+await mouse('move', WB.x + b.x + 240, WB.y + b.y + 20);
+await mouse('move', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2);
+p = await until('dragging: the empty pane lights up', (q) => q.dragOn && q.panes.find((x) => x.id === empty.id)?.drop);
+if (p) check('a dragged pane lights up the pane under the pointer', true);
+await snap('2.3-drag-over-empty');
+await mouse('up', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2);
+p = await until('the drop moves the pane', (q) => !q.dragOn && !q.panes.some((x) => x.kind === 'empty') && pane(q, four[3]).x === empty.x && pane(q, four[3]).y === empty.y);
+check('a drop on an empty pane moves the pane there', !!p, shapeOf(savedTree()));
+check('the dragged pane keeps the focus', p && pane(p, four[3]).focused);
+// Drag pane 0 onto pane 1: they swap.
+const before0 = pane(p, four[0]), before1 = pane(p, four[1]);
+await mouse('down', WB.x + before0.x + 230, WB.y + before0.y + 13);
+await mouse('move', WB.x + before0.x + 240, WB.y + before0.y + 20);
+await mouse('move', WB.x + before1.x + 100, WB.y + before1.y + 100);
+await snap('2.3-drag-over-chat');
+await mouse('up', WB.x + before1.x + 100, WB.y + before1.y + 100);
+p = await until('the drop swaps the panes', (q) => pane(q, four[0]).x === before1.x && pane(q, four[0]).y === before1.y && pane(q, four[1]).x === before0.x && pane(q, four[1]).y === before0.y);
+if (p) check('a drop on another pane swaps the two', true);
+// Esc cancels a drag.
+b = pane(p, four[0]);
+await mouse('down', WB.x + b.x + 230, WB.y + b.y + 13);
+await mouse('move', WB.x + b.x + 240, WB.y + b.y + 20);
+await mouse('move', WB.x + before0.x + 100, WB.y + before0.y + 100);
+await until('dragging', (q) => q.dragOn);
+await key('Escape');
+await mouse('up', WB.x + before0.x + 100, WB.y + before0.y + 100);
+p = await until('Esc puts it back', (q) => !q.dragOn && pane(q, four[0]).x === b.x && pane(q, four[0]).y === b.y);
+if (p) check('Esc cancels a drag with no change', true);
+// A pinned pane can be dragged but is refused on release.
+await ui('pane-pin', pane(p, four[0]).id);
+p = await until('pinned', (q) => pane(q, four[0]).pinned);
+check('a pinned pane locks its dividers', p && p.lockedGutters > 0);
+b = pane(p, four[0]);
+const other = pane(p, four[2]);
+await mouse('down', WB.x + b.x + 230, WB.y + b.y + 13);
+await mouse('move', WB.x + b.x + 240, WB.y + b.y + 20);
+await mouse('move', WB.x + other.x + 100, WB.y + other.y + 100);
+await mouse('up', WB.x + other.x + 100, WB.y + other.y + 100);
+p = await until('a pinned pane is refused', (q) => q.toast === 'This pane is pinned. Unpin it to move it.');
+check('dropping a pinned pane is refused with the toast', p && pane(p, four[0]).x === b.x && pane(p, four[0]).y === b.y);
+await ui('pane-pin', b.id);
+await until('unpinned', (q) => !pane(q, four[0]).pinned);
+// The empty pane: split right, then its Terminal chip puts a launcher in that pane; × removes a pane.
+b = pane(await props(), four[1]);
+await ui('split', b.id, 'false');
+p = await until('an empty pane', (q) => q.panes.some((x) => x.kind === 'empty'));
+empty = p.panes.find((x) => x.kind === 'empty');
+await snap('2.3-empty');
+await mouse('click', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2 - 6.5);   // the chip: the column is centred
+p = await until('the chip starts a launcher in that pane', (q) => q.panes.find((x) => x.id === empty.id)?.kind === 'launcher');
+if (p) check('the Terminal chip puts a launcher in the clicked pane', true);
+await ui('close-pane', empty.id);
+p = await until('the launcher closes', (q) => !q.panes.some((x) => x.kind === 'launcher'));
+await ui('split', b.id, 'true');
+p = await until('another empty pane', (q) => q.panes.some((x) => x.kind === 'empty'));
+empty = p.panes.find((x) => x.kind === 'empty');
+await mouse('click', WB.x + empty.x + empty.w / 2 + 78, WB.y + empty.y + empty.h / 2 + 31.5);   // its ×
+p = await until('× removes the empty pane', (q) => !q.panes.some((x) => x.kind === 'empty'));
+if (p) check('the empty pane\'s × removes it', true);
+// The layout survives a restart.
+const kept = JSON.stringify(savedTree());
+const geo = (q) => four.map((id) => { const x = pane(q, id); return [Math.round(x.x), Math.round(x.y), Math.round(x.w), Math.round(x.h)]; });
+const geoBefore = geo(await props());
+d.close();
+app.kill();
+await sleep(1500);
+app = launch('run3');
+d = await driver();
+p = await until('after a restart: the same layout', (q) => q.signedIn && four.every((id) => pane(q, id)) && JSON.stringify(geo(q)) === JSON.stringify(geoBefore), 30000);
+check('the layout survives a restart', p && JSON.stringify(savedTree()) === kept);
 
 d.close();
 app.kill();

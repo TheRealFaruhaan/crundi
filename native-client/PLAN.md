@@ -199,6 +199,22 @@ Phase 1 left these, each with its workaround in place:
 - **Selection height in the rename input** (2.1): Slint draws the selection
   at the font's line height, 1px shorter than Chromium's (y98–110 against
   98–111); its width and the scroll to the end match.
+- **Turning a dragged pane** (2.3). The web turns the clone 1.5°; the
+  software renderer can't rotate, so it is drawn straight (opacity .92, the
+  pane's edge and the 0 12px 32px shadow in soft layers).
+- **A new pane's entrance** (2.3): it fades in over 220ms; the web also
+  scales it from .985, which the software renderer can't.
+- **Deliberate differences in moving panes** (2.3, DESIGN rule 5):
+  - the Terminal chip puts its launcher in the empty pane that was clicked,
+    and the chat it starts keeps that pane (the web uses the first empty
+    pane, then appends the chat);
+  - "Top + bottom split" fits on one line (the web wraps it in a 178px box);
+  - the dragged clone keeps its drop shadow when focused (the web's focus
+    ring CSS drops it);
+  - Esc puts a dragged pane back (the web has no Esc there).
+- **The empty pane's chips** (2.3): only Terminal, the one the native client
+  can open; Files, Git, Kanban, Notes, Mindmap, Media, Factory and Panel come
+  with their panels (phase 3). The chip row wraps differently until then.
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

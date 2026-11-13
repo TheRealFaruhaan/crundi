@@ -118,6 +118,16 @@ export component MainWindow inherits Window {
     callback pane-maximize(int);
     callback pane-menu(int, bool);
     callback draft-changed(string, string);
+    // 2.3: a pane dragged by its header, its clone under the pointer (the
+    // grab point kept), and the workbench's state.
+    callback pane-drag(int, int, length, length);
+    callback chip(int, string);
+    in property <bool> drag-on;
+    in property <PaneView> drag-pane;
+    in property <length> drag-dx;
+    in property <length> drag-dy;
+    in property <bool> wb-motion;
+    in property <int> wb-scroll-home;
     // The pane in full screen, if one is (it covers the window; Esc leaves).
     in property <bool> full-on;
     in property <PaneView> full-pane;
@@ -239,6 +249,11 @@ export component MainWindow inherits Window {
                         pane-rename(id, t) => { root.pane-rename(id, t); }
                         pane-maximize(id) => { root.pane-maximize(id); }
                         pane-menu(id, on) => { root.pane-menu(id, on); }
+                        pane-drag(id, k, x, y) => { root.pane-drag(id, k, x, y); }
+                        chip(id, k) => { root.chip(id, k); }
+                        dragging: root.drag-on;
+                        motion: root.wb-motion;
+                        scroll-home: root.wb-scroll-home;
                         draft-changed(k, t) => { root.draft-changed(k, t); }
                     }
                     if root.current-tab != "workbench": VerticalLayout {
@@ -306,6 +321,23 @@ export component MainWindow inherits Window {
         }
     }
 
+    // The dragged pane's clone: the whole pane at the pointer, opacity .92,
+    // with the pane's own edge and the drop shadow 0 12px 32px rgba(0,0,0,.55)
+    // in soft layers. The web turns it 1.5°: the software renderer can't
+    // rotate (PLAN.md, Known gaps). It takes no input (the grab stays with
+    // the header that started it).
+    if root.signed-in && root.drag-on: Rectangle {
+        x: Pointer.x - root.drag-dx;
+        y: Pointer.y - root.drag-dy;
+        width: root.drag-pane.w;
+        height: root.drag-pane.h;
+        opacity: 0.92;
+        for l in [{ e: 4px, c: #00000024 }, { e: 12px, c: #00000016 }, { e: 20px, c: #0000000c }, { e: 30px, c: #00000006 }]: Rectangle {
+            x: -l.e; y: 12px - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: 10px + l.e; background: l.c;
+        }
+        PaneCard { p: root.drag-pane; }
+    }
+
     // The toast: top: topbar + 10px; right 16px; at most 420px; bg-secondary,
     // a 1px border with a 3px accent (red: an error) left edge, radius 6,
     // padding 12px 20px, 13.6px text, shadow-md (0 6px 20px rgba(0,0,0,.5)).
@@ -334,9 +366,10 @@ export component MainWindow inherits Window {
     if root.signed-in && root.add-menu-open: TouchArea {
         clicked => { root.add-menu-open = false; }
     }
+    // At the "+" (24×24 at 374.4, 53.5): its left, its bottom + 4.
     if root.signed-in && root.add-menu-open: AddMenu {
-        x: Theme.sidebar-width + 134px;
-        y: Theme.topbar-height + 35px;
+        x: Theme.sidebar-width + 134.4px;
+        y: Theme.topbar-height + 5.5px + 24px + 4px;
         pick(k) => { root.add-menu-open = false; root.add-pane(k); }
     }
 }

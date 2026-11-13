@@ -185,6 +185,12 @@ fn main() {
                 WindowEvent::CursorMoved { position, .. } => {
                     let k = win.scale_factor();
                     at = (position.x as f32 / k, position.y as f32 / k);
+                    if let Some(u) = w.upgrade() { pointer_moved(&u, at.0, at.1); }
+                }
+                // Esc puts a dragged pane back (the web has none: DESIGN rule 5).
+                WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed
+                    && event.logical_key == slint::winit_030::winit::keyboard::Key::Named(slint::winit_030::winit::keyboard::NamedKey::Escape) => {
+                    app::drag_cancel();
                 }
                 WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
                     if let Some(u) = w.upgrade() { pointer_pressed(&u, at.0, at.1); }
@@ -217,6 +223,14 @@ fn dirs_cache() -> std::path::PathBuf {
         .or_else(|| std::env::var_os("LOCALAPPDATA").map(Into::into))
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Where the pointer is, in logical px: hover over a leaf, the dragged
+/// pane's clone, the Layout submenu (ui/widgets.slint Pointer).
+pub fn pointer_moved(ui: &MainWindow, x: f32, y: f32) {
+    let p = ui.global::<Pointer>();
+    p.set_x(x);
+    p.set_y(y);
 }
 
 /// A pointer press at (x, y), in logical px (ui/widgets.slint Pointer).

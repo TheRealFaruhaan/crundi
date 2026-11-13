@@ -69,9 +69,10 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
+            "dragOn": w.get_drag_on(),
             "lockedGutters": w.get_gutters().iter().filter(|g| g.locked).count(),
             "gutters": w.get_gutters().row_count(),
             "gutterViews": w.get_gutters().iter().map(|g| json!({ "split": g.split, "index": g.index, "row": g.row, "x": g.x, "y": g.y, "w": g.w, "h": g.h, "locked": g.locked })).collect::<Vec<_>>(),
@@ -104,6 +105,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 win.dispatch_event(WindowEvent::PointerPressed { position: pos, button: PointerEventButton::Left });
                 win.dispatch_event(WindowEvent::PointerReleased { position: pos, button: PointerEventButton::Left });
             };
+            crate::pointer_moved(&w, pos.x, pos.y);
             match c.get("kind").and_then(|v| v.as_str()).unwrap_or("move") {
                 "click" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); click(1) }
                 "dblclick" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); click(2) }
@@ -118,6 +120,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
         "key" => {
             use slint::platform::{Key, WindowEvent};
             let t = c.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            // As the system's Esc would (src/main.rs): a drag is put back.
+            if t == "Escape" { crate::app::drag_cancel(); }
             let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), o => o.into() };
             for ch in if t.len() > 1 && !["Escape", "Return", "Backspace"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
                 w.window().dispatch_event(WindowEvent::KeyPressed { text: ch.clone() });
@@ -153,6 +157,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "pane-rename" => w.invoke_pane_rename(arg(c, 0).parse().unwrap_or(0), arg(c, 1).into()),
                 "pane-maximize" => w.invoke_pane_maximize(arg(c, 0).parse().unwrap_or(0)),
                 "pane-menu" => w.invoke_pane_menu(arg(c, 0).parse().unwrap_or(0), arg(c, 1) != "false"),
+                "pane-drag" => w.invoke_pane_drag(arg(c, 0).parse().unwrap_or(0), arg(c, 1).parse().unwrap_or(0), arg(c, 2).parse().unwrap_or(0.0), arg(c, 3).parse().unwrap_or(0.0)),
+                "chip" => w.invoke_chip(arg(c, 0).parse().unwrap_or(0), arg(c, 1).into()),
                 "pane-secrets" => w.invoke_pane_secrets(arg(c, 0).parse().unwrap_or(0)),
                 "tab" => w.set_current_tab(arg(c, 0).into()),
                 "drawer" => w.set_drawer_open(arg(c, 0) == "true"),

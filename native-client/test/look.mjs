@@ -7,7 +7,7 @@
 // session.json: {password, secret} of the test server (CRUNDI_TEST_SERVER,
 // default http://localhost:8889). Actions after sign-in, each a snapshot:
 //   wait:<ms>  ui:<name>[:arg…]  snap:<name>
-//   mouse:<move|click|dblclick|leave>:<x>:<y>   key:<Escape|Return|text>
+//   mouse:<move|click|dblclick|down|up|leave>:<x>:<y>   key:<Escape|Return|text>
 // A ui: argument "@pane" is the first chat pane's leaf id.
 import net from 'node:net';
 import { readFileSync } from 'node:fs';

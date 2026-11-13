@@ -4,8 +4,8 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer } from "widgets.slint";
-import { ChatPane, PaneHead, HeadMenu, EntryView } from "chat.slint";
+import { Icon, Pointer, DashedBox } from "widgets.slint";
+import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox } from "chat.slint";
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -43,6 +43,8 @@ export struct PaneView {
     // its "…" menu is open (2.2).
     narrow: bool,
     menu: bool,
+    // The leaf under a dragged pane (2.3): it lights up (not when pinned).
+    drop: bool,
 }
 
 export struct GutterView {
@@ -134,33 +136,104 @@ component Launcher inherits Rectangle {
     }
 }
 
-/// A leaf with nothing in it: dashed edge, a line of help, split and close.
+/// An empty pane chip (.me-chip): a pill, 26 high, padding 5px 10px, gap 5;
+/// bg-primary on a 1px border, 11.5px text-secondary, a 13px accent-hover icon.
+/// Hover: accent border, text-primary, accent-dim fill (the icon stays).
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    callback clicked();
+    height: 26px;
+    width: 1px + 10px + 13px + 5px + ct.preferred-width + 10px + 1px;
+    border-radius: 999px;
+    border-width: 1px;
+    border-color: ch.has-hover ? Theme.accent : Theme.border;
+    background: ch.has-hover ? Theme.accent-dim : Theme.bg-primary;
+    animate border-color, background { duration: 140ms; }
+    Icon { x: 11px; width: 13px; height: 13px; source: root.icon; tint: Theme.accent-hover; }
+    ct := Text { x: 29px; text: root.label; font-size: 11.5px; color: ch.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
+    ch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: "Add " + root.label; } }
+    }
+}
+
+/// An empty pane button (.me-acts button): 26 high, padding 5px 9px, gap 4,
+/// radius 6, bg-tertiary on a 1px border, 11.52px text-secondary, 13px icons.
+/// Hover: accent border, text and icon text-primary.
+component EmptyBtn inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <string> tip;
+    callback clicked();
+    height: 26px;
+    width: 1px + 9px + 13px + (root.label != "" ? 4px + bt.preferred-width : 0px) + 9px + 1px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: bh.has-hover ? Theme.accent : Theme.border;
+    background: Theme.bg-tertiary;
+    Icon { x: 10px; width: 13px; height: 13px; source: root.icon; tint: bh.has-hover ? Theme.text-primary : Theme.text-secondary; }
+    bt := Text { x: 27px; text: root.label; font-size: 11.52px; color: bh.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
+    bh := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: root.tip; } }
+    }
+}
+
+/// A leaf with nothing in it (.mosaic-empty): 3px in from the leaf, a 2px
+/// dashed edge (6px dashes, 4px gaps), radius 10, no fill; a centred column,
+/// gap 10: the message, the chips, then Split ▸ / Split ▾ / ×. Small panes
+/// clip it. Only the chips the native client can open are drawn (Terminal).
 component EmptyLeaf inherits Rectangle {
     callback split-right();
     callback split-down();
     callback close();
-    border-radius: 10px;
-    border-width: 2px;
-    border-color: Theme.border;
+    callback chip(string);
+    callback maximize();
+    clip: true;
+    DashedBox { x: 3px; y: 3px; width: parent.width - 6px; height: parent.height - 6px; thick: 2px; dash: 6px; gap: 4px; corner: 10px; line: Theme.border; }
+    TouchArea { double-clicked => { root.maximize(); } }
     VerticalLayout {
+        x: 3px; y: 3px; width: parent.width - 6px; height: parent.height - 6px;
         alignment: center;
-        spacing: 12px;
-        Text { text: "Drop a panel here or launch a new one"; font-size: 13px; color: Theme.text-muted; horizontal-alignment: center; }
+        spacing: 10px;
+        Text { text: "Drop a panel here or launch a new one"; font-size: 13.12px; color: Theme.text-muted; horizontal-alignment: center; }
+        // The chips: a wrapping row, centred, gap 6, at most 300 wide; 2px under.
         HorizontalLayout {
             alignment: center;
-            spacing: 8px;
-            for b[i] in ["+ Split ▸", "+ Split ▾", "×"]: Rectangle {
-                height: 26px;
-                width: bt.preferred-width + 20px;
-                border-radius: 999px; border-width: 1px; border-color: Theme.border;
-                background: bh.has-hover ? Theme.bg-hover : Theme.bg-secondary;
-                bt := Text { text: b; font-size: 11.5px; color: Theme.text-secondary; }
-                bh := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { if i == 0 { root.split-right(); } else if i == 1 { root.split-down(); } else { root.close(); } }
-                }
-            }
+            padding-bottom: 2px;
+            Chip { label: "Terminal"; icon: Icons.terminal; clicked => { root.chip("terminal"); } }
         }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            EmptyBtn { label: "Split ▸"; icon: Icons.plus; tip: "Split right"; clicked => { root.split-right(); } }
+            EmptyBtn { label: "Split ▾"; icon: Icons.plus; tip: "Split down"; clicked => { root.split-down(); } }
+            EmptyBtn { icon: Icons.x; tip: "Remove pane"; clicked => { root.close(); } }
+        }
+    }
+}
+
+/// The split controls over a leaf on hover (.leaf-ctrls): two 22×18 buttons,
+/// gap 3, radius 5, bg-secondary on a 1px border; a 14×11 icon at +4,+3.5 in
+/// text-secondary. Hover: accent border, accent-hover icon.
+component LeafCtrl inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    callback clicked();
+    width: 22px;
+    height: 18px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: lh.has-hover ? Theme.accent : Theme.border;
+    background: Theme.bg-secondary;
+    Icon { x: 4px; y: 3.5px; width: 14px; height: 11px; source: root.icon; tint: lh.has-hover ? Theme.accent-hover : Theme.text-secondary; }
+    lh := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: root.tip; } }
     }
 }
 
@@ -186,6 +259,8 @@ export component PaneCard inherits Rectangle {
     callback draft-changed(string);
     // Open or close the narrow header's menu.
     callback menu(bool);
+    // The header dragged: 0 start, 1 move, 2 release; window coordinates.
+    callback drag(int, length, length);
     // The content sits inside the 1px edge, clipped to radius 9, so the
     // header's fill keeps the pane's round top corners (the web's overflow:
     // hidden inside a radius-10 border). Full screen: radius 0.
@@ -230,6 +305,7 @@ export component PaneCard inherits Rectangle {
             rename(t) => { root.rename(t); }
             maximize => { root.maximize(); }
             more => { root.menu(!p.menu); }
+            drag(k, x, y) => { root.drag(k, x, y); }
         }
         if p.kind == "chat": ChatPane {
             vertical-stretch: 1;
@@ -314,6 +390,21 @@ export component Workbench inherits Rectangle {
     callback pane-maximize(int);
     callback pane-menu(int, bool);
     callback draft-changed(string, string);
+    // 2.3: a pane dragged by its header (0 start, 1 move, 2 release; content
+    // coordinates), an empty pane's chip, and a scroll back to the left (Fit).
+    callback pane-drag(int, int, length, length);
+    callback chip(int, string);
+    // A pane is being dragged: every leaf shows its dashed outline.
+    in property <bool> dragging;
+    // The layout changed in structure or shares: ease the panes (220ms).
+    in property <bool> motion;
+    // Bumped to scroll back to the left (Fit to screen).
+    in property <int> scroll-home;
+    // A gutter is held: every gutter line is accent; nothing eases.
+    property <bool> resizing;
+    property <length> flick-x: 0;
+    // Set by the scrollbar: where the grid scrolls to.
+    property <length> scroll-to: 0;
 
     background: Theme.bg-primary;
     changed width => { root.area(self.width, self.height); }
@@ -328,15 +419,52 @@ export component Workbench inherits Rectangle {
         Text { text: "Or add a new project from the sidebar"; font-size: 12px; color: Theme.text-muted; horizontal-alignment: center; }
     }
 
-    if root.has-project: Flickable {
+    if root.has-project: fl := Flickable {
+        // The web's grid scrolls by the wheel and its scrollbar, never by
+        // dragging; a drag here would take the press from a pane's header
+        // or a gutter.
+        interactive: false;
         content-width: root.content-width;
         content-height: root.height;
+        changed content-x => { root.flick-x = self.content-x; }
+        property <int> home: root.scroll-home;
+        changed home => { self.content-x = 0; }
+        property <length> to: root.scroll-to;
+        changed to => { self.content-x = root.scroll-to; }
+        // Auto-scroll while a pane is dragged near the left or right edge:
+        // within 60px, up to 22px a frame, deeper is faster.
+        Timer {
+            interval: 16ms;
+            running: root.dragging;
+            triggered => {
+                let at = Pointer.x - root.absolute-position.x;
+                let lo = min(0px, root.width - root.content-width);
+                if at < 60px && at >= 0 {
+                    fl.content-x = min(0px, fl.content-x + 22px * (60px - at) / 60px);
+                } else if at > root.width - 60px && at <= root.width {
+                    fl.content-x = max(lo, fl.content-x - 22px * (at - root.width + 60px) / 60px);
+                }
+            }
+        }
         for p in root.panes: Rectangle {
             x: p.x; y: p.y; width: p.w; height: p.h;
+            // The layout motion: each pane eases from where it was (220ms,
+            // cubic-bezier(.2,.7,.2,1)); a new one fades in (the web also
+            // scales it from .985: the software renderer can't scale).
+            animate x, y, width, height { duration: root.motion && !root.resizing ? 220ms : 0ms; easing: cubic-bezier(0.2, 0.7, 0.2, 1); }
+            property <float> shown: 0;
+            init => { self.shown = 1; }
+            opacity: self.shown;
+            animate opacity { duration: 220ms; easing: ease-out; }
+            // The mouse over the leaf (header or body): its split controls fade in.
+            property <bool> over: Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
+                && Pointer.y >= self.absolute-position.y && Pointer.y < self.absolute-position.y + self.height;
             if p.kind == "empty": EmptyLeaf {
                 split-right => { root.split(p.id, false); }
                 split-down => { root.split(p.id, true); }
                 close => { root.close-pane(p.id); }
+                chip(k) => { root.chip(p.id, k); }
+                maximize => { root.pane-maximize(p.id); }
             }
             if p.kind != "empty": PaneCard {
                 p: p;
@@ -356,44 +484,145 @@ export component Workbench inherits Rectangle {
                 answer(id, o) => { root.answer(p.key, id, o); }
                 draft-changed(t) => { root.draft-changed(p.key, t); }
                 menu(on) => { root.pane-menu(p.id, on); }
+                drag(k, x, y) => { root.pane-drag(p.id, k, x - root.absolute-position.x - root.flick-x, y - root.absolute-position.y); }
+            }
+            // While a pane is dragged: every leaf's 1px dashed outline (3/2,
+            // inset 1px); the one under the pointer, 2px solid accent over its
+            // outer 2px, square corners (the leaf has no radius).
+            if root.dragging: DashedBox { line: Theme.border; thick: 1px; dash: 3px; gap: 2px; inset: 1px; }
+            if root.dragging && p.drop: Rectangle { border-width: 2px; border-color: Theme.accent; }
+            // The hover split controls: top 3px, centred on the leaf, above the
+            // header (they cover what is under them); fade .12s.
+            if p.kind != "empty": HorizontalLayout {
+                x: (parent.width - 47px) / 2; y: 3px;
+                width: 47px; height: 18px;
+                spacing: 3px;
+                opacity: parent.over ? 1 : 0;
+                animate opacity { duration: 120ms; }
+                visible: self.opacity > 0;
+                LeafCtrl { icon: Icons.split-right; tip: "Split right"; clicked => { root.split(p.id, false); } }
+                LeafCtrl { icon: Icons.split-down; tip: "Split down"; clicked => { root.split(p.id, true); } }
             }
         }
-        // The gutters: a 7px grab strip with a 1px line, accent while used.
+        // The gutters: a 7px strip with a 1px line in the middle (border);
+        // accent on hover, and every line accent while any gutter is held.
+        // Locked (by a pinned pane): not-allowed, the line at .4, no drag.
         for g in root.gutters: Rectangle {
             x: g.x; y: g.y; width: g.w; height: g.h;
             Rectangle {
                 x: g.row ? 3px : 0px; y: g.row ? 0px : 3px;
                 width: g.row ? 1px : parent.width; height: g.row ? parent.height : 1px;
-                background: (gt.has-hover || gt.pressed) && !g.locked ? Theme.accent : Theme.border;
+                opacity: g.locked ? 0.4 : 1;
+                background: gt.has-hover || root.resizing ? Theme.accent : Theme.border;
+                animate background { duration: 120ms; }
             }
             gt := TouchArea {
                 mouse-cursor: g.locked ? MouseCursor.not-allowed : g.row ? MouseCursor.col-resize : MouseCursor.row-resize;
+                pointer-event(ev) => {
+                    if ev.button == PointerEventButton.left && !g.locked {
+                        if ev.kind == PointerEventKind.down { root.resizing = true; }
+                        if ev.kind == PointerEventKind.up { root.resizing = false; }
+                    }
+                }
                 moved => {
                     if self.pressed && !g.locked {
                         root.gutter-drag(g.split, g.index, g.row ? self.mouse-x - self.pressed-x : self.mouse-y - self.pressed-y, g.span);
                     }
                 }
                 double-clicked => { root.gutter-even(g.split, g.index); }
+                if g.locked: Tooltip { TipBox { text: "A pinned pane is next to this divider"; } }
+            }
+        }
+    }
+    // Scrolling sideways: the web's 6px scrollbar under the grid; the thumb
+    // is border-coloured, text-muted on hover, radius 3; it can be dragged.
+    if root.has-project && root.content-width > root.width + 0.5px: sb := Rectangle {
+        y: root.height - 6px;
+        height: 6px;
+        property <length> thumb: max(20px, root.width * root.width / root.content-width);
+        property <length> range: root.content-width - root.width;
+        property <length> start;
+        Rectangle {
+            x: (parent.width - parent.thumb) * (- root.flick-x / max(1px, parent.range));
+            width: parent.thumb;
+            border-radius: 3px;
+            background: th.has-hover || th.pressed ? Theme.text-muted : Theme.border;
+            th := TouchArea {
+                pointer-event(ev) => { if ev.kind == PointerEventKind.down { sb.start = root.flick-x; } }
+                moved => {
+                    if self.pressed {
+                        root.scroll-to = max(- sb.range, min(0px, sb.start - (self.mouse-x - self.pressed-x) * sb.range / max(1px, root.width - sb.thumb)));
+                    }
+                }
             }
         }
     }
 }
 
-/// The "+" menu, under the tab bar's "+".
+/// A "+" menu item: 32 high, padding 8px 11px, gap 9, radius 6; a 16px
+/// accent-hover icon (22×16 in the Layout submenu), 13.76px text-primary.
+/// Hover (or `lit`): accent fill, white.
+component MenuItem inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <length> icon-w: 16px;
+    in property <length> icon-h: 16px;
+    in property <bool> caret;
+    in property <bool> lit;
+    in property <string> tip;
+    out property <bool> over: mh.has-hover;
+    callback clicked();
+    height: 32px;
+    border-radius: 6px;
+    background: mh.has-hover || root.lit ? Theme.accent : transparent;
+    Icon { x: 11px; width: root.icon-w; height: root.icon-h; source: root.icon; tint: mh.has-hover || root.lit ? white : Theme.accent-hover; }
+    mt := Text { x: 11px + root.icon-w + 9px; text: root.label; font-size: 13.76px; color: mh.has-hover || root.lit ? white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
+    // The caret ▸, pushed right, at .55.
+    if root.caret: Text { x: parent.width - 11px - self.preferred-width; text: "▸"; font-size: 13.76px; opacity: 0.55; color: mh.has-hover || root.lit ? white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
+    mh := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        if root.tip != "": Tooltip { TipBox { text: root.tip; } }
+    }
+}
+
+/// The "+" menu (#wb-add-menu), under the tab bar's "+": at least 150 wide,
+/// padding 5, gap 2; bg-secondary, a 1px border, radius 10, shadow
+/// 0 6px 22px rgba(0,0,0,.55) (soft layers). Its last item opens the Layout
+/// submenu to the right (Layout's right + 4, its top − 5) while the mouse is
+/// over either, closing .35s after it leaves both.
 export component AddMenu inherits Rectangle {
     callback pick(string);
+    // Over "Layout", or over the submenu or the 10px bridge to it (by the
+    // pointer's position: the items' own touch areas take the hover).
+    property <length> sub-x: self.width - 2px;
+    property <length> sub-y: 1px + 5px + 10 * 34px - 5px;
+    property <length> sub-w: max(178px, max(p1-m.preferred-width, p2-m.preferred-width, p3-m.preferred-width, p4-m.preferred-width, p5-m.preferred-width) + 11px + 22px + 9px + 11px + 12px);
+    property <length> sub-h: 12px + 5 * 32px + 4 * 2px;
+    property <bool> in-sub: root.layouts
+        && Pointer.x >= self.absolute-position.x + self.sub-x - 10px && Pointer.x <= self.absolute-position.x + self.sub-x + self.sub-w
+        && Pointer.y >= self.absolute-position.y + self.sub-y && Pointer.y <= self.absolute-position.y + self.sub-y + self.sub-h;
+    property <bool> sub-open: lay.over || self.in-sub;
+    p1-m := Text { visible: false; text: "2 columns"; font-size: 13.76px; }
+    p2-m := Text { visible: false; text: "3 columns"; font-size: 13.76px; }
+    p3-m := Text { visible: false; text: "2×2 cross"; font-size: 13.76px; }
+    p4-m := Text { visible: false; text: "Left + right split"; font-size: 13.76px; }
+    p5-m := Text { visible: false; text: "Top + bottom split"; font-size: 13.76px; }
     property <bool> layouts;
+    changed sub-open => {
+        if self.sub-open { self.layouts = true; closer.running = false; } else { closer.running = true; }
+    }
+    closer := Timer { interval: 350ms; running: false; triggered => { self.running = false; if !root.sub-open { root.layouts = false; } } }
     width: 150px;
-    height: items.preferred-height + 10px;
-    background: Theme.bg-secondary;
-    border-radius: 10px;
-    border-width: 1px;
-    border-color: Theme.border;
-    drop-shadow-blur: 22px;
-    drop-shadow-offset-y: 6px;
-    drop-shadow-color: #0000008c;
+    height: items.preferred-height + 2px;
+    for l in [{ e: 2px, c: #0000001e }, { e: 8px, c: #00000012 }, { e: 14px, c: #0000000a }, { e: 20px, c: #00000005 }]: Rectangle {
+        x: -l.e; y: 6px - l.e; width: root.width + 2 * l.e; height: root.height + 2 * l.e; border-radius: 10px + l.e; background: l.c;
+    }
+    Rectangle { background: Theme.bg-secondary; border-radius: 10px; border-width: 1px; border-color: Theme.border; }
     items := VerticalLayout {
+        x: 1px; y: 1px; width: parent.width - 2px;
         padding: 5px;
+        spacing: 2px;
         for it in [
             { id: "terminal", label: "Terminal", icon: Icons.terminal },
             { id: "files", label: "Files", icon: Icons.folder },
@@ -404,50 +633,33 @@ export component AddMenu inherits Rectangle {
             { id: "media", label: "Media", icon: Icons.images },
             { id: "factory", label: "Factory", icon: Icons.factory },
             { id: "panel", label: "Panel", icon: Icons.panel },
-            { id: "fit", label: "Fit to screen", icon: Icons.maximize },
-            { id: "layout", label: "Layout", icon: Icons.panel },
-        ]: Rectangle {
-            height: 34px;
-            border-radius: 6px;
-            background: mh.has-hover ? Theme.accent : transparent;
-            HorizontalLayout {
-                padding-left: 11px;
-                spacing: 10px;
-                Icon { source: it.icon; width: 15px; height: 15px; y: (parent.height - self.height) / 2; tint: mh.has-hover ? white : Theme.accent-hover; }
-                Text { text: it.label; font-size: 13.76px; color: mh.has-hover ? white : Theme.text-primary; vertical-alignment: center; horizontal-stretch: 1; }
-                if it.id == "layout": Text { text: "▸"; font-size: 10px; color: mh.has-hover ? white : Theme.text-muted; vertical-alignment: center; width: 18px; }
-            }
-            mh := TouchArea {
-                mouse-cursor: pointer;
-                clicked => { if it.id == "layout" { root.layouts = !root.layouts; } else { root.pick(it.id); } }
-            }
+        ]: MenuItem { label: it.label; icon: it.icon; clicked => { root.pick(it.id); } }
+        MenuItem {
+            label: "Fit to screen"; icon: Icons.fit;
+            tip: "Share the width out again so every pane fits the window (pinned panes keep their size)";
+            clicked => { root.pick("fit"); }
         }
+        lay := MenuItem { label: "Layout"; icon: Icons.columns; caret: true; lit: root.layouts; clicked => { root.layouts = true; } }
     }
-    // The Layout flyout: the presets.
+    // The Layout submenu: at least 178 wide, each item on one line (the web
+    // wraps "Top + bottom split" in its 178px: a slip, DESIGN rule 5).
     if root.layouts: Rectangle {
-        x: parent.width + 4px;
-        y: parent.height - self.height;
-        width: 170px;
-        height: presets.preferred-height + 10px;
-        background: Theme.bg-secondary;
-        border-radius: 10px;
-        border-width: 1px;
-        border-color: Theme.border;
+        x: root.sub-x; y: root.sub-y;
+        width: root.sub-w;
+        height: root.sub-h;
+        for l in [{ e: 2px, c: #0000001e }, { e: 8px, c: #00000012 }, { e: 14px, c: #0000000a }, { e: 20px, c: #00000005 }]: Rectangle {
+            x: -l.e; y: 6px - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: 10px + l.e; background: l.c;
+        }
+        Rectangle { background: Theme.bg-secondary; border-radius: 10px; border-width: 1px; border-color: Theme.border; }
         presets := VerticalLayout {
+            x: 1px; y: 1px; width: parent.width - 2px;
             padding: 5px;
-            for pr in [
-                { id: "layout:cols2", label: "2 columns" },
-                { id: "layout:cols3", label: "3 columns" },
-                { id: "layout:grid", label: "2 × 2" },
-                { id: "layout:stack", label: "Left + right stack" },
-                { id: "layout:rows", label: "Top + bottom pair" },
-            ]: Rectangle {
-                height: 34px;
-                border-radius: 6px;
-                background: ph.has-hover ? Theme.accent : transparent;
-                Text { x: 11px; text: pr.label; font-size: 13.76px; color: ph.has-hover ? white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
-                ph := TouchArea { mouse-cursor: pointer; clicked => { root.layouts = false; root.pick(pr.id); } }
-            }
+            spacing: 2px;
+            MenuItem { label: "2 columns"; icon: Icons.lay-cols2; icon-w: 22px; clicked => { root.layouts = false; root.pick("layout:cols2"); } }
+            MenuItem { label: "3 columns"; icon: Icons.lay-cols3; icon-w: 22px; clicked => { root.layouts = false; root.pick("layout:cols3"); } }
+            MenuItem { label: "2×2 cross"; icon: Icons.lay-cross4; icon-w: 22px; clicked => { root.layouts = false; root.pick("layout:cross4"); } }
+            MenuItem { label: "Left + right split"; icon: Icons.lay-left-right2; icon-w: 22px; clicked => { root.layouts = false; root.pick("layout:left-right2"); } }
+            MenuItem { label: "Top + bottom split"; icon: Icons.lay-top-bottom2; icon-w: 22px; clicked => { root.layouts = false; root.pick("layout:top-bottom2"); } }
         }
     }
 }

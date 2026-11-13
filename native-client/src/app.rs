@@ -23,6 +23,14 @@ use std::{
     time::Duration,
 };
 
+/// A pane dragged by its header: its leaf, and the leaf under the pointer.
+/// (Where it was grabbed goes to the window, for the clone.)
+#[derive(Clone, Copy, Debug)]
+struct Drag {
+    src: u32,
+    target: u32,
+}
+
 /// One chat shown in a pane.
 struct ChatPaneState {
     conv: Conversation,
@@ -78,6 +86,12 @@ pub struct App {
     full: Option<String>,
     /// The leaf whose narrow header has its "…" menu open (one at a time).
     menu: u32,
+    /// A pane being dragged by its header (2.3).
+    drag: Option<Drag>,
+    /// The pane rows' keys, one row per pane (a chat keeps its row, and so
+    /// its view, wherever it moves; the row eases to its new place).
+    row_keys: Vec<String>,
+    motion_gen: u32,
     /// Each chat's text size in px, and the size new chats start at
     /// (saved: store::Saved.font, font_default_chat).
     font: HashMap<String, i32>,
@@ -175,6 +189,9 @@ pub fn init(window: &MainWindow) {
             arm_gen: 0,
             full: None,
             menu: 0,
+            drag: None,
+            row_keys: vec![],
+            motion_gen: 0,
             font: HashMap::new(),
             font_default: head::FONT_BASE,
             drafts: HashMap::new(),
@@ -194,8 +211,10 @@ pub fn init(window: &MainWindow) {
     window.on_focus_pane(|id| focus_pane(id as u32));
     window.on_close_pane(|id| close_pane(id as u32));
     window.on_gutter_drag(|sp, i, d, span| { with(|a| a.mosaic.drag(sp as u32, i as usize, d, span)); layout_changed(); });
-    window.on_gutter_even(|sp, i| { with(|a| a.mosaic.even(sp as u32, i as usize)); layout_changed(); });
-    window.on_split(|id, down| { with(|a| { a.mosaic.split(id as u32, if down { Dir::Col } else { Dir::Row }); }); layout_changed(); });
+    window.on_gutter_even(|sp, i| { animate(); with(|a| a.mosaic.even(sp as u32, i as usize)); layout_changed(); });
+    window.on_split(|id, down| { animate(); with(|a| { a.mosaic.split(id as u32, if down { Dir::Col } else { Dir::Row }); }); layout_changed(); });
+    window.on_pane_drag(|id, k, x, y| pane_drag(id as u32, k, x, y));
+    window.on_chip(|id, k| chip(id as u32, k.as_str()));
     window.on_launch_chat(|id, skip| launch_chat(id as u32, skip));
     window.on_add_pane(|k| add_pane(k.as_str()));
     window.on_send(|k, t| send(k.as_str(), t.to_string()));
@@ -211,7 +230,7 @@ pub fn init(window: &MainWindow) {
     });
     window.on_pane_rename(|id, t| pane_rename(id as u32, t.as_str()));
     window.on_pane_menu(|id, on| pane_menu(id as u32, on));
-    window.on_pane_maximize(|id| { with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
+    window.on_pane_maximize(|id| { animate(); with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
     window.on_draft_changed(|k, t| { with(|a| { a.drafts.insert(k.to_string(), t.to_string()); }); });
 
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
@@ -475,6 +494,7 @@ pub fn sign_out(why: &str) {
         a.mosaic = Mosaic::default();
         a.project_rows.set_vec(vec![]);
         a.pane_rows.set_vec(vec![]);
+        a.row_keys.clear();
         a.gutter_rows.set_vec(vec![]);
     });
     if let Some(w) = ui() {
@@ -728,13 +748,20 @@ fn mode_label(m: &str) -> &'static str {
     }
 }
 
+/// The grid's content size: as wide as the panes need (wider than the area,
+/// it scrolls sideways), and then 6px less tall for the scrollbar under it.
+fn grid(a: &App) -> (f32, f32) {
+    let (w, h) = a.area;
+    let cw = a.mosaic.content_width(w);
+    (cw, if cw > w + 0.5 { h - 6.0 } else { h })
+}
+
 /// Lay the panes out and put them on screen (only rows that changed are rewritten).
 fn render() {
     let win = ui().map(|w| { let sz = w.window().size(); let k = w.window().scale_factor(); (sz.width as f32 / k, sz.height as f32 / k) }).unwrap_or((1400.0, 860.0));
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
     let out = with(|a| {
-        let (w, h) = a.area;
-        let cw = a.mosaic.content_width(w);
+        let (cw, h) = grid(a);
         let (leaves, gutters) = a.mosaic.layout(cw, h);
         if a.focused == 0 || !leaves.iter().any(|l| l.id == a.focused) {
             a.focused = leaves.first().map(|l| l.id).unwrap_or(0);
@@ -750,6 +777,7 @@ fn render() {
                 pinned: l.pinned,
                 armed: l.id == a.armed,
                 narrow: head::narrow(l.w),
+                drop: a.drag.is_some_and(|d| d.target == l.id) && !l.pinned,
                 menu: l.id == a.menu && head::narrow(l.w),
                 title_max: 160.0,
                 fs: 1.0,
@@ -809,12 +837,22 @@ fn render() {
         // The menu closes when its pane goes wide or away.
         if a.menu != 0 && !panes.iter().any(|p| p.id as u32 == a.menu && p.menu) { a.menu = 0; }
         let panes: Vec<PaneView> = panes.into_iter().map(|mut p| { p.full = false; if full.as_ref().is_some_and(|f| f.key == p.key) { p.armed = false; } p }).collect();
-        if panes.len() == a.pane_rows.row_count() {
-            for (i, p) in panes.into_iter().enumerate() {
-                if a.pane_rows.row_data(i).as_ref() != Some(&p) { a.pane_rows.set_row_data(i, p); }
+        // One row per pane, by key: rows of panes that went are removed, new
+        // ones added at the end, the rest rewritten only where they changed.
+        let row_key = |p: &PaneView| if p.key.is_empty() { format!("empty:{}", p.id) } else { p.key.to_string() };
+        let now: Vec<String> = panes.iter().map(row_key).collect();
+        // The keys follow the rows one for one; if they ever part, start over.
+        if a.row_keys.len() != a.pane_rows.row_count() { a.row_keys.clear(); a.pane_rows.set_vec(vec![]); }
+        let mut i = 0;
+        while i < a.row_keys.len() {
+            if now.contains(&a.row_keys[i]) { i += 1; } else { a.row_keys.remove(i); a.pane_rows.remove(i); }
+        }
+        for p in panes {
+            let k = row_key(&p);
+            match a.row_keys.iter().position(|r| *r == k) {
+                Some(i) => { if a.pane_rows.row_data(i).as_ref() != Some(&p) { a.pane_rows.set_row_data(i, p); } }
+                None => { a.row_keys.push(k); a.pane_rows.push(p); }
             }
-        } else {
-            a.pane_rows.set_vec(panes);
         }
         let gs: Vec<GutterView> = gutters.iter().map(|g| GutterView {
             split: g.split as i32, index: g.index as i32, row: g.dir == Dir::Row,
@@ -852,7 +890,7 @@ fn load_secrets(base: String) {
 fn leaf_rect(leaf: u32) -> Option<crate::mosaic::LeafRect> {
     with(|a| {
         let cw = a.mosaic.content_width(a.area.0);
-        a.mosaic.layout(cw, a.area.1).0.into_iter().find(|l| l.id == leaf)
+        a.mosaic.layout(cw, grid(a).1).0.into_iter().find(|l| l.id == leaf)
     }).flatten()
 }
 
@@ -951,6 +989,7 @@ pub fn toast(text: &str, error: bool) {
 fn close_pane(leaf: u32) {
     let key = leaf_rect(leaf).and_then(|l| l.key);
     let Some(id) = key.as_deref().and_then(chat_of).map(str::to_string) else {
+        animate();
         with(|a| a.mosaic.close(leaf));
         return layout_changed();
     };
@@ -958,6 +997,7 @@ fn close_pane(leaf: u32) {
     let path = format!("/api/ui-sessions/{id}/close");
     bg(move || api.post(&path, &json!({})), move |r| match head::close_outcome(r) {
         head::Closed::Yes => {
+            animate();
             with(|a| {
                 if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) { a.mosaic.close(l); }
                 a.font.remove(&id);
@@ -976,19 +1016,108 @@ fn close_pane(leaf: u32) {
 }
 
 fn add_pane(kind: &str) {
+    animate();
+    if kind == "fit" { return fit(); }
     with(|a| {
         if let Some(preset) = kind.strip_prefix("layout:") {
-            a.mosaic = a.mosaic.preset_from(preset);
-            return;
-        }
-        if kind == "fit" {
-            a.mosaic = { let keys = a.mosaic.keys(); let mut m = Mosaic::default(); for k in keys { m.place(&k); } m };
+            // The panes in display order: the chats in the server's order.
+            let order: Vec<String> = a.sessions.iter().filter(|c| s(c, "project") == a.project).map(|c| chat_key(&s(c, "id"))).collect();
+            a.mosaic = a.mosaic.preset_from(preset, &order);
             return;
         }
         let key = if kind == "terminal" { a.pending += 1; format!("pend:{}", a.pending) } else { format!("panel:{kind}") };
         a.focused = a.mosaic.place(&key);
     });
     layout_changed();
+}
+
+/// Ease the panes to their new places for the next 220ms (a change of
+/// structure or shares: not a gutter drag, not a window resize).
+pub fn animate() {
+    let gen = with(|a| { a.motion_gen += 1; a.motion_gen }).unwrap_or(0);
+    if let Some(w) = ui() { w.set_wb_motion(true); }
+    slint::Timer::single_shot(Duration::from_millis(260), move || {
+        if with(|a| a.motion_gen == gen).unwrap_or(false) { if let Some(w) = ui() { w.set_wb_motion(false); } }
+    });
+}
+
+/// Fit to screen: every split even, the grid back at the left; if it still
+/// scrolls sideways after 60ms, an error toast says why.
+fn fit() {
+    with(|a| a.mosaic.fit());
+    layout_changed();
+    if let Some(w) = ui() { w.set_wb_scroll_home(w.get_wb_scroll_home() + 1); }
+    slint::Timer::single_shot(Duration::from_millis(60), || {
+        let over = with(|a| (a.mosaic.content_width(a.area.0) > a.area.0 + 2.0, a.mosaic.has_pin())).unwrap_or((false, false));
+        if over.0 {
+            toast(if over.1 { "Does not fit: the pinned panes plus the others at their minimum width are wider than the window" }
+                else { "Does not fit: too many panes side by side for this window, even at their minimum width" }, true);
+        }
+    });
+}
+
+/// An empty pane's chip: Terminal puts a launcher in that pane (the web
+/// puts it in the first empty one: DESIGN rule 5, PLAN.md). The chat it
+/// starts then takes the same pane (launch_chat).
+fn chip(leaf: u32, kind: &str) {
+    if kind != "terminal" { return; }
+    animate();
+    with(|a| { a.pending += 1; let k = format!("pend:{}", a.pending); a.mosaic.assign(leaf, Some(k)); a.focused = leaf; });
+    layout_changed();
+}
+
+/// The leaf at a point of the grid's content (none on a gutter or outside).
+fn leaf_at(a: &App, x: f32, y: f32) -> Option<crate::mosaic::LeafRect> {
+    let cw = a.mosaic.content_width(a.area.0);
+    a.mosaic.layout(cw, grid(a).1).0.into_iter().find(|l| x >= l.x && x < l.x + l.w && y >= l.y && y < l.y + l.h)
+}
+
+/// A pane dragged by its header (0 start, 1 move, 2 release), at a point of
+/// the grid's content. The leaf under the pointer lights up unless pinned;
+/// the release swaps the two panes, or moves the pane into an empty one. A
+/// pinned pane can be dragged but is refused on release.
+pub fn pane_drag(leaf: u32, phase: i32, x: f32, y: f32) {
+    match phase {
+        0 => {
+            let Some(l) = leaf_rect(leaf) else { return };
+            let view = with(|a| { a.menu = 0; a.pane_rows.iter().find(|p| p.id as u32 == leaf) }).flatten();
+            with(|a| a.drag = Some(Drag { src: leaf, target: leaf }));
+            if let (Some(w), Some(v)) = (ui(), view) {
+                w.set_drag_pane(v);
+                w.set_drag_dx(x - l.x);
+                w.set_drag_dy(y - l.y);
+                w.set_drag_on(true);
+            }
+            render();
+        }
+        1 => {
+            let changed = with(|a| {
+                let t = leaf_at(a, x, y).map(|l| l.id).unwrap_or(0);
+                match &mut a.drag { Some(d) if d.target != t => { d.target = t; true } _ => false }
+            }).unwrap_or(false);
+            if changed { render(); }
+        }
+        _ => {
+            let Some(d) = with(|a| a.drag.take()).flatten() else { return };
+            if let Some(w) = ui() { w.set_drag_on(false); }
+            let target = with(|a| leaf_at(a, x, y).map(|l| l.id)).flatten();
+            let result = with(|a| target.map(|t| a.mosaic.drop_on(d.src, t)).unwrap_or(crate::mosaic::Dropped::Nothing)).unwrap_or(crate::mosaic::Dropped::Nothing);
+            match result {
+                crate::mosaic::Dropped::Pinned => { toast("This pane is pinned. Unpin it to move it.", false); render(); }
+                crate::mosaic::Dropped::Nothing => render(),
+                // The pane that was pressed keeps the focus, in its new leaf.
+                _ => { animate(); with(|a| if let Some(t) = target { a.focused = t; }); layout_changed(); }
+            }
+        }
+    }
+}
+
+/// Esc while dragging: put it down where it was, nothing changed.
+pub fn drag_cancel() {
+    if with(|a| a.drag.take().is_some()).unwrap_or(false) {
+        if let Some(w) = ui() { w.set_drag_on(false); }
+        render();
+    }
 }
 
 /// UI Mode in a launcher: a new chat in this project, in that pane.
@@ -999,7 +1128,15 @@ fn launch_chat(leaf: u32, skip: bool) {
         Ok(v) => {
             let id = s(&v, "id");
             if id.is_empty() { return; }
-            with(|a| { a.mosaic.assign(leaf, Some(chat_key(&id))); a.focused = leaf; });
+            // The chat takes the launcher's leaf (its size and pin); if the
+            // chat list already placed it elsewhere, that leaf goes.
+            animate();
+            with(|a| {
+                let key = chat_key(&id);
+                if let Some(other) = a.mosaic.leaf_of(&key) { if other != leaf { a.mosaic.close(other); } }
+                a.mosaic.assign(leaf, Some(key));
+                a.focused = leaf;
+            });
             save_layout();
             load_sessions();
         }

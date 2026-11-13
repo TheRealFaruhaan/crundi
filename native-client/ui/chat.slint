@@ -140,6 +140,38 @@ component CardBtn inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+/// Where a pane's header can be grabbed (its background, the ⋮⋮, the title):
+/// a press that moves more than 6px with the left button starts dragging the
+/// pane (2.3); the release drops it. A click that didn't move stays a click
+/// (`did-drag` says which). Positions are in window coordinates.
+component HeadGrab inherits TouchArea {
+    in property <bool> can-drag: true;
+    in property <MouseCursor> rest-cursor: MouseCursor.default;
+    out property <bool> dragging;
+    out property <bool> did-drag;
+    callback drag(int, length, length);
+    mouse-cursor: self.dragging ? MouseCursor.grabbing : self.rest-cursor;
+    pointer-event(ev) => {
+        if ev.button == PointerEventButton.left {
+            if ev.kind == PointerEventKind.down { self.did-drag = false; }
+            if ev.kind == PointerEventKind.up && self.dragging {
+                self.dragging = false;
+                root.drag(2, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    moved => {
+        if self.pressed && self.can-drag {
+            if !self.dragging && (abs(self.mouse-x - self.pressed-x) > 6px || abs(self.mouse-y - self.pressed-y) > 6px) {
+                self.dragging = true;
+                self.did-drag = true;
+                root.drag(0, self.absolute-position.x + self.pressed-x, self.absolute-position.y + self.pressed-y);
+            }
+            if self.dragging { root.drag(1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+        }
+    }
+}
+
 /// The CHAT tag: a 15px pill, 9.92px/700 upper case, .6px tracking, padding 1px 7px.
 component KindTag inherits Rectangle {
     in property <string> text;
@@ -194,6 +226,8 @@ export component PaneHead inherits Rectangle {
     callback rename(string);
     callback maximize();
     callback more();
+    // The header dragged (HeadGrab): 0 start, 1 move, 2 release.
+    callback drag(int, length, length);
     property <bool> renaming;
     // Narrow: 1px higher.
     property <length> dy: root.narrow ? -1px : 0px;
@@ -202,8 +236,13 @@ export component PaneHead inherits Rectangle {
     sure-m := Text { visible: false; text: "Sure?"; font-size: 11px; }
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     // Double-click the header (its background, handle, dot, tag: not the
-    // buttons) to maximise the pane in its split.
-    TouchArea { double-clicked => { root.maximize(); } }
+    // buttons) to maximise the pane in its split. The whole header is the
+    // drag handle (not in full screen).
+    HeadGrab {
+        can-drag: !root.full;
+        double-clicked => { root.maximize(); }
+        drag(k, x, y) => { root.drag(k, x, y); }
+    }
     HorizontalLayout {
         x: 0; y: 0;
         width: parent.width;
@@ -216,9 +255,10 @@ export component PaneHead inherits Rectangle {
         if !root.full: Rectangle {
             y: 7.5px + root.dy; width: 26px; height: 12px;
             Text { x: 3px; text: "⋮⋮"; font-size: 12px; letter-spacing: -2px; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
-            TouchArea {
-                mouse-cursor: grab;
+            HeadGrab {
+                rest-cursor: MouseCursor.grab;
                 double-clicked => { root.maximize(); }
+                drag(k, x, y) => { root.drag(k, x, y); }
                 Tooltip { TipBox { text: "Drag to reorder"; } }
             }
         }
@@ -243,10 +283,12 @@ export component PaneHead inherits Rectangle {
                 vertical-alignment: center; height: parent.height;
                 overflow: elide; wrap: no-wrap;
             }
-            th := TouchArea {
-                mouse-cursor: text;
-                clicked => { root.renaming = true; }
+            th := HeadGrab {
+                rest-cursor: MouseCursor.text;
+                can-drag: !root.full;
+                clicked => { if !self.did-drag { root.renaming = true; } }
                 double-clicked => { root.maximize(); }
+                drag(k, x, y) => { root.drag(k, x, y); }
                 Tooltip { TipBox { text: "Click to rename"; } }
             }
         }
@@ -602,7 +644,10 @@ component EntryRow inherits VerticalLayout {
         padding-top: max(0px, (self.size * 1.55 - pm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         Rectangle { height: 0; pm := Text { visible: false; text: "X"; font-size: pl.size; } }
+        // Its width given, so its wrapped height is measured at the width it
+        // is drawn at (F24: a long inline code token wrapped differently).
         StyledText {
+            width: root.avail;
             text: e.md;
             default-color: Theme.text-primary;
             default-font-size: (e.status == "h" ? 14px : 13px) * root.fs;
@@ -615,6 +660,7 @@ component EntryRow inherits VerticalLayout {
         Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: 13px * root.fs; } }
         Text { width: 20px; text: e.title; font-size: 13px * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
         StyledText {
+            width: root.avail - 20px;
             text: e.md;
             default-color: Theme.text-primary;
             default-font-size: 13px * root.fs;

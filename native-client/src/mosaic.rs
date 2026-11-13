@@ -69,6 +69,19 @@ pub struct GutterRect {
     pub locked: bool,
 }
 
+/// The Layout presets, by the web's ids.
+pub const PRESETS: [&str; 5] = ["cols2", "cols3", "cross4", "left-right2", "top-bottom2"];
+
+/// What a drop did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Dropped {
+    Nothing,
+    Swapped,
+    Moved,
+    /// The dragged pane is pinned: refused.
+    Pinned,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Mosaic {
     pub root: Node,
@@ -244,10 +257,9 @@ impl Mosaic {
                     // Into a split of the same direction: a sibling, sizes shared.
                     if let Some(i) = kids.iter().position(|k| matches!(k, Node::Leaf { _id, .. } if *_id == leaf)) {
                         if *d == dir {
-                            let half = sizes[i] / 2.0;
-                            sizes[i] = half;
-                            sizes.insert(i + 1, half);
                             kids.insert(i + 1, Node::Leaf { _id: new_leaf, key: None, pin: None });
+                            let n = kids.len();
+                            *sizes = vec![100.0 / n as f32; n];
                             return true;
                         }
                     }
@@ -260,20 +272,20 @@ impl Mosaic {
         new_leaf
     }
 
-    /// Close a leaf: it goes, and a split left with one child becomes that child.
+    /// Close a leaf (the web's mosaicCollapseLeaf): it goes, its siblings'
+    /// sizes become even, and a split left with one child becomes that child.
+    /// The root leaf alone becomes an empty root leaf.
     pub fn close(&mut self, leaf: u32) {
-        fn go(n: &mut Node, leaf: u32) {
-            if let Node::Split { sizes, kids, .. } = n {
-                if let Some(i) = kids.iter().position(|k| matches!(k, Node::Leaf { _id, .. } if *_id == leaf)) {
-                    kids.remove(i);
-                    sizes.remove(i);
-                } else {
-                    kids.iter_mut().for_each(|k| go(k, leaf));
-                }
-                if kids.len() == 1 {
-                    *n = kids.pop().unwrap();
-                }
+        fn go(n: &mut Node, leaf: u32) -> bool {
+            let Node::Split { sizes, kids, .. } = n else { return false };
+            if let Some(i) = kids.iter().position(|k| matches!(k, Node::Leaf { _id, .. } if *_id == leaf)) {
+                kids.remove(i);
+                let len = kids.len();
+                *sizes = vec![100.0 / len.max(1) as f32; len];
+                if len == 1 { *n = kids.pop().unwrap(); }
+                return true;
             }
+            kids.iter_mut().any(|k| go(k, leaf))
         }
         if matches!(&self.root, Node::Leaf { _id, .. } if *_id == leaf) {
             if let Node::Leaf { key, pin, .. } = &mut self.root { *key = None; *pin = None; }
@@ -292,8 +304,9 @@ impl Mosaic {
         leaves.iter().find(|l| l.key.as_deref() == Some(key)).map(|l| l.id)
     }
 
-    /// Show this pane: in an empty leaf if there is one, else in a new column
-    /// beside the last leaf (the web UI adds new panes to the right).
+    /// Show this pane (the web's mosaicAddKey): in the first empty leaf in tree
+    /// order if there is one, else appended to the root split, whose sizes
+    /// become even (a root leaf becomes a row of two).
     pub fn place(&mut self, key: &str) -> u32 {
         if let Some(id) = self.leaf_of(key) { return id; }
         let (leaves, _) = self.layout(1000.0, 1000.0);
@@ -302,21 +315,64 @@ impl Mosaic {
             self.assign(id, Some(key.to_string()));
             return id;
         }
-        let last = leaves.last().map(|l| l.id).unwrap_or(1);
-        // A new column at the top level.
         let new_leaf = self.id();
-        match &mut self.root {
-            Node::Split { dir: Dir::Row, sizes, kids, .. } => {
-                let share = 100.0 / (kids.len() + 1) as f32;
-                for s in sizes.iter_mut() { *s *= 1.0 - share / 100.0; }
-                sizes.push(share);
-                kids.push(Node::Leaf { _id: new_leaf, key: Some(key.to_string()), pin: None });
-                new_leaf
+        let leaf = Node::Leaf { _id: new_leaf, key: Some(key.to_string()), pin: None };
+        if let Node::Split { sizes, kids, .. } = &mut self.root {
+            kids.push(leaf);
+            let n = kids.len();
+            *sizes = vec![100.0 / n as f32; n];
+        } else {
+            let split = self.id();
+            let old = std::mem::replace(&mut self.root, Node::Leaf { _id: 0, key: None, pin: None });
+            self.root = Node::Split { _id: split, dir: Dir::Row, sizes: vec![50.0, 50.0], kids: vec![old, leaf] };
+        }
+        new_leaf
+    }
+
+    /// Fit to screen: every split's sizes even, all the way down (pins keep
+    /// their px size: a pin overrides the share).
+    pub fn fit(&mut self) {
+        fn go(n: &mut Node) {
+            if let Node::Split { sizes, kids, .. } = n {
+                *sizes = vec![100.0 / kids.len() as f32; kids.len()];
+                kids.iter_mut().for_each(go);
             }
-            _ => {
-                let id = self.split(last, Dir::Row);
-                self.assign(id, Some(key.to_string()));
-                id
+        }
+        go(&mut self.root);
+    }
+
+    /// Any pin in the tree.
+    pub fn has_pin(&self) -> bool {
+        fn go(n: &Node) -> bool {
+            match n { Node::Leaf { pin, .. } => pin.is_some(), Node::Split { kids, .. } => kids.iter().any(go) }
+        }
+        go(&self.root)
+    }
+
+    fn leaf_mut(&mut self, leaf: u32) -> Option<(&mut Option<String>, &mut Option<Pin>)> {
+        match Self::find_mut(&mut self.root, leaf) {
+            Some(Node::Leaf { key, pin, .. }) => Some((key, pin)),
+            _ => None,
+        }
+    }
+
+    /// Drop the pane of leaf `src` on leaf `dst` (the web's mosaicAssignToLeaf):
+    /// a pane there swaps with it (each leaf keeps its size and pin); an empty
+    /// leaf takes it, and the old leaf collapses.
+    pub fn drop_on(&mut self, src: u32, dst: u32) -> Dropped {
+        if src == dst { return Dropped::Nothing; }
+        let Some(src_key) = self.leaf_mut(src).and_then(|(k, _)| k.clone()) else { return Dropped::Nothing };
+        if self.leaf_mut(src).is_some_and(|(_, p)| p.is_some()) { return Dropped::Pinned; }
+        let Some((dst_key, dst_pin)) = self.leaf_mut(dst) else { return Dropped::Nothing };
+        if dst_pin.is_some() { return Dropped::Nothing; }
+        match dst_key.replace(src_key) {
+            Some(other) => {
+                if let Some((k, _)) = self.leaf_mut(src) { *k = Some(other); }
+                Dropped::Swapped
+            }
+            None => {
+                self.close(src);
+                Dropped::Moved
             }
         }
     }
@@ -368,44 +424,60 @@ impl Mosaic {
         go(&mut self.root, leaf);
     }
 
-    /// The "+" menu's Layout presets, filled with these panes in order:
-    /// cols2, cols3, grid (2×2), stack (left + right stack), rows (top + bottom pair).
+    /// The "+" menu's Layout presets (the web's mosaicApplyPreset), filled with
+    /// these panes in order; missing slots are empty leaves, panes beyond the
+    /// slots are added as `place` does. Even sizes. The ids are the web's, so
+    /// both share the saved tree:
+    ///   cols2        row[0, 1]
+    ///   cols3        row[0, 1, 2]
+    ///   cross4       row[col[0, 2], col[1, 3]]
+    ///   left-right2  row[0, col[1, 2]]
+    ///   top-bottom2  col[0, row[1, 2]]
     pub fn preset(name: &str, keys: Vec<String>) -> Mosaic {
         let mut m = Mosaic { root: Node::Leaf { _id: 1, key: None, pin: None }, next_id: 1 };
-        let mut keys = keys.into_iter();
-        let leaf = |m: &mut Mosaic, keys: &mut dyn Iterator<Item = String>| Node::Leaf { _id: m.id(), key: keys.next(), pin: None };
+        let slots: Vec<Option<String>> = (0..4).map(|i| keys.get(i).cloned()).collect();
+        let used = match name { "cols2" => 2, "cols3" | "left-right2" | "top-bottom2" => 3, "cross4" => 4, _ => 0 };
+        if used == 0 { return m; }
+        let leaf = |m: &mut Mosaic, i: usize| Node::Leaf { _id: m.id(), key: slots[i].clone(), pin: None };
         let split = |m: &mut Mosaic, dir: Dir, kids: Vec<Node>| { let n = kids.len() as f32; Node::Split { _id: m.id(), dir, sizes: vec![100.0 / n; kids.len()], kids } };
         let root = match name {
-            "cols3" => { let k = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)]; split(&mut m, Dir::Row, k) }
-            "grid" => {
-                let top = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)];
-                let bottom = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)];
-                let (t, b) = (split(&mut m, Dir::Row, top), split(&mut m, Dir::Row, bottom));
-                split(&mut m, Dir::Col, vec![t, b])
+            "cols2" => { let k = vec![leaf(&mut m, 0), leaf(&mut m, 1)]; split(&mut m, Dir::Row, k) }
+            "cols3" => { let k = vec![leaf(&mut m, 0), leaf(&mut m, 1), leaf(&mut m, 2)]; split(&mut m, Dir::Row, k) }
+            "cross4" => {
+                let left = vec![leaf(&mut m, 0), leaf(&mut m, 2)];
+                let right = vec![leaf(&mut m, 1), leaf(&mut m, 3)];
+                let (l, r) = (split(&mut m, Dir::Col, left), split(&mut m, Dir::Col, right));
+                split(&mut m, Dir::Row, vec![l, r])
             }
-            "stack" => {
-                let left = leaf(&mut m, &mut keys);
-                let right = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)];
+            "left-right2" => {
+                let first = leaf(&mut m, 0);
+                let right = vec![leaf(&mut m, 1), leaf(&mut m, 2)];
                 let r = split(&mut m, Dir::Col, right);
-                split(&mut m, Dir::Row, vec![left, r])
+                split(&mut m, Dir::Row, vec![first, r])
             }
-            "rows" => {
-                let top = leaf(&mut m, &mut keys);
-                let bottom = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)];
+            _ => {
+                let top = leaf(&mut m, 0);
+                let bottom = vec![leaf(&mut m, 1), leaf(&mut m, 2)];
                 let b = split(&mut m, Dir::Row, bottom);
                 split(&mut m, Dir::Col, vec![top, b])
             }
-            _ => { let k = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)]; split(&mut m, Dir::Row, k) }
         };
         m.root = root;
-        // Panes that did not fit the preset go on the right.
-        for k in keys { m.place(&k); }
+        // Panes beyond the slots: the first empty leaf, or appended to the root.
+        for k in keys.into_iter().skip(used) { m.place(&k); }
         m
     }
 
     /// A preset that keeps each pinned pane's pin wherever it lands.
-    pub fn preset_from(&self, name: &str) -> Mosaic {
-        let mut m = Mosaic::preset(name, self.keys());
+    /// `order`: the panes in display order (the web's currentDesiredKeys: the
+    /// chats in the server's order); panes in the tree but not in it follow.
+    pub fn preset_from(&self, name: &str, order: &[String]) -> Mosaic {
+        // An unknown preset leaves the layout as it is.
+        if !PRESETS.contains(&name) { return self.clone(); }
+        let have = self.keys();
+        let mut keys: Vec<String> = order.iter().filter(|k| have.contains(k)).cloned().collect();
+        keys.extend(have.into_iter().filter(|k| !order.contains(k)));
+        let mut m = Mosaic::preset(name, keys);
         for k in self.keys() { if let Some(p) = self.pin_of(&k) { m.set_pin(&k, p); } }
         m
     }
@@ -493,7 +565,8 @@ mod tests {
         // The pin survives JSON (it is saved) and a preset.
         let back: Mosaic = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
         assert_eq!(back.pin_of("live:a"), Some(Pin { w: 400.0, h: 788.0 }));
-        let p = m.preset_from("cols3");
+        assert_eq!(m.preset_from("nonsense", &[]).keys(), m.keys());
+        let p = m.preset_from("cols3", &[]);
         assert_eq!(p.pin_of("live:a"), Some(Pin { w: 400.0, h: 788.0 }));
         // Unpin: back to shares.
         m.toggle_pin(a, 0.0, 0.0);
@@ -521,5 +594,101 @@ mod tests {
         m.maximize(a);
         let (leaves, _) = m.layout(1154.0, 770.0);
         assert_eq!(leaves[1].w, MIN_W);
+    }
+
+    /// The tree as the spec writes it: row[a, col[b, ∅]].
+    fn shape(n: &Node) -> String {
+        match n {
+            Node::Leaf { key: Some(k), .. } => k.trim_start_matches("live:").to_string(),
+            Node::Leaf { .. } => "∅".into(),
+            Node::Split { dir, kids, .. } => format!("{}[{}]", if *dir == Dir::Row { "row" } else { "col" }, kids.iter().map(shape).collect::<Vec<_>>().join(", ")),
+        }
+    }
+
+    fn keys(n: usize) -> Vec<String> { (0..n).map(|i| format!("live:{i}")).collect() }
+
+    #[test]
+    fn presets_as_the_web() {
+        let cases = [
+            (4, "cols2", "row[0, 1, 2, 3]"), (4, "cols3", "row[0, 1, 2, 3]"),
+            (4, "cross4", "row[col[0, 2], col[1, 3]]"),
+            (4, "left-right2", "row[0, col[1, 2], 3]"), (4, "top-bottom2", "col[0, row[1, 2], 3]"),
+            (3, "cross4", "row[col[0, 2], col[1, ∅]]"), (3, "top-bottom2", "col[0, row[1, 2]]"),
+            (2, "cols3", "row[0, 1, ∅]"), (2, "cross4", "row[col[0, ∅], col[1, ∅]]"),
+            (2, "left-right2", "row[0, col[1, ∅]]"), (2, "top-bottom2", "col[0, row[1, ∅]]"),
+            (1, "cols2", "row[0, ∅]"), (1, "cols3", "row[0, ∅, ∅]"), (1, "cross4", "row[col[0, ∅], col[∅, ∅]]"),
+        ];
+        for (n, name, want) in cases {
+            let m = Mosaic::preset(name, keys(n));
+            assert_eq!(shape(&m.root), want, "{n} chats, {name}");
+        }
+        // Even sizes, and the 3-chat cross's geometry (spec: 570.5×378.5 leaves).
+        let m = Mosaic::preset("cross4", keys(3));
+        let (leaves, _) = m.layout(1160.0, 776.0);
+        assert!((leaves[0].w - 570.5).abs() < 0.01 && (leaves[0].h - 378.5).abs() < 0.01);
+        assert!((leaves[2].x - 823.5 + 240.0).abs() < 0.01, "{:?}", leaves[2]);
+        // Four from left-right2: 378 wide, the root's sizes even.
+        let m = Mosaic::preset("left-right2", keys(4));
+        let (leaves, _) = m.layout(1160.0, 776.0);
+        assert!((leaves[0].w - 378.0).abs() < 0.01 && (leaves[3].x - (1016.0 - 240.0)).abs() < 0.01, "{leaves:?}");
+    }
+
+    #[test]
+    fn drop_swaps_or_moves() {
+        // row[col[A, B], col[C, ∅]]: drag B onto ∅ gives row[A, col[C, B]].
+        let mut m = Mosaic::preset("cross4", vec!["live:A".into(), "live:C".into(), "live:B".into()]);
+        assert_eq!(shape(&m.root), "row[col[A, B], col[C, ∅]]");
+        let (leaves, _) = m.layout(1160.0, 776.0);
+        let id = |k: Option<&str>| leaves.iter().find(|l| l.key.as_deref() == k).unwrap().id;
+        assert_eq!(m.drop_on(id(Some("live:B")), id(None)), Dropped::Moved);
+        assert_eq!(shape(&m.root), "row[A, col[C, B]]");
+        // A swap trades the panes; each leaf keeps its pin and size.
+        let (leaves, _) = m.layout(1160.0, 776.0);
+        let id = |k: &str| leaves.iter().find(|l| l.key.as_deref() == Some(k)).unwrap().id;
+        let (a, c) = (id("live:A"), id("live:C"));
+        assert_eq!(m.drop_on(c, a), Dropped::Swapped);
+        assert_eq!(shape(&m.root), "row[C, col[A, B]]");
+        // On itself: nothing. A pinned pane is refused; a pinned target takes nothing.
+        assert_eq!(m.drop_on(a, a), Dropped::Nothing);
+        m.toggle_pin(a, 400.0, 700.0);
+        assert_eq!(m.drop_on(a, c), Dropped::Pinned);
+        assert_eq!(m.drop_on(c, a), Dropped::Nothing);
+        assert_eq!(shape(&m.root), "row[C, col[A, B]]");
+    }
+
+    #[test]
+    fn split_close_place_and_fit_even_out() {
+        // Split down on A of row[A, col[C, B]]: row[col[A, ∅], col[C, B]];
+        // then split right on C: row[col[A, ∅], col[row[C, ∅], B]].
+        let mut m = Mosaic::preset("left-right2", vec!["live:A".into(), "live:C".into(), "live:B".into()]);
+        let id = |m: &Mosaic, k: &str| m.leaf_of(k).unwrap();
+        m.split(id(&m, "live:A"), Dir::Col);
+        assert_eq!(shape(&m.root), "row[col[A, ∅], col[C, B]]");
+        m.split(id(&m, "live:C"), Dir::Row);
+        assert_eq!(shape(&m.root), "row[col[A, ∅], col[row[C, ∅], B]]");
+        // A sibling in a same-direction split: sizes even.
+        let mut r = Mosaic::preset("cols2", vec!["live:A".into(), "live:B".into()]);
+        r.split(id(&r, "live:A"), Dir::Row);
+        let Node::Split { sizes, .. } = &r.root else { panic!() };
+        assert!(sizes.iter().all(|s| (s - 100.0 / 3.0).abs() < 1e-3));
+        // Closing: even again, a one-child split hoisted.
+        r.close(id(&r, "live:B"));
+        let Node::Split { sizes, .. } = &r.root else { panic!() };
+        assert_eq!(sizes, &vec![50.0, 50.0]);
+        // A new pane fills the first empty leaf, else goes on the root, even.
+        let mut p = Mosaic::preset("cols2", vec!["live:A".into(), "live:B".into()]);
+        p.place("live:C");
+        assert_eq!(shape(&p.root), "row[A, B, C]");
+        let Node::Split { sizes, .. } = &p.root else { panic!() };
+        assert!(sizes.iter().all(|s| (s - 100.0 / 3.0).abs() < 1e-3));
+        // Fit: every split even, all the way down.
+        let (_, gutters) = m.layout(1160.0, 776.0);
+        let g = &gutters[0];
+        m.drag(g.split, g.index, 120.0, g.span);
+        m.fit();
+        fn all_even(n: &Node) -> bool {
+            match n { Node::Leaf { .. } => true, Node::Split { sizes, kids, .. } => sizes.iter().all(|s| (s - 100.0 / kids.len() as f32).abs() < 1e-3) && kids.iter().all(all_even) }
+        }
+        assert!(all_even(&m.root));
     }
 }

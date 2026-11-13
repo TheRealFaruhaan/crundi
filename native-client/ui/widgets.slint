@@ -160,3 +160,55 @@ export global States {
             : state;
     }
 }
+
+/// A dashed outline (Slint has no dashed borders): `thick` px dashes of
+/// `dash` px with `gap` px between, along the four edges, inset `inset` px.
+/// Corners with a radius get a solid quarter-arc each (Chromium runs its
+/// dashes round them).
+export component DashedBox inherits Rectangle {
+    in property <color> line: Theme.border;
+    in property <length> thick: 1px;
+    in property <length> dash: 3px;
+    in property <length> gap: 2px;
+    in property <length> inset: 0px;
+    in property <length> corner: 0px;
+    property <length> step: self.dash + self.gap;
+    property <length> w: self.width - 2 * self.inset;
+    property <length> h: self.height - 2 * self.inset;
+    property <length> run-w: self.w - 2 * self.corner;
+    property <length> run-h: self.h - 2 * self.corner;
+    for i in max(0, ceil(self.run-w / self.step)): Rectangle {
+        x: root.inset + root.corner + i * root.step; y: root.inset;
+        width: min(root.dash, root.run-w - i * root.step); height: root.thick; background: root.line;
+    }
+    for i in max(0, ceil(self.run-w / self.step)): Rectangle {
+        x: root.inset + root.corner + i * root.step; y: root.inset + root.h - root.thick;
+        width: min(root.dash, root.run-w - i * root.step); height: root.thick; background: root.line;
+    }
+    for i in max(0, ceil(self.run-h / self.step)): Rectangle {
+        x: root.inset; y: root.inset + root.corner + i * root.step;
+        width: root.thick; height: min(root.dash, root.run-h - i * root.step); background: root.line;
+    }
+    for i in max(0, ceil(self.run-h / self.step)): Rectangle {
+        x: root.inset + root.w - root.thick; y: root.inset + root.corner + i * root.step;
+        width: root.thick; height: min(root.dash, root.run-h - i * root.step); background: root.line;
+    }
+    // The four corners: a radius-`corner` ring, each clipped to its quarter.
+    if root.corner > 0: Rectangle {
+        x: root.inset; y: root.inset; width: root.corner; height: root.corner; clip: true;
+        Rectangle { x: 0; y: 0; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+    }
+    if root.corner > 0: Rectangle {
+        x: root.inset + root.w - root.corner; y: root.inset; width: root.corner; height: root.corner; clip: true;
+        Rectangle { x: -root.corner; y: 0; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+    }
+    if root.corner > 0: Rectangle {
+        x: root.inset; y: root.inset + root.h - root.corner; width: root.corner; height: root.corner; clip: true;
+        Rectangle { x: 0; y: -root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+    }
+    if root.corner > 0: Rectangle {
+        x: root.inset + root.w - root.corner; y: root.inset + root.h - root.corner; width: root.corner; height: root.corner; clip: true;
+        Rectangle { x: -root.corner; y: -root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+    }
+}
+

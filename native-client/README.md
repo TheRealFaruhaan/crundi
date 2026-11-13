@@ -156,6 +156,21 @@ them; each has a spec in `specs/`). So far:
     outside it, which still does its own job;
   - it stays open through live updates and closes when its pane goes wide.
 
+- **2.3 Moving panes** (`specs/moving-panes.md`):
+  - drag a pane by its header (more than 6px): a clone follows the pointer,
+    every pane shows a dashed outline and the one under the pointer lights
+    up; the drop swaps two panes, or moves a pane into an empty one (its old
+    place closes up). A pinned pane is refused with a toast; Esc puts it back;
+    near the grid's left or right edge it scrolls;
+  - the split controls that fade in over a pane; the empty pane with its
+    Terminal chip, Split ▸ / Split ▾ and ×;
+  - the "+" menu's Fit to screen (every split even, a toast when it still
+    doesn't fit) and Layout presets (2 columns, 3 columns, 2×2 cross,
+    Left + right split, Top + bottom split: the web's trees and ids, so the
+    saved layout is the same JSON);
+  - the gutters' look (accent while any is held, locked by a pin), the 6px
+    scrollbar when the grid scrolls sideways, and the 220ms layout motion.
+
 The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
 `test/phase2.mjs` drives each feature against a fresh server (the same setup
 as phase 1's test), by the pointer and keys where it matters.
