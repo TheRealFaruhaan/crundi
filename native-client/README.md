@@ -153,7 +153,8 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
   - `src/gpu.rs`: the GPU path.
 - **The interface (`ui/`):**
   - `main.slint`: the window;
-  - `signin.slint`, `sidebar.slint`, `chat.slint`, `browser.slint`: the screens;
+  - `signin.slint`, `shell.slint` (top bar, sidebar, tab bar), `workbench.slint`, `chat.slint`,
+    `browser.slint` (the drawer): the screens;
   - `widgets.slint`: shared parts;
   - `theme.slint` and `icons.slint`: the look.
 
