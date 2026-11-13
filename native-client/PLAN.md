@@ -50,10 +50,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      (the drop targets and their highlight); split right / split down from the
      hover controls (`leaf-split`, `head-split`); the empty pane and its chips;
      the "+" menu's Layout presets and Fit (`wb-layout`, `wb-fit`).
-   - [ ] **2.4 Live state.** The pane's dot and badge (idle, working,
+   - [x] **2.4 Live state.** The pane's dot and badge (idle, working,
      needs input, error), the project's dot in the sidebar, the chat title
      updating from the server.
-   - [ ] **2.T Token pass** (the owner's change of approach, 14 Nov 2026;
+   - [x] **2.T Token pass** (the owner's change of approach, 14 Nov 2026;
      DESIGN.md, rule 2). The scales in `ui/theme.slint`
      (spacing, radius, font, weights, line heights, colours, recurring
      sizes), and every hard-coded number in shell, workbench, chat, signin,
