@@ -149,9 +149,15 @@ component HeadGrab inherits TouchArea {
     in property <MouseCursor> rest-cursor: MouseCursor.default;
     out property <bool> dragging;
     out property <bool> did-drag;
+    // Its tooltip may show: not once a button went down (Chromium hides a
+    // title tooltip on a press), and not again until the pointer has left
+    // and come back.
+    out property <bool> tip-ok: true;
+    changed has-hover => { if !self.has-hover { self.tip-ok = true; } }
     callback drag(int, length, length);
     mouse-cursor: self.dragging ? MouseCursor.grabbing : self.rest-cursor;
     pointer-event(ev) => {
+        if ev.kind == PointerEventKind.down { self.tip-ok = false; }
         if ev.button == PointerEventButton.left {
             if ev.kind == PointerEventKind.down { self.did-drag = false; }
             if ev.kind == PointerEventKind.up && self.dragging {
@@ -257,11 +263,11 @@ export component PaneHead inherits Rectangle {
         if !root.full: Rectangle {
             y: 7.5px + root.dy; width: 26px; height: 12px;
             Text { x: 3px; text: "⋮⋮"; font-size: 12px; letter-spacing: -2px; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
-            HeadGrab {
+            dh := HeadGrab {
                 rest-cursor: MouseCursor.grab;
                 double-clicked => { root.maximize(); }
                 drag(k, x, y) => { root.drag(k, x, y); }
-                Tooltip { TipBox { text: "Drag to reorder"; } }
+                if dh.tip-ok && !dh.pressed && !dh.dragging: Tooltip { TipBox { text: "Drag to reorder"; } }
             }
         }
         // The state dot: 7px at y 10 (its colours: 2.4).
@@ -291,7 +297,7 @@ export component PaneHead inherits Rectangle {
                 clicked => { if !self.did-drag { root.renaming = true; } }
                 double-clicked => { root.maximize(); }
                 drag(k, x, y) => { root.drag(k, x, y); }
-                Tooltip { TipBox { text: "Click to rename"; } }
+                if th.tip-ok && !th.pressed && !th.dragging: Tooltip { TipBox { text: "Click to rename"; } }
             }
         }
         // Renaming: an input 160 wide, 20 high at y 3.5, the short title all

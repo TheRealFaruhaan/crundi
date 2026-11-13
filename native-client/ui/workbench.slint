@@ -380,6 +380,9 @@ export component Workbench inherits Rectangle {
     callback area(length, length);
     callback focus-pane(int);
     callback close-pane(int);
+    // A gutter pressed, then dragged: (split, index, the pointer along the
+    // split's axis in window px, the pair's span).
+    callback gutter-press(int, int, length, length);
     callback gutter-drag(int, int, length, length);
     callback gutter-even(int, int);
     callback split(int, bool /* down */);
@@ -540,7 +543,10 @@ export component Workbench inherits Rectangle {
                 mouse-cursor: g.locked ? MouseCursor.not-allowed : g.row ? MouseCursor.col-resize : MouseCursor.row-resize;
                 pointer-event(ev) => {
                     if ev.button == PointerEventButton.left && !g.locked {
-                        if ev.kind == PointerEventKind.down { root.resizing = true; }
+                        if ev.kind == PointerEventKind.down {
+                            root.resizing = true;
+                            root.gutter-press(g.split, g.index, g.row ? self.absolute-position.x + self.mouse-x : self.absolute-position.y + self.mouse-y, g.span);
+                        }
                         if ev.kind == PointerEventKind.up { root.resizing = false; }
                     }
                     // A cancelled press (the grab lost) ends it too.
@@ -548,7 +554,9 @@ export component Workbench inherits Rectangle {
                 }
                 moved => {
                     if self.pressed && !g.locked {
-                        root.gutter-drag(g.split, g.index, g.row ? self.mouse-x - self.pressed-x : self.mouse-y - self.pressed-y, g.span);
+                        // Where the pointer is (window px): the shares follow
+                        // from where the drag started (src/app.rs).
+                        root.gutter-drag(g.split, g.index, g.row ? self.absolute-position.x + self.mouse-x : self.absolute-position.y + self.mouse-y, g.span);
                     }
                 }
                 double-clicked => { root.gutter-even(g.split, g.index); }

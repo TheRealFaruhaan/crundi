@@ -99,6 +99,7 @@ export component MainWindow inherits Window {
     callback wb-area(length, length);
     callback focus-pane(int);
     callback close-pane(int);
+    callback gutter-press(int, int, length, length);
     callback gutter-drag(int, int, length, length);
     callback gutter-even(int, int);
     callback split(int, bool);
@@ -233,7 +234,8 @@ export component MainWindow inherits Window {
                         area(w, h) => { root.wb-area(w, h); }
                         focus-pane(id) => { root.focus-pane(id); }
                         close-pane(id) => { root.close-pane(id); }
-                        gutter-drag(s, i, d, span) => { root.gutter-drag(s, i, d, span); }
+                        gutter-press(s, i, at, span) => { root.gutter-press(s, i, at, span); }
+                        gutter-drag(s, i, at, span) => { root.gutter-drag(s, i, at, span); }
                         gutter-even(s, i) => { root.gutter-even(s, i); }
                         split(id, down) => { root.split(id, down); }
                         launch-chat(id, skip) => { root.launch-chat(id, skip); }

@@ -88,6 +88,9 @@ pub struct App {
     menu: u32,
     /// A pane being dragged by its header (2.3).
     drag: Option<Drag>,
+    /// A gutter held: its split and index, the pair's shares and px width at
+    /// the press, and where the press was along the axis.
+    gutter: Option<(u32, usize, f32, f32, f32, f32)>,
     /// The pane rows' keys, one row per pane (a chat keeps its row, and so
     /// its view, wherever it moves; the row eases to its new place).
     row_keys: Vec<String>,
@@ -190,6 +193,7 @@ pub fn init(window: &MainWindow) {
             full: None,
             menu: 0,
             drag: None,
+            gutter: None,
             row_keys: vec![],
             motion_gen: 0,
             font: HashMap::new(),
@@ -210,7 +214,21 @@ pub fn init(window: &MainWindow) {
     window.on_wb_area(|w, h| { with(|a| a.area = (w, h)); render(); });
     window.on_focus_pane(|id| focus_pane(id as u32));
     window.on_close_pane(|id| close_pane(id as u32));
-    window.on_gutter_drag(|sp, i, d, span| { with(|a| a.mosaic.drag(sp as u32, i as usize, d, span)); layout_changed(); });
+    // A gutter drag, as the web's: the shares and the pair's px at the press,
+    // then each move from there.
+    window.on_gutter_press(|sp, i, at, span| {
+        with(|a| {
+            let s = a.mosaic.shares(sp as u32).unwrap_or_default();
+            a.gutter = s.get(i as usize).zip(s.get(i as usize + 1)).map(|(x, y)| (sp as u32, i as usize, *x, *y, span - crate::mosaic::GUTTER, at));
+        });
+    });
+    window.on_gutter_drag(|sp, i, at, _span| {
+        let moved = with(|a| match a.gutter {
+            Some((gs, gi, a0, b0, total, start)) if gs == sp as u32 && gi == i as usize => { a.mosaic.drag_from(gs, gi, a0, b0, total, at - start); true }
+            _ => false,
+        }).unwrap_or(false);
+        if moved { layout_changed(); }
+    });
     window.on_gutter_even(|sp, i| { animate(); with(|a| a.mosaic.even(sp as u32, i as usize)); layout_changed(); });
     window.on_split(|id, down| { animate(); with(|a| { a.mosaic.split(id as u32, if down { Dir::Col } else { Dir::Row }); }); layout_changed(); });
     window.on_pane_drag(|id, k, x, y| pane_drag(id as u32, k, x, y));

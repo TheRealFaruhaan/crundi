@@ -94,6 +94,33 @@ impl Default for Mosaic {
     }
 }
 
+/// CSS's resolution of flexible lengths for children with flex-basis 0
+/// (`flex: <grow> 1 0`) in `avail` px: each takes its share of what is
+/// left; one that comes out under its minimum is frozen there and the rest
+/// is shared again, until none is under. Fixed children (`0 0 <px>`) are
+/// frozen from the start.
+pub fn flex_lens(avail: f32, grow: &[f32], fixed: &[Option<f32>], mins: &[f32]) -> Vec<f32> {
+    let n = grow.len();
+    let mut len = vec![0.0f32; n];
+    let mut frozen = vec![false; n];
+    for i in 0..n { if let Some(f) = fixed.get(i).copied().flatten() { len[i] = f; frozen[i] = true; } }
+    loop {
+        let open: Vec<usize> = (0..n).filter(|&i| !frozen[i]).collect();
+        if open.is_empty() { break; }
+        let used: f32 = (0..n).filter(|&i| frozen[i]).map(|i| len[i]).sum();
+        let free = avail - used;
+        let g: f32 = open.iter().map(|&i| grow[i].max(0.0)).sum();
+        let target = |i: usize| if g > 0.0 { (free * grow[i].max(0.0) / g).max(0.0) } else { 0.0 };
+        let under: Vec<usize> = open.iter().copied().filter(|&i| target(i) < mins.get(i).copied().unwrap_or(0.0)).collect();
+        if under.is_empty() {
+            for &i in &open { len[i] = target(i); }
+            break;
+        }
+        for &i in &under { len[i] = mins[i]; frozen[i] = true; }
+    }
+    len
+}
+
 fn node_id(n: &Node) -> u32 {
     match n { Node::Split { _id, .. } | Node::Leaf { _id, .. } => *_id }
 }
@@ -162,26 +189,14 @@ impl Mosaic {
                     let along = if *dir == Dir::Row { w } else { h };
                     let gaps = GUTTER * (kids.len().saturating_sub(1)) as f32;
                     let free = (along - gaps).max(0.0);
-                    // A pinned child (or a split holding one) takes its px size
-                    // along this axis; the others share what is left by their sizes.
+                    // As the web's CSS lays a split out: each child is
+                    // `flex: <size> 1 0` (a pinned one, or a split holding
+                    // one, `0 0 <px>`), with a 340px floor for a leaf and its
+                    // min-content for a split along a row; nothing below 0
+                    // down a column (flex_lens).
                     let fixed: Vec<Option<f32>> = kids.iter().map(|k| { let f = Mosaic::fixed(k); if *dir == Dir::Row { f.0 } else { f.1 } }).collect();
-                    let free = (free - fixed.iter().flatten().sum::<f32>()).max(0.0);
-                    let total: f32 = sizes.iter().zip(&fixed).filter(|(_, f)| f.is_none()).map(|(s, _)| *s).sum::<f32>().max(0.0001);
-                    let mut lens: Vec<f32> = sizes.iter().zip(&fixed).map(|(s, f)| f.unwrap_or(free * s / total)).collect();
-                    // Rows keep every child at its minimum width.
-                    if *dir == Dir::Row {
-                        let mins: Vec<f32> = kids.iter().map(Mosaic::min_width).collect();
-                        for i in 0..lens.len() {
-                            if lens[i] < mins[i] {
-                                let short = mins[i] - lens[i];
-                                lens[i] = mins[i];
-                                // Taken from the widest free sibling that can spare it.
-                                if let Some(j) = (0..lens.len()).filter(|&j| j != i && fixed[j].is_none() && lens[j] - mins[j] > short).max_by(|&a, &b| lens[a].partial_cmp(&lens[b]).unwrap()) {
-                                    lens[j] -= short;
-                                }
-                            }
-                        }
-                    }
+                    let mins: Vec<f32> = if *dir == Dir::Row { kids.iter().map(Mosaic::min_width).collect() } else { vec![0.0; kids.len()] };
+                    let lens = flex_lens(free, sizes, &fixed, &mins);
                     let mut at = if *dir == Dir::Row { x } else { y };
                     for (i, kid) in kids.iter().enumerate() {
                         let len = lens[i];
@@ -214,20 +229,42 @@ impl Mosaic {
         }
     }
 
-    /// Drag gutter `index` of split `split` by `delta` px, along a span of `span` px.
-    /// The pair stays within 10–90% of what the two share, as in the web UI.
-    pub fn drag(&mut self, split: u32, index: usize, delta: f32, span: f32) {
+    /// Drag gutter `index` of split `split` by `delta` px from where the drag
+    /// started, as the web does (setupMosaicResize): at the press it takes the
+    /// pair's shares (`a0`, `b0`) and their width in px (`total_px`, the two
+    /// panes without the gutter), and each move sets
+    /// a = a0 + delta / total_px × (a0 + b0), within 10–90% of the pair.
+    pub fn drag_from(&mut self, split: u32, index: usize, a0: f32, b0: f32, total_px: f32, delta: f32) {
         let Some(Node::Split { sizes, kids, dir, .. }) = Self::find_mut(&mut self.root, split) else { return };
-        if index + 1 >= sizes.len() || span <= GUTTER { return; }
+        if index + 1 >= sizes.len() { return; }
         // A divider next to a pinned pane is locked.
         let along = |k: &Node| { let f = Mosaic::fixed(k); if *dir == Dir::Row { f.0 } else { f.1 } };
         if along(&kids[index]).is_some() || along(&kids[index + 1]).is_some() { return; }
-        let pair = sizes[index] + sizes[index + 1];
-        let px_per = (span - GUTTER) / pair;
-        let mut a = sizes[index] + delta / px_per;
-        a = a.clamp(pair * 0.1, pair * 0.9);
+        let pair = a0 + b0;
+        let frac = if total_px > 0.0 { delta / total_px } else { 0.0 };
+        let a = (a0 + frac * pair).clamp(pair * 0.1, pair * 0.9);
         sizes[index] = a;
         sizes[index + 1] = pair - a;
+    }
+
+    /// A split's shares (for a drag's start).
+    pub fn shares(&self, split: u32) -> Option<Vec<f32>> {
+        fn go(n: &Node, id: u32) -> Option<Vec<f32>> {
+            match n {
+                Node::Split { _id, sizes, kids, .. } => if *_id == id { Some(sizes.clone()) } else { kids.iter().find_map(|k| go(k, id)) },
+                _ => None,
+            }
+        }
+        go(&self.root, split)
+    }
+
+    /// One drag of `delta` px from the current shares, across a pair `span`
+    /// px long with its gutter (the tests' shorthand).
+    #[cfg(test)]
+    pub fn drag(&mut self, split: u32, index: usize, delta: f32, span: f32) {
+        let Some(s) = self.shares(split) else { return };
+        if index + 1 >= s.len() || span <= GUTTER { return; }
+        self.drag_from(split, index, s[index], s[index + 1], span - GUTTER, delta);
     }
 
     /// Double-click on a gutter: the two sides even again.
@@ -690,5 +727,54 @@ mod tests {
             match n { Node::Leaf { .. } => true, Node::Split { sizes, kids, .. } => sizes.iter().all(|s| (s - 100.0 / kids.len() as f32).abs() < 1e-3) && kids.iter().all(all_even) }
         }
         assert!(all_even(&m.root));
+    }
+
+    #[test]
+    fn flex_floors_as_css() {
+        // Four leaves at [45, 5, 25, 25] in a 1400px window: 1160 of grid, 1148
+        // inside its padding. The floors need 4 × 340 + 3 × 7 = 1381, so the
+        // row is that wide, and every leaf ends at its 340 floor (the web's
+        // x246/593/940/1287).
+        let mut m = Mosaic::preset("cols3", keys(4));
+        if let Node::Split { sizes, .. } = &mut m.root { *sizes = vec![45.0, 5.0, 25.0, 25.0]; }
+        let cw = m.content_width(1160.0);
+        assert!((cw - 1393.0).abs() < 0.01);
+        let (leaves, _) = m.layout(cw, 776.0);
+        for (l, x) in leaves.iter().zip([246.0, 593.0, 940.0, 1287.0]) {
+            assert!((l.w - 340.0).abs() < 0.01 && (l.x + 240.0 - x).abs() < 0.01, "{leaves:?}");
+        }
+        // The resolution itself: shares, then freeze what falls under its floor,
+        // share again.
+        let l = flex_lens(1360.0, &[45.0, 5.0, 25.0, 25.0], &[None; 4], &[340.0; 4]);
+        assert!(l.iter().all(|w| (w - 340.0).abs() < 0.01), "{l:?}");
+        let l = flex_lens(1000.0, &[60.0, 20.0, 20.0], &[None; 3], &[340.0; 3]);
+        assert_eq!(l, vec![340.0, 340.0, 340.0]);
+        let l = flex_lens(1200.0, &[60.0, 20.0, 20.0], &[None; 3], &[340.0; 3]);
+        assert!((l[0] - 520.0).abs() < 0.01 && l[1] == 340.0 && l[2] == 340.0, "{l:?}");
+        let l = flex_lens(800.0, &[1.0, 1.0], &[Some(300.0), None], &[340.0, 340.0]);
+        assert_eq!(l, vec![300.0, 500.0]);
+    }
+
+    #[test]
+    fn gutter_drag_as_the_web() {
+        // From four 340s at 25% each: +100px on the first gutter. The web's
+        // arithmetic gives 25 + 100/680 × 50 = 32.35 and 17.65, and every leaf
+        // stays at 340 throughout.
+        let mut m = Mosaic::preset("cols3", keys(4));
+        let cw = m.content_width(1160.0);
+        let (_, gutters) = m.layout(cw, 776.0);
+        let g = &gutters[0];
+        let s0 = m.shares(g.split).unwrap();
+        for step in 1..=10 {
+            m.drag_from(g.split, 0, s0[0], s0[1], g.span - GUTTER, step as f32 * 10.0);
+            let (leaves, _) = m.layout(m.content_width(1160.0), 776.0);
+            assert!(leaves.iter().all(|l| (l.w - 340.0).abs() < 0.01), "step {step}: {leaves:?}");
+        }
+        let s = m.shares(g.split).unwrap();
+        assert!((s[0] - 32.35).abs() < 0.01 && (s[1] - 17.65).abs() < 0.01, "{s:?}");
+        // Clamped to 10–90% of the pair.
+        m.drag_from(g.split, 0, s0[0], s0[1], g.span - GUTTER, 10_000.0);
+        let s = m.shares(g.split).unwrap();
+        assert!((s[0] - 45.0).abs() < 0.01 && (s[1] - 5.0).abs() < 0.01, "{s:?}");
     }
 }
