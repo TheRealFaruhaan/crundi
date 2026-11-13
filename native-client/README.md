@@ -160,6 +160,9 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
 
 ## Adding a screen
 
+**Read `DESIGN.md` first.** Every screen copies the PC client's design
+exactly: measured, compared side by side, and reviewed against a checklist.
+
 Each screen follows the same pattern, so they stay alike:
 
 1. **Spec:**
@@ -182,7 +185,8 @@ Each screen follows the same pattern, so they stay alike:
    callbacks to `testctl.rs` too, so tests can drive them.
 5. **Proof:**
    - a step in a `test/*.mjs` against a real server;
-   - snapshots from the test driver;
+   - snapshots from the test driver, compared with the web screen
+     (`tools/compare.sh`, as `DESIGN.md` describes);
    - the CI build on all three systems.
 6. **A server without an endpoint** (older version): the screen says "Not
    supported by this server" (`ApiError::Status(404)`) and doesn't break.

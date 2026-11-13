@@ -51,6 +51,9 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - the release workflow;
    - moving PC users off Electron.
 
+Every screen copies the PC client's design exactly, by the method and checklist
+in `DESIGN.md`; a phase's review includes its side-by-side comparisons.
+
 Each phase ends with the screens working against a real server, a
 `test/drive`-style check where it fits, and screenshots from CI on all three
 systems.
