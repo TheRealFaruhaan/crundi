@@ -189,7 +189,7 @@ export component ProjectSidebar inherits Rectangle {
                 width: Theme.sp-24; height: Theme.sp-24;
                 border-radius: Theme.r-control;
                 background: ct.has-hover ? Theme.bg-hover : transparent;
-                Icon { source: root.folded ? Icons.chevron-right : Icons.chevrons-left; width: Theme.icon-md; height: Theme.icon-md; tint: ct.has-hover ? Theme.text-primary : Theme.text-muted; }
+                Icon { source: root.folded ? Icons.chevrons-right : Icons.chevrons-left; width: Theme.icon-md; height: Theme.icon-md; tint: ct.has-hover ? Theme.text-primary : Theme.text-muted; }
                 ct := TouchArea { mouse-cursor: pointer; clicked => { root.folded = !root.folded; } }
             }
         }
@@ -223,7 +223,7 @@ export component ProjectSidebar inherits Rectangle {
                         // The active look's 1px ring (0 0 0 1px accent), none or running.
                         if self.active && (self.st == "" || self.st == "running"): Rectangle { x: -1px; y: -1px; width: Theme.sp-40; height: Theme.sp-40; border-radius: Theme.r-pill; background: Theme.accent; }
                         // Active: the accent gradient as a circle (AccentFill), under the edge.
-                        if self.active: AccentFill { round: true; }
+                        if self.active: AccentFill { round: true; width: parent.width; height: parent.height; }
                         Rectangle {
                             border-radius: Theme.r-pill;
                             background: parent.active ? transparent : Theme.bg-tertiary;
@@ -275,17 +275,24 @@ export component ProjectSidebar inherits Rectangle {
         Rectangle {
             height: Theme.sidebar-foot;
             Rectangle { height: 1px; background: Theme.border-subtle; }
-            if !root.folded: Rectangle {
-                x: Theme.sp-8; y: Theme.sp-10; width: parent.width - Theme.sp-16; height: Theme.sz-34;
+            // Add project: a dashed box; folded, just its "+" (the web's rail
+            // keeps it, above Inbox). Padding 8 (folded 8 / 6).
+            Rectangle {
+                x: root.folded ? Theme.sp-6 : Theme.sp-8; y: Theme.sp-10;
+                width: parent.width - 2 * self.x; height: Theme.sz-34;
                 border-radius: Theme.r-control;
                 background: ap.has-hover ? Theme.accent-dim : transparent;
                 Dashed { line: ap.has-hover ? Theme.accent : Theme.border; }
-                Text { text: "+ Add project"; color: ap.has-hover ? Theme.accent-hover : Theme.text-muted; font-size: Theme.text-14; }
+                Text {
+                    text: root.folded ? "+" : "+ Add project";
+                    color: ap.has-hover ? Theme.accent-hover : Theme.text-muted;
+                    font-size: root.folded ? Theme.text-16 : Theme.text-14;
+                }
                 ap := TouchArea { mouse-cursor: pointer; }
             }
             Rectangle {
-                x: Theme.sp-8; y: Theme.sp-48 + Theme.sp-4;
-                width: parent.width - Theme.sp-16; height: root.inbox-unread > 0 ? Theme.sz-36 : Theme.sz-34;
+                x: root.folded ? Theme.sp-6 : Theme.sp-8; y: Theme.sp-48 + Theme.sp-4;
+                width: parent.width - 2 * self.x; height: root.inbox-unread > 0 ? Theme.sz-36 : Theme.sz-34;
                 border-radius: Theme.r-control;
                 border-width: 1px;
                 border-color: root.inbox-unread > 0 ? Theme.accent : Theme.border-subtle;
@@ -295,13 +302,22 @@ export component ProjectSidebar inherits Rectangle {
                     spacing: Theme.sp-8;
                     Icon { source: Icons.mail; width: Theme.icon-lg; height: Theme.icon-lg; y: (parent.height - Theme.sp-16) / 2; tint: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; }
                     if !root.folded: Text { text: "Inbox"; color: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; font-size: Theme.text-14; vertical-alignment: center; }
-                    if root.inbox-unread > 0: Rectangle {
+                    if root.inbox-unread > 0 && !root.folded: Rectangle {
                         y: (parent.height - Theme.sz-18) / 2;
                         height: Theme.sz-18; width: max(Theme.sz-18, ib-n.preferred-width + Theme.sp-10);
                         border-radius: Theme.r-field;
                         background: Theme.accent;
                         ib-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: white; font-size: Theme.text-11; font-weight: Theme.w-bold; }
                     }
+                }
+                // Folded: the count sits on the envelope's top-right corner
+                // (16 high, at least 16 wide, padding 0 4; top 2, right 6).
+                if root.inbox-unread > 0 && root.folded: Rectangle {
+                    x: parent.width - Theme.sp-6 - self.width; y: Theme.sp-2;
+                    height: Theme.icon-lg; width: max(Theme.icon-lg, fb-n.preferred-width + 2 * Theme.sp-4);
+                    border-radius: Theme.r-pill;
+                    background: Theme.accent;
+                    fb-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: white; font-size: Theme.text-10; font-weight: Theme.w-bold; }
                 }
                 ib := TouchArea { mouse-cursor: pointer; }
             }

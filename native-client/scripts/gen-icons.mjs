@@ -33,10 +33,10 @@ for (const n of names) {
 }
 // Turned variants: Slint's software renderer can't rotate an image, so the
 // pinned pin (the web's transform: rotate(-30deg)) is drawn turned.
-const TURNED = { 'pin-turned': ['pin', -30] };
-for (const [n, [base, deg]] of Object.entries(TURNED)) {
+const TURNED = { 'pin-turned': ['pin', 'rotate(-30 12 12)'], 'chevrons-right': ['chevrons-left', 'translate(24 0) scale(-1 1)'] };
+for (const [n, [base, how]] of Object.entries(TURNED)) {
   writeFileSync(join(dir, `${n}.svg`),
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(${deg} 12 12)">${icons[base]}</g></svg>\n`);
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="${how}">${icons[base]}</g></svg>\n`);
   names.push(n);
 }
 // Icons the web draws inline rather than from ICON_PATHS (the workbench's

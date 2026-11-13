@@ -351,13 +351,13 @@ export component MainWindow inherits Window {
         width: self.w;
         height: tt.preferred-height + Theme.sp-24 + Theme.sp-2;
         background: Theme.bg-secondary;
-        border-radius: Theme.radius-sm;
+        border-radius: Theme.r-control;
         border-width: 1px;
         border-color: root.toast-error ? Theme.red : Theme.border;
         drop-shadow-blur: Theme.sp-20;
         drop-shadow-offset-y: Theme.sp-6;
         drop-shadow-color: Theme.shadow;
-        Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.radius-sm; border-bottom-left-radius: Theme.radius-sm; background: root.toast-error ? Theme.red : Theme.accent; }
+        Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.r-control; border-bottom-left-radius: Theme.r-control; background: root.toast-error ? Theme.red : Theme.accent; }
         tm := Text { visible: false; text: root.toast; font-size: Theme.text-14; }
         tt := Text {
             x: Theme.sp-24; y: Theme.sz-14; width: parent.width - Theme.sz-44;
@@ -369,9 +369,11 @@ export component MainWindow inherits Window {
     if root.signed-in && root.add-menu-open: TouchArea {
         clicked => { root.add-menu-open = false; }
     }
-    // At the "+" (24×24 at 374.4, 53.5): its left, its bottom + 4.
+    // At the tab bar's "+": its left (the bar's padding, then the Workbench
+    // tab: its icon, a gap, its label, its padding), its bottom + 4.
+    wb-m := Text { visible: false; text: "Workbench"; font-size: Theme.text-13; font-weight: Theme.w-medium; }
     if root.signed-in && root.add-menu-open: AddMenu {
-        x: Theme.sidebar-width + Theme.add-menu-x;
+        x: Theme.sidebar-width + Theme.sp-12 + Theme.icon-lg + Theme.sp-6 + wb-m.preferred-width + Theme.sz-28;
         y: Theme.topbar-height + Theme.sp-6 + Theme.sp-24 + Theme.sp-4;
         pick(k) => { root.add-menu-open = false; root.add-pane(k); }
     }

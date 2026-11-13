@@ -246,10 +246,11 @@ Phase 1 left these, each with its workaround in place:
   are three soft rings (the software renderer has no blur).
 - **Round gradients** (2.T): the software renderer fills a gradient as a
   square and ignores a radius on it or on a clip, so the accent gradient's
-  round shapes are SVGs drawn at their size (`AccentFill` in
-  `ui/widgets.slint`, `ui/shapes/`): the folded rail's active avatar (a
-  circle) and Send and the cards' primary buttons (a radius-6 rectangle drawn
-  for 60×28; at other text sizes its corners stretch a little).
+  round shapes are images (`AccentFill` in `ui/widgets.slint`, `ui/shapes/`),
+  sized to fill what holds them: the folded rail's active avatar (an SVG
+  circle) and Send and the cards' primary buttons (a nine-slice PNG, radius
+  6: its corners stay round at any size, its middle stretches, so the 135°
+  gradient flattens a little on a wide button).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

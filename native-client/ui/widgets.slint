@@ -19,15 +19,17 @@ export global Pointer {
     in-out property <bool> press-on-menu;
 }
 
-/// The accent gradient (135°, accent to accent-hover) in a round shape:
-/// a circle, or a control's rounded rectangle (radius 6). The software
-/// renderer fills a gradient square and ignores a radius on it or on a clip,
-/// so the shape is an SVG drawn at its size (ui/shapes/; its two colours are
-/// Theme.accent and Theme.accent-hover). The control shape is drawn for
-/// 60×28: at other sizes its corners stretch a little (PLAN.md, Known gaps).
+/// The accent gradient (135°, accent to accent-hover) in a round shape,
+/// filling what holds it: a circle, or a control's rounded rectangle (radius
+/// 6). The software renderer fills a gradient square and ignores a radius on
+/// it or on a clip, so the shape is an image (ui/shapes/, in Theme.accent and
+/// Theme.accent-hover): the circle an SVG drawn at its size; the control a
+/// nine-slice PNG whose 6px corners stay round at any size while its middle
+/// stretches (PLAN.md, Known gaps).
 export component AccentFill inherits Image {
+    // Where it is used: width: parent.width; height: parent.height.
     in property <bool> round;
-    source: root.round ? @image-url("shapes/accent-round.svg") : @image-url("shapes/accent-control.svg");
+    source: root.round ? @image-url("shapes/accent-round.svg") : @image-url("shapes/accent-control.png", nine-slice(6));
     image-fit: fill;
 }
 
@@ -50,14 +52,14 @@ export component IconButton inherits Rectangle {
     callback clicked();
     width: root.size;
     height: root.size;
-    border-radius: Theme.radius-sm;
+    border-radius: Theme.r-control;
     background: ta.has-hover && root.enabled ? Theme.bg-hover : transparent;
     accessible-role: button;
     accessible-label: root.tooltip;
     Icon {
         source: root.icon;
-        width: root.size * 0.55;
-        height: root.size * 0.55;
+        width: root.size * Theme.icon-share;
+        height: root.size * Theme.icon-share;
         tint: root.enabled ? (ta.has-hover ? Theme.text-primary : root.tint) : Theme.text-muted;
     }
     ta := TouchArea {
@@ -78,7 +80,7 @@ export component Btn inherits Rectangle {
     callback clicked();
     height: Theme.sz-34;
     min-width: lay.preferred-width;
-    border-radius: Theme.radius-sm;
+    border-radius: Theme.r-control;
     background: !root.enabled ? Theme.bg-tertiary
         : root.primary ? (ta.has-hover ? Theme.accent-hover : Theme.accent)
         : root.danger ? (ta.has-hover ? Theme.red : Theme.red-dim)
@@ -121,7 +123,7 @@ export component Field inherits Rectangle {
     callback accepted(string);
     callback edited(string);
     height: Theme.sz-38;
-    border-radius: Theme.radius-sm;
+    border-radius: Theme.r-control;
     background: Theme.bg-tertiary;
     border-width: 1px;
     border-color: input.has-focus ? Theme.accent : Theme.border;
@@ -133,7 +135,7 @@ export component Field inherits Rectangle {
             enabled: root.enabled;
             vertical-alignment: center;
             color: Theme.text-primary;
-            font-size: Theme.font-size;
+            font-size: Theme.text-14;
             selection-background-color: Theme.accent-dim;
             input-type: root.password ? InputType.password : InputType.text;
             single-line: true;
@@ -147,7 +149,7 @@ export component Field inherits Rectangle {
         vertical-alignment: center;
         text: root.placeholder;
         color: Theme.text-muted;
-        font-size: Theme.font-size;
+        font-size: Theme.text-14;
     }
     public function focus-input() { input.focus(); }
 }

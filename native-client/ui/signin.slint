@@ -213,7 +213,7 @@ export component SignInPage inherits Rectangle {
                     background: Theme.bg-secondary;
                     border-width: 1px;
                     border-color: Theme.border;
-                    border-radius: Theme.radius;
+                    border-radius: Theme.r-card;
                     card := VerticalLayout {
                         padding: Theme.sp-32;
                         spacing: 0px;
@@ -233,7 +233,7 @@ export component SignInPage inherits Rectangle {
                         ]: HorizontalLayout {
                             padding-bottom: Theme.sp-10;
                             spacing: Theme.sp-10;
-                            opacity: i == 0 ? 0.45 : 1;
+                            opacity: i == 0 ? Theme.o-dim : 1;
                             Rectangle {
                                 width: Theme.sz-14; height: Theme.sz-14; y: Theme.sp-4;
                                 border-radius: Theme.r-pill;
@@ -318,7 +318,7 @@ export component SignInPage inherits Rectangle {
                     // The card's shadow (0 24px 60px rgba(0,0,0,.6)), in soft layers.
                     for l in Theme.shadow-card: Rectangle { x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-card + l.e; background: l.c; }
                     Rectangle {
-                        border-radius: Theme.radius;
+                        border-radius: Theme.r-card;
                         border-width: 1px;
                         border-color: Theme.border;
                         background: Theme.grad-card;
@@ -331,49 +331,68 @@ export component SignInPage inherits Rectangle {
                         prompt-t := Text { text: root.prompt; font-size: Theme.text-14; color: Theme.text-secondary; horizontal-alignment: center; }
 
                         // Google / GitHub, waiting on the browser.
-                        if root.oauth-code != "": VerticalLayout {
-                            spacing: Theme.sp-6;
-                            Text { text: "Sign in and allow this computer in your browser. Check that it shows this code:"; font-size: Theme.text-13; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: Theme.signin-field; }
-                            Text { text: root.oauth-code; font-family: Theme.mono; font-size: Theme.text-20; letter-spacing: Theme.track-code; color: Theme.text-primary; horizontal-alignment: center; }
-                            QuietLink { text: "Cancel"; color: Theme.accent-hover; clicked => { root.cancel(); } }
-                        }
-
-                        if root.oauth-code == "" && root.pairing: VerticalLayout {
-                            spacing: Theme.sp-10;
+                        // Centred in the card, as the web's form.
+                        if root.oauth-code != "": HorizontalLayout {
                             alignment: center;
-                            LoginField { text <=> root.link; placeholder: "https://…/pair#…"; accepted => { root.sign-in-pair(root.link); } }
-                            LoginButton { text: "Pair this computer"; enabled: !root.busy && root.link != ""; clicked => { root.sign-in-pair(root.link); } }
+                            VerticalLayout {
+                                spacing: Theme.sp-6;
+                                Text { text: "Sign in and allow this computer in your browser. Check that it shows this code:"; font-size: Theme.text-13; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: Theme.signin-field; }
+                                Text { text: root.oauth-code; font-family: Theme.mono; font-size: Theme.text-20; letter-spacing: Theme.track-code; color: Theme.text-primary; horizontal-alignment: center; }
+                                QuietLink { text: "Cancel"; color: Theme.accent-hover; clicked => { root.cancel(); } }
+                            }
                         }
 
-                        if root.oauth-code == "" && !root.pairing && root.buttons: VerticalLayout {
-                            spacing: Theme.sp-10;
-                            if root.offer-telegram: OAuthButton { logo: @image-url("brand/telegram.svg"); text: "Sign in with Telegram"; clicked => { root.sign-in-oauth(root.server, "telegram"); } }
-                            if root.offer-google: OAuthButton { logo: @image-url("brand/google.svg"); text: "Sign in with Google"; clicked => { root.sign-in-oauth(root.server, "google"); } }
-                            if root.offer-github: OAuthButton { logo: @image-url("brand/github.svg"); text: "Sign in with GitHub"; clicked => { root.sign-in-oauth(root.server, "github"); } }
+                        // Centred in the card, as the web's form.
+                        if root.oauth-code == "" && root.pairing: HorizontalLayout {
+                            alignment: center;
+                            VerticalLayout {
+                                spacing: Theme.sp-10;
+                                alignment: center;
+                                LoginField { text <=> root.link; placeholder: "https://…/pair#…"; accepted => { root.sign-in-pair(root.link); } }
+                                LoginButton { text: "Pair this computer"; enabled: !root.busy && root.link != ""; clicked => { root.sign-in-pair(root.link); } }
+                            }
+                        }
+
+                        // Centred in the card, as the web's form.
+                        if root.oauth-code == "" && !root.pairing && root.buttons: HorizontalLayout {
+                            alignment: center;
+                            VerticalLayout {
+                                spacing: Theme.sp-10;
+                                if root.offer-telegram: OAuthButton { logo: @image-url("brand/telegram.svg"); text: "Sign in with Telegram"; clicked => { root.sign-in-oauth(root.server, "telegram"); } }
+                                if root.offer-google: OAuthButton { logo: @image-url("brand/google.svg"); text: "Sign in with Google"; clicked => { root.sign-in-oauth(root.server, "google"); } }
+                                if root.offer-github: OAuthButton { logo: @image-url("brand/github.svg"); text: "Sign in with GitHub"; clicked => { root.sign-in-oauth(root.server, "github"); } }
+                            }
                         }
                         if root.oauth-code == "" && !root.pairing && root.buttons && root.offer-password: Text {
                             text: "OR"; font-size: Theme.text-12; letter-spacing: Theme.track-wide; color: Theme.text-muted; horizontal-alignment: center;
                         }
-                        if root.oauth-code == "" && !root.pairing && root.offer-password: VerticalLayout {
-                            spacing: Theme.sp-10;
+                        // Centred in the card, as the web's form.
+                        if root.oauth-code == "" && !root.pairing && root.offer-password: HorizontalLayout {
                             alignment: center;
-                            // Focused on open, as the web's.
-                            pw := LoginField { text <=> root.password; placeholder: "Password"; password: true; init => { self.focus-input(); } }
-                            LoginField {
-                                text <=> root.code;
-                                placeholder: "6-digit code";
-                                code: true;
-                                accepted => { root.sign-in-password(root.server, root.password, root.code); }
+                            VerticalLayout {
+                                spacing: Theme.sp-10;
+                                alignment: center;
+                                // Focused on open, as the web's.
+                                pw := LoginField { text <=> root.password; placeholder: "Password"; password: true; init => { self.focus-input(); } }
+                                LoginField {
+                                    text <=> root.code;
+                                    placeholder: "6-digit code";
+                                    code: true;
+                                    accepted => { root.sign-in-password(root.server, root.password, root.code); }
+                                }
+                                LoginButton {
+                                    text: root.busy ? "Signing in…" : "Sign in";
+                                    enabled: !root.busy && root.password != "" && root.code != "";
+                                    clicked => { root.sign-in-password(root.server, root.password, root.code); }
+                                }
+                                // The form's hidden error line (22.5px) before the links.
+                                Rectangle { height: Theme.sp-12; }
                             }
-                            LoginButton {
-                                text: root.busy ? "Signing in…" : "Sign in";
-                                enabled: !root.busy && root.password != "" && root.code != "";
-                                clicked => { root.sign-in-password(root.server, root.password, root.code); }
-                            }
-                            // The form's hidden error line (22.5px) before the links.
-                            Rectangle { height: Theme.sp-12; }
                         }
-                        if root.error != "": Text { text: root.error; font-size: Theme.text-12; color: Theme.red; horizontal-alignment: center; wrap: word-wrap; width: Theme.signin-field; }
+                        if root.error != "": HorizontalLayout {
+                            alignment: center;
+                            Text { text: root.error; font-size: Theme.text-12; color: Theme.red; horizontal-alignment: center; wrap: word-wrap; width: Theme.signin-field; }
+                        }
 
                         // The quiet links: pairing (or back), and the server.
                         VerticalLayout {

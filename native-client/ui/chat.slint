@@ -137,7 +137,7 @@ component CardBtn inherits Rectangle {
         : root.danger && ta.has-hover ? Theme.red-dim
         : ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
     // Primary: the accent gradient in its rounded shape (AccentFill).
-    if root.primary: AccentFill { }
+    if root.primary: AccentFill { width: parent.width; height: parent.height; }
     t := Text { text: root.text; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: root.primary ? white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
@@ -658,7 +658,7 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "user": HorizontalLayout {
         alignment: end;
         Rectangle {
-            width: min(ub-measure.preferred-width + Theme.sp-24, root.avail * 0.86);
+            width: min(ub-measure.preferred-width + Theme.sp-24, root.avail * Theme.bubble-share);
             background: Theme.accent-dim;
             border-width: 1px;
             border-color: Theme.accent-edge;
@@ -677,7 +677,7 @@ component EntryRow inherits VerticalLayout {
     // above and below (the font's own line measured, so any system font fits).
     if e.kind == "assistant" && e.status != "li": pl := VerticalLayout {
         property <length> size: (e.status == "h" ? Theme.sz-14 : Theme.sz-14) * root.fs;
-        padding-top: max(0px, (self.size * 1.55 - pm.preferred-height) / 2);
+        padding-top: max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         Rectangle { height: 0; pm := Text { visible: false; text: "X"; font-size: pl.size; } }
         // Its width given, so its wrapped height is measured at the width it
@@ -691,7 +691,7 @@ component EntryRow inherits VerticalLayout {
         }
     }
     if e.kind == "assistant" && e.status == "li": HorizontalLayout {
-        padding-top: max(0px, (Theme.sz-14 * root.fs * 1.55 - lm.preferred-height) / 2);
+        padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - lm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: Theme.text-13 * root.fs; } }
         Text { width: Theme.sp-20; text: e.title; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
@@ -999,7 +999,7 @@ export component ChatPane inherits Rectangle {
                             Rectangle {
                             border-radius: Theme.r-control;
                             // The accent gradient in its rounded shape (AccentFill).
-                            AccentFill { }
+                            AccentFill { width: parent.width; height: parent.height; }
                             st := Text { text: "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: white; }
                             TouchArea {
                                 mouse-cursor: pointer;
@@ -1044,7 +1044,7 @@ export component ChatPane inherits Rectangle {
                             Rectangle {
                             border-radius: Theme.r-control;
                             // The accent gradient in its rounded shape (AccentFill).
-                            AccentFill { }
+                            AccentFill { width: parent.width; height: parent.height; }
                             st2 := Text { text: "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: white; }
                             TouchArea {
                                 mouse-cursor: pointer;

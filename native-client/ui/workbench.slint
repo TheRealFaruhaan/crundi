@@ -2,7 +2,7 @@
 // this draws what it worked out), the gutters between them, the new-pane
 // launcher, empty panes, and the "+" menu. As the web UI's workbench.
 
-import { Theme } from "theme.slint";
+import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox } from "widgets.slint";
 import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox } from "chat.slint";
@@ -85,7 +85,7 @@ component Launcher inherits Rectangle {
                 box := VerticalLayout {
                     padding: Theme.sp-20;
                     spacing: Theme.sp-10;
-                    Text { text: "CLAUDE"; font-size: Theme.text-12; font-weight: Theme.w-bold; color: Theme.text-muted; letter-spacing: 1px; horizontal-alignment: center; }
+                    Text { text: "CLAUDE"; font-size: Theme.text-12; font-weight: Theme.w-bold; color: Theme.text-muted; letter-spacing: Theme.track-wide; horizontal-alignment: center; }
                     HorizontalLayout {
                         spacing: Theme.sp-8;
                         Rectangle {
@@ -466,7 +466,7 @@ export component Workbench inherits Rectangle {
             // The layout motion: each pane eases from where it was (220ms,
             // cubic-bezier(.2,.7,.2,1)); a new one fades in (the web also
             // scales it from .985: the software renderer can't scale).
-            animate x, y, width, height { duration: root.motion && !root.resizing ? Theme.motion : 0; easing: cubic-bezier(0.2, 0.7, 0.2, 1); }
+            animate x, y, width, height { duration: root.motion && !root.resizing ? Theme.motion : 0; easing: Motion.layout; }
             property <float> shown: 0;
             init => { self.shown = 1; }
             opacity: self.shown;
@@ -533,9 +533,9 @@ export component Workbench inherits Rectangle {
         for g in root.gutters: Rectangle {
             x: g.x; y: g.y; width: g.w; height: g.h;
             Rectangle {
-                x: g.row ? Theme.sp-4 : 0px; y: g.row ? 0px : Theme.sp-4;
+                x: g.row ? (parent.width - 1px) / 2 : 0px; y: g.row ? 0px : (parent.height - 1px) / 2;
                 width: g.row ? 1px : parent.width; height: g.row ? parent.height : 1px;
-                opacity: g.locked ? 0.4 : 1;
+                opacity: g.locked ? Theme.o-dim : 1;
                 background: gt.has-hover || root.resizing ? Theme.accent : Theme.border;
                 animate background { duration: Theme.motion-fast; }
             }
@@ -626,9 +626,10 @@ export component AddMenu inherits Rectangle {
     // Over "Layout", or over the submenu or the 10px bridge to it (by the
     // pointer's position: the items' own touch areas take the hover).
     property <length> sub-x: self.width - Theme.sp-2;
-    property <length> sub-y: 1px + Theme.sp-6 + 10 * Theme.sz-34 - Theme.sp-6;
+    // Layout's top − 6.
+    property <length> sub-y: items.y + lay.y - Theme.sp-6;
     property <length> sub-w: max(Theme.submenu-min, max(p1-m.preferred-width, p2-m.preferred-width, p3-m.preferred-width, p4-m.preferred-width, p5-m.preferred-width) + Theme.sp-12 + Theme.sz-22 + Theme.sp-10 + Theme.sp-12 + Theme.sp-12);
-    property <length> sub-h: Theme.sp-12 + 5 * Theme.sp-32 + 4 * Theme.sp-2;
+    property <length> sub-h: presets.preferred-height + Theme.sp-2;
     property <bool> in-sub: root.layouts
         && Pointer.x >= self.absolute-position.x + self.sub-x - Theme.sp-10 && Pointer.x <= self.absolute-position.x + self.sub-x + self.sub-w
         && Pointer.y >= self.absolute-position.y + self.sub-y && Pointer.y <= self.absolute-position.y + self.sub-y + self.sub-h;
@@ -673,7 +674,9 @@ export component AddMenu inherits Rectangle {
     }
     // The Layout submenu: at least 178 wide, each item on one line (the web
     // wraps "Top + bottom split" in its 178px: a slip, DESIGN rule 5).
-    if root.layouts: Rectangle {
+    // (Always there, shown while open, so its height can be read above.)
+    Rectangle {
+        visible: root.layouts;
         x: root.sub-x; y: root.sub-y;
         width: root.sub-w;
         height: root.sub-h;
