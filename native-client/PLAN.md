@@ -29,7 +29,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    client, natively and exactly). The screens, in build order; each one has
    a spec in `specs/`, passes the design review (web-over-native crops under
    the spec) and has an end-to-end test before it is ticked:
-   - [ ] **2.1 Pane header, wide.** `.term-head` of a UI chat: title (click to
+   - [x] **2.1 Pane header, wide.** `.term-head` of a UI chat: title (click to
      rename, `term-rename`), CHAT tag, the secrets lock (`chat-secrets-btn`,
      hidden when the server lacks `chat-secret-preauth`; count badge; yellow
      `.on`), A− / reset (rotate-ccw, `term-font-reset`) / A+ (the chat's
