@@ -2,10 +2,12 @@
 // Sign the running native client in to a test server and take window
 // snapshots, for comparing with the web UI (the driver: src/testctl.rs).
 //
-//   node native-client/test/look.mjs <session.json> <out-prefix> [actions…]
+//   node native-client/test/look.mjs <port | session.json> <out-prefix> [actions…]
 //
-// session.json: {password, secret} of the test server (CRUNDI_TEST_SERVER,
-// default http://localhost:8889). Actions after sign-in, each a snapshot:
+// A port: the seeded test server tools/test-server.sh <port> started, with its
+// /tmp/crundi-devtest-<port>/session.json. A session.json file: {password,
+// secret} of the server at CRUNDI_TEST_SERVER (default http://localhost:8889).
+// Actions after sign-in, each a snapshot:
 //   wait:<ms>  ui:<name>[:arg…]  snap:<name>
 //   mouse:<move|click|dblclick|down|up|leave>:<x>:<y>   key:<Escape|Return|text>
 // A ui: argument "@pane" is the first chat pane's leaf id.
@@ -13,8 +15,10 @@ import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { totpNow } from '../../src/auth-password.js';
 
-const [sessionFile, prefix, ...actions] = process.argv.slice(2);
-const SERVER = process.env.CRUNDI_TEST_SERVER || 'http://localhost:8889';
+const [target, prefix, ...actions] = process.argv.slice(2);
+const byPort = /^[0-9]+$/.test(target || '');
+const sessionFile = byPort ? `/tmp/crundi-devtest-${target}/session.json` : target;
+const SERVER = byPort ? `http://localhost:${target}` : (process.env.CRUNDI_TEST_SERVER || 'http://localhost:8889');
 const PORT = Number(process.env.CRUNDI_TEST_PORT || 7612);
 const sess = JSON.parse(readFileSync(sessionFile, 'utf8'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

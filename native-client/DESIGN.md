@@ -31,11 +31,19 @@ and not anyone's taste.
 ## The method
 
 ```
-native-client/tools/test-server.sh                 # an isolated dev Crundi on :8889, seeded
-node native-client/tools/web-session.mjs           # a web session for the browser
+native-client/tools/test-server.sh 4812             # an isolated dev Crundi on :4812, seeded
+node native-client/tools/web-session.mjs 4812       # a web session for the browser
 ```
 
-1. **The web screen.** Open `http://127.0.0.1:8889/` in a hidden browser at
+Always start a server through `tools/test-server.sh <port>`, never with
+`node src/index.js` by hand: without the script's empty `.env` a dev server
+reads the real one and runs the LIVE Telegram bot. The port is the first
+argument (or `DEV_WEB_PORT`, default 8889); in a factory run, use the run's
+range. Its data, config, log and `session.json` live in
+`/tmp/crundi-devtest-<port>`, so servers on different ports run side by side.
+Stop it with `kill $(cat /tmp/crundi-devtest-<port>/server.pid)`.
+
+1. **The web screen.** Open `http://127.0.0.1:<port>/` in a hidden browser at
    1400×860 (Crundi's `browser_open`, on: server). Put the session in
    localStorage (`crundi_token`, `crundi_refresh`) and reload.
    - Skip the What's-new tour and wait for the splash to fade before taking a
@@ -47,8 +55,8 @@ node native-client/tools/web-session.mjs           # a web session for the brows
    (where text actually sits), and `::before` / `::after`. Dots, bars, rings
    and underlines are often pseudo-elements.
 3. **The native screen.** Start the client with `CRUNDI_TEST_PORT`, sign in
-   and snapshot with `test/look.mjs` (its `ui:` actions reach the same
-   states).
+   and snapshot with `test/look.mjs <port> <out-prefix> …` (it signs in to the
+   same test server; its `ui:` actions reach the same states).
 4. **Compare.** Run `tools/compare.sh web.png native.png out <regions…>` for
    each region: top bar, sidebar header, rows, footer, tab bar, pane header,
    the chat log, the composer, menus, dialogs. Use `ZOOM=2` for small parts.

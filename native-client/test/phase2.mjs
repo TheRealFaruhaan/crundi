@@ -18,9 +18,21 @@
 //       screen, × and a press outside (which still acts) close it; it goes
 //       with its pane; it closes when the pane goes wide; and the fold edge
 //       (pane ≤ 567) checked by dragging a gutter across it.
+//   2.3 moving panes: every Layout preset with four chats (and, in a second
+//       project, with two: the spare slots empty), Fit (even shares; the
+//       error toast when it can't fit), a gutter drag, a preset from the
+//       menu by the mouse; the hover controls split down and right without
+//       taking the focus; drag a pane by its header onto an empty pane
+//       (moves) or a chat (swaps), Esc cancels, a pinned pane is refused;
+//       an empty pane's Terminal chip puts a launcher in that pane and the
+//       chat it starts takes the same leaf; × removes an empty pane; each
+//       project keeps its own layout, and the sizes survive a restart.
 //
-// Needs a FRESH dev server with no sign-in set up (this sets a password on it):
+// Needs a FRESH test server with no sign-in set up (this sets a password on
+// it), started through tools/test-server.sh <port> --bare, never by hand; it
+// refuses a server with a Telegram bot configured:
 //
+//   native-client/tools/test-server.sh 4811 --bare
 //   CRUNDI_TEST_SERVER=http://localhost:4811 NATIVE_BIN=… DISPLAY=… node native-client/test/phase2.mjs
 //
 // Pictures go to DRIVE_OUT (default: the temp dir).
@@ -55,11 +67,24 @@ async function http(method, path, body, token) {
 // ─── The server: a password, a project, two chats ───
 const PASSWORD = 'native-client-test-' + Math.random().toString(36).slice(2, 10);
 const methods = await http('GET', '/api/auth/methods');
+// Never against a server running the LIVE Telegram bot (checked again below,
+// once signed in): a test server comes from tools/test-server.sh <port> --bare.
+if (methods.body?.telegram || methods.body?.telegramBotId) {
+  console.error(`Refusing ${SERVER}: it has a Telegram bot configured. Start a test server with native-client/tools/test-server.sh <port> --bare.`);
+  process.exit(2);
+}
 if (!methods.body?.setupRequired) { console.error('This needs a fresh dev server (no sign-in set up yet)'); process.exit(2); }
 const setup = await http('POST', '/api/auth/setup', { method: 'password', password: PASSWORD });
 check('the server takes a password', setup.body?.ok && setup.body.totpSecret, setup.body);
 const SECRET = setup.body.totpSecret;
 const token = setup.body.token;
+
+// No bot behind the sign-in either (an empty .env, no TELEGRAM_BOT_TOKEN).
+const status = await http('GET', '/api/status', null, token);
+if (status.body?.botConfigured !== false) {
+  console.error(`Refusing ${SERVER}: it has a Telegram bot configured (botConfigured=${status.body?.botConfigured}). Start a test server with native-client/tools/test-server.sh <port> --bare.`);
+  process.exit(2);
+}
 const proj = await http('POST', '/api/projects', { alias: 'demo', name: 'Demo', path: process.env.CRUNDI_TEST_PROJECT || join(tmpdir(), 'crundi-native-demo2'), create: true }, token);
 check('a project to work in', proj.status < 300, proj.body);
 const chatA = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'First chat' }, token)).body?.id;
@@ -216,13 +241,14 @@ if (p) check('another preset keeps it too', Math.round(pane(p, chatA).w) === pin
 a = pane(p, chatA);   // a preset makes new leaves (new ids)
 
 // Double-click the header's background: 92 / 8, again: even. (Unpinned
-// first: a pinned neighbour keeps its size.)
+// first: a pinned neighbour keeps its size.) 50px right of the centre: the
+// hover split controls (2.3) cover the header's middle, as in the web.
 await ui('pane-pin', a.id);
 p = await until('unpin', (q) => !pane(q, chatA).pinned && q.lockedGutters === 0);
 const b0 = pane(p, chatB);
-await mouse('dblclick', WB.x + b0.x + b0.w / 2, headY(b0));
+await mouse('dblclick', WB.x + b0.x + b0.w / 2 + 50, headY(b0));
 p = await until('double-click on the header maximises in the split', (q) => pane(q, chatB).w > pane(q, chatA).w * 1.5);
-await mouse('dblclick', WB.x + pane(p, chatB).x + pane(p, chatB).w / 2, headY(b0));
+await mouse('dblclick', WB.x + pane(p, chatB).x + pane(p, chatB).w / 2 + 50, headY(b0));
 await until('again: an even split', (q) => Math.abs(pane(q, chatA).w - pane(q, chatB).w) < 2) && check('double-click: 92/8, then even', true);
 // Not on a button: a double-click on A+ only steps the size twice.
 p = await props();
@@ -591,6 +617,7 @@ await snap('2.3-drag-over-chat');
 await mouse('up', WB.x + before1.x + 100, WB.y + before1.y + 100);
 p = await until('the drop swaps the panes', (q) => pane(q, four[0]).x === before1.x && pane(q, four[0]).y === before1.y && pane(q, four[1]).x === before0.x && pane(q, four[1]).y === before0.y);
 if (p) check('a drop on another pane swaps the two', true);
+await sleep(500);   // the swap's motion (220ms) settles before the next press
 // Esc cancels a drag.
 b = pane(p, four[0]);
 await mouse('down', WB.x + b.x + 230, WB.y + b.y + 13);
@@ -632,7 +659,102 @@ empty = p.panes.find((x) => x.kind === 'empty');
 await mouse('click', WB.x + empty.x + empty.w / 2 + 78, WB.y + empty.y + empty.h / 2 + 31.5);   // its ×
 p = await until('× removes the empty pane', (q) => !q.panes.some((x) => x.kind === 'empty'));
 if (p) check('the empty pane\'s × removes it', true);
-// The layout survives a restart.
+// The hover split controls again: split right on pane 2 (by the mouse). A new
+// empty pane right of it, same top; the focus stays where it was.
+const shapeBeforeSplit = shapeOf(savedTree());
+await ui('focus-pane', pane(await props(), four[1]).id);
+p = await until('pane 1 focused (split right)', (q) => pane(q, four[1]).focused);
+b = pane(p, four[2]);
+await mouse('move', WB.x + b.x + 100, WB.y + b.y + 200);
+await sleep(300);
+await mouse('click', WB.x + b.x + b.w / 2 - 12, WB.y + b.y + 3 + 9);   // the left button: Split right
+p = await until('split right from the hover controls', (q) => q.panes.some((x) => x.kind === 'empty'));
+empty = p?.panes.find((x) => x.kind === 'empty');
+check('split right puts an empty pane right of it, same top', p && Math.abs(empty.y - pane(p, four[2]).y) < 1 && empty.x > pane(p, four[2]).x && Math.abs(empty.x - (pane(p, four[2]).x + pane(p, four[2]).w + 7)) < 1, p && [empty, pane(p, four[2])]);
+check('a split right shares that row evenly (340 + 7 + 340 at least)', p && Math.abs(empty.w - pane(p, four[2]).w) < 1 && empty.w >= 340, p && [empty.w, pane(p, four[2]).w]);
+check('a click on Split right leaves the focus alone', p && pane(p, four[1]).focused && !pane(p, four[2]).focused);
+// The empty pane's Terminal chip (by the mouse) puts a launcher in that very
+// pane, and the chat the launcher starts (UI Mode) takes the same leaf.
+await mouse('click', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2 - 6.5);
+p = await until('the chip: a launcher in the clicked pane', (q) => q.panes.find((x) => x.id === empty.id)?.kind === 'launcher');
+if (p) check('the Terminal chip starts a launcher in that pane', true);
+const sessionsBefore = (await http('GET', '/api/ui-sessions', null, token)).body?.sessions?.map((s) => s.id) || [];
+await ui('launch-chat', empty.id);
+let started;
+p = await until('UI Mode starts a chat in the launcher\'s leaf', async (q) => {
+  const x = q.panes.find((y) => y.id === empty.id);
+  if (x?.kind !== 'chat') return false;
+  started = x.key.slice(5);
+  return !q.panes.some((y) => y.kind === 'launcher' || y.kind === 'empty');
+});
+check('the chat started from the chip takes the launcher\'s leaf (same place, same size)', p && Math.abs(pane(p, started).x - empty.x) < 1 && Math.abs(pane(p, started).y - empty.y) < 1 && Math.abs(pane(p, started).w - empty.w) < 1, p && pane(p, started));
+check('…and it is a new chat on the server, in this project', started && !sessionsBefore.includes(started) && (await serverChat(started))?.project === 'demo', started);
+check('the chat started from the chip has the focus', p && pane(p, started)?.focused);
+// Closed on the server, its leaf collapses: the tree is as before the split.
+await http('POST', `/api/ui-sessions/${started}/close`, {}, token);
+p = await until('the started chat goes, its leaf collapses', (q) => !pane(q, started) && !q.panes.some((x) => x.kind === 'empty') && shapeOf(savedTree()) === shapeBeforeSplit);
+if (p) check('a chat closed on the server collapses its leaf', true);
+
+// Each preset with fewer chats than slots, in a second project with two
+// chats: the spare slots are empty panes. Each project keeps its own layout.
+const proj2 = await http('POST', '/api/projects', { alias: 'other', name: 'Other', path: join(tmpdir(), 'crundi-native-other2-' + Date.now()), create: true }, token);
+check('a second project', proj2.status < 300, proj2.body);
+const chatP = (await http('POST', '/api/ui-sessions/create', { project: 'other', title: 'Other one' }, token)).body?.id;
+const chatQ = (await http('POST', '/api/ui-sessions/create', { project: 'other', title: 'Other two' }, token)).body?.id;
+const demoGeo = (q) => four.map((id) => { const x = pane(q, id); return x && [Math.round(x.x), Math.round(x.y), Math.round(x.w), Math.round(x.h)]; });
+const demoTreeBefore = JSON.stringify(savedTree());
+const demoGeoBefore = demoGeo(await props());
+await ui('select-project', 'other');
+p = await until('the other project: its two chats', (q) => q.currentProject === 'other' && pane(q, chatP) && pane(q, chatQ) && !pane(q, four[0]));
+const two = [chatP, chatQ];
+const otherTree = () => saved().layouts?.other?.root;
+const shape2 = (n) => (n.t === 'leaf' ? (n.key ? two.indexOf(n.key.slice(5)) : '∅') : `${n.dir}[${n.kids.map(shape2).join(', ')}]`);
+await ui('add-pane', 'layout:cols2');
+await until('other: cols2', (q) => otherTree()?.t === 'split');
+two.splice(0, 2, ...JSON.stringify(saved().layouts.other).match(/live:[0-9a-f]+/g).map((k) => k.slice(5)));
+const preset2 = async (name, want, more) => {
+  await ui('add-pane', 'layout:' + name);
+  const q = await until(`other: preset ${name}`, () => shape2(otherTree()) === want);
+  if (!q) return;
+  const qq = await props();
+  const empties = qq.panes.filter((x) => x.kind === 'empty');
+  check(`preset ${name} with two chats: ${want}`, more(qq, empties), qq.panes.map((x) => [x.kind, x.title, x.x + WB.x, x.y + WB.y, x.w, x.h]));
+};
+await preset2('cols3', 'row[0, 1, ∅]', (q, e) => e.length === 1 && [pane(q, two[0]), pane(q, two[1]), e[0]].every((x, i) => Math.abs(x.x + WB.x - [246, 631, 1016][i]) < 1 && Math.abs(x.w - 378) < 1 && Math.abs(x.h - 764) < 1));
+await preset2('cross4', 'row[col[0, ∅], col[1, ∅]]', (q, e) => e.length === 2 && Math.abs(pane(q, two[1]).x + WB.x - 823.5) < 1 && Math.abs(pane(q, two[0]).h - 378.5) < 1);
+await preset2('left-right2', 'row[0, col[1, ∅]]', (q, e) => e.length === 1 && Math.abs(pane(q, two[0]).w - 570.5) < 1 && Math.abs(pane(q, two[0]).h - 764) < 1 && Math.abs(e[0].y + WB.y - 475.5) < 1);
+await preset2('top-bottom2', 'col[0, row[1, ∅]]', (q, e) => e.length === 1 && Math.abs(pane(q, two[0]).w - 1148) < 1 && Math.abs(pane(q, two[0]).h - 378.5) < 1 && Math.abs(e[0].x + WB.x - 823.5) < 1);
+await preset2('cols2', 'row[0, 1]', (q, e) => e.length === 0 && Math.abs(pane(q, two[0]).w - 570.5) < 1 && Math.abs(pane(q, two[1]).x + WB.x - 823.5) < 1);
+await snap('2.3-other-cols2');
+// Sizes by a gutter drag (left 120px wider), saved for this project.
+p = await props();
+const go = p.gutterViews.find((g) => g.row);
+const wo = pane(p, two[0]).w;
+await mouse('move', WB.x + go.x + 3.5, WB.y + go.y + 300);
+await mouse('down', WB.x + go.x + 3.5, WB.y + go.y + 300);
+for (let i = 1; i <= 6; i++) await mouse('move', WB.x + go.x + 3.5 + i * 20, WB.y + go.y + 300);
+await mouse('up', WB.x + go.x + 123.5, WB.y + go.y + 300);
+p = await until('other: the gutter drag resizes', (q) => Math.abs(pane(q, two[0]).w - (wo + 120)) < 2);
+const otherSizes = JSON.stringify(otherTree()?.sizes);
+check('the end of a gutter drag saves the sizes for that project', p && otherTree()?.sizes && Math.abs(otherTree().sizes[0] - otherTree().sizes[1]) > 5, otherTree());
+const otherGeo = (q) => two.map((id) => { const x = pane(q, id); return x && [Math.round(x.x), Math.round(x.w)]; });
+const otherGeoBefore = otherGeo(await props());
+// Back to Demo: its own layout, untouched.
+await ui('select-project', 'demo');
+p = await until('back on Demo: its four panes as they were', (q) => q.currentProject === 'demo' && JSON.stringify(demoGeo(q)) === JSON.stringify(demoGeoBefore));
+check('each project keeps its own layout', p && JSON.stringify(savedTree()) === demoTreeBefore && JSON.stringify(otherTree()?.sizes) === otherSizes);
+// Uneven sizes on Demo too (its column gutter 80px left), to see them come back after the restart.
+p = await props();
+const gd = p.gutterViews.find((g) => g.row);
+const leftOf = four.find((id) => { const x = pane(p, id); return Math.abs(x.x + x.w - gd.x) < 1 && x.y >= gd.y - 1 && x.y < gd.y + gd.h; });
+const wd = pane(p, leftOf).w;
+await mouse('move', WB.x + gd.x + 3.5, WB.y + gd.y + 200);
+await mouse('down', WB.x + gd.x + 3.5, WB.y + gd.y + 200);
+for (let i = 1; i <= 4; i++) await mouse('move', WB.x + gd.x + 3.5 - i * 20, WB.y + gd.y + 200);
+await mouse('up', WB.x + gd.x - 76.5, WB.y + gd.y + 200);
+p = await until('Demo: the gutter drag resizes', (q) => Math.abs(pane(q, leftOf).w - (wd - 80)) < 2);
+if (p) check('Demo: uneven sizes by a gutter drag', true);
+// The layout, sizes included, survives a restart, per project.
 const kept = JSON.stringify(savedTree());
 const geo = (q) => four.map((id) => { const x = pane(q, id); return [Math.round(x.x), Math.round(x.y), Math.round(x.w), Math.round(x.h)]; });
 const geoBefore = geo(await props());
@@ -643,6 +765,10 @@ app = launch('run3');
 d = await driver();
 p = await until('after a restart: the same layout', (q) => q.signedIn && four.every((id) => pane(q, id)) && JSON.stringify(geo(q)) === JSON.stringify(geoBefore), 30000);
 check('the layout survives a restart', p && JSON.stringify(savedTree()) === kept);
+check('…with the sizes a gutter drag left (not even)', p && Math.abs(pane(p, leftOf).w - (wd - 80)) < 2, p && geo(p));
+await ui('select-project', 'other');
+p = await until('after a restart: the other project\'s sizes', (q) => q.currentProject === 'other' && JSON.stringify(otherGeo(q)) === JSON.stringify(otherGeoBefore));
+check('the other project\'s sizes survive a restart too', p && JSON.stringify(otherTree()?.sizes) === otherSizes, p && otherGeo(p));
 
 d.close();
 app.kill();

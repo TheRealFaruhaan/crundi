@@ -109,16 +109,25 @@ driver (`CRUNDI_TEST_PORT`, `src/testctl.rs`):
 4. sign-out, then pairing;
 5. a restart that signs in from the saved login.
 
-It needs a fresh dev Crundi that shares nothing with a live one:
+It needs a fresh dev Crundi that shares nothing with a live one. Start it
+with `tools/test-server.sh`, never with `node src/index.js` by hand: a dev
+server started without its empty `.env` reads the real one and runs the LIVE
+Telegram bot. The script takes the port (`DEV_WEB_PORT` or the first
+argument, default 8889; in a factory run, use the run's range), keeps its data
+and config in `/tmp/crundi-devtest-<port>` so servers on different ports run
+side by side, and stops only the server it started before on that port.
+`--bare` leaves sign-in unset, which phase 1 and phase 2 need; they refuse a
+server that has a Telegram bot configured.
 
 ```
-mkdir -p /tmp/t/config/crundi /tmp/t/data /tmp/t/proj
-printf 'TELEGRAM_BOT_TOKEN=\nPROJECTS_DIR=\n' > /tmp/t/config/crundi/.env   # never the live bot
-env -u TELEGRAM_BOT_TOKEN -u PROJECTS_DIR XDG_CONFIG_HOME=/tmp/t/config DATA_DIR=/tmp/t/data \
-  DOTENV_PATH=/tmp/t/config/crundi/.env node src/index.js --dev &     # port 8889
-CRUNDI_TEST_SERVER=http://localhost:8889 CRUNDI_TEST_PROJECT=/tmp/t/proj \
+native-client/tools/test-server.sh 4811 --bare          # never the live bot
+CRUNDI_TEST_SERVER=http://localhost:4811 CRUNDI_TEST_PROJECT=/tmp/crundi-devtest-4811/proj \
   NATIVE_BIN=native-client/target/debug/crundi-native node native-client/test/phase1.mjs
+kill $(cat /tmp/crundi-devtest-4811/server.pid)          # when done
 ```
+
+Each test needs a fresh server: start `test-server.sh <port> --bare` again
+before the next one (`test/phase2.mjs` the same way).
 
 ## Phase 2: chats
 
