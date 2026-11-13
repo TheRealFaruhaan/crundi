@@ -21,7 +21,7 @@ export component MainWindow inherits Window {
     background: Theme.bg-primary;
     default-font-size: 13px;
     // No system frame, as the Electron client: the top bar has the window buttons.
-    no-frame: root.signed-in && !root.browser-only;
+    no-frame: !root.browser-only;
 
     // ─── The session ───
     in property <bool> signed-in;
@@ -46,6 +46,8 @@ export component MainWindow inherits Window {
     callback win-close();
 
     // ─── Signing in ───
+    // "server" (which server) or "login" (signing in to it).
+    in property <string> signin-step: "server";
     in-out property <string> signin-server;
     in property <string> signin-error;
     in property <bool> signin-busy;
@@ -55,6 +57,8 @@ export component MainWindow inherits Window {
     in property <bool> offer-github;
     in property <string> oauth-code;
     callback check-server(string);
+    callback change-server();
+    callback cancel-server();
     callback sign-in-pair(string);
     callback sign-in-password(string, string, string);
     callback sign-in-oauth(string, string);
@@ -134,19 +138,25 @@ export component MainWindow inherits Window {
     }
 
     if !root.browser-only && !root.signed-in: SignInPage {
+        step: root.signin-step;
         server <=> root.signin-server;
         error: root.signin-error;
         busy: root.signin-busy;
-        checked: root.signin-checked;
         offer-password: root.offer-password;
         offer-google: root.offer-google;
         offer-github: root.offer-github;
         oauth-code: root.oauth-code;
-        check-server(s) => { root.check-server(s); }
+        save-server(s) => { root.check-server(s); }
+        change-server => { root.change-server(); }
+        cancel-server => { root.cancel-server(); }
         sign-in-pair(l) => { root.sign-in-pair(l); }
         sign-in-password(s, p, c) => { root.sign-in-password(s, p, c); }
         sign-in-oauth(s, p) => { root.sign-in-oauth(s, p); }
         cancel => { root.cancel-sign-in(); }
+        drag => { root.win-drag(); }
+        minimize => { root.win-min(); }
+        maximize => { root.win-max(); }
+        close => { root.win-close(); }
     }
 
     if !root.browser-only && root.signed-in: VerticalLayout {

@@ -1,139 +1,388 @@
-// Signing in: a pairing link from a device that is already signed in (the
-// link names the server), or the server plus a password and authenticator
-// code, or Google / GitHub in the system browser.
+// Signing in, as the PC client does it, measured from the running pages:
+//
+// 1. Which server: the Electron client's "Server" screen (app/index.html,
+//    .setup-card), under its 32px title bar.
+// 2. Signing in: the web UI's login screen (src/webapp-html.js #login-screen):
+//    the mascot, the wordmark, the card with the methods the server offers.
+//
+// What the PC client does not have, the native one needs: pairing with a link
+// from a signed-in device, and changing the server. They sit in the card as
+// quiet links, in the style of its "I was invited to a project".
 
 import { Theme } from "theme.slint";
-import { Icons } from "icons.slint";
-import { Btn, Field, Icon } from "widgets.slint";
+
+/// The Electron client's title bar: 32px, the mark and wordmark, the window buttons.
+export component TitleBar inherits Rectangle {
+    callback drag();
+    callback minimize();
+    callback maximize();
+    callback close();
+    height: 32px;
+    background: Theme.bg-secondary;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    TouchArea {
+        pointer-event(e) => { if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { root.drag(); } }
+        double-clicked => { root.maximize(); }
+    }
+    Image { x: 12px; y: 6.5px; width: 18px; height: 18px; source: @image-url("brand/head.svg"); }
+    Image { x: 38px; y: 8.5px; width: 47.8px; height: 12px; source: @image-url("brand/wordmark.svg"); image-fit: contain; }
+    HorizontalLayout {
+        x: parent.width - 124px; y: 1.5px;
+        width: 112px; height: 28px;
+        spacing: 2px;
+        for g[i] in ["–", "□", "✕"]: Rectangle {
+            width: 36px; height: 28px;
+            border-radius: 6px;
+            background: wb.has-hover ? (i == 2 ? #ef4444 : Theme.bg-hover) : transparent;
+            Text { text: g; font-size: 16px; color: wb.has-hover ? (i == 2 ? white : Theme.text-primary) : Theme.text-secondary; }
+            wb := TouchArea { clicked => { if i == 0 { root.minimize(); } else if i == 1 { root.maximize(); } else { root.close(); } } }
+        }
+    }
+}
+
+/// The login card's field: 260×36, 9px 11px, radius 8, bg-primary; focused, an
+/// accent border and a 3px ring.
+component LoginField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> password;
+    in property <bool> code;
+    callback accepted();
+    public function focus-input() { input.focus(); }
+    width: 260px;
+    height: 36px;
+    // The focus ring: 3px of rgba(99,102,241,.28) outside the border.
+    if input.has-focus: Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 11px; background: #6366f147; }
+    Rectangle {
+        border-radius: 8px;
+        background: Theme.bg-primary;
+        border-width: 1px;
+        border-color: input.has-focus ? Theme.accent : Theme.border;
+    }
+    input := TextInput {
+        x: 12px; width: parent.width - 24px;
+        vertical-alignment: center;
+        horizontal-alignment: root.code ? center : left;
+        single-line: true;
+        text <=> root.text;
+        input-type: root.password ? InputType.password : InputType.text;
+        font-size: 14.4px;
+        font-family: root.code ? Theme.mono : "";
+        letter-spacing: root.code ? 2.59px : 0px;
+        color: Theme.text-primary;
+        selection-background-color: Theme.accent-dim;
+        accepted => { root.accepted(); }
+    }
+    if root.text == "": Text {
+        x: 12px; width: parent.width - 24px;
+        height: parent.height;
+        vertical-alignment: center;
+        horizontal-alignment: root.code ? center : left;
+        text: root.placeholder;
+        font-size: 14.4px;
+        font-family: root.code ? Theme.mono : "";
+        letter-spacing: root.code ? 2.59px : 0px;
+        color: #757575;
+    }
+}
+
+/// "Sign in": 260×34, accent, radius 8, 14.4px/600.
+component LoginButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: 260px;
+    height: 34px;
+    border-radius: 8px;
+    // Never drawn disabled (the web's isn't); it just waits for input.
+    background: lb.has-hover ? Theme.accent-hover : Theme.accent;
+    Text { text: root.text; font-size: 14.4px; font-weight: 600; color: white; }
+    lb := TouchArea { mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default; clicked => { if root.enabled { root.clicked(); } } }
+}
+
+/// A sign-in button (.oauth-btn): 260 wide, 9px 12px, radius 8, a border,
+/// bg-primary, an 18px logo and the words, 10px apart.
+component OAuthButton inherits Rectangle {
+    in property <image> logo;
+    in property <string> text;
+    callback clicked();
+    width: 260px;
+    height: 40px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: ob.has-hover ? Theme.accent : Theme.border;
+    background: ob.has-hover ? Theme.bg-tertiary : Theme.bg-primary;
+    HorizontalLayout {
+        alignment: center;
+        spacing: 10px;
+        Image { source: root.logo; width: 18px; height: 18px; y: 11px; colorize: Theme.text-primary; }
+        Text { text: root.text; font-size: 14.4px; color: Theme.text-primary; vertical-alignment: center; }
+    }
+    ob := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// A quiet link (#collab-login-link a): 12.48px, muted, accent on hover.
+component QuietLink inherits Text {
+    callback clicked();
+    font-size: 12.48px;
+    color: ql.has-hover ? Theme.accent-hover : Theme.text-muted;
+    horizontal-alignment: center;
+    ql := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The Electron setup card's button (.btn): 8px 20px, radius 6, a border,
+/// bg-tertiary, 13.6px; accent on hover.
+component SetupBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    callback clicked();
+    width: t.preferred-width + 42px;
+    height: 34px;
+    border-radius: 6px;
+    border-width: 1px;
+    // Never drawn disabled (Electron's aren't); it just waits for input.
+    border-color: sb.has-hover ? Theme.accent : Theme.border;
+    background: sb.has-hover ? Theme.accent : Theme.bg-tertiary;
+    t := Text { text: root.text; font-size: 13.6px; color: Theme.text-primary; }
+    sb := TouchArea { mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default; clicked => { if root.enabled { root.clicked(); } } }
+}
 
 export component SignInPage inherits Rectangle {
+    // "server": which server; "login": signing in to it.
+    in property <string> step;
     in-out property <string> server;
     in property <string> error;
     in property <bool> busy;
-    // What the server offers (after check-server).
-    in property <bool> checked;
     in property <bool> offer-password;
     in property <bool> offer-google;
     in property <bool> offer-github;
     // Google / GitHub: the code the browser page shows too, while waiting.
     in property <string> oauth-code;
-    callback check-server(string);
+    callback save-server(string);
+    callback change-server();
+    callback cancel-server();
     callback sign-in-pair(string);
     callback sign-in-password(string, string, string);
     callback sign-in-oauth(string, string);
     callback cancel();
+    callback drag();
+    callback minimize();
+    callback maximize();
+    callback close();
 
-    // The card's text width (420px less its padding): wrapped text is measured
-    // at this width, so the card is as tall as its text really is.
-    property <length> text-width: 364px;
     property <string> link;
     property <string> password;
     property <string> code;
+    property <string> url: root.server;
+    property <bool> pairing;
+    property <bool> buttons: root.offer-google || root.offer-github;
+    // The card's prompt, as the web login words it for what is on.
+    property <string> prompt: root.pairing ? "Paste the pairing link from a signed-in device"
+        : root.buttons ? "Sign in to continue"
+        : root.offer-password ? "Sign in with your password and authenticator code"
+        : "Pair this computer with a link from a signed-in device";
 
     background: Theme.bg-primary;
+    // The page's two faint glows (body: 1100×560 at 82% -12%, 820×480 at -8% 112%).
+    Rectangle {
+        x: parent.width * 0.82 - 550px; y: parent.height * -0.12 - 280px; width: 1100px; height: 560px;
+        background: @radial-gradient(circle, #6366f11a 0%, #6366f100 60%);
+    }
+    Rectangle {
+        x: parent.width * -0.08 - 410px; y: parent.height * 1.12 - 240px; width: 820px; height: 480px;
+        background: @radial-gradient(circle, #818cf80f 0%, #818cf800 60%);
+    }
 
     VerticalLayout {
-        alignment: center;
-        HorizontalLayout {
+        TitleBar {
+            drag => { root.drag(); }
+            minimize => { root.minimize(); }
+            maximize => { root.maximize(); }
+            close => { root.close(); }
+        }
+
+        // ─── 1. Which server (the Electron client's setup card) ───
+        if root.step == "server": VerticalLayout {
             alignment: center;
-            card := Rectangle {
-                width: 420px;
-                height: inner.preferred-height;
-                background: Theme.bg-secondary;
-                border-radius: Theme.radius;
-                border-width: 1px;
-                border-color: Theme.border;
-                inner := VerticalLayout {
-                    padding: 28px;
-                    spacing: 14px;
-                    Text { text: "Crundi"; color: Theme.accent-hover; font-size: 26px; font-weight: 800; horizontal-alignment: center; }
-                    Text { text: "Sign in to your Crundi server"; color: Theme.text-secondary; horizontal-alignment: center; }
-
-                    if root.oauth-code != "": VerticalLayout {
-                        spacing: 12px;
-                        Text { width: root.text-width; text: "Finish signing in in your browser."; color: Theme.text-primary; wrap: word-wrap; }
-                        Text { width: root.text-width; text: "Check that the page shows this code:"; color: Theme.text-secondary; wrap: word-wrap; }
-                        Text { text: root.oauth-code; color: Theme.amber; font-size: 28px; font-weight: 800; horizontal-alignment: center; font-family: Theme.mono; }
-                        Btn { text: "Cancel"; clicked => { root.cancel(); } }
-                    }
-
-                    if root.oauth-code == "": VerticalLayout {
-                        spacing: 10px;
-                        Text { text: "PAIRING LINK"; color: Theme.text-muted; font-size: Theme.font-size-xs; font-weight: 700; }
-                        Text { width: root.text-width;
-                            text: "In Crundi on a signed-in device, open Settings, then Connect a phone, and paste its link here (it works for a computer too).";
-                            color: Theme.text-secondary; font-size: Theme.font-size-sm; wrap: word-wrap;
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 480px;
+                    height: card.preferred-height;
+                    background: Theme.bg-secondary;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    border-radius: Theme.radius;
+                    card := VerticalLayout {
+                        padding: 32px;
+                        spacing: 0px;
+                        Text { text: "Server"; font-size: 20.8px; font-weight: 700; color: Theme.text-primary; }
+                        Rectangle { height: 6px; }
+                        Text {
+                            width: 414px;
+                            text: "Crundi can run its own server on this machine, or connect to one running elsewhere — a container on your network, for instance. Either way the browser panel opens here, in front of you.";
+                            font-size: 13.12px; color: Theme.text-muted; wrap: word-wrap; line-height-factor: 1.3;
                         }
-                        Field {
-                            text <=> root.link;
-                            placeholder: "https://…/pair#…";
-                            enabled: !root.busy;
-                            accepted => { root.sign-in-pair(root.link); }
+                        Rectangle { height: 16px; }
+                        // The two ways (this app connects to a server; a server of
+                        // its own comes in a later phase).
+                        for o[i] in [
+                            { title: "RUN A SERVER ON THIS MACHINE", sub: "THE STANDARD SETUP. EVERYTHING LOCAL." },
+                            { title: "CONNECT TO A SERVER", sub: "YOUR PROJECTS AND CLAUDE LIVE THERE; THIS APP IS THE WINDOW ONTO THEM." },
+                        ]: HorizontalLayout {
+                            padding-bottom: 10px;
+                            spacing: 9px;
+                            opacity: i == 0 ? 0.45 : 1;
+                            Rectangle {
+                                width: 13px; height: 13px; y: 3px;
+                                border-radius: 6.5px;
+                                border-width: 1px;
+                                border-color: i == 1 ? Theme.accent : Theme.text-muted;
+                                background: i == 1 ? Theme.accent : Theme.bg-tertiary;
+                                if i == 1: Rectangle { width: 5px; height: 5px; border-radius: 2.5px; background: white; }
+                            }
+                            VerticalLayout {
+                                Text { text: o.title; font-size: 12.8px; font-weight: 700; letter-spacing: 0.64px; color: Theme.text-muted; wrap: word-wrap; width: 392px; }
+                                Text { text: o.sub; font-size: 12.8px; letter-spacing: 0.64px; color: Theme.text-muted; wrap: word-wrap; width: 392px; }
+                            }
                         }
-                        Btn {
-                            text: "Pair this computer";
-                            primary: true;
-                            enabled: !root.busy && root.link != "";
-                            clicked => { root.sign-in-pair(root.link); }
+                        // The address: bg-tertiary, a border, radius 6, 8px 12px, 14.4px.
+                        Rectangle {
+                            height: 34px;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: srv.has-focus ? Theme.accent : Theme.border;
+                            background: Theme.bg-tertiary;
+                            srv := TextInput {
+                                x: 12px; width: parent.width - 24px;
+                                vertical-alignment: center;
+                                single-line: true;
+                                text <=> root.url;
+                                font-size: 14.4px;
+                                color: Theme.text-primary;
+                                accepted => { root.save-server(root.url); }
+                            }
+                            if root.url == "": Text { x: 12px; height: parent.height; vertical-alignment: center; text: "https://crundi.example.com"; font-size: 14.4px; color: #757575; }
                         }
-
-                        Rectangle { height: 1px; background: Theme.border; }
-
-                        Text { text: "OR SIGN IN"; color: Theme.text-muted; font-size: Theme.font-size-xs; font-weight: 700; }
+                        Rectangle { height: 6px; }
+                        // The note under it: the error, or what is happening.
+                        Text {
+                            height: 26.5px;
+                            text: root.error != "" ? root.error : root.busy ? "Connecting…" : "";
+                            font-size: 12.48px;
+                            color: root.error != "" ? Theme.red : Theme.text-muted;
+                            wrap: word-wrap;
+                        }
                         HorizontalLayout {
-                            spacing: 8px;
-                            Field {
-                                text <=> root.server;
-                                placeholder: "Server, e.g. crundi.example.com";
-                                enabled: !root.busy;
-                                accepted => { root.check-server(root.server); }
-                            }
-                            Btn {
-                                text: "Continue";
-                                enabled: !root.busy && root.server != "";
-                                clicked => { root.check-server(root.server); }
-                            }
+                            alignment: start;
+                            spacing: 10px;
+                            SetupBtn { text: "Save"; enabled: !root.busy && root.url != ""; clicked => { root.save-server(root.url); } }
+                            SetupBtn { text: "Cancel"; enabled: !root.busy && root.server != ""; clicked => { root.cancel-server(); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ─── 2. Signing in (the web UI's login screen) ───
+        if root.step == "login": VerticalLayout {
+            alignment: center;
+            // The mascot: 112px, an indigo glow under it (drop-shadow 0 12px 34px).
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 112px; height: 112px;
+                    Rectangle {
+                        y: 30px; width: 140px; height: 110px;
+                        background: @radial-gradient(circle, #6366f140 0%, #6366f100 65%);
+                    }
+                    Image { source: @image-url("brand/mascot.svg"); width: 112px; height: 112px; }
+                }
+            }
+            // 32px gap, less the mascot's -18px margin.
+            Rectangle { height: 14px; }
+            HorizontalLayout {
+                alignment: center;
+                Image { source: @image-url("brand/wordmark.svg"); width: 175.4px; height: 44px; image-fit: contain; }
+            }
+            // 32px gap, less the subtitle's -20px margin.
+            Rectangle { height: 12px; }
+            Text { text: "Claude Code terminal in your browser"; font-size: 15.2px; color: Theme.text-secondary; horizontal-alignment: center; }
+            Rectangle { height: 32px; }
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: max(260px, prompt-t.preferred-width) + 98px;
+                    height: box.preferred-height;
+                    // The card's shadow (0 24px 60px rgba(0,0,0,.6)), in soft layers.
+                    Rectangle { x: -34px; y: -8px; width: parent.width + 68px; height: parent.height + 64px; border-radius: 44px; background: #0000000d; }
+                    Rectangle { x: -22px; y: 0px; width: parent.width + 44px; height: parent.height + 46px; border-radius: 32px; background: #00000014; }
+                    Rectangle { x: -10px; y: 8px; width: parent.width + 20px; height: parent.height + 26px; border-radius: 20px; background: #0000001c; }
+                    Rectangle {
+                        border-radius: Theme.radius;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        background: @linear-gradient(180deg, #17171f 0%, Theme.bg-secondary 40%);
+                    }
+                    box := VerticalLayout {
+                        padding-top: 40px; padding-bottom: 40px;
+                        padding-left: 48px; padding-right: 48px;
+                        spacing: 24px;
+                        alignment: center;
+                        prompt-t := Text { text: root.prompt; font-size: 14.4px; color: Theme.text-secondary; horizontal-alignment: center; }
+
+                        // Google / GitHub, waiting on the browser.
+                        if root.oauth-code != "": VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Finish signing in in your browser. Check that it shows this code:"; font-size: 12.8px; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: 260px; }
+                            Text { text: root.oauth-code; font-family: Theme.mono; font-size: 22.4px; letter-spacing: 6.7px; color: Theme.text-primary; horizontal-alignment: center; }
+                            QuietLink { text: "Cancel"; color: Theme.accent-hover; clicked => { root.cancel(); } }
                         }
 
-                        if root.checked && root.offer-password: VerticalLayout {
-                            spacing: 8px;
-                            Field { text <=> root.password; placeholder: "Password"; password: true; enabled: !root.busy; }
-                            Field {
+                        if root.oauth-code == "" && root.pairing: VerticalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            LoginField { text <=> root.link; placeholder: "https://…/pair#…"; accepted => { root.sign-in-pair(root.link); } }
+                            LoginButton { text: "Pair this computer"; enabled: !root.busy && root.link != ""; clicked => { root.sign-in-pair(root.link); } }
+                        }
+
+                        if root.oauth-code == "" && !root.pairing && root.buttons: VerticalLayout {
+                            spacing: 10px;
+                            if root.offer-google: OAuthButton { logo: @image-url("brand/google.svg"); text: "Sign in with Google"; clicked => { root.sign-in-oauth(root.server, "google"); } }
+                            if root.offer-github: OAuthButton { logo: @image-url("brand/github.svg"); text: "Sign in with GitHub"; clicked => { root.sign-in-oauth(root.server, "github"); } }
+                        }
+                        if root.oauth-code == "" && !root.pairing && root.buttons && root.offer-password: Text {
+                            text: "OR"; font-size: 12.16px; letter-spacing: 0.97px; color: Theme.text-muted; horizontal-alignment: center;
+                        }
+                        if root.oauth-code == "" && !root.pairing && root.offer-password: VerticalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            // Focused on open, as the web's.
+                            pw := LoginField { text <=> root.password; placeholder: "Password"; password: true; init => { self.focus-input(); } }
+                            LoginField {
                                 text <=> root.code;
-                                placeholder: "6-digit code from your authenticator";
-                                enabled: !root.busy;
+                                placeholder: "6-digit code";
+                                code: true;
                                 accepted => { root.sign-in-password(root.server, root.password, root.code); }
                             }
-                            Btn {
-                                text: "Sign in";
-                                primary: true;
+                            LoginButton {
+                                text: root.busy ? "Signing in…" : "Sign in";
                                 enabled: !root.busy && root.password != "" && root.code != "";
                                 clicked => { root.sign-in-password(root.server, root.password, root.code); }
                             }
+                            // The form's hidden error line (22.5px) before the links.
+                            Rectangle { height: 12.5px; }
                         }
-                        if root.checked && (root.offer-google || root.offer-github): HorizontalLayout {
-                            spacing: 8px;
-                            if root.offer-google: Btn { text: "Google"; has-icon: true; icon: Icons.globe; enabled: !root.busy; clicked => { root.sign-in-oauth(root.server, "google"); } }
-                            if root.offer-github: Btn { text: "GitHub"; has-icon: true; icon: Icons.git-branch; enabled: !root.busy; clicked => { root.sign-in-oauth(root.server, "github"); } }
-                        }
-                        if root.checked && !root.offer-password && !root.offer-google && !root.offer-github: Text { width: root.text-width;
-                            text: "This server offers no sign-in this app can use here: pair it from a signed-in device.";
-                            color: Theme.text-secondary; font-size: Theme.font-size-sm; wrap: word-wrap;
-                        }
-                    }
+                        if root.error != "": Text { text: root.error; font-size: 12.48px; color: Theme.red; horizontal-alignment: center; wrap: word-wrap; width: 260px; }
 
-                    if root.busy: Text { text: "Working…"; color: Theme.text-secondary; horizontal-alignment: center; }
-                    if root.error != "": Rectangle {
-                        background: Theme.red-dim;
-                        border-radius: Theme.radius-sm;
-                        height: err.preferred-height + 16px;
-                        err := Text {
-                            x: 10px;
-                            width: parent.width - 20px;
-                            text: root.error;
-                            color: #fca5a5;
-                            wrap: word-wrap;
-                            font-size: Theme.font-size-sm;
+                        // The quiet links: pairing (or back), and the server.
+                        VerticalLayout {
+                            spacing: 6px;
+                            QuietLink {
+                                text: root.pairing ? "Back to signing in" : "Pair with a link from a signed-in device";
+                                clicked => { root.pairing = !root.pairing; }
+                            }
+                            QuietLink { text: "Server: " + root.server + " · Change"; clicked => { root.change-server(); } }
                         }
                     }
                 }

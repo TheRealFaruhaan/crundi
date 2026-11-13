@@ -158,10 +158,18 @@ pub fn init(window: &MainWindow) {
     window.on_respond(|k, id, b, always| respond(k.as_str(), id.to_string(), b.to_string(), always));
     window.on_answer(|k, id, o| answer(k.as_str(), id.as_str(), o.as_str()));
 
+    window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
+    window.on_cancel_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("login".into()); } });
+
     let saved = store::load();
     window.set_signin_server(host_of(&saved.server).into());
-    if !saved.server.is_empty() && !saved.refresh_token.is_empty() {
+    if saved.server.is_empty() {
+        window.set_signin_step("server".into());
+    } else if !saved.refresh_token.is_empty() {
+        window.set_signin_step("login".into());
         resume(saved);
+    } else {
+        check_server(&saved.server);
     }
 }
 
@@ -210,6 +218,8 @@ fn check_server(input: &str) {
                 w.set_offer_google(on("google"));
                 w.set_offer_github(on("github"));
                 w.set_signin_checked(true);
+                w.set_signin_step("login".into());
+                store::update(|s| { if s.server != base { s.refresh_token.clear(); } s.server = base.clone(); });
                 if on("setupRequired") { w.set_signin_error("This server has no sign-in set up yet: set one up in its web page first.".into()); }
             }
             Err(e) => w.set_signin_error(e.to_string().into()),
