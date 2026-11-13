@@ -81,11 +81,30 @@ pub fn close_outcome(r: Result<Value, ApiError>) -> Closed {
     }
 }
 
-/// The long title is shown only on a wide header (≥ 560px) and only when the
-/// chat has one; it is capped at min(440, 62% of the header). The short one
-/// at 160px.
-pub fn title_shown(title: &str, long: &str, head_w: f32) -> (String, f32) {
-    if head_w >= 560.0 && !long.is_empty() { (long.to_string(), 440f32.min(head_w * 0.62)) } else { (title.to_string(), 160.0) }
+/// The header's content box: the pane less its 1px border each side and the
+/// header's padding (2 left, 4 right). The web's header is a size container,
+/// so its rules (@container, 62cqw) read this.
+pub fn head_content(pane_w: f32) -> f32 {
+    pane_w - 8.0
+}
+
+/// The header folds its tools into "…" when its content box is under 560px:
+/// a pane of 567px is narrow, 568px wide (specs/pane-header-narrow.md).
+pub fn narrow(pane_w: f32) -> bool {
+    head_content(pane_w) < 560.0
+}
+
+/// No cap: the title takes what the row leaves it.
+pub const NO_CAP: f32 = 100_000.0;
+
+/// The title shown and its cap. Wide (content box ≥ 560px): the long form
+/// when there is one, at most min(440, 62% of the content box); else the short
+/// one at 160px. Narrow: the short one with no cap (it elides when the row
+/// runs out).
+pub fn title_shown(title: &str, long: &str, pane_w: f32) -> (String, f32) {
+    let content = head_content(pane_w);
+    if narrow(pane_w) { return (title.to_string(), NO_CAP); }
+    if !long.is_empty() { (long.to_string(), 440f32.min(content * 0.62)) } else { (title.to_string(), 160.0) }
 }
 
 #[cfg(test)]
@@ -140,10 +159,16 @@ mod tests {
 
     #[test]
     fn titles() {
-        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 1146.0), ("Fruit list and directory listing".into(), 440.0));
-        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 600.0).1, 372.0);
-        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 500.0), ("Fruit list".into(), 160.0));
-        assert_eq!(title_shown("Typed", "", 1146.0), ("Typed".into(), 160.0));
+        // A 1148px pane: wide, the long form at 440.
+        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 1148.0), ("Fruit list and directory listing".into(), 440.0));
+        // 62% of the content box (600 − 8).
+        assert!((title_shown("Fruit list", "Fruit list and directory listing", 600.0).1 - 367.04).abs() < 0.01);
+        // The edge: 567 is narrow (short form, no cap), 568 is wide.
+        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 567.0), ("Fruit list".into(), NO_CAP));
+        assert_eq!(title_shown("Fruit list", "Fruit list and directory listing", 568.0).0, "Fruit list and directory listing");
+        assert!(narrow(567.0) && !narrow(568.0));
+        assert_eq!(title_shown("Typed", "", 1148.0), ("Typed".into(), 160.0));
+        assert_eq!(title_shown("Fruit list and directory", "", 378.0), ("Fruit list and directory".into(), NO_CAP));
         assert_eq!(close_refused(""), "This chat cannot be closed right now.");
     }
 }

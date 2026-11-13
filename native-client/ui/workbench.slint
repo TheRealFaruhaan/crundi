@@ -5,7 +5,7 @@
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon } from "widgets.slint";
-import { ChatPane, PaneHead, EntryView } from "chat.slint";
+import { ChatPane, PaneHead, HeadMenu, EntryView } from "chat.slint";
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -39,6 +39,10 @@ export struct PaneView {
     armed: bool,
     fs: float,
     draft: string,
+    // The header folds (its content box under 560px: the pane ≤ 567), and
+    // its "…" menu is open (2.2).
+    narrow: bool,
+    menu: bool,
 }
 
 export struct GutterView {
@@ -180,6 +184,8 @@ export component PaneCard inherits Rectangle {
     callback respond(string, string, bool);
     callback answer(string, string);
     callback draft-changed(string);
+    // Open or close the narrow header's menu.
+    callback menu(bool);
     // The content sits inside the 1px edge, clipped to radius 9, so the
     // header's fill keeps the pane's round top corners (the web's overflow:
     // hidden inside a radius-10 border). Full screen: radius 0.
@@ -191,13 +197,14 @@ export component PaneCard inherits Rectangle {
         // A click anywhere in the pane focuses it (behind its content).
         TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-me(); } } }
         VerticalLayout {
-        PaneHead {
+        ph := PaneHead {
             title: p.title;
             title-max: p.title-max;
             short-title: p.short-title;
             state: p.state;
             chat: p.kind == "chat";
-            narrow: p.w < 560px && !p.full;
+            narrow: p.narrow;
+            menu-open: p.menu;
             kind-tag: p.kind == "chat" ? "CHAT" : "";
             secrets: p.secrets;
             secrets-n: p.secrets-n;
@@ -213,6 +220,7 @@ export component PaneCard inherits Rectangle {
             open-secrets => { root.open-secrets(); }
             rename(t) => { root.rename(t); }
             maximize => { root.maximize(); }
+            more => { root.menu(!p.menu); }
         }
         if p.kind == "chat": ChatPane {
             vertical-stretch: 1;
@@ -240,6 +248,25 @@ export component PaneCard inherits Rectangle {
             vertical-stretch: 1;
             Text { text: p.title + " comes in a later phase of the native client"; font-size: 13px; color: Theme.text-muted; }
         }
+        }
+        // The narrow header's menu: 1px under the header's line (its top + 27),
+        // 4px in from its right edge, over the pane body.
+        if p.menu: HeadMenu {
+            x: parent.width - 4px - self.width;
+            y: 27px;
+            max-w: ph.width - 8px;
+            kind-tag: p.kind == "chat" ? "CHAT" : "";
+            secrets: p.secrets;
+            secrets-n: p.secrets-n;
+            secrets-tip: p.secrets-tip;
+            pinned: p.pinned;
+            more-x: ph.absolute-position.x + ph.more-left;
+            more-y: ph.absolute-position.y + ph.more-top;
+            font(d) => { root.font(d); }
+            font-reset => { root.font-reset(); }
+            pin => { root.pin(); }
+            open-secrets => { root.menu(false); root.open-secrets(); }
+            dismiss => { root.menu(false); }
         }
     }
     // The 1px edge (accent when focused), above the content.
@@ -276,6 +303,7 @@ export component Workbench inherits Rectangle {
     callback pane-secrets(int);
     callback pane-rename(int, string);
     callback pane-maximize(int);
+    callback pane-menu(int, bool);
     callback draft-changed(string, string);
 
     background: Theme.bg-primary;
@@ -318,6 +346,7 @@ export component Workbench inherits Rectangle {
                 respond(id, b, a) => { root.respond(p.key, id, b, a); }
                 answer(id, o) => { root.answer(p.key, id, o); }
                 draft-changed(t) => { root.draft-changed(p.key, t); }
+                menu(on) => { root.pane-menu(p.id, on); }
             }
         }
         // The gutters: a 7px grab strip with a 1px line, accent while used.

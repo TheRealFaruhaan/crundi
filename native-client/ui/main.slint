@@ -116,6 +116,7 @@ export component MainWindow inherits Window {
     callback pane-secrets(int);
     callback pane-rename(int, string);
     callback pane-maximize(int);
+    callback pane-menu(int, bool);
     callback draft-changed(string, string);
     // The pane in full screen, if one is (it covers the window; Esc leaves).
     in property <bool> full-on;
@@ -237,6 +238,7 @@ export component MainWindow inherits Window {
                         pane-secrets(id) => { root.pane-secrets(id); }
                         pane-rename(id, t) => { root.pane-rename(id, t); }
                         pane-maximize(id) => { root.pane-maximize(id); }
+                        pane-menu(id, on) => { root.pane-menu(id, on); }
                         draft-changed(k, t) => { root.draft-changed(k, t); }
                     }
                     if root.current-tab != "workbench": VerticalLayout {

@@ -186,6 +186,12 @@ Phase 1 left these, each with its workaround in place:
   lands on something that can't take it; a browser blurs the field. Every
   press is counted (`Pointer` in `ui/widgets.slint`, from the system's events
   in `src/main.rs`), and the rename input ends and saves on a press outside it.
+- **Esc closes the narrow header's menu** (2.2). The web has no Esc there;
+  added on purpose (DESIGN rule 5), so Esc closes menus before it reaches the
+  pane.
+- **No split items in the narrow header's menu** (2.2). The web hides them
+  (`.head-split`) outside its phone layout, which the native window (900px or
+  wider) never reaches; a narrow pane splits from the hover controls (2.3).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

@@ -69,8 +69,10 @@ component HeadBtn inherits Rectangle {
     // rest | on (yellow: secrets granted) | pinned (accent fill) | lit (accent: full screen)
     // | armed (red: "Sure?") | close (the ×: red on hover)
     in property <string> look: "rest";
-    // A count after the icon (the secrets lock), 4px after it.
+    // A count after the icon (the secrets lock), 4px after it; and a label
+    // after that (the lock in the narrow header's menu), 4px after.
     in property <string> count;
+    in property <string> after;
     callback clicked();
     property <bool> hover: ta.has-hover;
     property <color> ink: root.look == "on" ? Theme.yellow
@@ -88,22 +90,25 @@ component HeadBtn inherits Rectangle {
     background: root.look == "armed" ? Theme.red-dim : root.look == "pinned" ? Theme.accent-dim : Theme.bg-primary;
     accessible-role: button;
     accessible-label: root.tip;
-    if root.has-icon && root.count == "": Image {
+    if root.has-icon && root.count == "" && root.after == "": Image {
         source: root.icon;
         width: root.icon-size; height: root.icon-size;
         colorize: root.ink;
     }
-    // The lock with its count: icon at 7px, a 4px gap, the number.
-    if root.has-icon && root.count != "": Image {
+    // The lock with its count (and label): icon at 7px, then each 4px apart.
+    if root.has-icon && (root.count != "" || root.after != ""): HorizontalLayout {
         x: 7px;
-        source: root.icon;
-        width: root.icon-size; height: root.icon-size;
-        colorize: root.ink;
-    }
-    if root.has-icon && root.count != "": Text {
-        x: 7px + root.icon-size + 4px;
-        text: root.count; font-size: 11px; color: root.ink;
-        vertical-alignment: center; height: parent.height;
+        width: self.preferred-width;
+        spacing: 4px;
+        alignment: start;
+        Image {
+            y: (parent.height - self.height) / 2;
+            source: root.icon;
+            width: root.icon-size; height: root.icon-size;
+            colorize: root.ink;
+        }
+        if root.count != "": Text { text: root.count; font-size: 11px; color: root.ink; vertical-alignment: center; }
+        if root.after != "": Text { text: root.after; font-size: 11px; color: root.ink; vertical-alignment: center; }
     }
     if !root.has-icon: Text { text: root.label; font-size: root.label-size; color: root.ink; }
     ta := TouchArea {
@@ -135,9 +140,26 @@ component CardBtn inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
+/// The CHAT tag: a 15px pill, 9.92px/700 upper case, .6px tracking, padding 1px 7px.
+component KindTag inherits Rectangle {
+    in property <string> text;
+    height: 15px;
+    width: tag.preferred-width + 16px;
+    border-radius: 99px;
+    border-width: 1px;
+    border-color: Theme.border;
+    // The web asks for 9.92px/700 with .6px tracking; Chromium's hinting
+    // draws DejaVu Sans Bold's capitals 8px tall and 29.2px across.
+    // Slint draws 9.92px at 7px, so the size is what matches the glyphs
+    // (caps 8px, C 6px wide) and the tracking keeps the text 31.6px.
+    tag := Text { text: root.text; font-size: 11px; font-weight: 700; color: Theme.accent-hover; letter-spacing: -0.4px; }
+}
+
 /// The pane header (.term-head): 28px (27 and a 1px line), bg-secondary;
 /// padding 3/4/3/2, items 4px apart. specs/pane-header-wide.md has every
-/// measurement used here (y: from the header's top).
+/// measurement used here (y: from the header's top). Narrow (2.2,
+/// specs/pane-header-narrow.md): the tools fold into "…", the header is
+/// 26px (the pin, its tallest item, is gone) and every item sits 1px higher.
 export component PaneHead inherits Rectangle {
     // The title shown (the long form on a wide header), its cap, and the
     // short title a rename starts from.
@@ -147,8 +169,10 @@ export component PaneHead inherits Rectangle {
     in property <string> state;
     in property <string> kind-tag;
     in property <bool> chat;
-    // Under 560px the tools fold into "…" (as the web UI's header does: 2.2).
+    // The header's content box is under 560px (the pane ≤ 567): src/head.rs.
     in property <bool> narrow;
+    // The fold-out menu is open (src/app.rs: one at a time).
+    in property <bool> menu-open;
     // The secrets lock: shown when the server can (chat-secret-preauth); the
     // number of grants, and its tooltip.
     in property <bool> secrets;
@@ -158,6 +182,9 @@ export component PaneHead inherits Rectangle {
     in property <bool> full;
     // The × was clicked once: "Sure?" (src/app.rs disarms it after 3 s).
     in property <bool> armed;
+    // Where "…" sits (from the header's left), for the menu's outside-press test.
+    out property <length> more-left: self.width - 4px - (root.armed ? sure-m.preferred-width + 14px : 27.7px) - 4px - 25px;
+    out property <length> more-top: 3px;
     callback close();
     callback full-screen();
     callback font(int);
@@ -166,9 +193,13 @@ export component PaneHead inherits Rectangle {
     callback open-secrets();
     callback rename(string);
     callback maximize();
+    callback more();
     property <bool> renaming;
-    height: 28px;
+    // Narrow: 1px higher.
+    property <length> dy: root.narrow ? -1px : 0px;
+    height: root.narrow ? 26px : 28px;
     background: Theme.bg-secondary;
+    sure-m := Text { visible: false; text: "Sure?"; font-size: 11px; }
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     // Double-click the header (its background, handle, dot, tag: not the
     // buttons) to maximise the pane in its split.
@@ -176,14 +207,14 @@ export component PaneHead inherits Rectangle {
     HorizontalLayout {
         x: 0; y: 0;
         width: parent.width;
-        height: 27px;
+        height: parent.height - 1px;
         padding-left: 2px;
         padding-right: 4px;
         spacing: 4px;
         // The drag handle "⋮⋮": 12px, -2px tracking, padding 0 3px; 26×12 at y 7.5.
         // Hidden in full screen.
         if !root.full: Rectangle {
-            y: 7.5px; width: 26px; height: 12px;
+            y: 7.5px + root.dy; width: 26px; height: 12px;
             Text { x: 3px; text: "⋮⋮"; font-size: 12px; letter-spacing: -2px; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
             TouchArea {
                 mouse-cursor: grab;
@@ -193,14 +224,17 @@ export component PaneHead inherits Rectangle {
         }
         // The state dot: 7px at y 10 (its colours: 2.4).
         if root.chat: Rectangle {
-            y: 10px; width: 7px; height: 7px; border-radius: 3.5px;
+            y: 10px + root.dy; width: 7px; height: 7px; border-radius: 3.5px;
             background: PaneState.color(root.state);
         }
         // The title: 12px/600, padding 2px 6px, radius 6; 18px at y 4.5.
-        // Never wider than its cap (160px, or the long form's).
+        // Never wider than its cap (160px, the long form's, or none when
+        // narrow), nor than the row leaves it: the spacer goes to 0 first, but
+        // its two 4px gaps stay.
         if !root.renaming: Rectangle {
-            y: 4.5px; height: 18px;
-            width: min(tt.preferred-width + 12px, root.title-max);
+            property <length> room: root.width - 2px - (root.full ? 0px : 30px) - (root.chat ? 11px : 0px) - 8px - tools.preferred-width - 4px;
+            y: 4.5px + root.dy; height: 18px;
+            width: max(0px, min(tt.preferred-width + 12px, root.title-max, self.room));
             border-radius: 6px;
             background: th.has-hover ? Theme.bg-tertiary : transparent;
             tt := Text {
@@ -220,7 +254,7 @@ export component PaneHead inherits Rectangle {
         // selected; an accent border and a 3px ring. Enter or leaving it
         // saves; Esc puts the title back.
         if root.renaming: ri := Rectangle {
-            y: 3.5px; width: 160px; height: 20px;
+            y: 3.5px + root.dy; width: 160px; height: 20px;
             // A press anywhere outside the input saves it, as the web's blur.
             property <int> presses: Pointer.presses;
             changed presses => {
@@ -244,14 +278,16 @@ export component PaneHead inherits Rectangle {
                 // The 146px text box (padding 6px and the 1px border), clipped;
                 // the text scrolls to keep the caret in view, as a browser's
                 // input does (it opens scrolled to the end, all selected).
-                // As std LineEdit (lineedit-base.slint).
+                // As std LineEdit (lineedit-base.slint), but with the 2px a
+                // browser keeps for the caret at the end (Slint's caret is wider).
                 Rectangle {
                     x: 7px; width: parent.width - 14px;
                     clip: true;
                     ti := TextInput {
                         property <length> scroll;
-                        x: min(0px, max(parent.width - self.width - self.text-cursor-width, self.scroll));
-                        width: max(parent.width - self.text-cursor-width, self.preferred-width);
+                        property <length> caret-room: 2px;
+                        x: min(0px, max(parent.width - self.width - self.caret-room, self.scroll));
+                        width: max(parent.width - self.caret-room, self.preferred-width);
                         font-size: 12px; font-weight: 600; color: Theme.text-primary;
                         vertical-alignment: center; height: parent.height;
                         single-line: true;
@@ -261,8 +297,8 @@ export component PaneHead inherits Rectangle {
                         cursor-position-changed(at) => {
                             if at.x + self.scroll < 0 {
                                 self.scroll = - at.x;
-                            } else if at.x + self.scroll > parent.width - self.text-cursor-width {
-                                self.scroll = parent.width - at.x - self.text-cursor-width;
+                            } else if at.x + self.scroll > parent.width - self.caret-room {
+                                self.scroll = parent.width - at.x - self.caret-room;
                             }
                         }
                         accepted => { if root.renaming { root.renaming = false; root.rename(self.text); } }
@@ -271,81 +307,188 @@ export component PaneHead inherits Rectangle {
                 }
             }
         }
-        // The rest is pushed right.
-        Rectangle { horizontal-stretch: 1; }
-        // The CHAT tag: a 15px pill, 9.92px/700 upper case, .6px tracking, padding 1px 7px.
-        if root.kind-tag != "": Rectangle {
-            y: 6px; height: 15px;
-            width: tag.preferred-width + 16px;
-            border-radius: 99px;
-            border-width: 1px;
-            border-color: Theme.border;
-            // The web asks for 9.92px/700 with .6px tracking; Chromium's hinting
-            // draws DejaVu Sans Bold's capitals 8px tall and 29.2px across.
-            // Slint draws 9.92px at 7px, so the size is what matches the glyphs
-            // (caps 8px, C 6px wide) and the tracking keeps the text 31.6px.
-            tag := Text { text: root.kind-tag; font-size: 11px; font-weight: 700; color: Theme.accent-hover; letter-spacing: -0.4px; }
+        // The rest is pushed right (the spacer can shrink to 0).
+        Rectangle { horizontal-stretch: 1; min-width: 0; }
+        // The tools: inline when wide; folded into "…" when narrow, leaving full
+        // screen, "…" and ×. (Their y: from the header's top, as the row's.)
+        tools := HorizontalLayout {
+            spacing: 4px;
+            if root.kind-tag != "" && !root.narrow: KindTag { y: 6px; text: root.kind-tag; }
+            // The secrets lock: 26×20 (37×20 with a count) at y 3.5; yellow with grants.
+            if root.chat && root.secrets && !root.narrow: HeadBtn {
+                y: 3.5px; height: 20px;
+                width: root.secrets-n > 0 ? 37px : 26px;
+                has-icon: true; icon: Icons.lock; icon-size: 12px;
+                look: root.secrets-n > 0 ? "on" : "rest";
+                count: root.secrets-n > 0 ? "" + root.secrets-n : "";
+                tip: root.secrets-tip;
+                clicked => { root.open-secrets(); }
+            }
+            // A- / reset / A+: 11px, padding 3px 6px; 19px high (reset 19.6).
+            if root.chat && !root.narrow: HeadBtn {
+                y: 4px; height: 19px; width: am.preferred-width + 14px;
+                label: "A-"; tip: "Smaller text";
+                am := Text { visible: false; text: "A-"; font-size: 11px; }
+                clicked => { root.font(-1); }
+            }
+            if root.chat && !root.narrow: HeadBtn {
+                y: 3.7px; height: 19.6px; width: 25px;
+                has-icon: true; icon: Icons.rotate-ccw; icon-size: 11px;
+                tip: "Reset text size";
+                clicked => { root.font-reset(); }
+            }
+            if root.chat && !root.narrow: HeadBtn {
+                y: 4px; height: 19px; width: ap.preferred-width + 14px;
+                label: "A+"; tip: "Larger text";
+                ap := Text { visible: false; text: "A+"; font-size: 11px; }
+                clicked => { root.font(1); }
+            }
+            // Pin: 27×21 at y 3, a 13px icon; pinned: accent on accent-dim, turned −30°.
+            if !root.narrow: HeadBtn {
+                y: 3px; height: 21px; width: 27px;
+                // Pinned, the icon is turned −30° (drawn turned: pin-turned).
+                has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
+                look: root.pinned ? "pinned" : "rest";
+                tip: root.pinned ? "Unpin (size and position are locked)" : "Pin size and position";
+                clicked => { root.pin(); }
+            }
+            // Full screen: 25×19 at y 4, an 11px maximize; accent while on.
+            if root.chat: HeadBtn {
+                y: 4px + root.dy; height: 19px; width: 25px;
+                has-icon: true; icon: Icons.maximize; icon-size: 11px;
+                look: root.full ? "lit" : "rest";
+                tip: "Full screen";
+                clicked => { root.full-screen(); }
+            }
+            // "…": 25×19, an 11px "more"; accent while its menu is open, hovered or not.
+            if root.narrow: HeadBtn {
+                y: 4px + root.dy; height: 19px; width: 25px;
+                has-icon: true; icon: Icons.more; icon-size: 11px;
+                look: root.menu-open ? "lit" : "rest";
+                tip: "More";
+                clicked => { root.more(); }
+            }
+            // Close takes two clicks: "×" 14px, padding 1px 7px, 27.7×18 at y 4.5;
+            // armed: "Sure?" 11px, padding 1px 6px, 15px high at y 6, red.
+            // Hidden in full screen.
+            if !root.full: HeadBtn {
+                y: (root.armed ? 6px : 4.5px) + root.dy;
+                height: root.armed ? 15px : 18px;
+                width: root.armed ? sure.preferred-width + 14px : 27.7px;
+                label: root.armed ? "Sure?" : "×";
+                label-size: root.armed ? 11px : 14px;
+                look: root.armed ? "armed" : "close";
+                tip: root.armed ? "Click again to close" : "Close chat";
+                sure := Text { visible: false; text: "Sure?"; font-size: 11px; }
+                clicked => { root.close(); }
+            }
         }
-        // The secrets lock: 26×20 (37×20 with a count) at y 3.5; yellow with grants.
-        if root.chat && root.secrets && !root.narrow: HeadBtn {
-            y: 3.5px; height: 20px;
-            width: root.secrets-n > 0 ? 37px : 26px;
-            has-icon: true; icon: Icons.lock; icon-size: 12px;
-            look: root.secrets-n > 0 ? "on" : "rest";
-            count: root.secrets-n > 0 ? "" + root.secrets-n : "";
-            tip: root.secrets-tip;
-            clicked => { root.open-secrets(); }
+    }
+}
+
+/// The narrow header's menu (.term-head.tools-open .term-head-tools): the
+/// folded tools in a wrapping row, right-aligned, padding 8, gap 6; bg-secondary,
+/// 1px border, radius 6, shadow-md. At most `max-w` wide (the header − 8).
+/// A-, reset, A+ and pin act and leave it open; the lock closes it. A press
+/// outside it (but on "…", which toggles it) closes it and still acts; Esc
+/// closes it (the web has no Esc here: DESIGN rule 5, as the brief asks).
+export component HeadMenu inherits Rectangle {
+    in property <length> max-w;
+    in property <string> kind-tag;
+    in property <bool> secrets;
+    in property <int> secrets-n;
+    in property <string> secrets-tip;
+    in property <bool> pinned;
+    // "…" in window coordinates: a press there is its own toggle.
+    in property <length> more-x;
+    in property <length> more-y;
+    callback font(int);
+    callback font-reset();
+    callback pin();
+    callback open-secrets();
+    callback dismiss();
+    // As wide as its items on one line (padding 8 and 6 between), but no
+    // wider than the header − 8: then it wraps.
+    property <length> lock-w: 7px + 12px + 4px + (root.secrets-n > 0 ? cnt-m.preferred-width + 4px : 0px) + lbl-m.preferred-width + 7px;
+    property <length> natural: 16px + (root.kind-tag != "" ? tag-m.preferred-width + 16px + 6px : 0px)
+        + (root.secrets ? self.lock-w + 6px : 0px)
+        + am-m.preferred-width + 14px + 6px + 25px + 6px + ap-m.preferred-width + 14px + 6px + 27px;
+    width: min(root.max-w, self.natural + 2px);
+    height: fl.preferred-height + 2px;
+    tag-m := Text { visible: false; text: root.kind-tag; font-size: 11px; font-weight: 700; letter-spacing: -0.4px; }
+    cnt-m := Text { visible: false; text: root.secrets-n; font-size: 11px; }
+    lbl-m := Text { visible: false; text: "Secrets for this chat"; font-size: 11px; }
+    am-m := Text { visible: false; text: "A-"; font-size: 11px; }
+    ap-m := Text { visible: false; text: "A+"; font-size: 11px; }
+    background: Theme.bg-secondary;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 20px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #00000080;
+    property <int> presses: Pointer.presses;
+    changed presses => {
+        let ax = self.absolute-position.x;
+        let ay = self.absolute-position.y;
+        let inside = Pointer.x >= ax && Pointer.x <= ax + self.width && Pointer.y >= ay && Pointer.y <= ay + self.height;
+        let on-more = Pointer.x >= root.more-x && Pointer.x <= root.more-x + 25px && Pointer.y >= root.more-y && Pointer.y <= root.more-y + 19px;
+        if !inside && !on-more { root.dismiss(); }
+    }
+    // Clicks on the menu's own padding stay in it.
+    TouchArea { }
+    fs := FocusScope {
+        init => { self.focus(); }
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.dismiss(); return accept; }
+            return reject;
         }
-        // A- / reset / A+: 11px, padding 3px 6px; 19px high (reset 19.6).
-        if root.chat && !root.narrow: HeadBtn {
-            y: 4px; height: 19px; width: am.preferred-width + 14px;
-            label: "A-"; tip: "Smaller text";
-            am := Text { visible: false; text: "A-"; font-size: 11px; }
-            clicked => { root.font(-1); }
-        }
-        if root.chat && !root.narrow: HeadBtn {
-            y: 3.7px; height: 19.6px; width: 25px;
-            has-icon: true; icon: Icons.rotate-ccw; icon-size: 11px;
-            tip: "Reset text size";
-            clicked => { root.font-reset(); }
-        }
-        if root.chat && !root.narrow: HeadBtn {
-            y: 4px; height: 19px; width: ap.preferred-width + 14px;
-            label: "A+"; tip: "Larger text";
-            ap := Text { visible: false; text: "A+"; font-size: 11px; }
-            clicked => { root.font(1); }
-        }
-        // Pin: 27×21 at y 3, a 13px icon; pinned: accent on accent-dim, turned −30°.
-        if !root.narrow: HeadBtn {
-            y: 3px; height: 21px; width: 27px;
-            // Pinned, the icon is turned −30° (drawn turned: pin-turned).
-            has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
-            look: root.pinned ? "pinned" : "rest";
-            tip: root.pinned ? "Unpin (size and position are locked)" : "Pin size and position";
-            clicked => { root.pin(); }
-        }
-        // Full screen: 25×19 at y 4, an 11px maximize; accent while on.
-        if root.chat && !root.narrow: HeadBtn {
-            y: 4px; height: 19px; width: 25px;
-            has-icon: true; icon: Icons.maximize; icon-size: 11px;
-            look: root.full ? "lit" : "rest";
-            tip: "Full screen";
-            clicked => { root.full-screen(); }
-        }
-        if root.narrow: HeadBtn { y: 4px; height: 19px; width: 25px; has-icon: true; icon: Icons.more; icon-size: 11px; tip: "More"; }
-        // Close takes two clicks: "×" 14px, padding 1px 7px, 27.7×18 at y 4.5;
-        // armed: "Sure?" 11px, padding 1px 6px, 15px high at y 6, red.
-        // Hidden in full screen.
-        if !root.full: HeadBtn {
-            y: root.armed ? 6px : 4.5px;
-            height: root.armed ? 15px : 18px;
-            width: root.armed ? sure.preferred-width + 14px : 27.7px;
-            label: root.armed ? "Sure?" : "×";
-            label-size: root.armed ? 11px : 14px;
-            look: root.armed ? "armed" : "close";
-            tip: root.armed ? "Click again to close" : "Close chat";
-            sure := Text { visible: false; text: "Sure?"; font-size: 11px; }
-            clicked => { root.close(); }
+        fl := FlexboxLayout {
+            x: 1px; y: 1px;
+            width: parent.width - 2px;
+            padding: 8px;
+            spacing: 6px;
+            flex-wrap: wrap;
+            alignment: end;
+            cross-axis-alignment: center;
+            if root.kind-tag != "": KindTag { text: root.kind-tag; }
+            // The lock with its label: icon 12, the count if any, "Secrets for
+            // this chat"; gap 4, padding 3px 6px; 20px high.
+            if root.secrets: HeadBtn {
+                height: 20px;
+                width: root.lock-w;
+                has-icon: true; icon: Icons.lock; icon-size: 12px;
+                look: root.secrets-n > 0 ? "on" : "rest";
+                count: root.secrets-n > 0 ? "" + root.secrets-n : "";
+                after: "Secrets for this chat";
+                tip: root.secrets-tip;
+                clicked => { root.open-secrets(); }
+            }
+            HeadBtn {
+                height: 19px; width: am.preferred-width + 14px;
+                label: "A-"; tip: "Smaller text";
+                am := Text { visible: false; text: "A-"; font-size: 11px; }
+                clicked => { root.font(-1); }
+            }
+            HeadBtn {
+                height: 19.6px; width: 25px;
+                has-icon: true; icon: Icons.rotate-ccw; icon-size: 11px;
+                tip: "Reset text size";
+                clicked => { root.font-reset(); }
+            }
+            HeadBtn {
+                height: 19px; width: ap.preferred-width + 14px;
+                label: "A+"; tip: "Larger text";
+                ap := Text { visible: false; text: "A+"; font-size: 11px; }
+                clicked => { root.font(1); }
+            }
+            HeadBtn {
+                height: 21px; width: 27px;
+                has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
+                look: root.pinned ? "pinned" : "rest";
+                tip: root.pinned ? "Unpin (size and position are locked)" : "Pin size and position";
+                clicked => { root.pin(); }
+            }
         }
     }
 }

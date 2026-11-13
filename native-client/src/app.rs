@@ -76,6 +76,8 @@ pub struct App {
     arm_gen: u32,
     /// The pane in full screen, by its key (it survives re-renders).
     full: Option<String>,
+    /// The leaf whose narrow header has its "…" menu open (one at a time).
+    menu: u32,
     /// Each chat's text size in px, and the size new chats start at
     /// (saved: store::Saved.font, font_default_chat).
     font: HashMap<String, i32>,
@@ -172,6 +174,7 @@ pub fn init(window: &MainWindow) {
             armed: 0,
             arm_gen: 0,
             full: None,
+            menu: 0,
             font: HashMap::new(),
             font_default: head::FONT_BASE,
             drafts: HashMap::new(),
@@ -207,6 +210,7 @@ pub fn init(window: &MainWindow) {
         // The chat-secrets dialog the lock opens is its own screen (2.12).
     });
     window.on_pane_rename(|id, t| pane_rename(id as u32, t.as_str()));
+    window.on_pane_menu(|id, on| pane_menu(id as u32, on));
     window.on_pane_maximize(|id| { with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
     window.on_draft_changed(|k, t| { with(|a| { a.drafts.insert(k.to_string(), t.to_string()); }); });
 
@@ -745,6 +749,8 @@ fn render() {
                 focused: l.id == a.focused,
                 pinned: l.pinned,
                 armed: l.id == a.armed,
+                narrow: head::narrow(l.w),
+                menu: l.id == a.menu && head::narrow(l.w),
                 title_max: 160.0,
                 fs: 1.0,
                 ..Default::default()
@@ -754,7 +760,7 @@ fn render() {
                 p.kind = "chat".into();
                 let short = item.map(|c| s(c, "title")).filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into());
                 let long = item.map(|c| s(c, "longTitle")).unwrap_or_default();
-                let (shown, cap) = head::title_shown(&short, &long, l.w - 2.0);
+                let (shown, cap) = head::title_shown(&short, &long, l.w);
                 p.title = shown.into();
                 p.title_max = cap;
                 p.short_title = short.into();
@@ -788,16 +794,20 @@ fn render() {
         let full = a.full.as_ref().and_then(|k| panes.iter().find(|p| p.key.as_str() == k)).map(|p| {
             let mut f = p.clone();
             f.full = true;
+            f.narrow = false;
+            f.menu = false;
             f.x = 0.0; f.y = 0.0; f.w = win.0; f.h = win.1;
             f.focused = true;
             let (shown, cap) = match chat_of(&p.key).and_then(|id| a.sessions.iter().find(|c| s(c, "id") == id)) {
-                Some(c) => head::title_shown(&s(c, "title"), &s(c, "longTitle"), win.0 - 2.0),
+                Some(c) => head::title_shown(&s(c, "title"), &s(c, "longTitle"), win.0),
                 None => (p.title.to_string(), 160.0),
             };
             f.title = shown.into();
             f.title_max = cap;
             f
         });
+        // The menu closes when its pane goes wide or away.
+        if a.menu != 0 && !panes.iter().any(|p| p.id as u32 == a.menu && p.menu) { a.menu = 0; }
         let panes: Vec<PaneView> = panes.into_iter().map(|mut p| { p.full = false; if full.as_ref().is_some_and(|f| f.key == p.key) { p.armed = false; } p }).collect();
         if panes.len() == a.pane_rows.row_count() {
             for (i, p) in panes.into_iter().enumerate() {
@@ -866,7 +876,16 @@ pub fn pane_close(leaf: u32) {
 /// Full screen on or off for this pane (one at a time).
 pub fn pane_full(leaf: u32) {
     let Some(key) = leaf_rect(leaf).and_then(|l| l.key) else { return };
-    with(|a| { a.full = if a.full.as_deref() == Some(key.as_str()) { None } else { Some(key) }; a.armed = 0; });
+    with(|a| { a.full = if a.full.as_deref() == Some(key.as_str()) { None } else { Some(key) }; a.armed = 0; a.menu = 0; });
+    render();
+}
+
+/// Open or close a narrow header's "…" menu. Opening one closes any other,
+/// and focuses its pane (as any click in a pane does).
+pub fn pane_menu(leaf: u32, open: bool) {
+    with(|a| {
+        if open { a.menu = leaf; a.focused = leaf; } else if a.menu == leaf { a.menu = 0; }
+    });
     render();
 }
 

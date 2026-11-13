@@ -145,6 +145,17 @@ them; each has a spec in `specs/`). So far:
   - double-click the header (not a button) to maximise the pane in its split
     (92 / 8), again to even it.
 
+- **2.2 The pane header, narrow** (`specs/pane-header-narrow.md`): when
+  the header's content box is under 560px (a pane of 567px or less), the
+  header is 26px and keeps only full screen, "…" and ×; the short title has no
+  cap and elides when the row runs out. "…" opens the folded tools in a
+  menu under the header (CHAT, the lock with its label, A-, reset, A+, pin),
+  which wraps right-aligned in a tight pane:
+  - one menu at a time; A-, reset, A+ and pin leave it open;
+  - the lock and full screen close it; so does Esc, and a press anywhere
+    outside it, which still does its own job;
+  - it stays open through live updates and closes when its pane goes wide.
+
 The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
 `test/phase2.mjs` drives each feature against a fresh server (the same setup
 as phase 1's test), by the pointer and keys where it matters.

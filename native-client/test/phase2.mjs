@@ -310,6 +310,99 @@ await sleep(600);
 p = await props();
 check('a double-click on a lone pane changes nothing', p.panes.length === 1 && Math.abs(pane(p, chatA).w - lone.w) < 1 && Math.abs(pane(p, chatA).h - lone.h) < 1 && p.full === null, p.panes);
 
+// ─── 2.2 The pane header, narrow ───
+// Three chats side by side: each pane is 378 wide, so each header folds.
+if (pane(await props(), chatA).pinned) await ui('pane-pin', pane(await props(), chatA).id);
+await http('POST', `/api/ui-sessions/${chatA}/rename`, { title: 'Fruit list and directory' }, token);
+const chatC = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Second chat' }, token)).body?.id;
+const chatD = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Third chat' }, token)).body?.id;
+p = await until('three panes, each narrow', (q) => [chatA, chatC, chatD].every((id) => pane(q, id)?.narrow) && pane(q, chatA).title === 'Fruit list and directory');
+if (p) check('three 378px panes fold their headers', true);
+a = pane(p, chatA);
+check('a narrow header shows the short title with no 160 cap', a.titleMax > 1000 && a.title === a.shortTitle, a);
+await snap('2.2-rest');
+// Where things are in a narrow header (26px) and its menu.
+const nHeadY = (q) => WB.y + q.y + 1 + 12.5;
+const moreX = (q) => WB.x + q.x + q.w - 1 - 4 - 27.7 - 4 - 12.5;
+const menuRight = (q) => WB.x + q.x + q.w - 1 - 4;
+const menuY = (q) => WB.y + q.y + 1 + 27 + 19.5;          // the middle of its 21px row
+const pinX = (q) => menuRight(q) - 1 - 8 - 13.5;
+const resetX = (q) => pinX(q) - 13.5 - 6 - 30.8 - 6 - 12.5;
+// "…" opens this header's menu, and focuses the pane.
+await mouse('click', moreX(a), nHeadY(a));
+p = await until('"…" opens the menu', (q) => pane(q, chatA).menu && pane(q, chatA).focused);
+if (p) check('"…" opens the menu and focuses its pane', true);
+await snap('2.2-menu-open');
+// Opening another pane's closes this one.
+const c = pane(p, chatC);
+await mouse('click', moreX(c), nHeadY(c));
+p = await until('one menu at a time', (q) => pane(q, chatC).menu && !pane(q, chatA).menu);
+if (p) check('opening one menu closes the other', true);
+await mouse('click', moreX(c), nHeadY(c));
+await until('"…" again closes it', (q) => !pane(q, chatC).menu) && check('"…" toggles its menu', true);
+// Items that act and leave it open: pin, reset (after A+).
+await mouse('click', moreX(a), nHeadY(a));
+await until('menu open', (q) => pane(q, chatA).menu);
+await mouse('click', pinX(a), menuY(a));
+p = await until('pin in the menu pins', (q) => pane(q, chatA).pinned);
+check('pin acts and the menu stays open', p && pane(p, chatA).menu, p?.panes);
+await snap('2.2-menu-pinned');
+await mouse('click', pinX(a), menuY(a));
+await until('unpin from the menu', (q) => !pane(q, chatA).pinned);
+await ui('pane-font', a.id, 1);
+await mouse('click', resetX(a), menuY(a));
+p = await until('reset in the menu', (q) => Math.abs(pane(q, chatA).fs - 1) < 1e-3);
+check('reset acts and the menu stays open', p && pane(p, chatA).menu, p?.panes);
+// A live update leaves it open.
+await http('POST', `/api/ui-sessions/${chatA}/rename`, { title: 'Fruit list renamed' }, token);
+p = await until('a live rename shows', (q) => pane(q, chatA).title === 'Fruit list renamed');
+check('the menu stays open through a live update', p && pane(p, chatA).menu);
+// Esc closes the menu, and only the menu.
+await key('Escape');
+p = await until('Esc closes the menu', (q) => !pane(q, chatA).menu);
+check('Esc closes the menu only', p && p.full === null);
+// The lock closes it (and opens the secrets dialog, 2.12).
+if (pane(await props(), chatA).secrets) {
+  await mouse('click', moreX(a), nHeadY(a));
+  await until('menu open', (q) => pane(q, chatA).menu);
+  const aMinusLeft = resetX(a) - 12.5 - 6 - 25.3;
+  await mouse('click', aMinusLeft - 6 - 30, menuY(a));
+  await until('the lock closes the menu', (q) => !pane(q, chatA).menu) && check('the lock closes the menu', true);
+}
+// A press outside closes it and still acts: here it opens another pane's rename.
+await mouse('click', moreX(a), nHeadY(a));
+await until('menu open again', (q) => pane(q, chatA).menu);
+const d0 = pane(await props(), chatD);
+await mouse('click', WB.x + d0.x + 1 + 43 + 20, nHeadY(d0));
+p = await until('a press outside closes the menu', (q) => !pane(q, chatA).menu);
+await sleep(300);
+await key('Picked');
+await key('Return');
+await until('…and the press still acts (the rename opened)', (q) => pane(q, chatD).title === 'Picked') && check('a press outside closes the menu and still acts', true);
+// Full screen closes it (and the full-screen header is wide).
+await mouse('click', moreX(a), nHeadY(a));
+await until('menu open', (q) => pane(q, chatA).menu);
+await mouse('click', moreX(a) - 25 - 4, nHeadY(a));
+p = await until('full screen closes the menu', (q) => q.full?.key === 'live:' + chatA && !pane(q, chatA).menu);
+if (p) check('full screen closes the menu', true);
+await key('Escape');
+await until('Esc leaves full screen', (q) => q.full === null);
+// × closes it and arms.
+await mouse('click', moreX(a), nHeadY(a));
+await until('menu open', (q) => pane(q, chatA).menu);
+await mouse('click', moreX(a) + 12.5 + 4 + 13.85, nHeadY(a));
+p = await until('× closes the menu and arms', (q) => !pane(q, chatA).menu && pane(q, chatA).armed);
+if (p) check('× closes the menu and arms', true);
+await sleep(3300);
+// The menu closes when its pane goes wide: a chat closing elsewhere leaves
+// two 571px panes.
+await mouse('click', moreX(a), nHeadY(a));
+await until('menu open', (q) => pane(q, chatA).menu);
+await http('POST', `/api/ui-sessions/${chatD}/close`, {}, token);
+p = await until('the pane goes wide', (q) => !pane(q, chatD) && !pane(q, chatA).narrow);
+check('the menu closes when the pane goes wide', p && !pane(p, chatA).menu, p?.panes);
+check('a wide header again shows the long form or the 160 cap', p && pane(p, chatA).titleMax <= 440, p?.panes);
+
 d.close();
 app.kill();
 console.log(failed ? `\n${failed} failed` : '\nall passed');
