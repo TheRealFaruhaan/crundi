@@ -214,6 +214,8 @@ export component PaneHead inherits Rectangle {
     in property <bool> full;
     // The × was clicked once: "Sure?" (src/app.rs disarms it after 3 s).
     in property <bool> armed;
+    // No pin button (the drag's clone).
+    in property <bool> no-pin;
     // Where "…" sits (from the header's left), for the menu's outside-press test.
     out property <length> more-left: self.width - 4px - (root.armed ? sure-m.preferred-width + 14px : 27.7px) - 4px - 25px;
     out property <length> more-top: 3px;
@@ -300,8 +302,8 @@ export component PaneHead inherits Rectangle {
             // A press anywhere outside the input saves it, as the web's blur.
             property <int> presses: Pointer.presses;
             changed presses => {
-                if root.renaming && (Pointer.x < self.absolute-position.x || Pointer.x > self.absolute-position.x + self.width
-                        || Pointer.y < self.absolute-position.y || Pointer.y > self.absolute-position.y + self.height) {
+                if root.renaming && (Pointer.press-x < self.absolute-position.x || Pointer.press-x > self.absolute-position.x + self.width
+                        || Pointer.press-y < self.absolute-position.y || Pointer.press-y > self.absolute-position.y + self.height) {
                     root.renaming = false;
                     root.rename(ti.text);
                 }
@@ -390,7 +392,7 @@ export component PaneHead inherits Rectangle {
                 clicked => { root.font(1); }
             }
             // Pin: 27×21 at y 3, a 13px icon; pinned: accent on accent-dim, turned −30°.
-            if !root.narrow: HeadBtn {
+            if !root.narrow && !root.no-pin: HeadBtn {
                 y: 3px; height: 21px; width: 27px;
                 // Pinned, the icon is turned −30° (drawn turned: pin-turned).
                 has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
@@ -483,8 +485,8 @@ export component HeadMenu inherits Rectangle {
     changed presses => {
         let ax = self.absolute-position.x;
         let ay = self.absolute-position.y;
-        let inside = Pointer.x >= ax && Pointer.x <= ax + self.width && Pointer.y >= ay && Pointer.y <= ay + self.height;
-        let on-more = Pointer.x >= root.more-x && Pointer.x <= root.more-x + 25px && Pointer.y >= root.more-y && Pointer.y <= root.more-y + 19px;
+        let inside = Pointer.press-x >= ax && Pointer.press-x <= ax + self.width && Pointer.press-y >= ay && Pointer.press-y <= ay + self.height;
+        let on-more = Pointer.press-x >= root.more-x && Pointer.press-x <= root.more-x + 25px && Pointer.press-y >= root.more-y && Pointer.press-y <= root.more-y + 19px;
         if !inside && !on-more { root.dismiss(); }
     }
     // Clicks on the menu's own padding stay in it.

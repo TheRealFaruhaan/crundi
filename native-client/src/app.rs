@@ -858,8 +858,15 @@ fn render() {
             split: g.split as i32, index: g.index as i32, row: g.dir == Dir::Row,
             x: g.x, y: g.y, w: g.w, h: g.h, span: g.span, locked: g.locked,
         }).collect();
-        let same = gs.len() == a.gutter_rows.row_count() && gs.iter().enumerate().all(|(i, g)| a.gutter_rows.row_data(i).as_ref() == Some(g));
-        if !same { a.gutter_rows.set_vec(gs); }
+        // Rewritten in place while the count holds: a gutter being dragged
+        // keeps its touch area (and so the press, and its release).
+        if gs.len() == a.gutter_rows.row_count() {
+            for (i, g) in gs.into_iter().enumerate() {
+                if a.gutter_rows.row_data(i).as_ref() != Some(&g) { a.gutter_rows.set_row_data(i, g); }
+            }
+        } else {
+            a.gutter_rows.set_vec(gs);
+        }
         (cw, full)
     });
     if let (Some(w), Some((cw, full))) = (ui(), out) {
@@ -1022,7 +1029,11 @@ fn add_pane(kind: &str) {
         if let Some(preset) = kind.strip_prefix("layout:") {
             // The panes in display order: the chats in the server's order.
             let order: Vec<String> = a.sessions.iter().filter(|c| s(c, "project") == a.project).map(|c| chat_key(&s(c, "id"))).collect();
+            // A preset makes new leaves: the focus stays with its pane.
+            let cw = a.mosaic.content_width(a.area.0);
+            let key = a.mosaic.layout(cw, a.area.1).0.into_iter().find(|l| l.id == a.focused).and_then(|l| l.key);
             a.mosaic = a.mosaic.preset_from(preset, &order);
+            if let Some(l) = key.and_then(|k| a.mosaic.leaf_of(&k)) { a.focused = l; }
             return;
         }
         let key = if kind == "terminal" { a.pending += 1; format!("pend:{}", a.pending) } else { format!("panel:{kind}") };

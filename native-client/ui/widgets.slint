@@ -9,8 +9,14 @@ import { Theme } from "theme.slint";
 /// blur (the rename input) watch this to end on a press outside them.
 export global Pointer {
     in-out property <int> presses;
+    // Where the pointer is now (moves too: hover, the drag's clone).
     in-out property <length> x;
     in-out property <length> y;
+    // Where the last press was, and whether the "+" menu was open then (a
+    // press on it, or on its backdrop, focuses no pane).
+    in-out property <length> press-x;
+    in-out property <length> press-y;
+    in-out property <bool> press-on-menu;
 }
 
 /// A flat icon from Icons, tinted.
@@ -163,8 +169,10 @@ export global States {
 
 /// A dashed outline (Slint has no dashed borders): `thick` px dashes of
 /// `dash` px with `gap` px between, along the four edges, inset `inset` px.
-/// Corners with a radius get a solid quarter-arc each (Chromium runs its
-/// dashes round them).
+/// With a radius (`corner`), as Chromium draws a dashed rounded border: each
+/// corner carries one dash on the middle of its arc (30° to 60°), and the
+/// straight dashes run from the corner's ends, spaced out so each edge
+/// starts and ends on a dash.
 export component DashedBox inherits Rectangle {
     in property <color> line: Theme.border;
     in property <length> thick: 1px;
@@ -172,43 +180,51 @@ export component DashedBox inherits Rectangle {
     in property <length> gap: 2px;
     in property <length> inset: 0px;
     in property <length> corner: 0px;
-    property <length> step: self.dash + self.gap;
     property <length> w: self.width - 2 * self.inset;
     property <length> h: self.height - 2 * self.inset;
-    property <length> run-w: self.w - 2 * self.corner;
-    property <length> run-h: self.h - 2 * self.corner;
-    for i in max(0, ceil(self.run-w / self.step)): Rectangle {
-        x: root.inset + root.corner + i * root.step; y: root.inset;
-        width: min(root.dash, root.run-w - i * root.step); height: root.thick; background: root.line;
+    // Where the straight dashes start (after the corner and its gap), how
+    // much edge they share, how many fit, and their spacing.
+    property <length> pad: self.corner;
+    property <length> run-w: self.w - 2 * self.pad;
+    property <length> run-h: self.h - 2 * self.pad;
+    property <int> n-w: self.corner > 0 ? max(1, floor((self.run-w + self.gap) / (self.dash + self.gap))) : max(0, ceil(self.run-w / (self.dash + self.gap)));
+    property <int> n-h: self.corner > 0 ? max(1, floor((self.run-h + self.gap) / (self.dash + self.gap))) : max(0, ceil(self.run-h / (self.dash + self.gap)));
+    property <length> step-w: self.corner > 0 ? (self.n-w > 1 ? (self.run-w - self.dash) / (self.n-w - 1) : 0px) : self.dash + self.gap;
+    property <length> step-h: self.corner > 0 ? (self.n-h > 1 ? (self.run-h - self.dash) / (self.n-h - 1) : 0px) : self.dash + self.gap;
+    for i in root.n-w: Rectangle {
+        x: root.inset + root.pad + i * root.step-w; y: root.inset;
+        width: min(root.dash, root.run-w - i * root.step-w); height: root.thick; background: root.line;
     }
-    for i in max(0, ceil(self.run-w / self.step)): Rectangle {
-        x: root.inset + root.corner + i * root.step; y: root.inset + root.h - root.thick;
-        width: min(root.dash, root.run-w - i * root.step); height: root.thick; background: root.line;
+    for i in root.n-w: Rectangle {
+        x: root.inset + root.pad + i * root.step-w; y: root.inset + root.h - root.thick;
+        width: min(root.dash, root.run-w - i * root.step-w); height: root.thick; background: root.line;
     }
-    for i in max(0, ceil(self.run-h / self.step)): Rectangle {
-        x: root.inset; y: root.inset + root.corner + i * root.step;
-        width: root.thick; height: min(root.dash, root.run-h - i * root.step); background: root.line;
+    for i in root.n-h: Rectangle {
+        x: root.inset; y: root.inset + root.pad + i * root.step-h;
+        width: root.thick; height: min(root.dash, root.run-h - i * root.step-h); background: root.line;
     }
-    for i in max(0, ceil(self.run-h / self.step)): Rectangle {
-        x: root.inset + root.w - root.thick; y: root.inset + root.corner + i * root.step;
-        width: root.thick; height: min(root.dash, root.run-h - i * root.step); background: root.line;
+    for i in root.n-h: Rectangle {
+        x: root.inset + root.w - root.thick; y: root.inset + root.pad + i * root.step-h;
+        width: root.thick; height: min(root.dash, root.run-h - i * root.step-h); background: root.line;
     }
-    // The four corners: a radius-`corner` ring, each clipped to its quarter.
+    // The four corners: the radius-`corner` ring, clipped to the box between
+    // its 30° and 60° points (x and y within half the radius of the corner).
+    property <length> cb: root.corner / 2 + root.thick / 2;
     if root.corner > 0: Rectangle {
-        x: root.inset; y: root.inset; width: root.corner; height: root.corner; clip: true;
+        x: root.inset; y: root.inset; width: root.cb; height: root.cb; clip: true;
         Rectangle { x: 0; y: 0; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
     }
     if root.corner > 0: Rectangle {
-        x: root.inset + root.w - root.corner; y: root.inset; width: root.corner; height: root.corner; clip: true;
-        Rectangle { x: -root.corner; y: 0; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+        x: root.inset + root.w - root.cb; y: root.inset; width: root.cb; height: root.cb; clip: true;
+        Rectangle { x: root.cb - 2 * root.corner; y: 0; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
     }
     if root.corner > 0: Rectangle {
-        x: root.inset; y: root.inset + root.h - root.corner; width: root.corner; height: root.corner; clip: true;
-        Rectangle { x: 0; y: -root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+        x: root.inset; y: root.inset + root.h - root.cb; width: root.cb; height: root.cb; clip: true;
+        Rectangle { x: 0; y: root.cb - 2 * root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
     }
     if root.corner > 0: Rectangle {
-        x: root.inset + root.w - root.corner; y: root.inset + root.h - root.corner; width: root.corner; height: root.corner; clip: true;
-        Rectangle { x: -root.corner; y: -root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
+        x: root.inset + root.w - root.cb; y: root.inset + root.h - root.cb; width: root.cb; height: root.cb; clip: true;
+        Rectangle { x: root.cb - 2 * root.corner; y: root.cb - 2 * root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
     }
 }
 

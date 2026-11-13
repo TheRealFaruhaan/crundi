@@ -238,5 +238,8 @@ pub fn pointer_pressed(ui: &MainWindow, x: f32, y: f32) {
     let p = ui.global::<Pointer>();
     p.set_x(x);
     p.set_y(y);
+    p.set_press_x(x);
+    p.set_press_y(y);
+    p.set_press_on_menu(ui.get_add_menu_open());
     p.set_presses(p.get_presses() + 1);
 }

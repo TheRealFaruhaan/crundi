@@ -261,6 +261,12 @@ export component PaneCard inherits Rectangle {
     callback menu(bool);
     // The header dragged: 0 start, 1 move, 2 release; window coordinates.
     callback drag(int, length, length);
+    // Presses that land on something over the pane don't focus it: the "+"
+    // menu is open, or (`ctrls`) the press is on the leaf's split controls.
+    in property <bool> blocked;
+    in property <bool> ctrls: true;
+    // The drag's clone: no pin button (the web hides .pane-pin outside the grid).
+    in property <bool> clone;
     // The content sits inside the 1px edge, clipped to radius 9, so the
     // header's fill keeps the pane's round top corners (the web's overflow:
     // hidden inside a radius-10 border). Full screen: radius 0.
@@ -274,9 +280,12 @@ export component PaneCard inherits Rectangle {
         // counted (Pointer), so one on a button or the header counts as well.
         property <int> presses: Pointer.presses;
         changed presses => {
-            if Pointer.x >= self.absolute-position.x && Pointer.x <= self.absolute-position.x + self.width
-                    && Pointer.y >= self.absolute-position.y && Pointer.y <= self.absolute-position.y + self.height
-                    && !p.focused {
+            let px = Pointer.press-x - self.absolute-position.x;
+            let py = Pointer.press-y - self.absolute-position.y;
+            // The split controls: 47×18, centred, 3px from the leaf's top (2
+            // inside this box).
+            let on-ctrls = root.ctrls && !p.full && px >= (self.width - 47px) / 2 && px <= (self.width + 47px) / 2 && py >= 2px && py <= 20px;
+            if px >= 0 && px <= self.width && py >= 0 && py <= self.height && !p.focused && !root.blocked && !Pointer.press-on-menu && !on-ctrls {
                 root.focus-me();
             }
         }
@@ -306,6 +315,7 @@ export component PaneCard inherits Rectangle {
             maximize => { root.maximize(); }
             more => { root.menu(!p.menu); }
             drag(k, x, y) => { root.drag(k, x, y); }
+            no-pin: root.clone;
         }
         if p.kind == "chat": ChatPane {
             vertical-stretch: 1;
@@ -396,6 +406,8 @@ export component Workbench inherits Rectangle {
     callback chip(int, string);
     // A pane is being dragged: every leaf shows its dashed outline.
     in property <bool> dragging;
+    // The "+" menu is open over the workbench: presses don't focus panes.
+    in property <bool> menu-open;
     // The layout changed in structure or shares: ease the panes (220ms).
     in property <bool> motion;
     // Bumped to scroll back to the left (Fit to screen).
@@ -468,6 +480,7 @@ export component Workbench inherits Rectangle {
             }
             if p.kind != "empty": PaneCard {
                 p: p;
+                blocked: root.menu-open;
                 focus-me => { root.focus-pane(p.id); }
                 close => { root.pane-close(p.id); }
                 full-screen => { root.pane-full(p.id); }
@@ -489,7 +502,14 @@ export component Workbench inherits Rectangle {
             // While a pane is dragged: every leaf's 1px dashed outline (3/2,
             // inset 1px); the one under the pointer, 2px solid accent over its
             // outer 2px, square corners (the leaf has no radius).
-            if root.dragging: DashedBox { line: Theme.border; thick: 1px; dash: 3px; gap: 2px; inset: 1px; }
+            // On a pane, only the header band shows it: the web's pane body
+            // paints over the leaf's outline below the header.
+            if root.dragging: Rectangle {
+                x: 0; y: 0;
+                height: p.kind == "empty" ? parent.height : (p.narrow ? 27px : 29px);
+                clip: true;
+                DashedBox { x: 0; y: 0; width: p.w; height: p.h; line: Theme.border; thick: 1px; dash: 3px; gap: 2px; inset: 1px; }
+            }
             if root.dragging && p.drop: Rectangle { border-width: 2px; border-color: Theme.accent; }
             // The hover split controls: top 3px, centred on the leaf, above the
             // header (they cover what is under them); fade .12s.
@@ -523,6 +543,8 @@ export component Workbench inherits Rectangle {
                         if ev.kind == PointerEventKind.down { root.resizing = true; }
                         if ev.kind == PointerEventKind.up { root.resizing = false; }
                     }
+                    // A cancelled press (the grab lost) ends it too.
+                    if ev.kind == PointerEventKind.cancel { root.resizing = false; }
                 }
                 moved => {
                     if self.pressed && !g.locked {

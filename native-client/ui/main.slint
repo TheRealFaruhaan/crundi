@@ -252,6 +252,7 @@ export component MainWindow inherits Window {
                         pane-drag(id, k, x, y) => { root.pane-drag(id, k, x, y); }
                         chip(id, k) => { root.chip(id, k); }
                         dragging: root.drag-on;
+                        menu-open: root.add-menu-open;
                         motion: root.wb-motion;
                         scroll-home: root.wb-scroll-home;
                         draft-changed(k, t) => { root.draft-changed(k, t); }
@@ -335,7 +336,7 @@ export component MainWindow inherits Window {
         for l in [{ e: 4px, c: #00000024 }, { e: 12px, c: #00000016 }, { e: 20px, c: #0000000c }, { e: 30px, c: #00000006 }]: Rectangle {
             x: -l.e; y: 12px - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: 10px + l.e; background: l.c;
         }
-        PaneCard { p: root.drag-pane; }
+        PaneCard { p: root.drag-pane; clone: true; blocked: true; }
     }
 
     // The toast: top: topbar + 10px; right 16px; at most 420px; bg-secondary,

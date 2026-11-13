@@ -529,21 +529,44 @@ if (p) check('Fit that cannot fit shows the error toast', true);
 await ui('add-pane', 'layout:cross4');
 p = await until('cross4 again', (q) => shapeOf(savedTree()) === 'row[col[0, 2], col[1, 3]]');
 const g0 = p.gutterViews.find((g) => g.row);
-await mouse('down', WB.x + g0.x + 3, WB.y + g0.y + 200);
-await mouse('move', WB.x + g0.x + 60, WB.y + g0.y + 200);
-await mouse('move', WB.x + g0.x + 120, WB.y + g0.y + 200);
-await mouse('up', WB.x + g0.x + 120, WB.y + g0.y + 200);
-p = await until('a gutter drag resizes', (q) => pane(q, four[0]).w > 600);
-check('dragging a gutter resizes the panes', !!p);
+// Ten moves of 10px: the gutter follows every one (not only the first).
+const w0 = pane(p, four[0]).w;
+await mouse('move', WB.x + g0.x + 3.5, WB.y + g0.y + 200);
+await mouse('down', WB.x + g0.x + 3.5, WB.y + g0.y + 200);
+for (let i = 1; i <= 10; i++) await mouse('move', WB.x + g0.x + 3.5 + i * 10, WB.y + g0.y + 200);
+await mouse('up', WB.x + g0.x + 103.5, WB.y + g0.y + 200);
+p = await until('a gutter drag resizes', (q) => Math.abs(pane(q, four[0]).w - (w0 + 100)) < 2);
+check('a gutter drag follows the pointer all the way', !!p, p?.panes?.map((x) => x.w));
 await ui('add-pane', 'fit');
 p = await until('Fit evens the shares', (q) => Math.abs(pane(q, four[0]).w - 570.5) < 1);
 if (p) check('Fit brings the shares back even', true);
-// The hover split controls: split down on pane 0 (by the mouse).
+// A preset picked from the "+" menu with the mouse: the press on the menu
+// focuses no pane (even the one that lands under the pointer).
+await ui('focus-pane', pane(p, four[1]).id);
+await until('pane 1 focused', (q) => pane(q, four[1]).focused);
+await ui('add-menu', 'true');
+await mouse('move', 450, 438);          // over "Layout": the submenu opens
+await sleep(300);
+await mouse('move', 600, 440);
+await mouse('move', 620, 580);          // "Top + bottom split"
+await sleep(200);
+await mouse('click', 620, 580);
+p = await until('the preset from the menu', (q) => shapeOf(savedTree()) === 'col[0, row[1, 2], 3]');
+await sleep(400);
+p = await props();
+check('picking a preset with the mouse leaves the focus alone', p && pane(p, four[1]).focused, p?.panes?.map((x) => [x.title, x.focused]));
+await ui('add-pane', 'layout:cross4');
+p = await until('cross4 once more', (q) => shapeOf(savedTree()) === 'row[col[0, 2], col[1, 3]]');
+// The hover split controls: split down on pane 0 (by the mouse). The click
+// doesn't reach the pane: the focus stays where it was (pane 1).
+await ui('focus-pane', pane(p, four[1]).id);
+p = await until('pane 1 focused', (q) => pane(q, four[1]).focused);
 let b = pane(p, four[0]);
 await mouse('move', WB.x + b.x + 100, WB.y + b.y + 200);
 await sleep(300);
 await mouse('click', WB.x + b.x + b.w / 2 + 12, WB.y + b.y + 3 + 9);
 p = await until('split down from the hover controls', (q) => q.panes.some((x) => x.kind === 'empty'));
+check('a click on the split controls leaves the focus alone', p && pane(p, four[1]).focused && !pane(p, four[0]).focused);
 check('split down makes an empty pane under it', p && shapeOf(savedTree()) === 'row[col[col[0, ∅], 2], col[1, 3]]' || shapeOf(savedTree()) === 'row[col[0, ∅, 2], col[1, 3]]', shapeOf(savedTree()));
 await snap('2.3-split-result');
 // Drag pane 3 into the empty pane: it moves, its old leaf collapses.

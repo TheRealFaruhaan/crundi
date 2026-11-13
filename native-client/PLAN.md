@@ -215,6 +215,11 @@ Phase 1 left these, each with its workaround in place:
 - **The empty pane's chips** (2.3): only Terminal, the one the native client
   can open; Files, Git, Kanban, Notes, Mindmap, Media, Factory and Panel come
   with their panels (phase 3). The chip row wraps differently until then.
+- **Dashed rounded borders** (2.3, the empty pane): each corner carries one
+  dash on its arc and the straight dashes are spaced to fit each edge
+  (`DashedBox`). Chromium runs one pattern round the corners as well, so
+  near the far corners (bottom, right) the dashes sit up to 5px from the
+  web's; the top-left corner and the dash and gap lengths match.
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.
