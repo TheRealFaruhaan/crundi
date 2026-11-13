@@ -1,0 +1,151 @@
+// Small building blocks shared by the screens, in Crundi's look (theme.slint).
+
+import { Theme } from "theme.slint";
+
+/// A flat icon from Icons, tinted.
+export component Icon inherits Image {
+    in property <color> tint: Theme.text-secondary;
+    width: 16px;
+    height: 16px;
+    colorize: root.tint;
+    image-fit: contain;
+}
+
+/// A square button with one icon (toolbars, rows).
+export component IconButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> tooltip;
+    in property <bool> enabled: true;
+    in property <color> tint: Theme.text-secondary;
+    in property <length> size: 30px;
+    callback clicked();
+    width: root.size;
+    height: root.size;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover && root.enabled ? Theme.bg-hover : transparent;
+    accessible-role: button;
+    accessible-label: root.tooltip;
+    Icon {
+        source: root.icon;
+        width: root.size * 0.55;
+        height: root.size * 0.55;
+        tint: root.enabled ? (ta.has-hover ? Theme.text-primary : root.tint) : Theme.text-muted;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// A text button: primary (accent) or quiet.
+export component Btn inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> has-icon: false;
+    in property <bool> primary: false;
+    in property <bool> danger: false;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: 34px;
+    min-width: lay.preferred-width;
+    border-radius: Theme.radius-sm;
+    background: !root.enabled ? Theme.bg-tertiary
+        : root.primary ? (ta.has-hover ? Theme.accent-hover : Theme.accent)
+        : root.danger ? (ta.has-hover ? Theme.red : Theme.red-dim)
+        : (ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary);
+    border-width: root.primary || root.danger ? 0px : 1px;
+    border-color: Theme.border;
+    accessible-role: button;
+    accessible-label: root.text;
+    lay := HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 6px;
+        alignment: center;
+        if root.has-icon: Icon {
+            y: (parent.height - self.height) / 2;
+            source: root.icon;
+            tint: root.primary || root.danger ? white : Theme.text-primary;
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            color: !root.enabled ? Theme.text-muted : root.primary || root.danger ? white : Theme.text-primary;
+            font-weight: 600;
+            font-size: 13px;
+        }
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// A one-line text field.
+export component Field inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> password: false;
+    in property <bool> enabled: true;
+    callback accepted(string);
+    callback edited(string);
+    height: 38px;
+    border-radius: Theme.radius-sm;
+    background: Theme.bg-tertiary;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        input := TextInput {
+            text <=> root.text;
+            enabled: root.enabled;
+            vertical-alignment: center;
+            color: Theme.text-primary;
+            font-size: Theme.font-size;
+            selection-background-color: Theme.accent-dim;
+            input-type: root.password ? InputType.password : InputType.text;
+            single-line: true;
+            accepted => { root.accepted(self.text); }
+            edited => { root.edited(self.text); }
+        }
+    }
+    if root.text == "" : Text {
+        x: 12px;
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.placeholder;
+        color: Theme.text-muted;
+        font-size: Theme.font-size;
+    }
+    public function focus-input() { input.focus(); }
+}
+
+/// A small coloured dot (state of a chat, the connection).
+export component Dot inherits Rectangle {
+    in property <color> fill: Theme.text-muted;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background: root.fill;
+}
+
+/// The colour for a chat's agent state.
+export global States {
+    public pure function color(state: string) -> color {
+        return state == "working" ? Theme.green
+            : state == "needs-input" || state == "waiting" ? Theme.amber
+            : state == "exited" ? Theme.text-muted
+            : Theme.text-secondary;
+    }
+    public pure function label(state: string) -> string {
+        return state == "working" ? "Working"
+            : state == "needs-input" ? "Needs you"
+            : state == "waiting" ? "Waiting"
+            : state == "exited" ? "Ended"
+            : state == "idle" ? "Idle"
+            : state;
+    }
+}

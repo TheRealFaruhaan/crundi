@@ -1,162 +1,73 @@
-// The prototype window: a toolbar, and two browser panels side by side. Each
-// panel shows its CEF browser's frames as an image (off-screen rendering), with
-// an annotation layer drawn by Slint on top of it: the page is part of the
-// layout, so anything can be drawn over it.
+// Crundi's PC client, native: the window. Signed out, the sign-in page;
+// signed in, the sidebar (projects and chats) and the main area (a chat, or
+// the browser panels).
 
-import { Button, ComboBox, LineEdit, CheckBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { SignInPage } from "signin.slint";
+import { Sidebar, ProjectItem, ChatItem } from "sidebar.slint";
+import { ChatView, EntryView } from "chat.slint";
+import { BrowserArea, PanelData } from "browser.slint";
 
-export struct PanelData {
-    frame: image,
-    // The page's own size (CSS px) and how it sits in the panel (image-fit: contain).
-    view-width: float,
-    view-height: float,
-    title: string,
-    url: string,
-    // Which device it emulates (an index into the device list), and who drives it.
-    device: int,
-    // The device list for this panel: the named devices, plus "Custom WxH" when the server set a size.
-    device-names: [string],
-    // The page's mouse cursor (src/browser.rs cursor_index).
-    cursor: int,
-    driver: string,
-    // Annotation strokes, as SVG path commands in panel pixels.
-    strokes: [string],
-    // A pin dropped by a chat (browserPoint), in panel pixels; -1 when none.
-    pin-x: float,
-    pin-y: float,
-    pin-label: string,
-}
-
-component BrowserPanel inherits Rectangle {
-    in property <PanelData> data;
-    in property <bool> annotating;
-    in property <int> index;
-    callback pointer(int /* kind: 0 move, 1 down, 2 up, 3 exit */, length, length, int /* button */, length, length);
-    callback wheel(length, length, length, length, length, length);
-    callback key(string, bool /* down */, bool /* ctrl */, bool /* shift */);
-    callback resized(length, length);
-    callback navigate(string);
-    callback set-device(int);
-    callback clear-marks();
-
-    // The dropdown follows the panel's device (set from here, not bound: the
-    // ComboBox assigns its own index when someone picks, which would drop a binding).
-    property <int> shown-device: root.data.device;
-    changed shown-device => { device-box.current-index = self.shown-device; }
-
-    horizontal-stretch: 1;
-    // Equal halves: the page image's own size must not widen a panel.
-    preferred-width: 100px;
-    min-width: 300px;
-    background: #12121a;
-    border-color: #2a2a3d;
-    border-width: 1px;
-    border-radius: 8px;
-    clip: true;
-
-    VerticalLayout {
-        padding: 6px;
-        spacing: 6px;
-        HorizontalLayout {
-            spacing: 6px;
-            height: 30px;
-            url-edit := LineEdit {
-                text: root.data.url;
-                accepted(t) => { root.navigate(t); }
-            }
-            device-box := ComboBox {
-                width: 170px;
-                model: root.data.device-names;
-                selected(v) => { root.set-device(self.current-index); }
-            }
-            Button {
-                text: "Clear marks";
-                clicked => { root.clear-marks(); }
-            }
-        }
-        HorizontalLayout {
-            spacing: 6px;
-            Text { text: root.data.title; color: #8888a8; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
-            Text { text: root.data.driver; color: #818cf8; font-size: 11px; }
-        }
-        stage := Rectangle {
-            background: #0a0a0f;
-            // The page, scaled to fit the stage when it emulates a device bigger than the panel.
-            page := Image {
-                source: root.data.frame;
-                width: parent.width;
-                height: parent.height;
-                image-fit: contain;
-            }
-            // The annotation layer: Slint draws over the browser.
-            for s in root.data.strokes: Path {
-                width: parent.width;
-                height: parent.height;
-                viewbox-width: self.width / 1px;
-                viewbox-height: self.height / 1px;
-                commands: s;
-                stroke: #ea580c;
-                stroke-width: 3px;
-                fill: transparent;
-            }
-            if root.data.pin-x >= 0: Rectangle {
-                x: root.data.pin-x * 1px - 11px;
-                y: root.data.pin-y * 1px - 11px;
-                width: 22px; height: 22px; border-radius: 11px;
-                background: #6366f1; border-color: white; border-width: 2px;
-            }
-            if root.data.pin-x >= 0 && root.data.pin-label != "": Rectangle {
-                x: root.data.pin-x * 1px + 16px;
-                y: root.data.pin-y * 1px - 10px;
-                height: 20px;
-                width: pin-text.preferred-width + 14px;
-                border-radius: 6px;
-                background: #6366f1;
-                pin-text := Text { text: root.data.pin-label; color: white; font-size: 12px; }
-            }
-            changed width => { root.resized(self.width, self.height); }
-            changed height => { root.resized(self.width, self.height); }
-            init => { root.resized(self.width, self.height); }
-
-            fs := FocusScope {
-                key-pressed(e) => { root.key(e.text, true, e.modifiers.control, e.modifiers.shift); accept }
-                key-released(e) => { root.key(e.text, false, e.modifiers.control, e.modifiers.shift); accept }
-                touch := TouchArea {
-                    mouse-cursor: root.annotating ? MouseCursor.crosshair
-                        : root.data.cursor == 1 ? MouseCursor.pointer : root.data.cursor == 2 ? MouseCursor.text : root.data.cursor == 3 ? MouseCursor.crosshair
-                        : root.data.cursor == 4 ? MouseCursor.move : root.data.cursor == 5 ? MouseCursor.progress : root.data.cursor == 6 ? MouseCursor.not-allowed
-                        : root.data.cursor == 7 ? MouseCursor.ew-resize : root.data.cursor == 8 ? MouseCursor.ns-resize : root.data.cursor == 9 ? MouseCursor.nesw-resize
-                        : root.data.cursor == 10 ? MouseCursor.nwse-resize : root.data.cursor == 11 ? MouseCursor.grab : root.data.cursor == 12 ? MouseCursor.grabbing
-                        : root.data.cursor == 13 ? MouseCursor.help : root.data.cursor == 14 ? MouseCursor.none : MouseCursor.default;
-                    pointer-event(e) => {
-                        if (e.kind == PointerEventKind.down) { fs.focus(); }
-                        root.pointer(
-                            e.kind == PointerEventKind.down ? 1 : e.kind == PointerEventKind.up ? 2 : 0,
-                            self.mouse-x, self.mouse-y,
-                            e.button == PointerEventButton.right ? 2 : e.button == PointerEventButton.middle ? 1 : 0,
-                            stage.width, stage.height);
-                    }
-                    moved => { root.pointer(0, self.mouse-x, self.mouse-y, 0, stage.width, stage.height); }
-                    scroll-event(e) => {
-                        root.wheel(self.mouse-x, self.mouse-y, e.delta-x, e.delta-y, stage.width, stage.height);
-                        accept
-                    }
-                }
-            }
-        }
-    }
-}
+export { PanelData, EntryView, ProjectItem, ChatItem }
 
 export component MainWindow inherits Window {
-    title: "Crundi (native prototype: Slint + CEF)";
+    title: "Crundi";
     preferred-width: 1400px;
     preferred-height: 860px;
-    background: #0a0a0f;
+    min-width: 760px;
+    min-height: 480px;
+    background: Theme.bg-primary;
+    default-font-size: Theme.font-size;
 
+    // ─── The session ───
+    in property <bool> signed-in;
+    // The browser panels on their own (driven by a server, for tests).
+    in property <bool> browser-only;
+    in property <bool> online;
+    in property <string> username;
+    in property <string> server;
+    callback sign-out();
+
+    // ─── Signing in ───
+    in-out property <string> signin-server;
+    in property <string> signin-error;
+    in property <bool> signin-busy;
+    in property <bool> signin-checked;
+    in property <bool> offer-password;
+    in property <bool> offer-google;
+    in property <bool> offer-github;
+    in property <string> oauth-code;
+    callback check-server(string);
+    callback sign-in-pair(string);
+    callback sign-in-password(string, string, string);
+    callback sign-in-oauth(string, string);
+    callback cancel-sign-in();
+
+    // ─── Projects and chats ───
+    in property <[ProjectItem]> projects;
+    in property <string> current-project;
+    in property <[ChatItem]> chats;
+    in property <string> current-chat;
+    in-out property <string> view: "chat";
+    callback select-project(string);
+    callback select-chat(string);
+    callback new-chat();
+
+    // ─── The open chat ───
+    in property <[EntryView]> entries;
+    in property <string> chat-title;
+    in property <string> chat-state;
+    in property <string> chat-error;
+    in-out property <string> draft;
+    callback send(string);
+    callback stop();
+    callback respond(string, string, bool);
+    callback answer(string, string);
+
+    // ─── Browser panels ───
     in property <[PanelData]> panels;
-    in property <string> status;
     in-out property <bool> annotating;
-
+    in property <string> status;
     callback pointer(int, int, length, length, int, length, length);
     callback wheel(int, length, length, length, length, length, length);
     callback key(int, string, bool, bool, bool);
@@ -165,32 +76,80 @@ export component MainWindow inherits Window {
     callback set-device(int, int);
     callback clear-marks(int);
 
-    VerticalLayout {
-        padding: 10px;
-        spacing: 8px;
-        HorizontalLayout {
-            spacing: 12px;
-            height: 32px;
-            Text { text: "Crundi"; color: #818cf8; font-size: 16px; font-weight: 700; vertical-alignment: center; }
-            CheckBox {
-                text: "Annotate (draw over the page)";
-                checked <=> root.annotating;
-            }
-            Text { text: root.status; color: #8888a8; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+    if root.browser-only: BrowserArea {
+        panels: root.panels;
+        annotating <=> root.annotating;
+        status: root.status;
+        pointer(i, k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
+        wheel(i, x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
+        key(i, t, d, c, s) => { root.key(i, t, d, c, s); }
+        resized(i, w, h) => { root.resized(i, w, h); }
+        navigate(i, u) => { root.navigate(i, u); }
+        set-device(i, d) => { root.set-device(i, d); }
+        clear-marks(i) => { root.clear-marks(i); }
+    }
+
+    if !root.browser-only && !root.signed-in: SignInPage {
+        server <=> root.signin-server;
+        error: root.signin-error;
+        busy: root.signin-busy;
+        checked: root.signin-checked;
+        offer-password: root.offer-password;
+        offer-google: root.offer-google;
+        offer-github: root.offer-github;
+        oauth-code: root.oauth-code;
+        check-server(s) => { root.check-server(s); }
+        sign-in-pair(l) => { root.sign-in-pair(l); }
+        sign-in-password(s, p, c) => { root.sign-in-password(s, p, c); }
+        sign-in-oauth(s, p) => { root.sign-in-oauth(s, p); }
+        cancel => { root.cancel-sign-in(); }
+    }
+
+    if !root.browser-only && root.signed-in: HorizontalLayout {
+        Sidebar {
+            projects: root.projects;
+            current-project: root.current-project;
+            chats: root.chats;
+            current-chat: root.current-chat;
+            view: root.view;
+            username: root.username;
+            server: root.server;
+            online: root.online;
+            select-project(a) => { root.view = "chat"; root.select-project(a); }
+            select-chat(id) => { root.view = "chat"; root.select-chat(id); }
+            new-chat => { root.view = "chat"; root.new-chat(); }
+            show(v) => { root.view = v; }
+            sign-out => { root.sign-out(); }
         }
-        HorizontalLayout {
-            spacing: 10px;
-            for p[i] in root.panels: BrowserPanel {
-                data: p;
-                index: i;
-                annotating: root.annotating;
-                pointer(k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
-                wheel(x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
-                key(t, d, c, s) => { root.key(i, t, d, c, s); }
-                resized(w, h) => { root.resized(i, w, h); }
-                navigate(u) => { root.navigate(i, u); }
-                set-device(d) => { root.set-device(i, d); }
-                clear-marks => { root.clear-marks(i); }
+        // Both stay alive (the browsers keep their pages); one is shown.
+        Rectangle {
+            horizontal-stretch: 1;
+            ChatView {
+                visible: root.view == "chat";
+                entries: root.entries;
+                title: root.chat-title;
+                state: root.chat-state;
+                error: root.chat-error;
+                has-chat: root.current-chat != "";
+                draft <=> root.draft;
+                send(t) => { root.send(t); }
+                stop => { root.stop(); }
+                respond(id, b, a) => { root.respond(id, b, a); }
+                answer(id, o) => { root.answer(id, o); }
+                new-chat => { root.new-chat(); }
+            }
+            BrowserArea {
+                visible: root.view == "browser";
+                panels: root.panels;
+                annotating <=> root.annotating;
+                status: root.status;
+                pointer(i, k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
+                wheel(i, x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
+                key(i, t, d, c, s) => { root.key(i, t, d, c, s); }
+                resized(i, w, h) => { root.resized(i, w, h); }
+                navigate(i, u) => { root.navigate(i, u); }
+                set-device(i, d) => { root.set-device(i, d); }
+                clear-marks(i) => { root.clear-marks(i); }
             }
         }
     }

@@ -16,7 +16,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
 0. **Shell and browser panels** (done: this prototype). CEF panels in the
    layout, annotations, device emulation, native host over `/ws`, and builds
    for Linux, Windows and macOS in CI.
-1. **Foundation**:
+1. **Foundation** (done, with chats as the worked example: README, Phase 1):
    - connecting to a server: the HTTP API and `/ws`, with the client's token;
    - pairing and sign-in, as the PC client does now;
    - saved settings;

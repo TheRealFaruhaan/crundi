@@ -56,7 +56,7 @@ fn ui_status(text: String) {
     let _ = slint::invoke_from_event_loop(move || browser::status(&text));
 }
 
-fn on_message(text: &str, tx: mpsc::Sender<Value>, shown: &str) {
+pub fn on_message(text: &str, tx: mpsc::Sender<Value>, shown: &str) {
     let Ok(m) = serde_json::from_str::<Value>(text) else { return };
     match m.get("type").and_then(|t| t.as_str()) {
         Some("native-host-ready") => ui_status(format!("Driven by {shown} (native host)")),

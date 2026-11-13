@@ -1,0 +1,140 @@
+// Signing in: a pairing link from a device that is already signed in (the
+// link names the server), or the server plus a password and authenticator
+// code, or Google / GitHub in the system browser.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Field, Icon } from "widgets.slint";
+
+export component SignInPage inherits Rectangle {
+    in-out property <string> server;
+    in property <string> error;
+    in property <bool> busy;
+    // What the server offers (after check-server).
+    in property <bool> checked;
+    in property <bool> offer-password;
+    in property <bool> offer-google;
+    in property <bool> offer-github;
+    // Google / GitHub: the code the browser page shows too, while waiting.
+    in property <string> oauth-code;
+    callback check-server(string);
+    callback sign-in-pair(string);
+    callback sign-in-password(string, string, string);
+    callback sign-in-oauth(string, string);
+    callback cancel();
+
+    property <string> link;
+    property <string> password;
+    property <string> code;
+
+    background: Theme.bg-primary;
+
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            card := Rectangle {
+                width: 420px;
+                height: inner.preferred-height;
+                background: Theme.bg-secondary;
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: Theme.border;
+                inner := VerticalLayout {
+                    padding: 28px;
+                    spacing: 14px;
+                    Text { text: "Crundi"; color: Theme.accent-hover; font-size: 26px; font-weight: 800; horizontal-alignment: center; }
+                    Text { text: "Sign in to your Crundi server"; color: Theme.text-secondary; horizontal-alignment: center; }
+
+                    if root.oauth-code != "": VerticalLayout {
+                        spacing: 12px;
+                        Text { text: "Finish signing in in your browser."; color: Theme.text-primary; wrap: word-wrap; }
+                        Text { text: "Check that the page shows this code:"; color: Theme.text-secondary; wrap: word-wrap; }
+                        Text { text: root.oauth-code; color: Theme.amber; font-size: 28px; font-weight: 800; horizontal-alignment: center; font-family: Theme.mono; }
+                        Btn { text: "Cancel"; clicked => { root.cancel(); } }
+                    }
+
+                    if root.oauth-code == "": VerticalLayout {
+                        spacing: 10px;
+                        Text { text: "PAIRING LINK"; color: Theme.text-muted; font-size: Theme.font-size-xs; font-weight: 700; }
+                        Text {
+                            text: "In Crundi on a signed-in device, open Settings, then Connect a phone, and paste its link here (it works for a computer too).";
+                            color: Theme.text-secondary; font-size: Theme.font-size-sm; wrap: word-wrap;
+                        }
+                        Field {
+                            text <=> root.link;
+                            placeholder: "https://…/pair#…";
+                            enabled: !root.busy;
+                            accepted => { root.sign-in-pair(root.link); }
+                        }
+                        Btn {
+                            text: "Pair this computer";
+                            primary: true;
+                            enabled: !root.busy && root.link != "";
+                            clicked => { root.sign-in-pair(root.link); }
+                        }
+
+                        Rectangle { height: 1px; background: Theme.border; }
+
+                        Text { text: "OR SIGN IN"; color: Theme.text-muted; font-size: Theme.font-size-xs; font-weight: 700; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Field {
+                                text <=> root.server;
+                                placeholder: "Server, e.g. crundi.example.com";
+                                enabled: !root.busy;
+                                accepted => { root.check-server(root.server); }
+                            }
+                            Btn {
+                                text: "Continue";
+                                enabled: !root.busy && root.server != "";
+                                clicked => { root.check-server(root.server); }
+                            }
+                        }
+
+                        if root.checked && root.offer-password: VerticalLayout {
+                            spacing: 8px;
+                            Field { text <=> root.password; placeholder: "Password"; password: true; enabled: !root.busy; }
+                            Field {
+                                text <=> root.code;
+                                placeholder: "6-digit code from your authenticator";
+                                enabled: !root.busy;
+                                accepted => { root.sign-in-password(root.server, root.password, root.code); }
+                            }
+                            Btn {
+                                text: "Sign in";
+                                primary: true;
+                                enabled: !root.busy && root.password != "" && root.code != "";
+                                clicked => { root.sign-in-password(root.server, root.password, root.code); }
+                            }
+                        }
+                        if root.checked && (root.offer-google || root.offer-github): HorizontalLayout {
+                            spacing: 8px;
+                            if root.offer-google: Btn { text: "Google"; has-icon: true; icon: Icons.globe; enabled: !root.busy; clicked => { root.sign-in-oauth(root.server, "google"); } }
+                            if root.offer-github: Btn { text: "GitHub"; has-icon: true; icon: Icons.git-branch; enabled: !root.busy; clicked => { root.sign-in-oauth(root.server, "github"); } }
+                        }
+                        if root.checked && !root.offer-password && !root.offer-google && !root.offer-github: Text {
+                            text: "This server offers no sign-in this app can use here: pair it from a signed-in device.";
+                            color: Theme.text-secondary; font-size: Theme.font-size-sm; wrap: word-wrap;
+                        }
+                    }
+
+                    if root.busy: Text { text: "Working…"; color: Theme.text-secondary; horizontal-alignment: center; }
+                    if root.error != "": Rectangle {
+                        background: Theme.red-dim;
+                        border-radius: Theme.radius-sm;
+                        height: err.preferred-height + 16px;
+                        err := Text {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            text: root.error;
+                            color: #fca5a5;
+                            wrap: word-wrap;
+                            font-size: Theme.font-size-sm;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

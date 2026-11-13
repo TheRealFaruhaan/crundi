@@ -1,0 +1,46 @@
+// The PC client's look: the web UI's colours and sizes (the :root variables at
+// the top of src/webapp-html.js), so the native client looks like Crundi.
+
+export global Theme {
+    // Surfaces, darkest first.
+    out property <color> bg-primary: #0a0a0f;
+    out property <color> bg-secondary: #12121a;
+    out property <color> bg-tertiary: #1a1a28;
+    out property <color> bg-hover: #22223a;
+    out property <color> bg-card: #14141f;
+    out property <color> border: #2a2a3d;
+    out property <color> border-subtle: #1e1e30;
+
+    // Text.
+    out property <color> text-primary: #e8e8f0;
+    out property <color> text-secondary: #8888a8;
+    out property <color> text-muted: #5a5a78;
+
+    // Accent (the mark's indigo) and the one warm colour.
+    out property <color> accent: #6366f1;
+    out property <color> accent-hover: #818cf8;
+    out property <color> accent-deep: #4f46e5;
+    out property <color> accent-dim: #6366f126;
+    out property <color> amber: #fbbf24;
+
+    // States.
+    out property <color> green: #10b981;
+    out property <color> green-dim: #10b98126;
+    out property <color> red: #ef4444;
+    out property <color> red-dim: #ef444426;
+    out property <color> yellow: #f59e0b;
+    out property <color> yellow-dim: #f59e0b26;
+    out property <color> sky: #38bdf8;
+
+    // Shape and layout.
+    out property <length> radius: 10px;
+    out property <length> radius-sm: 6px;
+    out property <length> sidebar-width: 240px;
+    out property <length> topbar-height: 48px;
+
+    // Type.
+    out property <length> font-size: 14px;
+    out property <length> font-size-sm: 12px;
+    out property <length> font-size-xs: 11px;
+    out property <string> mono: "JetBrains Mono";
+}

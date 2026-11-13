@@ -1,0 +1,296 @@
+// A chat: its entries (the server's conversation, src/chat.rs), and the composer.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Btn, Icon, IconButton, Dot, States } from "widgets.slint";
+import { ListView, TextEdit } from "std-widgets.slint";
+
+export struct EntryView {
+    id: string,
+    // user | assistant | thinking | tool | permission | question | result | error | notice
+    kind: string,
+    text: string,
+    title: string,
+    detail: string,
+    status: string,
+    error: bool,
+    request-id: string,
+    options: [string],
+}
+
+/// Text that can be selected and copied, wrapped to the width.
+component Prose inherits TextInput {
+    read-only: true;
+    wrap: word-wrap;
+    color: Theme.text-primary;
+    font-size: Theme.font-size;
+    selection-background-color: Theme.accent-dim;
+}
+
+component Card inherits Rectangle {
+    in property <color> edge: Theme.border;
+    background: Theme.bg-card;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: root.edge;
+}
+
+component EntryRow inherits VerticalLayout {
+    in property <EntryView> e;
+    callback respond(string, string, bool);
+    callback answer(string, string);
+    property <bool> open: false;
+
+    padding-top: 4px;
+    padding-bottom: 4px;
+
+    if e.kind == "user": HorizontalLayout {
+        alignment: end;
+        Rectangle {
+            max-width: 640px;
+            background: Theme.accent-dim;
+            border-radius: Theme.radius;
+            border-width: 1px;
+            border-color: #6366f140;
+            VerticalLayout {
+                padding: 10px;
+                padding-left: 14px;
+                padding-right: 14px;
+                Prose { text: e.text; }
+            }
+        }
+    }
+
+    if e.kind == "assistant": VerticalLayout {
+        padding-left: 4px;
+        padding-right: 40px;
+        Prose { text: e.text; }
+        if e.status == "streaming": Text { text: "…"; color: Theme.text-muted; }
+    }
+
+    if e.kind == "thinking": Rectangle {
+        height: think.preferred-height;
+        think := VerticalLayout {
+            padding-left: 4px;
+            HorizontalLayout {
+                spacing: 6px;
+                Icon { source: root.open ? Icons.chevron-left : Icons.chevron-right; width: 12px; height: 12px; y: 3px; tint: Theme.text-muted; }
+                Text { text: root.open ? e.text : "Thinking"; color: Theme.text-muted; font-italic: true; wrap: word-wrap; horizontal-stretch: 1; font-size: 13px; }
+            }
+        }
+        TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+    }
+
+    if e.kind == "tool": Card {
+        edge: e.error ? #ef444466 : Theme.border-subtle;
+        height: tool.preferred-height;
+        tool := VerticalLayout {
+            padding: 8px;
+            padding-left: 10px;
+            padding-right: 10px;
+            spacing: 6px;
+            HorizontalLayout {
+                spacing: 8px;
+                height: 18px;
+                Icon { source: Icons.terminal; width: 14px; height: 14px; y: 2px; tint: e.error ? Theme.red : Theme.accent-hover; }
+                Text { text: e.title; color: Theme.text-primary; font-weight: 600; font-size: 13px; vertical-alignment: center; }
+                Text { text: e.detail; color: Theme.text-secondary; font-family: Theme.mono; font-size: 12px; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                Dot { y: 5px; fill: e.status == "running" ? Theme.green : e.error ? Theme.red : Theme.text-muted; }
+            }
+            if root.open && e.text != "": Rectangle {
+                background: Theme.bg-primary;
+                border-radius: 4px;
+                height: min(out.preferred-height + 12px, 320px);
+                Flickable {
+                    content-height: out.preferred-height + 12px;
+                    out := TextInput {
+                        x: 8px; y: 6px;
+                        width: parent.width - 16px;
+                        read-only: true;
+                        wrap: word-wrap;
+                        text: e.text;
+                        color: Theme.text-secondary;
+                        font-family: Theme.mono;
+                        font-size: 12px;
+                    }
+                }
+            }
+        }
+        TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+    }
+
+    if e.kind == "permission": Card {
+        edge: e.status == "pending" ? Theme.amber : Theme.border-subtle;
+        height: perm.preferred-height;
+        perm := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                Icon { source: Icons.shield-alert; tint: Theme.amber; }
+                Text { text: e.title; color: Theme.text-primary; font-weight: 600; wrap: word-wrap; horizontal-stretch: 1; }
+            }
+            if e.detail != "": Text { text: e.detail; color: Theme.text-secondary; font-family: Theme.mono; font-size: 12px; wrap: word-wrap; }
+            if e.status == "pending": HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Btn { text: "Allow"; primary: true; clicked => { root.respond(e.request-id, "allow", false); } }
+                Btn { text: "Always allow"; clicked => { root.respond(e.request-id, "allow", true); } }
+                Btn { text: "Deny"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
+            }
+            if e.status != "pending": Text { text: e.status == "allowed" ? "Allowed" : e.status == "denied" ? "Denied" : e.status; color: Theme.text-muted; font-size: 12px; }
+        }
+    }
+
+    if e.kind == "question": Card {
+        edge: e.status == "pending" ? Theme.accent : Theme.border-subtle;
+        height: q.preferred-height;
+        q := VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+            if e.title != "": Text { text: e.title; color: Theme.accent-hover; font-size: Theme.font-size-xs; font-weight: 700; }
+            Text { text: e.text; color: Theme.text-primary; wrap: word-wrap; font-weight: 600; }
+            if e.status == "pending": VerticalLayout {
+                spacing: 6px;
+                for o in e.options: Btn { text: o; clicked => { root.answer(e.id, o); } }
+                Btn { text: "Dismiss"; clicked => { root.respond(e.request-id, "deny", false); } }
+            }
+            if e.status != "pending": Text { text: "Answered"; color: Theme.text-muted; font-size: 12px; }
+        }
+    }
+
+    if e.kind == "result": HorizontalLayout {
+        padding-left: 4px;
+        spacing: 6px;
+        Icon { source: e.error ? Icons.x : Icons.check; width: 13px; height: 13px; y: 1px; tint: e.error ? Theme.red : Theme.green; }
+        Text { text: (e.error ? "Stopped with an error" : "Done") + (e.detail != "" ? " · " + e.detail : ""); color: Theme.text-muted; font-size: 12px; }
+        if e.text != "": Text { text: e.text; color: Theme.red; font-size: 12px; wrap: word-wrap; horizontal-stretch: 1; }
+    }
+
+    if e.kind == "error": Card {
+        edge: #ef444466;
+        background: Theme.red-dim;
+        height: err.preferred-height;
+        err := VerticalLayout { padding: 10px; Text { text: e.text; color: #fca5a5; wrap: word-wrap; } }
+    }
+
+    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+}
+
+export component ChatView inherits Rectangle {
+    in property <[EntryView]> entries;
+    in property <string> title;
+    in property <string> state;
+    in property <string> error;
+    in property <bool> has-chat;
+    in-out property <string> draft;
+    callback send(string);
+    callback stop();
+    callback respond(string, string, bool);
+    callback answer(string, string);
+    callback new-chat();
+    // Follow new output, unless the person scrolled up.
+    property <bool> stick: true;
+
+    background: Theme.bg-primary;
+
+    if !root.has-chat: VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        Icon { source: Icons.message-square; width: 40px; height: 40px; tint: Theme.text-muted; x: (parent.width - self.width) / 2; }
+        Text { text: "Pick a chat, or start a new one"; color: Theme.text-secondary; horizontal-alignment: center; }
+        HorizontalLayout { alignment: center; Btn { text: "New chat"; primary: true; has-icon: true; icon: Icons.plus; clicked => { root.new-chat(); } } }
+    }
+
+    if root.has-chat: VerticalLayout {
+        // The header: title and state.
+        Rectangle {
+            height: Theme.topbar-height;
+            background: Theme.bg-secondary;
+            HorizontalLayout {
+                padding-left: 18px;
+                padding-right: 12px;
+                spacing: 10px;
+                Text { text: root.title == "" ? "New chat" : root.title; color: Theme.text-primary; font-size: 15px; font-weight: 600; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                Dot { y: (parent.height - self.height) / 2; fill: States.color(root.state); }
+                Text { text: States.label(root.state); color: Theme.text-secondary; font-size: 12px; vertical-alignment: center; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+        }
+
+        list := ListView {
+            vertical-stretch: 1;
+            for e in root.entries: HorizontalLayout {
+                padding-left: 24px;
+                padding-right: 24px;
+                EntryRow {
+                    e: e;
+                    respond(id, b, a) => { root.respond(id, b, a); }
+                    answer(id, o) => { root.answer(id, o); }
+                }
+            }
+            changed content-height => {
+                if root.stick { self.content-y = min(0px, self.visible-height - self.content-height); }
+            }
+            scrolled => {
+                root.stick = self.content-y <= self.visible-height - self.content-height + 60px;
+            }
+        }
+
+        if root.error != "": Rectangle {
+            background: Theme.red-dim;
+            height: errt.preferred-height + 12px;
+            errt := Text { x: 24px; width: parent.width - 48px; text: root.error; color: #fca5a5; wrap: word-wrap; font-size: 12px; }
+        }
+
+        // The composer.
+        Rectangle {
+            height: min(max(composer.preferred-height, 64px), 260px) + 20px;
+            HorizontalLayout {
+                padding: 10px;
+                padding-left: 24px;
+                padding-right: 24px;
+                Rectangle {
+                    background: Theme.bg-secondary;
+                    border-radius: Theme.radius;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    composer := HorizontalLayout {
+                        padding: 6px;
+                        spacing: 6px;
+                        FocusScope {
+                            horizontal-stretch: 1;
+                            capture-key-pressed(ev) => {
+                                if (ev.text == Key.Return && !ev.modifiers.shift && !ev.modifiers.control && !ev.modifiers.alt) {
+                                    if (root.draft != "") { root.send(root.draft); }
+                                    return accept;
+                                }
+                                return reject;
+                            }
+                            TextEdit {
+                                width: parent.width;
+                                height: parent.height;
+                                text <=> root.draft;
+                                wrap: word-wrap;
+                                font-size: Theme.font-size;
+                                placeholder-text: "Message Claude (Enter sends, Shift+Enter for a new line)";
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: end;
+                            if root.state == "working": IconButton { icon: Icons.stop; tooltip: "Stop"; tint: Theme.red; size: 34px; clicked => { root.stop(); } }
+                            IconButton {
+                                icon: Icons.send;
+                                tooltip: "Send";
+                                size: 34px;
+                                tint: root.draft != "" ? Theme.accent-hover : Theme.text-muted;
+                                enabled: root.draft != "";
+                                clicked => { root.send(root.draft); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

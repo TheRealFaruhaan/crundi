@@ -11,7 +11,10 @@ cef = "156.4.0"
 slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tungstenite = "0.27"
+tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
+ureq = "3"
+gethostname = "1"
+open = "5"
 base64 = "0.22"
 png = "0.17"
 

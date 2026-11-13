@@ -1,17 +1,29 @@
-//! Crundi's desktop client, native prototype: Rust + Slint for the interface,
-//! CEF (Chromium Embedded Framework, through cef-rs) for the browser panels,
-//! rendered off-screen so the pages are part of Slint's layout and anything can
-//! be drawn over them.
+//! Crundi's PC client, native: Rust + Slint for the interface, CEF (Chromium
+//! Embedded Framework, through cef-rs) for the browser panels, rendered
+//! off-screen so the pages are part of Slint's layout and anything can be
+//! drawn over them. Plan: PLAN.md.
 //!
-//!   CRUNDI_SERVER=ws://host:port/ws?token=…   control from a Crundi server (/ws, as a native host)
-//!   CRUNDI_URL_A / CRUNDI_URL_B                what the two panels open first
+//!   CRUNDI_NATIVE_HOST=1   once signed in, also answer the server's browser
+//!                          control (off by default: it would take that over
+//!                          from an Electron client signed in to the same server)
+//!   CRUNDI_SERVER=ws://host:port/ws?token=…   browser panels only, driven by a
+//!                          server as its native host (test/drive.mjs)
+//!   CRUNDI_URL_A / CRUNDI_URL_B   what the two panels open first
+//!   CRUNDI_TEST_PORT=<port>       the test driver (src/testctl.rs)
+//!   CRUNDI_CONFIG_DIR=<dir>       where the login is saved (src/store.rs)
 //!
 //! One binary is also CEF's helper processes (renderer, GPU, utility): CEF
 //! starts it again with --type=…, and execute_process() handles those first.
 
 slint::include_modules!();
 
+mod api;
+mod app;
 mod browser;
+mod chat;
+mod live;
+mod store;
+mod testctl;
 #[cfg(feature = "gpu")]
 mod gpu;
 #[cfg(target_os = "macos")]
@@ -132,8 +144,18 @@ fn main() {
     let _pump = pump::start(8);
 
     match std::env::var("CRUNDI_SERVER") {
-        Ok(url) if !url.is_empty() => server::start(url),
-        _ => browser::status("Not connected to a Crundi server (set CRUNDI_SERVER)"),
+        // The browser panels on their own, driven by a server (test/drive.mjs).
+        Ok(url) if !url.is_empty() => {
+            ui.set_browser_only(true);
+            server::start(url);
+        }
+        _ => {
+            browser::status("The server's browser control is off (CRUNDI_NATIVE_HOST=1 turns it on)");
+            app::init(&ui);
+        }
+    }
+    if let Some(port) = std::env::var("CRUNDI_TEST_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
+        testctl::start(port, ui.as_weak());
     }
 
     ui.run().expect("event loop");

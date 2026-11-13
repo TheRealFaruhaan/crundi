@@ -1,4 +1,4 @@
-# Crundi native client: prototype (Rust + Slint + CEF)
+# Crundi native PC client (Rust + Slint + CEF)
 
 A first look at a desktop client without Electron, where web pages are real
 Chromium browsers placed inside the app's own layout (card ee7d694caaf487e3).
@@ -62,7 +62,55 @@ branch that touch this folder. On Ubuntu, Windows and macOS (Apple silicon) it
 builds, runs the server test below, and keeps the test's pictures. It also
 keeps a runnable package for each OS (artifacts, 14 days).
 
-## Server test
+## Phase 1: signing in, projects, chats
+
+The client has its own sign-in. Today's Electron client borrows the session of
+the web page it shows; this one has no such page.
+
+- **Sign-in methods:**
+  - a pairing link from a signed-in device (Settings, then Connect a phone);
+  - the server's address plus a password and authenticator code;
+  - Google or GitHub, in the system browser.
+- **The saved login:** the refresh token, in the user's config folder, readable
+  by the user only (`src/store.rs`). Access tokens are never written down. A
+  restart signs in again on its own.
+- **Data:** projects and chats come from the server's API (`src/api.rs`).
+- **Live updates:** one `/ws` socket and the event stream (`src/live.rs`).
+- **The open chat:**
+  - Claude's replies stream in;
+  - tool calls show as cards;
+  - approvals (Allow, Always allow, Deny) and questions can be answered;
+  - Stop interrupts;
+  - Enter sends, and Shift+Enter starts a new line.
+
+  (`src/chat.rs`, `src/app.rs`, `ui/chat.slint`)
+- **The look:** the web UI's colours (`ui/theme.slint`) and its icon set,
+  generated from `ICON_PATHS` by `scripts/gen-icons.mjs` (`ui/icons/`).
+- **The server's browser control** is off unless `CRUNDI_NATIVE_HOST=1` is set.
+  It would take that control over from an Electron client signed in to the
+  same server.
+
+`test/phase1.mjs` runs all of that against a real server through the test
+driver (`CRUNDI_TEST_PORT`, `src/testctl.rs`):
+
+1. password sign-in;
+2. projects, a new chat, Claude's answer;
+3. an approval allowed from the client;
+4. sign-out, then pairing;
+5. a restart that signs in from the saved login.
+
+It needs a fresh dev Crundi that shares nothing with a live one:
+
+```
+mkdir -p /tmp/t/config/crundi /tmp/t/data /tmp/t/proj
+printf 'TELEGRAM_BOT_TOKEN=\nPROJECTS_DIR=\n' > /tmp/t/config/crundi/.env   # never the live bot
+env -u TELEGRAM_BOT_TOKEN -u PROJECTS_DIR XDG_CONFIG_HOME=/tmp/t/config DATA_DIR=/tmp/t/data \
+  DOTENV_PATH=/tmp/t/config/crundi/.env node src/index.js --dev &     # port 8889
+CRUNDI_TEST_SERVER=http://localhost:8889 CRUNDI_TEST_PROJECT=/tmp/t/proj \
+  NATIVE_BIN=native-client/target/debug/crundi-native node native-client/test/phase1.mjs
+```
+
+## Server test (browser panels)
 
 `node native-client/test/drive.mjs 7611` runs the real `src/browser.js`
 behind a `/ws`. With `NATIVE_BIN=<the binary>` it starts the prototype too;
@@ -73,11 +121,57 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
 
 ## Layout
 
-- `src/main.rs`: starts CEF (one binary is also CEF's helper processes) and
-  pumps CEF's message loop from Slint's event loop.
-- `src/mac.rs`: macOS only. It loads the framework and makes winit's
-  NSApplication adopt CEF's protocol.
-- `src/browser.rs`: the Slint and CEF bridge. It holds the render, life-span,
-  load, display and DevTools handlers, input, device emulation and annotations.
-- `src/server.rs`: the `/ws` native-host protocol.
-- `ui/main.slint`: the window, the panels and the annotation layer.
+- **`src/main.rs`**: starts CEF (one binary is also CEF's helper processes),
+  opens the window, and hands over to the app.
+- **`src/api.rs`**: the server's HTTP API, the sign-in flows, and the one
+  refresh at a time.
+- **`src/store.rs`**: the saved login (server, refresh token, the last project
+  and chat).
+- **`src/live.rs`**: `/ws` (the chats' events, and the server's browser
+  control) and `/api/events` (the chat list); they reconnect on their own.
+- **`src/app.rs`**: the app on the UI thread: signing in, projects, chats, the
+  open chat. Server calls run on worker threads (`bg`, `call`).
+- **`src/chat.rs`**: one chat's conversation; turns the server's entries into
+  rows on screen.
+- **`src/testctl.rs`**: the test driver (`CRUNDI_TEST_PORT`).
+- **`src/browser.rs`**: the Slint and CEF bridge (panels, input, device
+  emulation, annotations). `src/server.rs` answers the server's browser
+  requests.
+- **Platform code:**
+  - `src/pump.rs`: CEF's message loop;
+  - `src/mac.rs`: the framework and NSApp on macOS;
+  - `src/gpu.rs`: the GPU path.
+- **The interface (`ui/`):**
+  - `main.slint`: the window;
+  - `signin.slint`, `sidebar.slint`, `chat.slint`, `browser.slint`: the screens;
+  - `widgets.slint`: shared parts;
+  - `theme.slint` and `icons.slint`: the look.
+
+## Adding a screen
+
+Each screen follows the same pattern, so they stay alike:
+
+1. **Spec:**
+   - what today's PC client does there: the web UI (`src/webapp-html.js`) and
+     `app/` for desktop-only behaviour;
+   - the endpoints it calls, in the server's `src/`.
+2. **Data:**
+   - server calls go through `Api::get` / `Api::post`, on a worker thread via
+     `app::call`, never on the UI thread;
+   - live changes come from the event stream (`Event::State`) or `/ws`
+     (subscribe-style messages): add a `live::Event` for a new kind;
+   - turn the server's JSON into a plain Rust struct with a pure function, and
+     unit-test it (like `chat.rs`).
+3. **The view:**
+   - a `ui/<screen>.slint` with `in` properties and callbacks only, made from
+     `widgets.slint`, `Theme` and `Icons` (no emoji, no hard-coded colours);
+   - the window passes its properties and callbacks through;
+   - lists use a `VecModel` that is rewritten only where rows changed.
+4. **Wiring:** `app.rs` sets the models and handles the callbacks. Add the
+   callbacks to `testctl.rs` too, so tests can drive them.
+5. **Proof:**
+   - a step in a `test/*.mjs` against a real server;
+   - snapshots from the test driver;
+   - the CI build on all three systems.
+6. **A server without an endpoint** (older version): the screen says "Not
+   supported by this server" (`ApiError::Status(404)`) and doesn't break.
