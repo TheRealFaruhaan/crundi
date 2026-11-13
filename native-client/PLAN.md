@@ -25,11 +25,82 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - saved settings;
    - the theme and the flat icon set (no emoji);
    - the window: projects and navigation.
-2. **Chats**:
-   - the list;
-   - the conversation, with tool cards and approvals;
-   - the composer, with drafts and attachments;
-   - media.
+2. **Chats** (the factory run's CR: everything a chat does in today's PC
+   client, natively and exactly). The screens, in build order; each one has
+   a spec in `specs/`, passes the design review (web-over-native crops under
+   the spec) and has an end-to-end test before it is ticked:
+   - [ ] **2.1 Pane header, wide.** `.term-head` of a UI chat: title (click to
+     rename, `term-rename`), CHAT tag, the secrets lock (`chat-secrets-btn`,
+     hidden when the server lacks `chat-secret-preauth`; count badge; yellow
+     `.on`), A− / reset (rotate-ccw, `term-font-reset`) / A+ (the chat's
+     `--cc-fs`, kept per chat), pin (`pane-pin`: fixed size and position),
+     full screen (`pane-full`, Esc leaves), the two-click ×, double-click the
+     header to maximise. States: rest, hover of each button, pinned, full
+     screen, armed ×, renaming.
+   - [ ] **2.2 Pane header, narrow (< 560px).** Tools folded behind "…"
+     (`term-more`, `.tools-open`): split right / down, text size, pin, the
+     secrets button with its label. States: closed, open, each item hovered.
+   - [ ] **2.3 Moving panes.** Drag a pane by its header to move or swap it
+     (the drop targets and their highlight); split right / split down from the
+     hover controls (`leaf-split`, `head-split`); the empty pane and its chips;
+     the "+" menu's Layout presets and Fit (`wb-layout`, `wb-fit`).
+   - [ ] **2.4 Live state.** The pane's dot and badge (idle, working,
+     needs input, error), the project's dot in the sidebar, the chat title
+     updating from the server.
+   - [ ] **2.5 Composer and Stop.** The composer at rest, typing (auto-grow),
+     the Enter-mode switch (`cc-sw`), the meta row (mode button, model label,
+     session id, clock), Send, Stop arming to "Sure?" (`cc-armed`) and
+     disarming, and the stacked composer in a narrow pane (`cc-narrow`).
+   - [ ] **2.6 Permission-mode picker.** `cc-modal` with every mode, its
+     colour and description; changing a running chat's mode; the mode
+     button's colour per mode.
+   - [ ] **2.7 Attachments.** The attach button, the file picker, drag and
+     drop (`cc-dropping`), paste, upload progress (`cc-up`), the chips, and
+     the path put into the message (`/api/attachments/upload`).
+   - [ ] **2.8 Drafts.** Kept per chat across switching and a restart
+     (`saveDraft` / `readDraft` / `pruneDrafts`).
+   - [ ] **2.9 Queued messages.** Sent while a turn runs: the queue block
+     (`cc-queue`), cancel one, take it back to edit (`recallQueued`), sent when
+     the turn ends.
+   - [ ] **2.10 Scheduled messages.** The clock (`cc-sched-trig`) and its
+     panel (`cc-schedpanel`): empty, a list, the form (when, triggers, text),
+     save, delete.
+   - [ ] **2.11 Slash menu.** `cc-slash` with its items, keyboard selection.
+   - [ ] **2.12 Chat secrets dialog.** What the lock opens
+     (`app/vendor/crundi-chat-secrets.js`): list, add, remove, the PIN step.
+   - [ ] **2.13 Questions.** One and several questions, multi-select,
+     "Other…" with typed text, Submit, Dismiss, the answered and orphaned
+     states.
+   - [ ] **2.14 Tool cards.** Running spinner, open and closed, the result
+     body with its scroll and size limits, diffs (add / del), the Task tool's
+     card, the todo list (`cc-todo`).
+   - [ ] **2.15 Thinking.** Live shimmer, collapsing when done, opening again.
+   - [ ] **2.16 The rest of the log.** Links, code blocks with copy, images
+     and media in replies, the long-history notice (`cc-notice`), errors,
+     the copy hint on a selection (`cc-copyhint`), the jump-to-bottom button
+     (`cc-jump`).
+   - [ ] **2.17 Suggestions and recaps.** `cc-sug` (send, dismiss) and
+     `cc-recap`.
+   - [ ] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
+     panel (`cc-agents`, `cc-aglist`, `cc-agpanel`).
+   - [ ] **2.19 Goal and plan.** The goal bar (`cc-goalbar`) and the plan
+     pill and panel (`cc-plan`, `chat-plan`).
+   - [ ] **2.20 Cards.** A factory's result card (`cc-fr-*`) and the other
+     cards a reply can carry.
+   - [ ] **2.21 Side questions.** `cc-aside` (asked while a turn runs).
+   - [ ] **2.22 Resume picker.** `#chat-resume-modal` ("Open a session"):
+     loading, the list, empty, error; opening a new or an earlier
+     conversation.
+   - [ ] **2.23 Parked panes.** The parked card (Resume, its other choices,
+     the warning, the narrow variants) and Peek / leave Peek
+     (`/api/panes/:id/resume`).
+   - [ ] **2.24 Voice input.** The mic button and recording strip (`cc-mic`,
+     `cc-rec`). (Asked of the owner: in scope or later.)
+   - [ ] **2.25 Chat known gaps.** Inline-code chip, paragraph line height,
+     glows (Send): fixed where Slint allows, the rest kept below.
+
+   Not in phase 2: the header's bubble button (`chat-bubble`) is Electron's
+   chat bubble, phase 6.
 3. **Workbench**:
    - the pane layout and Claude panels;
    - the browser drawer on the phase 0 panels;
