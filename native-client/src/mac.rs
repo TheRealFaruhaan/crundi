@@ -68,7 +68,7 @@ pub fn adopt_cef_app_protocol() {
 // hands winit an event while it is still handling one: winit aborts ("tried to
 // handle event while another event is currently being handled"). So here the
 // pump is a CFRunLoop timer: it fires from the run loop directly, outside
-// winit's handler, and never re-enters itself.
+// winit's handler (src/pump.rs).
 
 use std::ffi::c_void;
 
@@ -98,20 +98,13 @@ extern "C" {
     static kCFRunLoopCommonModes: *const c_void;
 }
 
-static PUMPING: AtomicBool = AtomicBool::new(false);
-
 extern "C" fn pump(_timer: *mut c_void, _info: *mut c_void) {
-    if PUMPING.swap(true, Ordering::Acquire) {
-        return;
-    }
-    crate::browser::run_deferred();
-    cef::do_message_loop_work();
-    PUMPING.store(false, Ordering::Release);
+    crate::pump::pump_once();
 }
 
 /// Pump CEF every [interval_ms] from the main run loop (in every run-loop mode,
 /// so it keeps going during window drags and menus).
-pub fn start_pump(interval_ms: u64) {
+pub fn start_run_loop_timer(interval_ms: u64) {
     let secs = interval_ms as f64 / 1000.0;
     unsafe {
         let timer = CFRunLoopTimerCreate(std::ptr::null(), CFAbsoluteTimeGetCurrent() + secs, secs, 0, 0, pump, std::ptr::null_mut());

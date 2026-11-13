@@ -354,19 +354,18 @@ thread_local! {
     static DEFERRED: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::new(Vec::new());
 }
 
-/// Run a call into CEF that comes from a Slint callback. On macOS it waits for
-/// the next pump (src/mac.rs), outside winit's event handling, which CEF must
-/// not re-enter; elsewhere it runs now.
+/// Run a call into CEF that comes from a Slint callback. On macOS and Windows
+/// it waits for the next pump (src/pump.rs), outside winit's event handling,
+/// which CEF must not re-enter; on Linux it runs now.
 pub fn defer(f: impl FnOnce() + 'static) {
-    if cfg!(target_os = "macos") {
+    if cfg!(any(target_os = "macos", target_os = "windows")) {
         DEFERRED.with(|d| d.borrow_mut().push(Box::new(f)));
     } else {
         f();
     }
 }
 
-/// The deferred calls, in order (the macOS pump, before CEF's own work).
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// The deferred calls, in order (the pump, before CEF's own work).
 pub fn run_deferred() {
     loop {
         let batch = DEFERRED.with(|d| std::mem::take(&mut *d.borrow_mut()));

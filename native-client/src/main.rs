@@ -16,6 +16,7 @@ mod browser;
 mod gpu;
 #[cfg(target_os = "macos")]
 mod mac;
+mod pump;
 mod server;
 
 use cef::*;
@@ -127,13 +128,8 @@ fn main() {
     browser::create(0, &a);
     browser::create(1, &b);
 
-    // CEF's message loop: pumped from Slint's timer, or on macOS from the
-    // run loop directly (src/mac.rs: winit there must not be re-entered).
-    let pump = slint::Timer::default();
-    #[cfg(not(target_os = "macos"))]
-    pump.start(slint::TimerMode::Repeated, Duration::from_millis(8), || do_message_loop_work());
-    #[cfg(target_os = "macos")]
-    mac::start_pump(8);
+    // CEF's message loop (src/pump.rs).
+    let _pump = pump::start(8);
 
     match std::env::var("CRUNDI_SERVER") {
         Ok(url) if !url.is_empty() => server::start(url),

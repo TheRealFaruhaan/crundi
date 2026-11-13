@@ -45,6 +45,13 @@ pub fn start(url: String) {
     });
 }
 
+/// CRUNDI_TRACE=1: each request and reply on stderr (where a run stalls).
+fn trace(line: &str) {
+    if std::env::var_os("CRUNDI_TRACE").is_some() {
+        eprintln!("[native] {line}");
+    }
+}
+
 fn ui_status(text: String) {
     let _ = slint::invoke_from_event_loop(move || browser::status(&text));
 }
@@ -56,12 +63,14 @@ fn on_message(text: &str, tx: mpsc::Sender<Value>, shown: &str) {
         Some("native-host") => {
             let payload = m.get("payload").cloned().unwrap_or(Value::Null);
             let request_id = payload.get("requestId").cloned().unwrap_or(Value::Null);
+            trace(&format!("request {} {}", payload.get("type").and_then(|t| t.as_str()).unwrap_or("?"), request_id));
             let _ = slint::invoke_from_event_loop(move || {
                 let reply: Reply = Box::new(move |mut result: Value| {
                     if let Some(o) = result.as_object_mut() {
                         o.insert("type".into(), json!("browserResult"));
                         o.insert("requestId".into(), request_id);
                     }
+                    trace(&format!("reply {} ok={}", result["requestId"], result["ok"]));
                     let _ = tx.send(result);
                 });
                 browser::defer(move || dispatch(payload, reply));

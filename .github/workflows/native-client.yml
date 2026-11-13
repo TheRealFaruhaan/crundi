@@ -22,6 +22,8 @@ jobs:
         shell: bash
     env:
       CARGO_TERM_COLOR: always
+      CRUNDI_TRACE: "1"
+      RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@v4
 
