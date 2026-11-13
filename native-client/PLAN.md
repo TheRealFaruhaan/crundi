@@ -26,9 +26,13 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - the theme and the flat icon set (no emoji);
    - the window: projects and navigation.
 2. **Chats** (the factory run's CR: everything a chat does in today's PC
-   client, natively and exactly). The screens, in build order; each one has
-   a spec in `specs/`, passes the design review (web-over-native crops under
-   the spec) and has an end-to-end test before it is ticked:
+   client, natively, with the same layout and experience). The screens, in
+   build order; each one has a spec in `specs/`, passes the design review
+   (same parts, order, states, behaviour and wording, theme tokens only;
+   side-by-side snapshots under the spec) and has an end-to-end test before
+   it is ticked. Since 14 Nov 2026 the owner's rule is layout and
+   experience, not pixels (DESIGN.md); 2.1-2.3 were built to the earlier
+   pixel rule:
    - [x] **2.1 Pane header, wide.** `.term-head` of a UI chat: title (click to
      rename, `term-rename`), CHAT tag, the secrets lock (`chat-secrets-btn`,
      hidden when the server lacks `chat-secret-preauth`; count badge; yellow
@@ -49,6 +53,14 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [ ] **2.4 Live state.** The pane's dot and badge (idle, working,
      needs input, error), the project's dot in the sidebar, the chat title
      updating from the server.
+   - [ ] **2.T Token pass** (the owner's change of approach, 14 Nov 2026;
+     DESIGN.md, rule 2). The scales in `ui/theme.slint`
+     (spacing, radius, font, weights, line heights, colours, recurring
+     sizes), and every hard-coded number in shell, workbench, chat, signin,
+     browser and widgets replaced by a token (0 and 1px hairlines
+     excepted). One review round checks that phase 1 and 2.1-2.4 keep their
+     layout, states and behaviour, and look consistent. From here on, every
+     screen follows the rule.
    - [ ] **2.5 Composer and Stop.** The composer at rest, typing (auto-grow),
      the Enter-mode switch (`cc-sw`), the meta row (mode button, model label,
      session id, clock), Send, Stop arming to "Sure?" (`cc-armed`) and
@@ -129,8 +141,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - the release workflow;
    - moving PC users off Electron.
 
-Every screen copies the PC client's design exactly, by the method and checklist
-in `DESIGN.md`; a phase's review includes its side-by-side comparisons.
+Every screen keeps the PC client's layout and user experience (the same parts,
+arrangement, controls, behaviour, wording and states), drawn with one constant
+theme of tokens, by the method in `DESIGN.md`; a phase's review includes its
+side-by-side comparisons.
 
 Each phase ends with the screens working against a real server, a
 `test/drive`-style check where it fits, and screenshots from CI on all three
