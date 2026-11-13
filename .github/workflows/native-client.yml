@@ -15,13 +15,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-14]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: bash
     env:
-      SLINT_BACKEND: winit-software
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
@@ -57,15 +56,20 @@ jobs:
           restore-keys: cargo-${{ runner.os }}-
 
       - name: Fetch CEF
-        run: echo "CEF_PATH=$(node native-client/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")" >> "$GITHUB_ENV"
+        run: |
+          CEF=$(node native-client/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
+          echo "CEF_PATH=$CEF" >> "$GITHUB_ENV"
 
       - name: Build
         working-directory: native-client
-        run: cargo build --release
+        # With the GPU path compiled in; it stays off unless CRUNDI_GPU=1.
+        run: cargo build --release --features gpu
 
       - name: Stage CEF next to the binary
         working-directory: native-client
-        run: echo "NATIVE_BIN=$(node scripts/stage-cef.mjs target/release)" >> "$GITHUB_ENV"
+        run: |
+          BIN=$(node scripts/stage-cef.mjs target/release)
+          echo "NATIVE_BIN=$BIN" >> "$GITHUB_ENV"
 
       - name: Test deps (just what src/browser.js imports)
         run: |
@@ -83,12 +87,35 @@ jobs:
             node native-client/test/drive.mjs 7611
           fi
 
+      # The GPU path, tried where a CI machine has anything like a GPU (Apple's
+      # paravirtual Metal; Windows' software D3D). Informational: real GPUs
+      # are where it counts.
+      - name: GPU path (experimental)
+        continue-on-error: true
+        env:
+          DRIVE_OUT: ${{ runner.temp }}/drive-gpu
+          REGISTER_TIMEOUT: '120000'
+          CRUNDI_GPU: '1'
+          SLINT_WGPU_CPU: '1'
+        run: |
+          code=0
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/drive.mjs 7611 || code=$?
+          else
+            node native-client/test/drive.mjs 7611 || code=$?
+          fi
+          echo "--- the app's own lines:"
+          grep -a "\[native\]" "$DRIVE_OUT/native-app.log" | sort | uniq -c || true
+          exit $code
+
       - name: Test pictures and app log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: drive-${{ matrix.os }}
-          path: ${{ runner.temp }}/drive
+          path: |
+            ${{ runner.temp }}/drive
+            ${{ runner.temp }}/drive-gpu
           if-no-files-found: ignore
 
       - name: Package

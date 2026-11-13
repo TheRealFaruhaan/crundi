@@ -12,6 +12,8 @@
 slint::include_modules!();
 
 mod browser;
+#[cfg(feature = "gpu")]
+mod gpu;
 #[cfg(target_os = "macos")]
 mod mac;
 mod server;
@@ -22,12 +24,16 @@ use std::{rc::Rc, time::Duration};
 wrap_app! {
     struct NativeApp;
     impl App {
-        fn on_before_command_line_processing(&self, _process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
+        fn on_before_command_line_processing(&self, process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
+            // The browser process decides; the helpers inherit its switches.
+            if process_type.map(|t| !t.to_string().is_empty()).unwrap_or(false) { return; }
             let Some(cl) = command_line else { return };
-            // Software compositing: frames come to on_paint as CPU buffers. The
-            // zero-copy GPU path (on_accelerated_paint) is the next step.
-            for s in ["disable-gpu", "disable-gpu-compositing", "enable-begin-frame-scheduling"] {
-                cl.append_switch(Some(&CefString::from(s)));
+            // The CPU path: software compositing, frames come to on_paint as
+            // buffers. The GPU path (feature "gpu", CRUNDI_GPU=1) keeps the GPU
+            // and takes frames as shared textures (on_accelerated_paint).
+            let switches: &[&str] = if browser::gpu_on() { &[] } else { &["disable-gpu", "disable-gpu-compositing", "enable-begin-frame-scheduling"] };
+            for s in switches {
+                cl.append_switch(Some(&CefString::from(*s)));
             }
         }
     }
@@ -72,7 +78,19 @@ fn main() {
 
     // The window first: on macOS this is what creates NSApp (winit's), which
     // CEF needs to find implementing its protocol.
+    // Slint's renderer: wgpu for the GPU path, else the software renderer
+    // (named, so that having wgpu compiled in does not change the default).
+    #[cfg(feature = "gpu")]
+    let gpu_path = gpu::select_backend();
+    #[cfg(not(feature = "gpu"))]
+    let gpu_path = false;
+    if !gpu_path && std::env::var_os("SLINT_BACKEND").is_none() {
+        let _ = slint::BackendSelector::new().backend_name("winit".into()).renderer_name("software".into()).select();
+    }
+
     let ui = MainWindow::new().expect("window");
+    #[cfg(feature = "gpu")]
+    if gpu_path { gpu::attach(ui.window(), browser::invalidate_all); }
     #[cfg(target_os = "macos")]
     mac::adopt_cef_app_protocol();
 

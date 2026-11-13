@@ -46,7 +46,10 @@ const sha1 = createHash('sha1').update(readFileSync(archive)).digest('hex');
 if (sha1 !== file.sha1) throw new Error(`sha1 mismatch: ${sha1} != ${file.sha1}`);
 
 console.error('extracting');
-execFileSync('tar', ['-xjf', archive, '-C', work], { stdio: 'inherit' });
+// Windows' own tar (bsdtar): Git's GNU tar, first on PATH in Git Bash, reads
+// "C:\\…" as a remote host.
+const tar = process.platform === 'win32' ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+execFileSync(tar, ['-xjf', archive, '-C', work], { stdio: 'inherit' });
 const extracted = join(work, file.name.replace(/\.tar\.bz2$/, ''));
 
 // Release/ becomes the CEF dir; Resources/ is merged in (not on macOS, where

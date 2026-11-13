@@ -135,6 +135,13 @@ fn dispatch(m: Value, reply: Reply) {
                 Err(e) => err(reply, e),
             }));
         }
+        // On the GPU path the frame is a texture: Chromium takes the picture.
+        "browserScreenshot" if browser::gpu_on() => browser::cdp(i, "Page.captureScreenshot", json!({ "format": "png" }), Box::new(move |ok, v| {
+            match v.get("data").and_then(|d| d.as_str()) {
+                Some(data) if ok => reply(json!({ "ok": true, "data": data })),
+                _ => err(reply, "Screenshot failed"),
+            }
+        })),
         "browserScreenshot" => match browser::screenshot(i) {
             Some(data) => reply(json!({ "ok": true, "data": data })),
             None => err(reply, "No frame painted yet"),

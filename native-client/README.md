@@ -44,6 +44,17 @@ CRUNDI_SERVER='ws://host:port/ws?token=…'                   # driven by a Crun
 CRUNDI_URL_A=… CRUNDI_URL_B=…                               # first page of each panel
 ```
 
+## GPU path (experimental)
+
+`cargo build --features gpu` compiles in a second way to get the page into the
+window. CEF renders on the GPU and hands each frame over as a shared texture
+(DMA-BUF on Linux, D3D11 on Windows, IOSurface on macOS). cef-rs copies it
+into a wgpu texture on Slint's own device, and one render pass converts it
+from BGRA to RGBA (`src/gpu.rs`), so the page never passes through the CPU.
+It stays off unless `CRUNDI_GPU=1` is set. Without a usable GPU it says so and
+falls back to the CPU path. Not yet seen working: it needs a machine with a
+real GPU (this server has none; Chromium wants a GBM device on Linux).
+
 ## CI
 
 `.github/workflows/native-client.yml` runs for pushes to the `native-client`

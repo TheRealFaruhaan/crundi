@@ -15,12 +15,12 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync, copyFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const target = process.argv[2] || join(here, '..', 'target', 'debug');
+const target = resolve(process.argv[2] || join(here, '..', 'target', 'debug'));
 const os = { linux: 'linux', win32: 'windows', darwin: 'macos' }[process.platform];
 const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
 const cef = process.env.CEF_PATH || join(homedir(), '.local', 'share', 'cef', `cef_${os}_${arch}`);

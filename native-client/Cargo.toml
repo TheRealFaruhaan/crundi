@@ -15,6 +15,13 @@ tungstenite = "0.27"
 base64 = "0.22"
 png = "0.17"
 
+[features]
+# The GPU path: CEF hands over its frames as shared GPU textures (DMA-BUF on
+# Linux, D3D11 on Windows, IOSurface on macOS), copied into wgpu textures that
+# Slint draws directly. Turned on at run time with CRUNDI_GPU=1; the CPU path
+# (on_paint) stays the default and the fallback.
+gpu = ["slint/renderer-femtovg-wgpu", "slint/unstable-wgpu-30", "cef/accelerated_osr"]
+
 [build-dependencies]
 slint-build = "1.18.1"
 

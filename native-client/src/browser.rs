@@ -50,6 +50,8 @@ pub struct Panel {
     /// A size set by the server (browserResize), instead of a named device.
     pub custom: Option<(i32, i32)>,
     pub frame: Option<SharedPixelBuffer<Rgba8Pixel>>,
+    /// The GPU path's frame: a wgpu texture on Slint's device (src/gpu.rs).
+    pub gpu_frame: Option<Image>,
     pub title: String,
     pub url: String,
     /// The server's key for the browser in this panel (who drives it).
@@ -140,7 +142,7 @@ pub fn sync(i: usize) {
             None => (-1.0, -1.0, String::new()),
         };
         let data = PanelData {
-            frame: p.frame.clone().map(Image::from_rgba8).unwrap_or_default(),
+            frame: p.gpu_frame.clone().or_else(|| p.frame.clone().map(Image::from_rgba8)).unwrap_or_default(),
             view_width: vw as f32,
             view_height: vh as f32,
             title: p.title.clone().into(),
@@ -205,6 +207,19 @@ wrap_render_handler! {
             }
             with(|st| st.panels[self.index].frame = Some(pb));
             sync(self.index);
+        }
+        fn on_accelerated_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, _dirty: Option<&[Rect]>, info: Option<&AcceleratedPaintInfo>) {
+            #[cfg(feature = "gpu")]
+            {
+                if type_ != PaintElementType::VIEW { return; }
+                let Some(info) = info else { return };
+                if let Some(img) = crate::gpu::import(info) {
+                    with(|st| st.panels[self.index].gpu_frame = Some(img));
+                    sync(self.index);
+                }
+            }
+            #[cfg(not(feature = "gpu"))]
+            let _ = (type_, info);
         }
     }
 }
@@ -327,10 +342,27 @@ wrap_client! {
 /// Make panel [index]'s browser, off-screen, at [url].
 pub fn create(index: usize, url: &str) {
     let mut client = PanelClient::new(PanelRender::new(index), PanelLife::new(index), PanelLoad::new(index), PanelDisplay::new(index));
-    let window_info = WindowInfo::default().set_as_windowless(Default::default());
+    let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
+    // The GPU path: frames as shared textures (on_accelerated_paint), not buffers.
+    window_info.shared_texture_enabled = gpu_on() as _;
     let settings = BrowserSettings { windowless_frame_rate: 30, background_color: 0xffff_ffff, ..Default::default() };
     let b = browser_host_create_browser_sync(Some(&window_info), Some(&mut client), Some(&CefString::from(url)), Some(&settings), None, None);
     if b.is_none() { eprintln!("[native] panel {index}: CEF did not create the browser"); }
+}
+
+/// Is the GPU path in use (src/gpu.rs)?
+pub fn gpu_on() -> bool {
+    #[cfg(feature = "gpu")]
+    return crate::gpu::on();
+    #[cfg(not(feature = "gpu"))]
+    false
+}
+
+/// Ask every panel for a new frame (the GPU path, once Slint's device is ready).
+#[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+pub fn invalidate_all() {
+    let hosts: Vec<_> = with(|st| st.panels.iter().filter_map(|p| p.host()).collect());
+    for h in hosts { h.invalidate(PaintElementType::VIEW); }
 }
 
 // ─── CDP, in-process (no debugging port) ───
