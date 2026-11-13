@@ -28,6 +28,36 @@ and not anyone's taste.
    layers; padding inside inline code as thin spaces. List these gaps in the
    report too.
 
+## One constant theme (tokens)
+
+The owner wants one constant theme, not a copy of every one-off number. All
+sizes and colours live in `ui/theme.slint` as tokens. Screens use the tokens
+and never type a number, apart from 0 and the 1px hairlines.
+
+- **Scales.** Starting points, from the web UI's CSS (its values are mostly
+  rem leftovers such as 0.82rem = 13.12px):
+  - **Spacing:** 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48.
+  - **Radius:** 4 (chip), 6 (control), 8 (field), 10 (card or pane),
+    12 (bubble), pill.
+  - **Font size:** 10, 11, 12, 13, 14, 15, 16, 20, 26.
+  - **Weights:** 400, 500, 600, 700.
+  - **Line heights:** chat 1.55, UI 1.3.
+  - **Colours:** the web's variables (already in Theme).
+  - **Sizes that recur:** icons (12, 14, 16, 18), control heights (19, 22,
+    28, 34, 36), bars (32, 36, 48), the sidebar (240).
+
+  Add a token only when a value recurs, or when it is a deliberate part of
+  the design.
+- **Measure to choose a token, not to copy a number.** A measured value goes
+  to the nearest token on its scale: 13.12px is the 13 font, 14.08px the 14,
+  7px is the 8 gap.
+- **One-off asymmetries in the web are accidents. Don't copy them:** a gap of
+  7 in one place and 8 in another, padding of 3px 4px 3px 2px. Use the token.
+- **Keep only deliberate shapes,** each as a named token: the chat bubble's
+  one 3px corner, the sharp underside of a tab.
+- **Review:** a difference that comes only from snapping to a token is not a
+  finding. Using the wrong token, or a hard-coded number, is one.
+
 ## The method
 
 ```
@@ -42,7 +72,7 @@ node native-client/tools/web-session.mjs           # a web session for the brows
      screenshot.
    - Bring the screen into each of its states: hover, open menus, empty,
      narrow, with data, without data, unread, error.
-2. **The numbers.** Run `tools/measure.js` through `browser_eval`, with
+2. **The numbers (to pick tokens).** Run `tools/measure.js` through `browser_eval`, with
    selectors for every element on the screen. Read the boxes, the text boxes
    (where text actually sits), and `::before` / `::after`. Dots, bars, rings
    and underlines are often pseudo-elements.
@@ -57,6 +87,8 @@ node native-client/tools/web-session.mjs           # a web session for the brows
 
 ## What to check (each of these has gone wrong before)
 
+- **Tokens only:** no number typed in a screen; every size and colour comes
+  from `Theme`.
 - **Padding and text position inside small things:** badges, pills, chips,
   buttons. Check where the text box starts (the measured text box), not just
   the outer box.
