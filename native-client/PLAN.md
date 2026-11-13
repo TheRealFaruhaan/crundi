@@ -42,7 +42,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      its label. (Split right / down, `.head-split`, show only in the web's
      phone layout, so not here; narrow panes split through `.leaf-ctrls`,
      2.3.) States: closed, open, each item hovered.
-   - [ ] **2.3 Moving panes.** Drag a pane by its header to move or swap it
+   - [x] **2.3 Moving panes.** Drag a pane by its header to move or swap it
      (the drop targets and their highlight); split right / split down from the
      hover controls (`leaf-split`, `head-split`); the empty pane and its chips;
      the "+" menu's Layout presets and Fit (`wb-layout`, `wb-fit`).
