@@ -81,6 +81,29 @@ pub fn close_outcome(r: Result<Value, ApiError>) -> Closed {
     }
 }
 
+fn field<'a>(c: &'a Value, k: &str) -> &'a str { c.get(k).and_then(|v| v.as_str()).unwrap_or("") }
+
+/// A chat's state, as the web draws it (2.4): `exited` wins over
+/// everything; a pending card is needs input; else its agent state (idle
+/// when it has none yet).
+pub fn chat_state(c: &Value) -> String {
+    if field(c, "status") == "exited" { return "exited".into(); }
+    if c.get("pending").and_then(|p| p.as_array()).is_some_and(|p| !p.is_empty()) { return "needs-input".into(); }
+    let st = field(c, "agentState");
+    if st.is_empty() { "idle".into() } else { st.to_string() }
+}
+
+/// A project's dot (renderProjects), over its `running` chats and Claude
+/// terminals: needs-input > working > waiting > running > none.
+pub fn project_dot(list: &[Value], alias: &str) -> &'static str {
+    let mine: Vec<String> = list.iter().filter(|c| field(c, "project") == alias && field(c, "status") == "running").map(chat_state).collect();
+    if mine.iter().any(|x| x == "needs-input") { "needs-input" }
+    else if mine.iter().any(|x| x == "working") { "working" }
+    else if mine.iter().any(|x| x == "waiting") { "waiting" }
+    else if !mine.is_empty() { "running" }
+    else { "" }
+}
+
 /// The header's content box: the pane less its 1px border each side and the
 /// header's padding (2 left, 4 right). The web's header is a size container,
 /// so its rules (@container, 62cqw) read this.
@@ -163,6 +186,30 @@ mod tests {
         assert_eq!(close_outcome(Err(ApiError::Status(404, String::new()))), Closed::Yes);
         assert_eq!(close_outcome(Err(ApiError::SignedOut)), Closed::SignedOut);
         assert_eq!(close_outcome(Err(ApiError::Net("refused".into()))), Closed::No("Failed to close terminal: Cannot reach the server: refused".into()));
+    }
+
+    #[test]
+    fn live_states() {
+        // Exited wins over the last agent state; a pending card is needs input.
+        assert_eq!(chat_state(&json!({ "status": "exited", "agentState": "idle" })), "exited");
+        assert_eq!(chat_state(&json!({ "status": "running", "agentState": null })), "idle");
+        assert_eq!(chat_state(&json!({ "status": "running", "agentState": "working", "pending": [{}] })), "needs-input");
+        assert_eq!(chat_state(&json!({ "status": "running", "agentState": "waiting" })), "waiting");
+        // The project dot: running ones only (not exited, parked or another
+        // project's); needs-input > working > waiting > running.
+        let list = vec![
+            json!({ "project": "demo", "status": "running", "agentState": "waiting" }),
+            json!({ "project": "demo", "status": "running", "agentState": "working" }),
+            json!({ "project": "demo", "status": "exited", "agentState": "needs-input" }),
+            json!({ "project": "demo", "status": "parked", "agentState": "needs-input" }),
+            json!({ "project": "other", "status": "running", "agentState": "needs-input" }),
+            json!({ "project": "idle", "status": "running", "agentState": "idle", "kind": "terminal" }),
+        ];
+        assert_eq!(project_dot(&list, "demo"), "working");
+        assert_eq!(project_dot(&list, "other"), "needs-input");
+        assert_eq!(project_dot(&list, "idle"), "running");
+        assert_eq!(project_dot(&list, "none"), "");
+        assert_eq!(project_dot(&list[..1], "demo"), "waiting");
     }
 
     #[test]

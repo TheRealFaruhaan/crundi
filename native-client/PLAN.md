@@ -175,7 +175,9 @@ Phase 1 left these, each with its workaround in place:
 - **Small bold text** (2.1, the CHAT tag). Chromium's hinting draws DejaVu
   Sans Bold at 9.92px with 8px capitals; Slint draws 7px. The tag is drawn
   at 11px with −0.4px tracking instead of 9.92px with +0.6px: caps 8px, C 6px
-  wide, the pill 47px wide (web 47.6).
+  wide, the pill 47px wide (web 47.6). The agent badge (2.4) likewise: 11px
+  with −0.8px tracking for the web's 9.6px/700 at .384px (caps 8px, text 54
+  wide, as the web's).
 - **The secrets lock with no capability** (2.1) is drawn by the same rule
   (no lock, A- after CHAT), but the e2e test can only reach it on a server
   without `chat-secret-preauth`.
@@ -220,6 +222,14 @@ Phase 1 left these, each with its workaround in place:
   (`DashedBox`). Chromium runs one pattern round the corners as well, so
   near the far corners (bottom, right) the dashes sit up to 5px from the
   web's; the top-left corner and the dash and gap lengths match.
+- **Live state left to other screens** (2.4): the composer's foot label
+  ("idle", "working…", "needs your input"; a waiting chat reads "idle") is
+  2.5's; the parked pane's grey dot is 2.23's; the top bar's approvals button
+  (the shield with a count, for chat cards, secrets requests and
+  collaborators) is its own screen, for a later phase (5, operations); Cru's
+  cells belong to Cru on the PC (phase 6).
+- **The folded rail's glows** (2.4): the avatar's 0 0 10px / 12px glows
+  are three soft rings (the software renderer has no blur).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

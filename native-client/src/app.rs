@@ -88,6 +88,8 @@ pub struct App {
     menu: u32,
     /// A pane being dragged by its header (2.3).
     drag: Option<Drag>,
+    /// The last `state` event's `terminals` (chats and Claude terminals).
+    terminals: Option<Vec<Value>>,
     /// A gutter held: its split and index, the pair's shares and px width at
     /// the press, and where the press was along the axis.
     gutter: Option<(u32, usize, f32, f32, f32, f32)>,
@@ -193,6 +195,7 @@ pub fn init(window: &MainWindow) {
             full: None,
             menu: 0,
             drag: None,
+            terminals: None,
             gutter: None,
             row_keys: vec![],
             motion_gen: 0,
@@ -502,6 +505,7 @@ pub fn sign_out(why: &str) {
     with(|a| {
         a.projects.clear();
         a.sessions.clear();
+        a.terminals = None;
         a.chats.clear();
         a.project.clear();
         a.grants.clear();
@@ -543,7 +547,20 @@ fn on_live(e: Event) {
             if let Some(p) = state.get("projects").and_then(|p| p.as_array()) {
                 if !p.is_empty() { with(|a| a.projects = p.clone()); show_projects(); }
             }
-            load_sessions();
+            // The live list is the event's `terminals` (as the web's
+            // applyState): chats and Claude terminals, without a factory's
+            // employees. The chats in it are the panes' list too.
+            match state.get("terminals").and_then(|t| t.as_array()) {
+                Some(t) => {
+                    with(|a| {
+                        a.sessions = t.iter().filter(|c| s(c, "kind") == "ui").cloned().collect();
+                        a.terminals = Some(t.clone());
+                    });
+                    show_projects();
+                    sync_panes();
+                }
+                None => load_sessions(),
+            }
         }
         Event::Chat(m) => on_chat_message(&m),
         Event::Usage(u) => { with(|a| a.usage = Some((u, std::time::Instant::now()))); show_usage(); }
@@ -646,21 +663,14 @@ fn load_sessions() {
 }
 
 fn agent_state(c: &Value) -> String {
-    if s(c, "status") == "exited" { return "exited".into(); }
-    let pending = c.get("pending").and_then(|p| p.as_array()).map(|p| !p.is_empty()).unwrap_or(false);
-    if pending { return "needs-input".into(); }
-    let st = s(c, "agentState");
-    if st.is_empty() { "idle".into() } else { st }
+    head::chat_state(c)
 }
 
-/// A project's dot, by the web UI's priority.
+/// A project's dot, by the web UI's priority, over the `state` event's
+/// `terminals` (exited chats, parked panes and a factory's employees don't
+/// count).
 fn project_state(a: &App, alias: &str) -> &'static str {
-    let mine: Vec<String> = a.sessions.iter().filter(|c| s(c, "project") == alias && s(c, "status") != "exited").map(agent_state).collect();
-    if mine.iter().any(|x| x == "needs-input") { "needs-input" }
-    else if mine.iter().any(|x| x == "working") { "working" }
-    else if mine.iter().any(|x| x == "waiting") { "waiting" }
-    else if !mine.is_empty() { "running" }
-    else { "" }
+    head::project_dot(a.terminals.as_ref().unwrap_or(&a.sessions), alias)
 }
 
 fn show_projects() {
@@ -710,7 +720,9 @@ fn sync_panes() {
     let subscribe = with(|a| {
         if a.project.is_empty() { return vec![]; }
         let live: Vec<String> = a.sessions.iter()
-            .filter(|c| s(c, "project") == a.project && s(c, "status") != "exited" && s(c, "factory").is_empty())
+            // An exited chat keeps its pane (grey, "exited") until it is
+            // closed, as the web's grid does.
+            .filter(|c| s(c, "project") == a.project && s(c, "factory").is_empty())
             .map(|c| s(c, "id")).collect();
         a.mosaic.retain(|k| match chat_of(k) { Some(id) => live.iter().any(|l| l == id), None => true });
         for id in &live { a.mosaic.place(&chat_key(id)); }
@@ -819,7 +831,9 @@ fn render() {
                 p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
                 if let Some(cs) = a.chats.get(id) {
                     p.entries = cs.model.clone().into();
-                    p.state = { let st = if cs.conv.state.is_empty() { item.map(agent_state).unwrap_or_default() } else { cs.conv.state.clone() }; if st.is_empty() { "idle".into() } else { st.into() } };
+                    // The header's state is the list's (the `state` event), as
+                    // the web's: `exited` wins over the stream's last idle.
+                    p.state = { let st = match item { Some(c) => agent_state(c), None => cs.conv.state.clone() }; if st.is_empty() { "idle".into() } else { st.into() } };
                     p.mode = mode_label(&if cs.conv.mode.is_empty() { item.map(|c| s(c, "permissionMode")).unwrap_or_default() } else { cs.conv.mode.clone() }).into();
                     p.session = cs.conv.session_id.chars().take(8).collect::<String>().into();
                     p.model = cs.conv.model.clone().into();

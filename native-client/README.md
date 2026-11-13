@@ -180,6 +180,15 @@ them; each has a spec in `specs/`). So far:
   - the gutters' look (accent while any is held, locked by a pin), the 6px
     scrollbar when the grid scrolls sideways, and the 220ms layout motion.
 
+- **2.4 Live state** (`specs/live-state.md`): each pane's dot (with the
+  needs-input ring and the raw state as its tooltip) and its badge (WORKING,
+  NEEDS INPUT, WAITING); the project's dot in the sidebar (needs input >
+  working > waiting > running, with its ring; the active project with nothing
+  running is green) and its folded avatar; titles changed by the server or
+  another client, live. All from the `state` event's `terminals`, as the web
+  does: an exited chat is grey whatever its stream last said, and a factory's
+  employees don't light a project.
+
 The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
 `test/phase2.mjs` drives each feature against a fresh server (the same setup
 as phase 1's test), by the pointer and keys where it matters.

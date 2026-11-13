@@ -204,13 +204,38 @@ export component ProjectSidebar inherits Rectangle {
                 alignment: start;
                 for p in root.projects: Rectangle {
                     height: root.folded ? 46px : 32px;
-                    // Folded: a 38px round avatar with the project's initials.
-                    if root.folded: Rectangle {
-                        width: 38px; height: 38px; border-radius: 19px;
-                        background: Theme.bg-tertiary;
-                        border-width: 1px;
-                        border-color: p.alias == root.current ? Theme.accent : p.state != "" ? ProjectDot.color(p.state) : Theme.border;
-                        Text { text: p.initials; font-family: Theme.mono; font-size: 11.84px; font-weight: 700; color: p.alias == root.current ? Theme.accent-hover : Theme.text-secondary; overflow: elide; width: 26px; horizontal-alignment: center; }
+                    // Folded: a 38px round avatar with the project's initials
+                    // (.proj-initials). Its state wins over the active look:
+                    // running a green edge, working a yellow edge and glow,
+                    // needs input an accent edge and glow; waiting draws as
+                    // nothing running (the web has no rule for it).
+                    if root.folded: av := Rectangle {
+                        property <bool> active: p.alias == root.current;
+                        property <string> st: p.state == "waiting" ? "" : p.state;
+                        width: 38px; height: 38px;
+                        // The glows (0 0 10px -2px yellow, 0 0 12px -2px accent;
+                        // the active look's own) in soft rings.
+                        for l in [{ e: 2px, a: 0.28 }, { e: 4px, a: 0.14 }, { e: 6px, a: 0.06 }]: Rectangle {
+                            visible: parent.st == "working" || parent.st == "needs-input" || (parent.active && parent.st == "");
+                            x: -l.e; y: -l.e; width: 38px + 2 * l.e; height: 38px + 2 * l.e; border-radius: 19px + l.e;
+                            background: (parent.st == "working" ? Theme.yellow : Theme.accent).with-alpha(l.a);
+                        }
+                        // The active look's 1px ring (0 0 0 1px accent), none or running.
+                        if self.active && (self.st == "" || self.st == "running"): Rectangle { x: -1px; y: -1px; width: 40px; height: 40px; border-radius: 20px; background: Theme.accent; }
+                        Rectangle {
+                            border-radius: 19px;
+                            background: parent.active ? @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%) : Theme.bg-tertiary;
+                            border-width: 1px;
+                            border-color: parent.st == "running" ? Theme.green : parent.st == "working" ? Theme.yellow
+                                : parent.st == "needs-input" || parent.active || ta.has-hover ? Theme.accent : Theme.border;
+                            Text {
+                                text: p.initials; font-family: Theme.mono; font-size: 11.84px; font-weight: 700; letter-spacing: 0.3552px;
+                                color: av.st == "running" || av.st == "working" ? Theme.text-primary
+                                    : av.st == "needs-input" || av.active ? white
+                                    : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                                overflow: elide; width: 26px; horizontal-alignment: center;
+                            }
+                        }
                     }
                     if !root.folded: Rectangle {
                         border-radius: 6px;
@@ -221,12 +246,16 @@ export component ProjectSidebar inherits Rectangle {
                             border-top-right-radius: 3px; border-bottom-right-radius: 3px;
                             background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
                         }
-                        // The dot: 8px at 12px; needs-input and working wear a 3px ring.
-                        if p.state == "needs-input" || p.state == "working": Rectangle {
+                        // The dot: 8px at 12px; needs input, working and waiting wear
+                        // a 3px ring. The active row with nothing running is green.
+                        if p.state == "needs-input" || p.state == "working" || p.state == "waiting": Rectangle {
                             x: 9px; y: 9px; width: 14px; height: 14px; border-radius: 7px;
-                            background: p.state == "needs-input" ? Theme.accent-dim : Theme.yellow-dim;
+                            background: p.state == "needs-input" ? Theme.accent-dim : p.state == "working" ? Theme.yellow-dim : Theme.sky-ring;
                         }
-                        Rectangle { x: 12px; y: 12px; width: 8px; height: 8px; border-radius: 4px; background: ProjectDot.color(p.state); }
+                        Rectangle {
+                            x: 12px; y: 12px; width: 8px; height: 8px; border-radius: 4px;
+                            background: p.state == "" && p.alias == root.current ? Theme.green : ProjectDot.color(p.state);
+                        }
                         Text {
                             x: 30px; width: parent.width - 42px;
                             text: p.name;

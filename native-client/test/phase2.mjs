@@ -39,7 +39,7 @@
 
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
@@ -769,6 +769,88 @@ check('…with the sizes a gutter drag left (not even)', p && Math.abs(pane(p, l
 await ui('select-project', 'other');
 p = await until('after a restart: the other project\'s sizes', (q) => q.currentProject === 'other' && JSON.stringify(otherGeo(q)) === JSON.stringify(otherGeoBefore));
 check('the other project\'s sizes survive a restart too', p && JSON.stringify(otherTree()?.sizes) === otherSizes, p && otherGeo(p));
+
+// ─── 2.4 Live state ───
+// Real Claude turns on the test server; each wait is long enough for one.
+const send = (id, text) => http('POST', `/api/ui-sessions/${id}/send`, { text }, token);
+const make = async (project, title, skip) => (await http('POST', '/api/ui-sessions/create', { project, title, skipPermissions: !!skip }, token)).body?.id;
+const dot = (q, alias) => q.projectDots?.find((x) => x.alias === alias)?.state;
+// A chat's claude process: the one whose environment names the chat.
+const chatProc = (id) => {
+  for (const pid of readdirSync('/proc').filter((x) => /^\d+$/.test(x))) {
+    try {
+      const env = readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0');
+      if (env.includes('CRUNDI_CHAT_ID=' + id) && readFileSync(`/proc/${pid}/cmdline`, 'utf8').includes('claude')) {
+        return { pid: Number(pid), key: (env.find((e) => e.startsWith('CRUNDI_API_KEY=')) || '').slice(15) };
+      }
+    } catch { /* gone, or not ours */ }
+  }
+  return null;
+};
+await http('POST', '/api/projects', { alias: 'other', name: 'Other', path: join(tmpdir(), 'crundi-native-other2'), create: true }, token);
+// Demo on screen (an earlier part may have left another project open).
+await ui('select-project', 'demo');
+await until('Demo is open', (q) => q.currentProject === 'demo');
+// Working: a foreground wait (a plain sleep is refused by this machine's shell hook).
+const liveW = await make('demo', 'Long job', true);
+await send(liveW, 'Run exactly this shell command in the foreground with timeout 600000 and wait for it to finish: timeout 90 tail -f /dev/null. It is a deliberate wait for a UI test; do not run it in the background. Then say done.');
+p = await until('a working chat', (q) => pane(q, liveW)?.state === 'working' && dot(q, 'demo') === 'working', 120000);
+if (p) check('a working chat: its pane and the project dot say working', true);
+await snap('2.4-working');
+// Needs input: a question. Needs input wins over working on the project's dot.
+const liveQ = await make('demo', 'Question', false);
+await send(liveQ, 'Use the AskUserQuestion tool to ask me one question: "Which colour do you prefer?" with the options Red, Green and Blue. Do nothing else.');
+p = await until('a question: needs input', (q) => pane(q, liveQ)?.state === 'needs-input' && dot(q, 'demo') === 'needs-input', 120000);
+if (p) check('a question makes the pane and the project needs input (over working)', true);
+await snap('2.4-needs-input');
+// Waiting, in another (inactive) project: a background task armed, the turn over.
+const liveO = await make('other', 'Background', true);
+await send(liveO, 'Run the shell command `timeout 120 tail -f /dev/null` with run_in_background set to true. Do not wait for it; just reply "started" and end your turn.');
+p = await until('the other project waits', (q) => dot(q, 'other') === 'waiting', 120000);
+if (p) check('an inactive project shows waiting', dot(p, 'demo') === 'needs-input');
+await snap('2.4-sidebar-mixed');
+// The answer is not drawn ahead of the server: the project goes back to working (W still runs).
+const qEntry = (await d.send({ cmd: 'state' })).state;
+const qe = await (async () => { for (let i = 0; i < 20; i++) { const st = (await http('GET', '/api/ui-sessions', null, token)).body?.sessions?.find((x) => x.id === liveQ); const pend = st?.pending?.[0]; if (pend) return pend; await sleep(500); } return null; })();
+if (check('the question is pending on the server', !!qe, qEntry?.chat)) {
+  const input = { ...(qe.input || {}), answers: { 'Which colour do you prefer?': 'Green' } };
+  await http('POST', `/api/ui-sessions/${liveQ}/respond`, { requestId: qe.requestId, behavior: 'allow', updatedInput: input }, token);
+  p = await until('answered: needs input ends', (q) => pane(q, liveQ)?.state !== 'needs-input' && dot(q, 'demo') === 'working', 60000);
+  if (p) check('after the answer the project is working again (the other chat still runs)', true);
+}
+// Exited: its claude process ends; the pane goes grey even though its stream last said idle.
+const procLW = chatProc(liveW);
+if (check('the working chat has a claude process', !!procLW)) {
+  process.kill(procLW.pid);
+  p = await until('the killed chat is exited', (q) => pane(q, liveW)?.state === 'exited', 30000);
+  if (p) check('a chat whose process ended is exited on its pane', true);
+  await snap('2.4-exited');
+  p = await until('…and no longer counts on the project dot', (q) => dot(q, 'demo') !== 'working', 30000);
+  if (p) check('an exited chat no longer counts on the project dot', true);
+}
+// Claude names its chat (rename_chat): the short title live, the long one in a wide header.
+const procLQ = chatProc(liveQ) || chatProc(liveO);
+if (check('a running chat to take the internal key from', !!procLQ?.key)) {
+  const mcp = async (args) => (await fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': procLQ.key }, body: JSON.stringify({ tool: 'rename_chat', args }) })).json();
+  const r = await mcp({ sessionId: liveQ, title: 'Named by Claude', long: 'A title Claude gave this chat itself, long form' });
+  check('rename_chat answers ok', r?.ok, r);
+  p = await until('the server-set title shows live', (q) => pane(q, liveQ)?.shortTitle === 'Named by Claude', 15000);
+  if (p) check('a title set by the server shows live', true);
+  await ui('pane-full', pane(p, liveQ).id);
+  p = await until('full screen shows the long form', (q) => q.full?.title === 'A title Claude gave this chat itself, long form', 10000);
+  if (p) check('a wide header shows the long form', true);
+  await key('Escape');
+  await until('left full screen', (q) => q.full === null);
+  // Renamed in another client: the typed title shows, and a later automatic one is refused.
+  await http('POST', `/api/ui-sessions/${liveQ}/rename`, { title: 'Renamed in another client' }, token);
+  p = await until('a rename from another client shows live', (q) => pane(q, liveQ)?.title === 'Renamed in another client', 15000);
+  if (p) check('a rename in another client shows live', true);
+  const r2 = await mcp({ sessionId: liveQ, title: 'Claude tries again', long: 'x' });
+  await sleep(1500);
+  check('after a typed rename, the automatic one is refused and the title stays', r2?.ok === false && pane(await props(), liveQ).title === 'Renamed in another client', r2);
+  await snap('2.4-titles-live');
+}
+for (const id of [liveW, liveQ, liveO]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 
 d.close();
 app.kill();

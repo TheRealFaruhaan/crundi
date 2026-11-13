@@ -239,6 +239,9 @@ export component PaneHead inherits Rectangle {
     property <bool> renaming;
     // Narrow: 1px higher.
     property <length> dy: root.narrow ? -1px : 0px;
+    // The agent badge's text, upper case (none for idle and exited).
+    property <string> badge: !root.chat ? "" : root.state == "working" ? "WORKING" : root.state == "needs-input" ? "NEEDS INPUT" : root.state == "waiting" ? "WAITING" : "";
+    badge-m := Text { visible: false; text: root.badge; font-size: 11px; font-weight: 700; letter-spacing: -0.8px; }
     height: root.narrow ? 26px : 28px;
     background: Theme.bg-secondary;
     sure-m := Text { visible: false; text: "Sure?"; font-size: 11px; }
@@ -270,17 +273,24 @@ export component PaneHead inherits Rectangle {
                 if dh.tip-ok && !dh.pressed && !dh.dragging: Tooltip { TipBox { text: "Drag to reorder"; } }
             }
         }
-        // The state dot: 7px at y 10 (its colours: 2.4).
+        // The state dot: 7px at y 10 (2.4): green idle, yellow working, accent
+        // needs input (with a 3px accent-dim ring), sky waiting, muted exited.
+        // Its tooltip is the raw state.
         if root.chat: Rectangle {
-            y: 10px + root.dy; width: 7px; height: 7px; border-radius: 3.5px;
-            background: PaneState.color(root.state);
+            y: 10px + root.dy; width: 7px; height: 7px;
+            if root.state == "needs-input": Rectangle { x: -3px; y: -3px; width: 13px; height: 13px; border-radius: 6.5px; background: Theme.accent-dim; }
+            Rectangle { border-radius: 3.5px; background: PaneState.color(root.state); }
+            dt := TouchArea {
+                Tooltip { TipBox { text: root.state == "" ? "idle" : root.state; } }
+            }
         }
         // The title: 12px/600, padding 2px 6px, radius 6; 18px at y 4.5.
         // Never wider than its cap (160px, the long form's, or none when
         // narrow), nor than the row leaves it: the spacer goes to 0 first, but
         // its two 4px gaps stay.
         if !root.renaming: Rectangle {
-            property <length> room: root.width - 2px - (root.full ? 0px : 30px) - (root.chat ? 11px : 0px) - 8px - tools.preferred-width - 4px;
+            property <length> room: root.width - 2px - (root.full ? 0px : 30px) - (root.chat ? 11px : 0px) - 8px - tools.preferred-width - 4px
+                - (root.badge != "" ? badge-m.preferred-width + 14px + 4px : 0px);
             y: 4.5px + root.dy; height: 18px;
             width: max(0px, min(tt.preferred-width + 12px, root.title-max, self.room));
             border-radius: 6px;
@@ -357,6 +367,23 @@ export component PaneHead inherits Rectangle {
                         changed has-focus => { if !self.has-focus && root.renaming { root.renaming = false; root.rename(self.text); } }
                     }
                 }
+            }
+        }
+        // The agent badge (2.4), 4px after the title: WORKING, NEEDS INPUT,
+        // WAITING; a 13px pill, 9.6px/700, .384px tracking, padding 1px 7px.
+        // It never hides: the title elides first.
+        if root.badge != "": Rectangle {
+            y: 6px + root.dy; height: 13px;
+            width: badge-m.preferred-width + 14px;
+            border-radius: 6.5px;
+            background: root.state == "working" ? Theme.yellow-dim : root.state == "waiting" ? Theme.sky-dim : Theme.accent-dim;
+            // The web's 9.6px/700 with .384px tracking comes out with 8px
+            // capitals in Chromium (its hinting); Slint draws them 6px. As the
+            // CHAT tag: the size that matches the glyphs, the tracking that
+            // keeps the width (PLAN.md, "Small bold text").
+            Text {
+                text: root.badge; font-size: 11px; font-weight: 700; letter-spacing: -0.8px;
+                color: root.state == "working" ? Theme.yellow : root.state == "waiting" ? Theme.sky : Theme.accent-hover;
             }
         }
         // The rest is pushed right (the spacer can shrink to 0).

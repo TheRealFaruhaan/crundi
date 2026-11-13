@@ -46,7 +46,11 @@ fi
 
 rm -rf "$D"; mkdir -p "$D/data" "$D/config/crundi" "$D/proj"
 printf 'TELEGRAM_BOT_TOKEN=\nALLOWED_USERNAME=\nPROJECTS_DIR=\n' > "$D/config/crundi/.env"
-env -u TELEGRAM_BOT_TOKEN -u ALLOWED_USERNAME -u PROJECTS_DIR \
+# Nothing of the caller's Crundi or Claude Code session reaches the test server
+# or its chats: no live API URL or key, chat or factory-run id, session id or
+# messaging socket.
+LEAK=$(env | sed -n 's/^\(CRUNDI_[A-Z0-9_]*\|CLAUDE_CODE_[A-Z0-9_]*\)=.*/-u \1/p' | tr '\n' ' ')
+env -u TELEGRAM_BOT_TOKEN -u ALLOWED_USERNAME -u PROJECTS_DIR $LEAK \
   XDG_CONFIG_HOME="$D/config" DATA_DIR="$D/data" DOTENV_PATH="$D/config/crundi/.env" \
   CRUNDI_DEV=1 DEV_WEB_PORT="$PORT" HOMEPOOL_DISABLE=1 \
   setsid node src/index.js --dev > "$D/server.log" 2>&1 < /dev/null &
