@@ -7,7 +7,7 @@
 //!   {"cmd":"props"}                         what the window shows (signed-in, errors, …)
 //!   {"cmd":"snapshot","path":"/tmp/x.png"}  the window as Slint drew it
 //!   {"cmd":"ui","name":"send","args":["hi"]}  a window action (names below)
-//!   {"cmd":"mouse","kind":"move|click|dblclick|leave","x":10,"y":20}  the pointer, as a person's
+//!   {"cmd":"mouse","kind":"move|click|dblclick|down|up|leave","x":10,"y":20}  the pointer, as a person's
 //!   {"cmd":"key","text":"Escape"|"Return"|"a…"}  a key press and release (to the focused item)
 
 use base64::Engine;
@@ -74,6 +74,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "toast": w.get_toast().as_str(),
             "lockedGutters": w.get_gutters().iter().filter(|g| g.locked).count(),
             "gutters": w.get_gutters().row_count(),
+            "gutterViews": w.get_gutters().iter().map(|g| json!({ "split": g.split, "index": g.index, "row": g.row, "x": g.x, "y": g.y, "w": g.w, "h": g.h, "locked": g.locked })).collect::<Vec<_>>(),
         }),
         "snapshot" => match w.window().take_snapshot() {
             Ok(pb) => {
@@ -106,6 +107,9 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             match c.get("kind").and_then(|v| v.as_str()).unwrap_or("move") {
                 "click" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); click(1) }
                 "dblclick" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); click(2) }
+                // A press held across calls, then moves, then its release: a drag.
+                "down" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); crate::pointer_pressed(&w, pos.x, pos.y); win.dispatch_event(WindowEvent::PointerPressed { position: pos, button: PointerEventButton::Left }) }
+                "up" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); win.dispatch_event(WindowEvent::PointerReleased { position: pos, button: PointerEventButton::Left }) }
                 "leave" => win.dispatch_event(WindowEvent::PointerExited),
                 _ => win.dispatch_event(WindowEvent::PointerMoved { position: pos }),
             }

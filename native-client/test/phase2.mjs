@@ -12,6 +12,12 @@
 //       double-click to maximise (nothing on a lone pane), presets keeping a
 //       pin, one full-screen pane at a time, leaving a rename input saves,
 //       and the secrets lock's count, live.
+//   2.2 the narrow header: three (then four) narrow panes; "…" toggles its
+//       menu and focuses the pane, one menu at a time; pin, reset and a live
+//       rename or chat-secrets count leave it open; Esc, the lock, full
+//       screen, × and a press outside (which still acts) close it; it goes
+//       with its pane; it closes when the pane goes wide; and the fold edge
+//       (pane ≤ 567) checked by dragging a gutter across it.
 //
 // Needs a FRESH dev server with no sign-in set up (this sets a password on it):
 //
@@ -247,10 +253,10 @@ await until('the button leaves full screen', (q) => q.full === null) && check('t
 
 // The secrets lock: its count follows the server live.
 const caps = (await http('GET', '/api/handshake')).body?.server?.capabilities || [];
+const PIN = 'phase-two-pass';
+const ids = [];
 if (caps.includes('chat-secret-preauth')) {
   check('the lock shows when the server can', pane(await props(), chatA).secrets);
-  const PIN = 'phase-two-pass';
-  const ids = [];
   for (const name of ['P2_ONE', 'P2_TWO']) ids.push((await http('POST', '/api/secrets', { action: 'add', name, value: 'v-' + name, pin: PIN }, token)).body?.id);
   await http('POST', '/api/secrets/chat', { action: 'grant', sessionId: chatA, secrets: [{ id: ids[0], pin: PIN }], untilChatEnds: true }, token);
   await until('one grant: the lock counts 1', (q) => pane(q, chatA).secretsN === 1 && pane(q, chatA).secretsTip === '1 secret pre-authorised for this chat') && check('one grant shows live', true);
@@ -357,6 +363,16 @@ check('reset acts and the menu stays open', p && pane(p, chatA).menu, p?.panes);
 await http('POST', `/api/ui-sessions/${chatA}/rename`, { title: 'Fruit list renamed' }, token);
 p = await until('a live rename shows', (q) => pane(q, chatA).title === 'Fruit list renamed');
 check('the menu stays open through a live update', p && pane(p, chatA).menu);
+// A chat-secrets event changes the count inside the open menu, and leaves it open.
+if (ids.length === 2 && ids.every(Boolean)) {
+  await http('POST', '/api/secrets/chat', { action: 'grant', sessionId: chatA, secrets: [{ id: ids[0], pin: PIN }], untilChatEnds: true }, token);
+  p = await until('a grant counts 1 in the menu', (q) => pane(q, chatA).secretsN === 1);
+  check('the count changes live with the menu open', p && pane(p, chatA).menu, p?.panes);
+  await http('POST', '/api/secrets/chat', { action: 'grant', sessionId: chatA, secrets: ids.map((id) => ({ id, pin: PIN })), untilChatEnds: true }, token);
+  p = await until('two grants count 2 in the menu', (q) => pane(q, chatA).secretsN === 2);
+  check('the menu stays open through chat-secrets updates', p && pane(p, chatA).menu, p?.panes);
+  await snap('2.2-menu-secrets2-live');
+}
 // Esc closes the menu, and only the menu.
 await key('Escape');
 p = await until('Esc closes the menu', (q) => !pane(q, chatA).menu);
@@ -403,6 +419,29 @@ await mouse('click', moreX(a) + 12.5 + 4 + 13.85, nHeadY(a));
 p = await until('× closes the menu and arms', (q) => !pane(q, chatA).menu && pane(q, chatA).armed);
 if (p) check('× closes the menu and arms', true);
 await sleep(3300);
+// The menu goes with its pane: with a fourth chat the panes are 340 (the
+// fourth is past the window's edge, as on the web), the third pane's menu
+// open, that chat closed on the server. No other pane picks the menu up, and
+// the three left stay narrow.
+const chatE = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Fourth chat' }, token)).body?.id;
+p = await until('four narrow panes', (q) => [chatA, chatC, chatD, chatE].every((id) => pane(q, id)?.narrow));
+if (p) {
+  const c3 = pane(p, chatC);
+  await mouse('click', moreX(c3), nHeadY(c3));
+  p = await until('the 340px pane\'s menu opens', (q) => pane(q, chatC).menu);
+  if (p) check('a menu opens in a 340px pane', true);
+  await snap('2.2-menu-340');
+  await http('POST', `/api/ui-sessions/${chatC}/close`, {}, token);
+  p = await until('its pane goes', (q) => !pane(q, chatC) && [chatA, chatD, chatE].every((id) => pane(q, id)?.narrow));
+  check('the menu goes with its pane, and no other pane opens one', p && p.panes.every((x) => !x.menu), p?.panes);
+  const back = pane(p, chatD);
+  await mouse('click', moreX(back), nHeadY(back));
+  p = await until('a menu opens again after', (q) => pane(q, chatD).menu);
+  if (p) check('menus still open after a pane went', true);
+  await key('Escape');
+  await until('closed', (q) => !pane(q, chatD).menu);
+  a = pane(await props(), chatA);
+}
 // The menu closes when its pane goes wide: a chat closing elsewhere leaves
 // two 571px panes.
 await mouse('click', moreX(a), nHeadY(a));
@@ -411,6 +450,51 @@ await http('POST', `/api/ui-sessions/${chatD}/close`, {}, token);
 p = await until('the pane goes wide', (q) => !pane(q, chatD) && !pane(q, chatA).narrow);
 check('the menu closes when the pane goes wide', p && !pane(p, chatA).menu, p?.panes);
 check('a wide header again shows the long form or the 160 cap', p && pane(p, chatA).titleMax <= 440, p?.panes);
+
+// The edge, with a real gutter drag: the header folds while its content box
+// (pane − 8) is at most 559px, the web's @container (max-width: 559px), so a
+// pane of 567 is narrow and anything over it (567.3, 568) is wide. Drag A's
+// right gutter in steps across it.
+{
+  let q = await props();
+  const L = pane(q, chatA), G = q.gutterViews.find((g) => g.row && Math.abs(g.x - (L.x + L.w)) < 1);
+  if (check('a gutter right of the pane to drag', L && G, q.gutterViews)) {
+    const gy = WB.y + G.y + G.h / 2;
+    const target = async (w) => {
+      // Drag from the gutter's current place by (w − width).
+      const now = await props();
+      const cur = pane(now, chatA);
+      const g = now.gutterViews.find((v) => v.row && Math.abs(v.x - (cur.x + cur.w)) < 1);
+      const gx = WB.x + g.x + g.w / 2;
+      await mouse('move', gx, gy);
+      await mouse('down', gx, gy);
+      const dx = w - cur.w;
+      await mouse('move', gx + dx / 2, gy);
+      await mouse('move', gx + dx, gy);
+      await mouse('up', gx + dx, gy);
+      await sleep(300);
+      return pane(await props(), chatA);
+    };
+    const seen = [];
+    for (const w of [575, 569, 568.4, 567.6, 566, 560, 566.8, 567.4, 568.6, 571]) {
+      const got = await target(w);
+      seen.push({ want: w, w: got.w, narrow: got.narrow, menu: got.menu });
+      if (!check(`at pane width ${got.w.toFixed(2)} the header is ${got.w <= 567 ? 'narrow' : 'wide'}`, got.narrow === (got.w <= 567), got)) break;
+    }
+    check('the drag reached both sides of the edge', seen.some((s) => s.w <= 567 && s.w >= 565) && seen.some((s) => s.w > 567 && s.w < 570), seen);
+    // Open the menu just under the edge, then drag over it: the menu closes
+    // and does not come back when the pane narrows again.
+    const n = await target(563);
+    if (check('dragged narrow to open a menu', n.narrow, n)) {
+      await mouse('click', moreX(n), nHeadY(n));
+      await until('menu open at 566', (q) => pane(q, chatA).menu);
+      let g = await target(570);
+      check('dragging the pane wide closes its menu', !g.narrow && !g.menu, g);
+      g = await target(563);
+      check('…and narrowing it again leaves the menu shut', g.narrow && !g.menu, g);
+    }
+  }
+}
 
 d.close();
 app.kill();
