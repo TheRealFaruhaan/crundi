@@ -3,6 +3,7 @@
 //! refused close says. The web UI's versions are in src/webapp-html.js
 //! (renameTerminal, setTermFont, paintChatSecretBtns, closeTerminal).
 
+use crate::api::ApiError;
 use serde_json::Value;
 
 /// The chat text size the web starts at, and its limits.
@@ -56,6 +57,30 @@ pub fn close_refused(msg: &str) -> String {
     if msg.is_empty() { "This chat cannot be closed right now.".into() } else { msg.to_string() }
 }
 
+/// What came of asking the server to close a chat.
+#[derive(Debug, PartialEq)]
+pub enum Closed {
+    /// It closed: the pane goes.
+    Yes,
+    /// It didn't: the pane stays, and the toast says this.
+    No(String),
+    SignedOut,
+}
+
+/// The server's answer to POST /api/ui-sessions/:id/close, as the web UI
+/// reads it (closeTerminal): 409 is a refusal with the server's words; any
+/// other answer, even an error status, means it closed; no answer at all is
+/// "Failed to close terminal: …".
+pub fn close_outcome(r: Result<Value, ApiError>) -> Closed {
+    match r {
+        Ok(_) => Closed::Yes,
+        Err(ApiError::SignedOut) => Closed::SignedOut,
+        Err(ApiError::Status(409, m)) => Closed::No(close_refused(&m)),
+        Err(ApiError::Status(_, _)) => Closed::Yes,
+        Err(e) => Closed::No(format!("Failed to close terminal: {e}")),
+    }
+}
+
 /// The long title is shown only on a wide header (≥ 560px) and only when the
 /// chat has one; it is capped at min(440, 62% of the header). The short one
 /// at 160px.
@@ -100,6 +125,17 @@ mod tests {
         assert_eq!(secrets_tip(0), "Pre-authorise secrets for this chat");
         assert_eq!(secrets_tip(1), "1 secret pre-authorised for this chat");
         assert_eq!(secrets_tip(2), "2 secrets pre-authorised for this chat");
+    }
+
+    #[test]
+    fn close_answers() {
+        let msg = "This factory Manager's chat can't be closed while its run is going.";
+        assert_eq!(close_outcome(Err(ApiError::Status(409, msg.into()))), Closed::No(msg.into()));
+        assert_eq!(close_outcome(Err(ApiError::Status(409, String::new()))), Closed::No("This chat cannot be closed right now.".into()));
+        assert_eq!(close_outcome(Ok(json!({ "ok": true }))), Closed::Yes);
+        assert_eq!(close_outcome(Err(ApiError::Status(404, String::new()))), Closed::Yes);
+        assert_eq!(close_outcome(Err(ApiError::SignedOut)), Closed::SignedOut);
+        assert_eq!(close_outcome(Err(ApiError::Net("refused".into()))), Closed::No("Failed to close terminal: Cannot reach the server: refused".into()));
     }
 
     #[test]

@@ -924,13 +924,9 @@ fn close_pane(leaf: u32) {
         return layout_changed();
     };
     let Some(api) = api() else { return };
-    // As the web UI: any answer but 409 means it closed.
-    bg(move || match api.post(&format!("/api/ui-sessions/{id}/close"), &json!({})) {
-        Ok(_) => Ok(id),
-        Err(ApiError::Status(c, _)) if c != 409 => Ok(id),
-        Err(e) => Err(e),
-    }, move |r| match r {
-        Ok(id) => {
+    let path = format!("/api/ui-sessions/{id}/close");
+    bg(move || api.post(&path, &json!({})), move |r| match head::close_outcome(r) {
+        head::Closed::Yes => {
             with(|a| {
                 if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) { a.mosaic.close(l); }
                 a.font.remove(&id);
@@ -942,9 +938,9 @@ fn close_pane(leaf: u32) {
             layout_changed();
             load_sessions();
         }
-        Err(ApiError::SignedOut) => sign_out("Your sign-in ended. Sign in again."),
-        Err(ApiError::Status(409, m)) => toast(&head::close_refused(&m), true),
-        Err(e) => toast(&format!("Failed to close terminal: {e}"), true),
+        head::Closed::SignedOut => sign_out("Your sign-in ended. Sign in again."),
+        // Refused or failed: the pane stays, and a toast says why.
+        head::Closed::No(why) => toast(&why, true),
     });
 }
 

@@ -177,9 +177,15 @@ Phase 1 left these, each with its workaround in place:
 - **The secrets lock with no capability** (2.1) is drawn by the same rule
   (no lock, A- after CHAT), but the e2e test can only reach it on a server
   without `chat-secret-preauth`.
-- **A refused close (409)** (2.1): the toast is unit-tested
-  (`head::close_refused`); the e2e test can't make the server refuse (it
-  needs a factory Manager's chat while its run goes).
+- **A refused close (409)** (2.1): how the answer is read (409 keeps the
+  pane with the server's words; other answers close it; no answer says
+  "Failed to close terminal") is unit-tested (`head::close_outcome`); the e2e
+  test can't make the server refuse (it needs a factory Manager's chat while
+  its run goes).
+- **Blur on a click elsewhere** (2.1). Slint keeps the focus when a click
+  lands on something that can't take it; a browser blurs the field. Every
+  press is counted (`Pointer` in `ui/widgets.slint`, from the system's events
+  in `src/main.rs`), and the rename input ends and saves on a press outside it.
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

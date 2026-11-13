@@ -3,7 +3,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon } from "widgets.slint";
+import { Icon, Pointer } from "widgets.slint";
 import { ListView } from "std-widgets.slint";
 
 export struct ToolView {
@@ -219,8 +219,17 @@ export component PaneHead inherits Rectangle {
         // Renaming: an input 160 wide, 20 high at y 3.5, the short title all
         // selected; an accent border and a 3px ring. Enter or leaving it
         // saves; Esc puts the title back.
-        if root.renaming: Rectangle {
+        if root.renaming: ri := Rectangle {
             y: 3.5px; width: 160px; height: 20px;
+            // A press anywhere outside the input saves it, as the web's blur.
+            property <int> presses: Pointer.presses;
+            changed presses => {
+                if root.renaming && (Pointer.x < self.absolute-position.x || Pointer.x > self.absolute-position.x + self.width
+                        || Pointer.y < self.absolute-position.y || Pointer.y > self.absolute-position.y + self.height) {
+                    root.renaming = false;
+                    root.rename(ti.text);
+                }
+            }
             // The ring: 0 0 0 3px rgba(99,102,241,.28).
             Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f147; }
             Rectangle {

@@ -2,6 +2,17 @@
 
 import { Theme } from "theme.slint";
 
+/// Every pointer press in the window, wherever it lands (src/main.rs counts
+/// them from the system's events; the test driver from its own). Slint keeps
+/// the focus when a click lands on something that can't take it (the chat
+/// log, a header), where a browser blurs the field: fields that save on
+/// blur (the rename input) watch this to end on a press outside them.
+export global Pointer {
+    in-out property <int> presses;
+    in-out property <length> x;
+    in-out property <length> y;
+}
+
 /// A flat icon from Icons, tinted.
 export component Icon inherits Image {
     in property <color> tint: Theme.text-secondary;

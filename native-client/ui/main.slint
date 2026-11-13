@@ -3,6 +3,7 @@
 // (tab bar, then the workbench or another tab) and the browser drawer.
 
 import { Theme } from "theme.slint";
+import { Pointer } from "widgets.slint";
 import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
@@ -10,7 +11,7 @@ import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.sl
 import { EntryView, ToolView } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer }
 
 export component MainWindow inherits Window {
     title: "Crundi";

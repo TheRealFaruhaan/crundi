@@ -174,6 +174,26 @@ fn main() {
     let w = ui.as_weak();
     ui.on_win_max(move || { if let Some(u) = w.upgrade() { let m = u.window().is_maximized(); u.window().set_maximized(!m); } });
     ui.on_win_close(|| { let _ = slint::quit_event_loop(); });
+    // Every pointer press, for fields that save when a click lands outside
+    // them (ui/widgets.slint Pointer), before Slint handles the press.
+    {
+        use slint::winit_030::{winit::event::{ElementState, WindowEvent}, EventResult, WinitWindowAccessor};
+        let w = ui.as_weak();
+        let mut at = (0.0f32, 0.0f32);
+        ui.window().on_winit_window_event(move |win, ev| {
+            match ev {
+                WindowEvent::CursorMoved { position, .. } => {
+                    let k = win.scale_factor();
+                    at = (position.x as f32 / k, position.y as f32 / k);
+                }
+                WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+                    if let Some(u) = w.upgrade() { pointer_pressed(&u, at.0, at.1); }
+                }
+                _ => {}
+            }
+            EventResult::Propagate
+        });
+    }
     // "1m ago" on the usage, kept current.
     let usage_tick = slint::Timer::default();
     usage_tick.start(slint::TimerMode::Repeated, Duration::from_secs(30), app::show_usage);
@@ -197,4 +217,12 @@ fn dirs_cache() -> std::path::PathBuf {
         .or_else(|| std::env::var_os("LOCALAPPDATA").map(Into::into))
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
+}
+
+/// A pointer press at (x, y), in logical px (ui/widgets.slint Pointer).
+pub fn pointer_pressed(ui: &MainWindow, x: f32, y: f32) {
+    let p = ui.global::<Pointer>();
+    p.set_x(x);
+    p.set_y(y);
+    p.set_presses(p.get_presses() + 1);
 }

@@ -98,6 +98,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             let pos = slint::LogicalPosition::new(c.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32, c.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32);
             let win = w.window();
             let click = |n: usize| for _ in 0..n {
+                // As the system's press would (src/main.rs).
+                crate::pointer_pressed(&w, pos.x, pos.y);
                 win.dispatch_event(WindowEvent::PointerPressed { position: pos, button: PointerEventButton::Left });
                 win.dispatch_event(WindowEvent::PointerReleased { position: pos, button: PointerEventButton::Left });
             };
