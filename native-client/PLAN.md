@@ -166,10 +166,14 @@ Phase 1 left these, each with its workaround in place:
 - **Turning an icon** (2.1, the pinned pin's −30°). The software renderer
   can't rotate an image, so `scripts/gen-icons.mjs` writes a turned copy
   (`pin-turned`).
-- **Header text widths** (2.1). "CHAT" and "A+" come out up to 2px wider
-  than the web's (the UI font's widths; the web draws buttons in Arial), so
-  the tag sits up to 2px further left. The boxes' heights and the buttons'
-  right edges match.
+- **Header text widths** (2.1). "A-" and "A+" come out up to 1px wider than
+  the web's (the UI font's widths; the web draws buttons in Arial), so
+  everything left of them sits 1px further left. The boxes' heights and the
+  buttons' right edges match.
+- **Small bold text** (2.1, the CHAT tag). Chromium's hinting draws DejaVu
+  Sans Bold at 9.92px with 8px capitals; Slint draws 7px. The tag is drawn
+  at 11px with −0.4px tracking instead of 9.92px with +0.6px: caps 8px, C 6px
+  wide, the pill 47px wide (web 47.6).
 - **The secrets lock with no capability** (2.1) is drawn by the same rule
   (no lock, A- after CHAT), but the e2e test can only reach it on a server
   without `chat-secret-preauth`.

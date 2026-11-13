@@ -122,7 +122,8 @@ component CardBtn inherits Rectangle {
     in property <bool> primary;
     in property <bool> danger;
     callback clicked();
-    height: 28px + (root.fs - 1) * 18px;
+    // .cc-btn: padding 6px 12px and a 1px border round a 12px × fs line.
+    height: 14px + 14px * root.fs;
     width: t.preferred-width + 24px;
     border-radius: 6px;
     border-width: root.primary ? 0px : 1px;
@@ -253,7 +254,11 @@ export component PaneHead inherits Rectangle {
             border-radius: 99px;
             border-width: 1px;
             border-color: Theme.border;
-            tag := Text { text: root.kind-tag; font-size: 9.92px; font-weight: 700; color: Theme.accent-hover; letter-spacing: 0.6px; }
+            // The web asks for 9.92px/700 with .6px tracking; Chromium's hinting
+            // draws DejaVu Sans Bold's capitals 8px tall and 29.2px across.
+            // Slint draws 9.92px at 7px, so the size is what matches the glyphs
+            // (caps 8px, C 6px wide) and the tracking keeps the text 31.6px.
+            tag := Text { text: root.kind-tag; font-size: 11px; font-weight: 700; color: Theme.accent-hover; letter-spacing: -0.4px; }
         }
         // The secrets lock: 26×20 (37×20 with a count) at y 3.5; yellow with grants.
         if root.chat && root.secrets && !root.narrow: HeadBtn {
@@ -406,10 +411,14 @@ component EntryRow inherits VerticalLayout {
         }
     }
 
-    // The web's 1.55 line height: 2.5px above and below the line.
-    if e.kind == "assistant" && e.status != "li": VerticalLayout {
-        padding-top: 2.5px;
-        padding-bottom: 2.5px;
+    // The web's line box is 1.55 × the text size; StyledText has no line
+    // height, so its one line is padded to that box: half the difference
+    // above and below (the font's own line measured, so any system font fits).
+    if e.kind == "assistant" && e.status != "li": pl := VerticalLayout {
+        property <length> size: (e.status == "h" ? 14px : 13px) * root.fs;
+        padding-top: max(0px, (self.size * 1.55 - pm.preferred-height) / 2);
+        padding-bottom: self.padding-top;
+        Rectangle { height: 0; pm := Text { visible: false; text: "X"; font-size: pl.size; } }
         StyledText {
             text: e.md;
             default-color: Theme.text-primary;
@@ -418,8 +427,9 @@ component EntryRow inherits VerticalLayout {
         }
     }
     if e.kind == "assistant" && e.status == "li": HorizontalLayout {
-        padding-top: 2.5px;
-        padding-bottom: 2.5px;
+        padding-top: max(0px, (13px * root.fs * 1.55 - lm.preferred-height) / 2);
+        padding-bottom: self.padding-top;
+        Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: 13px * root.fs; } }
         Text { width: 20px; text: e.title; font-size: 13px * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
         StyledText {
             text: e.md;
@@ -716,15 +726,16 @@ export component ChatPane inherits Rectangle {
                     VerticalLayout {
                         alignment: end;
                         padding-bottom: 3px;
+                        // Send is a .cc-btn: padding 6px 12px, a 1px border, 12px × the text size.
                         Rectangle {
-                            width: 60px; height: 28px;
+                            width: st.preferred-width + 26px; height: 14px + 14px * root.fs;
                             // The glow (0 2px 12px rgba(99,102,241,.35)), in soft layers.
                             Rectangle { x: -6px; y: -4px; width: parent.width + 12px; height: parent.height + 12px; border-radius: 12px; background: #6366f10f; }
                             Rectangle { x: -3px; y: -1px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f11f; }
                             Rectangle {
                             border-radius: 6px;
                             background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
-                            Text { text: "Send"; font-size: 12px; font-weight: 600; color: white; }
+                            st := Text { text: "Send"; font-size: 12px * root.fs; font-weight: 600; color: white; }
                             TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { if root.draft != "" { root.send(root.draft); root.draft = ""; } }
@@ -762,14 +773,14 @@ export component ChatPane inherits Rectangle {
                         alignment: end;
                         padding-bottom: 3px;
                         Rectangle {
-                            width: 60px; height: 28px;
+                            width: st2.preferred-width + 26px; height: 14px + 14px * root.fs;
                             // The glow (0 2px 12px rgba(99,102,241,.35)), in soft layers.
                             Rectangle { x: -6px; y: -4px; width: parent.width + 12px; height: parent.height + 12px; border-radius: 12px; background: #6366f10f; }
                             Rectangle { x: -3px; y: -1px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f11f; }
                             Rectangle {
                             border-radius: 6px;
                             background: @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%);
-                            Text { text: "Send"; font-size: 12px; font-weight: 600; color: white; }
+                            st2 := Text { text: "Send"; font-size: 12px * root.fs; font-weight: 600; color: white; }
                             TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => { if root.draft != "" { root.send(root.draft); root.draft = ""; } }

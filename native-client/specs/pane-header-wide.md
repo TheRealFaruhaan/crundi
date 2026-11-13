@@ -250,11 +250,16 @@ Font notes:
 | result line, meta row, mode button | 7.62 | 11 | 20.31 |
 | composer textarea (lh 1.45) | 9 / 13.05 | 13 / 18.85 | 24 / 34.8 |
 
-  The composer's Send and Stop don't scale (13.33px: a button's default),
-  and the attach and clock buttons keep their box size.
+  The composer's Send scales: it is a `.cc-btn`, `font-size:
+  calc(12px*var(--cc-fs))` (app/vendor/claude-chat.js:132), padding 6px 12px
+  and a 1px border, so its box grows with it (60×28 at 13). The Stop label
+  ("Sure?") is `calc(11px*var(--cc-fs))`. (Corrected after the design review:
+  this line first said they don't scale.) The attach and clock buttons keep
+  their box size.
 
-  Native: one scale factor `px/13` for every chat text size in the pane, and
-  for the mode button's size; nothing else.
+  Native: one scale factor `px/13` for every chat text size in the pane, for
+  the mode button's size and for the line boxes (1.55 × the size); nothing
+  else.
 - Closing a chat deletes its entry (`delete termFont[id]`).
 
 ### Pin (`pane-pin`)

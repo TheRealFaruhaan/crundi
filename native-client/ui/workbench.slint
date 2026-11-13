@@ -180,19 +180,17 @@ export component PaneCard inherits Rectangle {
     callback respond(string, string, bool);
     callback answer(string, string);
     callback draft-changed(string);
-    background: Theme.bg-primary;
-    // Full screen: radius 0 (the focus edge stays).
-    border-radius: p.full ? 0px : 10px;
-    border-width: 1px;
-    border-color: p.focused ? Theme.accent : Theme.border;
-    clip: true;
-    // A click anywhere in the pane focuses it (behind its content).
-    TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-me(); } } }
-    // The focused pane's 1px accent ring (box-shadow 0 0 0 1px), inside the
-    // clip: the edge reads 2px.
-    if p.focused && !p.full: Rectangle { border-radius: 11px; border-width: 1px; border-color: Theme.accent; x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; }
-    VerticalLayout {
-        padding: 1px;
+    // The content sits inside the 1px edge, clipped to radius 9, so the
+    // header's fill keeps the pane's round top corners (the web's overflow:
+    // hidden inside a radius-10 border). Full screen: radius 0.
+    Rectangle {
+        x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+        background: Theme.bg-primary;
+        border-radius: p.full ? 0px : 9px;
+        clip: true;
+        // A click anywhere in the pane focuses it (behind its content).
+        TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-me(); } } }
+        VerticalLayout {
         PaneHead {
             title: p.title;
             title-max: p.title-max;
@@ -242,6 +240,13 @@ export component PaneCard inherits Rectangle {
             vertical-stretch: 1;
             Text { text: p.title + " comes in a later phase of the native client"; font-size: 13px; color: Theme.text-muted; }
         }
+        }
+    }
+    // The 1px edge (accent when focused), above the content.
+    Rectangle {
+        border-radius: p.full ? 0px : 10px;
+        border-width: 1px;
+        border-color: p.focused ? Theme.accent : Theme.border;
     }
 }
 
