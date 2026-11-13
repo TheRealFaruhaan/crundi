@@ -37,7 +37,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      full screen (`pane-full`, Esc leaves), the two-click ×, double-click the
      header to maximise. States: rest, hover of each button, pinned, full
      screen, armed ×, renaming.
-   - [ ] **2.2 Pane header, narrow (< 560px).** Tools folded behind "…"
+   - [x] **2.2 Pane header, narrow (< 560px).** Tools folded behind "…"
      (`term-more`, `.tools-open`): text size, pin, the secrets button with
      its label. (Split right / down, `.head-split`, show only in the web's
      phone layout, so not here; narrow panes split through `.leaf-ctrls`,
