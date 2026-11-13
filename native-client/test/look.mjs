@@ -7,6 +7,8 @@
 // session.json: {password, secret} of the test server (CRUNDI_TEST_SERVER,
 // default http://localhost:8889). Actions after sign-in, each a snapshot:
 //   wait:<ms>  ui:<name>[:arg…]  snap:<name>
+//   mouse:<move|click|dblclick|leave>:<x>:<y>   key:<Escape|Return|text>
+// A ui: argument "@pane" is the first chat pane's leaf id.
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import { totpNow } from '../../src/auth-password.js';
@@ -41,7 +43,12 @@ let n = 1;
 for (const a of actions) {
   const [kind, name, ...args] = a.split(':');
   if (kind === 'wait') await sleep(Number(name));
-  else if (kind === 'ui') console.log(a, JSON.stringify(await send({ cmd: 'ui', name, args })));
+  else if (kind === 'ui') {
+    const leaf = String((await props()).panes.find((x) => x.kind === 'chat')?.id ?? 0);
+    console.log(a, JSON.stringify(await send({ cmd: 'ui', name, args: args.map((x) => (x === '@pane' ? leaf : x)) })));
+  }
+  else if (kind === 'mouse') await send({ cmd: 'mouse', kind: name, x: Number(args[0] || 0), y: Number(args[1] || 0) });
+  else if (kind === 'key') await send({ cmd: 'key', text: [name, ...args].join(':') });
   else if (kind === 'snap') { await sleep(600); await send({ cmd: 'snapshot', path: `${prefix}-${name}.png` }); console.log('snap', name); }
   n++;
 }

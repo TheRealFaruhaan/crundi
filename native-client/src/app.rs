@@ -8,7 +8,7 @@ use crate::{
     chat::{Conversation, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    store, EntryView, GutterView, MainWindow, PaneView, ProjectItem, ToolView,
+    head, store, EntryView, GutterView, MainWindow, PaneView, ProjectItem, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -67,6 +67,24 @@ pub struct App {
     usage: Option<(Value, std::time::Instant)>,
     /// The server signs apps in through the browser ("app-login").
     app_login: bool,
+    /// The server can pre-authorise secrets for a chat ("chat-secret-preauth"),
+    /// and each chat's grants (GET /api/secrets/chat, then "chat-secrets").
+    secrets_cap: bool,
+    grants: HashMap<String, Value>,
+    /// The pane whose × was clicked once ("Sure?"), and which arming it is.
+    armed: u32,
+    arm_gen: u32,
+    /// The pane in full screen, by its key (it survives re-renders).
+    full: Option<String>,
+    /// Each chat's text size in px, and the size new chats start at
+    /// (saved: store::Saved.font, font_default_chat).
+    font: HashMap<String, i32>,
+    font_default: i32,
+    /// Each chat's draft as typed (shared by its views).
+    drafts: HashMap<String, String>,
+    /// The 30 s re-count of timed grants, and the toast's 3.5 s.
+    timers: Vec<slint::Timer>,
+    toast_gen: u32,
 }
 
 thread_local! {
@@ -97,6 +115,17 @@ fn s(v: &Value, k: &str) -> String {
         Some(Value::String(x)) => x.clone(),
         Some(Value::Null) | None => String::new(),
         Some(o) => o.to_string(),
+    }
+}
+
+/// JavaScript's truthiness, for flags the server may send as anything.
+fn truthy(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::String(x) => !x.is_empty(),
+        Value::Number(n) => n.as_f64() != Some(0.0),
+        _ => true,
     }
 }
 
@@ -138,6 +167,16 @@ pub fn init(window: &MainWindow) {
             sessions_dirty: false,
             usage: None,
             app_login: false,
+            secrets_cap: false,
+            grants: HashMap::new(),
+            armed: 0,
+            arm_gen: 0,
+            full: None,
+            font: HashMap::new(),
+            font_default: head::FONT_BASE,
+            drafts: HashMap::new(),
+            timers: vec![],
+            toast_gen: 0,
         })
     });
 
@@ -160,6 +199,16 @@ pub fn init(window: &MainWindow) {
     window.on_stop(|k| stop(k.as_str()));
     window.on_respond(|k, id, b, always| respond(k.as_str(), id.to_string(), b.to_string(), always));
     window.on_answer(|k, id, o| answer(k.as_str(), id.as_str(), o.as_str()));
+    window.on_pane_close(|id| pane_close(id as u32));
+    window.on_pane_full(|id| pane_full(id as u32));
+    window.on_pane_font(|id, d| pane_font(id as u32, d));
+    window.on_pane_pin(|id| pane_pin(id as u32));
+    window.on_pane_secrets(|_id| {
+        // The chat-secrets dialog the lock opens is its own screen (2.12).
+    });
+    window.on_pane_rename(|id, t| pane_rename(id as u32, t.as_str()));
+    window.on_pane_maximize(|id| { with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
+    window.on_draft_changed(|k, t| { with(|a| { a.drafts.insert(k.to_string(), t.to_string()); }); });
 
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
     window.on_cancel_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("login".into()); } });
@@ -383,7 +432,16 @@ fn start_session(si: SignedIn) {
         w.set_username(username.into());
         w.set_signin_checked(false);
     }
+    with(|a| {
+        a.font = saved.font.clone();
+        a.font_default = saved.font_default_chat.unwrap_or(head::FONT_BASE).clamp(head::FONT_MIN, head::FONT_MAX);
+        // Timed grants run out: count them again every 30 s (as the web UI).
+        let t = slint::Timer::default();
+        t.start(slint::TimerMode::Repeated, Duration::from_secs(30), || { if with(|a| !a.grants.is_empty()).unwrap_or(false) { render(); } });
+        a.timers = vec![t];
+    });
     load_all(saved.project);
+    load_secrets(base.clone());
     // The usage bars now, not at the server's next push (as the web UI: latest, then fresh).
     call(|api| api.get("/api/usage/latest").or_else(|_| api.get("/api/usage")), |r| {
         if let Ok(u) = r { with(|a| a.usage = Some((u, std::time::Instant::now()))); show_usage(); }
@@ -405,6 +463,11 @@ pub fn sign_out(why: &str) {
         a.sessions.clear();
         a.chats.clear();
         a.project.clear();
+        a.grants.clear();
+        a.secrets_cap = false;
+        a.full = None;
+        a.armed = 0;
+        a.timers.clear();
         a.mosaic = Mosaic::default();
         a.project_rows.set_vec(vec![]);
         a.pane_rows.set_vec(vec![]);
@@ -443,6 +506,12 @@ fn on_live(e: Event) {
         Event::Chat(m) => on_chat_message(&m),
         Event::Usage(u) => { with(|a| a.usage = Some((u, std::time::Instant::now()))); show_usage(); }
         Event::Inbox(v) => { if let Some(n) = v.get("unread").and_then(|n| n.as_i64()) { if let Some(w) = ui() { w.set_inbox_unread(n as i32); } } }
+        Event::ChatSecrets(v) => {
+            let sid = s(&v, "sessionId");
+            if sid.is_empty() { return; }
+            with(|a| { a.grants.insert(sid, v.get("grants").cloned().unwrap_or(Value::Null)); });
+            render();
+        }
     }
 }
 
@@ -474,7 +543,7 @@ pub fn show_usage() {
 }
 
 /// Seconds since 1970 from an ISO date ("2026-11-19T01:59:59.000Z" or with an offset).
-fn parse_iso(s: &str) -> Option<f64> {
+pub(crate) fn parse_iso(s: &str) -> Option<f64> {
     let (date, rest) = s.split_once('T')?;
     let mut d = date.split('-').map(|x| x.parse::<i64>());
     let (y, mo, da) = (d.next()?.ok()?, d.next()?.ok()?, d.next()?.ok()?);
@@ -605,15 +674,23 @@ fn sync_panes() {
         for id in &live { a.mosaic.place(&chat_key(id)); }
         // Chats in panes: a conversation each, subscribed once.
         let mut new = vec![];
+        let mut font_new: Vec<String> = vec![];
         for k in a.mosaic.keys() {
             if let Some(id) = chat_of(&k) {
                 if !a.chats.contains_key(id) {
+                    // A chat with no size yet starts at the default and keeps it.
+                    if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
                     a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new() });
                     new.push(id.to_string());
                 }
             }
         }
         a.chats.retain(|id, _| live.contains(id));
+        if a.full.as_deref().and_then(chat_of).is_some_and(|id| !live.iter().any(|l| l == id)) { a.full = None; }
+        if !font_new.is_empty() {
+            let (font, def) = (a.font.clone(), a.font_default);
+            store::update(|s| { for id in &font_new { s.font.insert(id.clone(), *font.get(id).unwrap_or(&def)); } });
+        }
         new
     }).unwrap_or_default();
     with(|a| if let Some(l) = &a.live { for id in &subscribe { l.subscribe(id); } });
@@ -627,7 +704,11 @@ fn save_layout() {
     if let Some(m) = m { store::update(|s| { s.layouts.insert(project, m); }); }
 }
 
+/// The layout changed: saved, and drawn again. As the web UI's full
+/// re-render, it disarms an armed ×, so a click after it never closes
+/// without the warning.
 fn layout_changed() {
+    with(|a| a.armed = 0);
     save_layout();
     render();
 }
@@ -645,7 +726,9 @@ fn mode_label(m: &str) -> &'static str {
 
 /// Lay the panes out and put them on screen (only rows that changed are rewritten).
 fn render() {
-    let content_w = with(|a| {
+    let win = ui().map(|w| { let sz = w.window().size(); let k = w.window().scale_factor(); (sz.width as f32 / k, sz.height as f32 / k) }).unwrap_or((1400.0, 860.0));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+    let out = with(|a| {
         let (w, h) = a.area;
         let cw = a.mosaic.content_width(w);
         let (leaves, gutters) = a.mosaic.layout(cw, h);
@@ -660,12 +743,28 @@ fn render() {
                 kind: "empty".into(),
                 x: l.x, y: l.y, w: l.w, h: l.h,
                 focused: l.id == a.focused,
+                pinned: l.pinned,
+                armed: l.id == a.armed,
+                title_max: 160.0,
+                fs: 1.0,
                 ..Default::default()
             };
             if let Some(id) = chat_of(&key) {
                 let item = a.sessions.iter().find(|c| s(c, "id") == id);
                 p.kind = "chat".into();
-                p.title = item.map(|c| { let t = s(c, "longTitle"); if t.is_empty() { s(c, "title") } else { t } }).filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into()).into();
+                let short = item.map(|c| s(c, "title")).filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into());
+                let long = item.map(|c| s(c, "longTitle")).unwrap_or_default();
+                let (shown, cap) = head::title_shown(&short, &long, l.w - 2.0);
+                p.title = shown.into();
+                p.title_max = cap;
+                p.short_title = short.into();
+                // The lock: the server can, and the chat is the owner's own.
+                p.secrets = a.secrets_cap && !item.and_then(|c| c.get("collaborator")).is_some_and(truthy);
+                let n = head::grant_count(a.grants.get(id), now);
+                p.secrets_n = n as i32;
+                p.secrets_tip = head::secrets_tip(n).into();
+                p.fs = head::font_scale(*a.font.get(id).unwrap_or(&a.font_default));
+                p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
                 if let Some(cs) = a.chats.get(id) {
                     p.entries = cs.model.clone().into();
                     p.state = { let st = if cs.conv.state.is_empty() { item.map(agent_state).unwrap_or_default() } else { cs.conv.state.clone() }; if st.is_empty() { "idle".into() } else { st.into() } };
@@ -685,6 +784,21 @@ fn render() {
             }
             p
         }).collect();
+        // The pane in full screen: the whole window.
+        let full = a.full.as_ref().and_then(|k| panes.iter().find(|p| p.key.as_str() == k)).map(|p| {
+            let mut f = p.clone();
+            f.full = true;
+            f.x = 0.0; f.y = 0.0; f.w = win.0; f.h = win.1;
+            f.focused = true;
+            let (shown, cap) = match chat_of(&p.key).and_then(|id| a.sessions.iter().find(|c| s(c, "id") == id)) {
+                Some(c) => head::title_shown(&s(c, "title"), &s(c, "longTitle"), win.0 - 2.0),
+                None => (p.title.to_string(), 160.0),
+            };
+            f.title = shown.into();
+            f.title_max = cap;
+            f
+        });
+        let panes: Vec<PaneView> = panes.into_iter().map(|mut p| { p.full = false; if full.as_ref().is_some_and(|f| f.key == p.key) { p.armed = false; } p }).collect();
         if panes.len() == a.pane_rows.row_count() {
             for (i, p) in panes.into_iter().enumerate() {
                 if a.pane_rows.row_data(i).as_ref() != Some(&p) { a.pane_rows.set_row_data(i, p); }
@@ -694,32 +808,150 @@ fn render() {
         }
         let gs: Vec<GutterView> = gutters.iter().map(|g| GutterView {
             split: g.split as i32, index: g.index as i32, row: g.dir == Dir::Row,
-            x: g.x, y: g.y, w: g.w, h: g.h, span: g.span,
+            x: g.x, y: g.y, w: g.w, h: g.h, span: g.span, locked: g.locked,
         }).collect();
         let same = gs.len() == a.gutter_rows.row_count() && gs.iter().enumerate().all(|(i, g)| a.gutter_rows.row_data(i).as_ref() == Some(g));
         if !same { a.gutter_rows.set_vec(gs); }
-        cw
+        (cw, full)
     });
-    if let (Some(w), Some(cw)) = (ui(), content_w) { w.set_content_width(cw); }
+    if let (Some(w), Some((cw, full))) = (ui(), out) {
+        w.set_content_width(cw);
+        w.set_full_on(full.is_some());
+        if let Some(f) = full { if w.get_full_pane() != f { w.set_full_pane(f); } }
+    }
 }
 
-fn close_pane(leaf: u32) {
-    let key = with(|a| {
-        let (leaves, _) = a.mosaic.layout(1000.0, 1000.0);
-        leaves.iter().find(|l| l.id == leaf).and_then(|l| l.key.clone())
-    }).flatten();
-    with(|a| a.mosaic.close(leaf));
-    layout_changed();
-    // Closing a chat's pane closes the chat, as in the web UI.
-    if let Some(id) = key.as_deref().and_then(chat_of).map(str::to_string) {
-        call(move |api| api.post(&format!("/api/ui-sessions/{id}/close"), &json!({})), |_| load_sessions());
+/// The capability for the secrets lock, then every chat's grants.
+fn load_secrets(base: String) {
+    bg(move || api::handshake(&base).ok().and_then(|h| h.pointer("/server/capabilities").cloned()), |caps| {
+        let on = caps.and_then(|c| c.as_array().map(|c| c.iter().any(|x| x == "chat-secret-preauth"))).unwrap_or(false);
+        with(|a| a.secrets_cap = on);
+        render();
+        if !on { return; }
+        call(|api| api.get("/api/secrets/chat"), |r| {
+            let Ok(v) = r else { return };
+            if let Some(chats) = v.get("chats").and_then(|c| c.as_object()) {
+                with(|a| { for (sid, g) in chats { a.grants.insert(sid.clone(), g.clone()); } });
+            }
+            render();
+        });
+    });
+}
+
+/// A pane's key and its laid-out rectangle, by leaf.
+fn leaf_rect(leaf: u32) -> Option<crate::mosaic::LeafRect> {
+    with(|a| {
+        let cw = a.mosaic.content_width(a.area.0);
+        a.mosaic.layout(cw, a.area.1).0.into_iter().find(|l| l.id == leaf)
+    }).flatten()
+}
+
+/// The header's ×: the first click arms it ("Sure?", 3 s; one pane at a
+/// time), the second closes.
+pub fn pane_close(leaf: u32) {
+    let armed = with(|a| a.armed == leaf).unwrap_or(false);
+    if armed {
+        with(|a| a.armed = 0);
+        render();
+        return close_pane(leaf);
     }
+    let gen = with(|a| { a.armed = leaf; a.arm_gen += 1; a.arm_gen }).unwrap_or(0);
+    render();
+    slint::Timer::single_shot(Duration::from_millis(3000), move || {
+        let again = with(|a| if a.armed == leaf && a.arm_gen == gen { a.armed = 0; true } else { false }).unwrap_or(false);
+        if again { render(); }
+    });
+}
+
+/// Full screen on or off for this pane (one at a time).
+pub fn pane_full(leaf: u32) {
+    let Some(key) = leaf_rect(leaf).and_then(|l| l.key) else { return };
+    with(|a| { a.full = if a.full.as_deref() == Some(key.as_str()) { None } else { Some(key) }; a.armed = 0; });
+    render();
+}
+
+/// A- / A+ (`d` = -1 / +1), or reset (`d` = 0, back to 13). Every change is
+/// also the size new chats start at.
+pub fn pane_font(leaf: u32, d: i32) {
+    let Some(id) = leaf_rect(leaf).and_then(|l| l.key).and_then(|k| chat_of(&k).map(str::to_string)) else { return };
+    let px = with(|a| {
+        let now = *a.font.get(&id).unwrap_or(&a.font_default);
+        let px = if d == 0 { head::FONT_BASE } else { head::font_step(now, d) };
+        a.font.insert(id.clone(), px);
+        a.font_default = px;
+        px
+    }).unwrap_or(head::FONT_BASE);
+    store::update(|s| { s.font.insert(id.clone(), px); s.font_default_chat = Some(px); });
+    render();
+}
+
+/// Pin this pane at its size now, or unpin it.
+pub fn pane_pin(leaf: u32) {
+    let Some(l) = leaf_rect(leaf) else { return };
+    with(|a| a.mosaic.toggle_pin(leaf, l.w, l.h));
+    layout_changed();
+}
+
+/// Rename a chat: the title changes at once (its long form goes), then the
+/// server is told; an unchanged title sends nothing.
+pub fn pane_rename(leaf: u32, input: &str) {
+    let Some(id) = leaf_rect(leaf).and_then(|l| l.key).and_then(|k| chat_of(&k).map(str::to_string)) else { return };
+    let current = with(|a| a.sessions.iter().find(|c| s(c, "id") == id).map(|c| s(c, "title"))).flatten().unwrap_or_default();
+    let Some(title) = head::rename_value(input, &current) else { return };
+    with(|a| if let Some(c) = a.sessions.iter_mut().find(|c| s(c, "id") == id) { c["title"] = json!(title); c["longTitle"] = json!(""); });
+    render();
+    call(move |api| api.post(&format!("/api/ui-sessions/{id}/rename"), &json!({ "title": title })), |_| {});
+}
+
+/// A toast, as the web UI's: 3.5 s.
+pub fn toast(text: &str, error: bool) {
+    let Some(w) = ui() else { return };
+    w.set_toast(text.into());
+    w.set_toast_error(error);
+    let gen = with(|a| { a.toast_gen += 1; a.toast_gen }).unwrap_or(0);
+    slint::Timer::single_shot(Duration::from_millis(3500), move || {
+        if with(|a| a.toast_gen == gen).unwrap_or(false) { if let Some(w) = ui() { w.set_toast("".into()); } }
+    });
+}
+
+/// Close a pane. A chat's pane closes the chat, as in the web UI: the
+/// server first; when it refuses (409: a factory Manager's chat while its run
+/// goes) the pane stays and a toast says why.
+fn close_pane(leaf: u32) {
+    let key = leaf_rect(leaf).and_then(|l| l.key);
+    let Some(id) = key.as_deref().and_then(chat_of).map(str::to_string) else {
+        with(|a| a.mosaic.close(leaf));
+        return layout_changed();
+    };
+    let Some(api) = api() else { return };
+    // As the web UI: any answer but 409 means it closed.
+    bg(move || match api.post(&format!("/api/ui-sessions/{id}/close"), &json!({})) {
+        Ok(_) => Ok(id),
+        Err(ApiError::Status(c, _)) if c != 409 => Ok(id),
+        Err(e) => Err(e),
+    }, move |r| match r {
+        Ok(id) => {
+            with(|a| {
+                if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) { a.mosaic.close(l); }
+                a.font.remove(&id);
+                a.drafts.remove(&chat_key(&id));
+                if a.full.as_deref() == Some(chat_key(&id).as_str()) { a.full = None; }
+                a.sessions.retain(|c| s(c, "id") != id);
+            });
+            store::update(|s| { s.font.remove(&id); });
+            layout_changed();
+            load_sessions();
+        }
+        Err(ApiError::SignedOut) => sign_out("Your sign-in ended. Sign in again."),
+        Err(ApiError::Status(409, m)) => toast(&head::close_refused(&m), true),
+        Err(e) => toast(&format!("Failed to close terminal: {e}"), true),
+    });
 }
 
 fn add_pane(kind: &str) {
     with(|a| {
         if let Some(preset) = kind.strip_prefix("layout:") {
-            a.mosaic = Mosaic::preset(preset, a.mosaic.keys());
+            a.mosaic = a.mosaic.preset_from(preset);
             return;
         }
         if kind == "fit" {

@@ -6,7 +6,7 @@ import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
-import { Workbench, AddMenu, PaneView, GutterView } from "workbench.slint";
+import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
 import { EntryView, ToolView } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
 
@@ -107,6 +107,21 @@ export component MainWindow inherits Window {
     callback stop(string);
     callback respond(string, string, string, bool);
     callback answer(string, string, string);
+    // The pane header (specs/pane-header-wide.md).
+    callback pane-close(int);
+    callback pane-full(int);
+    callback pane-font(int, int);
+    callback pane-pin(int);
+    callback pane-secrets(int);
+    callback pane-rename(int, string);
+    callback pane-maximize(int);
+    callback draft-changed(string, string);
+    // The pane in full screen, if one is (it covers the window; Esc leaves).
+    in property <bool> full-on;
+    in property <PaneView> full-pane;
+    // A toast: the web UI's, top right under the top bar (3.5 s).
+    in property <string> toast;
+    in property <bool> toast-error;
 
     // ─── The browser drawer ───
     in property <[PanelData]> panels;
@@ -214,6 +229,14 @@ export component MainWindow inherits Window {
                         stop(k) => { root.stop(k); }
                         respond(k, id, b, a) => { root.respond(k, id, b, a); }
                         answer(k, id, o) => { root.answer(k, id, o); }
+                        pane-close(id) => { root.pane-close(id); }
+                        pane-full(id) => { root.pane-full(id); }
+                        pane-font(id, d) => { root.pane-font(id, d); }
+                        pane-pin(id) => { root.pane-pin(id); }
+                        pane-secrets(id) => { root.pane-secrets(id); }
+                        pane-rename(id, t) => { root.pane-rename(id, t); }
+                        pane-maximize(id) => { root.pane-maximize(id); }
+                        draft-changed(k, t) => { root.draft-changed(k, t); }
                     }
                     if root.current-tab != "workbench": VerticalLayout {
                         alignment: center;
@@ -250,6 +273,57 @@ export component MainWindow inherits Window {
                 close-all => { root.drawer-open = false; }
                 drag-width(d) => { root.drawer-width = max(320px, min(root.width - Theme.sidebar-width - 420px, root.drawer-width + d)); }
             }
+        }
+    }
+
+    // Full screen: the pane covers the whole window (position: fixed; inset: 0;
+    // radius 0), with no drag handle and no ×. Esc leaves (the web leaves with
+    // the browser's full screen; Electron has no Esc: the spec asks for it).
+    if root.signed-in && root.full-on: FocusScope {
+        x: 0; y: 0; width: root.width; height: root.height;
+        init => { self.focus(); }
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.pane-full(root.full-pane.id); return accept; }
+            return reject;
+        }
+        PaneCard {
+            p: root.full-pane;
+            close => { root.pane-close(root.full-pane.id); }
+            full-screen => { root.pane-full(root.full-pane.id); }
+            font(d) => { root.pane-font(root.full-pane.id, d); }
+            font-reset => { root.pane-font(root.full-pane.id, 0); }
+            pin => { root.pane-pin(root.full-pane.id); }
+            open-secrets => { root.pane-secrets(root.full-pane.id); }
+            rename(t) => { root.pane-rename(root.full-pane.id, t); }
+            send(t) => { root.send(root.full-pane.key, t); }
+            stop => { root.stop(root.full-pane.key); }
+            respond(id, b, a) => { root.respond(root.full-pane.key, id, b, a); }
+            answer(id, o) => { root.answer(root.full-pane.key, id, o); }
+            draft-changed(t) => { root.draft-changed(root.full-pane.key, t); }
+        }
+    }
+
+    // The toast: top: topbar + 10px; right 16px; at most 420px; bg-secondary,
+    // a 1px border with a 3px accent (red: an error) left edge, radius 6,
+    // padding 12px 20px, 13.6px text, shadow-md (0 6px 20px rgba(0,0,0,.5)).
+    if root.toast != "": Rectangle {
+        property <length> w: min(420px, tm.preferred-width + 40px + 3px);
+        x: root.width - 16px - self.w;
+        y: Theme.topbar-height + 10px;
+        width: self.w;
+        height: tt.preferred-height + 24px + 2px;
+        background: Theme.bg-secondary;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: root.toast-error ? Theme.red : Theme.border;
+        drop-shadow-blur: 20px;
+        drop-shadow-offset-y: 6px;
+        drop-shadow-color: #00000080;
+        Rectangle { x: 0; width: 3px; border-top-left-radius: Theme.radius-sm; border-bottom-left-radius: Theme.radius-sm; background: root.toast-error ? Theme.red : Theme.accent; }
+        tm := Text { visible: false; text: root.toast; font-size: 13.6px; }
+        tt := Text {
+            x: 23px; y: 13px; width: parent.width - 43px;
+            text: root.toast; font-size: 13.6px; color: Theme.text-primary; wrap: word-wrap;
         }
     }
 

@@ -26,6 +26,19 @@ export struct PaneView {
     model: string,
     cost: string,
     error: string,
+    // The header (specs/pane-header-wide.md): the short title a rename starts
+    // from, the shown title's cap, the secrets lock, pin, full screen, the
+    // armed ×; the chat's text size (px / 13) and its draft.
+    short-title: string,
+    title-max: length,
+    secrets: bool,
+    secrets-n: int,
+    secrets-tip: string,
+    pinned: bool,
+    full: bool,
+    armed: bool,
+    fs: float,
+    draft: string,
 }
 
 export struct GutterView {
@@ -37,6 +50,8 @@ export struct GutterView {
     w: length,
     h: length,
     span: length,
+    // Next to a pinned pane: can't be dragged.
+    locked: bool,
 }
 
 /// A new pane: Empty Shell, or Claude in UI Mode (a chat) or Terminal.
@@ -145,6 +160,91 @@ component EmptyLeaf inherits Rectangle {
     }
 }
 
+/// A pane with something in it: the 1px edge (accent and a ring when
+/// focused), its header, and the chat, launcher or panel. The grid draws one
+/// per leaf; the full-screen overlay (main.slint) draws the full one.
+export component PaneCard inherits Rectangle {
+    in property <PaneView> p;
+    callback focus-me();
+    callback close();
+    callback full-screen();
+    callback font(int);
+    callback font-reset();
+    callback pin();
+    callback open-secrets();
+    callback rename(string);
+    callback maximize();
+    callback launch-chat(bool);
+    callback send(string);
+    callback stop();
+    callback respond(string, string, bool);
+    callback answer(string, string);
+    callback draft-changed(string);
+    background: Theme.bg-primary;
+    // Full screen: radius 0 (the focus edge stays).
+    border-radius: p.full ? 0px : 10px;
+    border-width: 1px;
+    border-color: p.focused ? Theme.accent : Theme.border;
+    clip: true;
+    // A click anywhere in the pane focuses it (behind its content).
+    TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-me(); } } }
+    // The focused pane's 1px accent ring (box-shadow 0 0 0 1px), inside the
+    // clip: the edge reads 2px.
+    if p.focused && !p.full: Rectangle { border-radius: 11px; border-width: 1px; border-color: Theme.accent; x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; }
+    VerticalLayout {
+        padding: 1px;
+        PaneHead {
+            title: p.title;
+            title-max: p.title-max;
+            short-title: p.short-title;
+            state: p.state;
+            chat: p.kind == "chat";
+            narrow: p.w < 560px && !p.full;
+            kind-tag: p.kind == "chat" ? "CHAT" : "";
+            secrets: p.secrets;
+            secrets-n: p.secrets-n;
+            secrets-tip: p.secrets-tip;
+            pinned: p.pinned;
+            full: p.full;
+            armed: p.armed;
+            close => { root.close(); }
+            full-screen => { root.full-screen(); }
+            font(d) => { root.font(d); }
+            font-reset => { root.font-reset(); }
+            pin => { root.pin(); }
+            open-secrets => { root.open-secrets(); }
+            rename(t) => { root.rename(t); }
+            maximize => { root.maximize(); }
+        }
+        if p.kind == "chat": ChatPane {
+            vertical-stretch: 1;
+            entries: p.entries;
+            state: p.state;
+            mode: p.mode;
+            session: p.session;
+            model: p.model;
+            cost: p.cost;
+            error: p.error;
+            fs: p.fs;
+            saved-draft: p.draft;
+            narrow: p.w < 480px && !p.full;
+            send(t) => { root.send(t); }
+            stop => { root.stop(); }
+            respond(id, b, a) => { root.respond(id, b, a); }
+            answer(id, o) => { root.answer(id, o); }
+            draft-changed(t) => { root.draft-changed(t); }
+        }
+        if p.kind == "launcher": Launcher {
+            vertical-stretch: 1;
+            ui-mode(skip) => { root.launch-chat(skip); }
+        }
+        if p.kind == "panel": Rectangle {
+            vertical-stretch: 1;
+            Text { text: p.title + " comes in a later phase of the native client"; font-size: 13px; color: Theme.text-muted; }
+        }
+    }
+}
+
 export component Workbench inherits Rectangle {
     in property <[PaneView]> panes;
     in property <[GutterView]> gutters;
@@ -161,6 +261,17 @@ export component Workbench inherits Rectangle {
     callback stop(string);
     callback respond(string, string, string, bool);
     callback answer(string, string, string);
+    // The header: full screen, text size (0: reset), pin, the secrets lock,
+    // rename, double-click to maximise; and a chat's draft as it is typed.
+    // The header's × (two clicks: src/app.rs arms it, then closes).
+    callback pane-close(int);
+    callback pane-full(int);
+    callback pane-font(int, int);
+    callback pane-pin(int);
+    callback pane-secrets(int);
+    callback pane-rename(int, string);
+    callback pane-maximize(int);
+    callback draft-changed(string, string);
 
     background: Theme.bg-primary;
     changed width => { root.area(self.width, self.height); }
@@ -185,50 +296,23 @@ export component Workbench inherits Rectangle {
                 split-down => { root.split(p.id, true); }
                 close => { root.close-pane(p.id); }
             }
-            if p.kind != "empty": Rectangle {
-                background: Theme.bg-primary;
-                border-radius: 10px;
-                border-width: 1px;
-                border-color: p.focused ? Theme.accent : Theme.border;
-                clip: true;
-                // A click anywhere in the pane focuses it (behind its content).
-                TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-pane(p.id); } } }
-                // The focused pane's 1px accent ring.
-                if p.focused: Rectangle { border-radius: 11px; border-width: 1px; border-color: Theme.accent; x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; }
-                VerticalLayout {
-                    padding: 1px;
-                    PaneHead {
-                        title: p.title;
-                        state: p.state;
-                        chat: p.kind == "chat";
-                        narrow: p.w < 560px;
-                        kind-tag: p.kind == "chat" ? "CHAT" : "";
-                        close => { root.close-pane(p.id); }
-                    }
-                    if p.kind == "chat": ChatPane {
-                        vertical-stretch: 1;
-                        entries: p.entries;
-                        state: p.state;
-                        mode: p.mode;
-                        session: p.session;
-                        model: p.model;
-                        cost: p.cost;
-                        error: p.error;
-                        narrow: p.w < 480px;
-                        send(t) => { root.send(p.key, t); }
-                        stop => { root.stop(p.key); }
-                        respond(id, b, a) => { root.respond(p.key, id, b, a); }
-                        answer(id, o) => { root.answer(p.key, id, o); }
-                    }
-                    if p.kind == "launcher": Launcher {
-                        vertical-stretch: 1;
-                        ui-mode(skip) => { root.launch-chat(p.id, skip); }
-                    }
-                    if p.kind == "panel": Rectangle {
-                        vertical-stretch: 1;
-                        Text { text: p.title + " comes in a later phase of the native client"; font-size: 13px; color: Theme.text-muted; }
-                    }
-                }
+            if p.kind != "empty": PaneCard {
+                p: p;
+                focus-me => { root.focus-pane(p.id); }
+                close => { root.pane-close(p.id); }
+                full-screen => { root.pane-full(p.id); }
+                font(d) => { root.pane-font(p.id, d); }
+                font-reset => { root.pane-font(p.id, 0); }
+                pin => { root.pane-pin(p.id); }
+                open-secrets => { root.pane-secrets(p.id); }
+                rename(t) => { root.pane-rename(p.id, t); }
+                maximize => { root.pane-maximize(p.id); }
+                launch-chat(skip) => { root.launch-chat(p.id, skip); }
+                send(t) => { root.send(p.key, t); }
+                stop => { root.stop(p.key); }
+                respond(id, b, a) => { root.respond(p.key, id, b, a); }
+                answer(id, o) => { root.answer(p.key, id, o); }
+                draft-changed(t) => { root.draft-changed(p.key, t); }
             }
         }
         // The gutters: a 7px grab strip with a 1px line, accent while used.
@@ -237,12 +321,12 @@ export component Workbench inherits Rectangle {
             Rectangle {
                 x: g.row ? 3px : 0px; y: g.row ? 0px : 3px;
                 width: g.row ? 1px : parent.width; height: g.row ? parent.height : 1px;
-                background: gt.has-hover || gt.pressed ? Theme.accent : Theme.border;
+                background: (gt.has-hover || gt.pressed) && !g.locked ? Theme.accent : Theme.border;
             }
             gt := TouchArea {
-                mouse-cursor: g.row ? MouseCursor.col-resize : MouseCursor.row-resize;
+                mouse-cursor: g.locked ? MouseCursor.not-allowed : g.row ? MouseCursor.col-resize : MouseCursor.row-resize;
                 moved => {
-                    if self.pressed {
+                    if self.pressed && !g.locked {
                         root.gutter-drag(g.split, g.index, g.row ? self.mouse-x - self.pressed-x : self.mouse-y - self.pressed-y, g.span);
                     }
                 }

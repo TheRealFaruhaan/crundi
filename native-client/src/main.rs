@@ -21,6 +21,7 @@ mod api;
 mod app;
 mod browser;
 mod chat;
+mod head;
 mod live;
 mod mosaic;
 mod store;

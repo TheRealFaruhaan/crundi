@@ -27,6 +27,13 @@ pub struct Saved {
     /// it in localStorage.crundi_wb_mosaic.
     #[serde(default)]
     pub layouts: std::collections::HashMap<String, serde_json::Value>,
+    /// Each chat's text size in px (the header's A- / A+), as the web UI's
+    /// localStorage.crundi_term_font; and the size new chats start at
+    /// (crundi_font_default.chat): every change becomes the new default.
+    #[serde(default)]
+    pub font: std::collections::HashMap<String, i32>,
+    #[serde(default)]
+    pub font_default_chat: Option<i32>,
 }
 
 pub fn config_dir() -> PathBuf {

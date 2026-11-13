@@ -43,32 +43,86 @@ export global PaneState {
     }
 }
 
-/// A small header button: 1px border, bg-primary, radius 6, 11px.
+/// A tooltip's box. The web's are the system's own (the title attribute);
+/// Slint draws its own, so this is the closest (PLAN.md, Known gaps).
+export component TipBox inherits Rectangle {
+    in property <string> text;
+    background: Theme.bg-tertiary;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Theme.border;
+    width: tt.preferred-width + 16px;
+    height: tt.preferred-height + 8px;
+    tt := Text { text: root.text; font-size: 12px; color: Theme.text-primary; }
+}
+
+/// A pane header button (.term-font-btn and its kin): 1px border, bg-primary,
+/// radius 6, text-secondary; hover: text-primary on an accent border.
+/// Its box is given (the spec's measured sizes); the icon or label is centred.
 component HeadBtn inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     in property <bool> has-icon;
-    in property <bool> armed;
+    in property <length> icon-size: 11px;
+    in property <length> label-size: 11px;
+    in property <string> tip;
+    // rest | on (yellow: secrets granted) | pinned (accent fill) | lit (accent: full screen)
+    // | armed (red: "Sure?") | close (the ×: red on hover)
+    in property <string> look: "rest";
+    // A count after the icon (the secrets lock), 4px after it.
+    in property <string> count;
     callback clicked();
-    height: root.label == "×" ? 18px : 19px;
-    width: root.has-icon ? 25px : root.label == "×" ? 27.7px : lbl.preferred-width + 14px;
+    property <bool> hover: ta.has-hover;
+    property <color> ink: root.look == "on" ? Theme.yellow
+        : root.look == "armed" ? Theme.red
+        : root.look == "pinned" || root.look == "lit" ? Theme.accent-hover
+        : root.look == "close" && root.hover ? Theme.red
+        : root.hover ? Theme.text-primary : Theme.text-secondary;
     border-radius: 6px;
     border-width: 1px;
-    border-color: root.armed ? Theme.red : Theme.border;
-    background: root.armed ? Theme.red-dim : ta.has-hover ? Theme.bg-hover : Theme.bg-primary;
-    if root.has-icon: Icon { source: root.icon; width: 12px; height: 12px; tint: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
-    lbl := Text { visible: !root.has-icon; text: root.label; font-size: root.label == "×" ? 14px : 11px; color: root.armed ? Theme.red : ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    border-color: root.look == "on" ? Theme.yellow
+        : root.look == "armed" ? Theme.red
+        : root.look == "pinned" || root.look == "lit" ? Theme.accent
+        : root.look == "close" && root.hover ? Theme.red
+        : root.hover ? Theme.accent : Theme.border;
+    background: root.look == "armed" ? Theme.red-dim : root.look == "pinned" ? Theme.accent-dim : Theme.bg-primary;
+    accessible-role: button;
+    accessible-label: root.tip;
+    if root.has-icon && root.count == "": Image {
+        source: root.icon;
+        width: root.icon-size; height: root.icon-size;
+        colorize: root.ink;
+    }
+    // The lock with its count: icon at 7px, a 4px gap, the number.
+    if root.has-icon && root.count != "": Image {
+        x: 7px;
+        source: root.icon;
+        width: root.icon-size; height: root.icon-size;
+        colorize: root.ink;
+    }
+    if root.has-icon && root.count != "": Text {
+        x: 7px + root.icon-size + 4px;
+        text: root.count; font-size: 11px; color: root.ink;
+        vertical-alignment: center; height: parent.height;
+    }
+    if !root.has-icon: Text { text: root.label; font-size: root.label-size; color: root.ink; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: root.tip; } }
+    }
 }
 
 /// A chat-card button: border, bg-tertiary, 6px 12px, radius 6, 12px.
 /// Primary: the accent gradient (the web UI's global button.primary).
 component CardBtn inherits Rectangle {
     in property <string> text;
+    // The pane's text size (the web's --cc-fs).
+    in property <float> fs: 1;
     in property <bool> primary;
     in property <bool> danger;
     callback clicked();
-    height: 28px;
+    height: 28px + (root.fs - 1) * 18px;
     width: t.preferred-width + 24px;
     border-radius: 6px;
     border-width: root.primary ? 0px : 1px;
@@ -76,96 +130,210 @@ component CardBtn inherits Rectangle {
     background: root.primary ? @linear-gradient(135deg, Theme.accent 0%, Theme.accent-hover 100%)
         : root.danger && ta.has-hover ? Theme.red-dim
         : ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
-    t := Text { text: root.text; font-size: 12px; font-weight: 600; color: root.primary ? white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
+    t := Text { text: root.text; font-size: 12px * root.fs; font-weight: 600; color: root.primary ? white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-/// The pane header (.term-head): 28px, bg-secondary, a line under it.
+/// The pane header (.term-head): 28px (27 and a 1px line), bg-secondary;
+/// padding 3/4/3/2, items 4px apart. specs/pane-header-wide.md has every
+/// measurement used here (y: from the header's top).
 export component PaneHead inherits Rectangle {
+    // The title shown (the long form on a wide header), its cap, and the
+    // short title a rename starts from.
     in property <string> title;
+    in property <length> title-max: 160px;
+    in property <string> short-title;
     in property <string> state;
     in property <string> kind-tag;
     in property <bool> chat;
-    // Under 560px the tools fold into "…" (as the web UI's header does).
+    // Under 560px the tools fold into "…" (as the web UI's header does: 2.2).
     in property <bool> narrow;
+    // The secrets lock: shown when the server can (chat-secret-preauth); the
+    // number of grants, and its tooltip.
+    in property <bool> secrets;
+    in property <int> secrets-n;
+    in property <string> secrets-tip;
+    in property <bool> pinned;
+    in property <bool> full;
+    // The × was clicked once: "Sure?" (src/app.rs disarms it after 3 s).
+    in property <bool> armed;
     callback close();
-    callback full();
+    callback full-screen();
     callback font(int);
-    property <bool> close-armed;
+    callback font-reset();
+    callback pin();
+    callback open-secrets();
+    callback rename(string);
+    callback maximize();
+    property <bool> renaming;
     height: 28px;
     background: Theme.bg-secondary;
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    // Double-click the header (its background, handle, dot, tag: not the
+    // buttons) to maximise the pane in its split.
+    TouchArea { double-clicked => { root.maximize(); } }
     HorizontalLayout {
-        padding-top: 3px;
-        padding-bottom: 3px;
+        x: 0; y: 0;
+        width: parent.width;
+        height: 27px;
         padding-left: 2px;
         padding-right: 4px;
         spacing: 4px;
-        // The drag handle: two columns of dots.
-        Rectangle {
-            width: 12px;
-            for d in 6: Rectangle {
-                x: 3px + mod(d, 2) * 4px;
-                y: (parent.height - 10px) / 2 + floor(d / 2) * 4px;
-                width: 2px; height: 2px; border-radius: 1px;
-                background: Theme.text-muted;
+        // The drag handle "⋮⋮": 12px, -2px tracking, padding 0 3px; 26×12 at y 7.5.
+        // Hidden in full screen.
+        if !root.full: Rectangle {
+            y: 7.5px; width: 26px; height: 12px;
+            Text { x: 3px; text: "⋮⋮"; font-size: 12px; letter-spacing: -2px; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
+            TouchArea {
+                mouse-cursor: grab;
+                double-clicked => { root.maximize(); }
+                Tooltip { TipBox { text: "Drag to reorder"; } }
             }
-            TouchArea { mouse-cursor: move; }
         }
+        // The state dot: 7px at y 10 (its colours: 2.4).
         if root.chat: Rectangle {
-            width: 11px;
-            Rectangle { width: 7px; height: 7px; border-radius: 3.5px; background: PaneState.color(root.state); }
+            y: 10px; width: 7px; height: 7px; border-radius: 3.5px;
+            background: PaneState.color(root.state);
         }
-        // The title's 6px left padding (4px of it is the row's gap).
-        Rectangle { width: 2px; }
-        Text {
-            text: root.title;
-            font-size: 12px;
-            font-weight: 600;
-            color: Theme.text-primary;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
+        // The title: 12px/600, padding 2px 6px, radius 6; 18px at y 4.5.
+        // Never wider than its cap (160px, or the long form's).
+        if !root.renaming: Rectangle {
+            y: 4.5px; height: 18px;
+            width: min(tt.preferred-width + 12px, root.title-max);
+            border-radius: 6px;
+            background: th.has-hover ? Theme.bg-tertiary : transparent;
+            tt := Text {
+                x: 6px; width: parent.width - 12px;
+                text: root.title; font-size: 12px; font-weight: 600; color: Theme.text-primary;
+                vertical-alignment: center; height: parent.height;
+                overflow: elide; wrap: no-wrap;
+            }
+            th := TouchArea {
+                mouse-cursor: text;
+                clicked => { root.renaming = true; }
+                double-clicked => { root.maximize(); }
+                Tooltip { TipBox { text: "Click to rename"; } }
+            }
         }
+        // Renaming: an input 160 wide, 20 high at y 3.5, the short title all
+        // selected; an accent border and a 3px ring. Enter or leaving it
+        // saves; Esc puts the title back.
+        if root.renaming: Rectangle {
+            y: 3.5px; width: 160px; height: 20px;
+            // The ring: 0 0 0 3px rgba(99,102,241,.28).
+            Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 9px; background: #6366f147; }
+            Rectangle {
+                border-radius: 6px; border-width: 1px; border-color: Theme.accent;
+                background: Theme.bg-primary;
+            }
+            FocusScope {
+                key-pressed(ev) => {
+                    if ev.text == Key.Escape { root.renaming = false; return accept; }
+                    return reject;
+                }
+                ti := TextInput {
+                    x: 7px; width: parent.width - 14px;
+                    font-size: 12px; font-weight: 600; color: Theme.text-primary;
+                    vertical-alignment: center; height: parent.height;
+                    single-line: true;
+                    selection-background-color: Theme.selection;
+                    selection-foreground-color: white;
+                    init => { self.text = root.short-title; self.focus(); self.select-all(); }
+                    accepted => { if root.renaming { root.renaming = false; root.rename(self.text); } }
+                    changed has-focus => { if !self.has-focus && root.renaming { root.renaming = false; root.rename(self.text); } }
+                }
+            }
+        }
+        // The rest is pushed right.
+        Rectangle { horizontal-stretch: 1; }
+        // The CHAT tag: a 15px pill, 9.92px/700 upper case, .6px tracking, padding 1px 7px.
         if root.kind-tag != "": Rectangle {
-            y: (parent.height - self.height) / 2;
-            height: 15px;
-            width: tag.preferred-width + 14px;
+            y: 6px; height: 15px;
+            width: tag.preferred-width + 16px;
             border-radius: 99px;
             border-width: 1px;
             border-color: Theme.border;
             tag := Text { text: root.kind-tag; font-size: 9.92px; font-weight: 700; color: Theme.accent-hover; letter-spacing: 0.6px; }
         }
-        if root.chat && !root.narrow: HeadBtn { y: 1px; has-icon: true; icon: Icons.lock; }
-        if root.chat && !root.narrow: HeadBtn { y: 1px; label: "A-"; clicked => { root.font(-1); } }
-        if root.chat && !root.narrow: HeadBtn { y: 1px; has-icon: true; icon: Icons.rotate-ccw; }
-        if root.chat && !root.narrow: HeadBtn { y: 1px; label: "A+"; clicked => { root.font(1); } }
-        if !root.narrow: HeadBtn { y: 1px; has-icon: true; icon: Icons.pin; }
-        if root.chat && !root.narrow: HeadBtn { y: 1px; has-icon: true; icon: Icons.maximize; clicked => { root.full(); } }
-        if root.narrow: HeadBtn { y: 1px; has-icon: true; icon: Icons.more; }
-        // Close takes two clicks: the first arms it.
-        HeadBtn {
-            y: 1px;
-            label: "×";
-            armed: root.close-armed;
-            clicked => {
-                if root.close-armed { root.close-armed = false; root.close(); } else { root.close-armed = true; }
-            }
+        // The secrets lock: 26×20 (37×20 with a count) at y 3.5; yellow with grants.
+        if root.chat && root.secrets && !root.narrow: HeadBtn {
+            y: 3.5px; height: 20px;
+            width: root.secrets-n > 0 ? 37px : 26px;
+            has-icon: true; icon: Icons.lock; icon-size: 12px;
+            look: root.secrets-n > 0 ? "on" : "rest";
+            count: root.secrets-n > 0 ? "" + root.secrets-n : "";
+            tip: root.secrets-tip;
+            clicked => { root.open-secrets(); }
+        }
+        // A- / reset / A+: 11px, padding 3px 6px; 19px high (reset 19.6).
+        if root.chat && !root.narrow: HeadBtn {
+            y: 4px; height: 19px; width: am.preferred-width + 14px;
+            label: "A-"; tip: "Smaller text";
+            am := Text { visible: false; text: "A-"; font-size: 11px; }
+            clicked => { root.font(-1); }
+        }
+        if root.chat && !root.narrow: HeadBtn {
+            y: 3.7px; height: 19.6px; width: 25px;
+            has-icon: true; icon: Icons.rotate-ccw; icon-size: 11px;
+            tip: "Reset text size";
+            clicked => { root.font-reset(); }
+        }
+        if root.chat && !root.narrow: HeadBtn {
+            y: 4px; height: 19px; width: ap.preferred-width + 14px;
+            label: "A+"; tip: "Larger text";
+            ap := Text { visible: false; text: "A+"; font-size: 11px; }
+            clicked => { root.font(1); }
+        }
+        // Pin: 27×21 at y 3, a 13px icon; pinned: accent on accent-dim, turned −30°.
+        if !root.narrow: HeadBtn {
+            y: 3px; height: 21px; width: 27px;
+            // Pinned, the icon is turned −30° (drawn turned: pin-turned).
+            has-icon: true; icon: root.pinned ? Icons.pin-turned : Icons.pin; icon-size: 13px;
+            look: root.pinned ? "pinned" : "rest";
+            tip: root.pinned ? "Unpin (size and position are locked)" : "Pin size and position";
+            clicked => { root.pin(); }
+        }
+        // Full screen: 25×19 at y 4, an 11px maximize; accent while on.
+        if root.chat && !root.narrow: HeadBtn {
+            y: 4px; height: 19px; width: 25px;
+            has-icon: true; icon: Icons.maximize; icon-size: 11px;
+            look: root.full ? "lit" : "rest";
+            tip: "Full screen";
+            clicked => { root.full-screen(); }
+        }
+        if root.narrow: HeadBtn { y: 4px; height: 19px; width: 25px; has-icon: true; icon: Icons.more; icon-size: 11px; tip: "More"; }
+        // Close takes two clicks: "×" 14px, padding 1px 7px, 27.7×18 at y 4.5;
+        // armed: "Sure?" 11px, padding 1px 6px, 15px high at y 6, red.
+        // Hidden in full screen.
+        if !root.full: HeadBtn {
+            y: root.armed ? 6px : 4.5px;
+            height: root.armed ? 15px : 18px;
+            width: root.armed ? sure.preferred-width + 14px : 27.7px;
+            label: root.armed ? "Sure?" : "×";
+            label-size: root.armed ? 11px : 14px;
+            look: root.armed ? "armed" : "close";
+            tip: root.armed ? "Click again to close" : "Close chat";
+            sure := Text { visible: false; text: "Sure?"; font-size: 11px; }
+            clicked => { root.close(); }
         }
     }
 }
 
 /// Text that can be selected and copied.
 component Prose inherits TextInput {
+    // The pane's text size: px / 13 (the web's --cc-fs).
+    in property <float> fs: 1;
     read-only: true;
     wrap: word-wrap;
     line-height-factor: 1.33;
     color: Theme.text-primary;
-    font-size: 13px;
+    font-size: 13px * root.fs;
     selection-background-color: Theme.accent-dim;
 }
 
 component ToolRow inherits Rectangle {
+    // The pane's text size: px / 13 (the web's --cc-fs).
+    in property <float> fs: 1;
     in property <ToolView> t;
     property <bool> open;
     background: Theme.bg-secondary;
@@ -175,7 +343,7 @@ component ToolRow inherits Rectangle {
     height: col.preferred-height;
     col := VerticalLayout {
         Rectangle {
-            height: 32px;
+            height: 32px + (root.fs - 1) * 18.6px;
             HorizontalLayout {
                 padding-left: 9px;
                 padding-right: 9px;
@@ -184,9 +352,9 @@ component ToolRow inherits Rectangle {
                     width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
                     background: t.status == "running" ? Theme.yellow : t.error ? Theme.red : Theme.green;
                 }
-                Text { text: t.title; font-family: Theme.mono; font-size: 12px; font-weight: 600; color: t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
-                Text { text: t.detail; font-size: 12px; color: Theme.text-secondary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
-                Text { text: root.open ? "▾" : "▸"; font-size: 10px; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: t.title; font-family: Theme.mono; font-size: 12px * root.fs; font-weight: 600; color: t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
+                Text { text: t.detail; font-size: 12px * root.fs; color: Theme.text-secondary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                Text { text: root.open ? "▾" : "▸"; font-size: 10px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
             }
             TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
         }
@@ -201,7 +369,7 @@ component ToolRow inherits Rectangle {
                     x: 9px; y: 7px; width: parent.width - 18px;
                     read-only: true; wrap: word-wrap;
                     text: t.text;
-                    font-family: Theme.mono; font-size: 11.5px;
+                    font-family: Theme.mono; font-size: 11.5px * root.fs;
                     color: Theme.text-secondary;
                 }
             }
@@ -210,6 +378,8 @@ component ToolRow inherits Rectangle {
 }
 
 component EntryRow inherits VerticalLayout {
+    // The pane's text size: px / 13 (the web's --cc-fs).
+    in property <float> fs: 1;
     in property <EntryView> e;
     // The width rows can use (from the list, not from the row: no loop).
     in property <length> avail;
@@ -231,8 +401,8 @@ component EntryRow inherits VerticalLayout {
             border-bottom-right-radius: 3px;
             border-bottom-left-radius: 12px;
             height: ub.preferred-height + 16px;
-            ub-measure := Text { visible: false; text: e.text; font-size: 13px; }
-            ub := Prose { x: 11px; y: 7px; width: parent.width - 22px; text: e.text; }
+            ub-measure := Text { visible: false; text: e.text; font-size: 13px * root.fs; }
+            ub := Prose { fs: root.fs; x: 11px; y: 7px; width: parent.width - 22px; text: e.text; }
         }
     }
 
@@ -243,18 +413,18 @@ component EntryRow inherits VerticalLayout {
         StyledText {
             text: e.md;
             default-color: Theme.text-primary;
-            default-font-size: e.status == "h" ? 14px : 13px;
+            default-font-size: (e.status == "h" ? 14px : 13px) * root.fs;
             link-color: Theme.accent-hover;
         }
     }
     if e.kind == "assistant" && e.status == "li": HorizontalLayout {
         padding-top: 2.5px;
         padding-bottom: 2.5px;
-        Text { width: 20px; text: e.title; font-size: 13px; color: Theme.text-primary; horizontal-alignment: center; }
+        Text { width: 20px; text: e.title; font-size: 13px * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
         StyledText {
             text: e.md;
             default-color: Theme.text-primary;
-            default-font-size: 13px;
+            default-font-size: 13px * root.fs;
             link-color: Theme.accent-hover;
         }
     }
@@ -269,7 +439,7 @@ component EntryRow inherits VerticalLayout {
             x: 11px; y: 9px; width: parent.width - 22px;
             read-only: true; wrap: word-wrap;
             text: e.text;
-            font-family: Theme.mono; font-size: 12px;
+            font-family: Theme.mono; font-size: 12px * root.fs;
             color: Theme.text-primary;
         }
     }
@@ -280,21 +450,21 @@ component EntryRow inherits VerticalLayout {
         VerticalLayout {
             Text {
                 text: "Thought";
-                font-size: 12px; font-italic: true; color: Theme.text-muted;
+                font-size: 12px * root.fs; font-italic: true; color: Theme.text-muted;
                 TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
             }
-            if root.open: Text { text: e.text; font-size: 12px; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
+            if root.open: Text { text: e.text; font-size: 12px * root.fs; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
         }
     }
 
     if e.kind == "tool": VerticalLayout {
-        for t in e.tools: ToolRow { t: t; }
+        for t in e.tools: ToolRow { t: t; fs: root.fs; }
     }
 
     if e.kind == "tools": VerticalLayout {
         spacing: 6px;
         Rectangle {
-            height: 34px;
+            height: 34px + (root.fs - 1) * 18.6px;
             background: Theme.bg-secondary;
             border-radius: 6px;
             border-width: 1px;
@@ -307,14 +477,14 @@ component EntryRow inherits VerticalLayout {
                     width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
                     background: e.status == "running" ? Theme.yellow : e.error ? Theme.red : Theme.green;
                 }
-                Text { text: e.title; font-size: 12px; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
-                Text { text: e.detail + (root.open ? "  ▾" : "  ▸"); font-size: 11px; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: e.title; font-size: 12px * root.fs; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+                Text { text: e.detail + (root.open ? "  ▾" : "  ▸"); font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
             }
             TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
         }
         if root.open: VerticalLayout {
             spacing: 6px;
-            for t in e.tools: ToolRow { t: t; }
+            for t in e.tools: ToolRow { t: t; fs: root.fs; }
         }
     }
 
@@ -327,21 +497,21 @@ component EntryRow inherits VerticalLayout {
         perm := VerticalLayout {
             padding-top: 11px; padding-bottom: 11px; padding-left: 12px; padding-right: 12px;
             spacing: 7px;
-            Text { text: e.title; font-weight: 650; font-size: 13px; color: Theme.text-primary; wrap: word-wrap; }
+            Text { text: e.title; font-weight: 650; font-size: 13px * root.fs; color: Theme.text-primary; wrap: word-wrap; }
             if e.detail != "": Rectangle {
                 background: Theme.bg-primary;
                 border-radius: 6px;
                 height: pd.preferred-height + 14px;
-                pd := Text { x: 9px; width: parent.width - 18px; text: e.detail; font-family: Theme.mono; font-size: 12px; color: Theme.text-secondary; wrap: word-wrap; }
+                pd := Text { x: 9px; width: parent.width - 18px; text: e.detail; font-family: Theme.mono; font-size: 12px * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
             }
             if e.status == "pending": HorizontalLayout {
                 spacing: 7px;
                 alignment: start;
-                CardBtn { text: "Allow"; primary: true; clicked => { root.respond(e.request-id, "allow", false); } }
-                CardBtn { text: "Allow always"; clicked => { root.respond(e.request-id, "allow", true); } }
-                CardBtn { text: "Deny"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
+                CardBtn { fs: root.fs; text: "Allow"; primary: true; clicked => { root.respond(e.request-id, "allow", false); } }
+                CardBtn { fs: root.fs; text: "Allow always"; clicked => { root.respond(e.request-id, "allow", true); } }
+                CardBtn { fs: root.fs; text: "Deny"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
             }
-            if e.status != "pending": Text { text: e.status == "allowed" ? "Allowed" : e.status == "denied" ? "Denied" : e.status; font-size: 12px; color: Theme.text-muted; }
+            if e.status != "pending": Text { text: e.status == "allowed" ? "Allowed" : e.status == "denied" ? "Denied" : e.status; font-size: 12px * root.fs; color: Theme.text-muted; }
         }
     }
 
@@ -354,12 +524,12 @@ component EntryRow inherits VerticalLayout {
         q := VerticalLayout {
             padding-top: 11px; padding-bottom: 11px; padding-left: 12px; padding-right: 12px;
             spacing: 7px;
-            if e.title != "": Text { text: e.title; font-size: 10.5px; font-weight: 700; color: Theme.accent-hover; letter-spacing: 0.5px; }
-            Text { text: e.text; font-weight: 600; font-size: 13px; color: Theme.text-primary; wrap: word-wrap; }
+            if e.title != "": Text { text: e.title; font-size: 10.5px * root.fs; font-weight: 700; color: Theme.accent-hover; letter-spacing: 0.5px; }
+            Text { text: e.text; font-weight: 600; font-size: 13px * root.fs; color: Theme.text-primary; wrap: word-wrap; }
             if e.status == "pending": VerticalLayout {
                 spacing: 6px;
                 for o in e.options: Rectangle {
-                    height: 32px;
+                    height: 32px + (root.fs - 1) * 20.15px;
                     border-radius: 6px;
                     border-width: 1px;
                     border-color: root.picked == o ? Theme.accent : Theme.border;
@@ -372,18 +542,18 @@ component EntryRow inherits VerticalLayout {
                             border-width: 1px; border-color: root.picked == o ? Theme.accent : Theme.text-muted;
                             Rectangle { width: 6px; height: 6px; border-radius: 3px; background: root.picked == o ? Theme.accent : transparent; }
                         }
-                        Text { text: o; font-size: 13px; color: Theme.text-primary; vertical-alignment: center; }
+                        Text { text: o; font-size: 13px * root.fs; color: Theme.text-primary; vertical-alignment: center; }
                     }
                     oh := TouchArea { mouse-cursor: pointer; clicked => { root.picked = o; } }
                 }
                 HorizontalLayout {
                     spacing: 7px;
                     alignment: start;
-                    CardBtn { text: "Submit"; primary: true; clicked => { if root.picked != "" { root.answer(e.id, root.picked); } } }
-                    CardBtn { text: "Dismiss"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
+                    CardBtn { fs: root.fs; text: "Submit"; primary: true; clicked => { if root.picked != "" { root.answer(e.id, root.picked); } } }
+                    CardBtn { fs: root.fs; text: "Dismiss"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
                 }
             }
-            if e.status != "pending": Text { text: "Answered"; font-size: 12px; color: Theme.text-muted; }
+            if e.status != "pending": Text { text: "Answered"; font-size: 12px * root.fs; color: Theme.text-muted; }
         }
     }
 
@@ -395,8 +565,8 @@ component EntryRow inherits VerticalLayout {
         }
         Text {
             text: e.error ? (e.text != "" ? e.text : "Error") : e.detail;
-            height: 23px;
-            font-size: 11px;
+            height: 23px + (root.fs - 1) * 17px;
+            font-size: 11px * root.fs;
             color: e.error ? Theme.red : Theme.text-muted;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -409,19 +579,22 @@ component EntryRow inherits VerticalLayout {
         border-color: #ef444466;
         border-radius: 6px;
         height: et.preferred-height + 16px;
-        et := Text { x: 10px; width: parent.width - 20px; text: e.text; color: #fca5a5; wrap: word-wrap; font-size: 12px; }
+        et := Text { x: 10px; width: parent.width - 20px; text: e.text; color: #fca5a5; wrap: word-wrap; font-size: 12px * root.fs; }
     }
 
-    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: 11px * root.fs; horizontal-alignment: center; wrap: word-wrap; }
 }
 
 /// The message box: grows with its text (34–180px); Enter sends.
 component InputBox inherits Rectangle {
+    // The pane's text size: px / 13 (the web's --cc-fs).
+    in property <float> fs: 1;
     in-out property <string> draft;
     // Ctrl+Enter sends (Enter makes a newline), when switched.
     in property <bool> ctrl-enter;
     callback send(string);
-    height: max(37px, min(180px, te.preferred-height + 18px));
+    // At least one line (the web's 1.45 line height, scaled) and 18px of padding.
+    height: max(18px + 18.85px * root.fs, min(180px, te.preferred-height + 18px));
     border-radius: 6px;
     border-width: 1px;
     border-color: te.has-focus ? Theme.accent : Theme.border;
@@ -441,7 +614,7 @@ component InputBox inherits Rectangle {
             height: parent.height - 18px;
             text <=> root.draft;
             wrap: word-wrap;
-            font-size: 13px;
+            font-size: 13px * root.fs;
             color: Theme.text-primary;
             selection-background-color: Theme.accent-dim;
         }
@@ -450,7 +623,7 @@ component InputBox inherits Rectangle {
         x: 10px; y: 9px;
         width: parent.width - 20px;
         text: root.ctrl-enter ? "Message Claude…  (Ctrl+Enter to send, Enter for newline)" : "Message Claude…  (Enter to send, Shift+Enter for newline)";
-        font-size: 13px;
+        font-size: 13px * root.fs;
         color: Theme.text-muted;
         overflow: elide;
     }
@@ -458,6 +631,8 @@ component InputBox inherits Rectangle {
 
 /// The chat inside a pane: the log, then the composer.
 export component ChatPane inherits Rectangle {
+    // The pane's text size: px / 13 (the web's --cc-fs).
+    in property <float> fs: 1;
     in property <[EntryView]> entries;
     in property <string> state;
     in property <string> mode;
@@ -470,7 +645,15 @@ export component ChatPane inherits Rectangle {
     callback stop();
     callback respond(string, string, bool);
     callback answer(string, string);
+    // The draft as the app holds it (src/app.rs): taken at start and whenever
+    // another view of this chat changed it (the full-screen pane); every
+    // change is handed back.
+    in property <string> saved-draft;
+    callback draft-changed(string);
     property <string> draft;
+    init => { self.draft = root.saved-draft; }
+    changed saved-draft => { if self.draft != root.saved-draft { self.draft = root.saved-draft; } }
+    changed draft => { root.draft-changed(self.draft); }
     property <bool> ctrl-enter;
     property <bool> stick: true;
     background: Theme.bg-primary;
@@ -483,6 +666,7 @@ export component ChatPane inherits Rectangle {
                 padding-right: 12px;
                 EntryRow {
                     e: e;
+                    fs: root.fs;
                     avail: list.visible-width - 24px;
                     respond(id, b, a) => { root.respond(id, b, a); }
                     answer(id, o) => { root.answer(id, o); }
@@ -496,7 +680,7 @@ export component ChatPane inherits Rectangle {
         if root.error != "": Rectangle {
             background: Theme.red-dim;
             height: errt.preferred-height + 10px;
-            errt := Text { x: 12px; width: parent.width - 24px; text: root.error; color: #fca5a5; wrap: word-wrap; font-size: 11px; }
+            errt := Text { x: 12px; width: parent.width - 24px; text: root.error; color: #fca5a5; wrap: word-wrap; font-size: 11px * root.fs; }
         }
         // The composer: bg-secondary, a line above, padding 8.
         Rectangle {
@@ -508,7 +692,7 @@ export component ChatPane inherits Rectangle {
                 spacing: 6px;
                 if !root.narrow: HorizontalLayout {
                     spacing: 7px;
-                    InputBox { horizontal-stretch: 1; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
+                    InputBox { fs: root.fs; horizontal-stretch: 1; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
                     VerticalLayout {
                         alignment: end;
                         Rectangle {
@@ -550,7 +734,7 @@ export component ChatPane inherits Rectangle {
                     }
                 }
                 // A narrow pane: the box on its own row, the buttons under it.
-                if root.narrow: InputBox { draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
+                if root.narrow: InputBox { fs: root.fs; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
                 if root.narrow: HorizontalLayout {
                     spacing: 7px;
                     alignment: end;
@@ -596,19 +780,21 @@ export component ChatPane inherits Rectangle {
                 }
                 // The meta row: 22px, gap 7, 11px muted (the web chat's .cc-meta).
                 HorizontalLayout {
-                    height: 22px;
+                    height: max(22px, 22px * root.fs);
                     spacing: 7px;
-                    Text { text: root.state == "" ? "idle" : root.state; font-size: 11px; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: root.state == "" ? "idle" : root.state; font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
                     // The permission mode: 22px, 0 6px, gap 5, radius 5.
                     Rectangle {
-                        width: mr.preferred-width + 12px;
+                        y: (parent.height - self.height) / 2;
+                        height: 22px * root.fs;
+                        width: max(26px * root.fs, mr.preferred-width + 12px);
                         border-radius: 5px; border-width: 1px; border-color: Theme.border;
                         background: Theme.bg-primary;
                         mr := HorizontalLayout {
                             x: 6px;
                             spacing: 5px;
-                            Icon { source: Icons.shield-alert; width: 13px; height: 13px; y: 4.5px; tint: Theme.text-secondary; }
-                            Text { text: root.mode; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+                            Icon { source: Icons.shield-alert; width: 13px * root.fs; height: 13px * root.fs; y: (parent.height - self.height) / 2; tint: Theme.text-secondary; }
+                            Text { text: root.mode; font-size: 11px * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
                         }
                     }
                     // Which key sends: a 56×19 switch, then "sends".
@@ -629,7 +815,7 @@ export component ChatPane inherits Rectangle {
                             Text { x: 32px; text: "⌃⏎"; font-size: 11px; font-weight: 700; color: root.ctrl-enter ? Theme.accent-hover : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
                             TouchArea { mouse-cursor: pointer; clicked => { root.ctrl-enter = !root.ctrl-enter; } }
                         }
-                        Text { text: "sends"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+                        Text { text: "sends"; font-size: 11px * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
                     }
                     // Schedule this message: 25×21, 3px 5px, border, radius 6.
                     Rectangle {
@@ -641,11 +827,11 @@ export component ChatPane inherits Rectangle {
                     // The session id: mono 10.5px, a dotted line under it.
                     Rectangle {
                         width: sid.preferred-width;
-                        sid := Text { text: root.session; font-family: Theme.mono; font-size: 10.5px; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
+                        sid := Text { text: root.session; font-family: Theme.mono; font-size: 10.5px * root.fs; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
                         for i in ceil(sid.preferred-width / 3px): Rectangle { x: i * 3px; y: parent.height - 3px; width: 1px; height: 1px; background: Theme.border; }
                     }
-                    Text { text: root.model; font-size: 11px; color: Theme.text-muted; vertical-alignment: center; }
-                    Text { text: root.cost; font-size: 11px; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: root.model; font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { text: root.cost; font-size: 11px * root.fs; color: Theme.text-muted; vertical-alignment: center; }
                 }
             }
         }

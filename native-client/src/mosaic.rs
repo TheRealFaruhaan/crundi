@@ -20,7 +20,19 @@ pub enum Node {
     #[serde(rename = "split")]
     Split { _id: u32, dir: Dir, sizes: Vec<f32>, kids: Vec<Node> },
     #[serde(rename = "leaf")]
-    Leaf { _id: u32, key: Option<String> },
+    Leaf {
+        _id: u32,
+        key: Option<String>,
+        /// Pinned: the pane keeps this size in px (the web UI's leaf.pin).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pin: Option<Pin>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Pin {
+    pub w: f32,
+    pub h: f32,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,6 +50,7 @@ pub struct LeafRect {
     pub y: f32,
     pub w: f32,
     pub h: f32,
+    pub pinned: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -52,6 +65,8 @@ pub struct GutterRect {
     pub h: f32,
     /// The pair's extent along the split (for turning a drag into percentages).
     pub span: f32,
+    /// A pinned pane is next to it: it can't be dragged.
+    pub locked: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -62,7 +77,7 @@ pub struct Mosaic {
 
 impl Default for Mosaic {
     fn default() -> Self {
-        Mosaic { root: Node::Leaf { _id: 1, key: None }, next_id: 2 }
+        Mosaic { root: Node::Leaf { _id: 1, key: None, pin: None }, next_id: 2 }
     }
 }
 
@@ -92,10 +107,30 @@ impl Mosaic {
 
     /// The minimum width the tree needs (leaves at MIN_W, gutters between).
     fn min_width(n: &Node) -> f32 {
+        if let (Some(w), _) = Self::fixed(n) { return w; }
         match n {
             Node::Leaf { .. } => MIN_W,
             Node::Split { dir: Dir::Row, kids, .. } => kids.iter().map(Self::min_width).sum::<f32>() + GUTTER * (kids.len().saturating_sub(1)) as f32,
             Node::Split { kids, .. } => kids.iter().map(Self::min_width).fold(0.0, f32::max),
+        }
+    }
+
+    /// A node's fixed size in px (w, h), or None where it flexes (the web UI's
+    /// mosaicFixed): a pinned leaf fixes both; a split is fixed along its own
+    /// axis only when every child is, and across it by its largest fixed child.
+    pub fn fixed(n: &Node) -> (Option<f32>, Option<f32>) {
+        match n {
+            Node::Leaf { pin: Some(p), .. } => (Some(p.w), Some(p.h)),
+            Node::Leaf { .. } => (None, None),
+            Node::Split { dir, kids, .. } => {
+                let fs: Vec<(Option<f32>, Option<f32>)> = kids.iter().map(Self::fixed).collect();
+                let gut = GUTTER * (kids.len().saturating_sub(1)) as f32;
+                let along = |f: &(Option<f32>, Option<f32>)| if *dir == Dir::Row { f.0 } else { f.1 };
+                let across = |f: &(Option<f32>, Option<f32>)| if *dir == Dir::Row { f.1 } else { f.0 };
+                let a = if fs.iter().all(|f| along(f).is_some()) { Some(fs.iter().filter_map(along).sum::<f32>() + gut) } else { None };
+                let x = fs.iter().filter_map(across).fold(None, |m: Option<f32>, v| Some(m.map_or(v, |m| m.max(v))));
+                if *dir == Dir::Row { (a, x) } else { (x, a) }
+            }
         }
     }
 
@@ -109,22 +144,26 @@ impl Mosaic {
         let (mut leaves, mut gutters) = (vec![], vec![]);
         fn place(n: &Node, x: f32, y: f32, w: f32, h: f32, leaves: &mut Vec<LeafRect>, gutters: &mut Vec<GutterRect>) {
             match n {
-                Node::Leaf { _id, key } => leaves.push(LeafRect { id: *_id, key: key.clone(), x, y, w, h }),
+                Node::Leaf { _id, key, pin } => leaves.push(LeafRect { id: *_id, key: key.clone(), x, y, w, h, pinned: pin.is_some() }),
                 Node::Split { _id, dir, sizes, kids } => {
                     let along = if *dir == Dir::Row { w } else { h };
                     let gaps = GUTTER * (kids.len().saturating_sub(1)) as f32;
                     let free = (along - gaps).max(0.0);
-                    let total: f32 = sizes.iter().sum::<f32>().max(0.0001);
+                    // A pinned child (or a split holding one) takes its px size
+                    // along this axis; the others share what is left by their sizes.
+                    let fixed: Vec<Option<f32>> = kids.iter().map(|k| { let f = Mosaic::fixed(k); if *dir == Dir::Row { f.0 } else { f.1 } }).collect();
+                    let free = (free - fixed.iter().flatten().sum::<f32>()).max(0.0);
+                    let total: f32 = sizes.iter().zip(&fixed).filter(|(_, f)| f.is_none()).map(|(s, _)| *s).sum::<f32>().max(0.0001);
+                    let mut lens: Vec<f32> = sizes.iter().zip(&fixed).map(|(s, f)| f.unwrap_or(free * s / total)).collect();
                     // Rows keep every child at its minimum width.
-                    let mut lens: Vec<f32> = sizes.iter().map(|s| free * s / total).collect();
                     if *dir == Dir::Row {
                         let mins: Vec<f32> = kids.iter().map(Mosaic::min_width).collect();
                         for i in 0..lens.len() {
                             if lens[i] < mins[i] {
                                 let short = mins[i] - lens[i];
                                 lens[i] = mins[i];
-                                // Taken from the widest sibling that can spare it.
-                                if let Some(j) = (0..lens.len()).filter(|&j| j != i && lens[j] - mins[j] > short).max_by(|&a, &b| lens[a].partial_cmp(&lens[b]).unwrap()) {
+                                // Taken from the widest free sibling that can spare it.
+                                if let Some(j) = (0..lens.len()).filter(|&j| j != i && fixed[j].is_none() && lens[j] - mins[j] > short).max_by(|&a, &b| lens[a].partial_cmp(&lens[b]).unwrap()) {
                                     lens[j] -= short;
                                 }
                             }
@@ -138,10 +177,11 @@ impl Mosaic {
                         at += len;
                         if i + 1 < kids.len() {
                             let span = lens[i] + lens[i + 1] + GUTTER;
+                            let locked = fixed[i].is_some() || fixed[i + 1].is_some();
                             gutters.push(if *dir == Dir::Row {
-                                GutterRect { split: *_id, index: i, dir: *dir, x: at, y, w: GUTTER, h, span }
+                                GutterRect { split: *_id, index: i, dir: *dir, x: at, y, w: GUTTER, h, span, locked }
                             } else {
-                                GutterRect { split: *_id, index: i, dir: *dir, x, y: at, w, h: GUTTER, span }
+                                GutterRect { split: *_id, index: i, dir: *dir, x, y: at, w, h: GUTTER, span, locked }
                             });
                             at += GUTTER;
                         }
@@ -164,8 +204,11 @@ impl Mosaic {
     /// Drag gutter `index` of split `split` by `delta` px, along a span of `span` px.
     /// The pair stays within 10–90% of what the two share, as in the web UI.
     pub fn drag(&mut self, split: u32, index: usize, delta: f32, span: f32) {
-        let Some(Node::Split { sizes, .. }) = Self::find_mut(&mut self.root, split) else { return };
+        let Some(Node::Split { sizes, kids, dir, .. }) = Self::find_mut(&mut self.root, split) else { return };
         if index + 1 >= sizes.len() || span <= GUTTER { return; }
+        // A divider next to a pinned pane is locked.
+        let along = |k: &Node| { let f = Mosaic::fixed(k); if *dir == Dir::Row { f.0 } else { f.1 } };
+        if along(&kids[index]).is_some() || along(&kids[index + 1]).is_some() { return; }
         let pair = sizes[index] + sizes[index + 1];
         let px_per = (span - GUTTER) / pair;
         let mut a = sizes[index] + delta / px_per;
@@ -193,8 +236,8 @@ impl Mosaic {
         fn go(n: &mut Node, leaf: u32, dir: Dir, new_leaf: u32, new_split: u32) -> bool {
             match n {
                 Node::Leaf { _id, .. } if *_id == leaf => {
-                    let old = std::mem::replace(n, Node::Leaf { _id: 0, key: None });
-                    *n = Node::Split { _id: new_split, dir, sizes: vec![50.0, 50.0], kids: vec![old, Node::Leaf { _id: new_leaf, key: None }] };
+                    let old = std::mem::replace(n, Node::Leaf { _id: 0, key: None, pin: None });
+                    *n = Node::Split { _id: new_split, dir, sizes: vec![50.0, 50.0], kids: vec![old, Node::Leaf { _id: new_leaf, key: None, pin: None }] };
                     true
                 }
                 Node::Split { dir: d, sizes, kids, .. } => {
@@ -204,7 +247,7 @@ impl Mosaic {
                             let half = sizes[i] / 2.0;
                             sizes[i] = half;
                             sizes.insert(i + 1, half);
-                            kids.insert(i + 1, Node::Leaf { _id: new_leaf, key: None });
+                            kids.insert(i + 1, Node::Leaf { _id: new_leaf, key: None, pin: None });
                             return true;
                         }
                     }
@@ -233,7 +276,7 @@ impl Mosaic {
             }
         }
         if matches!(&self.root, Node::Leaf { _id, .. } if *_id == leaf) {
-            if let Node::Leaf { key, .. } = &mut self.root { *key = None; }
+            if let Node::Leaf { key, pin, .. } = &mut self.root { *key = None; *pin = None; }
             return;
         }
         go(&mut self.root, leaf);
@@ -267,7 +310,7 @@ impl Mosaic {
                 let share = 100.0 / (kids.len() + 1) as f32;
                 for s in sizes.iter_mut() { *s *= 1.0 - share / 100.0; }
                 sizes.push(share);
-                kids.push(Node::Leaf { _id: new_leaf, key: Some(key.to_string()) });
+                kids.push(Node::Leaf { _id: new_leaf, key: Some(key.to_string()), pin: None });
                 new_leaf
             }
             _ => {
@@ -278,12 +321,59 @@ impl Mosaic {
         }
     }
 
+    /// Pin a leaf at this size in px, or unpin it (the header's pin button).
+    pub fn toggle_pin(&mut self, leaf: u32, w: f32, h: f32) {
+        if let Some(Node::Leaf { pin, .. }) = Self::find_mut(&mut self.root, leaf) {
+            *pin = if pin.is_some() { None } else { Some(Pin { w: w.round(), h: h.round() }) };
+        }
+    }
+
+    pub fn pin_of(&self, key: &str) -> Option<Pin> {
+        fn go(n: &Node, key: &str) -> Option<Pin> {
+            match n {
+                Node::Leaf { key: Some(k), pin, .. } if k == key => *pin,
+                Node::Split { kids, .. } => kids.iter().find_map(|k| go(k, key)),
+                _ => None,
+            }
+        }
+        go(&self.root, key)
+    }
+
+    fn set_pin(&mut self, key: &str, p: Pin) {
+        fn go(n: &mut Node, key: &str, p: Pin) {
+            match n {
+                Node::Leaf { key: Some(k), pin, .. } if k == key => *pin = Some(p),
+                Node::Split { kids, .. } => kids.iter_mut().for_each(|k| go(k, key, p)),
+                _ => {}
+            }
+        }
+        go(&mut self.root, key, p);
+    }
+
+    /// Double-click a pane's header: it takes its parent split (each sibling
+    /// 8%, held at its floor); again, an even split. A lone pane: nothing.
+    pub fn maximize(&mut self, leaf: u32) {
+        fn go(n: &mut Node, leaf: u32) -> bool {
+            let Node::Split { sizes, kids, .. } = n else { return false };
+            if let Some(i) = kids.iter().position(|k| node_id(k) == leaf) {
+                let len = kids.len();
+                let big = 100.0 - (len as f32 - 1.0) * 8.0;
+                let total: f32 = sizes.iter().sum::<f32>().max(0.0001);
+                let already = sizes[i] * 100.0 / total >= big - 0.5;
+                *sizes = (0..len).map(|j| if already { 100.0 / len as f32 } else if j == i { big } else { 8.0 }).collect();
+                return true;
+            }
+            kids.iter_mut().any(|k| go(k, leaf))
+        }
+        go(&mut self.root, leaf);
+    }
+
     /// The "+" menu's Layout presets, filled with these panes in order:
     /// cols2, cols3, grid (2×2), stack (left + right stack), rows (top + bottom pair).
     pub fn preset(name: &str, keys: Vec<String>) -> Mosaic {
-        let mut m = Mosaic { root: Node::Leaf { _id: 1, key: None }, next_id: 1 };
+        let mut m = Mosaic { root: Node::Leaf { _id: 1, key: None, pin: None }, next_id: 1 };
         let mut keys = keys.into_iter();
-        let leaf = |m: &mut Mosaic, keys: &mut dyn Iterator<Item = String>| Node::Leaf { _id: m.id(), key: keys.next() };
+        let leaf = |m: &mut Mosaic, keys: &mut dyn Iterator<Item = String>| Node::Leaf { _id: m.id(), key: keys.next(), pin: None };
         let split = |m: &mut Mosaic, dir: Dir, kids: Vec<Node>| { let n = kids.len() as f32; Node::Split { _id: m.id(), dir, sizes: vec![100.0 / n; kids.len()], kids } };
         let root = match name {
             "cols3" => { let k = vec![leaf(&mut m, &mut keys), leaf(&mut m, &mut keys), leaf(&mut m, &mut keys)]; split(&mut m, Dir::Row, k) }
@@ -310,6 +400,13 @@ impl Mosaic {
         m.root = root;
         // Panes that did not fit the preset go on the right.
         for k in keys { m.place(&k); }
+        m
+    }
+
+    /// A preset that keeps each pinned pane's pin wherever it lands.
+    pub fn preset_from(&self, name: &str) -> Mosaic {
+        let mut m = Mosaic::preset(name, self.keys());
+        for k in self.keys() { if let Some(p) = self.pin_of(&k) { m.set_pin(&k, p); } }
         m
     }
 
@@ -370,5 +467,59 @@ mod tests {
         assert!(leaves[1].y > leaves[0].y);
         m.retain(|k| k != "live:a");
         assert_eq!(m.keys(), vec!["pend:1"]);
+    }
+
+    #[test]
+    fn pin_fixes_size_and_locks_dividers() {
+        let mut m = Mosaic::default();
+        m.place("live:a");
+        m.place("live:b");
+        m.place("live:c");
+        let (leaves, _) = m.layout(1400.0, 800.0);
+        let a = leaves[0].id;
+        m.toggle_pin(a, 400.4, 788.0);
+        assert_eq!(m.pin_of("live:a"), Some(Pin { w: 400.0, h: 788.0 }));
+        let (leaves, gutters) = m.layout(1400.0, 800.0);
+        assert!(leaves[0].pinned);
+        assert_eq!(leaves[0].w, 400.0);
+        // The others share the rest evenly.
+        let rest = 1400.0 - 2.0 * PAD - 2.0 * GUTTER - 400.0;
+        assert!((leaves[1].w - rest / 2.0).abs() < 0.5);
+        // The divider by the pinned pane is locked, the other isn't.
+        assert!(gutters[0].locked && !gutters[1].locked);
+        let before = leaves[0].w;
+        m.drag(gutters[0].split, 0, 120.0, gutters[0].span);
+        assert_eq!(m.layout(1400.0, 800.0).0[0].w, before);
+        // The pin survives JSON (it is saved) and a preset.
+        let back: Mosaic = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert_eq!(back.pin_of("live:a"), Some(Pin { w: 400.0, h: 788.0 }));
+        let p = m.preset_from("cols3");
+        assert_eq!(p.pin_of("live:a"), Some(Pin { w: 400.0, h: 788.0 }));
+        // Unpin: back to shares.
+        m.toggle_pin(a, 0.0, 0.0);
+        assert_eq!(m.pin_of("live:a"), None);
+        assert!(!serde_json::to_string(&m).unwrap().contains("pin"));
+    }
+
+    #[test]
+    fn maximize_then_even() {
+        let mut m = Mosaic::default();
+        m.place("live:a");
+        // A lone pane: nothing happens.
+        let lone = m.leaf_of("live:a").unwrap();
+        m.maximize(lone);
+        assert_eq!(m.keys(), vec!["live:a"]);
+        m.place("live:b");
+        let a = m.leaf_of("live:a").unwrap();
+        m.maximize(a);
+        let Node::Split { sizes, .. } = &m.root else { panic!() };
+        assert_eq!(sizes, &vec![92.0, 8.0]);
+        m.maximize(a);
+        let Node::Split { sizes, .. } = &m.root else { panic!() };
+        assert_eq!(sizes, &vec![50.0, 50.0]);
+        // In 1400px, the small one sits at its 340px floor.
+        m.maximize(a);
+        let (leaves, _) = m.layout(1154.0, 770.0);
+        assert_eq!(leaves[1].w, MIN_W);
     }
 }

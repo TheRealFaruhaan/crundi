@@ -120,6 +120,40 @@ CRUNDI_TEST_SERVER=http://localhost:8889 CRUNDI_TEST_PROJECT=/tmp/t/proj \
   NATIVE_BIN=native-client/target/debug/crundi-native node native-client/test/phase1.mjs
 ```
 
+## Phase 2: chats
+
+Everything a chat does in the PC client, screen by screen (PLAN.md lists
+them; each has a spec in `specs/`). So far:
+
+- **2.1 The pane header, wide** (`specs/pane-header-wide.md`):
+  - the title: the long form on a wide header (capped at min(440px, 62%)),
+    the short one at 160px; click to rename (Enter or leaving saves, Esc
+    puts it back, empty becomes "Terminal"); a rename on the server shows
+    live and doesn't clobber an open one;
+  - the CHAT tag; the secrets lock with its count of grants, live from the
+    `chat-secrets` event and counted again every 30 s (shown only when the
+    server has `chat-secret-preauth`);
+  - A- / reset / A+: the chat's text size (9 to 24, px/13 on every text size
+    in the log and composer); each chat keeps its own, and every change is
+    the size new chats start at (saved: `font`, `font_default_chat`);
+  - pin: the pane keeps its px size, the dividers by it lock, presets keep
+    it (saved in the layout);
+  - full screen: the pane covers the window; the button or Esc leaves;
+  - the two-click × ("Sure?", disarmed after 3 s or by a layout change; one
+    pane at a time); a refused close (409) keeps the pane and says why in a
+    toast;
+  - double-click the header (not a button) to maximise the pane in its split
+    (92 / 8), again to even it.
+
+The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
+`test/phase2.mjs` drives each feature against a fresh server (the same setup
+as phase 1's test), by the pointer and keys where it matters.
+
+The test driver also takes `{"cmd":"mouse","kind":"move|click|dblclick|leave","x","y"}`
+and `{"cmd":"key","text":"Escape|Return|…"}`, and `test/look.mjs` has the same as
+`mouse:<kind>:<x>:<y>` and `key:<text>`, so snapshots reach hover and other
+states.
+
 ## Server test (browser panels)
 
 `node native-client/test/drive.mjs 7611` runs the real `src/browser.js`
@@ -143,6 +177,8 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
   open chat. Server calls run on worker threads (`bg`, `call`).
 - **`src/chat.rs`**: one chat's conversation; turns the server's entries into
   rows on screen.
+- **`src/head.rs`**: the pane header's rules (rename, text size, the secrets
+  count, titles).
 - **`src/testctl.rs`**: the test driver (`CRUNDI_TEST_PORT`).
 - **`src/browser.rs`**: the Slint and CEF bridge (panels, input, device
   emulation, annotations). `src/server.rs` answers the server's browser

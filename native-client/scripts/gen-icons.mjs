@@ -21,7 +21,7 @@ const icons = {};
 for (const m of block.matchAll(/^\s*(?:'([a-z0-9-]+)'|([a-z0-9]+)):\s*'([^']*)',?\s*$/gm)) {
   icons[m[1] || m[2]] = m[3];
 }
-const names = Object.keys(icons).sort();
+const names = Object.keys(icons).sort();  // (turned variants are added below)
 if (names.length < 20) throw new Error(`only ${names.length} icons parsed`);
 
 const dir = join(here, '..', 'ui', 'icons');
@@ -31,6 +31,15 @@ for (const n of names) {
   writeFileSync(join(dir, `${n}.svg`),
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[n]}</svg>\n`);
 }
+// Turned variants: Slint's software renderer can't rotate an image, so the
+// pinned pin (the web's transform: rotate(-30deg)) is drawn turned.
+const TURNED = { 'pin-turned': ['pin', -30] };
+for (const [n, [base, deg]] of Object.entries(TURNED)) {
+  writeFileSync(join(dir, `${n}.svg`),
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="rotate(${deg} 12 12)">${icons[base]}</g></svg>\n`);
+  names.push(n);
+}
+names.sort();
 // Slint names: a leading digit or a keyword gets a prefix.
 const slintName = (n) => (/^[0-9]/.test(n) || ['if', 'for', 'in', 'out', 'property', 'callback', 'import', 'export'].includes(n) ? `i-${n}` : n);
 writeFileSync(join(here, '..', 'ui', 'icons.slint'),

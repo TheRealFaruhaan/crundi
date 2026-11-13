@@ -7,6 +7,8 @@
 //!   {"cmd":"props"}                         what the window shows (signed-in, errors, …)
 //!   {"cmd":"snapshot","path":"/tmp/x.png"}  the window as Slint drew it
 //!   {"cmd":"ui","name":"send","args":["hi"]}  a window action (names below)
+//!   {"cmd":"mouse","kind":"move|click|dblclick|leave","x":10,"y":20}  the pointer, as a person's
+//!   {"cmd":"key","text":"Escape"|"Return"|"a…"}  a key press and release (to the focused item)
 
 use base64::Engine;
 use serde_json::{json, Value};
@@ -67,7 +69,10 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "error": p.error.as_str() })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs })).collect::<Vec<_>>(),
+            "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h }) } else { Value::Null },
+            "toast": w.get_toast().as_str(),
+            "lockedGutters": w.get_gutters().iter().filter(|g| g.locked).count(),
             "gutters": w.get_gutters().row_count(),
         }),
         "snapshot" => match w.window().take_snapshot() {
@@ -88,6 +93,32 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             }
             Err(e) => json!({ "ok": false, "error": format!("{e:?}") }),
         },
+        "mouse" => {
+            use slint::platform::{PointerEventButton, WindowEvent};
+            let pos = slint::LogicalPosition::new(c.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32, c.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32);
+            let win = w.window();
+            let click = |n: usize| for _ in 0..n {
+                win.dispatch_event(WindowEvent::PointerPressed { position: pos, button: PointerEventButton::Left });
+                win.dispatch_event(WindowEvent::PointerReleased { position: pos, button: PointerEventButton::Left });
+            };
+            match c.get("kind").and_then(|v| v.as_str()).unwrap_or("move") {
+                "click" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); click(1) }
+                "dblclick" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); click(2) }
+                "leave" => win.dispatch_event(WindowEvent::PointerExited),
+                _ => win.dispatch_event(WindowEvent::PointerMoved { position: pos }),
+            }
+            json!({ "ok": true })
+        }
+        "key" => {
+            use slint::platform::{Key, WindowEvent};
+            let t = c.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), o => o.into() };
+            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
+                w.window().dispatch_event(WindowEvent::KeyPressed { text: ch.clone() });
+                w.window().dispatch_event(WindowEvent::KeyReleased { text: ch });
+            }
+            json!({ "ok": true })
+        }
         "ui" => {
             let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let chat = || format!("live:{}", crate::app::focused_chat());
@@ -108,6 +139,14 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "stop" => w.invoke_stop(chat().into()),
                 "respond" => w.invoke_respond(chat().into(), arg(c, 0).into(), arg(c, 1).into(), arg(c, 2) == "true"),
                 "answer" => w.invoke_answer(chat().into(), arg(c, 0).into(), arg(c, 1).into()),
+                // The pane header, on a leaf id (as the "panes" list gives them).
+                "pane-close" => w.invoke_pane_close(arg(c, 0).parse().unwrap_or(0)),
+                "pane-full" => w.invoke_pane_full(arg(c, 0).parse().unwrap_or(0)),
+                "pane-font" => w.invoke_pane_font(arg(c, 0).parse().unwrap_or(0), arg(c, 1).parse().unwrap_or(0)),
+                "pane-pin" => w.invoke_pane_pin(arg(c, 0).parse().unwrap_or(0)),
+                "pane-rename" => w.invoke_pane_rename(arg(c, 0).parse().unwrap_or(0), arg(c, 1).into()),
+                "pane-maximize" => w.invoke_pane_maximize(arg(c, 0).parse().unwrap_or(0)),
+                "pane-secrets" => w.invoke_pane_secrets(arg(c, 0).parse().unwrap_or(0)),
                 "tab" => w.set_current_tab(arg(c, 0).into()),
                 "drawer" => w.set_drawer_open(arg(c, 0) == "true"),
                 "add-menu" => w.set_add_menu_open(arg(c, 0) == "true"),

@@ -94,8 +94,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [ ] **2.23 Parked panes.** The parked card (Resume, its other choices,
      the warning, the narrow variants) and Peek / leave Peek
      (`/api/panes/:id/resume`).
-   - [ ] **2.24 Voice input.** The mic button and recording strip (`cc-mic`,
-     `cc-rec`). (Asked of the owner: in scope or later.)
+   - [ ] **2.24 Voice input.** The chat's mic button, push-to-talk and the
+     recording strip (`cc-mic`, `cc-rec`, `/api/voice/listen`), and spoken
+     replies where the chat has them. In phase 2 by the owner's decision
+     (13 Nov 2026); Cru stays in phase 6.
    - [ ] **2.25 Chat known gaps.** Inline-code chip, paragraph line height,
      glows (Send): fixed where Slint allows, the rest kept below.
 
@@ -153,11 +155,27 @@ Phase 1 left these, each with its workaround in place:
   - Cru;
   - Add project and Inbox;
   - the schedule clock and the permission-mode picker;
-  - the pane header's lock, refresh, A−/A+, pin and maximise;
+  - the pane header's lock opens nothing yet (its dialog is 2.12);
   - attachments;
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
   - "Other…" answers to questions;
   - dragging a pane by its header.
+- **Tooltips** (phase 2). The web's are the system's own (`title`); Slint
+  draws its own (`Tooltip` with a `TipBox`: bg-tertiary, 1px border, 12px).
+  They show after Slint's delay, under the pointer.
+- **Turning an icon** (2.1, the pinned pin's −30°). The software renderer
+  can't rotate an image, so `scripts/gen-icons.mjs` writes a turned copy
+  (`pin-turned`).
+- **Header text widths** (2.1). "CHAT" and "A+" come out up to 2px wider
+  than the web's (the UI font's widths; the web draws buttons in Arial), so
+  the tag sits up to 2px further left. The boxes' heights and the buttons'
+  right edges match.
+- **The secrets lock with no capability** (2.1) is drawn by the same rule
+  (no lock, A- after CHAT), but the e2e test can only reach it on a server
+  without `chat-secret-preauth`.
+- **A refused close (409)** (2.1): the toast is unit-tested
+  (`head::close_refused`); the e2e test can't make the server refuse (it
+  needs a factory Manager's chat while its run goes).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.
