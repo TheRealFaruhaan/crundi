@@ -1,8 +1,10 @@
 // The browser panels: a CEF browser per panel, rendered off-screen and shown
 // as an image (src/browser.rs), with an annotation layer drawn by Slint on top.
 
-import { Button, ComboBox, LineEdit, CheckBox } from "std-widgets.slint";
+import { ComboBox, CheckBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon } from "widgets.slint";
 
 export struct PanelData {
     frame: image,
@@ -37,46 +39,72 @@ export component BrowserPanel inherits Rectangle {
     callback navigate(string);
     callback set-device(int);
     callback clear-marks();
+    callback history(int /* -1 back, 1 forward, 0 reload */);
+    callback toggle-annotate();
 
     // The dropdown follows the panel's device (set from here, not bound: the
     // ComboBox assigns its own index when someone picks, which would drop a binding).
     property <int> shown-device: root.data.device;
     changed shown-device => { device-box.current-index = self.shown-device; }
 
-    horizontal-stretch: 1;
-    // Equal halves: the page image's own size must not widen a panel.
-    preferred-width: 100px;
-    min-width: 300px;
-    background: #12121a;
-    border-color: #2a2a3d;
-    border-width: 1px;
-    border-radius: 8px;
+    background: Theme.bg-primary;
     clip: true;
 
     VerticalLayout {
-        padding: 6px;
-        spacing: 6px;
-        HorizontalLayout {
-            spacing: 6px;
-            height: 30px;
-            url-edit := LineEdit {
-                text: root.data.url;
-                accepted(t) => { root.navigate(t); }
+        // The address bar (.brd-bar): 28px buttons, the URL pill, device, annotate.
+        Rectangle {
+            height: 40px;
+            background: Theme.bg-secondary;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-top: 6px; padding-bottom: 6px; padding-left: 8px; padding-right: 8px;
+                spacing: 5px;
+                for b[i] in [Icons.chevron-left, Icons.chevron-right, Icons.refresh]: Rectangle {
+                    width: 28px; height: 28px;
+                    border-radius: 6px;
+                    background: nb.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                    Icon { source: b; width: 14px; height: 14px; tint: Theme.text-secondary; }
+                    nb := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.history(i == 0 ? -1 : i == 1 ? 1 : 0); } }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: Theme.bg-primary;
+                    border-width: 1px;
+                    border-color: url-edit.has-focus ? Theme.accent : Theme.border;
+                    url-edit := TextInput {
+                        x: 12px; width: parent.width - 24px;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text: root.data.url;
+                        font-family: Theme.mono;
+                        font-size: 12.5px;
+                        color: Theme.text-primary;
+                        accepted => { root.navigate(self.text); }
+                    }
+                }
+                device-box := ComboBox {
+                    width: 150px;
+                    height: 28px;
+                    model: root.data.device-names;
+                    selected(v) => { root.set-device(self.current-index); }
+                }
+                Rectangle {
+                    width: 28px; height: 28px;
+                    border-radius: 6px;
+                    background: root.annotating ? Theme.accent : an.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                    Icon { source: Icons.message-square; width: 14px; height: 14px; tint: root.annotating ? white : Theme.text-secondary; }
+                    an := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.toggle-annotate(); } }
+                }
+                if root.annotating: Rectangle {
+                    width: 28px; height: 28px;
+                    border-radius: 6px;
+                    background: cm.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                    Icon { source: Icons.trash; width: 14px; height: 14px; tint: Theme.text-secondary; }
+                    cm := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.clear-marks(); } }
+                }
             }
-            device-box := ComboBox {
-                width: 170px;
-                model: root.data.device-names;
-                selected(v) => { root.set-device(self.current-index); }
-            }
-            Button {
-                text: "Clear marks";
-                clicked => { root.clear-marks(); }
-            }
-        }
-        HorizontalLayout {
-            spacing: 6px;
-            Text { text: root.data.title; color: #8888a8; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
-            Text { text: root.data.driver; color: #818cf8; font-size: 11px; }
         }
         stage := Rectangle {
             background: #0a0a0f;
@@ -147,11 +175,12 @@ export component BrowserPanel inherits Rectangle {
 }
 
 
-/// Two panels side by side, and the switch for drawing over them.
-export component BrowserArea inherits Rectangle {
+/// The browser drawer (.brd): beside the project area, on the right, with
+/// its tab strip, and the page of the open tab under its address bar.
+export component BrowserDrawer inherits Rectangle {
     in property <[PanelData]> panels;
+    in-out property <int> active;
     in-out property <bool> annotating;
-    in property <string> status;
     callback pointer(int, int, length, length, int, length, length);
     callback wheel(int, length, length, length, length, length, length);
     callback key(int, string, bool, bool, bool);
@@ -159,30 +188,77 @@ export component BrowserArea inherits Rectangle {
     callback navigate(int, string);
     callback set-device(int, int);
     callback clear-marks(int);
+    callback history(int, int);
+    callback hide();
+    callback close-all();
+    callback drag-width(length);
 
     background: Theme.bg-primary;
-    VerticalLayout {
-        padding: 10px;
-        spacing: 8px;
-        HorizontalLayout {
-            spacing: 12px;
-            height: 32px;
-            CheckBox { text: "Annotate (draw over the page)"; checked <=> root.annotating; }
-            Text { text: root.status; color: Theme.text-secondary; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+    HorizontalLayout {
+        // The splitter: 5px, accent while used.
+        Rectangle {
+            width: 5px;
+            background: sp.has-hover || sp.pressed ? Theme.accent : Theme.border;
+            sp := TouchArea {
+                mouse-cursor: col-resize;
+                moved => { if self.pressed { root.drag-width(self.pressed-x - self.mouse-x); } }
+            }
         }
-        HorizontalLayout {
-            spacing: 10px;
-            for p[i] in root.panels: BrowserPanel {
-                data: p;
-                index: i;
-                annotating: root.annotating;
-                pointer(k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
-                wheel(x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
-                key(t, d, c, s) => { root.key(i, t, d, c, s); }
-                resized(w, h) => { root.resized(i, w, h); }
-                navigate(u) => { root.navigate(i, u); }
-                set-device(d) => { root.set-device(i, d); }
-                clear-marks => { root.clear-marks(i); }
+        VerticalLayout {
+            // The tab strip (.brd-tabs).
+            Rectangle {
+                height: 34px;
+                background: Theme.bg-primary;
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                HorizontalLayout {
+                    padding-top: 4px; padding-left: 6px; padding-right: 6px;
+                    spacing: 2px;
+                    for p[i] in root.panels: Rectangle {
+                        height: 29px;
+                        width: min(200px, max(64px, tt.preferred-width + 30px));
+                        border-top-left-radius: 6px; border-top-right-radius: 6px;
+                        background: i == root.active ? Theme.bg-secondary : th.has-hover ? Theme.bg-hover : transparent;
+                        border-width: i == root.active ? 1px : 0px;
+                        border-color: Theme.border;
+                        tt := Text {
+                            x: 10px; width: parent.width - 30px;
+                            text: p.title == "" ? "New tab" : p.title;
+                            font-size: 12px;
+                            color: i == root.active ? Theme.text-primary : Theme.text-secondary;
+                            overflow: elide;
+                            vertical-alignment: center;
+                        }
+                        th := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.active = i; } }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    for b[i] in [Icons.more, Icons.chevron-right, Icons.x]: Rectangle {
+                        width: 26px; height: 26px;
+                        border-radius: 6px;
+                        background: tb.has-hover ? Theme.bg-hover : transparent;
+                        Icon { source: b; width: 14px; height: 14px; tint: Theme.text-secondary; }
+                        tb := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { if i == 1 { root.hide(); } else if i == 2 { root.close-all(); } } }
+                    }
+                }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                for p[i] in root.panels: BrowserPanel {
+                    visible: i == root.active;
+                    width: parent.width;
+                    height: parent.height;
+                    data: p;
+                    index: i;
+                    annotating: root.annotating;
+                    pointer(k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
+                    wheel(x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
+                    key(t, d, c, s) => { root.key(i, t, d, c, s); }
+                    resized(w, h) => { root.resized(i, w, h); }
+                    navigate(u) => { root.navigate(i, u); }
+                    set-device(d) => { root.set-device(i, d); }
+                    clear-marks => { root.clear-marks(i); }
+                    history(h) => { root.history(i, h); }
+                    toggle-annotate => { root.annotating = !root.annotating; }
+                }
             }
         }
     }

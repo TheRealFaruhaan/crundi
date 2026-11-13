@@ -10,7 +10,7 @@
 
 use base64::Engine;
 use serde_json::{json, Value};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Model};
 use std::{
     io::{BufRead, BufReader, Write},
     net::TcpListener,
@@ -60,13 +60,13 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "signinChecked": w.get_signin_checked(),
             "offerPassword": w.get_offer_password(),
             "server": w.get_server().as_str(),
+            "username": w.get_username().as_str(),
             "currentProject": w.get_current_project().as_str(),
-            "currentChat": w.get_current_chat().as_str(),
-            "chatTitle": w.get_chat_title().as_str(),
-            "chatState": w.get_chat_state().as_str(),
-            "chatError": w.get_chat_error().as_str(),
-            "draft": w.get_draft().as_str(),
-            "view": w.get_view().as_str(),
+            "projectName": w.get_project_name().as_str(),
+            "currentTab": w.get_current_tab().as_str(),
+            "drawerOpen": w.get_drawer_open(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "error": p.error.as_str() })).collect::<Vec<_>>(),
+            "gutters": w.get_gutters().row_count(),
         }),
         "snapshot" => match w.window().take_snapshot() {
             Ok(pb) => {
@@ -88,20 +88,26 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
         },
         "ui" => {
             let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let chat = || format!("live:{}", crate::app::focused_chat());
             match name {
                 "check-server" => w.invoke_check_server(arg(c, 0).into()),
                 "sign-in-pair" => w.invoke_sign_in_pair(arg(c, 0).into()),
                 "sign-in-password" => w.invoke_sign_in_password(arg(c, 0).into(), arg(c, 1).into(), arg(c, 2).into()),
                 "sign-out" => w.invoke_sign_out(),
                 "select-project" => w.invoke_select_project(arg(c, 0).into()),
-                "select-chat" => w.invoke_select_chat(arg(c, 0).into()),
-                "new-chat" => w.invoke_new_chat(),
-                "send" => w.invoke_send(arg(c, 0).into()),
-                "stop" => w.invoke_stop(),
-                "respond" => w.invoke_respond(arg(c, 0).into(), arg(c, 1).into(), arg(c, 2) == "true"),
-                "answer" => w.invoke_answer(arg(c, 0).into(), arg(c, 1).into()),
-                "view" => w.set_view(arg(c, 0).into()),
-                "draft" => w.set_draft(arg(c, 0).into()),
+                "new-chat" => crate::app::new_chat_pane(),
+                "add-pane" => w.invoke_add_pane(arg(c, 0).into()),
+                "close-pane" => w.invoke_close_pane(arg(c, 0).parse().unwrap_or(0)),
+                "focus-pane" => w.invoke_focus_pane(arg(c, 0).parse().unwrap_or(0)),
+                "split" => w.invoke_split(arg(c, 0).parse().unwrap_or(0), arg(c, 1) == "true"),
+                "launch-chat" => w.invoke_launch_chat(arg(c, 0).parse().unwrap_or(0), false),
+                "send" => w.invoke_send(chat().into(), arg(c, 0).into()),
+                "stop" => w.invoke_stop(chat().into()),
+                "respond" => w.invoke_respond(chat().into(), arg(c, 0).into(), arg(c, 1).into(), arg(c, 2) == "true"),
+                "answer" => w.invoke_answer(chat().into(), arg(c, 0).into(), arg(c, 1).into()),
+                "tab" => w.set_current_tab(arg(c, 0).into()),
+                "drawer" => w.set_drawer_open(arg(c, 0) == "true"),
+                "add-menu" => w.set_add_menu_open(arg(c, 0) == "true"),
                 other => return json!({ "ok": false, "error": format!("unknown ui action {other}") }),
             }
             json!({ "ok": true })

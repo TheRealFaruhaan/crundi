@@ -1,27 +1,28 @@
-// Crundi's PC client, native: the window. Signed out, the sign-in page;
-// signed in, the sidebar (projects and chats) and the main area (a chat, or
-// the browser panels).
+// Crundi's PC client, native: the window, laid out as the web UI's app shell
+// (src/webapp-html.js #app): the top bar; then the sidebar, the project area
+// (tab bar, then the workbench or another tab) and the browser drawer.
 
 import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
-import { Sidebar, ProjectItem, ChatItem } from "sidebar.slint";
-import { ChatView, EntryView } from "chat.slint";
-import { BrowserArea, PanelData } from "browser.slint";
+import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
+import { Workbench, AddMenu, PaneView, GutterView } from "workbench.slint";
+import { EntryView, ToolView } from "chat.slint";
+import { BrowserDrawer, PanelData } from "browser.slint";
 
-export { PanelData, EntryView, ProjectItem, ChatItem }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView }
 
 export component MainWindow inherits Window {
     title: "Crundi";
     preferred-width: 1400px;
     preferred-height: 860px;
-    min-width: 760px;
-    min-height: 480px;
+    min-width: 900px;
+    min-height: 520px;
     background: Theme.bg-primary;
-    default-font-size: Theme.font-size;
+    default-font-size: 13px;
 
     // ─── The session ───
     in property <bool> signed-in;
-    // The browser panels on their own (driven by a server, for tests).
     in property <bool> browser-only;
     in property <bool> online;
     in property <string> username;
@@ -43,29 +44,54 @@ export component MainWindow inherits Window {
     callback sign-in-oauth(string, string);
     callback cancel-sign-in();
 
-    // ─── Projects and chats ───
+    // ─── Projects and tabs ───
     in property <[ProjectItem]> projects;
     in property <string> current-project;
-    in property <[ChatItem]> chats;
-    in property <string> current-chat;
-    in-out property <string> view: "chat";
+    in property <string> project-name;
+    in-out property <string> current-tab: "workbench";
     callback select-project(string);
-    callback select-chat(string);
-    callback new-chat();
+    property <[TabItem]> tabs: [
+        { id: "workbench", label: "Workbench", icon: Icons.terminal },
+        { id: "git", label: "Git", icon: Icons.git-branch },
+        { id: "files", label: "Files", icon: Icons.folder },
+        { id: "kanban", label: "Kanban", icon: Icons.kanban },
+        { id: "notes", label: "Notes", icon: Icons.file-text },
+        { id: "mindmap", label: "Mindmap", icon: Icons.mindmap },
+        { id: "media", label: "Media", icon: Icons.images },
+        { id: "panels", label: "Panels", icon: Icons.panel },
+        { id: "factories", label: "Factories", icon: Icons.factory },
+        { id: "schedule", label: "Schedule", icon: Icons.clock },
+        { id: "services", label: "Services", icon: Icons.server },
+        { id: "docker", label: "Docker", icon: Icons.docker },
+        { id: "homepool", label: "Homepool", icon: Icons.network },
+        { id: "info", label: "Info", icon: Icons.info },
+        { id: "secrets", label: "Secrets", icon: Icons.lock },
+        { id: "settings", label: "Settings", icon: Icons.settings },
+    ];
 
-    // ─── The open chat ───
-    in property <[EntryView]> entries;
-    in property <string> chat-title;
-    in property <string> chat-state;
-    in property <string> chat-error;
-    in-out property <string> draft;
-    callback send(string);
-    callback stop();
-    callback respond(string, string, bool);
-    callback answer(string, string);
+    // ─── The workbench ───
+    in property <[PaneView]> panes;
+    in property <[GutterView]> gutters;
+    in property <length> content-width;
+    in-out property <bool> add-menu-open;
+    callback wb-area(length, length);
+    callback focus-pane(int);
+    callback close-pane(int);
+    callback gutter-drag(int, int, length, length);
+    callback gutter-even(int, int);
+    callback split(int, bool);
+    callback launch-chat(int, bool);
+    callback add-pane(string);
+    callback send(string, string);
+    callback stop(string);
+    callback respond(string, string, string, bool);
+    callback answer(string, string, string);
 
-    // ─── Browser panels ───
+    // ─── The browser drawer ───
     in property <[PanelData]> panels;
+    in-out property <bool> drawer-open;
+    in-out property <length> drawer-width: 560px;
+    in-out property <int> drawer-active;
     in-out property <bool> annotating;
     in property <string> status;
     callback pointer(int, int, length, length, int, length, length);
@@ -75,11 +101,12 @@ export component MainWindow inherits Window {
     callback navigate(int, string);
     callback set-device(int, int);
     callback clear-marks(int);
+    callback history(int, int);
 
-    if root.browser-only: BrowserArea {
+    if root.browser-only: BrowserDrawer {
         panels: root.panels;
+        active <=> root.drawer-active;
         annotating <=> root.annotating;
-        status: root.status;
         pointer(i, k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
         wheel(i, x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
         key(i, t, d, c, s) => { root.key(i, t, d, c, s); }
@@ -87,6 +114,7 @@ export component MainWindow inherits Window {
         navigate(i, u) => { root.navigate(i, u); }
         set-device(i, d) => { root.set-device(i, d); }
         clear-marks(i) => { root.clear-marks(i); }
+        history(i, h) => { root.history(i, h); }
     }
 
     if !root.browser-only && !root.signed-in: SignInPage {
@@ -105,44 +133,71 @@ export component MainWindow inherits Window {
         cancel => { root.cancel-sign-in(); }
     }
 
-    if !root.browser-only && root.signed-in: HorizontalLayout {
-        Sidebar {
-            projects: root.projects;
-            current-project: root.current-project;
-            chats: root.chats;
-            current-chat: root.current-chat;
-            view: root.view;
-            username: root.username;
-            server: root.server;
-            online: root.online;
-            select-project(a) => { root.view = "chat"; root.select-project(a); }
-            select-chat(id) => { root.view = "chat"; root.select-chat(id); }
-            new-chat => { root.view = "chat"; root.new-chat(); }
-            show(v) => { root.view = v; }
-            sign-out => { root.sign-out(); }
-        }
-        // Both stay alive (the browsers keep their pages); one is shown.
-        Rectangle {
-            horizontal-stretch: 1;
-            ChatView {
-                visible: root.view == "chat";
-                entries: root.entries;
-                title: root.chat-title;
-                state: root.chat-state;
-                error: root.chat-error;
-                has-chat: root.current-chat != "";
-                draft <=> root.draft;
-                send(t) => { root.send(t); }
-                stop => { root.stop(); }
-                respond(id, b, a) => { root.respond(id, b, a); }
-                answer(id, o) => { root.answer(id, o); }
-                new-chat => { root.new-chat(); }
+    if !root.browser-only && root.signed-in: VerticalLayout {
+        TopBar { project-name: root.project-name; online: root.online; }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            ProjectSidebar {
+                projects: root.projects;
+                current: root.current-project;
+                select(a) => { root.select-project(a); }
             }
-            BrowserArea {
-                visible: root.view == "browser";
+            VerticalLayout {
+                horizontal-stretch: 1;
+                TabBar {
+                    tabs: root.tabs;
+                    current: root.current-tab;
+                    drawer-open: root.drawer-open;
+                    drawer-has-tabs: root.panels.length > 0;
+                    select(t) => { root.current-tab = t; root.add-menu-open = false; }
+                    add-menu => { root.add-menu-open = !root.add-menu-open; }
+                    toggle-browser => { root.drawer-open = true; }
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    Workbench {
+                        width: parent.width;
+                        height: parent.height;
+                        visible: root.current-tab == "workbench";
+                        panes: root.panes;
+                        gutters: root.gutters;
+                        content-width: root.content-width;
+                        has-project: root.current-project != "";
+                        area(w, h) => { root.wb-area(w, h); }
+                        focus-pane(id) => { root.focus-pane(id); }
+                        close-pane(id) => { root.close-pane(id); }
+                        gutter-drag(s, i, d, span) => { root.gutter-drag(s, i, d, span); }
+                        gutter-even(s, i) => { root.gutter-even(s, i); }
+                        split(id, down) => { root.split(id, down); }
+                        launch-chat(id, skip) => { root.launch-chat(id, skip); }
+                        send(k, t) => { root.send(k, t); }
+                        stop(k) => { root.stop(k); }
+                        respond(k, id, b, a) => { root.respond(k, id, b, a); }
+                        answer(k, id, o) => { root.answer(k, id, o); }
+                    }
+                    if root.current-tab != "workbench": VerticalLayout {
+                        alignment: center;
+                        spacing: 14px;
+                        Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+                        // Settings: signing out lives here, as in the PC client.
+                        if root.current-tab == "settings": HorizontalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: so.preferred-width + 28px; height: 34px;
+                                border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                                background: sh.has-hover ? Theme.red-dim : Theme.bg-tertiary;
+                                so := Text { text: "Sign out of " + root.server; font-size: 12px; font-weight: 600; color: sh.has-hover ? Theme.red : Theme.text-primary; }
+                                sh := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.sign-out(); } }
+                            }
+                        }
+                    }
+                }
+            }
+            if root.drawer-open: BrowserDrawer {
+                width: root.drawer-width;
                 panels: root.panels;
+                active <=> root.drawer-active;
                 annotating <=> root.annotating;
-                status: root.status;
                 pointer(i, k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
                 wheel(i, x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }
                 key(i, t, d, c, s) => { root.key(i, t, d, c, s); }
@@ -150,7 +205,21 @@ export component MainWindow inherits Window {
                 navigate(i, u) => { root.navigate(i, u); }
                 set-device(i, d) => { root.set-device(i, d); }
                 clear-marks(i) => { root.clear-marks(i); }
+                history(i, h) => { root.history(i, h); }
+                hide => { root.drawer-open = false; }
+                close-all => { root.drawer-open = false; }
+                drag-width(d) => { root.drawer-width = max(320px, min(root.width - Theme.sidebar-width - 420px, root.drawer-width + d)); }
             }
         }
+    }
+
+    // The "+" menu, under the "+" by Workbench.
+    if root.signed-in && root.add-menu-open: TouchArea {
+        clicked => { root.add-menu-open = false; }
+    }
+    if root.signed-in && root.add-menu-open: AddMenu {
+        x: Theme.sidebar-width + 134px;
+        y: Theme.topbar-height + 35px;
+        pick(k) => { root.add-menu-open = false; root.add-pane(k); }
     }
 }

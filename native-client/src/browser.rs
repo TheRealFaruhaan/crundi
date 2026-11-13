@@ -580,6 +580,16 @@ fn png_base64(pb: &SharedPixelBuffer<Rgba8Pixel>) -> Option<String> {
     Some(base64::engine::general_purpose::STANDARD.encode(out))
 }
 
+/// The address bar's back (-1), forward (1) and reload (0).
+pub fn history(i: usize, h: i32) {
+    let Some(b) = with(|st| st.panels[i].browser.clone()) else { return };
+    match h {
+        -1 => b.go_back(),
+        1 => b.go_forward(),
+        _ => b.reload(),
+    }
+}
+
 /// Real mouse input at page (CSS px) coordinates, as browser_mouse does.
 pub fn mouse(i: usize, x: f32, y: f32, action: &str) -> Result<(), String> {
     let host = with(|st| st.panels[i].host()).ok_or("no browser in this panel yet")?;

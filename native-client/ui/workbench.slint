@@ -1,0 +1,326 @@
+// The workbench: panes tiled by the mosaic (src/mosaic.rs lays the tree out;
+// this draws what it worked out), the gutters between them, the new-pane
+// launcher, empty panes, and the "+" menu. As the web UI's workbench.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon } from "widgets.slint";
+import { ChatPane, PaneHead, EntryView } from "chat.slint";
+
+export struct PaneView {
+    // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
+    id: int,
+    key: string,
+    // chat | launcher | empty | panel
+    kind: string,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    focused: bool,
+    title: string,
+    state: string,
+    entries: [EntryView],
+    mode: string,
+    session: string,
+    model: string,
+    cost: string,
+    error: string,
+}
+
+export struct GutterView {
+    split: int,
+    index: int,
+    row: bool,
+    x: length,
+    y: length,
+    w: length,
+    h: length,
+    span: length,
+}
+
+/// A new pane: Empty Shell, or Claude in UI Mode (a chat) or Terminal.
+component Launcher inherits Rectangle {
+    callback ui-mode(bool /* skip permissions */);
+    VerticalLayout {
+        alignment: center;
+        spacing: 14px;
+        Text { text: ">_"; font-size: 48px; font-family: Theme.mono; color: Theme.text-muted; opacity: 0.3; horizontal-alignment: center; }
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 190px; height: 36px;
+                border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                opacity: 0.6;
+                Text { text: "Empty Shell"; font-size: 14px; color: Theme.text-secondary; }
+            }
+        }
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 342px;
+                height: box.preferred-height;
+                border-radius: 10px; border-width: 1px; border-color: Theme.border;
+                box := VerticalLayout {
+                    padding: 20px;
+                    spacing: 10px;
+                    Text { text: "CLAUDE"; font-size: 12px; font-weight: 700; color: Theme.text-muted; letter-spacing: 1px; horizontal-alignment: center; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: 248px; height: 36px;
+                            border-radius: 6px;
+                            border-width: 1px; border-color: #818cf8d9;
+                            background: @linear-gradient(90deg, Theme.accent-deep 0%, Theme.accent 50%, Theme.accent-hover 100%);
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 10px;
+                                Rectangle { width: 2px; height: 16px; y: (parent.height - self.height) / 2; background: white; }
+                                Text { text: "UI Mode"; font-size: 14px; font-weight: 650; color: white; vertical-alignment: center; }
+                            }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.ui-mode(false); } }
+                        }
+                        Rectangle {
+                            width: 44px; height: 36px;
+                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            background: s1.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                            Icon { source: Icons.shield-alert; width: 14px; height: 14px; tint: Theme.text-secondary; }
+                            s1 := TouchArea { mouse-cursor: pointer; clicked => { root.ui-mode(true); } }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        opacity: 0.6;
+                        Rectangle {
+                            width: 248px; height: 36px;
+                            border-radius: 6px; border-width: 1px; border-color: #6366f166;
+                            background: Theme.bg-card;
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Icon { source: Icons.terminal; width: 14px; height: 14px; y: (parent.height - self.height) / 2; tint: Theme.text-primary; }
+                                Text { text: "Terminal"; font-size: 14px; color: Theme.text-primary; vertical-alignment: center; }
+                            }
+                        }
+                        Rectangle {
+                            width: 44px; height: 36px;
+                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            background: Theme.bg-tertiary;
+                            Icon { source: Icons.shield-alert; width: 14px; height: 14px; tint: Theme.text-secondary; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A leaf with nothing in it: dashed edge, a line of help, split and close.
+component EmptyLeaf inherits Rectangle {
+    callback split-right();
+    callback split-down();
+    callback close();
+    border-radius: 10px;
+    border-width: 2px;
+    border-color: Theme.border;
+    VerticalLayout {
+        alignment: center;
+        spacing: 12px;
+        Text { text: "Drop a panel here or launch a new one"; font-size: 13px; color: Theme.text-muted; horizontal-alignment: center; }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 8px;
+            for b[i] in ["+ Split ▸", "+ Split ▾", "×"]: Rectangle {
+                height: 26px;
+                width: bt.preferred-width + 20px;
+                border-radius: 999px; border-width: 1px; border-color: Theme.border;
+                background: bh.has-hover ? Theme.bg-hover : Theme.bg-secondary;
+                bt := Text { text: b; font-size: 11.5px; color: Theme.text-secondary; }
+                bh := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { if i == 0 { root.split-right(); } else if i == 1 { root.split-down(); } else { root.close(); } }
+                }
+            }
+        }
+    }
+}
+
+export component Workbench inherits Rectangle {
+    in property <[PaneView]> panes;
+    in property <[GutterView]> gutters;
+    in property <length> content-width;
+    in property <bool> has-project;
+    callback area(length, length);
+    callback focus-pane(int);
+    callback close-pane(int);
+    callback gutter-drag(int, int, length, length);
+    callback gutter-even(int, int);
+    callback split(int, bool /* down */);
+    callback launch-chat(int, bool);
+    callback send(string, string);
+    callback stop(string);
+    callback respond(string, string, string, bool);
+    callback answer(string, string, string);
+
+    background: Theme.bg-primary;
+    changed width => { root.area(self.width, self.height); }
+    changed height => { root.area(self.width, self.height); }
+    init => { root.area(self.width, self.height); }
+
+    if !root.has-project: VerticalLayout {
+        alignment: center;
+        spacing: 8px;
+        Text { text: ">_"; font-size: 48px; font-family: Theme.mono; color: Theme.text-muted; opacity: 0.3; horizontal-alignment: center; }
+        Text { text: "Select a project to open the workbench"; font-size: 14px; color: Theme.text-secondary; horizontal-alignment: center; }
+        Text { text: "Or add a new project from the sidebar"; font-size: 12px; color: Theme.text-muted; horizontal-alignment: center; }
+    }
+
+    if root.has-project: Flickable {
+        content-width: root.content-width;
+        content-height: root.height;
+        for p in root.panes: Rectangle {
+            x: p.x; y: p.y; width: p.w; height: p.h;
+            if p.kind == "empty": EmptyLeaf {
+                split-right => { root.split(p.id, false); }
+                split-down => { root.split(p.id, true); }
+                close => { root.close-pane(p.id); }
+            }
+            if p.kind != "empty": Rectangle {
+                background: Theme.bg-primary;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: p.focused ? Theme.accent : Theme.border;
+                clip: true;
+                // A click anywhere in the pane focuses it (behind its content).
+                TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.focus-pane(p.id); } } }
+                // The focused pane's 1px accent ring.
+                if p.focused: Rectangle { border-radius: 11px; border-width: 1px; border-color: #6366f166; x: -1px; y: -1px; width: parent.width + 2px; height: parent.height + 2px; }
+                VerticalLayout {
+                    padding: 1px;
+                    PaneHead {
+                        title: p.title;
+                        state: p.state;
+                        chat: p.kind == "chat";
+                        narrow: p.w < 560px;
+                        kind-tag: p.kind == "chat" ? "CHAT" : "";
+                        close => { root.close-pane(p.id); }
+                    }
+                    if p.kind == "chat": ChatPane {
+                        vertical-stretch: 1;
+                        entries: p.entries;
+                        state: p.state;
+                        mode: p.mode;
+                        session: p.session;
+                        model: p.model;
+                        cost: p.cost;
+                        error: p.error;
+                        narrow: p.w < 480px;
+                        send(t) => { root.send(p.key, t); }
+                        stop => { root.stop(p.key); }
+                        respond(id, b, a) => { root.respond(p.key, id, b, a); }
+                        answer(id, o) => { root.answer(p.key, id, o); }
+                    }
+                    if p.kind == "launcher": Launcher {
+                        vertical-stretch: 1;
+                        ui-mode(skip) => { root.launch-chat(p.id, skip); }
+                    }
+                    if p.kind == "panel": Rectangle {
+                        vertical-stretch: 1;
+                        Text { text: p.title + " comes in a later phase of the native client"; font-size: 13px; color: Theme.text-muted; }
+                    }
+                }
+            }
+        }
+        // The gutters: a 7px grab strip with a 1px line, accent while used.
+        for g in root.gutters: Rectangle {
+            x: g.x; y: g.y; width: g.w; height: g.h;
+            Rectangle {
+                x: g.row ? 3px : 0px; y: g.row ? 0px : 3px;
+                width: g.row ? 1px : parent.width; height: g.row ? parent.height : 1px;
+                background: gt.has-hover || gt.pressed ? Theme.accent : Theme.border;
+            }
+            gt := TouchArea {
+                mouse-cursor: g.row ? MouseCursor.col-resize : MouseCursor.row-resize;
+                moved => {
+                    if self.pressed {
+                        root.gutter-drag(g.split, g.index, g.row ? self.mouse-x - self.pressed-x : self.mouse-y - self.pressed-y, g.span);
+                    }
+                }
+                double-clicked => { root.gutter-even(g.split, g.index); }
+            }
+        }
+    }
+}
+
+/// The "+" menu, under the tab bar's "+".
+export component AddMenu inherits Rectangle {
+    callback pick(string);
+    property <bool> layouts;
+    width: 150px;
+    height: items.preferred-height + 10px;
+    background: Theme.bg-secondary;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Theme.border;
+    drop-shadow-blur: 22px;
+    drop-shadow-offset-y: 6px;
+    drop-shadow-color: #0000008c;
+    items := VerticalLayout {
+        padding: 5px;
+        for it in [
+            { id: "terminal", label: "Terminal", icon: Icons.terminal },
+            { id: "files", label: "Files", icon: Icons.folder },
+            { id: "git", label: "Git", icon: Icons.git-branch },
+            { id: "kanban", label: "Kanban", icon: Icons.kanban },
+            { id: "notes", label: "Notes", icon: Icons.file-text },
+            { id: "mindmap", label: "Mindmap", icon: Icons.mindmap },
+            { id: "media", label: "Media", icon: Icons.images },
+            { id: "factory", label: "Factory", icon: Icons.factory },
+            { id: "panel", label: "Panel", icon: Icons.panel },
+            { id: "fit", label: "Fit to screen", icon: Icons.maximize },
+            { id: "layout", label: "Layout", icon: Icons.panel },
+        ]: Rectangle {
+            height: 34px;
+            border-radius: 6px;
+            background: mh.has-hover ? Theme.accent : transparent;
+            HorizontalLayout {
+                padding-left: 11px;
+                spacing: 10px;
+                Icon { source: it.icon; width: 15px; height: 15px; y: (parent.height - self.height) / 2; tint: mh.has-hover ? white : Theme.accent-hover; }
+                Text { text: it.label; font-size: 13.76px; color: mh.has-hover ? white : Theme.text-primary; vertical-alignment: center; horizontal-stretch: 1; }
+                if it.id == "layout": Text { text: "▸"; font-size: 10px; color: mh.has-hover ? white : Theme.text-muted; vertical-alignment: center; width: 18px; }
+            }
+            mh := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { if it.id == "layout" { root.layouts = !root.layouts; } else { root.pick(it.id); } }
+            }
+        }
+    }
+    // The Layout flyout: the presets.
+    if root.layouts: Rectangle {
+        x: parent.width + 4px;
+        y: parent.height - self.height;
+        width: 170px;
+        height: presets.preferred-height + 10px;
+        background: Theme.bg-secondary;
+        border-radius: 10px;
+        border-width: 1px;
+        border-color: Theme.border;
+        presets := VerticalLayout {
+            padding: 5px;
+            for pr in [
+                { id: "layout:cols2", label: "2 columns" },
+                { id: "layout:cols3", label: "3 columns" },
+                { id: "layout:grid", label: "2 × 2" },
+                { id: "layout:stack", label: "Left + right stack" },
+                { id: "layout:rows", label: "Top + bottom pair" },
+            ]: Rectangle {
+                height: 34px;
+                border-radius: 6px;
+                background: ph.has-hover ? Theme.accent : transparent;
+                Text { x: 11px; text: pr.label; font-size: 13.76px; color: ph.has-hover ? white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
+                ph := TouchArea { mouse-cursor: pointer; clicked => { root.layouts = false; root.pick(pr.id); } }
+            }
+        }
+    }
+}

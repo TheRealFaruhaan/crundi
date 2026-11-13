@@ -12,6 +12,10 @@ pub struct Conversation {
     pub state: String,
     pub title: String,
     pub model: String,
+    /// For the composer's meta row: Claude's session id, the permission mode, the cost so far.
+    pub session_id: String,
+    pub mode: String,
+    pub cost: f64,
 }
 
 impl Conversation {
@@ -21,6 +25,9 @@ impl Conversation {
         self.title = s(session, "title");
         self.model = s(session, "model");
         self.state = s(session, "state");
+        self.session_id = s(session, "sessionId");
+        self.mode = s(session, "permissionMode");
+        self.cost = session.get("totalCostUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
         self.entries = session.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
     }
 
@@ -32,7 +39,11 @@ impl Conversation {
                 let id = s(e, "id");
                 match self.entries.iter_mut().find(|x| s(x, "id") == id && !id.is_empty()) {
                     Some(old) => *old = e.clone(),
-                    None => self.entries.push(e.clone()),
+                    None => {
+                        // A turn's end adds to the cost so far.
+                        if s(e, "kind") == "result" { self.cost += e.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0); }
+                        self.entries.push(e.clone())
+                    }
                 }
                 true
             }
@@ -60,9 +71,11 @@ impl Conversation {
                 if let Some(sess) = event.get("session") { self.load(sess); }
                 true
             }
-            "meta" => {
+            "meta" | "init" => {
                 if let Some(m) = event.get("model").and_then(|m| m.as_str()) { self.model = m.to_string(); }
-                false
+                if let Some(m) = event.get("permissionMode").and_then(|m| m.as_str()) { self.mode = m.to_string(); }
+                if let Some(m) = event.get("sessionId").and_then(|m| m.as_str()) { self.session_id = m.to_string(); }
+                true
             }
             _ => false,
         }
@@ -89,6 +102,8 @@ pub struct Shown {
     pub request_id: String,
     /// question: the first question's choices.
     pub options: Vec<String>,
+    /// tool: Claude's own description of the call (the group's title).
+    pub note: String,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -163,6 +178,7 @@ fn shown(e: &Value) -> Option<Shown> {
                 text: clip(&result_text(e.get("result")), RESULT_MAX),
                 status: s(e, "status"),
                 error: e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false),
+                note: input.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
                 ..base
             }
         }

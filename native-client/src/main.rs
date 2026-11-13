@@ -22,6 +22,7 @@ mod app;
 mod browser;
 mod chat;
 mod live;
+mod mosaic;
 mod store;
 mod testctl;
 #[cfg(feature = "gpu")]
@@ -134,6 +135,7 @@ fn main() {
     });
     ui.on_set_device(|i, d| browser::defer(move || browser::set_device(i as usize, d as usize)));
     ui.on_clear_marks(|i| browser::defer(move || browser::clear_marks(i as usize)));
+    ui.on_history(|i, h| browser::defer(move || browser::history(i as usize, h)));
 
     let a = std::env::var("CRUNDI_URL_A").unwrap_or_else(|_| "https://example.com".into());
     let b = std::env::var("CRUNDI_URL_B").unwrap_or_else(|_| "https://www.wikipedia.org".into());

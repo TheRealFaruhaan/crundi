@@ -23,6 +23,10 @@ pub struct Saved {
     pub project: String,
     #[serde(default)]
     pub chat: String,
+    /// The workbench layout of each project (src/mosaic.rs), as the web UI keeps
+    /// it in localStorage.crundi_wb_mosaic.
+    #[serde(default)]
+    pub layouts: std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub fn config_dir() -> PathBuf {

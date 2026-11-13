@@ -23,6 +23,9 @@ export component SignInPage inherits Rectangle {
     callback sign-in-oauth(string, string);
     callback cancel();
 
+    // The card's text width (420px less its padding): wrapped text is measured
+    // at this width, so the card is as tall as its text really is.
+    property <length> text-width: 364px;
     property <string> link;
     property <string> password;
     property <string> code;
@@ -48,8 +51,8 @@ export component SignInPage inherits Rectangle {
 
                     if root.oauth-code != "": VerticalLayout {
                         spacing: 12px;
-                        Text { text: "Finish signing in in your browser."; color: Theme.text-primary; wrap: word-wrap; }
-                        Text { text: "Check that the page shows this code:"; color: Theme.text-secondary; wrap: word-wrap; }
+                        Text { width: root.text-width; text: "Finish signing in in your browser."; color: Theme.text-primary; wrap: word-wrap; }
+                        Text { width: root.text-width; text: "Check that the page shows this code:"; color: Theme.text-secondary; wrap: word-wrap; }
                         Text { text: root.oauth-code; color: Theme.amber; font-size: 28px; font-weight: 800; horizontal-alignment: center; font-family: Theme.mono; }
                         Btn { text: "Cancel"; clicked => { root.cancel(); } }
                     }
@@ -57,7 +60,7 @@ export component SignInPage inherits Rectangle {
                     if root.oauth-code == "": VerticalLayout {
                         spacing: 10px;
                         Text { text: "PAIRING LINK"; color: Theme.text-muted; font-size: Theme.font-size-xs; font-weight: 700; }
-                        Text {
+                        Text { width: root.text-width;
                             text: "In Crundi on a signed-in device, open Settings, then Connect a phone, and paste its link here (it works for a computer too).";
                             color: Theme.text-secondary; font-size: Theme.font-size-sm; wrap: word-wrap;
                         }
@@ -113,7 +116,7 @@ export component SignInPage inherits Rectangle {
                             if root.offer-google: Btn { text: "Google"; has-icon: true; icon: Icons.globe; enabled: !root.busy; clicked => { root.sign-in-oauth(root.server, "google"); } }
                             if root.offer-github: Btn { text: "GitHub"; has-icon: true; icon: Icons.git-branch; enabled: !root.busy; clicked => { root.sign-in-oauth(root.server, "github"); } }
                         }
-                        if root.checked && !root.offer-password && !root.offer-google && !root.offer-github: Text {
+                        if root.checked && !root.offer-password && !root.offer-google && !root.offer-github: Text { width: root.text-width;
                             text: "This server offers no sign-in this app can use here: pair it from a signed-in device.";
                             color: Theme.text-secondary; font-size: Theme.font-size-sm; wrap: word-wrap;
                         }

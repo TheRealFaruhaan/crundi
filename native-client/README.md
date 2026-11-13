@@ -74,16 +74,26 @@ the web page it shows; this one has no such page.
 - **The saved login:** the refresh token, in the user's config folder, readable
   by the user only (`src/store.rs`). Access tokens are never written down. A
   restart signs in again on its own.
+- **The window copies the PC client's design exactly** (src/webapp-html.js,
+  measured from the running page):
+  - the 48px top bar, with the logo, the project and the connection badge;
+  - the 240px projects sidebar, with Add project and Inbox;
+  - the tab bar, with Workbench and its "+", the other tabs, and Browser on
+    the right (with its dot when tabs are open behind a hidden drawer);
+  - the **workbench**: panes tiled as the web UI's mosaic (`src/mosaic.rs`:
+    splits and leaves, 6px padding, 7px gutters, panes at least 340px), saved
+    per project; every live chat has a pane;
+  - the "+" menu, with its Layout presets; the new-pane launcher (Claude: UI
+    Mode); empty panes with their split buttons;
+  - chat panes as the web chat draws them: the 28px header (CHAT tag, tools,
+    "…" under 560px, a two-click ×), bubbles, markdown, tool groups ("N tool"),
+    approvals and questions, the result line, the composer and its meta row;
+  - the browser drawer on the right, with its tab strip, address bar, device
+    menu and annotation.
 - **Data:** projects and chats come from the server's API (`src/api.rs`).
 - **Live updates:** one `/ws` socket and the event stream (`src/live.rs`).
-- **The open chat:**
-  - Claude's replies stream in;
-  - tool calls show as cards;
-  - approvals (Allow, Always allow, Deny) and questions can be answered;
-  - Stop interrupts;
-  - Enter sends, and Shift+Enter starts a new line.
-
-  (`src/chat.rs`, `src/app.rs`, `ui/chat.slint`)
+- Tabs other than Workbench say they come in a later phase. Sign out is in
+  Settings.
 - **The look:** the web UI's colours (`ui/theme.slint`) and its icon set,
   generated from `ICON_PATHS` by `scripts/gen-icons.mjs` (`ui/icons/`).
 - **The server's browser control** is off unless `CRUNDI_NATIVE_HOST=1` is set.
