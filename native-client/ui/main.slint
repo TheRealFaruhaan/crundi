@@ -14,6 +14,10 @@ export struct PanelData {
     url: string,
     // Which device it emulates (an index into the device list), and who drives it.
     device: int,
+    // The device list for this panel: the named devices, plus "Custom WxH" when the server set a size.
+    device-names: [string],
+    // The page's mouse cursor (src/browser.rs cursor_index).
+    cursor: int,
     driver: string,
     // Annotation strokes, as SVG path commands in panel pixels.
     strokes: [string],
@@ -25,7 +29,6 @@ export struct PanelData {
 
 component BrowserPanel inherits Rectangle {
     in property <PanelData> data;
-    in property <[string]> devices;
     in property <bool> annotating;
     in property <int> index;
     callback pointer(int /* kind: 0 move, 1 down, 2 up, 3 exit */, length, length, int /* button */, length, length);
@@ -35,6 +38,11 @@ component BrowserPanel inherits Rectangle {
     callback navigate(string);
     callback set-device(int);
     callback clear-marks();
+
+    // The dropdown follows the panel's device (set from here, not bound: the
+    // ComboBox assigns its own index when someone picks, which would drop a binding).
+    property <int> shown-device: root.data.device;
+    changed shown-device => { device-box.current-index = self.shown-device; }
 
     horizontal-stretch: 1;
     // Equal halves: the page image's own size must not widen a panel.
@@ -56,10 +64,9 @@ component BrowserPanel inherits Rectangle {
                 text: root.data.url;
                 accepted(t) => { root.navigate(t); }
             }
-            ComboBox {
+            device-box := ComboBox {
                 width: 170px;
-                model: root.devices;
-                current-index: root.data.device;
+                model: root.data.device-names;
                 selected(v) => { root.set-device(self.current-index); }
             }
             Button {
@@ -115,7 +122,12 @@ component BrowserPanel inherits Rectangle {
                 key-pressed(e) => { root.key(e.text, true, e.modifiers.control, e.modifiers.shift); accept }
                 key-released(e) => { root.key(e.text, false, e.modifiers.control, e.modifiers.shift); accept }
                 touch := TouchArea {
-                    mouse-cursor: root.annotating ? crosshair : default;
+                    mouse-cursor: root.annotating ? MouseCursor.crosshair
+                        : root.data.cursor == 1 ? MouseCursor.pointer : root.data.cursor == 2 ? MouseCursor.text : root.data.cursor == 3 ? MouseCursor.crosshair
+                        : root.data.cursor == 4 ? MouseCursor.move : root.data.cursor == 5 ? MouseCursor.progress : root.data.cursor == 6 ? MouseCursor.not-allowed
+                        : root.data.cursor == 7 ? MouseCursor.ew-resize : root.data.cursor == 8 ? MouseCursor.ns-resize : root.data.cursor == 9 ? MouseCursor.nesw-resize
+                        : root.data.cursor == 10 ? MouseCursor.nwse-resize : root.data.cursor == 11 ? MouseCursor.grab : root.data.cursor == 12 ? MouseCursor.grabbing
+                        : root.data.cursor == 13 ? MouseCursor.help : root.data.cursor == 14 ? MouseCursor.none : MouseCursor.default;
                     pointer-event(e) => {
                         if (e.kind == PointerEventKind.down) { fs.focus(); }
                         root.pointer(
@@ -142,7 +154,6 @@ export component MainWindow inherits Window {
     background: #0a0a0f;
 
     in property <[PanelData]> panels;
-    in property <[string]> devices;
     in property <string> status;
     in-out property <bool> annotating;
 
@@ -172,7 +183,6 @@ export component MainWindow inherits Window {
             for p[i] in root.panels: BrowserPanel {
                 data: p;
                 index: i;
-                devices: root.devices;
                 annotating: root.annotating;
                 pointer(k, x, y, b, w, h) => { root.pointer(i, k, x, y, b, w, h); }
                 wheel(x, y, dx, dy, w, h) => { root.wheel(i, x, y, dx, dy, w, h); }

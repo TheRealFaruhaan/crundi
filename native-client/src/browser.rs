@@ -63,6 +63,11 @@ pub struct Panel {
     cdp_waiters: HashMap<i32, CdpReply>,
     load_waiters: Vec<Box<dyn FnOnce()>>,
     last_ua: String,
+    /// The page's mouse cursor, as an index the Slint side maps to its own cursors.
+    cursor: i32,
+    /// The device dropdown's list. One model for the panel's life: Slint's
+    /// ComboBox resets its choice whenever it is handed a different model.
+    device_names: StdRc<VecModel<SharedString>>,
 }
 
 impl Panel {
@@ -140,7 +145,15 @@ pub fn sync(i: usize) {
             view_height: vh as f32,
             title: p.title.clone().into(),
             url: p.url.clone().into(),
-            device: p.device as i32,
+            // The panel's own device list: the named devices, and the server's size when it set one.
+            device: if p.custom.is_some() { DEVICES.len() as i32 } else { p.device as i32 },
+            device_names: {
+                let mut v: Vec<SharedString> = DEVICES.iter().map(|d| SharedString::from(d.name)).collect();
+                if let Some((w, h)) = p.custom { v.push(format!("Custom {w}x{h}").into()); }
+                if p.device_names.iter().ne(v.iter().cloned()) { p.device_names.set_vec(v); }
+                p.device_names.clone().into()
+            },
+            cursor: p.cursor,
             driver: p.key.as_ref().map(|k| format!("driven by the server: {k}")).unwrap_or_default().into(),
             strokes: StdRc::new(VecModel::from(strokes)).into(),
             pin_x,
@@ -232,6 +245,32 @@ wrap_load_handler! {
     }
 }
 
+#[cfg(target_os = "macos")]
+type PageCursor = *mut u8;
+#[cfg(not(target_os = "macos"))]
+type PageCursor = CursorHandle;
+
+/// CEF's cursor kinds, folded into the ones the panel shows (ui/main.slint, page-cursor).
+fn cursor_index(t: CursorType) -> i32 {
+    match t {
+        CursorType::HAND => 1,
+        CursorType::IBEAM | CursorType::VERTICALTEXT => 2,
+        CursorType::CROSS | CursorType::CELL => 3,
+        CursorType::MOVE => 4,
+        CursorType::WAIT | CursorType::PROGRESS => 5,
+        CursorType::NOTALLOWED | CursorType::NODROP => 6,
+        CursorType::EASTRESIZE | CursorType::WESTRESIZE | CursorType::EASTWESTRESIZE | CursorType::COLUMNRESIZE => 7,
+        CursorType::NORTHRESIZE | CursorType::SOUTHRESIZE | CursorType::NORTHSOUTHRESIZE | CursorType::ROWRESIZE => 8,
+        CursorType::NORTHEASTRESIZE | CursorType::SOUTHWESTRESIZE | CursorType::NORTHEASTSOUTHWESTRESIZE => 9,
+        CursorType::NORTHWESTRESIZE | CursorType::SOUTHEASTRESIZE | CursorType::NORTHWESTSOUTHEASTRESIZE => 10,
+        CursorType::GRAB => 11,
+        CursorType::GRABBING => 12,
+        CursorType::HELP => 13,
+        CursorType::NONE => 14,
+        _ => 0,
+    }
+}
+
 wrap_display_handler! {
     pub struct PanelDisplay {
         index: usize,
@@ -241,6 +280,12 @@ wrap_display_handler! {
             let t = title.map(|t| t.to_string()).unwrap_or_default();
             with(|st| st.panels[self.index].title = t);
             sync(self.index);
+        }
+        fn on_cursor_change(&self, _browser: Option<&mut Browser>, _cursor: PageCursor, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> ::std::os::raw::c_int {
+            let c = cursor_index(type_);
+            let changed = with(|st| { let p = &mut st.panels[self.index]; let ch = p.cursor != c; p.cursor = c; ch });
+            if changed { sync(self.index); }
+            1
         }
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
@@ -348,7 +393,9 @@ pub fn apply_device(i: usize) {
 }
 
 pub fn set_device(i: usize, d: usize) {
-    with(|st| { let p = &mut st.panels[i]; p.device = d.min(DEVICES.len() - 1); p.custom = None; });
+    // The last entry may be "Custom WxH" (the server's size): choosing it keeps that size.
+    if d >= DEVICES.len() { return; }
+    with(|st| { let p = &mut st.panels[i]; p.device = d; p.custom = None; });
     apply_device(i);
 }
 
@@ -453,6 +500,19 @@ pub fn navigate(i: usize, url: &str, done: Box<dyn FnOnce()>) {
 /// The panel's current frame as a PNG (what the person sees, at device pixels).
 pub fn screenshot(i: usize) -> Option<String> {
     let pb = with(|st| st.panels[i].frame.clone())?;
+    png_base64(&pb)
+}
+
+/// The whole window as Slint draws it (panels, toolbar, annotations), as a
+/// base64 PNG: a screenshot that needs nothing from the OS.
+pub fn window_snapshot() -> Option<String> {
+    use slint::ComponentHandle;
+    let ui = with(|st| st.ui.upgrade())?;
+    let pb = ui.window().take_snapshot().ok()?;
+    png_base64(&pb)
+}
+
+fn png_base64(pb: &SharedPixelBuffer<Rgba8Pixel>) -> Option<String> {
     let mut out = Vec::new();
     {
         let mut enc = png::Encoder::new(&mut out, pb.width(), pb.height());

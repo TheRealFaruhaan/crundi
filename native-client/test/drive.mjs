@@ -5,16 +5,24 @@
 // Start the prototype with CRUNDI_SERVER=ws://127.0.0.1:<port>/ws?token=test and
 // this script waits for it to register, then drives both panels.
 //
-//   node native-client/test/drive.mjs [port]     (default 7611; screenshots to /tmp)
+//   node native-client/test/drive.mjs [port]     (default 7611)
+//
+//   NATIVE_BIN=path   start the prototype too (and stop it at the end)
+//   DRIVE_OUT=dir     where the screenshots go (default: the temp dir)
 
 import http from 'node:http';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, openSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import * as browser from '../../src/browser.js';
 
 const require = createRequire(import.meta.url);
 const { WebSocketServer } = require('ws');
 const port = Number(process.argv[2] || 7611);
+const out = process.env.DRIVE_OUT || tmpdir();
+mkdirSync(out, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;
 const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  ' + JSON.stringify(extra).slice(0, 300)}`); if (!ok) failed++; };
@@ -68,9 +76,17 @@ await new Promise((r) => page.listen(0, '127.0.0.1', r));
 await new Promise((r) => server.listen(port, '127.0.0.1', r));
 const pageUrl = `http://127.0.0.1:${page.address().port}`;
 console.log(`waiting for the prototype on ws://127.0.0.1:${port}/ws?token=test`);
-const reg = await Promise.race([ready, sleep(60000).then(() => null)]);
+let app = null;
+if (process.env.NATIVE_BIN) {
+  const log = openSync(join(out, 'native-app.log'), 'w');
+  app = spawn(process.env.NATIVE_BIN, [], { env: { ...process.env, CRUNDI_SERVER: `ws://127.0.0.1:${port}/ws?token=test`, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank' }, stdio: ['ignore', log, log] });
+  app.on('exit', (code) => console.log(`  the app exited (${code})`));
+}
+const finish = (code) => { if (app) app.kill(); setTimeout(() => process.exit(code), 500); };
+const reg = await Promise.race([ready, sleep(Number(process.env.REGISTER_TIMEOUT || 60000)).then(() => null)]);
 check('the prototype registers as native host', !!reg, 'no registration in 60s');
-if (!reg) process.exit(1);
+if (!reg) finish(1);
+else {
 console.log('  capabilities', reg.capabilities, 'device', reg.deviceId);
 
 const A = await browser.openBrowser({ alias: 'proto', name: 'a', url: pageUrl + '/a' });
@@ -116,13 +132,17 @@ await sleep(500);
 
 let shot = await browser.screenshotBrowser(A.key);
 check('browser_screenshot A', shot.ok && shot.data && shot.data.length > 1000, shot.error);
-if (shot.ok) writeFileSync('/tmp/native-drive-a.png', Buffer.from(shot.data, 'base64'));
+if (shot.ok) writeFileSync(join(out, 'native-drive-a.png'), Buffer.from(shot.data, 'base64'));
 shot = await browser.screenshotBrowser(B.key);
-if (shot.ok) writeFileSync('/tmp/native-drive-b.png', Buffer.from(shot.data, 'base64'));
+if (shot.ok) writeFileSync(join(out, 'native-drive-b.png'), Buffer.from(shot.data, 'base64'));
 
 r = await raw('browserMarks', { key: A.key });
 check('browserMarks reads the annotations', r.ok && r.marks && r.marks.pin && r.marks.pin.label === 'This button', r);
 console.log('  marks', JSON.stringify(r.marks).slice(0, 200));
+
+r = await raw('windowSnapshot', {});
+check('windowSnapshot: the whole window as Slint drew it', r.ok && r.data && r.data.length > 1000, r.error);
+if (r.ok) writeFileSync(join(out, 'native-window.png'), Buffer.from(r.data, 'base64'));
 
 if (process.env.KEEP) { console.log('KEEP set: leaving the panels open'); await sleep(Number(process.env.KEEP)); }
 r = await browser.closeBrowser(A.key);
@@ -131,4 +151,5 @@ const D = await browser.openBrowser({ alias: 'proto', name: 'd', url: pageUrl + 
 check('the freed panel takes a new browser', D.ok, D);
 
 console.log(failed ? `${failed} failed` : 'all passed');
-process.exit(failed ? 1 : 0);
+finish(failed ? 1 : 0);
+}

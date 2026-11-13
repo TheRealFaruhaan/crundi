@@ -12,6 +12,8 @@
 slint::include_modules!();
 
 mod browser;
+#[cfg(target_os = "macos")]
+mod mac;
 mod server;
 
 use cef::*;
@@ -33,6 +35,11 @@ wrap_app! {
 
 fn main() {
     // The API version this crate was built against: must come first.
+    // macOS: CEF is a framework in the bundle, loaded by hand (helpers are
+    // the same binary, in helper apps three levels deeper).
+    #[cfg(target_os = "macos")]
+    let _framework = mac::load_framework(std::env::args().any(|a| a.starts_with("--type=")));
+
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     let args = args::Args::new();
     let mut app = NativeApp::new();
@@ -47,27 +54,35 @@ fn main() {
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_default();
     let cache = dirs_cache().join("crundi-native");
     let _ = std::fs::create_dir_all(&cache);
-    let settings = Settings {
+    let mut settings = Settings {
         no_sandbox: 1,
         windowless_rendering_enabled: 1,
         // Pumped from Slint's event loop (below), the same way on every OS.
         multi_threaded_message_loop: 0,
         external_message_pump: 0,
         root_cache_path: CefString::from(cache.to_string_lossy().as_ref()),
-        resources_dir_path: CefString::from(exe_dir.to_string_lossy().as_ref()),
-        locales_dir_path: CefString::from(exe_dir.join("locales").to_string_lossy().as_ref()),
         log_severity: LogSeverity::WARNING,
         ..Default::default()
     };
+    // On macOS the framework finds its own resources; elsewhere they sit next to the binary.
+    if !cfg!(target_os = "macos") {
+        settings.resources_dir_path = CefString::from(exe_dir.to_string_lossy().as_ref());
+        settings.locales_dir_path = CefString::from(exe_dir.join("locales").to_string_lossy().as_ref());
+    }
+
+    // The window first: on macOS this is what creates NSApp (winit's), which
+    // CEF needs to find implementing its protocol.
+    let ui = MainWindow::new().expect("window");
+    #[cfg(target_os = "macos")]
+    mac::adopt_cef_app_protocol();
+
     if initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) != 1 {
         eprintln!("[native] CEF did not start");
         std::process::exit(1);
     }
 
-    let ui = MainWindow::new().expect("window");
     let model = Rc::new(slint::VecModel::from(vec![PanelData::default(), PanelData::default()]));
     ui.set_panels(model.clone().into());
-    ui.set_devices(Rc::new(slint::VecModel::from(browser::DEVICES.iter().map(|d| slint::SharedString::from(d.name)).collect::<Vec<_>>())).into());
     browser::STATE.with(|s| {
         *s.borrow_mut() = Some(browser::State { panels: vec![browser::Panel::default(), browser::Panel::default()], model, ui: ui.as_weak() });
     });

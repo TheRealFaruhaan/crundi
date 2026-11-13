@@ -96,6 +96,14 @@ fn dispatch(m: Value, reply: Reply) {
         return browser::navigate(i, &url, Box::new(move || reply(json!({ "ok": true }))));
     }
 
+    // Prototype-only: the whole window, for checking a build on any OS.
+    if ty == "windowSnapshot" {
+        return match browser::window_snapshot() {
+            Some(data) => reply(json!({ "ok": true, "data": data })),
+            None => err(reply, "No snapshot"),
+        };
+    }
+
     let Some(i) = panel_of(&key) else { return err(reply, format!("No panel for browser '{key}' (open it first)")) };
     match ty.as_str() {
         "browserClose" => {

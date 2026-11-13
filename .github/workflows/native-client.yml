@@ -1,0 +1,115 @@
+# The native client prototype (native-client/): build it on Linux, Windows and
+# macOS, run the server-control test against it on each, and keep a runnable
+# package of each to try on a real machine. Nothing here builds or releases
+# Crundi itself.
+name: native-client
+
+on:
+  push:
+    branches: [native-client]
+    paths: ['native-client/**', '.github/workflows/native-client.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SLINT_BACKEND: winit-software
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cef
+          key: cef-156.0.26-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-client/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('native-client/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Fetch CEF
+        run: echo "CEF_PATH=$(node native-client/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: native-client
+        run: cargo build --release
+
+      - name: Stage CEF next to the binary
+        working-directory: native-client
+        run: echo "NATIVE_BIN=$(node scripts/stage-cef.mjs target/release)" >> "$GITHUB_ENV"
+
+      - name: Test deps (just what src/browser.js imports)
+        run: |
+          mkdir -p "$RUNNER_TEMP/deps" && cd "$RUNNER_TEMP/deps" && npm init -y >/dev/null && npm install --no-audit --no-fund ws@8 dotenv@16
+          mv node_modules "$GITHUB_WORKSPACE/node_modules"
+
+      - name: Drive it from a Crundi server (/ws)
+        env:
+          DRIVE_OUT: ${{ runner.temp }}/drive
+          REGISTER_TIMEOUT: '120000'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/drive.mjs 7611
+          else
+            node native-client/test/drive.mjs 7611
+          fi
+
+      - name: Test pictures and app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drive-${{ matrix.os }}
+          path: ${{ runner.temp }}/drive
+          if-no-files-found: ignore
+
+      - name: Package
+        working-directory: native-client
+        run: |
+          PKG="$RUNNER_TEMP/pkg/crundi-native"
+          mkdir -p "$PKG"
+          case "$RUNNER_OS" in
+            macOS)   cp -R target/release/crundi-native.app "$PKG/" ;;
+            Windows) cp -R target/release/*.dll target/release/*.pak target/release/*.dat target/release/*.bin target/release/*.json \
+                       target/release/locales target/release/crundi-native.exe "$PKG/" ;;
+            Linux)   for f in target/release/*; do
+                       case "$(basename "$f")" in build|deps|examples|incremental|*.d|.*) ;; *) cp -RL "$f" "$PKG/" ;; esac
+                     done
+                     strip --strip-unneeded "$PKG/libcef.so" ;;
+          esac
+          cp README.md "$PKG/"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: crundi-native-${{ runner.os }}-${{ runner.arch }}
+          path: ${{ runner.temp }}/pkg
+          retention-days: 14

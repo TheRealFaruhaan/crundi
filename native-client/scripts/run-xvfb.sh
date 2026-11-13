@@ -4,4 +4,5 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export SLINT_BACKEND="${SLINT_BACKEND:-winit-software}"
-exec xvfb-run -a -s "-screen 0 1440x900x24" ./target/debug/crundi-native "$@"
+BIN="${BIN:-./target/debug/crundi-native}"
+exec xvfb-run -a -s "-screen 0 1440x900x24" "$BIN" "$@"
