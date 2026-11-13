@@ -60,3 +60,61 @@ pub fn adopt_cef_app_protocol() {
         eprintln!("[native] NSApp ({}) adopted CefAppProtocol", class_name.to_string_lossy());
     }
 }
+
+// ─── CEF's message loop on macOS ───
+//
+// Elsewhere a Slint timer calls do_message_loop_work. On macOS that timer runs
+// inside winit's event handler, and CEF's work spins the run loop itself, which
+// hands winit an event while it is still handling one: winit aborts ("tried to
+// handle event while another event is currently being handled"). So here the
+// pump is a CFRunLoop timer: it fires from the run loop directly, outside
+// winit's handler, and never re-enters itself.
+
+use std::ffi::c_void;
+
+#[repr(C)]
+struct CFRunLoopTimerContext {
+    version: isize,
+    info: *mut c_void,
+    retain: *const c_void,
+    release: *const c_void,
+    copy_description: *const c_void,
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRunLoopGetMain() -> *mut c_void;
+    fn CFAbsoluteTimeGetCurrent() -> f64;
+    fn CFRunLoopTimerCreate(
+        allocator: *const c_void,
+        fire_date: f64,
+        interval: f64,
+        flags: usize,
+        order: isize,
+        callout: extern "C" fn(*mut c_void, *mut c_void),
+        context: *mut CFRunLoopTimerContext,
+    ) -> *mut c_void;
+    fn CFRunLoopAddTimer(run_loop: *mut c_void, timer: *mut c_void, mode: *const c_void);
+    static kCFRunLoopCommonModes: *const c_void;
+}
+
+static PUMPING: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn pump(_timer: *mut c_void, _info: *mut c_void) {
+    if PUMPING.swap(true, Ordering::Acquire) {
+        return;
+    }
+    crate::browser::run_deferred();
+    cef::do_message_loop_work();
+    PUMPING.store(false, Ordering::Release);
+}
+
+/// Pump CEF every [interval_ms] from the main run loop (in every run-loop mode,
+/// so it keeps going during window drags and menus).
+pub fn start_pump(interval_ms: u64) {
+    let secs = interval_ms as f64 / 1000.0;
+    unsafe {
+        let timer = CFRunLoopTimerCreate(std::ptr::null(), CFAbsoluteTimeGetCurrent() + secs, secs, 0, 0, pump, std::ptr::null_mut());
+        CFRunLoopAddTimer(CFRunLoopGetMain(), timer, kCFRunLoopCommonModes);
+    }
+}

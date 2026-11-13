@@ -105,31 +105,35 @@ fn main() {
         *s.borrow_mut() = Some(browser::State { panels: vec![browser::Panel::default(), browser::Panel::default()], model, ui: ui.as_weak() });
     });
 
-    // Slint → the bridge.
+    // Slint → the bridge (browser::defer: on macOS, after winit's event handling).
     let weak = ui.as_weak();
     ui.on_pointer(move |i, kind, x, y, b, _w, _h| {
         let annotating = weak.upgrade().map(|u| u.get_annotating()).unwrap_or(false);
-        browser::pointer(i as usize, kind, x, y, b, annotating);
+        browser::defer(move || browser::pointer(i as usize, kind, x, y, b, annotating));
     });
-    ui.on_wheel(|i, x, y, dx, dy, _w, _h| browser::wheel(i as usize, x, y, dx, dy));
-    ui.on_key(|i, t, d, c, s| browser::key(i as usize, t.as_str(), d, c, s));
-    ui.on_resized(|i, w, h| browser::resized(i as usize, w, h));
+    ui.on_wheel(|i, x, y, dx, dy, _w, _h| browser::defer(move || browser::wheel(i as usize, x, y, dx, dy)));
+    ui.on_key(|i, t, d, c, s| browser::defer(move || browser::key(i as usize, t.as_str(), d, c, s)));
+    ui.on_resized(|i, w, h| browser::defer(move || browser::resized(i as usize, w, h)));
     ui.on_navigate(|i, u| {
         let u = u.to_string();
         let u = if u.contains("://") || u.starts_with("about:") { u } else { format!("https://{u}") };
-        browser::navigate(i as usize, &u, Box::new(|| {}));
+        browser::defer(move || browser::navigate(i as usize, &u, Box::new(|| {})));
     });
-    ui.on_set_device(|i, d| browser::set_device(i as usize, d as usize));
-    ui.on_clear_marks(|i| browser::clear_marks(i as usize));
+    ui.on_set_device(|i, d| browser::defer(move || browser::set_device(i as usize, d as usize)));
+    ui.on_clear_marks(|i| browser::defer(move || browser::clear_marks(i as usize)));
 
     let a = std::env::var("CRUNDI_URL_A").unwrap_or_else(|_| "https://example.com".into());
     let b = std::env::var("CRUNDI_URL_B").unwrap_or_else(|_| "https://www.wikipedia.org".into());
     browser::create(0, &a);
     browser::create(1, &b);
 
-    // CEF's message loop, pumped from Slint's.
+    // CEF's message loop: pumped from Slint's timer, or on macOS from the
+    // run loop directly (src/mac.rs: winit there must not be re-entered).
     let pump = slint::Timer::default();
+    #[cfg(not(target_os = "macos"))]
     pump.start(slint::TimerMode::Repeated, Duration::from_millis(8), || do_message_loop_work());
+    #[cfg(target_os = "macos")]
+    mac::start_pump(8);
 
     match std::env::var("CRUNDI_SERVER") {
         Ok(url) if !url.is_empty() => server::start(url),

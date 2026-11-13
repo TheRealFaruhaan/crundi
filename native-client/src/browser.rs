@@ -350,6 +350,31 @@ pub fn create(index: usize, url: &str) {
     if b.is_none() { eprintln!("[native] panel {index}: CEF did not create the browser"); }
 }
 
+thread_local! {
+    static DEFERRED: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::new(Vec::new());
+}
+
+/// Run a call into CEF that comes from a Slint callback. On macOS it waits for
+/// the next pump (src/mac.rs), outside winit's event handling, which CEF must
+/// not re-enter; elsewhere it runs now.
+pub fn defer(f: impl FnOnce() + 'static) {
+    if cfg!(target_os = "macos") {
+        DEFERRED.with(|d| d.borrow_mut().push(Box::new(f)));
+    } else {
+        f();
+    }
+}
+
+/// The deferred calls, in order (the macOS pump, before CEF's own work).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn run_deferred() {
+    loop {
+        let batch = DEFERRED.with(|d| std::mem::take(&mut *d.borrow_mut()));
+        if batch.is_empty() { break; }
+        for f in batch { f(); }
+    }
+}
+
 /// Is the GPU path in use (src/gpu.rs)?
 pub fn gpu_on() -> bool {
     #[cfg(feature = "gpu")]

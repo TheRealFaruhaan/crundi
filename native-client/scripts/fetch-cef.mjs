@@ -10,7 +10,7 @@
 
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -36,7 +36,8 @@ if (!version) throw new Error(`CEF ${CEF_VERSION} is not in the index for ${plat
 const file = version.files.find((f) => f.type === 'minimal');
 console.error(`downloading ${file.name} (${Math.round(file.size / 1e6)} MB)`);
 
-const work = join(tmpdir(), `cef-fetch-${process.pid}`);
+// Unpacked beside the result: a rename cannot cross drives (Windows CI: C: and D:).
+const work = join(out, `.fetch-${process.pid}`);
 mkdirSync(work, { recursive: true });
 const archive = join(work, file.name);
 const res = await fetch(`${CDN}/${encodeURIComponent(file.name)}`);

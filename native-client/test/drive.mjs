@@ -138,7 +138,7 @@ if (shot.ok) writeFileSync(join(out, 'native-drive-b.png'), Buffer.from(shot.dat
 
 r = await raw('browserMarks', { key: A.key });
 check('browserMarks reads the annotations', r.ok && r.marks && r.marks.pin && r.marks.pin.label === 'This button', r);
-console.log('  marks', JSON.stringify(r.marks).slice(0, 200));
+console.log('  marks', JSON.stringify(r.marks ?? null).slice(0, 200));
 
 r = await raw('windowSnapshot', {});
 check('windowSnapshot: the whole window as Slint drew it', r.ok && r.data && r.data.length > 1000, r.error);

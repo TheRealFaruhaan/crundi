@@ -64,7 +64,7 @@ fn on_message(text: &str, tx: mpsc::Sender<Value>, shown: &str) {
                     }
                     let _ = tx.send(result);
                 });
-                dispatch(payload, reply);
+                browser::defer(move || dispatch(payload, reply));
             });
         }
         _ => {}
