@@ -38,8 +38,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      header to maximise. States: rest, hover of each button, pinned, full
      screen, armed ×, renaming.
    - [ ] **2.2 Pane header, narrow (< 560px).** Tools folded behind "…"
-     (`term-more`, `.tools-open`): split right / down, text size, pin, the
-     secrets button with its label. States: closed, open, each item hovered.
+     (`term-more`, `.tools-open`): text size, pin, the secrets button with
+     its label. (Split right / down, `.head-split`, show only in the web's
+     phone layout, so not here; narrow panes split through `.leaf-ctrls`,
+     2.3.) States: closed, open, each item hovered.
    - [ ] **2.3 Moving panes.** Drag a pane by its header to move or swap it
      (the drop targets and their highlight); split right / split down from the
      hover controls (`leaf-split`, `head-split`); the empty pane and its chips;
