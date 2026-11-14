@@ -78,13 +78,13 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.6 Permission-mode picker.** `cc-modal` with every mode, its
      colour and description; changing a running chat's mode; the mode
      button's colour per mode.
-   - [ ] **2.7 Attachments.** The attach button, the file picker, drag and
+   - [x] **2.7 Attachments.** The attach button, the file picker, drag and
      drop (`cc-dropping`), paste, upload progress (`cc-up`), and the path
      put into the message (`/api/attachments/upload`). No chips: the web
      has none, it puts the path into the message.
    - [x] **2.8 Drafts.** Kept per chat across switching and a restart
      (`saveDraft` / `readDraft` / `pruneDrafts`).
-   - [ ] **2.9 Queued messages.** Sent while a turn runs: the queue block
+   - [x] **2.9 Queued messages.** Sent while a turn runs: the queue block
      (`cc-queue`), cancel one, take it back to edit (`recallQueued`), sent when
      the turn ends.
    - [ ] **2.10 Scheduled messages.** The clock (`cc-sched-trig`) and its
