@@ -97,6 +97,17 @@ impl Drafts {
         Some(text)
     }
 
+    /// A chat's held lines (2.9), kept with the drafts so a quit (or a kill)
+    /// doesn't lose them; empty removes.
+    pub fn set_held(&mut self, chat: &str, text: &str, now: u64) {
+        self.put(format!("held:{chat}"), text, now);
+    }
+
+    /// Held lines saved by an earlier run, taken (once).
+    pub fn take_held(&mut self, chat: &str) -> Option<String> {
+        self.entries.remove(&format!("held:{chat}")).map(|e| e.0)
+    }
+
     /// A chat's composer went (closed, another project): its claim is let go;
     /// nothing is removed.
     pub fn release(&mut self, chat: &str, alias: &str) {
@@ -148,5 +159,17 @@ mod tests {
         assert_eq!((d.own("old"), d.own("new"), d.own("bare"), d.own("empty")), (None, Some("y"), Some("z"), None));
         let back = Drafts::from_saved(&d.to_saved());
         assert_eq!((back.own("new"), back.own("bare")), (Some("y"), Some("z")));
+    }
+
+    #[test]
+    fn held_lines_kept() {
+        let mut d = Drafts::default();
+        d.set_held("a", "x\ny", 1);
+        let back = Drafts::from_saved(&d.to_saved());
+        let mut back = back;
+        assert_eq!(back.take_held("a").as_deref(), Some("x\ny"));
+        assert_eq!(back.take_held("a"), None);
+        d.set_held("a", "", 2);
+        assert_eq!(d.take_held("a"), None);
     }
 }

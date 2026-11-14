@@ -6,7 +6,7 @@
 use crate::{
     api::{self, Api, ApiError, SignedIn},
     attach, drafts::Drafts,
-    chat::{Conversation, Shown},
+    chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
     head, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, ToolView,
@@ -125,6 +125,10 @@ pub struct App {
     /// The pane whose Stop was clicked once ("Sure?"), and which arming it is.
     stop_armed: Option<String>,
     stop_gen: u32,
+    /// Lines sent while a chat needs input (2.9): held here, by chat id, and
+    /// sent as one message when the prompt is answered or the turn ends.
+    held: HashMap<String, Vec<String>>,
+    flush_pending: bool,
     /// The pane whose mode picker is open (2.6), by key.
     picker: Option<String>,
     /// Each chat's uploads (2.7), by pane key: the bar and how many run.
@@ -250,6 +254,8 @@ pub fn init(window: &MainWindow) {
             stop_gen: 0,
             local_errors: 0,
             picker: None,
+            held: HashMap::new(),
+            flush_pending: false,
             uploads: HashMap::new(),
             carets: HashMap::new(),
             file_target: None,
@@ -322,6 +328,7 @@ pub fn init(window: &MainWindow) {
     c.on_caret(|k, c, an| { with(|a| a.carets.insert(k.to_string(), (c.max(0) as usize, an.max(0) as usize))); });
     c.on_attach(|k| pick_file(k.to_string()));
     c.on_paste(|k, si| paste(k.as_str(), si));
+    c.on_take_back(|k| take_back(k.as_str()));
     window.on_file_target(|k| { with(|a| a.file_target = Some(k.to_string())); });
     window.on_mode_choose(|m| choose_mode(m.as_str()));
     window.on_mode_close(close_mode_picker);
@@ -902,6 +909,12 @@ fn render() {
                     p.up_frac = u.frac;
                     p.up_busy = u.active > 0;
                 }
+                // The drawers (2.9): held lines, and the handed-over ones.
+                if let Some(h) = a.held.get(id) { p.q_held = h.join("\n").into(); p.q_held_n = h.len() as i32; }
+                if let Some((kind, body)) = a.chats.get(id).and_then(|cs| cs.conv.handed()) {
+                    p.q_sent = body.into();
+                    p.q_sent_kind = match kind { Handed::Recallable => "recallable", Handed::Started => "started", Handed::Waiting => "waiting" }.into();
+                }
                 p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
                 p.draft_gen = *a.draft_gen.get(&key).unwrap_or(&0);
                 if let Some(cs) = a.chats.get(id) {
@@ -997,6 +1010,11 @@ fn render() {
         }
         (cw, full, picker)
     });
+    // Held lines whose chat no longer needs input go out (after the frame,
+    // so this never runs inside a render).
+    if with(|a| !a.held.is_empty() && !std::mem::replace(&mut a.flush_pending, true)).unwrap_or(false) {
+        slint::Timer::single_shot(Duration::from_millis(0), flush_held);
+    }
     if let (Some(w), Some((cw, full, picker))) = (ui(), out) {
         w.set_content_width(cw);
         w.set_mode_picker_open(picker.is_some());
@@ -1143,6 +1161,13 @@ fn close_pane(leaf: u32) {
             with(|a| {
                 if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) { a.mosaic.close(l); }
                 a.font.remove(&id);
+                // Held lines go into the draft (the web drops them).
+                if let Some(h) = a.held.remove(&id) {
+                    sync_held(a, &id);
+                    let key = chat_key(&id);
+                    let cur = a.drafts.get(&key).cloned().unwrap_or_default();
+                    save_draft_in(a, &key, &chat::given_back(&h.join("\n"), &cur));
+                }
                 // The draft stays (the web keeps it: a new chat in the project
                 // can adopt it); the composer's claim goes when its pane does.
                 if a.full.as_deref() == Some(chat_key(&id).as_str()) { a.full = None; }
@@ -1302,7 +1327,9 @@ fn on_chat_message(m: &Value) {
             "ui-event" => {
                 // The server's own state replaces the optimistic one.
                 let ty = m.get("event").map(|e| s(e, "type")).unwrap_or_default();
-                if matches!(ty.as_str(), "state" | "exit" | "history") { a.sending.remove(&id); }
+                // (An idle that comes before the send's working doesn't undo it.)
+                let st = m.get("event").map(|e| s(e, "state")).unwrap_or_default();
+                if (ty == "state" && st != "idle") || matches!(ty.as_str(), "exit" | "history") { a.sending.remove(&id); }
                 m.get("event").map(|e| cs.conv.apply(e)).unwrap_or(false) || ty == "exit"
             }
             _ => false,
@@ -1480,40 +1507,198 @@ pub fn send(key: &str, text: String) {
     let text = text.trim_end().to_string();
     if text.trim().is_empty() { return; }
     let k = key.to_string();
-    with(|a| {
+    let state = with(|a| {
         save_draft_in(a, &k, "");
         *a.draft_gen.entry(k.clone()).or_insert(0) += 1;
         if let Some(cs) = a.chats.get_mut(&id) { cs.error.clear(); }
-        a.sending.insert(id.clone());
-    });
+        let st = chat_state_now(a, &id);
+        // Needs input: held here, sent as one when the prompt is answered (2.9).
+        if st == "needs-input" { a.held.entry(id.clone()).or_default().push(text.clone()); sync_held(a, &id); }
+        st
+    }).unwrap_or_default();
+    match state.as_str() {
+        "needs-input" => { render(); write_drafts_soon(); }
+        // Working: handed over at once, a slot of its own in the drawer.
+        "working" => post_send(&k, &id, text, true),
+        // Idle: a plain send; the chat shows working at once.
+        _ => {
+            with(|a| a.sending.insert(id.clone()));
+            post_send(&k, &id, text, false);
+        }
+    }
+}
+
+/// A chat's state as its composer reads it now (the list's, the stream's,
+/// and working at once after a send).
+fn chat_state_now(a: &App, id: &str) -> String {
+    let st = match a.sessions.iter().find(|c| s(c, "id") == id) { Some(c) => agent_state(c), None => a.chats.get(id).map(|cs| cs.conv.state.clone()).unwrap_or_default() };
+    head::composer_state(&st, a.sending.contains(id))
+}
+
+/// POST /send. Handed over (Claude busy), its slot shows at once; the answer
+/// gives it its id, or drops it (the server was idle: it's in the log). A
+/// refused send gives the text back in front of the box's (and an error row).
+fn post_send(key: &str, id: &str, text: String, handed: bool) {
+    if handed { with(|a| if let Some(cs) = a.chats.get_mut(id) { cs.conv.add_slot(&text); }); }
     render();
     write_drafts_soon();
-    let (id2, body) = (id.clone(), text.clone());
-    call(move |api| api.post(&format!("/api/ui-sessions/{id}/send"), &json!({ "text": body })), move |r| {
-        let refused = match r {
-            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some(s(&v, "error")),
-            Ok(_) => None,
-            Err(e) => Some(e),
-        };
-        if let Some(e) = refused { send_refused(&k, &id2, if e.is_empty() { "Failed to send".into() } else { e }, text); }
+    let stub = crate::testctl::take_stub("send");
+    let (k, id, path) = (key.to_string(), id.to_string(), format!("/api/ui-sessions/{id}/send"));
+    let body = text.clone();
+    call(move |api| match stub { Some(v) => Ok(v), None => api.post(&path, &json!({ "text": body })) }, move |r| {
+        match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) != Some(false) => {
+                let injected = v.get("injected").and_then(|x| x.as_bool()).unwrap_or(false);
+                with(|a| if let Some(cs) = a.chats.get_mut(&id) {
+                    if injected && !cs.conv.slots.iter().any(|x| x.text == text && x.uuid.is_empty()) { cs.conv.add_slot(&text); }
+                    cs.conv.sent(&text, injected, &s(&v, "uuid"));
+                });
+                render();
+            }
+            Ok(v) => { let e = s(&v, "error"); send_refused(&k, &id, if e.is_empty() { "Failed to send".into() } else { e }, text); }
+            Err(e) => send_refused(&k, &id, e, text),
+        }
     });
 }
 
 fn send_refused(key: &str, id: &str, error: String, text: String) {
     with(|a| {
         a.sending.remove(id);
-        // The text comes back, unless something new was typed meanwhile.
-        if a.drafts.get(key).is_none_or(|d| d.is_empty()) {
-            save_draft_in(a, key, &text);
-            *a.draft_gen.entry(key.to_string()).or_insert(0) += 1;
-        }
-        a.local_errors += 1;
-        let n = a.local_errors;
-        if let Some(cs) = a.chats.get_mut(id) { cs.conv.entries.push(json!({ "id": format!("local-error-{n}"), "kind": "error", "text": error })); }
+        // Its slot goes; the text comes back in front of what the box holds.
+        let cur = a.drafts.get(key).cloned().unwrap_or_default();
+        save_draft_in(a, key, &chat::given_back(&text, &cur));
+        *a.draft_gen.entry(key.to_string()).or_insert(0) += 1;
+        if let Some(cs) = a.chats.get_mut(id) { cs.conv.drop_slot(&text); }
+        push_error(a, id, &error);
     });
     show_chat(id);
     render();
     write_drafts_soon();
+}
+
+/// A chat's held lines changed: the saved copy follows (written with the
+/// drafts), so they outlive the app.
+fn sync_held(a: &mut App, id: &str) {
+    drafts_for_server(a);
+    let text = a.held.get(id).map(|h| h.join("\n")).unwrap_or_default();
+    a.saved_drafts.set_held(id, &text, now_ms());
+    a.drafts_dirty = true;
+}
+
+/// An error row in a chat's log (the client's own).
+fn push_error(a: &mut App, id: &str, error: &str) {
+    a.local_errors += 1;
+    let n = a.local_errors;
+    if let Some(cs) = a.chats.get_mut(id) { cs.conv.entries.push(json!({ "id": format!("local-error-{n}"), "kind": "error", "text": error })); }
+}
+
+/// Held lines go out as one message once their chat no longer needs input
+/// (the prompt answered, or the turn over: the web's ticker and idle
+/// flush). An exited chat's go back into its box instead (the web loses
+/// them: a named difference).
+fn flush_held() {
+    with(|a| a.flush_pending = false);
+    let due: Vec<(String, String, String)> = with(|a| {
+        let ids: Vec<String> = a.held.keys().cloned().collect();
+        ids.into_iter().filter_map(|id| {
+            let st = chat_state_now(a, &id);
+            if st == "needs-input" { return None; }
+            let text = a.held.remove(&id)?.join("\n");
+            sync_held(a, &id);
+            Some((id, text, st))
+        }).collect()
+    }).unwrap_or_default();
+    for (id, text, st) in due {
+        let key = chat_key(&id);
+        if st == "exited" {
+            with(|a| { let cur = a.drafts.get(&key).cloned().unwrap_or_default(); save_draft_in(a, &key, &chat::given_back(&text, &cur)); *a.draft_gen.entry(key.clone()).or_insert(0) += 1; });
+            render();
+            write_drafts_soon();
+        } else {
+            post_send(&key, &id, text, true);
+        }
+    }
+}
+
+/// Take back (2.9): a click on a drawer, or ↑ on the box's first row. The
+/// held lines at once, and every handed-over message that can still be
+/// recalled (POST /cancel-queued each); then the box holds the cancelled
+/// texts, the held text, then its own. False: nothing to take back.
+pub fn take_back(key: &str) -> bool {
+    let Some(id) = chat_of(key).map(str::to_string) else { return false };
+    let (held, recall) = with(|a| {
+        let held = a.held.remove(&id).map(|h| h.join("\n")).unwrap_or_default();
+        sync_held(a, &id);
+        (held, a.chats.get(&id).map(|cs| cs.conv.recallable()).unwrap_or_default())
+    }).unwrap_or_default();
+    if held.is_empty() && recall.is_empty() { return false; }
+    if recall.is_empty() { taken_back(key, &id, vec![], held, None); return true; }
+    render();
+    let Some(api) = api() else { return true };
+    let stubs: Vec<Option<Value>> = recall.iter().map(|_| crate::testctl::take_stub("cancel-queued")).collect();
+    let (k, id2) = (key.to_string(), id.clone());
+    bg(move || {
+        recall.into_iter().zip(stubs).map(|((uuid, text), stub)| {
+            let r = match stub { Some(v) => Ok(v), None => api.post(&format!("/api/ui-sessions/{id2}/cancel-queued"), &json!({ "uuid": uuid })) };
+            let r = match r {
+                Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Err({ let e = s(&v, "error"); if e.is_empty() { "Could not take it back".to_string() } else { e } }),
+                Ok(v) => Ok(v.get("cancelled").and_then(|c| c.as_bool()).unwrap_or(false)),
+                Err(ApiError::Status(404, _)) => Err("Taking back is not supported by this server".into()),
+                Err(e) => Err(e.to_string()),
+            };
+            (uuid, text, r)
+        }).collect::<Vec<_>>()
+    }, move |results| {
+        let mut cancelled = vec![];
+        let mut error = None;
+        with(|a| if let Some(cs) = a.chats.get_mut(&id) {
+            for (uuid, text, r) in results {
+                match r {
+                    Ok(true) => { cs.conv.slots.retain(|x| x.uuid != uuid); cancelled.push(text); }
+                    // Too late: the CLI has it (no error).
+                    Ok(false) => { if let Some(x) = cs.conv.slots.iter_mut().find(|x| x.uuid == uuid) { x.state = "started".into(); } }
+                    Err(e) => { error.get_or_insert(e); }
+                }
+            }
+        });
+        taken_back(&k, &id, cancelled, held, error);
+    });
+    true
+}
+
+fn taken_back(key: &str, id: &str, cancelled: Vec<String>, held: String, error: Option<String>) {
+    let new = with(|a| {
+        let cur = a.drafts.get(key).cloned().unwrap_or_default();
+        let new = chat::taken_back(&cancelled, &held, &cur);
+        save_draft_in(a, key, &new);
+        a.carets.insert(key.to_string(), (new.len(), new.len()));
+        if let Some(e) = &error { push_error(a, id, e); }
+        new
+    }).unwrap_or_default();
+    if error.is_some() { show_chat(id); }
+    if let Some(w) = ui() {
+        let c = w.global::<Composer>();
+        c.set_insert_key(key.into());
+        c.set_insert_caret(new.len() as i32);
+        c.set_insert_text(new.into());
+        c.set_insert_gen(c.get_insert_gen() + 1);
+    }
+    render();
+    write_drafts_soon();
+}
+
+/// Quitting: every chat's held lines go into its draft (the web loses them:
+/// a named difference), to be back in the box after a restart.
+pub fn park_held() {
+    with(|a| {
+        let held: Vec<(String, Vec<String>)> = a.held.drain().collect();
+        for (id, lines) in held {
+            sync_held(a, &id);
+            let key = chat_key(&id);
+            let cur = a.drafts.get(&key).cloned().unwrap_or_default();
+            save_draft_in(a, &key, &chat::given_back(&lines.join("\n"), &cur));
+        }
+    });
 }
 
 /// Stop: the first click arms it ("Sure?") for 3 s; a second click within
@@ -1610,7 +1795,16 @@ fn restore_drafts(a: &mut App, keys: &[String]) {
         let Some(id) = chat_of(k).map(str::to_string) else { continue };
         let alias = chat_project(a, &id);
         a.restored.insert(k.clone(), alias.clone());
-        let found = a.saved_drafts.restore(&id, &alias, now);
+        let mut found = a.saved_drafts.restore(&id, &alias, now);
+        // Held lines an earlier run left (it quit or was stopped): in front of
+        // the draft, as a give-back (2.9).
+        if !a.held.contains_key(&id) {
+            if let Some(h) = a.saved_drafts.take_held(&id) {
+                let t = chat::given_back(&h, found.as_deref().unwrap_or(""));
+                a.saved_drafts.save(&id, &alias, &t, now);
+                found = Some(t);
+            }
+        }
         a.drafts_dirty = true;
         if let Some(t) = found {
             if a.drafts.get(k).is_none_or(|d| d.is_empty()) {
@@ -1773,8 +1967,11 @@ pub fn file_dropped(path: std::path::PathBuf) {
     let first = with(|a| { a.dropped.push(path); a.dropped.len() == 1 }).unwrap_or(false);
     if !first { return; }
     slint::Timer::single_shot(Duration::from_millis(0), || {
+        // The focused chat, found first: focused_chat() borrows the app too
+        // (a nested borrow panicked: F59).
+        let focused = chat_key(&focused_chat());
         let (paths, key) = with(|a| {
-            let key = a.full.clone().or_else(|| a.file_target.clone()).unwrap_or_else(|| chat_key(&focused_chat()));
+            let key = a.full.clone().or_else(|| a.file_target.clone()).unwrap_or(focused);
             (std::mem::take(&mut a.dropped), key)
         }).unwrap_or_default();
         file_hover(false);
@@ -1869,6 +2066,11 @@ pub fn upload_of(key: &str) -> (bool, String, String, bool) {
 /// The saved drafts of the server signed in to, for the test driver.
 pub fn saved_drafts() -> Value {
     with(|a| { drafts_for_server(a); a.saved_drafts.to_saved() }).unwrap_or(Value::Null)
+}
+
+/// The test driver plays a ui-event into a chat, as the server would.
+pub fn play_event(id: &str, event: Value) {
+    on_chat_message(&json!({ "type": "ui-event", "id": id, "event": event }));
 }
 
 /// A pane's draft as typed (the pane rows carry it only as of their last

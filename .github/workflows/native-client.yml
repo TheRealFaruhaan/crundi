@@ -77,6 +77,18 @@ jobs:
           BIN=$(node scripts/stage-cef.mjs target/release)
           echo "NATIVE_BIN=$BIN" >> "$GITHUB_ENV"
 
+      # The pure rules (attachments, drafts, layout, headers, chat) on every
+      # system, not just compiled there; CEF's libraries next to the binary
+      # are found through the loader path.
+      - name: Unit tests
+        working-directory: native-client
+        run: |
+          case "$RUNNER_OS" in
+            Windows) export PATH="$PWD/target/release:$PATH" ;;
+            Linux) export LD_LIBRARY_PATH="$PWD/target/release:$LD_LIBRARY_PATH" ;;
+          esac
+          cargo test --release --features gpu
+
       - name: Test deps (just what src/browser.js imports)
         run: |
           mkdir -p "$RUNNER_TEMP/deps" && cd "$RUNNER_TEMP/deps" && npm init -y >/dev/null && npm install --no-audit --no-fund ws@8 dotenv@16

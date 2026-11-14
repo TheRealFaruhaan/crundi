@@ -232,6 +232,16 @@ them; each has a spec in `specs/`). So far:
   (claimed by one open chat), restored when a composer is built, cleared on
   send, kept on close, pruned after 30 days.
 
+- **2.9 Queued messages** (specs/queued-messages.md): sent while Claude
+  works, a message is handed over at once and shows in a slate drawer
+  ("SENDING not read yet" → "SENT Claude is reading it"), driven by the
+  server's `queued-state` and `injected` events and its
+  `pendingInjections`; sent while it needs input, lines are held in a
+  dashed drawer and go out as one message when the prompt is answered or
+  the turn ends. A click on either drawer, or ↑ on the box's first row,
+  takes everything back (`cancel-queued` for each that can still be
+  recalled). The rules are in `src/chat.rs` (unit-tested).
+
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
   10–26, two letter-spacings) plus a short structural list (window, top

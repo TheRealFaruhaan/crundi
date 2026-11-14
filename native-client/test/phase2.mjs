@@ -986,7 +986,7 @@ await sleep(500);
 { const c = await cpane(); check('switched: Enter makes a newline and sends nothing', c.draft.endsWith('\n') && c.state === 'idle', c); }
 await keys('Backspace');
 await keys('Return', ['Control']);
-{ const c = await cpane(); check('Ctrl+Enter sends: the box empties and the chat is working at once', c.draft === '' && c.state === 'working', c); }
+{ const c = await cpane(); check('Ctrl+Enter sends: the box empties and the chat is working at once', c.draft === '' && c.state === 'working', { state: c.state, draft: c.draft, qSent: c.qSent, qHeld: c.qHeld }); }
 await snap('2.5-working');
 // Stop: armed by one click, disarmed after 3 s; two clicks interrupt.
 p = await until('the turn is under way', (q) => pane(q, liveC)?.state === 'working', 30000);
@@ -1309,6 +1309,128 @@ await sleep(800);
   check('sending clears the chat\'s draft and the project\'s copy', !sd['chat:' + liveN3] && !sd['project:demo'], sd);
 }
 for (const id of [liveB2, liveN3]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+
+// ─── 2.9 Queued messages ───
+const hist = async (id) => (await http('GET', `/api/ui-sessions/${id}/history`, null, token)).body?.session || {};
+const pendingTexts = async (id) => ((await hist(id)).pendingInjections || []).map((x) => x.text);
+const userTexts = async (id) => ((await hist(id)).messages || []).filter((m) => m.kind === 'user').map((m) => m.text);
+const errorRows = async () => ((await d.send({ cmd: 'state' })).state?.entries || []).filter((e) => e.kind === 'error').map((e) => e.text);
+const qp = async (id) => pane(await props(), id);
+const focusChat = async (id) => { await ui('focus-pane', (await qp(id)).id); await ui('composer-focus'); };
+const enter = async (text) => { await keys(text); await keys('Return'); };
+const BASH_WAIT = 'Run the shell command `timeout 300 tail -f /dev/null` in the foreground and wait for it, then say done.';
+const liveQW = await make('demo', 'Queue working', true);
+const liveQN = await make('demo', 'Queue held', false);
+const liveQX = await make('demo', 'Queue exit', false);
+await send(liveQW, 'Run exactly this shell command in the foreground with timeout 600000 and wait for it to finish: timeout 300 tail -f /dev/null. It is a deliberate wait for a UI test; do not run it in the background. Then say done.');
+await send(liveQN, BASH_WAIT);
+await send(liveQX, BASH_WAIT);
+p = await until('one chat working, two on a permission prompt', (q) => pane(q, liveQW)?.state === 'working' && pane(q, liveQN)?.state === 'needs-input' && pane(q, liveQX)?.state === 'needs-input', 180000);
+await sleep(3000);
+// Working: handed over at once; take it back (cancel-queued): nothing is sent.
+await focusChat(liveQW);
+await clearBox();
+await enter('do not send me');
+p = await until('handed over: the drawer, recallable', (q) => pane(q, liveQW)?.qSent === 'do not send me' && pane(q, liveQW).qSentKind === 'recallable' && pane(q, liveQW).draft === '', 20000);
+if (p) check('a message sent while working is handed over at once (the server holds it)', (await pendingTexts(liveQW)).includes('do not send me'));
+await snap('2.9-handed');
+await ui('take-back');
+p = await until('taken back: the drawer goes, the text in the box', (q) => pane(q, liveQW)?.qSent === '' && pane(q, liveQW).draft === 'do not send me', 15000);
+if (p) check('a take-back cancels it on the server and puts it back in the box', !(await pendingTexts(liveQW)).includes('do not send me'));
+await clearBox();
+// Too late: the server says it couldn't cancel (no error; "Claude is reading it").
+await enter('late one');
+await until('handed over', (q) => pane(q, liveQW)?.qSentKind === 'recallable', 20000);
+const errs0 = (await errorRows()).length;
+await ui('stub', 'cancel-queued', JSON.stringify({ ok: true, cancelled: false }));
+await ui('take-back');
+p = await until('too late: Claude is reading it', (q) => pane(q, liveQW)?.qSentKind === 'started', 10000);
+if (p) check('too late to take back: "Claude is reading it", no error row, the box unchanged', (await errorRows()).length === errs0 && pane(p, liveQW).draft === '');
+// A take-back that fails: one error row, the drawer stays.
+await enter('e1 one');
+await until('handed over', (q) => pane(q, liveQW)?.qSentKind === 'recallable', 20000);
+await ui('stub', 'cancel-queued', JSON.stringify({ ok: false, error: 'E1' }));
+await ui('take-back');
+p = await until('a failed take-back', async (q) => (await errorRows()).includes('E1'), 10000);
+if (p) check('a failed take-back: an error row with the server\'s words, the drawer stays', /e1 one/.test(pane(p, liveQW).qSent));
+// A refused send gives the text back, with an error row.
+await ui('stub', 'send', JSON.stringify({ ok: false, error: 'E2' }));
+await enter('refused one');
+p = await until('a refused send gives the text back', async (q) => pane(q, liveQW)?.draft === 'refused one' && (await errorRows()).includes('E2'), 10000);
+if (p) check('a refused send: its text back in the box, an error row, no slot', !/refused one/.test(pane(p, liveQW).qSent));
+await clearBox();
+await enter('queued one');
+await until('queued one handed over', (q) => /queued one/.test(pane(q, liveQW)?.qSent || ''), 20000);
+// Needs input: held here, two sends; ↑ takes them back in front of the box's text.
+await focusChat(liveQN);
+await clearBox();
+await enter('a'); await enter('b');
+p = await until('held while needs input', (q) => pane(q, liveQN)?.qHeld === 'a\nb' && pane(q, liveQN).qHeldN === 2, 5000);
+if (p) check('needs input: the lines are held here (two sends), nothing reaches the server', (await pendingTexts(liveQN)).length === 0);
+await snap('2.9-held');
+await keys('y');
+await ui('caret', '0');
+await keys('Up');
+p = await until('↑ takes back', (q) => pane(q, liveQN)?.qHeld === '' && pane(q, liveQN).draft === 'a\nb\ny', 5000);
+if (p) check('↑ on the first row: every held line back, then the box\'s own text', true);
+await clearBox();
+await enter('a'); await enter('b');
+await until('held again', (q) => pane(q, liveQN)?.qHeld === 'a\nb', 5000);
+// Held lines stay through a project switch (native).
+await ui('select-project', 'other');
+await until('Other open', (q) => q.currentProject === 'other', 10000);
+await ui('select-project', 'demo');
+p = await until('back on Demo, still held', (q) => q.currentProject === 'demo' && pane(q, liveQN)?.qHeld === 'a\nb', 15000);
+if (p) check('held lines survive a project switch', true);
+// A held line in the third chat, then a restart: handed-over messages come
+// back from the server, held ones in the box (the draft).
+await focusChat(liveQX);
+await clearBox();
+await enter('held over quit');
+await until('held', (q) => pane(q, liveQX)?.qHeld === 'held over quit', 5000);
+// (Past the drafts' write throttle: the test stops the app with a kill.)
+await sleep(800);
+d.close();
+app.kill();
+await sleep(2500);
+app = launch('run5');
+d = await driver();
+p = await until('after a restart: handed over back', (q) => q.signedIn && /queued one/.test(pane(q, liveQW)?.qSent || ''), 40000);
+if (p) check('a restart: handed-over messages come back (history)', true);
+p = await until('after a restart: held in the box', (q) => pane(q, liveQX)?.draft === 'held over quit', 20000);
+if (p) check('a restart: held lines are in the box', pane(p, liveQX).qHeld === '');
+else console.log('  QX', JSON.stringify(pane(await props(), liveQX)).slice(0, 300), 'QW', JSON.stringify(pane(await props(), liveQW)?.qSent));
+// The prompt answered: the held lines go out as one message.
+// (held lines went into the draft at the restart's quit too)
+await focusChat(liveQN);
+await clearBox();
+await enter('a'); await enter('b');
+await until('held once more', (q) => pane(q, liveQN)?.qHeld === 'a\nb', 5000);
+const permN = (await serverChat(liveQN))?.pending?.[0];
+if (check('the permission prompt is pending', !!permN)) {
+  await http('POST', `/api/ui-sessions/${liveQN}/respond`, { requestId: permN.requestId, behavior: 'allow' }, token);
+  p = await until('the held lines go out as one', async (q) => pane(q, liveQN)?.qHeld === '' && ((await pendingTexts(liveQN)).includes('a\nb') || (await userTexts(liveQN)).includes('a\nb')), 30000);
+  if (p) check('the prompt answered: the held lines go out as ONE message', true);
+}
+// Exit: held lines are kept (in the box), handed-over cleared.
+await focusChat(liveQX);
+await clearBox();
+await enter('z');
+await until('z held', (q) => pane(q, liveQX)?.qHeld === 'z', 5000);
+const procX = chatProc(liveQX);
+if (check('the exit chat has a claude process', !!procX)) {
+  process.kill(procX.pid);
+  p = await until('exited, the held line kept', (q) => pane(q, liveQX)?.state === 'exited' && /(^|\n)z($|\n)/.test(pane(q, liveQX).draft) && pane(q, liveQX).qHeld === '' && pane(q, liveQX).qSent === '', 30000);
+  if (p) check('exit: the held line is kept in the box (the web loses it)', true);
+}
+// The turn ends: what was handed over is read, and lands in the log.
+await http('POST', `/api/ui-sessions/${liveQW}/interrupt`, {}, token);
+p = await until('turn over: the drawer empties', (q) => pane(q, liveQW)?.qSent === '', 30000);
+if (p) {
+  const u = await userTexts(liveQW);
+  check('turn end: the handed-over message is in the log, the taken-back one is not', u.some((t) => /queued one/.test(t)) && !u.includes('do not send me'), u);
+}
+for (const id of [liveQW, liveQN, liveQX]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 
 d.close();
 app.kill();

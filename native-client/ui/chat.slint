@@ -864,6 +864,74 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: Theme.text-11 * root.fs; horizontal-alignment: center; wrap: word-wrap; }
 }
 
+/// A queued-messages drawer (2.9, .cc-queue): held (dashed accent edge,
+/// accent tint; hover brighter) or handed over (solid slate edge, slate
+/// tint, quieter text; no hover change). Its head (label and note), its text
+/// (at most four rows, "…" at the cut) and a hint. A click takes it back.
+component QueueDrawer inherits Rectangle {
+    in property <float> fs: 1;
+    in property <bool> sent;
+    in property <bool> recallable;
+    in property <string> label;
+    in property <string> note;
+    in property <string> hint;
+    in property <string> tip;
+    in property <string> body;
+    callback clicked();
+    property <bool> hot: !root.sent && ta.has-hover;
+    property <length> line: bm.preferred-height;
+    property <bool> trimmed: full-m.preferred-height > Theme.queue-rows * self.line + 1px;
+    height: col.preferred-height;
+    border-radius: Theme.r-card;
+    background: root.sent ? Theme.slate-haze : root.hot ? Theme.accent-dim : Theme.accent-haze;
+    border-width: root.sent ? 1px : 0px;
+    border-color: Theme.slate-edge;
+    if !root.sent: DashedBox {
+        width: parent.width; height: parent.height;
+        thick: 1px; dash: Theme.sp-4; gap: Theme.sp-2; corner: Theme.r-card;
+        line: root.hot ? Theme.accent : Theme.accent-line;
+    }
+    // One line of the body's text, and all of it at the body's width (for the
+    // four-row clamp).
+    bm := Text { visible: false; text: "X"; font-size: Theme.text-12 * root.fs; }
+    full-m := Text { visible: false; width: col.width - 2 * Theme.sp-12; text: root.body; font-size: Theme.text-12 * root.fs; wrap: word-wrap; }
+    col := VerticalLayout {
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        HorizontalLayout {
+            spacing: Theme.sp-6;
+            padding-bottom: Theme.sp-2;
+            Text {
+                vertical-alignment: center;
+                text: root.label; font-size: Theme.text-10 * root.fs; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide;
+                color: root.sent ? Theme.text-muted : Theme.accent-hover;
+            }
+            // The note: the label's colour, quieter; it wraps in its own box.
+            Text {
+                horizontal-stretch: 1; min-width: 0; preferred-width: 0;
+                vertical-alignment: center; wrap: word-wrap;
+                text: root.note; font-size: Theme.text-10 * root.fs; font-weight: Theme.w-medium;
+                color: root.sent ? Theme.text-muted : Theme.accent-hover; opacity: Theme.o-usage;
+            }
+        }
+        Text {
+            text: root.body; font-size: Theme.text-12 * root.fs; wrap: word-wrap;
+            color: root.sent ? Theme.text-secondary : Theme.text-primary;
+            max-height: Theme.queue-rows * root.line;
+            overflow: elide;
+        }
+        Rectangle { height: Theme.sp-4; }
+        Text {
+            text: (root.trimmed ? "Shown trimmed · " : "") + root.hint;
+            font-size: Theme.text-10 * root.fs; color: Theme.text-muted; wrap: word-wrap;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: root.recallable ? MouseCursor.pointer : MouseCursor.default;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: root.tip; } }
+    }
+}
+
 /// What every composer shares with the app (src/app.rs): the Enter mode
 /// (one setting for every chat, saved), a request to focus a chat's box,
 /// and the controls whose screens come later (attach 2.7, the clock 2.10,
@@ -886,6 +954,9 @@ export global Composer {
     // Ctrl+V (or Shift+Insert) in a pane's box: true when the clipboard held a
     // picture or a file, which the app uploads (the key is then taken).
     callback paste(string, bool) -> bool;
+    // Take back what is queued (2.9: a click on a drawer, or ↑ on the box's
+    // first row): false when there is nothing to take back.
+    callback take-back(string) -> bool;
     // The app put text into a pane's box (an attached path): its whole new
     // text and the caret; counted.
     in-out property <string> insert-key;
@@ -907,6 +978,11 @@ component InputBox inherits Rectangle {
     callback send();
     // The caret moved: the caret and the selection's other end (byte offsets).
     callback caret(int, int);
+    // ↑ on the box's first row, nothing selected: true when the app took
+    // back what was queued (the key is then taken).
+    callback up() -> bool;
+    // The caret's row: its top, in the text.
+    property <length> caret-y;
     // Ctrl+V / Shift+Insert (true): true when the app took it (a picture, a
     // file; Shift+Insert's text too: Slint's input knows only Ctrl+V).
     callback paste(bool) -> bool;
@@ -945,6 +1021,11 @@ component InputBox inherits Rectangle {
                         if root.paste(ev.modifiers.shift && ev.text == Key.Insert) { return accept; }
                         return reject;
                     }
+                    if ev.text == Key.UpArrow && !ev.modifiers.shift && !ev.modifiers.control && !ev.modifiers.alt && !ev.modifiers.meta
+                            && te.cursor-position-byte-offset == te.anchor-position-byte-offset && root.caret-y < root.line / 2 {
+                        if root.up() { return accept; }
+                        return reject;
+                    }
                     if ev.text == Key.Return {
                         if root.ctrl-enter ? (ev.modifiers.control || ev.modifiers.meta) : (!ev.modifiers.shift && !ev.modifiers.control && !ev.modifiers.meta) {
                             root.send();
@@ -967,6 +1048,7 @@ component InputBox inherits Rectangle {
                     // Past composer-max it scrolls: keep the caret in view.
                     cursor-position-changed(at) => {
                         root.caret(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                        root.caret-y = at.y;
                         if at.y + fl.content-y < 0 {
                             fl.content-y = -at.y;
                         } else if at.y + root.line + fl.content-y > fl.height {
@@ -1192,6 +1274,12 @@ export component ChatPane inherits Rectangle {
     in property <float> up-frac;
     in property <bool> up-busy;
     in property <bool> file-over;
+    // Queued messages (2.9): the held lines (joined) and how many sends; the
+    // handed-over ones (joined) and what their drawer says.
+    in property <string> q-held;
+    in property <int> q-held-n;
+    in property <string> q-sent;
+    in property <string> q-sent-kind;
     callback send(string);
     callback stop();
     callback respond(string, string, bool);
@@ -1255,6 +1343,26 @@ export component ChatPane inherits Rectangle {
             comp := VerticalLayout {
                 padding: Theme.sp-8;
                 spacing: Theme.sp-6;
+                // The drawers (2.9): handed over on top, held under it.
+                if root.q-sent != "": QueueDrawer {
+                    fs: root.fs; sent: true;
+                    recallable: root.q-sent-kind == "recallable";
+                    label: root.q-sent-kind == "recallable" ? "SENDING" : "SENT";
+                    note: root.q-sent-kind == "recallable" ? "not read yet" : root.q-sent-kind == "started" ? "Claude is reading it" : "waiting for Claude to pick it up";
+                    hint: root.q-sent-kind == "recallable" ? "Click or press ↑ to take it back" : root.q-sent-kind == "started" ? "Claude is reading this one — too late to edit" : "Waiting for the session to confirm";
+                    tip: root.q-sent-kind == "recallable" ? "Click to edit — brings it back to the message box" : "Claude has this one; it joins the conversation as it is read";
+                    body: root.q-sent;
+                    clicked => { Composer.take-back(root.key); }
+                }
+                if root.q-held != "": QueueDrawer {
+                    fs: root.fs; sent: false; recallable: true;
+                    label: "SENDING";
+                    note: root.q-held-n + (root.q-held-n == 1 ? " line" : " lines") + " · as one message, at the next tool call";
+                    hint: "Click or press ↑ to take it back";
+                    tip: "Click to edit — brings every queued line back to the message box";
+                    body: root.q-held;
+                    clicked => { Composer.take-back(root.key); }
+                }
                 // The box; wide, the buttons beside it on its bottom line.
                 HorizontalLayout {
                     spacing: Theme.sp-8;
@@ -1269,6 +1377,7 @@ export component ChatPane inherits Rectangle {
                             : "Message Claude…  (Enter to send, Shift+Enter for newline)";
                         send => { root.do-send(); }
                         caret(c, a) => { Composer.caret(root.key, c, a); }
+                        up => { return Composer.take-back(root.key); }
                         paste(si) => { return Composer.paste(root.key, si); }
                     }
                     if !root.narrow: VerticalLayout {

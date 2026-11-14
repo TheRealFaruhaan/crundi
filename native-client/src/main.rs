@@ -218,7 +218,9 @@ fn main() {
     }
 
     ui.run().expect("event loop");
-    // Drafts typed in the last moment reach the disk.
+    // Held lines (2.9) go into their drafts, and drafts typed in the last
+    // moment reach the disk.
+    app::park_held();
     app::flush_drafts();
 
     // Close the browsers, let CEF finish, then shut it down.

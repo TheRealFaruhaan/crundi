@@ -50,6 +50,17 @@ pub fn start(port: u16, ui: slint::Weak<crate::MainWindow>) {
 /// own path (busy check, off-thread pick, upload) runs as for a person.
 static PICK: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
 
+/// Canned answers for the next POSTs of a kind ("send", "cancel-queued"),
+/// in order: the test's stand-in for a server that refuses or is too late.
+static STUBS: std::sync::Mutex<Vec<(String, Value)>> = std::sync::Mutex::new(Vec::new());
+
+/// The next canned answer for that kind, taken once; None: the server's.
+pub fn take_stub(kind: &str) -> Option<Value> {
+    let mut s = STUBS.lock().ok()?;
+    let i = s.iter().position(|(k, _)| k == kind)?;
+    Some(s.remove(i).1)
+}
+
 /// The driver's answer for the picker, taken once; None: the real dialog.
 pub fn take_pick() -> Option<std::path::PathBuf> {
     PICK.lock().ok()?.take()
@@ -85,7 +96,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "qHeld": p.q_held.as_str(), "qHeldN": p.q_held_n, "qSent": p.q_sent.as_str(), "qSentKind": p.q_sent_kind.as_str(), "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
             "pointerModal": w.global::<crate::Pointer>().get_modal(),
@@ -154,8 +165,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "Control" => Key::Control.into(), "Shift" => Key::Shift.into(), "Alt" => Key::Alt.into(), _ => Key::Meta.into(),
             }).collect()).unwrap_or_default();
             for m in &mods { w.window().dispatch_event(WindowEvent::KeyPressed { text: m.clone() }); }
-            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), "Insert" => Key::Insert.into(), o => o.into() };
-            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab", "Insert"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
+            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), "Insert" => Key::Insert.into(), "Up" => Key::UpArrow.into(), "Down" => Key::DownArrow.into(), "Home" => Key::Home.into(), "End" => Key::End.into(), o => o.into() };
+            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab", "Insert", "Up", "Down", "Home", "End"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
                 w.window().dispatch_event(WindowEvent::KeyPressed { text: ch.clone() });
                 w.window().dispatch_event(WindowEvent::KeyReleased { text: ch });
             }
@@ -200,6 +211,15 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 }
                 // The attach button as clicked, its picker answered by
                 // "pick-next" (empty: no answer, the real dialog).
+                // Queued messages (2.9): a canned answer for the next POST of a
+                // kind ("send", "cancel-queued"), an event played into the
+                // focused chat, a take-back as a click on a drawer.
+                "stub" => {
+                    let v: Value = serde_json::from_str(&arg(c, 1)).unwrap_or(Value::Null);
+                    if let Ok(mut s) = STUBS.lock() { s.push((arg(c, 0), v)); }
+                }
+                "chat-event" => crate::app::play_event(crate::app::focused_chat().as_str(), serde_json::from_str(&arg(c, 0)).unwrap_or(Value::Null)),
+                "take-back" => { crate::app::take_back(&chat()); }
                 "pick-next" => { let a = arg(c, 0); if let Ok(mut p) = PICK.lock() { *p = (!a.is_empty()).then(|| a.into()); } }
                 "attach-button" => w.global::<crate::Composer>().invoke_attach(chat().into()),
                 // Files dropped as the system delivers them (src/main.rs: one

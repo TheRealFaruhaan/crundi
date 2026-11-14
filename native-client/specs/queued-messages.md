@@ -92,6 +92,10 @@ handed over, the turn was interrupted; the drawer went at once (`state`
 → idle 2.6 s later, `injected`), the line appeared in the log as a user
 bubble, and Claude answered it as the next turn ("It used bash…").
 
+The native client's: `native-*.png` (the drawers on a real server: handed
+over and recallable, taken back, two held lines, flushed) and the suite's
+`native-suite-*.png`.
+
 ## The parts
 
 Inside the composer's `.cc-wrap` (2.5's tree), before the input row:
@@ -422,46 +426,46 @@ All on a `tools/test-server.sh` server with real Claude turns, as 2.4 and
 
 ## Checklist
 
-- [ ] Held drawer (needs input): dashed accent-line edge, accent-haze fill,
+- [x] Held drawer (needs input): dashed accent-line edge, accent-haze fill,
       r-card, padding sp-8 × sp-12, above the input row
-- [ ] Held hover: accent edge, accent-dim fill, hand pointer
-- [ ] Handed-over drawer (working): solid slate-edge, slate-haze fill, label
+- [x] Held hover: accent edge, accent-dim fill, hand pointer
+- [x] Handed-over drawer (working): solid slate-edge, slate-haze fill, label
       and note muted, body text-secondary; no hover change
-- [ ] Both shown: handed-over on top, held under it, then the input row
+- [x] Both shown: handed-over on top, held under it, then the input row
       (and the upload bar after it)
-- [ ] Head: label uppercase w-bold track-wide text-10 × fs; note w-medium
+- [x] Head: label uppercase w-bold track-wide text-10 × fs; note w-medium
       at 70%, wraps in its own box; body text-12 × fs; hint text-10 × fs muted
-- [ ] All wording exact: `SENDING` / `SENT`; the three notes; "N line(s) ·
+- [x] All wording exact: `SENDING` / `SENT`; the three notes; "N line(s) ·
       as one message, at the next tool call"; the three hints; tooltips
-- [ ] Hint is always the "Click or press ↑" wording (never "Tap"); it does
+- [x] Hint is always the "Click or press ↑" wording (never "Tap"); it does
       not change with the Enter switch
-- [ ] Body clamped at 4 rows with "…", hint prefixed "Shown trimmed · "
-- [ ] Line count counts sends, not text lines
-- [ ] Send reads Queue when not idle; Enter/Ctrl+Enter per the switch
-- [ ] Working: each send handed over at once (POST /send), a slot per send
-- [ ] Needs input: held locally, flushed as ONE message (joined with
+- [x] Body clamped at 4 rows with "…", hint prefixed "Shown trimmed · "
+- [x] Line count counts sends, not text lines
+- [x] Send reads Queue when not idle; Enter/Ctrl+Enter per the switch
+- [x] Working: each send handed over at once (POST /send), a slot per send
+- [x] Needs input: held locally, flushed as ONE message (joined with
       newlines) when the state leaves needs-input or turns idle
-- [ ] `/send` reply: injected false → no drawer; uuid adopted
-- [ ] `queued-state` (queued / started / cancelled / discarded / refused) and
+- [x] `/send` reply: injected false → no drawer; uuid adopted
+- [x] `queued-state` (queued / started / cancelled / discarded / refused) and
       `injected` (by text, else oldest) drive the handed-over drawer
-- [ ] Take-back by click (either drawer) and by ↑ on the first visual row
+- [x] Take-back by click (either drawer) and by ↑ on the first visual row
       (no modifiers, no selection, something to take back); slash menu's ↑
       wins
-- [ ] Take-back: cancel-queued per recallable slot; order cancelled texts,
+- [x] Take-back: cancel-queued per recallable slot; order cancelled texts,
       held text, then the box's text; focus, caret at end, draft saved
-- [ ] cancelled false → "Claude is reading it", no error; failure → one
+- [x] cancelled false → "Claude is reading it", no error; failure → one
       error row, drawer stays
-- [ ] Refused send → give back in front of the box's text + error row
-- [ ] Turn end (normal, error, Stop) → handed-over drawer clears as the
+- [x] Refused send → give back in front of the box's text + error row
+- [x] Turn end (normal, error, Stop) → handed-over drawer clears as the
       messages land in the log
-- [ ] Exit: held text kept (named difference), handed-over cleared,
+- [x] Exit: held text kept (named difference), handed-over cleared,
       exited look
-- [ ] Handed-over survives reload/restart/reconnect (history
+- [x] Handed-over survives reload/restart/reconnect (history
       `pendingInjections`)
-- [ ] Held survives pane moves and project switches; on pane close / app
+- [x] Held survives pane moves and project switches; on pane close / app
       quit it goes into the draft (named difference)
-- [ ] Narrow and very narrow panes: full width, wrapping head and body
-- [ ] Tokens only; slate-edge and slate-haze added to theme.slint
-- [ ] Named differences in PLAN.md: exit keeps held text; held text kept
+- [x] Narrow and very narrow panes: full width, wrapping head and body
+- [x] Tokens only; slate-edge and slate-haze added to theme.slint
+- [x] Named differences in PLAN.md: exit keeps held text; held text kept
       across project switch / close / quit
 - [ ] Side-by-side crops for every state in `queued-messages/review/`

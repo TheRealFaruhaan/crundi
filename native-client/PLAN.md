@@ -306,6 +306,15 @@ Phase 1 left these, each with its workaround in place:
 - **Upload errors** (2.7): a proxy's non-JSON answer and no answer at all
   are unit-tested (`attach::upload_answer`); the end-to-end test drives a
   refused upload (an empty file).
+- **Queued messages** (2.9), deliberate differences (web bugs):
+  - held lines (sent while a chat needs input) belong to the chat, not the
+    pane: they survive pane moves and project switches, and go into the
+    chat's draft when its pane closes or the app quits (the web loses them);
+  - a chat that exits keeps its held lines in the box (the web flushes them
+    into the dying session on the idle that comes before the exit and drops
+    them);
+  - Queue and Send go through the same path: a message sent while working
+    is handed over at once (the server holds it), not kept in the client.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

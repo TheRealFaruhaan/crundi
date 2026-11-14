@@ -37,6 +37,13 @@ export struct PaneView {
     up-label: string,
     up-frac: float,
     up-busy: bool,
+    // Queued messages (2.9): the held lines (joined) and how many sends, the
+    // handed-over ones (joined) and what their drawer says
+    // (recallable | started | waiting).
+    q-held: string,
+    q-held-n: int,
+    q-sent: string,
+    q-sent-kind: string,
     model: string,
     cost: string,
     error: string,
@@ -355,6 +362,10 @@ export component PaneCard inherits Rectangle {
             up-label: p.up-label;
             up-frac: p.up-frac;
             up-busy: p.up-busy;
+            q-held: p.q-held;
+            q-held-n: p.q-held-n;
+            q-sent: p.q-sent;
+            q-sent-kind: p.q-sent-kind;
             file-over: root.file-over;
             model: p.model;
             cost: p.cost;

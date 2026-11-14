@@ -72,6 +72,9 @@ export global Theme {
     out property <color> placeholder: #757575;
     out property <color> annotate: #ea580c;
     out property <color> slate-dim: #94a3b826;
+    // A handed-over message's drawer (2.9): its edge and its fill.
+    out property <color> slate-edge: #94a3b873;
+    out property <color> slate-haze: #94a3b817;
     // Selected text in a text field.
     out property <color> selection: #0236a1;
     // A modal's backdrop.
@@ -126,6 +129,8 @@ export global Theme {
     // button's icon (of the button).
     out property <float> bubble-share: 0.86;
     out property <float> icon-share: 0.55;
+    // A queued message's drawer shows at most this many rows (2.9).
+    out property <int> queue-rows: 4;
     // Letter spacing: tight (packed marks, small bold capitals) and wide
     // (capitals in labels, a code's characters).
     out property <length> track-tight: -0.5px;
