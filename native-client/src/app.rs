@@ -8,7 +8,7 @@ use crate::{
     chat::{Conversation, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, store, Composer, EntryView, GutterView, MainWindow, PaneView, ProjectItem, ToolView,
+    head, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -112,6 +112,8 @@ pub struct App {
     /// The pane whose Stop was clicked once ("Sure?"), and which arming it is.
     stop_armed: Option<String>,
     stop_gen: u32,
+    /// The pane whose mode picker is open (2.6), by key.
+    picker: Option<String>,
     /// Errors the client adds to a chat's log (a refused send).
     local_errors: u32,
     /// The 30 s re-count of timed grants, and the toast's 3.5 s.
@@ -218,6 +220,7 @@ pub fn init(window: &MainWindow) {
             stop_armed: None,
             stop_gen: 0,
             local_errors: 0,
+            picker: None,
             timers: vec![],
             toast_gen: 0,
         })
@@ -275,11 +278,12 @@ pub fn init(window: &MainWindow) {
     c.set_ctrl_enter(store::load().chat_enter == "newline");
     c.on_set_ctrl_enter(set_chat_enter);
     c.on_copied(|full| toast(&format!("Session id copied: {full}"), false));
-    // Attaching (2.7), the schedule panel (2.10) and the mode chooser (2.6)
-    // are their own screens.
+    // Attaching (2.7) and the schedule panel (2.10) are their own screens.
     c.on_attach(|_| {});
     c.on_schedule(|_| {});
-    c.on_mode(|_| {});
+    c.on_mode(|k| open_mode_picker(k.as_str()));
+    window.on_mode_choose(|m| choose_mode(m.as_str()));
+    window.on_mode_close(close_mode_picker);
 
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
     window.on_cancel_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("login".into()); } });
@@ -794,18 +798,6 @@ fn layout_changed() {
     render();
 }
 
-/// A permission mode's name, as the web chat's MODE_INFO.
-fn mode_label(m: &str) -> &'static str {
-    match m {
-        "plan" => "Plan mode",
-        "acceptEdits" => "Accept edits",
-        "auto" => "Auto",
-        "dontAsk" => "Don't ask",
-        "bypassPermissions" => "Bypass all",
-        _ => "Ask permissions",
-    }
-}
-
 /// The grid's sideways scrollbar (ui/theme.slint sp-6).
 const SCROLLBAR: f32 = 6.0;
 
@@ -869,8 +861,11 @@ fn render() {
                     p.state = head::composer_state(&st, a.sending.contains(id)).into();
                     p.stop_armed = p.state == "working" && a.stop_armed.as_deref() == Some(key.as_str());
                     let mode = if cs.conv.mode.is_empty() { item.map(|c| s(c, "permissionMode")).unwrap_or_default() } else { cs.conv.mode.clone() };
-                    p.mode = mode_label(&mode).into();
-                    p.mode_key = mode.into();
+                    let shown = head::shown_mode(&mode, chat_skip(cs, item));
+                    p.mode = head::mode_info(shown).0.into();
+                    p.mode_key = shown.into();
+                    // Plan mode, and no plan of its own yet: the header's PLANNING.
+                    p.planning = shown == "plan" && item.is_none_or(|c| s(c, "planStatus").is_empty());
                     p.session = cs.conv.session_id.chars().take(8).collect::<String>().into();
                     p.session_full = cs.conv.session_id.clone().into();
                     p.model = cs.conv.model.clone().into();
@@ -908,6 +903,14 @@ fn render() {
             f.title_max = cap;
             f
         });
+        // The mode picker: its chat's list and mode; it closes with its pane.
+        let picker = a.picker.as_ref().and_then(|k| panes.iter().find(|p| p.key.as_str() == k && p.kind == "chat")).map(|p| {
+            let id = chat_of(p.key.as_str()).unwrap_or_default();
+            let item = a.sessions.iter().find(|c| s(c, "id") == id);
+            let skip = a.chats.get(id).is_some_and(|cs| chat_skip(cs, item));
+            (head::modes(skip), p.mode_key.to_string())
+        });
+        if picker.is_none() { a.picker = None; }
         // The menu closes when its pane goes wide or away.
         if a.menu != 0 && !panes.iter().any(|p| p.id as u32 == a.menu && p.menu) { a.menu = 0; }
         let panes: Vec<PaneView> = panes.into_iter().map(|mut p| { p.full = false; if full.as_ref().is_some_and(|f| f.key == p.key) { p.armed = false; } p }).collect();
@@ -941,10 +944,17 @@ fn render() {
         } else {
             a.gutter_rows.set_vec(gs);
         }
-        (cw, full)
+        (cw, full, picker)
     });
-    if let (Some(w), Some((cw, full))) = (ui(), out) {
+    if let (Some(w), Some((cw, full, picker))) = (ui(), out) {
         w.set_content_width(cw);
+        w.set_mode_picker_open(picker.is_some());
+        if let Some((list, current)) = picker {
+            let opts: Vec<ModeOption> = list.iter().map(|m| { let (n, d) = head::mode_info(m); ModeOption { key: (*m).into(), name: n.into(), desc: d.into() } }).collect();
+            if w.get_mode_options().row_count() != opts.len() || w.get_mode_options().iter().zip(&opts).any(|(x, y)| x != *y) { w.set_mode_options(ModelRc::new(VecModel::from(opts))); }
+            w.set_mode_start(list.iter().position(|m| *m == current).unwrap_or(0) as i32);
+            w.set_mode_current(current.into());
+        }
         w.set_full_on(full.is_some());
         if let Some(f) = full { if w.get_full_pane() != f { w.set_full_pane(f); } }
     }
@@ -1480,6 +1490,57 @@ fn set_chat_enter(ctrl: bool) {
 /// render; typing doesn't re-render).
 pub fn draft_of(key: &str) -> String {
     with(|a| a.drafts.get(key).cloned().unwrap_or_default()).unwrap_or_default()
+}
+
+/// A chat launched with skip permissions (Bypass all in its list): its
+/// snapshot says, or the list's entry.
+fn chat_skip(cs: &ChatPaneState, item: Option<&Value>) -> bool {
+    cs.conv.skip || item.and_then(|c| c.get("skipPermissions")).is_some_and(truthy)
+}
+
+/// The mode button: the picker for that pane's chat (one at a time).
+fn open_mode_picker(key: &str) {
+    with(|a| a.picker = Some(key.to_string()));
+    render();
+}
+
+fn close_mode_picker() {
+    with(|a| a.picker = None);
+    render();
+}
+
+/// A mode chosen in the picker: it closes; another mode shows at once and
+/// goes to the server. Refused or failed, the button goes back and a toast
+/// says why (the web keeps showing the mode it asked for: a deliberate
+/// difference, PLAN.md).
+fn choose_mode(mode: &str) {
+    let Some(key) = with(|a| a.picker.take()).flatten() else { return };
+    let Some(id) = chat_of(&key).map(str::to_string) else { render(); return };
+    let mode = mode.to_string();
+    let old = with(|a| {
+        let item = a.sessions.iter().find(|c| s(c, "id") == id).cloned();
+        let cs = a.chats.get_mut(&id)?;
+        let now = if cs.conv.mode.is_empty() { item.as_ref().map(|c| s(c, "permissionMode")).unwrap_or_default() } else { cs.conv.mode.clone() };
+        let now = head::shown_mode(&now, chat_skip(cs, item.as_ref())).to_string();
+        if now == mode { return None; }
+        cs.conv.mode = mode.clone();
+        Some(now)
+    }).flatten();
+    render();
+    let Some(old) = old else { return };
+    let (id2, m2) = (id.clone(), mode.clone());
+    call(move |api| api.post(&format!("/api/ui-sessions/{id}/permission-mode"), &json!({ "mode": mode })), move |r| {
+        let err = match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some(s(&v, "error")),
+            Ok(_) => None,
+            Err(e) => Some(e),
+        };
+        let Some(e) = err else { return };
+        // Back to the mode it had, unless something changed it meanwhile.
+        with(|a| if let Some(cs) = a.chats.get_mut(&id2) { if cs.conv.mode == m2 { cs.conv.mode = old; } });
+        render();
+        toast(&head::mode_error(&e), true);
+    });
 }
 
 /// Ask a pane's composer to take the focus (the box).

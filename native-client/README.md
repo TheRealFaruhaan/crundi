@@ -208,6 +208,15 @@ them; each has a spec in `specs/`). So far:
   wraps. Under `composer-stack` (520) the composer stacks. A refused send
   shows the server's error in the log and gives the text back.
 
+- **2.6 Permission-mode picker** (specs/mode-picker.md): the mode button
+  wears each mode's colour; a click opens the picker (`ui/modes.slint`),
+  centred in the window over a scrim, with the chat's modes (Bypass all
+  first, for chats launched with skip permissions). Choosing changes the
+  button at once and posts it; a refused change goes back with a toast.
+  Plan mode puts PLANNING in the pane header (in the "…" tray when narrow).
+  The mode follows `meta`/`init` events live; a mode outside the chat's list
+  is ignored.
+
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
   10–26, two letter-spacings) plus a short structural list (window, top

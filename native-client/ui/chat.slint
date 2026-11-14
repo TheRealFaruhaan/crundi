@@ -193,6 +193,18 @@ component KindTag inherits Rectangle {
     tag := Text { text: root.text; font-size: Theme.text-11; font-weight: Theme.w-bold; color: Theme.accent-hover; letter-spacing: Theme.track-tight; }
 }
 
+/// The header's PLANNING tag (.term-plan-tag): a chat in Plan mode with no
+/// plan of its own yet. Sky text in a sky pill; not clickable.
+component PlanTag inherits Rectangle {
+    height: Theme.sp-16;
+    width: pt.preferred-width + 2 * Theme.sp-6;
+    border-radius: Theme.r-pill;
+    border-width: 1px;
+    border-color: Theme.sky;
+    pt := Text { text: "PLANNING"; font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.sky; }
+    TouchArea { Tooltip { TipBox { text: "Plan mode — Claude is working one out"; } } }
+}
+
 /// The pane header (.term-head): bg-secondary, a line under it, its items
 /// in a row (specs/pane-header-wide.md). Narrow (2.2,
 /// specs/pane-header-narrow.md): the tools fold into "…", the header is
@@ -205,6 +217,8 @@ export component PaneHead inherits Rectangle {
     in property <string> short-title;
     in property <string> state;
     in property <string> kind-tag;
+    // Plan mode, no plan yet: the PLANNING tag before CHAT (2.6).
+    in property <bool> planning;
     in property <bool> chat;
     // The header's content box is under pane-fold: src/head.rs.
     in property <bool> narrow;
@@ -387,6 +401,7 @@ export component PaneHead inherits Rectangle {
         // screen, "…" and ×. (Each is centred on the row.)
         tools := HorizontalLayout {
             spacing: Theme.sp-4;
+            if root.planning && !root.narrow: PlanTag { y: (parent.height - self.height) / 2; }
             if root.kind-tag != "" && !root.narrow: KindTag { y: (parent.height - self.height) / 2; text: root.kind-tag; }
             // The secrets lock (wider with a count); yellow with grants.
             if root.chat && root.secrets && !root.narrow: HeadBtn {
@@ -468,6 +483,8 @@ export component PaneHead inherits Rectangle {
 export component HeadMenu inherits Rectangle {
     in property <length> max-w;
     in property <string> kind-tag;
+    // Plan mode, no plan yet: the PLANNING tag before CHAT (2.6).
+    in property <bool> planning;
     in property <bool> secrets;
     in property <int> secrets-n;
     in property <string> secrets-tip;
@@ -484,10 +501,12 @@ export component HeadMenu inherits Rectangle {
     // wraps.
     property <length> lock-w: Theme.sp-8 + Theme.sp-12 + Theme.sp-4 + (root.secrets-n > 0 ? cnt-m.preferred-width + Theme.sp-4 : 0px) + lbl-m.preferred-width + Theme.sp-8;
     property <length> natural: Theme.sp-16 + (root.kind-tag != "" ? tag-m.preferred-width + Theme.sp-16 + Theme.sp-6 : 0px)
+        + (root.planning ? plan-m.preferred-width + 2 * Theme.sp-6 + Theme.sp-6 : 0px)
         + (root.secrets ? self.lock-w + Theme.sp-6 : 0px)
         + Theme.sp-24 + Theme.sp-6 + Theme.sp-24 + Theme.sp-6 + Theme.sp-32 + Theme.sp-6 + Theme.sp-24;
     width: min(root.max-w, self.natural + Theme.sp-2);
     height: fl.preferred-height + Theme.sp-2;
+    plan-m := Text { visible: false; text: "PLANNING"; font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; }
     tag-m := Text { visible: false; text: root.kind-tag; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-tight; }
     cnt-m := Text { visible: false; text: root.secrets-n; font-size: Theme.text-11; }
     lbl-m := Text { visible: false; text: "Secrets for this chat"; font-size: Theme.text-11; }
@@ -527,6 +546,7 @@ export component HeadMenu inherits Rectangle {
             flex-wrap: wrap;
             alignment: end;
             cross-axis-alignment: center;
+            if root.planning: PlanTag { }
             if root.kind-tag != "": KindTag { text: root.kind-tag; }
             // The lock with its label: icon, the count if any, "Secrets for
             // this chat".
@@ -927,6 +947,16 @@ component InputBox inherits Rectangle {
                 }
             }
         }
+        // Past composer-max: a scroll thumb on the right, so more text above
+        // or below shows (the web's textarea scrollbar).
+        if te.preferred-height > fl.height: Rectangle {
+            property <length> track: parent.height - 2 * Theme.sp-2;
+            x: parent.width - Theme.sp-6; width: Theme.sp-4;
+            height: max(Theme.sp-16, self.track * fl.height / te.preferred-height);
+            y: Theme.sp-2 + (self.track - self.height) * (-fl.content-y) / max(1px, te.preferred-height - fl.height);
+            border-radius: Theme.r-pill;
+            background: Theme.border;
+        }
         if root.draft == "": Text {
             x: Theme.sp-10; y: Theme.sp-8;
             width: parent.width - 2 * Theme.sp-10;
@@ -1005,21 +1035,39 @@ component SendBtn inherits Rectangle {
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-/// The permission mode (.cc-mode): its icon and name (narrow: the icon only,
-/// finger-sized). Bypass all is red. The chooser is 2.6.
+/// A permission mode's look (the mode button, the picker's tiles): its
+/// icon and its colour, as the web chat's.
+export global ModeLook {
+    public pure function ink(key: string) -> color {
+        return key == "acceptEdits" || key == "auto" ? Theme.accent-hover
+            : key == "plan" ? Theme.sky
+            : key == "dontAsk" ? Theme.yellow
+            : key == "bypassPermissions" ? Theme.red
+            : Theme.text-secondary;
+    }
+    public pure function icon(key: string) -> image {
+        return key == "acceptEdits" ? Icons.mode-accept-edits : key == "auto" ? Icons.mode-auto
+            : key == "plan" ? Icons.mode-plan : key == "dontAsk" ? Icons.mode-dont-ask
+            : key == "bypassPermissions" ? Icons.mode-bypass-permissions : Icons.mode-default;
+    }
+}
+
+/// The permission mode (.cc-mode): its icon and name in the mode's colour
+/// (narrow: the icon only, finger-sized). Plan mode and Bypass all wear a
+/// tinted border, which hover keeps. A click opens the picker (2.6).
 component ModeBtn inherits Rectangle {
     in property <float> fs: 1;
     in property <string> mode-key;
     in property <string> name;
     in property <bool> icon-only;
     callback clicked();
-    property <bool> bypass: root.mode-key == "bypassPermissions";
-    property <color> ink: root.bypass ? Theme.red : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+    property <bool> own-edge: root.mode-key == "plan" || root.mode-key == "bypassPermissions";
+    property <color> ink: root.mode-key == "default" || root.mode-key == "" ? (ta.has-hover ? Theme.text-primary : Theme.text-secondary) : ModeLook.ink(root.mode-key);
     height: root.icon-only ? Theme.control-sm * root.fs : Theme.sp-24 * root.fs;
     width: root.icon-only ? Theme.control * root.fs : max(Theme.control-sm * root.fs, row.preferred-width + 2 * Theme.sp-6);
     border-radius: Theme.r-control;
     border-width: 1px;
-    border-color: root.bypass ? Theme.red : ta.has-hover ? Theme.accent : Theme.border;
+    border-color: root.mode-key == "plan" ? Theme.sky-edge : root.mode-key == "bypassPermissions" ? Theme.error-edge : ta.has-hover ? Theme.accent : Theme.border;
     background: Theme.bg-primary;
     row := HorizontalLayout {
         x: (parent.width - self.preferred-width) / 2;
@@ -1028,9 +1076,7 @@ component ModeBtn inherits Rectangle {
         Icon {
             y: (parent.height - self.height) / 2;
             width: Theme.icon-md * root.fs; height: Theme.icon-md * root.fs; tint: root.ink;
-            source: root.mode-key == "acceptEdits" ? Icons.mode-accept-edits : root.mode-key == "auto" ? Icons.mode-auto
-                : root.mode-key == "plan" ? Icons.mode-plan : root.mode-key == "dontAsk" ? Icons.mode-dont-ask
-                : root.bypass ? Icons.mode-bypass-permissions : Icons.mode-default;
+            source: ModeLook.icon(root.mode-key);
         }
         if !root.icon-only: Text { text: root.name; font-size: Theme.text-11 * root.fs; color: root.ink; vertical-alignment: center; }
     }

@@ -16,6 +16,8 @@ pub struct Conversation {
     pub session_id: String,
     pub mode: String,
     pub cost: f64,
+    /// Launched with skip permissions: Bypass all is in its list of modes.
+    pub skip: bool,
 }
 
 impl Conversation {
@@ -27,6 +29,7 @@ impl Conversation {
         self.state = s(session, "state");
         self.session_id = s(session, "sessionId");
         self.mode = s(session, "permissionMode");
+        self.skip = session.get("skipPermissions").and_then(|v| v.as_bool()).unwrap_or(false);
         self.cost = session.get("totalCostUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
         self.entries = session.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
     }
@@ -71,7 +74,8 @@ impl Conversation {
             }
             "meta" | "init" => {
                 if let Some(m) = event.get("model").and_then(|m| m.as_str()) { self.model = m.to_string(); }
-                if let Some(m) = event.get("permissionMode").and_then(|m| m.as_str()) { self.mode = m.to_string(); }
+                // A mode outside this chat's list is ignored (the web's setModeIfKnown).
+                if let Some(m) = event.get("permissionMode").and_then(|m| m.as_str()) { if crate::head::modes(self.skip).contains(&m) { self.mode = m.to_string(); } }
                 if let Some(m) = event.get("sessionId").and_then(|m| m.as_str()) { self.session_id = m.to_string(); }
                 true
             }

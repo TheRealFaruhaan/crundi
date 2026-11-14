@@ -28,6 +28,8 @@ export struct PaneView {
     session: string,
     session-full: string,
     stop-armed: bool,
+    // Plan mode, no plan yet: the header's PLANNING tag (2.6).
+    planning: bool,
     model: string,
     cost: string,
     error: string,
@@ -310,6 +312,7 @@ export component PaneCard inherits Rectangle {
             narrow: p.narrow;
             menu-open: p.menu;
             kind-tag: p.kind == "chat" ? "CHAT" : "";
+            planning: p.planning;
             secrets: p.secrets;
             secrets-n: p.secrets-n;
             secrets-tip: p.secrets-tip;
@@ -367,6 +370,7 @@ export component PaneCard inherits Rectangle {
             y: p.narrow ? Theme.pane-head-narrow : Theme.pane-head;
             max-w: ph.width - Theme.sp-8;
             kind-tag: p.kind == "chat" ? "CHAT" : "";
+            planning: p.planning;
             secrets: p.secrets;
             secrets-n: p.secrets-n;
             secrets-tip: p.secrets-tip;

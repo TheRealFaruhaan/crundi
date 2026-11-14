@@ -46,6 +46,8 @@ export global Theme {
     out property <color> sky: #38bdf8;
     out property <color> sky-dim: #38bdf829;
     out property <color> sky-ring: #38bdf82e;
+    // Plan mode's border (the mode button).
+    out property <color> sky-edge: #38bdf873;
 
     // Tints of the palette.
     out property <color> error-text: #fca5a5;
@@ -72,6 +74,8 @@ export global Theme {
     out property <color> slate-dim: #94a3b826;
     // Selected text in a text field.
     out property <color> selection: #0236a1;
+    // A modal's backdrop.
+    out property <color> scrim: #0000008c;
 
     // Spacing: 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48. Every gap,
     // padding and small box is one of these (or a sum of two).
@@ -154,6 +158,10 @@ export global Theme {
     out property <length> drawer-w: 560px;
     out property <length> drawer-min: 320px;
     out property <length> drawer-reserve: 420px;
+    // A small modal dialog (the permission-mode picker): its width and its
+    // tallest.
+    out property <length> dialog-w: 380px;
+    out property <length> dialog-max-h: 560px;
     // Control heights: small (header and toolbar buttons, chips), regular
     // (buttons, inputs), large (fields, tabs, launcher buttons).
     out property <length> control-sm: 28px;

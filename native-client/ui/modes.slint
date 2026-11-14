@@ -1,0 +1,122 @@
+// The permission-mode picker (2.6, specs/mode-picker.md): the dialog the
+// composer's mode button opens, centred in the window over a scrim.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon, SoftShadow } from "widgets.slint";
+import { ModeLook } from "chat.slint";
+
+export struct ModeOption { key: string, name: string, desc: string }
+
+/// One mode: its tile (the mode's icon in its colour), its name and what it
+/// does. Selected (the chat's mode): accent-dim on an accent-line border;
+/// hover bg-tertiary. The keyboard's focus: an accent border.
+component ModeRow inherits Rectangle {
+    in property <ModeOption> m;
+    in property <bool> selected;
+    in property <bool> focused;
+    callback clicked();
+    height: max(Theme.sp-48 + Theme.sp-4, row.preferred-height);
+    border-radius: Theme.r-field;
+    border-width: 1px;
+    border-color: root.focused ? Theme.accent : root.selected ? Theme.accent-line : transparent;
+    background: root.selected ? Theme.accent-dim : ta.has-hover ? Theme.bg-tertiary : transparent;
+    row := HorizontalLayout {
+        padding: Theme.sp-10;
+        spacing: Theme.sp-12;
+        Rectangle {
+            y: (parent.height - self.height) / 2;
+            width: Theme.sp-32; height: Theme.sp-32;
+            border-radius: Theme.r-field; border-width: 1px; border-color: Theme.border;
+            background: Theme.bg-primary;
+            Icon { source: ModeLook.icon(root.m.key); width: Theme.icon-lg; height: Theme.icon-lg; tint: ModeLook.ink(root.m.key); }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: Theme.sp-2;
+            Text { text: root.m.name; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+            Text { text: root.m.desc; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; line-height-factor: Theme.lh-chat; }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The picker: "PERMISSION MODE" and ×, then the chat's modes. It closes on
+/// ×, a click on the scrim, or Esc (which does nothing else). Tab and
+/// Shift+Tab move between × and the modes, staying in the dialog; Enter or
+/// Space chooses. The chat's mode has the focus when it opens.
+export component ModePicker inherits Rectangle {
+    in property <[ModeOption]> modes;
+    in property <string> current;
+    // The chat's mode's index: the keyboard starts there.
+    in property <int> start;
+    callback choose(string);
+    callback close();
+    // The keyboard's place: -1 the ×, else a mode's index.
+    property <int> at: -1;
+    init => { root.at = root.start; keys.focus(); }
+    background: Theme.scrim;
+    // A click on the scrim closes it.
+    TouchArea { clicked => { root.close(); } }
+    keys := FocusScope {
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.close(); return accept; }
+            if ev.text == Key.Tab {
+                root.at = root.at + 1 >= root.modes.length ? -1 : root.at + 1;
+                return accept;
+            }
+            if ev.text == Key.Backtab {
+                root.at = root.at <= -1 ? root.modes.length - 1 : root.at - 1;
+                return accept;
+            }
+            if ev.text == Key.Return || ev.text == " " {
+                if root.at < 0 { root.close(); } else { root.choose(root.modes[root.at].key); }
+                return accept;
+            }
+            // Nothing behind the picker takes keys while it is open.
+            accept
+        }
+    }
+    dialog := Rectangle {
+        property <length> room-h: min(Theme.dialog-max-h, root.height - 2 * Theme.sp-16);
+        width: min(Theme.dialog-w, root.width - 2 * Theme.sp-16);
+        height: min(body.preferred-height + Theme.sp-2, self.room-h);
+        x: (root.width - self.width) / 2;
+        y: (root.height - self.height) / 2;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
+        Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
+        // A click inside the dialog stays in it.
+        TouchArea { }
+        // Taller than the room: it scrolls, its header with it.
+        Flickable {
+            x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+            content-height: body.preferred-height;
+            body := VerticalLayout {
+                padding: Theme.sp-6;
+                HorizontalLayout {
+                    padding-top: Theme.sp-8; padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-bottom: Theme.sp-6;
+                    spacing: Theme.sp-8;
+                    Text {
+                        horizontal-stretch: 1; vertical-alignment: center;
+                        text: "PERMISSION MODE"; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-secondary;
+                    }
+                    Rectangle {
+                        width: Theme.icon-md + 2 * Theme.sp-8; height: Theme.icon-md + 2 * Theme.sp-4;
+                        border-radius: Theme.r-control;
+                        background: xa.has-hover ? Theme.bg-tertiary : transparent;
+                        border-width: root.at == -1 && keys.has-focus ? 1px : 0px;
+                        border-color: Theme.accent;
+                        Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: xa.has-hover ? Theme.text-primary : Theme.text-secondary; }
+                        xa := TouchArea { mouse-cursor: pointer; clicked => { root.close(); } }
+                    }
+                }
+                for m[i] in root.modes: ModeRow {
+                    m: m;
+                    selected: m.key == root.current;
+                    focused: root.at == i && keys.has-focus;
+                    clicked => { root.choose(m.key); }
+                }
+            }
+        }
+    }
+}

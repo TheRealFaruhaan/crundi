@@ -69,9 +69,10 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
+            "modePicker": if w.get_mode_picker_open() { json!({ "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
             "chatEnter": if w.global::<crate::Composer>().get_ctrl_enter() { "newline" } else { "enter" },
             "projectDots": w.get_projects().iter().map(|p| json!({ "alias": p.alias.as_str(), "state": p.state.as_str(), "initials": p.initials.as_str() })).collect::<Vec<_>>(),
             "dragOn": w.get_drag_on(),
@@ -129,8 +130,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "Control" => Key::Control.into(), "Shift" => Key::Shift.into(), "Alt" => Key::Alt.into(), _ => Key::Meta.into(),
             }).collect()).unwrap_or_default();
             for m in &mods { w.window().dispatch_event(WindowEvent::KeyPressed { text: m.clone() }); }
-            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), o => o.into() };
-            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
+            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), o => o.into() };
+            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
                 w.window().dispatch_event(WindowEvent::KeyPressed { text: ch.clone() });
                 w.window().dispatch_event(WindowEvent::KeyReleased { text: ch });
             }
@@ -152,12 +153,17 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "close-pane" => w.invoke_close_pane(arg(c, 0).parse().unwrap_or(0)),
                 "focus-pane" => w.invoke_focus_pane(arg(c, 0).parse().unwrap_or(0)),
                 "split" => w.invoke_split(arg(c, 0).parse().unwrap_or(0), arg(c, 1) == "true"),
-                "launch-chat" => w.invoke_launch_chat(arg(c, 0).parse().unwrap_or(0), false),
+                "launch-chat" => w.invoke_launch_chat(arg(c, 0).parse().unwrap_or(0), arg(c, 1) == "skip"),
                 "send" => w.invoke_send(chat().into(), arg(c, 0).into()),
                 "stop" => w.invoke_stop(chat().into()),
                 // The composer (2.5): the Enter mode, the focus in a chat's box.
                 "chat-enter" => w.global::<crate::Composer>().invoke_set_ctrl_enter(arg(c, 0) == "newline"),
                 "composer-focus" => crate::app::focus_composer(&chat()),
+                // The permission-mode picker (2.6): open it on the focused
+                // chat's button, choose, close.
+                "mode-open" => w.global::<crate::Composer>().invoke_mode(chat().into()),
+                "mode-choose" => w.invoke_mode_choose(arg(c, 0).into()),
+                "mode-close" => w.invoke_mode_close(),
                 "respond" => w.invoke_respond(chat().into(), arg(c, 0).into(), arg(c, 1).into(), arg(c, 2) == "true"),
                 "answer" => w.invoke_answer(chat().into(), arg(c, 0).into(), arg(c, 1).into()),
                 // The pane header, on a leaf id (as the "panes" list gives them).

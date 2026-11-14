@@ -1025,6 +1025,67 @@ if (check('the composer chat has a claude process', !!procC)) {
 }
 await http('POST', `/api/ui-sessions/${liveC}/close`, {}, token);
 
+// ─── 2.6 Permission-mode picker ───
+const liveM = await make('demo', 'Modes', true);
+const liveN = await make('demo', 'Modes plain', false);
+p = await until('the mode chats have panes', (q) => pane(q, liveM) && pane(q, liveN), 30000);
+await send(liveM, 'Run exactly this shell command in the foreground with timeout 600000 and wait for it to finish: timeout 120 tail -f /dev/null. It is a deliberate wait for a UI test; do not run it in the background. Then say done.');
+p = await until('the skip-permissions chat is working', (q) => pane(q, liveM)?.state === 'working', 120000);
+await ui('focus-pane', pane(await props(), liveM).id);
+await ui('mode-open');
+p = await until('the picker opens', (q) => q.modePicker, 5000);
+if (p) {
+  check('a skip-permissions chat: six modes, Bypass all first and selected', p.modePicker.modes.map((m) => m.key).join() === 'bypassPermissions,default,acceptEdits,auto,plan,dontAsk' && p.modePicker.current === 'bypassPermissions' && p.modePicker.start === 0, p.modePicker);
+  check('the names and descriptions are the web\'s', p.modePicker.modes[1].name === 'Ask permissions' && p.modePicker.modes[5].desc === 'Never asks. Anything not already allowed is refused.', p.modePicker.modes);
+}
+await snap('2.6-open-bypass');
+await ui('mode-choose', 'acceptEdits');
+{ const q = await props(); check('choosing closes the picker and the button changes at once', q.modePicker === null && pane(q, liveM).mode === 'Accept edits' && pane(q, liveM).modeKey === 'acceptEdits', pane(q, liveM)); }
+await until('the server has the new mode', async () => (await serverChat(liveM))?.permissionMode === 'acceptEdits', 10000) && check('…and the server has it; the turn carries on', pane(await props(), liveM).state === 'working');
+await ui('mode-open');
+await until('the picker opens again', (q) => q.modePicker?.current === 'acceptEdits', 5000);
+await ui('mode-choose', 'plan');
+p = await until('Plan mode: the header shows PLANNING', (q) => pane(q, liveM)?.planning === true, 10000);
+if (p) check('Plan mode puts PLANNING in the header', pane(p, liveM).mode === 'Plan mode');
+await snap('2.6-planning');
+// Changed elsewhere (the API, as another client): the button and the tag follow.
+await http('POST', `/api/ui-sessions/${liveM}/permission-mode`, { mode: 'default' }, token);
+p = await until('a mode set elsewhere shows live', (q) => pane(q, liveM)?.modeKey === 'default' && !pane(q, liveM).planning, 10000);
+if (p) check('a mode changed by another client shows with no click, and PLANNING goes', true);
+// Esc, ×/close and a click on the scrim each close it, and change nothing.
+await ui('mode-open'); await until('open', (q) => q.modePicker, 5000);
+await key('Escape');
+await until('Esc closes the picker', (q) => q.modePicker === null, 5000) && check('Esc closes the picker', true);
+await ui('mode-open'); await until('open', (q) => q.modePicker, 5000);
+await mouse('click', 20, 840);
+await until('a click on the scrim closes the picker', (q) => q.modePicker === null, 5000) && check('a click on the scrim closes the picker', true);
+await ui('mode-open'); await until('open', (q) => q.modePicker, 5000);
+await ui('mode-close');
+await until('× closes the picker', (q) => q.modePicker === null, 5000);
+check('closing changes nothing', (await serverChat(liveM))?.permissionMode === 'default' && pane(await props(), liveM).modeKey === 'default');
+await http('POST', `/api/ui-sessions/${liveM}/interrupt`, {}, token);
+// A plain chat: five modes; the keyboard chooses (Tab, Enter).
+await ui('focus-pane', pane(await props(), liveN).id);
+await ui('mode-open');
+p = await until('the plain chat\'s picker', (q) => q.modePicker, 5000);
+if (p) check('a plain chat: five modes, Ask permissions selected, no Bypass all', p.modePicker.modes.length === 5 && p.modePicker.current === 'default' && !p.modePicker.modes.some((m) => m.key === 'bypassPermissions'), p.modePicker);
+await snap('2.6-open-default');
+await key('Tab'); await key('Return');
+p = await until('Tab then Enter chooses the next mode', (q) => q.modePicker === null && pane(q, liveN)?.modeKey === 'acceptEdits', 5000);
+if (p) check('the keyboard: Tab moves, Enter chooses', true);
+// Refused (the chat has exited): the button goes back, a toast says why.
+const procN = chatProc(liveN);
+if (check('the plain chat has a claude process', !!procN)) {
+  process.kill(procN.pid);
+  await until('the plain chat exits', (q) => pane(q, liveN)?.state === 'exited', 30000);
+  await ui('mode-open'); await until('open', (q) => q.modePicker, 5000);
+  await ui('mode-choose', 'dontAsk');
+  p = await until('a refused change goes back, with a toast', (q) => /^Could not switch permission mode: No session/.test(q.toast) && pane(q, liveN)?.modeKey === 'acceptEdits', 10000);
+  if (p) check('a refused change: the button goes back and the toast says why', true);
+  await snap('2.6-refused');
+}
+for (const id of [liveM, liveN]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+
 d.close();
 app.kill();
 console.log(failed ? `\n${failed} failed` : '\nall passed');

@@ -10,8 +10,9 @@ import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slin
 import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
 import { EntryView, ToolView, Composer } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
+import { ModePicker, ModeOption } from "modes.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption }
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -134,6 +135,14 @@ export component MainWindow inherits Window {
     in property <PaneView> full-pane;
     // A toast: the web UI's, top right under the top bar (src/app.rs times it).
     in property <string> toast;
+    // The permission-mode picker (2.6): open, its chat's modes and mode, and
+    // where the keyboard starts.
+    in property <bool> mode-picker-open;
+    in property <[ModeOption]> mode-options;
+    in property <string> mode-current;
+    in property <int> mode-start;
+    callback mode-choose(string);
+    callback mode-close();
     in property <bool> toast-error;
 
     // ─── The browser drawer ───
@@ -337,6 +346,16 @@ export component MainWindow inherits Window {
         opacity: Theme.o-clone;
         SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-clone; }
         PaneCard { p: root.drag-pane; clone: true; blocked: true; }
+    }
+
+    // The permission-mode picker, over everything but the toast.
+    if root.signed-in && root.mode-picker-open: ModePicker {
+        width: root.width; height: root.height;
+        modes: root.mode-options;
+        current: root.mode-current;
+        start: root.mode-start;
+        choose(m) => { root.mode-choose(m); }
+        close => { root.mode-close(); }
     }
 
     // The toast, under the top bar on the right: never wider than a pane at

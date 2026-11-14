@@ -58,6 +58,11 @@ changes 1722-1733 (`status`), a rejected change rolled back 2526-2538.
 | `web-live-change` | the right pane's mode changed by another client (POST from the API): its button turned to Plan mode with no click |
 | `web-post-fails` | the POST failed (stubbed 404): the web still shows Accept edits while the server kept Don't ask (a web accident, see Errors) |
 
+The native client's: `native-<state>.png` (and `-2x` crops):
+open-default, open-bypass, narrow-open, header-planning,
+narrow-head-planning, button-accept, refused; the suite's own under
+`DRIVE_OUT` (`phase2-2.6-*`).
+
 ## The parts and their order
 
 ```
@@ -285,49 +290,49 @@ End-to-end test (test/phase2.mjs):
 ## Checklist
 
 Button
-- [ ] Each mode's icon and name, in its colour (Ask permissions
+- [x] Each mode's icon and name, in its colour (Ask permissions
       text-secondary, Accept edits and Auto accent-hover, Plan mode sky with
       a sky-edge border, Don't ask yellow, Bypass all red with an
       error-edge border); narrow: the icon alone in the same colour.
-- [ ] Hover: accent border (Ask permissions also text-primary); Plan mode
+- [x] Hover: accent border (Ask permissions also text-primary); Plan mode
       and Bypass all keep their own border.
-- [ ] Tooltip "Permission mode: <name>. Click to change."
+- [x] Tooltip "Permission mode: <name>. Click to change."
 
 Picker
-- [ ] Opens from the button in a wide and a narrow pane; centred in the
+- [x] Opens from the button in a wide and a narrow pane; centred in the
       window over a scrim covering everything; dialog-w wide; scrolls
       (header included) in a short window, sp-16 from the edges.
-- [ ] Header "PERMISSION MODE" and ×; × hover text-primary on bg-tertiary.
-- [ ] Options in order, each with tile (mode-coloured icon), name and the
+- [x] Header "PERMISSION MODE" and ×; × hover text-primary on bg-tertiary.
+- [x] Options in order, each with tile (mode-coloured icon), name and the
       exact description; Bypass all first and only on skip-permissions
       chats.
-- [ ] Selected: accent-dim with accent-line border; hover bg-tertiary;
+- [x] Selected: accent-dim with accent-line border; hover bg-tertiary;
       hovering the selected changes nothing; no check mark.
-- [ ] The selected option has focus on open; Tab stays in the dialog;
+- [x] The selected option has focus on open; Tab stays in the dialog;
       Enter/Space choose.
-- [ ] Closes on ×, backdrop, Esc (Esc does nothing else); a click inside
+- [x] Closes on ×, backdrop, Esc (Esc does nothing else); a click inside
       the dialog doesn't close it.
 
 Change
-- [ ] The same mode: closes, no request.
-- [ ] Another mode: closes, the button changes at once, POST with
+- [x] The same mode: closes, no request.
+- [x] Another mode: closes, the button changes at once, POST with
       `{mode}`; the server has it.
-- [ ] Works the same on a running chat; the turn and any permission card
+- [x] Works the same on a running chat; the turn and any permission card
       carry on.
-- [ ] Plan mode shows the header's PLANNING tag (wide: before CHAT;
+- [x] Plan mode shows the header's PLANNING tag (wide: before CHAT;
       narrow: in the "…" tray before CHAT); leaving it removes the tag.
 
 Live
-- [ ] `meta` / `init` with `permissionMode` update the button and the tag
+- [x] `meta` / `init` with `permissionMode` update the button and the tag
       with no click, from another client or the CLI; a mode outside the
       chat's list is ignored.
-- [ ] The snapshot sets the list (skipPermissions) and the mode on load.
+- [x] The snapshot sets the list (skipPermissions) and the mode on load.
 
 Errors (named difference in PLAN.md)
-- [ ] `{ok:false}` or a failed request: the button returns to the previous
+- [x] `{ok:false}` or a failed request: the button returns to the previous
       mode; error toast "Could not switch permission mode: <error>".
-- [ ] 404: the button returns; error toast "Not supported by this server".
+- [x] 404: the button returns; error toast "Not supported by this server".
 
 Test
-- [ ] The end-to-end steps above in test/phase2.mjs; phase1, drive and
+- [x] The end-to-end steps above in test/phase2.mjs; phase1, drive and
       cargo test still pass.

@@ -75,7 +75,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      the Enter-mode switch (`cc-sw`), the meta row (mode button, model label,
      session id, clock), Send, Stop arming to "Sure?" (`cc-armed`) and
      disarming, and the stacked composer in a narrow pane (`cc-narrow`).
-   - [ ] **2.6 Permission-mode picker.** `cc-modal` with every mode, its
+   - [x] **2.6 Permission-mode picker.** `cc-modal` with every mode, its
      colour and description; changing a running chat's mode; the mode
      button's colour per mode.
    - [ ] **2.7 Attachments.** The attach button, the file picker, drag and
@@ -183,9 +183,8 @@ Phase 1 left these, each with its workaround in place:
 - **Visual-only controls** until their phase:
   - Cru;
   - Add project and Inbox;
-  - the composer's schedule clock (2.10), mode button (2.6) and attach
-    button (2.7): drawn, with their hover and titles, but they open nothing
-    yet;
+  - the composer's schedule clock (2.10) and attach button (2.7): drawn,
+    with their hover and titles, but they open nothing yet;
   - the pane header's lock opens nothing yet (its dialog is 2.12);
   - attachments;
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
@@ -278,8 +277,19 @@ Phase 1 left these, each with its workaround in place:
     the client's own queue (2.9);
   - the cost is the snapshot's, as the web's (it refreshes on the next
     snapshot, not after each turn).
+- **The permission-mode picker** (2.6), deliberate differences:
+  - a refused or failed change puts the button back to the mode in effect
+    and toasts "Could not switch permission mode: <error>" ("Not supported
+    by this server" on a 404); the web ignores the answer and keeps showing
+    the mode it asked for;
+  - no check mark on the selected mode (the web's has no size and is never
+    seen); the keyboard's focus is an accent border on the option, and Tab
+    stays in the dialog (the web's can leave it, behind the backdrop).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
+- **The composer's scroll thumb** (2.5): past composer-max a thin thumb
+  shows where the text is; the wheel and the caret scroll it, but the thumb
+  can't be dragged (the web's is the textarea's own scrollbar).
 - **The composer's tallest box** (2.5): composer-max holds eight lines at
   the default size (the web's nine: its line box is 1.45, the native box
   pads its lines to line-chat).

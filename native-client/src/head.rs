@@ -156,6 +156,37 @@ fn long_fits(pane_w: f32) -> bool {
 }
 
 /// No cap: the title takes what the row leaves it.
+/// A chat's permission modes, in the picker's order: Bypass all first, and
+/// only for a chat launched with skip permissions (the web's buildModes).
+pub fn modes(skip: bool) -> Vec<&'static str> {
+    let mut m = vec!["default", "acceptEdits", "auto", "plan", "dontAsk"];
+    if skip { m.insert(0, "bypassPermissions"); }
+    m
+}
+
+/// A mode's name and description, as the web chat's MODE_INFO.
+pub fn mode_info(m: &str) -> (&'static str, &'static str) {
+    match m {
+        "acceptEdits" => ("Accept edits", "Edits files without asking. Still asks before running commands."),
+        "auto" => ("Auto", "Decides for itself what is safe to do, and asks about the rest."),
+        "plan" => ("Plan mode", "Reads and plans only. Changes nothing until you approve the plan."),
+        "dontAsk" => ("Don't ask", "Never asks. Anything not already allowed is refused."),
+        "bypassPermissions" => ("Bypass all", "Runs everything without asking. Only for a chat launched with skip permissions."),
+        _ => ("Ask permissions", "Asks you before editing files or running commands."),
+    }
+}
+
+/// The mode a chat shows: its own when in its list, otherwise Ask
+/// permissions (a snapshot is taken as it comes).
+pub fn shown_mode(m: &str, skip: bool) -> &'static str {
+    modes(skip).into_iter().find(|x| *x == m).unwrap_or("default")
+}
+
+/// What a refused or failed mode change says (a toast).
+pub fn mode_error(e: &str) -> String {
+    if e == "Not supported by this server" { e.into() } else { format!("Could not switch permission mode: {e}") }
+}
+
 /// A chat's state as its pane shows it: the agent's (idle when unknown),
 /// or working at once after a send while idle or waiting (the web's
 /// optimistic switch), until the server says otherwise. The header keeps
@@ -288,5 +319,19 @@ mod tests {
         assert_eq!(composer_state("waiting", false), "waiting");
         assert_eq!(composer_state("needs-input", true), "needs-input");
         assert_eq!(composer_state("exited", true), "exited");
+    }
+
+    #[test]
+    fn permission_modes() {
+        assert_eq!(modes(false), vec!["default", "acceptEdits", "auto", "plan", "dontAsk"]);
+        assert_eq!(modes(true)[0], "bypassPermissions");
+        assert_eq!(modes(true).len(), 6);
+        assert_eq!(mode_info("bypassPermissions").0, "Bypass all");
+        assert_eq!(mode_info("").0, "Ask permissions");
+        assert_eq!(shown_mode("bypassPermissions", false), "default");
+        assert_eq!(shown_mode("plan", false), "plan");
+        assert_eq!(shown_mode("", true), "default");
+        assert_eq!(mode_error("No session \"x\""), "Could not switch permission mode: No session \"x\"");
+        assert_eq!(mode_error("Not supported by this server"), "Not supported by this server");
     }
 }
