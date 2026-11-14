@@ -2694,6 +2694,22 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     for (let i = 0; i < 30 && !got; i++) { got = (await sent()).includes('Hello after the park'); if (!got) await sleep(500); }
     check('…and then the message went', got, await sent());
 
+    // Park, Peek, leave Peek, then Resume on the card: the same chat, live,
+    // in the same leaf, on the same conversation.
+    const lSess = (await serverChat(lightChat))?.sessionId;
+    pk = await http('POST', `/api/panes/${lightChat}/park`, {}, token);
+    p = await until('parked again for Resume', (q) => pane(q, lightChat)?.pk && !pane(q, lightChat).pk.peek);
+    await ui('peek', 'live:' + lightChat, 'on');
+    p = await until('…Peek', (q) => pane(q, lightChat)?.pk?.peek);
+    await ui('peek', 'live:' + lightChat, 'off');
+    p = await until('…Parked view', (q) => pane(q, lightChat)?.pk && !pane(q, lightChat).pk.peek);
+    await ui('park-resume', 'live:' + lightChat, 'resume');
+    p = await until('Resume: live again in the same leaf', (q) => pane(q, lightChat) && !pane(q, lightChat).pk && leafOf(q, lightChat) === lLeaf, 20000);
+    if (p) check('Resume: live again in the same leaf', true);
+    let lSess2 = '';
+    for (let i = 0; i < 20 && lSess && lSess2 !== lSess; i++) { lSess2 = (await serverChat(lightChat))?.sessionId || ''; if (lSess2 !== lSess) await sleep(500); }
+    check('…on the same conversation', !lSess || lSess2 === lSess, { before: lSess, after: lSess2 });
+
     // Resume on the card: the same id, live, in the same leaf.
     await ui('park-resume', 'live:' + heavyChat, 'compact');
     p = await until('Compact and resume: live again in the same leaf', (q) => pane(q, heavyChat) && !pane(q, heavyChat).pk && leafOf(q, heavyChat) === hLeaf, 20000);
