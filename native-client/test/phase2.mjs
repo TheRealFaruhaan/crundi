@@ -1073,6 +1073,50 @@ await snap('2.6-open-default');
 await key('Tab'); await key('Return');
 p = await until('Tab then Enter chooses the next mode', (q) => q.modePicker === null && pane(q, liveN)?.modeKey === 'acceptEdits', 5000);
 if (p) check('the keyboard: Tab moves, Enter chooses', true);
+// Under a modal's scrim nothing follows the pointer: hovering a pane shows
+// none of its hover controls (F50). First, without the picker, they do.
+{
+  // The leftmost pane (the grid may run past the window's right edge).
+  const q = (await props()).panes.filter((x) => x.kind === 'chat').sort((m, n) => m.x - n.x || m.y - n.y)[0];
+  const cx = Math.round(WB.x + q.x + q.w / 2), cy = Math.round(WB.y + q.y + 12);
+  const box = async () => { const img = await shot(), px = []; for (let y = cy - 14; y <= cy + 14; y++) for (let x = cx - 60; x <= cx + 60; x++) px.push(img.at(x, y)); return px; };
+  const differ = (a1, a2) => a1.filter((v, i) => v.some((c, j) => Math.abs(c - a2[i][j]) > 6)).length;
+  await mouse('move', 20, 840); await sleep(400); const off0 = await box();
+  await mouse('move', cx, cy + 40); await sleep(400); const on0 = await box();
+  check('without a modal, hovering a pane shows its hover controls', differ(off0, on0) > 0, { q: [q.x, q.y, q.w], cx, cy });
+  await ui('mode-open'); await until('the picker opens', (x) => x.modePicker, 5000);
+  check('a modal open: the pointer is its scrim\'s', (await props()).pointerModal === true);
+  await mouse('move', 20, 840); await sleep(400); const off1 = await box();
+  await mouse('move', cx, cy + 40); await sleep(400); const on1 = await box();
+  check('under the scrim, hovering a pane shows none of its hover controls', differ(off1, on1) === 0, differ(off1, on1));
+  await key('Escape');
+  await until('closed', (x) => x.modePicker === null && x.pointerModal === false, 5000);
+}
+// A short window: the dialog scrolls, and the keyboard's focus is kept in
+// view, the chat's mode too when it opens below the fold (F51).
+await http('POST', `/api/ui-sessions/${liveN}/permission-mode`, { mode: 'dontAsk' }, token);
+await until('Don\'t ask set', (q) => pane(q, liveN)?.modeKey === 'dontAsk', 10000);
+await d.send({ cmd: 'resize', w: 1400, h: 420 });
+await sleep(800);
+await ui('mode-open');
+p = await until('the picker opens on Don\'t ask', (q) => q.modePicker?.focus === 4, 5000);
+if (p) {
+  const m = p.modePicker;
+  check('a short window: the dialog scrolls to show the chat\'s mode at open', m.scroll > 0 && m.focusBottom - m.scroll <= m.viewH + 1 && m.focusTop - m.scroll >= -1, m);
+}
+await snap('2.6-short-window');
+await key('Tab');
+p = await until('Tab to ×', (q) => q.modePicker?.focus === -1, 5000);
+if (p) check('Tab to × scrolls back to the header', p.modePicker.scroll === 0, p.modePicker);
+await key('Backtab');
+p = await until('Shift+Tab to the last mode', (q) => q.modePicker?.focus === 4, 5000);
+if (p) check('Shift+Tab to the last mode scrolls it into view', p.modePicker.scroll > 0 && p.modePicker.focusBottom - p.modePicker.scroll <= p.modePicker.viewH + 1, p.modePicker);
+await key('Escape');
+await until('closed', (q) => q.modePicker === null, 5000);
+await d.send({ cmd: 'resize', w: 1400, h: 860 });
+await sleep(800);
+await http('POST', `/api/ui-sessions/${liveN}/permission-mode`, { mode: 'acceptEdits' }, token);
+await until('Accept edits back', (q) => pane(q, liveN)?.modeKey === 'acceptEdits', 10000);
 // Refused (the chat has exited): the button goes back, a toast says why.
 const procN = chatProc(liveN);
 if (check('the plain chat has a claude process', !!procN)) {

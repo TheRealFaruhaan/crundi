@@ -10,9 +10,9 @@ import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slin
 import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
 import { EntryView, ToolView, Composer } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
-import { ModePicker, ModeOption } from "modes.slint";
+import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe }
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -143,6 +143,10 @@ export component MainWindow inherits Window {
     in property <int> mode-start;
     callback mode-choose(string);
     callback mode-close();
+    // Any modal dialog open (every later one joins this): the pointer is the
+    // scrim's (Pointer.modal).
+    property <bool> modal-open: root.signed-in && root.mode-picker-open;
+    changed modal-open => { Pointer.modal = self.modal-open; }
     in property <bool> toast-error;
 
     // ─── The browser drawer ───

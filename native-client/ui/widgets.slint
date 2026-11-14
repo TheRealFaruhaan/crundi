@@ -17,6 +17,50 @@ export global Pointer {
     in-out property <length> press-x;
     in-out property <length> press-y;
     in-out property <bool> press-on-menu;
+    // A modal dialog is open (main.slint sets it): its scrim takes the
+    // pointer, so whatever follows the pointer by position (a leaf's hover
+    // controls, menus) ignores it, and a press under it focuses nothing.
+    // Every modal shares this one flag.
+    in-out property <bool> modal;
+}
+
+/// A scroll thumb for a box that scrolls (a Flickable): where the view is in
+/// its content, on the right edge, shown only while the content is taller.
+/// Give it the view's height, the content's and how far it has scrolled
+/// (the Flickable's -content-y); place it over the view.
+export component ScrollThumb inherits Rectangle {
+    in property <length> view-h;
+    in property <length> content-h;
+    in property <length> offset;
+    property <length> track: root.height - 2 * Theme.sp-2;
+    visible: root.content-h > root.view-h;
+    Rectangle {
+        x: parent.width - Theme.sp-6; width: Theme.sp-4;
+        height: max(Theme.sp-16, root.track * root.view-h / max(1px, root.content-h));
+        y: Theme.sp-2 + (root.track - self.height) * root.offset / max(1px, root.content-h - root.view-h);
+        border-radius: Theme.r-pill;
+        background: Theme.border;
+    }
+}
+
+/// A scrolling box that can bring a part of its content into view (the
+/// keyboard's focus in a dialog), with its scroll thumb. reveal(top, bottom)
+/// takes the part's place in the content.
+export component RevealFlickable inherits Flickable {
+    public function reveal(top: length, bottom: length) {
+        if top + self.content-y < 0 {
+            self.content-y = -top;
+        } else if bottom + self.content-y > self.height {
+            self.content-y = min(0px, self.height - bottom);
+        }
+    }
+    @children
+    ScrollThumb {
+        // Over the view, not the content: it stays put as the content moves.
+        x: 0; y: -root.content-y;
+        width: root.width; height: root.height;
+        view-h: root.height; content-h: root.content-height; offset: -root.content-y;
+    }
 }
 
 /// The accent gradient (accent to accent-hover) in a round shape,

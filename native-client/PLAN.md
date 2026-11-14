@@ -287,9 +287,10 @@ Phase 1 left these, each with its workaround in place:
     stays in the dialog (the web's can leave it, behind the backdrop).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
-- **The composer's scroll thumb** (2.5): past composer-max a thin thumb
-  shows where the text is; the wheel and the caret scroll it, but the thumb
-  can't be dragged (the web's is the textarea's own scrollbar).
+- **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):
+  `ScrollThumb` shows where the view is; the wheel, the caret and the
+  keyboard's focus scroll it, but the thumb can't be dragged (the web's are
+  the system's own scrollbars).
 - **The composer's tallest box** (2.5): composer-max holds eight lines at
   the default size (the web's nine: its line box is 1.45, the native box
   pads its lines to line-chat).

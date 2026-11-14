@@ -3,10 +3,21 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, SoftShadow } from "widgets.slint";
+import { Icon, SoftShadow, RevealFlickable } from "widgets.slint";
 import { ModeLook } from "chat.slint";
 
 export struct ModeOption { key: string, name: string, desc: string }
+
+/// What the open picker shows, for the test driver (src/testctl.rs): the
+/// keyboard's place (-1 the ×), that part's top and bottom in the dialog's
+/// content, how far the dialog has scrolled, and its visible height.
+export global PickerProbe {
+    in-out property <int> focus;
+    in-out property <length> focus-top;
+    in-out property <length> focus-bottom;
+    in-out property <length> scroll;
+    in-out property <length> view-h;
+}
 
 /// One mode: its tile (the mode's icon in its colour), its name and what it
 /// does. Selected (the chat's mode): accent-dim on an accent-line border;
@@ -16,6 +27,9 @@ component ModeRow inherits Rectangle {
     in property <bool> selected;
     in property <bool> focused;
     callback clicked();
+    // Taking the keyboard's focus (also on open): bring me into view.
+    callback reveal(length, length);
+    changed focused => { if self.focused { root.reveal(self.y, self.y + self.height); } }
     height: max(Theme.sp-48 + Theme.sp-4, row.preferred-height);
     border-radius: Theme.r-field;
     border-width: 1px;
@@ -54,7 +68,25 @@ export component ModePicker inherits Rectangle {
     callback close();
     // The keyboard's place: -1 the ×, else a mode's index.
     property <int> at: -1;
-    init => { root.at = root.start; keys.focus(); }
+    // The × takes the focus: the header comes into view.
+    changed at => {
+        PickerProbe.focus = root.at;
+        if root.at == -1 { root.show(0, head.y + head.height); }
+    }
+    // Bring a part of the dialog into view (and tell the probe).
+    function show(top: length, bottom: length) {
+        PickerProbe.focus-top = top;
+        PickerProbe.focus-bottom = bottom;
+        fl.reveal(top, bottom);
+    }
+    property <length> scrolled: -fl.content-y;
+    changed scrolled => { PickerProbe.scroll = self.scrolled; }
+    property <length> view-h: fl.height;
+    changed view-h => { PickerProbe.view-h = self.view-h; }
+    // The chat's mode takes the keyboard a frame after opening, once the
+    // rows are laid out, so it is brought into view like any later move.
+    init => { PickerProbe.scroll = 0; PickerProbe.view-h = fl.height; PickerProbe.focus = -1; keys.focus(); opener.running = true; }
+    opener := Timer { interval: Theme.frame; running: false; triggered => { self.running = false; root.at = root.start; } }
     background: Theme.scrim;
     // A click on the scrim closes it.
     TouchArea { clicked => { root.close(); } }
@@ -87,13 +119,14 @@ export component ModePicker inherits Rectangle {
         Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
         // A click inside the dialog stays in it.
         TouchArea { }
-        // Taller than the room: it scrolls, its header with it.
-        Flickable {
+        // Taller than the room: it scrolls, its header with it, and the
+        // keyboard's focus is kept in view.
+        fl := RevealFlickable {
             x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
             content-height: body.preferred-height;
             body := VerticalLayout {
                 padding: Theme.sp-6;
-                HorizontalLayout {
+                head := HorizontalLayout {
                     padding-top: Theme.sp-8; padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-bottom: Theme.sp-6;
                     spacing: Theme.sp-8;
                     Text {
@@ -115,6 +148,7 @@ export component ModePicker inherits Rectangle {
                     selected: m.key == root.current;
                     focused: root.at == i && keys.has-focus;
                     clicked => { root.choose(m.key); }
+                    reveal(top, bottom) => { root.show(top, bottom); }
                 }
             }
         }

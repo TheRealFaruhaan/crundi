@@ -216,6 +216,10 @@ them; each has a spec in `specs/`). So far:
   Plan mode puts PLANNING in the pane header (in the "…" tray when narrow).
   The mode follows `meta`/`init` events live; a mode outside the chat's list
   is ignored.
+  For every modal to come: `Pointer.modal` (ui/widgets.slint, set by
+  main.slint's `modal-open`) makes whatever follows the pointer ignore it
+  under a scrim, and `RevealFlickable` scrolls a dialog to keep the
+  keyboard's focus in view, with a `ScrollThumb` (also the composer's).
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

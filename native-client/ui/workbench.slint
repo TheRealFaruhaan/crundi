@@ -493,7 +493,8 @@ export component Workbench inherits Rectangle {
             opacity: self.shown;
             animate opacity { duration: Theme.motion; easing: ease-out; }
             // The mouse over the leaf (header or body): its split controls fade in.
-            property <bool> over: Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
+            // (Not under a modal's scrim: it takes the pointer.)
+            property <bool> over: !Pointer.modal && Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
                 && Pointer.y >= self.absolute-position.y && Pointer.y < self.absolute-position.y + self.height;
             if p.kind == "empty": EmptyLeaf {
                 split-right => { root.split(p.id, false); }

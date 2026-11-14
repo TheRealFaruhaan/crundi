@@ -242,6 +242,7 @@ pub fn pointer_pressed(ui: &MainWindow, x: f32, y: f32) {
     p.set_y(y);
     p.set_press_x(x);
     p.set_press_y(y);
-    p.set_press_on_menu(ui.get_add_menu_open());
+    // On the "+" menu or a modal's scrim: the press focuses nothing beneath.
+    p.set_press_on_menu(ui.get_add_menu_open() || p.get_modal());
     p.set_presses(p.get_presses() + 1);
 }

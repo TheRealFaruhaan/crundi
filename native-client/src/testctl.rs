@@ -72,7 +72,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
-            "modePicker": if w.get_mode_picker_open() { json!({ "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
+            "pointerModal": w.global::<crate::Pointer>().get_modal(),
+            "modePicker": if w.get_mode_picker_open() { let pr = w.global::<crate::PickerProbe>(); json!({ "focus": pr.get_focus(), "focusTop": pr.get_focus_top(), "focusBottom": pr.get_focus_bottom(), "scroll": pr.get_scroll(), "viewH": pr.get_view_h(), "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
             "chatEnter": if w.global::<crate::Composer>().get_ctrl_enter() { "newline" } else { "enter" },
             "projectDots": w.get_projects().iter().map(|p| json!({ "alias": p.alias.as_str(), "state": p.state.as_str(), "initials": p.initials.as_str() })).collect::<Vec<_>>(),
             "dragOn": w.get_drag_on(),
@@ -80,6 +81,12 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "gutters": w.get_gutters().row_count(),
             "gutterViews": w.get_gutters().iter().map(|g| json!({ "split": g.split, "index": g.index, "row": g.row, "x": g.x, "y": g.y, "w": g.w, "h": g.h, "locked": g.locked })).collect::<Vec<_>>(),
         }),
+        // Resize the window (logical px), as a person dragging its edge.
+        "resize" => {
+            let n = |k: &str| c.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            w.window().set_size(slint::LogicalSize::new(n("w"), n("h")));
+            json!({ "ok": true })
+        }
         "snapshot" => match w.window().take_snapshot() {
             Ok(pb) => {
                 let mut png = Vec::new();

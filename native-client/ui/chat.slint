@@ -3,7 +3,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer, AccentFill, SoftShadow } from "widgets.slint";
+import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb } from "widgets.slint";
 import { ListView } from "std-widgets.slint";
 
 export struct ToolView {
@@ -949,13 +949,9 @@ component InputBox inherits Rectangle {
         }
         // Past composer-max: a scroll thumb on the right, so more text above
         // or below shows (the web's textarea scrollbar).
-        if te.preferred-height > fl.height: Rectangle {
-            property <length> track: parent.height - 2 * Theme.sp-2;
-            x: parent.width - Theme.sp-6; width: Theme.sp-4;
-            height: max(Theme.sp-16, self.track * fl.height / te.preferred-height);
-            y: Theme.sp-2 + (self.track - self.height) * (-fl.content-y) / max(1px, te.preferred-height - fl.height);
-            border-radius: Theme.r-pill;
-            background: Theme.border;
+        ScrollThumb {
+            width: parent.width; height: parent.height;
+            view-h: fl.height; content-h: te.preferred-height; offset: -fl.content-y;
         }
         if root.draft == "": Text {
             x: Theme.sp-10; y: Theme.sp-8;
