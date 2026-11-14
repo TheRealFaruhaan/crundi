@@ -166,6 +166,10 @@ fn main() {
     // Consolas, monospace) as it lands on each system.
     let mono = if cfg!(target_os = "windows") { "Consolas" } else if cfg!(target_os = "macos") { "Menlo" } else { "DejaVu Sans Mono" };
     ui.global::<Theme>().set_mono(mono.into());
+    // The UI font: the system's on Windows and macOS (Segoe UI, San
+    // Francisco, as the web's system-ui), the bundled DejaVu Sans on Linux
+    // (ui/main.slint: with its italic faces, which the system may lack).
+    if cfg!(target_os = "linux") { ui.global::<Theme>().set_ui_font("DejaVu Sans".into()); }
 
     // The window has no system frame (as the Electron client): the top bar
     // moves it, and has the window buttons.

@@ -184,8 +184,6 @@ Phase 1 left these, each with its workaround in place:
 - **Visual-only controls** until their phase:
   - Cru;
   - Add project and Inbox;
-  - the composer's schedule clock (2.10): drawn, with its hover and title,
-    but it opens nothing yet;
   - the pane header's lock opens nothing yet (its dialog is 2.12);
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
   - "Other…" answers to questions;
@@ -330,6 +328,12 @@ Phase 1 left these, each with its workaround in place:
     this server." / "Not supported by this server." (named difference);
   - the open panel doesn't update when a message fires, as the web's (no
     event for it): it reloads on open, Schedule and ✕.
+- **Italic text** (2.10, and every italic line: _emphasis_, "Thought", the
+  schedule list's lines): Slint's software renderer draws no slanted face
+  of its own, and a Linux system may have only DejaVu Sans's upright faces.
+  The client bundles DejaVu Sans (four faces, ui/fonts/, with its licence)
+  and uses it as the UI font on Linux (`Theme.ui-font`); Windows and macOS
+  keep the system's UI font, which has its italics.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

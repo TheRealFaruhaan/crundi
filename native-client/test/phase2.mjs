@@ -1551,7 +1551,7 @@ await clearBox();
 await keys('carried text');
 // Open: the composer's text carried in, At a time, now + 30 minutes.
 await ui('sched-open');
-p = await until('the panel opens', async (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…', 10000);
+p = await until('the panel opens', async (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.loaded, 10000);
 if (p) {
   const sc = pane(p, liveS).sched, want = new Date(Date.now() + 30 * 60000), w2 = new Date(Date.now() + 29 * 60000);
   check('open: the composer\'s text carried in, At a time, now + 30 minutes', sc.text === 'carried text' && sc.trigger === 'time' && (sc.at === fieldOf(want) || sc.at === fieldOf(w2)), sc);
@@ -1569,7 +1569,7 @@ await until('open again', (q) => pane(q, liveS)?.sched?.open, 5000);
 await ui('sched-close');
 await until('× closes it', (q) => !pane(q, liveS)?.sched?.open, 5000) && check('× closes the panel', true);
 await ui('sched-open');
-await until('open', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…', 10000);
+await until('open', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.loaded, 10000);
 // Triggers: the notes; Limit resets refused while the warmer is off.
 await ui('sched-trigger', 'turn-end');
 p = await until('turn ends', (q) => pane(q, liveS)?.sched?.trigger === 'turn-end', 5000);
@@ -1610,7 +1610,7 @@ if (p) {
 await ui('sched-close');
 await focusChat(liveS); await clearBox(); await keys('keep me');
 await ui('sched-open');
-await until('open', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…', 10000);
+await until('open', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.loaded, 10000);
 await ui('sched-text', 'e2e two');
 await ui('sched-save');
 p = await until('the second item', (q) => pane(q, liveS)?.sched?.items.some((i) => i.text === 'e2e two'), 10000);
@@ -1633,7 +1633,7 @@ await snap('2.10-with-items');
 // Per chat: another chat's item isn't listed here.
 await http('POST', '/api/chat-schedule', { project: 'demo', text: 'for the other chat', trigger: { type: 'time', at: tomorrow.toISOString() }, chat: liveS2 }, token);
 await ui('sched-close'); await ui('sched-open');
-p = await until('reloaded', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…' && pane(q, liveS).sched.items.length > 0, 10000);
+p = await until('reloaded', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.loaded && pane(q, liveS).sched.items.length > 0, 10000);
 if (p) check('another chat\'s item is not in this chat\'s list', !pane(p, liveS).sched.items.some((i) => i.text === 'for the other chat'));
 // Fire: the current minute; it goes into the chat as a user message (and
 // the turn-end item after its turn); the open panel doesn't update.
@@ -1647,7 +1647,7 @@ if (p) {
   check('a scheduled message fires as a user message in the chat', true);
   check('the open panel does not update live (as the web)', (await sch(liveS)).items.some((i) => i.text === 'Reply with just the word pong'));
   await ui('sched-close'); await ui('sched-open');
-  p = await until('reopened: the fired one gone', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…' && !pane(q, liveS).sched.items.some((i) => i.text === 'Reply with just the word pong'), 10000);
+  p = await until('reopened: the fired one gone', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.loaded && !pane(q, liveS).sched.items.some((i) => i.text === 'Reply with just the word pong'), 10000);
   if (p) check('reopened, the fired message is gone from the list', true);
   p = await until('the turn-end item fires after the turn', async () => (await userTexts(liveS)).includes('Reply with just the word ok'), 90000);
   if (p) check('a turn-end item fires when the turn ends', true);
@@ -1655,7 +1655,7 @@ if (p) {
 // The warmer on: Limit resets can be chosen.
 await http('POST', '/api/settings', { limitWarmup: true }, token);
 await ui('sched-close'); await ui('sched-open');
-p = await until('warmer on', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…' && !pane(q, liveS).sched.limitOff, 10000);
+p = await until('warmer on', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.loaded && !pane(q, liveS).sched.limitOff, 10000);
 if (p) {
   await ui('sched-trigger', 'limit-reset');
   p = await until('limit resets', (q) => pane(q, liveS)?.sched?.trigger === 'limit-reset', 5000);

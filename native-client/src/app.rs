@@ -61,6 +61,8 @@ struct Sched {
     list: String,
     /// The server has no schedule (an older one).
     unsupported: bool,
+    /// The list has answered (nothing shows until it does, as the web).
+    loaded: bool,
 }
 
 struct ChatPaneState {
@@ -1674,7 +1676,7 @@ pub fn sched_toggle(key: &str) {
         a.sched.insert(key.to_string(), Sched {
             open: true, text: draft, text_gen: tg + 1, trigger: "time".into(),
             at: sched::default_at(chrono::Local::now()), at_gen: ag + 1, note: String::new(),
-            items: Rc::new(VecModel::default()), warm: None, list: "Loading…".into(), unsupported: false,
+            items: Rc::new(VecModel::default()), warm: None, list: String::new(), unsupported: false, loaded: false,
         });
         true
     }).unwrap_or(false);
@@ -1693,6 +1695,7 @@ fn sched_load(key: &str) {
     bg(move || match stub { Some(v) => stub_result(v), None => api.get(&path) }, move |r| {
         with(|a| {
             let Some(sc) = a.sched.get_mut(&k) else { return };
+            sc.loaded = true;
             match r {
                 Ok(v) => {
                     let items: Vec<SchedItem> = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default().iter().enumerate().map(|(i, it)| SchedItem {
@@ -1704,7 +1707,9 @@ fn sched_load(key: &str) {
                     sc.warm = Some(warm);
                     if !warm && sc.trigger == "limit-reset" { sc.trigger = "time".into(); sc.note.clear(); }
                 }
-                Err(ApiError::Status(404, _)) => { sc.unsupported = true; sc.list = "Scheduled messages are not supported by this server.".into(); sc.items.set_vec(vec![]); }
+                // An older server: no limit warmer to speak of either (the web
+                // reads limitWarmup missing as off).
+                Err(ApiError::Status(404, _)) => { sc.unsupported = true; sc.warm = Some(false); if sc.trigger == "limit-reset" { sc.trigger = "time".into(); } sc.list = "Scheduled messages are not supported by this server.".into(); sc.items.set_vec(vec![]); }
                 Err(ApiError::SignedOut) => {}
                 Err(_) => { sc.list = "Could not load scheduled messages.".into(); sc.items.set_vec(vec![]); }
             }
@@ -1803,7 +1808,7 @@ pub fn sched_set(key: &str, field: &str, text: &str) {
 pub fn sched_of(key: &str) -> Value {
     with(|a| a.sched.get(key).map(|sc| json!({
         "open": sc.open, "text": sc.text, "trigger": sc.trigger, "at": sc.at, "note": sc.note, "list": sc.list,
-        "limitOff": sc.warm == Some(false), "unsupported": sc.unsupported,
+        "limitOff": sc.warm == Some(false), "unsupported": sc.unsupported, "loaded": sc.loaded,
         "items": sc.items.iter().map(|i| json!({ "id": i.id.as_str(), "when": i.when.as_str(), "text": i.text.as_str(), "next": i.next })).collect::<Vec<_>>(),
     }))).flatten().unwrap_or(Value::Null)
 }

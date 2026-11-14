@@ -3,6 +3,16 @@
 // (tab bar, then the workbench or another tab) and the browser drawer.
 
 import { Theme } from "theme.slint";
+// DejaVu Sans, its four faces (its licence beside them). On Linux the UI
+// uses this family (src/main.rs, Theme.ui-font): the system may have only
+// its upright faces (fonts-dejavu-core alone), and Slint's software renderer
+// draws no slanted face of its own, so _emphasis_, the "Thought" line and the
+// other italic text came out upright. Windows and macOS keep the system's UI
+// font, which has its italics.
+import "fonts/DejaVuSans.ttf";
+import "fonts/DejaVuSans-Bold.ttf";
+import "fonts/DejaVuSans-Oblique.ttf";
+import "fonts/DejaVuSans-BoldOblique.ttf";
 import { Pointer, SoftShadow } from "widgets.slint";
 import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
@@ -16,6 +26,7 @@ export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Them
 
 export component MainWindow inherits Window {
     title: "Crundi";
+    default-font-family: Theme.ui-font;
     preferred-width: Theme.window-w;
     preferred-height: Theme.window-h;
     min-width: Theme.window-min-w;

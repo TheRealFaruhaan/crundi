@@ -51,6 +51,9 @@ const INLINE = {
   'lay-cols3': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="6.3" height="16" rx="1.2"/><rect x="8.85" y="1" width="6.3" height="16" rx="1.2"/><rect x="16.7" y="1" width="6.3" height="16" rx="1.2"/>'),
   'lay-cross4': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
   'lay-left-right2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="16" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+  // The schedule panel's time field (2.10): the browser's own date-time
+  // input shows a calendar glyph there.
+  'calendar': svg('0 0 24 24', 2, '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
   'lay-top-bottom2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="22" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
 };
 for (const [n, body] of Object.entries(INLINE)) { writeFileSync(join(dir, `${n}.svg`), body); names.push(n); }

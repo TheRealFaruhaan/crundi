@@ -218,6 +218,9 @@ export global Theme {
 
     // Type: the mono stack, set at start for the system (src/main.rs).
     in-out property <string> mono: "DejaVu Sans Mono";
+    // The UI font: empty for the system's own; on Linux the bundled DejaVu
+    // Sans (src/main.rs), whose italic faces the system may lack.
+    in-out property <string> ui-font;
 }
 
 /// Easing curves (a global of their own: Theme is shared with the Rust side,
