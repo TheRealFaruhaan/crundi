@@ -104,12 +104,12 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.14 Tool cards.** Running spinner, open and closed, the result
      body with its scroll and size limits, diffs (add / del), the Task tool's
      card, the todo list (`cc-todo`).
-   - [ ] **2.15 Thinking.** Live shimmer, collapsing when done, opening again.
-   - [ ] **2.16 The rest of the log.** Links, code blocks with copy, images
+   - [x] **2.15 Thinking.** Live shimmer, collapsing when done, opening again.
+   - [x] **2.16 The rest of the log.** Links, code blocks with copy, images
      and media in replies, the long-history notice (`cc-notice`), errors,
      the copy hint on a selection (`cc-copyhint`), the jump-to-bottom button
      (`cc-jump`).
-   - [ ] **2.16m Media in replies** (split out of 2.16; spec in
+   - [x] **2.16m Media in replies** (split out of 2.16; spec in
      `specs/log-rest.md` section 4). Pictures under `show_image` calls with
      their sized boxes, the loading and gone states and the viewer; video and
      audio (poster, play button, the system player); the file card's
