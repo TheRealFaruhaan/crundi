@@ -26,6 +26,7 @@ mod slash;
 mod secrets;
 mod sreq;
 mod questions;
+mod tools;
 mod drafts;
 mod app;
 mod browser;

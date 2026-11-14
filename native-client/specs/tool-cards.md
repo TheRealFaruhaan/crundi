@@ -359,36 +359,36 @@ rows.
 
 ## Checklist
 
-- [ ] Card box: `bg-secondary`, `border-subtle` edge, `r-control`.
-- [ ] Head: status mark, raw name (mono, semibold, `accent-hover`, red on
+- [x] Card box: `bg-secondary`, `border-subtle` edge, `r-control`.
+- [x] Head: status mark, raw name (mono, semibold, `accent-hover`, red on
       error), summary (elided), caret ▸ / ▾; padding `sp-6`×`sp-10`, gap `sp-8`.
-- [ ] Spinner while running (ring `border`, arc `accent`, turning); dots
+- [x] Spinner while running (ring `border`, arc `accent`, turning); dots
       `sp-6` green / red; `unanswered` is green.
-- [ ] Summaries match the table for every kind, including `shortPath`,
+- [x] Summaries match the table for every kind, including `shortPath`,
       the 140-character cut, Grep's glob, Glob's path, "N items" and the
       `key=value` fallback (F84: the pending AskUserQuestion row).
-- [ ] Body: hairline, mono, `lh-chat`, wraps (breaking words), keeps
+- [x] Body: hairline, mono, `lh-chat`, wraps (breaking words), keeps
       spaces and tabs, selectable, max `composer-max * 2`, scrolls with
       `ScrollThumb`.
-- [ ] Bash body: command + muted description.
-- [ ] Write: one green band; Edit: "- " red bands, then "+ " green bands.
-- [ ] Other tools: pretty JSON (`{}` when empty), cut at 4000.
-- [ ] Result: hairline, muted (red on error), ANSI removed, cut at 6000.
-- [ ] TodoWrite: icon marks, done struck and muted, active `accent-hover`
+- [x] Bash body: command + muted description.
+- [x] Write: one green band; Edit: "- " red bands, then "+ " green bands.
+- [x] Other tools: pretty JSON (`{}` when empty), cut at 4000.
+- [x] Result: hairline, muted (red on error), ANSI removed, cut at 6000.
+- [x] TodoWrite: icon marks, done struck and muted, active `accent-hover`
       with `activeForm`, pending `text-secondary`; wraps beside the mark.
-- [ ] Group head: status from its members, `text-primary` line, "N tool(s)",
+- [x] Group head: status from its members, `text-primary` line, "N tool(s)",
       caret, tooltips; opens / closes its members; first member `sp-4` below.
-- [ ] Closed group members take no room.
-- [ ] Agent row: mark, subagent type, description, "transcript ›",
+- [x] Closed group members take no room.
+- [x] Agent row: mark, subagent type, description, "transcript ›",
       accent edge on hover, padded like a head (named difference), never
       folded.
-- [ ] Live: entry adds a running card; patch updates it and its group
+- [x] Live: entry adds a running card; patch updates it and its group
       head; summary patch folds the batch; agent frame turns a card into an
       agent row.
-- [ ] An open card stays open when its result arrives (named difference).
-- [ ] Text size scales the text only.
-- [ ] Narrow pane: summaries elide, counts and carets stay, bodies wrap.
-- [ ] After a restart: whatever `ui-history` holds draws the same way
+- [x] An open card stays open when its result arrives (named difference).
+- [x] Text size scales the text only.
+- [x] Narrow pane: summaries elide, counts and carets stay, bodies wrap.
+- [x] After a restart: whatever `ui-history` holds draws the same way
       (groups and agent rows from the stored copy; plain cards, `unanswered`
       green dots and a Task card from a transcript).
 - [ ] phase2.mjs drives Bash, Read, Edit and a failing command; cargo tests

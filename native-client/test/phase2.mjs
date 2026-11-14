@@ -2027,6 +2027,61 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   for (const id of [qMany, qDis, qOrph]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 }
 
+// ─── 2.14 Tool cards ───
+// A real turn: Bash (with a description), Read, Edit and a failing command.
+// Then, as the server's own frames: a running call patched to done (an open
+// card stays open), a TodoWrite (this CLI has none) and an agent row.
+{
+  writeFileSync(join(demoPath, 'app.js'), 'const port = 3000;\nconsole.log("listening on", port);\n');
+  const tc = await make('demo', 'Tool calls', true);
+  await send(tc, 'This is a UI test. Make exactly these tool calls, one per message, in this order: 1. Bash `ls -la` with description "List the project files"; 2. Read app.js; 3. Edit app.js, replace `const port = 3000;` with `const port = 4000;`; 4. Bash `cat missing-file.txt` (it will fail). Then reply "Done."');
+  const cards = (rows) => (rows || []).flatMap((r) => r.card ? [r.card] : r.group ? r.members : []);
+  p = await until('the tool turn ends', (q) => pane(q, tc)?.state === 'idle' && cards(pane(q, tc)?.tools).length >= 4, 240000);
+  if (check('a turn with four tool calls', !!p, p && pane(p, tc)?.tools)) {
+    await ui('focus-pane', pane(p, tc).id);
+    // Open every group, then every card.
+    for (const r of pane(p, tc).tools) if (r.group) await ui('tool-toggle', r.group);
+    p = await props();
+    for (const c of cards(pane(p, tc).tools)) await ui('tool-toggle', c.id);
+    p = await until('all open', (q) => cards(pane(q, tc).tools).every((c) => c.open) && pane(q, tc).tools.every((r) => !r.group || r.open), 5000);
+    const all = cards(pane(p, tc).tools);
+    const bash = all.find((c) => c.name === 'Bash' && c.summary === 'ls -la');
+    check('Bash: green dot, the raw name, summary "ls -la"; open: the command, its description, the listing', bash && bash.status !== 'running' && !bash.error && bash.body === 'bash' && bash.args === 'ls -la' && bash.note === 'List the project files' && /app\.js/.test(bash.result), bash);
+    const read = all.find((c) => c.name === 'Read');
+    check('Read: summary …/<dir>/app.js; open: the JSON input and the file', read && /^…\/[^/]+\/app\.js$/.test(read.summary) && read.body === 'json' && read.args.includes('"file_path"') && /const port/.test(read.result), read);
+    const edit = all.find((c) => c.name === 'Edit');
+    check('Edit: the diff, "- const port = 3000;" removed and "+ const port = 4000;" added', edit && /app\.js$/.test(edit.summary) && edit.lines.some((l) => l.text === '- const port = 3000;' && !l.add) && edit.lines.some((l) => l.text === '+ const port = 4000;' && l.add), edit);
+    const bad = all.find((c) => c.name === 'Bash' && /cat missing-file\.txt/.test(c.summary));
+    check('the failing Bash: red, its result in red with "No such file"', bad && bad.error && /No such file/.test(bad.result), bad);
+    const groups = pane(p, tc).tools.filter((r) => r.group);
+    if (groups.length) {
+      check('group heads count their calls ("N tools")', groups.every((g) => g.count === g.members.length && g.count >= 1), groups.map((g) => [g.summary, g.count]));
+      const gBad = groups.find((g) => g.members.some((m) => m.error));
+      check('the group with the failed call has a red dot', !gBad || gBad.status === 'failed', gBad);
+    }
+    await snap('2.14-open');
+    // Live: a running call (spinner), opened, then its result: it stays open.
+    const ev = (e) => ui('chat-event', JSON.stringify(e));
+    await ev({ type: 'entry', entry: { id: 'e2e-run', kind: 'tool', name: 'Bash', toolUseId: 'tu-run', input: { command: 'sleep 30' }, status: 'running', result: null } });
+    await ev({ type: 'entry', entry: { id: 'e2e-todo', kind: 'tool', name: 'TodoWrite', toolUseId: 'tu-todo', input: { todos: [{ content: 'Read the code', status: 'completed' }, { content: 'Change the port', activeForm: 'Changing the port', status: 'in_progress' }, { content: 'Run the tests', status: 'pending' }] }, status: 'done', result: 'ok' } });
+    await ev({ type: 'entry', entry: { id: 'e2e-agent', kind: 'tool', name: 'Task', toolUseId: 'tu-agent', input: { description: 'Count lines' }, status: 'running' } });
+    await ev({ type: 'agent', agent: { toolUseId: 'tu-agent', kind: 'agent', subagentType: 'general-purpose', description: 'Count lines in app.js', status: 'running' } });
+    await ui('tool-toggle', 'e2e-run');
+    p = await until('the running card', (q) => pane(q, tc).tools.some((r) => r.card?.id === 'e2e-run' && r.card.open && r.card.status === 'running'), 5000);
+    if (p) {
+      const todo = pane(p, tc).tools.find((r) => r.card?.id === 'e2e-todo')?.card;
+      check('TodoWrite: "3 items"; done, the active one with its activeForm, pending', todo && todo.summary === '3 items' && JSON.stringify(todo.todos) === JSON.stringify([{ text: 'Read the code', state: 'completed' }, { text: 'Changing the port', state: 'in_progress' }, { text: 'Run the tests', state: 'pending' }]), todo);
+      const ag = pane(p, tc).tools.find((r) => r.agent === 'e2e-agent');
+      check('an agent record turns its call into an agent row', ag && ag.type === 'general-purpose' && ag.status === 'running', ag);
+    }
+    await snap('2.14-live');
+    await ev({ type: 'patch', id: 'e2e-run', patch: { status: 'done', result: 'slept', isError: false } });
+    p = await until('patched', (q) => pane(q, tc).tools.some((r) => r.card?.id === 'e2e-run' && r.card.status === 'done'), 5000);
+    if (p) check('its result arrives: the open card stays open (the web closes it: a named difference)', pane(p, tc).tools.find((r) => r.card?.id === 'e2e-run').card.open === true && pane(p, tc).tools.find((r) => r.card?.id === 'e2e-run').card.result === 'slept');
+  }
+  await http('POST', `/api/ui-sessions/${tc}/close`, {}, token);
+}
+
 d.close();
 app.kill();
 console.log(failed ? `\n${failed} failed` : '\nall passed');

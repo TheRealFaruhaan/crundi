@@ -276,6 +276,15 @@ them; each has a spec in `specs/`). So far:
   message. Half-answered cards are kept as answer drafts (`ans:<chat>:<entry>`
   in the drafts store) across pane switches and restarts. The rules are in
   `src/questions.rs` (unit-tested).
+- **2.14 Tool cards** (specs/tool-cards.md, `ui/chat.slint` ToolCard):
+  each tool call is a card as the web's: a spinner or a dot, the tool's
+  name as sent, the summary of its arguments (the web's toolSummary), and
+  a body that opens on a click with the arguments by tool (Bash's command
+  and description, Write's content, Edit's diff, TodoWrite's list, pretty
+  JSON otherwise) and the result, at most composer-max × 2 then scrolling.
+  Batches Claude Code summed up fold behind a group head; a call that
+  started a sub-agent is an agent row. The rules are in `src/tools.rs`
+  (unit-tested).
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

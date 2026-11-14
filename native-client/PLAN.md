@@ -371,6 +371,19 @@ Phase 1 left these, each with its workaround in place:
     first) whose arrows move and pick, Space picks or toggles, the fields
     are Tab stops; Submit, Dismiss, the note buttons and the note's ✕ take
     no keyboard focus (no native button does yet).
+- **Tool cards** (2.14), deliberate differences and gaps:
+  - an open card stays open when its result arrives (the web rebuilds the
+    card on every patch, which closes it);
+  - the agent row is padded as a card's head (the web's has no padding);
+  - a done to-do is struck with a line across each of its lines, the
+    whole width of the text column (Slint's text has no strike-through,
+    and a wrapped line's own width is not known);
+  - the spinner is two paths (a ring, a turning quarter): the software
+    renderer cannot turn an image;
+  - tabs in a body are expanded to stops of 8 in Rust (Slint's text has no
+    tab stops);
+  - the wheel over an open body scrolls the body; it does not pass on to
+    the log at the body's end.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

@@ -2,6 +2,7 @@
 //! entry / patch / delta / state), kept in order, and turned into what the
 //! chat view shows. The shapes are the server's (src/claude-ui.js).
 
+use crate::tools;
 use serde_json::Value;
 
 #[derive(Default)]
@@ -23,6 +24,9 @@ pub struct Conversation {
     pub slots: Vec<Slot>,
     /// The CLI's commands for the slash menu (2.11): names, or {name, description}.
     pub slash: Vec<Value>,
+    /// The chat's agent records (2.14: a call that started a sub-agent is an
+    /// agent row), by their toolUseId.
+    pub agents: Vec<Value>,
 }
 
 /// A message handed over to a busy chat (2.9, the web's handedOver).
@@ -52,6 +56,7 @@ impl Conversation {
         self.slash = session.get("slashCommands").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         self.cost = session.get("totalCostUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
         self.entries = session.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+        self.agents = session.get("agents").and_then(|m| m.as_array()).cloned().unwrap_or_default();
         self.slots = session.get("pendingInjections").and_then(|p| p.as_array()).map(|p| p.iter().map(|x| Slot {
             text: s(x, "text"), uuid: s(x, "uuid"), state: { let st = s(x, "state"); if st.is_empty() { "sent".into() } else { st } },
         }).collect()).unwrap_or_default();
@@ -104,6 +109,19 @@ impl Conversation {
                     // (The cost is the snapshot's, as the web's: it refreshes
                     // with the next snapshot, not after each turn.)
                     None => self.entries.push(e.clone()),
+                }
+                true
+            }
+            "agent" => {
+                let Some(ag) = event.get("agent") else { return false };
+                let tid = s(ag, "toolUseId");
+                if tid.is_empty() { return false; }
+                match self.agents.iter_mut().find(|x| s(x, "toolUseId") == tid) {
+                    Some(old) => {
+                        // A record may come as a partial update: merged.
+                        if let (Some(o), Some(n)) = (old.as_object_mut(), ag.as_object()) { for (k, v) in n { o.insert(k.clone(), v.clone()); } }
+                    }
+                    None => self.agents.push(ag.clone()),
                 }
                 true
             }
@@ -214,30 +232,17 @@ pub struct Shown {
     pub group_summary: String,
     /// question: the whole entry (its questions, status, answers: 2.13).
     pub raw: Value,
+    /// tool (2.14): the call's id (an agent record's key), its body's
+    /// arguments (src/tools.rs), and the JSON of its input (the body of a
+    /// tool with no look of its own).
+    pub tool_use_id: String,
+    pub body: tools::Body,
+    pub args: String,
 }
 
 fn s(v: &Value, k: &str) -> String {
     match v.get(k) {
         Some(Value::String(x)) => x.clone(),
-        Some(Value::Null) | None => String::new(),
-        Some(other) => other.to_string(),
-    }
-}
-
-const RESULT_MAX: usize = 4000;
-
-fn clip(t: &str, max: usize) -> String {
-    if t.chars().count() <= max { return t.to_string(); }
-    let mut out: String = t.chars().take(max).collect();
-    out.push_str("\n…");
-    out
-}
-
-/// A tool result is text, or a list of content blocks.
-fn result_text(v: Option<&Value>) -> String {
-    match v {
-        Some(Value::String(t)) => t.clone(),
-        Some(Value::Array(blocks)) => blocks.iter().filter_map(|b| b.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join("\n"),
         Some(Value::Null) | None => String::new(),
         Some(other) => other.to_string(),
     }
@@ -281,11 +286,17 @@ fn shown(e: &Value) -> Option<Shown> {
         "thinking" => Shown { kind: "thinking", text: s(e, "text"), ..base },
         "tool" => {
             let input = e.get("input").cloned().unwrap_or(Value::Null);
+            let name = s(e, "name");
+            let body = tools::body(&name, &input);
             Shown {
                 kind: "tool",
-                title: tool_title(e),
-                detail: tool_summary(&s(e, "name"), &input),
-                text: clip(&result_text(e.get("result")), RESULT_MAX),
+                // The name as sent (an MCP tool's mcp__server__tool too).
+                title: name.clone(),
+                detail: tools::summary(&name, &input),
+                text: tools::expand_tabs(&tools::result_shown(e.get("result"))),
+                args: if body == tools::Body::Json { tools::expand_tabs(&tools::json_args(&input)) } else { String::new() },
+                body,
+                tool_use_id: s(e, "toolUseId"),
                 status: s(e, "status"),
                 error: e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false),
                 note: input.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
@@ -351,8 +362,24 @@ mod tests {
         assert_eq!(v.len(), 3);
         assert_eq!(v[1].text, "Hello");
         assert_eq!(v[1].status, "");
-        assert_eq!((v[2].title.as_str(), v[2].detail.as_str(), v[2].text.as_str(), v[2].status.as_str()), ("Bash", "ls -la", "a b", "done"));
+        assert_eq!((v[2].title.as_str(), v[2].detail.as_str(), v[2].text.as_str(), v[2].status.as_str()), ("Bash", "ls -la\nmore", "a b", "done"));
         assert_eq!(c.state, "working");
+    }
+
+    #[test]
+    fn agents_and_tool_names() {
+        let mut c = Conversation::default();
+        c.load(&json!({ "messages": [
+            { "id": "t", "kind": "tool", "name": "mcp__crundi__list_services", "toolUseId": "u1", "input": {}, "status": "done", "result": "ok" },
+        ], "agents": [{ "toolUseId": "u1", "kind": "agent", "subagentType": "web-fetch", "status": "running" }] }));
+        let v = c.view();
+        assert_eq!((v[0].title.as_str(), v[0].detail.as_str(), v[0].args.as_str(), v[0].tool_use_id.as_str()), ("mcp__crundi__list_services", "", "{}", "u1"));
+        assert!(c.apply(&json!({ "type": "agent", "agent": { "toolUseId": "u1", "status": "done" } })));
+        assert_eq!(c.agents.len(), 1);
+        assert_eq!(c.agents[0]["status"], "done");
+        assert_eq!(c.agents[0]["subagentType"], "web-fetch");
+        assert!(c.apply(&json!({ "type": "agent", "agent": { "toolUseId": "u2", "kind": "task" } })));
+        assert_eq!(c.agents.len(), 2);
     }
 
     #[test]

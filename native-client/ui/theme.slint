@@ -200,6 +200,10 @@ export global Theme {
     // How long the pointer rests before a tooltip shows.
     out property <duration> tip-delay: 600ms;
     out property <duration> frame: 16ms;
+    // A tool card's spinner: one turn (2.14, the web's 0.7 s), and its ring.
+    out property <duration> spin: 700ms;
+    out property <length> spin-stroke: 1.5px;
+    out property <angle> turn: 360deg;
     // Opacity of things that are there but quiet.
     out property <float> o-faint: 0.3;
     out property <float> o-dim: 0.4;

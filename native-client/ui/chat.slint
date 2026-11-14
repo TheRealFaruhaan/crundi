@@ -6,13 +6,34 @@ import { Icons } from "icons.slint";
 import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox, RevealFlickable } from "widgets.slint";
 import { ListView, DatePickerPopup, TimePickerPopup, Date, Time } from "std-widgets.slint";
 
+/// An Edit's diff line ("- old" / "+ new"), and a to-do (completed |
+/// in_progress | pending).
+export struct DiffLine { text: string, add: bool }
+export struct TodoItem { text: string, state: string }
+
+/// A tool card (2.14): its entry, the tool's name as sent, the summary, the
+/// result as shown, running | done | unanswered, failed, open; the body's
+/// arguments by kind (bash: the command and its description; write: the
+/// content; diff: its lines; todos: its items; json: the input as JSON).
 export struct ToolView {
+    id: string,
     title: string,
     detail: string,
     text: string,
-    // running | done
     status: string,
     error: bool,
+    open: bool,
+    kind: string,
+    args: string,
+    note: string,
+    lines: [DiffLine],
+    todos: [TodoItem],
+}
+
+/// A tool card's or group's head clicked (src/app.rs): by the chat, and the
+/// entry id or "g:<group>".
+export global ToolAct {
+    callback toggle(string, string);
 }
 
 /// One choice of a question: its label, description and preview; picked;
@@ -40,6 +61,8 @@ export struct EntryView {
     tools: [ToolView],
     // The space after this row (paragraphs, list items, entries: src/app.rs).
     gap: length,
+    // A tool group's head open (2.14).
+    open: bool,
     // A question card (2.13): its chat, its questions with the person's
     // picks, and whether it can be answered (pending or orphaned), is
     // orphaned, can be submitted; answered: its tags, note lines, dismissed,
@@ -687,47 +710,168 @@ component Prose inherits TextInput {
     selection-background-color: Theme.accent-dim;
 }
 
-component ToolRow inherits Rectangle {
+/// The running spinner (.cc-spin): a ring in border with a quarter in
+/// accent, turning once every Theme.spin. (Drawn as paths: the software
+/// renderer cannot turn an image.)
+component Spinner inherits Rectangle {
+    width: Theme.icon-sm; height: Theme.icon-sm;
+    property <float> u: self.width / 1px;
+    property <float> r: (self.width - Theme.spin-stroke) / 2 / 1px;
+    property <angle> a: mod(animation-tick() / Theme.spin, 1) * Theme.turn;
+    // The ring.
+    Rectangle {
+        border-radius: self.width / 2;
+        border-width: Theme.spin-stroke; border-color: Theme.border;
+    }
+    Path {
+        width: parent.width; height: parent.height;
+        viewbox-width: root.u; viewbox-height: root.u;
+        stroke: Theme.accent; stroke-width: Theme.spin-stroke;
+        commands: "M " + (root.u / 2 + root.r * sin(root.a)) + " " + (root.u / 2 - root.r * cos(root.a))
+            + " A " + root.r + " " + root.r + " 0 0 1 " + (root.u / 2 + root.r * sin(root.a + 90deg)) + " " + (root.u / 2 - root.r * cos(root.a + 90deg));
+    }
+}
+
+/// A tool's status: the spinner while running, else a dot (red: failed).
+component StatusMark inherits Rectangle {
+    in property <bool> running;
+    in property <bool> failed;
+    width: Theme.icon-sm; height: Theme.icon-sm;
+    if root.running: Spinner { }
+    if !root.running: Rectangle {
+        width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.sp-6 / 2;
+        background: root.failed ? Theme.red : Theme.green;
+    }
+}
+
+/// The body's text: mono, keeps its lines, wraps, selectable.
+component BodyText inherits TextInput {
+    in property <float> fs: 1;
+    read-only: true;
+    wrap: word-wrap;
+    font-family: Theme.mono;
+    font-size: Theme.text-12 * root.fs;
+    line-height-factor: Theme.lh-chat;
+    color: Theme.text-secondary;
+}
+
+/// A band of the body (a Write's content, a diff line): its colour on its
+/// fill, the full width.
+component Band inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> text;
+    in property <bool> add;
+    background: root.add ? Theme.green-dim : Theme.red-dim;
+    height: bt.preferred-height;
+    bt := BodyText { width: parent.width; fs: root.fs; text: root.text; color: root.add ? Theme.green : Theme.red; }
+}
+
+/// A to-do: its mark (a box, ticked when done; ▸ while in progress) and the
+/// text beside it, wrapping in its own column; done ones struck through.
+component TodoRow inherits Rectangle {
+    in property <float> fs: 1;
+    in property <TodoItem> t;
+    property <color> c: root.t.state == "completed" ? Theme.text-muted : root.t.state == "in_progress" ? Theme.accent-hover : Theme.text-secondary;
+    height: tl.preferred-height;
+    tl := HorizontalLayout {
+        spacing: Theme.sp-8;
+        Rectangle {
+            width: Theme.icon-sm;
+            Icon {
+                y: (one.preferred-height - self.height) / 2; width: Theme.icon-sm; height: Theme.icon-sm;
+                source: root.t.state == "in_progress" ? Icons.play : Icons.square; tint: root.c;
+            }
+            if root.t.state == "completed": Icon {
+                x: (Theme.icon-sm - self.width) / 2; y: (one.preferred-height - self.height) / 2;
+                width: Theme.icon-sm - Theme.sp-4; height: Theme.icon-sm - Theme.sp-4; source: Icons.check; tint: root.c;
+            }
+        }
+        Rectangle {
+            horizontal-stretch: 1; min-width: 0;
+            height: tx.preferred-height;
+            tx := BodyText { width: parent.width; fs: root.fs; text: root.t.text; color: root.c; }
+            // Struck through, line by line (Slint's text has no strike).
+            if root.t.state == "completed": Rectangle {
+                for i in round(tx.preferred-height / max(1px, one.preferred-height)): Rectangle {
+                    y: i * one.preferred-height + one.preferred-height / 2; height: 1px; background: root.c;
+                }
+            }
+        }
+    }
+    one := Text { visible: false; text: "x"; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; }
+}
+
+/// A tool card (.cc-tool): the head (status, the tool's name, the summary,
+/// the caret) opens the body: the arguments by tool, then the result under
+/// a hairline. The body stops at composer-max * 2 and scrolls.
+component ToolCard inherits Rectangle {
     // The pane's text size, a scale of the base size (the web's --cc-fs).
     in property <float> fs: 1;
     in property <ToolView> t;
-    property <bool> open;
+    in property <string> chat;
     background: Theme.bg-secondary;
     border-radius: Theme.r-control;
     border-width: 1px;
     border-color: Theme.border-subtle;
+    clip: true;
     height: col.preferred-height;
     col := VerticalLayout {
         Rectangle {
-            height: Theme.sp-32 + (root.fs - 1) * Theme.sp-16;
-            HorizontalLayout {
-                padding-left: Theme.sp-10;
-                padding-right: Theme.sp-10;
+            height: hd.preferred-height;
+            hd := HorizontalLayout {
+                padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
                 spacing: Theme.sp-8;
-                Rectangle {
-                    width: Theme.sp-6; height: Theme.sp-6; y: (parent.height - self.height) / 2; border-radius: Theme.r-chip;
-                    background: t.status == "running" ? Theme.yellow : t.error ? Theme.red : Theme.green;
-                }
-                Text { text: t.title; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
-                Text { text: t.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
-                Text { text: root.open ? "▾" : "▸"; font-size: Theme.text-10 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                StatusMark { y: (parent.height - self.height) / 2; running: root.t.status == "running"; failed: root.t.error; }
+                Text { text: root.t.title; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: root.t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
+                Text { text: root.t.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; overflow: elide; wrap: no-wrap; horizontal-stretch: 1; min-width: 0; vertical-alignment: center; }
+                Text { text: root.t.open ? "▾" : "▸"; font-size: Theme.text-13 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
             }
-            TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+            TouchArea { mouse-cursor: pointer; clicked => { ToolAct.toggle(root.chat, root.t.id); } }
         }
-        if root.open && t.text != "": Rectangle {
-            height: min(out.preferred-height + Theme.sp-12, Theme.composer-max * 2);
+        if root.t.open: Rectangle {
+            property <length> content-h: body.preferred-height;
+            height: min(self.content-h, Theme.composer-max * 2) + 1px;
             Rectangle { y: 0; height: 1px; background: Theme.border-subtle; }
-            Flickable {
-                y: 1px;
-                height: parent.height - 1px;
-                content-height: out.preferred-height + Theme.sp-12;
-                out := TextInput {
-                    x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sp-16;
-                    read-only: true; wrap: word-wrap;
-                    text: t.text;
-                    font-family: Theme.mono; font-size: Theme.text-12 * root.fs;
-                    color: Theme.text-secondary;
+            fl := Flickable {
+                y: 1px; height: parent.height - 1px;
+                content-height: parent.content-h;
+                body := VerticalLayout {
+                    width: fl.width;
+                    padding-top: Theme.sp-8; padding-bottom: Theme.sp-8; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+                    if root.t.kind == "bash": BodyText { fs: root.fs; text: root.t.args; }
+                    if root.t.kind == "bash" && root.t.note != "": Rectangle {
+                        height: nt.preferred-height + Theme.sp-6;
+                        nt := BodyText { y: Theme.sp-6; width: parent.width; fs: root.fs; text: root.t.note; color: Theme.text-muted; }
+                    }
+                    if root.t.kind == "json": BodyText { fs: root.fs; text: root.t.args; }
+                    if root.t.kind == "write": Band { fs: root.fs; text: root.t.args; add: true; }
+                    if root.t.kind == "diff": Rectangle {
+                        height: dl.preferred-height;
+                        dl := VerticalLayout {
+                            for l in root.t.lines: Band { fs: root.fs; text: l.text; add: l.add; }
+                        }
+                    }
+                    if root.t.kind == "todos": Rectangle {
+                        height: tdl.preferred-height;
+                        tdl := VerticalLayout {
+                            spacing: Theme.sp-4;
+                            for td in root.t.todos: TodoRow { fs: root.fs; t: td; }
+                        }
+                    }
+                    // The result, under a hairline: muted, red when it failed.
+                    if root.t.text != "": Rectangle {
+                        height: rt.preferred-height + 2 * Theme.sp-8 + 1px;
+                        Rectangle { y: Theme.sp-8; height: 1px; background: Theme.border-subtle; }
+                        rt := BodyText {
+                            y: 2 * Theme.sp-8 + 1px; width: parent.width;
+                            fs: root.fs; text: root.t.text; color: root.t.error ? Theme.red : Theme.text-muted;
+                        }
+                    }
                 }
+            }
+            ScrollThumb {
+                y: 1px; height: parent.height - 1px;
+                view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y;
             }
         }
     }
@@ -808,7 +952,9 @@ component QOptRow inherits Rectangle {
     callback move(int);
     height: lay.preferred-height + Theme.sp-2;
     border-radius: Theme.r-control; border-width: 1px;
-    border-color: root.o.chosen ? Theme.accent : ta.has-hover ? Theme.accent-hover : Theme.border;
+    // The pointer anywhere in the row (its note button and ✕ too).
+    border-color: root.o.chosen ? Theme.accent : ta.has-hover || nb.has-hover || root.x-hover ? Theme.accent-hover : Theme.border;
+    property <bool> x-hover;
     background: root.o.chosen ? Theme.accent-dim : Theme.bg-primary;
     // Picked: the ring round the row.
     if root.o.chosen: Rectangle {
@@ -816,7 +962,9 @@ component QOptRow inherits Rectangle {
         border-radius: Theme.r-card; background: Theme.accent-ring;
     }
     if root.o.chosen: Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent; background: Theme.accent-dim; }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { fs-key.focus(); root.pick(); } }
+    // A press picks the choice; the app then gives it the keyboard (its
+    // focus-gen: the radio may only become a Tab stop once picked).
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.pick(); } }
     // The keyboard: Space picks (or toggles); in a radio group the arrows
     // move to and pick the next choice.
     fs-key := FocusScope {
@@ -895,7 +1043,10 @@ component QOptRow inherits Rectangle {
                             border-radius: Theme.r-control;
                             background: xa.has-hover ? Theme.bg-hover : transparent;
                             Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: xa.has-hover ? Theme.text-primary : Theme.text-muted; }
-                            xa := TouchArea { mouse-cursor: pointer; clicked => { root.note-remove(); } }
+                            xa := TouchArea {
+                                mouse-cursor: pointer; clicked => { root.note-remove(); }
+                                changed has-hover => { root.x-hover = self.has-hover; }
+                            }
                         }
                     }
                 }
@@ -1102,34 +1253,60 @@ component EntryRow inherits VerticalLayout {
     }
 
     if e.kind == "tool": VerticalLayout {
-        for t in e.tools: ToolRow { t: t; fs: root.fs; }
+        for t in e.tools: ToolCard { t: t; fs: root.fs; chat: e.chat; }
     }
 
+    // A batch Claude Code summed up (.cc-tgroup): its head (the members'
+    // status, the summary, "N tools", the caret) opens its calls' cards.
     if e.kind == "tools": VerticalLayout {
-        spacing: Theme.sp-6;
         Rectangle {
-            height: Theme.control + (root.fs - 1) * Theme.sp-16;
+            height: gh.preferred-height;
             background: Theme.bg-secondary;
             border-radius: Theme.r-control;
             border-width: 1px;
             border-color: Theme.border-subtle;
-            HorizontalLayout {
-                padding-left: Theme.sp-10;
-                padding-right: Theme.sp-10;
+            gh := HorizontalLayout {
+                padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
                 spacing: Theme.sp-8;
-                Rectangle {
-                    width: Theme.sp-6; height: Theme.sp-6; y: (parent.height - self.height) / 2; border-radius: Theme.r-chip;
-                    background: e.status == "running" ? Theme.yellow : e.error ? Theme.red : Theme.green;
-                }
-                Text { text: e.title; font-size: Theme.text-12 * root.fs; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
-                Text { text: e.detail + (root.open ? "  ▾" : "  ▸"); font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                StatusMark { y: (parent.height - self.height) / 2; running: e.status == "running"; failed: e.error; }
+                Text { text: e.title; font-size: Theme.text-12 * root.fs; color: Theme.text-primary; overflow: elide; wrap: no-wrap; horizontal-stretch: 1; min-width: 0; vertical-alignment: center; }
+                Text { text: e.detail; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
+                Text { text: e.open ? "▾" : "▸"; font-size: Theme.text-13 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
             }
-            TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => { ToolAct.toggle(e.chat, e.id); }
+                Tip { on: parent.has-hover; text: e.open ? "Fold these tool calls" : "Show each tool call"; }
+            }
         }
-        if root.open: VerticalLayout {
-            spacing: Theme.sp-6;
-            for t in e.tools: ToolRow { t: t; fs: root.fs; }
+        if e.open: Rectangle {
+            height: gm.preferred-height + Theme.sp-4;
+            gm := VerticalLayout {
+                y: Theme.sp-4;
+                spacing: Theme.sp-10;
+                for t in e.tools: ToolCard { t: t; fs: root.fs; chat: e.chat; }
+            }
         }
+    }
+
+    // A call that started a sub-agent (.cc-agentrow): its status, the
+    // agent's type and description, "transcript ›". (Padded as a card's
+    // head: the web's row has none, an accident. Its panel is 2.18.)
+    if e.kind == "agent": Rectangle {
+        height: ah.preferred-height;
+        background: Theme.bg-secondary;
+        border-radius: Theme.r-control;
+        border-width: 1px;
+        border-color: aa.has-hover ? Theme.accent : Theme.border-subtle;
+        ah := HorizontalLayout {
+            padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+            spacing: Theme.sp-8;
+            StatusMark { y: (parent.height - self.height) / 2; running: e.status == "running"; failed: e.status == "failed"; }
+            Text { text: e.title; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.accent-hover; vertical-alignment: center; }
+            Text { text: e.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; overflow: elide; wrap: no-wrap; horizontal-stretch: 1; min-width: 0; vertical-alignment: center; }
+            Text { text: "transcript ›"; font-size: Theme.text-11 * root.fs; color: Theme.accent-hover; vertical-alignment: center; }
+        }
+        aa := TouchArea { mouse-cursor: pointer; }
     }
 
     if e.kind == "permission": Rectangle {

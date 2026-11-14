@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, questions, sched, secrets, slash, sreq, store, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView,
+    head, questions, sched, secrets, slash, sreq, store, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -87,6 +87,10 @@ struct ChatPaneState {
     rows: Vec<Row>,
     model: Rc<VecModel<EntryView>>,
     error: String,
+    /// Tool cards and groups open (2.14): entry ids, and "g:<group>". Kept
+    /// while the pane shows the chat; an open card stays open when its
+    /// result arrives (the web's rebuild closes it: a named difference).
+    open: HashSet<String>,
 }
 
 /// What one row of a chat log shows (compared to rewrite only changed rows).
@@ -98,9 +102,12 @@ enum Row {
     /// message's last block (the gap after it is an entry's, 10px).
     Prose(String, String, &'static str, String, bool),
     Code(String, String, bool),
-    /// Tool calls: one on its own, or a batch Claude Code summed up (the summary).
-    Tool(String, Shown),
-    Tools(String, String, Vec<Shown>),
+    /// Tool calls (2.14): one card (open?); a batch Claude Code summed up
+    /// (its head's summary, the members with their open state, the group
+    /// open?); a call that started a sub-agent (its agent record).
+    Tool(String, Shown, bool),
+    Tools(String, String, Vec<(Shown, bool)>, bool),
+    Agent(String, Value),
 }
 
 pub struct App {
@@ -366,10 +373,14 @@ pub fn init(window: &MainWindow) {
     window.on_pane_full(|id| pane_full(id as u32));
     window.on_pane_font(|id, d| pane_font(id as u32, d));
     window.on_pane_pin(|id| pane_pin(id as u32));
+    // Tool cards (2.14): a head opens or closes its card, or its group.
+    window.global::<ToolAct>().on_toggle(|c, id| tool_toggle(c.as_str(), id.as_str()));
     // Question cards (2.13).
     {
         let qa = window.global::<QAct>();
-        qa.on_pick(|c, e, qi, oi| q_act(c.as_str(), e.as_str(), move |k| { let label = k.label(qi, oi); let q = k.qs[qi as usize].clone(); let p = &mut k.picks[qi as usize]; let had = !p.other.is_empty(); questions::pick(&q, p, &label); if had { k.other_gen[qi as usize] += 1; } k.note_focus = None; }));
+        // A pick (a press, Space) also gives the choice the keyboard: the radio
+        // becomes its group's Tab stop once picked, then takes the focus.
+        qa.on_pick(|c, e, qi, oi| q_act(c.as_str(), e.as_str(), move |k| { let label = k.label(qi, oi); let q = k.qs[qi as usize].clone(); let p = &mut k.picks[qi as usize]; let had = !p.other.is_empty(); questions::pick(&q, p, &label); if had { k.other_gen[qi as usize] += 1; } *k.focus_gen.entry((qi as usize, oi as usize)).or_insert(0) += 1; k.note_focus = None; }));
         qa.on_note_open(|c, e, qi, oi| q_act(c.as_str(), e.as_str(), move |k| { let label = k.label(qi, oi); let q = k.qs[qi as usize].clone(); let p = &mut k.picks[qi as usize]; let had = !p.other.is_empty(); questions::open_note(&q, p, &label); if had && p.other.is_empty() { k.other_gen[qi as usize] += 1; } k.note_focus = Some((qi as usize, label)); }));
         qa.on_note_typed(|c, e, qi, t| q_act(c.as_str(), e.as_str(), move |k| { if let Some(p) = k.picks.get_mut(qi as usize) { p.note = t.to_string(); } }));
         qa.on_note_remove(|c, e, qi| q_act(c.as_str(), e.as_str(), move |k| { if let Some(p) = k.picks.get_mut(qi as usize) { questions::remove_note(p); } k.note_focus = None; }));
@@ -943,7 +954,7 @@ fn sync_panes() {
                 if !a.chats.contains_key(id) {
                     // A chat with no size yet starts at the default and keeps it.
                     if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
-                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new() });
+                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new() });
                     new.push(id.to_string());
                 }
             }
@@ -1544,25 +1555,39 @@ fn split_blocks(id: &str, text: &str) -> Vec<Row> {
     out
 }
 
-/// The log's rows: tool calls on their own, or folded into the batch Claude
-/// Code summed up; Claude's text in blocks.
-fn rows_of(shown: &[Shown]) -> Vec<Row> {
+/// The log's rows (2.14): a call that started a sub-agent is an agent row
+/// (never folded); calls Claude Code summed up fold behind one group head,
+/// drawn where the group's first call is (its other calls take no room
+/// there); any other call is a card. Claude's text in blocks.
+fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>) -> Vec<Row> {
+    let agent_of = |e: &Shown| -> Option<&Value> {
+        if e.tool_use_id.is_empty() { return None; }
+        agents.iter().find(|a| s(a, "toolUseId") == e.tool_use_id && s(a, "kind") != "task")
+    };
+    let grouped = |e: &Shown| e.kind == "tool" && !e.group.is_empty() && !e.group_summary.is_empty() && agent_of(e).is_none();
+    let mut groups: Vec<(String, Vec<&Shown>)> = vec![];
+    for e in shown.iter().filter(|e| grouped(e)) {
+        match groups.iter_mut().find(|g| g.0 == e.group) { Some(g) => g.1.push(e), None => groups.push((e.group.clone(), vec![e])) }
+    }
+    let mut drawn: HashSet<String> = HashSet::new();
     let mut rows = vec![];
-    let mut i = 0;
-    while i < shown.len() {
-        let e = &shown[i];
-        if e.kind == "tool" && !e.group.is_empty() && !e.group_summary.is_empty() {
-            let mut batch = vec![e.clone()];
-            while i + 1 < shown.len() && shown[i + 1].kind == "tool" && shown[i + 1].group == e.group { i += 1; batch.push(shown[i].clone()); }
-            rows.push(Row::Tools(e.id.clone(), e.group_summary.clone(), batch));
-        } else if e.kind == "tool" {
-            rows.push(Row::Tool(e.id.clone(), e.clone()));
+    for e in shown {
+        if e.kind == "tool" {
+            if let Some(a) = agent_of(e) {
+                rows.push(Row::Agent(e.id.clone(), a.clone()));
+            } else if grouped(e) {
+                if !drawn.insert(e.group.clone()) { continue; }
+                let members = groups.iter().find(|g| g.0 == e.group).map(|g| g.1.clone()).unwrap_or_default();
+                let gid = format!("g:{}", e.group);
+                rows.push(Row::Tools(gid.clone(), e.group_summary.clone(), members.into_iter().map(|m| (m.clone(), open.contains(&m.id))).collect(), open.contains(&gid)));
+            } else {
+                rows.push(Row::Tool(e.id.clone(), e.clone(), open.contains(&e.id)));
+            }
         } else if e.kind == "assistant" {
             rows.extend(split_blocks(&e.id, &e.text));
         } else {
             rows.push(Row::Entry(e.clone()));
         }
-        i += 1;
     }
     rows
 }
@@ -1588,8 +1613,23 @@ fn md(text: &str) -> StyledText {
     StyledText::from_markdown(text).unwrap_or_else(|_| StyledText::from_markdown(&text.replace(['<', '>', '*', '_', '`', '[', ']'], "")).unwrap_or_default())
 }
 
-fn tool_view(t: &Shown) -> ToolView {
-    ToolView { title: t.title.clone().into(), detail: t.detail.clone().into(), text: t.text.clone().into(), status: t.status.clone().into(), error: t.error }
+/// A card as the view draws it: the head (the summary on one line, as the
+/// web's HTML collapses its whitespace) and the body.
+fn tool_view(t: &Shown, open: bool) -> ToolView {
+    let mut v = ToolView {
+        id: t.id.as_str().into(), title: t.title.as_str().into(),
+        detail: t.detail.split_whitespace().collect::<Vec<_>>().join(" ").into(),
+        text: t.text.as_str().into(), status: t.status.as_str().into(), error: t.error, open,
+        ..Default::default()
+    };
+    match &t.body {
+        tools::Body::Bash { command, description } => { v.kind = "bash".into(); v.args = tools::expand_tabs(command).into(); v.note = description.as_str().into(); }
+        tools::Body::Write(c) => { v.kind = "write".into(); v.args = tools::expand_tabs(c).into(); }
+        tools::Body::Diff(lines) => { v.kind = "diff".into(); v.lines = ModelRc::new(VecModel::from(lines.iter().map(|(l, add)| DiffLine { text: tools::expand_tabs(l).into(), add: *add }).collect::<Vec<_>>())); }
+        tools::Body::Todos(items) => { v.kind = "todos".into(); v.todos = ModelRc::new(VecModel::from(items.iter().map(|(t, st)| TodoItem { text: t.as_str().into(), state: st.as_str().into() }).collect::<Vec<_>>())); }
+        tools::Body::Json => { v.kind = "json".into(); v.args = t.args.as_str().into(); }
+    }
+    v
 }
 
 fn to_view(r: &Row) -> EntryView {
@@ -1602,18 +1642,30 @@ fn to_view(r: &Row) -> EntryView {
             ..Default::default()
         },
         Row::Code(id, t, last) => EntryView { id: id.clone().into(), kind: "code".into(), text: t.clone().into(), gap: if *last { 10.0 } else { 8.0 }, ..Default::default() },
-        Row::Tool(id, t) => EntryView {
-            id: id.clone().into(), kind: "tool".into(), status: t.status.clone().into(), error: t.error,
-            tools: ModelRc::new(VecModel::from(vec![tool_view(t)])), gap: 10.0, ..Default::default()
+        Row::Tool(id, t, open) => EntryView {
+            id: id.clone().into(), kind: "tool".into(), status: t.status.clone().into(), error: t.error, open: *open,
+            tools: ModelRc::new(VecModel::from(vec![tool_view(t, *open)])), gap: 10.0, ..Default::default()
         },
-        Row::Tools(id, summary, tools) => EntryView {
+        Row::Tools(id, summary, tools, open) => EntryView {
             id: id.clone().into(),
             kind: "tools".into(),
-            title: summary.clone().into(),
+            title: summary.split_whitespace().collect::<Vec<_>>().join(" ").into(),
             detail: format!("{} tool{}", tools.len(), if tools.len() == 1 { "" } else { "s" }).into(),
-            status: if tools.iter().any(|t| t.status == "running") { "running".into() } else { "done".into() },
-            error: tools.iter().any(|t| t.error),
-            tools: ModelRc::new(VecModel::from(tools.iter().map(tool_view).collect::<Vec<_>>())),
+            status: if tools.iter().any(|t| t.0.status == "running") { "running".into() } else { "done".into() },
+            error: tools.iter().any(|t| t.0.error),
+            open: *open,
+            tools: ModelRc::new(VecModel::from(tools.iter().map(|(t, o)| tool_view(t, *o)).collect::<Vec<_>>())),
+            gap: 10.0,
+            ..Default::default()
+        },
+        Row::Agent(id, a) => EntryView {
+            id: id.clone().into(),
+            kind: "agent".into(),
+            title: { let t = s(a, "subagentType"); if t.is_empty() { "Agent".into() } else { t.into() } },
+            detail: s(a, "description").split_whitespace().collect::<Vec<_>>().join(" ").into(),
+            // Running while its status is running or none; failed; else done.
+            status: { let st = s(a, "status"); if st.is_empty() || st == "running" { "running".into() } else if st == "failed" { "failed".into() } else { "done".into() } },
+            error: s(a, "status") == "failed",
             gap: 10.0,
             ..Default::default()
         },
@@ -1638,10 +1690,11 @@ fn show_chat(id: &str) {
     with(|a| {
         drafts_for_server(a);
         let Some(cs) = a.chats.get_mut(id) else { return };
-        let now = rows_of(&cs.conv.view());
+        let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open);
         for (i, r) in now.iter().enumerate() {
             if cs.rows.get(i) == Some(r) { continue; }
             let mut v = to_view(r);
+            v.chat = id.into();
             if let Row::Entry(e) = r { if e.kind == "question" { q_view(&mut a.qcards, &a.saved_drafts, id, e, &mut v); } }
             if i < cs.model.row_count() { cs.model.set_row_data(i, v); } else { cs.model.push(v); }
         }
@@ -3190,8 +3243,15 @@ fn q_answer(chat: String, entry: String, dismiss: bool) {
                 }
             });
             show_chat(&chat);
+            chat_error(&chat, err);
+        } else {
+            // An orphaned answer the server could not pass on (the session
+            // gone): an error entry in the conversation, under the card (the
+            // web's appendLocalError).
+            with(|a| push_error(a, &chat, &err));
+            show_chat(&chat);
+            render();
         }
-        chat_error(&chat, err);
     });
 }
 
@@ -3241,3 +3301,47 @@ pub fn q_drive(what: &str, args: &[String]) {
         _ => {}
     }
 }
+
+// ─── Tool cards (2.14, src/tools.rs, ui/chat.slint ToolRow) ───
+
+/// A card's or a group's head clicked: open or closed (kept while the pane
+/// shows the chat).
+fn tool_toggle(chat: &str, id: &str) {
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) { if !cs.open.remove(id) { cs.open.insert(id.to_string()); } });
+    show_chat(chat);
+}
+
+fn tool_json(t: &Shown, open: bool) -> Value {
+    let (kind, args, lines, todos): (&str, String, Vec<Value>, Vec<Value>) = match &t.body {
+        tools::Body::Bash { command, .. } => ("bash", command.clone(), vec![], vec![]),
+        tools::Body::Write(c) => ("write", c.clone(), vec![], vec![]),
+        tools::Body::Diff(l) => ("diff", String::new(), l.iter().map(|(x, add)| json!({ "text": x, "add": add })).collect(), vec![]),
+        tools::Body::Todos(t) => ("todos", String::new(), vec![], t.iter().map(|(x, st)| json!({ "text": x, "state": st })).collect()),
+        tools::Body::Json => ("json", t.args.clone(), vec![], vec![]),
+    };
+    json!({ "id": t.id, "name": t.title, "summary": t.detail, "status": t.status, "error": t.error, "open": open, "body": kind, "args": args, "note": t.note, "lines": lines, "todos": todos, "result": t.text })
+}
+
+/// The test driver: a chat's tool rows (cards, groups with their members,
+/// agent rows), as drawn.
+pub fn tools_of(key: &str) -> Value {
+    let Some(chat) = chat_of(key).map(str::to_string) else { return Value::Null };
+    with(|a| {
+        let cs = a.chats.get(&chat)?;
+        Some(Value::Array(cs.rows.iter().filter_map(|r| match r {
+            Row::Tool(_, t, o) => Some(json!({ "card": tool_json(t, *o) })),
+            Row::Tools(id, sum, ms, o) => Some(json!({ "group": id, "summary": sum, "open": o, "count": ms.len(),
+                "status": if ms.iter().any(|m| m.0.status == "running") { "running" } else if ms.iter().any(|m| m.0.error) { "failed" } else { "done" },
+                "members": ms.iter().map(|(t, o)| tool_json(t, *o)).collect::<Vec<_>>() })),
+            Row::Agent(id, ag) => Some(json!({ "agent": id, "type": s(ag, "subagentType"), "description": s(ag, "description"), "status": s(ag, "status") })),
+            _ => None,
+        }).collect()))
+    }).flatten().unwrap_or(Value::Null)
+}
+
+/// The test driver opens or closes a card or group of the focused chat.
+pub fn tool_toggle_focused(id: &str) {
+    let chat = focused_chat();
+    tool_toggle(&chat, id);
+}
+
