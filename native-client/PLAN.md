@@ -123,7 +123,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      `cc-recap`.
    - [ ] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
      panel (`cc-agents`, `cc-aglist`, `cc-agpanel`).
-   - [ ] **2.19 Goal and plan.** The goal bar (`cc-goalbar`) and the plan
+   - [x] **2.19 Goal and plan.** The goal bar (`cc-goalbar`) and the plan
      pill and panel (`cc-plan`, `chat-plan`).
    - [ ] **2.20 Cards.** A factory's result card (`cc-fr-*`) and the other
      cards a reply can carry.

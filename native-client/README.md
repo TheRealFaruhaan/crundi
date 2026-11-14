@@ -132,8 +132,10 @@ before the next one (`test/phase2.mjs` the same way).
 
 ## Phase 2: chats
 
-Everything a chat does in the PC client, screen by screen (PLAN.md lists
-them; each has a spec in `specs/`). So far:
+Everything a chat does in the PC client, screen by screen: PLAN.md lists
+them (2.1–2.21, with 2.16f live frames and 2.20 cards still to come) and
+each has a spec in `specs/` with the web's screenshots and measurements.
+What phase 2 has added so far, item by item:
 
 - **2.1 The pane header, wide** (`specs/pane-header-wide.md`):
   - the title: the long form on a wide header (capped at min(440px, 62%)),
@@ -154,7 +156,6 @@ them; each has a spec in `specs/`). So far:
     toast;
   - double-click the header (not a button) to maximise the pane in its split
     (92 / 8), again to even it.
-
 - **2.2 The pane header, narrow** (`specs/pane-header-narrow.md`): when
   the header's content box is under 560px (a pane of 567px or less), the
   header is 26px and keeps only full screen, "…" and ×; the short title has no
@@ -165,7 +166,6 @@ them; each has a spec in `specs/`). So far:
   - the lock and full screen close it; so does Esc, and a press anywhere
     outside it, which still does its own job;
   - it stays open through live updates and closes when its pane goes wide.
-
 - **2.3 Moving panes** (`specs/moving-panes.md`):
   - drag a pane by its header (more than 6px): a clone follows the pointer,
     every pane shows a dashed outline and the one under the pointer lights
@@ -180,7 +180,6 @@ them; each has a spec in `specs/`). So far:
     saved layout is the same JSON);
   - the gutters' look (accent while any is held, locked by a pin), the 6px
     scrollbar when the grid scrolls sideways, and the 220ms layout motion.
-
 - **2.4 Live state** (`specs/live-state.md`): each pane's dot (with the
   needs-input ring and the raw state as its tooltip) and its badge (WORKING,
   NEEDS INPUT, WAITING); the project's dot in the sidebar (needs input >
@@ -189,7 +188,6 @@ them; each has a spec in `specs/`). So far:
   another client, live. All from the `state` event's `terminals`, as the web
   does: an exited chat is grey whatever its stream last said, and a factory's
   employees don't light a project.
-
 - **2.T One theme** (DESIGN.md, rule 2): every size and colour is a token
   in `ui/theme.slint` (spacing 2–48, radii, font sizes, weights, line
   heights, tracking, recurring sizes, motion, opacities, colours, gradients,
@@ -197,7 +195,14 @@ them; each has a spec in `specs/`). So far:
   `tools/tokens.sh` lists any that are left. The Rust layout numbers that
   match a token are named constants (`mosaic::{PAD, GUTTER, MIN_W}`,
   `head::{PANE_FOLD, TITLE_CAP, LONG_CAP}`).
-
+- **2.C Theme consolidation**: the theme is the scales (spacing
+  2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
+  10–26, two letter-spacings) plus a short structural list (window, top
+  bar, tab bar, sidebar, pane header and limits, drawer, control heights,
+  icons); every other size is a step or a sum of two. `white` is a token,
+  and `tools/tokens.sh` also flags named colours (`white`, `Colors.*`).
+  Shadows and glows are `SoftShadow` (ui/widgets.slint): one smooth fade
+  of gradients, never stacked layers.
 - **2.5 Composer and Stop** (specs/composer.md): the message box grows
   from `control` to `composer-max` and then scrolls; Enter (or Ctrl+Enter,
   by the switch: one setting, saved as `chat_enter`) sends; Send reads
@@ -207,7 +212,6 @@ them; each has a spec in `specs/`). So far:
   the session id (a click copies the whole id), the model and the cost, and
   wraps. Under `composer-stack` (520) the composer stacks. A refused send
   shows the server's error in the log and gives the text back.
-
 - **2.6 Permission-mode picker** (specs/mode-picker.md): the mode button
   wears each mode's colour; a click opens the picker (`ui/modes.slint`),
   centred in the window over a scrim, with the chat's modes (Bypass all
@@ -220,7 +224,6 @@ them; each has a spec in `specs/`). So far:
   main.slint's `modal-open`) makes whatever follows the pointer ignore it
   under a scrim, and `RevealFlickable` scrolls a dialog to keep the
   keyboard's focus in view, with a `ScrollThumb` (also the composer's).
-
 - **2.7 Attachments and 2.8 Drafts** (specs/attachments-drafts.md): attach
   opens the system's file picker (`rfd`); a picked or pasted file (a
   picture as image.png, through `arboard`) uploads to
@@ -231,7 +234,6 @@ them; each has a spec in `specs/`). So far:
   (`src/drafts.rs`) are kept per server and chat with the project's copy
   (claimed by one open chat), restored when a composer is built, cleared on
   send, kept on close, pruned after 30 days.
-
 - **2.9 Queued messages** (specs/queued-messages.md): sent while Claude
   works, a message is handed over at once and shows in a slate drawer
   ("SENDING not read yet" → "SENT Claude is reading it"), driven by the
@@ -241,7 +243,6 @@ them; each has a spec in `specs/`). So far:
   the turn ends. A click on either drawer, or ↑ on the box's first row,
   takes everything back (`cancel-queued` for each that can still be
   recalled). The rules are in `src/chat.rs` (unit-tested).
-
 - **2.10 Scheduled messages** (specs/scheduled-messages.md): the clock
   opens a panel over the chat's foot (not modal; up to `sched-share` of the
   chat, its body scrolling): the composer's text carried into a message
@@ -249,7 +250,6 @@ them; each has a spec in `specs/`). So far:
   resets (only with the limit warmer on), Schedule (`POST
   /api/chat-schedule`), and this chat's messages to come with ✕. The rules
   are in `src/sched.rs` (unit-tested).
-
 - **2.11 Slash menu** (specs/slash-menu.md): while the whole message is
   one `/word`, the chat's commands (from its history and `init`, plus
   Crundi's /btw) open over the box's row, filtered by prefix; ↑ ↓ pick,
@@ -276,6 +276,9 @@ them; each has a spec in `specs/`). So far:
   message. Half-answered cards are kept as answer drafts (`ans:<chat>:<entry>`
   in the drafts store) across pane switches and restarts. The rules are in
   `src/questions.rs` (unit-tested).
+- **Permission cards** (F107/F110): as the web's (title, description,
+  reason, the input; Allow always only with suggestions; escalated to the
+  owner or a factory's Manager; answered: the name and its tag).
 - **2.14 Tool cards** (specs/tool-cards.md, `ui/chat.slint` ToolCard):
   each tool call is a card as the web's: a spinner or a dot, the tool's
   name as sent, the summary of its arguments (the web's toolSummary), and
@@ -309,10 +312,6 @@ them; each has a spec in `specs/`). So far:
   chat's dock at the log's bottom right: Claude Code's suggestion after a
   turn (a click sends it as it is, the box untouched; × dismisses it on the
   server) and the recap ("While you were away" / "Where this chat stands").
-- **2.21 Side questions** (specs/side-questions.md): `/btw <question>` in
-  any state asks on the side (POST …/aside): a card in the log where it was
-  asked, "Asking…" then the answer or the error; never queued, nothing
-  added to the conversation; a server without it gets the text as typed.
 - **2.18 The agent dock** (specs/agent-dock.md, `src/agents.rs`): a
   chat's sub-agents and background commands as two badges in its dock
   (count, spinner or dot, tooltip), their lists (running first, Dismiss
@@ -322,27 +321,68 @@ them; each has a spec in `specs/`). So far:
   (condition, checks, clear sends `/goal clear`), the "Goal not yet met"
   card in the log, the header's PLAN pill (proposed, executing, rejected)
   and the plan panel over the log.
-- **Permission cards** (F107/F110): as the web's (title, description,
-  reason, the input; Allow always only with suggestions; escalated to the
-  owner or a factory's Manager; answered: the name and its tag).
+- **2.21 Side questions** (specs/side-questions.md): `/btw <question>` in
+  any state asks on the side (POST …/aside): a card in the log where it was
+  asked, "Asking…" then the answer or the error; never queued, nothing
+  added to the conversation; a server without it gets the text as typed.
 
-- **2.C Theme consolidation**: the theme is the scales (spacing
-  2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
-  10–26, two letter-spacings) plus a short structural list (window, top
-  bar, tab bar, sidebar, pane header and limits, drawer, control heights,
-  icons); every other size is a step or a sum of two. `white` is a token,
-  and `tools/tokens.sh` also flags named colours (`white`, `Colors.*`).
-  Shadows and glows are `SoftShadow` (ui/widgets.slint): one smooth fade
-  of gradients, never stacked layers.
+### Reusable pieces
 
-The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
-`test/phase2.mjs` drives each feature against a fresh server (the same setup
-as phase 1's test), by the pointer and keys where it matters.
+- **Overlays and `Pointer.modal`** (ui/widgets.slint `Pointer`): one
+  global pointer state (position, presses, the press on a menu or a modal's
+  scrim, the dock's rectangle, wheel steps). A modal (the mode picker, the
+  secrets dialog, the viewer) sets `modal`, so nothing under its scrim
+  takes hover or a press; the secret-request dock tells it where its cards
+  are.
+- **`RevealFlickable` + `ScrollThumb`**: a scrolling box that can bring a
+  part into view (the keyboard's focus), with its thin thumb; used by the
+  dialogs, the pick lists, the prompt and command boxes.
+- **`Tip`** (ui/chat.slint) and `TipBox` (drawn by main.slint): the shared
+  tooltip, clamped to the window.
+- **`AccentFill`**: the accent gradient in a round or rounded shape (a
+  nine-slice image: the software renderer ignores a radius on a gradient).
+- **`SoftShadow`**, **`DashedBox`** (with a square corner when asked),
+  **`Spinner`/`StatusMark`**, **`CardBtn`**, **`Tag`**.
+- **The follow model** (ChatPane): the log follows its end only while the
+  reader is at it; any scroll of theirs away stops it at once (a real wheel
+  step up is caught before Slint scrolls, src/main.rs); while following,
+  every change of size keeps the end pinned; the jump button and its dot.
+  The agent panel follows its end the same way.
+- **Bundled fonts**: DejaVu Sans (and its italic) is bundled and used on
+  Linux (`Theme.ui-font`), so italic text has a real face.
+- **Pure rules in Rust, unit-tested**: `head.rs`, `mosaic.rs`, `sched.rs`,
+  `slash.rs`, `secrets.rs`, `sreq.rs`, `questions.rs`, `tools.rs`,
+  `think.rs`, `md.rs`, `media.rs`, `agents.rs`, `drafts.rs`.
 
-The test driver also takes `{"cmd":"mouse","kind":"move|click|dblclick|leave","x","y"}`
-and `{"cmd":"key","text":"Escape|Return|…"}`, and `test/look.mjs` has the same as
-`mouse:<kind>:<x>:<y>` and `key:<text>`, so snapshots reach hover and other
-states.
+### Testing phase 2
+
+- **Always against an isolated test server** from
+  `tools/test-server.sh <port> [--bare]` (ports 4810–4819; never the live
+  server's): a fresh data folder, the caller's Crundi and Claude variables
+  stripped. Stop what you start by PID.
+- `test/phase2.mjs` drives every feature against it (real Claude turns
+  where they matter: questions, tool calls, queues; the server's own
+  ui-event frames through the driver's `chat-event` for what this machine's
+  Claude Code does not send), by the pointer, keys and a real X wheel
+  (xdotool) where it matters:
+
+  ```bash
+  native-client/tools/test-server.sh 4813 --bare
+  DISPLAY=:99 SLINT_BACKEND=winit-software \
+    CRUNDI_TEST_SERVER=http://localhost:4813 CRUNDI_TEST_PORT=4814 \
+    CRUNDI_TEST_PROJECT=/tmp/crundi-devtest-4813/proj \
+    NATIVE_BIN=$CARGO_TARGET_DIR/debug/crundi-native \
+    node native-client/test/phase2.mjs
+  ```
+
+  Run it with nothing else on the display (a second client cannot start:
+  CEF's profile is shared). Then `test/phase1.mjs` and `test/drive.mjs`
+  on fresh servers, `cargo test` and `tools/tokens.sh`.
+- The test driver (src/testctl.rs) also takes
+  `{"cmd":"mouse","kind":"move|click|dblclick|leave|wheel","x","y"}` and
+  `{"cmd":"key","text":"Escape|Return|…"}`; `test/look.mjs` has the same
+  as `mouse:<kind>:<x>:<y>` and `key:<text>`, for snapshots of hover and
+  other states.
 
 ## Server test (browser panels)
 

@@ -56,6 +56,11 @@ export struct ToolView {
 /// entry id or "g:<group>".
 /// What the test driver reads of one chat's log (the pane whose key it
 /// watches): its distance from the bottom, following it, the jump button.
+/// The test driver's view of an open agent panel: how far from its end.
+export global SheetProbe {
+    in-out property <length> dist;
+}
+
 export global LogProbe {
     in-out property <string> watch;
     in-out property <length> dist;
@@ -1558,11 +1563,13 @@ component DockX inherits Rectangle {
     in property <float> fs: 1;
     in property <string> tip;
     out property <bool> hovered: xa.has-hover;
+    // The sheet's own × (the web's 15).
+    in property <bool> big;
     callback clicked();
     width: Theme.control-sm - Theme.sp-6; height: self.width;
     border-radius: Theme.r-control;
     background: xa.has-hover ? Theme.slate-dim : transparent;
-    Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: xa.has-hover ? Theme.text-primary : Theme.text-muted; }
+    Icon { source: Icons.x; width: root.big ? Theme.icon-md : Theme.icon-sm; height: self.width; tint: xa.has-hover ? Theme.text-primary : Theme.text-muted; }
     xa := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } Tip { on: parent.has-hover; text: root.tip; } }
 }
 
@@ -2720,6 +2727,9 @@ export component ChatPane inherits Rectangle {
     in property <string> panel-prompt; in property <styled-text> panel-summary; in property <bool> panel-has-summary;
     in property <[EntryView]> panel-entries; in property <string> panel-empty;
     property <bool> badges-on: root.ag-n > 0 || root.cmd-n > 0;
+    // The agent panel follows its end (F113); reset when a panel opens.
+    property <bool> pfollow: true;
+    changed sheet => { if root.sheet == "panel" { root.pfollow = true; } }
     // The goal and the plan (2.19).
     in property <bool> goal-on; in property <string> goal-cond; in property <string> goal-count;
     in property <bool> goal-looping; in property <bool> goal-stopped;
@@ -3224,8 +3234,10 @@ export component ChatPane inherits Rectangle {
                         vertical-alignment: center; text: root.sheet-back; font-size: Theme.text-12 * root.fs; color: ba.has-hover ? Theme.text-primary : Theme.text-muted;
                         ba := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.agent-back(root.key); } Tip { on: parent.has-hover; text: "Back to the list"; } }
                     }
-                    Text { vertical-alignment: center; text: root.sheet-title; font-size: Theme.text-13 * root.fs; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; horizontal-stretch: root.sheet == "panel" ? 1 : 0; min-width: 0; }
-                    Text { vertical-alignment: center; text: root.sheet-sub; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; overflow: elide; horizontal-stretch: 1; min-width: 0; }
+                    // A panel: the title fills, the sub sits at the right and gives
+                    // way first; a list: the sub fills after the title.
+                    Text { vertical-alignment: center; text: root.sheet-title; font-size: Theme.text-13 * root.fs; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; horizontal-stretch: root.sheet == "panel" ? 1 : 0; min-width: root.sheet == "panel" ? min(self.preferred-width, shd.width / 2) : 0px; }
+                    Text { vertical-alignment: center; text: root.sheet-sub; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; overflow: elide; horizontal-stretch: root.sheet == "panel" ? 0 : 1; min-width: 0; horizontal-alignment: root.sheet == "panel" ? TextHorizontalAlignment.right : TextHorizontalAlignment.left; }
                     if root.sheet != "panel": Rectangle {
                         y: (parent.height - self.height) / 2;
                         width: dat.preferred-width + Theme.sp-16 + Theme.sp-2; height: dat.preferred-height + Theme.sp-6;
@@ -3233,20 +3245,23 @@ export component ChatPane inherits Rectangle {
                         dat := Text { text: "Dismiss all"; font-size: Theme.text-11 * root.fs; color: daa.has-hover ? Theme.red : Theme.text-secondary; }
                         daa := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.agent-dismiss-all(root.key, root.sheet == "commands"); } }
                     }
-                    DockX { y: (parent.height - self.height) / 2; fs: root.fs; tip: "Close"; clicked => { ToolAct.agent-close(root.key); } }
+                    DockX { y: (parent.height - self.height) / 2; fs: root.fs; big: true; tip: "Close"; clicked => { ToolAct.agent-close(root.key); } }
                 }
                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
             }
             // A list: its rows, then the foot.
-            if root.sheet != "panel": Flickable {
-                vertical-stretch: 1;
+            // (The body fills the sheet, so the foot sits at its bottom edge.)
+            if root.sheet != "panel": Rectangle {
+              vertical-stretch: 1;
+              Flickable {
+                width: parent.width; height: parent.height;
                 content-height: rows.preferred-height;
                 rows := VerticalLayout {
                     padding: Theme.sp-6;
                     for r in root.sheet-rows: Rectangle {
                         height: rr.preferred-height;
                         border-radius: Theme.r-control;
-                        background: ra.has-hover ? Theme.bg-hover : transparent;
+                        background: ra.has-hover || rx.has-hover ? Theme.bg-hover : transparent;
                         ra := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.agent-open(root.key, r.id, true); } }
                         rr := HorizontalLayout {
                             padding: Theme.sp-8;
@@ -3257,15 +3272,16 @@ export component ChatPane inherits Rectangle {
                                 Text { text: r.title; font-size: Theme.text-13 * root.fs; color: r.state == "running" ? Theme.text-primary : Theme.text-secondary; overflow: elide; }
                                 Text { text: r.sub; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; overflow: elide; }
                             }
-                            Icon { y: (parent.height - self.height) / 2; source: Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-muted; }
-                            Rectangle {
-                                y: (parent.height - self.height) / 2; width: Theme.control-sm; height: Theme.control-sm; border-radius: Theme.r-control;
+                            VerticalLayout { alignment: center; Icon { source: Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-muted; } }
+                            VerticalLayout { alignment: center; Rectangle {
+                                width: Theme.control-sm; height: Theme.control-sm; border-radius: Theme.r-control;
                                 Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: rx.has-hover ? Theme.red : Theme.text-muted; }
                                 rx := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.agent-dismiss(root.key, r.id); } Tip { on: parent.has-hover; text: "Dismiss"; } }
-                            }
+                            } }
                         }
                     }
                 }
+              }
             }
             if root.sheet != "panel": Rectangle {
                 height: ft.preferred-height + Theme.sp-16;
@@ -3276,23 +3292,49 @@ export component ChatPane inherits Rectangle {
                     font-size: Theme.text-11 * root.fs; color: Theme.text-muted; wrap: word-wrap;
                 }
             }
-            // A panel: the prompt, the summary, the transcript (or its empty line).
-            if root.sheet == "panel": Flickable {
-                vertical-stretch: 1;
+            // A panel: the prompt, the summary, the transcript (or its empty
+            // line). It opens at its end and follows it while the reader is
+            // within sp-40 of it (the log's model).
+            if root.sheet == "panel": Rectangle {
+              vertical-stretch: 1;
+              pfl := Flickable {
+                width: parent.width; height: parent.height;
                 content-height: pb.preferred-height;
+                property <length> pdist: max(0px, self.content-height + self.content-y - self.height);
+                property <length> pch: self.content-height;
+                changed pch => { if root.pfollow { self.content-y = min(0px, self.height - self.content-height); } }
+                changed pdist => { SheetProbe.dist = self.pdist; }
+                flicked => { root.pfollow = self.pdist < Theme.sp-40; }
+                // Opened: at its end once the rows are laid out.
+                Timer {
+                    property <int> n;
+                    interval: Theme.frame; running: true;
+                    triggered => { pfl.content-y = min(0px, pfl.height - pfl.content-height); self.n += 1; SheetProbe.dist = pfl.pdist; if self.n >= 4 { self.running = false; } }
+                }
                 pb := VerticalLayout {
                     padding-top: Theme.sp-10; padding-bottom: Theme.sp-10; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
-                    spacing: Theme.sp-10;
+                    // The prompt: at most cmd-max-h, then it scrolls.
                     if root.panel-prompt != "": Rectangle {
-                        height: min(pp.preferred-height + Theme.sp-16, Theme.cmd-max-h);
-                        background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border-subtle; border-radius: Theme.r-control;
-                        clip: true;
-                        pp := Text { x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sp-20; text: root.panel-prompt; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                        height: min(pp.preferred-height + Theme.sp-16, Theme.cmd-max-h) + Theme.sp-10;
+                        Rectangle {
+                            height: parent.height - Theme.sp-10; y: 0;
+                            background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border-subtle; border-radius: Theme.r-control;
+                            ppf := RevealFlickable {
+                                x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+                                content-height: pp.preferred-height + Theme.sp-16 - Theme.sp-2;
+                                pp := Text { x: Theme.sp-10 - 1px; y: Theme.sp-8 - 1px; width: ppf.width - Theme.sp-20 + Theme.sp-2; text: root.panel-prompt; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                            }
+                        }
                     }
-                    if root.panel-has-summary: StyledText { width: list.width - Theme.sp-16 - Theme.sp-24 - Theme.sp-2; text: root.panel-summary; default-color: Theme.text-primary; default-font-size: Theme.text-13 * root.fs; link-color: Theme.accent-hover; }
+                    if root.panel-has-summary: Rectangle {
+                        height: psm.preferred-height + Theme.sp-10;
+                        psm := StyledText { y: 0; width: list.width - Theme.sp-16 - Theme.sp-24 - Theme.sp-2; text: root.panel-summary; default-color: Theme.text-primary; default-font-size: Theme.text-13 * root.fs; link-color: Theme.accent-hover; }
+                    }
+                    // The transcript, spaced as the log (each row's own gap).
                     for pe in root.panel-entries: EntryRow { e: pe; fs: root.fs; avail: list.width - Theme.sp-16 - Theme.sp-24 - Theme.sp-2; }
                     if root.panel-empty != "": Text { text: root.panel-empty; font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
                 }
+              }
             }
         }
     }

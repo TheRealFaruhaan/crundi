@@ -2463,6 +2463,10 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   await ev({ type: 'agent-entry', toolUseId: 'ta1', entry: { id: 'x1', kind: 'assistant-text', text: 'Looking at app.js.' } });
   a1 = await until('entry', async () => (await ad())?.entries === 1, 5000) ? await ad() : await ad();
   check('a live agent entry joins the open panel', a1.entries === 1 && a1.empty === '', a1);
+  // F113: the panel follows its end as entries arrive.
+  for (let i = 2; i < 32; i++) await ev({ type: 'agent-entry', toolUseId: 'ta1', entry: { id: 'x' + i, kind: 'assistant-text', text: 'Step ' + i + ' of the agent, a line of its transcript.' } });
+  p = await until('followed', async () => (await ad())?.entries === 31 && (await props()).panelDist < 2, 5000);
+  check('a long live transcript: the panel stays at its end', !!p, { entries: (await ad())?.entries, dist: (await props()).panelDist });
   await snap('2.18-panel');
   await ui('agent-back');
   check('back: the list again', (await ad()).sheet === 'agents');
