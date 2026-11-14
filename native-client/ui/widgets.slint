@@ -32,6 +32,8 @@ export global Pointer {
     in-out property <length> dock-y;
     in-out property <length> dock-w;
     in-out property <length> dock-h;
+    // Counts wheel steps up (the log under the pointer stops following).
+    in-out property <int> wheel-up;
     out property <bool> on-dock: self.x >= self.dock-x && self.x < self.dock-x + self.dock-w && self.y >= self.dock-y && self.y < self.dock-y + self.dock-h;
 }
 

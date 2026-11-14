@@ -213,6 +213,13 @@ fn main() {
                 WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
                     if let Some(u) = w.upgrade() { pointer_pressed(&u, at.0, at.1); }
                 }
+                // A wheel step up (the log under the pointer stops following
+                // the bottom at once: 2.16, F96), before Slint scrolls.
+                WindowEvent::MouseWheel { delta, .. } => {
+                    use slint::winit_030::winit::event::MouseScrollDelta;
+                    let up = match delta { MouseScrollDelta::LineDelta(_, y) => *y > 0.0, MouseScrollDelta::PixelDelta(p) => p.y > 0.0 };
+                    if up { if let Some(u) = w.upgrade() { pointer_wheel_up(&u, at.0, at.1); } }
+                }
                 // Files dragged from the system (2.7): the chat under the
                 // pointer draws its outline; a drop goes there.
                 WindowEvent::HoveredFile(_) => app::file_hover(true),
@@ -258,6 +265,14 @@ pub fn pointer_moved(ui: &MainWindow, x: f32, y: f32) {
     let p = ui.global::<Pointer>();
     p.set_x(x);
     p.set_y(y);
+}
+
+/// A wheel step up at (x, y), in logical px (ui/widgets.slint Pointer).
+pub fn pointer_wheel_up(ui: &MainWindow, x: f32, y: f32) {
+    let p = ui.global::<Pointer>();
+    p.set_x(x);
+    p.set_y(y);
+    p.set_wheel_up(p.get_wheel_up() + 1);
 }
 
 /// A pointer press at (x, y), in logical px (ui/widgets.slint Pointer).

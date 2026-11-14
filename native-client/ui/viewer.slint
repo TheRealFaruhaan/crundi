@@ -12,12 +12,16 @@ import { DlRow } from "chat.slint";
 /// A round button of the viewer's bar or sides.
 component VBtn inherits Rectangle {
     in property <string> label;
+    // An icon instead of the label (18, text-primary).
+    in property <image> icon;
+    in property <bool> has-icon;
     in property <length> size: Theme.sp-32 + Theme.sp-2;
     callback clicked();
     width: max(self.size, lt.preferred-width + Theme.sp-16); height: root.size;
     border-radius: self.height / 2;
     background: ta.has-hover ? Theme.play-edge : transparent;
-    lt := Text { text: root.label; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+    lt := Text { visible: !root.has-icon; text: root.label; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+    if root.has-icon: Icon { source: root.icon; width: Theme.icon-lg + Theme.sp-2; height: self.width; tint: Theme.text-primary; }
     ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -91,20 +95,20 @@ export component Viewer inherits Rectangle {
             border-radius: self.height / 2; background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border;
             bar := HorizontalLayout {
                 padding: Theme.sp-2; spacing: Theme.sp-2;
-                VBtn { label: "−"; clicked => { root.zoom(root.scale / Theme.zoom-step); } }
+                VBtn { has-icon: true; icon: @image-url("shapes/minus.svg"); clicked => { root.zoom(root.scale / Theme.zoom-step); } }
                 VBtn { label: round(root.scale * 100) + "%"; size: Theme.sp-32 + Theme.sp-2; clicked => { root.zoom(1); } }
-                VBtn { label: "+"; clicked => { root.zoom(root.scale * Theme.zoom-step); } }
-                VBtn { label: "×"; clicked => { root.close(); } }
+                VBtn { has-icon: true; icon: Icons.plus; clicked => { root.zoom(root.scale * Theme.zoom-step); } }
+                VBtn { has-icon: true; icon: Icons.x; clicked => { root.close(); } }
             }
         }
         // The side buttons (two or more, not while zoomed).
         if root.count > 1 && root.scale == 1: VBtn {
-            x: Theme.sp-12; y: (root.height - self.height) / 2; size: Theme.sp-48 - Theme.sp-4; label: "‹";
+            x: Theme.sp-12; y: (root.height - self.height) / 2; size: Theme.sp-48 - Theme.sp-4; has-icon: true; icon: Icons.chevron-left;
             background: Theme.bg-secondary;
             clicked => { root.step(-1); }
         }
         if root.count > 1 && root.scale == 1: VBtn {
-            x: root.width - self.width - Theme.sp-12; y: (root.height - self.height) / 2; size: Theme.sp-48 - Theme.sp-4; label: "›";
+            x: root.width - self.width - Theme.sp-12; y: (root.height - self.height) / 2; size: Theme.sp-48 - Theme.sp-4; has-icon: true; icon: Icons.chevron-right;
             background: Theme.bg-secondary;
             clicked => { root.step(1); }
         }

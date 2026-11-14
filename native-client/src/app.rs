@@ -1609,9 +1609,15 @@ fn split_blocks(id: &str, text: &str) -> Vec<Row> {
     if let Some(c) = code { out.push(Row::Code(n(&out), c.strip_suffix('\n').unwrap_or(&c).to_string(), false)); }
     flush(&mut para, &mut out);
     // A list's last item: the list's 8 below it (F94).
+    // (A numbered list and a bulleted one are two lists, as the web's <ol>
+    // and <ul>.)
     for k in 0..out.len() {
-        let next_li = matches!(out.get(k + 1), Some(Row::Prose(_, _, "li", _, _)));
-        if let Row::Prose(_, _, kind, _, _) = &mut out[k] { if *kind == "li" && !next_li { *kind = "lie"; } }
+        let bullet = |m: &str| m == "•";
+        let next_same = match (out.get(k), out.get(k + 1)) {
+            (Some(Row::Prose(_, _, "li", m, _)), Some(Row::Prose(_, _, "li", n, _))) => bullet(m) == bullet(n),
+            _ => false,
+        };
+        if let Row::Prose(_, _, kind, _, _) = &mut out[k] { if *kind == "li" && !next_same { *kind = "lie"; } }
     }
     match out.last_mut() {
         Some(Row::Prose(_, _, _, _, last)) | Some(Row::Code(_, _, last)) => *last = true,
@@ -1721,7 +1727,8 @@ impl MediaCtx<'_> {
     fn item(&self, i: &media::Item, several: bool) -> MediaItem {
         let (w, h) = match i.kind.as_str() { "embed" => media::frame_size(i), "image" | "video" => media::box_size(i.w, i.h, several), _ => (0.0, 0.0) };
         // A picture, or a video's poster: from the cache, else fetched.
-        let pic = if i.kind == "image" { i.name.clone() } else if i.kind == "video" { i.poster.clone() } else { String::new() };
+        // (A stored frame's HTML is asked for too: a 404 is "gone".)
+        let pic = if i.kind == "image" || (i.kind == "embed" && !i.name.is_empty()) { i.name.clone() } else if i.kind == "video" { i.poster.clone() } else { String::new() };
         let key = format!("{}|{}", self.chat, pic);
         let (state, image) = if pic.is_empty() { ("ready".to_string(), None) } else {
             match self.cache.get(&key) {
@@ -3519,6 +3526,7 @@ fn fetch_media(key: String) {
     let path = format!("/api/chat-media?session={chat}&name={name}");
     bg(move || {
         match api.get_bytes(&path) {
+            Ok((200, _)) if path.ends_with(".embed") => ("ready", None),
             Ok((200, bytes)) => match image::load_from_memory(&bytes) {
                 Ok(img) => {
                     let rgba = img.to_rgba8();
@@ -3548,7 +3556,9 @@ fn fetch_media(key: String) {
 fn chat_pictures(chat: &str) -> Vec<String> {
     with(|a| a.chats.get(chat).map(|cs| cs.conv.view().iter().filter(|e| e.kind == "tool" && e.status != "running" && !e.error)
         .filter_map(|e| e.raw.as_str().map(|r| media::items(r).0)).flatten()
-        .filter(|i| i.kind == "image").map(|i| format!("{chat}|{}", i.name)).collect()).unwrap_or_default()).unwrap_or_default()
+        .filter(|i| i.kind == "image").map(|i| format!("{chat}|{}", i.name))
+        // Only the pictures that loaded (the web's galleryOf: a gone box has no picture).
+        .filter(|k| a.media.get(k).is_some_and(|m| m.0 == "ready")).collect()).unwrap_or_default()).unwrap_or_default()
 }
 
 /// A picture clicked: the viewer, on it.

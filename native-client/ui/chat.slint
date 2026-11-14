@@ -878,10 +878,8 @@ component MediaBox inherits Rectangle {
     height: root.m.h * 1px * self.k;
     border-radius: Theme.r-field;
     clip: true;
-    background: root.m.kind == "embed" ? Theme.frame-bg : Theme.bg-secondary;
-    border-width: root.m.state == "gone" ? 0px : 1px;
-    border-color: Theme.border;
-    if root.m.state == "gone": DashedBox { width: parent.width; height: parent.height; }
+    background: root.m.state == "gone" ? transparent : root.m.kind == "embed" ? Theme.frame-bg : Theme.bg-secondary;
+    if root.m.state == "gone": DashedBox { width: parent.width; height: parent.height; corner: Theme.r-field; }
     if root.m.state == "gone": Text { text: root.gone-text; font-size: Theme.text-12; color: Theme.text-muted; }
     if root.m.state == "loading": LoadRing { }
     if root.m.state == "ready" && root.m.image.width > 0: Image {
@@ -890,6 +888,13 @@ component MediaBox inherits Rectangle {
         opacity: 0; init => { self.opacity = 1; }
         animate opacity { duration: Theme.motion-fast; }
     }
+    // Round corners: the software renderer's clip has no radius, so the
+    // corners outside it are covered in the log's colour, then the edge.
+    if root.m.state != "gone": Image { x: 0; y: 0; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-tl.svg"); colorize: Theme.bg-primary; }
+    if root.m.state != "gone": Image { x: parent.width - self.width; y: 0; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-tr.svg"); colorize: Theme.bg-primary; }
+    if root.m.state != "gone": Image { x: 0; y: parent.height - self.height; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-bl.svg"); colorize: Theme.bg-primary; }
+    if root.m.state != "gone": Image { x: parent.width - self.width; y: parent.height - self.height; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-br.svg"); colorize: Theme.bg-primary; }
+    if root.m.state != "gone": Rectangle { border-radius: Theme.r-field; border-width: 1px; border-color: Theme.border; }
     @children
 }
 
@@ -919,7 +924,7 @@ component MediaView inherits VerticalLayout {
             Rectangle {
                 width: Theme.sp-48 + Theme.sp-8; height: self.width; border-radius: self.width / 2;
                 background: Theme.play-bg; border-width: 1px; border-color: Theme.play-edge;
-                if !root.m.fetching: Icon { source: Icons.play; width: Theme.icon-xl; height: Theme.icon-xl; tint: Theme.white; }
+                if !root.m.fetching: Icon { source: @image-url("shapes/play-fill.svg"); width: Theme.icon-xl + Theme.sp-4; height: self.width; tint: Theme.white; }
                 if root.m.fetching: LoadRing { }
                 TouchArea { mouse-cursor: pointer; clicked => { ToolAct.play(root.m.chat, root.m.name, root.m.filename); } }
             }
@@ -935,7 +940,7 @@ component MediaView inherits VerticalLayout {
                 Rectangle {
                     y: (parent.height - self.height) / 2; width: Theme.sp-40 - Theme.sp-2; height: self.width; border-radius: self.width / 2;
                     background: Theme.accent;
-                    if !root.m.fetching: Icon { source: Icons.play; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.white; }
+                    if !root.m.fetching: Icon { source: @image-url("shapes/play-fill.svg"); width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.white; }
                     if root.m.fetching: Text { text: "…"; color: Theme.white; }
                     TouchArea { mouse-cursor: pointer; clicked => { ToolAct.play(root.m.chat, root.m.name, root.m.filename); } }
                 }
@@ -982,7 +987,7 @@ component MediaView inherits VerticalLayout {
         alignment: start;
         MediaBox {
             m: root.m; avail: root.avail; gone-text: "This embed is no longer stored.";
-            Rectangle {
+            if root.m.state == "ready": Rectangle {
                 width: ob.preferred-width + Theme.sp-24; height: Theme.control-sm;
                 border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                 background: oa.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
@@ -995,8 +1000,11 @@ component MediaView inherits VerticalLayout {
         alignment: start;
         spacing: Theme.sp-4;
         MediaCap { text: root.m.caption + (root.m.link != "" ? " ·" : ""); max-width: Theme.file-max-w - Theme.sp-20; }
-        if root.m.link != "": Text {
-            text: root.m.link; font-size: Theme.text-12; color: Theme.accent-hover;
+        // The Open link: accent-hover, underlined.
+        if root.m.link != "": Rectangle {
+            width: lk.preferred-width; height: lk.preferred-height;
+            lk := Text { text: root.m.link; font-size: Theme.text-12; color: Theme.accent-hover; }
+            Rectangle { y: lk.preferred-height - 1px; height: 1px; background: Theme.accent-hover; }
             TouchArea { mouse-cursor: pointer; clicked => { ToolAct.open-link(root.m.url); } }
         }
     }
@@ -1556,7 +1564,11 @@ component EntryRow inherits VerticalLayout {
     }
     // A rule: a light line, the full width.
     // A rule: the browser's 2px light line.
-    if e.kind == "assistant" && e.status == "hr": Rectangle { height: Theme.sp-2; background: Theme.text-muted; }
+    if e.kind == "assistant" && e.status == "hr": Rectangle {
+        height: Theme.sp-2;
+        Rectangle { y: 0; height: 1px; background: Theme.rule-dark; }
+        Rectangle { y: 1px; height: 1px; background: Theme.rule-light; }
+    }
     if e.kind == "assistant" && (e.status == "li" || e.status == "lie"): HorizontalLayout {
         padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - lm.preferred-height) / 2);
         padding-bottom: self.padding-top;
@@ -2511,6 +2523,22 @@ export component ChatPane inherits Rectangle {
         if root.stick { root.to-bottom(); }
         else { root.jump-new = true; }
     }
+    // A wheel step up over this log (seen before Slint scrolls, src/main.rs):
+    // following stops at once, whatever the scroll's own animation does.
+    property <int> wheel-up: Pointer.wheel-up;
+    changed wheel-up => {
+        if Pointer.x >= list.absolute-position.x && Pointer.x < list.absolute-position.x + list.width
+            && Pointer.y >= list.absolute-position.y && Pointer.y < list.absolute-position.y + list.height {
+            root.stick = false; glide.running = false; root.last-dist = root.dist;
+        }
+    }
+    // Reaching the very end by scrolling down follows again (an animated
+    // scroll ends with no `scrolled` of its own).
+    property <length> prev-dist;
+    changed dist => {
+        if !root.stick && root.dist < 1px && root.prev-dist >= 1px && !glide.running { root.stick = true; root.jump-new = false; }
+        root.prev-dist = root.dist;
+    }
     // The jump button: past the larger of jump-at and a third of the log;
     // new content below while reading up gives it a dot.
     property <bool> jump-on: root.dist > max(Theme.jump-at, list.visible-height * Theme.jump-share);
@@ -2566,9 +2594,11 @@ export component ChatPane inherits Rectangle {
             // off at once; back within stick-within turns it on.
             scrolled => {
                 glide.running = false;
-                root.stick = root.dist < Theme.stick-within && root.dist <= root.last-dist;
+                // Down toward the end (or a drag there) follows again; up
+                // never does (a wheel step up is caught above).
+                if root.dist < Theme.stick-within && root.dist < root.last-dist { root.stick = true; root.jump-new = false; }
+                else if root.dist > root.last-dist { root.stick = false; }
                 root.last-dist = root.dist;
-                if root.stick { root.jump-new = false; }
             }
         }
         if root.error != "": Rectangle {

@@ -165,7 +165,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "up" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); win.dispatch_event(WindowEvent::PointerReleased { position: pos, button: PointerEventButton::Left }) }
                 "leave" => win.dispatch_event(WindowEvent::PointerExited),
                 // A wheel step (dy logical px; negative scrolls up), as the system's.
-                "wheel" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); win.dispatch_event(WindowEvent::PointerScrolled { position: pos, delta_x: 0.0, delta_y: c.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 }) }
+                "wheel" => { if c.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0 { crate::pointer_wheel_up(&w, pos.x, pos.y); } win.dispatch_event(WindowEvent::PointerMoved { position: pos }); win.dispatch_event(WindowEvent::PointerScrolled { position: pos, delta_x: 0.0, delta_y: c.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 }) }
                 _ => win.dispatch_event(WindowEvent::PointerMoved { position: pos }),
             }
             json!({ "ok": true })

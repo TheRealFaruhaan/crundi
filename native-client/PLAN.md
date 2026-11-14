@@ -114,6 +114,11 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      their sized boxes, the loading and gone states and the viewer; video and
      audio (poster, play button, the system player); the file card's
      Download; frames (caption and Open); JPEG, WebP and GIF decoding.
+   - [ ] **2.16f Live frames** (split out of 2.16m, F95). A `show_embed`
+     frame is live: a windowless CEF view inside each realised frame box
+     (https src with its referrer policy, stored HTML as a data: URL, popups
+     to the system browser, pointer, wheel and keys forwarded), on the phase
+     0 panel code. Until then the frame shows its caption and Open.
    - [ ] **2.17 Suggestions and recaps.** `cc-sug` (send, dismiss) and
      `cc-recap`.
    - [ ] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
@@ -434,6 +439,10 @@ Phase 1 left these, each with its workaround in place:
   - Download asks where to save first, then streams (the web fetches, then
     asks, and says Saved even when the dialog was cancelled);
   - a decoded picture is kept while the client runs (not let go when far).
+  - a media box's round corners: the software renderer's clip has no
+    radius, so the box's four corners are covered with corner masks in the
+    log's colour (ui/shapes/corner-*.svg) and the rounded edge drawn on
+    top; it relies on the log's background being bg-primary.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

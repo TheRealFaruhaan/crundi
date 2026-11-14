@@ -153,6 +153,13 @@ const headY = (q) => WB.y + q.y + 14;
 const closeX = (q) => WB.x + q.x + q.w - 1 - 4 - 13.85;   // the ×: 27.7 wide, 4px from the edge
 const titleX = (q) => WB.x + q.x + 1 + 43 + 20;            // inside the title (it starts 43px in)
 
+// The real X pointer parked outside the window (it is moved over it only
+// for the real wheel check, 2.16): a pointer resting on the window gives it
+// hover and enter events the driven checks do not expect.
+const parkPointer = async () => {
+  try { (await import('node:child_process')).execFileSync('xdotool', ['mousemove', '1439', '899'], { env: { ...process.env, DISPLAY: process.env.DISPLAY || ':99' } }); } catch { /* no xdotool: nothing to park */ }
+};
+await parkPointer();
 let app = launch('run1');
 // Never leave the app behind (it would hold the driver's port for the next run).
 process.on('exit', () => { try { app.kill(); } catch {} });
@@ -2249,6 +2256,40 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   check('a narrower window while following stays at the end', p.log.dist < 2 && p.log.over < 2 && p.log.stick, p.log);
   await d.send({ cmd: 'resize', w: 1400, h: 860 });
   await sleep(500);
+  // F96: a REAL wheel notch (an X event through xdotool, not the test
+  // control) from the bottom leaves it and stays there after an arrival.
+  {
+    const { execFileSync } = await import('node:child_process');
+    let xd = null;
+    try { xd = execFileSync('xdotool', ['search', '--pid', String(app.pid)], { env: { ...process.env, DISPLAY: process.env.DISPLAY || ':99' } }).toString().trim().split('\n').filter(Boolean); } catch { xd = null; }
+    if (!xd?.length) { check('xdotool finds the client window (for the real wheel check)', false, xd); } else {
+      await ev({ type: 'entry', entry: { id: 'rw0', kind: 'notice', text: 'Before the real wheel' } });
+      p = await until('at the end', (q) => q.log.stick && q.log.dist < 2, 5000);
+      const lq = pane(await props(), lg);
+      const rx = Math.round(WB.x + lq.x + lq.w / 2), ry = Math.round(WB.y + lq.y + lq.h / 3);
+      const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':99' };
+      // The window that is the client's (the largest one of its windows).
+      const win = xd.map((id) => { try { const g = execFileSync('xdotool', ['getwindowgeometry', id], { env }).toString(); const m = g.match(/Geometry: (\d+)x(\d+)/); return { id, area: m ? +m[1] * +m[2] : 0 }; } catch { return { id, area: 0 }; } }).sort((x, y) => y.area - x.area)[0].id;
+      execFileSync('xdotool', ['mousemove', '--window', win, String(rx), String(ry)], { env });
+      await sleep(200);
+      // (XTEST: a real button event at the pointer; a synthetic one sent to
+      // the window is ignored.)
+      execFileSync('xdotool', ['click', '4'], { env });
+      await sleep(800);
+      p = await props();
+      check('a real wheel notch up from the bottom leaves it (following off)', p.log.dist > 2 && !p.log.stick, p.log);
+      const d1 = p.log.dist;
+      await ev({ type: 'entry', entry: { id: 'rw1', kind: 'notice', text: 'After the real wheel' } });
+      await sleep(600);
+      p = await props();
+      check('…and an arrival does not pull it back', p.log.dist >= d1 - 2 && !p.log.stick, p.log);
+      // Real notches down to the end follow again.
+      for (let i = 0; i < 8 && !(await props()).log.stick; i++) { execFileSync('xdotool', ['click', '5'], { env }); await sleep(400); }
+      p = await until('following', (q) => q.log.stick && q.log.dist < 2, 4000);
+      check('real notches down to the end follow again', !!p, (await props()).log);
+      await parkPointer();
+    }
+  }
   await http('POST', `/api/ui-sessions/${lg}/close`, {}, token);
 }
 
@@ -2293,9 +2334,9 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     // The viewer.
     await ui('view', `${mc}|${r4.items[0].name}`);
     p = await until('the viewer', (q) => q.viewer?.ready, 5000);
-    check('a click on a picture: the viewer, "1 / 5" (all the chat\'s pictures)', p && p.viewer.at === 0 && p.viewer.count === 5, p?.viewer);
+    check('a click on a picture: the viewer, "1 / 4" (the chat\'s pictures that loaded: not the gone one)', p && p.viewer.at === 0 && p.viewer.count === 4, p?.viewer);
     await key('Right');
-    await until('2 / 5', (q) => q.viewer?.at === 1, 3000) && check('→ shows the next picture', true);
+    await until('2 / 4', (q) => q.viewer?.at === 1, 3000) && check('→ shows the next picture', true);
     await snap('2.16m-viewer');
     await key('Escape');
     await until('closed', (q) => q.viewer === null, 3000) && check('Esc closes the viewer', true);
