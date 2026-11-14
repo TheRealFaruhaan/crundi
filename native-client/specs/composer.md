@@ -19,10 +19,19 @@ Other screens own what these controls open:
   recording strip in Send's place: **2.24**. Its slot is kept: between Stop
   and Send.
 
-Rule 2 of DESIGN.md applies: no numbers from the web. Every size below is a
-scale step (spacing, radius, font) or a structural size (control height,
-icon size); the web's own values are in its CSS for anyone who wants them,
-but they are not the spec.
+Rule 2 of DESIGN.md applies, against the consolidated theme (2.C):
+every size below is named by its token in `ui/theme.slint` (a spacing,
+radius, text, icon or opacity step, or a structural size), never in
+pixels. "× fs" means the token times the pane's text scale (`ChatPane.fs`).
+The web's own values are in its CSS for anyone who wants them; they are not
+the spec.
+
+Structural sizes this screen uses: `control` (the attach and Stop square,
+the box's least height, a narrow pane's buttons), `control-sm`, 
+`composer-max` (the box's tallest), `composer-stack` (the width under which
+the composer stacks). **`composer-stack` is 480 in the theme today; the
+web's edge is 520 (of the chat's own width) and the token must become
+520** (the pane's width less its two 1px borders is near enough).
 
 Source, `app/vendor/claude-chat.js`:
 - CSS 132-137 (`.cc-btn`, `.primary`), 174-206 (composer, narrow rules,
@@ -71,7 +80,7 @@ Three side by side at 1400 makes every pane narrow.
 | `web-rest` | wide, idle, empty, unfocused: placeholder with the Enter hint; meta: idle · Ask permissions · switch · clock · id · model · cost. Below: two fresh chats (no id, model or cost), one Bypass all |
 | `web-focus` | the box focused: accent border and the ring |
 | `web-typing` | one line typed |
-| `web-long-max` | ten lines: the box has grown to its maximum (180px at 1×) and scrolls inside; the buttons stay at the bottom |
+| `web-long-max` | ten lines: the box has grown to its maximum (`composer-max`) and scrolls inside; the buttons stay at the bottom |
 | `web-enter-newline` | the switch on Ctrl+Enter: thumb on the right, the hint in the placeholder changed. The other panes still show the old hint (see Behaviour) |
 | `web-hover-attach` / `-send` / `-mode` / `-switch` / `-clock` / `-sid` | each control hovered (crops) |
 | `web-sid-copied` | after a click on the session id: the toast "Session id copied: <full uuid>" |
@@ -88,18 +97,18 @@ Three side by side at 1400 makes every pane narrow.
 ## The parts and their order
 
 ```
-.cc-composer   (bg-secondary, a 1px border line on top, padding 8)
+.cc-composer   (bg-secondary, a 1px border hairline on top, padding sp-8)
   .cc-wrap
-    .cc-inrow            one row, items aligned to the BOTTOM, gap 8
+    .cc-inrow            one row, items aligned to the BOTTOM, gap sp-8
       .cc-input          the message box (stretches)
       .cc-actions        (wide: transparent, its children sit in the row)
-        attach           34 square, paperclip icon
+        attach           control square, paperclip icon
         [clock]          narrow only: moved here from the meta row
-        Stop             34 high, only while working
+        Stop             control high, only while working
         [mic]            hidden (2.24)
-        Send / Queue     .cc-btn.primary
+        Send / Queue     the primary button
     .cc-up               upload bar, hidden (2.7)
-  .cc-meta               one row, gap 8, wraps; text 11 muted
+  .cc-meta               one row, gap sp-8, wraps; text-11 × fs, muted
     state label          "idle" | "working…" | "needs your input" | "exited"
     mode button          icon + name (wide) / icon only (narrow)
     Enter switch         [ ⏎ | ⌃⏎ ] + "sends"
@@ -110,64 +119,71 @@ Three side by side at 1400 makes every pane narrow.
     cost                 "$0.4015"
 ```
 
-### Wide (pane content ≥ 520px)
+### Wide (the chat's width ≥ composer-stack)
 
 - **Row 1:** the box takes all the width left; attach, [Stop], Send at its
   right, bottom-aligned with it, so as the box grows they stay on its last
-  line. Gap 8 between all.
-- **Row 2 (meta):** gap 6 above it. Label, mode button (icon and name),
+  line. Gap sp-8 between all. Attach and Stop are `control` high; Send is
+  shorter (its text plus sp-6 padding, about `control-sm` at fs 1) and sits
+  on the same bottom line (`web-running-2x`).
+- **Row 2 (meta):** sp-6 above it. Label, mode button (icon and name),
   switch, clock; then a spacer; then id, model, cost at the right edge. When
   the row is too narrow it wraps (the cost goes to a second line first,
   `web-needs-input-2x`).
 
-### Narrow (pane content < 520px), `.cc-narrow`
+### Narrow (the chat's width < composer-stack), `.cc-narrow`
 
 The measure is the chat's own width (`root.clientWidth < 520`, a
 ResizeObserver), not the window's; it flips live as a split is dragged.
+Native: `p.w < composer-stack` (workbench.slint), with the token at 520.
 
 - **Row 1:** the box, full width.
-- **Row 2:** attach, clock, [Stop], Send. Send stretches to fill the rest;
-  attach, clock and Stop keep their size. Gap 8. The clock is the same
-  control, moved (not a second copy), and is a 34-high button here (bigger
-  icon, more padding) instead of the meta row's small one.
+- **Row 2:** attach, clock, [Stop], Send. Send stretches to fill the rest
+  and is `control` high here (padding sp-8 × sp-10); attach, clock and Stop
+  keep their size. Gap sp-8. The clock is the same control, moved (not a
+  second copy), and is a `control`-high button here (icon-lg, padding
+  sp-8 × sp-10) instead of the meta row's small one.
 - **Row 3 (meta):** label, the mode button as an **icon only** and
-  finger-sized (34 wide, 28 high at 1×), switch, spacer, model, cost. The
-  **session id is hidden** (the pane header already carries it, 2.2). Gap 6,
-  text one step smaller (10 instead of 11 on the scale).
+  finger-sized (`control` × fs wide, `control-sm` × fs high), switch,
+  spacer, model, cost. The **session id is hidden** (the pane header
+  already carries it, 2.2). Gap sp-6, text one step smaller (text-10 × fs
+  instead of text-11).
 - The placeholder drops its hint: just "Message Claude…".
 
-A window narrower than 768px also hides the mode button's name in every
-pane (the web's phone media query); the PC client can be that narrow, so
-the native client does the same.
+The web also hides the mode button's name in every pane in a window under
+768 wide (its phone media query). The native window's least width is
+`window-min-w` (900), so that case cannot happen: nothing to build.
 
 ## Every control
 
 | Control | Look | Does |
 |---|---|---|
-| **Message box** | bg-primary, 1px border, radius control (6), padding 8 × 10, text 13 × fs, line height ~1.45. Placeholder muted. Focus: accent border + the ring (3px accent at ~28%). Disabled: 55% opacity | Typing grows it (below). Enter / Ctrl+Enter sends per the switch. Up on the top row recalls a queued message (2.9). A leading `/word` opens the slash menu (2.11). |
-| **Attach** | 34 square, bg-primary, border, radius control, paperclip 16 in text-secondary. Hover: accent border, icon accent-hover. Title "Attach a file (uploads to crundi_attachments)" | Opens the file picker (2.7). While uploading: 55% and inert. |
-| **Stop** | 34 high, at least 34 wide, bg-primary, border, radius control, a red rounded square 15. Hover: red border. **Armed:** red-dim fill, red border, and "Sure?" (11 × fs) slides in beside the square (the label grows from 0 width over ~180ms) | Shown only while the state is **working**. First click arms; a second click within 3 s interrupts (below). Title: "Stop this turn (click twice)", armed: "Click again to interrupt". |
-| **Send** | `.cc-btn.primary`: the accent fill (the theme's accent gradient and glow, as the native Send already has), white 12 × fs semibold, padding 6 × 12, radius control. Hover: accent-hover. Narrow: stretches, padding 8 × 10 | Reads **Send** when idle, **Queue** when working or needing input. Never disabled. Click = the same as Enter (doSend). |
-| **State label** | 11 × fs. "idle", "exited": muted. "working…", "needs your input": accent-hover (`.cc-busy`) | Read-only. A *waiting* chat (background task, turn over) reads "idle". |
-| **Mode button** | 22 high (× fs), min 26 wide, padding 0 6, radius 5→**control**, border, bg-primary, icon 13 × fs + the mode's name (11 × fs) in text-secondary. Hover: accent border, text-primary. Its colour per mode is 2.6 (Bypass all is red with a red border: `web-rest`) | Opens the permission-mode chooser (2.6). Title "Permission mode: <name>. Click to change." |
-| **Enter switch** | a pill track (bg-tertiary, padding 2) holding "⏎" and "⌃⏎" (11 × fs, bold), a thumb (accent-dim fill, 1px accent border, pill) under the live one, which is full opacity with its glyph in accent-hover; the other at 45%. Then "sends" (11 × fs, text-secondary). Hover: the label goes text-primary. The thumb slides in ~180ms | Click swaps Enter-sends ↔ Ctrl+Enter-sends, saves it, updates the placeholder, and puts the focus back in the box. Title: "Enter sends, Shift+Enter makes a newline — click to swap" / "Enter makes a newline, Ctrl+Enter sends — click to swap". |
-| **Clock** | wide: a small bordered button (padding 3 × 5, radius control, clock icon 13, text-muted); narrow: 34 high (padding 7 × 9, icon 15). Hover: accent border, accent-hover. Title "Schedule this message". Does **not** scale with the text size | Opens / closes the schedule panel (2.10). |
-| **Session id** | mono, 10.5→**10** or **11** × fs (pick one step), muted, a dotted 1px border-coloured underline; hover text-secondary; pointer cursor. Hidden until the CLI has reported an id; hidden in a narrow pane | Click copies the **full** uuid to the clipboard and toasts "Session id copied: <uuid>". Title "Claude session <uuid>  — click to copy (use it to resume this conversation)". |
-| **Model** | 11 × fs, muted | Read-only. Empty until known. |
-| **Cost** | 11 × fs, muted, "$" + 4 decimals | Read-only. Empty when 0. |
+| **Message box** | bg-primary, 1px border, r-control, padding sp-8 × sp-10, text-13 × fs, line height lh-chat (as `InputBox` has it). Placeholder text-muted. Focus: accent border plus the focus ring the client already uses (an accent-ring halo sp-4 outside the box, as `chat.slint` 325 and `signin.slint` 56). Disabled (exited): opacity o-soft | Typing grows it (below). Enter / Ctrl+Enter sends per the switch. Up on the top row recalls a queued message (2.9). A leading `/word` opens the slash menu (2.11). |
+| **Attach** | `control` square, bg-primary, 1px border, r-control, paperclip icon-lg in text-secondary. Hover: accent border, icon accent-hover. Title "Attach a file (uploads to crundi_attachments)" | Opens the file picker (2.7). While uploading: opacity o-soft and inert. |
+| **Stop** | `control` high, at least `control` wide, padding 0 sp-8, bg-primary, 1px border, r-control, a red rounded square (icon-md). Hover: red border. **Armed:** red-dim fill, red border, and "Sure?" (text-11 × fs, red) slides in beside the square with an sp-4 gap (its width grows from 0 over `motion`) | Shown only while the state is **working**. First click arms; a second click within 3 s interrupts (below). Title: "Stop this turn (click twice)", armed: "Click again to interrupt". |
+| **Send** | the primary button: the accent fill (grad-accent and the glow-send SoftShadow, as the native Send already has), white text-12 × fs semibold, padding sp-6 × sp-12, r-control. Hover: accent-hover. Narrow: stretches, `control` high, padding sp-8 × sp-10 | Reads **Send** when idle, **Queue** when working or needing input. Never disabled. Click = the same as Enter (doSend). |
+| **State label** | text-11 × fs. "idle", "exited": text-muted. "working…", "needs your input": accent-hover (`.cc-busy`) | Read-only. A *waiting* chat (background task, turn over) reads "idle". |
+| **Mode button** | sp-24 × fs high, at least control-sm × fs wide, padding 0 sp-6, r-control, 1px border, bg-primary; icon-md × fs plus the mode's name (text-11 × fs, gap sp-4) in text-secondary. Hover: accent border, text-primary. Its colour per mode is 2.6 (Bypass all is red with a red border: `web-rest`) | Opens the permission-mode chooser (2.6). Title "Permission mode: <name>. Click to change." |
+| **Enter switch** | a pill track (bg-tertiary, r-pill, padding sp-2) holding "⏎" and "⌃⏎" (mono, text-11 × fs, semibold; each padded sp-2 × sp-8), a thumb (accent-dim fill, 1px accent border, r-pill) under the live one, which is full opacity with its glyph in accent-hover; the other at o-dim. Then "sends" (text-11 × fs, text-secondary, gap sp-4). Hover: the label goes text-primary. The thumb slides over `motion` | Click swaps Enter-sends ↔ Ctrl+Enter-sends, saves it, updates the placeholder, and puts the focus back in the box. Title: "Enter sends, Shift+Enter makes a newline — click to swap" / "Enter makes a newline, Ctrl+Enter sends — click to swap". |
+| **Clock** | wide: a small bordered button (padding sp-4 × sp-6, r-control, clock icon-md, text-muted, no fill); narrow: `control` high (padding sp-8 × sp-10, icon-lg). Hover: accent border, accent-hover. Title "Schedule this message". Does **not** scale with the text size | Opens / closes the schedule panel (2.10). |
+| **Session id** | mono, text-11 × fs, text-muted, a dotted 1px border-coloured underline (Slint has no dotted line: a row of sp-2 dashes, or a solid hairline named in PLAN.md); hover text-secondary; pointer cursor. Hidden until the CLI has reported an id; hidden in a narrow pane | Click copies the **full** uuid to the clipboard and toasts "Session id copied: <uuid>". Title "Claude session <uuid>  — click to copy (use it to resume this conversation)". |
+| **Model** | text-11 × fs, text-muted | Read-only. Empty until known. |
+| **Cost** | text-11 × fs, text-muted, "$" + 4 decimals | Read-only. Empty when 0. |
 
 ## Behaviour
 
 ### Typing and auto-grow
-- The box starts one line high (its minimum: 34 at any text size) and grows
-  with its content, wrapped lines included, up to **180** (at any text
-  size), then scrolls inside. Measured: 35, 54, 73, 91, 110, 129, 148, 167,
-  180 for 1-9 lines at 1×.
+- The box starts one line high (at least `control`, at any text size) and
+  grows with its content, wrapped lines included, up to **`composer-max`**
+  (at any text size), then scrolls inside. At fs 1 that is nine lines
+  (`web-long-max`); the buttons stay on its bottom line.
 - It shrinks back as text is removed, and to one line when sent.
 - Every change also saves the draft (2.8) and checks for the slash menu
   (2.11).
-- Native: the minimum and the maximum are structural sizes (control height
-  34, the composer maximum 180), the same at every text size.
+- Native: the minimum and the maximum are structural sizes (`control`,
+  `composer-max`), the same at every text size; one line at a large text
+  size is taller than `control` and wins. `InputBox` today takes
+  `sp-16 + sp-16 × fs` as its least height: make it `control`.
 
 ### Enter, Ctrl+Enter and the switch
 - **Enter sends** (the default): Enter with no Shift, Ctrl or Cmd sends
@@ -251,7 +267,7 @@ button, the switch and the clock stay as they are.
   clicked; when the app goes to a chat (`goToChat`, the inbox's "open
   chat": the host calls `view.focus()`); after a recall, an attach or a
   give-back puts text in it (the caret at the end).
-- Focus look: accent border plus the focus ring.
+- Focus look: accent border plus the focus ring (accent-ring, sp-4 out).
 
 ### Text size (A− / A+)
 - Each pane has its own size, 9 to 24 (default 13, the last one chosen for
@@ -260,8 +276,8 @@ button, the switch and the clock stay as they are.
   - **scale:** the box's text, the placeholder, Send's text and height,
     "Sure?", the label, the mode button (height, min width, icon, text), the
     switch and "sends", the id, the model, the cost;
-  - **do not scale:** attach (34), Stop (34 high), the clock, the box's
-    minimum (34) and maximum (180), the paddings and gaps.
+  - **do not scale:** attach and Stop (`control`), the clock, the box's
+    least and tallest (`control`, `composer-max`), the paddings and gaps.
 - It changes live when A−/A+ is clicked.
 - Native: font sizes are a scale step × fs, as `ChatPane.fs` does today.
 
@@ -310,7 +326,8 @@ Stored on the client: the Enter mode (one setting); the pane's text size
   `{ok:false, error:"Session is not running"}`; in the client, the same
   through the composer of a chat that exited between the click and the send,
   or a stub.
-- **narrow:** three panes side by side in a 1400 window (each < 520).
+- **narrow:** three panes side by side in the default window (each
+  narrower than `composer-stack`).
 
 ## Checklist
 
@@ -319,17 +336,18 @@ Layout
       under it: label, mode (icon + name), switch, clock, spacer, id, model,
       cost.
 - [ ] The meta row wraps instead of clipping (cost to a second line).
-- [ ] Narrow (< 520 of the pane's own width, live while dragging a split):
+- [ ] Narrow (under `composer-stack`, now 520, of the pane's own width,
+      live while dragging a split):
       box alone; then attach, clock, [Stop], Send stretched; meta: label,
       mode icon only (finger-sized), switch, model, cost; no id.
 - [ ] The clock moves between the meta row (small) and the button row
-      (34 high) with the width.
+      (`control` high) with the width.
 - [ ] Placeholder: the hint per Enter mode; "Message Claude…" when narrow;
       "Session ended." when exited.
-- [ ] Window < 768: the mode button's name hidden everywhere.
 
 Box
-- [ ] Grows from one line (34) to 180, wrapped lines counted, then scrolls;
+- [ ] Grows from one line (at least `control`) to `composer-max`, wrapped
+      lines counted, then scrolls;
       shrinks back; one line after sending.
 - [ ] Focus: accent border and the ring. Disabled (exited): dimmed.
 
@@ -372,8 +390,13 @@ Meta
 
 Text size
 - [ ] A−/A+ scales the text parts live (box text, Send, Sure?, the meta row,
-      the mode button); attach, Stop, the clock and the box's 34/180 do not.
+      the mode button); attach, Stop, the clock and the box's `control` / `composer-max` do not.
 
 Theme
 - [ ] Every size is a scale step or a structural size from `ui/theme.slint`;
       no typed numbers, no named colours (`white` → a Theme token).
+- [ ] `composer-stack` is 520 (the web's edge), not 480.
+- [ ] `InputBox`'s least height is `control`, not `sp-16 + sp-16 × fs`.
+- [ ] Opacities are theme steps: disabled box and uploading attach o-soft,
+      the switch's idle glyph o-dim; slides take `motion`.
+- [ ] `tools/tokens.sh` is clean for the composer.
