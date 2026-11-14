@@ -91,7 +91,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      panel (`cc-schedpanel`): empty, a list, the form (when, triggers, text),
      save, delete.
    - [x] **2.11 Slash menu.** `cc-slash` with its items, keyboard selection.
-   - [ ] **2.12 Chat secrets dialog.** What the lock opens
+   - [x] **2.12 Chat secrets dialog.** What the lock opens
      (`app/vendor/crundi-chat-secrets.js`): list, add, remove, the PIN step.
    - [ ] **2.12b Secret requests in a chat.** The secret-request dock
      (`sreq-dock`, src/webapp-html.js ~17420-17530: 'Run a command with X',
