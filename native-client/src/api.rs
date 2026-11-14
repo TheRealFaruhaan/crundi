@@ -332,6 +332,40 @@ impl Api {
         unreachable!()
     }
 
+    /// A GET whose body is streamed to `sink` (bytes, and the total when
+    /// the server says it); `sink` returns false to stop (a cancel). An
+    /// answer other than 200 is read as text instead: (status, text).
+    pub fn get_stream(&self, path: &str, sink: &mut dyn FnMut(&[u8], u64) -> bool) -> ApiResult<(u16, String)> {
+        use std::io::Read;
+        let url = format!("{}{}", self.0.base, path);
+        let mut access = self.access();
+        for attempt in 0..2 {
+            let r = self.0.agent.get(&url).header("Authorization", &format!("Bearer {access}")).call();
+            let mut resp = match r { Ok(resp) => resp, Err(e) => return Err(ApiError::Net(e.to_string())) };
+            let status = resp.status().as_u16();
+            if status == 401 && attempt == 0 { self.refresh_after(&access)?; access = self.access(); continue; }
+            if status == 401 { return Err(ApiError::SignedOut); }
+            if status != 200 { return Ok((status, resp.body_mut().read_to_string().unwrap_or_default())); }
+            let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            let mut rd = resp.body_mut().with_config().limit(u64::MAX).reader();
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = rd.read(&mut buf).map_err(|e| ApiError::Net(e.to_string()))?;
+                if n == 0 { break; }
+                if !sink(&buf[..n], total) { return Ok((499, String::new())); }
+            }
+            return Ok((200, String::new()));
+        }
+        unreachable!()
+    }
+
+    /// A GET's bytes (a picture, a poster): (status, bytes or the error text).
+    pub fn get_bytes(&self, path: &str) -> ApiResult<(u16, Vec<u8>)> {
+        let mut out = Vec::new();
+        let (st, text) = self.get_stream(path, &mut |b, _| { out.extend_from_slice(b); true })?;
+        Ok(if st == 200 { (st, out) } else { (st, text.into_bytes()) })
+    }
+
     /// The URL of the server's /ws, with a fresh access token.
     pub fn ws_url(&self) -> ApiResult<String> {
         let token = self.fresh_access()?;

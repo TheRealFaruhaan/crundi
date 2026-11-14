@@ -79,6 +79,13 @@ export global Theme {
     out property <color> selection: #0236a1;
     // A modal's backdrop.
     out property <color> scrim: #0000008c;
+    // Media (2.16m): the picture viewer's backdrop, a frame's box, a video's
+    // play button and its ring (over a picture: white on dark).
+    out property <color> backdrop: #000000db;
+    out property <color> frame-bg: #0f0f14;
+    out property <color> play-bg: #0000008c;
+    out property <color> play-edge: #ffffff40;
+    out property <color> ring-faint: #ffffff2e;
 
     // Spacing: 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48. Every gap,
     // padding and small box is one of these (or a sum of two).
@@ -214,6 +221,15 @@ export global Theme {
     out property <float> jump-share: 0.3333;
     // The jump button's glide, at most this many frames.
     out property <int> glide-frames: 20;
+    // Media boxes: one item at most this wide; files at most this wide; the
+    // download rows' width.
+    out property <length> media-max-w: 640px;
+    out property <length> file-max-w: 460px;
+    out property <length> dl-w: 320px;
+    // The viewer's zoom: a step, a double click's, the most.
+    out property <float> zoom-step: 1.4;
+    out property <float> zoom-double: 2.5;
+    out property <float> zoom-max: 8;
     // Opacity of things that are there but quiet.
     out property <float> o-faint: 0.3;
     out property <float> o-dim: 0.4;

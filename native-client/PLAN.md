@@ -417,8 +417,23 @@ Phase 1 left these, each with its workaround in place:
   - a code block scrolls sideways with the wheel (Shift) and has no
     sideways thumb;
   - the jump button's click scrolls down in a few eased frames;
-  - not built yet in this step: the media under show_* calls (pictures and
-    the viewer, video and audio, files and their Download, frames).
+- **Media under show_* calls** (2.16m):
+  - a frame (show_embed) is its box with the caption and an "Open" button
+    (the page, or the stored HTML through a temp file, in the system
+    browser): the live inline frame (a windowless CEF view per box) is not
+    built yet;
+  - a GIF shows its first frame (not animated);
+  - video and audio play in the system's player: the file is fetched (with
+    the sign-in, never a URL with the token) to the temp folder, then
+    opened; the video box shows its poster and the play button, the audio
+    pill its play button and "0:00 / m:ss" (no seek line or sound button:
+    they would do nothing; CEF's build has no H.264/AAC and Slint no
+    playback);
+  - the file card shows the plain file icon for every type (the Files
+    list's per-type icons come with phase 3);
+  - Download asks where to save first, then streams (the web fetches, then
+    asks, and says Saved even when the dialog was cancelled);
+  - a decoded picture is kept while the client runs (not let go when far).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

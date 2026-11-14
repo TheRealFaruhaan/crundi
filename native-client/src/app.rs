@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem,
+    head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -193,6 +193,16 @@ pub struct App {
     qcards: HashMap<String, QCard>,
     /// The last link a reply opened (the test driver reads it).
     last_opened: String,
+    /// Media Claude showed (2.16m), by "<chat>|<stored name>": loading,
+    /// ready (with the picture), gone, empty (would not decode), fetching
+    /// (a video or audio on its way to the system player).
+    media: HashMap<String, (String, Option<slint::Image>)>,
+    /// The picture viewer: the chat's pictures' keys, and which is shown.
+    viewer: Option<(Vec<String>, usize)>,
+    /// Downloads (the window's download rows), newest last.
+    dls: Vec<Dl>,
+    dl_rows: Rc<VecModel<DlRow>>,
+    dl_seq: u32,
     /// Each chat's schedule panel (2.10), by pane key.
     sched: HashMap<String, Sched>,
     /// The pane whose mode picker is open (2.6), by key.
@@ -325,6 +335,11 @@ pub fn init(window: &MainWindow) {
             sreq: Sreq::default(),
             qcards: HashMap::new(),
             last_opened: String::new(),
+            media: HashMap::new(),
+            viewer: None,
+            dls: vec![],
+            dl_rows: Rc::new(VecModel::default()),
+            dl_seq: 0,
             slash: HashMap::new(),
             held: HashMap::new(),
             flush_pending: false,
@@ -386,6 +401,14 @@ pub fn init(window: &MainWindow) {
     window.global::<ToolAct>().on_toggle(|c, id| tool_toggle(c.as_str(), id.as_str()));
     // A link in a reply: the system browser. Copy: the clipboard, "Copied".
     window.global::<ToolAct>().on_open_link(|u| open_link(u.as_str()));
+    // Media (2.16m): a picture's viewer, play, Download, a frame's Open.
+    window.global::<ToolAct>().on_view(|k| view_picture(k.as_str()));
+    window.global::<ToolAct>().on_play(|c, n, f| play_media(c.as_str(), n.as_str(), f.as_str()));
+    window.global::<ToolAct>().on_download(|c, i, f| download_file(c.as_str(), i.as_str(), f.as_str()));
+    window.global::<ToolAct>().on_open_frame(|c, n, u| open_frame(c.as_str(), n.as_str(), u.as_str()));
+    window.on_viewer_step(viewer_step);
+    window.on_viewer_close(viewer_close);
+    window.on_dl_close(dl_close);
     // A click in a user's bubble on one of its URLs.
     window.global::<ToolAct>().on_click_at(|t, at| if let Some(u) = crate::md::url_at(t.as_str(), at.max(0) as usize) { open_link(&u); });
     window.global::<ToolAct>().on_copy(|t| if copy_text(t.as_str()) { toast_ok_plain("Copied"); } else { toast("Could not copy", true); });
@@ -1659,7 +1682,7 @@ fn md(text: &str) -> StyledText {
 
 /// A card as the view draws it: the head (the summary on one line, as the
 /// web's HTML collapses its whitespace) and the body.
-fn tool_view(t: &Shown, open: bool) -> ToolView {
+fn tool_view(t: &Shown, open: bool, mc: &MediaCtx) -> ToolView {
     let mut v = ToolView {
         id: t.id.as_str().into(), title: t.title.as_str().into(),
         detail: t.detail.split_whitespace().collect::<Vec<_>>().join(" ").into(),
@@ -1673,10 +1696,56 @@ fn tool_view(t: &Shown, open: bool) -> ToolView {
         tools::Body::Todos(items) => { v.kind = "todos".into(); v.todos = ModelRc::new(VecModel::from(items.iter().map(|(t, st)| TodoItem { text: t.as_str().into(), state: st.as_str().into() }).collect::<Vec<_>>())); }
         tools::Body::Json => { v.kind = "json".into(); v.args = t.args.as_str().into(); }
     }
+    // What a show_* call showed, under its card (done, not failed).
+    if t.status != "running" && !t.error {
+        if let Some(res) = t.raw.as_str() {
+            let (items, cap) = media::items(res);
+            let several = items.iter().filter(|i| matches!(i.kind.as_str(), "image" | "video" | "embed")).count() > 1;
+            v.media_stack = items.iter().all(|i| matches!(i.kind.as_str(), "file" | "audio"));
+            v.media_caption = if several || items.is_empty() { cap.as_str().into() } else { SharedString::default() };
+            v.media = ModelRc::new(VecModel::from(items.iter().map(|i| mc.item(i, several)).collect::<Vec<_>>()));
+        }
+    }
     v
 }
 
-fn to_view(r: &Row) -> EntryView {
+/// What tool_view needs to draw media: the chat, what is cached, and which
+/// pictures to fetch.
+struct MediaCtx<'a> {
+    chat: String,
+    cache: &'a HashMap<String, (String, Option<slint::Image>)>,
+    want: std::cell::RefCell<Vec<String>>,
+}
+
+impl MediaCtx<'_> {
+    fn item(&self, i: &media::Item, several: bool) -> MediaItem {
+        let (w, h) = match i.kind.as_str() { "embed" => media::frame_size(i), "image" | "video" => media::box_size(i.w, i.h, several), _ => (0.0, 0.0) };
+        // A picture, or a video's poster: from the cache, else fetched.
+        let pic = if i.kind == "image" { i.name.clone() } else if i.kind == "video" { i.poster.clone() } else { String::new() };
+        let key = format!("{}|{}", self.chat, pic);
+        let (state, image) = if pic.is_empty() { ("ready".to_string(), None) } else {
+            match self.cache.get(&key) {
+                Some((st, img)) => (st.clone(), img.clone()),
+                None => { self.want.borrow_mut().push(key.clone()); ("loading".into(), None) }
+            }
+        };
+        // A video or audio on its way to the player.
+        let play_key = format!("{}|{}", self.chat, i.name);
+        let fetching = self.cache.get(&play_key).is_some_and(|(st, _)| st == "fetching");
+        let (cap, link) = if i.kind == "embed" { media::frame_caption(i) } else { (media::item_caption(i), String::new()) };
+        MediaItem {
+            kind: i.kind.as_str().into(), key: key.into(), name: i.name.as_str().into(), id: i.id.as_str().into(),
+            filename: i.filename.as_str().into(), w: w as f32, h: h as f32, caption: cap.into(), link: link.into(),
+            url: if i.url.is_empty() { i.src.as_str().into() } else { i.url.as_str().into() },
+            state: state.into(), image: image.unwrap_or_default(), fetching,
+            line: { let sz = media::fmt_bytes(i.size); if i.caption.is_empty() { sz } else { format!("{sz} · {}", i.caption) } }.into(),
+            duration: if i.duration > 0.0 { media::fmt_duration(i.duration).into() } else { SharedString::default() },
+            chat: self.chat.as_str().into(),
+        }
+    }
+}
+
+fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
     match r {
         Row::Prose(id, t, kind, marker, last) => EntryView {
             id: id.clone().into(), kind: "assistant".into(), text: t.clone().into(), md: md(t),
@@ -1690,7 +1759,7 @@ fn to_view(r: &Row) -> EntryView {
         Row::Code(id, t, last) => EntryView { id: id.clone().into(), kind: "code".into(), text: t.clone().into(), gap: if *last { 10.0 } else { 8.0 }, ..Default::default() },
         Row::Tool(id, t, open) => EntryView {
             id: id.clone().into(), kind: "tool".into(), status: t.status.clone().into(), error: t.error, open: *open,
-            tools: ModelRc::new(VecModel::from(vec![tool_view(t, *open)])), gap: 10.0, ..Default::default()
+            tools: ModelRc::new(VecModel::from(vec![tool_view(t, *open, mc)])), gap: 10.0, ..Default::default()
         },
         Row::Tools(id, summary, tools, open) => EntryView {
             id: id.clone().into(),
@@ -1700,7 +1769,7 @@ fn to_view(r: &Row) -> EntryView {
             status: if tools.iter().any(|t| t.0.status == "running") { "running".into() } else { "done".into() },
             error: tools.iter().any(|t| t.0.error),
             open: *open,
-            tools: ModelRc::new(VecModel::from(tools.iter().map(|(t, o)| tool_view(t, *o)).collect::<Vec<_>>())),
+            tools: ModelRc::new(VecModel::from(tools.iter().map(|(t, o)| tool_view(t, *o, mc)).collect::<Vec<_>>())),
             gap: 10.0,
             ..Default::default()
         },
@@ -1740,20 +1809,26 @@ fn to_view(r: &Row) -> EntryView {
 
 /// A chat's log on screen, rewriting only the rows that changed.
 fn show_chat(id: &str) {
-    with(|a| {
+    let wanted = with(|a| {
         drafts_for_server(a);
-        let Some(cs) = a.chats.get_mut(id) else { return };
+        let mut wanted: Vec<String> = vec![];
+        let Some(cs) = a.chats.get_mut(id) else { return wanted };
         let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open, &cs.think);
         for (i, r) in now.iter().enumerate() {
             if cs.rows.get(i) == Some(r) { continue; }
-            let mut v = to_view(r);
+            let mc = MediaCtx { chat: id.to_string(), cache: &a.media, want: std::cell::RefCell::new(vec![]) };
+            let mut v = to_view(r, &mc);
+            wanted.extend(mc.want.into_inner());
             v.chat = id.into();
             if let Row::Entry(e) = r { if e.kind == "question" { q_view(&mut a.qcards, &a.saved_drafts, id, e, &mut v); } }
             if i < cs.model.row_count() { cs.model.set_row_data(i, v); } else { cs.model.push(v); }
         }
         while cs.model.row_count() > now.len() { cs.model.remove(cs.model.row_count() - 1); }
         cs.rows = now;
-    });
+        for k in &wanted { a.media.insert(k.clone(), ("loading".into(), None)); }
+        wanted
+    }).unwrap_or_default();
+    for k in wanted { fetch_media(k); }
 }
 
 fn chat_error(id: &str, e: String) {
@@ -3386,7 +3461,7 @@ pub fn tools_of(key: &str) -> Value {
     with(|a| {
         let cs = a.chats.get(&chat)?;
         Some(Value::Array(cs.rows.iter().filter_map(|r| match r {
-            Row::Tool(_, t, o) => Some(json!({ "card": tool_json(t, *o) })),
+            Row::Tool(_, t, o) => Some(json!({ "card": tool_json(t, *o), "media": media_json(&chat, t, &a.media) })),
             Row::Tools(id, sum, ms, o) => Some(json!({ "group": id, "summary": sum, "open": o, "count": ms.len(),
                 "status": if ms.iter().any(|m| m.0.status == "running") { "running" } else if ms.iter().any(|m| m.0.error) { "failed" } else { "done" },
                 "members": ms.iter().map(|(t, o)| tool_json(t, *o)).collect::<Vec<_>>() })),
@@ -3432,3 +3507,274 @@ fn copy_text(text: &str) -> bool {
 
 /// A plain toast (the web's "Copied" is an ordinary toast).
 fn toast_ok_plain(text: &str) { toast(text, false); }
+
+// ─── Media Claude showed (2.16m, src/media.rs, ui/chat.slint MediaBlock) ───
+
+/// A picture (or poster) fetched and decoded off the UI thread: ready, gone
+/// (404), empty (would not decode); a network failure is forgotten, so it
+/// is asked for again the next time the row is drawn.
+fn fetch_media(key: String) {
+    let Some(api) = api() else { return };
+    let Some((chat, name)) = key.split_once('|').map(|(c, n)| (c.to_string(), n.to_string())) else { return };
+    let path = format!("/api/chat-media?session={chat}&name={name}");
+    bg(move || {
+        match api.get_bytes(&path) {
+            Ok((200, bytes)) => match image::load_from_memory(&bytes) {
+                Ok(img) => {
+                    let rgba = img.to_rgba8();
+                    let mut pb = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(rgba.width(), rgba.height());
+                    pb.make_mut_bytes().copy_from_slice(rgba.as_raw());
+                    ("ready", Some(pb))
+                }
+                Err(_) => ("empty", None),
+            },
+            Ok((404, _)) | Ok((410, _)) => ("gone", None),
+            _ => ("retry", None),
+        }
+    }, move |(st, pb)| {
+        with(|a| {
+            if st == "retry" { a.media.remove(&key); } else { a.media.insert(key.clone(), (st.to_string(), pb.map(slint::Image::from_rgba8))); }
+            // The rows with media are drawn again (the rest stay).
+            if let Some(cs) = a.chats.get_mut(&chat) {
+                for r in cs.rows.iter_mut() { if matches!(r, Row::Tool(..) | Row::Tools(..)) { *r = Row::Code(String::new(), String::new(), false); } }
+            }
+        });
+        show_chat(&chat);
+        show_viewer();
+    });
+}
+
+/// The chat's pictures, in order (the viewer's gallery).
+fn chat_pictures(chat: &str) -> Vec<String> {
+    with(|a| a.chats.get(chat).map(|cs| cs.conv.view().iter().filter(|e| e.kind == "tool" && e.status != "running" && !e.error)
+        .filter_map(|e| e.raw.as_str().map(|r| media::items(r).0)).flatten()
+        .filter(|i| i.kind == "image").map(|i| format!("{chat}|{}", i.name)).collect()).unwrap_or_default()).unwrap_or_default()
+}
+
+/// A picture clicked: the viewer, on it.
+pub fn view_picture(key: &str) {
+    let chat = key.split_once('|').map(|x| x.0.to_string()).unwrap_or_default();
+    let list = chat_pictures(&chat);
+    let at = list.iter().position(|k| k == key).unwrap_or(0);
+    if list.is_empty() { return; }
+    with(|a| a.viewer = Some((list, at)));
+    show_viewer();
+}
+
+/// The viewer's step (wrapping round), or closed (None).
+pub fn viewer_step(by: i32) {
+    with(|a| if let Some((l, at)) = a.viewer.as_mut() { let n = l.len() as i32; *at = (((*at as i32 + by) % n + n) % n) as usize; });
+    show_viewer();
+}
+
+pub fn viewer_close() { with(|a| a.viewer = None); show_viewer(); }
+
+fn show_viewer() {
+    let Some(w) = ui() else { return };
+    let (open, img, at, n, want) = with(|a| match &a.viewer {
+        Some((l, at)) => {
+            let k = &l[*at];
+            let want = (!a.media.contains_key(k)).then(|| k.clone());
+            (true, a.media.get(k).and_then(|m| m.1.clone()).unwrap_or_default(), *at as i32, l.len() as i32, want)
+        }
+        None => (false, slint::Image::default(), 0, 0, None),
+    }).unwrap_or((false, slint::Image::default(), 0, 0, None));
+    if let Some(k) = want { with(|a| { a.media.insert(k.clone(), ("loading".into(), None)); }); fetch_media(k); }
+    w.set_viewer_open(open);
+    w.set_viewer_image(img);
+    w.set_viewer_at(at);
+    w.set_viewer_count(n);
+}
+
+pub fn viewer_of() -> Value {
+    with(|a| a.viewer.as_ref().map(|(l, at)| json!({ "at": at, "count": l.len(), "key": l[*at], "ready": a.media.get(&l[*at]).is_some_and(|m| m.0 == "ready") }))).flatten().unwrap_or(Value::Null)
+}
+
+/// The state of a chat's media (the test driver).
+pub fn media_of(chat: &str) -> Value {
+    with(|a| Value::Object(a.media.iter().filter(|(k, _)| k.starts_with(&format!("{chat}|"))).map(|(k, (st, img))| {
+        let size = img.as_ref().map(|i| { let s = i.size(); json!([s.width, s.height]) }).unwrap_or(Value::Null);
+        (k.split_once('|').map(|x| x.1.to_string()).unwrap_or_default(), json!({ "state": st, "size": size }))
+    }).collect())).unwrap_or(Value::Null)
+}
+
+/// Play a video or audio: fetched (with the sign-in, never a URL with the
+/// token) to the temp folder under its stored name, then the system's
+/// player opens the file. (The test driver only records the path.)
+pub fn play_media(chat: &str, name: &str, filename: &str) {
+    let key = format!("{chat}|{name}");
+    if with(|a| a.media.get(&key).is_some_and(|m| m.0 == "fetching")).unwrap_or(true) { return; }
+    let Some(api) = api() else { return };
+    with(|a| { a.media.insert(key.clone(), ("fetching".into(), None)); });
+    invalidate_media_rows(chat);
+    let path = std::env::temp_dir().join(name);
+    let url = format!("/api/chat-media?session={chat}&name={name}");
+    let (chat2, label) = (chat.to_string(), if filename.is_empty() { name.to_string() } else { filename.to_string() });
+    bg(move || -> Result<std::path::PathBuf, String> {
+        if path.metadata().is_ok_and(|m| m.len() > 0) { return Ok(path); }
+        let part = path.with_extension("part");
+        let mut f = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+        let mut err = None;
+        let r = api.get_stream(&url, &mut |b, _| { use std::io::Write; if let Err(e) = f.write_all(b) { err = Some(e.to_string()); false } else { true } });
+        drop(f);
+        match r {
+            Ok((200, _)) if err.is_none() => { std::fs::rename(&part, &path).map_err(|e| e.to_string())?; Ok(path) }
+            Ok((_, text)) => { let _ = std::fs::remove_file(&part); Err(err.unwrap_or_else(|| serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string)).unwrap_or_default())) }
+            Err(e) => { let _ = std::fs::remove_file(&part); Err(e.to_string()) }
+        }
+    }, move |r| {
+        with(|a| { a.media.remove(&key); });
+        invalidate_media_rows(&chat2);
+        match r {
+            Ok(p) => {
+                let ps = p.to_string_lossy().to_string();
+                with(|a| a.last_opened = ps.clone());
+                if std::env::var_os("CRUNDI_TEST_PORT").is_none() { std::thread::spawn(move || { let _ = open::that(&p); }); }
+            }
+            Err(e) => toast(&if e.is_empty() { format!("Could not play {label}") } else { e }, true),
+        }
+    });
+}
+
+fn invalidate_media_rows(chat: &str) {
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) { for r in cs.rows.iter_mut() { if matches!(r, Row::Tool(..) | Row::Tools(..)) { *r = Row::Code(String::new(), String::new(), false); } } });
+    show_chat(chat);
+}
+
+/// A frame's Open (or a stored HTML frame's, when there is no live frame):
+/// its page in the system browser; stored HTML through a temp file.
+pub fn open_frame(chat: &str, name: &str, url: &str) {
+    if !url.is_empty() { open_link(url); return; }
+    let Some(api) = api() else { return };
+    let path = std::env::temp_dir().join(format!("{}.html", name.trim_end_matches(".embed")));
+    let q = format!("/api/chat-media?session={chat}&name={name}");
+    bg(move || api.get_bytes(&q).ok().filter(|r| r.0 == 200).and_then(|r| std::fs::write(&path, r.1).ok().map(|_| path)), |p| match p {
+        Some(p) => { let ps = p.to_string_lossy().to_string(); with(|a| a.last_opened = ps); if std::env::var_os("CRUNDI_TEST_PORT").is_none() { std::thread::spawn(move || { let _ = open::that(&p); }); } }
+        None => toast("This embed is no longer stored.", true),
+    });
+}
+
+// ─── Downloads (a show_file card's Download, the download rows) ───
+
+pub struct Dl {
+    id: u32,
+    name: String,
+    line: String,
+    /// running | done | failed | cancelled
+    state: String,
+    frac: f32,
+    cancel: Arc<AtomicBool>,
+}
+
+fn show_dls() {
+    let Some(w) = ui() else { return };
+    with(|a| {
+        let rows: Vec<DlRow> = a.dls.iter().map(|d| DlRow { id: d.id as i32, name: d.name.as_str().into(), line: d.line.as_str().into(), state: d.state.as_str().into(), frac: d.frac }).collect();
+        a.dl_rows.set_vec(rows);
+        w.set_dl_rows(ModelRc::from(a.dl_rows.clone()));
+    });
+}
+
+fn dl_update(id: u32, f: impl FnOnce(&mut Dl)) {
+    with(|a| if let Some(d) = a.dls.iter_mut().find(|d| d.id == id) { f(d); });
+    show_dls();
+}
+
+/// The row goes by itself after a while (4.5 s saved, 1.2 s cancelled, 7 s failed).
+fn dl_linger(id: u32, ms: u64) {
+    slint::Timer::single_shot(Duration::from_millis(ms), move || { with(|a| a.dls.retain(|d| d.id != id)); show_dls(); });
+}
+
+/// Download: the system's save dialog first ("Save <name>", the Downloads
+/// folder; cancel does nothing), then the file streams to <path>.part,
+/// renamed when complete, with its row.
+pub fn download_file(chat: &str, id: &str, filename: &str) {
+    let (chat, id, name) = (chat.to_string(), id.to_string(), if filename.is_empty() { "file".to_string() } else { filename.to_string() });
+    std::thread::spawn(move || {
+        let picked = crate::testctl::take_pick().or_else(|| {
+            let mut d = rfd::FileDialog::new().set_title(format!("Save {name}")).set_file_name(&name);
+            if let Some(dir) = dirs_downloads() { d = d.set_directory(dir); }
+            d.save_file()
+        });
+        let Some(path) = picked else { return };
+        let _ = slint::invoke_from_event_loop(move || start_download(chat, id, name, path));
+    });
+}
+
+fn dirs_downloads() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    let d = std::path::PathBuf::from(home).join("Downloads");
+    d.is_dir().then_some(d)
+}
+
+fn start_download(chat: String, fid: String, name: String, path: std::path::PathBuf) {
+    let Some(api) = api() else { return };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let id = with(|a| { a.dl_seq += 1; let id = a.dl_seq; a.dls.push(Dl { id, name: name.clone(), line: "Starting…".into(), state: "running".into(), frac: 0.0, cancel: cancel.clone() }); id }).unwrap_or(0);
+    show_dls();
+    let url = format!("/api/chat-media/file?session={chat}&id={fid}");
+    std::thread::spawn(move || {
+        let part = { let mut p = path.clone().into_os_string(); p.push(".part"); std::path::PathBuf::from(p) };
+        let res: Result<u64, String> = (|| {
+            let mut f = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+            let (mut got, mut last) = (0u64, std::time::Instant::now());
+            let mut werr = None;
+            let r = api.get_stream(&url, &mut |b, total| {
+                use std::io::Write;
+                if cancel.load(Ordering::Relaxed) { return false; }
+                if let Err(e) = f.write_all(b) { werr = Some(e.to_string()); return false; }
+                got += b.len() as u64;
+                if last.elapsed() >= Duration::from_millis(120) {
+                    last = std::time::Instant::now();
+                    let (g, t) = (got, total);
+                    let _ = slint::invoke_from_event_loop(move || dl_update(id, |d| {
+                        d.line = if t > 0 { format!("{} of {}", media::fmt_dl_size(g), media::fmt_dl_size(t)) } else { media::fmt_dl_size(g) };
+                        d.frac = if t > 0 { g as f32 / t as f32 } else { 0.0 };
+                    }));
+                }
+                true
+            }).map_err(|e| e.to_string())?;
+            drop(f);
+            if let Some(e) = werr { return Err(e); }
+            match r {
+                (200, _) => { std::fs::rename(&part, &path).map_err(|e| e.to_string())?; Ok(got) }
+                (499, _) => Err("\u{0}cancel".into()),
+                (st, text) => Err(serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string)).unwrap_or_else(|| format!("Download failed ({st})"))),
+            }
+        })();
+        if res.is_err() { let _ = std::fs::remove_file(&part); }
+        let _ = slint::invoke_from_event_loop(move || match res {
+            Ok(n) => { dl_update(id, |d| { d.state = "done".into(); d.frac = 1.0; d.line = format!("Saved · {}", media::fmt_dl_size(n)); }); dl_linger(id, 4500); }
+            Err(e) if e == "\u{0}cancel" => { dl_update(id, |d| { d.state = "cancelled".into(); d.line = "Cancelled".into(); }); dl_linger(id, 1200); }
+            Err(e) => { dl_update(id, |d| { d.state = "failed".into(); d.line = e; }); dl_linger(id, 7000); }
+        });
+    });
+}
+
+/// A row's ×: a running download is cancelled; a finished row goes.
+pub fn dl_close(id: i32) {
+    with(|a| {
+        if let Some(d) = a.dls.iter().find(|d| d.id == id as u32) {
+            if d.state == "running" { d.cancel.store(true, Ordering::Relaxed); return; }
+        }
+        a.dls.retain(|d| d.id != id as u32);
+    });
+    show_dls();
+}
+
+pub fn dls_of() -> Value {
+    with(|a| Value::Array(a.dls.iter().map(|d| json!({ "name": d.name, "line": d.line, "state": d.state })).collect())).unwrap_or(Value::Null)
+}
+
+/// A show_* card's media as drawn (the test driver): kind, name, box, state, caption.
+fn media_json(chat: &str, t: &Shown, cache: &HashMap<String, (String, Option<slint::Image>)>) -> Value {
+    let Some(res) = t.raw.as_str() else { return Value::Null };
+    let (items, cap) = media::items(res);
+    let several = items.iter().filter(|i| matches!(i.kind.as_str(), "image" | "video" | "embed")).count() > 1;
+    json!({ "caption": cap, "items": items.iter().map(|i| {
+        let (w, h) = match i.kind.as_str() { "embed" => media::frame_size(i), "image" | "video" => media::box_size(i.w, i.h, several), _ => (0.0, 0.0) };
+        let pic = if i.kind == "video" { &i.poster } else { &i.name };
+        let (cap, link) = if i.kind == "embed" { media::frame_caption(i) } else { (media::item_caption(i), String::new()) };
+        json!({ "kind": i.kind, "name": i.name, "w": w, "h": h, "state": cache.get(&format!("{chat}|{pic}")).map(|m| m.0.clone()).unwrap_or_default(), "caption": cap, "link": link, "line": format!("{}{}", media::fmt_bytes(i.size), if i.caption.is_empty() { String::new() } else { format!(" · {}", i.caption) }) })
+    }).collect::<Vec<_>>() })
+}

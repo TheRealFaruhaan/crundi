@@ -303,6 +303,8 @@ fn shown(e: &Value) -> Option<Shown> {
                 args: if body == tools::Body::Json { tools::expand_tabs(&tools::json_args(&input)) } else { String::new() },
                 body,
                 tool_use_id: s(e, "toolUseId"),
+                // A show_* call's result (its media: 2.16m), whole.
+                raw: if crate::media::is_show(&name) { json_result(e) } else { Value::Null },
                 status: s(e, "status"),
                 error: e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false),
                 note: input.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
@@ -450,5 +452,14 @@ mod tests {
         assert_eq!(taken_back(&[], "", "own"), "own");
         assert_eq!(given_back("sent", "typed"), "sent\ntyped");
         assert_eq!(given_back("sent", ""), "sent");
+    }
+}
+
+/// A show_* call's result as JSON text (a string, or text blocks joined).
+fn json_result(e: &Value) -> Value {
+    match e.get("result") {
+        Some(Value::String(t)) => Value::String(t.clone()),
+        Some(Value::Array(b)) => Value::String(b.iter().filter_map(|x| x.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join("")),
+        _ => Value::Null,
     }
 }

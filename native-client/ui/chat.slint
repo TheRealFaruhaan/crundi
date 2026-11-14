@@ -6,6 +6,15 @@ import { Icons } from "icons.slint";
 import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox, RevealFlickable } from "widgets.slint";
 import { ListView, DatePickerPopup, TimePickerPopup, Date, Time } from "std-widgets.slint";
 
+/// A medium a show_* call showed (2.16m): its kind (image | video | audio |
+/// file | embed), its cache key, stored name, file id and name, its box (w, h
+/// in px, before anything loads), caption and a frame's Open link and url,
+/// loading | ready | gone | empty, the picture (or a video's poster),
+/// fetching (on its way to the player), a file's line, a duration.
+export struct MediaItem { kind: string, key: string, name: string, id: string, filename: string, w: float, h: float, caption: string, link: string, url: string, state: string, image: image, fetching: bool, line: string, duration: string, chat: string }
+/// A download's row: its id, name, line, running | done | failed | cancelled, progress.
+export struct DlRow { id: int, name: string, line: string, state: string, frac: float }
+
 /// An Edit's diff line ("- old" / "+ new"), and a to-do (completed |
 /// in_progress | pending).
 export struct DiffLine { text: string, add: bool }
@@ -28,6 +37,11 @@ export struct ToolView {
     note: string,
     lines: [DiffLine],
     todos: [TodoItem],
+    // What a show_* call showed, under the card; the call's caption (several
+    // items); files and audio stack instead of a row.
+    media: [MediaItem],
+    media-caption: string,
+    media-stack: bool,
 }
 
 /// A tool card's or group's head clicked (src/app.rs): by the chat, and the
@@ -54,6 +68,13 @@ export global ToolAct {
     callback copy(string);
     // A click at a byte offset of a user's message (a URL there opens).
     callback click-at(string, int);
+    // Media (2.16m): a picture's viewer (its key); play (chat, stored name,
+    // file name); Download (chat, file id, file name); a frame's Open (chat,
+    // stored name, url).
+    callback view(string);
+    callback play(string, string, string);
+    callback download(string, string, string);
+    callback open-frame(string, string, string);
 }
 
 /// One choice of a question: its label, description and preview; picked;
@@ -829,6 +850,184 @@ component TodoRow inherits Rectangle {
     one := Text { visible: false; text: "x"; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; }
 }
 
+/// The 34 ring that turns while a picture or a frame loads.
+component LoadRing inherits Rectangle {
+    width: Theme.sp-32 + Theme.sp-2; height: self.width;
+    property <angle> a: mod(animation-tick() / Theme.spin, 1) * Theme.turn;
+    property <float> u: self.width / 1px;
+    property <float> r: (self.width - Theme.sp-4) / 2 / 1px;
+    Rectangle { border-radius: self.width / 2; border-width: Theme.sp-4 - 1px; border-color: Theme.ring-faint; }
+    Path {
+        width: parent.width; height: parent.height;
+        viewbox-width: root.u; viewbox-height: root.u;
+        stroke: Theme.accent; stroke-width: Theme.sp-4 - 1px;
+        commands: "M " + (root.u / 2 + root.r * sin(root.a)) + " " + (root.u / 2 - root.r * cos(root.a))
+            + " A " + root.r + " " + root.r + " 0 0 1 " + (root.u / 2 + root.r * sin(root.a + 90deg)) + " " + (root.u / 2 - root.r * cos(root.a + 90deg));
+    }
+}
+
+/// A picture's, a video's or a frame's box: its size known before anything
+/// loads (never wider than `avail`), the picture fitted inside; loading:
+/// the ring; gone: a dashed edge and the words.
+component MediaBox inherits Rectangle {
+    in property <MediaItem> m;
+    in property <length> avail;
+    in property <string> gone-text: "This image is no longer stored.";
+    property <float> k: min(1, root.avail / max(1px, root.m.w * 1px));
+    width: root.m.w * 1px * self.k;
+    height: root.m.h * 1px * self.k;
+    border-radius: Theme.r-field;
+    clip: true;
+    background: root.m.kind == "embed" ? Theme.frame-bg : Theme.bg-secondary;
+    border-width: root.m.state == "gone" ? 0px : 1px;
+    border-color: Theme.border;
+    if root.m.state == "gone": DashedBox { width: parent.width; height: parent.height; }
+    if root.m.state == "gone": Text { text: root.gone-text; font-size: Theme.text-12; color: Theme.text-muted; }
+    if root.m.state == "loading": LoadRing { }
+    if root.m.state == "ready" && root.m.image.width > 0: Image {
+        x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+        source: root.m.image; image-fit: contain;
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.motion-fast; }
+    }
+    @children
+}
+
+/// A caption under an item (or under a row: the call's).
+component MediaCap inherits Text {
+    font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap;
+}
+
+/// One medium: a picture (click: the viewer), a video (its poster and the
+/// play button: the system's player), an audio pill, a file card
+/// (Download), a frame (caption and Open).
+component MediaView inherits VerticalLayout {
+    in property <MediaItem> m;
+    in property <length> avail;
+    spacing: Theme.sp-4;
+    if root.m.kind == "image": HorizontalLayout {
+        alignment: start;
+        MediaBox {
+            m: root.m; avail: root.avail;
+            TouchArea { mouse-cursor: pointer; clicked => { ToolAct.view(root.m.key); } }
+        }
+    }
+    if root.m.kind == "video": HorizontalLayout {
+        alignment: start;
+        MediaBox {
+            m: root.m; avail: root.avail;
+            Rectangle {
+                width: Theme.sp-48 + Theme.sp-8; height: self.width; border-radius: self.width / 2;
+                background: Theme.play-bg; border-width: 1px; border-color: Theme.play-edge;
+                if !root.m.fetching: Icon { source: Icons.play; width: Theme.icon-xl; height: Theme.icon-xl; tint: Theme.white; }
+                if root.m.fetching: LoadRing { }
+                TouchArea { mouse-cursor: pointer; clicked => { ToolAct.play(root.m.chat, root.m.name, root.m.filename); } }
+            }
+        }
+    }
+    if root.m.kind == "audio": HorizontalLayout {
+        alignment: start;
+        Rectangle {
+            width: min(Theme.file-max-w - Theme.sp-20, root.avail); height: Theme.sp-48 + Theme.sp-2;
+            border-radius: self.height / 2; background: Theme.bg-card; border-width: 1px; border-color: Theme.border;
+            HorizontalLayout {
+                padding-left: Theme.sp-6; spacing: Theme.sp-10; alignment: start;
+                Rectangle {
+                    y: (parent.height - self.height) / 2; width: Theme.sp-40 - Theme.sp-2; height: self.width; border-radius: self.width / 2;
+                    background: Theme.accent;
+                    if !root.m.fetching: Icon { source: Icons.play; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.white; }
+                    if root.m.fetching: Text { text: "…"; color: Theme.white; }
+                    TouchArea { mouse-cursor: pointer; clicked => { ToolAct.play(root.m.chat, root.m.name, root.m.filename); } }
+                }
+                Text { vertical-alignment: center; text: "0:00 / " + (root.m.duration != "" ? root.m.duration : "0:00"); font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; }
+            }
+        }
+    }
+    if root.m.kind == "file": HorizontalLayout {
+        alignment: start;
+        Rectangle {
+            width: min(Theme.file-max-w, root.avail); height: fl.preferred-height;
+            border-radius: Theme.r-card; background: Theme.bg-card; border-width: 1px; border-color: Theme.border;
+            fl := HorizontalLayout {
+                padding-top: Theme.sp-10 - 1px; padding-bottom: Theme.sp-10 - 1px; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+                spacing: Theme.sp-10;
+                Rectangle {
+                    width: Theme.sp-32 + Theme.sp-2; height: self.width; y: (parent.height - self.height) / 2;
+                    border-radius: Theme.r-field; background: Theme.bg-primary; border-width: 1px; border-color: Theme.border;
+                    Icon { source: Icons.file; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1; min-width: 0; alignment: center; spacing: Theme.sp-2;
+                    Text { text: root.m.filename; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; }
+                    Text { text: root.m.line; font-size: Theme.text-12; color: Theme.text-secondary; overflow: elide; }
+                }
+                Rectangle {
+                    y: (parent.height - self.height) / 2;
+                    width: dl.preferred-width; height: Theme.control-sm;
+                    border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                    background: da.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                    dl := HorizontalLayout {
+                        padding-left: Theme.sp-10; padding-right: Theme.sp-10; spacing: Theme.sp-6;
+                        Icon { y: (parent.height - self.height) / 2; source: Icons.download; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-primary; }
+                        Text { vertical-alignment: center; text: "Download"; font-size: Theme.text-12; color: Theme.text-primary; }
+                    }
+                    da := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.download(root.m.chat, root.m.id, root.m.filename); } }
+                }
+            }
+        }
+    }
+    // A frame: its box with the caption and Open (a live frame in the box
+    // is not drawn yet: PLAN, Known gaps).
+    if root.m.kind == "embed": HorizontalLayout {
+        alignment: start;
+        MediaBox {
+            m: root.m; avail: root.avail; gone-text: "This embed is no longer stored.";
+            Rectangle {
+                width: ob.preferred-width + Theme.sp-24; height: Theme.control-sm;
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                background: oa.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                ob := Text { text: "Open"; font-size: Theme.text-12; color: Theme.text-primary; }
+                oa := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.open-frame(root.m.chat, root.m.name, root.m.url); } }
+            }
+        }
+    }
+    if root.m.kind != "file" && (root.m.caption != "" || root.m.link != ""): HorizontalLayout {
+        alignment: start;
+        spacing: Theme.sp-4;
+        MediaCap { text: root.m.caption + (root.m.link != "" ? " ·" : ""); max-width: Theme.file-max-w - Theme.sp-20; }
+        if root.m.link != "": Text {
+            text: root.m.link; font-size: Theme.text-12; color: Theme.accent-hover;
+            TouchArea { mouse-cursor: pointer; clicked => { ToolAct.open-link(root.m.url); } }
+        }
+    }
+}
+
+/// The media under a show_* call's card: one, a row (8 apart), or files and
+/// audio stacked; the call's caption under several.
+component MediaBlock inherits VerticalLayout {
+    in property <ToolView> t;
+    in property <length> avail;
+    padding-top: Theme.sp-6; padding-bottom: Theme.sp-2;
+    spacing: Theme.sp-4;
+    if root.t.media-stack: VerticalLayout {
+        spacing: Theme.sp-8;
+        for m in root.t.media: MediaView { m: m; avail: root.avail; }
+    }
+    if !root.t.media-stack: Flickable {
+        height: mr.preferred-height;
+        content-width: max(self.width, mr.preferred-width);
+        content-height: self.height;
+        mr := HorizontalLayout {
+            spacing: Theme.sp-8;
+            alignment: start;
+            // Several side by side keep their sizes (the row scrolls); one is
+            // never wider than the pane.
+            for m in root.t.media: MediaView { m: m; avail: root.t.media.length > 1 ? m.w * 1px : root.avail; }
+        }
+    }
+    if root.t.media-caption != "": MediaCap { text: root.t.media-caption; }
+}
+
 /// A tool card (.cc-tool): the head (status, the tool's name, the summary,
 /// the caret) opens the body: the arguments by tool, then the result under
 /// a hairline. The body stops at composer-max * 2 and scrolls.
@@ -1422,7 +1621,10 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "thinking": ThinkBlock { fs: root.fs; e: e; }
 
     if e.kind == "tool": VerticalLayout {
-        for t in e.tools: ToolCard { t: t; fs: root.fs; chat: e.chat; }
+        for t in e.tools: VerticalLayout {
+            ToolCard { t: t; fs: root.fs; chat: e.chat; }
+            if t.media.length > 0: MediaBlock { t: t; avail: root.avail; }
+        }
     }
 
     // A batch Claude Code summed up (.cc-tgroup): its head (the members'
@@ -1453,7 +1655,10 @@ component EntryRow inherits VerticalLayout {
             gm := VerticalLayout {
                 y: Theme.sp-4;
                 spacing: Theme.sp-10;
-                for t in e.tools: ToolCard { t: t; fs: root.fs; chat: e.chat; }
+                for t in e.tools: VerticalLayout {
+                    ToolCard { t: t; fs: root.fs; chat: e.chat; }
+                    if t.media.length > 0: MediaBlock { t: t; avail: root.avail; }
+                }
             }
         }
     }

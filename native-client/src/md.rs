@@ -58,7 +58,15 @@ pub fn linkify(text: &str) -> String {
             }
             code = !code; out.push(c); i += 1; continue;
         }
-        if !code && c == '!' && chars.get(i + 1) == Some(&'[') { out.push_str("!\\["); i += 2; continue; }
+        // An image's "!" is a literal one (the web draws no pictures from
+        // markdown: `![a](https://…)` is "!" and the link).
+        if !code && c == '!' && chars.get(i + 1) == Some(&'[') { out.push_str("\\!"); i += 1; continue; }
+        // [text](target) is a link only to http(s); else its text stays.
+        if !code && c == '[' {
+            let rest: String = chars[i..].iter().collect();
+            let http = rest.find("](").is_some_and(|k| { let t = &rest[k + 2..]; t.starts_with("http://") || t.starts_with("https://") });
+            if !http { out.push_str("\\["); i += 1; continue; }
+        }
         let rest: String = chars[i..chars.len().min(i + 8)].iter().collect();
         let prev = if i > 0 { chars[i - 1] } else { ' ' };
         if !code && (rest.starts_with("http://") || rest.starts_with("https://")) && prev != '(' && prev != '<' {
@@ -194,7 +202,8 @@ mod tests {
         assert_eq!(linkify("a https://x.io/b) c"), "a <https://x.io/b>) c");
         assert_eq!(linkify("[docs](https://example.com/a)"), "[docs](https://example.com/a)");
         assert_eq!(linkify("`https://in.code`"), "`https://in.code`");
-        assert_eq!(linkify("![alt](https://x/p.png)"), "!\\[alt](https://x/p.png)");
+        assert_eq!(linkify("![alt](https://x/p.png)"), "\\![alt](https://x/p.png)");
+        assert_eq!(linkify("![logo](./assets/logo.png)"), "\\!\\[logo]([./assets/logo.png](path:./assets/logo.png))");
         assert_eq!(linkify("and/or 10/12"), "and/or 10/12");
     }
 

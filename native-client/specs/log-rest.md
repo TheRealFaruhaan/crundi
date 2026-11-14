@@ -710,26 +710,26 @@ only when `stick`; a height change alone does not).
 - [x] Link click → system browser; right-click → "Open in browser" /
       "Copy link" menu.
 - [x] Path click: named gap until the Files panel (phase 3).
-- [ ] Media under `show_*` calls: boxes sized before loading (one / several
+- [x] Media under `show_*` calls: boxes sized before loading (one / several
       / unknown), captions, the call's caption, row gap 8, horizontal scroll
       when too wide.
-- [ ] Picture: loading ring, fade in, "gone" box; click → viewer with
+- [x] Picture: loading ring, fade in, "gone" box; click → viewer with
       gallery counter, side buttons, zoom bar, keys (Esc, ← →, + − 0),
       Ctrl+wheel, drag, double click.
-- [ ] Video / audio: poster, play button and caption ("… · 0:06"); the
+- [x] Video / audio: poster, play button and caption ("… · 0:06"); the
       audio pill; play → ring while it downloads to temp → system player
       (no token in any URL handed out); named gaps in PLAN.
-- [ ] File card: icon, name, size · caption (`fmtBytes`), Download → the
+- [x] File card: icon, name, size · caption (`fmtBytes`), Download → the
       save dialog first ("Save <name>", Downloads), then streaming to the
       path; cancel the dialog → nothing.
-- [ ] Formats: PNG, JPEG, WebP and GIF all draw (GIF: first frame or
+- [x] Formats: PNG, JPEG, WebP and GIF all draw (GIF: first frame or
       animated; named gap if first frame); a poster `.poster.jpg` draws.
-- [ ] Markdown `![a](https://…)`: "!" and a link, no picture; nothing fetched.
+- [x] Markdown `![a](https://…)`: "!" and a link, no picture; nothing fetched.
 - [ ] Frame: live inline CEF view (https `src`; stored HTML as a data URL),
       sized per the table, loading ring, "This embed is no longer stored.",
       caption "title · caption · Open on <provider>", popups to the system
       browser; made when realised, closed when far; the no-CEF fallback named.
-- [ ] Download row: tray top right, accent / green / red left edge, texts
+- [x] Download row: tray top right, accent / green / red left edge, texts
       "Starting…", "<got> of <total>", "Saved · <size>", "Cancelled", the
       server's error; × cancels; leaves after 4.5 / 1.2 / 7 s.
 - [x] Notices italic, centred, `text-muted`, wrap; the long-history line.

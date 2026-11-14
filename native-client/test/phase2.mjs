@@ -2181,7 +2181,7 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   check('numbered items count from 1; each > line is its own quote; a rule', prose.filter((r) => r.prose === 'li' || r.prose === 'lie').map((r) => r.marker).join() === '1.,2.' && prose.filter((r) => r.prose === 'quote').length === 2 && prose.some((r) => r.prose === 'hr'), prose);
   check('paths are path links (the look; the click waits for phase 3)', prose.some((r) => r.prose === 'p' && r.text.includes('[/tmp/proj/client.js:12](path:/tmp/proj/client.js:12)') && r.text.includes('[`src/server.js`](path:src/server.js)')), prose);
   check('a list\'s last item carries the list\'s gap below it', prose.some((r) => r.prose === 'lie' && r.marker === '2.'), prose.map((r) => r.prose));
-  check('an image is not drawn: its text stays', prose.some((r) => r.text.includes('!\\[pic]')), prose);
+  check('a markdown image is not drawn: "!" and the link, as the web', prose.some((r) => r.text.includes('\\![pic](https://x/p.png)')), prose);
   const code = rows.find((r) => r.code !== undefined);
   check('the code block: its text, the fence\'s trailing newline dropped', code && code.code.startsWith('const a = 1;') && !code.code.endsWith('\n'), code);
   await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'n1', kind: 'notice', text: 'Context compacted.' } }));
@@ -2250,6 +2250,98 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   await d.send({ cmd: 'resize', w: 1400, h: 860 });
   await sleep(500);
   await http('POST', `/api/ui-sessions/${lg}/close`, {}, token);
+}
+
+// ─── 2.16m Media under show_* calls ───
+// Real files stored through /api/mcp/call with the chat's key, each result
+// injected as the call's done tool entry (as a real turn would produce it).
+{
+  const { execFileSync } = await import('node:child_process');
+  const med = mkdtempSync(join(tmpdir(), 'crundi-media-'));
+  const have = (bin) => { try { execFileSync('which', [bin]); return true; } catch { return false; } };
+  if (!have('convert')) { console.log('skipping 2.16m: no ImageMagick'); } else {
+    execFileSync('convert', ['-size', '1200x700', 'gradient:steelblue-navy', join(med, 'a.png')]);
+    execFileSync('convert', ['-size', '600x900', 'gradient:orange-red', join(med, 'b.jpg')]);
+    execFileSync('convert', ['-size', '500x500', 'xc:seagreen', join(med, 'c.webp')]);
+    execFileSync('convert', ['-size', '400x300', 'xc:purple', join(med, 'd.gif')]);
+    writeFileSync(join(med, 'export.csv'), 'a,b\n1,22222\n');
+    const mc = await make('demo', 'Media', true);
+    p = await until('the media chat has a pane', (q) => pane(q, mc), 30000);
+    await ui('focus-pane', pane(p, mc).id);
+    const DATA = process.env.CRUNDI_TEST_DATA || `/tmp/crundi-devtest-${new URL(SERVER).port}/data`;
+    const mf = join(DATA, 'dev-mcp', `${mc}.json`);
+    await until('its MCP config', () => existsSync(mf), 20000);
+    const KEY = JSON.parse(readFileSync(mf, 'utf8')).mcpServers.crundi.env.CRUNDI_API_KEY;
+    const show = async (tool, args) => (await fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify({ tool, args: { sessionId: mc, ...args } }) })).json();
+    let n = 0;
+    const put = (tool, res) => ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'med' + (++n), kind: 'tool', name: 'mcp__crundi__' + tool, toolUseId: 'tm' + n, input: {}, status: 'done', isError: false, result: JSON.stringify(res) } }));
+    const card = async (k) => pane(await props(), mc).tools.filter((r) => r.card)[k];
+    // The four formats in a row.
+    const r4 = await show('show_image', { paths: ['a.png', 'b.jpg', 'c.webp', 'd.gif'].map((f) => join(med, f)), caption: 'Four formats' });
+    check('show_image stores four pictures', r4.ok && r4.items?.length === 4, r4);
+    await put('show_image', r4);
+    p = await until('decoded', async (q) => { const c = await card(0); return c?.media?.items?.every((i) => i.state === 'ready'); }, 15000);
+    const c4 = await card(0);
+    check('four boxes 220 tall (377 / 147 / 220 / 293), the call\'s caption', c4 && c4.media.caption === 'Four formats' && JSON.stringify(c4.media.items.map((i) => [i.w, i.h])) === JSON.stringify([[377, 220], [147, 220], [220, 220], [293, 220]]), c4?.media);
+    const sizes = (await props()).media;
+    check('PNG, JPEG, WebP and GIF all decode, at their pixel sizes', !!p && ['png', 'jpg', 'webp', 'gif'].every((x) => Object.entries(sizes).some(([k, v]) => k.endsWith('.' + x) && v.state === 'ready' && v.size)) && Object.values(sizes).some((v) => JSON.stringify(v.size) === '[600,900]'), sizes);
+    await snap('2.16m-formats');
+    // Gone.
+    await put('show_image', { ok: true, items: [{ kind: 'image', name: '0123456789abcdef.png', w: 300, h: 200, caption: 'Gone' }] });
+    p = await until('gone', async () => (await card(1))?.media?.items?.[0]?.state === 'gone', 10000);
+    check('a picture no longer stored: "gone"', !!p, (await card(1))?.media);
+    // The viewer.
+    await ui('view', `${mc}|${r4.items[0].name}`);
+    p = await until('the viewer', (q) => q.viewer?.ready, 5000);
+    check('a click on a picture: the viewer, "1 / 5" (all the chat\'s pictures)', p && p.viewer.at === 0 && p.viewer.count === 5, p?.viewer);
+    await key('Right');
+    await until('2 / 5', (q) => q.viewer?.at === 1, 3000) && check('→ shows the next picture', true);
+    await snap('2.16m-viewer');
+    await key('Escape');
+    await until('closed', (q) => q.viewer === null, 3000) && check('Esc closes the viewer', true);
+    // A file: Download to a path the test gives (instead of the dialog).
+    const rf = await show('show_file', { path: join(med, 'export.csv'), caption: 'The export' });
+    await put('show_file', rf);
+    const cf = await until('the file card', async () => (await card(2))?.media?.items?.[0]?.kind === 'file', 5000);
+    check('the file card: its name and "12 B · The export"', cf && (await card(2)).media.items[0].line === '12 B · The export', (await card(2))?.media);
+    const out = join(med, 'saved.csv');
+    await ui('pick-next', out);
+    await ui('download', rf.items[0].id, 'export.csv');
+    p = await until('saved', (q) => q.downloads?.some((d) => d.state === 'done'), 10000);
+    check('Download: "Saved · 12 B", the bytes as stored', p && p.downloads.find((d) => d.state === 'done').line === 'Saved · 12 B' && readFileSync(out, 'utf8') === 'a,b\n1,22222\n', p?.downloads);
+    writeFileSync(join(med, 'export.csv'), '');
+    execFileSync('rm', [join(med, 'export.csv')]);
+    await ui('pick-next', join(med, 'again.csv'));
+    await ui('download', rf.items[0].id, 'export.csv');
+    p = await until('410', (q) => q.downloads?.some((d) => d.state === 'failed'), 10000);
+    check('a file no longer where it was: the row says so, failed', p && /no longer where it was/.test(p.downloads.find((d) => d.state === 'failed').line), p?.downloads);
+    await snap('2.16m-download');
+    // Frames: captions and Open.
+    const rh = await show('show_embed', { html: '<h1>Counter</h1>', title: 'Counter', height: 160 });
+    const ru = await show('show_embed', { url: 'https://example.com/', title: 'A plain page' });
+    await put('show_embed', rh);
+    await put('show_embed', ru);
+    await sleep(500);
+    const fh = (await card(3))?.media?.items?.[0], fu = (await card(4))?.media?.items?.[0];
+    check('a stored HTML frame: 640 × its height, its title, no Open', fh && fh.w === 640 && fh.h === 160 && fh.caption === 'Counter' && fh.link === '', fh);
+    check('an https frame: "… · Open on example.com"', fu && fu.caption === 'A plain page' && fu.link === 'Open on example.com', fu);
+    await ui('open-frame', '', 'https://example.com/');
+    check('Open: the system browser with its url (recorded)', (await props()).lastOpened === 'https://example.com/');
+    // A video: the system player with the file's path, never a URL.
+    if (have('ffmpeg')) {
+      execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc=duration=6:size=320x240:rate=10', '-pix_fmt', 'yuv420p', join(med, 'v.mp4')]);
+      const rv = await show('show_video', { path: join(med, 'v.mp4'), caption: 'The test pattern' });
+      await put('show_video', rv);
+      p = await until('the video', async () => (await card(5))?.media?.items?.[0]?.kind === 'video', 5000);
+      const vi = (await card(5))?.media?.items?.[0];
+      check('a video: its box and "The test pattern · 0:06"', vi && vi.caption === 'The test pattern · 0:06', vi);
+      await ui('play', rv.items[0].name, 'v.mp4');
+      p = await until('played', (q) => q.lastOpened.endsWith(rv.items[0].name), 15000);
+      check('play: the file in the temp folder, opened by path (not a URL)', p && existsSync(p.lastOpened) && !/^https?:/.test(p.lastOpened) && readFileSync(p.lastOpened).length === readFileSync(join(med, 'v.mp4')).length, p?.lastOpened);
+      await snap('2.16m-video');
+    }
+    await http('POST', `/api/ui-sessions/${mc}/close`, {}, token);
+  }
 }
 
 d.close();

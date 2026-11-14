@@ -298,6 +298,13 @@ them; each has a spec in `specs/`). So far:
   browser, notices in italics, errors and failed turns in a red box, and the
   log following the bottom only when the reader is there (wheel steps up
   stay; the jump button with its new-content dot).
+- **2.16m Media** (specs/log-rest.md section 4, `src/media.rs`,
+  `ui/viewer.slint`): what Claude shows with show_image / video / audio /
+  file / embed, under the call's card: picture boxes sized before they load
+  (PNG, JPEG, WebP, GIF), loading and gone states, the picture viewer
+  (gallery, zoom, keys); video and audio played in the system's player;
+  the file card's Download (save dialog, streamed, its download row);
+  frames' captions with Open.
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

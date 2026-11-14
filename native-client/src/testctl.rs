@@ -106,6 +106,9 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "secretsDialog": crate::app::sec_of(),
             "sreq": crate::app::sreq_of(),
             "lastOpened": crate::app::last_opened(),
+            "viewer": crate::app::viewer_of(),
+            "media": crate::app::media_of(&crate::app::focused_chat()),
+            "downloads": crate::app::dls_of(),
             // The watched chat log (ui log-watch <pane key>): how far from the
             // bottom, following it, the jump button and its dot (2.16).
             "log": ({ let l = w.global::<crate::LogProbe>(); json!({ "key": l.get_watch().as_str(), "dist": l.get_dist(), "over": l.get_over(), "stick": l.get_stick(), "jump": l.get_jump(), "jumpNew": l.get_jump_new(), "jumpX": l.get_jump_x(), "jumpY": l.get_jump_y() }) }),
@@ -177,8 +180,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "Control" => Key::Control.into(), "Shift" => Key::Shift.into(), "Alt" => Key::Alt.into(), _ => Key::Meta.into(),
             }).collect()).unwrap_or_default();
             for m in &mods { w.window().dispatch_event(WindowEvent::KeyPressed { text: m.clone() }); }
-            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), "Insert" => Key::Insert.into(), "Up" => Key::UpArrow.into(), "Down" => Key::DownArrow.into(), "Home" => Key::Home.into(), "End" => Key::End.into(), o => o.into() };
-            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab", "Insert", "Up", "Down", "Home", "End"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
+            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), "Insert" => Key::Insert.into(), "Up" => Key::UpArrow.into(), "Down" => Key::DownArrow.into(), "Left" => Key::LeftArrow.into(), "Right" => Key::RightArrow.into(), "Home" => Key::Home.into(), "End" => Key::End.into(), o => o.into() };
+            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab", "Insert", "Up", "Down", "Left", "Right", "Home", "End"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
                 w.window().dispatch_event(WindowEvent::KeyPressed { text: ch.clone() });
                 w.window().dispatch_event(WindowEvent::KeyReleased { text: ch });
             }
@@ -257,6 +260,15 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "tool-toggle" => crate::app::tool_toggle_focused(&arg(c, 0)),
                 "log-watch" => w.global::<crate::LogProbe>().set_watch(arg(c, 0).into()),
                 "tool-copy" => w.global::<crate::ToolAct>().invoke_copy(arg(c, 0).into()),
+                // Media (2.16m): view <key>, viewer-step <±1>, viewer-close,
+                // play <name> <file name>, download <id> <file name> (the save
+                // dialog answered by "pick"), open-frame <name> <url>.
+                "view" => crate::app::view_picture(&arg(c, 0)),
+                "viewer-step" => crate::app::viewer_step(arg(c, 0).parse().unwrap_or(1)),
+                "viewer-close" => crate::app::viewer_close(),
+                "play" => crate::app::play_media(&crate::app::focused_chat(), &arg(c, 0), &arg(c, 1)),
+                "download" => crate::app::download_file(&crate::app::focused_chat(), &arg(c, 0), &arg(c, 1)),
+                "open-frame" => crate::app::open_frame(&crate::app::focused_chat(), &arg(c, 0), &arg(c, 1)),
                 "open-link" => w.global::<crate::ToolAct>().invoke_open_link(arg(c, 0).into()),
                 n if n.starts_with("q-") => crate::app::q_drive(&n[2..], &(0..4).map(|i| arg(c, i)).collect::<Vec<_>>()),
                 "sreq-approve" => crate::app::sreq_approve_by(&arg(c, 0)),

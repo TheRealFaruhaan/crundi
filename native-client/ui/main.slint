@@ -18,13 +18,14 @@ import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
 import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
-import { EntryView, ToolView, Composer, TipBox, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, LogProbe } from "chat.slint";
+import { EntryView, ToolView, Composer, TipBox, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, LogProbe, MediaItem, DlRow } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
 import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
 import { SecretsDialog, SecGrant, SecPick, SecProbe } from "secrets.slint";
 import { SreqDock, SreqCard, SreqProbe } from "sreq.slint";
+import { Viewer, DlTray } from "viewer.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe}
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow}
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -188,6 +189,15 @@ export component MainWindow inherits Window {
     callback sreq-escape();
     // A toast of success (a green edge).
     in property <bool> toast-ok;
+    // The picture viewer (2.16m) and the download rows.
+    in property <bool> viewer-open;
+    in property <image> viewer-image;
+    in property <int> viewer-at;
+    in property <int> viewer-count;
+    callback viewer-step(int);
+    callback viewer-close();
+    in property <[DlRow]> dl-rows;
+    callback dl-close(int);
     callback sec-close();
     callback sec-tick(string);
     callback sec-typed(string, string);
@@ -198,7 +208,7 @@ export component MainWindow inherits Window {
     pure callback sec-next-field(string, bool) -> string;
     // Any modal dialog open (every later one joins this): the pointer is the
     // scrim's (Pointer.modal).
-    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open);
+    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open);
     changed modal-open => { Pointer.modal = self.modal-open; }
     in property <bool> toast-error;
 
@@ -451,6 +461,22 @@ export component MainWindow inherits Window {
         revoke(id) => { root.sec-revoke(id); }
         revoke-all => { root.sec-revoke-all(); }
         next-field(c, back) => { return root.sec-next-field(c, back); }
+    }
+
+    // The download rows: top right, under the top bar.
+    if root.signed-in && root.dl-rows.length > 0: DlTray {
+        x: root.width - self.width - Theme.sp-16; y: Theme.topbar-height + Theme.sp-48 + Theme.sp-16;
+        width: min(Theme.dl-w, root.width - 2 * Theme.sp-16);
+        rows: root.dl-rows;
+        close(id) => { root.dl-close(id); }
+    }
+
+    // The picture viewer, over everything (2.16m).
+    if root.signed-in && root.viewer-open: Viewer {
+        width: root.width; height: root.height;
+        img: root.viewer-image; at: root.viewer-at; count: root.viewer-count;
+        step(by) => { root.viewer-step(by); }
+        close => { root.viewer-close(); }
     }
 
     // The tooltip (chat.slint Tip): under the pointer, shifted left at the

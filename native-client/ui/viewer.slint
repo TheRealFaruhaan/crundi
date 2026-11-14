@@ -1,0 +1,149 @@
+// The picture viewer (2.16m, specs/log-rest.md "The viewer"): a picture
+// Claude showed, large over a dark backdrop; the chat's pictures as a
+// gallery (← → and the side buttons), zoom (+ − 0, the bar, a double click,
+// Ctrl+wheel), dragged when zoomed; Esc, × or the backdrop close it. And
+// the download rows (a show_file card's Download).
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon, SoftShadow } from "widgets.slint";
+import { DlRow } from "chat.slint";
+
+/// A round button of the viewer's bar or sides.
+component VBtn inherits Rectangle {
+    in property <string> label;
+    in property <length> size: Theme.sp-32 + Theme.sp-2;
+    callback clicked();
+    width: max(self.size, lt.preferred-width + Theme.sp-16); height: root.size;
+    border-radius: self.height / 2;
+    background: ta.has-hover ? Theme.play-edge : transparent;
+    lt := Text { text: root.label; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+export component Viewer inherits Rectangle {
+    in property <image> img;
+    in property <int> at;
+    in property <int> count;
+    callback step(int);
+    callback close();
+    // The zoom (1: fitted), and how far the picture is moved.
+    property <float> scale: 1;
+    property <length> px;
+    property <length> py;
+    changed at => { root.scale = 1; root.px = 0; root.py = 0; }
+    property <float> iw: max(1, root.img.width);
+    property <float> ih: max(1, root.img.height);
+    property <float> fit: min(1, min((root.width - 2 * Theme.sp-16) / 1px / root.iw, (root.height - 2 * Theme.sp-16) / 1px / root.ih));
+    property <length> pw: root.iw * root.fit * root.scale * 1px;
+    property <length> ph: root.ih * root.fit * root.scale * 1px;
+    // Never further than the picture's edge plus sp-40.
+    function clamp-pan() {
+        let mx = max(0px, (root.pw - root.width) / 2 + Theme.sp-40);
+        let my = max(0px, (root.ph - root.height) / 2 + Theme.sp-40);
+        root.px = max(-mx, min(mx, root.px));
+        root.py = max(-my, min(my, root.py));
+    }
+    function zoom(to: float) { root.scale = max(1, min(Theme.zoom-max, to)); if root.scale == 1 { root.px = 0; root.py = 0; } root.clamp-pan(); }
+    background: Theme.backdrop;
+    keys := FocusScope {
+        width: root.width; height: root.height;
+        focus-on-click: false;
+        init => { self.focus(); }
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.close(); return accept; }
+            if ev.text == Key.LeftArrow && root.count > 1 { root.step(-1); return accept; }
+            if ev.text == Key.RightArrow && root.count > 1 { root.step(1); return accept; }
+            if ev.text == "+" || ev.text == "=" { root.zoom(root.scale * Theme.zoom-step); return accept; }
+            if ev.text == "-" { root.zoom(root.scale / Theme.zoom-step); return accept; }
+            if ev.text == "0" { root.zoom(1); return accept; }
+            accept
+        }
+        // The backdrop: a click closes.
+        TouchArea { clicked => { root.close(); } }
+        Image {
+            x: (root.width - self.width) / 2 + root.px; y: (root.height - self.height) / 2 + root.py;
+            width: root.pw; height: root.ph;
+            source: root.img; image-fit: fill;
+            TouchArea {
+                property <length> sx; property <length> sy;
+                pointer-event(e) => { if e.kind == PointerEventKind.down { self.sx = root.px; self.sy = root.py; } }
+                moved => { if root.scale > 1 { root.px = self.sx + self.mouse-x - self.pressed-x; root.py = self.sy + self.mouse-y - self.pressed-y; root.clamp-pan(); } }
+                double-clicked => { root.zoom(root.scale > 1 ? 1 : Theme.zoom-double); }
+                scroll-event(e) => {
+                    if e.modifiers.control { root.zoom(e.delta-y > 0 ? root.scale * Theme.zoom-step : root.scale / Theme.zoom-step); return accept; }
+                    if root.scale > 1 { root.px += e.delta-x; root.py += e.delta-y; root.clamp-pan(); return accept; }
+                    reject
+                }
+            }
+        }
+        // The counter (two or more), top left.
+        if root.count > 1: Rectangle {
+            x: Theme.sp-12 + Theme.sp-2; y: Theme.sp-12 + Theme.sp-2;
+            width: ct.preferred-width + Theme.sp-24; height: Theme.sp-32 - Theme.sp-4;
+            border-radius: self.height / 2; background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border;
+            ct := Text { text: (root.at + 1) + " / " + root.count; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+        }
+        // The bar, top right: − 100% + ×.
+        Rectangle {
+            x: root.width - self.width - Theme.sp-10; y: Theme.sp-10;
+            width: bar.preferred-width; height: bar.preferred-height;
+            border-radius: self.height / 2; background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border;
+            bar := HorizontalLayout {
+                padding: Theme.sp-2; spacing: Theme.sp-2;
+                VBtn { label: "−"; clicked => { root.zoom(root.scale / Theme.zoom-step); } }
+                VBtn { label: round(root.scale * 100) + "%"; size: Theme.sp-32 + Theme.sp-2; clicked => { root.zoom(1); } }
+                VBtn { label: "+"; clicked => { root.zoom(root.scale * Theme.zoom-step); } }
+                VBtn { label: "×"; clicked => { root.close(); } }
+            }
+        }
+        // The side buttons (two or more, not while zoomed).
+        if root.count > 1 && root.scale == 1: VBtn {
+            x: Theme.sp-12; y: (root.height - self.height) / 2; size: Theme.sp-48 - Theme.sp-4; label: "‹";
+            background: Theme.bg-secondary;
+            clicked => { root.step(-1); }
+        }
+        if root.count > 1 && root.scale == 1: VBtn {
+            x: root.width - self.width - Theme.sp-12; y: (root.height - self.height) / 2; size: Theme.sp-48 - Theme.sp-4; label: "›";
+            background: Theme.bg-secondary;
+            clicked => { root.step(1); }
+        }
+    }
+}
+
+/// The download rows, top right under the top bar: a row per download,
+/// newest last; its left edge and icon accent (done green, failed red).
+export component DlTray inherits VerticalLayout {
+    in property <[DlRow]> rows;
+    callback close(int);
+    spacing: Theme.sp-8;
+    for r in root.rows: Rectangle {
+        height: rl.preferred-height;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.shadow-menu; }
+        Rectangle { border-radius: Theme.r-control; background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border; }
+        Rectangle {
+            x: 0; width: Theme.sp-2 + 1px; border-top-left-radius: Theme.r-control; border-bottom-left-radius: Theme.r-control;
+            background: r.state == "done" ? Theme.green : r.state == "failed" ? Theme.red : Theme.accent;
+        }
+        rl := HorizontalLayout {
+            padding-top: Theme.sp-10; padding-bottom: Theme.sp-10; padding-left: Theme.sp-12; padding-right: Theme.sp-10;
+            spacing: Theme.sp-10;
+            Icon { y: (parent.height - self.height) / 2; source: Icons.download; width: Theme.icon-md; height: Theme.icon-md; tint: r.state == "done" ? Theme.green : r.state == "failed" ? Theme.red : Theme.accent-hover; }
+            VerticalLayout {
+                horizontal-stretch: 1; min-width: 0; spacing: Theme.sp-2;
+                Text { text: r.name; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; }
+                Text { text: r.line; font-size: Theme.text-11; color: Theme.text-secondary; overflow: elide; }
+                if r.state != "failed": Rectangle {
+                    height: Theme.sp-2 + 1px; border-radius: self.height / 2; background: Theme.bg-tertiary;
+                    Rectangle { x: 0; width: parent.width * max(0, min(1, r.frac)); border-radius: parent.height / 2; background: r.state == "done" ? Theme.green : Theme.accent; }
+                }
+            }
+            Rectangle {
+                width: Theme.sp-24; y: (parent.height - self.height) / 2; height: Theme.sp-24;
+                border-radius: Theme.r-control; background: xa.has-hover ? Theme.bg-tertiary : transparent;
+                Text { text: "×"; font-size: Theme.text-16; color: xa.has-hover ? Theme.text-primary : Theme.text-muted; }
+                xa := TouchArea { mouse-cursor: pointer; clicked => { root.close(r.id); } }
+            }
+        }
+    }
+}

@@ -29,6 +29,7 @@ mod questions;
 mod tools;
 mod think;
 mod md;
+mod media;
 mod drafts;
 mod app;
 mod browser;
