@@ -1945,7 +1945,8 @@ fn fr_diff(chat: &str, id: &str) {
     show_chat(chat);
     let path = format!("/api/factory-runs/diff?id={}", enc(&s(&e, "runId")));
     let (c, i) = (chat.to_string(), id.to_string());
-    call(move |api| api.get(&path), move |r| {
+    let stub = crate::testctl::take_stub("fr-diff");
+    call(move |api| match stub { Some(v) => stub_result(v), None => api.get(&path) }, move |r| {
         with(|a| {
             let ui = a.fr.entry(i.clone()).or_default();
             ui.diff_loading = false;

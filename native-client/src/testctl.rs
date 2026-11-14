@@ -113,6 +113,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             // bottom, following it, the jump button and its dot (2.16).
             "log": ({ let l = w.global::<crate::LogProbe>(); json!({ "key": l.get_watch().as_str(), "dist": l.get_dist(), "over": l.get_over(), "stick": l.get_stick(), "jump": l.get_jump(), "jumpNew": l.get_jump_new(), "jumpX": l.get_jump_x(), "jumpY": l.get_jump_y() }) }),
             "panelDist": w.global::<crate::SheetProbe>().get_dist(),
+            "bubble": (json!({ "drawn": w.global::<crate::BubbleProbe>().get_drawn(), "copy": w.global::<crate::BubbleProbe>().get_copy(), "box": w.global::<crate::BubbleProbe>().get_box() })),
             // The resume picker (2.22).
             "resume": if w.get_resume_open() { let rp = w.global::<crate::ResumeProbe>(); json!({
                 "heading": w.get_resume_heading().as_str(), "error": w.get_resume_error().as_str(), "heavy": w.get_resume_heavy(),

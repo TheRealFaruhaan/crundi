@@ -73,6 +73,12 @@ states used a fetch stub.
 | `web-text-large` (+`-2x`) / `web-text-small` (+`-2x`) | **Text sizes** (the pane's A+ / A-): every part of the card scales with the pane's text size, buttons and file rows included. |
 | `web-widget-cards` (+`-2x`) | **Widget cards:** under a `widget_open` call with `slot: 'inline'`, the live widget (header with its title and an Open-in-Panels button, the widget's page below); under a `widget_render` call, the row of the check's screenshots ("inline", "mobile" captions). |
 
+Native: `cards/native-<state>.png`, one per web state, made by
+`test/phase2.mjs`'s 2.20 gallery with the web shots' own data (the run's
+summary, files, follow-ups and usage, and the analyst's patches in the same
+order); `tools/cards-review.sh <DRIVE_OUT>` puts the web's Manager pane over
+the native one in `cards/review/<state>.png`.
+
 ## Where the card lives
 
 The card is an entry of the **Manager's chat** of a run. That chat is in

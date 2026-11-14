@@ -44,6 +44,14 @@ export global FrAct {
     callback diff(string, string);
 }
 
+/// The last user bubble drawn (F122, the test driver): its drawn text's
+/// height, its selectable copy's, and the bubble's.
+export global BubbleProbe {
+    in-out property <length> drawn;
+    in-out property <length> copy;
+    in-out property <length> box;
+}
+
 /// The window's height (main.slint keeps it): the full diff is at most half of it.
 export global Win {
     in-out property <length> height;
@@ -363,13 +371,15 @@ component CardBtn inherits Rectangle {
     if root.primary && root.enabled && ta.has-hover: SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-accent; }
     border-radius: Theme.r-control;
     border-width: root.primary ? 0px : 1px;
-    border-color: root.danger && ta.has-hover && root.enabled ? Theme.red : Theme.border;
+    // Hovered (.cc-btn:hover): an accent border on accent-dim; danger red.
+    border-color: root.danger && ta.has-hover && root.enabled ? Theme.red : ta.has-hover && root.enabled ? Theme.accent : Theme.border;
     background: root.primary ? transparent
-        : root.danger && ta.has-hover ? Theme.red-dim
-        : ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+        : root.danger && ta.has-hover && root.enabled ? Theme.red-dim
+        : ta.has-hover && root.enabled ? Theme.accent-dim : Theme.bg-tertiary;
     // Primary: the accent gradient in its rounded shape (AccentFill).
     if root.primary: AccentFill { width: parent.width; height: parent.height; }
-    t := Text { text: root.text; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: root.primary ? Theme.white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
+    // (Only the primary one is semibold, as .cc-btn.primary.)
+    t := Text { text: root.text; font-size: Theme.text-12 * root.fs; font-weight: root.primary ? Theme.w-semibold : Theme.w-regular; color: root.primary ? Theme.white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
     ta := TouchArea { enabled: root.enabled; mouse-cursor: root.enabled ? pointer : default; clicked => { root.clicked(); } }
 }
 
@@ -1918,19 +1928,29 @@ component EntryRow inherits VerticalLayout {
             border-top-right-radius: Theme.r-bubble;
             border-bottom-right-radius: Theme.r-chip;
             border-bottom-left-radius: Theme.r-bubble;
-            height: ub.preferred-height + Theme.sp-16;
+            // Its height is the drawn text's (F122: the copy below once set
+            // it, at the chat's line height, so a long message got a tall
+            // empty bubble).
+            height: ust.preferred-height + Theme.sp-16;
+            property <length> drawn: ust.preferred-height;
+            property <length> copy: ub.preferred-height;
+            init => { BubbleProbe.drawn = self.drawn; BubbleProbe.copy = self.copy; BubbleProbe.box = self.height; }
+            changed drawn => { BubbleProbe.drawn = self.drawn; BubbleProbe.box = self.height; }
+            changed copy => { BubbleProbe.copy = self.copy; }
             ub-measure := Text { visible: false; text: e.text; font-size: Theme.text-13 * root.fs; }
             // Drawn as StyledText (its URLs links in the bubble's colour,
             // underlined); a transparent copy of the text over it keeps the
             // selection, and a click on a URL opens it.
-            StyledText {
+            ust := StyledText {
                 x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20;
                 text: e.md;
                 default-color: Theme.text-primary;
                 default-font-size: Theme.text-13 * root.fs;
                 link-color: Theme.text-primary;
             }
+            // (At the font's own line, as the StyledText it lies over.)
             ub := Prose {
+                line-height-factor: Theme.lh-plain;
                 fs: root.fs; x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20; text: e.text;
                 color: transparent; selection-foreground-color: transparent;
                 changed cursor-position-byte-offset => {

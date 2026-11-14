@@ -2076,7 +2076,8 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
       await ui('q-submit');
       p = await until('answered late', (q) => qOf(q, qOrph)?.status === 'answered-late', 10000);
       if (p) check('an orphaned answer shows its tag at once', JSON.stringify(qOf(p, qOrph).tags) === '["SQLite"]', qOf(p, qOrph));
-      h = await hist(qOrph);
+      // (The server records it a moment after the card shows it.)
+      for (let i = 0; i < 20; i++) { h = await hist(qOrph); if (h?.status === 'answered-late') break; await sleep(300); }
       check('the server marked it answered-late', h?.status === 'answered-late' && h.answeredInput?.answers?.['Which database for the queue?'] === 'SQLite', h);
     }
   }
@@ -2867,6 +2868,136 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     p = await until('a widget check: its screenshots row', (q) => (pane(q, helper)?.tools || []).some((t) => t.shots?.length === 2), 8000);
     const sh = p && pane(p, helper).tools.find((t) => t.shots?.length === 2).shots;
     check('…one per shot, captioned "inline", "mobile · dark"', sh && sh[0].caption === 'inline' && sh[1].caption === 'mobile · dark' && sh[0].key.includes('render-image'), sh);
+    // F122: a long user message's bubble is as tall as its text (the
+    // selectable copy lines up with what is drawn).
+    await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'u-long', kind: 'user', text: Array.from({ length: 22 }, (_, i) => `Line ${i + 1} of a long step message: {"summary":"…"} and /tmp/a/very/long/path/to/a/worktree/run_mwgymxh95f6eac/main`).join('\n') } }));
+    await sleep(800);
+    const bb = (await props()).bubble;
+    check('a long user bubble is as tall as its drawn text (F122)', bb && Math.abs(bb.box - bb.drawn - 16) < 1 && Math.abs(bb.copy - bb.drawn) < 3, bb);
+
+    // ─── 2.20 gallery: the web screenshots' own data (specs/cards/web-*),
+    // replayed into the Manager's pane state by state, for the review's
+    // web-over-native crops (native-<state>.png and each pane's rectangle).
+    {
+      const WEB = { runId: 'run_mwgxunww405aa5', factory: 'Site builder', branch: 'factory/site-builder-405aa5', parentBranch: 'dev' };
+      const files8 = [['README.md', 3, 1], ['docs/old.md', 0, 30], ['src/greet.js', 3, 2], ['src/pages/greeting/components/really/deeply/nested/a-very-long-component-name-for-the-greeting.html', 120, 0],
+        ['src/pages/greeting/index.html', 1, 0], ['src/pages/greeting/part1.js', 1, 0], ['src/pages/greeting/part2.js', 1, 0], ['src/pages/greeting/part3.js', 1, 0]];
+      const tests = Array.from({ length: 45 }, (_, i) => `test/case${i + 1}.test.js`).sort();
+      const files53 = [...files8.map((f) => f), ...tests.map((t) => [t, 1, 0])].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+      const asFiles = (l) => l.slice(0, 40).map(([file, added, removed]) => ({ file, added, removed }));
+      const base = {
+        id: 'web-card', kind: 'factory-result', ...WEB, state: 'ask', error: '', commit: '', auto: false, task: 'Build a greeting page.',
+        summary: 'Added a **greeting page** under `src/pages/greeting` and taught `greet()` three languages (English, French, Spanish).\n\n- The page says hello in the chosen language.\n- The old docs page is gone; the README says how to start it.',
+        diff: { added: 130, removed: 33, count: 8, files: asFiles(files8) },
+        followUps: [{ id: 'F1', text: 'The greeting page has no test for an unknown language.', where: 'src/greet.js:2', blocking: false },
+          { id: 'F2', text: 'README should mention the lang parameter.', where: 'README.md', blocking: false },
+          { id: 'F3', text: 'Spanish greeting misses the opening ¡ mark, which a native speaker would expect at the start of the sentence before Hola.', where: '', blocking: true }],
+        usage: { costUsd: 0.18, turns: 1, handoffs: 1, chats: 1, activeMs: 25000 },
+      };
+      const LONG = 'Made the changes you asked for.\n\n## What changed\n\n- **Spanish** now opens with ¡ before Hola, as a native speaker expects.\n- 45 new tests cover every language, an unknown language (falls back to English), an empty name, a very long name of several hundred characters that has to wrap nicely across the card, and names with accents such as Zoë and Ñandú.\n- The README explains the `lang` parameter with an example: `greet("Ana", "es")` returns `¡Hola, Ana!`.\n\n## What to check\n\n1. Open the greeting page and switch languages.\n2. Run `npm test`: all 45 pass.\n\nThe reviewer left two nits; they are below as follow-ups.';
+      const DIFF = 'diff --git a/README.md b/README.md\nindex ffc7886..6e8db8c 100644\n--- a/README.md\n+++ b/README.md\n@@ -1,3 +1,5 @@\n # Demo\n \n-A demo project.\n+A demo project with a greeting page.\n+\n+Run `npm start`.\ndiff --git a/docs/old.md b/docs/old.md\ndeleted file mode 100644\nindex 316a8f0..0000000\n--- a/docs/old.md\n+++ /dev/null\n@@ -1,30 +0,0 @@\n' + Array(30).fill('-line').join('\n') + '\ndiff --git a/src/greet.js b/src/greet.js\nindex 1f2e3d4..5a6b7c8 100644\n--- a/src/greet.js\n+++ b/src/greet.js\n@@ -1,3 +1,4 @@\n-export const greet = (name) => `Hello, ${name}!`;\n-export default greet;\n+const words = { en: \'Hello\', fr: \'Bonjour\', es: \'Hola\' };\n+export const greet = (name, lang = \'en\') => `${words[lang] || words.en}, ${name}!`;\n+export default greet;\n';
+      const ev = (e) => ui('chat-event', JSON.stringify(e));
+      const patch = (p) => ev({ type: 'patch', id: 'web-card', patch: p });
+      const wc = async () => (pane(await props(), mgr)?.fr?.cards || []).find((x) => x.id === 'web-card');
+      const rects = {};
+      const shoot = async (name) => {
+        await sleep(500);
+        const q = await props();
+        const m = pane(q, mgr);
+        rects[name] = m && { x: WB.x + m.x, y: WB.y + m.y, w: m.w, h: m.h };
+        await d.send({ cmd: 'snapshot', path: join(OUT, `cards-native-${name}.png`) });
+      };
+      await ui('focus-pane', pane(await props(), mgr).id);
+      await ev({ type: 'entry', entry: base });
+      p = await until('the web\'s card in the Manager\'s pane', async () => (await wc())?.state === 'ask', 8000);
+      let c = await wc();
+      check('the web\'s data: its usage line is drawn ($0.18 · 1 turn · 1 handoff · 1 chat)', c && c.usage === '$0.18 · 1 turn · 1 handoff · 1 chat', c?.usage);
+      await shoot('ask-two-panes');
+      // Hover: the pointer over Discard, then Request changes (their places
+      // in this layout: the buttons' row 121 above the pane's bottom).
+      {
+        const r = rects['ask-two-panes'];
+        await mouse('move', r.x + 462, r.y + r.h - 121);
+        await shoot('discard-hover');
+        await mouse('move', r.x + 230, r.y + r.h - 121);
+        await shoot('button-hover');
+        await mouse('leave', 0, 0);
+      }
+      // Narrow (a 1000-wide window) and the text sizes, on the first card.
+      await d.send({ cmd: 'resize', w: 1000, h: 860 });
+      await until('narrow', (q) => pane(q, mgr)?.w < 400, 5000);
+      await shoot('narrow');
+      await d.send({ cmd: 'resize', w: 1400, h: 860 });
+      await until('wide again', (q) => pane(q, mgr)?.w > 500, 5000);
+      const leaf = pane(await props(), mgr).id;
+      await ui('pane-font', leaf, 1); await ui('pane-font', leaf, 1);
+      await shoot('text-large');
+      await ui('pane-font', leaf, 0); await ui('pane-font', leaf, -1); await ui('pane-font', leaf, -1);
+      await shoot('text-small');
+      await ui('pane-font', leaf, 0);
+      await ui('fr-toggle', mgr, 'web-card', 'files');
+      await shoot('files-open');
+      await ui('stub', 'fr-diff', JSON.stringify({ ok: true, diff: DIFF, truncated: false }));
+      await ui('fr-diff', mgr, 'web-card');
+      await until('the diff', async () => (await wc())?.diffOn, 5000);
+      await shoot('full-diff');
+      await ui('fr-toggle', mgr, 'web-card', 'files');
+      await ui('fr-toggle', mgr, 'web-card', 'fu');
+      await shoot('followups-open');
+      await ui('fr-toggle', mgr, 'web-card', 'fu');
+      await ui('fr-press', mgr, 'web-card', 'changes');
+      await shoot('changes-form');
+      await ui('fr-press', mgr, 'web-card', 'changes');
+      await ui('fr-press', mgr, 'web-card', 'discard');
+      await shoot('discard-armed');
+      await sleep(3200);
+      await ui('stub', 'fr-finish', JSON.stringify({ delayMs: 2500, ok: false, error: 'The run is running; there is no result waiting for a decision.' }));
+      await ui('fr-press', mgr, 'web-card', 'keep');
+      await shoot('busy');
+      await until('the error', async () => (await wc())?.actErr !== '', 6000);
+      await shoot('action-error');
+      await patch({ state: 'changes', summary: '' });
+      await until('changes', async () => (await wc())?.state === 'changes', 5000);
+      await shoot('changes');
+      await patch({ state: 'ask', summary: LONG, diff: { added: 175, removed: 33, count: 53, files: asFiles(files53) }, usage: { costUsd: 0.2, turns: 2, handoffs: 2, chats: 1, activeMs: 60000 } });
+      await until('ask again', async () => (await wc())?.state === 'ask', 5000);
+      await shoot('long-summary');
+      await ui('fr-toggle', mgr, 'web-card', 'files');
+      c = await wc();
+      check('…53 files: 40 rows and "and 13 more"', c && c.files.length === 40 && c.more === 'and 13 more', c && { n: c.files.length, more: c.more });
+      await shoot('long-files-end');
+      await ui('fr-toggle', mgr, 'web-card', 'files');
+      await patch({ state: 'merged', commit: '6b00fea3c1d2', error: '' });
+      await until('merged', async () => (await wc())?.state === 'merged', 5000);
+      await shoot('merged');
+      await patch({ state: 'undone', diff: { added: 0, removed: 0, count: 0, files: [] } });
+      await until('undone', async () => (await wc())?.state === 'undone', 5000);
+      await shoot('undone');
+      // The states the web's screenshots patched in, with the same patches.
+      for (const [name, pt, open] of [
+        ['ask-empty', { state: 'ask', summary: 'Added a greeting page.', diff: { added: 0, removed: 0, count: 0, files: [] }, followUps: [], error: '' }],
+        ['kept-files-binary', { state: 'kept', summary: 'Added a greeting page.', diff: { added: 12, removed: 3, count: 2, files: [{ file: 'src/greet.js', added: 3, removed: 2 }, { file: 'logo.png', added: null, removed: null }] } }, true],
+        ['discarded', { state: 'discarded' }],
+        ['conflict', { state: 'conflict', error: 'Merging conflicts in src/greet.js, README.md.', usage: { costUsd: 4.37, turns: 58, handoffs: 14, chats: 5, activeMs: (2 * 60 + 25) * 60000 } }],
+        ['merged-auto', { state: 'merged', auto: true, commit: 'a1b2c3d4e5f6', error: '' }],
+        ['ask-merge-error', { state: 'ask', auto: false, commit: '', error: 'Your checkout of dev has uncommitted changes to src/greet.js that the merge would overwrite. Commit or stash them, then press Merge again.', usage: { costUsd: 0, turns: 3, handoffs: 2, chats: 1, activeMs: 20000 } }],
+      ]) {
+        await patch(pt);
+        await until(name, async () => (await wc())?.state === pt.state, 5000);
+        if (open) await ui('fr-toggle', mgr, 'web-card', 'files');
+        await shoot(name);
+        if (open) await ui('fr-toggle', mgr, 'web-card', 'files');
+      }
+      c = await wc();
+      check('the merge error\'s usage: "3 turns · 2 handoffs · 1 chat"', c && c.usage === '3 turns · 2 handoffs · 1 chat' && c.error.startsWith('Your checkout of dev'), c && { u: c.usage, e: c.error });
+      // The widget cards: the inline widget is phase 3's (nothing); the check's screenshots.
+      await ui('stub', 'renders', JSON.stringify({ ok: true, renders: { at: 1, shots: [{ frame: 'inline', state: 'live', width: 560, height: 220 }, { frame: 'mobile', state: 'live', width: 390, height: 844 }] } }));
+      await ev({ type: 'entry', entry: { id: 'wgo1', kind: 'tool', name: 'mcp__crundi__widget_open', toolUseId: 'tu_wgo1', input: { id: 'build', title: 'Build status', slot: 'inline' }, status: 'done', result: '{"ok":true}' } });
+      await ev({ type: 'entry', entry: { id: 'wgr1', kind: 'tool', name: 'mcp__crundi__widget_render', toolUseId: 'tu_wgr1', input: { id: 'build' }, status: 'done', result: 'No errors or warnings.' } });
+      await until('the screenshots row', (q) => (pane(q, mgr)?.tools || []).some((t) => t.shots?.length === 2), 5000);
+      await shoot('widget-cards');
+      writeFileSync(join(OUT, 'cards-rects.json'), JSON.stringify(rects));
+    }
   } finally {
     if (helper) await http('POST', `/api/ui-sessions/${helper}/close`, {}, token);
   }
