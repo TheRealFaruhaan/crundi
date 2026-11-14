@@ -121,7 +121,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      0 panel code. Until then the frame shows its caption and Open.
    - [x] **2.17 Suggestions and recaps.** `cc-sug` (send, dismiss) and
      `cc-recap`.
-   - [ ] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
+   - [x] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
      panel (`cc-agents`, `cc-aglist`, `cc-agpanel`).
    - [x] **2.19 Goal and plan.** The goal bar (`cc-goalbar`) and the plan
      pill and panel (`cc-plan`, `chat-plan`).
