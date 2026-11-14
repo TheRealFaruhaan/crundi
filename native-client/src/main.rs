@@ -22,6 +22,8 @@ slint::include_modules!();
 mod api;
 mod attach;
 mod sched;
+mod slash;
+mod secrets;
 mod drafts;
 mod app;
 mod browser;
@@ -200,6 +202,7 @@ fn main() {
                 WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed
                     && event.logical_key == slint::winit_030::winit::keyboard::Key::Named(slint::winit_030::winit::keyboard::NamedKey::Escape) => {
                     app::drag_cancel();
+                    app::escape();
                 }
                 WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
                     if let Some(u) = w.upgrade() { pointer_pressed(&u, at.0, at.1); }

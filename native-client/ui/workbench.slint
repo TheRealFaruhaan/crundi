@@ -5,7 +5,7 @@
 import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
-import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem } from "chat.slint";
+import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem, SlashItem } from "chat.slint";
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -56,6 +56,10 @@ export struct PaneView {
     s-limit-off: bool,
     s-list: string,
     s-unsupported: bool,
+    // The slash menu (2.11): see ChatPane.
+    slash-open: bool,
+    slash-items: [SlashItem],
+    slash-sel: int,
     model: string,
     cost: string,
     error: string,
@@ -381,6 +385,7 @@ export component PaneCard inherits Rectangle {
             s-open: p.s-open; s-text: p.s-text; s-text-gen: p.s-text-gen; s-trigger: p.s-trigger;
             s-at: p.s-at; s-at-gen: p.s-at-gen; s-note: p.s-note; s-items: p.s-items;
             s-limit-off: p.s-limit-off; s-list: p.s-list; s-unsupported: p.s-unsupported;
+            slash-open: p.slash-open; slash-items: p.slash-items; slash-sel: p.slash-sel;
             file-over: root.file-over;
             model: p.model;
             cost: p.cost;

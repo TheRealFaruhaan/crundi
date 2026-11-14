@@ -21,6 +21,8 @@ pub struct Conversation {
     /// Messages handed over while Claude works (2.9): the server keeps them
     /// until the CLI reads them (its pendingInjections), oldest first.
     pub slots: Vec<Slot>,
+    /// The CLI's commands for the slash menu (2.11): names, or {name, description}.
+    pub slash: Vec<Value>,
 }
 
 /// A message handed over to a busy chat (2.9, the web's handedOver).
@@ -47,6 +49,7 @@ impl Conversation {
         self.session_id = s(session, "sessionId");
         self.mode = s(session, "permissionMode");
         self.skip = session.get("skipPermissions").and_then(|v| v.as_bool()).unwrap_or(false);
+        self.slash = session.get("slashCommands").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         self.cost = session.get("totalCostUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
         self.entries = session.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
         self.slots = session.get("pendingInjections").and_then(|p| p.as_array()).map(|p| p.iter().map(|x| Slot {
@@ -154,6 +157,8 @@ impl Conversation {
             // Gone with the session: beyond recall.
             "exit" => { self.slots.clear(); true }
             "meta" | "init" => {
+                // init replaces the slash commands (names only after a first turn).
+                if let Some(c) = event.get("slashCommands").and_then(|v| v.as_array()) { self.slash = c.clone(); }
                 if let Some(m) = event.get("model").and_then(|m| m.as_str()) { self.model = m.to_string(); }
                 // A mode outside this chat's list is ignored (the web's setModeIfKnown).
                 if let Some(m) = event.get("permissionMode").and_then(|m| m.as_str()) { if crate::head::modes(self.skip).contains(&m) { self.mode = m.to_string(); } }

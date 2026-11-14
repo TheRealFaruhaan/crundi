@@ -294,31 +294,31 @@ so only an upgraded installation meets it).
 - Esc closes the dialog.
 
 ## Checklist
-- [ ] Opens from the lock for that chat; closes any header menu first.
-- [ ] Modal over a scrim; ×, Close, scrim click and Esc close it; Tab
+- [x] Opens from the lock for that chat; closes any header menu first.
+- [x] Modal over a scrim; ×, Close, scrim click and Esc close it; Tab
       stays inside; typed locks are cleared on close.
-- [ ] Head (lock icon, title, ×), the hint text word for word, both
+- [x] Head (lock icon, title, ×), the hint text word for word, both
       section labels upper case.
-- [ ] List: grant rows (mono name, "when" line, Revoke), "Revoke all" in
+- [x] List: grant rows (mono name, "when" line, Revoke), "Revoke all" in
       red text only with 2+, the empty line otherwise.
-- [ ] Pick list: loading line, then every secret with a checkbox; the
+- [x] Pick list: loading line, then every secret with a checkbox; the
       no-secrets line; scrolls past `pick-max-h`; long names wrap.
-- [ ] Ticking shows the lock field and focuses it; PIN fields digits only,
+- [x] Ticking shows the lock field and focuses it; PIN fields digits only,
       max 6; passphrase fields any text; unticking forgets the text.
-- [ ] Duration chips, one on, 1 hour by default, kept after a grant, reset
+- [x] Duration chips, one on, 1 hour by default, kept after a grant, reset
       on reopen.
-- [ ] Pre-authorise: the two local checks with their wording and the red
+- [x] Pre-authorise: the two local checks with their wording and the red
       field; "Checking…" while busy; the named-secret error and emptied
       field on a refusal; nothing granted when any one fails.
-- [ ] Success: list and header lock update, toast, ticks and typed locks
+- [x] Success: list and header lock update, toast, ticks and typed locks
       cleared, the dialog stays open.
-- [ ] Revoke / Revoke all: disabled while pending, toasts on success and
+- [x] Revoke / Revoke all: disabled while pending, toasts on success and
       failure, no confirm.
-- [ ] Live: `chat-secrets` redraws an open dialog and the lock; "when"
+- [x] Live: `chat-secrets` redraws an open dialog and the lock; "when"
       lines recomputed every 30 s; expired grants dropped.
-- [ ] Older server: no lock; a 404 says "This server does not support this
+- [x] Older server: no lock; a 404 says "This server does not support this
       yet. Update the server to use it."
-- [ ] Upgrade prompt: built, or named in PLAN.md "Known gaps".
+- [x] Upgrade prompt: built, or named in PLAN.md "Known gaps".
 - [ ] Tokens only (`dialog-w-lg`, `pick-max-h`, `lock-field-w` the only
       new ones); side-by-side crops of each state saved under
       `chat-secrets/review/`.

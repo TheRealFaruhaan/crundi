@@ -183,24 +183,24 @@ composer
 - The draft after a choice equals the chosen text.
 
 ## Checklist
-- [ ] Opens only while the whole text is `/` + `[a-z0-9_:-]*`; closes on a
+- [x] Opens only while the whole text is `/` + `[a-z0-9_:-]*`; closes on a
       space, a newline, or no match; no empty state.
-- [ ] Prefix filter, case-insensitive, server order, at most 40.
-- [ ] `/btw` added last when the CLI has none, with its description.
-- [ ] Item: mono semibold accent-hover name (never wrapped), muted
+- [x] Prefix filter, case-insensitive, server order, at most 40.
+- [x] `/btw` added last when the CLI has none, with its description.
+- [x] Item: mono semibold accent-hover name (never wrapped), muted
       description elided on one line; names-only items show the name alone.
-- [ ] Selected item accent-dim; hover changes nothing; the first item is
+- [x] Selected item accent-dim; hover changes nothing; the first item is
       selected after every edit.
-- [ ] ↑ ↓ clamp; the selection stays in view (named difference).
-- [ ] Enter (not Shift+Enter) and Tab choose; Enter never sends; ↑ never
+- [x] ↑ ↓ clamp; the selection stays in view (named difference).
+- [x] Enter (not Shift+Enter) and Tab choose; Enter never sends; ↑ never
       recalls while open.
-- [ ] Esc closes the list only and keeps the text.
-- [ ] A press on an item chooses it; focus stays in the box.
-- [ ] Choice: text `/name ` with the caret at the end; the draft is saved.
-- [ ] Losing focus closes it (after motion-fast); sending closes it.
-- [ ] List over the box's row (wide: box + attach + send; narrow: box
+- [x] Esc closes the list only and keeps the text.
+- [x] A press on an item chooses it; focus stays in the box.
+- [x] Choice: text `/name ` with the caret at the end; the draft is saved.
+- [x] Losing focus closes it (after motion-fast); sending closes it.
+- [x] List over the box's row (wide: box + attach + send; narrow: box
       only), sp-4 above, bg-secondary, border, r-control, shadow-menu, max
       `slash-max-h`, scrolls with a thumb.
-- [ ] Commands from `ui-history` and replaced by `init`.
+- [x] Commands from `ui-history` and replaced by `init`.
 - [ ] Tokens only; side-by-side crops of each state saved under
       `slash-menu/review/`.

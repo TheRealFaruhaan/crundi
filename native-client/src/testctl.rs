@@ -96,12 +96,13 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "sched": crate::app::sched_of(p.key.as_str()), "qHeld": p.q_held.as_str(), "qHeldN": p.q_held_n, "qSent": p.q_sent.as_str(), "qSentKind": p.q_sent_kind.as_str(), "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "slash": crate::app::slash_of(p.key.as_str()), "sched": crate::app::sched_of(p.key.as_str()), "qHeld": p.q_held.as_str(), "qHeldN": p.q_held_n, "qSent": p.q_sent.as_str(), "qSentKind": p.q_sent_kind.as_str(), "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
             "pointerModal": w.global::<crate::Pointer>().get_modal(),
             "modePicker": if w.get_mode_picker_open() { let pr = w.global::<crate::PickerProbe>(); json!({ "focus": pr.get_focus(), "focusTop": pr.get_focus_top(), "focusBottom": pr.get_focus_bottom(), "scroll": pr.get_scroll(), "viewH": pr.get_view_h(), "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
             "savedDrafts": crate::app::saved_drafts(),
+            "secretsDialog": crate::app::sec_of(),
             "chatEnter": if w.global::<crate::Composer>().get_ctrl_enter() { "newline" } else { "enter" },
             "projectDots": w.get_projects().iter().map(|p| json!({ "alias": p.alias.as_str(), "state": p.state.as_str(), "initials": p.initials.as_str() })).collect::<Vec<_>>(),
             "dragOn": w.get_drag_on(),
@@ -159,7 +160,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             use slint::platform::{Key, WindowEvent};
             let t = c.get("text").and_then(|v| v.as_str()).unwrap_or("");
             // As the system's Esc would (src/main.rs): a drag is put back.
-            if t == "Escape" { crate::app::drag_cancel(); }
+            if t == "Escape" { crate::app::drag_cancel(); crate::app::escape(); }
             // Modifiers held around it ("mods": ["Control", "Shift", "Alt", "Meta"]).
             let mods: Vec<slint::SharedString> = c.get("mods").and_then(|m| m.as_array()).map(|m| m.iter().filter_map(|x| x.as_str()).map(|x| match x {
                 "Control" => Key::Control.into(), "Shift" => Key::Shift.into(), "Alt" => Key::Alt.into(), _ => Key::Meta.into(),
@@ -230,6 +231,17 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "sched-save" => crate::app::sched_save(&chat()),
                 "sched-delete" => crate::app::sched_delete(&chat(), arg(c, 0)),
                 "sched-close" => w.global::<crate::Composer>().invoke_sched_close(chat().into()),
+                // The chat secrets dialog (2.12): open it from the lock of a pane
+                // (leaf id), tick or type in a secret by its name, a duration,
+                // Pre-authorise, revoke by name or all, close.
+                "sec-open" => w.invoke_pane_secrets(arg(c, 0).parse().unwrap_or(0)),
+                "sec-tick" => w.invoke_sec_tick(crate::app::sec_by_name(&arg(c, 0)).into()),
+                "sec-type" => w.invoke_sec_typed(crate::app::sec_by_name(&arg(c, 0)).into(), arg(c, 1).into()),
+                "sec-duration" => w.invoke_sec_duration_set(arg(c, 0).into()),
+                "sec-grant" => w.invoke_sec_grant(),
+                "sec-revoke" => w.invoke_sec_revoke(crate::app::sec_by_name(&arg(c, 0)).into()),
+                "sec-revoke-all" => w.invoke_sec_revoke_all(),
+                "sec-close" => w.invoke_sec_close(),
                 "pick-next" => { let a = arg(c, 0); if let Ok(mut p) = PICK.lock() { *p = (!a.is_empty()).then(|| a.into()); } }
                 "attach-button" => w.global::<crate::Composer>().invoke_attach(chat().into()),
                 // Files dropped as the system delivers them (src/main.rs: one

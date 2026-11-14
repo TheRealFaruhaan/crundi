@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, sched, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, ToolView,
+    head, sched, secrets, slash, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -43,6 +43,23 @@ struct Upload {
     /// Shown (also for a moment after the last ends), and which hide is due.
     shown: bool,
     hide_gen: u32,
+}
+
+/// The chat secrets dialog (2.12): for which chat, the secrets to pick, what
+/// is ticked and typed (dropped on close), the duration, the state.
+struct SecDlg {
+    chat: String,
+    /// (id, name, lock); None while loading.
+    secrets: Option<Vec<(String, String, String)>>,
+    chosen: Vec<String>,
+    pins: HashMap<String, String>,
+    bad: String,
+    duration: String,
+    busy: bool,
+    err: String,
+    revoking: HashSet<String>,
+    unsupported: bool,
+    pin_gen: i32,
 }
 
 /// A chat's schedule panel (2.10), by pane key: the form, the list.
@@ -151,6 +168,11 @@ pub struct App {
     flush_pending: bool,
     /// A box's text set by code, to show (src set_box / show_box).
     box_set: Option<(String, String, usize, bool)>,
+    /// Each chat box's slash menu (2.11), by pane key: its items, the
+    /// selection; none while closed.
+    slash: HashMap<String, (Rc<VecModel<SlashItem>>, usize)>,
+    /// The chat secrets dialog, open (2.12).
+    sec: Option<SecDlg>,
     /// Each chat's schedule panel (2.10), by pane key.
     sched: HashMap<String, Sched>,
     /// The pane whose mode picker is open (2.6), by key.
@@ -279,6 +301,8 @@ pub fn init(window: &MainWindow) {
             local_errors: 0,
             picker: None,
             sched: HashMap::new(),
+            sec: None,
+            slash: HashMap::new(),
             held: HashMap::new(),
             flush_pending: false,
             box_set: None,
@@ -335,13 +359,28 @@ pub fn init(window: &MainWindow) {
     window.on_pane_full(|id| pane_full(id as u32));
     window.on_pane_font(|id, d| pane_font(id as u32, d));
     window.on_pane_pin(|id| pane_pin(id as u32));
-    window.on_pane_secrets(|_id| {
-        // The chat-secrets dialog the lock opens is its own screen (2.12).
-    });
+    // The chat secrets dialog (2.12).
+    window.on_pane_secrets(|id| sec_open(id as u32));
+    window.on_sec_close(sec_close);
+    window.on_sec_tick(|id| sec_tick(id.as_str()));
+    window.on_sec_typed(|id, t| sec_typed(id.as_str(), t.as_str()));
+    window.on_sec_duration_set(|d| { with(|a| if let Some(d0) = a.sec.as_mut() { d0.duration = d.to_string(); }); render(); });
+    window.on_sec_grant(sec_grant);
+    window.on_sec_revoke(|id| sec_revoke(Some(id.to_string())));
+    window.on_sec_revoke_all(|| sec_revoke(None));
+    window.on_sec_next_field(|cur, back| with(|a| {
+        let Some(d) = a.sec.as_ref() else { return SharedString::default() };
+        let order: Vec<&String> = d.secrets.iter().flatten().map(|x| &x.0).filter(|id| d.chosen.contains(id)).collect();
+        if order.is_empty() { return SharedString::default(); }
+        let i = order.iter().position(|x| x.as_str() == cur.as_str());
+        let n = order.len();
+        let next = match (i, back) { (None, false) => 0, (None, true) => n - 1, (Some(i), false) => (i + 1) % n, (Some(i), true) => (i + n - 1) % n };
+        order[next].as_str().into()
+    }).unwrap_or_default());
     window.on_pane_rename(|id, t| pane_rename(id as u32, t.as_str()));
     window.on_pane_menu(|id, on| pane_menu(id as u32, on));
     window.on_pane_maximize(|id| { animate(); with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
-    window.on_draft_changed(|k, t| set_draft(k.as_str(), t.as_str()));
+    window.on_draft_changed(|k, t| { set_draft(k.as_str(), t.as_str()); slash_edit(k.as_str(), t.as_str()); });
     // The composers' shared controls (ui/chat.slint Composer). The Enter mode
     // is one setting for every chat, saved (the web's crundi_chat_enter).
     let c = window.global::<Composer>();
@@ -353,6 +392,10 @@ pub fn init(window: &MainWindow) {
     c.on_attach(|k| pick_file(k.to_string()));
     c.on_paste(|k, si| paste(k.as_str(), si));
     c.on_take_back(|k| take_back(k.as_str()));
+    // The slash menu (2.11).
+    c.on_slash_move(|k, by| slash_move(k.as_str(), by));
+    c.on_slash_choose(|k, i| slash_choose(k.as_str(), i));
+    c.on_slash_close(|k| { if with(|a| a.slash.remove(k.as_str()).is_some()).unwrap_or(false) { render(); } });
     // The schedule panel (2.10).
     c.on_schedule(|k| sched_toggle(k.as_str()));
     c.on_sched_close(|k| { with(|a| if let Some(sc) = a.sched.get_mut(k.as_str()) { sc.open = false; }); render(); });
@@ -967,6 +1010,11 @@ fn render() {
                     p.s_list = sc.list.clone().into();
                     p.s_unsupported = sc.unsupported;
                 }
+                if let Some((items, sel)) = a.slash.get(&key) {
+                    p.slash_open = true;
+                    p.slash_items = items.clone().into();
+                    p.slash_sel = *sel as i32;
+                }
                 p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
                 p.draft_gen = *a.draft_gen.get(&key).unwrap_or(&0);
                 if let Some(cs) = a.chats.get(id) {
@@ -1067,6 +1115,7 @@ fn render() {
     if with(|a| !a.held.is_empty() && !std::mem::replace(&mut a.flush_pending, true)).unwrap_or(false) {
         slint::Timer::single_shot(Duration::from_millis(0), flush_held);
     }
+    if let Some(w) = ui() { with(|a| show_sec(&w, a)); }
     if let (Some(w), Some((cw, full, picker))) = (ui(), out) {
         w.set_content_width(cw);
         w.set_mode_picker_open(picker.is_some());
@@ -1658,6 +1707,275 @@ fn show_box() {
         c.set_insert_focus(focus);
         c.set_insert_gen(c.get_insert_gen() + 1);
     }
+}
+
+// ─── The chat secrets dialog (2.12, src/secrets.rs) ───
+
+const SEC_UNSUPPORTED: &str = "This server does not support this yet. Update the server to use it.";
+
+/// The header's lock: the dialog for that pane's chat (its header menu
+/// closed first). The grants known now at once; then the chat's own and the
+/// secrets to pick, from the server.
+fn sec_open(leaf: u32) {
+    let Some(id) = leaf_rect(leaf).and_then(|l| l.key).as_deref().and_then(chat_of).map(str::to_string) else { return };
+    let cap = with(|a| {
+        a.menu = 0;
+        a.sec = Some(SecDlg {
+            chat: id.clone(), secrets: None, chosen: vec![], pins: HashMap::new(), bad: String::new(), duration: "1h".into(),
+            busy: false, err: String::new(), revoking: HashSet::new(), unsupported: !a.secrets_cap, pin_gen: 0,
+        });
+        if !a.secrets_cap { if let Some(d) = a.sec.as_mut() { d.err = SEC_UNSUPPORTED.into(); } }
+        a.secrets_cap
+    }).unwrap_or(false);
+    render();
+    if !cap { return; }
+    let Some(api) = api() else { return };
+    let (api2, id2, id3) = (api.clone(), id.clone(), id.clone());
+    bg(move || api.get(&format!("/api/secrets/chat?sessionId={}", enc(&id2))), move |r| {
+        with(|a| match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => { if let Some(d) = a.sec.as_mut().filter(|d| d.chat == id3) { d.err = s(&v, "error"); } }
+            Ok(v) => { a.grants.insert(id3.clone(), v.get("grants").cloned().unwrap_or(Value::Null)); }
+            Err(ApiError::Status(_, e)) if !e.is_empty() => { if let Some(d) = a.sec.as_mut().filter(|d| d.chat == id3) { d.err = e; } }
+            Err(_) => {}
+        });
+        render();
+    });
+    bg(move || api2.get("/api/secrets"), move |r| {
+        with(|a| if let Some(d) = a.sec.as_mut().filter(|d| d.chat == id) {
+            d.secrets = Some(match r {
+                Ok(v) => v.get("secrets").and_then(|x| x.as_array()).cloned().unwrap_or_default().iter()
+                    .map(|x| (s(x, "id"), s(x, "name"), { let l = s(x, "lock"); if l.is_empty() { "passphrase".into() } else { l } })).collect(),
+                Err(_) => vec![],
+            });
+        });
+        render();
+    });
+}
+
+/// Esc from the system (src/main.rs), wherever the focus is: an open secrets
+/// dialog closes (its own key handler can miss it when the focused field
+/// went with a grant).
+pub fn escape() {
+    if with(|a| a.sec.is_some()).unwrap_or(false) { sec_close(); }
+}
+
+/// Closing: everything typed is overwritten and dropped.
+fn sec_close() {
+    with(|a| if let Some(mut d) = a.sec.take() { for v in d.pins.values_mut() { v.clear(); v.shrink_to_fit(); } });
+    render();
+}
+
+fn sec_tick(id: &str) {
+    with(|a| if let Some(d) = a.sec.as_mut() {
+        if let Some(i) = d.chosen.iter().position(|x| x == id) {
+            d.chosen.remove(i);
+            if let Some(mut p) = d.pins.remove(id) { p.clear(); }
+            if d.bad == id { d.bad.clear(); }
+        } else {
+            d.chosen.push(id.to_string());
+        }
+    });
+    render();
+}
+
+/// Typed in a lock field: kept (a PIN takes digits only, at most 6; the
+/// field is reset to what is kept when it took something else).
+fn sec_typed(id: &str, text: &str) {
+    let changed = with(|a| {
+        let d = a.sec.as_mut()?;
+        let lock = d.secrets.iter().flatten().find(|x| x.0 == id).map(|x| x.2.clone()).unwrap_or_default();
+        let kept = secrets::typed(&lock, text);
+        let reset = kept != text;
+        d.pins.insert(id.to_string(), kept);
+        if reset { d.pin_gen += 1; }
+        Some(reset)
+    }).flatten().unwrap_or(false);
+    if changed { render(); }
+}
+
+/// The raw answer of a POST (a refusal's body names the secret).
+fn post_raw(api: &Api, path: &str, body: &Value) -> Result<(u16, Value), ApiError> {
+    let bytes = serde_json::to_vec(body).unwrap_or_default();
+    let (status, text) = api.post_with_progress(path, &bytes, &|_, _| {})?;
+    if status == 0 { return Err(ApiError::Net("Network error".into())); }
+    Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
+}
+
+/// Pre-authorise: the two checks here, then the server (all or nothing).
+fn sec_grant() {
+    let req = with(|a| {
+        let d = a.sec.as_mut()?;
+        if d.busy || d.unsupported { return None; }
+        if d.chosen.is_empty() { d.err = "Choose at least one secret.".into(); return None; }
+        let locks: HashMap<String, String> = d.secrets.iter().flatten().map(|x| (x.0.clone(), x.2.clone())).collect();
+        if let Some(bad) = d.chosen.iter().find(|id| !secrets::lock_ok(locks.get(*id).map(String::as_str).unwrap_or(""), d.pins.get(*id).map(String::as_str).unwrap_or(""))) {
+            d.bad = bad.clone();
+            d.err = "Enter the PIN or passphrase of each secret chosen.".into();
+            return None;
+        }
+        d.bad.clear();
+        d.err.clear();
+        d.busy = true;
+        Some(json!({ "action": "grant", "sessionId": d.chat, "duration": d.duration,
+            "secrets": d.chosen.iter().map(|id| json!({ "id": id, "pin": d.pins.get(id).cloned().unwrap_or_default() })).collect::<Vec<_>>() }))
+    }).flatten();
+    render();
+    let Some(body) = req else { return };
+    let Some(api) = api() else { return };
+    let chat = s(&body, "sessionId");
+    bg(move || post_raw(&api, "/api/secrets/chat", &body), move |r| {
+        let toast_ok = with(|a| {
+            if let Ok((_, v)) = &r { if let Some(g) = v.get("grants") { a.grants.insert(chat.clone(), g.clone()); } }
+            let d = a.sec.as_mut().filter(|d| d.chat == chat)?;
+            d.busy = false;
+            match r {
+                Ok((st, v)) if st < 300 && v.get("ok").and_then(|o| o.as_bool()) == Some(true) => {
+                    for p in d.pins.values_mut() { p.clear(); }
+                    d.pins.clear();
+                    d.chosen.clear();
+                    d.bad.clear();
+                    d.pin_gen += 1;
+                    Some(true)
+                }
+                Ok((404, _)) => { d.err = SEC_UNSUPPORTED.into(); Some(false) }
+                Ok((_, v)) => {
+                    let e = s(&v, "error");
+                    let sid = s(&v, "secretId");
+                    match d.secrets.iter().flatten().find(|x| x.0 == sid && !sid.is_empty()).map(|x| x.1.clone()) {
+                        Some(name) => {
+                            d.pins.insert(sid.clone(), String::new());
+                            d.bad = sid;
+                            d.pin_gen += 1;
+                            d.err = format!("{name}: {e}");
+                        }
+                        None => d.err = if e.is_empty() { "Nothing could be pre-authorised for this chat.".into() } else { e },
+                    }
+                    Some(false)
+                }
+                Err(e) => { d.err = e.to_string(); Some(false) }
+            }
+        }).flatten();
+        render();
+        if toast_ok == Some(true) { toast("Pre-authorised for this chat", false); }
+    });
+}
+
+/// Revoke one (Some) or all (None): no confirmation; the button pending.
+fn sec_revoke(one: Option<String>) {
+    let req = with(|a| {
+        let d = a.sec.as_mut()?;
+        let tag = one.clone().unwrap_or_else(|| "*all*".into());
+        if !d.revoking.insert(tag.clone()) { return None; }
+        let name = one.as_ref().and_then(|id| a.grants.get(&d.chat).and_then(|g| g.as_array()).and_then(|g| g.iter().find(|x| s(x, "secretId") == *id)).map(|x| s(x, "name"))).unwrap_or_default();
+        let body = match &one { Some(id) => json!({ "action": "revoke", "sessionId": d.chat, "secretId": id }), None => json!({ "action": "revokeAll", "sessionId": d.chat }) };
+        Some((d.chat.clone(), tag, name, body))
+    }).flatten();
+    render();
+    let Some((chat, tag, name, body)) = req else { return };
+    let Some(api) = api() else { return };
+    let all = one.is_none();
+    bg(move || post_raw(&api, "/api/secrets/chat", &body), move |r| {
+        let msg = with(|a| {
+            if let Some(d) = a.sec.as_mut() { d.revoking.remove(&tag); }
+            match r {
+                Ok((st, v)) if st < 300 && v.get("ok").and_then(|o| o.as_bool()) == Some(true) => {
+                    if let Some(g) = v.get("grants") { a.grants.insert(chat.clone(), g.clone()); }
+                    (if all { "Revoked all for this chat".to_string() } else { format!("Revoked {name}") }, false)
+                }
+                Ok((404, _)) => (SEC_UNSUPPORTED.to_string(), true),
+                Ok((_, v)) => { let e = s(&v, "error"); (if !e.is_empty() { e } else if all { "Could not revoke them".into() } else { "Could not revoke it".into() }, true) }
+                Err(e) => (e.to_string(), true),
+            }
+        }).unwrap_or_default();
+        render();
+        toast(&msg.0, msg.1);
+    });
+}
+
+/// The dialog on screen (in render, after the panes).
+fn show_sec(w: &MainWindow, a: &App) {
+    w.set_sec_open(a.sec.is_some());
+    let Some(d) = a.sec.as_ref() else { return };
+    let now = chrono::Local::now();
+    let now_s = now.timestamp_millis() as f64 / 1000.0;
+    let grants: Vec<SecGrant> = a.grants.get(&d.chat).and_then(|g| g.as_array()).cloned().unwrap_or_default().iter()
+        .filter(|g| match g.get("expiresAt").and_then(|e| e.as_str()) { Some(at) if !at.is_empty() => parse_iso(at).map(|t| t > now_s).unwrap_or(true), _ => true })
+        .map(|g| SecGrant {
+            id: s(g, "secretId").into(), name: s(g, "name").into(),
+            when: secrets::when(g.get("expiresAt").and_then(|e| e.as_str()), now).into(),
+            busy: d.revoking.contains(&s(g, "secretId")),
+        }).collect();
+    w.set_sec_grants(ModelRc::new(VecModel::from(grants)));
+    let picks: Vec<SecPick> = d.secrets.iter().flatten().map(|(id, name, lock)| SecPick {
+        id: id.into(), name: name.into(), lock: lock.into(), chosen: d.chosen.contains(id), bad: d.bad == *id,
+        pin: d.pins.get(id).cloned().unwrap_or_default().into(),
+    }).collect();
+    if w.get_sec_picks().row_count() != picks.len() || w.get_sec_picks().iter().zip(&picks).any(|(x, y)| x != *y) { w.set_sec_picks(ModelRc::new(VecModel::from(picks))); }
+    w.set_sec_pick_line(match &d.secrets { None => "Loading the secrets…".into(), Some(v) if v.is_empty() => "There are no secrets yet. Add them under Secrets.".into(), _ => SharedString::default() });
+    w.set_sec_duration(d.duration.clone().into());
+    w.set_sec_err(d.err.clone().into());
+    w.set_sec_busy(d.busy);
+    w.set_sec_revoking_all(d.revoking.contains("*all*"));
+    w.set_sec_unsupported(d.unsupported);
+    w.set_sec_pin_gen(d.pin_gen);
+}
+
+/// The test driver's view of the dialog.
+pub fn sec_of() -> Value {
+    with(|a| a.sec.as_ref().map(|d| json!({
+        "chat": d.chat, "loading": d.secrets.is_none(), "secrets": d.secrets.iter().flatten().map(|x| x.1.clone()).collect::<Vec<_>>(),
+        "chosen": d.chosen, "bad": d.bad, "duration": d.duration, "busy": d.busy, "err": d.err, "unsupported": d.unsupported,
+        "grants": a.grants.get(&d.chat).and_then(|g| g.as_array()).cloned().unwrap_or_default().iter().map(|g| json!({ "name": s(g, "name"), "when": secrets::when(g.get("expiresAt").and_then(|e| e.as_str()), chrono::Local::now()) })).collect::<Vec<_>>(),
+    }))).flatten().unwrap_or(Value::Null)
+}
+
+/// The test driver ticks a secret by its name, or types in its field.
+pub fn sec_by_name(name: &str) -> String {
+    with(|a| a.sec.as_ref().and_then(|d| d.secrets.iter().flatten().find(|x| x.1 == name).map(|x| x.0.clone()))).flatten().unwrap_or_default()
+}
+
+// ─── The slash menu (2.11, src/slash.rs) ───
+
+/// The box was edited: the menu opens on a whole `/word` with matches (the
+/// first selected), else closes.
+fn slash_edit(key: &str, text: &str) {
+    let changed = with(|a| {
+        let items = chat_of(key).and_then(|id| a.chats.get(id)).zip(slash::query(text))
+            .map(|(cs, q)| slash::filter(&cs.conv.slash, q)).unwrap_or_default();
+        if items.is_empty() { return a.slash.remove(key).is_some(); }
+        let rows: Vec<SlashItem> = items.into_iter().map(|(n, d)| SlashItem { name: format!("/{n}").into(), desc: d.into() }).collect();
+        match a.slash.get_mut(key) {
+            Some((m, sel)) => { m.set_vec(rows); *sel = 0; }
+            None => { a.slash.insert(key.to_string(), (Rc::new(VecModel::from(rows)), 0)); }
+        }
+        true
+    }).unwrap_or(false);
+    if changed { render(); }
+}
+
+/// ↑ ↓ in an open menu: one step, stopping at the ends.
+fn slash_move(key: &str, by: i32) {
+    with(|a| if let Some((m, sel)) = a.slash.get_mut(key) { *sel = slash::moved(*sel, by, m.row_count()); });
+    render();
+}
+
+/// Enter, Tab or a press on an item: the box becomes "/name " (the caret at
+/// the end, the draft saved), and the menu closes.
+fn slash_choose(key: &str, index: i32) {
+    let done = with(|a| {
+        let (m, sel) = a.slash.remove(key)?;
+        let i = if index < 0 { sel } else { index as usize };
+        let name = m.row_data(i)?.name.to_string();
+        let text = slash::chosen(name.trim_start_matches('/'));
+        set_box(a, key, &text, text.len(), true);
+        Some(())
+    }).flatten();
+    if done.is_some() { show_box(); render(); write_drafts_soon(); }
+}
+
+/// The test driver's view of a pane's menu: its names and the selection.
+pub fn slash_of(key: &str) -> Value {
+    with(|a| a.slash.get(key).map(|(m, sel)| json!({ "items": m.iter().map(|i| i.name.to_string()).collect::<Vec<_>>(), "descs": m.iter().map(|i| i.desc.to_string()).collect::<Vec<_>>(), "sel": sel }))).flatten().unwrap_or(Value::Null)
 }
 
 // ─── Scheduled messages (2.10, src/sched.rs) ───

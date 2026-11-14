@@ -135,6 +135,13 @@ export global Theme {
     // at most), and its tallest, a share of the chat's height.
     out property <int> sched-rows: 3;
     out property <float> sched-share: 0.82;
+    // The slash menu's tallest (2.11), about six and a half items.
+    out property <length> slash-max-h: 190px;
+    // The chat secrets dialog (2.12): its width, its pick list's tallest,
+    // a lock field's width.
+    out property <length> dialog-w-lg: 460px;
+    out property <length> pick-max-h: 240px;
+    out property <length> lock-field-w: 150px;
     // Letter spacing: tight (packed marks, small bold capitals) and wide
     // (capitals in labels, a code's characters).
     out property <length> track-tight: -0.5px;

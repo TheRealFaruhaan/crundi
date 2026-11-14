@@ -250,6 +250,17 @@ them; each has a spec in `specs/`). So far:
   /api/chat-schedule`), and this chat's messages to come with ✕. The rules
   are in `src/sched.rs` (unit-tested).
 
+- **2.11 Slash menu** (specs/slash-menu.md): while the whole message is
+  one `/word`, the chat's commands (from its history and `init`, plus
+  Crundi's /btw) open over the box's row, filtered by prefix; ↑ ↓ pick,
+  Enter, Tab or a press puts "/name " in the box, Esc closes. The rules are
+  in `src/slash.rs` (unit-tested).
+- **2.12 Chat secrets dialog** (specs/chat-secrets.md, `ui/secrets.slint`):
+  the header's lock opens the secrets pre-authorised for that chat (revoke
+  one or all) and the server's secrets to pre-authorise: tick, type each
+  one's PIN or passphrase, pick a duration, Pre-authorise (all or nothing).
+  The lock's count follows; grants update live (`chat-secrets`).
+
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
   10–26, two letter-spacings) plus a short structural list (window, top

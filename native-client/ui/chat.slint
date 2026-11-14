@@ -982,6 +982,43 @@ component QueueDrawer inherits Rectangle {
     }
 }
 
+/// A slash command in the menu (2.11): "/name" and its description (empty
+/// for a names-only command).
+export struct SlashItem { name: string, desc: string }
+
+/// One command: the name (mono, semibold, accent-hover; never wrapped), its
+/// description (muted, one line, elided); selected: accent-dim. Hover changes
+/// nothing but the pointer; a press chooses it.
+component SlashRow inherits Rectangle {
+    in property <float> fs: 1;
+    in property <SlashItem> it;
+    in property <bool> on;
+    callback chosen();
+    // Selected: keep it in view (the web doesn't: a named difference).
+    callback reveal(length, length);
+    changed on => { if self.on { root.reveal(self.y, self.y + self.height); } }
+    height: row.preferred-height;
+    background: root.on ? Theme.accent-dim : transparent;
+    row := HorizontalLayout {
+        padding-top: Theme.sp-4; padding-bottom: Theme.sp-4; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        spacing: Theme.sp-8;
+        Text {
+            horizontal-stretch: 0;
+            text: root.it.name; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold;
+            color: Theme.accent-hover; line-height-factor: Theme.lh-ui; wrap: no-wrap;
+        }
+        Text {
+            horizontal-stretch: 1; min-width: 0; preferred-width: 0;
+            text: root.it.desc; font-size: Theme.text-12 * root.fs; color: Theme.text-muted;
+            line-height-factor: Theme.lh-ui; overflow: elide; wrap: no-wrap;
+        }
+    }
+    TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => { if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { root.chosen(); } }
+    }
+}
+
 /// What every composer shares with the app (src/app.rs): the Enter mode
 /// (one setting for every chat, saved), a request to focus a chat's box,
 /// and the controls whose screens come later (attach 2.7, the clock 2.10,
@@ -1011,6 +1048,11 @@ export global Composer {
     // and time field's text as typed, Schedule, an item's ✕, a date and time
     // picked in the popups.
     callback sched-close(string);
+    // The slash menu (2.11), by pane key: ↑ ↓, choose (an index; -1 the
+    // selected), close.
+    callback slash-move(string, int);
+    callback slash-choose(string, int);
+    callback slash-close(string);
     callback sched-trigger(string, string);
     callback sched-text(string, string);
     callback sched-at(string, string);
@@ -1045,6 +1087,11 @@ component InputBox inherits Rectangle {
     callback up() -> bool;
     // The caret's row: its top, in the text.
     property <length> caret-y;
+    // The slash menu is open (2.11): ↑ ↓ Enter Tab Esc go to it first.
+    in property <bool> slash-open;
+    callback slash-move(int);
+    callback slash-choose();
+    callback slash-close();
     // Ctrl+V / Shift+Insert (true): true when the app took it (a picture, a
     // file; Shift+Insert's text too: Slint's input knows only Ctrl+V).
     callback paste(bool) -> bool;
@@ -1079,6 +1126,12 @@ component InputBox inherits Rectangle {
             content-height: max(self.height, te.preferred-height);
             FocusScope {
                 capture-key-pressed(ev) => {
+                    if root.slash-open {
+                        if ev.text == Key.UpArrow { root.slash-move(-1); return accept; }
+                        if ev.text == Key.DownArrow { root.slash-move(1); return accept; }
+                        if (ev.text == Key.Return && !ev.modifiers.shift) || ev.text == Key.Tab { root.slash-choose(); return accept; }
+                        if ev.text == Key.Escape { root.slash-close(); return accept; }
+                    }
                     if ((ev.modifiers.control || ev.modifiers.meta) && (ev.text == "v" || ev.text == "V")) || (ev.modifiers.shift && ev.text == Key.Insert) {
                         if root.paste(ev.modifiers.shift && ev.text == Key.Insert) { return accept; }
                         return reject;
@@ -1571,6 +1624,14 @@ export component ChatPane inherits Rectangle {
     in property <bool> s-limit-off;
     in property <string> s-list;
     in property <bool> s-unsupported;
+    // The slash menu (2.11): open, its items, the selected one.
+    in property <bool> slash-open;
+    in property <[SlashItem]> slash-items;
+    in property <int> slash-sel;
+    // The box losing focus closes it a moment later (a press on an item lands first).
+    property <bool> box-focus: ib.focused;
+    changed box-focus => { if !self.box-focus && root.slash-open { blur-close.running = true; } }
+    blur-close := Timer { interval: Theme.motion-fast; running: false; triggered => { self.running = false; if !ib.focused { Composer.slash-close(root.key); } } }
     callback send(string);
     callback stop();
     callback respond(string, string, bool);
@@ -1655,9 +1716,13 @@ export component ChatPane inherits Rectangle {
                     clicked => { Composer.take-back(root.key); }
                 }
                 // The box; wide, the buttons beside it on its bottom line.
-                HorizontalLayout {
+                boxrow := HorizontalLayout {
                     spacing: Theme.sp-8;
                     ib := InputBox {
+                        slash-open: root.slash-open;
+                        slash-move(by) => { Composer.slash-move(root.key, by); }
+                        slash-choose => { Composer.slash-choose(root.key, -1); }
+                        slash-close => { Composer.slash-close(root.key); }
                         horizontal-stretch: 1;
                         fs: root.fs;
                         draft <=> root.draft;
@@ -1834,6 +1899,30 @@ export component ChatPane inherits Rectangle {
                             if root.cost != "" && !meta.cost-fit: Text { text: root.cost; font-size: meta.size; color: Theme.text-muted; }
                         }
                     }
+                }
+            }
+        }
+    }
+    // The slash menu (2.11): over the box's row (wide: box, attach, Send;
+    // narrow: the box), sp-4 above it, as wide; up to slash-max-h, scrolling.
+    if root.slash-open: Rectangle {
+        property <length> row-x: boxrow.absolute-position.x - root.absolute-position.x;
+        property <length> row-y: boxrow.absolute-position.y - root.absolute-position.y;
+        x: self.row-x; width: boxrow.width;
+        height: min(sl.preferred-height + Theme.sp-2, Theme.slash-max-h);
+        y: self.row-y - Theme.sp-4 - self.height;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.shadow-menu; }
+        Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border; }
+        TouchArea { }
+        sf := RevealFlickable {
+            x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+            content-height: sl.preferred-height;
+            sl := VerticalLayout {
+                width: sf.width;
+                for it[i] in root.slash-items: SlashRow {
+                    fs: root.fs; it: it; on: i == root.slash-sel;
+                    reveal(top, bottom) => { sf.reveal(top, bottom); }
+                    chosen => { Composer.slash-choose(root.key, i); }
                 }
             }
         }

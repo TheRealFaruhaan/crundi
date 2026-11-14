@@ -418,6 +418,10 @@ if (pane(await props(), chatA).secrets) {
   const aMinusLeft = resetX(a) - 12.5 - 6 - 25.3;
   await mouse('click', aMinusLeft - 6 - 30, menuY(a));
   await until('the lock closes the menu', (q) => !pane(q, chatA).menu) && check('the lock closes the menu', true);
+  // …and opens the secrets dialog (2.12): closed again before going on.
+  await until('the secrets dialog opens', (q) => q.secretsDialog, 5000) && check('the lock opens the secrets dialog', true);
+  await key('Escape');
+  await until('the dialog closed', (q) => q.secretsDialog === null, 5000);
 }
 // A press outside closes it and still acts: here it opens another pane's rename.
 await mouse('click', moreX(a), nHeadY(a));
@@ -1678,6 +1682,89 @@ p = await until('an older server', (q) => pane(q, liveS)?.sched?.unsupported, 10
 if (p) check('an older server: "not supported by this server"', pane(p, liveS).sched.list === 'Scheduled messages are not supported by this server.');
 await ui('sched-close');
 for (const id of [liveS, liveS2]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+
+// ─── 2.11 Slash menu ───
+const liveSl = await make('demo', 'Slash', true);
+p = await until('the slash chat has commands', (q) => pane(q, liveSl), 30000);
+await focusChat(liveSl);
+await clearBox();
+await keys('/');
+p = await until('the slash menu opens', (q) => pane(q, liveSl)?.slash?.items?.length > 0, 20000);
+if (p) {
+  const sl = pane(p, liveSl).slash;
+  check('"/" opens the menu: the CLI\'s commands, the first selected, /btw last when the CLI has none', sl.sel === 0 && sl.items.length <= 40 && (sl.items.includes('/btw') || sl.items.length === 40), sl.items.slice(-3));
+}
+await snap('2.11-open');
+const first = (await qp(liveSl)).slash?.items?.[0] || '/x';
+const pre = first.slice(0, 3);
+await keys(pre.slice(1));
+p = await until('filtered', (q) => (pane(q, liveSl)?.slash?.items || []).length > 0 && pane(q, liveSl).slash.items.every((n) => n.toLowerCase().startsWith(pre.toLowerCase())), 5000);
+if (p) check('typing filters by prefix (case-insensitive)', true);
+const userBefore = (await userTexts(liveSl)).length;
+const slItems = (await qp(liveSl)).slash.items;
+await keys('Down');
+await keys('Return');
+const want = slItems.length > 1 ? slItems[1] + ' ' : slItems[0] + ' ';
+p = await until('a choice fills the box', (q) => pane(q, liveSl)?.draft === want && !pane(q, liveSl).slash, 5000);
+if (p) {
+  await sleep(1500);
+  check('↓ then Enter: the box reads "/name " and nothing is sent; the list closes', (await userTexts(liveSl)).length === userBefore, { draft: pane(p, liveSl).draft });
+  await sleep(500);
+  check('the draft after a choice is the chosen text (saved)', saved().drafts?.[SERVER]?.['chat:' + liveSl]?.v === want, saved().drafts?.[SERVER]?.['chat:' + liveSl]);
+}
+await clearBox();
+await keys('/zzzzqq');
+await sleep(400);
+check('no match: no list (no empty state)', !(await qp(liveSl)).slash);
+await clearBox();
+await keys('/');
+await until('open again', (q) => pane(q, liveSl)?.slash, 5000);
+await key('Escape');
+await sleep(300);
+{ const c = await qp(liveSl); check('Esc closes the list and keeps the text', !c.slash && c.draft === '/', { slash: c.slash, draft: c.draft }); }
+await keys('b');
+p = await until('/b', (q) => pane(q, liveSl)?.slash, 5000);
+if (p) check('the next edit opens it again; /btw is listed for /b', pane(p, liveSl).slash.items.includes('/btw'), pane(p, liveSl).slash.items);
+await clearBox();
+await http('POST', `/api/ui-sessions/${liveSl}/close`, {}, token);
+
+// ─── 2.12 Chat secrets dialog ───
+const liveSec = await make('demo', 'Secrets', true);
+p = await until('the secrets chat has a pane', (q) => pane(q, liveSec), 30000);
+const added = await http('POST', '/api/secrets', { action: 'add', name: 'E2E_TOKEN', description: 'e2e', value: 'v', pin: 'open-sesame' }, token);
+check('a secret is seeded on the server', added.body?.ok === true, added.body);
+const grantsOf = async () => (await http('GET', `/api/secrets/chat?sessionId=${liveSec}`, null, token)).body?.grants || [];
+await ui('sec-open', (await qp(liveSec)).id);
+p = await until('the dialog loads', (q) => q.secretsDialog && !q.secretsDialog.loading, 10000);
+if (p) check('the lock opens the dialog: E2E_TOKEN listed, nothing pre-authorised, 1 hour', p.secretsDialog.secrets.includes('E2E_TOKEN') && p.secretsDialog.grants.length === 0 && p.secretsDialog.duration === '1h', p.secretsDialog);
+check('the dialog is modal (the pointer is its scrim\'s)', (await props()).pointerModal === true);
+await ui('sec-grant');
+await until('nothing ticked', (q) => q.secretsDialog?.err === 'Choose at least one secret.', 5000) && check('nothing ticked: "Choose at least one secret."', true);
+await ui('sec-tick', 'E2E_TOKEN');
+await ui('sec-grant');
+await until('no passphrase', (q) => q.secretsDialog?.err === 'Enter the PIN or passphrase of each secret chosen.', 5000) && check('a ticked secret with no passphrase: its field red, the error line', (await props()).secretsDialog.bad !== '');
+await keys('wrong-pass');
+await keys('Return');
+p = await until('a wrong passphrase', (q) => q.secretsDialog?.err === 'E2E_TOKEN: Incorrect passphrase', 10000);
+if (p) check('a wrong passphrase: "E2E_TOKEN: Incorrect passphrase", nothing granted', (await grantsOf()).length === 0);
+await snap('2.12-wrong');
+await keys('open-sesame');
+await keys('Return');
+p = await until('granted', (q) => q.secretsDialog?.grants?.length === 1 && pane(q, liveSec)?.secretsN === 1, 10000);
+if (p) {
+  const g = await grantsOf(), d = p.secretsDialog;
+  check('granted: on the server for about an hour', g.length === 1 && g[0].name === 'E2E_TOKEN' && Math.abs(Date.parse(g[0].expiresAt) - Date.now() - 3600000) < 120000, g);
+  check('the lock counts it, with its tooltip', pane(p, liveSec).secretsTip === '1 secret pre-authorised for this chat');
+  check('the dialog lists it: "until HH:MM (1 h left)" (or 59 min, as the web\'s describe)', /^until \d\d:\d\d \(((59|60) min|1 h) left\)$/.test(d.grants[0].when), d.grants[0]);
+  check('the toast, and the ticks cleared', p.toast === 'Pre-authorised for this chat' && d.chosen.length === 0, { toast: p.toast, chosen: d.chosen });
+}
+await snap('2.12-granted');
+await ui('sec-revoke', 'E2E_TOKEN');
+p = await until('revoked', (q) => q.secretsDialog?.grants?.length === 0 && pane(q, liveSec)?.secretsN === 0, 10000);
+if (p) check('Revoke: gone from the server and the lock; the toast', (await grantsOf()).length === 0 && p.toast === 'Revoked E2E_TOKEN', p.toast);
+await key('Escape');
+await until('Esc closes the dialog', (q) => q.secretsDialog === null && q.pointerModal === false, 5000) && check('Esc closes the dialog', true);
+await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
 
 d.close();
 app.kill();

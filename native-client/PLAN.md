@@ -334,6 +334,17 @@ Phase 1 left these, each with its workaround in place:
   The client bundles DejaVu Sans (four faces, ui/fonts/, with its licence)
   and uses it as the UI font on Linux (`Theme.ui-font`); Windows and macOS
   keep the system's UI font, which has its italics.
+- **The slash menu** (2.11), deliberate differences: the selected item is
+  kept in view as ↑ ↓ move it (the web's scrolls out of sight); a choice
+  saves the draft; command names never wrap (the web's wrap at a hyphen).
+- **The chat secrets dialog** (2.12):
+  - the "Update this secret's lock" prompt after a grant (old 6-digit PIN
+    secrets, `upgradable`) is not built: it belongs with the Secrets screen,
+    and a new server cannot make a PIN secret;
+  - Tab and Shift+Tab move between the ticked secrets' lock fields only
+    (the web's Tab also reaches the buttons, and can leave the dialog);
+  - the checkbox is the client's own (an accent box with a check), not the
+    system's.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):
