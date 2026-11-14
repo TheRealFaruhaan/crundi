@@ -1,0 +1,227 @@
+// The resume picker (2.22, specs/resume-picker.md): "Open UI Mode", a new
+// session or an earlier conversation of this project, before a launcher
+// starts a chat. A heavy conversation offers compacting first.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { SoftShadow, RevealFlickable } from "widgets.slint";
+
+export struct ResumeRow { title: string, meta: string, heavy: bool, in-use: bool }
+
+/// What the open picker shows, for the test driver (src/testctl.rs): the
+/// keyboard's place, how far the list has scrolled, the list's visible and
+/// whole heights, and the focused row's bottom in the list.
+export global ResumeProbe {
+    in-out property <int> focus;
+    in-out property <length> scroll;
+    in-out property <length> view-h;
+    in-out property <length> content-h;
+    in-out property <length> focus-bottom;
+}
+
+/// A row (.cr-item): full width, bg-primary on a border, radius 6; hover an
+/// accent border on accent-dim. `lead` is the New session look (an accent
+/// border, the title accent-hover); `quiet` has only the meta line (Back).
+component CrItem inherits Rectangle {
+    in property <string> title;
+    in property <string> meta;
+    in property <bool> heavy;
+    in property <bool> in-use;
+    in property <bool> lead;
+    in property <bool> quiet;
+    in property <bool> focused;
+    callback clicked();
+    callback reveal(length, length);
+    changed focused => { if self.focused { root.reveal(self.y, self.y + self.height); } }
+    height: lay.preferred-height;
+    // The focus ring, around the row.
+    if root.focused: Rectangle {
+        x: -Theme.sp-2; y: -Theme.sp-2; width: parent.width + Theme.sp-4; height: parent.height + Theme.sp-4;
+        border-radius: Theme.r-control + Theme.sp-2; border-width: Theme.sp-2; border-color: Theme.accent-ring;
+    }
+    Rectangle {
+        border-radius: Theme.r-control; border-width: 1px;
+        border-color: ta.has-hover || root.lead || root.focused ? Theme.accent : Theme.border;
+        background: ta.has-hover ? Theme.accent-dim : Theme.bg-primary;
+    }
+    lay := VerticalLayout {
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        spacing: Theme.sp-2;
+        if !root.quiet: Text {
+            text: root.title; font-size: Theme.text-14; font-weight: Theme.w-semibold; wrap: word-wrap;
+            color: root.lead ? Theme.accent-hover : Theme.text-primary;
+        }
+        if root.meta != "": HorizontalLayout {
+            Text { text: root.meta; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; overflow: elide; }
+            if root.heavy: Text { text: " · "; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; }
+            if root.heavy: Text { text: "heavy"; font-family: Theme.mono; font-size: Theme.text-11; font-weight: Theme.w-bold; color: Theme.yellow; }
+            if root.in-use: Text { text: " · "; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; }
+            if root.in-use: Text { text: "open elsewhere — opens a copy"; font-family: Theme.mono; font-size: Theme.text-11; font-weight: Theme.w-bold; color: Theme.accent; overflow: elide; }
+            Rectangle { horizontal-stretch: 1; }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The picker. The list is read once per opening (src/app.rs); New session
+/// has the keyboard on open. Tab / Shift+Tab walk New session, the rows and
+/// Cancel; ↑/↓ move between rows; Enter or Space picks; Esc cancels (the web
+/// has no Esc here: a named difference). A click on the scrim does nothing,
+/// as the web's.
+export component ResumePicker inherits Rectangle {
+    in property <string> heading;
+    // The earlier conversations (none while the heavy choice shows).
+    in property <[ResumeRow]> rows;
+    // The list could not load: its message ("" when it did).
+    in property <string> error;
+    // A heavy conversation picked: its title, the intro after it, and open elsewhere.
+    in property <bool> heavy;
+    in property <string> heavy-title;
+    in property <string> heavy-intro;
+    in property <bool> heavy-in-use;
+    callback pick-new();
+    callback pick(int);
+    callback compact();
+    callback full();
+    callback back();
+    callback cancel();
+    // The keyboard's place: 0 the first row (New session, or Compact first),
+    // then the rows; `count` is Cancel.
+    property <int> count: root.heavy ? 3 : root.rows.length + 1;
+    property <int> at: 0;
+    changed at => { ResumeProbe.focus = root.at; }
+    changed heavy => { root.at = 0; fl.content-y = 0; }
+    function act(i: int) {
+        if i >= root.count { root.cancel(); }
+        else if root.heavy { if i == 0 { root.compact(); } else if i == 1 { root.full(); } else { root.back(); } }
+        else if i == 0 { root.pick-new(); }
+        else { root.pick(i - 1); }
+    }
+    function show(top: length, bottom: length) {
+        ResumeProbe.focus-bottom = bottom;
+        fl.reveal(top - Theme.sp-2, bottom + Theme.sp-2);
+    }
+    property <length> scrolled: -fl.content-y;
+    changed scrolled => { ResumeProbe.scroll = self.scrolled; }
+    init => { ResumeProbe.focus = 0; ResumeProbe.scroll = 0; keys.focus(); }
+    background: Theme.scrim;
+    keys := FocusScope {
+        width: root.width; height: root.height;
+        focus-on-click: false;
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.cancel(); return accept; }
+            if ev.text == Key.Tab { root.at = root.at >= root.count ? 0 : root.at + 1; return accept; }
+            if ev.text == Key.Backtab { root.at = root.at <= 0 ? root.count : root.at - 1; return accept; }
+            if ev.text == Key.DownArrow { if root.at < root.count - 1 { root.at += 1; } return accept; }
+            if ev.text == Key.UpArrow { if root.at > 0 && root.at < root.count { root.at -= 1; } return accept; }
+            if ev.text == Key.Return || ev.text == " " { root.act(root.at); return accept; }
+            accept
+        }
+        // The scrim takes the press, and does nothing with it.
+        TouchArea { }
+        dialog := Rectangle {
+            property <length> room-h: min(Theme.dialog-max-h, root.height - Theme.sp-32);
+            // What the dialog holds besides the list.
+            property <length> fixed: 2 * Theme.sp-24 + head.preferred-height + Theme.sp-16 + Theme.sp-16 + Theme.control;
+            property <length> list-h: min(body.preferred-height, max(Theme.control, self.room-h - self.fixed));
+            width: min(Theme.dialog-w-xl, root.width - Theme.sp-32);
+            height: self.fixed + self.list-h;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
+            Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
+            TouchArea { }
+            VerticalLayout {
+                padding: Theme.sp-24;
+                spacing: 0;
+                head := Text { text: root.heading; font-size: Theme.text-16; font-weight: Theme.w-bold; color: Theme.text-primary; }
+                Rectangle { height: Theme.sp-16; }
+                // The list (or the heavy choice): it scrolls, the heading and
+                // Cancel stay. The view reaches sp-2 past each side so the
+                // focus ring shows.
+                Rectangle {
+                    height: dialog.list-h;
+                    fl := RevealFlickable {
+                        x: -Theme.sp-2; y: 0; width: parent.width + Theme.sp-4; height: parent.height;
+                        content-height: body.preferred-height;
+                        property <length> vh: self.height;
+                        changed vh => { ResumeProbe.view-h = self.vh; }
+                        property <length> ch: self.content-height;
+                        changed ch => { ResumeProbe.content-h = self.ch; }
+                        init => { ResumeProbe.view-h = self.height; ResumeProbe.content-h = self.content-height; }
+                        body := VerticalLayout {
+                            padding-left: Theme.sp-2; padding-right: Theme.sp-2; padding-top: Theme.sp-2; padding-bottom: Theme.sp-2;
+                            spacing: Theme.sp-6;
+                            if !root.heavy: CrItem {
+                                title: "New session"; meta: "Start a fresh conversation"; lead: true;
+                                focused: root.at == 0 && keys.has-focus;
+                                clicked => { root.pick-new(); }
+                                reveal(t, b) => { root.show(t, b); }
+                            }
+                            if !root.heavy && root.error != "": Rectangle {
+                                height: et.preferred-height + 2 * Theme.sp-10;
+                                et := Text {
+                                    x: Theme.sp-2; width: parent.width - Theme.sp-4;
+                                    text: "Could not load earlier conversations: " + root.error;
+                                    font-size: Theme.text-13; color: Theme.text-muted; wrap: word-wrap;
+                                }
+                            }
+                            // (Empty while the heavy choice shows: src/app.rs.)
+                            for r[i] in root.rows: CrItem {
+                                title: r.title; meta: r.meta; heavy: r.heavy; in-use: r.in-use;
+                                focused: root.at == i + 1 && keys.has-focus;
+                                clicked => { root.pick(i); }
+                                reveal(t, b) => { root.show(t, b); }
+                            }
+                            if root.heavy: Rectangle {
+                                height: intro.preferred-height;
+                                intro := VerticalLayout {
+                                    padding-bottom: Theme.sp-2;
+                                    Text { text: root.heavy-title; font-size: Theme.text-13; font-weight: Theme.w-bold; color: Theme.text-secondary; wrap: word-wrap; line-height-factor: Theme.lh-chat; }
+                                    Text { text: root.heavy-intro; font-size: Theme.text-13; color: Theme.text-secondary; wrap: word-wrap; line-height-factor: Theme.lh-chat; }
+                                    if root.heavy-in-use: Text { text: "It is open elsewhere, so this opens a copy."; font-size: Theme.text-13; font-weight: Theme.w-bold; color: Theme.accent; wrap: word-wrap; line-height-factor: Theme.lh-chat; }
+                                }
+                            }
+                            if root.heavy: CrItem {
+                                title: "Compact first (recommended)"; lead: true;
+                                focused: root.at == 0 && keys.has-focus;
+                                clicked => { root.compact(); }
+                                reveal(t, b) => { root.show(t, b); }
+                            }
+                            if root.heavy: CrItem {
+                                title: "Load the full conversation";
+                                focused: root.at == 1 && keys.has-focus;
+                                clicked => { root.full(); }
+                                reveal(t, b) => { root.show(t, b); }
+                            }
+                            if root.heavy: CrItem {
+                                meta: "← Back to the list"; quiet: true;
+                                focused: root.at == 2 && keys.has-focus;
+                                clicked => { root.back(); }
+                                reveal(t, b) => { root.show(t, b); }
+                            }
+                        }
+                    }
+                }
+                Rectangle { height: Theme.sp-16; }
+                HorizontalLayout {
+                    alignment: end;
+                    cb := Rectangle {
+                        width: cbt.preferred-width + 2 * Theme.sp-16; height: Theme.control;
+                        if root.at == root.count && keys.has-focus: Rectangle {
+                            x: -Theme.sp-2; y: -Theme.sp-2; width: parent.width + Theme.sp-4; height: parent.height + Theme.sp-4;
+                            border-radius: Theme.r-control + Theme.sp-2; border-width: Theme.sp-2; border-color: Theme.accent-ring;
+                        }
+                        Rectangle {
+                            border-radius: Theme.r-control; border-width: 1px;
+                            border-color: root.at == root.count && keys.has-focus ? Theme.accent : Theme.border;
+                            background: ca.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                        }
+                        cbt := Text { text: "Cancel"; font-size: Theme.text-14; color: Theme.text-primary; }
+                        ca := TouchArea { mouse-cursor: pointer; clicked => { root.cancel(); } }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -157,19 +157,19 @@ session" is only the markup's placeholder, never seen.)
 
 ## Checklist
 
-- [ ] UI Mode and UI Mode — Skip Permissions open the picker; Empty Shell does not.
-- [ ] Loading: no dialog; repeated clicks ignored.
-- [ ] Empty list: no dialog, a new session starts, the button busy.
-- [ ] Heading "Open UI Mode" / "Open UI Mode — Skip Permissions".
-- [ ] New session row first, accent; then rows newest first.
-- [ ] Row: title (wraps), mono meta "id8 · age · N.Nk tokens" (or KB), **heavy**, **open elsewhere — opens a copy**.
-- [ ] Hover (accent border, accent-dim) and focus ring on rows.
-- [ ] Long list scrolls inside the dialog; heading and Cancel fixed.
-- [ ] Error: New session + "Could not load earlier conversations: <message>".
-- [ ] Heavy (≥100k, UI Mode): intro, Compact first (recommended), Load the full conversation, ← Back to the list; Back restores the list.
-- [ ] Create bodies exactly as listed (new / resume / compact, skip).
-- [ ] The chat lands in the launcher's pane, focused; launch failure → error toast, launcher usable.
-- [ ] Cancel closes; Esc closes (native); backdrop click does nothing.
-- [ ] Keyboard: Tab through rows, Enter/Space picks; native ↑/↓ and initial focus on New session.
-- [ ] 404 from `resumable` → new session (no breakage).
-- [ ] Tokens only (`dialog-w-xl` added to theme.slint as a named size).
+- [x] UI Mode and UI Mode — Skip Permissions open the picker; Empty Shell does not.
+- [x] Loading: no dialog; repeated clicks ignored.
+- [x] Empty list: no dialog, a new session starts, the button busy.
+- [x] Heading "Open UI Mode" / "Open UI Mode — Skip Permissions".
+- [x] New session row first, accent; then rows newest first.
+- [x] Row: title (wraps), mono meta "id8 · age · N.Nk tokens" (or KB), **heavy**, **open elsewhere — opens a copy**.
+- [x] Hover (accent border, accent-dim) and focus ring on rows.
+- [x] Long list scrolls inside the dialog; heading and Cancel fixed.
+- [x] Error: New session + "Could not load earlier conversations: <message>".
+- [x] Heavy (≥100k, UI Mode): intro, Compact first (recommended), Load the full conversation, ← Back to the list; Back restores the list.
+- [x] Create bodies exactly as listed (new / resume / compact, skip).
+- [x] The chat lands in the launcher's pane, focused; launch failure → error toast, launcher usable.
+- [x] Cancel closes; Esc closes (native); backdrop click does nothing.
+- [x] Keyboard: Tab through rows, Enter/Space picks; native ↑/↓ and initial focus on New session.
+- [x] 404 from `resumable` → new session (no breakage).
+- [x] Tokens only (`dialog-w-xl` added to theme.slint as a named size).

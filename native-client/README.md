@@ -133,7 +133,8 @@ before the next one (`test/phase2.mjs` the same way).
 ## Phase 2: chats
 
 Everything a chat does in the PC client, screen by screen: PLAN.md lists
-them (2.1–2.21, with 2.16f live frames and 2.20 cards still to come) and
+them (2.1–2.23, with 2.16f live frames, 2.20 cards and 2.24 voice still to
+come) and
 each has a spec in `specs/` with the web's screenshots and measurements.
 What phase 2 has added so far, item by item:
 
@@ -325,6 +326,21 @@ What phase 2 has added so far, item by item:
   any state asks on the side (POST …/aside): a card in the log where it was
   asked, "Asking…" then the answer or the error; never queued, nothing
   added to the conversation; a server without it gets the text as typed.
+- **2.22 The resume picker** (specs/resume-picker.md, `ui/resume.slint`,
+  `src/resume.rs`): UI Mode (and Skip Permissions) in a launcher first
+  fetches the project's earlier conversations; none (or a server without
+  the list): a new session at once; else "Open UI Mode" with New session
+  and the rows (title, id · age · tokens, heavy, open elsewhere). A heavy
+  one offers Compact first / Load the full conversation / Back. The
+  launcher spins its pressed button while the chat starts; a refused start
+  is a toast. Keyboard: New session first, ↑/↓, Tab, Enter, Esc.
+- **2.23 Parked panes** (specs/parked-panes.md, `ui/parked.slint`): a chat
+  the server parked (by hand, idle, a restart) keeps its leaf: its stored
+  conversation darkened behind a card (Resume, Peek, why and when, what
+  Resume does, the heavy warning with Compact and resume and New session;
+  tighter when the pane is short). Peek reads it (Parked view or Esc goes
+  back); anything that would change it resumes it first. Resumed, it swaps
+  to the live chat in place; × discards it.
 
 ### Reusable pieces
 

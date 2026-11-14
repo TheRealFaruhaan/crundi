@@ -34,6 +34,14 @@
 //       not) and the folded rail's initials and avatar rings; titles set by
 //       Claude (rename_chat, the long form in a wide header) and renames in
 //       another client arrive live.
+//   2.22 the resume picker, on seeded earlier conversations: the list, the
+//       keyboard and its scroll, Esc, the heavy choice and Back, compact and
+//       Skip Permissions resumes (their create calls, the launcher's leaf),
+//       loading, the list failing, an empty list, a refused create, a 404.
+//   2.23 parked panes: the card in the same leaf, its stored conversation,
+//       Peek / Esc / Parked view, a choice running and refused, the heavy
+//       warning, the short and very short forms, a send from Peek resuming
+//       in place, Compact and resume, × discarding.
 //
 // Needs a FRESH test server with no sign-in set up (this sets a password on
 // it), started through tools/test-server.sh <port> --bare, never by hand; it
@@ -699,6 +707,8 @@ p = await until('the chip: a launcher in the clicked pane', (q) => q.panes.find(
 if (p) check('the Terminal chip starts a launcher in that pane', true);
 const sessionsBefore = (await http('GET', '/api/ui-sessions', null, token)).body?.sessions?.map((s) => s.id) || [];
 await ui('launch-chat', empty.id);
+// (Earlier conversations in this project: the resume picker first, 2.22.)
+if (await until('the launch goes on or asks which conversation', (q) => q.resume || q.panes.find((y) => y.id === empty.id)?.kind === 'chat', 10000).then((q) => q?.resume)) await ui('resume-new');
 let started;
 p = await until('UI Mode starts a chat in the launcher\'s leaf', async (q) => {
   const x = q.panes.find((y) => y.id === empty.id);
@@ -2500,6 +2510,210 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   await ev({ type: 'goal', goal: null });
   check('goal null: the bar goes', (await gl()).on === false);
   await http('POST', `/api/ui-sessions/${sg}/close`, {}, token);
+}
+
+
+// ─── 2.22 The resume picker; 2.23 Parked panes ───
+// A project of its own, with earlier conversations seeded where Claude Code
+// keeps them (~/.claude/projects/<the path, encoded>/<session>.jsonl):
+// a heavy one (138.2k tokens), a light one, and twenty more to scroll.
+{
+  const { homedir } = await import('node:os');
+  const { rmSync, utimesSync } = await import('node:fs');
+  const rpath = join(tmpdir(), 'crundi-native-resume-' + Date.now());
+  const rp = await http('POST', '/api/projects', { alias: 'resume', name: 'Resume', path: rpath, create: true }, token);
+  check('a project for the resume picker', rp.status < 300, rp.body);
+  const tdir = join(homedir(), '.claude', 'projects', rpath.replace(/[^a-zA-Z0-9]/g, '-'));
+  mkdirSync(tdir, { recursive: true });
+  const H = 'bbbb2222-3333-4444-8555-666677778888';
+  const L = 'aaaa1111-2222-4333-8444-555566667777';
+  const transcript = (sid, title, tokens) => [
+    // (The token estimate skips the first line: it may be cut.)
+    JSON.stringify({ type: 'summary', summary: '' }),
+    JSON.stringify({ type: 'ai-title', aiTitle: title, sessionId: sid }),
+    JSON.stringify({ type: 'user', sessionId: sid, uuid: sid.slice(0, 9) + 'u001', parentUuid: null, timestamp: new Date().toISOString(), cwd: rpath, message: { role: 'user', content: title } }),
+    JSON.stringify({ type: 'assistant', sessionId: sid, uuid: sid.slice(0, 9) + 'a001', parentUuid: sid.slice(0, 9) + 'u001', timestamp: new Date().toISOString(), cwd: rpath, message: { id: 'msg_' + sid.slice(0, 8), role: 'assistant', model: 'claude-test', content: [{ type: 'text', text: 'Done: ' + title }], usage: { input_tokens: 100, cache_read_input_tokens: tokens - 100, cache_creation_input_tokens: 0, output_tokens: 10 } } }),
+    '',
+  ].join('\n');
+  const nowS = Date.now() / 1000;
+  const seed = (sid, title, tokens, ageS) => { const f = join(tdir, sid + '.jsonl'); writeFileSync(f, transcript(sid, title, tokens)); utimesSync(f, nowS - ageS, nowS - ageS); };
+  seed(H, 'Refactor the billing exports into one module', 138200, 300);
+  seed(L, 'A light conversation about the docs', 38100, 7300);
+  for (let i = 0; i < 20; i++) seed(`cccc${String(i).padStart(4, '0')}-0000-4000-8000-000000000000`, `Earlier conversation number ${i + 1}, about a long list of things to scroll through`, 20000 + i * 100, 86400 * 2 + i * 60);
+  try {
+    await ui('select-project', 'resume');
+    await ui('add-pane', 'terminal');
+    let q0 = await until('a launcher in the project', (q) => q.panes.some((x) => x.kind === 'launcher'));
+    let launcher = q0?.panes.find((x) => x.kind === 'launcher');
+    const lpane = async () => (await props()).panes.find((x) => x.id === launcher.id);
+
+    // The list: New session first, then the rows, newest first.
+    await ui('launch-chat', launcher.id);
+    p = await until('UI Mode opens the picker with the earlier conversations', (q) => q.resume?.rows?.length === 22);
+    let r = p?.resume;
+    check('heading "Open UI Mode"; New session has the keyboard; the rows newest first', r && r.heading === 'Open UI Mode' && r.focus === 0 && r.error === '' && r.rows[0].title === 'Refactor the billing exports into one module' && r.rows[1].title === 'A light conversation about the docs', r);
+    check('a row\'s meta: id · age · tokens; heavy marked', r && r.rows[0].meta === 'bbbb2222 · 5m ago · 138.2k tokens' && r.rows[0].heavy && !r.rows[1].heavy && r.rows[1].meta === 'aaaa1111 · 2h ago · 38.1k tokens' && r.rows[2].meta.endsWith('· 2d ago · 20.0k tokens'), r?.rows?.slice(0, 3));
+    await snap('2.22-list');
+    // The keyboard: ↓ walks the rows and the list follows; Tab reaches Cancel and wraps.
+    for (let i = 0; i < 22; i++) await key('Down');
+    r = (await props()).resume;
+    check('↓ to the last row: it has the keyboard, the list scrolled to show it (heading and Cancel stay)', r.focus === 22 && r.contentH > r.viewH && r.scroll > 0 && r.focusBottom - r.scroll <= r.viewH + 1, r && { focus: r.focus, scroll: r.scroll, viewH: r.viewH, contentH: r.contentH, fb: r.focusBottom });
+    await snap('2.22-list-end');
+    await key('Down');
+    check('↓ stops at the last row', (await props()).resume.focus === 22);
+    await key('Tab');
+    check('Tab after the last row: Cancel', (await props()).resume.focus === 23);
+    await key('Tab');
+    check('…then round to New session', (await props()).resume.focus === 0);
+    await key('Escape');
+    p = await until('Esc cancels the picker', (q) => !q.resume);
+    check('…nothing launched: the launcher as it was', p && (await lpane())?.kind === 'launcher' && (await lpane()).launchBusy === 0);
+
+    // A heavy conversation: compact first, or load it all, or back.
+    await ui('launch-chat', launcher.id);
+    await until('the picker again', (q) => q.resume?.rows?.length === 22);
+    await ui('resume-pick', 0);
+    p = await until('a heavy conversation offers compacting first', (q) => q.resume?.heavy);
+    r = p?.resume;
+    check('the heavy choice: the title, its cost, and the three choices (the list gone)', r && r.heavyTitle === 'Refactor the billing exports into one module' && r.heavyIntro === '138.2k tokens — continuing loads all of it into every turn. Compacting loads it once, then summarises it so later turns stay small.' && r.rows.length === 0 && r.focus === 0, r);
+    await snap('2.22-heavy');
+    await ui('resume-back');
+    p = await until('← Back to the list: the list again', (q) => q.resume && !q.resume.heavy && q.resume.rows.length === 22);
+    if (p) check('← Back to the list: the list again', true);
+    await ui('resume-pick', 0);
+    await until('the heavy choice again', (q) => q.resume?.heavy);
+    await ui('resume-compact');
+    p = await until('Compact first: the chat lands in the launcher\'s leaf', async (q) => !q.resume && (await lpane())?.kind === 'chat');
+    check('the create call: compact, the conversation picked', JSON.stringify(p?.lastCreate) === JSON.stringify({ project: 'resume', sessionMode: 'compact', resumeId: H, title: 'Chat (compacted)' }), p?.lastCreate);
+    const heavyChat = p && (await lpane()).key.slice(5);
+    check('…it has the focus', p && (await lpane()).focused);
+
+    // Skip Permissions; a light conversation resumes at once.
+    await ui('add-pane', 'terminal');
+    q0 = await until('another launcher', (q) => q.panes.some((x) => x.kind === 'launcher'));
+    launcher = q0?.panes.find((x) => x.kind === 'launcher');
+    await ui('launch-chat', launcher.id, 'skip');
+    p = await until('Skip Permissions opens it too', (q) => q.resume?.rows?.length === 22);
+    check('heading "Open UI Mode — Skip Permissions"', p?.resume.heading === 'Open UI Mode — Skip Permissions', p?.resume.heading);
+    await ui('resume-pick', 1);
+    p = await until('a light conversation resumes in the launcher\'s leaf', async (q) => !q.resume && (await lpane())?.kind === 'chat');
+    check('the create call: resume, Skip Permissions', JSON.stringify(p?.lastCreate) === JSON.stringify({ project: 'resume', skipPermissions: true, title: 'Chat (skip perms)', sessionMode: 'resume', resumeId: L }), p?.lastCreate);
+    const lightChat = p && (await lpane()).key.slice(5);
+    check('…a chat of this project on the server', lightChat && (await serverChat(lightChat))?.project === 'resume', lightChat);
+
+    // Loading shows nothing and a second click is ignored; the list failing:
+    // New session and the error.
+    await ui('add-pane', 'terminal');
+    q0 = await until('a third launcher', (q) => q.panes.some((x) => x.kind === 'launcher'));
+    launcher = q0?.panes.find((x) => x.kind === 'launcher');
+    await ui('stub', 'resumable', JSON.stringify({ delayMs: 1500, net: 'Failed to fetch' }));
+    await ui('launch-chat', launcher.id);
+    await sleep(300);
+    p = await props();
+    check('loading: no dialog, the launcher as it was', !p.resume && (await lpane()).launchBusy === 0);
+    await ui('launch-chat', launcher.id);
+    p = await until('the list failed: the picker with its error', (q) => q.resume?.error);
+    check('…New session and "Could not load earlier conversations" (no rows)', p && p.resume.rows.length === 0 && /Failed to fetch/.test(p.resume.error), p?.resume);
+    await snap('2.22-error');
+    await ui('resume-cancel');
+    await sleep(500);
+    check('Cancel closes it; the click made while loading did nothing', !(await props()).resume && (await lpane()).kind === 'launcher');
+
+    // No earlier conversation: no dialog, a new session at once (busy); the
+    // create call refused: a toast, the launcher usable again.
+    await ui('stub', 'resumable', JSON.stringify({ ok: true, sessions: [] }));
+    await ui('stub', 'create', JSON.stringify({ delayMs: 1500, ok: false, error: 'Project "resume" no longer exists' }));
+    await ui('launch-chat', launcher.id);
+    p = await until('an empty list: no dialog, UI Mode spinning', async (q) => (await lpane())?.launchBusy === 1, 3000);
+    check('…a new session asked for', p && !p.resume && JSON.stringify(p.lastCreate) === JSON.stringify({ project: 'resume', sessionMode: 'new', title: 'Chat (new)' }), p?.lastCreate);
+    await snap('2.22-launching');
+    p = await until('the create call refused: a toast, the launcher usable', async (q) => /no longer exists/.test(q.toast || '') && (await lpane())?.launchBusy === 0);
+    if (p) check('the create call refused: a toast, the launcher usable', true);
+    // An old server without the list (404): a new session.
+    await ui('stub', 'resumable', JSON.stringify({ status: 404, error: 'Not found' }));
+    await ui('launch-chat', launcher.id);
+    p = await until('no list on this server (404): a new session at once', async (q) => (await lpane())?.kind === 'chat');
+    check('…its create call a new session', p && p.lastCreate.sessionMode === 'new', p?.lastCreate);
+    const newChat = p && (await lpane()).key.slice(5);
+
+    // ─── 2.23 Parked panes ───
+    const leafOf = (q, id) => pane(q, id)?.id;
+    const lLeaf = leafOf(await props(), lightChat);
+    let pk = await http('POST', `/api/panes/${lightChat}/park`, {}, token);
+    check('the server parks a chat', pk.body?.ok, pk.body);
+    p = await until('a parked chat keeps its leaf and shows the card', (q) => pane(q, lightChat)?.pk && leafOf(q, lightChat) === lLeaf);
+    let c = p && pane(p, lightChat);
+    check('the card: "Closed · just now", what Resume does, Peek (it has a conversation), not heavy', c?.pk.why === 'Closed · just now' && c.pk.what === 'Resume picks up this conversation.' && c.pk.session && !c.pk.heavy, c?.pk);
+    check('its header: exited, the title, no chat tools', c?.state === 'exited' && !c.narrow && !c.menu, c && { state: c.state, title: c.title });
+    p = await until('its stored conversation behind the card', (q) => pane(q, lightChat)?.entries > 0, 8000);
+    await snap('2.23-parked');
+    // Peek, then Esc (native) and Parked view back.
+    await ui('peek', 'live:' + lightChat, 'on');
+    p = await until('Peek shows the conversation', (q) => pane(q, lightChat)?.pk?.peek);
+    await snap('2.23-peek');
+    await key('Escape');
+    p = await until('Esc leaves Peek', (q) => pane(q, lightChat)?.pk && !pane(q, lightChat).pk.peek);
+    if (p) check('Esc leaves Peek', true);
+    await ui('peek', 'live:' + lightChat, 'on');
+    await ui('peek', 'live:' + lightChat, 'off');
+    check('Parked view: the card again', pane(await props(), lightChat)?.pk?.peek === false);
+    // A choice while it runs: its label, the card dimmed; refused: a toast, back.
+    await ui('stub', 'park-resume', JSON.stringify({ delayMs: 1500, ok: false, error: 'This pane is not parked' }));
+    await ui('park-resume', 'live:' + lightChat, 'new');
+    p = await until('New session pressed: Starting…', (q) => pane(q, lightChat)?.pk?.busy === 'new', 3000);
+    await snap('2.23-starting');
+    p = await until('refused: a toast, the card as it was', (q) => q.toast === 'This pane is not parked' && pane(q, lightChat)?.pk?.busy === '');
+    if (p) check('refused: a toast, the card as it was', true);
+
+    // The heavy one: the warning, Compact and resume, New session.
+    const hLeaf = leafOf(await props(), heavyChat);
+    pk = await http('POST', `/api/panes/${heavyChat}/park`, {}, token);
+    p = await until('a heavy parked chat', (q) => pane(q, heavyChat)?.pk?.heavy);
+    check('…its warning\'s tokens: 138.2k tokens', p && pane(p, heavyChat).pk.tokens === '138.2k tokens' && pane(p, heavyChat).pk.session, p && pane(p, heavyChat).pk);
+    await snap('2.23-heavy');
+    // Short panes: the card gets tighter (no What, the warning a pill), then
+    // one row (no Why, a smaller Resume, the tokens only).
+    for (const [h, name] of [[440, 'short'], [330, 'very-short']]) {
+      await d.send({ cmd: 'resize', w: 1400, h });
+      p = await until('the window at ' + h, (q) => pane(q, heavyChat) && pane(q, heavyChat).h < h - 84, 5000);
+      await sleep(400);
+      await snap('2.23-' + name);
+    }
+    await d.send({ cmd: 'resize', w: 1400, h: 860 });
+    await until('the window back', (q) => pane(q, heavyChat)?.h > 700, 5000);
+
+    // A send from Peek resumes it first, then goes; the pane swaps in place.
+    await ui('peek', 'live:' + lightChat, 'on');
+    await ui('focus-pane', lLeaf);
+    await ui('send', 'Hello after the park');
+    p = await until('a send from Peek resumes the chat in place', (q) => pane(q, lightChat) && !pane(q, lightChat).pk && leafOf(q, lightChat) === lLeaf, 20000);
+    if (p) check('a send from Peek resumes the chat in place (same id, same leaf)', true);
+    const sent = async () => { const h = (await http('GET', `/api/ui-sessions/${lightChat}/history`, null, token)).body?.session || {}; return [...(h.messages || []).filter((m) => m.kind === 'user').map((m) => m.text), ...(h.pendingInjections || []).map((x) => x.text)]; };
+    let got = false;
+    for (let i = 0; i < 30 && !got; i++) { got = (await sent()).includes('Hello after the park'); if (!got) await sleep(500); }
+    check('…and then the message went', got, await sent());
+
+    // Resume on the card: the same id, live, in the same leaf.
+    await ui('park-resume', 'live:' + heavyChat, 'compact');
+    p = await until('Compact and resume: live again in the same leaf', (q) => pane(q, heavyChat) && !pane(q, heavyChat).pk && leafOf(q, heavyChat) === hLeaf, 20000);
+    if (p) check('Compact and resume: live again in the same leaf', true);
+
+    // × on a parked pane discards it.
+    pk = await http('POST', `/api/panes/${newChat}/park`, {}, token);
+    p = await until('parked again', (q) => pane(q, newChat)?.pk);
+    const nLeaf = leafOf(p, newChat);
+    await ui('close-pane', nLeaf);
+    await ui('close-pane', nLeaf);
+    p = await until('× (twice) discards a parked chat: its pane goes', (q) => !pane(q, newChat));
+    const st = await http('GET', `/api/panes/${newChat}/preview`, null, token);
+    check('…and the server forgot it', st.body?.ok === false, st.body);
+
+    for (const id of [lightChat, heavyChat]) if (id) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+  } finally {
+    // (After the closed chats' processes have written their last lines.)
+    await sleep(1500);
+    rmSync(tdir, { recursive: true, force: true });
+  }
 }
 
 d.close();

@@ -9,9 +9,10 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow,
+    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct,
 };
 use serde_json::{json, Value};
+use crate::resume;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 use std::{
     cell::RefCell,
@@ -82,7 +83,41 @@ struct Sched {
     loaded: bool,
 }
 
+/// The resume picker (2.22): the launcher's leaf, Skip Permissions, the
+/// earlier conversations, the list's error, and the heavy one picked.
+struct ResumeDlg {
+    leaf: u32,
+    skip: bool,
+    list: Vec<resume::Earlier>,
+    error: String,
+    heavy: Option<usize>,
+}
+
+#[derive(Default)]
+struct Park {
+    dlg: Option<ResumeDlg>,
+    /// The list is on its way (the launcher ignores more clicks).
+    loading: bool,
+    /// Launchers launching, by leaf: 1 UI Mode, 2 Skip Permissions.
+    launching: HashMap<u32, i32>,
+    /// The last create call's body (the test driver reads it).
+    last_create: Value,
+    /// Parked chats, from the `state` event's `terminals` (paneKind ui).
+    parked: Vec<Value>,
+    /// Chats peeked at, by id.
+    peek: HashSet<String>,
+    /// A parked chat's choice on its way, by id: resume | compact | new.
+    busy: HashMap<String, String>,
+    /// Chats resumed that the `state` event does not list live yet: their
+    /// panes stay.
+    resumed: HashSet<String>,
+    /// What waits on a chat's resume (a send from Peek), by id.
+    then: HashMap<String, Box<dyn FnOnce()>>,
+}
+
 struct ChatPaneState {
+    /// Parked (2.23): its conversation is the stored one (never connected).
+    parked: bool,
     conv: Conversation,
     rows: Vec<Row>,
     model: Rc<VecModel<EntryView>>,
@@ -215,6 +250,8 @@ pub struct App {
     media: HashMap<String, (String, Option<slint::Image>)>,
     /// The picture viewer: the chat's pictures' keys, and which is shown.
     viewer: Option<(Vec<String>, usize)>,
+    /// The resume picker and launching (2.22), parked chats (2.23).
+    park: Park,
     /// Downloads (the window's download rows), newest last.
     dls: Vec<Dl>,
     dl_rows: Rc<VecModel<DlRow>>,
@@ -353,6 +390,7 @@ pub fn init(window: &MainWindow) {
             last_opened: String::new(),
             media: HashMap::new(),
             viewer: None,
+            park: Park::default(),
             dls: vec![],
             dl_rows: Rc::new(VecModel::default()),
             dl_seq: 0,
@@ -533,6 +571,15 @@ pub fn init(window: &MainWindow) {
     });
     window.on_file_target(|k| { with(|a| a.file_target = Some(k.to_string())); });
     window.on_mode_choose(|m| choose_mode(m.as_str()));
+    // The resume picker (2.22) and parked chats (2.23).
+    window.on_resume_new(|| resume_choose(ResumeChoice::New));
+    window.on_resume_pick(|i| resume_choose(ResumeChoice::Pick(i.max(0) as usize)));
+    window.on_resume_compact(|| resume_choose(ResumeChoice::Heavy("compact")));
+    window.on_resume_full(|| resume_choose(ResumeChoice::Heavy("resume")));
+    window.on_resume_back(|| { with(|a| if let Some(d) = a.park.dlg.as_mut() { d.heavy = None; }); show_resume(); });
+    window.on_resume_cancel(|| { with(|a| a.park.dlg = None); show_resume(); });
+    window.global::<ParkAct>().on_resume(|k, m| park_resume(k.as_str(), m.as_str()));
+    window.global::<ParkAct>().on_peek(|k, on| park_peek(k.as_str(), on));
     window.on_mode_close(close_mode_picker);
 
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
@@ -844,6 +891,8 @@ fn on_live(e: Event) {
                 Some(t) => {
                     with(|a| {
                         a.sessions = t.iter().filter(|c| s(c, "kind") == "ui").cloned().collect();
+                        // Parked chats keep their id, so their panes keep their place (2.23).
+                        a.park.parked = t.iter().filter(|c| s(c, "kind") == "parked" && s(c, "paneKind") == "ui").cloned().collect();
                         a.terminals = Some(t.clone());
                     });
                     show_projects();
@@ -1007,37 +1056,60 @@ pub fn select_project(alias: &str) {
 /// The panes follow the project's live chats: every running chat has a pane
 /// (new ones are added to the right), and panes of chats that are gone close.
 fn sync_panes() {
-    let subscribe = with(|a| {
-        if a.project.is_empty() { return vec![]; }
+    let (subscribe, unsubscribe, previews) = with(|a| {
+        if a.project.is_empty() { return (vec![], vec![], vec![]); }
         let live: Vec<String> = a.sessions.iter()
             // An exited chat keeps its pane (grey, "exited") until it is
             // closed, as the web's grid does.
             .filter(|c| s(c, "project") == a.project && s(c, "factory").is_empty())
             .map(|c| s(c, "id")).collect();
-        a.mosaic.retain(|k| match chat_of(k) { Some(id) => live.iter().any(|l| l == id), None => true });
-        for id in &live { a.mosaic.place(&chat_key(id)); }
-        // Chats in panes: a conversation each, subscribed once.
+        // Parked chats (2.23) keep their panes too, as do chats resumed here
+        // that the list does not show live yet.
+        let parked: Vec<String> = a.park.parked.iter().filter(|c| s(c, "project") == a.project).map(|c| s(c, "id")).filter(|id| !live.contains(id)).collect();
+        a.park.resumed.retain(|id| !live.contains(id) && !parked.contains(id));
+        let resumed: Vec<String> = a.park.resumed.iter().cloned().collect();
+        // Before the first `state` event the parked ones are not known: no
+        // pane goes yet.
+        let known = a.terminals.is_some();
+        a.mosaic.retain(|k| match chat_of(k) { Some(id) => !known || live.iter().chain(&parked).chain(&resumed).any(|l| l == id), None => true });
+        for id in live.iter().chain(&parked) { a.mosaic.place(&chat_key(id)); }
+        // Chats in panes: a conversation each, subscribed once (a parked one
+        // never: its stored conversation is fetched instead).
         let mut new = vec![];
+        let mut gone = vec![];
+        let mut previews = vec![];
         let mut font_new: Vec<String> = vec![];
         for k in a.mosaic.keys() {
-            if let Some(id) = chat_of(&k) {
-                if !a.chats.contains_key(id) {
-                    // A chat with no size yet starts at the default and keeps it.
-                    if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
-                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0, asides: vec![], sheet_list: None, plan_open: false, sheet_panel: None, panel_model: Rc::new(VecModel::default()) });
-                    new.push(id.to_string());
-                }
+            let Some(id) = chat_of(&k) else { continue };
+            let is_parked = parked.iter().any(|p| p == id);
+            if !is_parked && !live.iter().any(|l| l == id) { continue; }
+            // Parked to live, or live to parked: the pane swaps in place.
+            if a.chats.get(id).is_some_and(|cs| cs.parked != is_parked) {
+                a.chats.remove(id);
+                if is_parked { gone.push(id.to_string()); } else { a.park.peek.remove(id); }
+                a.park.busy.remove(id);
+            }
+            if !a.chats.contains_key(id) {
+                // A chat with no size yet starts at the default and keeps it.
+                if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
+                a.chats.insert(id.to_string(), ChatPaneState { parked: is_parked, conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0, asides: vec![], sheet_list: None, plan_open: false, sheet_panel: None, panel_model: Rc::new(VecModel::default()) });
+                if is_parked { previews.push(id.to_string()); } else { new.push(id.to_string()); }
             }
         }
-        a.chats.retain(|id, _| live.contains(id));
-        if a.full.as_deref().and_then(chat_of).is_some_and(|id| !live.iter().any(|l| l == id)) { a.full = None; }
+        a.chats.retain(|id, _| live.contains(id) || parked.contains(id) || resumed.contains(id));
+        a.park.peek.retain(|id| parked.contains(id) || resumed.contains(id));
+        if a.full.as_deref().and_then(chat_of).is_some_and(|id| !live.iter().chain(&parked).chain(&resumed).any(|l| l == id)) { a.full = None; }
         if !font_new.is_empty() {
             let (font, def) = (a.font.clone(), a.font_default);
             store::update(|s| { for id in &font_new { s.font.insert(id.clone(), *font.get(id).unwrap_or(&def)); } });
         }
-        new
+        (new, gone, previews)
     }).unwrap_or_default();
-    with(|a| if let Some(l) = &a.live { for id in &subscribe { l.subscribe(id); } });
+    with(|a| if let Some(l) = &a.live {
+        for id in &unsubscribe { l.unsubscribe(id); }
+        for id in &subscribe { l.subscribe(id); }
+    });
+    for id in previews { load_preview(id); }
     save_layout();
     render();
 }
@@ -1099,9 +1171,10 @@ fn render() {
                 ..Default::default()
             };
             if let Some(id) = chat_of(&key) {
-                let item = a.sessions.iter().find(|c| s(c, "id") == id);
+                let parked_item = a.park.parked.iter().find(|c| s(c, "id") == id);
+                let item = a.sessions.iter().find(|c| s(c, "id") == id).or(parked_item);
                 p.kind = "chat".into();
-                let short = item.map(|c| s(c, "title")).filter(|t| !t.is_empty()).unwrap_or_else(|| "New chat".into());
+                let short = item.map(|c| s(c, "title")).filter(|t| !t.is_empty()).unwrap_or_else(|| if parked_item.is_some() { "Chat".into() } else { "New chat".into() });
                 let long = item.map(|c| s(c, "longTitle")).unwrap_or_default();
                 let (shown, cap) = head::title_shown(&short, &long, l.w);
                 p.title = shown.into();
@@ -1174,9 +1247,25 @@ fn render() {
                     p.cost = if cs.conv.cost > 0.0 { format!("${:.4}", cs.conv.cost).into() } else { SharedString::default() };
                     p.error = cs.error.clone().into();
                 }
+                // Parked (2.23): the card's lines, and the chat reads exited.
+                if a.chats.get(id).is_some_and(|cs| cs.parked) {
+                    p.pk = true;
+                    p.pk_peek = a.park.peek.contains(id);
+                    p.state = "exited".into();
+                    p.stop_armed = false;
+                    if let Some(c) = parked_item {
+                        p.pk_why = resume::park_why(&s(c, "reason"), c.get("parkedAt").and_then(|x| x.as_f64()).unwrap_or(0.0), now).into();
+                        p.pk_session = c.get("hasSession").is_some_and(truthy);
+                        p.pk_what = resume::park_what(p.pk_session).into();
+                        p.pk_heavy = c.get("heavy").is_some_and(truthy);
+                        p.pk_tokens = resume::tokens_k(c.get("tokens").and_then(|x| x.as_f64()).unwrap_or(0.0).max(0.0) as u64).into();
+                    }
+                    p.pk_busy = a.park.busy.get(id).cloned().unwrap_or_default().into();
+                }
             } else if key.starts_with("pend:") {
                 p.kind = "launcher".into();
                 p.title = "New terminal".into();
+                p.launch_busy = *a.park.launching.get(&l.id).unwrap_or(&0);
             } else if let Some(kind) = key.strip_prefix("panel:") {
                 p.kind = "panel".into();
                 let mut c = kind.chars();
@@ -1184,7 +1273,7 @@ fn render() {
             }
             // Only a chat's header folds its tools into "…" (a launcher or a
             // panel has just Pin and ×, shown at any width, as the web's).
-            if p.kind != "chat" { p.narrow = false; p.menu = false; }
+            if p.kind != "chat" || p.pk { p.narrow = false; p.menu = false; }
             p
         }).collect();
         // Stop disarms when its chat stops working (the turn ended, a question).
@@ -1398,6 +1487,23 @@ fn close_pane(leaf: u32) {
         with(|a| a.mosaic.close(leaf));
         return layout_changed();
     };
+    // A parked chat's × discards it for good (2.23).
+    if with(|a| a.chats.get(&id).is_some_and(|cs| cs.parked)).unwrap_or(false) {
+        let path = format!("/api/panes/{id}/discard");
+        return call(move |api| api.post(&path, &json!({})), move |r| {
+            let err = match &r { Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some(s(v, "error")), Ok(_) => None, Err(e) => Some(e.clone()) };
+            if let Some(e) = err { return toast(&format!("Failed to close: {e}"), true); }
+            animate();
+            with(|a| {
+                if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) { a.mosaic.close(l); }
+                a.park.parked.retain(|c| s(c, "id") != id);
+                a.park.peek.remove(&id);
+                if a.full.as_deref() == Some(chat_key(&id).as_str()) { a.full = None; }
+            });
+            layout_changed();
+            sync_panes();
+        });
+    }
     let Some(api) = api() else { return };
     let path = format!("/api/ui-sessions/{id}/close");
     bg(move || api.post(&path, &json!({})), move |r| match head::close_outcome(r) {
@@ -1537,27 +1643,208 @@ pub fn drag_cancel() {
     }
 }
 
-/// UI Mode in a launcher: a new chat in this project, in that pane.
+/// UI Mode in a launcher (2.22): which conversation first. The list of
+/// earlier ones is fetched (nothing shows meanwhile, and the launcher ignores
+/// more clicks); none: a new session at once; else the picker. An old server
+/// without the list (404): a new session.
 fn launch_chat(leaf: u32, skip: bool) {
     let project = with(|a| a.project.clone()).unwrap_or_default();
     if project.is_empty() { return; }
-    call(move |api| api.post("/api/ui-sessions/create", &json!({ "project": project, "skipPermissions": skip })), move |r| match r {
-        Ok(v) => {
-            let id = s(&v, "id");
-            if id.is_empty() { return; }
-            // The chat takes the launcher's leaf (its size and pin); if the
-            // chat list already placed it elsewhere, that leaf goes.
-            animate();
-            with(|a| {
-                let key = chat_key(&id);
-                if let Some(other) = a.mosaic.leaf_of(&key) { if other != leaf { a.mosaic.close(other); } }
-                a.mosaic.assign(leaf, Some(key));
-                a.focused = leaf;
-            });
-            save_layout();
-            load_sessions();
+    let go = with(|a| {
+        if a.park.loading || a.park.dlg.is_some() || a.park.launching.contains_key(&leaf) { return false; }
+        a.park.loading = true;
+        true
+    }).unwrap_or(false);
+    if !go { return; }
+    let path = format!("/api/ui-sessions/resumable?project={}", enc(&project));
+    let stub = crate::testctl::take_stub("resumable");
+    call(move |api| match stub { Some(v) => stub_result(v), None => api.get(&path) }, move |r| {
+        with(|a| a.park.loading = false);
+        let (list, error) = match r {
+            Ok(v) => (resume::rows(&v, now_secs()), String::new()),
+            Err(e) if e == ApiError::Status(404, String::new()).to_string() => (vec![], String::new()),
+            Err(e) => (vec![], e),
+        };
+        // The launcher went meanwhile: nothing to open.
+        if leaf_rect(leaf).and_then(|l| l.key).is_none_or(|k| !k.starts_with("pend:")) { return; }
+        if list.is_empty() && error.is_empty() { return create_chat(leaf, skip, "new", String::new()); }
+        with(|a| a.park.dlg = Some(ResumeDlg { leaf, skip, list, error, heavy: None }));
+        show_resume();
+    });
+}
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
+}
+
+enum ResumeChoice { New, Pick(usize), Heavy(&'static str) }
+
+/// A choice in the picker: New session, an earlier conversation (a heavy one
+/// in UI Mode offers compacting first), or the heavy choice's two.
+fn resume_choose(c: ResumeChoice) {
+    let launch = with(|a| {
+        let d = a.park.dlg.as_mut()?;
+        let (mode, id) = match c {
+            ResumeChoice::New => ("new", String::new()),
+            ResumeChoice::Pick(i) => {
+                let e = d.list.get(i)?;
+                if e.heavy { d.heavy = Some(i); return Some(None); }
+                ("resume", e.id.clone())
+            }
+            ResumeChoice::Heavy(m) => (m, d.list.get(d.heavy?)?.id.clone()),
+        };
+        let d = a.park.dlg.take()?;
+        Some(Some((d.leaf, d.skip, mode, id)))
+    }).flatten();
+    show_resume();
+    if let Some(Some((leaf, skip, mode, id))) = launch { create_chat(leaf, skip, mode, id); }
+}
+
+/// The picker on the window, as it stands (its rows rewritten on each change).
+fn show_resume() {
+    let Some(w) = ui() else { return };
+    let st = with(|a| a.park.dlg.as_ref().map(|d| (d.skip, d.list.clone(), d.error.clone(), d.heavy))).flatten();
+    let Some((skip, list, error, heavy)) = st else { w.set_resume_open(false); return };
+    w.set_resume_heading(resume::heading(skip).into());
+    w.set_resume_error(error.into());
+    let rows: Vec<ResumeRow> = if heavy.is_some() { vec![] } else {
+        list.iter().map(|e| ResumeRow { title: e.title.clone().into(), meta: e.meta.clone().into(), heavy: e.heavy, in_use: e.in_use }).collect()
+    };
+    if w.get_resume_rows().row_count() != rows.len() || w.get_resume_rows().iter().zip(&rows).any(|(x, y)| x != *y) {
+        w.set_resume_rows(ModelRc::new(VecModel::from(rows)));
+    }
+    match heavy.and_then(|i| list.get(i)) {
+        Some(e) => {
+            w.set_resume_heavy_title(e.title.clone().into());
+            w.set_resume_heavy_intro(resume::heavy_intro(e.tokens).into());
+            w.set_resume_heavy_in_use(e.in_use);
+            w.set_resume_heavy(true);
         }
-        Err(e) => eprintln!("[native] could not start a chat: {e}"),
+        None => w.set_resume_heavy(false),
+    }
+    w.set_resume_open(true);
+}
+
+/// Start the chat (new | resume | compact) from a launcher: the pressed
+/// button spins and the others dim until it answers; the chat takes the
+/// launcher's leaf. Refused or failed: a toast, the launcher usable again.
+fn create_chat(leaf: u32, skip: bool, mode: &str, resume_id: String) {
+    let project = with(|a| a.project.clone()).unwrap_or_default();
+    if project.is_empty() { return; }
+    let go = with(|a| a.park.launching.insert(leaf, if skip { 2 } else { 1 }).is_none()).unwrap_or(false);
+    if !go { return; }
+    let body = resume::create_body(&project, skip, mode, &resume_id);
+    with(|a| a.park.last_create = body.clone());
+    render();
+    let stub = crate::testctl::take_stub("create");
+    call(move |api| match stub { Some(v) => stub_result(v), None => api.post("/api/ui-sessions/create", &body) }, move |r| {
+        with(|a| a.park.launching.remove(&leaf));
+        let v = match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => {
+                let e = s(&v, "error");
+                toast(if e.is_empty() { "Failed to launch" } else { &e }, true);
+                return render();
+            }
+            Ok(v) => v,
+            Err(e) => { toast(&format!("Failed to launch: {e}"), true); return render(); }
+        };
+        let id = s(&v, "id");
+        if id.is_empty() { return render(); }
+        // The chat takes the launcher's leaf (its size and pin); if the
+        // chat list already placed it elsewhere, that leaf goes.
+        animate();
+        with(|a| {
+            let key = chat_key(&id);
+            if let Some(other) = a.mosaic.leaf_of(&key) { if other != leaf { a.mosaic.close(other); } }
+            a.mosaic.assign(leaf, Some(key));
+            a.focused = leaf;
+        });
+        save_layout();
+        load_sessions();
+    });
+}
+
+// ─── Parked chats (2.23) ───
+
+/// A chat is parked and not yet resumed from here: anything that would
+/// change it resumes it first.
+fn parked_now(id: &str) -> bool {
+    with(|a| a.chats.get(id).is_some_and(|cs| cs.parked) && !a.park.resumed.contains(id)).unwrap_or(false)
+}
+
+/// Do `go` once the chat is live: at once, or after resuming it (a failed
+/// resume: a toast, and `go` never runs).
+fn after_resume(id: &str, go: impl FnOnce() + 'static) {
+    if parked_now(id) { resume_pane(id.to_string(), "resume".into(), Some(Box::new(go))); } else { go(); }
+}
+
+/// The card's Resume, Compact and resume, New session.
+fn park_resume(key: &str, mode: &str) {
+    let Some(id) = chat_of(key).map(str::to_string) else { return };
+    resume_pane(id, mode.to_string(), None);
+}
+
+fn resume_pane(id: String, mode: String, then: Option<Box<dyn FnOnce()>>) {
+    let go = with(|a| if a.park.busy.contains_key(&id) { false } else { a.park.busy.insert(id.clone(), mode.clone()); true }).unwrap_or(false);
+    if !go { return; }
+    if let Some(f) = then { with(|a| a.park.then.insert(id.clone(), f)); }
+    render();
+    let path = format!("/api/panes/{id}/resume");
+    let stub = crate::testctl::take_stub("park-resume");
+    call(move |api| match stub { Some(v) => stub_result(v), None => api.post(&path, &json!({ "mode": mode })) }, move |r| {
+        let err = match &r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) != Some(true) => Some({ let e = s(v, "error"); if e.is_empty() { "Could not resume".to_string() } else { e } }),
+            Ok(_) => None,
+            Err(e) => Some(e.clone()),
+        };
+        if let Some(e) = err {
+            with(|a| { a.park.busy.remove(&id); a.park.then.remove(&id); });
+            toast(&e, true);
+            return render();
+        }
+        let then = with(|a| a.park.then.remove(&id)).flatten();
+        let new_id = r.ok().map(|v| s(&v, "id")).filter(|n| !n.is_empty()).unwrap_or_else(|| id.clone());
+        with(|a| {
+            // Another id (not the same slot): the new chat takes the parked pane's leaf.
+            if new_id != id {
+                if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) {
+                    if let Some(o) = a.mosaic.leaf_of(&chat_key(&new_id)) { if o != l { a.mosaic.close(o); } }
+                    a.mosaic.assign(l, Some(chat_key(&new_id)));
+                }
+                a.park.busy.remove(&id);
+            }
+            // Its pane stays until the `state` event lists it live (unless it already does).
+            if !a.sessions.iter().any(|c| s(c, "id") == new_id) { a.park.resumed.insert(new_id.clone()); }
+        });
+        if let Some(f) = then { f(); }
+        sync_panes();
+    });
+}
+
+/// Peek on (the conversation, readable) or off (the card again).
+fn park_peek(key: &str, on: bool) {
+    let Some(id) = chat_of(key).map(str::to_string) else { return };
+    with(|a| {
+        if on { a.park.peek.insert(id.clone()); } else { a.park.peek.remove(&id); }
+        if let Some(l) = a.mosaic.leaf_of(key) { a.focused = l; }
+    });
+    render();
+}
+
+/// A parked chat's stored conversation, the background of its card.
+fn load_preview(id: String) {
+    let path = format!("/api/panes/{id}/preview");
+    call(move |api| api.get(&path), move |r| {
+        let Ok(v) = r else { return };
+        if v.get("ok").and_then(|o| o.as_bool()) != Some(true) { return; }
+        let ok = with(|a| {
+            let Some(cs) = a.chats.get_mut(&id) else { return false };
+            if !cs.parked { return false; }
+            cs.conv.load(&json!({ "id": id, "status": "parked", "state": "idle", "messages": v.get("messages").cloned().unwrap_or(json!([])) }));
+            cs.gen += 1;
+            true
+        }).unwrap_or(false);
+        if ok { show_chat(&id); }
     });
 }
 
@@ -1930,6 +2217,11 @@ fn send_plain(key: &str, text: String) {
     let Some(id) = chat_of(key).map(str::to_string) else { return };
     let text = text.trim_end().to_string();
     if text.trim().is_empty() { return; }
+    // Peeking at a parked chat: it resumes first, then this goes (2.23).
+    if parked_now(&id) {
+        let k = key.to_string();
+        return after_resume(&id, move || send_plain(&k, text));
+    }
     let k = key.to_string();
     let state = with(|a| {
         save_draft_in(a, &k, "");
@@ -2079,7 +2371,16 @@ fn sec_open(leaf: u32) {
 /// dialog closes (its own key handler can miss it when the focused field
 /// went with a grant).
 pub fn escape() {
-    if with(|a| a.sec.is_some()).unwrap_or(false) { sec_close(); }
+    if with(|a| a.sec.is_some()).unwrap_or(false) { return sec_close(); }
+    // Esc in a pane peeking at a parked chat: the parked view again (2.23, a
+    // named addition), unless a dialog over it takes the Esc.
+    let back = with(|a| {
+        if a.picker.is_some() || a.viewer.is_some() || a.park.dlg.is_some() { return None; }
+        let key = a.mosaic.layout(1000.0, 1000.0).0.into_iter().find(|l| l.id == a.focused).and_then(|l| l.key)?;
+        let id = chat_of(&key)?.to_string();
+        a.park.peek.remove(&id).then_some(())
+    }).flatten();
+    if back.is_some() { render(); }
 }
 
 /// Closing: everything typed is overwritten and dropped.
@@ -2362,7 +2663,9 @@ fn sched_load(key: &str) {
 }
 
 /// A test stub as a server answer: an `ok:false` with a status is that error.
+/// (Its `delayMs`: it answers that much later, on the worker thread.)
 fn stub_result(v: Value) -> api::ApiResult {
+    if let Some(ms) = v.get("delayMs").and_then(|x| x.as_u64()) { std::thread::sleep(Duration::from_millis(ms)); }
     match v.get("status").and_then(|x| x.as_u64()) {
         Some(st) if st >= 400 => Err(ApiError::Status(st as u16, s(&v, "error"))),
         _ if v.get("net").is_some() => Err(ApiError::Net(s(&v, "net"))),
@@ -2958,7 +3261,8 @@ fn choose_mode(mode: &str) {
     render();
     let Some(old) = old else { return };
     let (id2, m2) = (id.clone(), mode.clone());
-    call(move |api| api.post(&format!("/api/ui-sessions/{id}/permission-mode"), &json!({ "mode": mode })), move |r| {
+    let id3 = id.clone();
+    after_resume(&id3, move || call(move |api| api.post(&format!("/api/ui-sessions/{id}/permission-mode"), &json!({ "mode": mode })), move |r| {
         let err = match r {
             Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some(s(&v, "error")),
             Ok(_) => None,
@@ -2969,7 +3273,7 @@ fn choose_mode(mode: &str) {
         with(|a| if let Some(cs) = a.chats.get_mut(&id2) { if cs.conv.mode == m2 { cs.conv.mode = old; } });
         render();
         toast(&head::mode_error(&e), true);
-    });
+    }));
 }
 
 /// Ask a pane's composer to take the focus (the box).
@@ -2988,7 +3292,8 @@ pub fn respond(key: &str, request_id: String, behavior: String, always: bool) {
     let is_question = with(|a| a.chats.get(&id).map(|cs| cs.conv.entries.iter().any(|e| s(e, "requestId") == request_id && s(e, "kind") == "question")).unwrap_or(false)).unwrap_or(false);
     if is_question && behavior == "deny" { body["message"] = json!("The user dismissed the question."); }
     let id2 = id.clone();
-    call(move |api| api.post(&format!("/api/ui-sessions/{id}/respond"), &body), move |r| if let Err(e) = r { chat_error(&id2, e) });
+    let id3 = id.clone();
+    after_resume(&id3, move || call(move |api| api.post(&format!("/api/ui-sessions/{id}/respond"), &body), move |r| if let Err(e) = r { chat_error(&id2, e) }));
 }
 
 pub fn answer(key: &str, entry_id: &str, option: &str) {
@@ -3003,7 +3308,8 @@ pub fn answer(key: &str, entry_id: &str, option: &str) {
     }).flatten();
     let Some((request_id, input)) = found else { return };
     let id2 = id.clone();
-    call(move |api| api.post(&format!("/api/ui-sessions/{id}/respond"), &json!({ "requestId": request_id, "behavior": "allow", "updatedInput": input })), move |r| if let Err(e) = r { chat_error(&id2, e) });
+    let id3 = id.clone();
+    after_resume(&id3, move || call(move |api| api.post(&format!("/api/ui-sessions/{id}/respond"), &json!({ "requestId": request_id, "behavior": "allow", "updatedInput": input })), move |r| if let Err(e) = r { chat_error(&id2, e) }));
 }
 
 // ─── For the test driver (src/testctl.rs) ───
@@ -3018,11 +3324,17 @@ pub fn focused_chat() -> String {
     }).unwrap_or_default()
 }
 
+/// The last create call's body (2.22).
+pub fn last_create() -> Value {
+    with(|a| a.park.last_create.clone()).unwrap_or(Value::Null)
+}
+
 /// A new chat in a new pane, as the "+" menu's Terminal then UI Mode.
 pub fn new_chat_pane() {
     add_pane("terminal");
     let leaf = with(|a| a.focused).unwrap_or(0);
-    launch_chat(leaf, false);
+    // (The test driver's shortcut: a new session, no picker.)
+    create_chat(leaf, false, "new", String::new());
 }
 
 pub fn snapshot_state() -> Value {

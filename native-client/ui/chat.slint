@@ -421,6 +421,9 @@ export component PaneHead inherits Rectangle {
     in property <string> plan-status;
     callback plan-clicked();
     in property <bool> chat;
+    // A parked chat (2.23): the grey dot ("Closed"), the title (its tooltip
+    // the whole title, no rename), the kind tag, pin and × only.
+    in property <bool> parked;
     // The header's content box is under pane-fold: src/head.rs.
     in property <bool> narrow;
     // The fold-out menu is open (src/app.rs: one at a time).
@@ -488,12 +491,12 @@ export component PaneHead inherits Rectangle {
         // The state dot (2.4): green idle, yellow working, accent needs
         // input (with an accent-dim ring), sky waiting, muted exited.
         // Its tooltip is the raw state.
-        if root.chat: Rectangle {
+        if root.chat || root.parked: Rectangle {
             y: (parent.height - self.height) / 2; width: Theme.sp-8; height: Theme.sp-8;
             if root.state == "needs-input": Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-pill; background: Theme.accent-dim; }
             Rectangle { border-radius: Theme.r-chip; background: PaneState.color(root.state); }
             dt := TouchArea {
-                Tip { on: parent.has-hover; text: root.state == "" ? "idle" : root.state; }
+                Tip { on: parent.has-hover; text: root.parked ? "Closed" : root.state == "" ? "idle" : root.state; }
             }
         }
         // The title: semibold, radius 6.
@@ -501,7 +504,7 @@ export component PaneHead inherits Rectangle {
         // narrow), nor than the row leaves it: the spacer goes to 0 first, but
         // its two gaps stay.
         if !root.renaming: Rectangle {
-            property <length> room: root.width - Theme.sp-2 - (root.full ? 0px : Theme.sp-24 + Theme.sp-4) - (root.chat ? Theme.sp-12 : 0px) - Theme.sp-8 - tools.preferred-width - Theme.sp-4
+            property <length> room: root.width - Theme.sp-2 - (root.full ? 0px : Theme.sp-24 + Theme.sp-4) - (root.chat || root.parked ? Theme.sp-12 : 0px) - Theme.sp-8 - tools.preferred-width - Theme.sp-4
                 - (root.badge != "" ? badge-m.preferred-width + Theme.sp-12 + Theme.sp-4 : 0px);
             y: (parent.height - self.height) / 2; height: Theme.sp-16;
             width: max(0px, min(tt.preferred-width + Theme.sp-12, root.title-max, self.room));
@@ -514,12 +517,12 @@ export component PaneHead inherits Rectangle {
                 overflow: elide; wrap: no-wrap;
             }
             th := HeadGrab {
-                rest-cursor: MouseCursor.text;
                 can-drag: !root.full;
-                clicked => { if !self.did-drag { root.renaming = true; } }
+                rest-cursor: root.parked ? MouseCursor.default : MouseCursor.text;
+                clicked => { if !self.did-drag && !root.parked { root.renaming = true; } }
                 double-clicked => { root.maximize(); }
                 drag(k, x, y) => { root.drag(k, x, y); }
-                if th.tip-ok && !th.pressed && !th.dragging: Tip { on: parent.has-hover; text: "Click to rename"; }
+                if th.tip-ok && !th.pressed && !th.dragging: Tip { on: parent.has-hover; text: root.parked ? root.short-title : "Click to rename"; }
             }
         }
         // Renaming: an input title-cap wide, the short title all
@@ -667,7 +670,7 @@ export component PaneHead inherits Rectangle {
                 label: root.armed ? "Sure?" : "×";
                 label-size: root.armed ? Theme.text-11 : Theme.text-14;
                 look: root.armed ? "armed" : "close";
-                tip: root.armed ? "Click again to close" : "Close chat";
+                tip: root.armed ? "Click again to close" : root.parked ? "Close this pane for good" : "Close chat";
                 sure := Text { visible: false; text: "Sure?"; font-size: Theme.text-11; }
                 clicked => { root.close(); }
             }
@@ -807,20 +810,23 @@ component Prose inherits TextInput {
 /// The running spinner (.cc-spin): a ring in border with a quarter in
 /// accent, turning once every Theme.spin. (Drawn as paths: the software
 /// renderer cannot turn an image.)
-component Spinner inherits Rectangle {
+export component Spinner inherits Rectangle {
+    in property <brush> ring: Theme.border;
+    in property <brush> arc: Theme.accent;
+    in property <length> stroke: Theme.spin-stroke;
     width: Theme.icon-sm; height: Theme.icon-sm;
     property <float> u: self.width / 1px;
-    property <float> r: (self.width - Theme.spin-stroke) / 2 / 1px;
+    property <float> r: (self.width - root.stroke) / 2 / 1px;
     property <angle> a: mod(animation-tick() / Theme.spin, 1) * Theme.turn;
     // The ring.
     Rectangle {
         border-radius: self.width / 2;
-        border-width: Theme.spin-stroke; border-color: Theme.border;
+        border-width: root.stroke; border-color: root.ring;
     }
     Path {
         width: parent.width; height: parent.height;
         viewbox-width: root.u; viewbox-height: root.u;
-        stroke: Theme.accent; stroke-width: Theme.spin-stroke;
+        stroke: root.arc; stroke-width: root.stroke;
         commands: "M " + (root.u / 2 + root.r * sin(root.a)) + " " + (root.u / 2 - root.r * cos(root.a))
             + " A " + root.r + " " + root.r + " 0 0 1 " + (root.u / 2 + root.r * sin(root.a + 90deg)) + " " + (root.u / 2 - root.r * cos(root.a + 90deg));
     }

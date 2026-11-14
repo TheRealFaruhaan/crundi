@@ -31,6 +31,7 @@ mod think;
 mod md;
 mod media;
 mod agents;
+mod resume;
 mod drafts;
 mod app;
 mod browser;

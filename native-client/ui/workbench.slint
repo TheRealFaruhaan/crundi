@@ -5,7 +5,8 @@
 import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
-import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem, SlashItem, AgentRow, AnsBlock, ToolAct } from "chat.slint";
+import { ParkedVeil, Unpeek, ParkAct } from "parked.slint";
+import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem, SlashItem, AgentRow, AnsBlock, ToolAct, Spinner } from "chat.slint";
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -102,6 +103,19 @@ export struct PaneView {
     menu: bool,
     // The leaf under a dragged pane (2.3): it lights up (not when pinned).
     drop: bool,
+    // A launcher launching (2.22): 1 UI Mode, 2 Skip Permissions.
+    launch-busy: int,
+    // A parked chat (2.23): parked, peeking; the card's why and what lines;
+    // a conversation to resume (Peek and the choices); heavy, its tokens;
+    // the pressed choice while it runs (resume | compact | new).
+    pk: bool,
+    pk-peek: bool,
+    pk-why: string,
+    pk-what: string,
+    pk-session: bool,
+    pk-heavy: bool,
+    pk-tokens: string,
+    pk-busy: string,
 }
 
 export struct GutterView {
@@ -120,6 +134,10 @@ export struct GutterView {
 /// A new pane: Empty Shell, or Claude in UI Mode (a chat) or Terminal.
 component Launcher inherits Rectangle {
     callback ui-mode(bool /* skip permissions */);
+    // Launching (2.22, the web's beginLaunch): 1 UI Mode, 2 its Skip
+    // Permissions. The pressed button spins, the others dim; none take clicks.
+    in property <int> busy;
+    property <bool> busy-skip: root.busy == 2;
     VerticalLayout {
         alignment: center;
         spacing: Theme.sp-12;
@@ -133,7 +151,7 @@ component Launcher inherits Rectangle {
                 x: (parent.width - self.width) / 2;
                 width: Theme.pane-min / 2; height: Theme.control-lg;
                 border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                opacity: Theme.o-soft;
+                opacity: root.busy != 0 ? Theme.o-dim : Theme.o-soft;
                 Text { text: "Empty Shell"; font-size: Theme.text-14; color: Theme.text-secondary; }
             }
         }
@@ -158,19 +176,24 @@ component Launcher inherits Rectangle {
                             Image { width: parent.width; height: parent.height; source: @image-url("shapes/launcher-control.png", nine-slice(6)); image-fit: fill; }
                             Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-hover-edge; }
                             HorizontalLayout {
+                                visible: root.busy != 1;
                                 alignment: center;
                                 spacing: Theme.sp-10;
                                 Rectangle { width: Theme.sp-2; height: Theme.sp-16; y: (parent.height - self.height) / 2; background: Theme.white; }
                                 Text { text: "UI Mode"; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; vertical-alignment: center; }
                             }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.ui-mode(false); } }
+                            if root.busy == 1: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            opacity: root.busy-skip ? Theme.o-dim : 1;
+                            TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { root.ui-mode(false); } }
                         }
                         Rectangle {
                             width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: s1.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
-                            Icon { source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
-                            s1 := TouchArea { mouse-cursor: pointer; clicked => { root.ui-mode(true); } }
+                            background: s1.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-tertiary;
+                            opacity: root.busy == 1 ? Theme.o-dim : 1;
+                            Icon { visible: root.busy != 2; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            if root.busy == 2: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            s1 := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { root.ui-mode(true); } }
                         }
                     }
                     HorizontalLayout {
@@ -358,7 +381,8 @@ export component PaneCard inherits Rectangle {
             title-max: p.title-max;
             short-title: p.short-title;
             state: p.state;
-            chat: p.kind == "chat";
+            chat: p.kind == "chat" && !p.pk;
+            parked: p.pk;
             narrow: p.narrow;
             menu-open: p.menu;
             kind-tag: p.kind == "chat" ? "CHAT" : "";
@@ -430,12 +454,24 @@ export component PaneCard inherits Rectangle {
         }
         if p.kind == "launcher": Launcher {
             vertical-stretch: 1;
+            busy: p.launch-busy;
             ui-mode(skip) => { root.launch-chat(skip); }
         }
         if p.kind == "panel": Rectangle {
             vertical-stretch: 1;
             Text { text: p.title + " comes in a later phase of the native client"; font-size: Theme.text-13; color: Theme.text-muted; }
         }
+        }
+        // A parked chat (2.23): the card over its conversation, or, peeking,
+        // the way back to it.
+        if p.pk && !p.pk-peek: ParkedVeil {
+            y: ph.height; width: parent.width; height: parent.height - ph.height;
+            key: p.key; why: p.pk-why; what: p.pk-what; session: p.pk-session;
+            heavy: p.pk-heavy; tokens: p.pk-tokens; busy: p.pk-busy;
+        }
+        if p.pk && p.pk-peek: Unpeek {
+            x: parent.width - self.width - Theme.sp-12; y: ph.height + Theme.sp-10;
+            key: p.key;
         }
         // The narrow header's menu: under the header, in from its right
         // edge, over the pane body.

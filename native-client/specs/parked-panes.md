@@ -205,15 +205,15 @@ Width: the card shrinks to the pane (max `park-card-w`); the rows wrap.
 
 ## Checklist
 
-- [ ] Parked chats from the `state` push appear in their own leaf, header with grey dot, title, `CHAT` tag, pin, × only.
-- [ ] Background: the stored conversation, darkened (no blur: named gap), read-only.
-- [ ] Card: Resume (accent pill, glow) + Peek; Why · time; What; quiet New session.
-- [ ] Wording for idle / manual / restart and with / without a conversation.
-- [ ] Heavy: warning box (long form), Compact and resume + New session as pills.
-- [ ] ≤ 330: no What, warning pill short form. ≤ 210: one row, no Why, smaller Resume, tokens-only pill. Sliver: card scrolls.
-- [ ] Busy labels Resuming… / Compacting… / Starting…, all buttons disabled; failure → toast, restored.
-- [ ] Resume bodies `{mode}` exactly; success swaps in place (same leaf, focus); different id takes the leaf.
-- [ ] Peek: readable log, Parked view pill top right; Parked view (and Esc, native) returns; a send from Peek resumes first then sends.
-- [ ] × → discard; the pane closes.
-- [ ] No global input bar under a focused parked pane.
-- [ ] Tokens only (`park-card-w` and, if used, `yellow-edge` added to theme.slint).
+- [x] Parked chats from the `state` push appear in their own leaf, header with grey dot, title, `CHAT` tag, pin, × only.
+- [x] Background: the stored conversation, darkened (no blur: named gap), read-only.
+- [x] Card: Resume (accent pill, glow) + Peek; Why · time; What; quiet New session.
+- [x] Wording for idle / manual / restart and with / without a conversation.
+- [x] Heavy: warning box (long form), Compact and resume + New session as pills.
+- [x] ≤ 330: no What, warning pill short form. ≤ 210: one row, no Why, smaller Resume, tokens-only pill. Sliver: card scrolls.
+- [x] Busy labels Resuming… / Compacting… / Starting…, all buttons disabled; failure → toast, restored.
+- [x] Resume bodies `{mode}` exactly; success swaps in place (same leaf, focus); different id takes the leaf.
+- [x] Peek: readable log, Parked view pill top right; Parked view (and Esc, native) returns; a send from Peek resumes first then sends.
+- [x] × → discard; the pane closes.
+- [x] No global input bar under a focused parked pane.
+- [x] Tokens only (`park-card-w` and, if used, `yellow-edge` added to theme.slint).

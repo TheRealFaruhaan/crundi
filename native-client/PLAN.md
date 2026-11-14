@@ -128,10 +128,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [ ] **2.20 Cards.** A factory's result card (`cc-fr-*`) and the other
      cards a reply can carry.
    - [x] **2.21 Side questions.** `cc-aside` (asked while a turn runs).
-   - [ ] **2.22 Resume picker.** `#chat-resume-modal` ("Open a session"):
+   - [x] **2.22 Resume picker.** `#chat-resume-modal` ("Open a session"):
      loading, the list, empty, error; opening a new or an earlier
      conversation.
-   - [ ] **2.23 Parked panes.** The parked card (Resume, its other choices,
+   - [x] **2.23 Parked panes.** The parked card (Resume, its other choices,
      the warning, the narrow variants) and Peek / leave Peek
      (`/api/panes/:id/resume`).
    - [ ] **2.24 Voice input.** The chat's mic button, push-to-talk and the
@@ -464,6 +464,21 @@ Phase 1 left these, each with its workaround in place:
 - **The goal and the plan** (2.19):
   - the plan's headings are bold body text in the panel (StyledText has no
     heading sizes); its lists hang as the reply's.
+- **The resume picker** (2.22), deliberate differences: Esc cancels, the
+  keyboard starts on New session, ↑/↓ move between rows (the web has none
+  of these); the launcher shows its busy look from the picker too (the web
+  only when no dialog was shown); a list that failed says the client's own
+  words for the error ("Cannot reach the server: …").
+- **Parked panes** (2.23):
+  - no blur on the conversation behind the card (the software renderer
+    has none): it is darkened (`park-dim`) under the veil;
+  - the very short card's wrapping row is two rows (Resume, Peek, the
+    tokens; then the choices): Slint has no wrapping row;
+  - Esc in Peek goes back to the parked view (the web has no Esc there);
+  - "Closed · 5m ago" is worked out again on each redraw (the web's stays
+    as it was when the card was built);
+  - the web's terminal input bar under a focused parked chat is left out;
+  - the card's buttons take no Tab focus (the mouse does everything).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

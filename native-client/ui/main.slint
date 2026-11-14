@@ -24,8 +24,10 @@ import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
 import { SecretsDialog, SecGrant, SecPick, SecProbe } from "secrets.slint";
 import { SreqDock, SreqCard, SreqProbe } from "sreq.slint";
 import { Viewer, DlTray } from "viewer.slint";
+import { ResumePicker, ResumeRow, ResumeProbe } from "resume.slint";
+import { ParkAct } from "parked.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe}
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe, ResumeRow, ResumeProbe, ParkAct}
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -206,9 +208,24 @@ export component MainWindow inherits Window {
     callback sec-revoke(string);
     callback sec-revoke-all();
     pure callback sec-next-field(string, bool) -> string;
+    // The resume picker (2.22): see ui/resume.slint.
+    in property <bool> resume-open;
+    in property <string> resume-heading;
+    in property <[ResumeRow]> resume-rows;
+    in property <string> resume-error;
+    in property <bool> resume-heavy;
+    in property <string> resume-heavy-title;
+    in property <string> resume-heavy-intro;
+    in property <bool> resume-heavy-in-use;
+    callback resume-new();
+    callback resume-pick(int);
+    callback resume-compact();
+    callback resume-full();
+    callback resume-back();
+    callback resume-cancel();
     // Any modal dialog open (every later one joins this): the pointer is the
     // scrim's (Pointer.modal).
-    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open);
+    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open || root.resume-open);
     changed modal-open => { Pointer.modal = self.modal-open; }
     in property <bool> toast-error;
 
@@ -445,6 +462,19 @@ export component MainWindow inherits Window {
         start: root.mode-start;
         choose(m) => { root.mode-choose(m); }
         close => { root.mode-close(); }
+    }
+
+    // The resume picker (2.22).
+    if root.signed-in && root.resume-open: ResumePicker {
+        width: root.width; height: root.height;
+        heading: root.resume-heading; rows: root.resume-rows; error: root.resume-error;
+        heavy: root.resume-heavy; heavy-title: root.resume-heavy-title; heavy-intro: root.resume-heavy-intro; heavy-in-use: root.resume-heavy-in-use;
+        pick-new => { root.resume-new(); }
+        pick(i) => { root.resume-pick(i); }
+        compact => { root.resume-compact(); }
+        full => { root.resume-full(); }
+        back => { root.resume-back(); }
+        cancel => { root.resume-cancel(); }
     }
 
     // The chat secrets dialog (2.12).

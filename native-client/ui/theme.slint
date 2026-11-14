@@ -48,6 +48,8 @@ export global Theme {
     out property <color> sky-ring: #38bdf82e;
     // Plan mode's border (the mode button).
     out property <color> sky-edge: #38bdf873;
+    // The parked card's warning edge (2.23): yellow at .35.
+    out property <color> yellow-edge: #f59e0b59;
 
     // Tints of the palette.
     out property <color> error-text: #fca5a5;
@@ -82,6 +84,10 @@ export global Theme {
     // Media (2.16m): the picture viewer's backdrop, a frame's box, a video's
     // play button and its ring (over a picture: white on dark).
     out property <color> backdrop: #000000db;
+    // A parked pane (2.23): its conversation darkened (the web's
+    // brightness .55; no blur, PLAN.md), then the veil, darkest at the centre.
+    out property <color> park-dim: #00000073;
+    out property <brush> park-veil: @radial-gradient(circle, #0a0a0f8c 0%, #0a0a0f26 70%);
     out property <color> frame-bg: #0f0f14;
     // The suggestion's dashed edge, and its edge on hover (2.17).
     out property <color> sug-edge: #818cf88c;
@@ -153,6 +159,13 @@ export global Theme {
     // The chat secrets dialog (2.12): its width, its pick list's tallest,
     // a lock field's width.
     out property <length> dialog-w-lg: 460px;
+    // The resume picker (2.22): the web's 560 (dialog-w-lg wraps every title).
+    out property <length> dialog-w-xl: 560px;
+    // The parked card's widest (2.23), and the body heights its short and
+    // very short forms start at.
+    out property <length> park-card-w: 330px;
+    out property <length> park-short-h: 330px;
+    out property <length> park-tiny-h: 210px;
     out property <length> pick-max-h: 240px;
     out property <length> lock-field-w: 150px;
     // Secret requests (2.12b): a run's command box at its tallest, and the
@@ -216,6 +229,10 @@ export global Theme {
     // A tool card's spinner: one turn (2.14, the web's 0.7 s), and its ring.
     out property <duration> spin: 700ms;
     out property <length> spin-stroke: 1.5px;
+    // A launching button's spinner (the web's .cr-busy): 15 across, a 2px
+    // white ring at .35 with a white arc.
+    out property <length> spin-busy: 15px;
+    out property <color> spin-busy-ring: #ffffff59;
     out property <angle> turn: 360deg;
     // A live thinking block (2.15): the label's shimmer, the caret's blink.
     out property <duration> shimmer: 1600ms;
@@ -266,6 +283,8 @@ export global Theme {
     out property <Shadow> glow-send: { blur: 8px, y: 2px, c: #6366f133 };
     out property <Shadow> glow-yellow: { blur: 8px, y: 0px, c: #f59e0b59 };
     out property <Shadow> glow-accent: { blur: 10px, y: 0px, c: #6366f159 };
+    // The parked card's Resume (0 0 24px accent at .35).
+    out property <Shadow> glow-resume: { blur: 24px, y: 0px, c: #6366f159 };
 
     // Type: the mono stack, set at start for the system (src/main.rs).
     in-out property <string> mono: "DejaVu Sans Mono";

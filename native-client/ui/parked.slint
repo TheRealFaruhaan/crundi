@@ -1,0 +1,235 @@
+// A parked chat (2.23, specs/parked-panes.md): its conversation darkened
+// behind a card with Resume, Peek, why and when it was closed, what Resume
+// does, the warning for a long conversation, and the other ways back in.
+// Peek shows the conversation, with Parked view to come back.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon, SoftShadow } from "widgets.slint";
+import { Tip } from "chat.slint";
+
+/// What the card's buttons do (src/app.rs): resume a pane's chat (resume |
+/// compact | new), and Peek on or off.
+export global ParkAct {
+    callback resume(string /* pane key */, string /* mode */);
+    callback peek(string, bool);
+}
+
+/// Resume (.pk-resume): an accent pill with a glow, the play mark and its
+/// label; smaller and without the glow on a very short pane.
+component PkResume inherits Rectangle {
+    in property <string> label;
+    in property <bool> small;
+    in property <bool> off;
+    callback clicked();
+    height: root.small ? Theme.control : Theme.control-lg;
+    width: lay.preferred-width;
+    opacity: root.off ? Theme.o-dim : 1;
+    if !root.small: SoftShadow { width: parent.width; height: parent.height; radius: root.height / 2; shadow: Theme.glow-resume; }
+    Rectangle { border-radius: root.height / 2; background: ta.has-hover && !root.off ? Theme.accent-hover : Theme.accent; }
+    lay := HorizontalLayout {
+        padding-left: root.small ? Theme.sp-16 : Theme.sp-24; padding-right: self.padding-left;
+        spacing: Theme.sp-8;
+        alignment: center;
+        Icon { y: (parent.height - self.height) / 2; source: @image-url("shapes/play-fill.svg"); width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.white; }
+        Text { text: root.label; vertical-alignment: center; font-size: root.small ? Theme.text-13 : Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; }
+    }
+    ta := TouchArea { enabled: !root.off; mouse-cursor: root.off ? default : pointer; clicked => { root.clicked(); } }
+}
+
+/// A second choice (.pk-alt): a small pill, bg-tertiary on a border (accent
+/// when hovered), maybe an icon.
+component PkAlt inherits Rectangle {
+    in property <string> label;
+    in property <image> icon;
+    in property <bool> has-icon;
+    in property <bool> off;
+    in property <string> tip;
+    callback clicked();
+    height: Theme.control-sm;
+    width: lay.preferred-width;
+    opacity: root.off ? Theme.o-dim : 1;
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: ta.has-hover && !root.off ? Theme.accent : Theme.border;
+    background: Theme.bg-tertiary;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        spacing: Theme.sp-6;
+        alignment: center;
+        if root.has-icon: Icon { y: (parent.height - self.height) / 2; source: root.icon; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-primary; }
+        Text { text: root.label; vertical-alignment: center; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+    }
+    ta := TouchArea {
+        enabled: !root.off; mouse-cursor: root.off ? default : pointer; clicked => { root.clicked(); }
+        if root.tip != "": Tip { on: parent.has-hover; text: root.tip; }
+    }
+}
+
+/// The quiet New session (.pk-alt.quiet): an underlined link,
+/// text-secondary (text-primary when hovered).
+component PkQuiet inherits Rectangle {
+    in property <bool> off;
+    callback clicked();
+    width: qt.preferred-width + 2 * Theme.sp-4;
+    height: Theme.control-sm;
+    opacity: root.off ? Theme.o-dim : 1;
+    qt := Text {
+        text: "New session"; font-size: Theme.text-12; font-weight: Theme.w-medium;
+        color: ta.has-hover && !root.off ? Theme.text-primary : Theme.text-secondary;
+    }
+    // The underline, 3 under the text's baseline box.
+    Rectangle {
+        x: (parent.width - qt.preferred-width) / 2; width: qt.preferred-width;
+        y: (parent.height + qt.preferred-height) / 2 + 1px; height: 1px;
+        background: qt.color;
+    }
+    ta := TouchArea {
+        enabled: !root.off; mouse-cursor: root.off ? default : pointer; clicked => { root.clicked(); }
+        Tip { on: parent.has-hover; text: "Start a fresh conversation in this pane. The old one stays, and can be resumed from the session list."; }
+    }
+}
+
+/// The warning (.pk-warn): a yellow-dim box on a yellow edge, the shield
+/// and the tokens in yellow. `form`: long (a box, the long text), short (a
+/// pill, ", a long conversation") or tokens (a pill, the tokens only).
+component PkWarn inherits Rectangle {
+    in property <string> tokens;
+    in property <string> form;
+    in property <length> max-w;
+    property <bool> pill: root.form != "long";
+    property <length> text-w: root.max-w - 2 * Theme.sp-10 - Theme.icon-sm - Theme.sp-6;
+    width: root.pill ? min(root.max-w, pw.preferred-width + 2 * Theme.sp-10 + Theme.icon-sm + Theme.sp-6) : root.max-w;
+    height: root.pill ? max(Theme.icon-sm, pw.preferred-height) + 2 * Theme.sp-4 : lw.preferred-height + 2 * Theme.sp-8;
+    border-radius: root.pill ? self.height / 2 : Theme.r-control;
+    border-width: 1px; border-color: Theme.yellow-edge;
+    background: Theme.yellow-dim;
+    Icon {
+        x: Theme.sp-10; y: root.pill ? (parent.height - self.height) / 2 : Theme.sp-8 + Theme.sp-2;
+        source: Icons.shield-alert; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.yellow;
+    }
+    pw := StyledText {
+        visible: root.pill;
+        x: Theme.sp-10 + Theme.icon-sm + Theme.sp-6; y: (parent.height - self.preferred-height) / 2;
+        text: root.form == "short" ? @markdown("<font color=\"\{Theme.yellow}\">**\{root.tokens}**</font>, a long conversation") : @markdown("<font color=\"\{Theme.yellow}\">**\{root.tokens}**</font>");
+        default-color: Theme.text-primary; default-font-size: Theme.text-11;
+    }
+    lw := StyledText {
+        visible: !root.pill;
+        x: Theme.sp-10 + Theme.icon-sm + Theme.sp-6; y: Theme.sp-8; width: root.text-w;
+        text: @markdown("<font color=\"\{Theme.yellow}\">**\{root.tokens}**</font> — continuing loads all of it into every turn. Compacting loads it once, then summarises it so later turns stay small.");
+        default-color: Theme.text-primary; default-font-size: Theme.text-11;
+    }
+    TouchArea { Tip { on: parent.has-hover; text: "continuing loads all of it into every turn. Compacting loads it once, then summarises it so later turns stay small."; } }
+}
+
+/// The parked view over the pane's body: the conversation darkened, the
+/// veil, and the card centred (it scrolls when the body is shorter).
+/// Body taller than park-short-h: everything; at most that: no What, the
+/// warning a pill; at most park-tiny-h: one row (Resume, Peek, the tokens),
+/// no Why, a smaller Resume.
+export component ParkedVeil inherits Rectangle {
+    in property <string> key;
+    in property <string> why;
+    in property <string> what;
+    in property <bool> session;
+    in property <bool> heavy;
+    in property <string> tokens;
+    // The pressed choice while it runs: resume | compact | new.
+    in property <string> busy;
+    property <bool> short: root.height <= Theme.park-short-h;
+    property <bool> tiny: root.height <= Theme.park-tiny-h;
+    property <bool> off: root.busy != "";
+    Rectangle { background: Theme.park-dim; }
+    Rectangle { background: Theme.park-veil; }
+    // The conversation behind takes no pointer.
+    TouchArea { scroll-event(e) => { accept } }
+    fl := Flickable {
+        width: parent.width; height: parent.height;
+        content-height: max(self.height, card.preferred-height);
+        card := VerticalLayout {
+            width: root.tiny ? fl.width : min(Theme.park-card-w, fl.width);
+            x: (fl.width - self.width) / 2;
+            y: max(0px, (fl.height - self.preferred-height) / 2);
+            height: self.preferred-height;
+            padding-top: root.tiny ? Theme.sp-8 : root.short ? Theme.sp-10 : Theme.sp-16;
+            padding-bottom: self.padding-top;
+            padding-left: root.tiny ? Theme.sp-8 : root.short ? Theme.sp-12 : Theme.sp-16;
+            padding-right: self.padding-left;
+            spacing: root.short ? Theme.sp-6 : Theme.sp-8;
+            HorizontalLayout {
+                alignment: center;
+                spacing: root.tiny ? Theme.sp-6 : Theme.sp-8;
+                PkResume {
+                    y: (parent.height - self.height) / 2;
+                    small: root.tiny; off: root.off;
+                    label: root.busy == "resume" ? "Resuming…" : "Resume";
+                    clicked => { ParkAct.resume(root.key, "resume"); }
+                }
+                if root.session: PkAlt {
+                    y: (parent.height - self.height) / 2;
+                    label: "Peek"; has-icon: true; icon: Icons.eye; off: root.off;
+                    tip: "Read the conversation without resuming it";
+                    clicked => { ParkAct.peek(root.key, true); }
+                }
+                if root.tiny && root.heavy: PkWarn {
+                    y: (parent.height - self.height) / 2;
+                    form: "tokens"; tokens: root.tokens; max-w: fl.width;
+                }
+            }
+            if !root.tiny: Text {
+                text: root.why; font-size: Theme.text-12; color: Theme.text-primary;
+                horizontal-alignment: center; wrap: word-wrap;
+            }
+            if !root.short: Text {
+                text: root.what; font-size: Theme.text-11; color: Theme.text-secondary;
+                horizontal-alignment: center; wrap: word-wrap;
+            }
+            if root.heavy && !root.tiny: HorizontalLayout {
+                alignment: center;
+                PkWarn { form: root.short ? "short" : "long"; tokens: root.tokens; max-w: card.width - card.padding-left - card.padding-right; }
+            }
+            if root.session: HorizontalLayout {
+                alignment: center;
+                spacing: Theme.sp-6;
+                if root.heavy: PkAlt {
+                    label: root.busy == "compact" ? "Compacting…" : "Compact and resume"; off: root.off;
+                    clicked => { ParkAct.resume(root.key, "compact"); }
+                }
+                if root.heavy: PkAlt {
+                    label: root.busy == "new" ? "Starting…" : "New session"; off: root.off;
+                    tip: "Start a fresh conversation in this pane. The old one stays, and can be resumed from the session list.";
+                    clicked => { ParkAct.resume(root.key, "new"); }
+                }
+                if !root.heavy: PkQuiet {
+                    off: root.off;
+                    clicked => { ParkAct.resume(root.key, "new"); }
+                }
+            }
+        }
+    }
+}
+
+/// Peek's way back (.pk-unpeek): top right of the body, an accent-edged
+/// pill on bg-card with a shadow; accent-dim when hovered.
+export component Unpeek inherits Rectangle {
+    in property <string> key;
+    width: lay.preferred-width;
+    height: Theme.control-sm + Theme.sp-2;
+    SoftShadow { width: parent.width; height: parent.height; radius: self.height / 2; shadow: Theme.shadow-menu; }
+    Rectangle {
+        border-radius: root.height / 2; border-width: 1px; border-color: Theme.accent;
+        background: ta.has-hover ? Theme.accent-dim : Theme.bg-card;
+    }
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        spacing: Theme.sp-6;
+        Icon { y: (parent.height - self.height) / 2; source: Icons.eye-off; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-primary; }
+        Text { text: "Parked view"; vertical-alignment: center; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { ParkAct.peek(root.key, false); }
+        Tip { on: parent.has-hover; text: "Back to the parked view"; }
+    }
+}

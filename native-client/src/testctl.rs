@@ -96,7 +96,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "slash": crate::app::slash_of(p.key.as_str()), "question": crate::app::q_of(p.key.as_str()), "tools": crate::app::tools_of(p.key.as_str()), "dock": crate::app::dock_of(p.key.as_str()), "agentDock": crate::app::agents_of(p.key.as_str()), "goal": crate::app::goal_of(p.key.as_str()), "sched": crate::app::sched_of(p.key.as_str()), "qHeld": p.q_held.as_str(), "qHeldN": p.q_held_n, "qSent": p.q_sent.as_str(), "qSentKind": p.q_sent_kind.as_str(), "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "slash": crate::app::slash_of(p.key.as_str()), "question": crate::app::q_of(p.key.as_str()), "tools": crate::app::tools_of(p.key.as_str()), "dock": crate::app::dock_of(p.key.as_str()), "agentDock": crate::app::agents_of(p.key.as_str()), "goal": crate::app::goal_of(p.key.as_str()), "sched": crate::app::sched_of(p.key.as_str()), "qHeld": p.q_held.as_str(), "qHeldN": p.q_held_n, "qSent": p.q_sent.as_str(), "qSentKind": p.q_sent_kind.as_str(), "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop, "launchBusy": p.launch_busy, "entries": p.entries.row_count(), "pk": if p.pk { json!({ "peek": p.pk_peek, "why": p.pk_why.as_str(), "what": p.pk_what.as_str(), "session": p.pk_session, "heavy": p.pk_heavy, "tokens": p.pk_tokens.as_str(), "busy": p.pk_busy.as_str() }) } else { Value::Null } })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
             "pointerModal": w.global::<crate::Pointer>().get_modal(),
@@ -113,6 +113,14 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             // bottom, following it, the jump button and its dot (2.16).
             "log": ({ let l = w.global::<crate::LogProbe>(); json!({ "key": l.get_watch().as_str(), "dist": l.get_dist(), "over": l.get_over(), "stick": l.get_stick(), "jump": l.get_jump(), "jumpNew": l.get_jump_new(), "jumpX": l.get_jump_x(), "jumpY": l.get_jump_y() }) }),
             "panelDist": w.global::<crate::SheetProbe>().get_dist(),
+            // The resume picker (2.22).
+            "resume": if w.get_resume_open() { let rp = w.global::<crate::ResumeProbe>(); json!({
+                "heading": w.get_resume_heading().as_str(), "error": w.get_resume_error().as_str(), "heavy": w.get_resume_heavy(),
+                "heavyTitle": w.get_resume_heavy_title().as_str(), "heavyIntro": w.get_resume_heavy_intro().as_str(),
+                "rows": w.get_resume_rows().iter().map(|r| json!({ "title": r.title.as_str(), "meta": r.meta.as_str(), "heavy": r.heavy, "inUse": r.in_use })).collect::<Vec<_>>(),
+                "focus": rp.get_focus(), "scroll": rp.get_scroll(), "viewH": rp.get_view_h(), "contentH": rp.get_content_h(), "focusBottom": rp.get_focus_bottom(),
+            }) } else { Value::Null },
+            "lastCreate": crate::app::last_create(),
             "clipboard": arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).unwrap_or_default(),
             "sreqFocused": w.global::<crate::SreqProbe>().get_field_focused(),
             "dock": ({ let p = w.global::<crate::Pointer>(); json!({ "x": p.get_dock_x(), "y": p.get_dock_y(), "w": p.get_dock_w(), "h": p.get_dock_h() }) }),
@@ -205,6 +213,18 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "focus-pane" => w.invoke_focus_pane(arg(c, 0).parse().unwrap_or(0)),
                 "split" => w.invoke_split(arg(c, 0).parse().unwrap_or(0), arg(c, 1) == "true"),
                 "launch-chat" => w.invoke_launch_chat(arg(c, 0).parse().unwrap_or(0), arg(c, 1) == "skip"),
+                // The resume picker (2.22): New session, an earlier one (by
+                // row), the heavy choice's two, Back, Cancel.
+                "resume-new" => w.invoke_resume_new(),
+                "resume-pick" => w.invoke_resume_pick(arg(c, 0).parse().unwrap_or(0)),
+                "resume-compact" => w.invoke_resume_compact(),
+                "resume-full" => w.invoke_resume_full(),
+                "resume-back" => w.invoke_resume_back(),
+                "resume-cancel" => w.invoke_resume_cancel(),
+                // A parked chat (2.23), by pane key: Resume (resume | compact |
+                // new), Peek on or off.
+                "park-resume" => w.global::<crate::ParkAct>().invoke_resume(arg(c, 0).into(), arg(c, 1).into()),
+                "peek" => w.global::<crate::ParkAct>().invoke_peek(arg(c, 0).into(), arg(c, 1) != "off"),
                 "send" => w.invoke_send(chat().into(), arg(c, 0).into()),
                 "stop" => w.invoke_stop(chat().into()),
                 // The composer (2.5): the Enter mode, the focus in a chat's box.
