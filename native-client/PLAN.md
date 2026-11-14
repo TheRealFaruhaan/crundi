@@ -82,7 +82,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      drop (`cc-dropping`), paste, upload progress (`cc-up`), and the path
      put into the message (`/api/attachments/upload`). No chips: the web
      has none, it puts the path into the message.
-   - [ ] **2.8 Drafts.** Kept per chat across switching and a restart
+   - [x] **2.8 Drafts.** Kept per chat across switching and a restart
      (`saveDraft` / `readDraft` / `pruneDrafts`).
    - [ ] **2.9 Queued messages.** Sent while a turn runs: the queue block
      (`cc-queue`), cancel one, take it back to edit (`recallQueued`), sent when
