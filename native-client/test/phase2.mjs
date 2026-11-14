@@ -1725,6 +1725,34 @@ await sleep(300);
 await keys('b');
 p = await until('/b', (q) => pane(q, liveSl)?.slash, 5000);
 if (p) check('the next edit opens it again; /btw is listed for /b', pane(p, liveSl).slash.items.includes('/btw'), pane(p, liveSl).slash.items);
+// By mouse: a press on a row chooses it. The selected row is found by its
+// fill (accent-dim over bg-secondary); the third row is two row-heights below.
+await clearBox();
+await keys('/');
+p = await until('open for the mouse', (q) => pane(q, liveSl)?.slash?.items?.length >= 3 && pane(q, liveSl).slash.sel === 0, 5000);
+if (p) {
+  await sleep(300);
+  const q = pane(p, liveSl), img = await shot(), sel = [30, 30, 58];
+  let best = null;
+  for (let x = Math.round(WB.x + q.x + 6); x < Math.min(img.w - 30, WB.x + q.x + q.w - 6); x += 7) {
+    let run = [0, 0];
+    for (let y = Math.round(WB.y + q.y); y < Math.min(img.h, WB.y + q.y + q.h); y++) {
+      const c = img.at(x, y);
+      if (sel.every((v, i) => Math.abs(c[i] - v) <= 4)) { run = run[1] ? [run[0], run[1] + 1] : [y, 1]; if (run[1] >= 14 && run[1] <= 40 && (!best || run[1] > best.h)) best = { x, top: run[0], h: run[1] }; } else run = [0, 0];
+    }
+    if (best) break;
+  }
+  if (check('the selected row is drawn (accent-dim)', !!best, best)) {
+    const want3 = q.slash.items[2] + ' ', before = (await userTexts(liveSl)).length;
+    await mouse('click', best.x, best.top + best.h * 2.5);
+    p = await until('the mouse choice fills the box', (r) => pane(r, liveSl)?.draft === want3 && !pane(r, liveSl).slash, 5000);
+    if (check('a click on the third row: the box reads its "/name ", the list closes', !!p, { want: want3, draft: pane(await props(), liveSl)?.draft })) {
+      await sleep(1000);
+      check('a mouse choice sends nothing', (await userTexts(liveSl)).length === before);
+      check('the box keeps the focus after a mouse choice', pane(await props(), liveSl)?.focused === true);
+    }
+  }
+}
 await clearBox();
 await http('POST', `/api/ui-sessions/${liveSl}/close`, {}, token);
 
