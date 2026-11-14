@@ -88,9 +88,11 @@ export component ModePicker inherits Rectangle {
     init => { PickerProbe.scroll = 0; PickerProbe.view-h = fl.height; PickerProbe.focus = -1; keys.focus(); opener.running = true; }
     opener := Timer { interval: Theme.frame; running: false; triggered => { self.running = false; root.at = root.start; } }
     background: Theme.scrim;
-    // A click on the scrim closes it.
-    TouchArea { clicked => { root.close(); } }
+    // The key handler holds the whole dialog (as the secrets dialog's), so
+    // keys from anything focused in it pass through it.
     keys := FocusScope {
+        width: root.width; height: root.height;
+        focus-on-click: false;
         key-pressed(ev) => {
             if ev.text == Key.Escape { root.close(); return accept; }
             if ev.text == Key.Tab {
@@ -108,47 +110,49 @@ export component ModePicker inherits Rectangle {
             // Nothing behind the picker takes keys while it is open.
             accept
         }
-    }
-    dialog := Rectangle {
-        property <length> room-h: min(Theme.dialog-max-h, root.height - 2 * Theme.sp-16);
-        width: min(Theme.dialog-w, root.width - 2 * Theme.sp-16);
-        height: min(body.preferred-height + Theme.sp-2, self.room-h);
-        x: (root.width - self.width) / 2;
-        y: (root.height - self.height) / 2;
-        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
-        Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
-        // A click inside the dialog stays in it.
-        TouchArea { }
-        // Taller than the room: it scrolls, its header with it, and the
-        // keyboard's focus is kept in view.
-        fl := RevealFlickable {
-            x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
-            content-height: body.preferred-height;
-            body := VerticalLayout {
-                padding: Theme.sp-6;
-                head := HorizontalLayout {
-                    padding-top: Theme.sp-8; padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-bottom: Theme.sp-6;
-                    spacing: Theme.sp-8;
-                    Text {
-                        horizontal-stretch: 1; vertical-alignment: center;
-                        text: "PERMISSION MODE"; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-secondary;
+        // A click on the scrim closes it.
+        TouchArea { clicked => { root.close(); } }
+        dialog := Rectangle {
+            property <length> room-h: min(Theme.dialog-max-h, root.height - 2 * Theme.sp-16);
+            width: min(Theme.dialog-w, root.width - 2 * Theme.sp-16);
+            height: min(body.preferred-height + Theme.sp-2, self.room-h);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
+            Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
+            // A click inside the dialog stays in it.
+            TouchArea { }
+            // Taller than the room: it scrolls, its header with it, and the
+            // keyboard's focus is kept in view.
+            fl := RevealFlickable {
+                x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+                content-height: body.preferred-height;
+                body := VerticalLayout {
+                    padding: Theme.sp-6;
+                    head := HorizontalLayout {
+                        padding-top: Theme.sp-8; padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-bottom: Theme.sp-6;
+                        spacing: Theme.sp-8;
+                        Text {
+                            horizontal-stretch: 1; vertical-alignment: center;
+                            text: "PERMISSION MODE"; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-secondary;
+                        }
+                        Rectangle {
+                            width: Theme.icon-md + 2 * Theme.sp-8; height: Theme.icon-md + 2 * Theme.sp-4;
+                            border-radius: Theme.r-control;
+                            background: xa.has-hover ? Theme.bg-tertiary : transparent;
+                            border-width: root.at == -1 && keys.has-focus ? 1px : 0px;
+                            border-color: Theme.accent;
+                            Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: xa.has-hover ? Theme.text-primary : Theme.text-secondary; }
+                            xa := TouchArea { mouse-cursor: pointer; clicked => { root.close(); } }
+                        }
                     }
-                    Rectangle {
-                        width: Theme.icon-md + 2 * Theme.sp-8; height: Theme.icon-md + 2 * Theme.sp-4;
-                        border-radius: Theme.r-control;
-                        background: xa.has-hover ? Theme.bg-tertiary : transparent;
-                        border-width: root.at == -1 && keys.has-focus ? 1px : 0px;
-                        border-color: Theme.accent;
-                        Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: xa.has-hover ? Theme.text-primary : Theme.text-secondary; }
-                        xa := TouchArea { mouse-cursor: pointer; clicked => { root.close(); } }
+                    for m[i] in root.modes: ModeRow {
+                        m: m;
+                        selected: m.key == root.current;
+                        focused: root.at == i && keys.has-focus;
+                        clicked => { root.choose(m.key); }
+                        reveal(top, bottom) => { root.show(top, bottom); }
                     }
-                }
-                for m[i] in root.modes: ModeRow {
-                    m: m;
-                    selected: m.key == root.current;
-                    focused: root.at == i && keys.has-focus;
-                    clicked => { root.choose(m.key); }
-                    reveal(top, bottom) => { root.show(top, bottom); }
                 }
             }
         }

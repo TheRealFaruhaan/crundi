@@ -1762,6 +1762,39 @@ await snap('2.12-granted');
 await ui('sec-revoke', 'E2E_TOKEN');
 p = await until('revoked', (q) => q.secretsDialog?.grants?.length === 0 && pane(q, liveSec)?.secretsN === 0, 10000);
 if (p) check('Revoke: gone from the server and the lock; the toast', (await grantsOf()).length === 0 && p.toast === 'Revoked E2E_TOKEN', p.toast);
+// F74: Tab and Shift+Tab move between the ticked secrets' fields, and what
+// is typed lands in the field Tab went to.
+const added2 = await http('POST', '/api/secrets', { action: 'add', name: 'E2E_TWO', description: 'e2e', value: 'v', pin: 'two-pass' }, token);
+check('a second secret is seeded', added2.body?.ok === true, added2.body);
+await key('Escape');
+await until('closed to reload', (q) => q.secretsDialog === null, 5000);
+await ui('sec-open', (await qp(liveSec)).id);
+await until('the dialog lists both', (q) => q.secretsDialog && !q.secretsDialog.loading && q.secretsDialog.secrets.includes('E2E_TWO'), 10000);
+await ui('sec-tick', 'E2E_TOKEN');
+await ui('sec-tick', 'E2E_TWO');
+await new Promise((r) => setTimeout(r, 300));
+await keys('ab');
+p = await until('typed in the last ticked field', (q) => q.secretsDialog?.typed?.E2E_TWO === 2, 5000);
+if (p) check('the field of the secret ticked last has the focus', p.secretsDialog.typed.E2E_TOKEN === undefined || p.secretsDialog.typed.E2E_TOKEN === 0, p.secretsDialog.typed);
+await key('Tab');
+await new Promise((r) => setTimeout(r, 200));
+await keys('xyz');
+p = await until('Tab moves on', (q) => q.secretsDialog?.typed?.E2E_TOKEN === 3, 5000);
+if (p) check('Tab moves to the other ticked field and typing lands there', p.secretsDialog.typed.E2E_TWO === 2, p.secretsDialog.typed);
+await key('Backtab');
+await new Promise((r) => setTimeout(r, 200));
+await keys('c');
+p = await until('Shift+Tab moves back', (q) => q.secretsDialog?.typed?.E2E_TWO === 3, 5000);
+if (p) check('Shift+Tab moves back, staying among the fields', p.secretsDialog.typed.E2E_TOKEN === 3, p.secretsDialog.typed);
+check('the dialog is still open', (await props()).secretsDialog !== null);
+// F75: in a short window the pick list gives up its height first; the
+// durations, Close and Pre-authorise stay in view.
+await d.send({ cmd: 'resize', w: 860, h: 480 });
+p = await until('short window', (q) => q.secProbe && q.secProbe.actionsShown === true, 5000);
+check('860x480: Close and Pre-authorise in view', !!p, (await props()).secProbe);
+await snap('2.12-short');
+await d.send({ cmd: 'resize', w: 1400, h: 860 });
+await until('back to size', (q) => q.secProbe?.actionsShown === true, 5000);
 await key('Escape');
 await until('Esc closes the dialog', (q) => q.secretsDialog === null && q.pointerModal === false, 5000) && check('Esc closes the dialog', true);
 await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);

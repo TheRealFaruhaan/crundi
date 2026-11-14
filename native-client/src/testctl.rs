@@ -100,6 +100,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
             "pointerModal": w.global::<crate::Pointer>().get_modal(),
+            "secProbe": if w.get_sec_open() { let pr = w.global::<crate::SecProbe>(); json!({ "actionsShown": pr.get_actions_shown() }) } else { Value::Null },
             "modePicker": if w.get_mode_picker_open() { let pr = w.global::<crate::PickerProbe>(); json!({ "focus": pr.get_focus(), "focusTop": pr.get_focus_top(), "focusBottom": pr.get_focus_bottom(), "scroll": pr.get_scroll(), "viewH": pr.get_view_h(), "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
             "savedDrafts": crate::app::saved_drafts(),
             "secretsDialog": crate::app::sec_of(),

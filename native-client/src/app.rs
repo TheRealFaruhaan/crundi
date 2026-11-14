@@ -1924,7 +1924,9 @@ fn show_sec(w: &MainWindow, a: &App) {
 pub fn sec_of() -> Value {
     with(|a| a.sec.as_ref().map(|d| json!({
         "chat": d.chat, "loading": d.secrets.is_none(), "secrets": d.secrets.iter().flatten().map(|x| x.1.clone()).collect::<Vec<_>>(),
-        "chosen": d.chosen, "bad": d.bad, "duration": d.duration, "busy": d.busy, "err": d.err, "unsupported": d.unsupported,
+        "chosen": d.chosen, "bad": d.bad,
+        // How much is typed in each field, by name (never what).
+        "typed": d.secrets.iter().flatten().filter_map(|x| d.pins.get(&x.0).map(|p| (x.1.clone(), json!(p.chars().count())))).collect::<serde_json::Map<String, Value>>(), "duration": d.duration, "busy": d.busy, "err": d.err, "unsupported": d.unsupported,
         "grants": a.grants.get(&d.chat).and_then(|g| g.as_array()).cloned().unwrap_or_default().iter().map(|g| json!({ "name": s(g, "name"), "when": secrets::when(g.get("expiresAt").and_then(|e| e.as_str()), chrono::Local::now()) })).collect::<Vec<_>>(),
     }))).flatten().unwrap_or(Value::Null)
 }

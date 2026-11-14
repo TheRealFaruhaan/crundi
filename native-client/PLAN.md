@@ -90,9 +90,14 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.10 Scheduled messages.** The clock (`cc-sched-trig`) and its
      panel (`cc-schedpanel`): empty, a list, the form (when, triggers, text),
      save, delete.
-   - [ ] **2.11 Slash menu.** `cc-slash` with its items, keyboard selection.
+   - [x] **2.11 Slash menu.** `cc-slash` with its items, keyboard selection.
    - [ ] **2.12 Chat secrets dialog.** What the lock opens
      (`app/vendor/crundi-chat-secrets.js`): list, add, remove, the PIN step.
+   - [ ] **2.12b Secret requests in a chat.** The secret-request dock
+     (`sreq-dock`, src/webapp-html.js ~17420-17530: 'Run a command with X',
+     Approve / Reject, the PIN or passphrase field) and its 'Allow for this
+     chat' row with a duration (`CrundiChatSecrets.allowRow`, sent as
+     `allowForChat` on approve).
    - [ ] **2.13 Questions.** One and several questions, multi-select,
      "Other…" with typed text, Submit, Dismiss, the answered and orphaned
      states.
@@ -184,7 +189,6 @@ Phase 1 left these, each with its workaround in place:
 - **Visual-only controls** until their phase:
   - Cru;
   - Add project and Inbox;
-  - the pane header's lock opens nothing yet (its dialog is 2.12);
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
   - "Other…" answers to questions;
 - **Tooltips** (phase 2). The web's are the system's own (`title`); the
@@ -345,6 +349,10 @@ Phase 1 left these, each with its workaround in place:
     (the web's Tab also reaches the buttons, and can leave the dialog);
   - the checkbox is the client's own (an accent box with a check), not the
     system's.
+  - the pick list's rows keep the scroll thumb's strip clear whenever the
+    rows' least height overflows the list (a row's real height depends on
+    its width, so the exact test would be a binding loop); a list whose
+    long names wrap just enough to scroll may run a field under the thumb.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):
