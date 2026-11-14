@@ -98,10 +98,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      Approve / Reject, the PIN or passphrase field) and its 'Allow for this
      chat' row with a duration (`CrundiChatSecrets.allowRow`, sent as
      `allowForChat` on approve).
-   - [ ] **2.13 Questions.** One and several questions, multi-select,
+   - [x] **2.13 Questions.** One and several questions, multi-select,
      "Other…" with typed text, Submit, Dismiss, the answered and orphaned
      states.
-   - [ ] **2.14 Tool cards.** Running spinner, open and closed, the result
+   - [x] **2.14 Tool cards.** Running spinner, open and closed, the result
      body with its scroll and size limits, diffs (add / del), the Task tool's
      card, the todo list (`cc-todo`).
    - [ ] **2.15 Thinking.** Live shimmer, collapsing when done, opening again.
