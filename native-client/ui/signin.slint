@@ -1,7 +1,7 @@
 // Signing in, as the PC client does it, measured from the running pages:
 //
 // 1. Which server: the Electron client's "Server" screen (app/index.html,
-//    .setup-card), under its 32px title bar.
+//    .setup-card), under its title bar.
 // 2. Signing in: the web UI's login screen (src/webapp-html.js #login-screen):
 //    the mascot, the wordmark, the card with the methods the server offers.
 //
@@ -10,8 +10,9 @@
 // quiet links, in the style of its "I was invited to a project".
 
 import { Theme } from "theme.slint";
+import { SoftShadow } from "widgets.slint";
 
-/// The Electron client's title bar: 32px, the mark and wordmark, the window buttons.
+/// The Electron client's title bar: the mark and wordmark, the window buttons.
 export component TitleBar inherits Rectangle {
     callback drag();
     callback minimize();
@@ -24,24 +25,24 @@ export component TitleBar inherits Rectangle {
         pointer-event(e) => { if e.kind == PointerEventKind.down && e.button == PointerEventButton.left { root.drag(); } }
         double-clicked => { root.maximize(); }
     }
-    Image { x: Theme.sp-12; y: Theme.sp-6; width: Theme.sz-18; height: Theme.sz-18; source: @image-url("brand/head.svg"); }
-    Image { x: Theme.sz-38; y: Theme.sp-8; width: Theme.sp-48; height: Theme.icon-sm; source: @image-url("brand/wordmark.svg"); image-fit: contain; }
+    Image { x: Theme.sp-12; y: (parent.height - self.height) / 2; width: Theme.icon-lg; height: Theme.icon-lg; source: @image-url("brand/head.svg"); }
+    Image { x: Theme.sp-12 + Theme.icon-lg + Theme.sp-8; y: (parent.height - self.height) / 2; width: Theme.sp-48; height: Theme.icon-sm; source: @image-url("brand/wordmark.svg"); image-fit: contain; }
     HorizontalLayout {
-        x: parent.width - Theme.winbtns-w - Theme.sp-12; y: Theme.sp-2;
-        width: Theme.winbtns-w; height: Theme.sz-28;
+        x: parent.width - self.width - Theme.sp-12; y: Theme.sp-2;
+        width: self.preferred-width; height: Theme.control-sm;
         spacing: Theme.sp-2;
         for g[i] in ["–", "□", "✕"]: Rectangle {
-            width: Theme.sz-36; height: Theme.sz-28;
+            width: Theme.control-lg; height: Theme.control-sm;
             border-radius: Theme.r-control;
             background: wb.has-hover ? (i == 2 ? Theme.red : Theme.bg-hover) : transparent;
-            Text { text: g; font-size: Theme.text-16; color: wb.has-hover ? (i == 2 ? white : Theme.text-primary) : Theme.text-secondary; }
+            Text { text: g; font-size: Theme.text-16; color: wb.has-hover ? (i == 2 ? Theme.white : Theme.text-primary) : Theme.text-secondary; }
             wb := TouchArea { clicked => { if i == 0 { root.minimize(); } else if i == 1 { root.maximize(); } else { root.close(); } } }
         }
     }
 }
 
-/// The login card's field: 260×36, 9px 11px, radius 8, bg-primary; focused, an
-/// accent border and a 3px ring.
+/// The login card's field: as wide as the sidebar (the card's one column),
+/// radius 8, bg-primary; focused, an accent border and a ring.
 component LoginField inherits Rectangle {
     in-out property <string> text;
     in property <string> placeholder;
@@ -49,9 +50,9 @@ component LoginField inherits Rectangle {
     in property <bool> code;
     callback accepted();
     public function focus-input() { input.focus(); }
-    width: Theme.signin-field;
-    height: Theme.sz-36;
-    // The focus ring: 3px of rgba(99,102,241,.28) outside the border.
+    width: Theme.sidebar-width;
+    height: Theme.control-lg;
+    // The focus ring, outside the border.
     if input.has-focus: Rectangle { x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4; border-radius: Theme.r-card; background: Theme.accent-ring; }
     Rectangle {
         border-radius: Theme.r-field;
@@ -68,7 +69,7 @@ component LoginField inherits Rectangle {
         input-type: root.password ? InputType.password : InputType.text;
         font-size: Theme.text-14;
         font-family: root.code ? Theme.mono : "";
-        letter-spacing: root.code ? Theme.track-code-sm : 0px;
+        letter-spacing: root.code ? Theme.track-wide : 0px;
         color: Theme.text-primary;
         selection-background-color: Theme.accent-dim;
         accepted => { root.accepted(); }
@@ -81,32 +82,32 @@ component LoginField inherits Rectangle {
         text: root.placeholder;
         font-size: Theme.text-14;
         font-family: root.code ? Theme.mono : "";
-        letter-spacing: root.code ? Theme.track-code-sm : 0px;
+        letter-spacing: root.code ? Theme.track-wide : 0px;
         color: Theme.placeholder;
     }
 }
 
-/// "Sign in": 260×34, accent, radius 8, 14.4px/600.
+/// "Sign in": the field's width, accent, radius 8.
 component LoginButton inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
     callback clicked();
-    width: Theme.signin-field;
-    height: Theme.sz-34;
+    width: Theme.sidebar-width;
+    height: Theme.control;
     border-radius: Theme.r-field;
     // Never drawn disabled (the web's isn't); it just waits for input.
     background: lb.has-hover ? Theme.accent-hover : Theme.accent;
-    Text { text: root.text; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: white; }
+    Text { text: root.text; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; }
     lb := TouchArea { mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default; clicked => { if root.enabled { root.clicked(); } } }
 }
 
-/// A sign-in button (.oauth-btn): 260 wide, 9px 12px, radius 8, a border,
-/// bg-primary, an 18px logo and the words, 10px apart.
+/// A sign-in button (.oauth-btn): the field's width, radius 8, a border,
+/// bg-primary, a logo and the words.
 component OAuthButton inherits Rectangle {
     in property <image> logo;
     in property <string> text;
     callback clicked();
-    width: Theme.signin-field;
+    width: Theme.sidebar-width;
     height: Theme.sp-40;
     border-radius: Theme.r-field;
     border-width: 1px;
@@ -115,13 +116,13 @@ component OAuthButton inherits Rectangle {
     HorizontalLayout {
         alignment: center;
         spacing: Theme.sp-10;
-        Image { source: root.logo; width: Theme.sz-18; height: Theme.sz-18; y: Theme.sp-12; colorize: Theme.text-primary; }
+        Image { source: root.logo; width: Theme.icon-lg; height: Theme.icon-lg; y: (parent.height - self.height) / 2; colorize: Theme.text-primary; }
         Text { text: root.text; font-size: Theme.text-14; color: Theme.text-primary; vertical-alignment: center; }
     }
     ob := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-/// A quiet link (#collab-login-link a): 12.48px, muted, accent on hover.
+/// A quiet link (#collab-login-link a): muted, accent on hover.
 component QuietLink inherits Text {
     callback clicked();
     font-size: Theme.text-12;
@@ -130,14 +131,14 @@ component QuietLink inherits Text {
     ql := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
-/// The Electron setup card's button (.btn): 8px 20px, radius 6, a border,
-/// bg-tertiary, 13.6px; accent on hover.
+/// The Electron setup card's button (.btn): radius 6, a border,
+/// bg-tertiary; accent on hover.
 component SetupBtn inherits Rectangle {
     in property <string> text;
     in property <bool> enabled: true;
     callback clicked();
-    width: t.preferred-width + Theme.sz-44;
-    height: Theme.sz-34;
+    width: t.preferred-width + Theme.sp-40;
+    height: Theme.control;
     border-radius: Theme.r-control;
     border-width: 1px;
     // Never drawn disabled (Electron's aren't); it just waits for input.
@@ -184,14 +185,18 @@ export component SignInPage inherits Rectangle {
         : "Pair this computer with a link from a signed-in device";
 
     background: Theme.bg-primary;
-    // The page's two faint glows (body: 1100×560 at 82% -12%, 820×480 at -8% 112%).
+    // The page's two faint glows: top right and bottom left.
     Rectangle {
-        x: parent.width * Theme.glow-a-fx - Theme.glow-a-w / 2; y: parent.height * Theme.glow-a-fy - Theme.glow-a-h / 2; width: Theme.glow-a-w; height: Theme.glow-a-h;
-        background: Theme.glow-page-a;
+        property <length> r: root.height * Theme.glow-a.fr;
+        property <length> cx: root.width * Theme.glow-a.fx;
+        property <length> cy: root.height * Theme.glow-a.fy;
+        background: @radial-gradient(circle self.r at self.cx self.cy, Theme.accent-haze 0%, Theme.accent-clear 100%);
     }
     Rectangle {
-        x: parent.width * Theme.glow-b-fx - Theme.glow-b-w / 2; y: parent.height * Theme.glow-b-fy - Theme.glow-b-h / 2; width: Theme.glow-b-w; height: Theme.glow-b-h;
-        background: Theme.glow-page-b;
+        property <length> r: root.height * Theme.glow-b.fr;
+        property <length> cx: root.width * Theme.glow-b.fx;
+        property <length> cy: root.height * Theme.glow-b.fy;
+        background: @radial-gradient(circle self.r at self.cx self.cy, Theme.accent-hover-mist 0%, Theme.accent-hover-clear 100%);
     }
 
     VerticalLayout {
@@ -208,7 +213,7 @@ export component SignInPage inherits Rectangle {
             HorizontalLayout {
                 alignment: center;
                 Rectangle {
-                    width: Theme.signin-card;
+                    width: Theme.sidebar-width * 2;
                     height: card.preferred-height;
                     background: Theme.bg-secondary;
                     border-width: 1px;
@@ -220,7 +225,6 @@ export component SignInPage inherits Rectangle {
                         Text { text: "Server"; font-size: Theme.text-20; font-weight: Theme.w-bold; color: Theme.text-primary; }
                         Rectangle { height: Theme.sp-6; }
                         Text {
-                            width: Theme.signin-row;
                             text: "Crundi can run its own server on this machine, or connect to one running elsewhere — a container on your network, for instance. Either way the browser panel opens here, in front of you.";
                             font-size: Theme.text-13; color: Theme.text-muted; wrap: word-wrap; line-height-factor: Theme.lh-ui;
                         }
@@ -235,21 +239,22 @@ export component SignInPage inherits Rectangle {
                             spacing: Theme.sp-10;
                             opacity: i == 0 ? Theme.o-dim : 1;
                             Rectangle {
-                                width: Theme.sz-14; height: Theme.sz-14; y: Theme.sp-4;
+                                width: Theme.sp-12; height: Theme.sp-12; y: Theme.sp-4;
                                 border-radius: Theme.r-pill;
                                 border-width: 1px;
                                 border-color: i == 1 ? Theme.accent : Theme.text-muted;
                                 background: i == 1 ? Theme.accent : Theme.bg-tertiary;
-                                if i == 1: Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-chip; background: white; }
+                                if i == 1: Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-chip; background: Theme.white; }
                             }
                             VerticalLayout {
-                                Text { text: o.title; font-size: Theme.text-13; font-weight: Theme.w-bold; letter-spacing: Theme.track-caps; color: Theme.text-muted; wrap: word-wrap; width: Theme.signin-text; }
-                                Text { text: o.sub; font-size: Theme.text-13; letter-spacing: Theme.track-caps; color: Theme.text-muted; wrap: word-wrap; width: Theme.signin-text; }
+                                horizontal-stretch: 1;
+                                Text { text: o.title; font-size: Theme.text-13; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-muted; wrap: word-wrap; }
+                                Text { text: o.sub; font-size: Theme.text-13; letter-spacing: Theme.track-wide; color: Theme.text-muted; wrap: word-wrap; }
                             }
                         }
-                        // The address: bg-tertiary, a border, radius 6, 8px 12px, 14.4px.
+                        // The address: bg-tertiary, a border, radius 6.
                         Rectangle {
-                            height: Theme.sz-34;
+                            height: Theme.control;
                             border-radius: Theme.r-control;
                             border-width: 1px;
                             border-color: srv.has-focus ? Theme.accent : Theme.border;
@@ -268,7 +273,7 @@ export component SignInPage inherits Rectangle {
                         Rectangle { height: Theme.sp-6; }
                         // The note under it: the error, or what is happening.
                         Text {
-                            height: Theme.sz-26;
+                            height: Theme.sp-24;
                             text: root.error != "" ? root.error : root.busy ? "Connecting…" : "";
                             font-size: Theme.text-12;
                             color: root.error != "" ? Theme.red : Theme.text-muted;
@@ -288,40 +293,51 @@ export component SignInPage inherits Rectangle {
         // ─── 2. Signing in (the web UI's login screen) ───
         if root.step == "login": VerticalLayout {
             alignment: center;
-            // The mascot: 112px, an indigo glow under it (drop-shadow 0 12px 34px).
+            // The mascot, an indigo glow under it.
             HorizontalLayout {
                 alignment: center;
                 Rectangle {
-                    width: Theme.mascot; height: Theme.mascot;
+                    width: Theme.sp-48 * 2; height: Theme.sp-48 * 2;
                     Rectangle {
-                        y: Theme.sz-30; width: Theme.mascot-glow-w; height: Theme.mascot-glow-h;
+                        y: Theme.sp-32; width: parent.width + Theme.sp-48; height: parent.height + Theme.sp-16;
                         background: Theme.glow-mascot;
                     }
-                    Image { source: @image-url("brand/mascot.svg"); width: Theme.mascot; height: Theme.mascot; }
+                    Image { source: @image-url("brand/mascot.svg"); width: parent.width; height: parent.height; }
                 }
             }
-            // 32px gap, less the mascot's -18px margin.
-            Rectangle { height: Theme.sz-14; }
+            Rectangle { height: Theme.sp-12; }
             HorizontalLayout {
                 alignment: center;
-                Image { source: @image-url("brand/wordmark.svg"); width: Theme.wordmark-lg-w; height: Theme.wordmark-lg-h; image-fit: contain; }
+                Image { source: @image-url("brand/wordmark.svg"); height: Theme.sp-40; width: self.height * self.source.width / self.source.height; image-fit: contain; }
             }
-            // 32px gap, less the subtitle's -20px margin.
             Rectangle { height: Theme.sp-12; }
             Text { text: "Claude Code terminal in your browser"; font-size: Theme.text-15; color: Theme.text-secondary; horizontal-alignment: center; }
             Rectangle { height: Theme.sp-32; }
             HorizontalLayout {
                 alignment: center;
                 Rectangle {
-                    width: max(Theme.signin-field, prompt-t.preferred-width) + 2 * (Theme.sp-48 + 1px);
+                    width: max(Theme.sidebar-width, prompt-t.preferred-width) + 2 * (Theme.sp-48 + 1px);
                     height: box.preferred-height;
-                    // The card's shadow (0 24px 60px rgba(0,0,0,.6)), in soft layers.
-                    for l in Theme.shadow-card: Rectangle { x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-card + l.e; background: l.c; }
+                    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
+                    // The card's fill: card-top fading to bg-secondary down to
+                    // its middle. The software renderer squares a gradient,
+                    // so the round corners are plain fills: a top cap and the
+                    // bottom half, the gradient between them.
+                    Rectangle {
+                        y: 0; height: 2 * Theme.r-card;
+                        border-radius: Theme.r-card;
+                        background: Theme.card-top;
+                    }
+                    Rectangle { y: Theme.r-card; height: parent.height / 2 - Theme.r-card; background: Theme.grad-card; }
+                    Rectangle {
+                        y: parent.height / 2 - Theme.r-card; height: parent.height / 2 + Theme.r-card;
+                        border-radius: Theme.r-card;
+                        background: Theme.bg-secondary;
+                    }
                     Rectangle {
                         border-radius: Theme.r-card;
                         border-width: 1px;
                         border-color: Theme.border;
-                        background: Theme.grad-card;
                     }
                     box := VerticalLayout {
                         padding-top: Theme.sp-40; padding-bottom: Theme.sp-40;
@@ -335,9 +351,10 @@ export component SignInPage inherits Rectangle {
                         if root.oauth-code != "": HorizontalLayout {
                             alignment: center;
                             VerticalLayout {
+                                width: Theme.sidebar-width;
                                 spacing: Theme.sp-6;
-                                Text { text: "Sign in and allow this computer in your browser. Check that it shows this code:"; font-size: Theme.text-13; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: Theme.signin-field; }
-                                Text { text: root.oauth-code; font-family: Theme.mono; font-size: Theme.text-20; letter-spacing: Theme.track-code; color: Theme.text-primary; horizontal-alignment: center; }
+                                Text { text: "Sign in and allow this computer in your browser. Check that it shows this code:"; font-size: Theme.text-13; color: Theme.text-secondary; horizontal-alignment: center; wrap: word-wrap; width: Theme.sidebar-width; }
+                                Text { text: root.oauth-code; font-family: Theme.mono; font-size: Theme.text-20; letter-spacing: Theme.track-wide; color: Theme.text-primary; horizontal-alignment: center; }
                                 QuietLink { text: "Cancel"; color: Theme.accent-hover; clicked => { root.cancel(); } }
                             }
                         }
@@ -346,6 +363,7 @@ export component SignInPage inherits Rectangle {
                         if root.oauth-code == "" && root.pairing: HorizontalLayout {
                             alignment: center;
                             VerticalLayout {
+                                width: Theme.sidebar-width;
                                 spacing: Theme.sp-10;
                                 alignment: center;
                                 LoginField { text <=> root.link; placeholder: "https://…/pair#…"; accepted => { root.sign-in-pair(root.link); } }
@@ -357,6 +375,7 @@ export component SignInPage inherits Rectangle {
                         if root.oauth-code == "" && !root.pairing && root.buttons: HorizontalLayout {
                             alignment: center;
                             VerticalLayout {
+                                width: Theme.sidebar-width;
                                 spacing: Theme.sp-10;
                                 if root.offer-telegram: OAuthButton { logo: @image-url("brand/telegram.svg"); text: "Sign in with Telegram"; clicked => { root.sign-in-oauth(root.server, "telegram"); } }
                                 if root.offer-google: OAuthButton { logo: @image-url("brand/google.svg"); text: "Sign in with Google"; clicked => { root.sign-in-oauth(root.server, "google"); } }
@@ -370,6 +389,7 @@ export component SignInPage inherits Rectangle {
                         if root.oauth-code == "" && !root.pairing && root.offer-password: HorizontalLayout {
                             alignment: center;
                             VerticalLayout {
+                                width: Theme.sidebar-width;
                                 spacing: Theme.sp-10;
                                 alignment: center;
                                 // Focused on open, as the web's.
@@ -385,13 +405,13 @@ export component SignInPage inherits Rectangle {
                                     enabled: !root.busy && root.password != "" && root.code != "";
                                     clicked => { root.sign-in-password(root.server, root.password, root.code); }
                                 }
-                                // The form's hidden error line (22.5px) before the links.
+                                // The form's hidden error line before the links.
                                 Rectangle { height: Theme.sp-12; }
                             }
                         }
                         if root.error != "": HorizontalLayout {
                             alignment: center;
-                            Text { text: root.error; font-size: Theme.text-12; color: Theme.red; horizontal-alignment: center; wrap: word-wrap; width: Theme.signin-field; }
+                            Text { text: root.error; font-size: Theme.text-12; color: Theme.red; horizontal-alignment: center; wrap: word-wrap; width: Theme.sidebar-width; }
                         }
 
                         // The quiet links: pairing (or back), and the server.

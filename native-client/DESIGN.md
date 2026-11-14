@@ -29,7 +29,11 @@ Electron client (`app/`) shows it. Where the web has no screen for something
    - **Weights:** 400, 500, 600, 700.
    - **Line heights:** chat 1.55, UI 1.3.
    - **Colours:** the web's palette.
-   - **Sizes that recur:** icons, control heights, bars, the sidebar.
+   - **Letter spacing:** tight and wide.
+   - **Named sizes,** only for structure: the window, the bars, the sidebar,
+     the pane header and pane limits, control heights, icons. Anything else
+     is a scale step (or a sum of two).
+   - **Shadows and glows:** `SoftShadow` (smooth gradients, no layers).
 
    Pick the token that fits by eye or a quick measurement. Don't copy
    one-offs (13.12px, a gap of 7 beside a gap of 8) or the web's accidents

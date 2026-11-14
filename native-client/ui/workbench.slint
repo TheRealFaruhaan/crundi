@@ -4,7 +4,7 @@
 
 import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer, DashedBox } from "widgets.slint";
+import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
 import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox } from "chat.slint";
 
 export struct PaneView {
@@ -28,7 +28,7 @@ export struct PaneView {
     error: string,
     // The header (specs/pane-header-wide.md): the short title a rename starts
     // from, the shown title's cap, the secrets lock, pin, full screen, the
-    // armed ×; the chat's text size (px / 13) and its draft.
+    // armed ×; the chat's text size (a scale of the base size) and its draft.
     short-title: string,
     title-max: length,
     secrets: bool,
@@ -39,7 +39,7 @@ export struct PaneView {
     armed: bool,
     fs: float,
     draft: string,
-    // The header folds (its content box under 560px: the pane ≤ 567), and
+    // The header folds (its content box under pane-fold: src/head.rs), and
     // its "…" menu is open (2.2).
     narrow: bool,
     menu: bool,
@@ -65,21 +65,25 @@ component Launcher inherits Rectangle {
     callback ui-mode(bool /* skip permissions */);
     VerticalLayout {
         alignment: center;
-        spacing: Theme.sz-14;
-        Text { text: ">_"; font-size: Theme.text-hero; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
-        HorizontalLayout {
-            alignment: center;
+        spacing: Theme.sp-12;
+        Text { text: ">_"; font-size: Theme.text-26; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
+        // Each centred on the pane, also when the pane is narrower: then it
+        // overflows both sides evenly, as the web's centred column does.
+        Rectangle {
+            height: Theme.control-lg;
             Rectangle {
-                width: Theme.launcher-shell-w; height: Theme.sz-36;
+                x: (parent.width - self.width) / 2;
+                width: Theme.pane-min / 2; height: Theme.control-lg;
                 border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                 opacity: Theme.o-soft;
                 Text { text: "Empty Shell"; font-size: Theme.text-14; color: Theme.text-secondary; }
             }
         }
-        HorizontalLayout {
-            alignment: center;
+        Rectangle {
+            height: box.preferred-height;
             Rectangle {
-                width: Theme.launcher-card-w;
+                x: (parent.width - self.width) / 2;
+                width: Theme.pane-min;
                 height: box.preferred-height;
                 border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
                 box := VerticalLayout {
@@ -89,20 +93,22 @@ component Launcher inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.sp-8;
                         Rectangle {
-                            width: Theme.launcher-btn-w; height: Theme.sz-36;
+                            horizontal-stretch: 1; height: Theme.control-lg;
                             border-radius: Theme.r-control;
-                            border-width: 1px; border-color: Theme.accent-hover-edge;
-                            background: Theme.grad-launcher;
+                            // The launcher gradient in its rounded shape (an
+                            // image: the software renderer squares a gradient).
+                            Image { width: parent.width; height: parent.height; source: @image-url("shapes/launcher-control.png", nine-slice(6)); image-fit: fill; }
+                            Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-hover-edge; }
                             HorizontalLayout {
                                 alignment: center;
                                 spacing: Theme.sp-10;
-                                Rectangle { width: Theme.sp-2; height: Theme.sp-16; y: (parent.height - self.height) / 2; background: white; }
-                                Text { text: "UI Mode"; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: white; vertical-alignment: center; }
+                                Rectangle { width: Theme.sp-2; height: Theme.sp-16; y: (parent.height - self.height) / 2; background: Theme.white; }
+                                Text { text: "UI Mode"; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; vertical-alignment: center; }
                             }
                             TouchArea { mouse-cursor: pointer; clicked => { root.ui-mode(false); } }
                         }
                         Rectangle {
-                            width: Theme.sz-44; height: Theme.sz-36;
+                            width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                             background: s1.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
                             Icon { source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
@@ -113,7 +119,7 @@ component Launcher inherits Rectangle {
                         spacing: Theme.sp-8;
                         opacity: Theme.o-soft;
                         Rectangle {
-                            width: Theme.launcher-btn-w; height: Theme.sz-36;
+                            horizontal-stretch: 1; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-line;
                             background: Theme.bg-card;
                             HorizontalLayout {
@@ -124,7 +130,7 @@ component Launcher inherits Rectangle {
                             }
                         }
                         Rectangle {
-                            width: Theme.sz-44; height: Theme.sz-36;
+                            width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                             background: Theme.bg-tertiary;
                             Icon { source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
@@ -136,22 +142,22 @@ component Launcher inherits Rectangle {
     }
 }
 
-/// An empty pane chip (.me-chip): a pill, 26 high, padding 5px 10px, gap 5;
-/// bg-primary on a 1px border, 11.5px text-secondary, a 13px accent-hover icon.
+/// An empty pane chip (.me-chip): a pill; bg-primary on a border,
+/// text-secondary, an accent-hover icon.
 /// Hover: accent border, text-primary, accent-dim fill (the icon stays).
 component Chip inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     callback clicked();
-    height: Theme.sz-26;
-    width: 1px + Theme.sp-10 + Theme.sz-14 + Theme.sp-6 + ct.preferred-width + Theme.sp-10 + 1px;
+    height: Theme.sp-24;
+    width: 1px + Theme.sp-10 + Theme.icon-md + Theme.sp-6 + ct.preferred-width + Theme.sp-10 + 1px;
     border-radius: Theme.r-pill;
     border-width: 1px;
     border-color: ch.has-hover ? Theme.accent : Theme.border;
     background: ch.has-hover ? Theme.accent-dim : Theme.bg-primary;
     animate border-color, background { duration: Theme.motion-fast; }
-    Icon { x: Theme.sp-12; width: Theme.icon-md; height: Theme.icon-md; source: root.icon; tint: Theme.accent-hover; }
-    ct := Text { x: Theme.sz-30; text: root.label; font-size: Theme.text-12; color: ch.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
+    Icon { x: 1px + Theme.sp-10; width: Theme.icon-md; height: Theme.icon-md; source: root.icon; tint: Theme.accent-hover; }
+    ct := Text { x: 1px + Theme.sp-10 + Theme.icon-md + Theme.sp-6; text: root.label; font-size: Theme.text-12; color: ch.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
     ch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -159,22 +165,22 @@ component Chip inherits Rectangle {
     }
 }
 
-/// An empty pane button (.me-acts button): 26 high, padding 5px 9px, gap 4,
-/// radius 6, bg-tertiary on a 1px border, 11.52px text-secondary, 13px icons.
+/// An empty pane button (.me-acts button): radius 6, bg-tertiary on a
+/// border, text-secondary, an icon.
 /// Hover: accent border, text and icon text-primary.
 component EmptyBtn inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     in property <string> tip;
     callback clicked();
-    height: Theme.sz-26;
-    width: 1px + Theme.sp-10 + Theme.sz-14 + (root.label != "" ? Theme.sp-4 + bt.preferred-width : 0px) + Theme.sp-10 + 1px;
+    height: Theme.sp-24;
+    width: 1px + Theme.sp-10 + Theme.icon-md + (root.label != "" ? Theme.sp-4 + bt.preferred-width : 0px) + Theme.sp-10 + 1px;
     border-radius: Theme.r-control;
     border-width: 1px;
     border-color: bh.has-hover ? Theme.accent : Theme.border;
     background: Theme.bg-tertiary;
-    Icon { x: Theme.sp-10; width: Theme.icon-md; height: Theme.icon-md; source: root.icon; tint: bh.has-hover ? Theme.text-primary : Theme.text-secondary; }
-    bt := Text { x: Theme.sz-28; text: root.label; font-size: Theme.text-12; color: bh.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
+    Icon { x: 1px + Theme.sp-10; width: Theme.icon-md; height: Theme.icon-md; source: root.icon; tint: bh.has-hover ? Theme.text-primary : Theme.text-secondary; }
+    bt := Text { x: 1px + Theme.sp-10 + Theme.icon-md + Theme.sp-4; text: root.label; font-size: Theme.text-12; color: bh.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
     bh := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -182,9 +188,8 @@ component EmptyBtn inherits Rectangle {
     }
 }
 
-/// A leaf with nothing in it (.mosaic-empty): 3px in from the leaf, a 2px
-/// dashed edge (6px dashes, 4px gaps), radius 10, no fill; a centred column,
-/// gap 10: the message, the chips, then Split ▸ / Split ▾ / ×. Small panes
+/// A leaf with nothing in it (.mosaic-empty): inset from the leaf, a
+/// dashed edge, radius 10, no fill; a centred column: the message, the chips, then Split ▸ / Split ▾ / ×. Small panes
 /// clip it. Only the chips the native client can open are drawn (Terminal).
 component EmptyLeaf inherits Rectangle {
     callback split-right();
@@ -200,7 +205,7 @@ component EmptyLeaf inherits Rectangle {
         alignment: center;
         spacing: Theme.sp-10;
         Text { text: "Drop a panel here or launch a new one"; font-size: Theme.text-13; color: Theme.text-muted; horizontal-alignment: center; }
-        // The chips: a wrapping row, centred, gap 6, at most 300 wide; 2px under.
+        // The chips: a centred row.
         HorizontalLayout {
             alignment: center;
             padding-bottom: Theme.sp-2;
@@ -216,20 +221,19 @@ component EmptyLeaf inherits Rectangle {
     }
 }
 
-/// The split controls over a leaf on hover (.leaf-ctrls): two 22×18 buttons,
-/// gap 3, radius 5, bg-secondary on a 1px border; a 14×11 icon at +4,+3.5 in
-/// text-secondary. Hover: accent border, accent-hover icon.
+/// The split controls over a leaf on hover (.leaf-ctrls): two small buttons,
+/// radius 6, bg-secondary on a border; an icon in text-secondary. Hover: accent border, accent-hover icon.
 component LeafCtrl inherits Rectangle {
     in property <image> icon;
     in property <string> tip;
     callback clicked();
-    width: Theme.sz-22;
-    height: Theme.sz-18;
+    width: Theme.sp-20;
+    height: Theme.sp-16;
     border-radius: Theme.r-control;
     border-width: 1px;
     border-color: lh.has-hover ? Theme.accent : Theme.border;
     background: Theme.bg-secondary;
-    Icon { x: Theme.sp-4; y: Theme.sp-4; width: Theme.icon-md; height: Theme.icon-sm; source: root.icon; tint: lh.has-hover ? Theme.accent-hover : Theme.text-secondary; }
+    Icon { width: Theme.icon-md; height: Theme.icon-sm; source: root.icon; tint: lh.has-hover ? Theme.accent-hover : Theme.text-secondary; }
     lh := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -237,7 +241,7 @@ component LeafCtrl inherits Rectangle {
     }
 }
 
-/// A pane with something in it: the 1px edge (accent and a ring when
+/// A pane with something in it: the hairline edge (accent and a ring when
 /// focused), its header, and the chat, launcher or panel. The grid draws one
 /// per leaf; the full-screen overlay (main.slint) draws the full one.
 export component PaneCard inherits Rectangle {
@@ -267,13 +271,13 @@ export component PaneCard inherits Rectangle {
     in property <bool> ctrls: true;
     // The drag's clone: no pin button (the web hides .pane-pin outside the grid).
     in property <bool> clone;
-    // The content sits inside the 1px edge, clipped to radius 9, so the
-    // header's fill keeps the pane's round top corners (the web's overflow:
-    // hidden inside a radius-10 border). Full screen: radius 0.
+    // The content sits inside the edge, clipped round, so the header's fill
+    // keeps the pane's round top corners (the web's overflow: hidden inside
+    // a rounded border). Full screen: square.
     Rectangle {
         x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
         background: Theme.bg-primary;
-        border-radius: p.full ? 0px : Theme.sp-10;
+        border-radius: p.full ? 0px : Theme.r-card;
         clip: true;
         // Any press in the pane focuses it, buttons and the right button too
         // (the web's capture-phase mousedown on .term-cell): every press is
@@ -282,8 +286,7 @@ export component PaneCard inherits Rectangle {
         changed presses => {
             let px = Pointer.press-x - self.absolute-position.x;
             let py = Pointer.press-y - self.absolute-position.y;
-            // The split controls: 47×18, centred, 3px from the leaf's top (2
-            // inside this box).
+            // The split controls: centred, just under the leaf's top.
             let on-ctrls = root.ctrls && !p.full && px >= (self.width - Theme.sp-48) / 2 && px <= (self.width + Theme.sp-48) / 2 && py >= Theme.sp-2 && py <= Theme.sp-20;
             if px >= 0 && px <= self.width && py >= 0 && py <= self.height && !p.focused && !root.blocked && !Pointer.press-on-menu && !on-ctrls {
                 root.focus-me();
@@ -344,11 +347,11 @@ export component PaneCard inherits Rectangle {
             Text { text: p.title + " comes in a later phase of the native client"; font-size: Theme.text-13; color: Theme.text-muted; }
         }
         }
-        // The narrow header's menu: 1px under the header's line (its top + 27),
-        // 4px in from its right edge, over the pane body.
+        // The narrow header's menu: under the header, in from its right
+        // edge, over the pane body.
         if p.menu: HeadMenu {
             x: parent.width - Theme.sp-4 - self.width;
-            y: Theme.sz-28;
+            y: p.narrow ? Theme.pane-head-narrow : Theme.pane-head;
             max-w: ph.width - Theme.sp-8;
             kind-tag: p.kind == "chat" ? "CHAT" : "";
             secrets: p.secrets;
@@ -364,9 +367,9 @@ export component PaneCard inherits Rectangle {
             dismiss => { root.menu(false); }
         }
     }
-    // The 1px edge (accent when focused), above the content.
+    // The hairline edge (accent when focused), above the content.
     Rectangle {
-        border-radius: p.full ? 0px : Theme.sp-10;
+        border-radius: p.full ? 0px : Theme.r-card;
         border-width: 1px;
         border-color: p.focused ? Theme.accent : Theme.border;
     }
@@ -411,7 +414,7 @@ export component Workbench inherits Rectangle {
     in property <bool> dragging;
     // The "+" menu is open over the workbench: presses don't focus panes.
     in property <bool> menu-open;
-    // The layout changed in structure or shares: ease the panes (220ms).
+    // The layout changed in structure or shares: ease the panes (Theme.motion).
     in property <bool> motion;
     // Bumped to scroll back to the left (Fit to screen).
     in property <int> scroll-home;
@@ -429,7 +432,7 @@ export component Workbench inherits Rectangle {
     if !root.has-project: VerticalLayout {
         alignment: center;
         spacing: Theme.sp-8;
-        Text { text: ">_"; font-size: Theme.text-hero; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
+        Text { text: ">_"; font-size: Theme.text-26; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
         Text { text: "Select a project to open the workbench"; font-size: Theme.text-14; color: Theme.text-secondary; horizontal-alignment: center; }
         Text { text: "Or add a new project from the sidebar"; font-size: Theme.text-12; color: Theme.text-muted; horizontal-alignment: center; }
     }
@@ -447,25 +450,25 @@ export component Workbench inherits Rectangle {
         property <length> to: root.scroll-to;
         changed to => { self.content-x = root.scroll-to; }
         // Auto-scroll while a pane is dragged near the left or right edge:
-        // within 60px, up to 22px a frame, deeper is faster.
+        // near an edge, faster the deeper in.
         Timer {
             interval: Theme.frame;
             running: root.dragging;
             triggered => {
                 let at = Pointer.x - root.absolute-position.x;
                 let lo = min(0px, root.width - root.content-width);
-                if at < Theme.drag-edge && at >= 0 {
-                    fl.content-x = min(0px, fl.content-x + Theme.sz-22 * (Theme.drag-edge - at) / Theme.drag-edge);
-                } else if at > root.width - Theme.drag-edge && at <= root.width {
-                    fl.content-x = max(lo, fl.content-x - Theme.sz-22 * (at - root.width + Theme.drag-edge) / Theme.drag-edge);
+                if at < Theme.sp-48 && at >= 0 {
+                    fl.content-x = min(0px, fl.content-x + Theme.sp-20 * (Theme.sp-48 - at) / Theme.sp-48);
+                } else if at > root.width - Theme.sp-48 && at <= root.width {
+                    fl.content-x = max(lo, fl.content-x - Theme.sp-20 * (at - root.width + Theme.sp-48) / Theme.sp-48);
                 }
             }
         }
         for p in root.panes: Rectangle {
             x: p.x; y: p.y; width: p.w; height: p.h;
-            // The layout motion: each pane eases from where it was (220ms,
+            // The layout motion: each pane eases from where it was (Theme.motion,
             // cubic-bezier(.2,.7,.2,1)); a new one fades in (the web also
-            // scales it from .985: the software renderer can't scale).
+            // scales it a little: the software renderer can't scale).
             animate x, y, width, height { duration: root.motion && !root.resizing ? Theme.motion : 0; easing: Motion.layout; }
             property <float> shown: 0;
             init => { self.shown = 1; }
@@ -502,23 +505,23 @@ export component Workbench inherits Rectangle {
                 menu(on) => { root.pane-menu(p.id, on); }
                 drag(k, x, y) => { root.pane-drag(p.id, k, x - root.absolute-position.x - root.flick-x, y - root.absolute-position.y); }
             }
-            // While a pane is dragged: every leaf's 1px dashed outline (3/2,
-            // inset 1px); the one under the pointer, 2px solid accent over its
-            // outer 2px, square corners (the leaf has no radius).
+            // While a pane is dragged: every leaf's dashed outline; the one
+            // under the pointer, a solid accent edge, square corners (the leaf
+            // has no radius).
             // On a pane, only the header band shows it: the web's pane body
             // paints over the leaf's outline below the header.
             if root.dragging: Rectangle {
                 x: 0; y: 0;
-                height: p.kind == "empty" ? parent.height : (p.narrow ? Theme.sz-28 : Theme.sz-30);
+                height: p.kind == "empty" ? parent.height : (p.narrow ? Theme.pane-head-narrow : Theme.pane-head) + Theme.sp-2;
                 clip: true;
                 DashedBox { x: 0; y: 0; width: p.w; height: p.h; line: Theme.border; thick: 1px; dash: Theme.sp-4; gap: Theme.sp-2; inset: 1px; }
             }
             if root.dragging && p.drop: Rectangle { border-width: Theme.sp-2; border-color: Theme.accent; }
-            // The hover split controls: top 3px, centred on the leaf, above the
-            // header (they cover what is under them); fade .12s.
+            // The hover split controls: at the top, centred on the leaf, above the
+            // header (they cover what is under them); fade (motion-fast).
             if p.kind != "empty": HorizontalLayout {
                 x: (parent.width - Theme.sp-48) / 2; y: Theme.sp-4;
-                width: Theme.sp-48; height: Theme.sz-18;
+                width: Theme.sp-48; height: Theme.sp-16;
                 spacing: Theme.sp-4;
                 opacity: parent.over ? 1 : 0;
                 animate opacity { duration: Theme.motion-fast; }
@@ -527,7 +530,7 @@ export component Workbench inherits Rectangle {
                 LeafCtrl { icon: Icons.split-down; tip: "Split down"; clicked => { root.split(p.id, true); } }
             }
         }
-        // The gutters: a 7px strip with a 1px line in the middle (border);
+        // The gutters: a strip with a hairline in the middle (border);
         // accent on hover, and every line accent while any gutter is held.
         // Locked (by a pinned pane): not-allowed, the line at .4, no drag.
         for g in root.gutters: Rectangle {
@@ -564,7 +567,7 @@ export component Workbench inherits Rectangle {
             }
         }
     }
-    // Scrolling sideways: the web's 6px scrollbar under the grid; the thumb
+    // Scrolling sideways: the web's thin scrollbar under the grid; the thumb
     // is border-coloured, text-muted on hover, radius 3; it can be dragged.
     if root.has-project && root.content-width > root.width + Theme.sp-2: sb := Rectangle {
         y: root.height - Theme.sp-6;
@@ -589,9 +592,8 @@ export component Workbench inherits Rectangle {
     }
 }
 
-/// A "+" menu item: 32 high, padding 8px 11px, gap 9, radius 6; a 16px
-/// accent-hover icon (22×16 in the Layout submenu), 13.76px text-primary.
-/// Hover (or `lit`): accent fill, white.
+/// A "+" menu item: radius 6; an accent-hover icon (wider in the Layout
+/// submenu), text-primary. Hover (or `lit`): accent fill, white.
 component MenuItem inherits Rectangle {
     in property <string> label;
     in property <image> icon;
@@ -605,10 +607,10 @@ component MenuItem inherits Rectangle {
     height: Theme.sp-32;
     border-radius: Theme.r-control;
     background: mh.has-hover || root.lit ? Theme.accent : transparent;
-    Icon { x: Theme.sp-12; width: root.icon-w; height: root.icon-h; source: root.icon; tint: mh.has-hover || root.lit ? white : Theme.accent-hover; }
-    mt := Text { x: Theme.sp-12 + root.icon-w + Theme.sp-10; text: root.label; font-size: Theme.text-14; color: mh.has-hover || root.lit ? white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
-    // The caret ▸, pushed right, at .55.
-    if root.caret: Text { x: parent.width - Theme.sp-12 - self.preferred-width; text: "▸"; font-size: Theme.text-14; opacity: Theme.o-caret; color: mh.has-hover || root.lit ? white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
+    Icon { x: Theme.sp-12; width: root.icon-w; height: root.icon-h; source: root.icon; tint: mh.has-hover || root.lit ? Theme.white : Theme.accent-hover; }
+    mt := Text { x: Theme.sp-12 + root.icon-w + Theme.sp-10; text: root.label; font-size: Theme.text-14; color: mh.has-hover || root.lit ? Theme.white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
+    // The caret ▸, pushed right, quiet.
+    if root.caret: Text { x: parent.width - Theme.sp-12 - self.preferred-width; text: "▸"; font-size: Theme.text-14; opacity: Theme.o-caret; color: mh.has-hover || root.lit ? Theme.white : Theme.text-primary; vertical-alignment: center; height: parent.height; }
     mh := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
@@ -616,19 +618,17 @@ component MenuItem inherits Rectangle {
     }
 }
 
-/// The "+" menu (#wb-add-menu), under the tab bar's "+": at least 150 wide,
-/// padding 5, gap 2; bg-secondary, a 1px border, radius 10, shadow
-/// 0 6px 22px rgba(0,0,0,.55) (soft layers). Its last item opens the Layout
-/// submenu to the right (Layout's right + 4, its top − 5) while the mouse is
-/// over either, closing .35s after it leaves both.
+/// The "+" menu (#wb-add-menu), under the tab bar's "+": as wide as its
+/// longest item; bg-secondary, a border, radius 10, a soft shadow. Its last
+/// item opens the Layout submenu to its right while the mouse is over
+/// either, closing a moment after it leaves both.
 export component AddMenu inherits Rectangle {
     callback pick(string);
-    // Over "Layout", or over the submenu or the 10px bridge to it (by the
+    // Over "Layout", or over the submenu or the bridge to it (by the
     // pointer's position: the items' own touch areas take the hover).
     property <length> sub-x: self.width - Theme.sp-2;
-    // Layout's top − 6.
     property <length> sub-y: items.y + lay.y - Theme.sp-6;
-    property <length> sub-w: max(Theme.submenu-min, max(p1-m.preferred-width, p2-m.preferred-width, p3-m.preferred-width, p4-m.preferred-width, p5-m.preferred-width) + Theme.sp-12 + Theme.sz-22 + Theme.sp-10 + Theme.sp-12 + Theme.sp-12);
+    property <length> sub-w: max(p1-m.preferred-width, p2-m.preferred-width, p3-m.preferred-width, p4-m.preferred-width, p5-m.preferred-width) + Theme.sp-12 + Theme.sp-20 + Theme.sp-10 + Theme.sp-12 + 2 * Theme.sp-6 + Theme.sp-2;
     property <length> sub-h: presets.preferred-height + Theme.sp-2;
     property <bool> in-sub: root.layouts
         && Pointer.x >= self.absolute-position.x + self.sub-x - Theme.sp-10 && Pointer.x <= self.absolute-position.x + self.sub-x + self.sub-w
@@ -639,16 +639,15 @@ export component AddMenu inherits Rectangle {
     p3-m := Text { visible: false; text: "2×2 cross"; font-size: Theme.text-14; }
     p4-m := Text { visible: false; text: "Left + right split"; font-size: Theme.text-14; }
     p5-m := Text { visible: false; text: "Top + bottom split"; font-size: Theme.text-14; }
+    fit-m := Text { visible: false; text: "Fit to screen"; font-size: Theme.text-14; }
     property <bool> layouts;
     changed sub-open => {
         if self.sub-open { self.layouts = true; closer.running = false; } else { closer.running = true; }
     }
     closer := Timer { interval: Theme.menu-linger; running: false; triggered => { self.running = false; if !root.sub-open { root.layouts = false; } } }
-    width: Theme.menu-w;
+    width: fit-m.preferred-width + Theme.sp-12 + Theme.icon-lg + Theme.sp-10 + Theme.sp-12 + 2 * Theme.sp-6 + Theme.sp-2;
     height: items.preferred-height + Theme.sp-2;
-    for l in Theme.shadow-menu: Rectangle {
-        x: -l.e; y: l.y - l.e; width: root.width + 2 * l.e; height: root.height + 2 * l.e; border-radius: Theme.r-card + l.e; background: l.c;
-    }
+    SoftShadow { width: root.width; height: root.height; radius: Theme.r-card; shadow: Theme.shadow-menu; }
     Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
     items := VerticalLayout {
         x: 1px; y: 1px; width: parent.width - Theme.sp-2;
@@ -672,27 +671,25 @@ export component AddMenu inherits Rectangle {
         }
         lay := MenuItem { label: "Layout"; icon: Icons.columns; caret: true; lit: root.layouts; clicked => { root.layouts = true; } }
     }
-    // The Layout submenu: at least 178 wide, each item on one line (the web
-    // wraps "Top + bottom split" in its 178px: a slip, DESIGN rule 5).
+    // The Layout submenu: each item on one line (the web wraps "Top +
+    // bottom split": a slip, DESIGN rule 5).
     // (Always there, shown while open, so its height can be read above.)
     Rectangle {
         visible: root.layouts;
         x: root.sub-x; y: root.sub-y;
         width: root.sub-w;
         height: root.sub-h;
-        for l in Theme.shadow-menu: Rectangle {
-            x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-card + l.e; background: l.c;
-        }
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-menu; }
         Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
         presets := VerticalLayout {
             x: 1px; y: 1px; width: parent.width - Theme.sp-2;
             padding: Theme.sp-6;
             spacing: Theme.sp-2;
-            MenuItem { label: "2 columns"; icon: Icons.lay-cols2; icon-w: Theme.sz-22; clicked => { root.layouts = false; root.pick("layout:cols2"); } }
-            MenuItem { label: "3 columns"; icon: Icons.lay-cols3; icon-w: Theme.sz-22; clicked => { root.layouts = false; root.pick("layout:cols3"); } }
-            MenuItem { label: "2×2 cross"; icon: Icons.lay-cross4; icon-w: Theme.sz-22; clicked => { root.layouts = false; root.pick("layout:cross4"); } }
-            MenuItem { label: "Left + right split"; icon: Icons.lay-left-right2; icon-w: Theme.sz-22; clicked => { root.layouts = false; root.pick("layout:left-right2"); } }
-            MenuItem { label: "Top + bottom split"; icon: Icons.lay-top-bottom2; icon-w: Theme.sz-22; clicked => { root.layouts = false; root.pick("layout:top-bottom2"); } }
+            MenuItem { label: "2 columns"; icon: Icons.lay-cols2; icon-w: Theme.sp-20; clicked => { root.layouts = false; root.pick("layout:cols2"); } }
+            MenuItem { label: "3 columns"; icon: Icons.lay-cols3; icon-w: Theme.sp-20; clicked => { root.layouts = false; root.pick("layout:cols3"); } }
+            MenuItem { label: "2×2 cross"; icon: Icons.lay-cross4; icon-w: Theme.sp-20; clicked => { root.layouts = false; root.pick("layout:cross4"); } }
+            MenuItem { label: "Left + right split"; icon: Icons.lay-left-right2; icon-w: Theme.sp-20; clicked => { root.layouts = false; root.pick("layout:left-right2"); } }
+            MenuItem { label: "Top + bottom split"; icon: Icons.lay-top-bottom2; icon-w: Theme.sp-20; clicked => { root.layouts = false; root.pick("layout:top-bottom2"); } }
         }
     }
 }

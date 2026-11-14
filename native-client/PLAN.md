@@ -67,7 +67,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      letter-spacings) and named sizes for structural parts (window, top bar,
      sidebar, tab bar, pane header, controls, icons); every other size snaps
      to a scale step; old pixel-measurement comments go. Layout, order,
-     states and behaviour unchanged; one review round and CI.
+     states and behaviour unchanged; one review round and CI. With it: the
+     sign-in card's fields and button centred again (a token-pass
+     regression), its shadow smooth or dropped (the same for every layered
+     shadow), and a sweep of every screen for alignment slips.
    - [ ] **2.5 Composer and Stop.** The composer at rest, typing (auto-grow),
      the Enter-mode switch (`cc-sw`), the meta row (mode button, model label,
      session id, clock), Send, Stop arming to "Sure?" (`cc-armed`) and
@@ -167,9 +170,12 @@ Phase 1 left these, each with its workaround in place:
 - **Line height inside a paragraph.** StyledText has no line height, so a
   wrapped paragraph's lines sit tighter than the web's 1.55. (Single lines,
   list items and paragraph gaps match.)
-- **Shadows and glows** (Send, the login card, menus) are drawn as soft layers.
-  The software renderer has no blur behind rounded corners. Try the GPU
-  renderer, or images.
+- **Shadows and glows** (Send, the login card, menus, the toast, the dragged
+  pane, the folded rail's avatars). The software renderer has no blur, and
+  stacked layers left visible steps (dark blocks at the edges). Each is now
+  one smooth fade drawn with gradients (`SoftShadow` in `ui/widgets.slint`: a
+  core, four linear edges, four radial corners), its strength a Theme
+  `Shadow`. The fade is linear, not a blur's curve.
 - **The connection dot's ring** doesn't pulse; it's drawn at rest.
 - **The login step sits under the 32px title bar.** In Electron the web page
   fills the window. Keep the bar (the window needs it), or give the login a
@@ -193,12 +199,9 @@ Phase 1 left these, each with its workaround in place:
   the web's (the UI font's widths; the web draws buttons in Arial), so
   everything left of them sits 1px further left. The boxes' heights and the
   buttons' right edges match.
-- **Small bold text** (2.1, the CHAT tag). Chromium's hinting draws DejaVu
-  Sans Bold at 9.92px with 8px capitals; Slint draws 7px. The tag is drawn
-  at 11px with −0.4px tracking instead of 9.92px with +0.6px: caps 8px, C 6px
-  wide, the pill 47px wide (web 47.6). The agent badge (2.4) likewise: 11px
-  with −0.8px tracking for the web's 9.6px/700 at .384px (caps 8px, text 54
-  wide, as the web's).
+- **Small bold text** (2.1, the CHAT tag; 2.4, the agent badge). Slint draws
+  small bold capitals smaller than Chromium does, so both are drawn a size up
+  (text-11) with the tight tracking.
 - **The secrets lock with no capability** (2.1) is drawn by the same rule
   (no lock, A- after CHAT), but the e2e test can only reach it on a server
   without `chat-secret-preauth`.
@@ -217,14 +220,12 @@ Phase 1 left these, each with its workaround in place:
 - **No split items in the narrow header's menu** (2.2). The web hides them
   (`.head-split`) outside its phone layout, which the native window (900px or
   wider) never reaches; a narrow pane splits from the hover controls (2.3).
-- **The narrow header's menu shadow** (2.2): shadow-md in four soft layers
-  (`HeadMenu`), within one grey level of the web's at each row below the menu.
 - **Selection height in the rename input** (2.1): Slint draws the selection
   at the font's line height, 1px shorter than Chromium's (y98–110 against
   98–111); its width and the scroll to the end match.
 - **Turning a dragged pane** (2.3). The web turns the clone 1.5°; the
-  software renderer can't rotate, so it is drawn straight (opacity .92, the
-  pane's edge and the 0 12px 32px shadow in soft layers).
+  software renderer can't rotate, so it is drawn straight (a little
+  see-through, the pane's edge and a soft shadow).
 - **A new pane's entrance** (2.3): it fades in over 220ms; the web also
   scales it from .985, which the software renderer can't.
 - **Deliberate differences in moving panes** (2.3, DESIGN rule 5):
@@ -249,8 +250,6 @@ Phase 1 left these, each with its workaround in place:
   (the shield with a count, for chat cards, secrets requests and
   collaborators) is its own screen, for a later phase (5, operations); Cru's
   cells belong to Cru on the PC (phase 6).
-- **The folded rail's glows** (2.4): the avatar's 0 0 10px / 12px glows
-  are three soft rings (the software renderer has no blur).
 - **Round gradients** (2.T): the software renderer fills a gradient as a
   square and ignores a radius on it or on a clip, so the accent gradient's
   round shapes are images (`AccentFill` in `ui/widgets.slint`, `ui/shapes/`),
@@ -258,6 +257,14 @@ Phase 1 left these, each with its workaround in place:
   circle) and Send and the cards' primary buttons (a nine-slice PNG, radius
   6: its corners stay round at any size, its middle stretches, so the 135°
   gradient flattens a little on a wide button).
+  The same holds for the launcher's UI Mode button (2.C:
+  `shapes/launcher-control.png`, nine-slice) and the sign-in card's fill
+  (2.C: its square gradient showed dark corners outside the round border;
+  now a round top cap, the gradient band, and a round bottom half).
+- **The sign-in fields "left-aligned"** (2.C): not reproduced on a fresh
+  build at scale 1 or 1.25, in any step (server, password, error, pairing,
+  browser code: `specs/token-pass/align/`). Each centred group now also
+  has a fixed width, so it can't stretch and lose its centring.
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

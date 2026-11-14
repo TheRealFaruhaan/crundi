@@ -197,6 +197,15 @@ them; each has a spec in `specs/`). So far:
   match a token are named constants (`mosaic::{PAD, GUTTER, MIN_W}`,
   `head::{PANE_FOLD, TITLE_CAP, LONG_CAP}`).
 
+- **2.C Theme consolidation**: the theme is the scales (spacing
+  2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
+  10–26, two letter-spacings) plus a short structural list (window, top
+  bar, tab bar, sidebar, pane header and limits, drawer, control heights,
+  icons); every other size is a step or a sum of two. `white` is a token,
+  and `tools/tokens.sh` also flags named colours (`white`, `Colors.*`).
+  Shadows and glows are `SoftShadow` (ui/widgets.slint): one smooth fade
+  of gradients, never stacked layers.
+
 The pure rules are in `src/head.rs` and `src/mosaic.rs` (unit-tested).
 `test/phase2.mjs` drives each feature against a fresh server (the same setup
 as phase 1's test), by the pointer and keys where it matters.

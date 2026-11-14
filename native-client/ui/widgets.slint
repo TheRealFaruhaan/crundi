@@ -1,6 +1,6 @@
 // Small building blocks shared by the screens, in Crundi's look (theme.slint).
 
-import { Theme } from "theme.slint";
+import { Theme, Shadow } from "theme.slint";
 
 /// Every pointer press in the window, wherever it lands (src/main.rs counts
 /// them from the system's events; the test driver from its own). Slint keeps
@@ -19,18 +19,84 @@ export global Pointer {
     in-out property <bool> press-on-menu;
 }
 
-/// The accent gradient (135°, accent to accent-hover) in a round shape,
+/// The accent gradient (accent to accent-hover) in a round shape,
 /// filling what holds it: a circle, or a control's rounded rectangle (radius
 /// 6). The software renderer fills a gradient square and ignores a radius on
 /// it or on a clip, so the shape is an image (ui/shapes/, in Theme.accent and
 /// Theme.accent-hover): the circle an SVG drawn at its size; the control a
-/// nine-slice PNG whose 6px corners stay round at any size while its middle
+/// nine-slice PNG whose corners (r-control) stay round at any size while its middle
 /// stretches (PLAN.md, Known gaps).
 export component AccentFill inherits Image {
     // Where it is used: width: parent.width; height: parent.height.
     in property <bool> round;
     source: root.round ? @image-url("shapes/accent-round.svg") : @image-url("shapes/accent-control.png", nine-slice(6));
     image-fit: fill;
+}
+
+/// A soft shadow or glow under a box, given the box's geometry and corner
+/// radius. The software renderer has no blur, so it is drawn as gradients
+/// that fade smoothly to nothing: a core under the box, four edge strips
+/// (linear) and four corners (radial, centred on the core's corners). The
+/// core is the box inset by its radius, so a rounded box gets a rounded
+/// shadow. It grows by `shadow.blur` and moves down by `shadow.y`.
+export component SoftShadow {
+    in property <length> radius;
+    in property <Shadow> shadow;
+    property <length> core: min(root.radius, min(root.width, root.height) / 2);
+    property <length> fade: root.shadow.blur + root.core;
+    property <length> dy: root.shadow.y;
+    property <color> c: root.shadow.c;
+    // The same colour, clear: a gradient to `transparent` (black, clear)
+    // darkens a coloured glow on its way out.
+    property <color> clear: root.c.with-alpha(0);
+    // The core: under the box (it shows only past a round corner).
+    Rectangle {
+        x: root.core; y: root.core + root.dy;
+        width: root.width - 2 * root.core; height: root.height - 2 * root.core;
+        background: root.c;
+    }
+    // Edges: top, bottom, left, right.
+    Rectangle {
+        x: root.core; y: root.core - root.fade + root.dy;
+        width: root.width - 2 * root.core; height: root.fade;
+        background: @linear-gradient(0deg, root.c 0%, root.clear 100%);
+    }
+    Rectangle {
+        x: root.core; y: root.height - root.core + root.dy;
+        width: root.width - 2 * root.core; height: root.fade;
+        background: @linear-gradient(180deg, root.c 0%, root.clear 100%);
+    }
+    Rectangle {
+        x: root.core - root.fade; y: root.core + root.dy;
+        width: root.fade; height: root.height - 2 * root.core;
+        background: @linear-gradient(270deg, root.c 0%, root.clear 100%);
+    }
+    Rectangle {
+        x: root.width - root.core; y: root.core + root.dy;
+        width: root.fade; height: root.height - 2 * root.core;
+        background: @linear-gradient(90deg, root.c 0%, root.clear 100%);
+    }
+    // Corners: top-left, top-right, bottom-left, bottom-right.
+    Rectangle {
+        x: root.core - root.fade; y: root.core - root.fade + root.dy;
+        width: root.fade; height: root.fade;
+        background: @radial-gradient(circle root.fade at root.fade root.fade, root.c 0%, root.clear 100%);
+    }
+    Rectangle {
+        x: root.width - root.core; y: root.core - root.fade + root.dy;
+        width: root.fade; height: root.fade;
+        background: @radial-gradient(circle root.fade at 0px root.fade, root.c 0%, root.clear 100%);
+    }
+    Rectangle {
+        x: root.core - root.fade; y: root.height - root.core + root.dy;
+        width: root.fade; height: root.fade;
+        background: @radial-gradient(circle root.fade at root.fade 0px, root.c 0%, root.clear 100%);
+    }
+    Rectangle {
+        x: root.width - root.core; y: root.height - root.core + root.dy;
+        width: root.fade; height: root.fade;
+        background: @radial-gradient(circle root.fade at 0px 0px, root.c 0%, root.clear 100%);
+    }
 }
 
 /// A flat icon from Icons, tinted.
@@ -48,7 +114,7 @@ export component IconButton inherits Rectangle {
     in property <string> tooltip;
     in property <bool> enabled: true;
     in property <color> tint: Theme.text-secondary;
-    in property <length> size: Theme.sz-30;
+    in property <length> size: Theme.sp-32;
     callback clicked();
     width: root.size;
     height: root.size;
@@ -78,7 +144,7 @@ export component Btn inherits Rectangle {
     in property <bool> danger: false;
     in property <bool> enabled: true;
     callback clicked();
-    height: Theme.sz-34;
+    height: Theme.control;
     min-width: lay.preferred-width;
     border-radius: Theme.r-control;
     background: !root.enabled ? Theme.bg-tertiary
@@ -90,19 +156,19 @@ export component Btn inherits Rectangle {
     accessible-role: button;
     accessible-label: root.text;
     lay := HorizontalLayout {
-        padding-left: Theme.sz-14;
-        padding-right: Theme.sz-14;
+        padding-left: Theme.sp-12;
+        padding-right: Theme.sp-12;
         spacing: Theme.sp-6;
         alignment: center;
         if root.has-icon: Icon {
             y: (parent.height - self.height) / 2;
             source: root.icon;
-            tint: root.primary || root.danger ? white : Theme.text-primary;
+            tint: root.primary || root.danger ? Theme.white : Theme.text-primary;
         }
         Text {
             text: root.text;
             vertical-alignment: center;
-            color: !root.enabled ? Theme.text-muted : root.primary || root.danger ? white : Theme.text-primary;
+            color: !root.enabled ? Theme.text-muted : root.primary || root.danger ? Theme.white : Theme.text-primary;
             font-weight: Theme.w-semibold;
             font-size: Theme.text-13;
         }
@@ -122,7 +188,7 @@ export component Field inherits Rectangle {
     in property <bool> enabled: true;
     callback accepted(string);
     callback edited(string);
-    height: Theme.sz-38;
+    height: Theme.control-lg;
     border-radius: Theme.r-control;
     background: Theme.bg-tertiary;
     border-width: 1px;

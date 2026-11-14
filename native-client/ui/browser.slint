@@ -51,7 +51,7 @@ export component BrowserPanel inherits Rectangle {
     clip: true;
 
     VerticalLayout {
-        // The address bar (.brd-bar): 28px buttons, the URL pill, device, annotate.
+        // The address bar (.brd-bar): back, forward, reload, the URL pill, device, annotate.
         Rectangle {
             height: Theme.sp-40;
             background: Theme.bg-secondary;
@@ -60,7 +60,7 @@ export component BrowserPanel inherits Rectangle {
                 padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-8; padding-right: Theme.sp-8;
                 spacing: Theme.sp-6;
                 for b[i] in [Icons.chevron-left, Icons.chevron-right, Icons.refresh]: Rectangle {
-                    width: Theme.sz-28; height: Theme.sz-28;
+                    width: Theme.control-sm; height: Theme.control-sm;
                     border-radius: Theme.r-control;
                     background: nb.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
                     Icon { source: b; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
@@ -68,7 +68,7 @@ export component BrowserPanel inherits Rectangle {
                 }
                 Rectangle {
                     horizontal-stretch: 1;
-                    height: Theme.sz-28;
+                    height: Theme.control-sm;
                     border-radius: Theme.r-bubble;
                     background: Theme.bg-primary;
                     border-width: 1px;
@@ -85,20 +85,20 @@ export component BrowserPanel inherits Rectangle {
                     }
                 }
                 device-box := ComboBox {
-                    width: Theme.menu-w;
-                    height: Theme.sz-28;
+                    width: Theme.title-cap;
+                    height: Theme.control-sm;
                     model: root.data.device-names;
                     selected(v) => { root.set-device(self.current-index); }
                 }
                 Rectangle {
-                    width: Theme.sz-28; height: Theme.sz-28;
+                    width: Theme.control-sm; height: Theme.control-sm;
                     border-radius: Theme.r-control;
                     background: root.annotating ? Theme.accent : an.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
-                    Icon { source: Icons.message-square; width: Theme.icon-md; height: Theme.icon-md; tint: root.annotating ? white : Theme.text-secondary; }
+                    Icon { source: Icons.message-square; width: Theme.icon-md; height: Theme.icon-md; tint: root.annotating ? Theme.white : Theme.text-secondary; }
                     an := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.toggle-annotate(); } }
                 }
                 if root.annotating: Rectangle {
-                    width: Theme.sz-28; height: Theme.sz-28;
+                    width: Theme.control-sm; height: Theme.control-sm;
                     border-radius: Theme.r-control;
                     background: cm.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
                     Icon { source: Icons.trash; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
@@ -129,17 +129,17 @@ export component BrowserPanel inherits Rectangle {
             if root.data.pin-x >= 0: Rectangle {
                 x: root.data.pin-x * 1px - self.width / 2;
                 y: root.data.pin-y * 1px - self.height / 2;
-                width: Theme.sz-22; height: Theme.sz-22; border-radius: Theme.r-pill;
-                background: Theme.accent; border-color: white; border-width: Theme.sp-2;
+                width: Theme.sp-20; height: Theme.sp-20; border-radius: Theme.r-pill;
+                background: Theme.accent; border-color: Theme.white; border-width: Theme.sp-2;
             }
             if root.data.pin-x >= 0 && root.data.pin-label != "": Rectangle {
                 x: root.data.pin-x * 1px + Theme.sp-16;
                 y: root.data.pin-y * 1px - Theme.sp-10;
                 height: Theme.sp-20;
-                width: pin-text.preferred-width + Theme.sz-14;
+                width: pin-text.preferred-width + Theme.sp-12;
                 border-radius: Theme.r-control;
                 background: Theme.accent;
-                pin-text := Text { text: root.data.pin-label; color: white; font-size: Theme.text-12; }
+                pin-text := Text { text: root.data.pin-label; color: Theme.white; font-size: Theme.text-12; }
             }
             changed width => { root.resized(self.width, self.height); }
             changed height => { root.resized(self.width, self.height); }
@@ -195,7 +195,7 @@ export component BrowserDrawer inherits Rectangle {
 
     background: Theme.bg-primary;
     HorizontalLayout {
-        // The splitter: 5px, accent while used.
+        // The splitter, accent while used.
         Rectangle {
             width: Theme.sp-6;
             background: sp.has-hover || sp.pressed ? Theme.accent : Theme.border;
@@ -207,21 +207,21 @@ export component BrowserDrawer inherits Rectangle {
         VerticalLayout {
             // The tab strip (.brd-tabs).
             Rectangle {
-                height: Theme.sz-34;
+                height: Theme.control;
                 background: Theme.bg-primary;
                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
                 HorizontalLayout {
                     padding-top: Theme.sp-4; padding-left: Theme.sp-6; padding-right: Theme.sp-6;
                     spacing: Theme.sp-2;
                     for p[i] in root.panels: Rectangle {
-                        height: Theme.sz-30;
-                        width: min(Theme.tab-max, max(Theme.tab-min, tt.preferred-width + Theme.sz-30));
+                        height: Theme.control - Theme.sp-4;
+                        width: min(Theme.sidebar-width, max(Theme.sp-48, tt.preferred-width + Theme.sp-32));
                         border-top-left-radius: Theme.r-control; border-top-right-radius: Theme.r-control;
                         background: i == root.active ? Theme.bg-secondary : th.has-hover ? Theme.bg-hover : transparent;
                         border-width: i == root.active ? 1px : 0px;
                         border-color: Theme.border;
                         tt := Text {
-                            x: Theme.sp-10; width: parent.width - Theme.sz-30;
+                            x: Theme.sp-10; width: parent.width - Theme.sp-32;
                             text: p.title == "" ? "New tab" : p.title;
                             font-size: Theme.text-12;
                             color: i == root.active ? Theme.text-primary : Theme.text-secondary;
@@ -232,7 +232,7 @@ export component BrowserDrawer inherits Rectangle {
                     }
                     Rectangle { horizontal-stretch: 1; }
                     for b[i] in [Icons.more, Icons.chevron-right, Icons.x]: Rectangle {
-                        width: Theme.sz-26; height: Theme.sz-26;
+                        width: Theme.sp-24; height: Theme.sp-24;
                         border-radius: Theme.r-control;
                         background: tb.has-hover ? Theme.bg-hover : transparent;
                         Icon { source: b; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }

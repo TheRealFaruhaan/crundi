@@ -4,7 +4,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, AccentFill } from "widgets.slint";
+import { Icon, AccentFill, SoftShadow } from "widgets.slint";
 
 export struct ProjectItem {
     alias: string,
@@ -26,7 +26,7 @@ export global ProjectDot {
     }
 }
 
-/// A 1px dashed outline (CSS "1px dashed"): 3px dashes, 3px gaps.
+/// A hairline dashed outline (CSS "1px dashed").
 export component Dashed inherits Rectangle {
     in property <color> line: Theme.border;
     for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; y: 0px; width: min(Theme.sp-4, root.width - i * Theme.sp-6); height: 1px; background: root.line; }
@@ -59,21 +59,21 @@ component UsageRow inherits Rectangle {
     }
 }
 
-/// A window button (36×28): minimise, maximise, close (red on hover).
+/// A window button: minimise, maximise, close (red on hover).
 component WinBtn inherits Rectangle {
     in property <int> kind;
     callback clicked();
-    width: Theme.sz-36;
-    height: Theme.sz-28;
+    width: Theme.control-lg;
+    height: Theme.control-sm;
     border-radius: Theme.r-control;
     background: ta.has-hover ? (root.kind == 2 ? Theme.red : Theme.bg-hover) : transparent;
     if root.kind == 0: Rectangle { width: Theme.sp-10; height: 1px; background: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
     if root.kind == 1: Rectangle { width: Theme.sp-10; height: Theme.sp-10; border-width: 1px; border-color: ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
-    if root.kind == 2: Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: ta.has-hover ? white : Theme.text-secondary; }
+    if root.kind == 2: Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: ta.has-hover ? Theme.white : Theme.text-secondary; }
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
-/// The top bar: 48px. Usage bars behind; logo / project; the usage age, Cru,
+/// The top bar. Usage bars behind; logo / project; the usage age, Cru,
 /// the connection badge and the window buttons on the right.
 export component TopBar inherits Rectangle {
     in property <string> project-name;
@@ -113,14 +113,14 @@ export component TopBar inherits Rectangle {
         HorizontalLayout {
             spacing: Theme.sp-10;
             Image { source: @image-url("brand/head.svg"); width: Theme.sp-24; height: Theme.sp-24; y: Theme.sp-12; }
-            Image { source: @image-url("brand/wordmark.svg"); width: Theme.wordmark-w; height: Theme.wordmark-h; y: Theme.sp-16; image-fit: contain; }
+            Image { source: @image-url("brand/wordmark.svg"); height: Theme.sp-16; width: self.height * self.source.width / self.source.height; y: Theme.sp-16; image-fit: contain; }
         }
         Text { text: "/"; color: Theme.text-muted; vertical-alignment: center; font-size: Theme.text-14; }
         Text { text: root.project-name == "" ? "No project" : root.project-name; color: Theme.text-secondary; vertical-alignment: center; font-size: Theme.text-14; }
         Rectangle { horizontal-stretch: 1; }
         // How old the usage numbers are.
         if root.usage-on && root.usage-age != "": Rectangle {
-            y: Theme.sz-14; height: Theme.sp-20;
+            y: Theme.sp-12; height: Theme.sp-20;
             width: age.preferred-width + Theme.sp-20;
             border-radius: Theme.r-bubble;
             background: Theme.slate-dim;
@@ -133,13 +133,13 @@ export component TopBar inherits Rectangle {
         }
         // Cru's mark (the voice assistant; it opens in a later phase).
         Rectangle {
-            y: Theme.sp-10; width: Theme.sz-44; height: Theme.sz-28;
+            y: Theme.sp-10; width: Theme.sp-40; height: Theme.control-sm;
             border-radius: Theme.r-pill;
             Image { source: @image-url("brand/cru.svg"); width: Theme.sp-40; height: Theme.sp-24; }
         }
-        // The connection badge: 3px 10px, a 6px dot (with its ring) and a 6px gap, mono 12px.
+        // The connection badge: a dot (with its ring), mono text.
         Rectangle {
-            y: Theme.sz-14;
+            y: Theme.sp-12;
             height: Theme.sp-20;
             width: badge.preferred-width + Theme.sp-20;
             border-radius: Theme.r-bubble;
@@ -150,7 +150,7 @@ export component TopBar inherits Rectangle {
                 Rectangle {
                     width: Theme.sp-6; height: Theme.sp-6; y: Theme.sp-8;
                     // The pulsing ring, at rest.
-                    Rectangle { width: Theme.sz-14; height: Theme.sz-14; border-radius: Theme.r-pill; background: root.online ? Theme.green-ring : Theme.red-ring; }
+                    Rectangle { width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-pill; background: root.online ? Theme.green-ring : Theme.red-ring; }
                     Rectangle { border-radius: Theme.r-chip; background: root.online ? Theme.green : Theme.red; }
                 }
                 Text { text: root.online ? "connected" : "disconnected"; color: root.online ? Theme.green : Theme.red; font-size: Theme.text-12; font-family: Theme.mono; vertical-alignment: center; }
@@ -165,7 +165,7 @@ export component TopBar inherits Rectangle {
     }
 }
 
-/// The sidebar: 240px (60px folded). "PROJECTS" and the fold button; the
+/// The sidebar (narrower folded). "PROJECTS" and the fold button; the
 /// projects; Add project (dashed) and Inbox.
 export component ProjectSidebar inherits Rectangle {
     in property <[ProjectItem]> projects;
@@ -179,11 +179,11 @@ export component ProjectSidebar inherits Rectangle {
 
     VerticalLayout {
         width: parent.width - 1px;
-        // Header: 49px, padding 12px 16px, a subtle line under it.
+        // Header: as tall as the top bar, a subtle line under it.
         Rectangle {
             height: Theme.topbar-height;
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
-            if !root.folded: Text { x: Theme.sp-16; y: Theme.sz-18; text: "PROJECTS"; color: Theme.text-muted; font-size: Theme.text-12; font-weight: Theme.w-semibold; letter-spacing: Theme.track-caps; }
+            if !root.folded: Text { x: Theme.sp-16; y: Theme.sp-16; text: "PROJECTS"; color: Theme.text-muted; font-size: Theme.text-12; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; }
             Rectangle {
                 x: root.folded ? (parent.width - Theme.sp-24) / 2 : Theme.sidebar-width - Theme.sp-40; y: Theme.sp-12;
                 width: Theme.sp-24; height: Theme.sp-24;
@@ -204,7 +204,7 @@ export component ProjectSidebar inherits Rectangle {
                 alignment: start;
                 for p in root.projects: Rectangle {
                     height: root.folded ? Theme.sp-48 : Theme.sp-32;
-                    // Folded: a 38px round avatar with the project's initials
+                    // Folded: a round avatar with the project's initials
                     // (.proj-initials). Its state wins over the active look:
                     // running a green edge, working a yellow edge and glow,
                     // needs input an accent edge and glow; waiting draws as
@@ -212,16 +212,15 @@ export component ProjectSidebar inherits Rectangle {
                     if root.folded: av := Rectangle {
                         property <bool> active: p.alias == root.current;
                         property <string> st: p.state == "waiting" ? "" : p.state;
-                        width: Theme.sz-38; height: Theme.sz-38;
-                        // The glows (0 0 10px -2px yellow, 0 0 12px -2px accent;
-                        // the active look's own) in soft rings.
-                        for l in (av.st == "working" ? Theme.glow-yellow : Theme.glow-accent): Rectangle {
-                            visible: av.st == "working" || av.st == "needs-input" || (av.active && av.st == "");
-                            x: -l.e; y: l.y - l.e; width: Theme.sz-38 + 2 * l.e; height: Theme.sz-38 + 2 * l.e; border-radius: Theme.r-pill;
-                            background: l.c;
+                        width: Theme.control-lg; height: Theme.control-lg;
+                        // The glows (yellow working; accent needing input, or the
+                        // active look's own), soft.
+                        if av.st == "working" || av.st == "needs-input" || (av.active && av.st == ""): SoftShadow {
+                            width: parent.width; height: parent.height; radius: parent.width / 2;
+                            shadow: av.st == "working" ? Theme.glow-yellow : Theme.glow-accent;
                         }
-                        // The active look's 1px ring (0 0 0 1px accent), none or running.
-                        if self.active && (self.st == "" || self.st == "running"): Rectangle { x: -1px; y: -1px; width: Theme.sp-40; height: Theme.sp-40; border-radius: Theme.r-pill; background: Theme.accent; }
+                        // The active look's hairline ring, none or running.
+                        if self.active && (self.st == "" || self.st == "running"): Rectangle { x: -1px; y: -1px; width: parent.width + Theme.sp-2; height: parent.height + Theme.sp-2; border-radius: Theme.r-pill; background: Theme.accent; }
                         // Active: the accent gradient as a circle (AccentFill), under the edge.
                         if self.active: AccentFill { round: true; width: parent.width; height: parent.height; }
                         Rectangle {
@@ -231,35 +230,35 @@ export component ProjectSidebar inherits Rectangle {
                             border-color: parent.st == "running" ? Theme.green : parent.st == "working" ? Theme.yellow
                                 : parent.st == "needs-input" || parent.active || ta.has-hover ? Theme.accent : Theme.border;
                             Text {
-                                text: p.initials; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-bold; letter-spacing: Theme.track-caps;
+                                text: p.initials; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide;
                                 color: av.st == "running" || av.st == "working" ? Theme.text-primary
-                                    : av.st == "needs-input" || av.active ? white
+                                    : av.st == "needs-input" || av.active ? Theme.white
                                     : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
-                                overflow: elide; width: Theme.sz-26; horizontal-alignment: center;
+                                overflow: elide; width: Theme.sp-24; horizontal-alignment: center;
                             }
                         }
                     }
                     if !root.folded: Rectangle {
                         border-radius: Theme.r-control;
                         background: p.alias == root.current ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : transparent;
-                        // The active row's gradient bar: 3px, inset 7px.
+                        // The active row's gradient bar, inset from the row's ends.
                         if p.alias == root.current: Rectangle {
-                            x: 0px; y: Theme.sp-8; width: Theme.sp-4; height: parent.height - Theme.sz-14;
+                            x: 0px; y: Theme.sp-8; width: Theme.sp-4; height: parent.height - Theme.sp-12;
                             border-top-right-radius: Theme.r-chip; border-bottom-right-radius: Theme.r-chip;
                             background: Theme.grad-accent;
                         }
-                        // The dot: 8px at 12px; needs input, working and waiting wear
-                        // a 3px ring. The active row with nothing running is green.
+                        // The dot; needs input, working and waiting wear
+                        // a ring. The active row with nothing running is green.
                         if p.state == "needs-input" || p.state == "working" || p.state == "waiting": Rectangle {
-                            x: Theme.sp-12 + (Theme.dot - self.width) / 2; y: Theme.sp-12 + (Theme.dot - self.height) / 2; width: Theme.sz-14; height: Theme.sz-14; border-radius: Theme.r-pill;
+                            x: Theme.sp-12 + (Theme.sp-8 - self.width) / 2; y: Theme.sp-12 + (Theme.sp-8 - self.height) / 2; width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-pill;
                             background: p.state == "needs-input" ? Theme.accent-dim : p.state == "working" ? Theme.yellow-dim : Theme.sky-ring;
                         }
                         Rectangle {
-                            x: Theme.sp-12; y: Theme.sp-12; width: Theme.dot; height: Theme.dot; border-radius: Theme.r-pill;
+                            x: Theme.sp-12; y: Theme.sp-12; width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.r-pill;
                             background: p.state == "" && p.alias == root.current ? Theme.green : ProjectDot.color(p.state);
                         }
                         Text {
-                            x: Theme.sz-30; width: parent.width - Theme.sz-44;
+                            x: Theme.sp-32; width: parent.width - Theme.sp-40;
                             text: p.name;
                             color: p.alias == root.current ? Theme.accent-hover : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
                             font-size: Theme.text-14;
@@ -271,15 +270,16 @@ export component ProjectSidebar inherits Rectangle {
                 }
             }
         }
-        // Footer: padding 8, a subtle line above.
-        Rectangle {
-            height: Theme.sidebar-foot;
-            Rectangle { height: 1px; background: Theme.border-subtle; }
+        // Footer: a subtle line at its top, then Add project and Inbox.
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        VerticalLayout {
+            padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+            padding-left: root.folded ? Theme.sp-6 : Theme.sp-8; padding-right: self.padding-left;
+            spacing: Theme.sp-8;
             // Add project: a dashed box; folded, just its "+" (the web's rail
-            // keeps it, above Inbox). Padding 8 (folded 8 / 6).
+            // keeps it, above Inbox).
             Rectangle {
-                x: root.folded ? Theme.sp-6 : Theme.sp-8; y: Theme.sp-10;
-                width: parent.width - 2 * self.x; height: Theme.sz-34;
+                height: Theme.control;
                 border-radius: Theme.r-control;
                 background: ap.has-hover ? Theme.accent-dim : transparent;
                 Dashed { line: ap.has-hover ? Theme.accent : Theme.border; }
@@ -291,8 +291,7 @@ export component ProjectSidebar inherits Rectangle {
                 ap := TouchArea { mouse-cursor: pointer; }
             }
             Rectangle {
-                x: root.folded ? Theme.sp-6 : Theme.sp-8; y: Theme.sp-48 + Theme.sp-4;
-                width: parent.width - 2 * self.x; height: root.inbox-unread > 0 ? Theme.sz-36 : Theme.sz-34;
+                height: root.inbox-unread > 0 ? Theme.control-lg : Theme.control;
                 border-radius: Theme.r-control;
                 border-width: 1px;
                 border-color: root.inbox-unread > 0 ? Theme.accent : Theme.border-subtle;
@@ -303,21 +302,20 @@ export component ProjectSidebar inherits Rectangle {
                     Icon { source: Icons.mail; width: Theme.icon-lg; height: Theme.icon-lg; y: (parent.height - Theme.sp-16) / 2; tint: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; }
                     if !root.folded: Text { text: "Inbox"; color: root.inbox-unread > 0 ? Theme.text-primary : Theme.text-muted; font-size: Theme.text-14; vertical-alignment: center; }
                     if root.inbox-unread > 0 && !root.folded: Rectangle {
-                        y: (parent.height - Theme.sz-18) / 2;
-                        height: Theme.sz-18; width: max(Theme.sz-18, ib-n.preferred-width + Theme.sp-10);
+                        y: (parent.height - Theme.sp-16) / 2;
+                        height: Theme.sp-16; width: max(Theme.sp-16, ib-n.preferred-width + Theme.sp-10);
                         border-radius: Theme.r-field;
                         background: Theme.accent;
-                        ib-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: white; font-size: Theme.text-11; font-weight: Theme.w-bold; }
+                        ib-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: Theme.white; font-size: Theme.text-11; font-weight: Theme.w-bold; }
                     }
                 }
-                // Folded: the count sits on the envelope's top-right corner
-                // (16 high, at least 16 wide, padding 0 4; top 2, right 6).
+                // Folded: the count sits on the envelope's top-right corner.
                 if root.inbox-unread > 0 && root.folded: Rectangle {
                     x: parent.width - Theme.sp-6 - self.width; y: Theme.sp-2;
                     height: Theme.icon-lg; width: max(Theme.icon-lg, fb-n.preferred-width + 2 * Theme.sp-4);
                     border-radius: Theme.r-pill;
                     background: Theme.accent;
-                    fb-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: white; font-size: Theme.text-10; font-weight: Theme.w-bold; }
+                    fb-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: Theme.white; font-size: Theme.text-10; font-weight: Theme.w-bold; }
                 }
                 ib := TouchArea { mouse-cursor: pointer; }
             }
@@ -331,7 +329,7 @@ export struct TabItem {
     icon: image,
 }
 
-/// The tab bar: 36px. Workbench, its "+", the other tabs, and Browser on the right.
+/// The tab bar. Workbench, its "+", the other tabs, and Browser on the right.
 export component TabBar inherits Rectangle {
     in property <[TabItem]> tabs;
     in property <string> current;
@@ -340,7 +338,7 @@ export component TabBar inherits Rectangle {
     callback select(string);
     callback add-menu();
     callback toggle-browser();
-    height: Theme.sz-36;
+    height: Theme.tabbar-height;
     background: Theme.bg-secondary;
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     HorizontalLayout {
@@ -352,17 +350,17 @@ export component TabBar inherits Rectangle {
             content-width: tabrow.preferred-width;
             tabrow := HorizontalLayout {
                 for t[i] in root.tabs: HorizontalLayout {
-                    // A tab: padding 10px 14px, gap 6, a 15px icon, 13.12px/500.
+                    // A tab: an icon and its label.
                     Rectangle {
-                        width: tab.preferred-width + Theme.sz-28;
-                        height: Theme.sz-36;
+                        width: tab.preferred-width + Theme.sp-24;
+                        height: Theme.tabbar-height;
                         tab := HorizontalLayout {
-                            x: Theme.sz-14;
+                            x: Theme.sp-12;
                             spacing: Theme.sp-6;
                             Icon { source: t.icon; width: Theme.icon-lg; height: Theme.icon-lg; y: Theme.sp-10; tint: t.id == root.current ? Theme.accent-hover : th.has-hover ? Theme.text-secondary : Theme.text-muted; }
                             Text { text: t.label; color: t.id == root.current ? Theme.accent-hover : th.has-hover ? Theme.text-secondary : Theme.text-muted; font-size: Theme.text-13; font-weight: Theme.w-medium; vertical-alignment: center; }
                         }
-                        // The active tab's 2px gradient underline, inset 12px.
+                        // The active tab's gradient underline.
                         if t.id == root.current: Rectangle {
                             x: Theme.sp-12; y: parent.height - Theme.sp-2; width: parent.width - Theme.sp-24; height: Theme.sp-2;
                             border-top-left-radius: Theme.r-chip; border-top-right-radius: Theme.r-chip;
@@ -370,9 +368,9 @@ export component TabBar inherits Rectangle {
                         }
                         th := TouchArea { mouse-cursor: pointer; clicked => { root.select(t.id); } }
                     }
-                    // The "+": 24px, bg-tertiary, 1px border, radius 6, a 17px "+", 6px after it.
+                    // The "+": bg-tertiary, a border, radius 6.
                     if i == 0: Rectangle {
-                        width: Theme.sz-30;
+                        width: Theme.sp-32;
                         Rectangle {
                             x: 0px; y: Theme.sp-6;
                             width: Theme.sp-24; height: Theme.sp-24;
@@ -380,7 +378,7 @@ export component TabBar inherits Rectangle {
                             background: pl.has-hover ? Theme.accent : Theme.bg-tertiary;
                             border-width: 1px;
                             border-color: pl.has-hover ? Theme.accent : Theme.border;
-                            Text { text: "+"; font-size: Theme.text-16; color: pl.has-hover ? white : Theme.text-secondary; }
+                            Text { text: "+"; font-size: Theme.text-16; color: pl.has-hover ? Theme.white : Theme.text-secondary; }
                             pl := TouchArea { mouse-cursor: pointer; clicked => { root.add-menu(); } }
                         }
                     }
@@ -389,16 +387,16 @@ export component TabBar inherits Rectangle {
         }
         // Browser, pinned right; gone while the drawer is open.
         if !root.drawer-open: Rectangle {
-            width: bl.preferred-width + Theme.sz-28;
+            width: bl.preferred-width + Theme.sp-24;
             bl := HorizontalLayout {
-                x: Theme.sz-14;
+                x: Theme.sp-12;
                 spacing: Theme.sp-6;
                 Icon { source: Icons.globe; width: Theme.icon-lg; height: Theme.icon-lg; y: Theme.sp-10; tint: bh.has-hover ? Theme.text-secondary : Theme.text-muted; }
                 Text { text: "Browser"; color: bh.has-hover ? Theme.text-secondary : Theme.text-muted; font-size: Theme.text-13; font-weight: Theme.w-medium; vertical-alignment: center; }
             }
-            // Pages still open behind a hidden drawer: a 7px accent dot with a 2px ring.
+            // Pages still open behind a hidden drawer: an accent dot with a ring.
             if root.drawer-has-tabs: Rectangle {
-                x: parent.width - Theme.sz-14; y: Theme.sp-8; width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-control;
+                x: parent.width - Theme.sp-12; y: Theme.sp-8; width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-control;
                 background: Theme.bg-secondary;
                 Rectangle { width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.r-chip; background: Theme.accent; }
             }

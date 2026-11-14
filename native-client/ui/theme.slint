@@ -1,11 +1,17 @@
 // The PC client's look: one constant theme (DESIGN.md, rule 2). The colours
-// are the web UI's palette; every size is a token from a scale. Screens never
-// type a number but 0 and 1px hairlines: they use these. tools/tokens.sh lists
-// any left.
+// are the web UI's palette; every size is a step of a scale, and the few
+// named sizes are the client's structure (the window, the bars, the
+// sidebar, the pane header, control heights, icons). Screens never type a
+// number but 0 and 1px hairlines: they use these. tools/tokens.sh lists any
+// left.
 
-/// One soft layer of a shadow or a glow (the software renderer has no blur):
-/// the shape grown by `e`, moved down by `y`, in colour `c`.
-export struct Layer { e: length, y: length, c: color }
+/// A soft shadow or glow (widgets.slint SoftShadow): it fades from `c` at
+/// the box's edge to nothing over `blur`, moved down by `y`.
+export struct Shadow { blur: length, y: length, c: color }
+
+/// A faint glow on the sign-in page: a circle at a fraction of the window
+/// (fx across, fy down) with a radius of a fraction `fr` of its height.
+export struct Glow { fx: float, fy: float, fr: float }
 
 export global Theme {
     // Surfaces, darkest first.
@@ -17,10 +23,11 @@ export global Theme {
     out property <color> border: #2a2a3d;
     out property <color> border-subtle: #1e1e30;
 
-    // Text.
+    // Text. `white` is text and icons on an accent or red fill.
     out property <color> text-primary: #e8e8f0;
     out property <color> text-secondary: #8888a8;
     out property <color> text-muted: #5a5a78;
+    out property <color> white: #ffffff;
 
     // Accent (the mark's indigo) and the one warm colour.
     out property <color> accent: #6366f1;
@@ -37,11 +44,10 @@ export global Theme {
     out property <color> yellow: #f59e0b;
     out property <color> yellow-dim: #f59e0b26;
     out property <color> sky: #38bdf8;
-    // Sky at .16 (the waiting badge) and .18 (the sidebar's waiting ring).
     out property <color> sky-dim: #38bdf829;
     out property <color> sky-ring: #38bdf82e;
 
-    // One-off tints of the palette.
+    // Tints of the palette.
     out property <color> error-text: #fca5a5;
     out property <color> error-edge: #ef444466;
     out property <color> red-ring: #ef444434;
@@ -63,9 +69,12 @@ export global Theme {
     out property <color> card-top: #17171f;
     out property <color> placeholder: #757575;
     out property <color> annotate: #ea580c;
-    out property <color> shadow: #00000080;
+    out property <color> slate-dim: #94a3b826;
+    // Selected text in a text field.
+    out property <color> selection: #0236a1;
 
-    // Spacing: 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48.
+    // Spacing: 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48. Every gap,
+    // padding and small box is one of these (or a sum of two).
     out property <length> sp-2: 2px;
     out property <length> sp-4: 4px;
     out property <length> sp-6: 6px;
@@ -78,30 +87,17 @@ export global Theme {
     out property <length> sp-32: 32px;
     out property <length> sp-40: 40px;
     out property <length> sp-48: 48px;
-    // Sizes between the spacing steps (control heights, boxes): even only.
-    out property <length> sz-14: 14px;
-    out property <length> sz-18: 18px;
-    out property <length> sz-22: 22px;
-    out property <length> sz-26: 26px;
-    out property <length> sz-28: 28px;
-    out property <length> sz-30: 30px;
-    out property <length> sz-34: 34px;
-    out property <length> sz-36: 36px;
-    out property <length> sz-38: 38px;
-    out property <length> sz-44: 44px;
 
-    // Radius: 4 a chip, 6 a control, 8 a field, 10 a card or pane, 12 a
-    // bubble, a pill (also any circle: a radius is held to half the size).
+    // Radius: a chip, a control, a field, a card or pane, a bubble, a pill
+    // (also any circle: a radius is held to half the size).
     out property <length> r-chip: 4px;
     out property <length> r-control: 6px;
     out property <length> r-field: 8px;
     out property <length> r-card: 10px;
     out property <length> r-bubble: 12px;
     out property <length> r-pill: 999px;
-    // The chat bubble's one sharp corner (its tail).
-    out property <length> r-tail: 3px;
 
-    // Font sizes: 10, 11, 12, 13, 14, 15, 16, 20, 26; and the launcher's big ">_".
+    // Font sizes: 10, 11, 12, 13, 14, 15, 16, 20, 26.
     out property <length> text-10: 10px;
     out property <length> text-11: 11px;
     out property <length> text-12: 12px;
@@ -111,7 +107,6 @@ export global Theme {
     out property <length> text-16: 16px;
     out property <length> text-20: 20px;
     out property <length> text-26: 26px;
-    out property <length> text-hero: 48px;
     // Weights: 400, 500, 600, 700.
     out property <int> w-regular: 400;
     out property <int> w-medium: 500;
@@ -127,72 +122,48 @@ export global Theme {
     // button's icon (of the button).
     out property <float> bubble-share: 0.86;
     out property <float> icon-share: 0.55;
-    // Tracking: the drag grip's packed dots, small bold capitals (the CHAT
-    // tag, the agent badge: Slint draws them smaller, so a size up and closer),
-    // capitals in labels, wide capitals, the sign-in code's digits.
-    out property <length> track-grip: -2px;
-    out property <length> track-tag: -0.4px;
-    out property <length> track-badge: -0.8px;
-    out property <length> track-caps: 0.6px;
+    // Letter spacing: tight (packed marks, small bold capitals) and wide
+    // (capitals in labels, a code's characters).
+    out property <length> track-tight: -0.5px;
     out property <length> track-wide: 1px;
-    out property <length> track-code: 6px;
-    out property <length> track-code-sm: 2px;
 
-    // Recurring sizes.
-    out property <length> icon-sm: 12px;
-    out property <length> icon-md: 14px;
-    out property <length> icon-lg: 16px;
-    out property <length> icon-xl: 20px;
-    out property <length> dot: 8px;
-    out property <length> dot-sm: 6px;
-    out property <length> sidebar-width: 240px;
-    out property <length> sidebar-folded: 60px;
-    out property <length> topbar-height: 48px;
-    out property <length> pane-head: 28px;
-    out property <length> pane-head-narrow: 26px;
-    // The workbench (src/mosaic.rs and src/head.rs hold the same numbers).
-    out property <length> pane-min: 340px;
-    out property <length> pane-fold: 560px;
-    out property <length> gutter: 7px;
-    out property <length> composer-stack: 480px;
-    out property <length> composer-max: 180px;
-    out property <length> tool-max: 340px;
-    out property <length> title-cap: 160px;
-    out property <length> menu-w: 150px;
-    out property <length> submenu-min: 178px;
-    out property <length> toast-max: 420px;
-    out property <length> drawer-w: 560px;
-    out property <length> drawer-min: 320px;
-    out property <length> drawer-reserve: 420px;
-    out property <length> switch-w: 56px;
-    out property <length> tab-min: 64px;
-    out property <length> tab-max: 200px;
-    out property <length> drag-edge: 60px;
-    out property <length> stick-zone: 60px;
-    out property <length> launcher-shell-w: 190px;
-    out property <length> launcher-card-w: 342px;
-    out property <length> launcher-btn-w: 248px;
-    out property <length> wordmark-w: 60px;
-    out property <length> wordmark-h: 15px;
-    out property <length> wordmark-lg-w: 176px;
-    out property <length> wordmark-lg-h: 44px;
-    out property <length> mascot: 112px;
-    out property <length> mascot-glow-w: 140px;
-    out property <length> mascot-glow-h: 110px;
-    out property <length> signin-field: 260px;
-    out property <length> signin-card: 480px;
-    out property <length> signin-row: 414px;
-    out property <length> signin-text: 392px;
-    out property <length> winbtns-w: 112px;
-    out property <length> sidebar-foot: 96px;
-    out property <length> glow-a-w: 1100px;
-    out property <length> glow-a-h: 560px;
-    out property <length> glow-b-w: 820px;
-    out property <length> glow-b-h: 480px;
+    // ─── Structure: the only named sizes ───
+    // The window.
     out property <length> window-w: 1400px;
     out property <length> window-h: 860px;
     out property <length> window-min-w: 900px;
     out property <length> window-min-h: 520px;
+    // The bars and the sidebar.
+    out property <length> topbar-height: 48px;
+    out property <length> tabbar-height: 36px;
+    out property <length> sidebar-width: 240px;
+    out property <length> sidebar-folded: 60px;
+    // Panes (src/mosaic.rs and src/head.rs hold the same numbers): the
+    // header (narrow under pane-fold), a pane's least width, the gutter
+    // between panes, a title's widest, the composer's stacking width and
+    // tallest input.
+    out property <length> pane-head: 28px;
+    out property <length> pane-head-narrow: 26px;
+    out property <length> pane-min: 340px;
+    out property <length> pane-fold: 560px;
+    out property <length> gutter: 7px;
+    out property <length> title-cap: 160px;
+    out property <length> composer-stack: 480px;
+    out property <length> composer-max: 180px;
+    // The browser drawer: its width, its least, and what it leaves the panes.
+    out property <length> drawer-w: 560px;
+    out property <length> drawer-min: 320px;
+    out property <length> drawer-reserve: 420px;
+    // Control heights: small (header and toolbar buttons, chips), regular
+    // (buttons, inputs), large (fields, tabs, launcher buttons).
+    out property <length> control-sm: 28px;
+    out property <length> control: 34px;
+    out property <length> control-lg: 36px;
+    // Icons.
+    out property <length> icon-sm: 12px;
+    out property <length> icon-md: 14px;
+    out property <length> icon-lg: 16px;
+    out property <length> icon-xl: 20px;
 
     // Motion.
     out property <duration> motion-fast: 120ms;
@@ -204,38 +175,30 @@ export global Theme {
     out property <float> o-dim: 0.4;
     out property <float> o-caret: 0.55;
     out property <float> o-soft: 0.6;
+    out property <float> o-usage: 0.7;
     out property <float> o-clone: 0.92;
 
     // Gradients.
     out property <brush> grad-accent: @linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
-    out property <brush> grad-launcher: @linear-gradient(90deg, #4f46e5 0%, #6366f1 50%, #818cf8 100%);
-    out property <brush> grad-card: @linear-gradient(180deg, #17171f 0%, #12121a 40%);
-    out property <brush> glow-page-a: @radial-gradient(circle, #6366f11a 0%, #6366f100 60%);
-    out property <brush> glow-page-b: @radial-gradient(circle, #818cf80f 0%, #818cf800 60%);
+    out property <brush> grad-card: @linear-gradient(180deg, #17171f 0%, #12121a 100%);
     out property <brush> glow-mascot: @radial-gradient(circle, #6366f140 0%, #6366f100 65%);
-    // Where the page glows sit (a fraction of the window) and their size.
-    out property <float> glow-a-fx: 0.82;
-    out property <float> glow-a-fy: -0.12;
-    out property <float> glow-b-fx: -0.08;
-    out property <float> glow-b-fy: 1.12;
-    // The usage bars' quiet opacity in the top bar.
-    out property <float> o-usage: 0.7;
+    // The sign-in page's two glows (top right, bottom left), in accent-haze
+    // and accent-hover-mist.
+    out property <Glow> glow-a: { fx: 0.82, fy: -0.12, fr: 0.43 };
+    out property <Glow> glow-b: { fx: -0.08, fy: 1.12, fr: 0.33 };
 
-    // Shadows and glows, as soft layers (Layer).
-    out property <[Layer]> shadow-menu: [{ e: 2px, y: 6px, c: #0000001e }, { e: 8px, y: 6px, c: #00000012 }, { e: 14px, y: 6px, c: #0000000a }, { e: 20px, y: 6px, c: #00000005 }];
-    out property <[Layer]> shadow-head-menu: [{ e: 2px, y: 6px, c: #00000016 }, { e: 8px, y: 6px, c: #0000000e }, { e: 12px, y: 6px, c: #0000000e }, { e: 18px, y: 6px, c: #00000005 }];
-    out property <[Layer]> shadow-clone: [{ e: 4px, y: 12px, c: #00000024 }, { e: 12px, y: 12px, c: #00000016 }, { e: 20px, y: 12px, c: #0000000c }, { e: 30px, y: 12px, c: #00000006 }];
-    out property <[Layer]> shadow-card: [{ e: 34px, y: 26px, c: #0000000d }, { e: 22px, y: 22px, c: #00000014 }, { e: 10px, y: 18px, c: #0000001c }];
-    out property <[Layer]> glow-send: [{ e: 6px, y: 2px, c: #6366f10f }, { e: 3px, y: 2px, c: #6366f11f }];
-    // The folded avatar's glows (0 0 10px -2px yellow, 0 0 12px -2px accent).
-    out property <[Layer]> glow-yellow: [{ e: 2px, y: 0px, c: #f59e0b47 }, { e: 4px, y: 0px, c: #f59e0b24 }, { e: 6px, y: 0px, c: #f59e0b0f }];
-    out property <[Layer]> glow-accent: [{ e: 2px, y: 0px, c: #6366f147 }, { e: 4px, y: 0px, c: #6366f124 }, { e: 6px, y: 0px, c: #6366f10f }];
+    // Shadows and glows (SoftShadow): a menu or toast, a dragged pane, the
+    // sign-in card, the Send button, the folded rail's working and active
+    // avatars.
+    out property <Shadow> shadow-menu: { blur: 16px, y: 6px, c: #00000052 };
+    out property <Shadow> shadow-clone: { blur: 24px, y: 12px, c: #00000047 };
+    out property <Shadow> shadow-card: { blur: 40px, y: 24px, c: #00000040 };
+    out property <Shadow> glow-send: { blur: 8px, y: 2px, c: #6366f133 };
+    out property <Shadow> glow-yellow: { blur: 8px, y: 0px, c: #f59e0b59 };
+    out property <Shadow> glow-accent: { blur: 10px, y: 0px, c: #6366f159 };
 
     // Type: the mono stack, set at start for the system (src/main.rs).
     in-out property <string> mono: "DejaVu Sans Mono";
-    out property <color> slate-dim: #94a3b826;
-    // Selected text in a text field, as Chromium draws it in the web UI's inputs.
-    out property <color> selection: #0236a1;
 }
 
 /// Easing curves (a global of their own: Theme is shared with the Rust side,

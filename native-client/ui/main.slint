@@ -3,7 +3,7 @@
 // (tab bar, then the workbench or another tab) and the browser drawer.
 
 import { Theme } from "theme.slint";
-import { Pointer } from "widgets.slint";
+import { Pointer, SoftShadow } from "widgets.slint";
 import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
@@ -132,7 +132,7 @@ export component MainWindow inherits Window {
     // The pane in full screen, if one is (it covers the window; Esc leaves).
     in property <bool> full-on;
     in property <PaneView> full-pane;
-    // A toast: the web UI's, top right under the top bar (3.5 s).
+    // A toast: the web UI's, top right under the top bar (src/app.rs times it).
     in property <string> toast;
     in property <bool> toast-error;
 
@@ -261,13 +261,13 @@ export component MainWindow inherits Window {
                     }
                     if root.current-tab != "workbench": VerticalLayout {
                         alignment: center;
-                        spacing: Theme.sz-14;
+                        spacing: Theme.sp-12;
                         Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: Theme.text-13; horizontal-alignment: center; }
                         // Settings: signing out lives here, as in the PC client.
                         if root.current-tab == "settings": HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: so.preferred-width + Theme.sz-28; height: Theme.sz-34;
+                                width: so.preferred-width + Theme.sp-24; height: Theme.control;
                                 border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                                 background: sh.has-hover ? Theme.red-dim : Theme.bg-tertiary;
                                 so := Text { text: "Sign out of " + root.server; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: sh.has-hover ? Theme.red : Theme.text-primary; }
@@ -324,9 +324,9 @@ export component MainWindow inherits Window {
         }
     }
 
-    // The dragged pane's clone: the whole pane at the pointer, opacity .92,
-    // with the pane's own edge and the drop shadow 0 12px 32px rgba(0,0,0,.55)
-    // in soft layers. The web turns it 1.5°: the software renderer can't
+    // The dragged pane's clone: the whole pane at the pointer, a little
+    // see-through, with the pane's own edge and a soft shadow. The web turns
+    // it a little: the software renderer can't
     // rotate (PLAN.md, Known gaps). It takes no input (the grab stays with
     // the header that started it).
     if root.signed-in && root.drag-on: Rectangle {
@@ -335,32 +335,30 @@ export component MainWindow inherits Window {
         width: root.drag-pane.w;
         height: root.drag-pane.h;
         opacity: Theme.o-clone;
-        for l in Theme.shadow-clone: Rectangle {
-            x: -l.e; y: l.y - l.e; width: parent.width + 2 * l.e; height: parent.height + 2 * l.e; border-radius: Theme.r-card + l.e; background: l.c;
-        }
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-clone; }
         PaneCard { p: root.drag-pane; clone: true; blocked: true; }
     }
 
-    // The toast: top: topbar + 10px; right 16px; at most 420px; bg-secondary,
-    // a 1px border with a 3px accent (red: an error) left edge, radius 6,
-    // padding 12px 20px, 13.6px text, shadow-md (0 6px 20px rgba(0,0,0,.5)).
+    // The toast, under the top bar on the right: never wider than a pane at
+    // its least; bg-secondary, a border with an accent (red: an error) left
+    // edge, radius 6, a soft shadow.
     if root.toast != "": Rectangle {
-        property <length> w: min(Theme.toast-max, tm.preferred-width + Theme.sp-40 + Theme.sp-4);
+        property <length> w: min(Theme.pane-min, tm.preferred-width + Theme.sp-40 + Theme.sp-4);
         x: root.width - Theme.sp-16 - self.w;
         y: Theme.topbar-height + Theme.sp-10;
         width: self.w;
         height: tt.preferred-height + Theme.sp-24 + Theme.sp-2;
-        background: Theme.bg-secondary;
-        border-radius: Theme.r-control;
-        border-width: 1px;
-        border-color: root.toast-error ? Theme.red : Theme.border;
-        drop-shadow-blur: Theme.sp-20;
-        drop-shadow-offset-y: Theme.sp-6;
-        drop-shadow-color: Theme.shadow;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.shadow-menu; }
+        Rectangle {
+            background: Theme.bg-secondary;
+            border-radius: Theme.r-control;
+            border-width: 1px;
+            border-color: root.toast-error ? Theme.red : Theme.border;
+        }
         Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.r-control; border-bottom-left-radius: Theme.r-control; background: root.toast-error ? Theme.red : Theme.accent; }
         tm := Text { visible: false; text: root.toast; font-size: Theme.text-14; }
         tt := Text {
-            x: Theme.sp-24; y: Theme.sz-14; width: parent.width - Theme.sz-44;
+            x: Theme.sp-24; y: Theme.sp-12; width: parent.width - Theme.sp-40;
             text: root.toast; font-size: Theme.text-14; color: Theme.text-primary; wrap: word-wrap;
         }
     }
@@ -373,7 +371,7 @@ export component MainWindow inherits Window {
     // tab: its icon, a gap, its label, its padding), its bottom + 4.
     wb-m := Text { visible: false; text: "Workbench"; font-size: Theme.text-13; font-weight: Theme.w-medium; }
     if root.signed-in && root.add-menu-open: AddMenu {
-        x: Theme.sidebar-width + Theme.sp-12 + Theme.icon-lg + Theme.sp-6 + wb-m.preferred-width + Theme.sz-28;
+        x: Theme.sidebar-width + Theme.sp-12 + Theme.icon-lg + Theme.sp-6 + wb-m.preferred-width + Theme.sp-24;
         y: Theme.topbar-height + Theme.sp-6 + Theme.sp-24 + Theme.sp-4;
         pick(k) => { root.add-menu-open = false; root.add-pane(k); }
     }
