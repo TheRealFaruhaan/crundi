@@ -318,6 +318,18 @@ Phase 1 left these, each with its workaround in place:
     them);
   - Queue and Send go through the same path: a message sent while working
     is handed over at once (the server holds it), not kept in the client.
+- **Scheduled messages** (2.10):
+  - the time is picked with Slint's std `DatePickerPopup`, then its
+    `TimePickerPopup`: their own (std) style, not our theme, and two steps
+    where the web's datetime-local popup has one; the field can be typed;
+  - the time field and the list's times use en-US formats (the web's are
+    the browser's locale);
+  - the panel's message box has no resize grip, and keeps its three rows in
+    a short pane (the body scrolls instead; the web's shrinks to nothing);
+  - an older server's 404 reads "Scheduled messages are not supported by
+    this server." / "Not supported by this server." (named difference);
+  - the open panel doesn't update when a message fires, as the web's (no
+    event for it): it reloads on open, Schedule and ✕.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

@@ -389,39 +389,39 @@ text, trigger, time, note, items, warm, loading) is per chat key.
 
 ## Checklist
 
-- [ ] Clock toggles the panel (open ↔ closed); × closes; Esc and outside
+- [x] Clock toggles the panel (open ↔ closed); × closes; Esc and outside
       clicks do not
-- [ ] Panel: bottom-anchored over the composer, inset sp-8, grows upward,
+- [x] Panel: bottom-anchored over the composer, inset sp-8, grows upward,
       max `sched-share` (0.82) of the chat, body scrolls (RevealFlickable +
       ScrollThumb), head fixed; not modal (no scrim, Pointer.modal untouched)
-- [ ] Head: "Schedule a message" w-semibold + × (muted → primary), hairline
-- [ ] Message box: carries the composer's text, focused on open, 3 rows,
+- [x] Head: "Schedule a message" w-semibold + × (muted → primary), hairline
+- [x] Message box: carries the composer's text, focused on open, 3 rows,
       field look and focus ring of 2.5; Enter = new line; never shorter than
       two lines
-- [ ] Triggers: three equal buttons, one on (accent-dim, accent edge,
+- [x] Triggers: three equal buttons, one on (accent-dim, accent edge,
       text-primary); Limit resets disabled (o-dim, tooltip) when
       `limitWarmup` is false, falling back to At a time
-- [ ] Time field: shown only for At a time; default now + 30 min (minute);
+- [x] Time field: shown only for At a time; default now + 30 min (minute);
       themed box + calendar icon → DatePickerPopup then TimePickerPopup
       (named gap in PLAN.md)
-- [ ] Notes per trigger and per error, exact wording, muted, hidden when empty
-- [ ] Schedule: primary gradient look; validates (empty, no time); POST
+- [x] Notes per trigger and per error, exact wording, muted, hidden when empty
+- [x] Schedule: primary gradient look; validates (empty, no time); POST
       body with `chat`; on ok clears the box and note, keeps trigger/time,
       clears the composer only if it holds the same text, reloads the list
-- [ ] List: per chat, server order, first = next (accent edge, bold
+- [x] List: per chat, server order, first = next (accent edge, bold
       accent-hover "next · "), when-label mono muted, text cut at three lines,
       ✕ (muted → red, "Cancel this message")
-- [ ] Empty and load-error lines, exact wording
-- [ ] Delete: no confirm, reload after
-- [ ] No live list updates (reload on open/save/delete only), as the web
-- [ ] Clock has no badge/count/open state
-- [ ] Fired message appears in the chat as an ordinary user message
-- [ ] Old server (404): "not supported by this server", never breaks
+- [x] Empty and load-error lines, exact wording
+- [x] Delete: no confirm, reload after
+- [x] No live list updates (reload on open/save/delete only), as the web
+- [x] Clock has no badge/count/open state
+- [x] Fired message appears in the chat as an ordinary user message
+- [x] Old server (404): "not supported by this server", never breaks
       (named difference)
-- [ ] Narrow pane: same parts; short pane scrolls
-- [ ] Every font scales with the chat's text size (A−/A+)
-- [ ] Tokens only; `sched-share` added to theme.slint
-- [ ] PLAN.md: 2.10 ticked; Known gaps: the date/time popups' std style and
+- [x] Narrow pane: same parts; short pane scrolls
+- [x] Every font scales with the chat's text size (A−/A+)
+- [x] Tokens only; `sched-share` added to theme.slint
+- [ ] PLAN.md: 2.10 ticked (after review); Known gaps: the date/time popups' std style and
       two-step picking, no resize grip on the message box; named
       differences: 404 wording, message box min height
 - [ ] Side-by-side crops for every state in `scheduled-messages/review/`

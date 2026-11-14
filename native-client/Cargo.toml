@@ -21,6 +21,8 @@ png = "0.17"
 # Linux, no GTK) and a pasted picture or file (2.7).
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 arboard = "3.7"
+# Local time for scheduled messages (2.10).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [features]
 # The GPU path: CEF hands over its frames as shared GPU textures (DMA-BUF on

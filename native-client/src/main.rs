@@ -21,6 +21,7 @@ slint::include_modules!();
 
 mod api;
 mod attach;
+mod sched;
 mod drafts;
 mod app;
 mod browser;

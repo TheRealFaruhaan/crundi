@@ -275,6 +275,7 @@ impl Api {
                 let auth = format!("Bearer {token}");
                 match (method, body) {
                     ("GET", _) => self.0.agent.get(&url).header("Authorization", &auth).call(),
+                    ("DELETE", _) => self.0.agent.delete(&url).header("Authorization", &auth).call(),
                     (_, Some(b)) => self.0.agent.post(&url).header("Authorization", &auth).header("Content-Type", "application/json").send(b.to_string()),
                     (_, None) => self.0.agent.post(&url).header("Authorization", &auth).send_empty(),
                 }
@@ -293,6 +294,10 @@ impl Api {
 
     pub fn get(&self, path: &str) -> ApiResult {
         self.call("GET", path, None)
+    }
+
+    pub fn delete(&self, path: &str) -> ApiResult {
+        self.call("DELETE", path, None)
     }
 
     pub fn post(&self, path: &str, body: &Value) -> ApiResult {

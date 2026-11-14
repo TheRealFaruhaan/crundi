@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, ToolView,
+    head, sched, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -43,6 +43,24 @@ struct Upload {
     /// Shown (also for a moment after the last ends), and which hide is due.
     shown: bool,
     hide_gen: u32,
+}
+
+/// A chat's schedule panel (2.10), by pane key: the form, the list.
+struct Sched {
+    open: bool,
+    text: String,
+    text_gen: i32,
+    trigger: String,
+    at: String,
+    at_gen: i32,
+    note: String,
+    items: Rc<VecModel<SchedItem>>,
+    /// The limit warmer is on (Limit resets can be chosen); None: not known yet.
+    warm: Option<bool>,
+    /// The list's own line: "" (items or none to say), loading, an error.
+    list: String,
+    /// The server has no schedule (an older one).
+    unsupported: bool,
 }
 
 struct ChatPaneState {
@@ -131,6 +149,8 @@ pub struct App {
     flush_pending: bool,
     /// A box's text set by code, to show (src set_box / show_box).
     box_set: Option<(String, String, usize, bool)>,
+    /// Each chat's schedule panel (2.10), by pane key.
+    sched: HashMap<String, Sched>,
     /// The pane whose mode picker is open (2.6), by key.
     picker: Option<String>,
     /// Each chat's uploads (2.7), by pane key: the bar and how many run.
@@ -256,6 +276,7 @@ pub fn init(window: &MainWindow) {
             stop_gen: 0,
             local_errors: 0,
             picker: None,
+            sched: HashMap::new(),
             held: HashMap::new(),
             flush_pending: false,
             box_set: None,
@@ -325,13 +346,25 @@ pub fn init(window: &MainWindow) {
     c.set_ctrl_enter(store::load().chat_enter == "newline");
     c.on_set_ctrl_enter(set_chat_enter);
     c.on_copied(|full| toast(&format!("Session id copied: {full}"), false));
-    // The schedule panel (2.10) is its own screen.
-    c.on_schedule(|_| {});
     c.on_mode(|k| open_mode_picker(k.as_str()));
     c.on_caret(|k, c, an| { with(|a| a.carets.insert(k.to_string(), (c.max(0) as usize, an.max(0) as usize))); });
     c.on_attach(|k| pick_file(k.to_string()));
     c.on_paste(|k, si| paste(k.as_str(), si));
     c.on_take_back(|k| take_back(k.as_str()));
+    // The schedule panel (2.10).
+    c.on_schedule(|k| sched_toggle(k.as_str()));
+    c.on_sched_close(|k| { with(|a| if let Some(sc) = a.sched.get_mut(k.as_str()) { sc.open = false; }); render(); });
+    c.on_sched_trigger(|k, t| sched_trigger(k.as_str(), t.as_str()));
+    c.on_sched_text(|k, t| { with(|a| if let Some(sc) = a.sched.get_mut(k.as_str()) { sc.text = t.to_string(); }); });
+    c.on_sched_at(|k, t| { with(|a| if let Some(sc) = a.sched.get_mut(k.as_str()) { sc.at = t.to_string(); }); });
+    c.on_sched_save(|k| sched_save(k.as_str()));
+    c.on_sched_delete(|k, id| sched_delete(k.as_str(), id.to_string()));
+    c.on_sched_pick(|k, y, mo, d, h, mi| {
+        if let Some(t) = sched::picked(y, mo.max(0) as u32, d.max(0) as u32, h.max(0) as u32, mi.max(0) as u32) {
+            with(|a| if let Some(sc) = a.sched.get_mut(k.as_str()) { sc.at = t; sc.at_gen += 1; });
+            render();
+        }
+    });
     window.on_file_target(|k| { with(|a| a.file_target = Some(k.to_string())); });
     window.on_mode_choose(|m| choose_mode(m.as_str()));
     window.on_mode_close(close_mode_picker);
@@ -917,6 +950,20 @@ fn render() {
                 if let Some((kind, body)) = a.chats.get(id).and_then(|cs| cs.conv.handed()) {
                     p.q_sent = body.into();
                     p.q_sent_kind = match kind { Handed::Recallable => "recallable", Handed::Started => "started", Handed::Waiting => "waiting" }.into();
+                }
+                // The schedule panel (2.10).
+                if let Some(sc) = a.sched.get(&key) {
+                    p.s_open = sc.open;
+                    p.s_text = sc.text.clone().into();
+                    p.s_text_gen = sc.text_gen;
+                    p.s_trigger = sc.trigger.clone().into();
+                    p.s_at = sc.at.clone().into();
+                    p.s_at_gen = sc.at_gen;
+                    p.s_note = sc.note.clone().into();
+                    p.s_items = sc.items.clone().into();
+                    p.s_limit_off = sc.warm == Some(false);
+                    p.s_list = sc.list.clone().into();
+                    p.s_unsupported = sc.unsupported;
                 }
                 p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
                 p.draft_gen = *a.draft_gen.get(&key).unwrap_or(&0);
@@ -1609,6 +1656,156 @@ fn show_box() {
         c.set_insert_focus(focus);
         c.set_insert_gen(c.get_insert_gen() + 1);
     }
+}
+
+// ─── Scheduled messages (2.10, src/sched.rs) ───
+
+/// The clock: the panel opens (with the composer's text, At a time, now +
+/// 30 minutes, the list loading) or closes. Nothing of the form is kept.
+pub fn sched_toggle(key: &str) {
+    if chat_of(key).is_none() { return; }
+    let opened = with(|a| {
+        if a.sched.get(key).is_some_and(|sc| sc.open) {
+            if let Some(sc) = a.sched.get_mut(key) { sc.open = false; }
+            return false;
+        }
+        let draft = a.drafts.get(key).cloned().unwrap_or_default();
+        let (tg, ag) = a.sched.get(key).map(|sc| (sc.text_gen, sc.at_gen)).unwrap_or((0, 0));
+        a.sched.insert(key.to_string(), Sched {
+            open: true, text: draft, text_gen: tg + 1, trigger: "time".into(),
+            at: sched::default_at(chrono::Local::now()), at_gen: ag + 1, note: String::new(),
+            items: Rc::new(VecModel::default()), warm: None, list: "Loading…".into(), unsupported: false,
+        });
+        true
+    }).unwrap_or(false);
+    render();
+    if opened { sched_load(key); }
+}
+
+/// The list (this chat's pending items) and whether the warmer is on.
+fn sched_load(key: &str) {
+    let Some(id) = chat_of(key).map(str::to_string) else { return };
+    let project = with(|a| chat_project(a, &id)).unwrap_or_default();
+    let stub = crate::testctl::take_stub("sched-list");
+    let k = key.to_string();
+    let path = format!("/api/chat-schedule?project={}&chat={}", enc(&project), enc(&id));
+    let Some(api) = api() else { return };
+    bg(move || match stub { Some(v) => stub_result(v), None => api.get(&path) }, move |r| {
+        with(|a| {
+            let Some(sc) = a.sched.get_mut(&k) else { return };
+            match r {
+                Ok(v) => {
+                    let items: Vec<SchedItem> = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default().iter().enumerate().map(|(i, it)| SchedItem {
+                        id: s(it, "id").into(), when: sched::when_label(it).into(), text: s(it, "text").into(), next: i == 0,
+                    }).collect();
+                    sc.list = if items.is_empty() { "Nothing scheduled for this project.".into() } else { String::new() };
+                    sc.items.set_vec(items);
+                    let warm = v.get("limitWarmup").and_then(|w| w.as_bool()).unwrap_or(false);
+                    sc.warm = Some(warm);
+                    if !warm && sc.trigger == "limit-reset" { sc.trigger = "time".into(); sc.note.clear(); }
+                }
+                Err(ApiError::Status(404, _)) => { sc.unsupported = true; sc.list = "Scheduled messages are not supported by this server.".into(); sc.items.set_vec(vec![]); }
+                Err(ApiError::SignedOut) => {}
+                Err(_) => { sc.list = "Could not load scheduled messages.".into(); sc.items.set_vec(vec![]); }
+            }
+        });
+        render();
+    });
+}
+
+/// A test stub as a server answer: an `ok:false` with a status is that error.
+fn stub_result(v: Value) -> api::ApiResult {
+    match v.get("status").and_then(|x| x.as_u64()) {
+        Some(st) if st >= 400 => Err(ApiError::Status(st as u16, s(&v, "error"))),
+        _ if v.get("net").is_some() => Err(ApiError::Net(s(&v, "net"))),
+        _ => Ok(v),
+    }
+}
+
+/// A query parameter, percent-encoded.
+fn enc(v: &str) -> String {
+    v.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
+pub fn sched_trigger(key: &str, t: &str) {
+    with(|a| if let Some(sc) = a.sched.get_mut(key) {
+        if t == "limit-reset" && sc.warm == Some(false) { return; }
+        sc.trigger = t.to_string();
+        sc.note = sched::trigger_note(t).to_string();
+    });
+    render();
+}
+
+/// Schedule: checked here (an empty message, no time), then the server's
+/// word. Done: the form's text and note clear (trigger and time stay), the
+/// composer empties if it holds the same text, the list reloads.
+pub fn sched_save(key: &str) {
+    let Some(id) = chat_of(key).map(str::to_string) else { return };
+    let req = with(|a| {
+        let project = chat_project(a, &id);
+        let sc = a.sched.get_mut(key)?;
+        if sc.unsupported { return None; }
+        match sched::check(&sc.text, &sc.trigger, &sc.at) {
+            Err(n) => { sc.note = n.into(); None }
+            Ok(trigger) => Some(json!({ "project": project, "text": sc.text.trim(), "trigger": trigger, "chat": id })),
+        }
+    }).flatten();
+    render();
+    let Some(body) = req else { return };
+    let stub = crate::testctl::take_stub("sched-save");
+    let Some(api) = api() else { return };
+    let (k, sent) = (key.to_string(), s(&body, "text"));
+    bg(move || match stub { Some(v) => stub_result(v), None => api.post("/api/chat-schedule", &body) }, move |r| {
+        let ok = with(|a| {
+            let note = match &r {
+                Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some({ let e = s(v, "error"); if e.is_empty() { "Could not schedule that.".to_string() } else { e } }),
+                Ok(_) => None,
+                Err(ApiError::Status(404, _)) => Some("Not supported by this server.".into()),
+                Err(ApiError::Status(_, e)) if !e.is_empty() => Some(e.clone()),
+                Err(ApiError::Status(..)) => Some("Could not schedule that.".into()),
+                Err(e) => Some(format!("Could not schedule that: {e}")),
+            };
+            let Some(sc) = a.sched.get_mut(&k) else { return false };
+            match note {
+                Some(n) => { sc.note = n; false }
+                None => {
+                    sc.text.clear();
+                    sc.text_gen += 1;
+                    sc.note.clear();
+                    // The composer, holding what was scheduled, empties.
+                    if a.drafts.get(&k).is_some_and(|d| d.trim() == sent) { set_box(a, &k, "", 0, false); }
+                    true
+                }
+            }
+        }).unwrap_or(false);
+        show_box();
+        render();
+        if ok { write_drafts_soon(); sched_load(&k); }
+    });
+}
+
+/// ✕ on an item: no confirmation; the list reloads whatever the answer.
+pub fn sched_delete(key: &str, item: String) {
+    let Some(api) = api() else { return };
+    let k = key.to_string();
+    bg(move || api.delete(&format!("/api/chat-schedule/{}", enc(&item))), move |_| sched_load(&k));
+}
+
+/// The test driver types into the panel's message box or its time field.
+pub fn sched_set(key: &str, field: &str, text: &str) {
+    with(|a| if let Some(sc) = a.sched.get_mut(key) {
+        if field == "at" { sc.at = text.into(); sc.at_gen += 1; } else { sc.text = text.into(); sc.text_gen += 1; }
+    });
+    render();
+}
+
+/// The test driver's view of a pane's panel.
+pub fn sched_of(key: &str) -> Value {
+    with(|a| a.sched.get(key).map(|sc| json!({
+        "open": sc.open, "text": sc.text, "trigger": sc.trigger, "at": sc.at, "note": sc.note, "list": sc.list,
+        "limitOff": sc.warm == Some(false), "unsupported": sc.unsupported,
+        "items": sc.items.iter().map(|i| json!({ "id": i.id.as_str(), "when": i.when.as_str(), "text": i.text.as_str(), "next": i.next })).collect::<Vec<_>>(),
+    }))).flatten().unwrap_or(Value::Null)
 }
 
 /// An error row in a chat's log (the client's own).

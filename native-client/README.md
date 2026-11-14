@@ -242,6 +242,14 @@ them; each has a spec in `specs/`). So far:
   takes everything back (`cancel-queued` for each that can still be
   recalled). The rules are in `src/chat.rs` (unit-tested).
 
+- **2.10 Scheduled messages** (specs/scheduled-messages.md): the clock
+  opens a panel over the chat's foot (not modal; up to `sched-share` of the
+  chat, its body scrolling): the composer's text carried into a message
+  box, At a time (now + 30 minutes, typed or picked) / Turn ends / Limit
+  resets (only with the limit warmer on), Schedule (`POST
+  /api/chat-schedule`), and this chat's messages to come with ✕. The rules
+  are in `src/sched.rs` (unit-tested).
+
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
   10–26, two letter-spacings) plus a short structural list (window, top

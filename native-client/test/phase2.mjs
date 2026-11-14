@@ -1457,6 +1457,29 @@ await clearBox();
   await until('taken back', (x) => pane(x, liveQN)?.qHeld === '', 5000);
   await clearBox();
 }
+// Both drawers at once (F64): a held line, and a handed-over one (played in
+// as the server's history would bring it: a chat can't be working and on a
+// prompt at once from a test). Handed over on top, held under it; one
+// take-back brings both, handed over first.
+{
+  await focusChat(liveQN);
+  await clearBox();
+  await enter('k');
+  await until('k held', (q) => pane(q, liveQN)?.qHeld === 'k', 5000);
+  const h = await hist(liveQN);
+  await ui('chat-event', JSON.stringify({ type: 'history', session: { ...h, pendingInjections: [{ text: 'h', uuid: 'u-both', state: 'queued' }] } }));
+  p = await until('both drawers', (q) => pane(q, liveQN)?.qSent === 'h' && pane(q, liveQN).qHeld === 'k', 5000);
+  if (p) {
+    const slate = await drawerAt(liveQN, [29, 30, 39]), dashed = await drawerAt(liveQN, [26, 26, 47]);
+    check('both drawers: handed over on top, held under it', !!slate && !!dashed && slate.y < dashed.y, { slate, dashed });
+    await snap('2.9-both-drawers');
+    await ui('stub', 'cancel-queued', JSON.stringify({ ok: true, cancelled: true }));
+    await ui('take-back');
+    p = await until('one take-back brings both', (q) => pane(q, liveQN)?.draft === 'h\nk' && pane(q, liveQN).qSent === '' && pane(q, liveQN).qHeld === '', 10000);
+    if (p) check('one take-back: the handed-over line, then the held one, in the box', true);
+  }
+  await clearBox();
+}
 await enter('a'); await enter('b');
 await until('held again', (q) => pane(q, liveQN)?.qHeld === 'a\nb', 5000);
 // Held lines stay through a project switch (native).
@@ -1514,6 +1537,147 @@ if (p) {
   check('turn end: the handed-over message is in the log, the taken-back ones are not', u.some((t) => /queued one/.test(t)) && !u.some((t) => /do not send me|click me back/.test(t)), u);
 }
 for (const id of [liveQW, liveQN, liveQX]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+
+// ─── 2.10 Scheduled messages ───
+const sch = async (id) => (await qp(id))?.sched;
+const pad = (n) => String(n).padStart(2, '0');
+const fieldOf = (d) => `${pad(d.getMonth() + 1)}/${pad(d.getDate())}/${d.getFullYear()}, ${pad(((d.getHours() + 11) % 12) + 1)}:${pad(d.getMinutes())} ${d.getHours() < 12 ? 'AM' : 'PM'}`;
+const liveS = await make('demo', 'Schedule', true);
+const liveS2 = await make('demo', 'Schedule other', true);
+p = await until('the schedule chats have panes', (q) => pane(q, liveS) && pane(q, liveS2), 30000);
+await http('POST', '/api/settings', { limitWarmup: false }, token);
+await focusChat(liveS);
+await clearBox();
+await keys('carried text');
+// Open: the composer's text carried in, At a time, now + 30 minutes.
+await ui('sched-open');
+p = await until('the panel opens', async (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…', 10000);
+if (p) {
+  const sc = pane(p, liveS).sched, want = new Date(Date.now() + 30 * 60000), w2 = new Date(Date.now() + 29 * 60000);
+  check('open: the composer\'s text carried in, At a time, now + 30 minutes', sc.text === 'carried text' && sc.trigger === 'time' && (sc.at === fieldOf(want) || sc.at === fieldOf(w2)), sc);
+  check('open: nothing scheduled yet; the warmer off disables Limit resets', sc.list === 'Nothing scheduled for this project.' && sc.limitOff === true, sc);
+}
+await snap('2.10-open');
+// Esc and a click elsewhere don't close it; the clock and × do.
+await key('Escape');
+await sleep(300);
+check('Esc leaves the panel open', (await sch(liveS)).open === true);
+await ui('sched-open');
+await until('the clock closes it', async (q) => !pane(q, liveS)?.sched?.open, 5000) && check('the clock toggles the panel', true);
+await ui('sched-open');
+await until('open again', (q) => pane(q, liveS)?.sched?.open, 5000);
+await ui('sched-close');
+await until('× closes it', (q) => !pane(q, liveS)?.sched?.open, 5000) && check('× closes the panel', true);
+await ui('sched-open');
+await until('open', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…', 10000);
+// Triggers: the notes; Limit resets refused while the warmer is off.
+await ui('sched-trigger', 'turn-end');
+p = await until('turn ends', (q) => pane(q, liveS)?.sched?.trigger === 'turn-end', 5000);
+if (p) check('Turn ends: its note', pane(p, liveS).sched.note === 'Sends as soon as the current turn finishes. If nothing is running, it waits for the next turn to end.');
+await ui('sched-trigger', 'limit-reset');
+await sleep(300);
+check('Limit resets can\'t be chosen with the warmer off', (await sch(liveS)).trigger === 'turn-end');
+await ui('sched-trigger', 'time');
+await until('at a time', (q) => pane(q, liveS)?.sched?.trigger === 'time' && pane(q, liveS).sched.note === '', 5000);
+// Validation: empty, no time, a past time.
+await ui('sched-text', '  ');
+await ui('sched-save');
+await until('empty message', (q) => pane(q, liveS)?.sched?.note === 'Write a message first.', 5000) && check('an empty message: "Write a message first."', true);
+await ui('sched-text', 'later');
+await ui('sched-at', '');
+await ui('sched-save');
+await until('no time', (q) => pane(q, liveS)?.sched?.note === 'Pick a time.', 5000) && check('no time: "Pick a time."', true);
+await ui('sched-at', fieldOf(new Date(Date.now() - 3600000)));
+await ui('sched-save');
+await until('a past time', (q) => pane(q, liveS)?.sched?.note === 'That time has already passed', 10000) && check('a past time: the server\'s "That time has already passed"', true);
+// Schedule tomorrow 09:00: the form clears (trigger and time stay), the
+// item is listed, the composer holding the same text empties.
+const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0);
+await ui('sched-close');
+await focusChat(liveS); await clearBox(); await keys('e2e later');
+await ui('sched-open');
+await until('open with the text', (q) => pane(q, liveS)?.sched?.text === 'e2e later', 10000);
+await ui('sched-at', fieldOf(tomorrow));
+await ui('sched-save');
+p = await until('scheduled', (q) => { const sc = pane(q, liveS)?.sched; return sc && sc.items.some((i) => i.text === 'e2e later'); }, 10000);
+if (p) {
+  const sc = pane(p, liveS).sched, it = sc.items.find((i) => i.text === 'e2e later');
+  check('scheduled: the box and note clear, trigger and time stay', sc.text === '' && sc.note === '' && sc.trigger === 'time' && sc.at === fieldOf(tomorrow), sc);
+  check('the item lists its time', it.when === `${tomorrow.getMonth() + 1}/${tomorrow.getDate()}/${tomorrow.getFullYear()}, 9:00:00 AM`, it);
+  check('the composer, holding the same text, is emptied', pane(p, liveS).draft === '', pane(p, liveS).draft);
+}
+// Other text in the composer: left alone.
+await ui('sched-close');
+await focusChat(liveS); await clearBox(); await keys('keep me');
+await ui('sched-open');
+await until('open', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…', 10000);
+await ui('sched-text', 'e2e two');
+await ui('sched-save');
+p = await until('the second item', (q) => pane(q, liveS)?.sched?.items.some((i) => i.text === 'e2e two'), 10000);
+if (p) check('a composer holding other text is left alone', pane(p, liveS).draft === 'keep me', pane(p, liveS).draft);
+// A turn-end item lists first, as next.
+await ui('sched-trigger', 'turn-end');
+await ui('sched-text', 'Reply with just the word ok');
+await ui('sched-save');
+p = await until('the turn-end item first', (q) => pane(q, liveS)?.sched?.items[0]?.when === 'when the turn ends', 10000);
+if (p) check('a turn-end item lists first, as next', pane(p, liveS).sched.items[0].next && !pane(p, liveS).sched.items[1]?.next);
+await snap('2.10-with-items');
+// Delete: gone from the list and the server.
+{
+  const it = (await sch(liveS)).items.find((i) => i.text === 'e2e two');
+  await ui('sched-delete', it.id);
+  p = await until('deleted', (q) => !pane(q, liveS)?.sched?.items.some((i) => i.text === 'e2e two'), 10000);
+  const srv = (await http('GET', `/api/chat-schedule?project=demo&chat=${liveS}`, null, token)).body?.items || [];
+  if (p) check('✕ deletes it (no confirm): gone from the list and the server', !srv.some((i) => i.text === 'e2e two'));
+}
+// Per chat: another chat's item isn't listed here.
+await http('POST', '/api/chat-schedule', { project: 'demo', text: 'for the other chat', trigger: { type: 'time', at: tomorrow.toISOString() }, chat: liveS2 }, token);
+await ui('sched-close'); await ui('sched-open');
+p = await until('reloaded', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…' && pane(q, liveS).sched.items.length > 0, 10000);
+if (p) check('another chat\'s item is not in this chat\'s list', !pane(p, liveS).sched.items.some((i) => i.text === 'for the other chat'));
+// Fire: the current minute; it goes into the chat as a user message (and
+// the turn-end item after its turn); the open panel doesn't update.
+await ui('sched-trigger', 'time');
+await ui('sched-at', fieldOf(new Date()));
+await ui('sched-text', 'Reply with just the word pong');
+await ui('sched-save');
+await until('listed', (q) => pane(q, liveS)?.sched?.items.some((i) => i.text === 'Reply with just the word pong'), 10000);
+p = await until('the scheduled message fires into the chat', async () => (await userTexts(liveS)).includes('Reply with just the word pong'), 60000);
+if (p) {
+  check('a scheduled message fires as a user message in the chat', true);
+  check('the open panel does not update live (as the web)', (await sch(liveS)).items.some((i) => i.text === 'Reply with just the word pong'));
+  await ui('sched-close'); await ui('sched-open');
+  p = await until('reopened: the fired one gone', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…' && !pane(q, liveS).sched.items.some((i) => i.text === 'Reply with just the word pong'), 10000);
+  if (p) check('reopened, the fired message is gone from the list', true);
+  p = await until('the turn-end item fires after the turn', async () => (await userTexts(liveS)).includes('Reply with just the word ok'), 90000);
+  if (p) check('a turn-end item fires when the turn ends', true);
+}
+// The warmer on: Limit resets can be chosen.
+await http('POST', '/api/settings', { limitWarmup: true }, token);
+await ui('sched-close'); await ui('sched-open');
+p = await until('warmer on', (q) => pane(q, liveS)?.sched?.open && pane(q, liveS).sched.list !== 'Loading…' && !pane(q, liveS).sched.limitOff, 10000);
+if (p) {
+  await ui('sched-trigger', 'limit-reset');
+  p = await until('limit resets', (q) => pane(q, liveS)?.sched?.trigger === 'limit-reset', 5000);
+  if (p) check('with the warmer on, Limit resets is chosen, with its note', pane(p, liveS).sched.note === 'Sends when the rolling 5-hour usage window rolls over.');
+}
+await http('POST', '/api/settings', { limitWarmup: false }, token);
+// Errors: a load that fails, a save that fails, an older server.
+await ui('sched-close');
+await ui('stub', 'sched-list', JSON.stringify({ net: 'down' }));
+await ui('sched-open');
+await until('a failed load', (q) => pane(q, liveS)?.sched?.list === 'Could not load scheduled messages.', 10000) && check('a failed load: "Could not load scheduled messages."', true);
+await ui('sched-text', 'x');
+await ui('stub', 'sched-save', JSON.stringify({ net: 'down' }));
+await ui('sched-save');
+await until('a failed save', (q) => /^Could not schedule that: /.test(pane(q, liveS)?.sched?.note || ''), 10000) && check('a failed save: "Could not schedule that: …"', true);
+await ui('sched-close');
+await ui('stub', 'sched-list', JSON.stringify({ status: 404, error: 'Not found' }));
+await ui('sched-open');
+p = await until('an older server', (q) => pane(q, liveS)?.sched?.unsupported, 10000);
+if (p) check('an older server: "not supported by this server"', pane(p, liveS).sched.list === 'Scheduled messages are not supported by this server.');
+await ui('sched-close');
+for (const id of [liveS, liveS2]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 
 d.close();
 app.kill();

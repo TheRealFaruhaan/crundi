@@ -3,8 +3,8 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox } from "widgets.slint";
-import { ListView } from "std-widgets.slint";
+import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox, RevealFlickable } from "widgets.slint";
+import { ListView, DatePickerPopup, TimePickerPopup, Date, Time } from "std-widgets.slint";
 
 export struct ToolView {
     title: string,
@@ -1007,6 +1007,16 @@ export global Composer {
     // Take back what is queued (2.9: a click on a drawer, or ↑ on the box's
     // first row): false when there is nothing to take back.
     callback take-back(string) -> bool;
+    // The schedule panel (2.10), by pane key: ×, a trigger, its message box's
+    // and time field's text as typed, Schedule, an item's ✕, a date and time
+    // picked in the popups.
+    callback sched-close(string);
+    callback sched-trigger(string, string);
+    callback sched-text(string, string);
+    callback sched-at(string, string);
+    callback sched-save(string);
+    callback sched-delete(string, string);
+    callback sched-pick(string, int, int, int, int, int);
     // The app put text into a pane's box (an attached path): its whole new
     // text and the caret; counted.
     in-out property <string> insert-key;
@@ -1296,6 +1306,213 @@ component EnterSwitch inherits Rectangle {
     }
 }
 
+/// A scheduled message in the panel's list (src/sched.rs when_label).
+export struct SchedItem { id: string, when: string, text: string, next: bool }
+
+/// A trigger button: one of three; on: accent-dim, accent edge, text-primary;
+/// disabled: dim, inert, its reason as the tooltip.
+component TrigBtn inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> label;
+    in property <bool> on;
+    in property <bool> disabled;
+    in property <string> tip;
+    callback clicked();
+    height: Theme.control-sm;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.accent-dim : Theme.bg-secondary;
+    opacity: root.disabled ? Theme.o-dim : 1;
+    Text { text: root.label; font-size: Theme.text-12 * root.fs; color: root.on ? Theme.text-primary : Theme.text-secondary; }
+    ta := TouchArea {
+        enabled: !root.disabled;
+        mouse-cursor: root.disabled ? MouseCursor.default : MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+    // (A disabled button takes no hover, so its tooltip rides its own area.)
+    if root.tip != "": TouchArea { Tip { on: parent.has-hover; text: root.tip; } }
+}
+
+/// One scheduled message: when (and "next ·" for the first, its edge accent),
+/// its text cut at sched-rows rows, ✕ in the corner.
+component SchedRow inherits Rectangle {
+    in property <float> fs: 1;
+    in property <SchedItem> it;
+    callback delete();
+    property <length> line: lm.preferred-height;
+    height: col.preferred-height;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.it.next ? Theme.accent : Theme.border-subtle;
+    background: Theme.bg-secondary;
+    lm := Text { visible: false; text: "X"; font-size: Theme.text-12 * root.fs; }
+    full := Text { visible: false; width: col.width - Theme.sp-10 - Theme.sp-24; text: root.it.text; font-size: Theme.text-12 * root.fs; wrap: word-wrap; }
+    col := VerticalLayout {
+        padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-24;
+        spacing: Theme.sp-2;
+        HorizontalLayout {
+            alignment: start;
+            if root.it.next: Text { text: "next · "; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-bold; color: Theme.accent-hover; }
+            Text { text: root.it.when; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; }
+        }
+        // At most sched-rows rows, cut there (no ellipsis, as the web).
+        Rectangle {
+            height: min(full.preferred-height, Theme.sched-rows * root.line);
+            clip: true;
+            Text { y: 0; width: parent.width; text: root.it.text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+        }
+    }
+    Rectangle {
+        x: parent.width - Theme.sp-4 - self.width; y: Theme.sp-4;
+        width: Theme.icon-sm + Theme.sp-8; height: Theme.icon-sm + Theme.sp-4;
+        Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: xa.has-hover ? Theme.red : Theme.text-muted; }
+        xa := TouchArea { mouse-cursor: pointer; clicked => { root.delete(); } Tip { on: parent.has-hover; text: "Cancel this message"; } }
+    }
+}
+
+/// The schedule panel (.cc-schedpanel, 2.10): over the bottom of the chat, not
+/// modal; a fixed head ("Schedule a message", ×), then the form and the list
+/// scrolling as one. The app (src/app.rs) holds its state; this draws it and
+/// hands back what is typed.
+component SchedPanel inherits Rectangle {
+    in property <string> key;
+    in property <float> fs: 1;
+    in property <string> text-in;
+    in property <int> text-gen;
+    in property <string> trigger;
+    in property <string> at-in;
+    in property <int> at-gen;
+    in property <string> note;
+    in property <[SchedItem]> items;
+    in property <bool> limit-off;
+    in property <string> list;
+    in property <bool> unsupported;
+    // The tallest it may grow (a share of the chat).
+    in property <length> max-h;
+    property <string> text;
+    property <string> at;
+    property <Date> pick-date;
+    property <length> line: Theme.text-13 * root.fs * Theme.line-chat;
+    // The box takes the focus with the caret after the carried text.
+    init => { root.text = root.text-in; root.at = root.at-in; msg.focus(); msg.select-all(); msg.clear-selection(); }
+    changed text-gen => { root.text = root.text-in; }
+    changed at-gen => { root.at = root.at-in; }
+    changed text => { Composer.sched-text(root.key, root.text); }
+    changed at => { Composer.sched-at(root.key, root.at); }
+    height: min(head.preferred-height + 1px + body.preferred-height + Theme.sp-2, root.max-h);
+    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-menu; }
+    Rectangle { background: Theme.bg-primary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
+    // Clicks inside stay here (the panel is over the composer).
+    TouchArea { }
+    head := HorizontalLayout {
+        x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: self.preferred-height;
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        Text { horizontal-stretch: 1; vertical-alignment: center; text: "Schedule a message"; font-size: Theme.text-13 * root.fs; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+        Rectangle {
+            width: Theme.icon-md + Theme.sp-8; height: Theme.icon-md + Theme.sp-4;
+            Icon { source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: xh.has-hover ? Theme.text-primary : Theme.text-muted; }
+            xh := TouchArea { mouse-cursor: pointer; clicked => { Composer.sched-close(root.key); } }
+        }
+    }
+    // The date, then the time (Slint's std popups; PLAN.md, Known gaps).
+    dp := DatePickerPopup {
+        accepted(d) => { root.pick-date = d; dp.close(); tp.show(); }
+        canceled => { dp.close(); }
+    }
+    tp := TimePickerPopup {
+        accepted(t) => { tp.close(); Composer.sched-pick(root.key, root.pick-date.year, root.pick-date.month, root.pick-date.day, t.hour, t.minute); }
+        canceled => { tp.close(); }
+    }
+    Rectangle { x: 1px; y: head.y + head.height; width: parent.width - Theme.sp-2; height: 1px; background: Theme.border-subtle; }
+    fl := RevealFlickable {
+        x: 1px; y: head.y + head.height + 1px;
+        width: parent.width - Theme.sp-2; height: parent.height - self.y - 1px;
+        content-height: body.preferred-height;
+        body := VerticalLayout {
+            width: fl.width;
+            padding: Theme.sp-10;
+            spacing: Theme.sp-8;
+            // The message: sched-rows rows (the composer's field look, 2.5).
+            Rectangle {
+                height: Theme.sched-rows * root.line + 2 * Theme.sp-8;
+                if msg.has-focus: Rectangle {
+                    x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4;
+                    border-radius: Theme.r-card; background: Theme.accent-ring;
+                }
+                Rectangle {
+                    border-radius: Theme.r-control; border-width: 1px;
+                    border-color: msg.has-focus ? Theme.accent : Theme.border;
+                    background: Theme.bg-secondary;
+                }
+                mf := Flickable {
+                    x: Theme.sp-8; y: Theme.sp-8; width: parent.width - 2 * Theme.sp-8; height: parent.height - 2 * Theme.sp-8;
+                    content-height: max(self.height, msg.preferred-height);
+                    msg := TextInput {
+                        width: mf.width; height: max(mf.height, self.preferred-height);
+                        text <=> root.text;
+                        single-line: false; wrap: word-wrap;
+                        line-height-factor: Theme.lh-chat;
+                        font-size: Theme.text-13 * root.fs; color: Theme.text-primary;
+                        selection-background-color: Theme.accent-dim;
+                        cursor-position-changed(at) => {
+                            if at.y + mf.content-y < 0 { mf.content-y = -at.y; }
+                            else if at.y + root.line + mf.content-y > mf.height { mf.content-y = min(0px, mf.height - at.y - root.line); }
+                        }
+                    }
+                }
+                if root.text == "": Text {
+                    x: Theme.sp-8; y: Theme.sp-8;
+                    text: "Message to send later…"; font-size: Theme.text-13 * root.fs; color: Theme.text-muted;
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-6;
+                TrigBtn { horizontal-stretch: 1; fs: root.fs; label: "At a time"; on: root.trigger == "time"; clicked => { Composer.sched-trigger(root.key, "time"); } }
+                TrigBtn { horizontal-stretch: 1; fs: root.fs; label: "Turn ends"; on: root.trigger == "turn-end"; clicked => { Composer.sched-trigger(root.key, "turn-end"); } }
+                TrigBtn {
+                    horizontal-stretch: 1; fs: root.fs; label: "Limit resets"; on: root.trigger == "limit-reset";
+                    disabled: root.limit-off; tip: root.limit-off ? "Needs the limit warmer, which is off" : "";
+                    clicked => { Composer.sched-trigger(root.key, "limit-reset"); }
+                }
+            }
+            // The time: typed, or picked (a date, then a time: Slint's std
+            // popups; PLAN.md, Known gaps).
+            if root.trigger == "time": Rectangle {
+                height: Theme.control-lg;
+                border-radius: Theme.r-control; border-width: 1px;
+                border-color: atin.has-focus ? Theme.accent : Theme.border;
+                background: Theme.bg-secondary;
+                atin := TextInput {
+                    x: Theme.sp-8; width: parent.width - Theme.sp-8 - Theme.sp-32;
+                    vertical-alignment: center; single-line: true;
+                    text <=> root.at;
+                    font-size: Theme.text-13 * root.fs; color: Theme.text-primary;
+                }
+                Rectangle {
+                    x: parent.width - Theme.sp-32; width: Theme.sp-32;
+                    Icon { source: Icons.clock; width: Theme.icon-md; height: Theme.icon-md; tint: ca.has-hover ? Theme.text-primary : Theme.text-muted; }
+                    ca := TouchArea { mouse-cursor: pointer; clicked => { dp.show(); } }
+                }
+            }
+            if root.note != "": Text { text: root.note; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; wrap: word-wrap; }
+            SendBtn {
+                fs: root.fs; label: "Schedule";
+                height: Theme.control-sm;
+                opacity: root.unsupported ? Theme.o-dim : 1;
+                clicked => { if !root.unsupported { Composer.sched-save(root.key); } }
+            }
+            // The list: a hairline, then this chat's messages to come.
+            Rectangle { height: 1px; background: Theme.border-subtle; }
+            VerticalLayout {
+                spacing: Theme.sp-6;
+                if root.list != "": Text { text: root.list; font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
+                for it in root.items: SchedRow { fs: root.fs; it: it; delete => { Composer.sched-delete(root.key, it.id); } }
+            }
+        }
+    }
+}
+
 /// The chat inside a pane: the log, then the composer (specs/composer.md).
 export component ChatPane inherits Rectangle {
     // The pane's key (src/app.rs), for the shared controls (Composer).
@@ -1332,6 +1549,19 @@ export component ChatPane inherits Rectangle {
     in property <int> q-held-n;
     in property <string> q-sent;
     in property <string> q-sent-kind;
+    // The schedule panel (2.10): open, the form (text, trigger, time, each
+    // with a count of the app's changes), the note, the list.
+    in property <bool> s-open;
+    in property <string> s-text;
+    in property <int> s-text-gen;
+    in property <string> s-trigger;
+    in property <string> s-at;
+    in property <int> s-at-gen;
+    in property <string> s-note;
+    in property <[SchedItem]> s-items;
+    in property <bool> s-limit-off;
+    in property <string> s-list;
+    in property <bool> s-unsupported;
     callback send(string);
     callback stop();
     callback respond(string, string, bool);
@@ -1598,6 +1828,19 @@ export component ChatPane inherits Rectangle {
                 }
             }
         }
+    }
+    // The schedule panel (2.10): at the chat's foot, over the composer, inset
+    // sp-8, growing upward to sched-share of the chat. Not modal.
+    if root.s-open: SchedPanel {
+        x: Theme.sp-8; width: parent.width - 2 * Theme.sp-8;
+        y: parent.height - Theme.sp-8 - self.height;
+        max-h: parent.height * Theme.sched-share;
+        key: root.key; fs: root.fs;
+        text-in: root.s-text; text-gen: root.s-text-gen;
+        trigger: root.s-trigger;
+        at-in: root.s-at; at-gen: root.s-at-gen;
+        note: root.s-note; items: root.s-items; limit-off: root.s-limit-off;
+        list: root.s-list; unsupported: root.s-unsupported;
     }
     // A file dragged over the chat (2.7): a dashed accent outline just inside
     // it, over the log and the composer.
