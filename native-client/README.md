@@ -95,7 +95,8 @@ the web page it shows; this one has no such page.
 - Tabs other than Workbench say they come in a later phase. Sign out is in
   Settings.
 - **The look:** the web UI's colours (`ui/theme.slint`) and its icon set,
-  generated from `ICON_PATHS` by `scripts/gen-icons.mjs` (`ui/icons/`).
+  generated from `ICON_PATHS` by `scripts/gen-icons.mjs` (`ui/icons/`), with
+  the chat's permission-mode icons from `MODE_INFO` in `app/vendor/claude-chat.js`.
 - **The server's browser control** is off unless `CRUNDI_NATIVE_HOST=1` is set.
   It would take that control over from an Electron client signed in to the
   same server.
@@ -196,6 +197,16 @@ them; each has a spec in `specs/`). So far:
   `tools/tokens.sh` lists any that are left. The Rust layout numbers that
   match a token are named constants (`mosaic::{PAD, GUTTER, MIN_W}`,
   `head::{PANE_FOLD, TITLE_CAP, LONG_CAP}`).
+
+- **2.5 Composer and Stop** (specs/composer.md): the message box grows
+  from `control` to `composer-max` and then scrolls; Enter (or Ctrl+Enter,
+  by the switch: one setting, saved as `chat_enter`) sends; Send reads
+  Queue while Claude is busy and is never disabled; a send turns the chat
+  working at once; Stop arms on one click ("Sure?", 3 s) and interrupts on
+  the second. The meta row shows the state, the mode, the switch, the clock,
+  the session id (a click copies the whole id), the model and the cost, and
+  wraps. Under `composer-stack` (520) the composer stacks. A refused send
+  shows the server's error in the log and gives the text back.
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

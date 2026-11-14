@@ -34,6 +34,10 @@ pub struct Saved {
     pub font: std::collections::HashMap<String, i32>,
     #[serde(default)]
     pub font_default_chat: Option<i32>,
+    /// Which key sends in every chat: "newline" for Ctrl+Enter (Enter makes a
+    /// newline), otherwise Enter (the web's localStorage.crundi_chat_enter).
+    #[serde(default)]
+    pub chat_enter: String,
 }
 
 pub fn config_dir() -> PathBuf {

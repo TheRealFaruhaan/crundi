@@ -94,6 +94,11 @@ Three side by side at 1400 makes every pane narrow.
 | `web-a-plus-20` | text size 20: box text, Send, the mode button, the switch, the labels grow; attach, Stop and the clock do not |
 | `web-send-error` | a send the server refused: the error box in the log ("Session is not running"), the box emptied, and the composer stuck on "working…" with Stop (a web accident, see Behaviour) |
 
+The native client's own, in the same states: `native-<state>.png` (the
+window) and `-2x` (the composer ×2): rest, focus, typing, long-max,
+enter-newline, running, stop-armed, narrow, narrow-armed, a-plus-24,
+a-minus-9, exited, send-error, sid-copied.
+
 ## The parts and their order
 
 ```
@@ -332,71 +337,71 @@ Stored on the client: the Enter mode (one setting); the pane's text size
 ## Checklist
 
 Layout
-- [ ] Wide: box, attach, [Stop], Send in one row, bottom-aligned; meta row
+- [x] Wide: box, attach, [Stop], Send in one row, bottom-aligned; meta row
       under it: label, mode (icon + name), switch, clock, spacer, id, model,
       cost.
-- [ ] The meta row wraps instead of clipping (cost to a second line).
-- [ ] Narrow (under `composer-stack`, now 520, of the pane's own width,
+- [x] The meta row wraps instead of clipping (cost to a second line).
+- [x] Narrow (under `composer-stack`, now 520, of the pane's own width,
       live while dragging a split):
       box alone; then attach, clock, [Stop], Send stretched; meta: label,
       mode icon only (finger-sized), switch, model, cost; no id.
-- [ ] The clock moves between the meta row (small) and the button row
+- [x] The clock moves between the meta row (small) and the button row
       (`control` high) with the width.
-- [ ] Placeholder: the hint per Enter mode; "Message Claude…" when narrow;
+- [x] Placeholder: the hint per Enter mode; "Message Claude…" when narrow;
       "Session ended." when exited.
 
 Box
-- [ ] Grows from one line (at least `control`) to `composer-max`, wrapped
+- [x] Grows from one line (at least `control`) to `composer-max`, wrapped
       lines counted, then scrolls;
       shrinks back; one line after sending.
-- [ ] Focus: accent border and the ring. Disabled (exited): dimmed.
+- [x] Focus: accent border and the ring. Disabled (exited): dimmed.
 
 Enter switch
-- [ ] Enter sends / Shift+Enter newline; switched: Ctrl(Cmd)+Enter sends,
+- [x] Enter sends / Shift+Enter newline; switched: Ctrl(Cmd)+Enter sends,
       Enter newline.
-- [ ] The thumb slides; the live glyph in accent-hover, the other faint.
-- [ ] One setting for every chat, persisted across a restart.
-- [ ] Clicking it puts the focus back in the box.
+- [x] The thumb slides; the live glyph in accent-hover, the other faint.
+- [x] One setting for every chat, persisted across a restart.
+- [x] Clicking it puts the focus back in the box.
 
 Send
-- [ ] Never disabled; a blank box does nothing.
-- [ ] Clears the box and the draft; follows the log to the bottom.
-- [ ] Goes working at once (label, Stop, Queue) before the server's event.
-- [ ] Reads "Queue" while working or needing input, "Send" otherwise.
-- [ ] A refused send: the error box in the log with the server's text; the
+- [x] Never disabled; a blank box does nothing.
+- [x] Clears the box and the draft; follows the log to the bottom.
+- [x] Goes working at once (label, Stop, Queue) before the server's event.
+- [x] Reads "Queue" while working or needing input, "Send" otherwise.
+- [x] A refused send: the error box in the log with the server's text; the
       composer returns to the real state and the text comes back (named
       difference).
 
 Stop
-- [ ] Only while working; between attach and Send.
-- [ ] Click 1: armed ("Sure?", red-dim, red border, wider; the box gives
+- [x] Only while working; between attach and Send.
+- [x] Click 1: armed ("Sure?", red-dim, red border, wider; the box gives
       way). Disarms after 3 s, or when the turn ends.
-- [ ] Click 2 within 3 s: POST interrupt; Stop goes and Send returns on the
+- [x] Click 2 within 3 s: POST interrupt; Stop goes and Send returns on the
       server's idle.
-- [ ] Hover: red border.
+- [x] Hover: red border.
 
 Meta
-- [ ] Label: idle / working… / needs your input / exited, coloured as above;
+- [x] Label: idle / working… / needs your input / exited, coloured as above;
       a waiting chat reads idle.
-- [ ] Model and id appear live on `init` (no reload); the id only once
+- [x] Model and id appear live on `init` (no reload); the id only once
       known.
-- [ ] A click on the id copies the full uuid and toasts "Session id copied:
+- [x] A click on the id copies the full uuid and toasts "Session id copied:
       <uuid>".
-- [ ] Cost "$x.xxxx" from the snapshot, empty when 0.
-- [ ] Mode button shows the current mode's icon and name; opens 2.6.
-- [ ] Hover looks: attach and clock (accent), mode (accent border, text
+- [x] Cost "$x.xxxx" from the snapshot, empty when 0.
+- [x] Mode button shows the current mode's icon and name (what it opens is 2.6).
+- [x] Hover looks: attach and clock (accent), mode (accent border, text
       primary), switch label (text primary), id (text secondary), Send
       (accent-hover), Stop (red).
 
 Text size
-- [ ] A−/A+ scales the text parts live (box text, Send, Sure?, the meta row,
+- [x] A−/A+ scales the text parts live (box text, Send, Sure?, the meta row,
       the mode button); attach, Stop, the clock and the box's `control` / `composer-max` do not.
 
 Theme
-- [ ] Every size is a scale step or a structural size from `ui/theme.slint`;
+- [x] Every size is a scale step or a structural size from `ui/theme.slint`;
       no typed numbers, no named colours (`white` → a Theme token).
-- [ ] `composer-stack` is 520 (the web's edge), not 480.
-- [ ] `InputBox`'s least height is `control`, not `sp-16 + sp-16 × fs`.
-- [ ] Opacities are theme steps: disabled box and uploading attach o-soft,
+- [x] `composer-stack` is 520 (the web's edge), not 480.
+- [x] `InputBox`'s least height is `control`, not `sp-16 + sp-16 × fs`.
+- [x] Opacities are theme steps: disabled box and uploading attach o-soft,
       the switch's idle glyph o-dim; slides take `motion`.
-- [ ] `tools/tokens.sh` is clean for the composer.
+- [x] `tools/tokens.sh` is clean for the composer.

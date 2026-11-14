@@ -8,13 +8,13 @@ use crate::{
     chat::{Conversation, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, store, EntryView, GutterView, MainWindow, PaneView, ProjectItem, ToolView,
+    head, store, Composer, EntryView, GutterView, MainWindow, PaneView, ProjectItem, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -101,8 +101,19 @@ pub struct App {
     /// (saved: store::Saved.font, font_default_chat).
     font: HashMap<String, i32>,
     font_default: i32,
-    /// Each chat's draft as typed (shared by its views).
+    /// Each chat's draft as typed (shared by its views), and how often the
+    /// app itself set it (a send clears it, a refused send gives it back):
+    /// the views take it again on each.
     drafts: HashMap<String, String>,
+    draft_gen: HashMap<String, i32>,
+    /// Chats sent to while idle: shown working at once (the web's optimistic
+    /// switch), until the server's own state comes.
+    sending: HashSet<String>,
+    /// The pane whose Stop was clicked once ("Sure?"), and which arming it is.
+    stop_armed: Option<String>,
+    stop_gen: u32,
+    /// Errors the client adds to a chat's log (a refused send).
+    local_errors: u32,
     /// The 30 s re-count of timed grants, and the toast's 3.5 s.
     timers: Vec<slint::Timer>,
     toast_gen: u32,
@@ -202,6 +213,11 @@ pub fn init(window: &MainWindow) {
             font: HashMap::new(),
             font_default: head::FONT_BASE,
             drafts: HashMap::new(),
+            draft_gen: HashMap::new(),
+            sending: HashSet::new(),
+            stop_armed: None,
+            stop_gen: 0,
+            local_errors: 0,
             timers: vec![],
             toast_gen: 0,
         })
@@ -253,6 +269,17 @@ pub fn init(window: &MainWindow) {
     window.on_pane_menu(|id, on| pane_menu(id as u32, on));
     window.on_pane_maximize(|id| { animate(); with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
     window.on_draft_changed(|k, t| { with(|a| { a.drafts.insert(k.to_string(), t.to_string()); }); });
+    // The composers' shared controls (ui/chat.slint Composer). The Enter mode
+    // is one setting for every chat, saved (the web's crundi_chat_enter).
+    let c = window.global::<Composer>();
+    c.set_ctrl_enter(store::load().chat_enter == "newline");
+    c.on_set_ctrl_enter(set_chat_enter);
+    c.on_copied(|full| toast(&format!("Session id copied: {full}"), false));
+    // Attaching (2.7), the schedule panel (2.10) and the mode chooser (2.6)
+    // are their own screens.
+    c.on_attach(|_| {});
+    c.on_schedule(|_| {});
+    c.on_mode(|_| {});
 
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
     window.on_cancel_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("login".into()); } });
@@ -767,13 +794,14 @@ fn layout_changed() {
     render();
 }
 
+/// A permission mode's name, as the web chat's MODE_INFO.
 fn mode_label(m: &str) -> &'static str {
     match m {
         "plan" => "Plan mode",
         "acceptEdits" => "Accept edits",
         "auto" => "Auto",
         "dontAsk" => "Don't ask",
-        "bypassPermissions" => "Skip permissions",
+        "bypassPermissions" => "Bypass all",
         _ => "Ask permissions",
     }
 }
@@ -832,13 +860,19 @@ fn render() {
                 p.secrets_tip = head::secrets_tip(n).into();
                 p.fs = head::font_scale(*a.font.get(id).unwrap_or(&a.font_default));
                 p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
+                p.draft_gen = *a.draft_gen.get(&key).unwrap_or(&0);
                 if let Some(cs) = a.chats.get(id) {
                     p.entries = cs.model.clone().into();
                     // The header's state is the list's (the `state` event), as
                     // the web's: `exited` wins over the stream's last idle.
-                    p.state = { let st = match item { Some(c) => agent_state(c), None => cs.conv.state.clone() }; if st.is_empty() { "idle".into() } else { st.into() } };
-                    p.mode = mode_label(&if cs.conv.mode.is_empty() { item.map(|c| s(c, "permissionMode")).unwrap_or_default() } else { cs.conv.mode.clone() }).into();
+                    let st = match item { Some(c) => agent_state(c), None => cs.conv.state.clone() };
+                    p.state = head::composer_state(&st, a.sending.contains(id)).into();
+                    p.stop_armed = p.state == "working" && a.stop_armed.as_deref() == Some(key.as_str());
+                    let mode = if cs.conv.mode.is_empty() { item.map(|c| s(c, "permissionMode")).unwrap_or_default() } else { cs.conv.mode.clone() };
+                    p.mode = mode_label(&mode).into();
+                    p.mode_key = mode.into();
                     p.session = cs.conv.session_id.chars().take(8).collect::<String>().into();
+                    p.session_full = cs.conv.session_id.clone().into();
                     p.model = cs.conv.model.clone().into();
                     p.cost = if cs.conv.cost > 0.0 { format!("${:.4}", cs.conv.cost).into() } else { SharedString::default() };
                     p.error = cs.error.clone().into();
@@ -851,8 +885,13 @@ fn render() {
                 let mut c = kind.chars();
                 p.title = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default().into();
             }
+            // Only a chat's header folds its tools into "…" (a launcher or a
+            // panel has just Pin and ×, shown at any width, as the web's).
+            if p.kind != "chat" { p.narrow = false; p.menu = false; }
             p
         }).collect();
+        // Stop disarms when its chat stops working (the turn ended, a question).
+        if a.stop_armed.as_ref().is_some_and(|k| !panes.iter().any(|p| p.key.as_str() == k && p.state == "working")) { a.stop_armed = None; }
         // The pane in full screen: the whole window.
         let full = a.full.as_ref().and_then(|k| panes.iter().find(|p| p.key.as_str() == k)).map(|p| {
             let mut f = p.clone();
@@ -1197,8 +1236,13 @@ fn on_chat_message(m: &Value) {
     let changed = with(|a| {
         let Some(cs) = a.chats.get_mut(&id) else { return false };
         match s(m, "type").as_str() {
-            "ui-history" => { if let Some(sess) = m.get("session") { cs.conv.load(sess); } true }
-            "ui-event" => m.get("event").map(|e| cs.conv.apply(e)).unwrap_or(false),
+            "ui-history" => { if let Some(sess) = m.get("session") { cs.conv.load(sess); } a.sending.remove(&id); true }
+            "ui-event" => {
+                // The server's own state replaces the optimistic one.
+                let ty = m.get("event").map(|e| s(e, "type")).unwrap_or_default();
+                if matches!(ty.as_str(), "state" | "exit" | "history") { a.sending.remove(&id); }
+                m.get("event").map(|e| cs.conv.apply(e)).unwrap_or(false) || ty == "exit"
+            }
             _ => false,
         }
     }).unwrap_or(false);
@@ -1364,21 +1408,87 @@ fn chat_error(id: &str, e: String) {
     render();
 }
 
+/// Send (or queue) what the box holds: a blank box does nothing. The box
+/// and the draft are cleared, and an idle chat shows working at once (the
+/// web's optimistic switch). A refused send puts an error in the log, the
+/// text back in the box, and the chat back to its real state (the web stays
+/// "working…" and loses the text: a deliberate difference, PLAN.md).
 pub fn send(key: &str, text: String) {
     let Some(id) = chat_of(key).map(str::to_string) else { return };
     let text = text.trim_end().to_string();
     if text.trim().is_empty() { return; }
-    chat_error(&id, String::new());
-    let id2 = id.clone();
-    call(move |api| api.post(&format!("/api/ui-sessions/{id}/send"), &json!({ "text": text })), move |r| {
-        if let Err(e) = r { chat_error(&id2, format!("Not sent: {e}")); }
+    let k = key.to_string();
+    with(|a| {
+        a.drafts.insert(k.clone(), String::new());
+        *a.draft_gen.entry(k.clone()).or_insert(0) += 1;
+        if let Some(cs) = a.chats.get_mut(&id) { cs.error.clear(); }
+        a.sending.insert(id.clone());
+    });
+    render();
+    let (id2, body) = (id.clone(), text.clone());
+    call(move |api| api.post(&format!("/api/ui-sessions/{id}/send"), &json!({ "text": body })), move |r| {
+        let refused = match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some(s(&v, "error")),
+            Ok(_) => None,
+            Err(e) => Some(e),
+        };
+        if let Some(e) = refused { send_refused(&k, &id2, if e.is_empty() { "Failed to send".into() } else { e }, text); }
     });
 }
 
+fn send_refused(key: &str, id: &str, error: String, text: String) {
+    with(|a| {
+        a.sending.remove(id);
+        // The text comes back, unless something new was typed meanwhile.
+        if a.drafts.get(key).is_none_or(|d| d.is_empty()) {
+            a.drafts.insert(key.to_string(), text);
+            *a.draft_gen.entry(key.to_string()).or_insert(0) += 1;
+        }
+        a.local_errors += 1;
+        let n = a.local_errors;
+        if let Some(cs) = a.chats.get_mut(id) { cs.conv.entries.push(json!({ "id": format!("local-error-{n}"), "kind": "error", "text": error })); }
+    });
+    show_chat(id);
+    render();
+}
+
+/// Stop: the first click arms it ("Sure?") for 3 s; a second click within
+/// them interrupts the turn (the server then reports idle).
 pub fn stop(key: &str) {
     let Some(id) = chat_of(key).map(str::to_string) else { return };
-    let id2 = id.clone();
-    call(move |api| api.post(&format!("/api/ui-sessions/{id}/interrupt"), &json!({})), move |r| if let Err(e) = r { chat_error(&id2, e) });
+    let armed = with(|a| a.stop_armed.as_deref() == Some(key)).unwrap_or(false);
+    if !armed {
+        let gen = with(|a| { a.stop_armed = Some(key.to_string()); a.stop_gen += 1; a.stop_gen }).unwrap_or(0);
+        render();
+        slint::Timer::single_shot(Duration::from_secs(3), move || {
+            if with(|a| a.stop_gen == gen && a.stop_armed.take().is_some()).unwrap_or(false) { render(); }
+        });
+        return;
+    }
+    with(|a| a.stop_armed = None);
+    render();
+    call(move |api| api.post(&format!("/api/ui-sessions/{id}/interrupt"), &json!({})), |_| {});
+}
+
+/// The Enter mode, for every chat, saved.
+fn set_chat_enter(ctrl: bool) {
+    if let Some(w) = ui() { w.global::<Composer>().set_ctrl_enter(ctrl); }
+    store::update(|s| s.chat_enter = if ctrl { "newline".into() } else { String::new() });
+}
+
+/// A pane's draft as typed (the pane rows carry it only as of their last
+/// render; typing doesn't re-render).
+pub fn draft_of(key: &str) -> String {
+    with(|a| a.drafts.get(key).cloned().unwrap_or_default()).unwrap_or_default()
+}
+
+/// Ask a pane's composer to take the focus (the box).
+pub fn focus_composer(key: &str) {
+    if let Some(w) = ui() {
+        let c = w.global::<Composer>();
+        c.set_focus_key(key.into());
+        c.set_focus_gen(c.get_focus_gen() + 1);
+    }
 }
 
 pub fn respond(key: &str, request_id: String, behavior: String, always: bool) {

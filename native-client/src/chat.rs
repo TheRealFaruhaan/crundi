@@ -39,11 +39,9 @@ impl Conversation {
                 let id = s(e, "id");
                 match self.entries.iter_mut().find(|x| s(x, "id") == id && !id.is_empty()) {
                     Some(old) => *old = e.clone(),
-                    None => {
-                        // A turn's end adds to the cost so far.
-                        if s(e, "kind") == "result" { self.cost += e.get("costUsd").and_then(|c| c.as_f64()).unwrap_or(0.0); }
-                        self.entries.push(e.clone())
-                    }
+                    // (The cost is the snapshot's, as the web's: it refreshes
+                    // with the next snapshot, not after each turn.)
+                    None => self.entries.push(e.clone()),
                 }
                 true
             }

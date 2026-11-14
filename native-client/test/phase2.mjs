@@ -957,6 +957,72 @@ if (check('a running chat to take the internal key from', !!procLQ?.key)) {
 }
 for (const id of [liveW, liveQ, liveO]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 
+// ─── 2.5 Composer and Stop ───
+const liveC = await make('demo', 'Composer', true);
+p = await until('the composer chat has a pane', (q) => pane(q, liveC), 30000);
+await ui('focus-pane', pane(p, liveC).id);
+await ui('composer-focus');
+const keys = (text, mods) => d.send({ cmd: 'key', text, mods });
+const clearBox = async () => { await keys('a', ['Control']); await keys('Backspace'); };
+const cpane = async () => pane(await props(), liveC);
+check('Enter sends by default', (await props()).chatEnter === 'enter');
+// Typing fills the draft; Shift+Enter makes a newline, not a send.
+await keys('one'); await keys('Return', ['Shift']); await keys('two');
+p = await until('Shift+Enter makes a newline', async (q) => pane(q, liveC)?.draft === 'one\ntwo', 5000);
+if (p) check('typing fills the box; Shift+Enter is a newline', pane(p, liveC).state === 'idle');
+// A blank box sends nothing (Send is never disabled; nothing happens).
+await clearBox(); await keys('   '); await keys('Return');
+await sleep(800);
+{ const c = await cpane(); check('a blank box: Enter does nothing', c.draft === '   ' && c.state === 'idle', c); }
+// Ctrl+Enter mode: one setting, saved; Enter makes a newline, Ctrl+Enter sends.
+await ui('chat-enter', 'newline');
+p = await until('the Enter mode switched', (q) => q.chatEnter === 'newline', 5000);
+check('the Enter mode is saved for every chat', saved().chat_enter === 'newline', saved().chat_enter);
+await clearBox();
+await keys('Write the numbers from 1 to 150 as words, one per line, with no other text.');
+await keys('Return');
+await sleep(500);
+{ const c = await cpane(); check('switched: Enter makes a newline and sends nothing', c.draft.endsWith('\n') && c.state === 'idle', c); }
+await keys('Backspace');
+await keys('Return', ['Control']);
+{ const c = await cpane(); check('Ctrl+Enter sends: the box empties and the chat is working at once', c.draft === '' && c.state === 'working', c); }
+await snap('2.5-working');
+// Stop: armed by one click, disarmed after 3 s; two clicks interrupt.
+p = await until('the turn is under way', (q) => pane(q, liveC)?.state === 'working', 30000);
+await ui('stop');
+{ const c = await cpane(); check('Stop, one click: armed ("Sure?")', c.stopArmed === true && c.state === 'working', c); }
+await snap('2.5-stop-armed');
+await sleep(3500);
+{ const c = await cpane(); check('…and disarmed by itself after 3 s', c.stopArmed === false, c); }
+if ((await cpane()).state === 'working') {
+  await ui('stop'); await ui('stop');
+  p = await until('two clicks on Stop interrupt the turn', (q) => pane(q, liveC)?.state === 'idle', 30000);
+  if (p) check('Stop twice: the turn is interrupted and the chat idle', !pane(p, liveC).stopArmed);
+}
+// The session id and the model arrive live (no reload).
+p = await until('the session id and model shown', (q) => pane(q, liveC)?.session?.length === 8 && pane(q, liveC)?.model !== '', 30000);
+if (p) check('the meta row: session id (8 characters) and model, live', pane(p, liveC).sessionFull.startsWith(pane(p, liveC).session), pane(p, liveC));
+await ui('chat-enter', 'enter');
+await until('Enter sends again', (q) => q.chatEnter === 'enter', 5000);
+check('…saved back', saved().chat_enter === '', saved().chat_enter);
+// Exited, then a refused send: the error in the log, the text back in the box.
+const procC = chatProc(liveC);
+if (check('the composer chat has a claude process', !!procC)) {
+  process.kill(procC.pid);
+  p = await until('the chat exits', (q) => pane(q, liveC)?.state === 'exited', 30000);
+  if (p) check('exited: the composer says so', true);
+  await snap('2.5-exited');
+  await ui('send', 'after the end');
+  const st = await until('a refused send', async (q) => {
+    const c = pane(q, liveC);
+    const e = (await d.send({ cmd: 'state' })).state?.entries || [];
+    return c?.draft === 'after the end' && e.some((x) => x.kind === 'error' && /not running/i.test(x.text));
+  }, 15000);
+  if (st) check('a refused send: the server\'s error in the log, the text back in the box, the chat as it was', pane(st, liveC).state === 'exited');
+  await snap('2.5-send-refused');
+}
+await http('POST', `/api/ui-sessions/${liveC}/close`, {}, token);
+
 d.close();
 app.kill();
 console.log(failed ? `\n${failed} failed` : '\nall passed');

@@ -54,6 +54,16 @@ const INLINE = {
   'lay-top-bottom2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="22" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
 };
 for (const [n, body] of Object.entries(INLINE)) { writeFileSync(join(dir, `${n}.svg`), body); names.push(n); }
+// The chat's permission modes (the composer's mode button), from the web
+// chat's MODE_INFO (app/vendor/claude-chat.js): mode-<mode>.
+const chat = readFileSync(join(here, '..', '..', 'app', 'vendor', 'claude-chat.js'), 'utf8');
+let modes = 0;
+for (const m of chat.matchAll(/^\s*'([A-Za-z]+)': \{ icon: MODE_SVG\('([^']*)'\)/gm)) {
+  const n = `mode-${m[1].replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`;
+  writeFileSync(join(dir, `${n}.svg`), svg('0 0 24 24', 2, m[2]));
+  names.push(n); modes++;
+}
+if (modes < 6) throw new Error(`only ${modes} mode icons parsed`);
 names.sort();
 // Slint names: a leading digit or a keyword gets a prefix.
 const slintName = (n) => (/^[0-9]/.test(n) || ['if', 'for', 'in', 'out', 'property', 'callback', 'import', 'export'].includes(n) ? `i-${n}` : n);

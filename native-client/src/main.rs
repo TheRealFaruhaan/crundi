@@ -14,6 +14,8 @@
 //!
 //! One binary is also CEF's helper processes (renderer, GPU, utility): CEF
 //! starts it again with --type=…, and execute_process() handles those first.
+// The test driver's props are one large json! (src/testctl.rs).
+#![recursion_limit = "256"]
 
 slint::include_modules!();
 

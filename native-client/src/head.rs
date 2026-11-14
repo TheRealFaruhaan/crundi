@@ -156,6 +156,15 @@ fn long_fits(pane_w: f32) -> bool {
 }
 
 /// No cap: the title takes what the row leaves it.
+/// A chat's state as its pane shows it: the agent's (idle when unknown),
+/// or working at once after a send while idle or waiting (the web's
+/// optimistic switch), until the server says otherwise. The header keeps
+/// "waiting" (its badge); the composer reads it as idle.
+pub fn composer_state(state: &str, sending: bool) -> String {
+    let st = if state.is_empty() { "idle" } else { state };
+    if sending && matches!(st, "idle" | "waiting") { "working".into() } else { st.into() }
+}
+
 pub const NO_CAP: f32 = 100_000.0;
 
 /// The title shown and its cap. Wide (content box ≥ 560px): the long form
@@ -269,5 +278,15 @@ mod tests {
         assert_eq!(title_shown("Typed", "", 1148.0), ("Typed".into(), 160.0));
         assert_eq!(title_shown("Fruit list and directory", "", 378.0), ("Fruit list and directory".into(), NO_CAP));
         assert_eq!(close_refused(""), "This chat cannot be closed right now.");
+    }
+
+    #[test]
+    fn composer_states() {
+        assert_eq!(composer_state("", false), "idle");
+        assert_eq!(composer_state("idle", true), "working");
+        assert_eq!(composer_state("waiting", true), "working");
+        assert_eq!(composer_state("waiting", false), "waiting");
+        assert_eq!(composer_state("needs-input", true), "needs-input");
+        assert_eq!(composer_state("exited", true), "exited");
     }
 }

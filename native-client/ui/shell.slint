@@ -4,7 +4,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, AccentFill, SoftShadow } from "widgets.slint";
+import { Icon, AccentFill, SoftShadow, DashedBox } from "widgets.slint";
 
 export struct ProjectItem {
     alias: string,
@@ -26,14 +26,6 @@ export global ProjectDot {
     }
 }
 
-/// A hairline dashed outline (CSS "1px dashed").
-export component Dashed inherits Rectangle {
-    in property <color> line: Theme.border;
-    for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; y: 0px; width: min(Theme.sp-4, root.width - i * Theme.sp-6); height: 1px; background: root.line; }
-    for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; y: root.height - 1px; width: min(Theme.sp-4, root.width - i * Theme.sp-6); height: 1px; background: root.line; }
-    for i in ceil(self.height / Theme.sp-6): Rectangle { x: 0px; y: i * Theme.sp-6; width: 1px; height: min(Theme.sp-4, root.height - i * Theme.sp-6); background: root.line; }
-    for i in ceil(self.height / Theme.sp-6): Rectangle { x: root.width - 1px; y: i * Theme.sp-6; width: 1px; height: min(Theme.sp-4, root.height - i * Theme.sp-6); background: root.line; }
-}
 
 /// One row of the usage bars behind the top bar (the web UI's .urow).
 component UsageRow inherits Rectangle {
@@ -282,7 +274,7 @@ export component ProjectSidebar inherits Rectangle {
                 height: Theme.control;
                 border-radius: Theme.r-control;
                 background: ap.has-hover ? Theme.accent-dim : transparent;
-                Dashed { line: ap.has-hover ? Theme.accent : Theme.border; }
+                DashedBox { width: parent.width; height: parent.height; corner: Theme.r-control; line: ap.has-hover ? Theme.accent : Theme.border; }
                 Text {
                     text: root.folded ? "+" : "+ Add project";
                     color: ap.has-hover ? Theme.accent-hover : Theme.text-muted;

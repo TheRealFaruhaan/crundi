@@ -71,7 +71,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      sign-in card's fields and button centred again (a token-pass
      regression), its shadow smooth or dropped (the same for every layered
      shadow), and a sweep of every screen for alignment slips.
-   - [ ] **2.5 Composer and Stop.** The composer at rest, typing (auto-grow),
+   - [x] **2.5 Composer and Stop.** The composer at rest, typing (auto-grow),
      the Enter-mode switch (`cc-sw`), the meta row (mode button, model label,
      session id, clock), Send, Stop arming to "Sure?" (`cc-armed`) and
      disarming, and the stacked composer in a narrow pane (`cc-narrow`).
@@ -183,7 +183,9 @@ Phase 1 left these, each with its workaround in place:
 - **Visual-only controls** until their phase:
   - Cru;
   - Add project and Inbox;
-  - the schedule clock and the permission-mode picker;
+  - the composer's schedule clock (2.10), mode button (2.6) and attach
+    button (2.7): drawn, with their hover and titles, but they open nothing
+    yet;
   - the pane header's lock opens nothing yet (its dialog is 2.12);
   - attachments;
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
@@ -265,6 +267,22 @@ Phase 1 left these, each with its workaround in place:
   build at scale 1 or 1.25, in any step (server, password, error, pairing,
   browser code: `specs/token-pass/align/`). Each centred group now also
   has a fixed width, so it can't stretch and lose its centring.
+- **The composer** (2.5), deliberate differences (DESIGN rule 5):
+  - a refused send (`{ok:false}`, or no answer) puts the server's words in
+    the log as an error, gives the text back to the box and returns the chat
+    to its real state; the web stays on "working…" with Stop and loses the
+    text;
+  - the Enter mode is one saved setting that every open pane follows at
+    once; the web's other open panes keep their old mode until rebuilt;
+  - Queue sends to the server, which hands it to the running turn, until
+    the client's own queue (2.9);
+  - the cost is the snapshot's, as the web's (it refreshes on the next
+    snapshot, not after each turn).
+- **The session id's dotted underline** (2.5): Slint has no dotted border;
+  hairline dashes (sp-2 every sp-4) under the id.
+- **The composer's tallest box** (2.5): composer-max holds eight lines at
+  the default size (the web's nine: its line box is 1.45, the native box
+  pads its lines to line-chat).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

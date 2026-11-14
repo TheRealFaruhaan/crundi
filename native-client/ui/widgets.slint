@@ -42,7 +42,14 @@ export component AccentFill inherits Image {
 export component SoftShadow {
     in property <length> radius;
     in property <Shadow> shadow;
-    property <length> core: min(root.radius, min(root.width, root.height) / 2);
+    // Whole pixels for every piece: an edge that falls between pixels is
+    // rounded per piece, which left one-pixel seams where they meet. So the
+    // pieces sit on whole window pixels (ox, oy) and whole sizes.
+    property <length> ox: round(self.absolute-position.x / 1px) * 1px - self.absolute-position.x;
+    property <length> oy: round(self.absolute-position.y / 1px) * 1px - self.absolute-position.y;
+    property <length> w: round(root.width / 1px) * 1px;
+    property <length> h: round(root.height / 1px) * 1px;
+    property <length> core: round(min(root.radius, min(self.w, self.h) / 2) / 1px) * 1px;
     property <length> fade: root.shadow.blur + root.core;
     property <length> dy: root.shadow.y;
     property <color> c: root.shadow.c;
@@ -51,49 +58,49 @@ export component SoftShadow {
     property <color> clear: root.c.with-alpha(0);
     // The core: under the box (it shows only past a round corner).
     Rectangle {
-        x: root.core; y: root.core + root.dy;
-        width: root.width - 2 * root.core; height: root.height - 2 * root.core;
+        x: root.ox + root.core; y: root.oy + root.core + root.dy;
+        width: root.w - 2 * root.core; height: root.h - 2 * root.core;
         background: root.c;
     }
     // Edges: top, bottom, left, right.
     Rectangle {
-        x: root.core; y: root.core - root.fade + root.dy;
-        width: root.width - 2 * root.core; height: root.fade;
+        x: root.ox + root.core; y: root.oy + root.core - root.fade + root.dy;
+        width: root.w - 2 * root.core; height: root.fade;
         background: @linear-gradient(0deg, root.c 0%, root.clear 100%);
     }
     Rectangle {
-        x: root.core; y: root.height - root.core + root.dy;
-        width: root.width - 2 * root.core; height: root.fade;
+        x: root.ox + root.core; y: root.oy + root.h - root.core + root.dy;
+        width: root.w - 2 * root.core; height: root.fade;
         background: @linear-gradient(180deg, root.c 0%, root.clear 100%);
     }
     Rectangle {
-        x: root.core - root.fade; y: root.core + root.dy;
-        width: root.fade; height: root.height - 2 * root.core;
+        x: root.ox + root.core - root.fade; y: root.oy + root.core + root.dy;
+        width: root.fade; height: root.h - 2 * root.core;
         background: @linear-gradient(270deg, root.c 0%, root.clear 100%);
     }
     Rectangle {
-        x: root.width - root.core; y: root.core + root.dy;
-        width: root.fade; height: root.height - 2 * root.core;
+        x: root.ox + root.w - root.core; y: root.oy + root.core + root.dy;
+        width: root.fade; height: root.h - 2 * root.core;
         background: @linear-gradient(90deg, root.c 0%, root.clear 100%);
     }
     // Corners: top-left, top-right, bottom-left, bottom-right.
     Rectangle {
-        x: root.core - root.fade; y: root.core - root.fade + root.dy;
+        x: root.ox + root.core - root.fade; y: root.oy + root.core - root.fade + root.dy;
         width: root.fade; height: root.fade;
         background: @radial-gradient(circle root.fade at root.fade root.fade, root.c 0%, root.clear 100%);
     }
     Rectangle {
-        x: root.width - root.core; y: root.core - root.fade + root.dy;
+        x: root.ox + root.w - root.core; y: root.oy + root.core - root.fade + root.dy;
         width: root.fade; height: root.fade;
         background: @radial-gradient(circle root.fade at 0px root.fade, root.c 0%, root.clear 100%);
     }
     Rectangle {
-        x: root.core - root.fade; y: root.height - root.core + root.dy;
+        x: root.ox + root.core - root.fade; y: root.oy + root.h - root.core + root.dy;
         width: root.fade; height: root.fade;
         background: @radial-gradient(circle root.fade at root.fade 0px, root.c 0%, root.clear 100%);
     }
     Rectangle {
-        x: root.width - root.core; y: root.height - root.core + root.dy;
+        x: root.ox + root.w - root.core; y: root.oy + root.h - root.core + root.dy;
         width: root.fade; height: root.fade;
         background: @radial-gradient(circle root.fade at 0px 0px, root.c 0%, root.clear 100%);
     }

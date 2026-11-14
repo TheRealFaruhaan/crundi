@@ -844,77 +844,296 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: Theme.text-11 * root.fs; horizontal-alignment: center; wrap: word-wrap; }
 }
 
-/// The message box: grows with its text (up to composer-max); Enter sends.
+/// What every composer shares with the app (src/app.rs): the Enter mode
+/// (one setting for every chat, saved), a request to focus a chat's box,
+/// and the controls whose screens come later (attach 2.7, the clock 2.10,
+/// the mode chooser 2.6).
+export global Composer {
+    // Ctrl+Enter sends (Enter makes a newline); otherwise Enter sends.
+    in-out property <bool> ctrl-enter;
+    callback set-ctrl-enter(bool);
+    // Focus this pane's box (its key); counted, so asking again refocuses.
+    in-out property <string> focus-key;
+    in-out property <int> focus-gen;
+    // The session id was copied (its full uuid): the app toasts it.
+    callback copied(string);
+    callback attach(string);
+    callback schedule(string);
+    callback mode(string);
+}
+
+/// The message box (.cc-input): one line at least (`control`), growing with
+/// its text (wrapped lines too) to `composer-max`, then scrolling inside.
+/// Enter, or Ctrl+Enter when switched, sends.
 component InputBox inherits Rectangle {
     // The pane's text size, a scale of the base size (the web's --cc-fs).
     in property <float> fs: 1;
     in-out property <string> draft;
-    // Ctrl+Enter sends (Enter makes a newline), when switched.
     in property <bool> ctrl-enter;
-    callback send(string);
-    // At least one line (scaled) and its padding.
-    height: max(Theme.sp-16 + Theme.sp-16 * root.fs, min(Theme.composer-max, te.preferred-height + Theme.sp-16));
-    border-radius: Theme.r-control;
-    border-width: 1px;
-    border-color: te.has-focus ? Theme.accent : Theme.border;
-    background: Theme.bg-primary;
-    FocusScope {
-        capture-key-pressed(ev) => {
-            if (ev.text == Key.Return && !ev.modifiers.shift && !ev.modifiers.alt && ev.modifiers.control == root.ctrl-enter) {
-                if (root.draft != "") { root.send(root.draft); root.draft = ""; }
-                return accept;
-            }
-            return reject;
-        }
-        te := TextInput {
-            line-height-factor: Theme.lh-chat;
-            x: Theme.sp-10; y: Theme.sp-10;
-            width: parent.width - Theme.sp-20;
-            height: parent.height - Theme.sp-16;
-            text <=> root.draft;
-            wrap: word-wrap;
-            font-size: Theme.text-13 * root.fs;
-            color: Theme.text-primary;
-            selection-background-color: Theme.accent-dim;
-        }
+    in property <bool> enabled: true;
+    in property <string> placeholder;
+    callback send();
+    public function focus-box() { te.focus(); }
+    out property <bool> focused: te.has-focus && root.enabled;
+    property <length> line: Theme.text-13 * root.fs * Theme.line-chat;
+    // Dimmed while it can't take text (an exited chat).
+    opacity: root.enabled ? 1 : Theme.o-soft;
+    height: max(Theme.control, min(Theme.composer-max, te.preferred-height + 2 * Theme.sp-8));
+    // The focus ring, outside the border.
+    if root.focused: Rectangle {
+        x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4;
+        border-radius: Theme.r-card; background: Theme.accent-ring;
     }
-    if root.draft == "": Text {
-        x: Theme.sp-10; y: Theme.sp-10;
-        width: parent.width - Theme.sp-20;
-        text: root.ctrl-enter ? "Message Claude…  (Ctrl+Enter to send, Enter for newline)" : "Message Claude…  (Enter to send, Shift+Enter for newline)";
-        font-size: Theme.text-13 * root.fs;
-        color: Theme.text-muted;
-        overflow: elide;
+    Rectangle {
+        border-radius: Theme.r-control;
+        border-width: 1px;
+        border-color: root.focused ? Theme.accent : Theme.border;
+        background: Theme.bg-primary;
+    }
+    Rectangle {
+        fl := Flickable {
+            x: Theme.sp-10; y: Theme.sp-8;
+            width: parent.width - 2 * Theme.sp-10; height: parent.height - 2 * Theme.sp-8;
+            content-height: max(self.height, te.preferred-height);
+            FocusScope {
+                capture-key-pressed(ev) => {
+                    if ev.text == Key.Return {
+                        if root.ctrl-enter ? (ev.modifiers.control || ev.modifiers.meta) : (!ev.modifiers.shift && !ev.modifiers.control && !ev.modifiers.meta) {
+                            root.send();
+                            return accept;
+                        }
+                    }
+                    return reject;
+                }
+                te := TextInput {
+                    width: fl.width;
+                    height: max(fl.height, self.preferred-height);
+                    line-height-factor: Theme.lh-chat;
+                    text <=> root.draft;
+                    enabled: root.enabled;
+                    single-line: false;
+                    wrap: word-wrap;
+                    font-size: Theme.text-13 * root.fs;
+                    color: Theme.text-primary;
+                    selection-background-color: Theme.accent-dim;
+                    // Past composer-max it scrolls: keep the caret in view.
+                    cursor-position-changed(at) => {
+                        if at.y + fl.content-y < 0 {
+                            fl.content-y = -at.y;
+                        } else if at.y + root.line + fl.content-y > fl.height {
+                            fl.content-y = min(0px, fl.height - at.y - root.line);
+                        }
+                    }
+                }
+            }
+        }
+        if root.draft == "": Text {
+            x: Theme.sp-10; y: Theme.sp-8;
+            width: parent.width - 2 * Theme.sp-10;
+            text: root.placeholder;
+            font-size: Theme.text-13 * root.fs;
+            color: Theme.text-muted;
+            overflow: elide;
+        }
     }
 }
 
-/// The chat inside a pane: the log, then the composer.
+/// A square bordered button of the composer (attach; the clock in a narrow
+/// pane): bg-primary, hover an accent border and icon.
+component SquareBtn inherits Rectangle {
+    in property <image> icon;
+    in property <length> icon-size: Theme.icon-lg;
+    in property <string> tip;
+    in property <bool> fill: true;
+    in property <color> ink: Theme.text-secondary;
+    callback clicked();
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: ta.has-hover ? Theme.accent : Theme.border;
+    background: root.fill ? Theme.bg-primary : transparent;
+    Icon { source: root.icon; width: root.icon-size; height: root.icon-size; tint: ta.has-hover ? Theme.accent-hover : root.ink; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: root.tip; } }
+    }
+}
+
+/// Stop (.cc-stop): a red square; armed (one click), red-dim with "Sure?"
+/// sliding in beside it. The app arms and disarms it (src/app.rs).
+component StopBtn inherits Rectangle {
+    in property <float> fs: 1;
+    in property <bool> armed;
+    callback clicked();
+    property <length> sure-w: root.armed ? sure-m.preferred-width + Theme.sp-4 : 0px;
+    animate sure-w { duration: Theme.motion; }
+    height: Theme.control;
+    width: max(Theme.control, Theme.sp-8 + Theme.icon-md + self.sure-w + Theme.sp-8);
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.armed || ta.has-hover ? Theme.red : Theme.border;
+    background: root.armed ? Theme.red-dim : Theme.bg-primary;
+    sure-m := Text { visible: false; text: "Sure?"; font-size: Theme.text-11 * root.fs; }
+    HorizontalLayout {
+        alignment: center;
+        Icon { y: (parent.height - self.height) / 2; source: Icons.square; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.red; }
+        Rectangle {
+            width: root.sure-w;
+            clip: true;
+            Text { x: Theme.sp-4; text: "Sure?"; font-size: Theme.text-11 * root.fs; color: Theme.red; vertical-alignment: center; height: parent.height; }
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: root.armed ? "Click again to interrupt" : "Stop this turn (click twice)"; } }
+    }
+}
+
+/// Send (or Queue while Claude is busy): the accent fill and its glow; never
+/// disabled. Narrow, it stretches and is `control` high.
+component SendBtn inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> label;
+    callback clicked();
+    border-radius: Theme.r-control;
+    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-send; }
+    AccentFill { width: parent.width; height: parent.height; }
+    if ta.has-hover: Rectangle { border-radius: Theme.r-control; background: Theme.accent-hover; }
+    st := Text { text: root.label; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.white; }
+    out property <length> text-w: st.preferred-width;
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The permission mode (.cc-mode): its icon and name (narrow: the icon only,
+/// finger-sized). Bypass all is red. The chooser is 2.6.
+component ModeBtn inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> mode-key;
+    in property <string> name;
+    in property <bool> icon-only;
+    callback clicked();
+    property <bool> bypass: root.mode-key == "bypassPermissions";
+    property <color> ink: root.bypass ? Theme.red : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+    height: root.icon-only ? Theme.control-sm * root.fs : Theme.sp-24 * root.fs;
+    width: root.icon-only ? Theme.control * root.fs : max(Theme.control-sm * root.fs, row.preferred-width + 2 * Theme.sp-6);
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.bypass ? Theme.red : ta.has-hover ? Theme.accent : Theme.border;
+    background: Theme.bg-primary;
+    row := HorizontalLayout {
+        x: (parent.width - self.preferred-width) / 2;
+        width: self.preferred-width;
+        spacing: Theme.sp-4;
+        Icon {
+            y: (parent.height - self.height) / 2;
+            width: Theme.icon-md * root.fs; height: Theme.icon-md * root.fs; tint: root.ink;
+            source: root.mode-key == "acceptEdits" ? Icons.mode-accept-edits : root.mode-key == "auto" ? Icons.mode-auto
+                : root.mode-key == "plan" ? Icons.mode-plan : root.mode-key == "dontAsk" ? Icons.mode-dont-ask
+                : root.bypass ? Icons.mode-bypass-permissions : Icons.mode-default;
+        }
+        if !root.icon-only: Text { text: root.name; font-size: Theme.text-11 * root.fs; color: root.ink; vertical-alignment: center; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tooltip { TipBox { text: "Permission mode: " + root.name + ". Click to change."; } }
+    }
+}
+
+/// Which key sends (.cc-sw): a pill holding ⏎ and ⌃⏎, a thumb under the live
+/// one, then "sends". A click swaps them.
+component EnterSwitch inherits Rectangle {
+    in property <float> fs: 1;
+    in property <bool> ctrl;
+    callback toggle();
+    property <length> w1: g1.preferred-width + 2 * Theme.sp-8;
+    property <length> w2: g2.preferred-width + 2 * Theme.sp-8;
+    property <length> cell-h: g1.preferred-height + 2 * Theme.sp-2;
+    width: self.w1 + self.w2 + 2 * Theme.sp-2 + Theme.sp-4 + sends.preferred-width;
+    height: self.cell-h + 2 * Theme.sp-2;
+    g1 := Text { visible: false; text: "⏎"; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; }
+    g2 := Text { visible: false; text: "⌃⏎"; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; }
+    Rectangle {
+        x: 0; width: root.w1 + root.w2 + 2 * Theme.sp-2;
+        border-radius: Theme.r-pill;
+        background: Theme.bg-tertiary;
+        Rectangle {
+            x: Theme.sp-2 + (root.ctrl ? root.w1 : 0px); y: Theme.sp-2;
+            width: root.ctrl ? root.w2 : root.w1; height: root.cell-h;
+            animate x, width { duration: Theme.motion; }
+            border-radius: Theme.r-pill; border-width: 1px; border-color: Theme.accent;
+            background: Theme.accent-dim;
+        }
+        Text {
+            x: Theme.sp-2; width: root.w1; height: parent.height; horizontal-alignment: center; vertical-alignment: center;
+            text: "⏎"; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold;
+            color: root.ctrl ? Theme.text-secondary : Theme.accent-hover; opacity: root.ctrl ? Theme.o-dim : 1;
+        }
+        Text {
+            x: Theme.sp-2 + root.w1; width: root.w2; height: parent.height; horizontal-alignment: center; vertical-alignment: center;
+            text: "⌃⏎"; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold;
+            color: root.ctrl ? Theme.accent-hover : Theme.text-secondary; opacity: root.ctrl ? 1 : Theme.o-dim;
+        }
+    }
+    sends := Text {
+        x: root.w1 + root.w2 + 2 * Theme.sp-2 + Theme.sp-4; height: parent.height; vertical-alignment: center;
+        text: "sends"; font-size: Theme.text-11 * root.fs; color: ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.toggle(); }
+        Tooltip { TipBox { text: root.ctrl ? "Enter makes a newline, Ctrl+Enter sends — click to swap" : "Enter sends, Shift+Enter makes a newline — click to swap"; } }
+    }
+}
+
+/// The chat inside a pane: the log, then the composer (specs/composer.md).
 export component ChatPane inherits Rectangle {
+    // The pane's key (src/app.rs), for the shared controls (Composer).
+    in property <string> key;
     // The pane's text size, a scale of the base size (the web's --cc-fs).
     in property <float> fs: 1;
     in property <[EntryView]> entries;
+    // idle | working | needs-input | waiting | exited
     in property <string> state;
+    // The permission mode: its key and its name.
+    in property <string> mode-key;
     in property <string> mode;
+    // Claude's session id: the first 8 characters, and the whole.
     in property <string> session;
+    in property <string> session-full;
     in property <string> model;
     in property <string> cost;
     in property <string> error;
+    // Narrower than composer-stack: the composer stacks.
     in property <bool> narrow;
+    // Stop was clicked once (src/app.rs disarms it after 3 s).
+    in property <bool> stop-armed;
     callback send(string);
     callback stop();
     callback respond(string, string, bool);
     callback answer(string, string);
     // The draft as the app holds it (src/app.rs): taken at start and whenever
-    // another view of this chat changed it (the full-screen pane); every
-    // change is handed back.
+    // the app changed it (another view of this chat, a send, a refused send);
+    // every change is handed back.
     in property <string> saved-draft;
     callback draft-changed(string);
     property <string> draft;
     init => { self.draft = root.saved-draft; }
     changed saved-draft => { if self.draft != root.saved-draft { self.draft = root.saved-draft; } }
+    in property <int> draft-gen;
+    changed draft-gen => { self.draft = root.saved-draft; }
     changed draft => { root.draft-changed(self.draft); }
-    property <bool> ctrl-enter;
     property <bool> stick: true;
+    property <bool> exited: root.state == "exited";
+    property <bool> busy: root.state == "working" || root.state == "needs-input";
+    // The app asks for this pane's box to take the focus.
+    property <int> focus-gen: Composer.focus-gen;
+    changed focus-gen => { if Composer.focus-key == root.key { ib.focus-box(); } }
+    function do-send() {
+        root.stick = true;
+        root.send(root.draft);
+    }
     background: Theme.bg-primary;
 
     VerticalLayout {
@@ -949,151 +1168,151 @@ export component ChatPane inherits Rectangle {
             comp := VerticalLayout {
                 padding: Theme.sp-8;
                 spacing: Theme.sp-6;
-                if !root.narrow: HorizontalLayout {
+                // The box; wide, the buttons beside it on its bottom line.
+                HorizontalLayout {
                     spacing: Theme.sp-8;
-                    InputBox { fs: root.fs; horizontal-stretch: 1; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
-                    VerticalLayout {
+                    ib := InputBox {
+                        horizontal-stretch: 1;
+                        fs: root.fs;
+                        draft <=> root.draft;
+                        ctrl-enter: Composer.ctrl-enter;
+                        enabled: !root.exited;
+                        placeholder: root.exited ? "Session ended." : root.narrow ? "Message Claude…"
+                            : Composer.ctrl-enter ? "Message Claude…  (Ctrl+Enter to send, Enter for newline)"
+                            : "Message Claude…  (Enter to send, Shift+Enter for newline)";
+                        send => { root.do-send(); }
+                    }
+                    if !root.narrow: VerticalLayout {
                         alignment: end;
-                        Rectangle {
+                        SquareBtn {
                             width: Theme.control; height: Theme.control;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: at.has-hover ? Theme.bg-hover : Theme.bg-primary;
-                            Icon { source: Icons.paperclip; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.text-secondary; }
-                            at := TouchArea { mouse-cursor: pointer; }
+                            icon: Icons.paperclip; tip: "Attach a file (uploads to crundi_attachments)";
+                            clicked => { Composer.attach(root.key); }
                         }
                     }
-                    if root.state == "working": VerticalLayout {
+                    if !root.narrow && root.state == "working": VerticalLayout {
                         alignment: end;
-                        Rectangle {
-                            width: Theme.control; height: Theme.control;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: sp.has-hover ? Theme.red-dim : Theme.bg-primary;
-                            Rectangle { width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-chip; background: Theme.red; }
-                            sp := TouchArea { mouse-cursor: pointer; clicked => { root.stop(); } }
-                        }
+                        StopBtn { fs: root.fs; armed: root.stop-armed; clicked => { root.stop(); } }
                     }
-                    VerticalLayout {
+                    if !root.narrow: VerticalLayout {
                         alignment: end;
-                        padding-bottom: Theme.sp-4;
-                        // Send is a .cc-btn, at the pane's text size.
-                        Rectangle {
-                            width: st.preferred-width + Theme.sp-24; height: Theme.sp-12 + Theme.sp-16 * root.fs;
-                            // Its soft accent glow.
-                            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-send; }
-                            Rectangle {
-                            border-radius: Theme.r-control;
-                            // The accent gradient in its rounded shape (AccentFill).
-                            AccentFill { width: parent.width; height: parent.height; }
-                            st := Text { text: "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.white; }
-                            TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { if root.draft != "" { root.send(root.draft); root.draft = ""; } }
-                            }
-                            }
+                        SendBtn {
+                            fs: root.fs;
+                            label: root.busy ? "Queue" : "Send";
+                            width: self.text-w + 2 * Theme.sp-12;
+                            height: Theme.sp-12 + Theme.sp-16 * root.fs;
+                            clicked => { root.do-send(); }
                         }
                     }
                 }
-                // A narrow pane: the box on its own row, the buttons under it.
-                if root.narrow: InputBox { fs: root.fs; draft <=> root.draft; ctrl-enter: root.ctrl-enter; send(t) => { root.send(t); } }
+                // Narrow: the buttons on their own row, Send filling the rest.
                 if root.narrow: HorizontalLayout {
                     spacing: Theme.sp-8;
-                    alignment: end;
-                    VerticalLayout {
-                        alignment: end;
-                        Rectangle {
-                            width: Theme.control; height: Theme.control;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: at2.has-hover ? Theme.bg-hover : Theme.bg-primary;
-                            Icon { source: Icons.paperclip; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.text-secondary; }
-                            at2 := TouchArea { mouse-cursor: pointer; }
-                        }
+                    SquareBtn {
+                        width: Theme.control; height: Theme.control;
+                        icon: Icons.paperclip; tip: "Attach a file (uploads to crundi_attachments)";
+                        clicked => { Composer.attach(root.key); }
                     }
-                    if root.state == "working": VerticalLayout {
-                        alignment: end;
-                        Rectangle {
-                            width: Theme.control; height: Theme.control;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: sp2.has-hover ? Theme.red-dim : Theme.bg-primary;
-                            Rectangle { width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-chip; background: Theme.red; }
-                            sp2 := TouchArea { mouse-cursor: pointer; clicked => { root.stop(); } }
-                        }
+                    SquareBtn {
+                        width: Theme.icon-lg + 2 * Theme.sp-10; height: Theme.control;
+                        icon: Icons.clock; icon-size: Theme.icon-lg; ink: Theme.text-muted; fill: false;
+                        tip: "Schedule this message";
+                        clicked => { Composer.schedule(root.key); }
                     }
-                    VerticalLayout {
-                        alignment: end;
-                        padding-bottom: Theme.sp-4;
-                        Rectangle {
-                            width: st2.preferred-width + Theme.sp-24; height: Theme.sp-12 + Theme.sp-16 * root.fs;
-                            // Its soft accent glow.
-                            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-send; }
-                            Rectangle {
-                            border-radius: Theme.r-control;
-                            // The accent gradient in its rounded shape (AccentFill).
-                            AccentFill { width: parent.width; height: parent.height; }
-                            st2 := Text { text: "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.white; }
-                            TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => { if root.draft != "" { root.send(root.draft); root.draft = ""; } }
-                            }
-                            }
-                        }
+                    if root.state == "working": StopBtn { fs: root.fs; armed: root.stop-armed; clicked => { root.stop(); } }
+                    SendBtn {
+                        horizontal-stretch: 1;
+                        fs: root.fs;
+                        label: root.busy ? "Queue" : "Send";
+                        height: Theme.control;
+                        clicked => { root.do-send(); }
                     }
                 }
-                // The meta row, small and muted (the web chat's .cc-meta).
-                HorizontalLayout {
-                    height: max(Theme.sp-20, Theme.sp-20 * root.fs);
-                    spacing: Theme.sp-8;
-                    Text { text: root.state == "" ? "idle" : root.state; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
-                    // The permission mode: an icon and its name, radius 6.
-                    Rectangle {
-                        y: (parent.height - self.height) / 2;
-                        height: Theme.sp-20 * root.fs;
-                        width: max(Theme.sp-24 * root.fs, mr.preferred-width + Theme.sp-12);
-                        border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                        background: Theme.bg-primary;
-                        mr := HorizontalLayout {
-                            x: Theme.sp-6;
-                            spacing: Theme.sp-6;
-                            Icon { source: Icons.shield-alert; width: Theme.icon-md * root.fs; height: Theme.icon-md * root.fs; y: (parent.height - self.height) / 2; tint: Theme.text-secondary; }
-                            Text { text: root.mode; font-size: Theme.text-11 * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
-                        }
-                    }
-                    // Which key sends: a switch, then "sends".
-                    HorizontalLayout {
-                        horizontal-stretch: 0;
-                        spacing: Theme.sp-6;
-                        Rectangle {
-                            y: Theme.sp-2; width: Theme.sp-48 + Theme.sp-8; height: Theme.sp-20;
-                            border-radius: Theme.r-pill;
-                            background: Theme.bg-tertiary;
-                            Rectangle {
-                                x: root.ctrl-enter ? Theme.sp-24 : Theme.sp-2; y: Theme.sp-2;
-                                width: root.ctrl-enter ? Theme.sp-32 : Theme.sp-24; height: Theme.sp-16;
-                                border-radius: Theme.r-pill; border-width: 1px; border-color: Theme.accent;
-                                background: Theme.accent-dim;
+                // The meta row (.cc-meta): the state, the mode, the switch (and
+                // the clock), then the id, the model and the cost on the right.
+                // What doesn't fit wraps to a second line, in order.
+                meta := Rectangle {
+                    property <length> gap: root.narrow ? Theme.sp-6 : Theme.sp-8;
+                    property <length> size: (root.narrow ? Theme.text-10 : Theme.text-11) * root.fs;
+                    property <length> avail: self.width - left.preferred-width;
+                    property <bool> id-on: !root.narrow && root.session != "";
+                    property <length> used-a: self.id-on ? self.gap + id-m.preferred-width : 0px;
+                    property <bool> id-fit: !self.id-on || self.used-a <= self.avail;
+                    property <length> used-b: self.used-a + (root.model != "" ? self.gap + model-m.preferred-width : 0px);
+                    property <bool> model-fit: self.id-fit && (root.model == "" || self.used-b <= self.avail);
+                    property <length> used-c: self.used-b + (root.cost != "" ? self.gap + cost-m.preferred-width : 0px);
+                    property <bool> cost-fit: self.model-fit && (root.cost == "" || self.used-c <= self.avail);
+                    property <bool> wraps: (self.id-on && !self.id-fit) || (root.model != "" && !self.model-fit) || (root.cost != "" && !self.cost-fit);
+                    height: lines.preferred-height;
+                    id-m := Text { visible: false; text: root.session; font-family: Theme.mono; font-size: meta.size; }
+                    model-m := Text { visible: false; text: root.model; font-size: meta.size; }
+                    cost-m := Text { visible: false; text: root.cost; font-size: meta.size; }
+                    lines := VerticalLayout {
+                        spacing: Theme.sp-4;
+                        HorizontalLayout {
+                            spacing: meta.gap;
+                            left := HorizontalLayout {
+                                horizontal-stretch: 0;
+                                spacing: meta.gap;
+                                Text {
+                                    text: root.state == "working" ? "working…" : root.state == "needs-input" ? "needs your input" : root.exited ? "exited" : "idle";
+                                    font-size: meta.size; vertical-alignment: center;
+                                    color: root.busy ? Theme.accent-hover : Theme.text-muted;
+                                }
+                                ModeBtn {
+                                    y: (parent.height - self.height) / 2;
+                                    fs: root.fs; mode-key: root.mode-key; name: root.mode; icon-only: root.narrow;
+                                    clicked => { Composer.mode(root.key); }
+                                }
+                                EnterSwitch {
+                                    y: (parent.height - self.height) / 2;
+                                    fs: root.fs; ctrl: Composer.ctrl-enter;
+                                    toggle => { Composer.set-ctrl-enter(!Composer.ctrl-enter); ib.focus-box(); }
+                                }
+                                if !root.narrow: SquareBtn {
+                                    y: (parent.height - self.height) / 2;
+                                    width: Theme.icon-md + 2 * Theme.sp-6; height: Theme.icon-md + 2 * Theme.sp-4;
+                                    icon: Icons.clock; icon-size: Theme.icon-md; ink: Theme.text-muted; fill: false;
+                                    tip: "Schedule this message";
+                                    clicked => { Composer.schedule(root.key); }
+                                }
                             }
-                            Text { x: Theme.sp-10; text: "⏎"; font-size: Theme.text-11; font-weight: Theme.w-bold; color: root.ctrl-enter ? Theme.text-secondary : Theme.accent-hover; vertical-alignment: center; height: parent.height; }
-                            Text { x: Theme.sp-32; text: "⌃⏎"; font-size: Theme.text-11; font-weight: Theme.w-bold; color: root.ctrl-enter ? Theme.accent-hover : Theme.text-secondary; vertical-alignment: center; height: parent.height; }
-                            TouchArea { mouse-cursor: pointer; clicked => { root.ctrl-enter = !root.ctrl-enter; } }
+                            Rectangle { horizontal-stretch: 1; min-width: 0; }
+                            // The session id: the first 8 characters, a dotted
+                            // line under it; a click copies the whole id.
+                            if meta.id-on && meta.id-fit: sid := Rectangle {
+                                width: sidt.preferred-width;
+                                sidt := Text {
+                                    text: root.session; font-family: Theme.mono; font-size: meta.size;
+                                    color: sh.has-hover ? Theme.text-secondary : Theme.text-muted;
+                                    vertical-alignment: center; height: parent.height;
+                                }
+                                // Slint has no dotted line: hairline dots (PLAN.md, Known gaps).
+                                for i in ceil(sidt.preferred-width / Theme.sp-4): Rectangle {
+                                    x: i * Theme.sp-4; y: (parent.height + sidt.preferred-height) / 2; width: Theme.sp-2; height: 1px; background: Theme.border;
+                                }
+                                sh := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { clip.select-all(); clip.copy(); clip.clear-selection(); Composer.copied(root.session-full); }
+                                    Tooltip { TipBox { text: "Claude session " + root.session-full + "  — click to copy (use it to resume this conversation)"; } }
+                                }
+                            }
+                            if root.model != "" && meta.model-fit: Text { text: root.model; font-size: meta.size; color: Theme.text-muted; vertical-alignment: center; }
+                            if root.cost != "" && meta.cost-fit: Text { text: root.cost; font-size: meta.size; color: Theme.text-muted; vertical-alignment: center; }
                         }
-                        Text { text: "sends"; font-size: Theme.text-11 * root.fs; color: Theme.text-secondary; vertical-alignment: center; }
+                        if meta.wraps: HorizontalLayout {
+                            spacing: meta.gap;
+                            alignment: start;
+                            if meta.id-on && !meta.id-fit: Text { text: root.session; font-family: Theme.mono; font-size: meta.size; color: Theme.text-muted; }
+                            if root.model != "" && !meta.model-fit: Text { text: root.model; font-size: meta.size; color: Theme.text-muted; }
+                            if root.cost != "" && !meta.cost-fit: Text { text: root.cost; font-size: meta.size; color: Theme.text-muted; }
+                        }
                     }
-                    // Schedule this message: border, radius 6.
-                    Rectangle {
-                        y: Theme.sp-2; width: Theme.sp-24; height: Theme.sp-20;
-                        border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                        Icon { source: Icons.clock; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
-                    }
-                    Rectangle { horizontal-stretch: 1; }
-                    // The session id: mono, a dotted line under it.
-                    Rectangle {
-                        width: sid.preferred-width;
-                        sid := Text { text: root.session; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; height: parent.height; }
-                        for i in ceil(sid.preferred-width / Theme.sp-4): Rectangle { x: i * Theme.sp-4; y: parent.height - Theme.sp-4; width: 1px; height: 1px; background: Theme.border; }
-                    }
-                    Text { text: root.model; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
-                    Text { text: root.cost; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
                 }
             }
         }
     }
+    // Copies the whole session id (a hidden input: Slint's clipboard is a
+    // text input's).
+    clip := TextInput { visible: false; width: 0; height: 0; text: root.session-full; read-only: true; }
 }

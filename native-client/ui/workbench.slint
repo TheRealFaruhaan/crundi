@@ -21,8 +21,13 @@ export struct PaneView {
     title: string,
     state: string,
     entries: [EntryView],
+    // The permission mode's key and name; Claude's session id (its first 8
+    // characters, and the whole); Stop armed (one click).
+    mode-key: string,
     mode: string,
     session: string,
+    session-full: string,
+    stop-armed: bool,
     model: string,
     cost: string,
     error: string,
@@ -39,6 +44,8 @@ export struct PaneView {
     armed: bool,
     fs: float,
     draft: string,
+    // Counts the app's own changes to the draft (a send, a refused send).
+    draft-gen: int,
     // The header folds (its content box under pane-fold: src/head.rs), and
     // its "…" menu is open (2.2).
     narrow: bool,
@@ -66,7 +73,8 @@ component Launcher inherits Rectangle {
     VerticalLayout {
         alignment: center;
         spacing: Theme.sp-12;
-        Text { text: ">_"; font-size: Theme.text-26; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
+        // The big ">_" is a mark, not text: sized as a box (sp-48), as the web's.
+        Text { text: ">_"; font-size: Theme.sp-48; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
         // Each centred on the pane, also when the pane is narrower: then it
         // overflows both sides evenly, as the web's centred column does.
         Rectangle {
@@ -322,15 +330,20 @@ export component PaneCard inherits Rectangle {
         }
         if p.kind == "chat": ChatPane {
             vertical-stretch: 1;
+            key: p.key;
             entries: p.entries;
             state: p.state;
+            mode-key: p.mode-key;
             mode: p.mode;
             session: p.session;
+            session-full: p.session-full;
+            stop-armed: p.stop-armed;
             model: p.model;
             cost: p.cost;
             error: p.error;
             fs: p.fs;
             saved-draft: p.draft;
+            draft-gen: p.draft-gen;
             narrow: p.w < Theme.composer-stack && !p.full;
             send(t) => { root.send(t); }
             stop => { root.stop(); }
@@ -432,7 +445,8 @@ export component Workbench inherits Rectangle {
     if !root.has-project: VerticalLayout {
         alignment: center;
         spacing: Theme.sp-8;
-        Text { text: ">_"; font-size: Theme.text-26; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
+        // The big ">_" is a mark, not text: sized as a box (sp-48), as the web's.
+        Text { text: ">_"; font-size: Theme.sp-48; font-family: Theme.mono; color: Theme.text-muted; opacity: Theme.o-faint; horizontal-alignment: center; }
         Text { text: "Select a project to open the workbench"; font-size: Theme.text-14; color: Theme.text-secondary; horizontal-alignment: center; }
         Text { text: "Or add a new project from the sidebar"; font-size: Theme.text-12; color: Theme.text-muted; horizontal-alignment: center; }
     }
