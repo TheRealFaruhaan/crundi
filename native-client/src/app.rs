@@ -142,6 +142,7 @@ pub struct App {
     drafts_server: String,
     restored: HashMap<String, String>,
     drafts_dirty: bool,
+    drafts_timer: bool,
     /// Errors the client adds to a chat's log (a refused send).
     local_errors: u32,
     /// The 30 s re-count of timed grants, and the toast's 3.5 s.
@@ -257,6 +258,7 @@ pub fn init(window: &MainWindow) {
             drafts_server: String::new(),
             restored: HashMap::new(),
             drafts_dirty: false,
+            drafts_timer: false,
             timers: vec![],
             toast_gen: 0,
         })
@@ -319,7 +321,7 @@ pub fn init(window: &MainWindow) {
     c.on_mode(|k| open_mode_picker(k.as_str()));
     c.on_caret(|k, c, an| { with(|a| a.carets.insert(k.to_string(), (c.max(0) as usize, an.max(0) as usize))); });
     c.on_attach(|k| pick_file(k.to_string()));
-    c.on_paste(|k| paste(k.as_str()));
+    c.on_paste(|k, si| paste(k.as_str(), si));
     window.on_file_target(|k| { with(|a| a.file_target = Some(k.to_string())); });
     window.on_mode_choose(|m| choose_mode(m.as_str()));
     window.on_mode_close(close_mode_picker);
@@ -1579,7 +1581,12 @@ fn set_draft(key: &str, text: &str) {
 /// The drafts go to disk at most every menu-linger while typing (and at
 /// quit: [flush_drafts]).
 fn write_drafts_soon() {
-    slint::Timer::single_shot(Duration::from_millis(350), flush_drafts);
+    // One write pending at a time, not one per keystroke.
+    if with(|a| std::mem::replace(&mut a.drafts_timer, true)).unwrap_or(true) { return; }
+    slint::Timer::single_shot(Duration::from_millis(350), || {
+        with(|a| a.drafts_timer = false);
+        flush_drafts();
+    });
 }
 
 pub fn flush_drafts() {
@@ -1775,9 +1782,11 @@ pub fn file_dropped(path: std::path::PathBuf) {
     });
 }
 
-/// Ctrl+V in a chat's box: a picture (as image.png) or a copied file
-/// uploads, and the key is taken; anything else is the ordinary paste.
-fn paste(key: &str) -> bool {
+/// Ctrl+V (or Shift+Insert) in a chat's box: a picture (as image.png) or a
+/// copied file uploads, and the key is taken; anything else is the ordinary
+/// paste. Slint's input pastes on Ctrl+V only, so Shift+Insert's text is put
+/// in here, at the caret.
+fn paste(key: &str, shift_insert: bool) -> bool {
     let Ok(mut cb) = arboard::Clipboard::new() else { return false };
     if let Ok(files) = cb.get().file_list() {
         if let Some(f) = files.into_iter().next() { upload_file(key, &f); return true; }
@@ -1788,7 +1797,43 @@ fn paste(key: &str) -> bool {
             return true;
         }
     }
+    if shift_insert {
+        if let Ok(t) = cb.get_text() { put_text(key, &t); }
+        return true;
+    }
     false
+}
+
+/// Text into a chat's box at its caret, replacing a selection, as typed
+/// (a paste).
+fn put_text(key: &str, text: &str) {
+    let done = with(|a| {
+        let cur = a.drafts.get(key).cloned().unwrap_or_default();
+        let (c, an) = a.carets.get(key).copied().unwrap_or((cur.len(), cur.len()));
+        let fix = |i: usize| { let mut i = i.min(cur.len()); while !cur.is_char_boundary(i) { i -= 1; } i };
+        let (s0, s1) = (fix(c.min(an)), fix(c.max(an)));
+        let new = format!("{}{}{}", &cur[..s0], text, &cur[s1..]);
+        let caret = s0 + text.len();
+        save_draft_in(a, key, &new);
+        a.carets.insert(key.to_string(), (caret, caret));
+        (new, caret)
+    });
+    let Some((new, caret)) = done else { return };
+    if let Some(w) = ui() {
+        let c = w.global::<Composer>();
+        c.set_insert_key(key.into());
+        c.set_insert_text(new.into());
+        c.set_insert_caret(caret as i32);
+        c.set_insert_gen(c.get_insert_gen() + 1);
+    }
+    write_drafts_soon();
+}
+
+/// The test driver's clipboard: kept open, since on X11 the clipboard's
+/// contents live as long as their owner.
+pub fn keep_clipboard(cb: arboard::Clipboard) {
+    thread_local! { static KEEP: RefCell<Option<arboard::Clipboard>> = const { RefCell::new(None) }; }
+    KEEP.with(|k| *k.borrow_mut() = Some(cb));
 }
 
 /// RGBA pixels as a PNG file.

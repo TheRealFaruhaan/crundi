@@ -78,10 +78,11 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.6 Permission-mode picker.** `cc-modal` with every mode, its
      colour and description; changing a running chat's mode; the mode
      button's colour per mode.
-   - [x] **2.7 Attachments.** The attach button, the file picker, drag and
-     drop (`cc-dropping`), paste, upload progress (`cc-up`), the chips, and
-     the path put into the message (`/api/attachments/upload`).
-   - [x] **2.8 Drafts.** Kept per chat across switching and a restart
+   - [ ] **2.7 Attachments.** The attach button, the file picker, drag and
+     drop (`cc-dropping`), paste, upload progress (`cc-up`), and the path
+     put into the message (`/api/attachments/upload`). No chips: the web
+     has none, it puts the path into the message.
+   - [ ] **2.8 Drafts.** Kept per chat across switching and a restart
      (`saveDraft` / `readDraft` / `pruneDrafts`).
    - [ ] **2.9 Queued messages.** Sent while a turn runs: the queue block
      (`cc-queue`), cancel one, take it back to edit (`recallQueued`), sent when
@@ -186,10 +187,8 @@ Phase 1 left these, each with its workaround in place:
   - the composer's schedule clock (2.10): drawn, with its hover and title,
     but it opens nothing yet;
   - the pane header's lock opens nothing yet (its dialog is 2.12);
-  - attachments;
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
   - "Other…" answers to questions;
-  - dragging a pane by its header.
 - **Tooltips** (phase 2). The web's are the system's own (`title`); Slint
   draws its own (`Tooltip` with a `TipBox`: bg-tertiary, 1px border, 12px).
   They show after Slint's delay, under the pointer.

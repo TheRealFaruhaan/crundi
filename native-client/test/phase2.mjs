@@ -1168,6 +1168,38 @@ if (p) check('while uploading: the bar (name, number) and attach busy', true, pa
 await snap('2.7-uploading');
 p = await until('the big upload finishes', (q) => /-big\.bin $/.test(pane(q, liveA)?.draft || '') && !pane(q, liveA).upBusy, 60000);
 if (p) check('a big file uploads and its path goes in', true);
+// A long name elides; name and track share the bar 1:2 (F53): the track
+// keeps about two thirds of the bar's room.
+{
+  const longF = join(tmpA, 'quarterly-report-final-version-with-all-the-appendices-and-the-notes-included.bin');
+  writeFileSync(longF, Buffer.alloc(60 * 1024 * 1024, 7));
+  await clearBox();
+  await ui('attach', longF);
+  p = await until('the long-named upload shows its bar', (q) => pane(q, liveA)?.upOn && pane(q, liveA)?.upBusy, 10000);
+  if (p) {
+    const q = pane(p, liveA), img = await shot();
+    const near = (c, h, t) => Math.abs(c[0] - parseInt(h.slice(1, 3), 16)) <= t && Math.abs(c[1] - parseInt(h.slice(3, 5), 16)) <= t && Math.abs(c[2] - parseInt(h.slice(5, 7), 16)) <= t;
+    let best = 0;
+    for (let y = Math.round(WB.y + q.y + q.h - 140); y < Math.min(img.h, WB.y + q.y + q.h); y++) {
+      let run = 0;
+      for (let x = Math.round(WB.x + q.x); x < Math.min(img.w, WB.x + q.x + q.w); x++) {
+        const c = img.at(x, y);
+        if (near(c, '#1a1a28', 3) || near(c, '#6366f1', 12)) { run++; best = Math.max(best, run); } else run = 0;
+      }
+    }
+    check('a long file name elides and the track keeps its two thirds of the bar', best > q.w * 0.5, { best, w: q.w });
+    await snap('2.7-long-name');
+  }
+  await until('the long upload finishes', (q) => !pane(q, liveA)?.upBusy, 60000);
+}
+// Shift+Insert pastes the clipboard's text, as Ctrl+V does (F57).
+await clearBox();
+await keys('ab');
+await ui('caret', '1');
+await ui('clipboard-text', 'XY');
+await keys('Insert', ['Shift']);
+p = await until('Shift+Insert pastes text at the caret', (q) => pane(q, liveA)?.draft === 'aXYb', 5000);
+if (p) check('Shift+Insert pastes the clipboard\'s text at the caret', true);
 // Dropped on a chat from this machine: the local paths, no upload.
 await clearBox();
 const before = attCount();

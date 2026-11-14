@@ -138,8 +138,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "Control" => Key::Control.into(), "Shift" => Key::Shift.into(), "Alt" => Key::Alt.into(), _ => Key::Meta.into(),
             }).collect()).unwrap_or_default();
             for m in &mods { w.window().dispatch_event(WindowEvent::KeyPressed { text: m.clone() }); }
-            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), o => o.into() };
-            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
+            let text: slint::SharedString = match t { "Escape" => Key::Escape.into(), "Return" => Key::Return.into(), "Backspace" => Key::Backspace.into(), "Tab" => Key::Tab.into(), "Backtab" => Key::Backtab.into(), "Insert" => Key::Insert.into(), o => o.into() };
+            for ch in if t.len() > 1 && !["Escape", "Return", "Backspace", "Tab", "Backtab", "Insert"].contains(&t) { t.chars().map(|c| c.to_string().into()).collect::<Vec<slint::SharedString>>() } else { vec![text] } {
                 w.window().dispatch_event(WindowEvent::KeyPressed { text: ch.clone() });
                 w.window().dispatch_event(WindowEvent::KeyReleased { text: ch });
             }
@@ -186,6 +186,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 // Files dragged from the system over the window (true) or gone
                 // (false): with the pointer over a chat, its drop outline.
                 "file-hover" => crate::app::file_hover(arg(c, 0) == "true"),
+                // Text on the system's clipboard (for Shift+Insert).
+                "clipboard-text" => { if let Ok(mut cb) = arboard::Clipboard::new() { let _ = cb.set_text(arg(c, 0)); crate::app::keep_clipboard(cb); } }
                 "paste-file" => crate::app::upload_file(&chat(), std::path::Path::new(&arg(c, 0))),
                 "caret" => { let at: usize = arg(c, 0).parse().unwrap_or(0); crate::app::set_caret(&chat(), at, arg(c, 1).parse().unwrap_or(at)); }
                 "respond" => w.invoke_respond(chat().into(), arg(c, 0).into(), arg(c, 1).into(), arg(c, 2) == "true"),

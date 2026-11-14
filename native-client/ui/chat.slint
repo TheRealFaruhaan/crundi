@@ -630,7 +630,7 @@ component ToolRow inherits Rectangle {
         }
         if root.open && t.text != "": Rectangle {
             height: min(out.preferred-height + Theme.sp-12, Theme.composer-max * 2);
-            Rectangle { height: 1px; background: Theme.border-subtle; }
+            Rectangle { y: 0; height: 1px; background: Theme.border-subtle; }
             Flickable {
                 y: 1px;
                 height: parent.height - 1px;
@@ -885,7 +885,7 @@ export global Composer {
     callback caret(string, int, int);
     // Ctrl+V (or Shift+Insert) in a pane's box: true when the clipboard held a
     // picture or a file, which the app uploads (the key is then taken).
-    callback paste(string) -> bool;
+    callback paste(string, bool) -> bool;
     // The app put text into a pane's box (an attached path): its whole new
     // text and the caret; counted.
     in-out property <string> insert-key;
@@ -907,8 +907,9 @@ component InputBox inherits Rectangle {
     callback send();
     // The caret moved: the caret and the selection's other end (byte offsets).
     callback caret(int, int);
-    // Ctrl+V / Shift+Insert: true when the app took it (a picture, a file).
-    callback paste() -> bool;
+    // Ctrl+V / Shift+Insert (true): true when the app took it (a picture, a
+    // file; Shift+Insert's text too: Slint's input knows only Ctrl+V).
+    callback paste(bool) -> bool;
     public function focus-box() { te.focus(); }
     // The app's text and caret (an attached path put in): the box takes the
     // focus with the caret there.
@@ -941,7 +942,7 @@ component InputBox inherits Rectangle {
             FocusScope {
                 capture-key-pressed(ev) => {
                     if ((ev.modifiers.control || ev.modifiers.meta) && (ev.text == "v" || ev.text == "V")) || (ev.modifiers.shift && ev.text == Key.Insert) {
-                        if root.paste() { return accept; }
+                        if root.paste(ev.modifiers.shift && ev.text == Key.Insert) { return accept; }
                         return reject;
                     }
                     if ev.text == Key.Return {
@@ -1249,7 +1250,8 @@ export component ChatPane inherits Rectangle {
         Rectangle {
             background: Theme.bg-secondary;
             height: comp.preferred-height;
-            Rectangle { height: 1px; background: Theme.border; }
+            // Along its top edge (a hairline with no y would be centred).
+            Rectangle { y: 0; height: 1px; background: Theme.border; }
             comp := VerticalLayout {
                 padding: Theme.sp-8;
                 spacing: Theme.sp-6;
@@ -1267,7 +1269,7 @@ export component ChatPane inherits Rectangle {
                             : "Message Claude…  (Enter to send, Shift+Enter for newline)";
                         send => { root.do-send(); }
                         caret(c, a) => { Composer.caret(root.key, c, a); }
-                        paste => { return Composer.paste(root.key); }
+                        paste(si) => { return Composer.paste(root.key, si); }
                     }
                     if !root.narrow: VerticalLayout {
                         alignment: end;
@@ -1322,22 +1324,28 @@ export component ChatPane inherits Rectangle {
                 if root.up-on: HorizontalLayout {
                     padding-top: Theme.sp-4; padding-left: Theme.sp-2; padding-right: Theme.sp-2;
                     spacing: Theme.sp-8;
+                    // Name and track share the room 1:2 whatever the name's
+                    // length (no width of their own); a long name elides.
                     Text {
-                        horizontal-stretch: 1; min-width: 0;
+                        horizontal-stretch: 1; min-width: 0; preferred-width: 0;
                         text: root.up-name; font-size: Theme.text-11; color: Theme.text-muted;
                         overflow: elide; vertical-alignment: center;
                     }
-                    Rectangle {
-                        horizontal-stretch: 2;
-                        y: (parent.height - self.height) / 2; height: Theme.sp-4;
-                        border-radius: Theme.r-pill;
-                        background: Theme.bg-tertiary;
-                        clip: true;
+                    // The track, centred on the text's line.
+                    VerticalLayout {
+                        horizontal-stretch: 2; min-width: 0; preferred-width: 0;
+                        alignment: center;
                         Rectangle {
-                            x: 0; width: parent.width * max(0, min(1, root.up-frac));
-                            animate width { duration: Theme.motion-fast; }
+                            height: Theme.sp-4;
                             border-radius: Theme.r-pill;
-                            background: Theme.accent;
+                            background: Theme.bg-tertiary;
+                            clip: true;
+                            Rectangle {
+                                x: 0; width: parent.width * max(0, min(1, root.up-frac));
+                                animate width { duration: Theme.motion-fast; }
+                                border-radius: Theme.r-pill;
+                                background: Theme.accent;
+                            }
                         }
                     }
                     Text {
