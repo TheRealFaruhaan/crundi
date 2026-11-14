@@ -447,62 +447,62 @@ End-to-end tests (test/phase2.mjs):
 ## Checklist
 
 Attach button
-- [ ] Click opens the system file picker (one file, no filter), without
+- [x] Click opens the system file picker (one file, no filter), without
       freezing the window; cancel does nothing.
-- [ ] A picked file always uploads (also on the same machine).
-- [ ] Busy (o-soft, inert) while any upload of the chat runs.
+- [x] A picked file always uploads (also on the same machine).
+- [x] Busy (o-soft, inert) while any upload of the chat runs.
 
 Upload bar
-- [ ] Hidden at rest; shown under the input row (wide) or under the
+- [x] Hidden at rest; shown under the input row (wide) or under the
       attach/clock/Send row (narrow), before the meta row.
-- [ ] name (text-11 muted, ellipsized, weight 1) · track (sp-4 high, pill,
+- [x] name (text-11 muted, ellipsized, weight 1) · track (sp-4 high, pill,
       bg-tertiary, weight 2) with an accent fill · pct (text-11 muted,
       tabular, right, ≥ sp-32 + sp-2).
-- [ ] "N%" follows the bytes sent; "saving" once the body is sent.
-- [ ] Stays menu-linger after the last upload ends, then hides.
+- [x] "N%" follows the bytes sent; "saving" once the body is sent.
+- [x] Stays menu-linger after the last upload ends, then hides.
 
 Success
-- [ ] Path inserted at the caret / replacing the selection, with the
+- [x] Path inserted at the caret / replacing the selection, with the
       spacing rules; caret after it; box grows; box focused; draft saved.
-- [ ] Toast "Attached: `<server name>`".
-- [ ] The path is the server's absolute path, raw; no chips anywhere.
+- [x] Toast "Attached: `<server name>`".
+- [x] The path is the server's absolute path, raw; no chips anywhere.
 
 Drop
-- [ ] Dashed accent outline (DashedBox, sp-2 / sp-6 / sp-4) just inside the
+- [x] Dashed accent outline (DashedBox, sp-2 / sp-6 / sp-4) just inside the
       chat while a drag is over it; goes on leave, drop, end, Esc.
-- [ ] Same machine (localhost, 127.0.0.1, ::1, [::1]): local paths,
+- [x] Same machine (localhost, 127.0.0.1, ::1, [::1]): local paths,
       space-joined, one insertion, "File added" / "N files added".
-- [ ] Otherwise: each file uploads.
-- [ ] A drop on a chat pane's header goes to that chat (named difference).
-- [ ] Several files from one drop are one drop.
+- [x] Otherwise: each file uploads.
+- [x] A drop on a chat pane's header goes to that chat (named difference).
+- [x] Several files from one drop are one drop.
 
 Paste
-- [ ] Ctrl+V / Cmd+V / Shift+Insert with a picture: uploads `image.png`; a
+- [x] Ctrl+V / Cmd+V / Shift+Insert with a picture: uploads `image.png`; a
       copied file uploads under its name; only the first.
-- [ ] Text paste unchanged.
+- [x] Text paste unchanged.
 
 Errors
-- [ ] `{ok:false, error}` → "Upload failed: `<error>`" (or "?").
-- [ ] Non-JSON → "Upload failed: The upload was answered with HTTP …, not by
+- [x] `{ok:false, error}` → "Upload failed: `<error>`" (or "?").
+- [x] Non-JSON → "Upload failed: The upload was answered with HTTP …, not by
       Crundi. Something between this device and the server may have
       blocked it." (tags stripped, 80 chars; ", and nothing else" when empty).
-- [ ] No connection → "Upload failed: Network error".
-- [ ] 404 "Not found" → "Upload failed: not supported by this server".
-- [ ] Error toasts are the red toast; nothing is inserted; attach and bar
+- [x] No connection → "Upload failed: Network error".
+- [x] 404 "Not found" → "Upload failed: not supported by this server".
+- [x] Error toasts are the red toast; nothing is inserted; attach and bar
       recover.
 
 Drafts
-- [ ] Text kept per server and chat in `Saved`, plus the project copy with
+- [x] Text kept per server and chat in `Saved`, plus the project copy with
       the claim rules.
-- [ ] Saved on every change (typing, insert, give-back, put-back), written
+- [x] Saved on every change (typing, insert, give-back, put-back), written
       to disk throttled and on quit.
-- [ ] Cleared on send and on a matching schedule; NOT on close.
-- [ ] Restored when a chat's composer is built: own, else unclaimed project
+- [x] Cleared on send and on a matching schedule; NOT on close.
+- [x] Restored when a chat's composer is built: own, else unclaimed project
       copy; the box grows to fit; last built owns the project copy.
-- [ ] 30-day prune at start.
-- [ ] Survives switching, closing and reopening a pane, a client restart;
+- [x] 30-day prune at start.
+- [x] Survives switching, closing and reopening a pane, a client restart;
       adopted by a new chat after a close or a server restart.
 
 Tests
-- [ ] The ten end-to-end tests above pass in test/phase2.mjs; phase1 and
+- [x] The ten end-to-end tests above pass in test/phase2.mjs; phase1 and
       drive still pass.

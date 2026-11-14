@@ -38,6 +38,10 @@ pub struct Saved {
     /// newline), otherwise Enter (the web's localStorage.crundi_chat_enter).
     #[serde(default)]
     pub chat_enter: String,
+    /// The chats' drafts, per server (src/drafts.rs): {"<server>":
+    /// {"chat:<id>": {v, t}, "project:<alias>": {v, t}}}.
+    #[serde(default)]
+    pub drafts: std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub fn config_dir() -> PathBuf {

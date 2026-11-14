@@ -78,10 +78,10 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.6 Permission-mode picker.** `cc-modal` with every mode, its
      colour and description; changing a running chat's mode; the mode
      button's colour per mode.
-   - [ ] **2.7 Attachments.** The attach button, the file picker, drag and
+   - [x] **2.7 Attachments.** The attach button, the file picker, drag and
      drop (`cc-dropping`), paste, upload progress (`cc-up`), the chips, and
      the path put into the message (`/api/attachments/upload`).
-   - [ ] **2.8 Drafts.** Kept per chat across switching and a restart
+   - [x] **2.8 Drafts.** Kept per chat across switching and a restart
      (`saveDraft` / `readDraft` / `pruneDrafts`).
    - [ ] **2.9 Queued messages.** Sent while a turn runs: the queue block
      (`cc-queue`), cancel one, take it back to edit (`recallQueued`), sent when
@@ -183,8 +183,8 @@ Phase 1 left these, each with its workaround in place:
 - **Visual-only controls** until their phase:
   - Cru;
   - Add project and Inbox;
-  - the composer's schedule clock (2.10) and attach button (2.7): drawn,
-    with their hover and titles, but they open nothing yet;
+  - the composer's schedule clock (2.10): drawn, with its hover and title,
+    but it opens nothing yet;
   - the pane header's lock opens nothing yet (its dialog is 2.12);
   - attachments;
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
@@ -285,6 +285,28 @@ Phase 1 left these, each with its workaround in place:
   - no check mark on the selected mode (the web's has no size and is never
     seen); the keyboard's focus is an accent border on the option, and Tab
     stays in the dialog (the web's can leave it, behind the backdrop).
+- **Attachments and drafts** (2.7, 2.8), deliberate differences:
+  - a file dropped on a chat pane's header goes to that chat (the web's
+    workbench takes it and the path is lost);
+  - attach stays busy, and the upload bar stays, until the chat's last
+    upload ends (the web's shared flag lets the first one end it);
+  - an older server's 404 "Not found" reads "Upload failed: not supported by
+    this server";
+  - drafts live in the client's settings per server (`Saved.drafts`),
+    written at most every menu-linger and at quit.
+- **Dropping files from the system** (2.7): winit sends no pointer position
+  with a file drag, so the chat is the one under the last pointer position
+  Slint saw (on X11 the drag may not move it), else the focused chat; full
+  screen, its chat. Text drags from panels (Files, Git…) come with those
+  panels.
+- **Pasting** (2.7): a picture or a copied file is read from the system's
+  clipboard (`arboard`) on Ctrl+V / Cmd+V / Shift+Insert in the message box;
+  a paste with the focus in the log isn't caught.
+- **The file picker** (2.7) is the system's (`rfd`); on Linux it needs the
+  desktop's xdg-desktop-portal.
+- **Upload errors** (2.7): a proxy's non-JSON answer and no answer at all
+  are unit-tested (`attach::upload_answer`); the end-to-end test drives a
+  refused upload (an empty file).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

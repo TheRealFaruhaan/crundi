@@ -17,6 +17,10 @@ gethostname = "1"
 open = "5"
 base64 = "0.22"
 png = "0.17"
+# The attach button's file picker (the system's own; xdg-desktop-portal on
+# Linux, no GTK) and a pasted picture or file (2.7).
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+arboard = "3.7"
 
 [features]
 # The GPU path: CEF hands over its frames as shared GPU textures (DMA-BUF on

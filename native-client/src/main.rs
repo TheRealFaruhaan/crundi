@@ -20,6 +20,8 @@
 slint::include_modules!();
 
 mod api;
+mod attach;
+mod drafts;
 mod app;
 mod browser;
 mod chat;
@@ -197,6 +199,11 @@ fn main() {
                 WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
                     if let Some(u) = w.upgrade() { pointer_pressed(&u, at.0, at.1); }
                 }
+                // Files dragged from the system (2.7): the chat under the
+                // pointer draws its outline; a drop goes there.
+                WindowEvent::HoveredFile(_) => app::file_hover(true),
+                WindowEvent::HoveredFileCancelled => app::file_hover(false),
+                WindowEvent::DroppedFile(path) => app::file_dropped(path.clone()),
                 _ => {}
             }
             EventResult::Propagate
@@ -211,6 +218,8 @@ fn main() {
     }
 
     ui.run().expect("event loop");
+    // Drafts typed in the last moment reach the disk.
+    app::flush_drafts();
 
     // Close the browsers, let CEF finish, then shut it down.
     let browsers: Vec<_> = browser::with(|st| st.panels.iter().filter_map(|p| p.browser.clone()).collect());

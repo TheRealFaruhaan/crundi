@@ -46,7 +46,7 @@
 
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
@@ -1129,6 +1129,126 @@ if (check('the plain chat has a claude process', !!procN)) {
   await snap('2.6-refused');
 }
 for (const id of [liveM, liveN]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+
+// ─── 2.7 Attachments ───
+const demoPath = process.env.CRUNDI_TEST_PROJECT || join(tmpdir(), 'crundi-native-demo2');
+const attDir = join(demoPath, 'crundi_attachments');
+const attCount = () => (existsSync(attDir) ? readdirSync(attDir).length : 0);
+const tmpA = mkdtempSync(join(tmpdir(), 'crundi-attach-'));
+const notes = join(tmpA, 'notes.txt'); writeFileSync(notes, 'hello notes\n');
+const otherF = join(tmpA, 'other file.md'); writeFileSync(otherF, '# other\n');
+const emptyF = join(tmpA, 'empty.txt'); writeFileSync(emptyF, '');
+const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(40 * 1024 * 1024, 7));
+const pic = join(tmpA, 'shot.png'); writeFileSync(pic, Buffer.from((await d.send({ cmd: 'snapshot' })).data, 'base64'));
+const liveA = await make('demo', 'Attach', false);
+const liveB2 = await make('demo', 'Attach two', false);
+p = await until('the attach chats have panes', (q) => pane(q, liveA) && pane(q, liveB2), 30000);
+const apane = async () => pane(await props(), liveA);
+const focusA = async () => { await ui('focus-pane', (await apane()).id); await ui('composer-focus'); };
+await focusA();
+await clearBox();
+// Attach: the path goes in at the caret, spaced; the file is on the server.
+await keys('Please read andsummarise');
+await ui('caret', '15');
+await ui('attach', notes);
+p = await until('an attached file\'s path goes in at the caret', (q) => /^Please read and \/\S+\/crundi_attachments\/\d+-notes\.txt summarise$/.test(pane(q, liveA)?.draft || ''), 20000);
+if (p) {
+  const path = pane(p, liveA).draft.split(' ')[3];
+  check('the upload reached the server with the same bytes', existsSync(path) && readFileSync(path, 'utf8') === 'hello notes\n', path);
+  p = await until('the toast names the stored file', (q) => /^Attached: \d+-notes\.txt$/.test(q.toast), 5000);
+  if (p) check('toast "Attached: <stored name>"', true);
+  p = await until('the bar goes after the upload, attach free again', (q) => !pane(q, liveA).upOn && !pane(q, liveA).upBusy, 5000);
+  if (p) check('the upload bar goes and attach is free again', true);
+}
+// A big file: the bar shows (name, a number), attach busy, then all gone.
+await clearBox();
+await ui('attach', big);
+p = await until('uploading: the bar and attach busy', (q) => { const c = pane(q, liveA); return c.upOn && c.upBusy && c.upName === 'big.bin' && /^(\d+%|saving)$/.test(c.upLabel); }, 10000);
+if (p) check('while uploading: the bar (name, number) and attach busy', true, pane(p, liveA));
+await snap('2.7-uploading');
+p = await until('the big upload finishes', (q) => /-big\.bin $/.test(pane(q, liveA)?.draft || '') && !pane(q, liveA).upBusy, 60000);
+if (p) check('a big file uploads and its path goes in', true);
+// Dropped on a chat from this machine: the local paths, no upload.
+await clearBox();
+const before = attCount();
+await ui('drop', notes, otherF);
+p = await until('dropped files: their local paths', (q) => pane(q, liveA)?.draft === `${notes} ${otherF} ` && q.toast === '2 files added', 5000);
+if (p) check('a drop on the same machine: local paths, space-separated, "2 files added", nothing uploaded', attCount() === before, attCount());
+// Dropped on a chat from elsewhere (the driver's remote): each uploads.
+await clearBox();
+await ui('drop', 'upload', notes);
+p = await until('a remote drop uploads', (q) => /\/crundi_attachments\/\d+-notes\.txt $/.test(pane(q, liveA)?.draft || ''), 20000);
+if (p) check('a drop on a remote server uploads; the server\'s path goes in', true);
+// A pasted picture uploads as image.png.
+await clearBox();
+await ui('paste-image', pic);
+p = await until('a pasted picture uploads', (q) => /\/crundi_attachments\/\d+-image\.png $/.test(pane(q, liveA)?.draft || ''), 20000);
+if (p) check('a pasted picture uploads as image.png', true);
+// Refused: an empty file ("Missing name or data"): nothing goes in.
+await clearBox();
+await keys('kept');
+await ui('attach', emptyF);
+p = await until('a refused upload toasts', (q) => q.toast === 'Upload failed: Missing name or data', 10000);
+if (p) check('a refused upload: the red toast, nothing inserted, attach free', pane(p, liveA).draft === 'kept' && !pane(p, liveA).upBusy, pane(p, liveA));
+await snap('2.7-refused');
+
+// ─── 2.8 Drafts ───
+await clearBox();
+await keys('a draft to keep');
+await ui('focus-pane', pane(await props(), liveB2).id); await ui('composer-focus');
+await keys('the second one');
+await sleep(800);
+{
+  const sd = saved().drafts?.[SERVER] || {};
+  check('drafts are saved per server and chat', sd['chat:' + liveA]?.v === 'a draft to keep' && sd['chat:' + liveB2]?.v === 'the second one', sd);
+}
+// Switching away and back brings each back.
+await ui('select-project', 'other');
+await until('Other open', (q) => q.currentProject === 'other', 10000);
+await ui('select-project', 'demo');
+p = await until('back on Demo: both drafts back', (q) => pane(q, liveA)?.draft === 'a draft to keep' && pane(q, liveB2)?.draft === 'the second one', 15000);
+if (p) check('switching projects keeps each chat\'s draft', true);
+// A restart: the drafts come back; a 31-day-old draft is pruned, a 29-day-old one stays.
+d.close();
+app.kill();
+await sleep(1500);
+{
+  const f = join(configDir, 'session.json'), j = JSON.parse(readFileSync(f, 'utf8')), day = 24 * 3600 * 1000;
+  j.drafts[SERVER]['chat:old-one'] = { v: 'too old', t: Date.now() - 31 * day };
+  j.drafts[SERVER]['chat:recent-one'] = { v: 'recent', t: Date.now() - 29 * day };
+  writeFileSync(f, JSON.stringify(j));
+}
+app = launch('run4');
+d = await driver();
+p = await until('after a restart: the drafts back', (q) => q.signedIn && pane(q, liveA)?.draft === 'a draft to keep' && pane(q, liveB2)?.draft === 'the second one', 30000);
+if (p) {
+  check('a client restart brings the drafts back', true);
+  check('a draft older than 30 days is pruned; a newer one stays', !p.savedDrafts['chat:old-one'] && p.savedDrafts['chat:recent-one']?.v === 'recent', Object.keys(p.savedDrafts));
+}
+// Adopted: the chat owning the project's copy closes; a new chat starts with it.
+// (The other chat empties its box first: it lets go of the copy.)
+await ui('focus-pane', pane(await props(), liveB2).id); await ui('composer-focus');
+await clearBox();
+await focusA();
+await clearBox(); await keys('a draft to keep!');
+await sleep(500);
+await ui('pane-close', pane(await props(), liveA).id);
+await ui('pane-close', pane(await props(), liveA).id);
+await until('the attach chat closed', (q) => !pane(q, liveA), 15000);
+check('closing a chat keeps its draft', saved().drafts?.[SERVER]?.['project:demo']?.v === 'a draft to keep!', saved().drafts?.[SERVER]);
+const liveN3 = await make('demo', 'Adopter', false);
+p = await until('a new chat adopts the project\'s draft', (q) => pane(q, liveN3)?.draft === 'a draft to keep!', 30000);
+if (p) check('a new chat in the project starts with the closed chat\'s draft', true);
+// Sending clears it, and the project's copy with it.
+await ui('focus-pane', pane(await props(), liveN3).id); await ui('composer-focus');
+await clearBox(); await keys('Reply with just the word ok'); await keys('Return');
+p = await until('sent: the draft is empty', (q) => pane(q, liveN3)?.draft === '', 10000);
+await sleep(800);
+{
+  const sd = saved().drafts?.[SERVER] || {};
+  check('sending clears the chat\'s draft and the project\'s copy', !sd['chat:' + liveN3] && !sd['project:demo'], sd);
+}
+for (const id of [liveB2, liveN3]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 
 d.close();
 app.kill();

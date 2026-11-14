@@ -22,6 +22,8 @@ export global Pointer {
     // controls, menus) ignores it, and a press under it focuses nothing.
     // Every modal shares this one flag.
     in-out property <bool> modal;
+    // Files from the system are being dragged over the window (2.7).
+    in-out property <bool> file-drag;
 }
 
 /// A scroll thumb for a box that scrolls (a Flickable): where the view is in

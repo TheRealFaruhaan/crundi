@@ -3,7 +3,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb } from "widgets.slint";
+import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox } from "widgets.slint";
 import { ListView } from "std-widgets.slint";
 
 export struct ToolView {
@@ -880,6 +880,18 @@ export global Composer {
     callback attach(string);
     callback schedule(string);
     callback mode(string);
+    // A pane's caret moved (its key, the caret and the selection's other
+    // end, byte offsets): where an attached path will go (2.7).
+    callback caret(string, int, int);
+    // Ctrl+V (or Shift+Insert) in a pane's box: true when the clipboard held a
+    // picture or a file, which the app uploads (the key is then taken).
+    callback paste(string) -> bool;
+    // The app put text into a pane's box (an attached path): its whole new
+    // text and the caret; counted.
+    in-out property <string> insert-key;
+    in-out property <string> insert-text;
+    in-out property <int> insert-caret;
+    in-out property <int> insert-gen;
 }
 
 /// The message box (.cc-input): one line at least (`control`), growing with
@@ -893,7 +905,18 @@ component InputBox inherits Rectangle {
     in property <bool> enabled: true;
     in property <string> placeholder;
     callback send();
+    // The caret moved: the caret and the selection's other end (byte offsets).
+    callback caret(int, int);
+    // Ctrl+V / Shift+Insert: true when the app took it (a picture, a file).
+    callback paste() -> bool;
     public function focus-box() { te.focus(); }
+    // The app's text and caret (an attached path put in): the box takes the
+    // focus with the caret there.
+    public function put(text: string, caret: int) {
+        root.draft = text;
+        te.set-selection-offsets(caret, caret);
+        te.focus();
+    }
     out property <bool> focused: te.has-focus && root.enabled;
     property <length> line: Theme.text-13 * root.fs * Theme.line-chat;
     // Dimmed while it can't take text (an exited chat).
@@ -917,6 +940,10 @@ component InputBox inherits Rectangle {
             content-height: max(self.height, te.preferred-height);
             FocusScope {
                 capture-key-pressed(ev) => {
+                    if ((ev.modifiers.control || ev.modifiers.meta) && (ev.text == "v" || ev.text == "V")) || (ev.modifiers.shift && ev.text == Key.Insert) {
+                        if root.paste() { return accept; }
+                        return reject;
+                    }
                     if ev.text == Key.Return {
                         if root.ctrl-enter ? (ev.modifiers.control || ev.modifiers.meta) : (!ev.modifiers.shift && !ev.modifiers.control && !ev.modifiers.meta) {
                             root.send();
@@ -938,6 +965,7 @@ component InputBox inherits Rectangle {
                     selection-background-color: Theme.accent-dim;
                     // Past composer-max it scrolls: keep the caret in view.
                     cursor-position-changed(at) => {
+                        root.caret(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
                         if at.y + fl.content-y < 0 {
                             fl.content-y = -at.y;
                         } else if at.y + root.line + fl.content-y > fl.height {
@@ -972,13 +1000,17 @@ component SquareBtn inherits Rectangle {
     in property <string> tip;
     in property <bool> fill: true;
     in property <color> ink: Theme.text-secondary;
+    // Busy (attach while a file uploads): faint and inert.
+    in property <bool> busy;
     callback clicked();
+    opacity: root.busy ? Theme.o-soft : 1;
     border-radius: Theme.r-control;
     border-width: 1px;
-    border-color: ta.has-hover ? Theme.accent : Theme.border;
+    border-color: ta.has-hover && !root.busy ? Theme.accent : Theme.border;
     background: root.fill ? Theme.bg-primary : transparent;
-    Icon { source: root.icon; width: root.icon-size; height: root.icon-size; tint: ta.has-hover ? Theme.accent-hover : root.ink; }
+    Icon { source: root.icon; width: root.icon-size; height: root.icon-size; tint: ta.has-hover && !root.busy ? Theme.accent-hover : root.ink; }
     ta := TouchArea {
+        enabled: !root.busy;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
         Tooltip { TipBox { text: root.tip; } }
@@ -1151,6 +1183,14 @@ export component ChatPane inherits Rectangle {
     in property <bool> narrow;
     // Stop was clicked once (src/app.rs disarms it after 3 s).
     in property <bool> stop-armed;
+    // Uploading (2.7): the bar (shown, the file's name, "42%" or "saving",
+    // the share sent) and attach busy; a file dragged over the chat.
+    in property <bool> up-on;
+    in property <string> up-name;
+    in property <string> up-label;
+    in property <float> up-frac;
+    in property <bool> up-busy;
+    in property <bool> file-over;
     callback send(string);
     callback stop();
     callback respond(string, string, bool);
@@ -1169,6 +1209,9 @@ export component ChatPane inherits Rectangle {
     property <bool> stick: true;
     property <bool> exited: root.state == "exited";
     property <bool> busy: root.state == "working" || root.state == "needs-input";
+    // The app put text in this pane's box (an attached path).
+    property <int> insert-gen: Composer.insert-gen;
+    changed insert-gen => { if Composer.insert-key == root.key { ib.put(Composer.insert-text, Composer.insert-caret); } }
     // The app asks for this pane's box to take the focus.
     property <int> focus-gen: Composer.focus-gen;
     changed focus-gen => { if Composer.focus-key == root.key { ib.focus-box(); } }
@@ -1223,12 +1266,15 @@ export component ChatPane inherits Rectangle {
                             : Composer.ctrl-enter ? "Message Claude…  (Ctrl+Enter to send, Enter for newline)"
                             : "Message Claude…  (Enter to send, Shift+Enter for newline)";
                         send => { root.do-send(); }
+                        caret(c, a) => { Composer.caret(root.key, c, a); }
+                        paste => { return Composer.paste(root.key); }
                     }
                     if !root.narrow: VerticalLayout {
                         alignment: end;
                         SquareBtn {
                             width: Theme.control; height: Theme.control;
                             icon: Icons.paperclip; tip: "Attach a file (uploads to crundi_attachments)";
+                            busy: root.up-busy;
                             clicked => { Composer.attach(root.key); }
                         }
                     }
@@ -1253,6 +1299,7 @@ export component ChatPane inherits Rectangle {
                     SquareBtn {
                         width: Theme.control; height: Theme.control;
                         icon: Icons.paperclip; tip: "Attach a file (uploads to crundi_attachments)";
+                        busy: root.up-busy;
                         clicked => { Composer.attach(root.key); }
                     }
                     SquareBtn {
@@ -1268,6 +1315,35 @@ export component ChatPane inherits Rectangle {
                         label: root.busy ? "Queue" : "Send";
                         height: Theme.control;
                         clicked => { root.do-send(); }
+                    }
+                }
+                // The upload bar (.cc-up), while a file uploads (and a moment
+                // after): its name, the share sent, the number or "saving".
+                if root.up-on: HorizontalLayout {
+                    padding-top: Theme.sp-4; padding-left: Theme.sp-2; padding-right: Theme.sp-2;
+                    spacing: Theme.sp-8;
+                    Text {
+                        horizontal-stretch: 1; min-width: 0;
+                        text: root.up-name; font-size: Theme.text-11; color: Theme.text-muted;
+                        overflow: elide; vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 2;
+                        y: (parent.height - self.height) / 2; height: Theme.sp-4;
+                        border-radius: Theme.r-pill;
+                        background: Theme.bg-tertiary;
+                        clip: true;
+                        Rectangle {
+                            x: 0; width: parent.width * max(0, min(1, root.up-frac));
+                            animate width { duration: Theme.motion-fast; }
+                            border-radius: Theme.r-pill;
+                            background: Theme.accent;
+                        }
+                    }
+                    Text {
+                        min-width: Theme.sp-32 + Theme.sp-2; horizontal-stretch: 0;
+                        text: root.up-label; font-size: Theme.text-11; color: Theme.text-muted;
+                        horizontal-alignment: right; vertical-alignment: center;
                     }
                 }
                 // The meta row (.cc-meta): the state, the mode, the switch (and
@@ -1353,6 +1429,12 @@ export component ChatPane inherits Rectangle {
                 }
             }
         }
+    }
+    // A file dragged over the chat (2.7): a dashed accent outline just inside
+    // it, over the log and the composer.
+    if root.file-over: DashedBox {
+        width: parent.width; height: parent.height;
+        thick: Theme.sp-2; dash: Theme.sp-6; gap: Theme.sp-4; line: Theme.accent;
     }
     // Copies the whole session id (a hidden input: Slint's clipboard is a
     // text input's).

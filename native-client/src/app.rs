@@ -5,6 +5,7 @@
 
 use crate::{
     api::{self, Api, ApiError, SignedIn},
+    attach, drafts::Drafts,
     chat::{Conversation, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
@@ -32,6 +33,18 @@ struct Drag {
 }
 
 /// One chat shown in a pane.
+/// A chat's uploads (2.7): what its bar shows, and how many still run.
+#[derive(Default)]
+struct Upload {
+    name: String,
+    label: String,
+    frac: f32,
+    active: u32,
+    /// Shown (also for a moment after the last ends), and which hide is due.
+    shown: bool,
+    hide_gen: u32,
+}
+
 struct ChatPaneState {
     conv: Conversation,
     rows: Vec<Row>,
@@ -114,6 +127,21 @@ pub struct App {
     stop_gen: u32,
     /// The pane whose mode picker is open (2.6), by key.
     picker: Option<String>,
+    /// Each chat's uploads (2.7), by pane key: the bar and how many run.
+    uploads: HashMap<String, Upload>,
+    /// Each chat box's caret and the selection's other end (byte offsets):
+    /// where an attached path goes.
+    carets: HashMap<String, (usize, usize)>,
+    /// The chat a file dragged from the system is over, and the files of a
+    /// drop as they come (one event each).
+    file_target: Option<String>,
+    dropped: Vec<std::path::PathBuf>,
+    /// The drafts of the server signed in to (2.8, saved per server), the
+    /// chats whose composer is built (restored), and a write to come.
+    saved_drafts: Drafts,
+    drafts_server: String,
+    restored: HashMap<String, String>,
+    drafts_dirty: bool,
     /// Errors the client adds to a chat's log (a refused send).
     local_errors: u32,
     /// The 30 s re-count of timed grants, and the toast's 3.5 s.
@@ -221,6 +249,14 @@ pub fn init(window: &MainWindow) {
             stop_gen: 0,
             local_errors: 0,
             picker: None,
+            uploads: HashMap::new(),
+            carets: HashMap::new(),
+            file_target: None,
+            dropped: vec![],
+            saved_drafts: Drafts::default(),
+            drafts_server: String::new(),
+            restored: HashMap::new(),
+            drafts_dirty: false,
             timers: vec![],
             toast_gen: 0,
         })
@@ -271,17 +307,20 @@ pub fn init(window: &MainWindow) {
     window.on_pane_rename(|id, t| pane_rename(id as u32, t.as_str()));
     window.on_pane_menu(|id, on| pane_menu(id as u32, on));
     window.on_pane_maximize(|id| { animate(); with(|a| a.mosaic.maximize(id as u32)); layout_changed(); });
-    window.on_draft_changed(|k, t| { with(|a| { a.drafts.insert(k.to_string(), t.to_string()); }); });
+    window.on_draft_changed(|k, t| set_draft(k.as_str(), t.as_str()));
     // The composers' shared controls (ui/chat.slint Composer). The Enter mode
     // is one setting for every chat, saved (the web's crundi_chat_enter).
     let c = window.global::<Composer>();
     c.set_ctrl_enter(store::load().chat_enter == "newline");
     c.on_set_ctrl_enter(set_chat_enter);
     c.on_copied(|full| toast(&format!("Session id copied: {full}"), false));
-    // Attaching (2.7) and the schedule panel (2.10) are their own screens.
-    c.on_attach(|_| {});
+    // The schedule panel (2.10) is its own screen.
     c.on_schedule(|_| {});
     c.on_mode(|k| open_mode_picker(k.as_str()));
+    c.on_caret(|k, c, an| { with(|a| a.carets.insert(k.to_string(), (c.max(0) as usize, an.max(0) as usize))); });
+    c.on_attach(|k| pick_file(k.to_string()));
+    c.on_paste(|k| paste(k.as_str()));
+    window.on_file_target(|k| { with(|a| a.file_target = Some(k.to_string())); });
     window.on_mode_choose(|m| choose_mode(m.as_str()));
     window.on_mode_close(close_mode_picker);
 
@@ -816,6 +855,9 @@ fn render() {
     let out = with(|a| {
         let (cw, h) = grid(a);
         let (leaves, gutters) = a.mosaic.layout(cw, h);
+        // Chat composers built now take their drafts back (2.8).
+        let chat_keys: Vec<String> = leaves.iter().filter_map(|l| l.key.clone()).filter(|k| chat_of(k).is_some_and(|id| a.chats.contains_key(id))).collect();
+        restore_drafts(a, &chat_keys);
         if a.focused == 0 || !leaves.iter().any(|l| l.id == a.focused) {
             a.focused = leaves.first().map(|l| l.id).unwrap_or(0);
         }
@@ -851,6 +893,13 @@ fn render() {
                 p.secrets_n = n as i32;
                 p.secrets_tip = head::secrets_tip(n).into();
                 p.fs = head::font_scale(*a.font.get(id).unwrap_or(&a.font_default));
+                if let Some(u) = a.uploads.get(&key) {
+                    p.up_on = u.shown;
+                    p.up_name = u.name.clone().into();
+                    p.up_label = u.label.clone().into();
+                    p.up_frac = u.frac;
+                    p.up_busy = u.active > 0;
+                }
                 p.draft = a.drafts.get(&key).cloned().unwrap_or_default().into();
                 p.draft_gen = *a.draft_gen.get(&key).unwrap_or(&0);
                 if let Some(cs) = a.chats.get(id) {
@@ -1092,7 +1141,8 @@ fn close_pane(leaf: u32) {
             with(|a| {
                 if let Some(l) = a.mosaic.leaf_of(&chat_key(&id)) { a.mosaic.close(l); }
                 a.font.remove(&id);
-                a.drafts.remove(&chat_key(&id));
+                // The draft stays (the web keeps it: a new chat in the project
+                // can adopt it); the composer's claim goes when its pane does.
                 if a.full.as_deref() == Some(chat_key(&id).as_str()) { a.full = None; }
                 a.sessions.retain(|c| s(c, "id") != id);
             });
@@ -1429,12 +1479,13 @@ pub fn send(key: &str, text: String) {
     if text.trim().is_empty() { return; }
     let k = key.to_string();
     with(|a| {
-        a.drafts.insert(k.clone(), String::new());
+        save_draft_in(a, &k, "");
         *a.draft_gen.entry(k.clone()).or_insert(0) += 1;
         if let Some(cs) = a.chats.get_mut(&id) { cs.error.clear(); }
         a.sending.insert(id.clone());
     });
     render();
+    write_drafts_soon();
     let (id2, body) = (id.clone(), text.clone());
     call(move |api| api.post(&format!("/api/ui-sessions/{id}/send"), &json!({ "text": body })), move |r| {
         let refused = match r {
@@ -1451,7 +1502,7 @@ fn send_refused(key: &str, id: &str, error: String, text: String) {
         a.sending.remove(id);
         // The text comes back, unless something new was typed meanwhile.
         if a.drafts.get(key).is_none_or(|d| d.is_empty()) {
-            a.drafts.insert(key.to_string(), text);
+            save_draft_in(a, key, &text);
             *a.draft_gen.entry(key.to_string()).or_insert(0) += 1;
         }
         a.local_errors += 1;
@@ -1460,6 +1511,7 @@ fn send_refused(key: &str, id: &str, error: String, text: String) {
     });
     show_chat(id);
     render();
+    write_drafts_soon();
 }
 
 /// Stop: the first click arms it ("Sure?") for 3 s; a second click within
@@ -1484,6 +1536,294 @@ pub fn stop(key: &str) {
 fn set_chat_enter(ctrl: bool) {
     if let Some(w) = ui() { w.global::<Composer>().set_ctrl_enter(ctrl); }
     store::update(|s| s.chat_enter = if ctrl { "newline".into() } else { String::new() });
+}
+
+// ─── Drafts (2.8, src/drafts.rs) ───
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// The drafts of the server signed in to, loaded (and pruned) when it
+/// changes.
+fn drafts_for_server(a: &mut App) {
+    let server = a.api.as_ref().map(|x| x.base().to_string()).unwrap_or_default();
+    if server == a.drafts_server { return; }
+    a.drafts_server = server.clone();
+    a.saved_drafts = Drafts::from_saved(store::load().drafts.get(&server).unwrap_or(&Value::Null));
+    a.saved_drafts.prune(now_ms());
+    a.restored.clear();
+}
+
+/// A chat's project alias.
+fn chat_project(a: &App, id: &str) -> String {
+    a.sessions.iter().find(|c| s(c, "id") == id).map(|c| s(c, "project")).unwrap_or_else(|| a.project.clone())
+}
+
+/// The box's text changed: the pane's draft, and the saved one (own, and
+/// the project's copy by the claim rules).
+fn save_draft_in(a: &mut App, key: &str, text: &str) {
+    a.drafts.insert(key.to_string(), text.to_string());
+    let Some(id) = chat_of(key).map(str::to_string) else { return };
+    drafts_for_server(a);
+    let alias = chat_project(a, &id);
+    a.saved_drafts.save(&id, &alias, text, now_ms());
+    a.drafts_dirty = true;
+}
+
+fn set_draft(key: &str, text: &str) {
+    let changed = with(|a| { if a.drafts.get(key).map(String::as_str) == Some(text) { return false; } save_draft_in(a, key, text); true }).unwrap_or(false);
+    if changed { write_drafts_soon(); }
+}
+
+/// The drafts go to disk at most every menu-linger while typing (and at
+/// quit: [flush_drafts]).
+fn write_drafts_soon() {
+    slint::Timer::single_shot(Duration::from_millis(350), flush_drafts);
+}
+
+pub fn flush_drafts() {
+    let out = with(|a| {
+        if !a.drafts_dirty || a.drafts_server.is_empty() { return None; }
+        a.drafts_dirty = false;
+        Some((a.drafts_server.clone(), a.saved_drafts.to_saved()))
+    }).flatten();
+    if let Some((server, v)) = out { store::update(|s| { s.drafts.insert(server, v); }); }
+}
+
+/// The chat panes on screen now: a newly built composer takes its draft
+/// back (own, else the project's unclaimed copy); one that went lets its
+/// claim go.
+fn restore_drafts(a: &mut App, keys: &[String]) {
+    if a.api.is_none() { return; }
+    drafts_for_server(a);
+    let now = now_ms();
+    for k in keys {
+        if a.restored.contains_key(k) { continue; }
+        let Some(id) = chat_of(k).map(str::to_string) else { continue };
+        let alias = chat_project(a, &id);
+        a.restored.insert(k.clone(), alias.clone());
+        let found = a.saved_drafts.restore(&id, &alias, now);
+        a.drafts_dirty = true;
+        if let Some(t) = found {
+            if a.drafts.get(k).is_none_or(|d| d.is_empty()) {
+                a.drafts.insert(k.clone(), t);
+                *a.draft_gen.entry(k.clone()).or_insert(0) += 1;
+            }
+        }
+    }
+    let gone: Vec<(String, String)> = a.restored.iter().filter(|(k, _)| !keys.contains(k)).map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, alias) in gone {
+        a.restored.remove(&k);
+        if let Some(id) = chat_of(&k) { a.saved_drafts.release(id, &alias); }
+    }
+}
+
+// ─── Attachments (2.7, src/attach.rs) ───
+
+/// The attach button: the system's file picker (one file, any type), off the
+/// UI thread; the picked file always uploads.
+fn pick_file(key: String) {
+    if with(|a| a.uploads.get(&key).is_some_and(|u| u.active > 0)).unwrap_or(false) { return; }
+    std::thread::spawn(move || {
+        let Some(path) = rfd::FileDialog::new().pick_file() else { return };
+        let _ = slint::invoke_from_event_loop(move || upload_file(&key, &path));
+    });
+}
+
+/// Upload a file from disk to a chat's project.
+pub fn upload_file(key: &str, path: &std::path::Path) {
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+    match std::fs::read(path) {
+        Ok(bytes) => upload(key, name, bytes),
+        Err(e) => toast(&format!("Upload failed: {e}"), true),
+    }
+}
+
+/// Upload bytes as `name`: the bar, the upload off the UI thread, then the
+/// path at the caret and a toast, or the error's toast.
+pub fn upload(key: &str, name: String, bytes: Vec<u8>) {
+    let Some(id) = chat_of(key).map(str::to_string) else { return };
+    let project = with(|a| chat_project(a, &id)).unwrap_or_default();
+    if project.is_empty() { return toast("No project for this chat", true); }
+    let Some(api) = api() else { return };
+    with(|a| {
+        let u = a.uploads.entry(key.to_string()).or_default();
+        u.active += 1;
+        u.shown = true;
+        u.name = name.clone();
+        u.label = "0%".into();
+        u.frac = 0.0;
+    });
+    render();
+    let k = key.to_string();
+    bg(move || {
+        use base64::Engine;
+        let body = serde_json::to_vec(&json!({ "project": project, "name": name, "data": base64::engine::general_purpose::STANDARD.encode(&bytes) })).unwrap_or_default();
+        // Tell the bar as the body goes out (only when the number changes).
+        let last = std::sync::atomic::AtomicU64::new(u64::MAX);
+        let (pk, pname) = (k.clone(), name.clone());
+        let progress = move |sent: u64, total: u64| {
+            let pct = if total == 0 { 0 } else if sent >= total { 101 } else { sent * 100 / total };
+            if last.swap(pct, Ordering::Relaxed) == pct { return; }
+            let (k, n) = (pk.clone(), pname.clone());
+            let _ = slint::invoke_from_event_loop(move || upload_progress(&k, &n, sent, total));
+        };
+        let r = api.post_with_progress("/api/attachments/upload", &body, &progress);
+        (k, name, r)
+    }, |(k, name, r)| {
+        let answer = match r {
+            Err(ApiError::SignedOut) => return sign_out("Your sign-in ended. Sign in again."),
+            Err(_) => attach::upload_answer(0, "", &name),
+            Ok((status, body)) => attach::upload_answer(status, &body, &name),
+        };
+        upload_done(&k, answer);
+    });
+}
+
+fn upload_progress(key: &str, name: &str, sent: u64, total: u64) {
+    with(|a| if let Some(u) = a.uploads.get_mut(key) {
+        u.name = name.to_string();
+        u.label = attach::progress_label(sent, total);
+        u.frac = if total == 0 { 0.0 } else { (sent as f64 / total as f64) as f32 };
+    });
+    render();
+}
+
+fn upload_done(key: &str, answer: Result<(String, String), String>) {
+    let gen = with(|a| {
+        let u = a.uploads.entry(key.to_string()).or_default();
+        u.active = u.active.saturating_sub(1);
+        u.hide_gen += 1;
+        (u.active, u.hide_gen)
+    });
+    match answer {
+        Ok((path, name)) => { insert_text(key, &path); toast(&format!("Attached: {name}"), false); }
+        Err(e) => toast(&e, true),
+    }
+    // The bar stays a moment after the chat's last upload, then goes.
+    if let Some((0, gen)) = gen {
+        let k = key.to_string();
+        slint::Timer::single_shot(Duration::from_millis(350), move || {
+            if with(|a| a.uploads.get(&k).is_some_and(|u| u.active == 0 && u.hide_gen == gen)).unwrap_or(false) {
+                with(|a| a.uploads.remove(&k));
+                render();
+            }
+        });
+    }
+    render();
+}
+
+/// Put text (a path) into a chat's box at its caret, replacing a selection,
+/// spaced as the web's; the box takes the focus with the caret after it.
+pub fn insert_text(key: &str, path: &str) {
+    let done = with(|a| {
+        if !a.chats.contains_key(chat_of(key)?) { return None; }
+        let text = a.drafts.get(key).cloned().unwrap_or_default();
+        let (c, an) = a.carets.get(key).copied().unwrap_or((text.len(), text.len()));
+        let (new, caret) = attach::insert_path(&text, c, an, path);
+        save_draft_in(a, key, &new);
+        a.carets.insert(key.to_string(), (caret, caret));
+        Some((new, caret))
+    }).flatten();
+    let Some((new, caret)) = done else { return };
+    if let Some(w) = ui() {
+        let c = w.global::<Composer>();
+        c.set_insert_key(key.into());
+        c.set_insert_text(new.into());
+        c.set_insert_caret(caret as i32);
+        c.set_insert_gen(c.get_insert_gen() + 1);
+    }
+    render();
+    write_drafts_soon();
+}
+
+/// Files dropped on a chat: on this machine, their own paths go in (one
+/// insertion, a toast); otherwise each uploads. `upload` forces the upload
+/// (the test driver's remote).
+pub fn drop_files(key: &str, paths: Vec<std::path::PathBuf>, upload_anyway: bool) {
+    if paths.is_empty() || chat_of(key).is_none() { return; }
+    let local = with(|a| a.api.as_ref().is_some_and(|x| attach::is_local(x.base()))).unwrap_or(false);
+    if local && !upload_anyway {
+        let joined = paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ");
+        insert_text(key, &joined);
+        toast(&attach::added_toast(paths.len()), false);
+    } else {
+        for p in paths { upload_file(key, &p); }
+    }
+}
+
+/// The system started or stopped dragging files over the window.
+pub fn file_hover(on: bool) {
+    if let Some(w) = ui() { w.global::<crate::Pointer>().set_file_drag(on); }
+    if !on { with(|a| a.file_target = None); }
+}
+
+/// One dropped file (the system sends one event each): those that arrive
+/// together are one drop, on the chat the drag was over (else the focused
+/// chat; full screen, its chat).
+pub fn file_dropped(path: std::path::PathBuf) {
+    let first = with(|a| { a.dropped.push(path); a.dropped.len() == 1 }).unwrap_or(false);
+    if !first { return; }
+    slint::Timer::single_shot(Duration::from_millis(0), || {
+        let (paths, key) = with(|a| {
+            let key = a.full.clone().or_else(|| a.file_target.clone()).unwrap_or_else(|| chat_key(&focused_chat()));
+            (std::mem::take(&mut a.dropped), key)
+        }).unwrap_or_default();
+        file_hover(false);
+        drop_files(&key, paths, false);
+    });
+}
+
+/// Ctrl+V in a chat's box: a picture (as image.png) or a copied file
+/// uploads, and the key is taken; anything else is the ordinary paste.
+fn paste(key: &str) -> bool {
+    let Ok(mut cb) = arboard::Clipboard::new() else { return false };
+    if let Ok(files) = cb.get().file_list() {
+        if let Some(f) = files.into_iter().next() { upload_file(key, &f); return true; }
+    }
+    if let Ok(img) = cb.get_image() {
+        if let Some(png) = encode_png(img.width as u32, img.height as u32, &img.bytes) {
+            upload(key, "image.png".into(), png);
+            return true;
+        }
+    }
+    false
+}
+
+/// RGBA pixels as a PNG file.
+fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    {
+        let mut e = png::Encoder::new(&mut out, w, h);
+        e.set_color(png::ColorType::Rgba);
+        e.set_depth(png::BitDepth::Eight);
+        let mut wr = e.write_header().ok()?;
+        wr.write_image_data(rgba).ok()?;
+    }
+    Some(out)
+}
+
+/// The test driver puts a pane's caret (and selection) somewhere.
+pub fn set_caret(key: &str, at: usize, to: usize) {
+    let text = with(|a| { a.carets.insert(key.to_string(), (at, to)); a.drafts.get(key).cloned().unwrap_or_default() }).unwrap_or_default();
+    if let Some(w) = ui() {
+        let c = w.global::<Composer>();
+        c.set_insert_key(key.into());
+        c.set_insert_text(text.into());
+        c.set_insert_caret(at as i32);
+        c.set_insert_gen(c.get_insert_gen() + 1);
+    }
+}
+
+/// A pane's upload bar, for the test driver: (shown, name, label, busy).
+pub fn upload_of(key: &str) -> (bool, String, String, bool) {
+    with(|a| a.uploads.get(key).map(|u| (u.shown, u.name.clone(), u.label.clone(), u.active > 0))).flatten().unwrap_or_default()
+}
+
+/// The saved drafts of the server signed in to, for the test driver.
+pub fn saved_drafts() -> Value {
+    with(|a| { drafts_for_server(a); a.saved_drafts.to_saved() }).unwrap_or(Value::Null)
 }
 
 /// A pane's draft as typed (the pane rows carry it only as of their last

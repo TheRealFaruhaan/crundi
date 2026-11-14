@@ -69,11 +69,12 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "projectName": w.get_project_name().as_str(),
             "currentTab": w.get_current_tab().as_str(),
             "drawerOpen": w.get_drawer_open(),
-            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
+            "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
             "pointerModal": w.global::<crate::Pointer>().get_modal(),
             "modePicker": if w.get_mode_picker_open() { let pr = w.global::<crate::PickerProbe>(); json!({ "focus": pr.get_focus(), "focusTop": pr.get_focus_top(), "focusBottom": pr.get_focus_bottom(), "scroll": pr.get_scroll(), "viewH": pr.get_view_h(), "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
+            "savedDrafts": crate::app::saved_drafts(),
             "chatEnter": if w.global::<crate::Composer>().get_ctrl_enter() { "newline" } else { "enter" },
             "projectDots": w.get_projects().iter().map(|p| json!({ "alias": p.alias.as_str(), "state": p.state.as_str(), "initials": p.initials.as_str() })).collect::<Vec<_>>(),
             "dragOn": w.get_drag_on(),
@@ -171,6 +172,22 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "mode-open" => w.global::<crate::Composer>().invoke_mode(chat().into()),
                 "mode-choose" => w.invoke_mode_choose(arg(c, 0).into()),
                 "mode-close" => w.invoke_mode_close(),
+                // Attachments (2.7), on the focused chat: a file as if picked
+                // in the dialog; files as if dropped from the system (args after
+                // the first; "upload" first: as on a remote server); a picture
+                // or a file as if pasted; the caret (and selection) in the box.
+                "attach" => crate::app::upload_file(&chat(), std::path::Path::new(&arg(c, 0))),
+                "drop" => {
+                    let all: Vec<String> = (0..16).map(|i| arg(c, i)).filter(|x| !x.is_empty()).collect();
+                    let force = all.first().is_some_and(|x| x == "upload");
+                    crate::app::drop_files(&chat(), all.into_iter().filter(|x| x != "upload").map(std::path::PathBuf::from).collect(), force);
+                }
+                "paste-image" => match std::fs::read(arg(c, 0)) { Ok(b) => crate::app::upload(&chat(), "image.png".into(), b), Err(e) => return json!({ "ok": false, "error": e.to_string() }) },
+                // Files dragged from the system over the window (true) or gone
+                // (false): with the pointer over a chat, its drop outline.
+                "file-hover" => crate::app::file_hover(arg(c, 0) == "true"),
+                "paste-file" => crate::app::upload_file(&chat(), std::path::Path::new(&arg(c, 0))),
+                "caret" => { let at: usize = arg(c, 0).parse().unwrap_or(0); crate::app::set_caret(&chat(), at, arg(c, 1).parse().unwrap_or(at)); }
                 "respond" => w.invoke_respond(chat().into(), arg(c, 0).into(), arg(c, 1).into(), arg(c, 2) == "true"),
                 "answer" => w.invoke_answer(chat().into(), arg(c, 0).into(), arg(c, 1).into()),
                 // The pane header, on a leaf id (as the "panes" list gives them).

@@ -221,6 +221,17 @@ them; each has a spec in `specs/`). So far:
   under a scrim, and `RevealFlickable` scrolls a dialog to keep the
   keyboard's focus in view, with a `ScrollThumb` (also the composer's).
 
+- **2.7 Attachments and 2.8 Drafts** (specs/attachments-drafts.md): attach
+  opens the system's file picker (`rfd`); a picked or pasted file (a
+  picture as image.png, through `arboard`) uploads to
+  `/api/attachments/upload` with the upload bar (name, share, "42%" then
+  "saving"), and the server's path goes into the box at the caret
+  (`attach::insert_path`). Files dropped from the system on a chat go in as
+  their own paths when the server is on this machine, else upload. Drafts
+  (`src/drafts.rs`) are kept per server and chat with the project's copy
+  (claimed by one open chat), restored when a composer is built, cleared on
+  send, kept on close, pruned after 30 days.
+
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
   10–26, two letter-spacings) plus a short structural list (window, top

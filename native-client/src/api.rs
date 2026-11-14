@@ -191,6 +191,24 @@ pub fn refresh(base: &str, refresh_token: &str) -> ApiResult<Tokens> {
     }
 }
 
+/// A body that tells how much of it has been read (sent).
+struct Counting<'a> {
+    data: &'a [u8],
+    at: usize,
+    progress: &'a (dyn Fn(u64, u64) + Send + Sync),
+}
+
+impl std::io::Read for Counting<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // In slices, so the bar moves as the body goes out.
+        let n = (self.data.len() - self.at).min(buf.len()).min(64 * 1024);
+        buf[..n].copy_from_slice(&self.data[self.at..self.at + n]);
+        self.at += n;
+        (self.progress)(self.at as u64, self.data.len() as u64);
+        Ok(n)
+    }
+}
+
 // ─── A signed-in session ───
 
 struct Inner {
@@ -279,6 +297,34 @@ impl Api {
 
     pub fn post(&self, path: &str, body: &Value) -> ApiResult {
         self.call("POST", path, Some(body))
+    }
+
+    /// POST a JSON body, telling `progress(sent, total)` as it goes out (the
+    /// upload bar); the answer raw, as (status, body), for the caller to read
+    /// (a proxy's HTML is an answer too). Status 0: no answer at all.
+    pub fn post_with_progress(&self, path: &str, body: &[u8], progress: &(dyn Fn(u64, u64) + Send + Sync)) -> ApiResult<(u16, String)> {
+        let url = format!("{}{}", self.0.base, path);
+        let mut access = self.access();
+        for attempt in 0..2 {
+            let mut reader = Counting { data: body, at: 0, progress };
+            let r = self.0.agent.post(&url)
+                .header("Authorization", &format!("Bearer {access}"))
+                .header("Content-Type", "application/json")
+                .header("Content-Length", &body.len().to_string())
+                .send(ureq::SendBody::from_reader(&mut reader));
+            let (status, text) = match r {
+                Ok(mut resp) => (resp.status().as_u16(), resp.body_mut().with_config().limit(16 * 1024 * 1024).read_to_string().unwrap_or_default()),
+                Err(_) => (0, String::new()),
+            };
+            if status == 401 && attempt == 0 {
+                self.refresh_after(&access)?;
+                access = self.access();
+                continue;
+            }
+            if status == 401 { return Err(ApiError::SignedOut); }
+            return Ok((status, text));
+        }
+        unreachable!()
     }
 
     /// The URL of the server's /ws, with a fresh access token.

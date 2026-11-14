@@ -123,6 +123,7 @@ export component MainWindow inherits Window {
     // 2.3: a pane dragged by its header, its clone under the pointer (the
     // grab point kept), and the workbench's state.
     callback pane-drag(int, int, length, length);
+    callback file-target(string);
     callback chip(int, string);
     in property <bool> drag-on;
     in property <PaneView> drag-pane;
@@ -265,6 +266,7 @@ export component MainWindow inherits Window {
                         pane-maximize(id) => { root.pane-maximize(id); }
                         pane-menu(id, on) => { root.pane-menu(id, on); }
                         pane-drag(id, k, x, y) => { root.pane-drag(id, k, x, y); }
+                        file-target(k) => { root.file-target(k); }
                         chip(id, k) => { root.chip(id, k); }
                         dragging: root.drag-on;
                         menu-open: root.add-menu-open;
@@ -322,6 +324,9 @@ export component MainWindow inherits Window {
         }
         PaneCard {
             p: root.full-pane;
+            // Full screen, the whole window is this chat (a dropped file goes
+            // to it: src/app.rs).
+            file-over: Pointer.file-drag && root.full-pane.kind == "chat";
             close => { root.pane-close(root.full-pane.id); }
             full-screen => { root.pane-full(root.full-pane.id); }
             font(d) => { root.pane-font(root.full-pane.id, d); }

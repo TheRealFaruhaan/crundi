@@ -30,6 +30,13 @@ export struct PaneView {
     stop-armed: bool,
     // Plan mode, no plan yet: the header's PLANNING tag (2.6).
     planning: bool,
+    // Uploading (2.7): the bar shown, the file, "42%" or "saving", the share
+    // sent, attach busy; a file dragged over the chat.
+    up-on: bool,
+    up-name: string,
+    up-label: string,
+    up-frac: float,
+    up-busy: bool,
     model: string,
     cost: string,
     error: string,
@@ -256,6 +263,8 @@ component LeafCtrl inherits Rectangle {
 /// per leaf; the full-screen overlay (main.slint) draws the full one.
 export component PaneCard inherits Rectangle {
     in property <PaneView> p;
+    // A file from the system dragged over this chat (its outline, 2.7).
+    in property <bool> file-over;
     callback focus-me();
     callback close();
     callback full-screen();
@@ -341,6 +350,12 @@ export component PaneCard inherits Rectangle {
             session: p.session;
             session-full: p.session-full;
             stop-armed: p.stop-armed;
+            up-on: p.up-on;
+            up-name: p.up-name;
+            up-label: p.up-label;
+            up-frac: p.up-frac;
+            up-busy: p.up-busy;
+            file-over: root.file-over;
             model: p.model;
             cost: p.cost;
             error: p.error;
@@ -426,6 +441,8 @@ export component Workbench inherits Rectangle {
     // 2.3: a pane dragged by its header (0 start, 1 move, 2 release; content
     // coordinates), an empty pane's chip, and a scroll back to the left (Fit).
     callback pane-drag(int, int, length, length);
+    // The chat a file dragged from the system is over (2.7).
+    callback file-target(string);
     callback chip(int, string);
     // A pane is being dragged: every leaf shows its dashed outline.
     in property <bool> dragging;
@@ -503,8 +520,13 @@ export component Workbench inherits Rectangle {
                 chip(k) => { root.chip(p.id, k); }
                 maximize => { root.pane-maximize(p.id); }
             }
+            // A file dragged from the system over this chat: it goes here (the
+            // app is told), and the chat draws its outline.
+            property <bool> file-here: Pointer.file-drag && self.over && p.kind == "chat";
+            changed file-here => { if self.file-here { root.file-target(p.key); } }
             if p.kind != "empty": PaneCard {
                 p: p;
+                file-over: parent.file-here;
                 blocked: root.menu-open;
                 focus-me => { root.focus-pane(p.id); }
                 close => { root.pane-close(p.id); }
