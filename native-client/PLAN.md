@@ -87,7 +87,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.9 Queued messages.** Sent while a turn runs: the queue block
      (`cc-queue`), cancel one, take it back to edit (`recallQueued`), sent when
      the turn ends.
-   - [ ] **2.10 Scheduled messages.** The clock (`cc-sched-trig`) and its
+   - [x] **2.10 Scheduled messages.** The clock (`cc-sched-trig`) and its
      panel (`cc-schedpanel`): empty, a list, the form (when, triggers, text),
      save, delete.
    - [ ] **2.11 Slash menu.** `cc-slash` with its items, keyboard selection.
