@@ -59,6 +59,8 @@ pub enum Event {
     Inbox(Value),
     /// One chat's pre-authorised secrets: {sessionId, grants}.
     ChatSecrets(Value),
+    /// The secret requests waiting on the owner: {requests} (2.12b).
+    SecretRequests(Value),
     SignedOut,
 }
 
@@ -162,6 +164,7 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, to_ui: impl Fn(Event)) {
                 "usage" => to_ui(Event::Usage(v)),
                 "inbox" => to_ui(Event::Inbox(v)),
                 "chat-secrets" => to_ui(Event::ChatSecrets(v)),
+                "secret-requests" => to_ui(Event::SecretRequests(v)),
                 _ => {}
             }
         });

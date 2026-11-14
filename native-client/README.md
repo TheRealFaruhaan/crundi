@@ -260,6 +260,13 @@ them; each has a spec in `specs/`). So far:
   one or all) and the server's secrets to pre-authorise: tick, type each
   one's PIN or passphrase, pick a duration, Pre-authorise (all or nothing).
   The lock's count follows; grants update live (`chat-secrets`).
+- **2.12b Secret requests** (specs/secret-requests.md, `ui/sreq.slint`):
+  Claude's `secret_get` / `secret_run` waiting on the owner show as cards
+  docked at the window's bottom right (live from `secret-requests`): what
+  is asked (a run's command and the variable it is bound to), the PIN or
+  passphrase field on the first card, Approve / Reject, and for a chat's
+  run "Allow for this chat" with a duration. Success toasts have a green
+  edge. The rules are in `src/sreq.rs` (unit-tested).
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

@@ -24,6 +24,7 @@ mod attach;
 mod sched;
 mod slash;
 mod secrets;
+mod sreq;
 mod drafts;
 mod app;
 mod browser;

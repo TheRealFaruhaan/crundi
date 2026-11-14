@@ -1,0 +1,361 @@
+// Secret requests (2.12b, specs/secret-requests.md): the dock of request
+// cards at the window's bottom right. Claude's secret_get / secret_run wait
+// here for the owner: read what is asked, type the secret's PIN or
+// passphrase, Approve or Reject. The app (src/app.rs, src/sreq.rs) holds the
+// list and what is typed; this is the view.
+
+import { Theme } from "theme.slint";
+import { Icons } from "icons.slint";
+import { Icon, SoftShadow, ScrollThumb, RevealFlickable, AccentFill } from "widgets.slint";
+
+/// One request's card: the request, and whether it holds the field.
+export struct SreqCard { id: string, run: bool, name: string, project: string, reason: string, command: string, env: string, lock: string, armed: bool }
+
+/// What the test driver reads (src/testctl.rs): whether the field has the
+/// keyboard.
+export global SreqProbe {
+    in-out property <bool> field-focused;
+}
+
+/// The dock's buttons (the web's kanban-btn): the field's height, regular
+/// weight; primary: the accent gradient with its glow; quiet: bg-tertiary.
+component Btn inherits Rectangle {
+    in property <string> text;
+    in property <bool> primary;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: Theme.control;
+    width: bt.preferred-width + 2 * Theme.sp-12;
+    opacity: root.enabled ? 1 : Theme.o-soft;
+    if root.primary: SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-send; }
+    if root.primary: AccentFill { width: parent.width; height: parent.height; }
+    if !root.primary: Rectangle {
+        border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+        background: ta.has-hover && root.enabled ? Theme.bg-hover : Theme.bg-tertiary;
+    }
+    bt := Text { text: root.text; font-size: Theme.text-13; color: root.primary ? Theme.white : Theme.text-primary; }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: root.enabled ? pointer : default; clicked => { root.clicked(); } }
+}
+
+/// The checkbox of 2.12's pick rows: an accent box with a check when on.
+component Tick inherits Rectangle {
+    in property <bool> on;
+    width: Theme.icon-lg; height: Theme.icon-lg;
+    border-radius: Theme.r-chip; border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.accent : Theme.bg-primary;
+    if root.on: Icon { source: Icons.check; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.white; }
+}
+
+/// A card. The armed one has the field (Approve, Reject, the allow row, the
+/// error line); the others Approve (which arms them) and Reject.
+component Card inherits Rectangle {
+    in property <SreqCard> c;
+    // The armed card's state (the app's).
+    in property <bool> allow;
+    in property <bool> allow-on;
+    in property <string> duration-label;
+    in property <string> err;
+    in property <bool> busy;
+    in property <string> pin;
+    in property <int> pin-gen;
+    // Armed by a click (its field takes the focus), not automatically.
+    in property <bool> focus-armed;
+    // Counted: the field takes the focus, its text selected (an error).
+    in property <int> sel-gen;
+    callback approve();
+    callback confirm();
+    callback reject();
+    callback typed(string);
+    callback toggle-allow();
+    // The duration's button, in window coordinates: its list opens there.
+    callback open-durations(length, length, length, length);
+    callback escape();
+    height: lay.preferred-height;
+    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
+    Rectangle { background: Theme.bg-card; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.accent; }
+    // A click on the card stays on it.
+    TouchArea { }
+    lay := VerticalLayout {
+        padding-top: Theme.sp-12; padding-bottom: Theme.sp-12; padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+        spacing: Theme.sp-8;
+        // The head: the lock, what is asked, the secret's name.
+        HorizontalLayout {
+            spacing: Theme.sp-6;
+            Icon { y: (parent.height - self.height) / 2; source: Icons.lock; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.accent-hover; }
+            HorizontalLayout {
+              horizontal-stretch: 1;
+              // A word space between what is asked and the name.
+              spacing: Theme.sp-4;
+              Text {
+                vertical-alignment: center;
+                text: root.c.run ? "Run a command with" : "Release";
+                font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary;
+              }
+              Text {
+                horizontal-stretch: 1; min-width: 0; preferred-width: 0;
+                vertical-alignment: center; wrap: word-wrap;
+                text: root.c.name;
+                font-family: Theme.mono; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.accent-hover;
+              }
+            }
+        }
+        if root.c.project != "": Text { text: "project: " + root.c.project; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        if root.c.reason != "": Text { text: root.c.reason; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        // A run: the command (the decision: wrapped, never cut; selectable),
+        // and the variable the value is bound to.
+        if root.c.run: Rectangle {
+            height: min(cmd.preferred-height + 2 * Theme.sp-8, Theme.cmd-max-h);
+            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+            background: Theme.bg-primary;
+            cf := RevealFlickable {
+                x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+                content-height: cmd.preferred-height + 2 * Theme.sp-8 - Theme.sp-2;
+                interactive: false;
+                cmd := TextInput {
+                    x: Theme.sp-8 - 1px; y: Theme.sp-8 - 1px; width: cf.width - 2 * Theme.sp-8 + Theme.sp-2;
+                    height: self.preferred-height;
+                    read-only: true; wrap: word-wrap;
+                    text: root.c.command;
+                    font-family: Theme.mono; font-size: Theme.text-11; line-height-factor: Theme.lh-chat; color: Theme.text-primary;
+                }
+            }
+        }
+        if root.c.run: Text {
+            text: "the value is bound to $" + root.c.env + " and never shown to Claude";
+            font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; wrap: word-wrap;
+        }
+        if !root.c.run: Text { text: "Claude will be able to read this value."; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        // The armed card: the field, Approve, Reject; the allow row; the
+        // error line. (Each a direct row of the card: a wrapped Text in a
+        // nested conditional layout is measured on one line.)
+        if root.c.armed: HorizontalLayout {
+            padding-top: Theme.sp-2;
+            spacing: Theme.sp-6;
+            Rectangle {
+                horizontal-stretch: 1; min-width: 0;
+                height: Theme.control;
+                // Focused: the ring other fields wear, outside the border.
+                if lf.has-focus: Rectangle {
+                    x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4;
+                    border-radius: Theme.r-card; background: Theme.accent-ring;
+                }
+                Rectangle {
+                    border-radius: Theme.r-control; border-width: 1px;
+                    border-color: lf.has-focus ? Theme.accent : Theme.border;
+                    background: Theme.bg-primary;
+                }
+                // Esc in the field: the error goes, the field lets go.
+                FocusScope {
+                    focus-on-click: false;
+                    capture-key-pressed(ev) => {
+                        if ev.text == Key.Escape { root.escape(); lf.clear-focus(); return accept; }
+                        EventResult.reject
+                    }
+                    lf := TextInput {
+                        x: Theme.sp-10; width: parent.width - 2 * Theme.sp-10;
+                        vertical-alignment: center; horizontal-alignment: center; single-line: true;
+                        input-type: InputType.password;
+                        font-family: root.c.lock == "pin" ? Theme.mono : "";
+                        letter-spacing: root.c.lock == "pin" ? Theme.track-wide : 0px;
+                        font-size: Theme.text-15; color: Theme.text-primary;
+                        init => {
+                            self.text = root.pin;
+                            if root.focus-armed { self.focus(); }
+                        }
+                        edited => { root.typed(self.text); }
+                        accepted => { root.confirm(); }
+                        changed has-focus => { SreqProbe.field-focused = self.has-focus; }
+                    }
+                }
+                if lf.text == "": Text {
+                    x: Theme.sp-10; width: parent.width - 2 * Theme.sp-10; height: parent.height;
+                    vertical-alignment: center; horizontal-alignment: center;
+                    text: root.c.lock == "pin" ? "PIN" : "Passphrase"; font-size: Theme.text-15; color: Theme.text-muted;
+                }
+                property <int> gen: root.pin-gen;
+                changed gen => { lf.text = root.pin; }
+                property <int> sgen: root.sel-gen;
+                changed sgen => { lf.focus(); lf.select-all(); }
+            }
+            Btn { text: root.busy ? "Approving…" : "Approve"; primary: true; enabled: !root.busy; clicked => { root.confirm(); } }
+            Btn { text: "Reject"; clicked => { root.reject(); } }
+        }
+        // Allow for this chat (a run a chat asked for), its duration, its
+        // hint while ticked.
+        if root.c.armed && root.allow: HorizontalLayout {
+            // The web: 6 above, then the card's gap.
+            padding-top: Theme.sp-6;
+            spacing: Theme.sp-8;
+            alignment: start;
+            Rectangle {
+                width: al.preferred-width; height: al.preferred-height;
+                al := HorizontalLayout {
+                    spacing: Theme.sp-6;
+                    Tick { y: (parent.height - self.height) / 2; on: root.allow-on; }
+                    Text { vertical-alignment: center; text: "Allow for this chat"; font-size: Theme.text-13; color: Theme.text-primary; }
+                }
+                TouchArea { mouse-cursor: pointer; clicked => { root.toggle-allow(); } }
+            }
+            // As wide as its widest choice (as a select is).
+            sel := Rectangle {
+                widest := Text { visible: false; text: "Until this chat ends"; font-size: Theme.text-12; }
+                width: widest.preferred-width + Theme.icon-sm + 2 * Theme.sp-6 + Theme.sp-6 + Theme.sp-2;
+                height: sl.preferred-height;
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                background: Theme.bg-primary;
+                opacity: root.allow-on ? 1 : Theme.o-dim;
+                sl := HorizontalLayout {
+                    padding-top: Theme.sp-4; padding-bottom: Theme.sp-4; padding-left: Theme.sp-6; padding-right: Theme.sp-6;
+                    spacing: Theme.sp-6;
+                    Text { horizontal-stretch: 1; vertical-alignment: center; text: root.duration-label; font-size: Theme.text-12; color: Theme.text-primary; }
+                    Icon { y: (parent.height - self.height) / 2; source: @image-url("shapes/chevron-down.svg"); width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-secondary; }
+                }
+                TouchArea {
+                    enabled: root.allow-on;
+                    mouse-cursor: root.allow-on ? pointer : default;
+                    clicked => { root.open-durations(sel.absolute-position.x, sel.absolute-position.y, sel.width, sel.height); }
+                }
+            }
+        }
+        if root.c.armed && root.allow && root.allow-on: Text {
+            text: "This chat may then run commands with this secret without asking, until then. Its value is never shown.";
+            font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap;
+        }
+        if root.c.armed && root.err != "": Text { text: root.err; font-size: Theme.text-12; color: Theme.red; wrap: word-wrap; }
+        // Another card: Approve (arms it), Reject.
+        if !root.c.armed: HorizontalLayout {
+            padding-top: Theme.sp-2;
+            spacing: Theme.sp-6;
+            alignment: start;
+            Btn { text: "Approve"; primary: true; clicked => { root.approve(); } }
+            Btn { text: "Reject"; clicked => { root.reject(); } }
+        }
+    }
+}
+
+/// One duration in the list: its label, the current one marked.
+component DurRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    callback clicked();
+    height: dl.preferred-height;
+    background: ta.has-hover ? Theme.bg-hover : root.on ? Theme.accent-dim : transparent;
+    dl := HorizontalLayout {
+        padding-top: Theme.sp-4; padding-bottom: Theme.sp-4; padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+        spacing: Theme.sp-6;
+        Rectangle {
+            width: Theme.icon-sm;
+            if root.on: Icon { source: Icons.check; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.accent-hover; }
+        }
+        Text { vertical-alignment: center; text: root.label; font-size: Theme.text-12; color: Theme.text-primary; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The dock: over the whole window, drawing only its cards (and the
+/// duration list when open), so the rest of the window stays live.
+export component SreqDock inherits Rectangle {
+    in property <[SreqCard]> cards;
+    in property <bool> allow;
+    in property <bool> allow-on;
+    in property <string> duration;
+    in property <string> err;
+    in property <bool> busy;
+    in property <string> pin;
+    in property <int> pin-gen;
+    in property <bool> focus-armed;
+    in property <int> sel-gen;
+    callback approve(string);
+    callback confirm();
+    callback reject(string);
+    callback typed(string);
+    callback toggle-allow();
+    callback set-duration(string);
+    callback escape();
+
+    // 640 wide or less: the window's width less sp-12 each side.
+    property <bool> narrow: root.width <= Theme.dock-narrow;
+    property <length> edge: root.narrow ? Theme.sp-12 : Theme.sp-16;
+    property <length> dock-w: root.narrow ? root.width - 2 * Theme.sp-12 : min(Theme.dialog-w-lg, root.width - 2 * Theme.sp-16);
+    // Its tallest: the window less the top bar and sp-16; then it scrolls.
+    property <length> max-h: root.height - Theme.topbar-height - Theme.sp-16;
+    property <bool> scrolls: list.preferred-height > root.max-h;
+    property <length> view-h: min(list.preferred-height, root.max-h);
+    // The cards' shadows fall outside them: the scrolling box is that much
+    // wider (and taller, while it does not scroll) so they are not cut. It
+    // takes no presses (not interactive), so what is under it stays live.
+    property <length> sh: Theme.shadow-card.blur + Theme.shadow-card.y;
+    property <length> sh-v: root.scrolls ? 0px : root.sh;
+
+    property <string> dur-label: root.duration == "15m" ? "15 minutes" : root.duration == "8h" ? "8 hours" : root.duration == "chat" ? "Until this chat ends" : "1 hour";
+    // The duration list: open, and where its button is.
+    property <bool> dur-open;
+    property <length> dur-x;
+    property <length> dur-y;
+    property <length> dur-w;
+    property <length> dur-h;
+
+    fl := Flickable {
+        x: root.width - root.edge - root.dock-w - root.sh;
+        y: root.height - root.edge - root.view-h - root.sh-v;
+        width: root.dock-w + 2 * root.sh;
+        height: root.view-h + 2 * root.sh-v;
+        interactive: false;
+        content-height: list.preferred-height + 2 * root.sh-v;
+        list := VerticalLayout {
+            x: root.sh; y: root.sh-v;
+            width: root.dock-w;
+            spacing: Theme.sp-10;
+            for c in root.cards: Card {
+                c: c;
+                allow: root.allow; allow-on: root.allow-on; duration-label: root.dur-label;
+                err: root.err; busy: root.busy; pin: root.pin; pin-gen: root.pin-gen;
+                focus-armed: root.focus-armed; sel-gen: root.sel-gen;
+                approve => { root.approve(c.id); }
+                confirm => { root.confirm(); }
+                reject => { root.reject(c.id); }
+                typed(t) => { root.typed(t); }
+                toggle-allow => { root.dur-open = false; root.toggle-allow(); }
+                escape => { root.escape(); }
+                open-durations(x, y, w, h) => {
+                    root.dur-x = x - root.absolute-position.x;
+                    root.dur-y = y - root.absolute-position.y;
+                    root.dur-w = w; root.dur-h = h;
+                    root.dur-open = true;
+                }
+            }
+        }
+    }
+    if root.scrolls: ScrollThumb {
+        x: fl.x + root.sh; y: fl.y;
+        width: root.dock-w; height: fl.height;
+        view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y;
+    }
+    // The duration list, under its button (over it when there is no room
+    // below); a click elsewhere or Esc closes it.
+    if root.dur-open: TouchArea { clicked => { root.dur-open = false; } }
+    if root.dur-open: Rectangle {
+        property <length> below: root.dur-y + root.dur-h + Theme.sp-2;
+        width: max(root.dur-w, dv.preferred-width);
+        height: dv.preferred-height + Theme.sp-2;
+        x: min(root.dur-x, root.width - self.width - Theme.sp-4);
+        y: self.below + self.height <= root.height - Theme.sp-4 ? self.below : root.dur-y - self.height - Theme.sp-2;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.shadow-menu; }
+        Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border; }
+        FocusScope {
+            init => { self.focus(); }
+            key-pressed(ev) => {
+                if ev.text == Key.Escape { root.dur-open = false; return accept; }
+                EventResult.reject
+            }
+        }
+        dv := VerticalLayout {
+            x: 1px; y: 1px; width: parent.width - Theme.sp-2;
+            DurRow { label: "15 minutes"; on: root.duration == "15m"; clicked => { root.dur-open = false; root.set-duration("15m"); } }
+            DurRow { label: "1 hour"; on: root.duration == "1h"; clicked => { root.dur-open = false; root.set-duration("1h"); } }
+            DurRow { label: "8 hours"; on: root.duration == "8h"; clicked => { root.dur-open = false; root.set-duration("8h"); } }
+            DurRow { label: "Until this chat ends"; on: root.duration == "chat"; clicked => { root.dur-open = false; root.set-duration("chat"); } }
+        }
+    }
+}

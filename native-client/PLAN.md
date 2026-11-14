@@ -349,10 +349,17 @@ Phase 1 left these, each with its workaround in place:
     (the web's Tab also reaches the buttons, and can leave the dialog);
   - the checkbox is the client's own (an accent box with a check), not the
     system's.
-  - the pick list's rows keep the scroll thumb's strip clear whenever the
-    rows' least height overflows the list (a row's real height depends on
-    its width, so the exact test would be a binding loop); a list whose
-    long names wrap just enough to scroll may run a field under the thumb.
+- **The secret-request dock** (2.12b):
+  - the "Update this secret's lock" prompt after approving with an old
+    6-digit PIN (`needsUpgrade`) is not built, as in 2.12;
+  - Tab: the dock's buttons, the allow box and the duration take no
+    keyboard focus (no native button does yet); Tab from the field goes to
+    the next focusable thing, Enter in the field approves;
+  - a run's command wraps where Slint's line breaker allows, which also
+    breaks after a `/` in a long URL (the web keeps such a word whole and
+    wraps at the space before it);
+  - while the dock scrolls (taller than the window), the cards' shadows
+    are cut at its top and bottom (a scrolling box clips).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

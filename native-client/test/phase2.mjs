@@ -1825,6 +1825,106 @@ await d.send({ cmd: 'resize', w: 1400, h: 860 });
 await until('back to size', (q) => q.secProbe?.actionsShown === true, 5000);
 await key('Escape');
 await until('Esc closes the dialog', (q) => q.secretsDialog === null && q.pointerModal === false, 5000) && check('Esc closes the dialog', true);
+
+// ─── 2.12b Secret requests (the dock) ───
+// Claude's MCP bridge: POST /api/mcp/call with the chat's key (the test
+// server's dev-mcp file for the chat). The call waits for the owner, so it
+// is started and not awaited.
+{
+  const DATA = process.env.CRUNDI_TEST_DATA || `/tmp/crundi-devtest-${new URL(SERVER).port}/data`;
+  const mcpFile = join(DATA, 'dev-mcp', `${liveSec}.json`);
+  await until('the chat\'s MCP config', () => existsSync(mcpFile), 20000);
+  if (!check('the secrets chat has its MCP config (dev-mcp)', existsSync(mcpFile), mcpFile)) {
+    console.log('skipping 2.12b');
+  } else {
+    const KEY = JSON.parse(readFileSync(mcpFile, 'utf8')).mcpServers.crundi.env.CRUNDI_API_KEY;
+    const mcp = (tool, args) => fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify({ tool, args }) }).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+    const run = () => mcp('secret_run', { sessionId: liveSec, name: 'E2E_RUN', command: 'echo len=${#SECRET}', reason: 'e2e' });
+    const seeded = await http('POST', '/api/secrets', { action: 'add', name: 'E2E_RUN', description: 'e2e', value: 'v-e2e', pin: 'open-sesame' }, token);
+    check('E2E_RUN is seeded', seeded.body?.ok === true, seeded.body);
+    // Reject.
+    let call = run();
+    p = await until('a run request: one card', (q) => q.sreq?.cards?.length === 1, 10000);
+    if (p) {
+      const c = p.sreq.cards[0];
+      check('the card: a run of E2E_RUN with its command, armed', c.name === 'E2E_RUN' && c.run && c.command === 'echo len=${#SECRET}' && c.armed, c);
+      check('armed without the focus (the composer keeps the keyboard)', p.sreqFocused === false);
+      check('the dock is not modal', p.pointerModal === false);
+    }
+    await snap('2.12b-one-run');
+    await ui('sreq-reject', 'E2E_RUN');
+    let ans = await call;
+    check('Reject: the call is denied', ans.ok === false && ans.error === 'The user denied this secret access request.', ans);
+    p = await until('the dock goes', (q) => q.sreq === null && q.toast === 'Rejected', 10000);
+    if (p) check('the dock goes; the toast "Rejected"', true);
+    // Wrong, then right.
+    call = run();
+    await until('a second request', (q) => q.sreq?.cards?.length === 1, 10000);
+    await ui('sreq-focus');
+    await until('the field has the keyboard', (q) => q.sreqFocused === true, 5000);
+    await keys('nope-nope');
+    await keys('Return');
+    p = await until('a wrong passphrase', (q) => q.sreq?.err === 'Incorrect passphrase', 10000);
+    if (p) {
+      const pending = (await http('GET', '/api/secrets', null, token)).body?.requests || [];
+      check('wrong: "Incorrect passphrase", the card and the request still there, the text kept', p.sreq.cards.length === 1 && pending.length === 1 && p.sreq.typed === 9, { sreq: p.sreq, pending: pending.length });
+    }
+    await snap('2.12b-wrong');
+    // Esc: the error goes, the text stays, the field lets go.
+    await key('Escape');
+    p = await until('Esc', (q) => q.sreq?.err === '' && q.sreqFocused === false, 5000);
+    if (p) check('Esc in the field: the error cleared, the text kept, the focus gone', p.sreq.typed === 9, p.sreq);
+    await ui('sreq-focus');
+    await until('focused again', (q) => q.sreqFocused === true, 5000);
+    // The text is selected: typing replaces it.
+    await keys('open-sesame');
+    await keys('Return');
+    ans = await call;
+    check('right: the command ran with the secret bound', ans.ok === true && ans.stdout === 'len=5\n', ans);
+    p = await until('approved', (q) => q.sreq === null && q.toast === 'Approved', 10000);
+    if (p) check('the toast "Approved"; no dock', true);
+    // Allow for this chat.
+    call = run();
+    await until('a third request', (q) => q.sreq?.cards?.length === 1, 10000);
+    await ui('sreq-allow');
+    await ui('sreq-duration', '1h');
+    await until('ticked', (q) => q.sreq?.allowOn === true, 5000);
+    await snap('2.12b-allow');
+    await ui('sreq-focus');
+    await until('focused', (q) => q.sreqFocused === true, 5000);
+    await keys('open-sesame');
+    await keys('Return');
+    ans = await call;
+    check('allowed: it ran', ans.ok === true, ans);
+    p = await until('allowed for this chat', (q) => q.sreq === null && q.toast === 'Approved, and allowed for this chat' && pane(q, liveSec)?.secretsN === 1, 10000);
+    if (p) {
+      const g = (await http('GET', `/api/secrets/chat?sessionId=${liveSec}`, null, token)).body?.grants || [];
+      check('the toast "Approved, and allowed for this chat"; the lock counts 1; the grant about an hour', g.length === 1 && g[0].name === 'E2E_RUN' && Math.abs(Date.parse(g[0].expiresAt) - Date.now() - 3600000) < 120000, g);
+    }
+    ans = await run();
+    check('the next run from the chat asks nothing', ans.ok === true && ans.stdout === 'len=5\n', ans);
+    check('and no card appeared', (await props()).sreq === null);
+    // Several: a get and a run; Approve on the second moves the field there.
+    const callGet = mcp('secret_get', { sessionId: liveSec, name: 'E2E_TOKEN', reason: '' });
+    await until('the get', (q) => q.sreq?.cards?.length === 1, 10000);
+    const callRun2 = mcp('secret_run', { sessionId: liveSec, name: 'E2E_TWO', command: 'true', reason: '' });
+    p = await until('two cards', (q) => q.sreq?.cards?.length === 2, 10000);
+    if (p) check('two cards, oldest first, the first armed', p.sreq.cards[0].name === 'E2E_TOKEN' && !p.sreq.cards[0].run && p.sreq.cards[0].armed && !p.sreq.cards[1].armed, p.sreq.cards);
+    await snap('2.12b-several');
+    await keys('typed-in-first');
+    await ui('sreq-approve', 'E2E_TWO');
+    p = await until('the second armed', (q) => q.sreq?.cards?.[1]?.armed === true && q.sreqFocused === true, 5000);
+    if (p) check('Approve on the second: its field, empty and focused', p.sreq.typed === 0 && !p.sreq.cards[0].armed, p.sreq);
+    await ui('sreq-reject', 'E2E_TWO');
+    await until('one left', (q) => q.sreq?.cards?.length === 1, 10000);
+    p = await props();
+    check('rejected: the first card armed again', p.sreq?.cards?.[0]?.armed === true, p.sreq);
+    await ui('sreq-reject', 'E2E_TOKEN');
+    p = await until('none left', (q) => q.sreq === null, 10000);
+    const [g1, r2] = await Promise.all([callGet, callRun2]);
+    check('both calls denied', g1.ok === false && r2.ok === false, { g1, r2 });
+  }
+}
 await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
 
 d.close();

@@ -297,37 +297,37 @@ The call blocks until answered, so start it without awaiting.
    push a `secret-requests` with an empty list and the dock goes.
 
 ## Checklist
-- [ ] Dock at the window's bottom right (sp-16), over the panes, under
+- [x] Dock at the window's bottom right (sp-16), over the panes, under
       dialogs and the toast; full width less sp-12 at 640 or narrower;
       height capped with a scroll.
-- [ ] One card per request, oldest first, live from `secret-requests`;
+- [x] One card per request, oldest first, live from `secret-requests`;
       no requests, no dock.
-- [ ] Head wording per kind: "Run a command with <NAME>" / "Release
+- [x] Head wording per kind: "Run a command with <NAME>" / "Release
       <NAME>", the name mono in accent.
-- [ ] Project and reason lines only when set; run: the command box (wraps,
+- [x] Project and reason lines only when set; run: the command box (wraps,
       `cmd-max-h`, scrolls, selectable) and the bind line with the env
       name; get: "Claude will be able to read this value."
-- [ ] The first card armed without focus; Approve on another arms and
+- [x] The first card armed without focus; Approve on another arms and
       focuses it (empty field); others show Approve / Reject.
-- [ ] Passphrase field centred, "Passphrase"; PIN field digits only, 6
+- [x] Passphrase field centred, "Passphrase"; PIN field digits only, 6
       max, "PIN".
-- [ ] Allow for this chat: only for a run from an owner's chat with the
+- [x] Allow for this chat: only for a run from an owner's chat with the
       capability; unticked by default; duration dropdown disabled until
       ticked, 1 hour first, last choice kept; hint only when ticked; sent
       as `allowForChat`.
-- [ ] Approve: the two local messages; "Approving…" disabled; server
+- [x] Approve: the two local messages; "Approving…" disabled; server
       errors in the line, text kept, focused and selected; success toasts
       "Approved" / "Approved, and allowed for this chat" (green).
-- [ ] After allow-for-chat the header lock counts it, and the next run
+- [x] After allow-for-chat the header lock counts it, and the next run
       from that chat asks nothing.
-- [ ] Reject: at once, toast "Rejected", the card goes; failure → error
+- [x] Reject: at once, toast "Rejected", the card goes; failure → error
       toast.
-- [ ] Timed out or answered elsewhere: the card goes silently; a stale
+- [x] Timed out or answered elsewhere: the card goes silently; a stale
       Approve shows "Request no longer pending (it may have timed out)".
-- [ ] The pane stays "working" while a request waits (no needs-input).
-- [ ] Enter approves; Esc clears the error and leaves the field; the dock
+- [x] The pane stays "working" while a request waits (no needs-input).
+- [x] Enter approves; Esc clears the error and leaves the field; the dock
       is not modal.
-- [ ] Typed locks cleared from memory after sending or when the card goes.
-- [ ] Upgrade prompt: built, or named in PLAN.md "Known gaps" (as 2.12).
+- [x] Typed locks cleared from memory after sending or when the card goes.
+- [x] Upgrade prompt: built, or named in PLAN.md "Known gaps" (as 2.12).
 - [ ] Tokens only (`cmd-max-h` the one new size; `dialog-w-lg` reused);
       side-by-side crops of each state under `secret-requests/review/`.

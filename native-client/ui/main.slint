@@ -22,8 +22,9 @@ import { EntryView, ToolView, Composer, TipBox, TipState, SchedItem, SlashItem }
 import { BrowserDrawer, PanelData } from "browser.slint";
 import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
 import { SecretsDialog, SecGrant, SecPick, SecProbe } from "secrets.slint";
+import { SreqDock, SreqCard, SreqProbe } from "sreq.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, SecGrant, SecPick, SecProbe }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe }
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -167,6 +168,26 @@ export component MainWindow inherits Window {
     in property <bool> sec-revoking-all;
     in property <bool> sec-unsupported;
     in property <int> sec-pin-gen;
+    // Secret requests (2.12b): the dock's cards and the armed card's state.
+    in property <[SreqCard]> sreq-cards;
+    in property <bool> sreq-allow;
+    in property <bool> sreq-allow-on;
+    in property <string> sreq-duration;
+    in property <string> sreq-err;
+    in property <bool> sreq-busy;
+    in property <string> sreq-pin;
+    in property <int> sreq-pin-gen;
+    in property <bool> sreq-focus-armed;
+    in property <int> sreq-sel-gen;
+    callback sreq-approve(string);
+    callback sreq-confirm();
+    callback sreq-reject(string);
+    callback sreq-typed(string);
+    callback sreq-toggle-allow();
+    callback sreq-set-duration(string);
+    callback sreq-escape();
+    // A toast of success (a green edge).
+    in property <bool> toast-ok;
     callback sec-close();
     callback sec-tick(string);
     callback sec-typed(string, string);
@@ -388,6 +409,22 @@ export component MainWindow inherits Window {
         PaneCard { p: root.drag-pane; clone: true; blocked: true; }
     }
 
+    // Secret requests (2.12b): over the workbench, under the dialogs and
+    // the toast; not modal.
+    if root.signed-in && root.sreq-cards.length > 0: SreqDock {
+        width: root.width; height: root.height;
+        cards: root.sreq-cards; allow: root.sreq-allow; allow-on: root.sreq-allow-on;
+        duration: root.sreq-duration; err: root.sreq-err; busy: root.sreq-busy;
+        pin: root.sreq-pin; pin-gen: root.sreq-pin-gen; focus-armed: root.sreq-focus-armed; sel-gen: root.sreq-sel-gen;
+        approve(id) => { root.sreq-approve(id); }
+        confirm => { root.sreq-confirm(); }
+        reject(id) => { root.sreq-reject(id); }
+        typed(t) => { root.sreq-typed(t); }
+        toggle-allow => { root.sreq-toggle-allow(); }
+        set-duration(d) => { root.sreq-set-duration(d); }
+        escape => { root.sreq-escape(); }
+    }
+
     // The permission-mode picker, over everything but the toast.
     if root.signed-in && root.mode-picker-open: ModePicker {
         width: root.width; height: root.height;
@@ -429,7 +466,7 @@ export component MainWindow inherits Window {
 
     // The toast, under the top bar on the right: never wider than a pane at
     // its least; bg-secondary, a border with an accent (red: an error) left
-    // edge, radius 6, a soft shadow.
+    // edge; green: a success), radius 6, a soft shadow.
     if root.toast != "": Rectangle {
         property <length> w: min(Theme.pane-min, tm.preferred-width + Theme.sp-40 + Theme.sp-4);
         x: root.width - Theme.sp-16 - self.w;
@@ -441,9 +478,9 @@ export component MainWindow inherits Window {
             background: Theme.bg-secondary;
             border-radius: Theme.r-control;
             border-width: 1px;
-            border-color: root.toast-error ? Theme.red : Theme.border;
+            border-color: root.toast-error ? Theme.red : root.toast-ok ? Theme.green : Theme.border;
         }
-        Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.r-control; border-bottom-left-radius: Theme.r-control; background: root.toast-error ? Theme.red : Theme.accent; }
+        Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.r-control; border-bottom-left-radius: Theme.r-control; background: root.toast-error ? Theme.red : root.toast-ok ? Theme.green : Theme.accent; }
         tm := Text { visible: false; text: root.toast; font-size: Theme.text-14; }
         tt := Text {
             x: Theme.sp-24; y: Theme.sp-12; width: parent.width - Theme.sp-40;

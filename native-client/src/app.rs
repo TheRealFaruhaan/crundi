@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, sched, secrets, slash, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, ToolView,
+    head, sched, secrets, slash, sreq, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -173,6 +173,8 @@ pub struct App {
     slash: HashMap<String, (Rc<VecModel<SlashItem>>, usize)>,
     /// The chat secrets dialog, open (2.12).
     sec: Option<SecDlg>,
+    /// Secret requests waiting on the owner (2.12b).
+    sreq: Sreq,
     /// Each chat's schedule panel (2.10), by pane key.
     sched: HashMap<String, Sched>,
     /// The pane whose mode picker is open (2.6), by key.
@@ -302,6 +304,7 @@ pub fn init(window: &MainWindow) {
             picker: None,
             sched: HashMap::new(),
             sec: None,
+            sreq: Sreq::default(),
             slash: HashMap::new(),
             held: HashMap::new(),
             flush_pending: false,
@@ -359,6 +362,15 @@ pub fn init(window: &MainWindow) {
     window.on_pane_full(|id| pane_full(id as u32));
     window.on_pane_font(|id, d| pane_font(id as u32, d));
     window.on_pane_pin(|id| pane_pin(id as u32));
+    // Secret requests (2.12b).
+    window.set_sreq_cards(ModelRc::from(with(|a| a.sreq.cards.clone()).unwrap_or_default()));
+    window.on_sreq_approve(|id| sreq_arm(id.as_str()));
+    window.on_sreq_confirm(sreq_confirm);
+    window.on_sreq_reject(|id| sreq_reject(id.to_string()));
+    window.on_sreq_typed(|t| sreq_typed(t.as_str()));
+    window.on_sreq_toggle_allow(|| { with(|a| a.sreq.allow_on = !a.sreq.allow_on); render(); });
+    window.on_sreq_set_duration(|d| { with(|a| a.sreq.duration = d.to_string()); render(); });
+    window.on_sreq_escape(|| { with(|a| a.sreq.err.clear()); render(); });
     // The chat secrets dialog (2.12).
     window.on_pane_secrets(|id| sec_open(id as u32));
     window.on_sec_close(sec_close);
@@ -646,6 +658,7 @@ fn start_session(si: SignedIn) {
     });
     load_all(saved.project);
     load_secrets(base.clone());
+    load_sreqs();
     // The usage bars now, not at the server's next push (as the web UI: latest, then fresh).
     call(|api| api.get("/api/usage/latest").or_else(|_| api.get("/api/usage")), |r| {
         if let Ok(u) = r { with(|a| a.usage = Some((u, std::time::Instant::now()))); show_usage(); }
@@ -670,6 +683,9 @@ pub fn sign_out(why: &str) {
         a.project.clear();
         a.grants.clear();
         a.secrets_cap = false;
+        a.sreq.forget();
+        a.sreq.list.clear();
+        a.sreq.armed = None;
         a.full = None;
         a.armed = 0;
         a.timers.clear();
@@ -701,7 +717,12 @@ fn call(work: impl FnOnce(&Api) -> api::ApiResult + Send + 'static, done: impl F
 
 fn on_live(e: Event) {
     match e {
-        Event::Connected(on) => { if let Some(w) = ui() { w.set_online(on); } }
+        Event::Connected(on) => {
+            if let Some(w) = ui() { w.set_online(on); }
+            // Back online: requests may have come and gone meanwhile.
+            if on { load_sreqs(); }
+        }
+        Event::SecretRequests(v) => sreq_list(v.get("requests").unwrap_or(&Value::Null)),
         Event::SignedOut => sign_out("Your sign-in ended. Sign in again."),
         Event::State(state) => {
             if let Some(p) = state.get("projects").and_then(|p| p.as_array()) {
@@ -1115,7 +1136,7 @@ fn render() {
     if with(|a| !a.held.is_empty() && !std::mem::replace(&mut a.flush_pending, true)).unwrap_or(false) {
         slint::Timer::single_shot(Duration::from_millis(0), flush_held);
     }
-    if let Some(w) = ui() { with(|a| show_sec(&w, a)); }
+    if let Some(w) = ui() { with(|a| show_sec(&w, a)); with(|a| show_sreq(&w, a)); }
     if let (Some(w), Some((cw, full, picker))) = (ui(), out) {
         w.set_content_width(cw);
         w.set_mode_picker_open(picker.is_some());
@@ -1234,10 +1255,16 @@ pub fn pane_rename(leaf: u32, input: &str) {
 }
 
 /// A toast, as the web UI's: 3.5 s.
-pub fn toast(text: &str, error: bool) {
+pub fn toast(text: &str, error: bool) { toast_kind(text, error, false); }
+
+/// A toast of success (a green edge, the web's `.toast.success`).
+pub fn toast_ok(text: &str) { toast_kind(text, false, true); }
+
+fn toast_kind(text: &str, error: bool, ok: bool) {
     let Some(w) = ui() else { return };
     w.set_toast(text.into());
     w.set_toast_error(error);
+    w.set_toast_ok(ok);
     let gen = with(|a| { a.toast_gen += 1; a.toast_gen }).unwrap_or(0);
     slint::Timer::single_shot(Duration::from_millis(3500), move || {
         if with(|a| a.toast_gen == gen).unwrap_or(false) { if let Some(w) = ui() { w.set_toast("".into()); } }
@@ -2719,3 +2746,233 @@ pub fn snapshot_state() -> Value {
         })
     }).unwrap_or(Value::Null)
 }
+
+// ─── Secret requests (2.12b, src/sreq.rs, ui/sreq.slint) ───
+
+/// The requests waiting on the owner, which card holds the field, and that
+/// card's state. What is typed lives here only while its card is armed.
+pub struct Sreq {
+    list: Vec<sreq::Req>,
+    armed: Option<String>,
+    pin: String,
+    allow_on: bool,
+    /// The last duration chosen (kept across cards while the app runs).
+    duration: String,
+    err: String,
+    busy: bool,
+    /// Armed by a click (its field takes the focus), not automatically.
+    focus_armed: bool,
+    pin_gen: i32,
+    sel_gen: i32,
+    cards: Rc<VecModel<SreqCard>>,
+}
+
+impl Default for Sreq {
+    fn default() -> Self {
+        Sreq { list: vec![], armed: None, pin: String::new(), allow_on: false, duration: "1h".into(), err: String::new(), busy: false, focus_armed: false, pin_gen: 0, sel_gen: 0, cards: Rc::new(VecModel::default()) }
+    }
+}
+
+impl Sreq {
+    /// What was typed: overwritten, then dropped; the field emptied.
+    fn forget(&mut self) {
+        // SAFETY of meaning, not memory: the bytes are overwritten in place
+        // before the string is emptied, so the lock does not linger.
+        let n = self.pin.len();
+        self.pin.clear();
+        self.pin.extend(std::iter::repeat('\0').take(n));
+        self.pin.clear();
+        self.pin.shrink_to_fit();
+        self.pin_gen += 1;
+    }
+    /// A new card holds the field: nothing typed, unticked, no error.
+    fn arm(&mut self, id: Option<String>, focus: bool) {
+        if self.armed != id { self.forget(); }
+        self.armed = id;
+        self.allow_on = false;
+        self.err.clear();
+        self.focus_armed = focus;
+    }
+}
+
+/// The list at start (and after a reconnect): GET /api/secrets.
+fn load_sreqs() {
+    call(|api| api.get("/api/secrets"), |r| {
+        if let Ok(v) = r { sreq_list(v.get("requests").unwrap_or(&Value::Null)); }
+    });
+}
+
+/// The server's whole list (start, or its `secret-requests` event). The armed
+/// card stays armed while its request is there (what is typed, the tick and
+/// the error with it); else the first is armed, without the focus.
+fn sreq_list(v: &Value) {
+    let list = sreq::parse(v);
+    with(|a| {
+        let r = &mut a.sreq;
+        match sreq::armed(&list, r.armed.as_deref()) {
+            Some((_, true)) => {}
+            Some((id, false)) => r.arm(Some(id), false),
+            None => r.arm(None, false),
+        }
+        r.list = list;
+    });
+    render();
+}
+
+/// The cards: rows rewritten only where they changed (a redraw must not
+/// take the focus or what is typed from the armed field).
+fn show_sreq(w: &MainWindow, a: &App) {
+    let r = &a.sreq;
+    let rows: Vec<SreqCard> = r.list.iter().map(|q| SreqCard {
+        id: q.id.as_str().into(), run: q.run, name: q.name.as_str().into(), project: q.project.as_str().into(), reason: q.reason.as_str().into(),
+        command: q.command.as_str().into(), env: q.env.as_str().into(), lock: q.lock.as_str().into(), armed: r.armed.as_deref() == Some(q.id.as_str()),
+    }).collect();
+    let m = &r.cards;
+    // Gone: removed where they are; new: at the end (the server's order is
+    // oldest first); then the changed ones in place.
+    let mut i = 0;
+    while i < m.row_count() {
+        let id = m.row_data(i).map(|c| c.id).unwrap_or_default();
+        if rows.iter().any(|c| c.id == id) { i += 1; } else { m.remove(i); }
+    }
+    let same_order = m.iter().zip(rows.iter()).all(|(x, y)| x.id == y.id);
+    if !same_order { m.set_vec(rows.clone()); }
+    for (k, c) in rows.iter().enumerate() {
+        if k < m.row_count() { if m.row_data(k).as_ref() != Some(c) { m.set_row_data(k, c.clone()); } } else { m.push(c.clone()); }
+    }
+    let armed = r.armed.as_deref().and_then(|id| r.list.iter().find(|q| q.id == id));
+    let collab = armed.map(|q| a.sessions.iter().chain(a.terminals.iter().flatten()).find(|c| s(c, "id") == q.session).and_then(|c| c.get("collaborator")).is_some_and(truthy)).unwrap_or(false);
+    w.set_sreq_allow(armed.is_some_and(|q| sreq::can_allow(q, a.secrets_cap, collab)));
+    w.set_sreq_allow_on(r.allow_on);
+    w.set_sreq_duration(r.duration.as_str().into());
+    w.set_sreq_err(r.err.as_str().into());
+    w.set_sreq_busy(r.busy);
+    w.set_sreq_pin(r.pin.as_str().into());
+    w.set_sreq_pin_gen(r.pin_gen);
+    w.set_sreq_focus_armed(r.focus_armed);
+    w.set_sreq_sel_gen(r.sel_gen);
+}
+
+/// Approve on a card without the field: it takes the field, and the focus.
+fn sreq_arm(id: &str) {
+    with(|a| if a.sreq.list.iter().any(|q| q.id == id) && a.sreq.armed.as_deref() != Some(id) {
+        a.sreq.arm(Some(id.to_string()), true);
+    });
+    render();
+}
+
+fn sreq_typed(text: &str) {
+    let changed = with(|a| {
+        let lock = a.sreq.armed.as_deref().and_then(|id| a.sreq.list.iter().find(|q| q.id == id)).map(|q| q.lock.clone()).unwrap_or_default();
+        let clean = secrets::typed(&lock, text);
+        let changed = clean != text;
+        a.sreq.pin = clean;
+        if changed { a.sreq.pin_gen += 1; }
+        changed
+    }).unwrap_or(false);
+    if changed { render(); }
+}
+
+/// Approve on the armed card (or Enter in its field): the local check, then
+/// the server. A refusal keeps the text (focused, selected) and says why.
+fn sreq_confirm() {
+    let job = with(|a| {
+        let caps = a.secrets_cap;
+        let r = &mut a.sreq;
+        if r.busy { return None; }
+        let q = r.armed.as_deref().and_then(|id| r.list.iter().find(|q| q.id == id))?.clone();
+        if let Err(e) = sreq::check(&q.lock, &r.pin) {
+            r.err = e.to_string();
+            r.sel_gen += 1;
+            return Some(Err(()));
+        }
+        let collab = a.sessions.iter().chain(a.terminals.iter().flatten()).find(|c| s(c, "id") == q.session).and_then(|c| c.get("collaborator")).is_some_and(truthy);
+        let r = &mut a.sreq;
+        let allow = (r.allow_on && sreq::can_allow(&q, caps, collab)).then(|| r.duration.clone());
+        let body = sreq::approve_body(&q, &r.pin, allow.as_deref());
+        r.busy = true;
+        Some(Ok((q.id.clone(), body, allow.is_some())))
+    }).flatten();
+    let Some(job) = job else { return };
+    render();
+    let Ok((id, mut body, allow)) = job else { return };
+    let Some(api) = api() else { return };
+    bg(move || {
+        let r = post_raw(&api, "/api/secrets", &body).map_err(|e| e.to_string());
+        // The lock in the body: overwritten once sent.
+        if let Some(p) = body.get_mut("pin") { *p = json!(""); }
+        r
+    }, move |r| {
+        match sreq::answer(r, allow) {
+            Ok(msg) => {
+                with(|a| {
+                    a.sreq.busy = false;
+                    // The next card is armed (not focused): the server's event
+                    // takes this one away.
+                    let next = a.sreq.list.iter().find(|q| q.id != id).map(|q| q.id.clone());
+                    if a.sreq.armed.as_deref() == Some(id.as_str()) { a.sreq.arm(next, false); }
+                    a.sreq.list.retain(|q| q.id != id);
+                });
+                toast_ok(msg);
+            }
+            Err(e) => with(|a| {
+                a.sreq.busy = false;
+                if a.sreq.armed.as_deref() == Some(id.as_str()) { a.sreq.err = e; a.sreq.sel_gen += 1; }
+            }).unwrap_or(()),
+        }
+        render();
+    });
+}
+
+/// Reject, on any card: at once, no confirmation. The server's event takes
+/// the card away; a failure says so (the web says nothing).
+fn sreq_reject(id: String) {
+    let Some(api) = api() else { return };
+    with(|a| if a.sreq.armed.as_deref() == Some(id.as_str()) { a.sreq.err.clear(); });
+    let body = json!({ "action": "deny", "reqId": id });
+    bg(move || post_raw(&api, "/api/secrets", &body), move |r| match r {
+        Ok((_, v)) if v.get("ok").and_then(|o| o.as_bool()) != Some(false) => {
+            with(|a| {
+                if a.sreq.armed.as_deref() == Some(id.as_str()) {
+                    let next = a.sreq.list.iter().find(|q| q.id != id).map(|q| q.id.clone());
+                    a.sreq.arm(next, false);
+                }
+                a.sreq.list.retain(|q| q.id != id);
+            });
+            toast("Rejected", false);
+            render();
+        }
+        Ok((_, v)) => toast(v.get("error").and_then(|e| e.as_str()).unwrap_or("Could not reject it"), true),
+        Err(e) => toast(&e.to_string(), true),
+    });
+}
+
+/// The test driver's view of the dock.
+pub fn sreq_of() -> Value {
+    with(|a| {
+        let r = &a.sreq;
+        if r.list.is_empty() { return Value::Null; }
+        json!({
+            "cards": r.list.iter().map(|q| json!({ "id": q.id, "name": q.name, "run": q.run, "command": q.command, "armed": r.armed.as_deref() == Some(q.id.as_str()) })).collect::<Vec<_>>(),
+            "armed": r.armed, "err": r.err, "busy": r.busy, "allowOn": r.allow_on, "duration": r.duration,
+            // How much is typed (never what).
+            "typed": r.pin.chars().count(),
+        })
+    }).unwrap_or(Value::Null)
+}
+
+/// The test driver: a card by its secret's name (the first such).
+pub fn sreq_by_name(name: &str) -> String {
+    with(|a| a.sreq.list.iter().find(|q| q.name == name).map(|q| q.id.clone())).flatten().unwrap_or_default()
+}
+
+/// The test driver: the armed card's field takes the focus (as a click on it).
+pub fn sreq_focus() {
+    with(|a| a.sreq.sel_gen += 1);
+    render();
+}
+
+pub fn sreq_approve_by(name: &str) { let id = sreq_by_name(name); if with(|a| a.sreq.armed.as_deref() == Some(id.as_str())).unwrap_or(false) { sreq_confirm(); } else { sreq_arm(&id); } }
+pub fn sreq_reject_by(name: &str) { let id = sreq_by_name(name); if !id.is_empty() { sreq_reject(id); } }
+pub fn sreq_toggle_allow() { with(|a| a.sreq.allow_on = !a.sreq.allow_on); render(); }
+pub fn sreq_set_duration(d: &str) { with(|a| a.sreq.duration = d.to_string()); render(); }
