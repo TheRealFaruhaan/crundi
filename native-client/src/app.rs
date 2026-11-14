@@ -1633,7 +1633,7 @@ fn restore_drafts(a: &mut App, keys: &[String]) {
 fn pick_file(key: String) {
     if with(|a| a.uploads.get(&key).is_some_and(|u| u.active > 0)).unwrap_or(false) { return; }
     std::thread::spawn(move || {
-        let Some(path) = rfd::FileDialog::new().pick_file() else { return };
+        let Some(path) = crate::testctl::take_pick().or_else(|| rfd::FileDialog::new().pick_file()) else { return };
         let _ = slint::invoke_from_event_loop(move || upload_file(&key, &path));
     });
 }

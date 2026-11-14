@@ -45,6 +45,21 @@ pub fn start(port: u16, ui: slint::Weak<crate::MainWindow>) {
     });
 }
 
+/// The file the attach button's picker answers with next (the driver's
+/// stand-in for the system dialog, which a test can't drive); the button's
+/// own path (busy check, off-thread pick, upload) runs as for a person.
+static PICK: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// The driver's answer for the picker, taken once; None: the real dialog.
+pub fn take_pick() -> Option<std::path::PathBuf> {
+    PICK.lock().ok()?.take()
+}
+
+/// The driver set an answer for the picker and it hasn't been taken.
+fn pick_waiting() -> bool {
+    PICK.lock().map(|p| p.is_some()).unwrap_or(false)
+}
+
 fn arg(c: &Value, i: usize) -> String {
     c.pointer(&format!("/args/{i}")).map(|v| match v { Value::String(s) => s.clone(), o => o.to_string() }).unwrap_or_default()
 }
@@ -57,6 +72,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "ok": true,
             "signedIn": w.get_signed_in(),
             "online": w.get_online(),
+            "pickWaiting": pick_waiting(),
             "signinError": w.get_signin_error().as_str(),
             "signinBusy": w.get_signin_busy(),
             "signinChecked": w.get_signin_checked(),
@@ -182,6 +198,15 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                     let force = all.first().is_some_and(|x| x == "upload");
                     crate::app::drop_files(&chat(), all.into_iter().filter(|x| x != "upload").map(std::path::PathBuf::from).collect(), force);
                 }
+                // The attach button as clicked, its picker answered by
+                // "pick-next" (empty: no answer, the real dialog).
+                "pick-next" => { let a = arg(c, 0); if let Ok(mut p) = PICK.lock() { *p = (!a.is_empty()).then(|| a.into()); } }
+                "attach-button" => w.global::<crate::Composer>().invoke_attach(chat().into()),
+                // Files dropped as the system delivers them (src/main.rs: one
+                // DroppedFile each, the same moment), on the chat the drag is
+                // over ("file-hover" true and the pointer over it) or else the
+                // focused chat.
+                "os-drop" => { for i in 0..16 { let a = arg(c, i); if !a.is_empty() { crate::app::file_dropped(a.into()); } } }
                 "paste-image" => match std::fs::read(arg(c, 0)) { Ok(b) => crate::app::upload(&chat(), "image.png".into(), b), Err(e) => return json!({ "ok": false, "error": e.to_string() }) },
                 // Files dragged from the system over the window (true) or gone
                 // (false): with the pointer over a chat, its drop outline.

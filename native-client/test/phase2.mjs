@@ -1150,7 +1150,9 @@ await clearBox();
 // Attach: the path goes in at the caret, spaced; the file is on the server.
 await keys('Please read andsummarise');
 await ui('caret', '15');
-await ui('attach', notes);
+// Through the attach button: its picker (answered by the driver) and upload.
+await ui('pick-next', notes);
+await ui('attach-button');
 p = await until('an attached file\'s path goes in at the caret', (q) => /^Please read and \/\S+\/crundi_attachments\/\d+-notes\.txt summarise$/.test(pane(q, liveA)?.draft || ''), 20000);
 if (p) {
   const path = pane(p, liveA).draft.split(' ')[3];
@@ -1162,10 +1164,17 @@ if (p) {
 }
 // A big file: the bar shows (name, a number), attach busy, then all gone.
 await clearBox();
-await ui('attach', big);
+await ui('pick-next', big);
+await ui('attach-button');
 p = await until('uploading: the bar and attach busy', (q) => { const c = pane(q, liveA); return c.upOn && c.upBusy && c.upName === 'big.bin' && /^(\d+%|saving)$/.test(c.upLabel); }, 10000);
 if (p) check('while uploading: the bar (name, number) and attach busy', true, pane(p, liveA));
 await snap('2.7-uploading');
+// Busy: the attach button opens no picker until the upload is done.
+await ui('pick-next', notes);
+await ui('attach-button');
+await sleep(400);
+{ const q = await props(); check('attach while uploading: no picker, nothing else uploads', q.pickWaiting === true && !/notes\.txt/.test(pane(q, liveA).draft), { pick: q.pickWaiting, draft: pane(q, liveA).draft }); }
+await ui('pick-next', '');
 p = await until('the big upload finishes', (q) => /-big\.bin $/.test(pane(q, liveA)?.draft || '') && !pane(q, liveA).upBusy, 60000);
 if (p) check('a big file uploads and its path goes in', true);
 // A long name elides; name and track share the bar 1:2 (F53): the track
@@ -1206,6 +1215,25 @@ const before = attCount();
 await ui('drop', notes, otherF);
 p = await until('dropped files: their local paths', (q) => pane(q, liveA)?.draft === `${notes} ${otherF} ` && q.toast === '2 files added', 5000);
 if (p) check('a drop on the same machine: local paths, space-separated, "2 files added", nothing uploaded', attCount() === before, attCount());
+// Dropped as the system delivers it (one event per file): on the chat the
+// drag is over, not the focused one; with no chat under it, the focused chat.
+{
+  await clearBox();
+  const b = pane(await props(), liveB2);
+  await ui('file-hover', 'true');
+  await d.send({ cmd: 'mouse', kind: 'move', x: WB.x + b.x + b.w / 2, y: WB.y + b.y + b.h / 2 });
+  await sleep(200);
+  await ui('os-drop', notes, otherF);
+  p = await until('an OS drop lands on the chat under the pointer', (q) => pane(q, liveB2)?.draft === `${notes} ${otherF} ` && q.toast === '2 files added', 5000);
+  if (p) check('a system drop of two files: one insertion on the chat under the pointer, the focused chat untouched', pane(p, liveA).draft === '', { a: pane(p, liveA).draft, b: pane(p, liveB2).draft });
+  await d.send({ cmd: 'mouse', kind: 'leave', x: 0, y: 0 });
+  await ui('os-drop', notes);
+  p = await until('an OS drop with no chat under it goes to the focused chat', (q) => pane(q, liveA)?.draft === `${notes} ` && q.toast === 'File added', 5000);
+  if (p) check('a system drop with no target: the focused chat, "File added"', pane(p, liveB2).draft === `${notes} ${otherF} `);
+  // Empty the second chat's box again (2.8 types into it).
+  await ui('focus-pane', pane(await props(), liveB2).id); await ui('composer-focus'); await clearBox();
+  await focusA();
+}
 // Dropped on a chat from elsewhere (the driver's remote): each uploads.
 await clearBox();
 await ui('drop', 'upload', notes);
