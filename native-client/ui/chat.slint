@@ -56,6 +56,49 @@ export component TipBox inherits Rectangle {
     tt := Text { text: root.text; font-size: Theme.text-12; color: Theme.text-primary; }
 }
 
+/// The one tooltip on screen (main.slint draws it, kept inside the window):
+/// its text, where the pointer was, which Tip owns it.
+export global TipState {
+    in-out property <bool> shown;
+    in-out property <string> text;
+    in-out property <length> x;
+    in-out property <length> y;
+    in-out property <int> owner;
+    in-out property <int> count;
+}
+
+/// A tooltip for what holds it (a TouchArea: `on: parent.has-hover`): after
+/// tip-delay on it, its text shows by the pointer. Slint's own Tooltip opens
+/// where the pointer is and runs past the window's edge; this one is drawn
+/// by main.slint, flipped and shifted to stay inside.
+export component Tip {
+    in property <bool> on;
+    in property <string> text;
+    property <int> id: -1;
+    width: 0; height: 0;
+    function arm() {
+        if root.id < 0 { TipState.count += 1; root.id = TipState.count; }
+        wait.running = true;
+    }
+    function drop() {
+        wait.running = false;
+        if TipState.owner == root.id { TipState.shown = false; }
+    }
+    init => { if root.on { root.arm(); } }
+    changed on => { if root.on { root.arm(); } else { root.drop(); } }
+    changed text => { if TipState.shown && TipState.owner == root.id { TipState.text = root.text; } }
+    wait := Timer {
+        interval: Theme.tip-delay; running: false;
+        triggered => {
+            self.running = false;
+            if root.on && root.text != "" {
+                TipState.text = root.text; TipState.x = Pointer.x; TipState.y = Pointer.y;
+                TipState.owner = root.id; TipState.shown = true;
+            }
+        }
+    }
+}
+
 /// A pane header button (.term-font-btn and its kin): a border, bg-primary,
 /// radius 6, text-secondary; hover: text-primary on an accent border.
 /// Its box is given (the spec's measured sizes); the icon or label is centred.
@@ -114,7 +157,7 @@ component HeadBtn inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: root.tip; } }
+        Tip { on: parent.has-hover; text: root.tip; }
     }
 }
 
@@ -202,7 +245,7 @@ component PlanTag inherits Rectangle {
     border-width: 1px;
     border-color: Theme.sky;
     pt := Text { text: "PLANNING"; font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.sky; }
-    TouchArea { Tooltip { TipBox { text: "Plan mode — Claude is working one out"; } } }
+    TouchArea { Tip { on: parent.has-hover; text: "Plan mode — Claude is working one out"; } }
 }
 
 /// The pane header (.term-head): bg-secondary, a line under it, its items
@@ -281,7 +324,7 @@ export component PaneHead inherits Rectangle {
                 rest-cursor: MouseCursor.grab;
                 double-clicked => { root.maximize(); }
                 drag(k, x, y) => { root.drag(k, x, y); }
-                if dh.tip-ok && !dh.pressed && !dh.dragging: Tooltip { TipBox { text: "Drag to reorder"; } }
+                if dh.tip-ok && !dh.pressed && !dh.dragging: Tip { on: parent.has-hover; text: "Drag to reorder"; }
             }
         }
         // The state dot (2.4): green idle, yellow working, accent needs
@@ -292,7 +335,7 @@ export component PaneHead inherits Rectangle {
             if root.state == "needs-input": Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: Theme.sp-12; height: Theme.sp-12; border-radius: Theme.r-pill; background: Theme.accent-dim; }
             Rectangle { border-radius: Theme.r-chip; background: PaneState.color(root.state); }
             dt := TouchArea {
-                Tooltip { TipBox { text: root.state == "" ? "idle" : root.state; } }
+                Tip { on: parent.has-hover; text: root.state == "" ? "idle" : root.state; }
             }
         }
         // The title: semibold, radius 6.
@@ -318,7 +361,7 @@ export component PaneHead inherits Rectangle {
                 clicked => { if !self.did-drag { root.renaming = true; } }
                 double-clicked => { root.maximize(); }
                 drag(k, x, y) => { root.drag(k, x, y); }
-                if th.tip-ok && !th.pressed && !th.dragging: Tooltip { TipBox { text: "Click to rename"; } }
+                if th.tip-ok && !th.pressed && !th.dragging: Tip { on: parent.has-hover; text: "Click to rename"; }
             }
         }
         // Renaming: an input title-cap wide, the short title all
@@ -913,11 +956,18 @@ component QueueDrawer inherits Rectangle {
                 color: root.sent ? Theme.text-muted : Theme.accent-hover; opacity: Theme.o-usage;
             }
         }
-        Text {
-            text: root.body; font-size: Theme.text-12 * root.fs; wrap: word-wrap;
-            color: root.sent ? Theme.text-secondary : Theme.text-primary;
-            max-height: Theme.queue-rows * root.line;
-            overflow: elide;
+        // At most queue-rows rows: clipped there, "…" on the last (and
+        // "Shown trimmed · " before the hint), so a long batch never pushes
+        // the box out of a short pane.
+        Rectangle {
+            height: min(full-m.preferred-height, Theme.queue-rows * root.line);
+            clip: true;
+            Text {
+                width: parent.width; height: parent.height;
+                text: root.body; font-size: Theme.text-12 * root.fs; wrap: word-wrap;
+                color: root.sent ? Theme.text-secondary : Theme.text-primary;
+                overflow: elide;
+            }
         }
         Rectangle { height: Theme.sp-4; }
         Text {
@@ -928,7 +978,7 @@ component QueueDrawer inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: root.recallable ? MouseCursor.pointer : MouseCursor.default;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: root.tip; } }
+        Tip { on: parent.has-hover; text: root.tip; }
     }
 }
 
@@ -962,6 +1012,8 @@ export global Composer {
     in-out property <string> insert-key;
     in-out property <string> insert-text;
     in-out property <int> insert-caret;
+    // ...and whether the box takes the focus (not for a give-back).
+    in-out property <bool> insert-focus;
     in-out property <int> insert-gen;
 }
 
@@ -989,10 +1041,10 @@ component InputBox inherits Rectangle {
     public function focus-box() { te.focus(); }
     // The app's text and caret (an attached path put in): the box takes the
     // focus with the caret there.
-    public function put(text: string, caret: int) {
+    public function put(text: string, caret: int, focus: bool) {
         root.draft = text;
         te.set-selection-offsets(caret, caret);
-        te.focus();
+        if focus { te.focus(); }
     }
     out property <bool> focused: te.has-focus && root.enabled;
     property <length> line: Theme.text-13 * root.fs * Theme.line-chat;
@@ -1096,7 +1148,7 @@ component SquareBtn inherits Rectangle {
         enabled: !root.busy;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: root.tip; } }
+        Tip { on: parent.has-hover; text: root.tip; }
     }
 }
 
@@ -1127,7 +1179,7 @@ component StopBtn inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: root.armed ? "Click again to interrupt" : "Stop this turn (click twice)"; } }
+        Tip { on: parent.has-hover; text: root.armed ? "Click again to interrupt" : "Stop this turn (click twice)"; }
     }
 }
 
@@ -1194,7 +1246,7 @@ component ModeBtn inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: "Permission mode: " + root.name + ". Click to change."; } }
+        Tip { on: parent.has-hover; text: "Permission mode: " + root.name + ". Click to change."; }
     }
 }
 
@@ -1240,7 +1292,7 @@ component EnterSwitch inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.toggle(); }
-        Tooltip { TipBox { text: root.ctrl ? "Enter makes a newline, Ctrl+Enter sends — click to swap" : "Enter sends, Shift+Enter makes a newline — click to swap"; } }
+        Tip { on: parent.has-hover; text: root.ctrl ? "Enter makes a newline, Ctrl+Enter sends — click to swap" : "Enter sends, Shift+Enter makes a newline — click to swap"; }
     }
 }
 
@@ -1300,7 +1352,7 @@ export component ChatPane inherits Rectangle {
     property <bool> busy: root.state == "working" || root.state == "needs-input";
     // The app put text in this pane's box (an attached path).
     property <int> insert-gen: Composer.insert-gen;
-    changed insert-gen => { if Composer.insert-key == root.key { ib.put(Composer.insert-text, Composer.insert-caret); } }
+    changed insert-gen => { if Composer.insert-key == root.key { ib.put(Composer.insert-text, Composer.insert-caret, Composer.insert-focus); } }
     // The app asks for this pane's box to take the focus.
     property <int> focus-gen: Composer.focus-gen;
     changed focus-gen => { if Composer.focus-key == root.key { ib.focus-box(); } }
@@ -1529,7 +1581,7 @@ export component ChatPane inherits Rectangle {
                                 sh := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { clip.select-all(); clip.copy(); clip.clear-selection(); Composer.copied(root.session-full); }
-                                    Tooltip { TipBox { text: "Claude session " + root.session-full + "  — click to copy (use it to resume this conversation)"; } }
+                                    Tip { on: parent.has-hover; text: "Claude session " + root.session-full + "  — click to copy (use it to resume this conversation)"; }
                                 }
                             }
                             if root.model != "" && meta.model-fit: Text { text: root.model; font-size: meta.size; color: Theme.text-muted; vertical-alignment: center; }

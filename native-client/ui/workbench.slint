@@ -5,7 +5,7 @@
 import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
-import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox } from "chat.slint";
+import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip } from "chat.slint";
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -185,7 +185,7 @@ component Chip inherits Rectangle {
     ch := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: "Add " + root.label; } }
+        Tip { on: parent.has-hover; text: "Add " + root.label; }
     }
 }
 
@@ -208,7 +208,7 @@ component EmptyBtn inherits Rectangle {
     bh := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: root.tip; } }
+        Tip { on: parent.has-hover; text: root.tip; }
     }
 }
 
@@ -261,7 +261,7 @@ component LeafCtrl inherits Rectangle {
     lh := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        Tooltip { TipBox { text: root.tip; } }
+        Tip { on: parent.has-hover; text: root.tip; }
     }
 }
 
@@ -615,7 +615,7 @@ export component Workbench inherits Rectangle {
                     }
                 }
                 double-clicked => { root.gutter-even(g.split, g.index); }
-                if g.locked: Tooltip { TipBox { text: "A pinned pane is next to this divider"; } }
+                if g.locked: Tip { on: parent.has-hover; text: "A pinned pane is next to this divider"; }
             }
         }
     }
@@ -666,7 +666,7 @@ component MenuItem inherits Rectangle {
     mh := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
-        if root.tip != "": Tooltip { TipBox { text: root.tip; } }
+        if root.tip != "": Tip { on: parent.has-hover; text: root.tip; }
     }
 }
 

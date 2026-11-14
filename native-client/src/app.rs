@@ -129,6 +129,8 @@ pub struct App {
     /// sent as one message when the prompt is answered or the turn ends.
     held: HashMap<String, Vec<String>>,
     flush_pending: bool,
+    /// A box's text set by code, to show (src set_box / show_box).
+    box_set: Option<(String, String, usize, bool)>,
     /// The pane whose mode picker is open (2.6), by key.
     picker: Option<String>,
     /// Each chat's uploads (2.7), by pane key: the bar and how many run.
@@ -256,6 +258,7 @@ pub fn init(window: &MainWindow) {
             picker: None,
             held: HashMap::new(),
             flush_pending: false,
+            box_set: None,
             uploads: HashMap::new(),
             carets: HashMap::new(),
             file_target: None,
@@ -1566,11 +1569,12 @@ fn send_refused(key: &str, id: &str, error: String, text: String) {
         a.sending.remove(id);
         // Its slot goes; the text comes back in front of what the box holds.
         let cur = a.drafts.get(key).cloned().unwrap_or_default();
-        save_draft_in(a, key, &chat::given_back(&text, &cur));
-        *a.draft_gen.entry(key.to_string()).or_insert(0) += 1;
+        let back = chat::given_back(&text, &cur);
+        set_box(a, key, &back, back.len(), false);
         if let Some(cs) = a.chats.get_mut(id) { cs.conv.drop_slot(&text); }
         push_error(a, id, &error);
     });
+    show_box();
     show_chat(id);
     render();
     write_drafts_soon();
@@ -1583,6 +1587,28 @@ fn sync_held(a: &mut App, id: &str) {
     let text = a.held.get(id).map(|h| h.join("\n")).unwrap_or_default();
     a.saved_drafts.set_held(id, &text, now_ms());
     a.drafts_dirty = true;
+}
+
+/// The one way code sets a chat box's text (2.7–2.9): the draft (saved),
+/// the caret at `caret`, and the box shows both; `focus`: the box takes the
+/// focus too (an attached path, a take-back), not for a give-back.
+fn set_box(a: &mut App, key: &str, text: &str, caret: usize, focus: bool) {
+    save_draft_in(a, key, text);
+    a.carets.insert(key.to_string(), (caret, caret));
+    a.box_set = Some((key.to_string(), text.to_string(), caret, focus));
+}
+
+/// Show what [set_box] set (outside the app's borrow).
+fn show_box() {
+    let Some((key, text, caret, focus)) = with(|a| a.box_set.take()).flatten() else { return };
+    if let Some(w) = ui() {
+        let c = w.global::<Composer>();
+        c.set_insert_key(key.into());
+        c.set_insert_text(text.into());
+        c.set_insert_caret(caret as i32);
+        c.set_insert_focus(focus);
+        c.set_insert_gen(c.get_insert_gen() + 1);
+    }
 }
 
 /// An error row in a chat's log (the client's own).
@@ -1611,7 +1637,8 @@ fn flush_held() {
     for (id, text, st) in due {
         let key = chat_key(&id);
         if st == "exited" {
-            with(|a| { let cur = a.drafts.get(&key).cloned().unwrap_or_default(); save_draft_in(a, &key, &chat::given_back(&text, &cur)); *a.draft_gen.entry(key.clone()).or_insert(0) += 1; });
+            with(|a| { let cur = a.drafts.get(&key).cloned().unwrap_or_default(); let back = chat::given_back(&text, &cur); set_box(a, &key, &back, back.len(), false); });
+            show_box();
             render();
             write_drafts_soon();
         } else {
@@ -1667,22 +1694,14 @@ pub fn take_back(key: &str) -> bool {
 }
 
 fn taken_back(key: &str, id: &str, cancelled: Vec<String>, held: String, error: Option<String>) {
-    let new = with(|a| {
+    with(|a| {
         let cur = a.drafts.get(key).cloned().unwrap_or_default();
         let new = chat::taken_back(&cancelled, &held, &cur);
-        save_draft_in(a, key, &new);
-        a.carets.insert(key.to_string(), (new.len(), new.len()));
+        set_box(a, key, &new, new.len(), true);
         if let Some(e) = &error { push_error(a, id, e); }
-        new
-    }).unwrap_or_default();
+    });
+    show_box();
     if error.is_some() { show_chat(id); }
-    if let Some(w) = ui() {
-        let c = w.global::<Composer>();
-        c.set_insert_key(key.into());
-        c.set_insert_caret(new.len() as i32);
-        c.set_insert_text(new.into());
-        c.set_insert_gen(c.get_insert_gen() + 1);
-    }
     render();
     write_drafts_soon();
 }
@@ -1923,18 +1942,11 @@ pub fn insert_text(key: &str, path: &str) {
         let text = a.drafts.get(key).cloned().unwrap_or_default();
         let (c, an) = a.carets.get(key).copied().unwrap_or((text.len(), text.len()));
         let (new, caret) = attach::insert_path(&text, c, an, path);
-        save_draft_in(a, key, &new);
-        a.carets.insert(key.to_string(), (caret, caret));
-        Some((new, caret))
+        set_box(a, key, &new, caret, true);
+        Some(())
     }).flatten();
-    let Some((new, caret)) = done else { return };
-    if let Some(w) = ui() {
-        let c = w.global::<Composer>();
-        c.set_insert_key(key.into());
-        c.set_insert_text(new.into());
-        c.set_insert_caret(caret as i32);
-        c.set_insert_gen(c.get_insert_gen() + 1);
-    }
+    if done.is_none() { return; }
+    show_box();
     render();
     write_drafts_soon();
 }
@@ -2010,19 +2022,10 @@ fn put_text(key: &str, text: &str) {
         let fix = |i: usize| { let mut i = i.min(cur.len()); while !cur.is_char_boundary(i) { i -= 1; } i };
         let (s0, s1) = (fix(c.min(an)), fix(c.max(an)));
         let new = format!("{}{}{}", &cur[..s0], text, &cur[s1..]);
-        let caret = s0 + text.len();
-        save_draft_in(a, key, &new);
-        a.carets.insert(key.to_string(), (caret, caret));
-        (new, caret)
+        set_box(a, key, &new, s0 + text.len(), true);
     });
-    let Some((new, caret)) = done else { return };
-    if let Some(w) = ui() {
-        let c = w.global::<Composer>();
-        c.set_insert_key(key.into());
-        c.set_insert_text(new.into());
-        c.set_insert_caret(caret as i32);
-        c.set_insert_gen(c.get_insert_gen() + 1);
-    }
+    if done.is_none() { return; }
+    show_box();
     write_drafts_soon();
 }
 
@@ -2048,14 +2051,8 @@ fn encode_png(w: u32, h: u32, rgba: &[u8]) -> Option<Vec<u8>> {
 
 /// The test driver puts a pane's caret (and selection) somewhere.
 pub fn set_caret(key: &str, at: usize, to: usize) {
-    let text = with(|a| { a.carets.insert(key.to_string(), (at, to)); a.drafts.get(key).cloned().unwrap_or_default() }).unwrap_or_default();
-    if let Some(w) = ui() {
-        let c = w.global::<Composer>();
-        c.set_insert_key(key.into());
-        c.set_insert_text(text.into());
-        c.set_insert_caret(at as i32);
-        c.set_insert_gen(c.get_insert_gen() + 1);
-    }
+    with(|a| { let t = a.drafts.get(key).cloned().unwrap_or_default(); set_box(a, key, &t, at, true); a.carets.insert(key.to_string(), (at, to)); });
+    show_box();
 }
 
 /// A pane's upload bar, for the test driver: (shown, name, label, busy).

@@ -1358,6 +1358,10 @@ await ui('stub', 'send', JSON.stringify({ ok: false, error: 'E2' }));
 await enter('refused one');
 p = await until('a refused send gives the text back', async (q) => pane(q, liveQW)?.draft === 'refused one' && (await errorRows()).includes('E2'), 10000);
 if (p) check('a refused send: its text back in the box, an error row, no slot', !/refused one/.test(pane(p, liveQW).qSent));
+// The give-back leaves the caret at the end of the text (F62): typing goes after it.
+await keys('Z');
+p = await until('typing after a give-back goes at the end', (q) => pane(q, liveQW)?.draft === 'refused oneZ', 5000);
+if (p) check('after a give-back the caret is at the end of the text', true);
 await clearBox();
 await enter('queued one');
 await until('queued one handed over', (q) => /queued one/.test(pane(q, liveQW)?.qSent || ''), 20000);
@@ -1374,6 +1378,29 @@ await keys('Up');
 p = await until('↑ takes back', (q) => pane(q, liveQN)?.qHeld === '' && pane(q, liveQN).draft === 'a\nb\ny', 5000);
 if (p) check('↑ on the first row: every held line back, then the box\'s own text', true);
 await clearBox();
+// A long held batch is clamped at four rows (F61): the box stays in the
+// pane, seen (Queue drawn), focusable and typed into.
+{
+  for (let i = 1; i <= 12; i++) await enter(`held line ${i} of a long batch that keeps going`);
+  await until('a long batch held', (q) => pane(q, liveQN)?.qHeldN === 12, 5000);
+  await snap('2.9-long-batch');
+  const q = await qp(liveQN), img = await shot();
+  let queue = 0;
+  for (let y = Math.round(WB.y + q.y); y < Math.min(img.h, WB.y + q.y + q.h); y++) {
+    for (let x = Math.round(WB.x + q.x); x < Math.min(img.w, WB.x + q.x + q.w); x++) {
+      const c = img.at(x, y);
+      if (c[2] > 220 && c[0] > 85 && c[0] < 140 && c[1] > 90 && c[1] < 150) queue++;
+    }
+  }
+  await ui('composer-focus');
+  await keys('k');
+  p = await until('the box takes typing under a long batch', (x) => pane(x, liveQN)?.draft === 'k', 5000);
+  check('a long held batch: the drawer is clamped, the box still shows (Queue) and takes typing', !!p && queue > 600, { queue, h: q.h });
+  await clearBox();
+  await ui('take-back');
+  await until('taken back', (x) => pane(x, liveQN)?.qHeld === '', 5000);
+  await clearBox();
+}
 await enter('a'); await enter('b');
 await until('held again', (q) => pane(q, liveQN)?.qHeld === 'a\nb', 5000);
 // Held lines stay through a project switch (native).

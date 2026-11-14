@@ -8,11 +8,11 @@ import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
 import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
-import { EntryView, ToolView, Composer } from "chat.slint";
+import { EntryView, ToolView, Composer, TipBox, TipState } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
 import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState }
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -366,6 +366,19 @@ export component MainWindow inherits Window {
         choose(m) => { root.mode-choose(m); }
         close => { root.mode-close(); }
     }
+
+    // The tooltip (chat.slint Tip): under the pointer, shifted left at the
+    // right edge and flipped above it at the bottom, so it stays inside the
+    // window. A press, or the pointer moving well away, puts it away.
+    if TipState.shown: TipBox {
+        text: TipState.text;
+        x: max(Theme.sp-4, min(TipState.x, root.width - self.width - Theme.sp-4));
+        y: TipState.y + Theme.sp-20 + self.height > root.height ? max(0px, TipState.y - self.height - Theme.sp-4) : TipState.y + Theme.sp-20;
+    }
+    property <int> tip-presses: Pointer.presses;
+    changed tip-presses => { TipState.shown = false; }
+    property <bool> tip-far: abs(Pointer.x - TipState.x) > Theme.sp-48 || abs(Pointer.y - TipState.y) > Theme.sp-48;
+    changed tip-far => { if self.tip-far { TipState.shown = false; } }
 
     // The toast, under the top bar on the right: never wider than a pane at
     // its least; bg-secondary, a border with an accent (red: an error) left

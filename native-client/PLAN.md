@@ -189,9 +189,12 @@ Phase 1 left these, each with its workaround in place:
   - the pane header's lock opens nothing yet (its dialog is 2.12);
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
   - "Other…" answers to questions;
-- **Tooltips** (phase 2). The web's are the system's own (`title`); Slint
-  draws its own (`Tooltip` with a `TipBox`: bg-tertiary, 1px border, 12px).
-  They show after Slint's delay, under the pointer.
+- **Tooltips** (phase 2). The web's are the system's own (`title`); the
+  native client draws its own: `Tip` (ui/chat.slint) in what it describes,
+  one `TipBox` drawn by main.slint after `tip-delay`, under the pointer,
+  shifted left at the right edge and flipped above it at the bottom so it
+  stays inside the window (Slint's own Tooltip ran past the edge). It goes
+  on a press or when the pointer moves well away.
 - **Turning an icon** (2.1, the pinned pin's −30°). The software renderer
   can't rotate an image, so `scripts/gen-icons.mjs` writes a turned copy
   (`pin-turned`).
