@@ -1,6 +1,43 @@
 //! Claude's reply text (2.16, specs/log-rest.md): the web's md(), inline()
 //! and linkify() rules, as markdown for Slint's StyledText. Pure.
 
+const FILE_EXT: &[&str] = &["js", "mjs", "cjs", "ts", "tsx", "jsx", "json", "md", "txt", "log", "py", "sh", "bash", "yml", "yaml", "toml", "ini", "conf", "cfg", "env", "html", "htm", "css", "scss", "xml", "svg", "png", "jpg", "jpeg", "gif", "webp", "ico", "pdf", "csv", "sql", "go", "rs", "rb", "php", "java", "kt", "kts", "gradle", "swift", "c", "h", "cc", "cpp", "hpp", "vue", "lock", "dockerfile", "service"];
+
+fn part_char(c: char) -> bool { c.is_alphanumeric() || "_.@+~%,=-".contains(c) }
+
+/// Without a trailing ":12" or ":12:3".
+fn bare(p: &str) -> &str {
+    let mut b = p;
+    for _ in 0..2 {
+        if let Some((head, tail)) = b.rsplit_once(':') { if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) { b = head; } }
+    }
+    b
+}
+
+fn has_ext(p: &str) -> bool {
+    p.rsplit_once('.').is_some_and(|(_, e)| FILE_EXT.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// The web's path rule for running text: an absolute path of two parts or
+/// more, or a relative one starting ./ or ../, or with a known file
+/// extension ("and/or" and "10/12" stay words); with its :line[:col].
+pub fn text_path(tok: &str) -> bool {
+    let b = bare(tok);
+    let parts: Vec<&str> = b.trim_start_matches("../").trim_start_matches("./").trim_start_matches('/').split('/').collect();
+    if parts.len() < 2 || parts.iter().any(|p| p.is_empty() || !p.chars().all(part_char)) { return false; }
+    b.starts_with('/') || b.starts_with("./") || b.starts_with("../") || has_ext(b)
+}
+
+/// The web's looksLikePath for a code span.
+pub fn code_path(c: &str) -> bool {
+    if c.is_empty() || c.chars().count() > 260 || c.contains(char::is_whitespace) || c.contains("://") || c.chars().any(|x| "<>&*|$`".contains(x)) { return false; }
+    let b = bare(c);
+    let rel = b.trim_start_matches("../").trim_start_matches("./");
+    let parts: Vec<&str> = rel.trim_start_matches('/').split('/').collect();
+    if parts.len() >= 2 && parts.iter().all(|p| !p.is_empty() && p.chars().all(|x| x.is_alphanumeric() || "_.@+~-".contains(x))) { return true; }
+    parts.len() == 1 && !parts[0].is_empty() && parts[0].chars().all(|x| x.is_alphanumeric() || "_.@+~-".contains(x)) && has_ext(parts[0])
+}
+
 /// A bare http(s) URL becomes a link; trailing punctuation stays outside.
 /// Code spans, markdown links and autolinks are left alone. An image
 /// (`![alt](url)`) is not drawn: its text stays as written.
@@ -11,7 +48,16 @@ pub fn linkify(text: &str) -> String {
     let mut code = false;
     while i < chars.len() {
         let c = chars[i];
-        if c == '`' { code = !code; out.push(c); i += 1; continue; }
+        if c == '`' {
+            // A code span that is a path: its chip, as a path link.
+            if let Some(len) = chars[i + 1..].iter().position(|x| *x == '`') {
+                let inner: String = chars[i + 1..i + 1 + len].iter().collect();
+                if code_path(&inner) { out.push_str(&format!("[`{inner}`](path:{inner})")); } else { out.push('`'); out.push_str(&inner); out.push('`'); }
+                i += len + 2;
+                continue;
+            }
+            code = !code; out.push(c); i += 1; continue;
+        }
         if !code && c == '!' && chars.get(i + 1) == Some(&'[') { out.push_str("!\\["); i += 2; continue; }
         let rest: String = chars[i..chars.len().min(i + 8)].iter().collect();
         let prev = if i > 0 { chars[i - 1] } else { ' ' };
@@ -28,10 +74,73 @@ pub fn linkify(text: &str) -> String {
             i = j;
             continue;
         }
+        // A path in running text (after a space, a bracket or the start).
+        if !code && (c == '/' || c == '.' || part_char(c)) && (i == 0 || " \t([>\"'".contains(prev)) {
+            let mut j = i;
+            while j < chars.len() && (part_char(chars[j]) || chars[j] == '/' || chars[j] == ':') { j += 1; }
+            let mut end = j;
+            while end > i && ".,;:!?)]'\"".contains(chars[end - 1]) { end -= 1; }
+            let tok: String = chars[i..end].iter().collect();
+            if tok.contains('/') && text_path(&tok) {
+                out.push_str(&format!("[{tok}](path:{tok})"));
+                out.extend(&chars[end..j]);
+                i = j;
+                continue;
+            }
+        }
         out.push(c);
         i += 1;
     }
     out
+}
+
+/// A user's message for StyledText: its text as typed (markdown characters
+/// escaped, line breaks kept, leading spaces kept), its URLs as links.
+pub fn plain_links(text: &str) -> String {
+    text.split('\n').map(|line| {
+        let lead = line.len() - line.trim_start_matches(' ').len();
+        let mut out = "\u{a0}".repeat(lead);
+        let rest = &line[lead..];
+        let chars: Vec<char> = rest.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let head: String = chars[i..chars.len().min(i + 8)].iter().collect();
+            if head.starts_with("http://") || head.starts_with("https://") {
+                let mut j = i;
+                while j < chars.len() && !chars[j].is_whitespace() { j += 1; }
+                let mut end = j;
+                while end > i && ".,;:!?)]'\">".contains(chars[end - 1]) { end -= 1; }
+                let url: String = chars[i..end].iter().collect();
+                out.push('<'); out.push_str(&url); out.push('>');
+                for c in &chars[end..j] { out.push('\\'); out.push(*c); }
+                i = j;
+                continue;
+            }
+            let c = chars[i];
+            if c.is_ascii_punctuation() { out.push('\\'); }
+            out.push(c);
+            i += 1;
+        }
+        if out.is_empty() { out.push('\u{a0}'); }
+        out
+    }).collect::<Vec<_>>().join("  \n")
+}
+
+/// The URL under a byte offset of a user's text (a click in its bubble).
+pub fn url_at(text: &str, at: usize) -> Option<String> {
+    let mut i = 0;
+    while let Some(k) = text[i..].find("http") {
+        let s = i + k;
+        let rest = &text[s..];
+        if rest.starts_with("http://") || rest.starts_with("https://") {
+            let e = s + rest.find(char::is_whitespace).unwrap_or(rest.len());
+            let url = text[s..e].trim_end_matches(|c: char| ".,;:!?)]'\">".contains(c));
+            if at >= s && at <= s + url.len() { return Some(url.to_string()); }
+            i = e;
+        } else { i = s + 4; }
+        if i >= text.len() { break; }
+    }
+    None
 }
 
 /// A paragraph's lines: one paragraph, its line breaks kept (hard breaks).
@@ -87,6 +196,24 @@ mod tests {
         assert_eq!(linkify("`https://in.code`"), "`https://in.code`");
         assert_eq!(linkify("![alt](https://x/p.png)"), "!\\[alt](https://x/p.png)");
         assert_eq!(linkify("and/or 10/12"), "and/or 10/12");
+    }
+
+    #[test]
+    fn paths() {
+        assert_eq!(linkify("see /tmp/proj/client.js:12 now"), "see [/tmp/proj/client.js:12](path:/tmp/proj/client.js:12) now");
+        assert_eq!(linkify("in src/app.js."), "in [src/app.js](path:src/app.js).");
+        assert_eq!(linkify("./x/y and ../a"), "[./x/y](path:./x/y) and ../a");
+        assert_eq!(linkify("and/or 10/12 client/server"), "and/or 10/12 client/server");
+        assert_eq!(linkify("`src/server.js` and `obj.prop` and `app.js`"), "[`src/server.js`](path:src/server.js) and `obj.prop` and [`app.js`](path:app.js)");
+        assert!(code_path("src/a.js") && code_path("/etc/z") && !code_path("a b/c") && !code_path("https://x/y"));
+    }
+
+    #[test]
+    fn user_text() {
+        assert_eq!(plain_links("see https://ex.com/a. *x*"), "see <https://ex.com/a>\\. \\*x\\*");
+        assert_eq!(plain_links("a\n\n  b"), "a  \n\u{a0}  \n\u{a0}\u{a0}b");
+        assert_eq!(url_at("go https://ex.com/a. ok", 5).as_deref(), Some("https://ex.com/a"));
+        assert_eq!(url_at("go https://ex.com/a. ok", 1), None);
     }
 
     #[test]

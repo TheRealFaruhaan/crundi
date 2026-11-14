@@ -109,6 +109,11 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      and media in replies, the long-history notice (`cc-notice`), errors,
      the copy hint on a selection (`cc-copyhint`), the jump-to-bottom button
      (`cc-jump`).
+   - [ ] **2.16m Media in replies** (split out of 2.16; spec in
+     `specs/log-rest.md` section 4). Pictures under `show_image` calls with
+     their sized boxes, the loading and gone states and the viewer; video and
+     audio (poster, play button, the system player); the file card's
+     Download; frames (caption and Open); JPEG, WebP and GIF decoding.
    - [ ] **2.17 Suggestions and recaps.** `cc-sug` (send, dismiss) and
      `cc-recap`.
    - [ ] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
@@ -402,8 +407,13 @@ Phase 1 left these, each with its workaround in place:
   - reply paragraphs cannot be selected (StyledText has no selection); code
     blocks, bubbles, tool and thinking bodies can, each on its own (a
     selection cannot span blocks);
-  - a path in a reply is plain text; its click (the Files panel) waits for
-    phase 3;
+  - a path in a reply (in running text or as a code span) is drawn as a
+    link in accent-hover with a solid underline (the web's is dotted:
+    StyledText has one underline); its click does nothing until the Files
+    panel (phase 3);
+  - a user bubble is StyledText (its URLs links in the bubble's colour)
+    under a transparent copy of its text that keeps the selection; a click
+    that lands on a URL opens it (a drag selects);
   - a code block scrolls sideways with the wheel (Shift) and has no
     sideways thumb;
   - the jump button's click scrolls down in a few eased frames;

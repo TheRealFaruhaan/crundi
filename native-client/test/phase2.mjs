@@ -2173,12 +2173,14 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   await ev({ type: 'entry', entry: { id: 'th5', kind: 'thinking', text: 'From history: not streaming.' } });
   check('a block first seen not streaming is folded', (await th('th5'))?.open === false);
   // 2.16: a reply with markdown.
-  await ev({ type: 'entry', entry: { id: 'r1', kind: 'assistant-text', text: '# Title\n## The fix\nFirst line\nsecond line, see [docs](https://example.com/a) and https://example.com/b.\n\n```js\nconst a = 1;\nconst long = "' + 'x'.repeat(300) + '";\n```\n\n1) one\n2) two\n\n> a quote\n> another\n\n---\n![pic](https://x/p.png)' } });
+  await ev({ type: 'entry', entry: { id: 'r1', kind: 'assistant-text', text: '# Title\n## The fix\nFirst line\nsecond line, see [docs](https://example.com/a) and https://example.com/b, and /tmp/proj/client.js:12 and `src/server.js`.\n\n```js\nconst a = 1;\nconst long = "' + 'x'.repeat(300) + '";\n```\n\n1) one\n2) two\n\n> a quote\n> another\n\n---\n![pic](https://x/p.png)' } });
   const rows = await rowsOf();
   const prose = rows.filter((r) => r.prose);
   check('# is the heading, ## bold body size', prose.some((r) => r.prose === 'h' && /Title/.test(r.text)) && prose.some((r) => r.prose === 'h4' && /The fix/.test(r.text)), prose);
-  check('a paragraph keeps its line breaks; links and bare URLs are links', prose.some((r) => r.prose === 'p' && r.text.includes('First line  \nsecond line') && r.text.includes('[docs](https://example.com/a)') && r.text.includes('<https://example.com/b>.')), prose);
-  check('numbered items count from 1; each > line is its own quote; a rule', prose.filter((r) => r.prose === 'li').map((r) => r.marker).join() === '1.,2.' && prose.filter((r) => r.prose === 'quote').length === 2 && prose.some((r) => r.prose === 'hr'), prose);
+  check('a paragraph keeps its line breaks; links and bare URLs are links', prose.some((r) => r.prose === 'p' && r.text.includes('First line  \nsecond line') && r.text.includes('[docs](https://example.com/a)') && r.text.includes('<https://example.com/b>,')), prose);
+  check('numbered items count from 1; each > line is its own quote; a rule', prose.filter((r) => r.prose === 'li' || r.prose === 'lie').map((r) => r.marker).join() === '1.,2.' && prose.filter((r) => r.prose === 'quote').length === 2 && prose.some((r) => r.prose === 'hr'), prose);
+  check('paths are path links (the look; the click waits for phase 3)', prose.some((r) => r.prose === 'p' && r.text.includes('[/tmp/proj/client.js:12](path:/tmp/proj/client.js:12)') && r.text.includes('[`src/server.js`](path:src/server.js)')), prose);
+  check('a list\'s last item carries the list\'s gap below it', prose.some((r) => r.prose === 'lie' && r.marker === '2.'), prose.map((r) => r.prose));
   check('an image is not drawn: its text stays', prose.some((r) => r.text.includes('!\\[pic]')), prose);
   const code = rows.find((r) => r.code !== undefined);
   check('the code block: its text, the fence\'s trailing newline dropped', code && code.code.startsWith('const a = 1;') && !code.code.endsWith('\n'), code);
@@ -2210,6 +2212,43 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   p = await props();
   check('an arrival does not pull the log down; the jump button shows its dot', p.log.dist >= ds[2] - 2 && !p.log.stick && p.log.jump && p.log.jumpNew, p.log);
   await snap('2.16-jump');
+  // F91: the jump button glides to the end and lets go: a notch up moves the log again.
+  p = await props();
+  await mouse('click', p.log.jumpX, p.log.jumpY);
+  p = await until('jumped', (q) => q.log.dist < 2 && q.log.stick && !q.log.jump, 5000);
+  check('the jump button takes the log to the end and hides', !!p, (await props()).log);
+  await d.send({ cmd: 'mouse', kind: 'wheel', x: wx, y: wy, dy: 15 });
+  await sleep(500);
+  p = await props();
+  check('after the jump, one notch up moves the log (and stays)', p.log.dist > 2 && !p.log.stick, p.log);
+  // F87: one notch up, then an arrival: it stays up.
+  await ev({ type: 'entry', entry: { id: 'late2', kind: 'notice', text: 'Another arrival' } });
+  await sleep(400);
+  p = await props();
+  check('one notch up stays up after an arrival', p.log.dist > 2 && !p.log.stick, p.log);
+  // Back to the bottom (a notch down at a time).
+  for (let i = 0; i < 6 && !(await props()).log.stick; i++) { await d.send({ cmd: 'mouse', kind: 'wheel', x: wx, y: wy, dy: -100 }); await sleep(200); }
+  p = await until('following again', (q) => q.log.stick && q.log.dist < 2, 5000);
+  check('scrolling back to the bottom follows again', !!p, (await props()).log);
+  // F90a: a block folding while following leaves no blank band.
+  await ev({ type: 'entry', entry: { id: 'thF', kind: 'thinking', text: Array.from({ length: 12 }, (_, k) => 'reasoning line ' + k).join('\n'), streaming: true } });
+  await sleep(400);
+  await ev({ type: 'entry', entry: { id: 'thG', kind: 'thinking', text: 'Newer.', streaming: true } });
+  await sleep(700);
+  p = await props();
+  check('a block folding while following: still at the end, no blank band', p.log.dist < 2 && p.log.over < 2 && p.log.stick, p.log);
+  // F90b: opening a block at the bottom keeps the end in view.
+  await ui('tool-toggle', 'thF');
+  await sleep(700);
+  p = await props();
+  check('a block opened at the bottom while following stays at the end', p.log.dist < 2 && p.log.over < 2, p.log);
+  // F90c: a narrower window while following: still at the end.
+  await d.send({ cmd: 'resize', w: 900, h: 860 });
+  await sleep(800);
+  p = await props();
+  check('a narrower window while following stays at the end', p.log.dist < 2 && p.log.over < 2 && p.log.stick, p.log);
+  await d.send({ cmd: 'resize', w: 1400, h: 860 });
+  await sleep(500);
   await http('POST', `/api/ui-sessions/${lg}/close`, {}, token);
 }
 

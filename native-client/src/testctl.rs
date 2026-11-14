@@ -108,7 +108,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "lastOpened": crate::app::last_opened(),
             // The watched chat log (ui log-watch <pane key>): how far from the
             // bottom, following it, the jump button and its dot (2.16).
-            "log": ({ let l = w.global::<crate::LogProbe>(); json!({ "key": l.get_watch().as_str(), "dist": l.get_dist(), "stick": l.get_stick(), "jump": l.get_jump(), "jumpNew": l.get_jump_new() }) }),
+            "log": ({ let l = w.global::<crate::LogProbe>(); json!({ "key": l.get_watch().as_str(), "dist": l.get_dist(), "over": l.get_over(), "stick": l.get_stick(), "jump": l.get_jump(), "jumpNew": l.get_jump_new(), "jumpX": l.get_jump_x(), "jumpY": l.get_jump_y() }) }),
             "clipboard": arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).unwrap_or_default(),
             "sreqFocused": w.global::<crate::SreqProbe>().get_field_focused(),
             "dock": ({ let p = w.global::<crate::Pointer>(); json!({ "x": p.get_dock_x(), "y": p.get_dock_y(), "w": p.get_dock_w(), "h": p.get_dock_h() }) }),

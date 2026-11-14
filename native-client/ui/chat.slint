@@ -37,6 +37,10 @@ export struct ToolView {
 export global LogProbe {
     in-out property <string> watch;
     in-out property <length> dist;
+    in-out property <length> over;
+    // The jump button's middle, in window coordinates (when shown).
+    in-out property <length> jump-x;
+    in-out property <length> jump-y;
     in-out property <bool> stick;
     in-out property <bool> jump;
     in-out property <bool> jump-new;
@@ -48,6 +52,8 @@ export global ToolAct {
     callback open-link(string);
     // A code block's copy button: its text to the clipboard.
     callback copy(string);
+    // A click at a byte offset of a user's message (a URL there opens).
+    callback click-at(string, int);
 }
 
 /// One choice of a question: its label, description and preview; picked;
@@ -1294,7 +1300,23 @@ component EntryRow inherits VerticalLayout {
             border-bottom-left-radius: Theme.r-bubble;
             height: ub.preferred-height + Theme.sp-16;
             ub-measure := Text { visible: false; text: e.text; font-size: Theme.text-13 * root.fs; }
-            ub := Prose { fs: root.fs; x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20; text: e.text; }
+            // Drawn as StyledText (its URLs links in the bubble's colour,
+            // underlined); a transparent copy of the text over it keeps the
+            // selection, and a click on a URL opens it.
+            StyledText {
+                x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20;
+                text: e.md;
+                default-color: Theme.text-primary;
+                default-font-size: Theme.text-13 * root.fs;
+                link-color: Theme.text-primary;
+            }
+            ub := Prose {
+                fs: root.fs; x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20; text: e.text;
+                color: transparent; selection-foreground-color: transparent;
+                changed cursor-position-byte-offset => {
+                    if self.anchor-position-byte-offset == self.cursor-position-byte-offset { ToolAct.click-at(e.text, self.cursor-position-byte-offset); }
+                }
+            }
         }
     }
 
@@ -1334,8 +1356,9 @@ component EntryRow inherits VerticalLayout {
         }
     }
     // A rule: a light line, the full width.
-    if e.kind == "assistant" && e.status == "hr": Rectangle { height: Theme.sp-2; background: Theme.border; }
-    if e.kind == "assistant" && e.status == "li": HorizontalLayout {
+    // A rule: the browser's 2px light line.
+    if e.kind == "assistant" && e.status == "hr": Rectangle { height: Theme.sp-2; background: Theme.text-muted; }
+    if e.kind == "assistant" && (e.status == "li" || e.status == "lie"): HorizontalLayout {
         padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - lm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: Theme.text-13 * root.fs; } }
@@ -2258,24 +2281,30 @@ export component ChatPane inherits Rectangle {
     in property <int> draft-gen;
     changed draft-gen => { self.draft = root.saved-draft; }
     changed draft => { root.draft-changed(self.draft); }
-    // Following the newest message (2.16, F87): set only by the reader's own
-    // scrolling (within stick-within of the bottom); the log goes to the
-    // bottom only when content arrives (content-gen) or the log is resized,
-    // never because the list's estimated height changed.
+    // Following the newest message (2.16, the web's one model): `stick` is
+    // true only while the reader is at the bottom. Any scroll of theirs away
+    // from it (a wheel notch, a drag, a key) turns it off at once; coming
+    // back within stick-within turns it on. While it is on, ANY change of
+    // the content's or the view's size (an arrival, a block folding or
+    // opening, rewrapping at a new width, the list's estimate settling)
+    // keeps the bottom pinned. Off, nothing moves the log.
     property <bool> stick: true;
     in property <int> content-gen;
+    // How far the view is from the end, and past it (a blank band).
+    property <length> max-y: min(0px, list.visible-height - list.content-height);
     property <length> dist: max(0px, list.content-height + list.content-y - list.visible-height);
-    function to-bottom() { list.content-y = min(0px, list.visible-height - list.content-height - Theme.sp-4); }
+    property <length> over: max(0px, list.visible-height - list.content-height - list.content-y);
+    property <length> last-dist;
+    function to-bottom() { list.content-y = root.max-y; root.last-dist = 0px; }
+    property <length> pin-h: list.content-height;
+    changed pin-h => { if root.stick { root.to-bottom(); } }
+    property <length> pin-vh: list.visible-height;
+    changed pin-vh => { if root.stick { root.to-bottom(); } }
+    property <length> pin-vw: list.visible-width;
+    changed pin-vw => { if root.stick { root.to-bottom(); } }
     changed content-gen => {
-        if root.stick || root.dist < Theme.stick-within { root.stick = true; root.to-bottom(); root.settle-n = 0; settle.running = true; }
+        if root.stick { root.to-bottom(); }
         else { root.jump-new = true; }
-    }
-    // The list's estimate settles as the last rows are realised: a few
-    // frames' re-check, for that content change only.
-    property <int> settle-n;
-    settle := Timer {
-        interval: Theme.frame; running: false;
-        triggered => { root.settle-n += 1; if root.stick { root.to-bottom(); } if root.settle-n >= 4 { self.running = false; } }
     }
     // The jump button: past the larger of jump-at and a third of the log;
     // new content below while reading up gives it a dot.
@@ -2283,15 +2312,20 @@ export component ChatPane inherits Rectangle {
     property <bool> jump-new;
     // For the test driver (LogProbe), when watched.
     property <bool> watched: LogProbe.watch == root.key;
-    property <string> probe: root.watched ? root.dist / 1px + "|" + (root.stick ? "s" : "") + "|" + (root.jump-on ? "j" : "") + "|" + (root.jump-new ? "n" : "") : "";
-    changed probe => { if root.watched { LogProbe.dist = root.dist; LogProbe.stick = root.stick; LogProbe.jump = root.jump-on; LogProbe.jump-new = root.jump-new; } }
-    // Its click: down to the bottom in a few eased frames.
+    property <string> probe: root.watched ? root.dist / 1px + "|" + root.over / 1px + "|" + (root.stick ? "s" : "") + "|" + (root.jump-on ? "j" : "") + "|" + (root.jump-new ? "n" : "") : "";
+    changed probe => { if root.watched { LogProbe.dist = root.dist; LogProbe.over = root.over; LogProbe.stick = root.stick; LogProbe.jump = root.jump-on; LogProbe.jump-new = root.jump-new; } }
+    // Its click: down to the end (exactly the last scroll position) in eased
+    // frames; it stops there, or after its frames, or when the reader scrolls.
+    property <int> glide-n;
     glide := Timer {
         interval: Theme.frame; running: false;
         triggered => {
-            let target = min(0px, list.visible-height - list.content-height - Theme.sp-4);
-            if abs(list.content-y - target) < Theme.sp-2 { list.content-y = target; self.running = false; }
-            else { list.content-y = list.content-y + (target - list.content-y) / 2; }
+            root.glide-n += 1;
+            if abs(list.content-y - root.max-y) < Theme.sp-2 || root.glide-n >= Theme.glide-frames {
+                root.stick = true; root.to-bottom(); self.running = false;
+            } else {
+                list.content-y = list.content-y + (root.max-y - list.content-y) / 2;
+            }
         }
     }
     property <bool> exited: root.state == "exited";
@@ -2304,6 +2338,7 @@ export component ChatPane inherits Rectangle {
     changed focus-gen => { if Composer.focus-key == root.key { ib.focus-box(); } }
     function do-send() {
         root.stick = true;
+        root.to-bottom();
         root.send(root.draft);
     }
     background: Theme.bg-primary;
@@ -2322,9 +2357,12 @@ export component ChatPane inherits Rectangle {
                     answer(id, o) => { root.answer(id, o); }
                 }
             }
-            changed visible-height => { if root.stick { root.to-bottom(); } }
+            // The reader's own scroll: away from the bottom turns following
+            // off at once; back within stick-within turns it on.
             scrolled => {
-                root.stick = root.dist < Theme.stick-within;
+                glide.running = false;
+                root.stick = root.dist < Theme.stick-within && root.dist <= root.last-dist;
+                root.last-dist = root.dist;
                 if root.stick { root.jump-new = false; }
             }
         }
@@ -2553,6 +2591,7 @@ export component ChatPane inherits Rectangle {
     // The jump button (.cc-jump): over the log, at its bottom centre.
     if root.jump-on: Rectangle {
         width: Theme.sp-40; height: Theme.sp-40;
+        init => { if root.watched { LogProbe.jump-x = self.absolute-position.x + self.width / 2; LogProbe.jump-y = self.absolute-position.y + self.height / 2; } }
         x: list.x + (list.width - self.width) / 2;
         y: list.y + list.height - self.height - Theme.sp-10;
         SoftShadow { width: parent.width; height: parent.height; radius: self.width / 2; shadow: Theme.shadow-menu; }
@@ -2575,7 +2614,7 @@ export component ChatPane inherits Rectangle {
         }
         jt := TouchArea {
             mouse-cursor: pointer;
-            clicked => { root.stick = true; root.jump-new = false; glide.running = true; }
+            clicked => { root.jump-new = false; root.glide-n = 0; glide.running = true; }
             Tip { on: parent.has-hover; text: "Go to the newest message"; }
         }
     }

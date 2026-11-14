@@ -386,6 +386,8 @@ pub fn init(window: &MainWindow) {
     window.global::<ToolAct>().on_toggle(|c, id| tool_toggle(c.as_str(), id.as_str()));
     // A link in a reply: the system browser. Copy: the clipboard, "Copied".
     window.global::<ToolAct>().on_open_link(|u| open_link(u.as_str()));
+    // A click in a user's bubble on one of its URLs.
+    window.global::<ToolAct>().on_click_at(|t, at| if let Some(u) = crate::md::url_at(t.as_str(), at.max(0) as usize) { open_link(&u); });
     window.global::<ToolAct>().on_copy(|t| if copy_text(t.as_str()) { toast_ok_plain("Copied"); } else { toast("Could not copy", true); });
     // Question cards (2.13).
     {
@@ -1583,6 +1585,11 @@ fn split_blocks(id: &str, text: &str) -> Vec<Row> {
     }
     if let Some(c) = code { out.push(Row::Code(n(&out), c.strip_suffix('\n').unwrap_or(&c).to_string(), false)); }
     flush(&mut para, &mut out);
+    // A list's last item: the list's 8 below it (F94).
+    for k in 0..out.len() {
+        let next_li = matches!(out.get(k + 1), Some(Row::Prose(_, _, "li", _, _)));
+        if let Row::Prose(_, _, kind, _, _) = &mut out[k] { if *kind == "li" && !next_li { *kind = "lie"; } }
+    }
     match out.last_mut() {
         Some(Row::Prose(_, _, _, _, last)) | Some(Row::Code(_, _, last)) => *last = true,
         _ => {}
@@ -1677,7 +1684,7 @@ fn to_view(r: &Row) -> EntryView {
             // Paragraphs and quotes 8 apart, list items 4 (their 2 margins), a
             // heading 6 below (12 above: its own padding), `##` and rules
             // none; the message's last block 10.
-            gap: if *last { 10.0 } else { match *kind { "li" => 2.0, "h" => 6.0, "h4" | "hr" => 0.0, _ => 8.0 } },
+            gap: if *last { 10.0 } else { match *kind { "li" => 2.0, "lie" => 8.0, "h" => 6.0, "h4" | "hr" => 0.0, _ => 8.0 } },
             ..Default::default()
         },
         Row::Code(id, t, last) => EntryView { id: id.clone().into(), kind: "code".into(), text: t.clone().into(), gap: if *last { 10.0 } else { 8.0 }, ..Default::default() },
@@ -1715,6 +1722,8 @@ fn to_view(r: &Row) -> EntryView {
         },
         Row::Entry(e) => EntryView {
             id: e.id.clone().into(),
+            // A user's message: its URLs as links (2.16, F92).
+            md: if e.kind == "user" { StyledText::from_markdown(&crate::md::plain_links(&e.text)).unwrap_or_default() } else { StyledText::default() },
             kind: e.kind.into(),
             text: e.text.clone().into(),
             title: e.title.clone().into(),
