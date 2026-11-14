@@ -324,6 +324,9 @@ export component DashedBox inherits Rectangle {
     in property <length> gap: Theme.sp-2;
     in property <length> inset: 0px;
     in property <length> corner: 0px;
+    // The bottom-right corner square (a bubble's sharp corner): its dashes
+    // meet at the corner, no arc there.
+    in property <bool> square-br;
     property <length> w: self.width - 2 * self.inset;
     property <length> h: self.height - 2 * self.inset;
     // Where the straight dashes start (after the corner and its gap), how
@@ -366,9 +369,11 @@ export component DashedBox inherits Rectangle {
         x: root.inset; y: root.inset + root.h - root.cb; width: root.cb; height: root.cb; clip: true;
         Rectangle { x: 0; y: root.cb - 2 * root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
     }
-    if root.corner > 0: Rectangle {
+    if root.corner > 0 && !root.square-br: Rectangle {
         x: root.inset + root.w - root.cb; y: root.inset + root.h - root.cb; width: root.cb; height: root.cb; clip: true;
         Rectangle { x: root.cb - 2 * root.corner; y: root.cb - 2 * root.corner; width: 2 * root.corner; height: 2 * root.corner; border-radius: root.corner; border-width: root.thick; border-color: root.line; }
     }
+    if root.corner > 0 && root.square-br: Rectangle { x: root.inset + root.w - root.cb; y: root.inset + root.h - root.thick; width: root.cb; height: root.thick; background: root.line; }
+    if root.corner > 0 && root.square-br: Rectangle { x: root.inset + root.w - root.thick; y: root.inset + root.h - root.cb; width: root.thick; height: root.cb; background: root.line; }
 }
 

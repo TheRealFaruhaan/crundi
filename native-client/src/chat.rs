@@ -266,35 +266,6 @@ fn s(v: &Value, k: &str) -> String {
     }
 }
 
-/// The one line that says what a tool call does.
-pub fn tool_summary(name: &str, input: &Value) -> String {
-    let pick = |keys: &[&str]| keys.iter().find_map(|k| input.get(*k).and_then(|v| v.as_str()).map(str::to_string));
-    let line = match name {
-        "Bash" => pick(&["command"]),
-        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" => pick(&["file_path", "notebook_path"]),
-        "Grep" | "Glob" => pick(&["pattern"]),
-        "WebFetch" => pick(&["url"]),
-        "WebSearch" => pick(&["query"]),
-        "Task" | "Agent" => pick(&["description", "prompt"]),
-        "TodoWrite" => Some("Update the to-do list".into()),
-        _ => None,
-    };
-    let line = line.or_else(|| input.as_object().and_then(|o| o.values().find_map(|v| v.as_str().map(str::to_string)))).unwrap_or_default();
-    line.lines().next().unwrap_or("").chars().take(200).collect()
-}
-
-/// "mcp__crundi__browser_open" reads better as "browser_open (crundi)".
-fn tool_title(e: &Value) -> String {
-    let display = s(e, "displayName");
-    if !display.is_empty() { return display; }
-    let name = s(e, "name");
-    let name = if name.is_empty() { s(e, "toolName") } else { name };
-    match name.strip_prefix("mcp__").and_then(|r| r.split_once("__")) {
-        Some((server, tool)) => format!("{tool} ({server})"),
-        None => name,
-    }
-}
-
 fn shown(e: &Value) -> Option<Shown> {
     let id = s(e, "id");
     let base = Shown { id, ..Default::default() };
@@ -331,14 +302,32 @@ fn shown(e: &Value) -> Option<Shown> {
                 ..base
             }
         }
-        "permission" => Shown {
-            kind: "permission",
-            title: { let t = s(e, "title"); if t.is_empty() { format!("Allow {}?", tool_title(e)) } else { t } },
-            detail: { let d = s(e, "description"); if d.is_empty() { tool_summary(&s(e, "toolName"), e.get("input").unwrap_or(&Value::Null)) } else { d } },
-            status: s(e, "status"),
-            request_id: s(e, "requestId"),
-            ..base
-        },
+        // The web's permissionNode: pending, its title (or "Claude wants to
+        // use <name>"), description, reason and input; closed, the name and
+        // a tag (never answered / denied / allowed / always allowed, by Cru),
+        // and what it asked when nobody answered.
+        "permission" => {
+            let name = { let d = s(e, "displayName"); if d.is_empty() { s(e, "toolName") } else { d } };
+            let st = s(e, "status");
+            let closed = st == "unanswered" || st == "cancelled";
+            let mut tag = if st == "denied" { "denied".to_string() } else if closed { "never answered".into() } else if e.get("always").and_then(|v| v.as_bool()).unwrap_or(false) { "always allowed".into() } else { "allowed".into() };
+            if s(e, "answeredBy") == "cru" && !closed { tag.push_str(" by Cru"); }
+            let raw_title = s(e, "title");
+            Shown {
+                kind: "permission",
+                title: if raw_title.is_empty() { format!("Claude wants to use {name}") } else { raw_title.clone() },
+                text: name,
+                detail: s(e, "description"),
+                note: tools::strip_ansi(&s(e, "decisionReason")),
+                args: tools::truncate(&serde_json::to_string_pretty(e.get("input").unwrap_or(&Value::Null)).unwrap_or_default(), 2500),
+                group_summary: tag,
+                group: if closed { raw_title } else { String::new() },
+                error: st == "denied" || closed,
+                status: st,
+                request_id: s(e, "requestId"),
+                ..base
+            }
+        }
         "question" => {
             let q = e.pointer("/input/questions/0").cloned().unwrap_or(Value::Null);
             Shown {
@@ -422,8 +411,9 @@ mod tests {
         ]}));
         let v = c.view();
         assert_eq!(v.len(), 2);
-        assert_eq!(v[0].title, "Allow browser_open (crundi)?");
-        assert_eq!(v[0].detail, "https://x");
+        assert_eq!(v[0].title, "Claude wants to use mcp__crundi__browser_open");
+        assert!(v[0].args.contains("\"url\": \"https://x\""));
+        assert_eq!(v[0].group_summary, "allowed");
         assert_eq!(v[1].options, vec!["A", "B"]);
         assert_eq!(v[1].request_id, "r2");
     }

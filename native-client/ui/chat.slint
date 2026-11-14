@@ -6,6 +6,10 @@ import { Icons } from "icons.slint";
 import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox, RevealFlickable } from "widgets.slint";
 import { ListView, DatePickerPopup, TimePickerPopup, Date, Time } from "std-widgets.slint";
 
+/// A block of a side question's answer: p | li | code, a list item's
+/// marker, its markdown (or a code block's text).
+export struct AnsBlock { kind: string, marker: string, md: styled-text, text: string }
+
 /// A medium a show_* call showed (2.16m): its kind (image | video | audio |
 /// file | embed), its cache key, stored name, file id and name, its box (w, h
 /// in px, before anything loads), caption and a frame's Open link and url,
@@ -109,6 +113,14 @@ export struct EntryView {
     gap: length,
     // A tool group's head open (2.14).
     open: bool,
+    // A permission card (F107): the reason, the input as JSON, the closed
+    // card's tag and, never answered, what it asked.
+    note: string,
+    args: string,
+    tag: string,
+    sub: string,
+    // A side question's answer as the reply's blocks (lists hang, F106).
+    blocks: [AnsBlock],
     // A question card (2.13): its chat, its questions with the person's
     // picks, and whether it can be answered (pending or orphaned), is
     // orphaned, can be submitted; answered: its tags, note lines, dismissed,
@@ -1491,6 +1503,7 @@ component ThinkBlock inherits Rectangle {
 component DockX inherits Rectangle {
     in property <float> fs: 1;
     in property <string> tip;
+    out property <bool> hovered: xa.has-hover;
     callback clicked();
     width: Theme.control-sm - Theme.sp-6; height: self.width;
     border-radius: Theme.r-control;
@@ -1658,6 +1671,7 @@ component EntryRow inherits VerticalLayout {
         DashedBox { width: parent.width; height: parent.height; corner: Theme.r-control; }
         al := VerticalLayout {
             x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sp-20;
+            height: self.preferred-height;
             HorizontalLayout {
                 spacing: Theme.sp-8;
                 Text { horizontal-stretch: 1; vertical-alignment: center; text: "ON THE SIDE"; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
@@ -1673,15 +1687,24 @@ component EntryRow inherits VerticalLayout {
                 StatusMark { running: true; }
                 Text { vertical-alignment: center; text: "Asking…"; font-size: Theme.text-13 * root.fs; color: Theme.text-secondary; }
             }
-            if e.status == "done": Rectangle {
-                height: ans.preferred-height;
-                ans := StyledText {
-                    width: parent.width;
-                    text: e.md;
-                    default-color: Theme.text-secondary;
-                    default-font-size: Theme.text-13 * root.fs;
-                    link-color: Theme.accent-hover;
-                    link-clicked(url) => { ToolAct.open-link(url); }
+            // The answer: the reply's blocks in text-secondary; a list's
+            // items hang from their markers.
+            if e.status == "done": VerticalLayout {
+                spacing: Theme.sp-4;
+                for b in e.blocks: Rectangle {
+                    height: bl.preferred-height;
+                    bl := HorizontalLayout {
+                        if b.kind == "li": Text { width: Theme.sp-20; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-secondary; horizontal-alignment: center; }
+                        if b.kind != "code": StyledText {
+                            width: al.width - (b.kind == "li" ? Theme.sp-20 : 0px);
+                            text: b.md;
+                            default-color: Theme.text-secondary;
+                            default-font-size: Theme.text-13 * root.fs;
+                            link-color: Theme.accent-hover;
+                            link-clicked(url) => { ToolAct.open-link(url); }
+                        }
+                        if b.kind == "code": Text { width: al.width; text: b.text; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                    }
                 }
             }
             if e.status == "error": Rectangle {
@@ -1759,21 +1782,43 @@ component EntryRow inherits VerticalLayout {
         aa := TouchArea { mouse-cursor: pointer; }
     }
 
+    // A permission card (the web's permissionNode): yellow while pending
+    // and after; pending: its title, description, reason, the input, then
+    // Allow / Allow always / Deny; answered: the tool's name and its tag.
     if e.kind == "permission": Rectangle {
-        background: e.status == "pending" ? Theme.yellow-dim : Theme.bg-secondary;
+        background: Theme.yellow-dim;
         border-width: 1px;
-        border-color: e.status == "pending" ? Theme.yellow : Theme.border-subtle;
+        border-color: Theme.yellow;
         border-radius: Theme.r-card;
         height: perm.preferred-height;
         perm := VerticalLayout {
-            padding-top: Theme.sp-12; padding-bottom: Theme.sp-12; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
-            spacing: Theme.sp-8;
-            Text { text: e.title; font-weight: Theme.w-semibold; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
-            if e.detail != "": Rectangle {
-                background: Theme.bg-primary;
-                border-radius: Theme.r-control;
-                height: pd.preferred-height + Theme.sp-12;
-                pd := Text { x: Theme.sp-10; width: parent.width - Theme.sp-16; text: e.detail; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+            padding-top: Theme.sp-12 - 1px; padding-bottom: Theme.sp-12 - 1px; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            if e.status == "pending": Text { text: e.title; font-weight: Theme.w-semibold; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
+            if e.status == "pending" && e.detail != "": Rectangle {
+                height: pdsc.preferred-height + Theme.sp-2;
+                pdsc := Text { y: Theme.sp-2; width: parent.width; text: e.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+            }
+            if e.status == "pending" && e.note != "": Rectangle {
+                height: prs.preferred-height + Theme.sp-8;
+                prs := Text { y: Theme.sp-8; width: parent.width; text: e.note; font-size: Theme.text-12 * root.fs; color: Theme.text-muted; wrap: word-wrap; }
+            }
+            // The input (cc-ask-pre): mono on bg-primary, at most 200 tall, scrolling.
+            if e.status == "pending": Rectangle {
+                height: min(pre.preferred-height + Theme.sp-16, Theme.pre-max-h) + Theme.sp-8 + Theme.sp-10;
+                Rectangle {
+                    y: Theme.sp-8; height: parent.height - Theme.sp-8 - Theme.sp-10;
+                    background: Theme.bg-primary; border-width: 1px; border-color: Theme.border-subtle; border-radius: Theme.r-control;
+                    clip: true;
+                    pf := Flickable {
+                        x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+                        content-height: pre.preferred-height + Theme.sp-16 - Theme.sp-2;
+                        pre := TextInput {
+                            x: Theme.sp-10 - 1px; y: Theme.sp-8 - 1px; width: pf.width - Theme.sp-20 + Theme.sp-2;
+                            read-only: true; wrap: word-wrap; text: e.args;
+                            font-family: Theme.mono; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary;
+                        }
+                    }
+                }
             }
             if e.status == "pending": HorizontalLayout {
                 spacing: Theme.sp-8;
@@ -1782,7 +1827,16 @@ component EntryRow inherits VerticalLayout {
                 CardBtn { fs: root.fs; text: "Allow always"; clicked => { root.respond(e.request-id, "allow", true); } }
                 CardBtn { fs: root.fs; text: "Deny"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
             }
-            if e.status != "pending": Text { text: e.status == "allowed" ? "Allowed" : e.status == "denied" ? "Denied" : e.status; font-size: Theme.text-12 * root.fs; color: Theme.text-muted; }
+            if e.status != "pending": HorizontalLayout {
+                spacing: Theme.sp-6;
+                alignment: start;
+                Text { vertical-alignment: center; text: e.text; font-weight: Theme.w-bold; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; }
+                Tag { y: (parent.height - self.height) / 2; fs: root.fs; text: e.tag; tone: e.error ? "no" : "ok"; }
+            }
+            if e.status != "pending" && e.sub != "": Rectangle {
+                height: psub.preferred-height + Theme.sp-6;
+                psub := Text { y: Theme.sp-6; width: parent.width; text: e.sub; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+            }
         }
     }
 
@@ -2915,6 +2969,7 @@ export component ChatPane inherits Rectangle {
             Rectangle { x: 0; width: Theme.sp-2 + 1px; border-top-left-radius: Theme.r-field; border-bottom-left-radius: Theme.r-field; background: Theme.accent; }
             rl := VerticalLayout {
                 x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-12 - Theme.sp-24 - Theme.sp-6;
+                height: self.preferred-height;
                 spacing: Theme.sp-2;
                 Text { text: root.recap-caption; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
                 Text { text: root.recap-text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
@@ -2937,7 +2992,8 @@ export component ChatPane inherits Rectangle {
             HorizontalLayout {
                 alignment: end;
                 sb := Rectangle {
-                    property <bool> on: sa.has-hover || sk.has-focus;
+                    // The hover look also while the × is hovered (it is in the bubble).
+                    property <bool> on: sa.has-hover || sk.has-focus || sx.hovered;
                     width: min(dock.w, sm.preferred-width + Theme.sp-12 + Theme.sp-24 + Theme.sp-6);
                     height: st.preferred-height + Theme.sp-8 + Theme.sp-6;
                     SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-bubble; shadow: Theme.shadow-menu; }
@@ -2948,7 +3004,7 @@ export component ChatPane inherits Rectangle {
                         border-width: sb.on ? 1px : 0px; border-color: Theme.sug-edge-on;
                         animate background { duration: Theme.motion-fast; }
                     }
-                    if !sb.on: DashedBox { width: parent.width; height: parent.height; line: Theme.sug-edge; corner: Theme.r-bubble; }
+                    if !sb.on: DashedBox { width: parent.width; height: parent.height; line: Theme.sug-edge; corner: Theme.r-bubble; square-br: true; }
                     sm := Text { visible: false; text: root.sug-text; font-size: Theme.text-13 * root.fs; }
                     st := Text {
                         x: Theme.sp-12; y: Theme.sp-8 - 1px; width: parent.width - Theme.sp-12 - Theme.sp-24 - Theme.sp-6;
@@ -2964,7 +3020,7 @@ export component ChatPane inherits Rectangle {
                         clicked => { root.stick = true; root.to-bottom(); ToolAct.sug-send(root.key); }
                         Tip { on: parent.has-hover; text: "Tap to send"; }
                     }
-                    DockX { x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4; fs: root.fs; tip: "Dismiss"; clicked => { ToolAct.sug-dismiss(root.key); } }
+                    sx := DockX { x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4; fs: root.fs; tip: "Dismiss"; clicked => { ToolAct.sug-dismiss(root.key); } }
                 }
             }
         }

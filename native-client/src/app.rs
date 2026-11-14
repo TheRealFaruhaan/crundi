@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow,
+    head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -1811,6 +1811,11 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
             id: format!("aside-{}", x.id).into(), kind: "aside".into(), text: x.question.as_str().into(), status: x.state.as_str().into(),
             detail: if x.state == "error" { x.text.as_str().into() } else { SharedString::default() },
             md: if x.state == "done" { md(&crate::md::linkify(&x.text)) } else { StyledText::default() },
+            blocks: if x.state == "done" { ModelRc::new(VecModel::from(split_blocks("aside", &x.text).into_iter().filter_map(|r| match r {
+                Row::Prose(_, t, kind, marker, _) => Some(AnsBlock { kind: if kind.starts_with("li") { "li".into() } else { "p".into() }, marker: marker.into(), md: md(&t), text: t.into() }),
+                Row::Code(_, t, _) => Some(AnsBlock { kind: "code".into(), marker: SharedString::default(), md: StyledText::default(), text: t.into() }),
+                _ => None,
+            }).collect::<Vec<_>>())) } else { ModelRc::default() },
             request_id: x.id.to_string().into(), gap: 10.0,
             ..Default::default()
         },
@@ -1842,6 +1847,11 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
             error: e.error,
             request_id: e.request_id.clone().into(),
             options: ModelRc::new(VecModel::from(e.options.iter().map(|o| SharedString::from(o.as_str())).collect::<Vec<_>>())),
+            // A permission card's reason, input, tag and (closed) what it asked.
+            note: e.note.as_str().into(),
+            args: e.args.as_str().into(),
+            tag: e.group_summary.as_str().into(),
+            sub: e.group.as_str().into(),
             gap: 10.0,
             ..Default::default()
         },
