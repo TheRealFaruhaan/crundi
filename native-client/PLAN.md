@@ -119,7 +119,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      (https src with its referrer policy, stored HTML as a data: URL, popups
      to the system browser, pointer, wheel and keys forwarded), on the phase
      0 panel code. Until then the frame shows its caption and Open.
-   - [ ] **2.17 Suggestions and recaps.** `cc-sug` (send, dismiss) and
+   - [x] **2.17 Suggestions and recaps.** `cc-sug` (send, dismiss) and
      `cc-recap`.
    - [ ] **2.18 Agent dock.** Sub-agent badges, their list and one agent's
      panel (`cc-agents`, `cc-aglist`, `cc-agpanel`).
@@ -127,7 +127,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      pill and panel (`cc-plan`, `chat-plan`).
    - [ ] **2.20 Cards.** A factory's result card (`cc-fr-*`) and the other
      cards a reply can carry.
-   - [ ] **2.21 Side questions.** `cc-aside` (asked while a turn runs).
+   - [x] **2.21 Side questions.** `cc-aside` (asked while a turn runs).
    - [ ] **2.22 Resume picker.** `#chat-resume-modal` ("Open a session"):
      loading, the list, empty, error; opening a new or an earlier
      conversation.
