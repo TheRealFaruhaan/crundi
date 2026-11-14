@@ -1261,6 +1261,7 @@ fn render() {
                         p.pk_tokens = resume::tokens_k(c.get("tokens").and_then(|x| x.as_f64()).unwrap_or(0.0).max(0.0) as u64).into();
                     }
                     p.pk_busy = a.park.busy.get(id).cloned().unwrap_or_default().into();
+                    p.pk_busy_label = resume::park_busy_label(&p.pk_busy).into();
                 }
             } else if key.starts_with("pend:") {
                 p.kind = "launcher".into();
@@ -1663,7 +1664,7 @@ fn launch_chat(leaf: u32, skip: bool) {
         let (list, error) = match r {
             Ok(v) => (resume::rows(&v, now_secs()), String::new()),
             Err(e) if e == ApiError::Status(404, String::new()).to_string() => (vec![], String::new()),
-            Err(e) => (vec![], e),
+            Err(e) => (vec![], resume::list_error(&e)),
         };
         // The launcher went meanwhile: nothing to open.
         if leaf_rect(leaf).and_then(|l| l.key).is_none_or(|k| !k.starts_with("pend:")) { return; }

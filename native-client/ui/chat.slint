@@ -460,6 +460,7 @@ export component PaneHead inherits Rectangle {
     height: root.narrow ? Theme.pane-head-narrow : Theme.pane-head;
     background: Theme.bg-secondary;
     sure-m := Text { visible: false; text: "Sure?"; font-size: Theme.text-11; }
+    kind-m := Text { visible: false; text: root.kind-tag; font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-tight; }
     Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
     // Double-click the header (its background, handle, dot, tag: not the
     // buttons) to maximise the pane in its split. The whole header is the
@@ -505,7 +506,8 @@ export component PaneHead inherits Rectangle {
         // its two gaps stay.
         if !root.renaming: Rectangle {
             property <length> room: root.width - Theme.sp-2 - (root.full ? 0px : Theme.sp-24 + Theme.sp-4) - (root.chat || root.parked ? Theme.sp-12 : 0px) - Theme.sp-8 - tools.preferred-width - Theme.sp-4
-                - (root.badge != "" ? badge-m.preferred-width + Theme.sp-12 + Theme.sp-4 : 0px);
+                - (root.badge != "" ? badge-m.preferred-width + Theme.sp-12 + Theme.sp-4 : 0px)
+                - (root.parked && root.kind-tag != "" ? kind-m.preferred-width + Theme.sp-16 + Theme.sp-4 : 0px);
             y: (parent.height - self.height) / 2; height: Theme.sp-16;
             width: max(0px, min(tt.preferred-width + Theme.sp-12, root.title-max, self.room));
             border-radius: Theme.r-control;
@@ -599,6 +601,9 @@ export component PaneHead inherits Rectangle {
                 color: root.state == "working" ? Theme.yellow : root.state == "waiting" ? Theme.sky : Theme.accent-hover;
             }
         }
+        // A parked chat's kind tag comes right after the title (the web's
+        // headHtmlParked), not with the tools.
+        if root.parked && root.kind-tag != "" && !root.renaming: KindTag { y: (parent.height - self.height) / 2; text: root.kind-tag; }
         // The rest is pushed right (the spacer can shrink to 0).
         Rectangle { horizontal-stretch: 1; min-width: 0; }
         // The tools: inline when wide; folded into "…" when narrow, leaving full
@@ -606,7 +611,7 @@ export component PaneHead inherits Rectangle {
         tools := HorizontalLayout {
             spacing: Theme.sp-4;
             if (root.planning || root.plan-status != "") && !root.narrow: PlanTag { y: (parent.height - self.height) / 2; status: root.plan-status; clicked => { root.plan-clicked(); } }
-            if root.kind-tag != "" && !root.narrow: KindTag { y: (parent.height - self.height) / 2; text: root.kind-tag; }
+            if root.kind-tag != "" && !root.narrow && !root.parked: KindTag { y: (parent.height - self.height) / 2; text: root.kind-tag; }
             // The secrets lock (wider with a count); yellow with grants.
             if root.chat && root.secrets && !root.narrow: HeadBtn {
                 y: (parent.height - self.height) / 2; height: Theme.sp-20;

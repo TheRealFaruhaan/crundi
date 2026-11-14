@@ -31,7 +31,8 @@ component PkResume inherits Rectangle {
         padding-left: root.small ? Theme.sp-16 : Theme.sp-24; padding-right: self.padding-left;
         spacing: Theme.sp-8;
         alignment: center;
-        Icon { y: (parent.height - self.height) / 2; source: @image-url("shapes/play-fill.svg"); width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.white; }
+        // The play mark, its triangle filling the box (the web's ~10x13).
+        Icon { y: (parent.height - self.height) / 2; source: @image-url("shapes/play-mark.svg"); width: Theme.icon-md; height: Theme.icon-md; tint: Theme.white; }
         Text { text: root.label; vertical-alignment: center; font-size: root.small ? Theme.text-13 : Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; }
     }
     ta := TouchArea { enabled: !root.off; mouse-cursor: root.off ? default : pointer; clicked => { root.clicked(); } }
@@ -70,12 +71,14 @@ component PkAlt inherits Rectangle {
 /// text-secondary (text-primary when hovered).
 component PkQuiet inherits Rectangle {
     in property <bool> off;
+    // Its busy label ("Starting…") while it runs.
+    in property <string> label: "New session";
     callback clicked();
     width: qt.preferred-width + 2 * Theme.sp-4;
     height: Theme.control-sm;
     opacity: root.off ? Theme.o-dim : 1;
     qt := Text {
-        text: "New session"; font-size: Theme.text-12; font-weight: Theme.w-medium;
+        text: root.label; font-size: Theme.text-12; font-weight: Theme.w-medium;
         color: ta.has-hover && !root.off ? Theme.text-primary : Theme.text-secondary;
     }
     // The underline, 3 under the text's baseline box.
@@ -135,8 +138,10 @@ export component ParkedVeil inherits Rectangle {
     in property <bool> session;
     in property <bool> heavy;
     in property <string> tokens;
-    // The pressed choice while it runs: resume | compact | new.
+    // The pressed choice while it runs: resume | compact | new; its label
+    // meanwhile (src/resume.rs: Resuming…, Compacting…, Starting…).
     in property <string> busy;
+    in property <string> busy-label;
     property <bool> short: root.height <= Theme.park-short-h;
     property <bool> tiny: root.height <= Theme.park-tiny-h;
     property <bool> off: root.busy != "";
@@ -163,7 +168,7 @@ export component ParkedVeil inherits Rectangle {
                 PkResume {
                     y: (parent.height - self.height) / 2;
                     small: root.tiny; off: root.off;
-                    label: root.busy == "resume" ? "Resuming…" : "Resume";
+                    label: root.busy == "resume" ? root.busy-label : "Resume";
                     clicked => { ParkAct.resume(root.key, "resume"); }
                 }
                 if root.session: PkAlt {
@@ -193,16 +198,17 @@ export component ParkedVeil inherits Rectangle {
                 alignment: center;
                 spacing: Theme.sp-6;
                 if root.heavy: PkAlt {
-                    label: root.busy == "compact" ? "Compacting…" : "Compact and resume"; off: root.off;
+                    label: root.busy == "compact" ? root.busy-label : "Compact and resume"; off: root.off;
                     clicked => { ParkAct.resume(root.key, "compact"); }
                 }
                 if root.heavy: PkAlt {
-                    label: root.busy == "new" ? "Starting…" : "New session"; off: root.off;
+                    label: root.busy == "new" ? root.busy-label : "New session"; off: root.off;
                     tip: "Start a fresh conversation in this pane. The old one stays, and can be resumed from the session list.";
                     clicked => { ParkAct.resume(root.key, "new"); }
                 }
                 if !root.heavy: PkQuiet {
                     off: root.off;
+                    label: root.busy == "new" ? root.busy-label : "New session";
                     clicked => { ParkAct.resume(root.key, "new"); }
                 }
             }

@@ -467,8 +467,7 @@ Phase 1 left these, each with its workaround in place:
 - **The resume picker** (2.22), deliberate differences: Esc cancels, the
   keyboard starts on New session, ↑/↓ move between rows (the web has none
   of these); the launcher shows its busy look from the picker too (the web
-  only when no dialog was shown); a list that failed says the client's own
-  words for the error ("Cannot reach the server: …").
+  only when no dialog was shown).
 - **Parked panes** (2.23):
   - no blur on the conversation behind the card (the software renderer
     has none): it is darkened (`park-dim`) under the veil;

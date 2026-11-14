@@ -116,6 +116,7 @@ export struct PaneView {
     pk-heavy: bool,
     pk-tokens: string,
     pk-busy: string,
+    pk-busy-label: string,
 }
 
 export struct GutterView {
@@ -467,7 +468,7 @@ export component PaneCard inherits Rectangle {
         if p.pk && !p.pk-peek: ParkedVeil {
             y: ph.height; width: parent.width; height: parent.height - ph.height;
             key: p.key; why: p.pk-why; what: p.pk-what; session: p.pk-session;
-            heavy: p.pk-heavy; tokens: p.pk-tokens; busy: p.pk-busy;
+            heavy: p.pk-heavy; tokens: p.pk-tokens; busy: p.pk-busy; busy-label: p.pk-busy-label;
         }
         if p.pk && p.pk-peek: Unpeek {
             x: parent.width - self.width - Theme.sp-12; y: ph.height + Theme.sp-10;

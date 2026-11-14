@@ -99,6 +99,17 @@ pub fn park_what(has_session: bool) -> &'static str {
     if has_session { "Resume picks up this conversation." } else { "Resume starts a new conversation." }
 }
 
+/// The pressed choice's label while it runs.
+pub fn park_busy_label(mode: &str) -> &'static str {
+    match mode { "new" => "Starting…", "compact" => "Compacting…", _ => "Resuming…" }
+}
+
+/// The picker's error: the reason alone (the line says "Could not load
+/// earlier conversations: " before it, as the web's).
+pub fn list_error(e: &str) -> String {
+    e.strip_prefix("Cannot reach the server: ").unwrap_or(e).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +159,10 @@ mod tests {
         assert_eq!(park_why("idle", now * 1000.0 - 600_000.0, now), "Closed while idle · 10m ago");
         assert_eq!(park_why("restart", 0.0, now), "Closed when Crundi restarted");
         assert_eq!(park_what(false), "Resume starts a new conversation.");
+        assert_eq!(park_busy_label("new"), "Starting…");
+        assert_eq!(park_busy_label("compact"), "Compacting…");
+        assert_eq!(park_busy_label("resume"), "Resuming…");
+        assert_eq!(list_error("Cannot reach the server: Failed to fetch"), "Failed to fetch");
+        assert_eq!(list_error("Unknown project"), "Unknown project");
     }
 }
