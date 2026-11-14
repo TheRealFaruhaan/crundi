@@ -1338,6 +1338,30 @@ await ui('take-back');
 p = await until('taken back: the drawer goes, the text in the box', (q) => pane(q, liveQW)?.qSent === '' && pane(q, liveQW).draft === 'do not send me', 15000);
 if (p) check('a take-back cancels it on the server and puts it back in the box', !(await pendingTexts(liveQW)).includes('do not send me'));
 await clearBox();
+// The same by a real click on the drawer (found by its fill: slate-haze
+// for handed over, accent-haze for held), down the pane's right side.
+const drawerAt = async (id, rgb) => {
+  const q = await qp(id), img = await shot();
+  // (Clear of the window's resize border at its right edge.)
+  const x = Math.min(img.w - 30, Math.round(WB.x + q.x + q.w - 24));
+  let best = [0, 0], run = [0, 0];
+  for (let y = Math.round(WB.y + q.y); y < Math.min(img.h, WB.y + q.y + q.h); y++) {
+    const c = img.at(x, y);
+    if (rgb.every((v, i) => Math.abs(c[i] - v) <= 4)) { run = run[1] ? [run[0], run[1] + 1] : [y, 1]; if (run[1] > best[1]) best = run; } else run = [0, 0];
+  }
+  return best[1] >= 20 ? { x, y: best[0] + best[1] / 2 } : null;
+};
+await enter('click me back');
+await until('handed over again', (q) => pane(q, liveQW)?.qSent === 'click me back' && pane(q, liveQW).qSentKind === 'recallable', 20000);
+{
+  const at = await drawerAt(liveQW, [29, 30, 39]);
+  if (check('the handed-over drawer is on screen', !!at)) {
+    await mouse('click', at.x, at.y);
+    p = await until('a click on the handed-over drawer takes it back', (q) => pane(q, liveQW)?.qSent === '' && pane(q, liveQW).draft === 'click me back', 15000);
+    if (p) check('a click on the handed-over drawer cancels it on the server and puts it in the box', !(await pendingTexts(liveQW)).includes('click me back'));
+  }
+}
+await clearBox();
 // Too late: the server says it couldn't cancel (no error; "Claude is reading it").
 await enter('late one');
 await until('handed over', (q) => pane(q, liveQW)?.qSentKind === 'recallable', 20000);
@@ -1377,6 +1401,38 @@ await ui('caret', '0');
 await keys('Up');
 p = await until('↑ takes back', (q) => pane(q, liveQN)?.qHeld === '' && pane(q, liveQN).draft === 'a\nb\ny', 5000);
 if (p) check('↑ on the first row: every held line back, then the box\'s own text', true);
+await clearBox();
+// A click on the held drawer takes it back too.
+await enter('c');
+await until('c held', (q) => pane(q, liveQN)?.qHeld === 'c', 5000);
+{
+  const at = await drawerAt(liveQN, [26, 26, 47]);
+  if (check('the held drawer is on screen', !!at)) {
+    // Its tooltip at the window's right edge stays inside (F63); and one at
+    // the bottom (the pane's mode button) flips above the pointer.
+    await mouse('move', at.x, at.y); await sleep(1500);
+    await snap('2.9-tip-right-edge');
+    {
+      // (Pane x is the grid's, before its sideways scroll: find the focused
+      // pane's left edge on screen by its accent border, from the right.)
+      const q = await qp(liveQN), img = await shot(), yy = Math.round(WB.y + q.y + q.h / 2);
+      let lx = -1;
+      for (let x = img.w - 1; x > WB.x && lx < 0; x--) { const c = img.at(x, yy); if (Math.abs(c[0] - 99) < 14 && Math.abs(c[1] - 102) < 14 && c[2] > 220) lx = x; }
+      await mouse('move', lx + 115, WB.y + q.y + q.h - 22); await sleep(1500);
+      await snap('2.9-tip-bottom');
+      // The mode button's tooltip, flipped above the pointer, inside the window.
+      // (Counted against the shot before the hover: the Queue button's text is white too.)
+      const t = await shot(), bright = (im) => { let n = 0; for (let y = Math.round(WB.y + q.y + q.h - 80); y < Math.round(WB.y + q.y + q.h - 26); y++) for (let x = lx + 60; x < im.w; x++) { const c = im.at(x, y); if (c[0] > 200 && c[1] > 200 && c[2] > 200) n++; } return n; };
+      const tip = bright(t) - bright(img);
+      check('a tooltip at the window\'s bottom opens above the pointer', lx > 0 && tip > 50, { lx, tip });
+    }
+    await mouse('move', at.x, at.y); await sleep(300);
+    await mouse('click', at.x, at.y);
+    p = await until('a click on the held drawer takes it back', (q) => pane(q, liveQN)?.qHeld === '' && pane(q, liveQN).draft === 'c', 5000);
+    if (p) check('a click on the held drawer puts the held line back in the box, nothing sent', (await pendingTexts(liveQN)).length === 0);
+  }
+}
+await focusChat(liveQN);
 await clearBox();
 // A long held batch is clamped at four rows (F61): the box stays in the
 // pane, seen (Queue drawn), focusable and typed into.
@@ -1455,7 +1511,7 @@ await http('POST', `/api/ui-sessions/${liveQW}/interrupt`, {}, token);
 p = await until('turn over: the drawer empties', (q) => pane(q, liveQW)?.qSent === '', 30000);
 if (p) {
   const u = await userTexts(liveQW);
-  check('turn end: the handed-over message is in the log, the taken-back one is not', u.some((t) => /queued one/.test(t)) && !u.includes('do not send me'), u);
+  check('turn end: the handed-over message is in the log, the taken-back ones are not', u.some((t) => /queued one/.test(t)) && !u.some((t) => /do not send me|click me back/.test(t)), u);
 }
 for (const id of [liveQW, liveQN, liveQX]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
 
