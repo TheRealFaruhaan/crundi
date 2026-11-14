@@ -85,6 +85,11 @@ injected as tool entries.
 | `web-selection` | **Selecting reply text** with the mouse: the system's selection colour over two paragraphs; the copy button still shows by the hovered code block. |
 | `web-narrow` | **Narrow pane**: text and links wrap ("ws READ ME" breaks inside the link), the code block and error boxes keep the full width. |
 | `web-narrow-media` | Narrow: the single picture shrinks to the pane; the row of three just fits (it scrolls sideways when it does not). |
+| `web-media-formats` (+`-2x`) | **JPEG, WebP and GIF** in one `show_image` call (1200×700 JPEG, 500×500 WebP, a two-frame 500×500 GIF): a row 220 tall; no item captions (the items have none), the call's caption "JPEG, WebP and GIF" under the row. The GIF animates in the web. |
+| `web-embed-https-html` (+`-2x`) | **Frames**: a YouTube page (`show_embed url=`; w/h 16:9, so 640 × 360), its caption "The talk · from 2:10 · Open on YouTube" (the link `accent-hover`, underlined); under it **stored HTML** (`html=`, height 160): 640 × 160, live (its button counts clicks), caption "Counter", no Open. |
+| `web-embed-page-gone-loading` | **An unknown https site** (example.com, height 480): the live page in a 640 × 480 box, "A plain page · Open on example.com"; **a stored frame no longer stored** (404): dashed box, "This embed is no longer stored." centred; **a stored frame loading** (its HTML not yet fetched): the 34 ring. |
+| `web-md-image` (+`-2x`) | **Markdown image syntax in a reply**: the web draws no picture. `![Weekly sales](https://…/chart.png)` shows "!" then a link "Weekly sales"; `![logo](./assets/logo.png)` stays text with the path linked. |
+| `web-video-playing` (+`-2x`) | **The video playing inline** (Electron), the pointer over it: the big button gone, the bar: pause, "0:04 / 0:06", the seek line (accent fill, white knob), sound, full screen. Native plays in the system player instead (see Video and audio). |
 
 ## 1. Reply text
 
@@ -252,6 +257,36 @@ captions and names are text, never markup.
 The box has its final size **before** anything loads, so the log never
 jumps when a picture arrives.
 
+### Formats (`web-media-formats`)
+
+Stored pictures are `png`, `jpg`, `gif` or `webp` (the name's extension; a
+video's poster is a `.poster.jpg`). The native client must decode all four:
+today slint is built with `default-features = false` and only the `png`
+crate is present, so JPEG, WebP and GIF draw nothing. Turn on Slint's
+`image-default-formats` feature, or decode with the `image` crate (features
+`png`, `jpeg`, `webp`, `gif`) into a `SharedPixelBuffer`. Decode off the UI
+thread, like the fetch.
+
+- **GIF**: the web animates it (an `<img>`). Native: the first frame is
+  enough for this step, named in PLAN (Known gaps) if animation is not done;
+  if it is, play the frames with their delays and loop, and stop when the
+  row is not realised. The viewer shows the same (first frame or animated).
+- An item with no `caption` has no caption line (the formats shot: only the
+  call's caption, under the row).
+- A file that is fetched but will not decode (bad bytes, an unknown
+  format): the web leaves the box empty (no ring, no words; its `<img>`
+  has no error handler). Native: the same empty box. Only a 404 is "gone".
+
+### Images in reply markdown (`web-md-image`)
+
+**The web draws no pictures from markdown.** `md()` has no `![…](…)` rule:
+the `[text](https://…)` link rule matches inside it, so
+`![Weekly sales](https://x/chart.png)` shows a literal "!" followed by the
+link "Weekly sales" (opening the URL); `![logo](./assets/logo.png)` is left
+as text with `./assets/logo.png` linked as a path. Native: the same, nothing
+fetched. Pictures only ever come from `show_image` (and the other
+`show_*` tools). A `cargo test` in md.rs pins both cases.
+
 ### Picture
 
 - **Loading** (`web-media-loading`): a ring 34 wide, 3 thick (white 18%,
@@ -298,47 +333,148 @@ jumps when a picture arrives.
   the seek line (4 tall, 6 on hover, `accent` fill, buffered part lighter,
   a white 12 knob on hover), sound on/off, full screen. Nothing is fetched
   until play is first pressed. While playing and idle the bar hides.
-  Buffering: a white ring 48 in the middle.
+  Buffering: a white ring 48 in the middle. Playing: `web-video-playing`.
 - **Audio**: a pill at most 440 wide, 50 tall, `bg-card`, `border`; the
   play button 38 round in `accent` with a white icon; time; seek line
   (`border` track); sound.
 - Keys on the seek line: ← / → step. Click on the line: jump there.
-- **Slint has no media playback.** Name it in PLAN (Known gaps), with the
-  closest equivalent: draw the video box with its poster, the big play
-  button and the caption (and the audio pill with its time and caption),
-  and on play fetch the file (`GET /api/chat-media?session=&name=`, with
-  the auth header) to a temporary file and open it in the system's player
-  (`open::that`). The Manager decides if a player library is wanted later.
+- Caption: `caption` (or the file name) · `m:ss` (`fmtDuration`: rounded
+  seconds, minutes not padded: 6 → "0:06", 75 → "1:15").
+- **What Electron does**: plays inline (HTML5 `<video>` / `<audio>`; the
+  web passes the session as `?token=` on the media URL).
+- **Native: the system player.** Slint has no media playback, and CEF's
+  standard build has no H.264/AAC, so an inline CEF player would fail on
+  most `.mp4`/`.m4a`. Name it in PLAN (Known gaps). Draw the video box with
+  its poster (a `.poster.jpg`: JPEG decoding is needed), the big play button,
+  and the caption; the audio pill with its play button, "0:00 / m:ss" and
+  the caption (no seek line or sound button: they would do nothing; name
+  that too). On play: the big button becomes the 48 white ring while the
+  file downloads (`GET /api/chat-media?session=&name=` with the auth
+  header) to the system temp folder under its stored name (reuse it if it
+  is already there with the same size), then `open::that(path)` and the
+  button returns. Never hand the system player a URL with the token in it
+  (it would land in the player's history). A failure: the server's error
+  (or "Could not play <file name>") as an error toast. The Manager decides
+  if a player library is wanted later.
 
 ### File (`fileItem`)
 
 | Part | Web | Token |
 |---|---|---|
-| Card | at most 460 wide, padding 9 × 10, gap 10, `bg-card`, 1px `border`, radius 10 | `sp-10`, `r-card` |
-| Icon box | 34, `bg-primary`, `border`, radius 8, a file icon `text-secondary` | `r-field` |
+| Card | at most 460 wide (and the pane), padding 9 × 10, gap 10, `bg-card`, 1px `border`, radius 10 | `sp-10`, `r-card` |
+| Icon box | 34, `bg-primary`, `border`, radius 8, the Files list's icon for the name (`fileIcon()`, webapp-html 12509: coloured letters for code types, e.g. "JS" `#f7df1e`, "{}" for JSON, "M↓" for md, image / archive / red file-text (pdf) icons, else the plain file icon `text-secondary`, 15 / mono) | `r-field` |
 | Name | 13 / 600 `text-primary`, one line, elided | `text-13`, `w-semibold` |
-| Line under | "12 B · The export" (size, then the caption), 11.5 `text-secondary`, elided | `text-12` |
+| Line under | "12 B · The export" (size, then the caption), 11.5 `text-secondary`, elided, 2 below the name | `text-12` |
 | Download | 28 tall, padding 4 × 10, gap 5, `bg-tertiary`, `border`, radius 6, 12px, a download icon + "Download" | the client's small button |
 
-**Download**: Electron asks where to save (a save dialog, the system's
-Downloads folder and the file's name filled in), then a download row shows
-at the top right: the name, "Saved · 12 B" (or progress, "Starting…"), a
-bar, × to cancel. Native: the system save dialog (`rfd` or the platform's),
-then stream `GET /api/chat-media/file?session=&id=` (auth header) to that
-path; while it runs and when done, a toast-sized row with the name and
-"Saved · <size>"; failure: the server's error (410 "<name> is no longer
-where it was.") as an error toast.
+If the client has no `fileIcon` table yet (it comes with the Files panel,
+phase 3), the plain file icon for every type is acceptable now: name it in
+PLAN. Several files in one call stack (one card per line, 8 apart), never a row.
+Sizes on the card: `fmtBytes` (1024 steps; one decimal under 10: "12 B",
+"26 KB", "1.5 MB", "12 MB").
+
+**Download in Electron** (`crundiDownload`): the download row appears at
+once ("Starting…"), the file is fetched into memory with the auth header
+showing progress, then saved through a link click, which Electron answers
+with **its save dialog** (title "Save <name>", the Downloads folder and the
+name filled in); the row then says "Saved · <size>" even if the dialog was
+cancelled (a web bug). Over 600 MB it lets the browser stream it instead
+(toast "Downloading <name> in the browser (too large to do in the app)").
+
+**Native** (a deliberate difference in order, named in the spec only):
+1. The system save dialog first (`rfd::AsyncFileDialog`, the client already
+   has it): title "Save <name>", the platform's Downloads folder (if
+   there is one), the name filled in. Cancel: nothing
+   happens, no row.
+2. Then stream `GET /api/chat-media/file?session=<chat>&id=<id>` (auth
+   header) to `<path>.part` off the UI thread, renamed to the path when
+   complete (no size limit: it streams).
+3. The download row (below) shows from step 2.
+
+The download row (`.dl-tray` / `.dl-row`, `web-download-tray`), window-level:
+
+| Part | Web | Token |
+|---|---|---|
+| Tray | top right: 16 from the right, the top bar's height + 64 from the top; 320 wide (window − 32 at most); rows 8 apart, newest last; above the panes, under dialogs | `sp-16`, `sp-8` |
+| Row | padding 10 / 10 / 10 / 12, gap 10, `bg-secondary`, 1px `border`, **left edge 3 `accent`** (done `green`, failed `red`), `r-sm`, `shadow-md` | |
+| Icon | download, 15, `accent-hover` (done `green`, failed `red`) | |
+| Name | 12.5 / 600 `text-primary`, elided | `text-12`, `w-semibold` |
+| Line | 11 `text-secondary`, tabular figures, elided; 3 under the name | `text-11` |
+| Bar | 3 tall, pill, `bg-tertiary`; fill `accent` (done `green`); hidden when failed | |
+| × | 17, `text-muted`, padding 6 × 8, radius 6; hover `text-primary` on `bg-tertiary` | |
+
+- Line texts: "Starting…"; while running "<got> of <total>" (or "<got>"
+  when the size is unknown), repainted at most every 120 ms; done
+  "Saved · <size>"; cancelled "Cancelled"; failed: the server's `error`
+  (410: "<name> is no longer where it was.", 404 "Not found") or
+  "Download failed (<status>)"; a write error: the system's message. Sizes here
+  are `fmtDlSize` ("12 B", "26 KB", "1.5 MB": KB rounded, MB one decimal).
+- × while running cancels (the `.part` file is deleted); after it ends, ×
+  removes the row.
+- The row leaves by itself: 4.5 s after "Saved", 1.2 s after "Cancelled",
+  7 s after a failure; it fades and drops 6 (0.2 s).
+- Nothing beyond the web's: no "Open" or "Show in folder" on the row.
 
 ### Frame (`embedItem`, `show_embed`)
 
-A sandboxed frame: stored HTML (`GET /api/chat-media?…&name=<x>.embed`
-answers the HTML as text) or an https page (`src`); the box `width` × 
-`height` (or from `w`/`h`); caption "title · caption" (or the provider, or
-"Embedded HTML"), plus "Open" / "Open on <provider>" (`accent-hover`) when
-it has a `url`. **Native: frames need CEF**, which DESIGN keeps for browser
-panels: name the gap; draw the box with the caption and, inside, "Open"
-(a stored HTML frame opens the HTML in the browser drawer or the system
-browser; an https one its `url`/`src` in the system browser).
+The item: stored HTML (`name` `<16 hex>.embed`; `GET /api/chat-media?…&name=`
+answers the HTML as text) or an https page (`src`, never this server's own
+host). The server fills `provider` (YouTube, Vimeo, X, Instagram, Spotify,
+CodePen, GitHub Gist… or, for a site it does not know, the host name) and
+`url` (the page to open).
+
+| Part | Web | Token |
+|---|---|---|
+| Box size | with `w`/`h` (a known player): aspect `w:h`, width **640** when `w ≥ h`, else `560·w/h`; without: `width` (default 640) × `height` (default 420; stored HTML: what Claude asked, e.g. 160); never wider than the pane (height follows the aspect when it has one) | |
+| Box | the media box (1px `border`, radius 8, clipped), background `#0f0f14` (a theme colour, darker than `bg-secondary`) | `r-field` |
+| Loading | the 34 ring (as a picture) until the page or the HTML has loaded | |
+| Gone (stored HTML 404) | dashed edge, "This embed is no longer stored." centred, 11.5 `text-muted` | |
+| Caption | 11.5 `text-secondary`, line 1.35, at most 440, wraps: `title · caption` (either alone), else the provider, else "Embedded HTML"; then, with a `url`, " · " and the link | `text-12` |
+| Open link | `accent-hover`, underlined, pointer: "Open on <provider>" (when the caption is not just the provider), else "Open"; opens `url` in the system browser | |
+
+Examples from the shots: "The talk · from 2:10 · Open on YouTube"; "A plain
+page · Open on example.com"; "Counter" (stored HTML: no url, no link).
+
+**What Electron does**: the frame is **live, inline in the log** (an
+`<iframe>`), made when it comes within about a screen of the view and
+removed when far (kept while it is full screen):
+- https: sandbox `allow-scripts allow-same-origin allow-popups
+  allow-popups-to-escape-sandbox allow-forms allow-presentation`, `allow`
+  autoplay / encrypted-media / picture-in-picture / fullscreen /
+  clipboard-write / web-share, referrer `strict-origin-when-cross-origin`
+  (YouTube refuses a frame without it). Its popups and links with a target
+  go to the system browser (`setWindowOpenHandler`).
+- stored HTML: fetched with the auth header, given as `srcdoc`, sandbox
+  `allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms
+  allow-modals allow-pointer-lock` (no origin at all).
+- Many sites refuse to be framed: the box then stays as the site draws it
+  (blank or the site's own refusal); the Open link is the way out.
+
+**Native: an inline CEF view in the box** (PLAN's decision: CEF is for
+browser panels and live web content, embeds included; `src/browser.rs`
+already draws a windowless CEF browser's frames as a Slint `Image` and
+forwards pointer, wheel and keys):
+- When the row is realised, create a windowless browser the box's size
+  (device scale as the window); when the row is dropped (far from the
+  view, as the web's 4500), close it and keep the box, so it reloads when
+  it comes back (the web does the same).
+- https: load `src` with the referrer policy above. Stored HTML: fetch it
+  with the auth header, load it as a `data:text/html;base64,…` URL (an
+  opaque origin, like `srcdoc` in a sandbox).
+- New windows and `target=_blank` links from the frame open in the system
+  browser (`on_before_popup` → `open::that`, cancel the popup). The frame
+  never navigates the client.
+- Input: pointer and wheel over the box go to the frame (as the web: the
+  wheel scrolls the frame first). A click focuses it; keys go to it until a
+  click elsewhere. Esc is the frame's.
+- The loading ring until the first paint (or the HTML's fetch); gone as
+  above.
+- If CEF did not start (the log says "CEF did not start"), draw the box with
+  the caption, the Open link and, centred inside, "Open" as a small button
+  (stored HTML: opens the HTML in the system browser through a temp file).
+  Name this fallback in PLAN; it is not the normal look.
+- Full screen from inside a frame (a player's button): name it as a gap if
+  not done.
 
 ## 5. Notices
 
@@ -467,6 +603,12 @@ From the chat's stream (specs/live-state.md): `ui-history` and `ui-event`
 | `GET /api/files/resolve?project=&path=` | a path click (phase 3) | `{ok:true,file,dir,size}` or 404 `{ok:false,error}` |
 | `POST /api/mcp/call` `{tool:'show_image', args:{sessionId, path\|paths, caption}}` (`x-api-key` from `data/dev-mcp/<chat>.json`) | **tests only**: store real media in a chat, as Claude does | `{ok, shown, items, caption?, note}` |
 
+The web adds the session as `&token=` to media URLs it hands to `<img>` /
+`<video>`; the server accepts that, but native always sends the auth header
+and never puts the token in a URL it gives to another program.
+`show_embed` answers `{kind:'embed', title, caption?, url?, provider,
+known, w?, h?, height?, width?, src? | name?}` (see Frame).
+
 `/api/chat-images` is the 1.19.19 name of `/api/chat-media` (same answer).
 
 ## End-to-end test (phase2.mjs)
@@ -500,6 +642,45 @@ Against `tools/test-server.sh`, one chat open in one wide pane:
    log ends at the bottom (distance < 2) and the button hides.
 7. **Errors and notices**: inject a notice, an error and a failed result:
    the notice is italic and centred; both errors are boxes.
+
+8. **Media (2.16m)**. Store real files with `POST /api/mcp/call`
+   (`show_image` `paths` [a PNG and a JPEG, plus a WebP and a GIF],
+   `show_file` a small CSV, `show_embed` once with `html` and once with
+   `url: https://example.com/`) using the chat's API key, and inject each
+   result as a done `tool` entry (or let a real turn produce them; the
+   result JSON is the same). Check, through testctl:
+   - the image row: four boxes 220 tall, widths 377 / 220 / 220 / 220
+     (1200×700 → 377), the call's caption; after a moment every box is
+     loaded (no ring) **and has a decoded image of the right pixel size**
+     (JPEG, WebP and GIF included);
+   - a `show_image` with a name that does not exist: "This image is no
+     longer stored.", dashed;
+   - click the PNG: the viewer is open with "1 / 4" (all the chat's
+     pictures); → shows "2 / 4"; + shows "140%"; 0 back to "100%"; Esc
+     closes it; a click on the backdrop closes it too;
+   - the file card: "export.csv", "12 B · The export"; Download with the
+     save path given by testctl (instead of the dialog) to a temp file: the
+     row goes to "Saved · 12 B" and the file's bytes equal the CSV; a
+     second Download of an id the server answers 410 for (delete the
+     source file first): the row shows "export.csv is no longer where it
+     was." and its edge is red;
+   - the frames: the stored HTML's box is 640 × its height, caption the
+     title, no Open; the https one has the caption "… · Open on
+     example.com", and clicking Open calls the system opener with the url
+     (testctl records it); with CEF up, each frame's view has painted
+     (a non-empty frame image) within a few seconds;
+   - a reply with `![chart](https://example.com/c.png)`: the text holds
+     "!chart" with "chart" a link, and no picture box;
+   - `show_video`: the poster box with the big play button and "… · 0:06";
+     play (testctl records the opener instead of the system player): the
+     file lands in the temp folder with the right size, and the opener is
+     called with that path, not a URL.
+
+`cargo test`: `fmtBytes` (12 → "12 B", 26625 → "26 KB", 1572864 →
+"1.5 MB") and `fmtDlSize` (26625 → "26 KB", 1572864 → "1.5 MB"),
+`fmtDuration` (6 → "0:06", 75 → "1:15"), the frame's box (w/h 16:9 →
+640×360; 9:16 → 315×560; height 160 → 640×160; nothing → 640×420), the
+frame caption and its Open wording, and `![a](https://x)` → "!" + link.
 
 `cargo test`: the markdown split (paragraph line breaks kept; `#` → the
 heading style, `##` → bold body size; each `>` line a quote; numbered and
@@ -535,11 +716,22 @@ only when `stick`; a height change alone does not).
 - [ ] Picture: loading ring, fade in, "gone" box; click → viewer with
       gallery counter, side buttons, zoom bar, keys (Esc, ← →, + − 0),
       Ctrl+wheel, drag, double click.
-- [ ] Video / audio: poster, play button, bar and caption drawn; play per
-      the named gap (system player).
-- [ ] File card: icon, name, size · caption, Download → save dialog, the
-      download row, errors as toasts.
-- [ ] Frame: named gap; caption and "Open".
+- [ ] Video / audio: poster, play button and caption ("… · 0:06"); the
+      audio pill; play → ring while it downloads to temp → system player
+      (no token in any URL handed out); named gaps in PLAN.
+- [ ] File card: icon, name, size · caption (`fmtBytes`), Download → the
+      save dialog first ("Save <name>", Downloads), then streaming to the
+      path; cancel the dialog → nothing.
+- [ ] Formats: PNG, JPEG, WebP and GIF all draw (GIF: first frame or
+      animated; named gap if first frame); a poster `.poster.jpg` draws.
+- [ ] Markdown `![a](https://…)`: "!" and a link, no picture; nothing fetched.
+- [ ] Frame: live inline CEF view (https `src`; stored HTML as a data URL),
+      sized per the table, loading ring, "This embed is no longer stored.",
+      caption "title · caption · Open on <provider>", popups to the system
+      browser; made when realised, closed when far; the no-CEF fallback named.
+- [ ] Download row: tray top right, accent / green / red left edge, texts
+      "Starting…", "<got> of <total>", "Saved · <size>", "Cancelled", the
+      server's error; × cancels; leaves after 4.5 / 1.2 / 7 s.
 - [x] Notices italic, centred, `text-muted`, wrap; the long-history line.
 - [x] Errors and failed results: the red box (`red` text and edge,
       `red-dim`); end-of-turn line dashed, centred, "12.3s · $0.0421".
