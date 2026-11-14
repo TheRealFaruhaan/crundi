@@ -960,6 +960,7 @@ for (const id of [liveW, liveQ, liveO]) await http('POST', `/api/ui-sessions/${i
 // ─── 2.5 Composer and Stop ───
 const liveC = await make('demo', 'Composer', true);
 p = await until('the composer chat has a pane', (q) => pane(q, liveC), 30000);
+{ const c = pane(p, liveC); check('a fresh chat: no session id, model or cost yet', c.session === '' && c.sessionFull === '' && c.model === '' && c.cost === '' && c.stopArmed === false, c); }
 await ui('focus-pane', pane(p, liveC).id);
 await ui('composer-focus');
 const keys = (text, mods) => d.send({ cmd: 'key', text, mods });
@@ -1002,6 +1003,7 @@ if ((await cpane()).state === 'working') {
 // The session id and the model arrive live (no reload).
 p = await until('the session id and model shown', (q) => pane(q, liveC)?.session?.length === 8 && pane(q, liveC)?.model !== '', 30000);
 if (p) check('the meta row: session id (8 characters) and model, live', pane(p, liveC).sessionFull.startsWith(pane(p, liveC).session), pane(p, liveC));
+if (p) check('the cost reads "$x.xxxx" (or nothing when 0)', /^(\$\d+\.\d{4})?$/.test(pane(p, liveC).cost), pane(p, liveC).cost);
 await ui('chat-enter', 'enter');
 await until('Enter sends again', (q) => q.chatEnter === 'enter', 5000);
 check('…saved back', saved().chat_enter === '', saved().chat_enter);
