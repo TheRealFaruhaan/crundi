@@ -28,3 +28,14 @@ screenshot over the native one, same region (`-2x` = ZOOM 2).
 
 Esc and a click on the log leave the panel open; × and the clock close it; two panels
 open in two chats at once; Schedule cleared the composer holding the same text.
+
+## Round 2 (fix check)
+
+r2/: F66 calendar glyph in the time field, F67 placeholder "mm/dd/yyyy, --:-- --"
+when emptied, F68 the list's empty line in italic (bundled DejaVu Sans faces; the
+chat's "Thought" line is italic too) (native-empty-time-calendar-italic.png);
+F71 a trigger click leaves no focus ring in the message box
+(native-trigger-click-no-focus.png); F72 "next" bold accent with " · " muted,
+item lines at the chat's line pitch, list empty until the answer
+(native-with-items-next.png); F69 the 404 branch sets the warmer off (code);
+F70 the stale PLAN line is gone. All verified.
