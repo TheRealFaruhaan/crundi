@@ -2003,6 +2003,39 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     // Dismiss.
     p = await props();
     await ui('focus-pane', pane(p, qDis).id);
+    // Before dismissing: Other against a pick, the note's ✕, the arrows.
+    {
+      const pk = async (what, f) => { const r = await until(what, (q) => { const x = qOf(q, qDis)?.picks?.[0]; return x && f(x); }, 5000); return r && qOf(r, qDis).picks[0]; };
+      await ui('q-pick', 0, 0);
+      await pk('SQLite picked', (x) => x.chosen?.[0] === 'SQLite');
+      await ui('q-other', 0, 'Redis');
+      let x = await pk('Other typed', (x) => x.other === 'Redis');
+      if (x) check('typing in Other un-picks the choices; Submit still enabled (Other answers)', x.chosen.length === 0 && qOf(await props(), qDis).can === true, x);
+      await ui('q-pick', 0, 1);
+      x = await pk('MySQL picked', (x) => x.chosen?.[0] === 'MySQL');
+      if (x) check('a pick clears Other', x.other === '', x);
+      await ui('q-note', 0, 0);
+      x = await pk('note on SQLite', (x) => x.noteOpt === 'SQLite');
+      if (x) check('the note button on SQLite picks it (a single choice: MySQL goes)', JSON.stringify(x.chosen) === '["SQLite"]', x);
+      await keys('cache size');
+      await pk('note typed', (x) => x.note === 'cache size');
+      await ui('q-note-remove', 0);
+      x = await pk('note removed', (x) => x.note === '' && x.noteOpt === '');
+      if (x) check('the note ✕ clears the note and closes it; the pick stays', JSON.stringify(x.chosen) === '["SQLite"]', x);
+      // The arrows in a radio group (real keys to the focused radio).
+      await ui('q-move', 0, 0, 1);
+      x = await pk('moved to MySQL', (x) => x.chosen?.[0] === 'MySQL');
+      if (x) check('an arrow moves to the next choice and picks it', true);
+      await key('Down');
+      x = await pk('Down wraps to SQLite', (x) => x.chosen?.[0] === 'SQLite');
+      if (x) check('↓ on the last radio (a real key) wraps to the first and picks it', true);
+      await key('Up');
+      x = await pk('Up to MySQL', (x) => x.chosen?.[0] === 'MySQL');
+      if (x) check('↑ (a real key) moves back and picks', true);
+      await key('Escape');
+      await sleep(300);
+      check('Esc does nothing to the card', qOf(await props(), qDis)?.status === 'pending' && qOf(await props(), qDis)?.picks?.[0]?.chosen?.[0] === 'MySQL', qOf(await props(), qDis));
+    }
     await ui('q-dismiss');
     p = await until('dismissed', (q) => qOf(q, qDis)?.dismissed === true, 10000);
     if (p) check('Dismiss: the card shows "dismissed" at once', true);
@@ -2078,6 +2111,27 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     await ev({ type: 'patch', id: 'e2e-run', patch: { status: 'done', result: 'slept', isError: false } });
     p = await until('patched', (q) => pane(q, tc).tools.some((r) => r.card?.id === 'e2e-run' && r.card.status === 'done'), 5000);
     if (p) check('its result arrives: the open card stays open (the web closes it: a named difference)', pane(p, tc).tools.find((r) => r.card?.id === 'e2e-run').card.open === true && pane(p, tc).tools.find((r) => r.card?.id === 'e2e-run').card.result === 'slept');
+    // More kinds: Write (its content), Grep, an MCP tool (key=value summary).
+    await ev({ type: 'entry', entry: { id: 'e2e-write', kind: 'tool', name: 'Write', toolUseId: 'tu-write', input: { file_path: join(demoPath, 'CHANGELOG.md'), content: '# Changelog\n- Port 4000.' }, status: 'done', result: 'ok' } });
+    await ev({ type: 'entry', entry: { id: 'e2e-grep', kind: 'tool', name: 'Grep', toolUseId: 'tu-grep', input: { pattern: 'port', glob: '*.js' }, status: 'done', result: 'app.js' } });
+    await ev({ type: 'entry', entry: { id: 'e2e-mcp', kind: 'tool', name: 'mcp__crundi__list_services', toolUseId: 'tu-mcp', input: { all: true }, status: 'done', isError: true, result: 'boom' } });
+    p = await until('three more cards', (q) => ['e2e-write', 'e2e-grep', 'e2e-mcp'].every((id) => cards(pane(q, tc).tools).some((c) => c.id === id)), 5000);
+    if (p) {
+      const c = (id) => cards(pane(p, tc).tools).find((x) => x.id === id);
+      check('Write: summary …/<dir>/CHANGELOG.md; body: its content', /^…\/[^/]+\/CHANGELOG\.md$/.test(c('e2e-write').summary) && c('e2e-write').body === 'write' && c('e2e-write').args === '# Changelog\n- Port 4000.', c('e2e-write'));
+      check('Grep: summary "port (*.js)"', c('e2e-grep').summary === 'port (*.js)', c('e2e-grep'));
+      check('an MCP tool: its raw name, summary "all=true", failed', c('e2e-mcp').name === 'mcp__crundi__list_services' && c('e2e-mcp').summary === 'all=true' && c('e2e-mcp').error === true && c('e2e-mcp').body === 'json', c('e2e-mcp'));
+    }
+    // A head clicked again closes it.
+    await ui('tool-toggle', 'e2e-run');
+    p = await until('closed again', (q) => cards(pane(q, tc).tools).some((c) => c.id === 'e2e-run' && !c.open), 5000);
+    if (p) check('a second press on an open card\'s head closes it', true);
+    const g0 = pane(await props(), tc).tools.find((r) => r.group && r.open);
+    if (g0) {
+      await ui('tool-toggle', g0.group);
+      p = await until('group closed', (q) => pane(q, tc).tools.some((r) => r.group === g0.group && !r.open), 5000);
+      if (p) check('a second press on an open group\'s head closes it', true);
+    }
   }
   await http('POST', `/api/ui-sessions/${tc}/close`, {}, token);
 }
