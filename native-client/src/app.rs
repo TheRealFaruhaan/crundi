@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock,
+    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -97,6 +97,13 @@ struct ChatPaneState {
     gen: i32,
     /// Side questions asked in this chat (2.21): local, in the log where asked.
     asides: Vec<Aside>,
+    /// The agent dock's sheet (2.18): a list (commands: true) or one record's
+    /// panel (its toolUseId, opened from the list?), and the panel's rows.
+    sheet_list: Option<bool>,
+    /// The plan panel open (2.19).
+    plan_open: bool,
+    sheet_panel: Option<(String, bool)>,
+    panel_model: Rc<VecModel<EntryView>>,
 }
 
 /// A side question (/btw): its id, the entry it follows, the question, and
@@ -414,6 +421,18 @@ pub fn init(window: &MainWindow) {
     window.global::<ToolAct>().on_sug_send(|k| if let Some(c) = chat_of(k.as_str()) { suggestion_send(c); });
     window.global::<ToolAct>().on_sug_dismiss(|k| if let Some(c) = chat_of(k.as_str()) { suggestion_dismiss(c); });
     window.global::<ToolAct>().on_recap_dismiss(|k| if let Some(c) = chat_of(k.as_str()) { recap_dismiss(c); });
+    // The agent dock (2.18).
+    window.global::<ToolAct>().on_agent_badge(|k, task| if let Some(c) = chat_of(k.as_str()) { agent_badge(c, task); });
+    // (By the chat's id from the log's row; by the pane's key from the list.)
+    window.global::<ToolAct>().on_agent_open(|c, id, from_list| { let c = chat_of(c.as_str()).unwrap_or(c.as_str()).to_string(); agent_open(&c, id.as_str(), from_list); });
+    window.global::<ToolAct>().on_agent_back(|k| if let Some(c) = chat_of(k.as_str()) { agent_back(c); });
+    window.global::<ToolAct>().on_agent_close(|k| if let Some(c) = chat_of(k.as_str()) { agent_close(c); });
+    window.global::<ToolAct>().on_agent_dismiss(|k, id| if let Some(c) = chat_of(k.as_str()) { agent_dismiss(c, vec![id.to_string()]); });
+    window.global::<ToolAct>().on_agent_dismiss_all(|k, task| if let Some(c) = chat_of(k.as_str()) { agent_dismiss_all(c, task); });
+    // The goal and the plan (2.19).
+    window.global::<ToolAct>().on_plan_toggle(|k| if let Some(c) = chat_of(k.as_str()) { plan_toggle(c); });
+    window.global::<ToolAct>().on_goal_clear(|k| if let Some(c) = chat_of(k.as_str()) { goal_clear(c); });
+    window.global::<ToolAct>().on_collab_cancel(|id| { let body = json!({ "id": id.as_str() }); call(move |api| api.post("/api/collab/cancel", &body), |_| {}); });
     window.global::<ToolAct>().on_aside_close(|c, id| aside_close(c.as_str(), id.parse().unwrap_or(0)));
     // Media (2.16m): a picture's viewer, play, Download, a frame's Open.
     window.global::<ToolAct>().on_view(|k| view_picture(k.as_str()));
@@ -1005,7 +1024,7 @@ fn sync_panes() {
                 if !a.chats.contains_key(id) {
                     // A chat with no size yet starts at the default and keeps it.
                     if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
-                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0, asides: vec![] });
+                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0, asides: vec![], sheet_list: None, plan_open: false, sheet_panel: None, panel_model: Rc::new(VecModel::default()) });
                     new.push(id.to_string());
                 }
             }
@@ -1102,6 +1121,8 @@ fn render() {
                     p.up_busy = u.active > 0;
                 }
                 p.content_gen = a.chats.get(id).map(|cs| cs.gen).unwrap_or(0);
+                // The agent dock (2.18): the badges, and the sheet.
+                if let Some(cs) = a.chats.get(id) { agent_pane(&mut p, cs); goal_pane(&mut p, cs); }
                 // The dock (2.17): the suggestion while idle and running; the recap.
                 if let Some(cs) = a.chats.get(id) {
                     if chat_state_now(a, id) == "idle" { p.sug_text = cs.conv.suggestion.as_str().into(); }
@@ -1547,7 +1568,7 @@ fn on_chat_message(m: &Value) {
     let changed = with(|a| {
         let Some(cs) = a.chats.get_mut(&id) else { return false };
         match s(m, "type").as_str() {
-            "ui-history" => { if let Some(sess) = m.get("session") { cs.conv.load(sess); } a.sending.remove(&id); true }
+            "ui-history" => { if let Some(sess) = m.get("session") { cs.conv.load(sess); } a.sending.remove(&id); cs.sheet_list = None; cs.sheet_panel = None; true }
             "ui-event" => {
                 // Thinking blocks (2.15): one that starts streaming opens (the
                 // others the rules opened fold); a finished one folds later.
@@ -1580,6 +1601,8 @@ fn on_chat_message(m: &Value) {
     }).unwrap_or(false);
     if changed {
         with(|a| if let Some(cs) = a.chats.get_mut(&id) { cs.gen += 1; });
+        // An open agent panel follows its transcript (2.18).
+        with(|a| if let Some(cs) = a.chats.get(&id) { if cs.sheet_panel.is_some() { panel_rows(cs, &id, &a.media); } });
         show_chat(&id);
         render();
     }
@@ -1827,6 +1850,7 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
         Row::Agent(id, a) => EntryView {
             id: id.clone().into(),
             kind: "agent".into(),
+            request_id: s(a, "toolUseId").into(),
             title: { let t = s(a, "subagentType"); if t.is_empty() { "Agent".into() } else { t.into() } },
             detail: s(a, "description").split_whitespace().collect::<Vec<_>>().join(" ").into(),
             // Running while its status is running or none; failed; else done.
@@ -3930,4 +3954,188 @@ pub fn dock_of(key: &str) -> Value {
         "suggestion": cs.conv.suggestion, "recap": cs.conv.recap.as_ref().map(|r| json!({ "text": r.0, "why": r.1 })),
         "asides": cs.asides.iter().map(|x| json!({ "id": x.id, "question": x.question, "state": x.state, "text": x.text })).collect::<Vec<_>>(),
     }))).flatten().unwrap_or(Value::Null)
+}
+
+// ─── The agent dock (2.18, src/agents.rs) ───
+
+/// A pane's badges and its open sheet (a list, or one record's panel).
+fn agent_pane(p: &mut PaneView, cs: &ChatPaneState) {
+    let shown: Vec<&Value> = cs.conv.agents.iter().filter(|a| agents::shown(a)).collect();
+    let (tasks, ags): (Vec<&Value>, Vec<&Value>) = shown.iter().partition(|a| agents::is_task(a));
+    let run = |l: &[&Value]| l.iter().filter(|a| agents::running(a)).count();
+    p.ag_n = ags.len() as i32; p.ag_run = run(&ags) > 0;
+    p.cmd_n = tasks.len() as i32; p.cmd_run = run(&tasks) > 0;
+    p.ag_tip = agents::tooltip(false, ags.len(), run(&ags)).into();
+    p.cmd_tip = agents::tooltip(true, tasks.len(), run(&tasks)).into();
+    if let Some(task) = cs.sheet_list {
+        let list: Vec<Value> = shown.iter().filter(|a| agents::is_task(a) == task).map(|a| (*a).clone()).collect();
+        let r = list.iter().filter(|a| agents::running(a)).count();
+        p.sheet = if task { "commands".into() } else { "agents".into() };
+        p.sheet_title = if task { "Commands".into() } else { "Agents".into() };
+        p.sheet_sub = agents::list_sub(r, list.len() - r).into();
+        p.sheet_rows = ModelRc::new(VecModel::from(agents::sorted(&list).iter().map(|a| AgentRow {
+            id: s(a, "toolUseId").into(), title: agents::label(a).into(), sub: agents::row_sub(a).into(),
+            state: if agents::running(a) { "running".into() } else if s(a, "status") == "failed" { "failed".into() } else { "done".into() },
+        }).collect::<Vec<_>>()));
+    } else if let Some((tid, back)) = &cs.sheet_panel {
+        if let Some(a) = cs.conv.agents.iter().find(|a| s(a, "toolUseId") == *tid) {
+            p.sheet = "panel".into();
+            p.sheet_title = agents::label(a).into();
+            p.sheet_sub = agents::panel_sub(a).into();
+            p.sheet_back = if *back { if agents::is_task(a) { "‹ Commands".into() } else { "‹ Agents".into() } } else { SharedString::default() };
+            p.panel_prompt = s(a, "prompt").into();
+            p.panel_summary = md(&s(a, "summary"));
+            p.panel_has_summary = !s(a, "summary").is_empty();
+            p.panel_entries = ModelRc::from(cs.panel_model.clone());
+            p.panel_empty = if cs.panel_model.row_count() == 0 { agents::empty_text(a).into() } else { SharedString::default() };
+        }
+    }
+}
+
+/// The open panel's rows: the agent's transcript (a task: its own tool card
+/// from the chat, open), drawn as the log draws entries.
+fn panel_rows(cs: &ChatPaneState, chat: &str, cache: &HashMap<String, (String, Option<slint::Image>)>) {
+    let Some((tid, _)) = &cs.sheet_panel else { cs.panel_model.set_vec(vec![]); return };
+    let a = cs.conv.agents.iter().find(|a| s(a, "toolUseId") == *tid);
+    let mut c = Conversation::default();
+    if a.is_some_and(agents::is_task) {
+        // A command: its tool row from the chat, expanded.
+        c.entries = cs.conv.entries.iter().filter(|e| s(e, "toolUseId") == *tid).cloned().collect();
+    } else {
+        c.entries = cs.conv.agent_msgs.get(tid).cloned().unwrap_or_default();
+    }
+    let open: HashSet<String> = c.entries.iter().filter(|e| a.is_some_and(agents::is_task) && s(e, "kind") == "tool").map(|e| s(e, "id")).collect();
+    let rows = rows_of(&c.view(), &[], &open, &cs.think, &[]);
+    let mc = MediaCtx { chat: chat.to_string(), cache, want: std::cell::RefCell::new(vec![]) };
+    let views: Vec<EntryView> = rows.iter().map(|r| { let mut v = to_view(r, &mc); v.chat = chat.into(); v }).collect();
+    cs.panel_model.set_vec(views);
+}
+
+fn sheet_update(chat: &str, f: impl FnOnce(&mut ChatPaneState)) {
+    with(|a| {
+        if let Some(cs) = a.chats.get_mut(chat) { f(cs); }
+        if let Some(cs) = a.chats.get(chat) { panel_rows(cs, chat, &a.media); }
+    });
+    render();
+}
+
+/// A badge: its kind's list (closing any panel); again: closed.
+pub fn agent_badge(chat: &str, task: bool) {
+    sheet_update(chat, |cs| { cs.sheet_panel = None; cs.sheet_list = if cs.sheet_list == Some(task) { None } else { Some(task) }; });
+}
+
+/// A list row: that record's panel, with the back link; the log's agent
+/// row: its panel without one (again: closed).
+pub fn agent_open(chat: &str, tid: &str, from_list: bool) {
+    sheet_update(chat, |cs| {
+        let same = cs.sheet_panel.as_ref().is_some_and(|(t, _)| t == tid);
+        cs.sheet_list = None;
+        cs.sheet_panel = if same && !from_list { None } else { Some((tid.to_string(), from_list)) };
+    });
+}
+
+pub fn agent_back(chat: &str) {
+    sheet_update(chat, |cs| {
+        let task = cs.sheet_panel.as_ref().and_then(|(t, _)| cs.conv.agents.iter().find(|a| s(a, "toolUseId") == *t)).map(agents::is_task).unwrap_or(false);
+        cs.sheet_panel = None; cs.sheet_list = Some(task);
+    });
+}
+
+pub fn agent_close(chat: &str) { sheet_update(chat, |cs| { cs.sheet_list = None; cs.sheet_panel = None; }); }
+
+/// Dismiss one (a row's ✕) or every shown one of a kind (Dismiss all): at
+/// once here, then POST …/dismiss-agents. The last one gone closes the list.
+pub fn agent_dismiss(chat: &str, ids: Vec<String>) {
+    if ids.is_empty() { return; }
+    sheet_update(chat, |cs| {
+        for a in cs.conv.agents.iter_mut() { if ids.contains(&s(a, "toolUseId")) { a["dismissed"] = json!(true); } }
+        if let Some(task) = cs.sheet_list {
+            if !cs.conv.agents.iter().any(|a| agents::shown(a) && agents::is_task(a) == task) { cs.sheet_list = None; }
+        }
+    });
+    show_chat(chat);
+    let path = format!("/api/ui-sessions/{chat}/dismiss-agents");
+    let body = json!({ "toolUseIds": ids });
+    let c = chat.to_string();
+    bg(move || api().map(|api| post_raw(&api, &path, &body)), move |r| {
+        if let Some(Ok((404, _))) = r { let _ = c; toast("Dismissing is not supported by this server", true); }
+    });
+}
+
+pub fn agent_dismiss_all(chat: &str, task: bool) {
+    let ids = with(|a| a.chats.get(chat).map(|cs| cs.conv.agents.iter().filter(|a| agents::shown(a) && agents::is_task(a) == task).map(|a| s(a, "toolUseId")).collect::<Vec<_>>())).flatten().unwrap_or_default();
+    agent_dismiss(chat, ids);
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) { cs.sheet_list = None; });
+    render();
+}
+
+/// The test driver: a chat's badges and sheet.
+pub fn agents_of(key: &str) -> Value {
+    let Some(chat) = chat_of(key).map(str::to_string) else { return Value::Null };
+    let Some(w) = ui() else { return Value::Null };
+    let p = w.get_panes().iter().find(|p| p.key == key);
+    let Some(p) = p else { return Value::Null };
+    let _ = chat;
+    json!({ "agents": p.ag_n, "agentsRunning": p.ag_run, "commands": p.cmd_n, "commandsRunning": p.cmd_run, "agTip": p.ag_tip.as_str(), "cmdTip": p.cmd_tip.as_str(),
+        "sheet": p.sheet.as_str(), "title": p.sheet_title.as_str(), "sub": p.sheet_sub.as_str(), "back": p.sheet_back.as_str(),
+        "rows": p.sheet_rows.iter().map(|r| json!({ "id": r.id.as_str(), "title": r.title.as_str(), "sub": r.sub.as_str(), "state": r.state.as_str() })).collect::<Vec<_>>(),
+        "prompt": p.panel_prompt.as_str(), "entries": p.panel_entries.row_count(), "empty": p.panel_empty.as_str() })
+}
+
+// ─── The goal and the plan (2.19) ───
+
+fn goal_pane(p: &mut PaneView, cs: &ChatPaneState) {
+    if let Some(g) = &cs.conv.goal {
+        let n = g.get("verdicts").and_then(|v| v.as_u64()).unwrap_or(0);
+        let looping = g.get("looping").and_then(|v| v.as_bool()).unwrap_or(false);
+        p.goal_on = true;
+        p.goal_cond = s(g, "condition").into();
+        p.goal_looping = looping;
+        p.goal_count = if n > 0 { format!("{n} check{}", if n == 1 { "" } else { "s" }) } else if looping { "running".into() } else { "set".into() }.into();
+        p.goal_stopped = !looping && n > 0;
+    }
+    if let Some(pl) = &cs.conv.plan {
+        let st = s(pl, "status");
+        // (The panel shows only while there is a plan: plan_open is read with it.)
+        p.plan_status = if st.is_empty() { "proposed".into() } else { st.as_str().into() };
+        p.plan_open = cs.plan_open;
+        p.plan_state = match st.as_str() { "executing" => "approved — being worked through", "rejected" => "sent back for revision", _ => "waiting for your approval" }.into();
+        if cs.plan_open {
+            p.plan_blocks = ModelRc::new(VecModel::from(split_blocks("plan", &s(pl, "text")).into_iter().filter_map(|r| match r {
+                Row::Prose(_, t, kind, marker, _) => Some(AnsBlock { kind: if kind.starts_with("li") { "li".into() } else if kind.starts_with('h') { "h".into() } else { "p".into() }, marker: marker.into(), md: md(&t), text: t.into() }),
+                Row::Code(_, t, _) => Some(AnsBlock { kind: "code".into(), marker: SharedString::default(), md: StyledText::default(), text: t.into() }),
+                _ => None,
+            }).collect::<Vec<_>>()));
+        }
+    }
+}
+
+/// The PLAN pill: the panel opens or closes (never without a plan).
+pub fn plan_toggle(chat: &str) {
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) { cs.plan_open = cs.conv.plan.is_some() && !cs.plan_open; });
+    render();
+}
+
+/// "clear": `/goal clear` through the send path (queued when busy), the box
+/// and its draft untouched.
+pub fn goal_clear(chat: &str) {
+    let key = chat_key(chat);
+    let text = "/goal clear".to_string();
+    let state = with(|a| {
+        let st = chat_state_now(a, chat);
+        if st == "needs-input" { a.held.entry(chat.to_string()).or_default().push(text.clone()); sync_held(a, chat); }
+        st
+    }).unwrap_or_default();
+    match state.as_str() {
+        "needs-input" => render(),
+        "working" => post_send(&key, chat, text, true),
+        _ => { with(|a| a.sending.insert(chat.to_string())); post_send(&key, chat, text, false); }
+    }
+}
+
+pub fn goal_of(key: &str) -> Value {
+    let Some(w) = ui() else { return Value::Null };
+    let Some(p) = w.get_panes().iter().find(|p| p.key == key) else { return Value::Null };
+    json!({ "on": p.goal_on, "condition": p.goal_cond.as_str(), "count": p.goal_count.as_str(), "looping": p.goal_looping, "stopped": p.goal_stopped,
+        "plan": p.plan_status.as_str(), "planOpen": p.plan_open, "planState": p.plan_state.as_str(), "planBlocks": p.plan_blocks.row_count() })
 }

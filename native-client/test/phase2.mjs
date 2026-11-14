@@ -2442,9 +2442,59 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   // "/btw" alone is not a side question.
   await ui('stub', 'send', JSON.stringify({ ok: true, injected: false }));
   await keys('/btw');
+  // (The slash menu offers /btw: Esc closes it, then Enter sends.)
+  await key('Escape');
   await keys('Return');
   await sleep(500);
-  check('"/btw" alone is sent as a message, not asked', (await dk()).asides.length === 1);
+  check('"/btw" alone is sent as a message, not asked', (await dk()).asides.length === 1 && pane(await props(), sg).draft === '', { asides: (await dk()).asides.length, draft: pane(await props(), sg).draft });
+  // ─── 2.18 The agent dock (records as the server's frames) ───
+  await ev({ type: 'agent', agent: { toolUseId: 'ta1', kind: 'agent', subagentType: 'general-purpose', description: 'Count lines in app.js', status: 'running', prompt: 'Count the lines.' } });
+  await ev({ type: 'agent', agent: { toolUseId: 'tt1', kind: 'task', description: 'npm test', status: 'completed', endedAt: Date.now(), usage: { total_tokens: 812 } } });
+  const ad = async () => pane(await props(), sg)?.agentDock;
+  p = await until('badges', async () => (await ad())?.agents === 1 && (await ad())?.commands === 1, 5000);
+  check('two badges: an agent running, a command finished, with their tooltips', !!p && (await ad()).agentsRunning === true && (await ad()).agTip === '1 agent, 1 running — click to see it' && (await ad()).cmdTip === '1 background command, all finished — click to see it', await ad());
+  await snap('2.18-badges');
+  await ui('agent-badge', 'agents');
+  let a1 = await ad();
+  check('the agents badge opens its list: one row, "1 running"', a1.sheet === 'agents' && a1.rows.length === 1 && a1.rows[0].title === 'Count lines in app.js' && a1.sub === '1 running', a1);
+  await ui('agent-open', 'ta1', 'list');
+  a1 = await ad();
+  check('a row opens its panel with the back link, the prompt, the empty line', a1.sheet === 'panel' && a1.back === '‹ Agents' && a1.prompt === 'Count the lines.' && a1.empty === 'Waiting for the agent’s first step…', a1);
+  await ev({ type: 'agent-entry', toolUseId: 'ta1', entry: { id: 'x1', kind: 'assistant-text', text: 'Looking at app.js.' } });
+  a1 = await until('entry', async () => (await ad())?.entries === 1, 5000) ? await ad() : await ad();
+  check('a live agent entry joins the open panel', a1.entries === 1 && a1.empty === '', a1);
+  await snap('2.18-panel');
+  await ui('agent-back');
+  check('back: the list again', (await ad()).sheet === 'agents');
+  await ui('agent-dismiss', 'ta1');
+  a1 = await ad();
+  check('dismissing the last one: gone from the badge, the list closes', a1.agents === 0 && a1.sheet === '', a1);
+  await ui('agent-badge', 'commands');
+  await ui('agent-dismiss-all', 'commands');
+  a1 = await ad();
+  check('Dismiss all: the commands go, the list closes', a1.commands === 0 && a1.sheet === '', a1);
+  // ─── 2.19 The goal and the plan ───
+  const gl = async () => pane(await props(), sg)?.goal;
+  await ev({ type: 'goal', goal: { condition: 'All tests pass', verdicts: 0, looping: true } });
+  p = await until('goal', async () => (await gl())?.on, 5000);
+  check('the goal bar: its condition, "running" while looping', !!p && (await gl()).condition === 'All tests pass' && (await gl()).count === 'running' && (await gl()).looping, await gl());
+  await ev({ type: 'entry', entry: { id: 'gv1', kind: 'goal-verdict', text: 'Two tests still fail.', n: 1 } });
+  await ev({ type: 'goal', goal: { condition: 'All tests pass', verdicts: 1, looping: false } });
+  p = await until('stopped', async () => (await gl())?.stopped, 5000);
+  check('a check and the loop stopped: "1 check", the stopped line', !!p && (await gl()).count === '1 check', await gl());
+  await snap('2.19-goal');
+  await ev({ type: 'meta', plan: { text: '### Dark-mode toggle\n\n1. Add the setting\n2. Wire it', status: 'proposed' } });
+  p = await until('plan', async () => (await gl())?.plan === 'proposed', 5000);
+  check('a proposed plan: the PLAN pill', !!p);
+  await ui('plan-toggle');
+  p = await until('panel', async () => (await gl())?.planOpen && (await gl())?.planBlocks >= 3, 5000);
+  check('the pill opens the plan panel: "waiting for your approval", the plan\'s blocks', !!p && (await gl()).planState === 'waiting for your approval', await gl());
+  await snap('2.19-plan');
+  await ev({ type: 'meta', plan: null });
+  p = await until('plan gone', async () => (await gl())?.plan === '' && !(await gl())?.planOpen, 5000);
+  check('the plan going closes the panel', !!p, await gl());
+  await ev({ type: 'goal', goal: null });
+  check('goal null: the bar goes', (await gl()).on === false);
   await http('POST', `/api/ui-sessions/${sg}/close`, {}, token);
 }
 

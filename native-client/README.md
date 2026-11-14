@@ -313,6 +313,18 @@ them; each has a spec in `specs/`). So far:
   any state asks on the side (POST …/aside): a card in the log where it was
   asked, "Asking…" then the answer or the error; never queued, nothing
   added to the conversation; a server without it gets the text as typed.
+- **2.18 The agent dock** (specs/agent-dock.md, `src/agents.rs`): a
+  chat's sub-agents and background commands as two badges in its dock
+  (count, spinner or dot, tooltip), their lists (running first, Dismiss
+  all) and one record's panel (its prompt, summary and live transcript);
+  the log's agent row opens it; dismissing posts dismiss-agents.
+- **2.19 The goal and the plan** (specs/goal-plan.md): the goal bar
+  (condition, checks, clear sends `/goal clear`), the "Goal not yet met"
+  card in the log, the header's PLAN pill (proposed, executing, rejected)
+  and the plan panel over the log.
+- **Permission cards** (F107/F110): as the web's (title, description,
+  reason, the input; Allow always only with suggestions; escalated to the
+  owner or a factory's Manager; answered: the name and its tag).
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

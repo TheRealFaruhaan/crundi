@@ -30,6 +30,7 @@ mod tools;
 mod think;
 mod md;
 mod media;
+mod agents;
 mod drafts;
 mod app;
 mod browser;

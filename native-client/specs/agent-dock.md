@@ -272,30 +272,30 @@ the snapshot after a reload).
 
 ## Checklist
 
-- [ ] Badges row first in the dock; commands left, agents right; each
+- [x] Badges row first in the dock; commands left, agents right; each
       hidden at 0.
-- [ ] Badge: pill, icon (robot / terminal), mono count, spinner while any
+- [x] Badge: pill, icon (robot / terminal), mono count, spinner while any
       runs (icon `accent-hover`) else green dot; hover/open accent border
       and `text-primary`; focus ring; tooltip wording.
 - [ ] Arrival and finish animations, live only (not on replay, not while a
       sheet is open).
-- [ ] Log padded by the dock while a badge shows; jump button not lifted by
+- [x] Log padded by the dock while a badge shows; jump button not lifted by
       badges alone.
-- [ ] List: sheet over the log only; head (title, counts sub, Dismiss all,
+- [x] List: sheet over the log only; head (title, counts sub, Dismiss all,
       ✕); rows (mark, title, sub, ›, ✕) in the right order; foot text per
       kind.
-- [ ] Row texts: title fallbacks, sub (type · step/finished/status · tok).
-- [ ] Row hover/focus `bg-hover`; ✕ hover red; Dismiss all hover red.
+- [x] Row texts: title fallbacks, sub (type · step/finished/status · tok).
+- [x] Row hover/focus `bg-hover`; ✕ hover red; Dismiss all hover red.
 - [ ] Row click / Enter / Space opens the panel with back; Esc closes the
       list and focuses the badge; the first row focused on open.
-- [ ] Dismiss one; Dismiss all (this kind only, closes the list); the list
+- [x] Dismiss one; Dismiss all (this kind only, closes the list); the list
       closes when empty; POST `dismiss-agents`; survives a reload.
-- [ ] Server auto-dismiss (`dismissed: true`) hides a record live.
-- [ ] Panel: back (from the list only), title, sub giving way first, ✕;
+- [x] Server auto-dismiss (`dismissed: true`) hides a record live.
+- [x] Panel: back (from the list only), title, sub giving way first, ✕;
       prompt box (capped, scrolls); summary; a command's tool row
       expanded; the transcript as the log draws it; the four empty texts.
-- [ ] Panel live: entries append (stick to the bottom), patches redraw,
+- [x] Panel live: entries append (stick to the bottom), patches redraw,
       the sub updates.
-- [ ] The log's agent row opens the panel without back and toggles it.
-- [ ] Narrow pane: badges, list and panel keep their buttons; texts cut.
+- [x] The log's agent row opens the panel without back and toggles it.
+- [x] Narrow pane: badges, list and panel keep their buttons; texts cut.
 - [ ] Tokens only; screenshots side by side under `agent-dock/review/`.

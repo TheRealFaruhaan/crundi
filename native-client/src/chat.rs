@@ -31,6 +31,11 @@ pub struct Conversation {
     /// idle; and the recap (its text, why: idle | resumed).
     pub suggestion: String,
     pub recap: Option<(String, String)>,
+    /// Each agent's own transcript (2.18), by its toolUseId.
+    pub agent_msgs: std::collections::HashMap<String, Vec<Value>>,
+    /// The goal (2.19) {condition, verdicts, looping}, and the plan {text, status}.
+    pub goal: Option<Value>,
+    pub plan: Option<Value>,
 }
 
 /// A message handed over to a busy chat (2.9, the web's handedOver).
@@ -61,6 +66,9 @@ impl Conversation {
         self.cost = session.get("totalCostUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
         self.entries = session.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
         self.agents = session.get("agents").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+        self.agent_msgs = self.agents.iter().map(|a| (s(a, "toolUseId"), a.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default())).collect();
+        self.goal = session.get("goal").filter(|g| !g.is_null()).cloned();
+        self.plan = session.get("plan").filter(|g| !g.is_null()).cloned();
         self.suggestion = session.pointer("/suggestion/text").and_then(|t| t.as_str()).unwrap_or("").to_string();
         self.recap = session.get("recap").filter(|r| !r.is_null()).map(|r| (s(r, "text"), s(r, "why"))).filter(|r| !r.0.is_empty());
         self.slots = session.get("pendingInjections").and_then(|p| p.as_array()).map(|p| p.iter().map(|x| Slot {
@@ -118,6 +126,9 @@ impl Conversation {
                 }
                 true
             }
+            // 2.19: the goal (null: it goes); a meta carrying a plan (null: it goes).
+            "goal" => { self.goal = event.get("goal").filter(|g| !g.is_null()).cloned(); true }
+            "meta" if event.get("plan").is_some() => { self.plan = event.get("plan").filter(|g| !g.is_null()).cloned(); true }
             // 2.17: a suggestion (null: it goes), a recap (null: it goes).
             "suggestion" => {
                 self.suggestion = event.pointer("/suggestion/text").and_then(|t| t.as_str()).unwrap_or("").to_string();
@@ -125,6 +136,21 @@ impl Conversation {
             }
             "recap" => {
                 self.recap = event.get("recap").filter(|r| !r.is_null()).map(|r| (s(r, "text"), s(r, "why"))).filter(|r| !r.0.is_empty());
+                true
+            }
+            // An agent's own entry, or a patch to one (2.18).
+            "agent-entry" => {
+                let (Some(e), tid) = (event.get("entry"), s(event, "toolUseId")) else { return false };
+                let list = self.agent_msgs.entry(tid).or_default();
+                let id = s(e, "id");
+                match list.iter_mut().find(|x| s(x, "id") == id && !id.is_empty()) { Some(old) => *old = e.clone(), None => list.push(e.clone()) }
+                true
+            }
+            "agent-patch" => {
+                let (tid, id) = (s(event, "toolUseId"), s(event, "id"));
+                let Some(list) = self.agent_msgs.get_mut(&tid) else { return false };
+                let (Some(entry), Some(patch)) = (list.iter_mut().find(|x| s(x, "id") == id), event.get("patch").and_then(|p| p.as_object())) else { return false };
+                if let Some(o) = entry.as_object_mut() { for (k, v) in patch { o.insert(k.clone(), v.clone()); } }
                 true
             }
             "agent" => {
@@ -313,15 +339,22 @@ fn shown(e: &Value) -> Option<Shown> {
             let mut tag = if st == "denied" { "denied".to_string() } else if closed { "never answered".into() } else if e.get("always").and_then(|v| v.as_bool()).unwrap_or(false) { "always allowed".into() } else { "allowed".into() };
             if s(e, "answeredBy") == "cru" && !closed { tag.push_str(" by Cru"); }
             let raw_title = s(e, "title");
+            // Pending: escalated to the project owner (or a factory's
+            // Manager), its approval's id; "Allow always" only with the CLI's
+            // suggestions and no suppressAlwaysAllow (F110).
+            let escalated = e.get("escalated").and_then(|v| v.as_bool()).unwrap_or(false);
+            let pending = st == "pending";
+            let always_ok = !e.get("suppressAlwaysAllow").and_then(|v| v.as_bool()).unwrap_or(false) && e.get("suggestions").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty());
             Shown {
+                options: if pending && always_ok { vec!["always".into()] } else { vec![] },
                 kind: "permission",
                 title: if raw_title.is_empty() { format!("Claude wants to use {name}") } else { raw_title.clone() },
                 text: name,
                 detail: s(e, "description"),
                 note: tools::strip_ansi(&s(e, "decisionReason")),
                 args: tools::truncate(&serde_json::to_string_pretty(e.get("input").unwrap_or(&Value::Null)).unwrap_or_default(), 2500),
-                group_summary: tag,
-                group: if closed { raw_title } else { String::new() },
+                group_summary: if pending { if !escalated { String::new() } else if s(e, "routedTo") == "manager" { "manager".into() } else { "escalated".into() } } else { tag },
+                group: if closed { raw_title } else if pending && escalated { s(e, "approvalId") } else { String::new() },
                 error: st == "denied" || closed,
                 status: st,
                 request_id: s(e, "requestId"),
@@ -356,6 +389,8 @@ fn shown(e: &Value) -> Option<Shown> {
         }
         "error" => Shown { kind: "error", text: s(e, "text"), error: true, ..base },
         "notice" => Shown { kind: "notice", text: s(e, "text"), ..base },
+        // A goal check that said "not yet" (2.19).
+        "goal-verdict" => Shown { kind: "goal-verdict", text: s(e, "text"), detail: format!("Goal not yet met · check {}", e.get("n").and_then(|n| n.as_u64()).unwrap_or(0)), ..base },
         _ => return None,
     })
 }
@@ -413,7 +448,8 @@ mod tests {
         assert_eq!(v.len(), 2);
         assert_eq!(v[0].title, "Claude wants to use mcp__crundi__browser_open");
         assert!(v[0].args.contains("\"url\": \"https://x\""));
-        assert_eq!(v[0].group_summary, "allowed");
+        assert_eq!(v[0].group_summary, "");
+        assert!(v[0].options.is_empty());
         assert_eq!(v[1].options, vec!["A", "B"]);
         assert_eq!(v[1].request_id, "r2");
     }

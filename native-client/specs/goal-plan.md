@@ -221,24 +221,24 @@ button, and the `goal-verdict` card.
 
 ## Checklist
 
-- [ ] Goal bar only while a goal is set; between log and composer;
+- [x] Goal bar only while a goal is set; between log and composer;
       `accent-dim` with the top rule.
-- [ ] Tag (spinner while looping), condition with ellipsis, count
+- [x] Tag (spinner while looping), condition with ellipsis, count
       ("N checks" / "running" / "set"), clear (tooltip, red hover).
-- [ ] Stopped line only when stopped with checks.
-- [ ] clear sends `/goal clear` (queued while busy); the bar goes on the
+- [x] Stopped line only when stopped with checks.
+- [x] clear sends `/goal clear` (queued while busy); the bar goes on the
       server's `goal: null`.
-- [ ] Verdict card in the log: accent bar, dot, "Goal not yet met · check
+- [x] Verdict card in the log: accent bar, dot, "Goal not yet met · check
       N", reason.
-- [ ] PLAN pill: proposed yellow, executing green, rejected muted; tooltips;
+- [x] PLAN pill: proposed yellow, executing green, rejected muted; tooltips;
       hover fill; before CHAT, in the tray when narrow; PLANNING when in
       Plan mode with no plan.
-- [ ] Pill click toggles the panel; Close closes; `plan: null` closes and
+- [x] Pill click toggles the panel; Close closes; `plan: null` closes and
       removes the pill.
-- [ ] Panel over the log only (goal bar and composer stay); header tag,
+- [x] Panel over the log only (goal bar and composer stay); header tag,
       status wording, Close; markdown body with proper lists.
-- [ ] Live: a new plan replaces the open panel's text and status; the pill
+- [x] Live: a new plan replaces the open panel's text and status; the pill
       follows `meta` and `planStatus`.
-- [ ] Narrow pane: bar, tray pill and panel work; the tray shows above the
+- [x] Narrow pane: bar, tray pill and panel work; the tray shows above the
       panel.
 - [ ] Tokens only; screenshots side by side under `goal-plan/review/`.

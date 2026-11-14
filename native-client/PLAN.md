@@ -455,6 +455,15 @@ Phase 1 left these, each with its workaround in place:
     when it was asked (the web loses it when it rebuilds the log);
   - the answer is one block of markdown (StyledText), not the reply's
     split blocks: its lists are drawn as StyledText draws them.
+- **The agent dock** (2.18):
+  - the badges' arrival (scale and accent ring) and finish (green ring)
+    animations are not played;
+  - the list has no keyboard of its own (Tab, Enter, Esc back to the
+    badge); the mouse does everything;
+  - "1 tools" is "1 tool" (the web's plural slip).
+- **The goal and the plan** (2.19):
+  - the plan's headings are bold body text in the panel (StyledText has no
+    heading sizes); its lists hang as the reply's.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):
