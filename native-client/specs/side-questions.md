@@ -177,26 +177,26 @@ No WebSocket event: the answer comes back on the POST (up to 60 s).
 
 ## Checklist
 
-- [ ] `/btw <q>` from the box (Enter, Ctrl+Enter mode, the button) asks on
+- [x] `/btw <q>` from the box (Enter, Ctrl+Enter mode, the button) asks on
       the side in every running state; never queued, held or sent.
-- [ ] `/btw` with no question is sent as an ordinary message.
-- [ ] Box cleared, draft saved empty, log re-pinned, slash menu closed,
+- [x] `/btw` with no question is sent as an ordinary message.
+- [x] Box cleared, draft saved empty, log re-pinned, slash menu closed,
       recap dismissed.
-- [ ] Card at the end of the log, above "Working…": dashed `border`,
+- [x] Card at the end of the log, above "Working…": dashed `border`,
       `bg-secondary`, `r-control`, `sp-8`/`sp-10` padding, `sp-6` margins.
-- [ ] Head "ON THE SIDE" (upper case, `w-semibold`, `track-wide`,
+- [x] Head "ON THE SIDE" (upper case, `w-semibold`, `track-wide`,
       `text-muted`) and × (tooltip "Close", hover `slate-dim`).
-- [ ] Question `text-primary`, wraps, keeps newlines, without "/btw".
-- [ ] Pending: spinner + "Asking…" `text-secondary`.
-- [ ] Answered: markdown as replies, `text-secondary`, lists indented.
-- [ ] Error: the log's red error box with the server's or network's message.
-- [ ] 404: card removed, text sent as typed.
-- [ ] Note "Not added to the conversation." `text-muted` small.
-- [ ] Several at once, each answering into its own card.
-- [ ] × removes the card at once, no call.
-- [ ] Later entries arrive below the card; it keeps its place.
-- [ ] Kept through a reconnect (native); gone after a client restart.
-- [ ] Nothing added to the server's conversation.
-- [ ] A-/A+ scale the texts.
-- [ ] Narrow pane: same parts, wrapped.
-- [ ] Tokens only.
+- [x] Question `text-primary`, wraps, keeps newlines, without "/btw".
+- [x] Pending: spinner + "Asking…" `text-secondary`.
+- [x] Answered: markdown as replies, `text-secondary`, lists indented.
+- [x] Error: the log's red error box with the server's or network's message.
+- [x] 404: card removed, text sent as typed.
+- [x] Note "Not added to the conversation." `text-muted` small.
+- [x] Several at once, each answering into its own card.
+- [x] × removes the card at once, no call.
+- [x] Later entries arrive below the card; it keeps its place.
+- [x] Kept through a reconnect (native); gone after a client restart.
+- [x] Nothing added to the server's conversation.
+- [x] A-/A+ scale the texts.
+- [x] Narrow pane: same parts, wrapped.
+- [x] Tokens only.

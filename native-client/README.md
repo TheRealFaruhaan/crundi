@@ -305,6 +305,14 @@ them; each has a spec in `specs/`). So far:
   (gallery, zoom, keys); video and audio played in the system's player;
   the file card's Download (save dialog, streamed, its download row);
   frames' captions with Open.
+- **2.17 Suggestions and recaps** (specs/suggestions-recaps.md): the
+  chat's dock at the log's bottom right: Claude Code's suggestion after a
+  turn (a click sends it as it is, the box untouched; × dismisses it on the
+  server) and the recap ("While you were away" / "Where this chat stands").
+- **2.21 Side questions** (specs/side-questions.md): `/btw <question>` in
+  any state asks on the side (POST …/aside): a card in the log where it was
+  asked, "Asking…" then the answer or the error; never queued, nothing
+  added to the conversation; a server without it gets the text as typed.
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

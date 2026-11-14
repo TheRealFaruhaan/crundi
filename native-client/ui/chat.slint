@@ -72,6 +72,11 @@ export global ToolAct {
     // file name); Download (chat, file id, file name); a frame's Open (chat,
     // stored name, url).
     callback view(string);
+    // The dock (2.17), by pane key; a side question's × (chat, its id).
+    callback sug-send(string);
+    callback sug-dismiss(string);
+    callback recap-dismiss(string);
+    callback aside-close(string, string);
     callback play(string, string, string);
     callback download(string, string, string);
     callback open-frame(string, string, string);
@@ -1482,6 +1487,18 @@ component ThinkBlock inherits Rectangle {
     }
 }
 
+/// The dock's × (and a side question's): the x icon, a hover fill.
+component DockX inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> tip;
+    callback clicked();
+    width: Theme.control-sm - Theme.sp-6; height: self.width;
+    border-radius: Theme.r-control;
+    background: xa.has-hover ? Theme.slate-dim : transparent;
+    Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: xa.has-hover ? Theme.text-primary : Theme.text-muted; }
+    xa := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } Tip { on: parent.has-hover; text: root.tip; } }
+}
+
 component EntryRow inherits VerticalLayout {
     // The pane's text size, a scale of the base size (the web's --cc-fs).
     in property <float> fs: 1;
@@ -1631,6 +1648,53 @@ component EntryRow inherits VerticalLayout {
     }
 
     if e.kind == "thinking": ThinkBlock { fs: root.fs; e: e; }
+
+    // A side question (2.21): "On the side", the question, then "Asking…",
+    // the answer (markdown, text-secondary) or the error box; the note.
+    if e.kind == "aside": Rectangle {
+        height: al.preferred-height + Theme.sp-16;
+        background: Theme.bg-secondary;
+        border-radius: Theme.r-control;
+        DashedBox { width: parent.width; height: parent.height; corner: Theme.r-control; }
+        al := VerticalLayout {
+            x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sp-20;
+            HorizontalLayout {
+                spacing: Theme.sp-8;
+                Text { horizontal-stretch: 1; vertical-alignment: center; text: "ON THE SIDE"; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+                DockX { fs: root.fs; tip: "Close"; clicked => { ToolAct.aside-close(e.chat, e.request-id); } }
+            }
+            Rectangle {
+                height: aq.preferred-height + Theme.sp-4 + Theme.sp-6;
+                aq := Text { y: Theme.sp-4; width: parent.width; text: e.text; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
+            }
+            if e.status == "pending": HorizontalLayout {
+                spacing: Theme.sp-6;
+                alignment: start;
+                StatusMark { running: true; }
+                Text { vertical-alignment: center; text: "Asking…"; font-size: Theme.text-13 * root.fs; color: Theme.text-secondary; }
+            }
+            if e.status == "done": Rectangle {
+                height: ans.preferred-height;
+                ans := StyledText {
+                    width: parent.width;
+                    text: e.md;
+                    default-color: Theme.text-secondary;
+                    default-font-size: Theme.text-13 * root.fs;
+                    link-color: Theme.accent-hover;
+                    link-clicked(url) => { ToolAct.open-link(url); }
+                }
+            }
+            if e.status == "error": Rectangle {
+                height: aet.preferred-height + Theme.sp-6 + Theme.sp-8;
+                background: Theme.red-dim; border-width: 1px; border-color: Theme.red; border-radius: Theme.r-control;
+                aet := Text { x: Theme.sp-10; y: Theme.sp-6 + 1px; width: parent.width - Theme.sp-20; text: e.detail; color: Theme.red; wrap: word-wrap; font-size: Theme.text-12 * root.fs; }
+            }
+            Rectangle {
+                height: an.preferred-height + Theme.sp-6;
+                an := Text { x: 0; y: Theme.sp-6; text: "Not added to the conversation."; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; }
+            }
+        }
+    }
 
     if e.kind == "tool": VerticalLayout {
         for t in e.tools: VerticalLayout {
@@ -2507,6 +2571,13 @@ export component ChatPane inherits Rectangle {
     // keeps the bottom pinned. Off, nothing moves the log.
     property <bool> stick: true;
     in property <int> content-gen;
+    // The dock (2.17).
+    in property <string> sug-text;
+    in property <string> recap-text;
+    in property <string> recap-caption;
+    property <bool> dock-on: root.sug-text != "" || root.recap-text != "";
+    // A suggestion or a recap appearing while following keeps the end in view.
+    changed dock-on => { if root.stick { root.to-bottom(); } }
     // How far the view is from the end, and past it (a blank band).
     property <length> max-y: min(0px, list.visible-height - list.content-height);
     property <length> dist: max(0px, list.content-height + list.content-y - list.visible-height);
@@ -2579,9 +2650,12 @@ export component ChatPane inherits Rectangle {
     VerticalLayout {
         list := ListView {
             vertical-stretch: 1;
-            for e in root.entries: HorizontalLayout {
+            for e[i] in root.entries: HorizontalLayout {
                 padding-left: Theme.sp-12;
                 padding-right: Theme.sp-12;
+                // Room under the newest entry for the dock (the suggestion
+                // and, unlike the web, the recap too: a named difference).
+                padding-bottom: i == root.entries.length - 1 && root.dock-on ? dock.height + Theme.sp-12 : 0px;
                 EntryRow {
                     e: e;
                     fs: root.fs;
@@ -2823,12 +2897,86 @@ export component ChatPane inherits Rectangle {
             }
         }
     }
-    // The jump button (.cc-jump): over the log, at its bottom centre.
+    // The dock (2.17): over the log at its bottom right: the recap, then the
+    // suggestion (always last), right-aligned.
+    dock := VerticalLayout {
+        visible: root.dock-on;
+        property <length> w: min(Theme.chat-dock-w, list.width - Theme.sp-20);
+        x: list.x + list.width - self.w - Theme.sp-10;
+        y: list.y + list.height - self.preferred-height - Theme.sp-8;
+        width: self.w;
+        height: self.preferred-height;
+        spacing: Theme.sp-4;
+        alignment: end;
+        if root.recap-text != "": Rectangle {
+            height: rl.preferred-height + Theme.sp-16;
+            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-field; shadow: Theme.shadow-menu; }
+            Rectangle { border-radius: Theme.r-field; background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border-subtle; }
+            Rectangle { x: 0; width: Theme.sp-2 + 1px; border-top-left-radius: Theme.r-field; border-bottom-left-radius: Theme.r-field; background: Theme.accent; }
+            rl := VerticalLayout {
+                x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-12 - Theme.sp-24 - Theme.sp-6;
+                spacing: Theme.sp-2;
+                Text { text: root.recap-caption; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+                Text { text: root.recap-text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+            }
+            DockX { x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4; fs: root.fs; tip: "Dismiss"; clicked => { ToolAct.recap-dismiss(root.key); } }
+        }
+        if root.sug-text != "": VerticalLayout {
+            spacing: Theme.sp-2;
+            padding-top: Theme.sp-4;
+            alignment: end;
+            HorizontalLayout {
+                alignment: end;
+                padding-right: Theme.sp-4;
+                Rectangle {
+                    width: cap.preferred-width + Theme.sp-8; height: cap.preferred-height;
+                    border-radius: Theme.r-chip; background: Theme.bg-primary;
+                    cap := Text { text: "Suggested, tap to send"; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; }
+                }
+            }
+            HorizontalLayout {
+                alignment: end;
+                sb := Rectangle {
+                    property <bool> on: sa.has-hover || sk.has-focus;
+                    width: min(dock.w, sm.preferred-width + Theme.sp-12 + Theme.sp-24 + Theme.sp-6);
+                    height: st.preferred-height + Theme.sp-8 + Theme.sp-6;
+                    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-bubble; shadow: Theme.shadow-menu; }
+                    Rectangle {
+                        background: sb.on ? Theme.accent-dim : Theme.bg-secondary;
+                        border-top-left-radius: Theme.r-bubble; border-top-right-radius: Theme.r-bubble;
+                        border-bottom-left-radius: Theme.r-bubble; border-bottom-right-radius: Theme.r-chip;
+                        border-width: sb.on ? 1px : 0px; border-color: Theme.sug-edge-on;
+                        animate background { duration: Theme.motion-fast; }
+                    }
+                    if !sb.on: DashedBox { width: parent.width; height: parent.height; line: Theme.sug-edge; corner: Theme.r-bubble; }
+                    sm := Text { visible: false; text: root.sug-text; font-size: Theme.text-13 * root.fs; }
+                    st := Text {
+                        x: Theme.sp-12; y: Theme.sp-8 - 1px; width: parent.width - Theme.sp-12 - Theme.sp-24 - Theme.sp-6;
+                        text: root.sug-text; font-size: Theme.text-13 * root.fs; color: sb.on ? Theme.text-primary : Theme.text-secondary; wrap: word-wrap;
+                    }
+                    // Enter or Space sends (the web's role=button has no key:
+                    // a named difference).
+                    sk := FocusScope {
+                        key-pressed(ev) => { if ev.text == Key.Return || ev.text == " " { ToolAct.sug-send(root.key); return accept; } reject }
+                    }
+                    sa := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.stick = true; root.to-bottom(); ToolAct.sug-send(root.key); }
+                        Tip { on: parent.has-hover; text: "Tap to send"; }
+                    }
+                    DockX { x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4; fs: root.fs; tip: "Dismiss"; clicked => { ToolAct.sug-dismiss(root.key); } }
+                }
+            }
+        }
+    }
+
+    // The jump button (.cc-jump): over the log, at its bottom centre (above
+    // the dock while it shows).
     if root.jump-on: Rectangle {
         width: Theme.sp-40; height: Theme.sp-40;
         init => { if root.watched { LogProbe.jump-x = self.absolute-position.x + self.width / 2; LogProbe.jump-y = self.absolute-position.y + self.height / 2; } }
         x: list.x + (list.width - self.width) / 2;
-        y: list.y + list.height - self.height - Theme.sp-10;
+        y: list.y + list.height - self.height - (root.dock-on ? dock.height + Theme.sp-16 : Theme.sp-10);
         SoftShadow { width: parent.width; height: parent.height; radius: self.width / 2; shadow: Theme.shadow-menu; }
         Rectangle {
             border-radius: self.width / 2; border-width: 1px;

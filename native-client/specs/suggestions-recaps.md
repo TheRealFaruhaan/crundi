@@ -275,36 +275,36 @@ Neither is in `GET /api/ui-sessions` (the list).
 
 ## Checklist
 
-- [ ] The dock: bottom right of the log, right `sp-10`, bottom `sp-8`,
+- [x] The dock: bottom right of the log, right `sp-10`, bottom `sp-8`,
       at most `chat-dock-w` (320) and `pane − 20`, right-aligned column.
-- [ ] Order: (badges) · recap · suggestion; the suggestion always last.
-- [ ] Suggestion: caption "Suggested, tap to send" on a `bg-primary` chip;
+- [x] Order: (badges) · recap · suggestion; the suggestion always last.
+- [x] Suggestion: caption "Suggested, tap to send" on a `bg-primary` chip;
       dashed `sug-edge` bubble, `bg-secondary`, bubble corners with the sharp
       bottom right, shadow, `text-secondary`; × top right.
-- [ ] Hover and keyboard focus: solid edge, `accent-dim`, `text-primary`.
-- [ ] × hover: `text-primary` on `slate-dim`. Tooltips "Tap to send",
+- [x] Hover and keyboard focus: solid edge, `accent-dim`, `text-primary`.
+- [x] × hover: `text-primary` on `slate-dim`. Tooltips "Tap to send",
       "Dismiss".
-- [ ] Long text wraps inside 320, keeps its line breaks, × stays top right.
-- [ ] Shown only while idle and running; gone on working / needs input /
+- [x] Long text wraps inside 320, keeps its line breaks, × stays top right.
+- [x] Shown only while idle and running; gone on working / needs input /
       waiting / exit; a new one replaces the old.
-- [ ] Click sends straight away (`POST …/send`), not into the box; the box
+- [x] Click sends straight away (`POST …/send`), not into the box; the box
       and its draft unchanged; working at once; dock emptied; log re-pinned.
-- [ ] Enter / Space on the focused bubble sends; on the × dismisses (native).
-- [ ] × → gone at once + `POST …/dismiss-suggestion`; not back after a
+- [x] Enter / Space on the focused bubble sends; on the × dismisses (native).
+- [x] × → gone at once + `POST …/dismiss-suggestion`; not back after a
       client restart.
-- [ ] Recap: `accent` 3px left bar, `border-subtle` edge, `r-field`,
+- [x] Recap: `accent` 3px left bar, `border-subtle` edge, `r-field`,
       shadow; caption "WHILE YOU WERE AWAY" / "WHERE THIS CHAT STANDS"
       (upper case, `w-semibold`, `track-wide`, `text-muted`); text
       `text-secondary` `text-12`; × top right; no hover on the card.
-- [ ] Recap × → gone + `POST …/dismiss-recap {}`; not back after a restart.
-- [ ] Any sent message drops both; a side question drops the recap; exit
+- [x] Recap × → gone + `POST …/dismiss-recap {}`; not back after a restart.
+- [x] Any sent message drops both; a side question drops the recap; exit
       drops both.
-- [ ] From `ui-history` on open: what the server holds is shown.
-- [ ] Log padding = dock height + `sp-12` while anything is in the dock
+- [x] From `ui-history` on open: what the server holds is shown.
+- [x] Log padding = dock height + `sp-12` while anything is in the dock
       (native also for a recap alone: PLAN.md named difference).
-- [ ] Jump button above the dock while a suggestion or recap shows.
-- [ ] Following the bottom stays following when one appears.
-- [ ] A-/A+ scale the texts, not the boxes.
-- [ ] Narrow pane: same arrangement, dock inside the pane.
-- [ ] Tokens only: new `chat-dock-w`, `sug-edge`, `sug-edge-on` in
+- [x] Jump button above the dock while a suggestion or recap shows.
+- [x] Following the bottom stays following when one appears.
+- [x] A-/A+ scale the texts, not the boxes.
+- [x] Narrow pane: same arrangement, dock inside the pane.
+- [x] Tokens only: new `chat-dock-w`, `sug-edge`, `sug-edge-on` in
       theme.slint.

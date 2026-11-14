@@ -443,6 +443,18 @@ Phase 1 left these, each with its workaround in place:
     radius, so the box's four corners are covered with corner masks in the
     log's colour (ui/shapes/corner-*.svg) and the rounded edge drawn on
     top; it relies on the log's background being bg-primary.
+- **Suggestions and recaps** (2.17), deliberate differences:
+  - the log makes room under its last entry for the recap too (the web pads
+    only for the suggestion, so a recap covers the end of the last reply);
+  - Enter or Space on a focused suggestion sends it (the web's role=button
+    has no key handler);
+  - the suggestion's dashed edge is DashedBox's dashes (round corners as
+    the bubble's), the hover look a solid sug-edge-on edge.
+- **Side questions** (2.21), deliberate differences:
+  - a card survives a reconnect, anchored after the entry that was last
+    when it was asked (the web loses it when it rebuilds the log);
+  - the answer is one block of markdown (StyledText), not the reply's
+    split blocks: its lists are drawn as StyledText draws them.
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

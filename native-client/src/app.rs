@@ -95,7 +95,14 @@ struct ChatPaneState {
     think: think::Think,
     /// Counts what arrived from the server (the log follows the bottom on it).
     gen: i32,
+    /// Side questions asked in this chat (2.21): local, in the log where asked.
+    asides: Vec<Aside>,
 }
+
+/// A side question (/btw): its id, the entry it follows, the question, and
+/// pending | done | error with the answer or the error.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Aside { id: u32, anchor: String, question: String, state: String, text: String }
 
 /// What one row of a chat log shows (compared to rewrite only changed rows).
 #[derive(Clone, PartialEq, Debug)]
@@ -112,6 +119,8 @@ enum Row {
     Tool(String, Shown, bool),
     /// A thinking block (2.15), open?
     Think(Shown, bool),
+    /// A side question's card (2.21).
+    Aside(Aside),
     Tools(String, String, Vec<(Shown, bool)>, bool),
     Agent(String, Value),
 }
@@ -401,6 +410,11 @@ pub fn init(window: &MainWindow) {
     window.global::<ToolAct>().on_toggle(|c, id| tool_toggle(c.as_str(), id.as_str()));
     // A link in a reply: the system browser. Copy: the clipboard, "Copied".
     window.global::<ToolAct>().on_open_link(|u| open_link(u.as_str()));
+    // The dock (2.17) and side questions (2.21), by pane key / chat.
+    window.global::<ToolAct>().on_sug_send(|k| if let Some(c) = chat_of(k.as_str()) { suggestion_send(c); });
+    window.global::<ToolAct>().on_sug_dismiss(|k| if let Some(c) = chat_of(k.as_str()) { suggestion_dismiss(c); });
+    window.global::<ToolAct>().on_recap_dismiss(|k| if let Some(c) = chat_of(k.as_str()) { recap_dismiss(c); });
+    window.global::<ToolAct>().on_aside_close(|c, id| aside_close(c.as_str(), id.parse().unwrap_or(0)));
     // Media (2.16m): a picture's viewer, play, Download, a frame's Open.
     window.global::<ToolAct>().on_view(|k| view_picture(k.as_str()));
     window.global::<ToolAct>().on_play(|c, n, f| play_media(c.as_str(), n.as_str(), f.as_str()));
@@ -991,7 +1005,7 @@ fn sync_panes() {
                 if !a.chats.contains_key(id) {
                     // A chat with no size yet starts at the default and keeps it.
                     if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
-                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0 });
+                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0, asides: vec![] });
                     new.push(id.to_string());
                 }
             }
@@ -1088,6 +1102,11 @@ fn render() {
                     p.up_busy = u.active > 0;
                 }
                 p.content_gen = a.chats.get(id).map(|cs| cs.gen).unwrap_or(0);
+                // The dock (2.17): the suggestion while idle and running; the recap.
+                if let Some(cs) = a.chats.get(id) {
+                    if chat_state_now(a, id) == "idle" { p.sug_text = cs.conv.suggestion.as_str().into(); }
+                    if let Some((t, why)) = &cs.conv.recap { p.recap_text = t.as_str().into(); p.recap_caption = if why == "resumed" { "WHERE THIS CHAT STANDS" } else { "WHILE YOU WERE AWAY" }.into(); }
+                }
                 // The drawers (2.9): held lines, and the handed-over ones.
                 if let Some(h) = a.held.get(id) { p.q_held = h.join("\n").into(); p.q_held_n = h.len() as i32; }
                 if let Some((kind, body)) = a.chats.get(id).and_then(|cs| cs.conv.handed()) {
@@ -1630,7 +1649,7 @@ fn split_blocks(id: &str, text: &str) -> Vec<Row> {
 /// (never folded); calls Claude Code summed up fold behind one group head,
 /// drawn where the group's first call is (its other calls take no room
 /// there); any other call is a card. Claude's text in blocks.
-fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>, think: &think::Think) -> Vec<Row> {
+fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>, think: &think::Think, asides: &[Aside]) -> Vec<Row> {
     let agent_of = |e: &Shown| -> Option<&Value> {
         if e.tool_use_id.is_empty() { return None; }
         agents.iter().find(|a| s(a, "toolUseId") == e.tool_use_id && s(a, "kind") != "task")
@@ -1642,7 +1661,13 @@ fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>, think: &th
     }
     let mut drawn: HashSet<String> = HashSet::new();
     let mut rows = vec![];
+    // Side questions: each after the entry that was last when it was asked
+    // (before everything when the log was empty; at the end when that entry
+    // is gone).
+    let ids: HashSet<&str> = shown.iter().map(|e| e.id.as_str()).collect();
+    for x in asides.iter().filter(|x| x.anchor.is_empty()) { rows.push(Row::Aside(x.clone())); }
     for e in shown {
+        let after: Vec<Row> = asides.iter().filter(|x| x.anchor == e.id).map(|x| Row::Aside(x.clone())).collect();
         if e.kind == "tool" {
             if let Some(a) = agent_of(e) {
                 rows.push(Row::Agent(e.id.clone(), a.clone()));
@@ -1661,7 +1686,9 @@ fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>, think: &th
         } else {
             rows.push(Row::Entry(e.clone()));
         }
+        rows.extend(after);
     }
+    for x in asides.iter().filter(|x| !x.anchor.is_empty() && !ids.contains(x.anchor.as_str())) { rows.push(Row::Aside(x.clone())); }
     rows
 }
 
@@ -1780,6 +1807,13 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
             gap: 10.0,
             ..Default::default()
         },
+        Row::Aside(x) => EntryView {
+            id: format!("aside-{}", x.id).into(), kind: "aside".into(), text: x.question.as_str().into(), status: x.state.as_str().into(),
+            detail: if x.state == "error" { x.text.as_str().into() } else { SharedString::default() },
+            md: if x.state == "done" { md(&crate::md::linkify(&x.text)) } else { StyledText::default() },
+            request_id: x.id.to_string().into(), gap: 10.0,
+            ..Default::default()
+        },
         Row::Think(e, open) => EntryView {
             id: e.id.clone().into(), kind: "thinking".into(), text: e.text.clone().into(),
             detail: e.detail.clone().into(), status: e.status.clone().into(), open: *open, gap: 10.0,
@@ -1820,7 +1854,7 @@ fn show_chat(id: &str) {
         drafts_for_server(a);
         let mut wanted: Vec<String> = vec![];
         let Some(cs) = a.chats.get_mut(id) else { return wanted };
-        let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open, &cs.think);
+        let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open, &cs.think, &cs.asides);
         for (i, r) in now.iter().enumerate() {
             if cs.rows.get(i) == Some(r) { continue; }
             let mc = MediaCtx { chat: id.to_string(), cache: &a.media, want: std::cell::RefCell::new(vec![]) };
@@ -1849,6 +1883,16 @@ fn chat_error(id: &str, e: String) {
 /// text back in the box, and the chat back to its real state (the web stays
 /// "working…" and loses the text: a deliberate difference, PLAN.md).
 pub fn send(key: &str, text: String) {
+    // A side question (/btw …, 2.21): asked at once in any state, never
+    // queued or held.
+    if let Some(q) = crate::md::btw(&text) {
+        if let Some(id) = chat_of(key).map(str::to_string) { ask_aside(key, &id, text.trim_end().to_string(), q); }
+        return;
+    }
+    send_plain(key, text);
+}
+
+fn send_plain(key: &str, text: String) {
     let Some(id) = chat_of(key).map(str::to_string) else { return };
     let text = text.trim_end().to_string();
     if text.trim().is_empty() { return; }
@@ -3787,4 +3831,93 @@ fn media_json(chat: &str, t: &Shown, cache: &HashMap<String, (String, Option<sli
         let (cap, link) = if i.kind == "embed" { media::frame_caption(i) } else { (media::item_caption(i), String::new()) };
         json!({ "kind": i.kind, "name": i.name, "w": w, "h": h, "state": cache.get(&format!("{chat}|{pic}")).map(|m| m.0.clone()).unwrap_or_default(), "caption": cap, "link": link, "line": format!("{}{}", media::fmt_bytes(i.size), if i.caption.is_empty() { String::new() } else { format!(" · {}", i.caption) }) })
     }).collect::<Vec<_>>() })
+}
+
+// ─── Suggestions and recaps (2.17), side questions (2.21) ───
+
+/// The suggestion clicked: sent as it is (the box and its draft untouched);
+/// it and the recap go at once.
+pub fn suggestion_send(chat: &str) {
+    let key = chat_key(chat);
+    let text = with(|a| a.chats.get_mut(chat).map(|cs| { let t = std::mem::take(&mut cs.conv.suggestion); cs.conv.recap = None; t })).flatten().unwrap_or_default();
+    if text.is_empty() { return; }
+    with(|a| { a.sending.insert(chat.to_string()); if let Some(cs) = a.chats.get_mut(chat) { cs.error.clear(); } });
+    post_send(&key, chat, text, false);
+}
+
+pub fn suggestion_dismiss(chat: &str) {
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) { cs.conv.suggestion.clear(); });
+    render();
+    let path = format!("/api/ui-sessions/{chat}/dismiss-suggestion");
+    call(move |api| api.post(&path, &json!({})), |_| {});
+}
+
+pub fn recap_dismiss(chat: &str) {
+    let had = with(|a| a.chats.get_mut(chat).and_then(|cs| cs.conv.recap.take()).is_some()).unwrap_or(false);
+    render();
+    if !had { return; }
+    let path = format!("/api/ui-sessions/{chat}/dismiss-recap");
+    call(move |api| api.post(&path, &json!({})), |_| {});
+}
+
+/// Ask on the side: the box cleared, the recap dismissed, a card in the log
+/// after the last entry, then POST …/aside. A server without it (404): the
+/// card goes and the text is sent as typed.
+fn ask_aside(key: &str, chat: &str, text: String, question: String) {
+    let n = with(|a| {
+        save_draft_in(a, key, "");
+        *a.draft_gen.entry(key.to_string()).or_insert(0) += 1;
+        a.slash.remove(key);
+        a.local_errors += 1;
+        let n = a.local_errors;
+        if let Some(cs) = a.chats.get_mut(chat) {
+            let anchor = cs.conv.entries.last().map(|e| s(e, "id")).unwrap_or_default();
+            cs.asides.push(Aside { id: n, anchor, question: question.clone(), state: "pending".into(), text: String::new() });
+            cs.gen += 1;
+        }
+        n
+    }).unwrap_or(0);
+    recap_dismiss(chat);
+    show_chat(chat);
+    render();
+    write_drafts_soon();
+    let Some(api) = api() else { return };
+    let stub = crate::testctl::take_stub("aside");
+    let (k, c, path) = (key.to_string(), chat.to_string(), format!("/api/ui-sessions/{chat}/aside"));
+    bg(move || match stub {
+        Some(v) => Ok((v.get("status").and_then(|x| x.as_u64()).unwrap_or(200) as u16, v.get("body").cloned().unwrap_or(Value::Null))),
+        None => post_raw(&api, &path, &json!({ "question": question })).map_err(|e| e.to_string()),
+    }, move |r| {
+        if matches!(r, Ok((404, _))) {
+            with(|a| if let Some(cs) = a.chats.get_mut(&c) { cs.asides.retain(|x| x.id != n); });
+            show_chat(&c);
+            send_plain(&k, text);
+            return;
+        }
+        let (state, out) = match r {
+            Ok((_, v)) if v.get("ok").and_then(|o| o.as_bool()) == Some(true) => ("done", s(&v, "answer")),
+            Ok((_, v)) => ("error", { let e = s(&v, "error"); if e.is_empty() { "No answer".to_string() } else { e } }),
+            Err(e) => ("error", e),
+        };
+        with(|a| if let Some(cs) = a.chats.get_mut(&c) {
+            if let Some(x) = cs.asides.iter_mut().find(|x| x.id == n) { x.state = state.into(); x.text = out; cs.gen += 1; }
+        });
+        show_chat(&c);
+        render();
+    });
+}
+
+/// A side question's ×: the card goes (its answer, if still coming, is dropped).
+pub fn aside_close(chat: &str, id: u32) {
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) { cs.asides.retain(|x| x.id != id); });
+    show_chat(chat);
+}
+
+/// The test driver: the dock and the side questions of a chat.
+pub fn dock_of(key: &str) -> Value {
+    let Some(chat) = chat_of(key).map(str::to_string) else { return Value::Null };
+    with(|a| a.chats.get(&chat).map(|cs| json!({
+        "suggestion": cs.conv.suggestion, "recap": cs.conv.recap.as_ref().map(|r| json!({ "text": r.0, "why": r.1 })),
+        "asides": cs.asides.iter().map(|x| json!({ "id": x.id, "question": x.question, "state": x.state, "text": x.text })).collect::<Vec<_>>(),
+    }))).flatten().unwrap_or(Value::Null)
 }

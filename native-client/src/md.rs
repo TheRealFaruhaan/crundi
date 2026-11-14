@@ -191,6 +191,18 @@ pub fn line(l: &str) -> Line<'_> {
     Line::Text(l)
 }
 
+/// A side question: `/btw <question>` (case-insensitive; the question may
+/// span lines). `/btw` alone is not one.
+pub fn btw(text: &str) -> Option<String> {
+    let t = text.trim_start();
+    let head = t.get(..4)?;
+    if !head.eq_ignore_ascii_case("/btw") { return None; }
+    let rest = &t[4..];
+    if !rest.starts_with(char::is_whitespace) { return None; }
+    let q = rest.trim();
+    (!q.is_empty()).then(|| q.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +217,16 @@ mod tests {
         assert_eq!(linkify("![alt](https://x/p.png)"), "\\![alt](https://x/p.png)");
         assert_eq!(linkify("![logo](./assets/logo.png)"), "\\!\\[logo]([./assets/logo.png](path:./assets/logo.png))");
         assert_eq!(linkify("and/or 10/12"), "and/or 10/12");
+    }
+
+    #[test]
+    fn side_questions() {
+        assert_eq!(btw("/btw what file?").as_deref(), Some("what file?"));
+        assert_eq!(btw("/BTW  two\nlines ").as_deref(), Some("two\nlines"));
+        assert_eq!(btw("/btw"), None);
+        assert_eq!(btw("/btw   "), None);
+        assert_eq!(btw("/btwx y"), None);
+        assert_eq!(btw("ask /btw x"), None);
     }
 
     #[test]

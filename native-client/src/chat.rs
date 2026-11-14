@@ -27,6 +27,10 @@ pub struct Conversation {
     /// The chat's agent records (2.14: a call that started a sub-agent is an
     /// agent row), by their toolUseId.
     pub agents: Vec<Value>,
+    /// The suggestion Claude Code offers after a turn (2.17), shown while
+    /// idle; and the recap (its text, why: idle | resumed).
+    pub suggestion: String,
+    pub recap: Option<(String, String)>,
 }
 
 /// A message handed over to a busy chat (2.9, the web's handedOver).
@@ -57,6 +61,8 @@ impl Conversation {
         self.cost = session.get("totalCostUsd").and_then(|c| c.as_f64()).unwrap_or(0.0);
         self.entries = session.get("messages").and_then(|m| m.as_array()).cloned().unwrap_or_default();
         self.agents = session.get("agents").and_then(|m| m.as_array()).cloned().unwrap_or_default();
+        self.suggestion = session.pointer("/suggestion/text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        self.recap = session.get("recap").filter(|r| !r.is_null()).map(|r| (s(r, "text"), s(r, "why"))).filter(|r| !r.0.is_empty());
         self.slots = session.get("pendingInjections").and_then(|p| p.as_array()).map(|p| p.iter().map(|x| Slot {
             text: s(x, "text"), uuid: s(x, "uuid"), state: { let st = s(x, "state"); if st.is_empty() { "sent".into() } else { st } },
         }).collect()).unwrap_or_default();
@@ -112,6 +118,15 @@ impl Conversation {
                 }
                 true
             }
+            // 2.17: a suggestion (null: it goes), a recap (null: it goes).
+            "suggestion" => {
+                self.suggestion = event.pointer("/suggestion/text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                true
+            }
+            "recap" => {
+                self.recap = event.get("recap").filter(|r| !r.is_null()).map(|r| (s(r, "text"), s(r, "why"))).filter(|r| !r.0.is_empty());
+                true
+            }
             "agent" => {
                 let Some(ag) = event.get("agent") else { return false };
                 let tid = s(ag, "toolUseId");
@@ -143,6 +158,9 @@ impl Conversation {
             }
             "state" => {
                 self.state = s(event, "state");
+                // A suggestion is for an idle chat: it goes for good the
+                // moment the chat is anything else (2.17).
+                if self.state != "idle" { self.suggestion.clear(); }
                 true
             }
             "history" => {
@@ -173,7 +191,7 @@ impl Conversation {
                 true
             }
             // Gone with the session: beyond recall.
-            "exit" => { self.slots.clear(); true }
+            "exit" => { self.slots.clear(); self.suggestion.clear(); self.recap = None; true }
             "meta" | "init" => {
                 // init replaces the slash commands (names only after a first turn).
                 if let Some(c) = event.get("slashCommands").and_then(|v| v.as_array()) { self.slash = c.clone(); }

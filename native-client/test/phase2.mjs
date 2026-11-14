@@ -2385,6 +2385,69 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   }
 }
 
+// ─── 2.17 Suggestions and recaps; 2.21 Side questions ───
+// This CLI sends no prompt_suggestion: both come as the server's own frames.
+// Side questions' answers are stubbed (a real one needs a long turn).
+{
+  const sg = await make('demo', 'Suggest', true);
+  p = await until('the chat idle', (q) => pane(q, sg)?.state === 'idle', 60000);
+  await ui('focus-pane', pane(p, sg).id);
+  const ev = (e) => ui('chat-event', JSON.stringify(e));
+  const dk = async () => pane(await props(), sg)?.dock;
+  await ev({ type: 'suggestion', suggestion: { text: 'Add due dates to the tasks', uuid: 'u1' } });
+  await ev({ type: 'recap', recap: { text: 'You are testing the dock; next, the side questions.', why: 'resumed', at: Date.now() } });
+  p = await until('the dock', async () => { const k = await dk(); return k?.suggestion && k?.recap; }, 5000);
+  check('a suggestion and a recap show in the dock', !!p, await dk());
+  await snap('2.17-dock');
+  // The suggestion sent: it and the recap go; the box keeps what is typed.
+  await ui('composer-focus');
+  await keys('my own words');
+  await ui('stub', 'send', JSON.stringify({ ok: true, injected: false }));
+  await ui('sug-send');
+  p = await until('sent', async () => { const k = await dk(); return k && k.suggestion === '' && k.recap === null; }, 5000);
+  check('a click on the suggestion sends it; it and the recap go; the box keeps its text', !!p && pane(await props(), sg).draft === 'my own words', { dock: await dk(), draft: pane(await props(), sg).draft });
+  await clearBox();
+  // Dismissing.
+  await ev({ type: 'suggestion', suggestion: { text: 'Another', uuid: 'u2' } });
+  await ui('sug-dismiss');
+  check('× dismisses the suggestion', (await dk())?.suggestion === '');
+  await ev({ type: 'recap', recap: { text: 'Away.', why: 'idle' } });
+  await ui('recap-dismiss');
+  check('× dismisses the recap', (await dk())?.recap === null);
+  // A side question: answered (markdown), the box emptied, nothing queued, the recap dismissed.
+  await ev({ type: 'recap', recap: { text: 'Before asking.', why: 'idle' } });
+  await ui('stub', 'aside', JSON.stringify({ status: 200, body: { ok: true, answer: 'Writing **design.md**.' } }));
+  await keys('/btw what file are you writing?');
+  await keys('Return');
+  p = await until('answered', async () => (await dk())?.asides?.[0]?.state === 'done', 5000);
+  const q1 = pane(await props(), sg);
+  check('/btw: a card answered in place; the box empty, nothing queued, the recap dismissed', !!p && q1.dock.asides[0].question === 'what file are you writing?' && /design\.md/.test(q1.dock.asides[0].text) && q1.draft === '' && q1.qSent === '' && q1.dock.recap === null, q1.dock);
+  // An error.
+  await ui('stub', 'aside', JSON.stringify({ status: 200, body: { ok: false, error: 'E3' } }));
+  await keys('/btw and then?');
+  await keys('Return');
+  p = await until('error', async () => (await dk())?.asides?.[1]?.state === 'error', 5000);
+  check('a refused side question: the red box with its error', !!p && (await dk()).asides[1].text === 'E3', await dk());
+  await snap('2.21-cards');
+  // A server without side questions (404): no card; sent as typed.
+  await ui('stub', 'aside', JSON.stringify({ status: 404, body: null }));
+  await ui('stub', 'send', JSON.stringify({ ok: true, injected: false }));
+  await keys('/btw old server');
+  await keys('Return');
+  await sleep(800);
+  check('404: no card, the text sent as typed', (await dk()).asides.length === 2);
+  // × closes one card; the other stays.
+  await ui('aside-close', String((await dk()).asides[0].id));
+  check('× closes one card', (await dk()).asides.length === 1 && (await dk()).asides[0].state === 'error');
+  // "/btw" alone is not a side question.
+  await ui('stub', 'send', JSON.stringify({ ok: true, injected: false }));
+  await keys('/btw');
+  await keys('Return');
+  await sleep(500);
+  check('"/btw" alone is sent as a message, not asked', (await dk()).asides.length === 1);
+  await http('POST', `/api/ui-sessions/${sg}/close`, {}, token);
+}
+
 d.close();
 app.kill();
 console.log(failed ? `\n${failed} failed` : '\nall passed');
