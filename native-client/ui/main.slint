@@ -18,7 +18,7 @@ import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
 import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
-import { EntryView, ToolView, Composer, TipBox, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, LogProbe, SheetProbe, MediaItem, DlRow, AnsBlock } from "chat.slint";
+import { EntryView, ToolView, Composer, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn, Win, TipBox, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, LogProbe, SheetProbe, MediaItem, DlRow, AnsBlock } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
 import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
 import { SecretsDialog, SecGrant, SecPick, SecProbe } from "secrets.slint";
@@ -27,7 +27,7 @@ import { Viewer, DlTray } from "viewer.slint";
 import { ResumePicker, ResumeRow, ResumeProbe } from "resume.slint";
 import { ParkAct } from "parked.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe, ResumeRow, ResumeProbe, ParkAct}
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe, ResumeRow, ResumeProbe, ParkAct, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn}
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -227,6 +227,10 @@ export component MainWindow inherits Window {
     // scrim's (Pointer.modal).
     property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open || root.resume-open);
     changed modal-open => { Pointer.modal = self.modal-open; }
+    // The window's height for what is sized by it (Win: the full diff, 2.20).
+    property <length> win-h: self.height;
+    changed win-h => { Win.height = self.win-h; }
+    init => { Win.height = self.height; }
     in property <bool> toast-error;
 
     // ─── The browser drawer ───

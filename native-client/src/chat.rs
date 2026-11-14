@@ -274,6 +274,8 @@ pub struct Shown {
     /// tool: the batch Claude Code summed up in one line (its id, and the line).
     pub group: String,
     pub group_summary: String,
+    /// A widget_render call (2.20): the widget's id (its screenshots row).
+    pub widget: String,
     /// question: the whole entry (its questions, status, answers: 2.13).
     pub raw: Value,
     /// tool (2.14): the call's id (an agent record's key), its body's
@@ -325,6 +327,7 @@ fn shown(e: &Value) -> Option<Shown> {
                 note: input.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string(),
                 group: s(e, "group"),
                 group_summary: s(e, "groupSummary"),
+                widget: if name.ends_with("widget_render") { input.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string() } else { String::new() },
                 ..base
             }
         }
@@ -361,6 +364,8 @@ fn shown(e: &Value) -> Option<Shown> {
                 ..base
             }
         }
+        // A factory's result card (2.20): drawn from the whole entry.
+        "factory-result" => Shown { kind: "factory-result", status: s(e, "state"), raw: e.clone(), ..base },
         "question" => {
             let q = e.pointer("/input/questions/0").cloned().unwrap_or(Value::Null);
             Shown {

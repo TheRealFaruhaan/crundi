@@ -133,8 +133,7 @@ before the next one (`test/phase2.mjs` the same way).
 ## Phase 2: chats
 
 Everything a chat does in the PC client, screen by screen: PLAN.md lists
-them (2.1–2.23, with 2.16f live frames, 2.20 cards and 2.24 voice still to
-come) and
+them (2.1–2.23, with 2.16f live frames and 2.24 voice still to come) and
 each has a spec in `specs/` with the web's screenshots and measurements.
 What phase 2 has added so far, item by item:
 
@@ -322,6 +321,13 @@ What phase 2 has added so far, item by item:
   (condition, checks, clear sends `/goal clear`), the "Goal not yet met"
   card in the log, the header's PLAN pill (proposed, executing, rejected)
   and the plan panel over the log.
+- **2.20 Cards** (specs/cards.md, `src/fresult.rs`): a factory's result
+  card in its Manager's chat (which now gets a pane, with the Factory tag):
+  the summary, the files (and the full diff, a virtualised list), the
+  state's message, usage, follow-ups, and the choices (Merge, Request
+  changes with its note, Keep branch, Discard armed for 3 s, Close the run,
+  Undo) posted to /api/factory-runs; the server's patches redraw it in
+  place. Under a widget_render call, the check's screenshots row.
 - **2.21 Side questions** (specs/side-questions.md): `/btw <question>` in
   any state asks on the side (POST …/aside): a card in the log where it was
   asked, "Asking…" then the answer or the error; never queued, nothing

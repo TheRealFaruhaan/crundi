@@ -61,6 +61,22 @@ pub fn secrets_tip(n: usize) -> String {
     }
 }
 
+/// A factory's employee chat (not its Manager): no pane, as the web's list
+/// (`terminals` holds only the Manager).
+pub fn factory_employee(c: &Value) -> bool {
+    match c.get("factory") {
+        None | Some(Value::Null) => false,
+        Some(Value::Object(f)) => f.get("role").and_then(|r| r.as_str()) != Some("manager"),
+        Some(Value::String(x)) => !x.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// A factory's Manager chat (its header's Factory tag).
+pub fn factory_manager(c: &Value) -> bool {
+    c.get("factory").and_then(|f| f.get("role")).and_then(|r| r.as_str()) == Some("manager")
+}
+
 /// The toast when the server refuses to close a chat (409: a factory
 /// Manager's chat while its run is going).
 pub fn close_refused(msg: &str) -> String {

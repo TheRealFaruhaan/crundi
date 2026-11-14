@@ -3,7 +3,8 @@
 # config under /tmp/crundi-devtest-<port> (nothing shared with a live server,
 # nor with a test server on another port), never the live Telegram bot (its
 # .env is empty and TELEGRAM_BOT_TOKEN is unset), no homepool listeners (so
-# two can run side by side), and no Cloudflare (--dev).
+# two can run side by side), and no Cloudflare (--dev). A factory run's
+# worktrees go under it too (FACTORY_WORKTREES_DIR), not ~/crundi-factory-worktrees.
 #
 # ALWAYS start a test server through this script, never `node src/index.js`
 # by hand: a dev server started without the empty .env picks up the real one
@@ -52,7 +53,7 @@ printf 'TELEGRAM_BOT_TOKEN=\nALLOWED_USERNAME=\nPROJECTS_DIR=\n' > "$D/config/cr
 LEAK=$(env | sed -n 's/^\(CRUNDI_[A-Z0-9_]*\|CLAUDE_CODE_[A-Z0-9_]*\)=.*/-u \1/p' | tr '\n' ' ')
 env -u TELEGRAM_BOT_TOKEN -u ALLOWED_USERNAME -u PROJECTS_DIR $LEAK \
   XDG_CONFIG_HOME="$D/config" DATA_DIR="$D/data" DOTENV_PATH="$D/config/crundi/.env" \
-  CRUNDI_DEV=1 DEV_WEB_PORT="$PORT" HOMEPOOL_DISABLE=1 \
+  CRUNDI_DEV=1 DEV_WEB_PORT="$PORT" HOMEPOOL_DISABLE=1 FACTORY_WORKTREES_DIR="$D/worktrees" \
   setsid node src/index.js --dev > "$D/server.log" 2>&1 < /dev/null &
 echo $! > "$D/server.pid"
 for i in $(seq 60); do grep -q "Local:" "$D/server.log" && break; kill -0 "$(cat "$D/server.pid")" 2>/dev/null || break; sleep 1; done

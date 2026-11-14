@@ -34,6 +34,12 @@
 //       not) and the folded rail's initials and avatar rings; titles set by
 //       Claude (rename_chat, the long form in a wide header) and renames in
 //       another client arrive live.
+//   2.20 a factory's result card, on a real run (a git project, a factory,
+//       its finish handed off through the MCP bridge): the Manager's pane and
+//       its Factory tag, the card's parts, files and the full diff,
+//       follow-ups, Discard's arming, a refused choice, Request changes (an
+//       empty note, a note), a second finish asking again in place, Merge
+//       and Undo (dev's commits); a widget check's screenshots row.
 //   2.22 the resume picker, on seeded earlier conversations: the list, the
 //       keyboard and its scroll, Esc, the heavy choice and Back, compact and
 //       Skip Permissions resumes (their create calls, the launcher's leaf),
@@ -2730,6 +2736,139 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     // (After the closed chats' processes have written their last lines.)
     await sleep(1500);
     rmSync(tdir, { recursive: true, force: true });
+  }
+}
+
+
+// ─── 2.20 Cards: a factory's result card ───
+// A real run on the test server: a git project, a factory (Manager and a
+// Developer), its run started, files written into its worktree, and the
+// Manager's finish handed off through Claude's MCP bridge (an ordinary
+// chat's key): the server posts the card into the Manager's chat.
+{
+  const { execFileSync } = await import('node:child_process');
+  const { unlinkSync } = await import('node:fs');
+  const git = (cwd, ...a) => execFileSync('git', a, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 't@e.st', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 't@e.st' } }).trim();
+  const fpath = join(tmpdir(), 'crundi-native-fr-' + Date.now());
+  mkdirSync(fpath, { recursive: true });
+  git(fpath, 'init', '-q', '-b', 'dev');
+  writeFileSync(join(fpath, 'index.html'), '<h1>Hello</h1>\n');
+  writeFileSync(join(fpath, 'style.css'), 'body { color: black; }\n');
+  writeFileSync(join(fpath, 'old.txt'), 'gone soon\n');
+  git(fpath, 'add', '.');
+  git(fpath, 'commit', '-q', '-m', 'First');
+  const first = git(fpath, 'rev-parse', 'dev');
+  const fp = await http('POST', '/api/projects', { alias: 'fr', name: 'Factory', path: fpath, create: false }, token);
+  check('a git project for a factory run', fp.status < 300, fp.body);
+  const quiet = 'You are a test fixture. Never call any tool. Answer every message with the one word: waiting.';
+  const def = {
+    settings: {},
+    roster: [{ id: 'manager', name: 'Manager', persona: quiet }, { id: 'dev', name: 'Developer', persona: quiet }],
+    nodes: [{ id: 'start', type: 'start' }, { id: 'mgr', type: 'manager' }, { id: 'end', type: 'end' }, { id: 'dev', type: 'employee', employeeId: 'dev', label: 'Developer' }],
+    edges: [{ source: 'start', target: 'mgr' }, { source: 'mgr', sourceHandle: 'finish', target: 'end' }, { source: 'mgr', target: 'dev' }, { source: 'dev', target: 'mgr', maxRounds: 5 }],
+  };
+  const fc = await http('POST', '/api/factories', { action: 'create', name: 'Site builder', definition: def }, token);
+  check('a factory', fc.body?.ok, fc.body);
+  const st = await http('POST', '/api/factory-runs', { action: 'start', project: 'fr', factoryId: fc.body?.factory?.id, task: 'Wait. Call no tools.', mergeMode: 'ask' }, token);
+  check('its run starts', st.body?.ok && st.body.run?.managerChatId && st.body.run?.worktree, st.body);
+  const run = st.body?.run || {};
+  const mgr = run.managerChatId;
+  if (run.worktree) {
+    writeFileSync(join(run.worktree, 'index.html'), '<h1>Hello, site</h1>\n<p>Built by the factory.</p>\n');
+    mkdirSync(join(run.worktree, 'assets', 'images', 'icons', 'navigation'), { recursive: true });
+    writeFileSync(join(run.worktree, 'assets', 'images', 'icons', 'navigation', 'a-very-long-file-name-for-the-menu-icon.svg'), '<svg/>\n');
+    unlinkSync(join(run.worktree, 'old.txt'));
+  }
+  // An ordinary chat of the project: its MCP key hands the Manager's finish over.
+  const helper = (await http('POST', '/api/ui-sessions/create', { project: 'fr', title: 'Helper' }, token)).body?.id;
+  const DATA = process.env.CRUNDI_TEST_DATA || `/tmp/crundi-devtest-${new URL(SERVER).port}/data`;
+  const keyFile = join(DATA, 'dev-mcp', `${helper}.json`);
+  await until('the helper chat\'s MCP config', () => existsSync(keyFile), 20000);
+  const KEY = existsSync(keyFile) ? JSON.parse(readFileSync(keyFile, 'utf8')).mcpServers.crundi.env.CRUNDI_API_KEY : '';
+  const mcp = (tool, args) => fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify({ tool, args }) }).then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+  const finish = (summary, again) => mcp('factory_handoff', again ? { sessionId: mgr, summary, finish: true } : { sessionId: mgr, summary, finish: true, findings: [
+    { text: 'Tidy the header markup', where: 'index.html', blocking: false },
+    { text: 'Name the icon by what it shows', blocking: false },
+    { text: 'The page has no title', where: 'index.html', blocking: true },
+  ] });
+  const h1 = await finish('## Done\n\nThe site has a **new heading** and an icon.\n\n- `index.html` reworded\n- an icon added');
+  check('the Manager hands its finish over', !(h1?.ok === false), h1);
+
+  try {
+    await ui('select-project', 'fr');
+    const card = async () => pane(await props(), mgr)?.fr?.cards?.[0];
+    p = await until('the Manager\'s chat has a pane, with the card', async (q) => pane(q, mgr) && (await card())?.state === 'ask', 30000);
+    check('…its header has the Factory tag', p && pane(p, mgr).factory === true, p && pane(p, mgr)?.title);
+    let c = await card();
+    const id = c?.id;
+    check('the card: title, summary, files line, message, usage, follow-ups, four buttons', c && c.title === 'Factory result · Site builder' && c.blocks >= 3
+      && /^\+\d+ −\d+ in 3 files on factory\//.test(c.line) && c.msg === 'Look it over, then choose what happens to it.'
+      && c.fuLine === '3 follow-ups from review' && JSON.stringify(c.buttons) === JSON.stringify(['Merge into dev', 'Request changes', 'Keep branch', 'Discard']), c);
+    await snap('2.20-ask');
+    // The files, and the full diff.
+    await ui('fr-toggle', mgr, id, 'files');
+    c = await card();
+    check('the files line opens the files: name and counts', c.filesOpen && c.files.length === 3 && c.files.some((f) => /a-very-long-file-name-for-the-menu-icon\.svg \+1 −0$/.test(f)) && c.files.some((f) => /^old\.txt \+0 −1$/.test(f)), c.files);
+    await ui('fr-diff', mgr, id);
+    p = await until('Show the full diff: the diff in its place', async () => (await card())?.diffOn, 10000);
+    c = await card();
+    check('…plain lines, from "diff --git"', c.diffLines > 5 && c.diffHead.startsWith('diff --git') && c.diffErr === '', c && { lines: c.diffLines, head: c.diffHead });
+    await ui('fr-toggle', mgr, id, 'fu');
+    c = await card();
+    check('follow-ups: F1-F3, F3 blocking, where in brackets', c.fuOpen && c.fus.length === 3 && c.fus[2].id === 'F3' && c.fus[2].blocking && c.fus[0].where === 'index.html', c.fus);
+    await snap('2.20-open');
+    // Discard arms for 3 s.
+    await ui('fr-press', mgr, id, 'discard');
+    check('Discard once: "Sure? Discard"', (await card()).buttons[3] === 'Sure? Discard');
+    p = await until('…3 s later, Discard again', async () => (await card())?.buttons[3] === 'Discard', 6000);
+    if (p) check('…3 s later, Discard again', true);
+    // A refused choice: the error, the buttons back.
+    await ui('stub', 'fr-finish', JSON.stringify({ delayMs: 1200, ok: false, error: 'The run is running; there is no result waiting for a decision.' }));
+    await ui('fr-press', mgr, id, 'keep');
+    p = await until('a choice being sent: the buttons wait', async () => (await card())?.busy, 3000);
+    await snap('2.20-busy');
+    p = await until('refused: the server\'s error, the buttons back', async () => { const x = await card(); return x && !x.busy && x.actErr === 'The run is running; there is no result waiting for a decision.'; }, 6000);
+    if (p) check('refused: the server\'s error, the buttons back', true);
+    // Request changes: an empty note only takes the keyboard; a note goes.
+    await ui('fr-press', mgr, id, 'changes');
+    c = await card();
+    check('Request changes opens the note (kept open lists)', c.noteOpen && c.filesOpen && c.fuOpen, c);
+    const lastBefore = JSON.stringify((await pane(await props(), mgr)).fr.last);
+    await ui('fr-send', mgr, id);
+    check('Send with an empty note posts nothing', JSON.stringify((await pane(await props(), mgr)).fr.last) === lastBefore);
+    await ui('fr-note', mgr, id, 'Give the page a title.');
+    await snap('2.20-changes-form');
+    await ui('fr-send', mgr, id);
+    p = await until('the note sent: the card says changes, no buttons', async () => { const x = await card(); return x?.state === 'changes' && x.buttons.length === 0; }, 15000);
+    check('…its body: changes with the note', JSON.stringify(pane(await props(), mgr).fr.last) === JSON.stringify({ action: 'finish', id: run.id, choice: 'changes', note: 'Give the page a title.' }), pane(await props(), mgr).fr.last);
+    c = await card();
+    check('…in place (the same entry), its message, the summary gone', c && c.id === id && c.msg.startsWith('Changes requested.') && c.blocks === 0, c);
+    await snap('2.20-changes');
+    // The Manager finishes again: the same card asks again.
+    const h2 = await finish('Gave the page a title.', true);
+    check('a second finish', !(h2?.ok === false), h2);
+    p = await until('the same card asks again', async () => { const x = await card(); return x?.state === 'ask' && x.id === id; }, 20000);
+    if (p) check('the same card asks again', true);
+    // Merge, then Undo.
+    await ui('fr-press', mgr, id, 'merge');
+    p = await until('merged: one commit, Undo', async () => { const x = await card(); return x?.state === 'merged' && JSON.stringify(x.buttons) === '["Undo"]'; }, 20000);
+    c = await card();
+    check('"Merged into **dev** as one commit `…`."', c && /^Merged into \*\*dev\*\* as one commit `[0-9a-f]{7}`\.$/.test(c.msg), c?.msg);
+    check('…dev has the commit', git(fpath, 'rev-parse', 'dev') !== first);
+    await snap('2.20-merged');
+    await ui('fr-press', mgr, id, 'undo');
+    p = await until('undone', async () => (await card())?.state === 'undone', 20000);
+    c = await card();
+    check('Undone: its message, no buttons; dev back where it was', c && c.msg.startsWith('Undone. dev is back where it was') && c.buttons.length === 0 && git(fpath, 'rev-parse', 'dev') === first, c && { msg: c.msg, b: c.buttons });
+    // A widget check's screenshots, under its widget_render call.
+    await ui('focus-pane', pane(await props(), helper).id);
+    await ui('stub', 'renders', JSON.stringify({ ok: true, renders: { at: 1, shots: [{ frame: 'inline', state: 'live', width: 600, height: 300 }, { frame: 'mobile', state: 'dark', width: 390, height: 844 }] } }));
+    await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'wr1', kind: 'tool', name: 'mcp__crundi__widget_render', input: { id: 'w-check' }, status: 'done', toolUseId: 'tu-wr1', result: '{"ok":true}' } }));
+    p = await until('a widget check: its screenshots row', (q) => (pane(q, helper)?.tools || []).some((t) => t.shots?.length === 2), 8000);
+    const sh = p && pane(p, helper).tools.find((t) => t.shots?.length === 2).shots;
+    check('…one per shot, captioned "inline", "mobile · dark"', sh && sh[0].caption === 'inline' && sh[1].caption === 'mobile · dark' && sh[0].key.includes('render-image'), sh);
+  } finally {
+    if (helper) await http('POST', `/api/ui-sessions/${helper}/close`, {}, token);
   }
 }
 

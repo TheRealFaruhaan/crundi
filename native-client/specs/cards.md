@@ -295,24 +295,24 @@ Seed a real run on the isolated test server, as these screenshots were made:
 
 ## Checklist
 
-- [ ] The Manager's chat gets a pane (not filtered for its `factory` field), with the Factory tag.
-- [ ] `factory-result` entries are drawn; unknown card kinds draw nothing.
-- [ ] Card box as the question card's; title "Factory result · <factory>".
-- [ ] Summary through the log's markdown (lists indented, headings spaced: named difference).
-- [ ] Files line: chevron, "+A" green, "−R" red, "in N file(s)", "on <branch>" muted; toggles the list.
-- [ ] File rows mono, name elides, counts right and whole, "?" for null; "and N more" past 40.
-- [ ] Show the full diff in ask / conflict / changes only; loads once; plain mono, no wrap, both scrollbars, at most half the window, virtualised; "… (cut short)"; error text in its place.
-- [ ] State messages exactly as the table, bold / mono parts, "the parent branch" fallback.
-- [ ] Usage line format (cost when set, minutes / hours, hidden when no turns and no cost), pluralised (named).
-- [ ] Follow-ups disclosure: count, rows with bold id, red "blocking", muted "(where)".
-- [ ] Server `error` line; action error line last.
-- [ ] Buttons per state, order and labels (Merge into <parent>, Request changes, Keep branch, Discard / Close the run, Undo); primary and danger looks; hover (accent / red).
-- [ ] Discard arms for 3 s ("Sure? Discard"); Close the run does not arm.
-- [ ] Request changes toggles the note form, focuses the note; empty note only focuses; Send posts `changes` with the note.
-- [ ] While posting: all card buttons disabled; `ok:false` → error, buttons back; network failure → buttons back + error (named); 404 → "Not supported by this server."
-- [ ] Patches redraw in place; open lists and the note survive a patch (named difference).
-- [ ] Text size scales the whole card; narrow pane wraps buttons and lines.
-- [ ] Widget screenshots row under `widget_render`: 150-tall pictures (`shot-h`), captions, sideways scroll, click → viewer; nothing when no shots.
-- [ ] Inline widget, Cru cards and the factory screens listed as named gaps in PLAN.md (phase 3 / 6 / 4).
-- [ ] phase2.mjs drives the run above (steps 1-12) against the test server.
-- [ ] Tokens only; side-by-side crops under `cards/review/` for every state above.
+- [x] The Manager's chat gets a pane (not filtered for its `factory` field), with the Factory tag.
+- [x] `factory-result` entries are drawn; unknown card kinds draw nothing.
+- [x] Card box as the question card's; title "Factory result · <factory>".
+- [x] Summary through the log's markdown (lists indented, headings spaced: named difference).
+- [x] Files line: chevron, "+A" green, "−R" red, "in N file(s)", "on <branch>" muted; toggles the list.
+- [x] File rows mono, name elides, counts right and whole, "?" for null; "and N more" past 40.
+- [x] Show the full diff in ask / conflict / changes only; loads once; plain mono, no wrap, both scrollbars, at most half the window, virtualised; "… (cut short)"; error text in its place.
+- [x] State messages exactly as the table, bold / mono parts, "the parent branch" fallback.
+- [x] Usage line format (cost when set, minutes / hours, hidden when no turns and no cost), pluralised (named).
+- [x] Follow-ups disclosure: count, rows with bold id, red "blocking", muted "(where)".
+- [x] Server `error` line; action error line last.
+- [x] Buttons per state, order and labels (Merge into <parent>, Request changes, Keep branch, Discard / Close the run, Undo); primary and danger looks; hover (accent / red).
+- [x] Discard arms for 3 s ("Sure? Discard"); Close the run does not arm.
+- [x] Request changes toggles the note form, focuses the note; empty note only focuses; Send posts `changes` with the note.
+- [x] While posting: all card buttons disabled; `ok:false` → error, buttons back; network failure → buttons back + error (named); 404 → "Not supported by this server."
+- [x] Patches redraw in place; open lists and the note survive a patch (named difference).
+- [x] Text size scales the whole card; narrow pane wraps buttons and lines.
+- [x] Widget screenshots row under `widget_render`: 150-tall pictures (`shot-h`), captions, sideways scroll, click → viewer; nothing when no shots.
+- [x] Inline widget, Cru cards and the factory screens listed as named gaps in PLAN.md (phase 3 / 6 / 4).
+- [x] phase2.mjs drives the run above (steps 1-12) against the test server.
+- [x] Tokens only; side-by-side crops under `cards/review/` for every state above.

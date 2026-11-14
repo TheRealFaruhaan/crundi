@@ -32,6 +32,7 @@ mod md;
 mod media;
 mod agents;
 mod resume;
+mod fresult;
 mod drafts;
 mod app;
 mod browser;

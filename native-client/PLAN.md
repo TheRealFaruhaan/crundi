@@ -125,7 +125,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      panel (`cc-agents`, `cc-aglist`, `cc-agpanel`).
    - [x] **2.19 Goal and plan.** The goal bar (`cc-goalbar`) and the plan
      pill and panel (`cc-plan`, `chat-plan`).
-   - [ ] **2.20 Cards.** A factory's result card (`cc-fr-*`) and the other
+   - [x] **2.20 Cards.** A factory's result card (`cc-fr-*`) and the other
      cards a reply can carry.
    - [x] **2.21 Side questions.** `cc-aside` (asked while a turn runs).
    - [x] **2.22 Resume picker.** `#chat-resume-modal` ("Open a session"):
@@ -464,6 +464,20 @@ Phase 1 left these, each with its workaround in place:
 - **The goal and the plan** (2.19):
   - the plan's headings are bold body text in the panel (StyledText has no
     heading sizes); its lists hang as the reply's.
+- **Cards** (2.20):
+  - the inline widget under a `widget_open` call (`slot: 'inline'`) is a
+    live page: it waits for the in-log CEF view (2.16f) and the Panels tab
+    (phase 3); until then nothing shows under the call. Cru's reply cards
+    are phase 6's, the factory's own screens phase 4's;
+  - deliberate differences on the factory result card: the summary's lists
+    and headings are drawn as in replies (the web's hang outside the card);
+    the usage line is pluralised ("1 turn"); open lists and a half-typed
+    note survive the server's patches; a network failure and a 404 say so
+    in the error line; Ctrl/Cmd+Enter in the note sends; the files and
+    follow-ups lines open with the chevron icon (the web's ▸ marker);
+  - the note grows to six lines and scrolls (no resize grip);
+  - a widget check's screenshot opens in the picture viewer without the
+    web's "Render: <frame>" title (the viewer has none).
 - **The resume picker** (2.22), deliberate differences: Esc cancels, the
   keyboard starts on New session, ↑/↓ move between rows (the web has none
   of these); the launcher shows its busy look from the picker too (the web

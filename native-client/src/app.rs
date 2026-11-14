@@ -9,10 +9,10 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct,
+    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn,
 };
 use serde_json::{json, Value};
-use crate::resume;
+use crate::{fresult, resume};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
 use std::{
     cell::RefCell,
@@ -165,6 +165,43 @@ enum Row {
     Aside(Aside),
     Tools(String, String, Vec<(Shown, bool)>, bool),
     Agent(String, Value),
+    /// A factory's result card (2.20), with what is open on it.
+    Fr(Shown, FrUi),
+}
+
+/// A factory result card's own state (2.20), by entry id: kept across the
+/// server's patches (a named difference: the web rebuilds the card).
+#[derive(Clone, Default)]
+struct FrUi {
+    files_open: bool,
+    fu_open: bool,
+    note_open: bool,
+    note: String,
+    note_gen: i32,
+    note_focus: i32,
+    diff_loading: bool,
+    /// The full diff: its lines (or the error) and the longest line.
+    diff: Option<Result<Rc<VecModel<SharedString>>, String>>,
+    diff_cols: i32,
+    diff_gen: u32,
+    busy: bool,
+    armed: bool,
+    arm_gen: u32,
+    act_err: String,
+    /// The card's state when last drawn: a new state drops the loaded diff.
+    state: String,
+}
+
+impl std::fmt::Debug for FrUi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "FrUi({}, diff {})", self.state, self.diff_gen) }
+}
+
+impl PartialEq for FrUi {
+    fn eq(&self, o: &Self) -> bool {
+        (self.files_open, self.fu_open, self.note_open, self.note_gen, self.note_focus, self.diff_loading, self.diff_gen, self.busy, self.armed, &self.act_err)
+            == (o.files_open, o.fu_open, o.note_open, o.note_gen, o.note_focus, o.diff_loading, o.diff_gen, o.busy, o.armed, &o.act_err)
+            && self.diff.is_some() == o.diff.is_some()
+    }
 }
 
 pub struct App {
@@ -252,6 +289,13 @@ pub struct App {
     viewer: Option<(Vec<String>, usize)>,
     /// The resume picker and launching (2.22), parked chats (2.23).
     park: Park,
+    /// Factory result cards' own state (2.20), by entry id, and the last
+    /// choice's body (the test driver reads it).
+    fr: HashMap<String, FrUi>,
+    fr_last: Value,
+    /// A widget check's screenshots (2.20), by "<chat>|<widget id>": their
+    /// captions, picture keys (in `media`) and sizes; asked once.
+    shots: HashMap<String, Vec<(String, String, f32, f32)>>,
     /// Downloads (the window's download rows), newest last.
     dls: Vec<Dl>,
     dl_rows: Rc<VecModel<DlRow>>,
@@ -391,6 +435,9 @@ pub fn init(window: &MainWindow) {
             media: HashMap::new(),
             viewer: None,
             park: Park::default(),
+            fr: HashMap::new(),
+            fr_last: Value::Null,
+            shots: HashMap::new(),
             dls: vec![],
             dl_rows: Rc::new(VecModel::default()),
             dl_seq: 0,
@@ -580,6 +627,12 @@ pub fn init(window: &MainWindow) {
     window.on_resume_cancel(|| { with(|a| a.park.dlg = None); show_resume(); });
     window.global::<ParkAct>().on_resume(|k, m| park_resume(k.as_str(), m.as_str()));
     window.global::<ParkAct>().on_peek(|k, on| park_peek(k.as_str(), on));
+    // Factory result cards (2.20).
+    window.global::<FrAct>().on_toggle(|c, i, w| fr_toggle(c.as_str(), i.as_str(), w.as_str()));
+    window.global::<FrAct>().on_press(|c, i, k| fr_press(c.as_str(), i.as_str(), k.as_str()));
+    window.global::<FrAct>().on_note(|_c, i, t| { with(|a| a.fr.entry(i.to_string()).or_default().note = t.to_string()); });
+    window.global::<FrAct>().on_send(|c, i| fr_send(c.as_str(), i.as_str()));
+    window.global::<FrAct>().on_diff(|c, i| fr_diff(c.as_str(), i.as_str()));
     window.on_mode_close(close_mode_picker);
 
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
@@ -1061,7 +1114,7 @@ fn sync_panes() {
         let live: Vec<String> = a.sessions.iter()
             // An exited chat keeps its pane (grey, "exited") until it is
             // closed, as the web's grid does.
-            .filter(|c| s(c, "project") == a.project && s(c, "factory").is_empty())
+            .filter(|c| s(c, "project") == a.project && !head::factory_employee(c))
             .map(|c| s(c, "id")).collect();
         // Parked chats (2.23) keep their panes too, as do chats resumed here
         // that the list does not show live yet.
@@ -1180,6 +1233,7 @@ fn render() {
                 p.title = shown.into();
                 p.title_max = cap;
                 p.short_title = short.into();
+                p.factory = item.is_some_and(head::factory_manager);
                 // The lock: the server can, and the chat is the owner's own.
                 p.secrets = a.secrets_cap && !item.and_then(|c| c.get("collaborator")).is_some_and(truthy);
                 let n = head::grant_count(a.grants.get(id), now);
@@ -1765,6 +1819,174 @@ fn create_chat(leaf: u32, skip: bool, mode: &str, resume_id: String) {
     });
 }
 
+// ─── Factory result cards (2.20) ───
+
+/// The reply's blocks of a markdown text (a list's items hang from their markers).
+fn md_blocks(key: &str, text: &str) -> ModelRc<AnsBlock> {
+    ModelRc::new(VecModel::from(split_blocks(key, text).into_iter().filter_map(|r| match r {
+        Row::Prose(_, t, kind, marker, _) => Some(AnsBlock { kind: if kind.starts_with("li") { "li".into() } else if kind.starts_with('h') { "h".into() } else { "p".into() }, marker: marker.into(), md: md(&t), text: t.into() }),
+        Row::Code(_, t, _) => Some(AnsBlock { kind: "code".into(), marker: SharedString::default(), md: StyledText::default(), text: t.into() }),
+        _ => None,
+    }).collect::<Vec<_>>()))
+}
+
+fn fr_view(e: &Value, ui: &FrUi) -> FrView {
+    let (add, del, n) = fresult::counts(e);
+    let (files, more) = fresult::files(e);
+    let fus = fresult::followups(e);
+    let msg = fresult::message(e);
+    let summary = s(e, "summary");
+    FrView {
+        title: fresult::title(e).into(),
+        blocks: if summary.trim().is_empty() { ModelRc::default() } else { md_blocks("fr", &summary) },
+        add: add.into(), del: del.into(), n: n.into(), branch: s(e, "branch").into(),
+        files_open: ui.files_open,
+        files: ModelRc::new(VecModel::from(files.into_iter().map(|(name, a, d)| FrFile { name: name.into(), add: a.into(), del: d.into() }).collect::<Vec<_>>())),
+        more: more.into(),
+        can_diff: fresult::can_diff(e),
+        diff_loading: ui.diff_loading,
+        diff_on: ui.diff.is_some(),
+        diff: match &ui.diff { Some(Ok(m)) => m.clone().into(), _ => ModelRc::default() },
+        diff_cols: ui.diff_cols,
+        diff_err: match &ui.diff { Some(Err(x)) => x.as_str().into(), _ => SharedString::default() },
+        msg_on: !msg.is_empty(),
+        msg: md(&msg),
+        usage: fresult::usage(e).into(),
+        fu_line: fresult::followups_line(fus.len()).into(),
+        fu_open: ui.fu_open,
+        fus: ModelRc::new(VecModel::from(fus.into_iter().map(|f| FrFu { id: f.id.into(), text: f.text.into(), place: f.place.into(), blocking: f.blocking }).collect::<Vec<_>>())),
+        error: s(e, "error").into(),
+        btns: ModelRc::new(VecModel::from(fresult::buttons(e, ui.armed).into_iter().map(|b| FrBtn { key: b.key.into(), label: b.label.into(), primary: b.primary, danger: b.danger }).collect::<Vec<_>>())),
+        busy: ui.busy,
+        note_open: ui.note_open && s(e, "state") == "ask",
+        note: ui.note.as_str().into(),
+        note_gen: ui.note_gen,
+        note_focus: ui.note_focus,
+        act_err: ui.act_err.as_str().into(),
+    }
+}
+
+/// The card's entry, by chat and id.
+fn fr_entry(chat: &str, id: &str) -> Option<Value> {
+    with(|a| a.chats.get(chat).and_then(|cs| cs.conv.entries.iter().find(|e| s(e, "id") == id).cloned())).flatten()
+}
+
+fn fr_toggle(chat: &str, id: &str, what: &str) {
+    with(|a| { let ui = a.fr.entry(id.to_string()).or_default(); if what == "fu" { ui.fu_open = !ui.fu_open; } else { ui.files_open = !ui.files_open; } });
+    show_chat(chat);
+}
+
+/// A button: Request changes opens the note; Discard arms for 3 s first;
+/// the others (and Close the run) post their choice.
+fn fr_press(chat: &str, id: &str, key: &str) {
+    match key {
+        "changes" => {
+            with(|a| { let ui = a.fr.entry(id.to_string()).or_default(); ui.note_open = !ui.note_open; if ui.note_open { ui.note_focus += 1; } });
+            show_chat(chat);
+        }
+        "discard" => {
+            let arm = with(|a| { let ui = a.fr.entry(id.to_string()).or_default(); if ui.armed { ui.armed = false; None } else { ui.armed = true; ui.arm_gen += 1; Some(ui.arm_gen) } }).flatten();
+            match arm {
+                Some(g) => {
+                    show_chat(chat);
+                    let (c, i) = (chat.to_string(), id.to_string());
+                    slint::Timer::single_shot(Duration::from_millis(3000), move || {
+                        let back = with(|a| a.fr.get_mut(&i).filter(|u| u.armed && u.arm_gen == g).map(|u| u.armed = false).is_some()).unwrap_or(false);
+                        if back { show_chat(&c); }
+                    });
+                }
+                None => fr_finish(chat, id, "discard", None),
+            }
+        }
+        "close" => fr_finish(chat, id, "discard", None),
+        k => fr_finish(chat, id, k, None),
+    }
+}
+
+/// Send to the Manager: an empty note only takes the keyboard back.
+fn fr_send(chat: &str, id: &str) {
+    let note = with(|a| a.fr.get(id).map(|u| u.note.clone())).flatten().unwrap_or_default();
+    if note.trim().is_empty() {
+        with(|a| a.fr.entry(id.to_string()).or_default().note_focus += 1);
+        return show_chat(chat);
+    }
+    fr_finish(chat, id, "changes", Some(note));
+}
+
+/// Post a choice: the card's buttons wait; refused, failed or unsupported:
+/// the error line, the buttons back. Accepted: the server's patch redraws it.
+fn fr_finish(chat: &str, id: &str, choice: &str, note: Option<String>) {
+    let Some(e) = fr_entry(chat, id) else { return };
+    let body = fresult::finish_body(&s(&e, "runId"), choice, note.as_deref());
+    with(|a| { let ui = a.fr.entry(id.to_string()).or_default(); ui.busy = true; ui.armed = false; ui.act_err.clear(); a.fr_last = body.clone(); });
+    show_chat(chat);
+    let (c, i) = (chat.to_string(), id.to_string());
+    let stub = crate::testctl::take_stub("fr-finish");
+    call(move |api| match stub { Some(v) => stub_result(v), None => api.post("/api/factory-runs", &body) }, move |r| {
+        let err = match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some({ let e = s(&v, "error"); if e.is_empty() { "That did not work.".to_string() } else { e } }),
+            Ok(_) => None,
+            Err(e) if e == ApiError::Status(404, String::new()).to_string() => Some("Not supported by this server.".into()),
+            Err(e) if e.starts_with("Cannot reach the server") => Some("Could not reach the server.".into()),
+            Err(e) => Some(e),
+        };
+        if let Some(e) = err {
+            with(|a| { let ui = a.fr.entry(i.clone()).or_default(); ui.busy = false; ui.act_err = e; });
+            show_chat(&c);
+        }
+    });
+}
+
+/// Show the full diff: fetched once; a network failure gives the button back.
+fn fr_diff(chat: &str, id: &str) {
+    let Some(e) = fr_entry(chat, id) else { return };
+    let go = with(|a| { let ui = a.fr.entry(id.to_string()).or_default(); if ui.diff_loading || ui.diff.is_some() { false } else { ui.diff_loading = true; true } }).unwrap_or(false);
+    if !go { return; }
+    show_chat(chat);
+    let path = format!("/api/factory-runs/diff?id={}", enc(&s(&e, "runId")));
+    let (c, i) = (chat.to_string(), id.to_string());
+    call(move |api| api.get(&path), move |r| {
+        with(|a| {
+            let ui = a.fr.entry(i.clone()).or_default();
+            ui.diff_loading = false;
+            match r {
+                Ok(v) => {
+                    ui.diff = Some(fresult::diff_lines(&v).map(|(lines, w)| { ui.diff_cols = w as i32; Rc::new(VecModel::from(lines.into_iter().map(SharedString::from).collect::<Vec<_>>())) }));
+                    ui.diff_gen += 1;
+                }
+                Err(e) if e.starts_with("Cannot reach the server") => {}
+                Err(e) => { ui.diff = Some(Err(e)); ui.diff_gen += 1; }
+            }
+        });
+        show_chat(&c);
+    });
+}
+
+/// What a factory result card shows, for the test driver (src/testctl.rs).
+pub fn fr_of(chat: &str) -> Value {
+    with(|a| {
+        let cs = a.chats.get(chat)?;
+        let rows: Vec<Value> = cs.rows.iter().filter_map(|r| match r {
+            Row::Fr(e, ui) => {
+                let v = fr_view(&e.raw, ui);
+                Some(json!({
+                    "id": e.id, "state": e.status, "title": v.title.as_str(), "blocks": v.blocks.row_count(),
+                    "line": format!("{} {} {}{}", v.add, v.del, v.n, if v.branch.is_empty() { String::new() } else { format!(" on {}", v.branch) }),
+                    "filesOpen": v.files_open, "files": v.files.iter().map(|f| format!("{} {} {}", f.name, f.add, f.del)).collect::<Vec<_>>(), "more": v.more.as_str(),
+                    "canDiff": v.can_diff, "diffLoading": v.diff_loading, "diffOn": v.diff_on, "diffLines": v.diff.row_count(),
+                    "diffHead": v.diff.row_data(0).map(|x| x.to_string()).unwrap_or_default(), "diffErr": v.diff_err.as_str(),
+                    "msg": fresult::message(&e.raw), "usage": v.usage.as_str(), "fuLine": v.fu_line.as_str(), "fuOpen": v.fu_open,
+                    "fus": v.fus.iter().map(|f| json!({ "id": f.id.as_str(), "blocking": f.blocking, "text": f.text.as_str(), "where": f.place.as_str() })).collect::<Vec<_>>(),
+                    "error": v.error.as_str(), "buttons": v.btns.iter().map(|b| b.label.to_string()).collect::<Vec<_>>(), "busy": v.busy,
+                    "noteOpen": v.note_open, "note": v.note.as_str(), "actErr": v.act_err.as_str(),
+                }))
+            }
+            _ => None,
+        }).collect();
+        Some(json!({ "cards": rows, "last": a.fr_last }))
+    }).flatten().unwrap_or(Value::Null)
+}
+
 // ─── Parked chats (2.23) ───
 
 /// A chat is parked and not yet resumed from here: anything that would
@@ -2050,6 +2272,23 @@ fn tool_view(t: &Shown, open: bool, mc: &MediaCtx) -> ToolView {
             v.media = ModelRc::new(VecModel::from(items.iter().map(|i| mc.item(i, several)).collect::<Vec<_>>()));
         }
     }
+    // A widget check's screenshots, under its widget_render call (2.20).
+    if t.status == "done" && !t.error && !t.widget.is_empty() {
+        let k = format!("{}|{}", mc.chat, t.widget);
+        match mc.shots.get(&k) {
+            None => mc.want_shots.borrow_mut().push(k),
+            Some(list) => {
+                v.shots = ModelRc::new(VecModel::from(list.iter().map(|(cap, key, w, h)| {
+                    let (state, image) = match mc.cache.get(key) {
+                        Some((st, img)) => (st.clone(), img.clone()),
+                        None => { mc.want.borrow_mut().push(key.clone()); ("loading".to_string(), None) }
+                    };
+                    let (w, h) = image.as_ref().map(|i| (i.size().width as f32, i.size().height as f32)).filter(|x| x.1 > 0.0).unwrap_or((*w, *h));
+                    ShotItem { key: key.as_str().into(), caption: cap.as_str().into(), state: state.into(), image: image.unwrap_or_default(), ratio: if h > 0.0 { w / h } else { 1.0 } }
+                }).collect::<Vec<_>>()));
+            }
+        }
+    }
     v
 }
 
@@ -2059,6 +2298,9 @@ struct MediaCtx<'a> {
     chat: String,
     cache: &'a HashMap<String, (String, Option<slint::Image>)>,
     want: std::cell::RefCell<Vec<String>>,
+    /// Widget checks' screenshots (2.20), and the lists to ask for.
+    shots: &'a HashMap<String, Vec<(String, String, f32, f32)>>,
+    want_shots: std::cell::RefCell<Vec<String>>,
 }
 
 impl MediaCtx<'_> {
@@ -2118,6 +2360,7 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
             gap: 10.0,
             ..Default::default()
         },
+        Row::Fr(e, ui) => EntryView { id: e.id.clone().into(), kind: "factory-result".into(), gap: 10.0, fr: fr_view(&e.raw, ui), ..Default::default() },
         Row::Aside(x) => EntryView {
             id: format!("aside-{}", x.id).into(), kind: "aside".into(), text: x.question.as_str().into(), status: x.state.as_str().into(),
             detail: if x.state == "error" { x.text.as_str().into() } else { SharedString::default() },
@@ -2172,16 +2415,31 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
 
 /// A chat's log on screen, rewriting only the rows that changed.
 fn show_chat(id: &str) {
+    let mut want_shots: Vec<String> = vec![];
     let wanted = with(|a| {
         drafts_for_server(a);
         let mut wanted: Vec<String> = vec![];
         let Some(cs) = a.chats.get_mut(id) else { return wanted };
         let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open, &cs.think, &cs.asides);
+        // Factory result cards carry their own open parts (2.20); a new state
+        // drops a loaded diff, a running choice and an armed Discard.
+        let now: Vec<Row> = now.into_iter().map(|r| match r {
+            Row::Entry(e) if e.kind == "factory-result" => {
+                let ui = a.fr.entry(e.id.clone()).or_default();
+                if ui.state != e.status {
+                    if !ui.state.is_empty() { ui.diff = None; ui.diff_loading = false; ui.diff_gen += 1; }
+                    ui.busy = false; ui.armed = false; ui.state = e.status.clone();
+                }
+                Row::Fr(e, ui.clone())
+            }
+            r => r,
+        }).collect();
         for (i, r) in now.iter().enumerate() {
             if cs.rows.get(i) == Some(r) { continue; }
-            let mc = MediaCtx { chat: id.to_string(), cache: &a.media, want: std::cell::RefCell::new(vec![]) };
+            let mc = MediaCtx { chat: id.to_string(), cache: &a.media, want: std::cell::RefCell::new(vec![]), shots: &a.shots, want_shots: std::cell::RefCell::new(vec![]) };
             let mut v = to_view(r, &mc);
             wanted.extend(mc.want.into_inner());
+            want_shots.extend(mc.want_shots.into_inner());
             v.chat = id.into();
             if let Row::Entry(e) = r { if e.kind == "question" { q_view(&mut a.qcards, &a.saved_drafts, id, e, &mut v); } }
             if i < cs.model.row_count() { cs.model.set_row_data(i, v); } else { cs.model.push(v); }
@@ -2192,6 +2450,36 @@ fn show_chat(id: &str) {
         wanted
     }).unwrap_or_default();
     for k in wanted { fetch_media(k); }
+    for k in want_shots { fetch_shots(k); }
+}
+
+/// A widget check's screenshots (2.20): the list once per call; none (or
+/// not ok) draws nothing. Their pictures go through the media cache.
+fn fetch_shots(key: String) {
+    let fresh = with(|a| if a.shots.contains_key(&key) { false } else { a.shots.insert(key.clone(), vec![]); true }).unwrap_or(false);
+    if !fresh { return; }
+    let Some((chat, wid)) = key.split_once('|').map(|(c, w)| (c.to_string(), w.to_string())) else { return };
+    let project = with(|a| a.project.clone()).unwrap_or_default();
+    let path = format!("/api/widgets/renders?project={}&id={}", enc(&project), enc(&wid));
+    let stub = crate::testctl::take_stub("renders");
+    call(move |api| match stub { Some(v) => stub_result(v), None => api.get(&path) }, move |r| {
+        let Ok(v) = r else { return };
+        if v.get("ok").and_then(|o| o.as_bool()) != Some(true) { return; }
+        let at = v.pointer("/renders/at").map(|x| match x { Value::String(t) => t.clone(), o => o.to_string() }).unwrap_or_default();
+        let list: Vec<(String, String, f32, f32)> = v.pointer("/renders/shots").and_then(|x| x.as_array()).map(|a| a.iter().map(|sh| {
+            let (frame, state) = (s(sh, "frame"), s(sh, "state"));
+            let cap = if state.is_empty() || state == "live" { frame.clone() } else { format!("{frame} · {state}") };
+            let img = format!("/api/widgets/render-image?project={}&id={}&name={}&t={}", enc(&project), enc(&wid), enc(&format!("{frame}--{state}")), enc(&at));
+            (cap, format!("{chat}|@render:{img}"), sh.get("width").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32, sh.get("height").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32)
+        }).collect()).unwrap_or_default();
+        with(|a| {
+            a.shots.insert(key.clone(), list);
+            if let Some(cs) = a.chats.get_mut(&chat) {
+                for r in cs.rows.iter_mut() { if matches!(r, Row::Tool(..) | Row::Tools(..)) { *r = Row::Code(String::new(), String::new(), false); } }
+            }
+        });
+        show_chat(&chat);
+    });
 }
 
 fn chat_error(id: &str, e: String) {
@@ -3859,7 +4147,8 @@ pub fn tools_of(key: &str) -> Value {
     with(|a| {
         let cs = a.chats.get(&chat)?;
         Some(Value::Array(cs.rows.iter().filter_map(|r| match r {
-            Row::Tool(_, t, o) => Some(json!({ "card": tool_json(t, *o), "media": media_json(&chat, t, &a.media) })),
+            Row::Tool(_, t, o) => Some(json!({ "card": tool_json(t, *o), "media": media_json(&chat, t, &a.media),
+                "shots": a.shots.get(&format!("{chat}|{}", t.widget)).map(|l| l.iter().map(|(c, k, _, _)| json!({ "caption": c, "key": k, "state": a.media.get(k).map(|m| m.0.clone()).unwrap_or_default() })).collect::<Vec<_>>()).unwrap_or_default() })),
             Row::Tools(id, sum, ms, o) => Some(json!({ "group": id, "summary": sum, "open": o, "count": ms.len(),
                 "status": if ms.iter().any(|m| m.0.status == "running") { "running" } else if ms.iter().any(|m| m.0.error) { "failed" } else { "done" },
                 "members": ms.iter().map(|(t, o)| tool_json(t, *o)).collect::<Vec<_>>() })),
@@ -3914,7 +4203,8 @@ fn toast_ok_plain(text: &str) { toast(text, false); }
 fn fetch_media(key: String) {
     let Some(api) = api() else { return };
     let Some((chat, name)) = key.split_once('|').map(|(c, n)| (c.to_string(), n.to_string())) else { return };
-    let path = format!("/api/chat-media?session={chat}&name={name}");
+    // (A widget check's screenshot names its own path, 2.20.)
+    let path = match name.strip_prefix("@render:") { Some(p) => p.to_string(), None => format!("/api/chat-media?session={chat}&name={name}") };
     bg(move || {
         match api.get_bytes(&path) {
             Ok((200, _)) if path.ends_with(".embed") => ("ready", None),
@@ -3955,7 +4245,9 @@ fn chat_pictures(chat: &str) -> Vec<String> {
 /// A picture clicked: the viewer, on it.
 pub fn view_picture(key: &str) {
     let chat = key.split_once('|').map(|x| x.0.to_string()).unwrap_or_default();
-    let list = chat_pictures(&chat);
+    let mut list = chat_pictures(&chat);
+    // A widget check's screenshot is viewed on its own (2.20).
+    if key.contains("|@render:") { list = vec![key.to_string()]; }
     let at = list.iter().position(|k| k == key).unwrap_or(0);
     if list.is_empty() { return; }
     with(|a| a.viewer = Some((list, at)));
@@ -4319,7 +4611,8 @@ fn panel_rows(cs: &ChatPaneState, chat: &str, cache: &HashMap<String, (String, O
     }
     let open: HashSet<String> = c.entries.iter().filter(|e| a.is_some_and(agents::is_task) && s(e, "kind") == "tool").map(|e| s(e, "id")).collect();
     let rows = rows_of(&c.view(), &[], &open, &cs.think, &[]);
-    let mc = MediaCtx { chat: chat.to_string(), cache, want: std::cell::RefCell::new(vec![]) };
+    let no_shots = HashMap::new();
+    let mc = MediaCtx { chat: chat.to_string(), cache, want: std::cell::RefCell::new(vec![]), shots: &no_shots, want_shots: std::cell::RefCell::new(vec![]) };
     let views: Vec<EntryView> = rows.iter().map(|r| { let mut v = to_view(r, &mc); v.chat = chat.into(); v }).collect();
     cs.panel_model.set_vec(views);
 }
