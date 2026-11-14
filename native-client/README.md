@@ -285,6 +285,19 @@ them; each has a spec in `specs/`). So far:
   Batches Claude Code summed up fold behind a group head; a call that
   started a sub-agent is an agent row. The rules are in `src/tools.rs`
   (unit-tested).
+- **2.15 Thinking** (specs/thinking.md, `ui/chat.slint` ThinkBlock): a
+  block with text shows "▾ Thinking" over its reasoning (live: the label
+  shimmers, a caret blinks, the body follows the newest line); it opens
+  when it starts, folds 5 s after it finishes or at once when a newer one
+  starts, and the reader's click wins. Without text: "Thought for ~1.2k
+  tokens". The rules are in `src/think.rs` (unit-tested).
+- **2.16 The rest of the log** (specs/log-rest.md): Claude's markdown as the
+  web's md() (line breaks kept, `#` headings, quotes, rules, numbered
+  lists, bare URLs as links; `src/md.rs`, unit-tested), reply text at 13,
+  code blocks that scroll sideways with a copy button, links to the system
+  browser, notices in italics, errors and failed turns in a red box, and the
+  log following the bottom only when the reader is there (wheel steps up
+  stay; the jump button with its new-content dot).
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

@@ -105,6 +105,11 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "savedDrafts": crate::app::saved_drafts(),
             "secretsDialog": crate::app::sec_of(),
             "sreq": crate::app::sreq_of(),
+            "lastOpened": crate::app::last_opened(),
+            // The watched chat log (ui log-watch <pane key>): how far from the
+            // bottom, following it, the jump button and its dot (2.16).
+            "log": ({ let l = w.global::<crate::LogProbe>(); json!({ "key": l.get_watch().as_str(), "dist": l.get_dist(), "stick": l.get_stick(), "jump": l.get_jump(), "jumpNew": l.get_jump_new() }) }),
+            "clipboard": arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).unwrap_or_default(),
             "sreqFocused": w.global::<crate::SreqProbe>().get_field_focused(),
             "dock": ({ let p = w.global::<crate::Pointer>(); json!({ "x": p.get_dock_x(), "y": p.get_dock_y(), "w": p.get_dock_w(), "h": p.get_dock_h() }) }),
             "chatEnter": if w.global::<crate::Composer>().get_ctrl_enter() { "newline" } else { "enter" },
@@ -156,6 +161,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "down" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); crate::pointer_pressed(&w, pos.x, pos.y); win.dispatch_event(WindowEvent::PointerPressed { position: pos, button: PointerEventButton::Left }) }
                 "up" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); win.dispatch_event(WindowEvent::PointerReleased { position: pos, button: PointerEventButton::Left }) }
                 "leave" => win.dispatch_event(WindowEvent::PointerExited),
+                // A wheel step (dy logical px; negative scrolls up), as the system's.
+                "wheel" => { win.dispatch_event(WindowEvent::PointerMoved { position: pos }); win.dispatch_event(WindowEvent::PointerScrolled { position: pos, delta_x: 0.0, delta_y: c.get("dy").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32 }) }
                 _ => win.dispatch_event(WindowEvent::PointerMoved { position: pos }),
             }
             json!({ "ok": true })
@@ -248,6 +255,9 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 // q-move <q> <opt> <±1>, q-submit, q-dismiss.
                 // Tool cards (2.14): a card's (entry id) or group's ("g:<group>") head.
                 "tool-toggle" => crate::app::tool_toggle_focused(&arg(c, 0)),
+                "log-watch" => w.global::<crate::LogProbe>().set_watch(arg(c, 0).into()),
+                "tool-copy" => w.global::<crate::ToolAct>().invoke_copy(arg(c, 0).into()),
+                "open-link" => w.global::<crate::ToolAct>().invoke_open_link(arg(c, 0).into()),
                 n if n.starts_with("q-") => crate::app::q_drive(&n[2..], &(0..4).map(|i| arg(c, i)).collect::<Vec<_>>()),
                 "sreq-approve" => crate::app::sreq_approve_by(&arg(c, 0)),
                 "sreq-reject" => crate::app::sreq_reject_by(&arg(c, 0)),

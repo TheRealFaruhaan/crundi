@@ -27,6 +27,8 @@ mod secrets;
 mod sreq;
 mod questions;
 mod tools;
+mod think;
+mod md;
 mod drafts;
 mod app;
 mod browser;

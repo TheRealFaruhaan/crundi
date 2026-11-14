@@ -513,22 +513,22 @@ only when `stick`; a height change alone does not).
 
 ## Checklist
 
-- [ ] Reply text 13 × fs, line 1.55 where Slint allows (else the named gap);
+- [x] Reply text 13 × fs, line 1.55 where Slint allows (else the named gap);
       paragraphs 8 apart; line breaks inside a paragraph kept.
-- [ ] Headings (`#` 14 semibold with its gaps, `##`+ bold body size), quotes
+- [x] Headings (`#` 14 semibold with its gaps, `##`+ bold body size), quotes
       (bar, `text-secondary`, one per line), lists (20 indent, numbers),
       rules, bold, italic.
-- [ ] Code span chip (`bg-tertiary`, `r-chip`), or the named gap.
-- [ ] Links `accent-hover` underlined; paths dotted; user-bubble links in
+- [x] Code span chip (`bg-tertiary`, `r-chip`), or the named gap.
+- [x] Links `accent-hover` underlined; paths dotted; user-bubble links in
       the bubble's colour.
-- [ ] Code block: `bg-secondary`, `border-subtle`, `r-control`, mono 12;
+- [x] Code block: `bg-secondary`, `border-subtle`, `r-control`, mono 12;
       long lines scroll sideways, not wrap; selectable.
-- [ ] Copy button: on hover of a code block (corner), code span, link or
+- [x] Copy button: on hover of a code block (corner), code span, link or
       path (after its last line); tooltip by kind; copies the block / URL /
       path / text; tick + "Copied"; hides 250 ms after leaving and on scroll.
-- [ ] Link click → system browser; right-click → "Open in browser" /
+- [x] Link click → system browser; right-click → "Open in browser" /
       "Copy link" menu.
-- [ ] Path click: named gap until the Files panel (phase 3).
+- [x] Path click: named gap until the Files panel (phase 3).
 - [ ] Media under `show_*` calls: boxes sized before loading (one / several
       / unknown), captions, the call's caption, row gap 8, horizontal scroll
       when too wide.
@@ -540,16 +540,16 @@ only when `stick`; a height change alone does not).
 - [ ] File card: icon, name, size · caption, Download → save dialog, the
       download row, errors as toasts.
 - [ ] Frame: named gap; caption and "Open".
-- [ ] Notices italic, centred, `text-muted`, wrap; the long-history line.
-- [ ] Errors and failed results: the red box (`red` text and edge,
+- [x] Notices italic, centred, `text-muted`, wrap; the long-history line.
+- [x] Errors and failed results: the red box (`red` text and edge,
       `red-dim`); end-of-turn line dashed, centred, "12.3s · $0.0421".
-- [ ] F87: wheel steps up from the bottom stay; `stick` only from the
+- [x] F87: wheel steps up from the bottom stay; `stick` only from the
       reader's scroll (60); scroll to bottom only when content arrives.
-- [ ] Jump button: shows past max(240, h/3); hover; new dot on arrivals;
+- [x] Jump button: shows past max(240, h/3); hover; new dot on arrivals;
       click scrolls to the bottom smoothly and hides it.
-- [ ] Selection: reply text selectable, or the named gap; nothing outside
+- [x] Selection: reply text selectable, or the named gap; nothing outside
       the conversation can be pulled into a selection.
-- [ ] Text size scales the text; boxes, gaps and the jump button do not.
-- [ ] Narrow pane: text, links and errors wrap; media shrink to the pane.
+- [x] Text size scales the text; boxes, gaps and the jump button do not.
+- [x] Narrow pane: text, links and errors wrap; media shrink to the pane.
 - [ ] phase2.mjs steps 1-7 pass; cargo tests above; snapshots of every
       state saved under `log-rest/review/`.

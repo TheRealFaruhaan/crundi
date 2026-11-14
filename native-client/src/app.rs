@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, questions, sched, secrets, slash, sreq, store, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem,
+    head, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -91,6 +91,10 @@ struct ChatPaneState {
     /// while the pane shows the chat; an open card stays open when its
     /// result arrives (the web's rebuild closes it: a named difference).
     open: HashSet<String>,
+    /// Thinking blocks open or folded (2.15, src/think.rs).
+    think: think::Think,
+    /// Counts what arrived from the server (the log follows the bottom on it).
+    gen: i32,
 }
 
 /// What one row of a chat log shows (compared to rewrite only changed rows).
@@ -106,6 +110,8 @@ enum Row {
     /// (its head's summary, the members with their open state, the group
     /// open?); a call that started a sub-agent (its agent record).
     Tool(String, Shown, bool),
+    /// A thinking block (2.15), open?
+    Think(Shown, bool),
     Tools(String, String, Vec<(Shown, bool)>, bool),
     Agent(String, Value),
 }
@@ -185,6 +191,8 @@ pub struct App {
     /// The question cards (2.13), by "<chat>:<entry>": the picks and the
     /// card's models (kept, so redraws leave its fields alone).
     qcards: HashMap<String, QCard>,
+    /// The last link a reply opened (the test driver reads it).
+    last_opened: String,
     /// Each chat's schedule panel (2.10), by pane key.
     sched: HashMap<String, Sched>,
     /// The pane whose mode picker is open (2.6), by key.
@@ -316,6 +324,7 @@ pub fn init(window: &MainWindow) {
             sec: None,
             sreq: Sreq::default(),
             qcards: HashMap::new(),
+            last_opened: String::new(),
             slash: HashMap::new(),
             held: HashMap::new(),
             flush_pending: false,
@@ -375,6 +384,9 @@ pub fn init(window: &MainWindow) {
     window.on_pane_pin(|id| pane_pin(id as u32));
     // Tool cards (2.14): a head opens or closes its card, or its group.
     window.global::<ToolAct>().on_toggle(|c, id| tool_toggle(c.as_str(), id.as_str()));
+    // A link in a reply: the system browser. Copy: the clipboard, "Copied".
+    window.global::<ToolAct>().on_open_link(|u| open_link(u.as_str()));
+    window.global::<ToolAct>().on_copy(|t| if copy_text(t.as_str()) { toast_ok_plain("Copied"); } else { toast("Could not copy", true); });
     // Question cards (2.13).
     {
         let qa = window.global::<QAct>();
@@ -954,7 +966,7 @@ fn sync_panes() {
                 if !a.chats.contains_key(id) {
                     // A chat with no size yet starts at the default and keeps it.
                     if !a.font.contains_key(id) { a.font.insert(id.to_string(), a.font_default); font_new.push(id.to_string()); }
-                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new() });
+                    a.chats.insert(id.to_string(), ChatPaneState { conv: Conversation::default(), rows: vec![], model: Rc::new(VecModel::default()), error: String::new(), open: HashSet::new(), think: think::Think::default(), gen: 0 });
                     new.push(id.to_string());
                 }
             }
@@ -1050,6 +1062,7 @@ fn render() {
                     p.up_frac = u.frac;
                     p.up_busy = u.active > 0;
                 }
+                p.content_gen = a.chats.get(id).map(|cs| cs.gen).unwrap_or(0);
                 // The drawers (2.9): held lines, and the handed-over ones.
                 if let Some(h) = a.held.get(id) { p.q_held = h.join("\n").into(); p.q_held_n = h.len() as i32; }
                 if let Some((kind, body)) = a.chats.get(id).and_then(|cs| cs.conv.handed()) {
@@ -1492,6 +1505,25 @@ fn on_chat_message(m: &Value) {
         match s(m, "type").as_str() {
             "ui-history" => { if let Some(sess) = m.get("session") { cs.conv.load(sess); } a.sending.remove(&id); true }
             "ui-event" => {
+                // Thinking blocks (2.15): one that starts streaming opens (the
+                // others the rules opened fold); a finished one folds later.
+                if let Some(ev) = m.get("event") {
+                    let ty = s(ev, "type");
+                    if ty == "entry" {
+                        if let Some(en) = ev.get("entry") {
+                            if s(en, "kind") == "thinking" && en.get("streaming").and_then(|v| v.as_bool()) == Some(true) { cs.think.started(&s(en, "id")); }
+                        }
+                    } else if ty == "patch" && ev.pointer("/patch/streaming").and_then(|v| v.as_bool()) == Some(false) {
+                        let tid = s(ev, "id");
+                        if cs.conv.entries.iter().any(|e| s(e, "id") == tid && s(e, "kind") == "thinking") {
+                            let chat = id.clone();
+                            slint::Timer::single_shot(Duration::from_millis(think::LINGER_MS), move || {
+                                let known = with(|a| a.chats.get_mut(&chat).map(|cs| cs.think.linger_over(&tid)).is_some()).unwrap_or(false);
+                                if known { show_chat(&chat); }
+                            });
+                        }
+                    }
+                }
                 // The server's own state replaces the optimistic one.
                 let ty = m.get("event").map(|e| s(e, "type")).unwrap_or_default();
                 // (An idle that comes before the send's working doesn't undo it.)
@@ -1503,6 +1535,7 @@ fn on_chat_message(m: &Value) {
         }
     }).unwrap_or(false);
     if changed {
+        with(|a| if let Some(cs) = a.chats.get_mut(&id) { cs.gen += 1; });
         show_chat(&id);
         render();
     }
@@ -1511,42 +1544,44 @@ fn on_chat_message(m: &Value) {
 /// Claude's text as rows: markdown blocks (paragraphs, list items, headings)
 /// and fenced code blocks, so each gets the web chat's spacing.
 fn split_blocks(id: &str, text: &str) -> Vec<Row> {
+    use crate::md::{self, Line};
     let mut out: Vec<Row> = vec![];
-    let mut para = String::new();
+    let mut para: Vec<String> = vec![];
     let mut code: Option<String> = None;
+    // A numbered list counts from 1 (the web's <ol>), until it ends.
+    let mut num = 0;
     let n = |out: &Vec<Row>| format!("{id}#{}", out.len());
-    let flush = |para: &mut String, out: &mut Vec<Row>| {
-        if !para.trim().is_empty() { out.push(Row::Prose(n(out), para.trim_end().to_string(), "p", String::new(), false)); }
+    let flush = |para: &mut Vec<String>, out: &mut Vec<Row>| {
+        if !para.is_empty() {
+            let refs: Vec<&str> = para.iter().map(String::as_str).collect();
+            out.push(Row::Prose(n(out), md::paragraph(&refs), "p", String::new(), false));
+        }
         para.clear();
     };
-    for line in text.split('\n') {
-        let t = line.trim_start();
-        if t.starts_with("```") {
-            match code.take() {
-                Some(c) => out.push(Row::Code(n(&out), c.trim_end().to_string(), false)),
-                None => { flush(&mut para, &mut out); code = Some(String::new()); }
-            }
+    for raw in text.split('\n') {
+        if let Some(c) = &mut code {
+            if md::line(raw) == Line::Fence {
+                // One trailing newline dropped.
+                let body = c.strip_suffix('\n').unwrap_or(c).to_string();
+                code = None;
+                out.push(Row::Code(n(&out), body, false));
+            } else { c.push_str(raw); c.push('\n'); }
             continue;
         }
-        if let Some(c) = &mut code { c.push_str(line); c.push('\n'); continue; }
-        if t.is_empty() { flush(&mut para, &mut out); continue; }
-        // A list item: "- ", "* ", "+ ", or "1. ".
-        let bullet = ["- ", "* ", "+ "].iter().find_map(|b| t.strip_prefix(b)).map(|r| ("•".to_string(), r));
-        let numbered = t.split_once(". ").filter(|(d, _)| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit())).map(|(d, r)| (format!("{d}."), r));
-        if let Some((marker, rest)) = bullet.or(numbered) {
-            flush(&mut para, &mut out);
-            out.push(Row::Prose(n(&out), rest.to_string(), "li", marker, false));
-            continue;
+        let l = md::line(raw);
+        if !matches!(l, Line::Numbered(_)) { num = 0; }
+        match l {
+            Line::Fence => { flush(&mut para, &mut out); code = Some(String::new()); }
+            Line::Blank => flush(&mut para, &mut out),
+            Line::Heading(top, h) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), format!("**{}**", md::linkify(h)), if top { "h" } else { "h4" }, String::new(), false)); }
+            Line::Rule => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), String::new(), "hr", String::new(), false)); }
+            Line::Quote(q) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), md::linkify(q), "quote", String::new(), false)); }
+            Line::Bullet(r) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), md::linkify(r), "li", "•".into(), false)); }
+            Line::Numbered(r) => { flush(&mut para, &mut out); num += 1; out.push(Row::Prose(n(&out), md::linkify(r), "li", format!("{num}."), false)); }
+            Line::Text(t) => para.push(t.to_string()),
         }
-        if let Some(h) = t.strip_prefix("#") {
-            flush(&mut para, &mut out);
-            out.push(Row::Prose(n(&out), format!("**{}**", h.trim_start_matches('#').trim()), "h", String::new(), false));
-            continue;
-        }
-        para.push_str(line);
-        para.push('\n');
     }
-    if let Some(c) = code { out.push(Row::Code(n(&out), c, false)); }
+    if let Some(c) = code { out.push(Row::Code(n(&out), c.strip_suffix('\n').unwrap_or(&c).to_string(), false)); }
     flush(&mut para, &mut out);
     match out.last_mut() {
         Some(Row::Prose(_, _, _, _, last)) | Some(Row::Code(_, _, last)) => *last = true,
@@ -1559,7 +1594,7 @@ fn split_blocks(id: &str, text: &str) -> Vec<Row> {
 /// (never folded); calls Claude Code summed up fold behind one group head,
 /// drawn where the group's first call is (its other calls take no room
 /// there); any other call is a card. Claude's text in blocks.
-fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>) -> Vec<Row> {
+fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>, think: &think::Think) -> Vec<Row> {
     let agent_of = |e: &Shown| -> Option<&Value> {
         if e.tool_use_id.is_empty() { return None; }
         agents.iter().find(|a| s(a, "toolUseId") == e.tool_use_id && s(a, "kind") != "task")
@@ -1585,6 +1620,8 @@ fn rows_of(shown: &[Shown], agents: &[Value], open: &HashSet<String>) -> Vec<Row
             }
         } else if e.kind == "assistant" {
             rows.extend(split_blocks(&e.id, &e.text));
+        } else if e.kind == "thinking" {
+            rows.push(Row::Think(e.clone(), think.open(&e.id)));
         } else {
             rows.push(Row::Entry(e.clone()));
         }
@@ -1637,8 +1674,10 @@ fn to_view(r: &Row) -> EntryView {
         Row::Prose(id, t, kind, marker, last) => EntryView {
             id: id.clone().into(), kind: "assistant".into(), text: t.clone().into(), md: md(t),
             status: (*kind).into(), title: marker.clone().into(),
-            // Paragraphs 8px apart, list items 4px (their 2px margins), the message 10px.
-            gap: if *last { 10.0 } else if *kind == "li" { 2.0 } else { 8.0 },
+            // Paragraphs and quotes 8 apart, list items 4 (their 2 margins), a
+            // heading 6 below (12 above: its own padding), `##` and rules
+            // none; the message's last block 10.
+            gap: if *last { 10.0 } else { match *kind { "li" => 2.0, "h" => 6.0, "h4" | "hr" => 0.0, _ => 8.0 } },
             ..Default::default()
         },
         Row::Code(id, t, last) => EntryView { id: id.clone().into(), kind: "code".into(), text: t.clone().into(), gap: if *last { 10.0 } else { 8.0 }, ..Default::default() },
@@ -1656,6 +1695,11 @@ fn to_view(r: &Row) -> EntryView {
             open: *open,
             tools: ModelRc::new(VecModel::from(tools.iter().map(|(t, o)| tool_view(t, *o)).collect::<Vec<_>>())),
             gap: 10.0,
+            ..Default::default()
+        },
+        Row::Think(e, open) => EntryView {
+            id: e.id.clone().into(), kind: "thinking".into(), text: e.text.clone().into(),
+            detail: e.detail.clone().into(), status: e.status.clone().into(), open: *open, gap: 10.0,
             ..Default::default()
         },
         Row::Agent(id, a) => EntryView {
@@ -1690,7 +1734,7 @@ fn show_chat(id: &str) {
     with(|a| {
         drafts_for_server(a);
         let Some(cs) = a.chats.get_mut(id) else { return };
-        let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open);
+        let now = rows_of(&cs.conv.view(), &cs.conv.agents, &cs.open, &cs.think);
         for (i, r) in now.iter().enumerate() {
             if cs.rows.get(i) == Some(r) { continue; }
             let mut v = to_view(r);
@@ -3307,7 +3351,11 @@ pub fn q_drive(what: &str, args: &[String]) {
 /// A card's or a group's head clicked: open or closed (kept while the pane
 /// shows the chat).
 fn tool_toggle(chat: &str, id: &str) {
-    with(|a| if let Some(cs) = a.chats.get_mut(chat) { if !cs.open.remove(id) { cs.open.insert(id.to_string()); } });
+    with(|a| if let Some(cs) = a.chats.get_mut(chat) {
+        // A thinking block's head (2.15): the reader's choice.
+        if cs.conv.entries.iter().any(|e| s(e, "id") == id && s(e, "kind") == "thinking") { cs.think.toggle(id); }
+        else if !cs.open.remove(id) { cs.open.insert(id.to_string()); }
+    });
     show_chat(chat);
 }
 
@@ -3333,6 +3381,10 @@ pub fn tools_of(key: &str) -> Value {
             Row::Tools(id, sum, ms, o) => Some(json!({ "group": id, "summary": sum, "open": o, "count": ms.len(),
                 "status": if ms.iter().any(|m| m.0.status == "running") { "running" } else if ms.iter().any(|m| m.0.error) { "failed" } else { "done" },
                 "members": ms.iter().map(|(t, o)| tool_json(t, *o)).collect::<Vec<_>>() })),
+            Row::Prose(_, t, kind, marker, _) => Some(json!({ "prose": kind, "text": t, "marker": marker })),
+            Row::Code(_, t, _) => Some(json!({ "code": t })),
+            Row::Entry(e) if matches!(e.kind, "notice" | "error" | "result") => Some(json!({ "entry": e.kind, "text": e.text, "error": e.error, "detail": e.detail })),
+            Row::Think(e, o) => Some(json!({ "think": e.id, "open": o, "streaming": e.status == "streaming", "detail": e.detail, "text": e.text })),
             Row::Agent(id, ag) => Some(json!({ "agent": id, "type": s(ag, "subagentType"), "description": s(ag, "description"), "status": s(ag, "status") })),
             _ => None,
         }).collect()))
@@ -3345,3 +3397,29 @@ pub fn tool_toggle_focused(id: &str) {
     tool_toggle(&chat, id);
 }
 
+
+// ─── The rest of the log (2.16) ───
+
+/// A reply's link: http(s) to the system browser. (Under the test driver it
+/// is only recorded.) Anything else (a path: the Files panel, phase 3)
+/// does nothing yet.
+fn open_link(url: &str) {
+    if !(url.starts_with("http://") || url.starts_with("https://")) { return; }
+    with(|a| a.last_opened = url.to_string());
+    if std::env::var_os("CRUNDI_TEST_PORT").is_some() { return; }
+    let u = url.to_string();
+    std::thread::spawn(move || { let _ = open::that(&u); });
+}
+
+pub fn last_opened() -> String { with(|a| a.last_opened.clone()).unwrap_or_default() }
+
+/// Text to the system clipboard (kept owned: on X11 the copy lives with it).
+fn copy_text(text: &str) -> bool {
+    let Ok(mut cb) = arboard::Clipboard::new() else { return false };
+    if cb.set_text(text.to_string()).is_err() { return false; }
+    keep_clipboard(cb);
+    true
+}
+
+/// A plain toast (the web's "Copied" is an ordinary toast).
+fn toast_ok_plain(text: &str) { toast(text, false); }

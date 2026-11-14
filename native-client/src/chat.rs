@@ -283,7 +283,13 @@ fn shown(e: &Value) -> Option<Shown> {
     Some(match s(e, "kind").as_str() {
         "user" => Shown { kind: "user", text: s(e, "text"), title: s(e, "by"), ..base },
         "assistant-text" => Shown { kind: "assistant", text: s(e, "text"), status: if e.get("streaming").and_then(|v| v.as_bool()).unwrap_or(false) { "streaming".into() } else { String::new() }, ..base },
-        "thinking" => Shown { kind: "thinking", text: s(e, "text"), ..base },
+        // 2.15: streaming while it streams; the "Thought" line's wording.
+        "thinking" => Shown {
+            kind: "thinking", text: s(e, "text"),
+            status: if e.get("streaming").and_then(|v| v.as_bool()).unwrap_or(false) { "streaming".into() } else { String::new() },
+            detail: crate::think::thought(e.get("tokens").and_then(|t| t.as_f64()).map(|t| t.max(0.0) as u64).unwrap_or(0)),
+            ..base
+        },
         "tool" => {
             let input = e.get("input").cloned().unwrap_or(Value::Null);
             let name = s(e, "name");
@@ -332,8 +338,12 @@ fn shown(e: &Value) -> Option<Shown> {
             let mut parts = Vec::new();
             if let Some(sec) = secs { parts.push(format!("{sec:.1}s")); }
             if let Some(c) = cost { if c > 0.0 { parts.push(format!("${c:.4}")); } }
-            let error = e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false);
-            Shown { kind: "result", detail: parts.join(" · "), error, text: if error { s(e, "text") } else { String::new() }, ..base }
+            // A turn that did not succeed (its subtype, e.g. error_max_turns):
+            // the error box, with its text or else the subtype.
+            let sub = s(e, "subtype");
+            let error = e.get("isError").and_then(|v| v.as_bool()).unwrap_or(false) || (!sub.is_empty() && sub != "success");
+            let text = if error { let t = s(e, "text"); if t.is_empty() { sub } else { t } } else { String::new() };
+            Shown { kind: "result", detail: parts.join(" · "), error, text, ..base }
         }
         "error" => Shown { kind: "error", text: s(e, "text"), error: true, ..base },
         "notice" => Shown { kind: "notice", text: s(e, "text"), ..base },

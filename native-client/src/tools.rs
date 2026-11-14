@@ -75,7 +75,8 @@ pub fn body(name: &str, input: &Value) -> Body {
     let f = |k: &str| field(input, k);
     match name {
         "Bash" => Body::Bash { command: f("command"), description: f("description") },
-        "Write" => Body::Write(truncate(&f("content"), ARGS_MAX)),
+        // (A <pre> drops one trailing newline: the band has no empty last line.)
+        "Write" => Body::Write(truncate(drop_last_newline(&f("content")), ARGS_MAX)),
         "Edit" => {
             let mut lines: Vec<(String, bool)> = f("old_string").split('\n').map(|l| (format!("- {l}"), false)).collect();
             lines.extend(f("new_string").split('\n').map(|l| (format!("+ {l}"), true)));
@@ -90,6 +91,11 @@ pub fn body(name: &str, input: &Value) -> Body {
         }).collect()).unwrap_or_default()),
         _ => Body::Json,
     }
+}
+
+/// A <pre>'s text drops one trailing newline.
+pub fn drop_last_newline(s: &str) -> &str {
+    s.strip_suffix('\n').unwrap_or(s)
 }
 
 /// The body's JSON: the input pretty-printed (2 spaces), cut.
@@ -135,7 +141,7 @@ pub fn result_text(v: Option<&Value>) -> String {
 
 /// The result as the body shows it: escapes out, cut.
 pub fn result_shown(v: Option<&Value>) -> String {
-    truncate(&strip_ansi(&result_text(v)), RESULT_MAX)
+    truncate(drop_last_newline(&strip_ansi(&result_text(v))), RESULT_MAX)
 }
 
 /// Tabs to the next stop of 8 (Slint's text has no tab stops).
@@ -195,6 +201,7 @@ mod tests {
             { "content": "Doing", "activeForm": "Doing it now", "status": "in_progress" },
             { "content": "Later", "status": "pending" } ] })),
             Body::Todos(vec![("Done one".into(), "completed".into()), ("Doing it now".into(), "in_progress".into()), ("Later".into(), "pending".into())]));
+        assert_eq!(body("Write", &json!({ "content": "# Changelog\n\n- Port moved to 4000.\n" })), Body::Write("# Changelog\n\n- Port moved to 4000.".into()));
         assert_eq!(body("Read", &json!({})), Body::Json);
         assert_eq!(json_args(&json!({})), "{}");
         assert_eq!(json_args(&Value::Null), "{}");

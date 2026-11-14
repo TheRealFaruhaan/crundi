@@ -2136,6 +2136,83 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
   await http('POST', `/api/ui-sessions/${tc}/close`, {}, token);
 }
 
+// ─── 2.15 Thinking and 2.16 the rest of the log ───
+// Frames as the server's own (this CLI returns no thinking text).
+{
+  const lg = await make('demo', 'Log', true);
+  p = await until('the log chat has a pane', (q) => pane(q, lg), 30000);
+  await ui('focus-pane', pane(p, lg).id);
+  const ev = (e) => ui('chat-event', JSON.stringify(e));
+  const rowsOf = async () => pane(await props(), lg)?.tools || [];
+  const th = async (id) => (await rowsOf()).find((r) => r.think === id);
+  // 1-3: a block that starts streaming opens; a newer one folds it.
+  await ev({ type: 'entry', entry: { id: 'th1', kind: 'thinking', text: 'Looking at the port setting.', streaming: true, tokens: 0 } });
+  let t1 = await th('th1');
+  check('a thinking block that starts streaming is open, live', t1?.open === true && t1?.streaming === true, t1);
+  for (let i = 0; i < 30; i++) await ev({ type: 'delta', id: 'th1', text: `\nline ${i} of the reasoning` });
+  await ev({ type: 'entry', entry: { id: 'th2', kind: 'thinking', text: 'A second thought.', streaming: true, tokens: 0 } });
+  t1 = await th('th1'); let t2 = await th('th2');
+  check('a newer block folds the older at once (still streaming), and opens', t1?.open === false && t1?.streaming === true && t2?.open === true, { t1, t2 });
+  await snap('2.15-newer-folds');
+  // 4: finished: open, then folded 5 s later.
+  await ev({ type: 'patch', id: 'th2', patch: { streaming: false } });
+  t2 = await th('th2');
+  check('just finished: still open', t2?.open === true && t2?.streaming === false, t2);
+  p = await until('folded after the linger', async () => (await th('th2'))?.open === false, 8000);
+  check('it folds 5 s after it finished', !!p);
+  // 5: the reader's click wins.
+  await ui('tool-toggle', 'th2');
+  await sleep(6000);
+  check('opened by a click, it stays open', (await th('th2'))?.open === true);
+  await ui('tool-toggle', 'th2');
+  check('closed by a click', (await th('th2'))?.open === false);
+  // 6: no text: the "Thought" line.
+  await ev({ type: 'entry', entry: { id: 'th3', kind: 'thinking', text: '', tokens: 1234 } });
+  await ev({ type: 'entry', entry: { id: 'th4', kind: 'thinking', text: '' } });
+  check('"Thought for ~1.2k tokens" and "Thought"', (await th('th3'))?.detail === 'Thought for ~1.2k tokens' && (await th('th4'))?.detail === 'Thought');
+  await ev({ type: 'entry', entry: { id: 'th5', kind: 'thinking', text: 'From history: not streaming.' } });
+  check('a block first seen not streaming is folded', (await th('th5'))?.open === false);
+  // 2.16: a reply with markdown.
+  await ev({ type: 'entry', entry: { id: 'r1', kind: 'assistant-text', text: '# Title\n## The fix\nFirst line\nsecond line, see [docs](https://example.com/a) and https://example.com/b.\n\n```js\nconst a = 1;\nconst long = "' + 'x'.repeat(300) + '";\n```\n\n1) one\n2) two\n\n> a quote\n> another\n\n---\n![pic](https://x/p.png)' } });
+  const rows = await rowsOf();
+  const prose = rows.filter((r) => r.prose);
+  check('# is the heading, ## bold body size', prose.some((r) => r.prose === 'h' && /Title/.test(r.text)) && prose.some((r) => r.prose === 'h4' && /The fix/.test(r.text)), prose);
+  check('a paragraph keeps its line breaks; links and bare URLs are links', prose.some((r) => r.prose === 'p' && r.text.includes('First line  \nsecond line') && r.text.includes('[docs](https://example.com/a)') && r.text.includes('<https://example.com/b>.')), prose);
+  check('numbered items count from 1; each > line is its own quote; a rule', prose.filter((r) => r.prose === 'li').map((r) => r.marker).join() === '1.,2.' && prose.filter((r) => r.prose === 'quote').length === 2 && prose.some((r) => r.prose === 'hr'), prose);
+  check('an image is not drawn: its text stays', prose.some((r) => r.text.includes('!\\[pic]')), prose);
+  const code = rows.find((r) => r.code !== undefined);
+  check('the code block: its text, the fence\'s trailing newline dropped', code && code.code.startsWith('const a = 1;') && !code.code.endsWith('\n'), code);
+  await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'n1', kind: 'notice', text: 'Context compacted.' } }));
+  await ev({ type: 'entry', entry: { id: 'e1', kind: 'error', text: 'Process error: boom' } });
+  await ev({ type: 'entry', entry: { id: 'res1', kind: 'result', subtype: 'error_max_turns', durationMs: 1000 } });
+  await ev({ type: 'entry', entry: { id: 'res2', kind: 'result', subtype: 'success', durationMs: 12300, costUsd: 0.0421 } });
+  const es = (await rowsOf()).filter((r) => r.entry);
+  check('a failed turn shows its subtype as an error; the end of a turn its time and cost', es.some((r) => r.entry === 'result' && r.error && r.text === 'error_max_turns') && es.some((r) => r.entry === 'result' && !r.error && r.detail === '12.3s · $0.0421'), es);
+  await snap('2.16-reply');
+  // Copy and links (the handlers; the clipboard as the system holds it).
+  await ui('tool-copy', 'const a = 1;');
+  p = await until('copied', (q) => q.clipboard === 'const a = 1;' && q.toast === 'Copied', 5000);
+  check('the copy button puts the block in the clipboard: "Copied"', !!p, p && { clipboard: (await props()).clipboard });
+  await ui('open-link', 'https://example.com/a');
+  check('a link opens in the system browser (recorded under test)', (await props()).lastOpened === 'https://example.com/a');
+  // F87: wheel steps up from the bottom stay; the jump button.
+  for (let i = 0; i < 40; i++) await ev({ type: 'entry', entry: { id: 'fill' + i, kind: 'notice', text: 'Filler line ' + i } });
+  await ui('log-watch', 'live:' + lg);
+  p = await until('at the bottom', (q) => q.log.key === 'live:' + lg && q.log.dist < 2 && q.log.stick, 5000);
+  check('the log follows the bottom', !!p, (await props()).log);
+  const lp = pane(await props(), lg);
+  const wx = WB.x + lp.x + lp.w / 2, wy = WB.y + lp.y + lp.h / 3;
+  const ds = [];
+  for (let i = 0; i < 3; i++) { await d.send({ cmd: 'mouse', kind: 'wheel', x: wx, y: wy, dy: 100 }); await sleep(300); ds.push((await props()).log.dist); }
+  check('three wheel steps up: further each time, never back at the bottom', ds[0] > 2 && ds[1] > ds[0] && ds[2] > ds[1], ds);
+  await ev({ type: 'entry', entry: { id: 'late', kind: 'notice', text: 'Arrived while reading up' } });
+  await sleep(300);
+  p = await props();
+  check('an arrival does not pull the log down; the jump button shows its dot', p.log.dist >= ds[2] - 2 && !p.log.stick && p.log.jump && p.log.jumpNew, p.log);
+  await snap('2.16-jump');
+  await http('POST', `/api/ui-sessions/${lg}/close`, {}, token);
+}
+
 d.close();
 app.kill();
 console.log(failed ? `\n${failed} failed` : '\nall passed');

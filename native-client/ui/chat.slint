@@ -32,8 +32,22 @@ export struct ToolView {
 
 /// A tool card's or group's head clicked (src/app.rs): by the chat, and the
 /// entry id or "g:<group>".
+/// What the test driver reads of one chat's log (the pane whose key it
+/// watches): its distance from the bottom, following it, the jump button.
+export global LogProbe {
+    in-out property <string> watch;
+    in-out property <length> dist;
+    in-out property <bool> stick;
+    in-out property <bool> jump;
+    in-out property <bool> jump-new;
+}
+
 export global ToolAct {
     callback toggle(string, string);
+    // A link in Claude's reply (2.16): the system browser.
+    callback open-link(string);
+    // A code block's copy button: its text to the clipboard.
+    callback copy(string);
 }
 
 /// One choice of a question: its label, description and preview; picked;
@@ -736,9 +750,12 @@ component Spinner inherits Rectangle {
 component StatusMark inherits Rectangle {
     in property <bool> running;
     in property <bool> failed;
-    width: Theme.icon-sm; height: Theme.icon-sm;
-    if root.running: Spinner { }
+    // The row's height (a layout sets it): the mark centred on it at any
+    // text size.
+    width: Theme.icon-sm;
+    if root.running: Spinner { y: (parent.height - self.height) / 2; }
     if !root.running: Rectangle {
+        y: (parent.height - self.height) / 2;
         width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.sp-6 / 2;
         background: root.failed ? Theme.red : Theme.green;
     }
@@ -786,16 +803,21 @@ component TodoRow inherits Rectangle {
                 width: Theme.icon-sm - Theme.sp-4; height: Theme.icon-sm - Theme.sp-4; source: Icons.check; tint: root.c;
             }
         }
-        Rectangle {
+        col := Rectangle {
             horizontal-stretch: 1; min-width: 0;
             height: tx.preferred-height;
             tx := BodyText { width: parent.width; fs: root.fs; text: root.t.text; color: root.c; }
-            // Struck through, line by line (Slint's text has no strike).
+            // Struck through, line by line (Slint's text has no strike): a
+            // one-line item as wide as its text; a wrapped one across the
+            // column (its lines' own widths are not known).
+            property <int> lines: round(tx.preferred-height / max(1px, one.preferred-height));
             if root.t.state == "completed": Rectangle {
-                for i in round(tx.preferred-height / max(1px, one.preferred-height)): Rectangle {
+                for i in col.lines: Rectangle {
+                    x: 0; width: col.lines == 1 ? min(col.width, whole.preferred-width) : col.width;
                     y: i * one.preferred-height + one.preferred-height / 2; height: 1px; background: root.c;
                 }
             }
+            whole := Text { visible: false; text: root.t.text; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; }
         }
     }
     one := Text { visible: false; text: "x"; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; }
@@ -821,7 +843,7 @@ component ToolCard inherits Rectangle {
             hd := HorizontalLayout {
                 padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
                 spacing: Theme.sp-8;
-                StatusMark { y: (parent.height - self.height) / 2; running: root.t.status == "running"; failed: root.t.error; }
+                StatusMark { running: root.t.status == "running"; failed: root.t.error; }
                 Text { text: root.t.title; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: root.t.error ? Theme.red : Theme.accent-hover; vertical-alignment: center; }
                 Text { text: root.t.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; overflow: elide; wrap: no-wrap; horizontal-stretch: 1; min-width: 0; vertical-alignment: center; }
                 Text { text: root.t.open ? "▾" : "▸"; font-size: Theme.text-13 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
@@ -1163,6 +1185,90 @@ component QuestionCard inherits Rectangle {
     }
 }
 
+/// Thinking (2.15, .cc-think / .cc-thought). With text: a bar at the left,
+/// the head "▾ Thinking" (it shimmers while live; a click opens or folds
+/// it) and the reasoning in muted italics, at most composer-max × 1.5 then
+/// scrolling (kept at the newest line while it streams, a caret blinking at
+/// its end). Without text: the "Thought" line.
+component ThinkBlock inherits Rectangle {
+    in property <float> fs: 1;
+    in property <EntryView> e;
+    property <bool> live: root.e.status == "streaming";
+    property <length> body-max: Theme.composer-max + Theme.composer-max / 2;
+    height: root.e.text == "" ? tl.preferred-height : lay.preferred-height;
+    // The "Thought" line: a dot and the wording; nothing to open.
+    tl := HorizontalLayout {
+        visible: root.e.text == "";
+        spacing: Theme.sp-6;
+        alignment: start;
+        Rectangle {
+            width: Theme.sp-6;
+            Rectangle {
+                y: (parent.height - self.height) / 2; width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.sp-6 / 2;
+                background: Theme.text-muted; opacity: Theme.o-caret;
+            }
+        }
+        Text { text: root.e.detail; font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted; line-height-factor: Theme.lh-chat; }
+    }
+    if root.e.text != "": Rectangle { x: 0; width: Theme.sp-2; background: Theme.border; }
+    lay := VerticalLayout {
+        visible: root.e.text != "";
+        x: Theme.sp-10; width: parent.width - Theme.sp-10;
+        // The head: the caret and the label.
+        Rectangle {
+            height: hd.preferred-height;
+            hd := HorizontalLayout {
+                spacing: Theme.sp-6;
+                alignment: start;
+                Text { text: root.e.open ? "▾" : "▸"; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; line-height-factor: Theme.lh-chat; }
+                Rectangle {
+                    width: lbl.preferred-width; height: lbl.preferred-height;
+                    lbl := Text { text: "Thinking"; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; line-height-factor: Theme.lh-chat; }
+                    // Live: a brighter band slides over the label, right to
+                    // left (the web's gradient; a band here: the software
+                    // renderer fills text in one colour).
+                    if root.live: Rectangle {
+                        property <float> p: mod(animation-tick() / Theme.shimmer, 1);
+                        x: parent.width - self.p * 2 * parent.width - parent.width / 2 / 2;
+                        width: parent.width / 2;
+                        clip: true;
+                        Text { x: -parent.x; text: "Thinking"; font-size: Theme.text-12 * root.fs; color: Theme.text-primary; line-height-factor: Theme.lh-chat; }
+                    }
+                }
+            }
+            TouchArea { mouse-cursor: pointer; clicked => { ToolAct.toggle(root.e.chat, root.e.id); } }
+        }
+        // The body: folds to nothing (motion), at most body-max, scrolls.
+        Rectangle {
+            property <length> want: min(bt.preferred-height, root.body-max);
+            height: root.e.open ? self.want + Theme.sp-4 : 0px;
+            animate height { duration: Theme.motion; easing: ease-out; }
+            clip: true;
+            fl := Flickable {
+                y: Theme.sp-4; height: parent.height - Theme.sp-4;
+                content-height: bt.preferred-height;
+                // While live: kept at its newest line.
+                property <length> ch: bt.preferred-height;
+                changed ch => { if root.live { self.content-y = min(0px, self.height - self.content-height); } }
+                bt := TextInput {
+                    width: fl.width;
+                    read-only: true; wrap: word-wrap;
+                    // Live: a caret blinks after the text (a glyph: the end of
+                    // a wrapped text has no position to draw one at).
+                    property <bool> on: mod(animation-tick() / Theme.blink * 2, 2) < 1;
+                    text: root.e.text + (root.live && self.on ? " ▎" : "");
+                    font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted;
+                    line-height-factor: Theme.lh-chat;
+                }
+            }
+            ScrollThumb {
+                y: Theme.sp-4; height: parent.height - Theme.sp-4;
+                view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y;
+            }
+        }
+    }
+}
+
 component EntryRow inherits VerticalLayout {
     // The pane's text size, a scale of the base size (the web's --cc-fs).
     in property <float> fs: 1;
@@ -1192,13 +1298,14 @@ component EntryRow inherits VerticalLayout {
         }
     }
 
-    // The web's line box is line-chat × the text size; StyledText has no line
-    // height, so its one line is padded to that box: half the difference
-    // above and below (the font's own line measured, so any system font fits).
-    if e.kind == "assistant" && e.status != "li": pl := VerticalLayout {
-        property <length> size: Theme.text-14 * root.fs;
-        padding-top: max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2);
-        padding-bottom: self.padding-top;
+    // Claude's reply (2.16): paragraphs, headings, quotes at 13 × fs (a `#`
+    // heading 14, semibold, 12 above). The web's line box is line-chat × the
+    // text size; StyledText has no line height, so its one line is padded
+    // to that box: half the difference above and below.
+    if e.kind == "assistant" && (e.status == "p" || e.status == "h" || e.status == "h4"): pl := VerticalLayout {
+        property <length> size: (e.status == "h" ? Theme.text-14 : Theme.text-13) * root.fs;
+        padding-top: max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2) + (e.status == "h" ? Theme.sp-4 : 0px);
+        padding-bottom: max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2);
         Rectangle { height: 0; pm := Text { visible: false; text: "X"; font-size: pl.size; } }
         // Its width given, so its wrapped height is measured at the width it
         // is drawn at (F24: a long inline code token wrapped differently).
@@ -1206,10 +1313,28 @@ component EntryRow inherits VerticalLayout {
             width: root.avail;
             text: e.md;
             default-color: Theme.text-primary;
-            default-font-size: Theme.text-14 * root.fs;
+            default-font-size: pl.size;
             link-color: Theme.accent-hover;
+            link-clicked(url) => { ToolAct.open-link(url); }
         }
     }
+    // A quote line: a bar, then the text in text-secondary.
+    if e.kind == "assistant" && e.status == "quote": HorizontalLayout {
+        padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - qm.preferred-height) / 2);
+        padding-bottom: self.padding-top;
+        spacing: Theme.sp-10 - Theme.sp-2;
+        Rectangle { width: Theme.sp-2; background: Theme.border; qm := Text { visible: false; text: "X"; font-size: Theme.text-13 * root.fs; } }
+        StyledText {
+            width: root.avail - Theme.sp-10;
+            text: e.md;
+            default-color: Theme.text-secondary;
+            default-font-size: Theme.text-13 * root.fs;
+            link-color: Theme.accent-hover;
+            link-clicked(url) => { ToolAct.open-link(url); }
+        }
+    }
+    // A rule: a light line, the full width.
+    if e.kind == "assistant" && e.status == "hr": Rectangle { height: Theme.sp-2; background: Theme.border; }
     if e.kind == "assistant" && e.status == "li": HorizontalLayout {
         padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - lm.preferred-height) / 2);
         padding-bottom: self.padding-top;
@@ -1221,36 +1346,57 @@ component EntryRow inherits VerticalLayout {
             default-color: Theme.text-primary;
             default-font-size: Theme.text-13 * root.fs;
             link-color: Theme.accent-hover;
+            link-clicked(url) => { ToolAct.open-link(url); }
         }
     }
 
-    if e.kind == "code": Rectangle {
+    // A code block (pre): its lines kept whole, scrolling sideways; the copy
+    // button inside its top-right corner while the pointer is over it.
+    if e.kind == "code": cblk := Rectangle {
         background: Theme.bg-secondary;
         border-width: 1px;
         border-color: Theme.border-subtle;
         border-radius: Theme.r-control;
-        height: code.preferred-height + Theme.sp-16;
-        code := TextInput {
-            x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20;
-            read-only: true; wrap: word-wrap;
-            text: e.text;
-            font-family: Theme.mono; font-size: Theme.text-12 * root.fs;
-            color: Theme.text-primary;
+        clip: true;
+        height: code.preferred-height + 2 * Theme.sp-10;
+        property <bool> over: !Pointer.modal && Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
+            && Pointer.y >= self.absolute-position.y && Pointer.y < self.absolute-position.y + self.height;
+        // Shown while over it, and a moment after (the pointer on its way to
+        // the button); the tick until it goes.
+        property <bool> shown;
+        property <bool> copied;
+        changed over => { if self.over { self.shown = true; linger.running = false; } else { linger.running = true; } }
+        linger := Timer { interval: Theme.motion; running: false; triggered => { self.running = false; cblk.shown = false; cblk.copied = false; } }
+        cf := Flickable {
+            x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+            content-width: max(self.width, code.preferred-width + 2 * Theme.sp-12);
+            content-height: self.height;
+            code := TextInput {
+                x: Theme.sp-12; y: Theme.sp-10 - 1px;
+                read-only: true; single-line: false; wrap: no-wrap;
+                text: e.text;
+                font-family: Theme.mono; font-size: Theme.text-12 * root.fs;
+                color: Theme.text-primary;
+            }
+        }
+        if cblk.shown: Rectangle {
+            x: parent.width - self.width - Theme.sp-6; y: Theme.sp-6;
+            width: Theme.sp-24; height: Theme.sp-20 + Theme.sp-2;
+            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.shadow-menu; }
+            Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border; background: cb.has-hover ? Theme.bg-hover : Theme.bg-secondary; }
+            Icon {
+                source: cblk.copied ? Icons.check : Icons.copy; width: Theme.icon-md; height: Theme.icon-md;
+                tint: cblk.copied ? Theme.green : cb.has-hover ? Theme.text-primary : Theme.text-secondary;
+            }
+            cb := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { ToolAct.copy(e.text); cblk.copied = true; }
+                Tip { on: parent.has-hover; text: "Copy code"; }
+            }
         }
     }
 
-    if e.kind == "thinking": HorizontalLayout {
-        spacing: Theme.sp-6;
-        Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-chip; y: Theme.sp-8; background: Theme.text-muted; }
-        VerticalLayout {
-            Text {
-                text: "Thought";
-                font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted;
-                TouchArea { mouse-cursor: pointer; clicked => { root.open = !root.open; } }
-            }
-            if root.open: Text { text: e.text; font-size: Theme.text-12 * root.fs; font-italic: true; color: Theme.text-muted; wrap: word-wrap; }
-        }
-    }
+    if e.kind == "thinking": ThinkBlock { fs: root.fs; e: e; }
 
     if e.kind == "tool": VerticalLayout {
         for t in e.tools: ToolCard { t: t; fs: root.fs; chat: e.chat; }
@@ -1268,7 +1414,7 @@ component EntryRow inherits VerticalLayout {
             gh := HorizontalLayout {
                 padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
                 spacing: Theme.sp-8;
-                StatusMark { y: (parent.height - self.height) / 2; running: e.status == "running"; failed: e.error; }
+                StatusMark { running: e.status == "running"; failed: e.error; }
                 Text { text: e.title; font-size: Theme.text-12 * root.fs; color: Theme.text-primary; overflow: elide; wrap: no-wrap; horizontal-stretch: 1; min-width: 0; vertical-alignment: center; }
                 Text { text: e.detail; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
                 Text { text: e.open ? "▾" : "▸"; font-size: Theme.text-13 * root.fs; color: Theme.text-muted; vertical-alignment: center; }
@@ -1301,7 +1447,7 @@ component EntryRow inherits VerticalLayout {
         ah := HorizontalLayout {
             padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-10; padding-right: Theme.sp-10;
             spacing: Theme.sp-8;
-            StatusMark { y: (parent.height - self.height) / 2; running: e.status == "running"; failed: e.status == "failed"; }
+            StatusMark { running: e.status == "running"; failed: e.status == "failed"; }
             Text { text: e.title; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.accent-hover; vertical-alignment: center; }
             Text { text: e.detail; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; overflow: elide; wrap: no-wrap; horizontal-stretch: 1; min-width: 0; vertical-alignment: center; }
             Text { text: "transcript ›"; font-size: Theme.text-11 * root.fs; color: Theme.accent-hover; vertical-alignment: center; }
@@ -1339,7 +1485,7 @@ component EntryRow inherits VerticalLayout {
     if e.kind == "question": QuestionCard { fs: root.fs; e: e; }
 
     // The end of a turn: centred, small, a line above.
-    if e.kind == "result": VerticalLayout {
+    if e.kind == "result" && !e.error: VerticalLayout {
         Rectangle {
             height: 1px;
             for i in ceil(self.width / Theme.sp-6): Rectangle { x: i * Theme.sp-6; width: Theme.sp-4; height: 1px; background: Theme.border-subtle; }
@@ -1354,16 +1500,22 @@ component EntryRow inherits VerticalLayout {
         }
     }
 
-    if e.kind == "error": Rectangle {
+    // An error (.cc-error), and a failed turn's end: a red box.
+    if e.kind == "error" || (e.kind == "result" && e.error): Rectangle {
         background: Theme.red-dim;
         border-width: 1px;
-        border-color: Theme.error-edge;
+        border-color: Theme.red;
         border-radius: Theme.r-control;
-        height: et.preferred-height + Theme.sp-16;
-        et := Text { x: Theme.sp-10; width: parent.width - Theme.sp-20; text: e.text; color: Theme.error-text; wrap: word-wrap; font-size: Theme.text-12 * root.fs; }
+        height: et.preferred-height + Theme.sp-6 + Theme.sp-8;
+        et := Text {
+            x: Theme.sp-10; y: Theme.sp-6 + 1px; width: parent.width - Theme.sp-20;
+            text: e.kind == "result" ? (e.text != "" ? e.text : "Error") : e.text;
+            color: Theme.red; wrap: word-wrap; font-size: Theme.text-12 * root.fs;
+        }
     }
 
-    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: Theme.text-11 * root.fs; horizontal-alignment: center; wrap: word-wrap; }
+    // A notice (.cc-notice): centred, muted italics.
+    if e.kind == "notice": Text { text: e.text; color: Theme.text-muted; font-size: Theme.text-12 * root.fs; font-italic: true; horizontal-alignment: center; wrap: word-wrap; }
 }
 
 /// A queued-messages drawer (2.9, .cc-queue): held (dashed accent edge,
@@ -2106,7 +2258,42 @@ export component ChatPane inherits Rectangle {
     in property <int> draft-gen;
     changed draft-gen => { self.draft = root.saved-draft; }
     changed draft => { root.draft-changed(self.draft); }
+    // Following the newest message (2.16, F87): set only by the reader's own
+    // scrolling (within stick-within of the bottom); the log goes to the
+    // bottom only when content arrives (content-gen) or the log is resized,
+    // never because the list's estimated height changed.
     property <bool> stick: true;
+    in property <int> content-gen;
+    property <length> dist: max(0px, list.content-height + list.content-y - list.visible-height);
+    function to-bottom() { list.content-y = min(0px, list.visible-height - list.content-height - Theme.sp-4); }
+    changed content-gen => {
+        if root.stick || root.dist < Theme.stick-within { root.stick = true; root.to-bottom(); root.settle-n = 0; settle.running = true; }
+        else { root.jump-new = true; }
+    }
+    // The list's estimate settles as the last rows are realised: a few
+    // frames' re-check, for that content change only.
+    property <int> settle-n;
+    settle := Timer {
+        interval: Theme.frame; running: false;
+        triggered => { root.settle-n += 1; if root.stick { root.to-bottom(); } if root.settle-n >= 4 { self.running = false; } }
+    }
+    // The jump button: past the larger of jump-at and a third of the log;
+    // new content below while reading up gives it a dot.
+    property <bool> jump-on: root.dist > max(Theme.jump-at, list.visible-height * Theme.jump-share);
+    property <bool> jump-new;
+    // For the test driver (LogProbe), when watched.
+    property <bool> watched: LogProbe.watch == root.key;
+    property <string> probe: root.watched ? root.dist / 1px + "|" + (root.stick ? "s" : "") + "|" + (root.jump-on ? "j" : "") + "|" + (root.jump-new ? "n" : "") : "";
+    changed probe => { if root.watched { LogProbe.dist = root.dist; LogProbe.stick = root.stick; LogProbe.jump = root.jump-on; LogProbe.jump-new = root.jump-new; } }
+    // Its click: down to the bottom in a few eased frames.
+    glide := Timer {
+        interval: Theme.frame; running: false;
+        triggered => {
+            let target = min(0px, list.visible-height - list.content-height - Theme.sp-4);
+            if abs(list.content-y - target) < Theme.sp-2 { list.content-y = target; self.running = false; }
+            else { list.content-y = list.content-y + (target - list.content-y) / 2; }
+        }
+    }
     property <bool> exited: root.state == "exited";
     property <bool> busy: root.state == "working" || root.state == "needs-input";
     // The app put text in this pane's box (an attached path).
@@ -2135,10 +2322,11 @@ export component ChatPane inherits Rectangle {
                     answer(id, o) => { root.answer(id, o); }
                 }
             }
-            changed content-height => {
-                if root.stick { self.content-y = min(0px, self.visible-height - self.content-height - Theme.sp-4); }
+            changed visible-height => { if root.stick { root.to-bottom(); } }
+            scrolled => {
+                root.stick = root.dist < Theme.stick-within;
+                if root.stick { root.jump-new = false; }
             }
-            scrolled => { root.stick = self.content-y <= self.visible-height - self.content-height + Theme.sp-48; }
         }
         if root.error != "": Rectangle {
             background: Theme.red-dim;
@@ -2360,6 +2548,35 @@ export component ChatPane inherits Rectangle {
                     }
                 }
             }
+        }
+    }
+    // The jump button (.cc-jump): over the log, at its bottom centre.
+    if root.jump-on: Rectangle {
+        width: Theme.sp-40; height: Theme.sp-40;
+        x: list.x + (list.width - self.width) / 2;
+        y: list.y + list.height - self.height - Theme.sp-10;
+        SoftShadow { width: parent.width; height: parent.height; radius: self.width / 2; shadow: Theme.shadow-menu; }
+        Rectangle {
+            border-radius: self.width / 2; border-width: 1px;
+            border-color: jt.has-hover || root.jump-new ? Theme.accent : Theme.border;
+            background: jt.has-hover ? Theme.accent-dim : Theme.bg-secondary;
+        }
+        Icon {
+            // New below: the arrow nudges down now and then.
+            property <bool> nudge: root.jump-new && mod(animation-tick() / Theme.shimmer, 1) < 1 / 2 / 2 / 2;
+            y: (parent.height - self.height) / 2 + (self.nudge ? Theme.sp-2 : 0px);
+            source: @image-url("shapes/arrow-down.svg"); width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.text-primary;
+        }
+        if root.jump-new: Rectangle {
+            x: parent.width - self.width + Theme.sp-2; y: -Theme.sp-2;
+            width: Theme.sp-10 + Theme.sp-4; height: self.width; border-radius: self.width / 2;
+            background: Theme.bg-primary;
+            Rectangle { width: Theme.sp-10; height: Theme.sp-10; border-radius: self.width / 2; background: Theme.accent; }
+        }
+        jt := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.stick = true; root.jump-new = false; glide.running = true; }
+            Tip { on: parent.has-hover; text: "Go to the newest message"; }
         }
     }
     // The slash menu (2.11): over the box's row (wide: box, attach, Send;

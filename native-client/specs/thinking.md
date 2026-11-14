@@ -194,22 +194,22 @@ non-streaming first sight is closed).
 
 ## Checklist
 
-- [ ] Block with text: bar `border` at the left, head "▾ Thinking" in
+- [x] Block with text: bar `border` at the left, head "▾ Thinking" in
       `text-secondary` (not italic), body 12 italic `text-muted`, `line-chat`,
       keeps newlines.
-- [ ] Body stops at its maximum height and scrolls (`ScrollThumb`); kept at
+- [x] Body stops at its maximum height and scrolls (`ScrollThumb`); kept at
       the newest line while text streams.
-- [ ] Live: the label shimmers (gradient sliding, theme period); a caret
+- [x] Live: the label shimmers (gradient sliding, theme period); a caret
       blinks after the text. Both go when it finishes.
-- [ ] Opens when it starts streaming; folds 5 s after it finishes; folds at
+- [x] Opens when it starts streaming; folds 5 s after it finishes; folds at
       once when a newer block starts; folded from history.
-- [ ] A click on the head toggles it (fold animation, caret ▾ / ▸) and the
+- [x] A click on the head toggles it (fold animation, caret ▾ / ▸) and the
       reader's choice wins over every rule.
-- [ ] Finishing does not jump the body's scroll (named difference).
-- [ ] No text: "Thought" / "Thought for ~N tokens" (k with one decimal from
+- [x] Finishing does not jump the body's scroll (named difference).
+- [x] No text: "Thought" / "Thought for ~N tokens" (k with one decimal from
       1000), the 55% dot; not clickable.
-- [ ] Text scales with A- / A+; bar, gaps and dot do not.
-- [ ] The log stays at the bottom while a followed block grows.
-- [ ] Body text is selectable; head and "Thought" are not.
+- [x] Text scales with A- / A+; bar, gaps and dot do not.
+- [x] The log stays at the bottom while a followed block grows.
+- [x] Body text is selectable; head and "Thought" are not.
 - [ ] phase2.mjs steps 1-7 pass; cargo tests cover the wording and the
       rules; snapshots of every state saved under `thinking/review/`.

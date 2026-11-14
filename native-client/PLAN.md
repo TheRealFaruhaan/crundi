@@ -384,6 +384,31 @@ Phase 1 left these, each with its workaround in place:
     tab stops);
   - the wheel over an open body scrolls the body; it does not pass on to
     the log at the body's end.
+- **Thinking** (2.15):
+  - the live label's shimmer is a brighter band sliding over it (the web's
+    is a gradient fading in and out: the software renderer fills text in
+    one colour);
+  - the live caret is a glyph after the text (the end of a wrapped text has
+    no position to draw a box at), blinking with Theme.blink;
+  - the system's reduced-motion setting is not read: it always animates;
+  - when a block finishes, its body keeps its scroll (the web's rebuild
+    puts it back at the top).
+- **The rest of the log** (2.16):
+  - the copy button shows on code blocks only: StyledText tells nothing of
+    where its links and code spans are, nor that the pointer is over one,
+    so spans, links and paths get no copy button, and a right-click on a
+    link has no "Open in browser / Copy link" menu (a left click opens it in
+    the system browser);
+  - reply paragraphs cannot be selected (StyledText has no selection); code
+    blocks, bubbles, tool and thinking bodies can, each on its own (a
+    selection cannot span blocks);
+  - a path in a reply is plain text; its click (the Files panel) waits for
+    phase 3;
+  - a code block scrolls sideways with the wheel (Shift) and has no
+    sideways thumb;
+  - the jump button's click scrolls down in a few eased frames;
+  - not built yet in this step: the media under show_* calls (pictures and
+    the viewer, video and audio, files and their Download, frames).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):
