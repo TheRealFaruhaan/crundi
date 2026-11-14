@@ -64,13 +64,6 @@ pub fn can_allow(r: &Req, cap: bool, collaborator: bool) -> bool {
     cap && r.run && !r.session.is_empty() && !collaborator
 }
 
-/// The durations of the allow row: its key and what it reads.
-pub const DURATIONS: [(&str, &str); 4] = [("15m", "15 minutes"), ("1h", "1 hour"), ("8h", "8 hours"), ("chat", "Until this chat ends")];
-
-pub fn duration_label(key: &str) -> &'static str {
-    DURATIONS.iter().find(|d| d.0 == key).map(|d| d.1).unwrap_or("1 hour")
-}
-
 /// What Approve sends.
 pub fn approve_body(req: &Req, pin: &str, allow: Option<&str>) -> Value {
     let pin = if req.lock == "pin" { pin.trim() } else { pin };
@@ -155,7 +148,5 @@ mod tests {
         assert_eq!(answer(Ok((200, json!({ "ok": false, "error": "Incorrect passphrase" }))), false), Err("Incorrect passphrase".into()));
         assert_eq!(answer(Ok((200, json!({ "ok": false }))), false), Err("Wrong PIN".into()));
         assert_eq!(answer(Err("Network error".into()), false), Err("Network error".into()));
-        assert_eq!(duration_label("chat"), "Until this chat ends");
-        assert_eq!(duration_label("?"), "1 hour");
     }
 }

@@ -267,6 +267,15 @@ them; each has a spec in `specs/`). So far:
   passphrase field on the first card, Approve / Reject, and for a chat's
   run "Allow for this chat" with a duration. Success toasts have a green
   edge. The rules are in `src/sreq.rs` (unit-tested).
+- **2.13 Questions** (specs/questions.md, `ui/chat.slint` QuestionCard):
+  Claude's AskUserQuestion cards in full: one to four questions, single
+  choice and multi-select with descriptions and previews, a note on a
+  choice (it follows the pick), Other, Submit (once every question has an
+  answer) and Dismiss; answered cards show their tags and notes, live from
+  any client; orphaned cards (the asking process gone) still answer, as a
+  message. Half-answered cards are kept as answer drafts (`ans:<chat>:<entry>`
+  in the drafts store) across pane switches and restarts. The rules are in
+  `src/questions.rs` (unit-tested).
 
 - **2.C Theme consolidation**: the theme is the scales (spacing
   2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font

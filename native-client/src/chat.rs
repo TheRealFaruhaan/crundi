@@ -212,6 +212,8 @@ pub struct Shown {
     /// tool: the batch Claude Code summed up in one line (its id, and the line).
     pub group: String,
     pub group_summary: String,
+    /// question: the whole entry (its questions, status, answers: 2.13).
+    pub raw: Value,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -309,6 +311,7 @@ fn shown(e: &Value) -> Option<Shown> {
                 options: q.get("options").and_then(|o| o.as_array()).map(|a| a.iter().map(|o| s(o, "label")).collect()).unwrap_or_default(),
                 status: s(e, "status"),
                 request_id: s(e, "requestId"),
+                raw: e.clone(),
                 ..base
             }
         }

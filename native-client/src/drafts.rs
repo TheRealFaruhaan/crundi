@@ -18,6 +18,10 @@ pub struct Drafts {
     entries: HashMap<String, (String, Option<u64>)>,
     /// Project alias → the chat that owns its copy.
     claims: HashMap<String, String>,
+    /// "ans:<chat>:<entry>" → a question card's picks (2.13: the web's
+    /// crundi_chat_ans_<chat>_<entry>, `{v: picks[], t}`), apart from the
+    /// text drafts and their claims.
+    answers: HashMap<String, (Value, Option<u64>)>,
 }
 
 impl Drafts {
@@ -27,6 +31,11 @@ impl Drafts {
         let mut d = Drafts::default();
         if let Some(o) = v.as_object() {
             for (k, e) in o {
+                if k.starts_with("ans:") {
+                    let v = e.get("v").cloned().unwrap_or(Value::Null);
+                    if v.as_array().is_some_and(|a| !a.is_empty()) { d.answers.insert(k.clone(), (v, e.get("t").and_then(|x| x.as_u64()))); }
+                    continue;
+                }
                 let (text, t) = match e {
                     Value::String(s) => (s.clone(), None),
                     o => (o.get("v").and_then(|x| x.as_str()).unwrap_or("").to_string(), o.get("t").and_then(|x| x.as_u64())),
@@ -40,6 +49,9 @@ impl Drafts {
     pub fn to_saved(&self) -> Value {
         let mut o = Map::new();
         for (k, (v, t)) in &self.entries {
+            o.insert(k.clone(), match t { Some(t) => json!({ "v": v, "t": t }), None => json!({ "v": v }) });
+        }
+        for (k, (v, t)) in &self.answers {
             o.insert(k.clone(), match t { Some(t) => json!({ "v": v, "t": t }), None => json!({ "v": v }) });
         }
         Value::Object(o)
@@ -117,6 +129,19 @@ impl Drafts {
     /// Drop drafts older than 30 days (those with no time stay).
     pub fn prune(&mut self, now: u64) {
         self.entries.retain(|_, (_, t)| t.is_none_or(|t| now.saturating_sub(t) <= TTL_MS));
+        self.answers.retain(|_, (_, t)| t.is_none_or(|t| now.saturating_sub(t) <= TTL_MS));
+    }
+
+    /// A question card's saved picks (2.13).
+    pub fn answer(&self, chat: &str, entry: &str) -> Option<&Value> {
+        self.answers.get(&format!("ans:{chat}:{entry}")).map(|e| &e.0)
+    }
+
+    /// A question card's picks changed: kept with the time; None removes
+    /// (nothing picked, or answered).
+    pub fn set_answer(&mut self, chat: &str, entry: &str, picks: Option<Value>, now: u64) {
+        let k = format!("ans:{chat}:{entry}");
+        match picks { Some(v) => { self.answers.insert(k, (v, Some(now))); } None => { self.answers.remove(&k); } }
     }
 }
 
@@ -159,6 +184,21 @@ mod tests {
         assert_eq!((d.own("old"), d.own("new"), d.own("bare"), d.own("empty")), (None, Some("y"), Some("z"), None));
         let back = Drafts::from_saved(&d.to_saved());
         assert_eq!((back.own("new"), back.own("bare")), (Some("y"), Some("z")));
+    }
+
+    #[test]
+    fn answers_kept_apart() {
+        let now = 100 * DAY;
+        let mut d = Drafts::default();
+        d.set_answer("c", "e1", Some(json!([{ "chosen": ["A"] }])), now - 31 * DAY);
+        d.set_answer("c", "e2", Some(json!([{ "other": "x" }])), now);
+        let mut back = Drafts::from_saved(&d.to_saved());
+        assert_eq!(back.own("c"), None);
+        assert_eq!(back.answer("c", "e2"), Some(&json!([{ "other": "x" }])));
+        back.prune(now);
+        assert_eq!(back.answer("c", "e1"), None);
+        back.set_answer("c", "e2", None, now);
+        assert_eq!(back.answer("c", "e2"), None);
     }
 
     #[test]

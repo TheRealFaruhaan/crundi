@@ -6,7 +6,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, SoftShadow, ScrollThumb, RevealFlickable, AccentFill } from "widgets.slint";
+import { Icon, SoftShadow, ScrollThumb, RevealFlickable, AccentFill, Pointer } from "widgets.slint";
 
 /// One request's card: the request, and whether it holds the field.
 export struct SreqCard { id: string, run: bool, name: string, project: string, reason: string, command: string, env: string, lock: string, armed: bool }
@@ -296,7 +296,20 @@ export component SreqDock inherits Rectangle {
     property <length> dur-w;
     property <length> dur-h;
 
+    // Where the cards are, for the Pointer (ui/widgets.slint): presses and
+    // hover there are the dock's.
+    property <length> at-x: root.dur-open ? 0px : root.cards.length == 0 ? 0px : root.width - root.edge - root.dock-w;
+    property <length> at-y: root.dur-open ? 0px : root.cards.length == 0 ? 0px : root.height - root.edge - root.view-h;
+    property <length> at-w: root.dur-open ? root.width : root.cards.length == 0 ? 0px : root.dock-w;
+    property <length> at-h: root.dur-open ? root.height : root.cards.length == 0 ? 0px : root.view-h;
+    function publish() { Pointer.dock-x = root.at-x; Pointer.dock-y = root.at-y; Pointer.dock-w = root.at-w; Pointer.dock-h = root.at-h; }
+    init => { self.publish(); }
+    changed at-x => { self.publish(); }
+    changed at-y => { self.publish(); }
+    changed at-w => { self.publish(); }
+    changed at-h => { self.publish(); }
     fl := Flickable {
+        visible: root.cards.length > 0;
         x: root.width - root.edge - root.dock-w - root.sh;
         y: root.height - root.edge - root.view-h - root.sh-v;
         width: root.dock-w + 2 * root.sh;

@@ -15,7 +15,7 @@
 //! One binary is also CEF's helper processes (renderer, GPU, utility): CEF
 //! starts it again with --type=…, and execute_process() handles those first.
 // The test driver's props are one large json! (src/testctl.rs).
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 slint::include_modules!();
 
@@ -25,6 +25,7 @@ mod sched;
 mod slash;
 mod secrets;
 mod sreq;
+mod questions;
 mod drafts;
 mod app;
 mod browser;
@@ -262,7 +263,8 @@ pub fn pointer_pressed(ui: &MainWindow, x: f32, y: f32) {
     p.set_y(y);
     p.set_press_x(x);
     p.set_press_y(y);
-    // On the "+" menu or a modal's scrim: the press focuses nothing beneath.
-    p.set_press_on_menu(ui.get_add_menu_open() || p.get_modal());
+    // On the "+" menu, a modal's scrim or the secret-request dock: the press
+    // focuses nothing beneath.
+    p.set_press_on_menu(ui.get_add_menu_open() || p.get_modal() || p.get_on_dock());
     p.set_presses(p.get_presses() + 1);
 }

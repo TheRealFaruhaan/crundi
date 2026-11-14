@@ -190,7 +190,6 @@ Phase 1 left these, each with its workaround in place:
   - Cru;
   - Add project and Inbox;
   - the launcher's Empty Shell and Terminal (they need a terminal emulator);
-  - "Other…" answers to questions;
 - **Tooltips** (phase 2). The web's are the system's own (`title`); the
   native client draws its own: `Tip` (ui/chat.slint) in what it describes,
   one `TipBox` drawn by main.slint after `tip-delay`, under the pointer,
@@ -360,6 +359,18 @@ Phase 1 left these, each with its workaround in place:
     wraps at the space before it);
   - while the dock scrolls (taller than the window), the cards' shadows
     are cut at its top and bottom (a scrolling box clips).
+- **Question cards** (2.13), deliberate differences and gaps:
+  - Enter in Other submits the card when every question has an answer (the
+    web does nothing on Enter);
+  - ticking a multi-select choice clears Other, as a single choice does
+    (the web keeps Other's text and then ignores the ticks);
+  - a `respond` the server refuses (or a network error) puts the card back
+    to pending with its picks and shows the chat's error line (the web
+    leaves a card that looks answered);
+  - the keyboard: a radio group is one Tab stop (the picked choice, or the
+    first) whose arrows move and pick, Space picks or toggles, the fields
+    are Tab stops; Submit, Dismiss, the note buttons and the note's ✕ take
+    no keyboard focus (no native button does yet).
 - **The session id's dotted underline** (2.5): Slint has no dotted border;
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):

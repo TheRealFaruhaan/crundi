@@ -15,6 +15,16 @@ export struct ToolView {
     error: bool,
 }
 
+/// One choice of a question: its label, description and preview; picked;
+/// the note row open under it (with the note's text, and whether it takes
+/// the focus when it opens); a counter that asks for the keyboard (an arrow
+/// moved the pick here).
+export struct QOpt { label: string, desc: string, preview: string, chosen: bool, note-open: bool, note: string, note-focus: bool, focus-gen: int }
+
+/// One question: its chip, text, kind, choices, and Other (what it holds,
+/// and a counter that resets the field when a pick clears it).
+export struct QView { header: string, question: string, multi: bool, options: [QOpt], other: string, other-gen: int, other-focus: int }
+
 export struct EntryView {
     id: string,
     // user | assistant | code | thinking | tools | permission | question | result | error | notice
@@ -30,6 +40,33 @@ export struct EntryView {
     tools: [ToolView],
     // The space after this row (paragraphs, list items, entries: src/app.rs).
     gap: length,
+    // A question card (2.13): its chat, its questions with the person's
+    // picks, and whether it can be answered (pending or orphaned), is
+    // orphaned, can be submitted; answered: its tags, note lines, dismissed,
+    // by Cru.
+    chat: string,
+    questions: [QView],
+    q-open: bool,
+    q-orphaned: bool,
+    q-can: bool,
+    q-tags: [string],
+    q-notes: [string],
+    q-dismissed: bool,
+    q-by-cru: bool,
+}
+
+/// What a question card does (src/app.rs): by the chat and the entry; a
+/// question and a choice by their index.
+export global QAct {
+    callback pick(string, string, int, int);
+    callback note-open(string, string, int, int);
+    callback note-typed(string, string, int, string);
+    callback note-remove(string, string, int);
+    callback other-typed(string, string, int, string);
+    // An arrow in a radio group: from this choice, one up (-1) or down (1).
+    callback move(string, string, int, int, int);
+    callback submit(string, string);
+    callback dismiss(string, string);
 }
 
 /// The state dot's colour (header and sidebar agree).
@@ -169,20 +206,26 @@ component CardBtn inherits Rectangle {
     in property <float> fs: 1;
     in property <bool> primary;
     in property <bool> danger;
+    // Disabled (Submit until every question has an answer): dimmed, no
+    // hover, no press.
+    in property <bool> enabled: true;
     callback clicked();
     // .cc-btn: padding round a line of text at the pane's size.
     height: Theme.sp-12 + Theme.sp-16 * root.fs;
     width: t.preferred-width + Theme.sp-24;
+    opacity: root.enabled ? 1 : Theme.o-dim;
+    // Primary, hovered: its glow (the web's button.primary:hover).
+    if root.primary && root.enabled && ta.has-hover: SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-accent; }
     border-radius: Theme.r-control;
     border-width: root.primary ? 0px : 1px;
-    border-color: root.danger && ta.has-hover ? Theme.red : Theme.border;
+    border-color: root.danger && ta.has-hover && root.enabled ? Theme.red : Theme.border;
     background: root.primary ? transparent
         : root.danger && ta.has-hover ? Theme.red-dim
         : ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
     // Primary: the accent gradient in its rounded shape (AccentFill).
     if root.primary: AccentFill { width: parent.width; height: parent.height; }
     t := Text { text: root.text; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: root.primary ? Theme.white : root.danger && ta.has-hover ? Theme.red : Theme.text-primary; }
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: root.enabled ? pointer : default; clicked => { root.clicked(); } }
 }
 
 /// Where a pane's header can be grabbed (its background, the ⋮⋮, the title):
@@ -690,6 +733,285 @@ component ToolRow inherits Rectangle {
     }
 }
 
+/// An answered card's tag (.cc-tag): ok (green), no (red) or neutral.
+component Tag inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> text;
+    in property <string> tone;
+    height: tt.preferred-height + Theme.sp-2 * 2;
+    width: tt.preferred-width + 2 * Theme.sp-8;
+    border-radius: self.height / 2; border-width: 1px;
+    border-color: root.tone == "ok" ? Theme.green : root.tone == "no" ? Theme.red : Theme.border-subtle;
+    background: Theme.bg-tertiary;
+    tt := Text { text: root.text; font-size: Theme.text-11 * root.fs; color: root.tone == "ok" ? Theme.green : root.tone == "no" ? Theme.red : Theme.text-secondary; }
+}
+
+/// A field of the question card (Other, a note): bg-primary, a border, the
+/// accent border and ring when focused, its placeholder.
+component QField inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> placeholder;
+    // What it starts with, and a counter that sets it again.
+    in property <string> start;
+    in property <int> gen;
+    in property <length> pad-y: Theme.sp-6;
+    in property <length> pad-x: Theme.sp-10;
+    // Takes the keyboard when it appears; a counter asks for it again.
+    in property <bool> grab;
+    in property <int> focus-gen;
+    callback edited(string);
+    callback accepted();
+    height: ti.preferred-height + 2 * root.pad-y + Theme.sp-2;
+    if ti.has-focus: Rectangle {
+        x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4;
+        border-radius: Theme.r-card; background: Theme.accent-ring;
+    }
+    Rectangle {
+        border-radius: Theme.r-control; border-width: 1px;
+        border-color: ti.has-focus ? Theme.accent : Theme.border;
+        background: Theme.bg-primary;
+    }
+    ti := TextInput {
+        x: root.pad-x + 1px; y: root.pad-y + 1px; width: parent.width - 2 * root.pad-x - Theme.sp-2;
+        height: self.preferred-height;
+        single-line: true; vertical-alignment: center;
+        font-size: Theme.text-12 * root.fs; color: Theme.text-primary;
+        init => { self.text = root.start; if root.grab { self.focus(); } }
+        edited => { root.edited(self.text); }
+        accepted => { root.accepted(); }
+    }
+    if ti.text == "": Text {
+        x: ti.x; y: ti.y; width: ti.width; height: ti.height;
+        vertical-alignment: center; overflow: elide;
+        text: root.placeholder; font-size: Theme.text-12 * root.fs; color: Theme.text-muted;
+    }
+    property <int> g: root.gen;
+    changed g => { ti.text = root.start; }
+    property <int> fg: root.focus-gen;
+    changed fg => { ti.focus(); }
+}
+
+/// One choice (.cc-opt): the radio or checkbox, the label, its description
+/// and preview, the note row when open, and the note button at the top
+/// right. A press anywhere on the row picks it (a tick toggles).
+component QOptRow inherits Rectangle {
+    in property <float> fs: 1;
+    in property <QOpt> o;
+    in property <bool> multi;
+    // A single choice's radio is one Tab stop per question: the picked one,
+    // or the first when none is.
+    in property <bool> tab-stop;
+    callback pick();
+    callback note-open();
+    callback note-typed(string);
+    callback note-remove();
+    callback move(int);
+    height: lay.preferred-height + Theme.sp-2;
+    border-radius: Theme.r-control; border-width: 1px;
+    border-color: root.o.chosen ? Theme.accent : ta.has-hover ? Theme.accent-hover : Theme.border;
+    background: root.o.chosen ? Theme.accent-dim : Theme.bg-primary;
+    // Picked: the ring round the row.
+    if root.o.chosen: Rectangle {
+        x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4;
+        border-radius: Theme.r-card; background: Theme.accent-ring;
+    }
+    if root.o.chosen: Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent; background: Theme.accent-dim; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { fs-key.focus(); root.pick(); } }
+    // The keyboard: Space picks (or toggles); in a radio group the arrows
+    // move to and pick the next choice.
+    fs-key := FocusScope {
+        x: 0; y: 0; width: 0; height: 0;
+        enabled: root.multi || root.tab-stop || self.has-focus;
+        focus-on-click: false;
+        key-pressed(ev) => {
+            if ev.text == " " { root.pick(); return accept; }
+            if !root.multi && (ev.text == Key.DownArrow || ev.text == Key.RightArrow) { root.move(1); return accept; }
+            if !root.multi && (ev.text == Key.UpArrow || ev.text == Key.LeftArrow) { root.move(-1); return accept; }
+            reject
+        }
+    }
+    property <int> fg: root.o.focus-gen;
+    changed fg => { fs-key.focus(); }
+    lay := HorizontalLayout {
+        x: 1px; y: 1px; width: parent.width - Theme.sp-2;
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8; padding-left: Theme.sp-10;
+        // Room for the note button.
+        padding-right: Theme.sp-32 + Theme.sp-4;
+        spacing: Theme.sp-8;
+        // The radio (round) or the checkbox (square), sp-2 down to sit on the label.
+        Rectangle {
+            width: Theme.icon-sm;
+            Rectangle {
+                y: Theme.sp-2; width: Theme.icon-sm; height: Theme.icon-sm;
+                // The keyboard's focus: the ring round the radio itself.
+                if fs-key.has-focus: Rectangle {
+                    x: -Theme.sp-4; y: -Theme.sp-4; width: parent.width + 2 * Theme.sp-4; height: parent.height + 2 * Theme.sp-4;
+                    border-radius: root.multi ? Theme.r-control : self.width / 2; background: Theme.accent-ring;
+                }
+                Rectangle {
+                    border-radius: root.multi ? Theme.r-chip : self.width / 2; border-width: 1px;
+                    border-color: root.o.chosen ? Theme.accent : Theme.text-muted;
+                    background: root.o.chosen && root.multi ? Theme.accent : Theme.bg-primary;
+                }
+                if root.o.chosen && !root.multi: Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.sp-6 / 2; background: Theme.accent; }
+                if root.o.chosen && root.multi: Icon { source: Icons.check; width: Theme.icon-sm - Theme.sp-2; height: Theme.icon-sm - Theme.sp-2; tint: Theme.white; }
+            }
+        }
+        // The text: label, description, preview, the note row.
+        Rectangle {
+            horizontal-stretch: 1; min-width: 0;
+            height: col.preferred-height;
+            col := VerticalLayout {
+                Text { text: root.o.label; font-size: Theme.text-13 * root.fs; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+                if root.o.desc != "": Text { text: root.o.desc; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                if root.o.preview != "": Rectangle {
+                    height: pv.preferred-height + Theme.sp-6;
+                    Rectangle {
+                        y: Theme.sp-6; height: parent.height - Theme.sp-6;
+                        background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border-subtle; border-radius: Theme.r-chip;
+                    }
+                    pv := VerticalLayout {
+                        y: Theme.sp-6;
+                        padding-top: Theme.sp-6; padding-bottom: Theme.sp-6; padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+                        Text { text: root.o.preview; font-family: Theme.mono; font-size: Theme.text-11 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                    }
+                }
+                // The note (one per question, under its choice): a field and ✕.
+                if root.o.note-open: Rectangle {
+                    height: nr.preferred-height + Theme.sp-8;
+                    nr := HorizontalLayout {
+                        y: Theme.sp-8;
+                        spacing: Theme.sp-6;
+                        QField {
+                            horizontal-stretch: 1;
+                            fs: root.fs; pad-y: Theme.sp-4; pad-x: Theme.sp-8;
+                            placeholder: "Note for Claude about this choice";
+                            start: root.o.note; grab: root.o.note-focus;
+                            edited(t) => { root.note-typed(t); }
+                        }
+                        Rectangle {
+                            width: Theme.control-sm - Theme.sp-4; height: Theme.control-sm - Theme.sp-4;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: Theme.r-control;
+                            background: xa.has-hover ? Theme.bg-hover : transparent;
+                            Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: xa.has-hover ? Theme.text-primary : Theme.text-muted; }
+                            xa := TouchArea { mouse-cursor: pointer; clicked => { root.note-remove(); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // The note button ("Add a note to this choice"): top right, sp-4 in.
+    Rectangle {
+        x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4;
+        width: Theme.control-sm - Theme.sp-2; height: Theme.control-sm - Theme.sp-2;
+        border-radius: Theme.r-control; border-width: 1px;
+        border-color: nb.has-hover ? Theme.border : transparent;
+        background: nb.has-hover ? Theme.bg-tertiary : transparent;
+        Icon { source: Icons.note; width: Theme.icon-md; height: Theme.icon-md; tint: root.o.note-open ? Theme.accent-hover : nb.has-hover ? Theme.text-primary : Theme.text-muted; }
+        nb := TouchArea { mouse-cursor: pointer; clicked => { root.note-open(); } }
+    }
+}
+
+/// A question card (2.13, .cc-ask): one to four questions, each with its
+/// chip, text, choices and Other; Submit and Dismiss. Answered: its tags.
+component QuestionCard inherits Rectangle {
+    in property <float> fs: 1;
+    in property <EntryView> e;
+    background: Theme.accent-dim;
+    border-width: 1px; border-color: Theme.accent;
+    border-radius: Theme.r-card;
+    height: card.preferred-height;
+    card := VerticalLayout {
+        padding: Theme.sp-12;
+        spacing: Theme.sp-12;
+        // Orphaned: why the buttons send a message instead.
+        if root.e.q-open && root.e.q-orphaned: Text {
+            text: "This question outlived the session that asked it. Answering sends your choice as a message.";
+            font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap;
+        }
+        if root.e.q-open: Rectangle {
+            height: qs.preferred-height;
+            qs := VerticalLayout {
+                spacing: Theme.sp-12;
+                for q[qi] in root.e.questions: Rectangle {
+                    height: ql.preferred-height;
+                    ql := VerticalLayout {
+                        if q.header != "": HorizontalLayout {
+                            alignment: start;
+                            padding-bottom: Theme.sp-4;
+                            Rectangle {
+                                width: chip.preferred-width + 2 * Theme.sp-6; height: chip.preferred-height + Theme.sp-2;
+                                border-radius: self.height / 2; background: Theme.accent;
+                                chip := Text { text: q.header; font-size: Theme.text-10 * root.fs; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.white; }
+                            }
+                        }
+                        Text { text: q.question; font-size: Theme.text-13 * root.fs; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+                        Rectangle {
+                            height: os.preferred-height + Theme.sp-8;
+                            os := VerticalLayout {
+                                y: Theme.sp-8;
+                                spacing: Theme.sp-6;
+                                for o[oi] in q.options: QOptRow {
+                                    fs: root.fs; o: o; multi: q.multi;
+                                    tab-stop: o.chosen || (oi == 0 && !root.any-chosen(q));
+                                    pick => { QAct.pick(root.e.chat, root.e.id, qi, oi); }
+                                    note-open => { QAct.note-open(root.e.chat, root.e.id, qi, oi); }
+                                    note-typed(t) => { QAct.note-typed(root.e.chat, root.e.id, qi, t); }
+                                    note-remove => { QAct.note-remove(root.e.chat, root.e.id, qi); }
+                                    move(d) => { QAct.move(root.e.chat, root.e.id, qi, oi, d); }
+                                }
+                            }
+                        }
+                        // Other: the question's own answer, typed.
+                        Rectangle {
+                            height: of.height + Theme.sp-4;
+                            of := QField {
+                                y: Theme.sp-4;
+                                fs: root.fs;
+                                placeholder: "Other (type your own answer)…";
+                                start: q.other; gen: q.other-gen; focus-gen: q.other-focus;
+                                edited(t) => { QAct.other-typed(root.e.chat, root.e.id, qi, t); }
+                                // Enter submits when every question has an answer
+                                // (the web does nothing: a named difference).
+                                accepted => { QAct.submit(root.e.chat, root.e.id); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if root.e.q-open: HorizontalLayout {
+            alignment: start;
+            spacing: Theme.sp-8;
+            CardBtn { fs: root.fs; text: "Submit"; primary: true; enabled: root.e.q-can; clicked => { QAct.submit(root.e.chat, root.e.id); } }
+            CardBtn { fs: root.fs; text: "Dismiss"; danger: true; clicked => { QAct.dismiss(root.e.chat, root.e.id); } }
+        }
+        // Answered: a tag per answer (or dismissed, or answered), by Cru,
+        // each note on its own line.
+        if !root.e.q-open: Rectangle {
+            height: tags.preferred-height;
+            tags := FlexboxLayout {
+                flex-wrap: wrap;
+                spacing: Theme.sp-6;
+                if root.e.q-dismissed: Tag { fs: root.fs; text: "dismissed"; tone: "no"; }
+                if !root.e.q-dismissed && root.e.q-tags.length == 0: Tag { fs: root.fs; text: "answered"; }
+                for t in root.e.q-tags: Tag { fs: root.fs; text: t; tone: "ok"; }
+                if root.e.q-by-cru: Tag { fs: root.fs; text: "by Cru"; }
+            }
+        }
+        if !root.e.q-open && root.e.q-notes.length > 0: VerticalLayout {
+            for n in root.e.q-notes: Text { text: n; font-size: Theme.text-11 * root.fs; color: Theme.text-muted; wrap: word-wrap; }
+        }
+    }
+    pure function any-chosen(q: QView) -> bool {
+        // A radio group's Tab stop: is anything picked? (Up to four choices.)
+        return (q.options.length > 0 && q.options[0].chosen) || (q.options.length > 1 && q.options[1].chosen)
+            || (q.options.length > 2 && q.options[2].chosen) || (q.options.length > 3 && q.options[3].chosen);
+    }
+}
+
 component EntryRow inherits VerticalLayout {
     // The pane's text size, a scale of the base size (the web's --cc-fs).
     in property <float> fs: 1;
@@ -837,47 +1159,7 @@ component EntryRow inherits VerticalLayout {
         }
     }
 
-    if e.kind == "question": Rectangle {
-        background: e.status == "pending" ? Theme.accent-dim : Theme.bg-secondary;
-        border-width: 1px;
-        border-color: e.status == "pending" ? Theme.accent : Theme.border-subtle;
-        border-radius: Theme.r-card;
-        height: q.preferred-height;
-        q := VerticalLayout {
-            padding-top: Theme.sp-12; padding-bottom: Theme.sp-12; padding-left: Theme.sp-12; padding-right: Theme.sp-12;
-            spacing: Theme.sp-8;
-            if e.title != "": Text { text: e.title; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-bold; color: Theme.accent-hover; letter-spacing: Theme.track-wide; }
-            Text { text: e.text; font-weight: Theme.w-semibold; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
-            if e.status == "pending": VerticalLayout {
-                spacing: Theme.sp-6;
-                for o in e.options: Rectangle {
-                    height: Theme.sp-32 + (root.fs - 1) * Theme.sp-20;
-                    border-radius: Theme.r-control;
-                    border-width: 1px;
-                    border-color: root.picked == o ? Theme.accent : Theme.border;
-                    background: root.picked == o ? Theme.accent-dim : oh.has-hover ? Theme.bg-hover : Theme.bg-primary;
-                    HorizontalLayout {
-                        padding-left: Theme.sp-10;
-                        spacing: Theme.sp-8;
-                        Rectangle {
-                            width: Theme.sp-12; height: Theme.sp-12; y: (parent.height - self.height) / 2; border-radius: Theme.r-control;
-                            border-width: 1px; border-color: root.picked == o ? Theme.accent : Theme.text-muted;
-                            Rectangle { width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-chip; background: root.picked == o ? Theme.accent : transparent; }
-                        }
-                        Text { text: o; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; vertical-alignment: center; }
-                    }
-                    oh := TouchArea { mouse-cursor: pointer; clicked => { root.picked = o; } }
-                }
-                HorizontalLayout {
-                    spacing: Theme.sp-8;
-                    alignment: start;
-                    CardBtn { fs: root.fs; text: "Submit"; primary: true; clicked => { if root.picked != "" { root.answer(e.id, root.picked); } } }
-                    CardBtn { fs: root.fs; text: "Dismiss"; danger: true; clicked => { root.respond(e.request-id, "deny", false); } }
-                }
-            }
-            if e.status != "pending": Text { text: "Answered"; font-size: Theme.text-12 * root.fs; color: Theme.text-muted; }
-        }
-    }
+    if e.kind == "question": QuestionCard { fs: root.fs; e: e; }
 
     // The end of a turn: centred, small, a line above.
     if e.kind == "result": VerticalLayout {

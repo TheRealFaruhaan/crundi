@@ -368,40 +368,40 @@ the question entry's `status` and `answeredInput`:
 
 ## Checklist
 
-- [ ] One question and several questions in one card: chip, question,
+- [x] One question and several questions in one card: chip, question,
       choices, Other per question; one Submit / Dismiss per card.
-- [ ] Single choice (radio) and multi-select (checkbox) look and toggle as
+- [x] Single choice (radio) and multi-select (checkbox) look and toggle as
       described; selected rows have the accent edge, fill and ring; hover
       turns the edge `accent-hover`.
-- [ ] Descriptions under labels; previews as mono boxes that keep line
+- [x] Descriptions under labels; previews as mono boxes that keep line
       breaks and wrap.
-- [ ] Note button on every choice: picks, opens the note under the choice,
+- [x] Note button on every choice: picks, opens the note under the choice,
       focuses it, shows on; the note follows the selection; ✕ removes it;
       Enter in the note does nothing.
-- [ ] Other: typing clears that question's picks; a pick or tick clears
+- [x] Other: typing clears that question's picks; a pick or tick clears
       Other (named difference for multi); Enter in Other submits when
       enabled (named difference).
-- [ ] Submit disabled (dimmed) until every question has an answer; enabled
+- [x] Submit disabled (dimmed) until every question has an answer; enabled
       hover glow; Dismiss danger hover.
-- [ ] Submit sends `respond` allow with `answers` (+ `annotations` only
+- [x] Submit sends `respond` allow with `answers` (+ `annotations` only
       with a note); Dismiss sends deny with "The user dismissed the
       question."; the card locks into its answered look at once.
-- [ ] Answered: green tags in question order, "Note: …" lines, "by Cru";
+- [x] Answered: green tags in question order, "Note: …" lines, "by Cru";
       dismissed: red tag; empty answers: neutral "answered".
-- [ ] Answered elsewhere (another client, Cru) updates the card live from
+- [x] Answered elsewhere (another client, Cru) updates the card live from
       the `patch` frame.
-- [ ] Orphaned (`cancelled` / `unanswered`): the extra line, still
+- [x] Orphaned (`cancelled` / `unanswered`): the extra line, still
       answerable; Submit and Dismiss go to `answer-closed` with the right
       text; errors show as the chat's error line.
-- [ ] Answer drafts kept per chat and entry in the drafts store; restored
+- [x] Answer drafts kept per chat and entry in the drafts store; restored
       after a pane switch, a project switch and a client restart; cleared
       on Submit / Dismiss; 30-day expiry.
-- [ ] Keyboard: Tab order, arrows pick in a radio group, Space toggles,
+- [x] Keyboard: Tab order, arrows pick in a radio group, Space toggles,
       Enter/Space on buttons, accent focus ring.
-- [ ] Text size scales the card's fonts (not paddings or the radio and
+- [x] Text size scales the card's fonts (not paddings or the radio and
       note button); narrow panes only wrap.
-- [ ] A failed `respond` puts the card back to pending with an error
+- [x] A failed `respond` puts the card back to pending with an error
       (named difference).
 - [ ] Tokens only; side-by-side crops of every state above saved under
       `specs/questions/review/`.
-- [ ] End-to-end flows above pass in `test/phase2.mjs`.
+- [x] End-to-end flows above pass in `test/phase2.mjs`.

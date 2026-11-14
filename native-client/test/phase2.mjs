@@ -1852,6 +1852,16 @@ await until('Esc closes the dialog', (q) => q.secretsDialog === null && q.pointe
       check('the dock is not modal', p.pointerModal === false);
     }
     await snap('2.12b-one-run');
+    // F79: a press on the dock is the dock's: the focused pane stays.
+    {
+      const q0 = await props();
+      const focused0 = q0.panes.find((x) => x.focused)?.key;
+      check('the dock tells the pointer where its card is', q0.dock.w > 0 && q0.dock.h > 0, q0.dock);
+      await mouse('click', q0.dock.x + q0.dock.w / 2, q0.dock.y + 12);
+      await sleep(300);
+      const q1 = await props();
+      check('a press on the card focuses no pane beneath it', q1.panes.find((x) => x.focused)?.key === focused0, { before: focused0, after: q1.panes.find((x) => x.focused)?.key });
+    }
     await ui('sreq-reject', 'E2E_RUN');
     let ans = await call;
     check('Reject: the call is denied', ans.ok === false && ans.error === 'The user denied this secret access request.', ans);
@@ -1926,6 +1936,96 @@ await until('Esc closes the dialog', (q) => q.secretsDialog === null && q.pointe
   }
 }
 await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
+
+// ─── 2.13 Questions ───
+// Three chats ask at once (real AskUserQuestion calls): several questions
+// (a note, ticks, the draft across a restart, Other and Enter), one to
+// dismiss, one orphaned by its process going.
+{
+  const ASK = (input) => 'Call the AskUserQuestion tool exactly once with exactly this input JSON (verbatim, no changes), then after the answer reply with one short sentence repeating what I chose and stop. Input: ' + JSON.stringify(input);
+  const QL = 'Which language should the service use?', QT = 'Which tests should run?', QD = 'Where should it deploy?';
+  const many = { questions: [
+    { header: 'Language', question: QL, multiSelect: false, options: [{ label: 'Rust', description: 'Fast and safe' }, { label: 'Go', description: 'Simple concurrency' }] },
+    { header: 'Tests', question: QT, multiSelect: true, options: [{ label: 'Unit', description: 'Small and quick' }, { label: 'Integration', description: 'Across modules' }, { label: 'E2E', description: 'The whole thing' }] },
+    { header: 'Deploy', question: QD, multiSelect: false, options: [{ label: 'This server', description: 'Where Crundi runs', preview: 'systemctl restart app\njournalctl -u app -f' }, { label: 'A container', description: 'Docker on the same box' }] },
+  ] };
+  const one = (q) => ({ questions: [{ header: 'Database', question: q, multiSelect: false, options: [{ label: 'SQLite', description: 'A file' }, { label: 'MySQL', description: 'A server' }] }] });
+  const hist = async (id) => { const b = (await http('GET', `/api/ui-sessions/${id}/history`, null, token)).body; return (b?.session?.messages || b?.messages || []).filter((e) => e.kind === 'question').pop(); };
+  const qMany = await make('demo', 'Several questions', false);
+  const qDis = await make('demo', 'Dismiss me', false);
+  const qOrph = await make('demo', 'Orphaned', false);
+  await send(qMany, ASK(many));
+  await send(qDis, ASK(one('Which database for the cache?')));
+  await send(qOrph, ASK(one('Which database for the queue?')));
+  const qOf = (q, id) => pane(q, id)?.question;
+  p = await until('three questions pending', (q) => [qMany, qDis, qOrph].every((id) => qOf(q, id)?.status === 'pending'), 240000);
+  if (check('three chats ask: question cards, pending', !!p, p && [qMany, qDis, qOrph].map((id) => qOf(p, id)))) {
+    // Several questions: Submit waits for every one.
+    await ui('focus-pane', pane(p, qMany).id);
+    check('the card holds three questions; Submit disabled', qOf(p, qMany).questions === 3 && qOf(p, qMany).can === false, qOf(p, qMany));
+    await ui('q-note', 0, 1);
+    await sleep(300);
+    await keys('keep it small');
+    p = await until('a note on Go', (q) => qOf(q, qMany)?.picks?.[0]?.note === 'keep it small', 5000);
+    if (p) check('the note button picks the choice and opens its note, which takes the keyboard', JSON.stringify(qOf(p, qMany).picks[0].chosen) === '["Go"]' && qOf(p, qMany).picks[0].noteOpt === 'Go', qOf(p, qMany).picks[0]);
+    await ui('q-pick', 0, 0);
+    p = await until('Rust', (q) => qOf(q, qMany)?.picks?.[0]?.chosen?.[0] === 'Rust', 5000);
+    if (p) check('the note follows the pick (Go to Rust), its text kept', qOf(p, qMany).picks[0].noteOpt === 'Rust' && qOf(p, qMany).picks[0].note === 'keep it small', qOf(p, qMany).picks[0]);
+    await ui('q-pick', 1, 1);
+    await ui('q-pick', 1, 0);
+    p = await until('two ticks', (q) => qOf(q, qMany)?.picks?.[1]?.chosen?.length === 2, 5000);
+    if (p) check('multi-select: ticks in the options\' order; Submit still disabled (Deploy unanswered)', JSON.stringify(qOf(p, qMany).picks[1].chosen) === '["Unit","Integration"]' && qOf(p, qMany).can === false, qOf(p, qMany));
+    await snap('2.13-several');
+    // The answer draft survives a restart.
+    const before = JSON.stringify(qOf(await props(), qMany).picks);
+    check('the answer draft is kept (drafts store)', JSON.stringify(qOf(await props(), qMany).draft) === before);
+    d.close();
+    app.kill();
+    await sleep(1500);
+    app = launch('run6');
+    d = await driver();
+    p = await until('after a restart: the card back with its picks', (q) => q.signedIn && JSON.stringify(qOf(q, qMany)?.picks) === before, 40000);
+    check('after a client restart, the half-answered card comes back as it was', !!p, p && qOf(p, qMany));
+    // Other, then Enter: submits (the web does nothing on Enter: a named difference).
+    p = await props();
+    await ui('focus-pane', pane(p, qMany).id);
+    await ui('q-other-focus', 2);
+    await sleep(300);
+    await keys('Somewhere else');
+    p = await until('Other typed', (q) => qOf(q, qMany)?.picks?.[2]?.other === 'Somewhere else' && qOf(q, qMany)?.can === true, 5000);
+    if (p) check('Other typed: the question answered, Submit enabled', true);
+    await keys('Return');
+    p = await until('answered', (q) => qOf(q, qMany)?.status === 'allowed', 10000);
+    if (p) check('Enter in Other submits; the card shows its tags in question order with the note', JSON.stringify(qOf(p, qMany).tags) === '["Rust","Unit, Integration","Somewhere else"]' && JSON.stringify(qOf(p, qMany).notes) === '["Note: keep it small"]' && qOf(p, qMany).draft === null, qOf(p, qMany));
+    let h = await hist(qMany);
+    check('the server got the answers and the note', h?.status === 'allowed' && h.answeredInput?.answers?.[QL] === 'Rust' && h.answeredInput.answers[QT] === 'Unit, Integration' && h.answeredInput.answers[QD] === 'Somewhere else' && h.answeredInput.annotations?.[QL]?.notes === 'keep it small', h && h.answeredInput);
+    await snap('2.13-answered');
+    // Dismiss.
+    p = await props();
+    await ui('focus-pane', pane(p, qDis).id);
+    await ui('q-dismiss');
+    p = await until('dismissed', (q) => qOf(q, qDis)?.dismissed === true, 10000);
+    if (p) check('Dismiss: the card shows "dismissed" at once', true);
+    h = await hist(qDis);
+    check('the server got deny', h?.status === 'denied' && !h.answeredInput?.answers, h);
+    // Orphaned: the asking process goes; the card stays answerable.
+    const proc = chatProc(qOrph);
+    if (check('the orphaned chat has a claude process', !!proc)) {
+      process.kill(proc.pid, 'SIGKILL');
+      p = await until('orphaned', (q) => qOf(q, qOrph)?.orphaned === true, 30000);
+      if (p) check('the process gone: the card is orphaned (cancelled), still open', qOf(p, qOrph).open === true, qOf(p, qOrph));
+      await ui('focus-pane', pane(await props(), qOrph).id);
+      await ui('q-pick', 0, 0);
+      await until('picked', (q) => qOf(q, qOrph)?.can === true, 5000);
+      await ui('q-submit');
+      p = await until('answered late', (q) => qOf(q, qOrph)?.status === 'answered-late', 10000);
+      if (p) check('an orphaned answer shows its tag at once', JSON.stringify(qOf(p, qOrph).tags) === '["SQLite"]', qOf(p, qOrph));
+      h = await hist(qOrph);
+      check('the server marked it answered-late', h?.status === 'answered-late' && h.answeredInput?.answers?.['Which database for the queue?'] === 'SQLite', h);
+    }
+  }
+  for (const id of [qMany, qDis, qOrph]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+}
 
 d.close();
 app.kill();

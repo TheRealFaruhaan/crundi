@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    head, sched, secrets, slash, sreq, store, Composer, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView,
+    head, questions, sched, secrets, slash, sreq, store, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView,
 };
 use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, StyledText, VecModel, Weak};
@@ -175,6 +175,9 @@ pub struct App {
     sec: Option<SecDlg>,
     /// Secret requests waiting on the owner (2.12b).
     sreq: Sreq,
+    /// The question cards (2.13), by "<chat>:<entry>": the picks and the
+    /// card's models (kept, so redraws leave its fields alone).
+    qcards: HashMap<String, QCard>,
     /// Each chat's schedule panel (2.10), by pane key.
     sched: HashMap<String, Sched>,
     /// The pane whose mode picker is open (2.6), by key.
@@ -305,6 +308,7 @@ pub fn init(window: &MainWindow) {
             sched: HashMap::new(),
             sec: None,
             sreq: Sreq::default(),
+            qcards: HashMap::new(),
             slash: HashMap::new(),
             held: HashMap::new(),
             flush_pending: false,
@@ -362,6 +366,30 @@ pub fn init(window: &MainWindow) {
     window.on_pane_full(|id| pane_full(id as u32));
     window.on_pane_font(|id, d| pane_font(id as u32, d));
     window.on_pane_pin(|id| pane_pin(id as u32));
+    // Question cards (2.13).
+    {
+        let qa = window.global::<QAct>();
+        qa.on_pick(|c, e, qi, oi| q_act(c.as_str(), e.as_str(), move |k| { let label = k.label(qi, oi); let q = k.qs[qi as usize].clone(); let p = &mut k.picks[qi as usize]; let had = !p.other.is_empty(); questions::pick(&q, p, &label); if had { k.other_gen[qi as usize] += 1; } k.note_focus = None; }));
+        qa.on_note_open(|c, e, qi, oi| q_act(c.as_str(), e.as_str(), move |k| { let label = k.label(qi, oi); let q = k.qs[qi as usize].clone(); let p = &mut k.picks[qi as usize]; let had = !p.other.is_empty(); questions::open_note(&q, p, &label); if had && p.other.is_empty() { k.other_gen[qi as usize] += 1; } k.note_focus = Some((qi as usize, label)); }));
+        qa.on_note_typed(|c, e, qi, t| q_act(c.as_str(), e.as_str(), move |k| { if let Some(p) = k.picks.get_mut(qi as usize) { p.note = t.to_string(); } }));
+        qa.on_note_remove(|c, e, qi| q_act(c.as_str(), e.as_str(), move |k| { if let Some(p) = k.picks.get_mut(qi as usize) { questions::remove_note(p); } k.note_focus = None; }));
+        qa.on_other_typed(|c, e, qi, t| q_act(c.as_str(), e.as_str(), move |k| { if let Some(p) = k.picks.get_mut(qi as usize) { questions::type_other(p, t.as_str()); } k.note_focus = None; }));
+        qa.on_move(|c, e, qi, oi, d| q_act(c.as_str(), e.as_str(), move |k| {
+            let n = k.qs[qi as usize].options.len() as i32;
+            if n == 0 { return; }
+            let to = ((oi + d) % n + n) % n;
+            let label = k.label(qi, to);
+            let q = k.qs[qi as usize].clone();
+            let p = &mut k.picks[qi as usize];
+            let had = !p.other.is_empty();
+            questions::pick(&q, p, &label);
+            if had { k.other_gen[qi as usize] += 1; }
+            *k.focus_gen.entry((qi as usize, to as usize)).or_insert(0) += 1;
+            k.note_focus = None;
+        }));
+        qa.on_submit(|c, e| q_answer(c.to_string(), e.to_string(), false));
+        qa.on_dismiss(|c, e| q_answer(c.to_string(), e.to_string(), true));
+    }
     // Secret requests (2.12b).
     window.set_sreq_cards(ModelRc::from(with(|a| a.sreq.cards.clone()).unwrap_or_default()));
     window.on_sreq_approve(|id| sreq_arm(id.as_str()));
@@ -1608,11 +1636,13 @@ fn to_view(r: &Row) -> EntryView {
 /// A chat's log on screen, rewriting only the rows that changed.
 fn show_chat(id: &str) {
     with(|a| {
+        drafts_for_server(a);
         let Some(cs) = a.chats.get_mut(id) else { return };
         let now = rows_of(&cs.conv.view());
         for (i, r) in now.iter().enumerate() {
             if cs.rows.get(i) == Some(r) { continue; }
-            let v = to_view(r);
+            let mut v = to_view(r);
+            if let Row::Entry(e) = r { if e.kind == "question" { q_view(&mut a.qcards, &a.saved_drafts, id, e, &mut v); } }
             if i < cs.model.row_count() { cs.model.set_row_data(i, v); } else { cs.model.push(v); }
         }
         while cs.model.row_count() > now.len() { cs.model.remove(cs.model.row_count() - 1); }
@@ -2976,3 +3006,238 @@ pub fn sreq_approve_by(name: &str) { let id = sreq_by_name(name); if with(|a| a.
 pub fn sreq_reject_by(name: &str) { let id = sreq_by_name(name); if !id.is_empty() { sreq_reject(id); } }
 pub fn sreq_toggle_allow() { with(|a| a.sreq.allow_on = !a.sreq.allow_on); render(); }
 pub fn sreq_set_duration(d: &str) { with(|a| a.sreq.duration = d.to_string()); render(); }
+
+// ─── Question cards (2.13, src/questions.rs, ui/chat.slint QuestionCard) ───
+
+/// One card while it can be answered: its questions, the picks, and the
+/// models the view draws (rows rewritten only where they changed).
+struct QCard {
+    qs: Vec<questions::Q>,
+    picks: Vec<questions::Pick>,
+    model: Rc<VecModel<QView>>,
+    opts: Vec<Rc<VecModel<QOpt>>>,
+    /// Counters: Other set again (a pick cleared it); a choice asked to take
+    /// the keyboard (an arrow moved there).
+    other_gen: Vec<i32>,
+    other_focus: Vec<i32>,
+    focus_gen: HashMap<(usize, usize), i32>,
+    /// The note opened by its button (it takes the focus when it appears).
+    note_focus: Option<(usize, String)>,
+}
+
+impl QCard {
+    fn new(qs: Vec<questions::Q>, picks: Vec<questions::Pick>) -> QCard {
+        let n = qs.len();
+        let opts: Vec<Rc<VecModel<QOpt>>> = qs.iter().map(|_| Rc::new(VecModel::default())).collect();
+        let mut k = QCard { qs, picks, model: Rc::new(VecModel::default()), opts, other_gen: vec![0; n], other_focus: vec![0; n], focus_gen: HashMap::new(), note_focus: None };
+        k.picks.resize(n, questions::Pick::default());
+        k.refresh();
+        k
+    }
+
+    fn label(&self, qi: i32, oi: i32) -> String {
+        self.qs.get(qi as usize).and_then(|q| q.options.get(oi as usize)).map(|o| o.label.clone()).unwrap_or_default()
+    }
+
+    /// The view from the picks: only the rows that differ are rewritten.
+    fn refresh(&mut self) {
+        for (qi, q) in self.qs.iter().enumerate() {
+            let p = &self.picks[qi];
+            let rows: Vec<QOpt> = q.options.iter().enumerate().map(|(oi, o)| QOpt {
+                label: o.label.as_str().into(), desc: o.desc.as_str().into(), preview: o.preview.as_str().into(),
+                chosen: p.chosen.contains(&o.label),
+                note_open: !p.note_opt.is_empty() && p.note_opt == o.label,
+                note: p.note.as_str().into(),
+                note_focus: self.note_focus.as_ref().is_some_and(|(nq, l)| *nq == qi && *l == o.label),
+                focus_gen: self.focus_gen.get(&(qi, oi)).copied().unwrap_or(0),
+            }).collect();
+            let m = &self.opts[qi];
+            for (oi, r) in rows.iter().enumerate() {
+                if oi < m.row_count() { if m.row_data(oi).as_ref() != Some(r) { m.set_row_data(oi, r.clone()); } } else { m.push(r.clone()); }
+            }
+            while m.row_count() > rows.len() { m.remove(m.row_count() - 1); }
+            let v = QView {
+                header: q.header.to_uppercase().into(), question: q.question.as_str().into(), multi: q.multi,
+                options: ModelRc::from(m.clone()), other: p.other.as_str().into(), other_gen: self.other_gen[qi], other_focus: self.other_focus[qi],
+            };
+            if qi < self.model.row_count() { if self.model.row_data(qi).as_ref() != Some(&v) { self.model.set_row_data(qi, v); } } else { self.model.push(v); }
+        }
+        while self.model.row_count() > self.qs.len() { self.model.remove(self.model.row_count() - 1); }
+    }
+
+    fn can(&self) -> bool { questions::can_submit(&self.qs, &self.picks) }
+}
+
+/// A question entry's row: answered, its tags; open, its card (made once,
+/// with the picks of its answer draft).
+fn q_view(cards: &mut HashMap<String, QCard>, drafts: &Drafts, chat: &str, e: &Shown, v: &mut EntryView) {
+    let status = s(&e.raw, "status");
+    v.chat = chat.into();
+    v.q_open = questions::open(&status);
+    v.q_orphaned = questions::orphaned(&status);
+    if !v.q_open {
+        let d = questions::done(&e.raw);
+        v.q_tags = ModelRc::new(VecModel::from(d.tags.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()));
+        v.q_notes = ModelRc::new(VecModel::from(d.notes.iter().map(|t| SharedString::from(t.as_str())).collect::<Vec<_>>()));
+        v.q_dismissed = d.dismissed;
+        v.q_by_cru = d.by_cru;
+        return;
+    }
+    let qs = questions::parse(e.raw.get("input").unwrap_or(&Value::Null));
+    let key = format!("{chat}:{}", e.id);
+    let fresh = || {
+        let picks = drafts.answer(chat, &e.id).map(|d| questions::from_value(d, &qs)).unwrap_or_default();
+        QCard::new(qs.clone(), picks)
+    };
+    let card = cards.entry(key).or_insert_with(fresh);
+    if card.qs != qs { *card = fresh(); }
+    v.questions = ModelRc::from(card.model.clone());
+    v.q_can = card.can();
+}
+
+/// A change to a card's picks: drawn, its Submit re-checked, the answer
+/// draft saved (or removed when nothing is picked).
+fn q_act(chat: &str, entry: &str, f: impl FnOnce(&mut QCard)) {
+    let key = format!("{chat}:{entry}");
+    let done = with(|a| {
+        drafts_for_server(a);
+        let card = a.qcards.get_mut(&key)?;
+        f(card);
+        card.refresh();
+        let can = card.can();
+        let saved = (!questions::blank(&card.picks)).then(|| questions::to_value(&card.picks));
+        a.saved_drafts.set_answer(chat, entry, saved, now_ms());
+        a.drafts_dirty = true;
+        // The row's Submit (its questions' model is the same: nothing rebuilt).
+        if let Some(cs) = a.chats.get(chat) {
+            if let Some(i) = (0..cs.model.row_count()).find(|i| cs.model.row_data(*i).is_some_and(|r| r.id == entry && r.kind == "question")) {
+                let mut r = cs.model.row_data(i).unwrap_or_default();
+                if r.q_can != can { r.q_can = can; cs.model.set_row_data(i, r); }
+            }
+        }
+        Some(())
+    }).flatten();
+    if done.is_some() { write_drafts_soon(); }
+}
+
+/// Submit (or Enter in Other) and Dismiss. A live question goes to
+/// `respond`; an orphaned one to `answer-closed`. The card shows its answer
+/// at once (no double answers) and its draft goes. A refused `respond`
+/// puts the card back with an error (the web leaves it looking answered).
+fn q_answer(chat: String, entry: String, dismiss: bool) {
+    let key = format!("{chat}:{entry}");
+    let job = with(|a| {
+        drafts_for_server(a);
+        let card = a.qcards.get(&key)?;
+        if !dismiss && !card.can() { return None; }
+        let cs = a.chats.get_mut(&chat)?;
+        let e = cs.conv.entries.iter_mut().find(|x| s(x, "id") == entry)?;
+        let status = s(e, "status");
+        if !questions::open(&status) { return None; }
+        let input = e.get("input").cloned().unwrap_or(json!({}));
+        let prev = e.clone();
+        let orphaned = questions::orphaned(&status);
+        let body;
+        if orphaned {
+            let answers = if dismiss { json!({}) } else { questions::answers(&card.qs, &card.picks) };
+            let text = if dismiss { String::new() } else { questions::closed_text(&card.qs, &card.picks) };
+            let mut ai = input.clone();
+            ai["answers"] = answers.clone();
+            e["status"] = json!("answered-late");
+            e["answeredInput"] = ai;
+            body = json!({ "entryId": entry, "answers": answers, "text": text });
+        } else if dismiss {
+            e["status"] = json!("denied");
+            body = json!({ "requestId": s(e, "requestId"), "behavior": "deny", "message": "The user dismissed the question." });
+        } else {
+            let upd = questions::updated_input(&input, &card.qs, &card.picks);
+            e["status"] = json!("allowed");
+            e["answeredInput"] = upd.clone();
+            body = json!({ "requestId": s(e, "requestId"), "behavior": "allow", "updatedInput": upd });
+        }
+        a.saved_drafts.set_answer(&chat, &entry, None, now_ms());
+        a.drafts_dirty = true;
+        Some((orphaned, body, prev))
+    }).flatten();
+    let Some((orphaned, body, prev)) = job else { return };
+    show_chat(&chat);
+    render();
+    write_drafts_soon();
+    let Some(api) = api() else { return };
+    let path = format!("/api/ui-sessions/{chat}/{}", if orphaned { "answer-closed" } else { "respond" });
+    bg(move || post_raw(&api, &path, &body), move |r| {
+        let err = match r {
+            Ok((404, _)) if orphaned => Some("Answering an old question is not supported by this server".to_string()),
+            Ok((_, v)) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => Some(v.get("error").and_then(|e| e.as_str()).unwrap_or("The answer was not taken").to_string()),
+            Ok((st, _)) if st >= 400 => Some(format!("The answer was not taken (HTTP {st})")),
+            Ok(_) => None,
+            Err(e) => Some(e.to_string()),
+        };
+        let Some(err) = err else { return };
+        // A refused answer: the card back as it was (its picks and draft
+        // with it); an orphaned card stays answered (the server marked it).
+        if !orphaned {
+            with(|a| {
+                if let Some(cs) = a.chats.get_mut(&chat) {
+                    if let Some(e) = cs.conv.entries.iter_mut().find(|x| s(x, "id") == entry) {
+                        if questions::open(s(&prev, "status").as_str()) && !questions::open(&s(e, "status")) && s(e, "status") != s(&prev, "status") { *e = prev.clone(); }
+                    }
+                }
+                if let Some(card) = a.qcards.get(&format!("{chat}:{entry}")) {
+                    let saved = (!questions::blank(&card.picks)).then(|| questions::to_value(&card.picks));
+                    a.saved_drafts.set_answer(&chat, &entry, saved, now_ms());
+                    a.drafts_dirty = true;
+                }
+            });
+            show_chat(&chat);
+        }
+        chat_error(&chat, err);
+    });
+}
+
+/// The test driver: a chat's latest question card (its entry, status, the
+/// picks as the draft keeps them, Submit, the answered tags).
+pub fn q_of(key: &str) -> Value {
+    let Some(chat) = chat_of(key).map(str::to_string) else { return Value::Null };
+    with(|a| {
+        let cs = a.chats.get(&chat)?;
+        let e = cs.conv.entries.iter().rev().find(|e| s(e, "kind") == "question")?;
+        let id = s(e, "id");
+        let status = s(e, "status");
+        let card = a.qcards.get(&format!("{chat}:{id}"));
+        let d = questions::done(e);
+        Some(json!({
+            "entry": id, "status": status, "open": questions::open(&status), "orphaned": questions::orphaned(&status),
+            "can": card.map(|k| k.can()).unwrap_or(false),
+            "picks": card.map(|k| questions::to_value(&k.picks)).unwrap_or(Value::Null),
+            "questions": card.map(|k| k.qs.len()).unwrap_or(0),
+            "draft": a.saved_drafts.answer(&chat, &id).cloned().unwrap_or(Value::Null),
+            "tags": d.tags, "notes": d.notes, "dismissed": d.dismissed,
+        }))
+    }).flatten().unwrap_or(Value::Null)
+}
+
+/// The test driver acts on the focused chat's latest open question card.
+pub fn q_drive(what: &str, args: &[String]) {
+    let chat = focused_chat();
+    let entry = with(|a| a.chats.get(&chat).and_then(|cs| cs.conv.entries.iter().rev().find(|e| s(e, "kind") == "question" && questions::open(&s(e, "status"))).map(|e| s(e, "id")))).flatten().unwrap_or_default();
+    if entry.is_empty() { return; }
+    let n = |i: usize| args.get(i).and_then(|x| x.parse::<i32>().ok()).unwrap_or(0);
+    let t = |i: usize| SharedString::from(args.get(i).cloned().unwrap_or_default());
+    let Some(w) = ui() else { return };
+    let qa = w.global::<QAct>();
+    let (c, e) = (SharedString::from(chat.as_str()), SharedString::from(entry.as_str()));
+    match what {
+        "pick" => qa.invoke_pick(c, e, n(0), n(1)),
+        "note" => qa.invoke_note_open(c, e, n(0), n(1)),
+        "note-type" => qa.invoke_note_typed(c, e, n(0), t(1)),
+        "note-remove" => qa.invoke_note_remove(c, e, n(0)),
+        "other" => qa.invoke_other_typed(c, e, n(0), t(1)),
+        "move" => qa.invoke_move(c, e, n(0), n(1), n(2)),
+        "submit" => qa.invoke_submit(c, e),
+        // The keyboard to a question's Other (as a click in it).
+        "other-focus" => q_act(&chat, &entry, |k| { if let Some(f) = k.other_focus.get_mut(n(0) as usize) { *f += 1; } }),
+        "dismiss" => qa.invoke_dismiss(c, e),
+        _ => {}
+    }
+}
