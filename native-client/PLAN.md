@@ -233,6 +233,41 @@ systems.
   placeholder, upload and key grid are the web bar's. Reviewers: intended,
   not a finding.
 
+## Desktop area (3.6, 3.7, 6.x): built, and what is left
+
+Specs: `specs/desktop/` (drawer, native-host, inbox-tray-bubble,
+passwords-homepool-cru). Test: `test/desktop.mjs` (parts drawer, host,
+inbox, cru, node; 72 checks, all passing). Screens: `screens/desktop/`. Built: the drawer (tabs per project, kept in desktop-drawer.json;
+the address bar with history suggestions; 19 devices; networks with the
+server's net tunnel; annotations pick/pin/box/pen with notes, sent to a
+chat as text or a marked screenshot; History; Clear browsing data; sleep and
+unload), the native host (every request type of app/main.js and the five
+drawer requests; dialogs suppressed; console and network capture), the
+Browsers tab, the Inbox, notifications (D-Bus on Linux, a toast on Windows,
+osascript on macOS), the homepool node's engine, and Cru's screen (turns,
+listening, speaking, the chat view, keyboard mode). Gaps left:
+
+- **6.3 The chat bubble is not the PC client's** (spec C.1: Electron has no
+  bubble window; the pane's Bubble button shows only inside the Android
+  app). Left out by DESIGN rule 4; nothing to build on the PC.
+- **6.1 The tray, close-to-tray, single instance, start at login**: need a
+  tray crate (requested in shared/requests.md); not built. Notifications are.
+- **6.4 Saved passwords**: need `keyring` + `aes-gcm` (requested). Until
+  then the Passwords panel says they are not available; the lock button
+  never shows; nothing is offered.
+- **6.5 The "This PC" card** lives in the Homepool tab (ops): the engine is
+  `src/desktop/homepool.rs` (status, share, start, stop, forget).
+- **6.6 Cru**: the field is the head in its state's colour, not the
+  contour visualiser; no attachments; no live barge-in (the mic pauses while
+  Cru speaks, as an older server); no Ctrl+Space push to talk (needs a
+  window-level key hook in main.rs) or hover-open; no unread dot on the top
+  bar's mark (Lead's shell); no Cru live panel (screen blocks); no kid
+  mode; "Hey Cru" (sherpa-onnx) not built.
+- **Drawer**: the left side (needs main.slint), the tab bar's dot (needs a
+  Shell hook), the chat cursor jumps instead of gliding, DevTools opens a
+  plain CEF window, page dialogs are suppressed in drawer tabs too, touch
+  listenersAt not reported, the password redaction is a no-op until 6.4.
+
 ## Known gaps (to fix during the factory run)
 
 Phase 1 left these, each with its workaround in place:
