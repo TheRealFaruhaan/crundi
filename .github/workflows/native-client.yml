@@ -27,6 +27,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Theme tokens (no number typed in the screens)
+        if: runner.os == 'Linux'
+        run: native-client/tools/tokens.sh
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -39,7 +43,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
+            libasound2-dev libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
 
       - name: Cache CEF
         uses: actions/cache@v4
@@ -72,6 +76,18 @@ jobs:
         run: |
           BIN=$(node scripts/stage-cef.mjs target/release)
           echo "NATIVE_BIN=$BIN" >> "$GITHUB_ENV"
+
+      # The pure rules (attachments, drafts, layout, headers, chat) on every
+      # system, not just compiled there; CEF's libraries next to the binary
+      # are found through the loader path.
+      - name: Unit tests
+        working-directory: native-client
+        run: |
+          case "$RUNNER_OS" in
+            Windows) export PATH="$PWD/target/release:$PATH" ;;
+            Linux) export LD_LIBRARY_PATH="$PWD/target/release:$LD_LIBRARY_PATH" ;;
+          esac
+          cargo test --release --features gpu
 
       - name: Test deps (just what src/browser.js imports)
         run: |

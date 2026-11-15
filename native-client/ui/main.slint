@@ -3,23 +3,41 @@
 // (tab bar, then the workbench or another tab) and the browser drawer.
 
 import { Theme } from "theme.slint";
+// DejaVu Sans, its four faces (its licence beside them). On Linux the UI
+// uses this family (src/main.rs, Theme.ui-font): the system may have only
+// its upright faces (fonts-dejavu-core alone), and Slint's software renderer
+// draws no slanted face of its own, so _emphasis_, the "Thought" line and the
+// other italic text came out upright. Windows and macOS keep the system's UI
+// font, which has its italics.
+import "fonts/DejaVuSans.ttf";
+import "fonts/DejaVuSans-Bold.ttf";
+import "fonts/DejaVuSans-Oblique.ttf";
+import "fonts/DejaVuSans-BoldOblique.ttf";
+import { Pointer, SoftShadow } from "widgets.slint";
 import { Icons } from "icons.slint";
 import { SignInPage } from "signin.slint";
 import { TopBar, ProjectSidebar, TabBar, ProjectItem, TabItem } from "shell.slint";
-import { Workbench, AddMenu, PaneView, GutterView } from "workbench.slint";
-import { EntryView, ToolView } from "chat.slint";
+import { Workbench, AddMenu, PaneView, GutterView, PaneCard } from "workbench.slint";
+import { EntryView, ToolView, Composer, FrameUi, VoiceUi, BubbleProbe, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn, Win, TipBox, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, LogProbe, SheetProbe, MediaItem, DlRow, AnsBlock } from "chat.slint";
 import { BrowserDrawer, PanelData } from "browser.slint";
+import { ModePicker, ModeOption, PickerProbe } from "modes.slint";
+import { SecretsDialog, SecGrant, SecPick, SecProbe } from "secrets.slint";
+import { SreqDock, SreqCard, SreqProbe } from "sreq.slint";
+import { Viewer, DlTray } from "viewer.slint";
+import { ResumePicker, ResumeRow, ResumeProbe } from "resume.slint";
+import { ParkAct } from "parked.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme }
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe, ResumeRow, ResumeProbe, ParkAct, FrameUi, VoiceUi, BubbleProbe, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn}
 
 export component MainWindow inherits Window {
     title: "Crundi";
-    preferred-width: 1400px;
-    preferred-height: 860px;
-    min-width: 900px;
-    min-height: 520px;
+    default-font-family: Theme.ui-font;
+    preferred-width: Theme.window-w;
+    preferred-height: Theme.window-h;
+    min-width: Theme.window-min-w;
+    min-height: Theme.window-min-h;
     background: Theme.bg-primary;
-    default-font-size: 13px;
+    default-font-size: Theme.text-13;
     // No system frame, as the Electron client: the top bar has the window buttons.
     no-frame: !root.browser-only;
 
@@ -98,6 +116,7 @@ export component MainWindow inherits Window {
     callback wb-area(length, length);
     callback focus-pane(int);
     callback close-pane(int);
+    callback gutter-press(int, int, length, length);
     callback gutter-drag(int, int, length, length);
     callback gutter-even(int, int);
     callback split(int, bool);
@@ -107,11 +126,123 @@ export component MainWindow inherits Window {
     callback stop(string);
     callback respond(string, string, string, bool);
     callback answer(string, string, string);
+    // The pane header (specs/pane-header-wide.md).
+    callback pane-close(int);
+    callback pane-full(int);
+    callback pane-font(int, int);
+    callback pane-pin(int);
+    callback pane-secrets(int);
+    callback pane-rename(int, string);
+    callback pane-maximize(int);
+    callback pane-menu(int, bool);
+    callback draft-changed(string, string);
+    // 2.3: a pane dragged by its header, its clone under the pointer (the
+    // grab point kept), and the workbench's state.
+    callback pane-drag(int, int, length, length);
+    callback file-target(string);
+    callback chip(int, string);
+    in property <bool> drag-on;
+    in property <PaneView> drag-pane;
+    in property <length> drag-dx;
+    in property <length> drag-dy;
+    in property <bool> wb-motion;
+    in property <int> wb-scroll-home;
+    // The pane in full screen, if one is (it covers the window; Esc leaves).
+    in property <bool> full-on;
+    in property <PaneView> full-pane;
+    // A toast: the web UI's, top right under the top bar (src/app.rs times it).
+    in property <string> toast;
+    // The permission-mode picker (2.6): open, its chat's modes and mode, and
+    // where the keyboard starts.
+    in property <bool> mode-picker-open;
+    in property <[ModeOption]> mode-options;
+    in property <string> mode-current;
+    in property <int> mode-start;
+    callback mode-choose(string);
+    callback mode-close();
+    // The chat secrets dialog (2.12): see ui/secrets.slint.
+    in property <bool> sec-open;
+    in property <[SecGrant]> sec-grants;
+    in property <[SecPick]> sec-picks;
+    in property <string> sec-pick-line;
+    in property <string> sec-duration;
+    in property <string> sec-err;
+    in property <bool> sec-busy;
+    in property <bool> sec-revoking-all;
+    in property <bool> sec-unsupported;
+    in property <int> sec-pin-gen;
+    // Secret requests (2.12b): the dock's cards and the armed card's state.
+    in property <[SreqCard]> sreq-cards;
+    in property <bool> sreq-allow;
+    in property <bool> sreq-allow-on;
+    in property <string> sreq-duration;
+    in property <string> sreq-err;
+    in property <bool> sreq-busy;
+    in property <string> sreq-pin;
+    in property <int> sreq-pin-gen;
+    in property <bool> sreq-focus-armed;
+    in property <int> sreq-sel-gen;
+    callback sreq-approve(string);
+    callback sreq-confirm();
+    callback sreq-reject(string);
+    callback sreq-typed(string);
+    callback sreq-toggle-allow();
+    callback sreq-set-duration(string);
+    callback sreq-escape();
+    // A toast of success (a green edge).
+    in property <bool> toast-ok;
+    // The picture viewer (2.16m) and the download rows.
+    in property <bool> viewer-open;
+    in property <image> viewer-image;
+    in property <int> viewer-at;
+    in property <int> viewer-count;
+    callback viewer-step(int);
+    callback viewer-close();
+    in property <[DlRow]> dl-rows;
+    callback dl-close(int);
+    callback sec-close();
+    callback sec-tick(string);
+    callback sec-typed(string, string);
+    callback sec-duration-set(string);
+    callback sec-grant();
+    callback sec-revoke(string);
+    callback sec-revoke-all();
+    pure callback sec-next-field(string, bool) -> string;
+    // The resume picker (2.22): see ui/resume.slint.
+    in property <bool> resume-open;
+    in property <string> resume-heading;
+    in property <[ResumeRow]> resume-rows;
+    in property <string> resume-error;
+    in property <bool> resume-heavy;
+    in property <string> resume-heavy-title;
+    in property <string> resume-heavy-intro;
+    in property <bool> resume-heavy-in-use;
+    callback resume-new();
+    callback resume-pick(int);
+    callback resume-compact();
+    callback resume-full();
+    callback resume-back();
+    callback resume-cancel();
+    // Any modal dialog open (every later one joins this): the pointer is the
+    // scrim's (Pointer.modal).
+    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open || root.resume-open);
+    changed modal-open => { Pointer.modal = self.modal-open; }
+    // The window's height for what is sized by it (Win: the full diff, 2.20).
+    property <length> win-h: self.height;
+    changed win-h => { Win.height = self.win-h; }
+    init => { Win.height = self.height; FrameUi.shown = root.current-tab == "workbench"; }
+    // Live frames (2.16f): only while the Workbench shows; a full-screen
+    // pane's own frames only.
+    property <bool> wb-shown: root.current-tab == "workbench";
+    changed wb-shown => { FrameUi.shown = self.wb-shown; }
+    property <string> full-key: root.full-on ? root.full-pane.key : "";
+    changed full-key => { FrameUi.full-key = self.full-key; }
+    in property <bool> toast-error;
 
     // ─── The browser drawer ───
     in property <[PanelData]> panels;
     in-out property <bool> drawer-open;
-    in-out property <length> drawer-width: 560px;
+    in-out property <length> drawer-width: Theme.drawer-w;
     in-out property <int> drawer-active;
     in-out property <bool> annotating;
     in property <string> status;
@@ -206,7 +337,8 @@ export component MainWindow inherits Window {
                         area(w, h) => { root.wb-area(w, h); }
                         focus-pane(id) => { root.focus-pane(id); }
                         close-pane(id) => { root.close-pane(id); }
-                        gutter-drag(s, i, d, span) => { root.gutter-drag(s, i, d, span); }
+                        gutter-press(s, i, at, span) => { root.gutter-press(s, i, at, span); }
+                        gutter-drag(s, i, at, span) => { root.gutter-drag(s, i, at, span); }
                         gutter-even(s, i) => { root.gutter-even(s, i); }
                         split(id, down) => { root.split(id, down); }
                         launch-chat(id, skip) => { root.launch-chat(id, skip); }
@@ -214,19 +346,35 @@ export component MainWindow inherits Window {
                         stop(k) => { root.stop(k); }
                         respond(k, id, b, a) => { root.respond(k, id, b, a); }
                         answer(k, id, o) => { root.answer(k, id, o); }
+                        pane-close(id) => { root.pane-close(id); }
+                        pane-full(id) => { root.pane-full(id); }
+                        pane-font(id, d) => { root.pane-font(id, d); }
+                        pane-pin(id) => { root.pane-pin(id); }
+                        pane-secrets(id) => { root.pane-secrets(id); }
+                        pane-rename(id, t) => { root.pane-rename(id, t); }
+                        pane-maximize(id) => { root.pane-maximize(id); }
+                        pane-menu(id, on) => { root.pane-menu(id, on); }
+                        pane-drag(id, k, x, y) => { root.pane-drag(id, k, x, y); }
+                        file-target(k) => { root.file-target(k); }
+                        chip(id, k) => { root.chip(id, k); }
+                        dragging: root.drag-on;
+                        menu-open: root.add-menu-open;
+                        motion: root.wb-motion;
+                        scroll-home: root.wb-scroll-home;
+                        draft-changed(k, t) => { root.draft-changed(k, t); }
                     }
                     if root.current-tab != "workbench": VerticalLayout {
                         alignment: center;
-                        spacing: 14px;
-                        Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: 13px; horizontal-alignment: center; }
+                        spacing: Theme.sp-12;
+                        Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: Theme.text-13; horizontal-alignment: center; }
                         // Settings: signing out lives here, as in the PC client.
                         if root.current-tab == "settings": HorizontalLayout {
                             alignment: center;
                             Rectangle {
-                                width: so.preferred-width + 28px; height: 34px;
-                                border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                                width: so.preferred-width + Theme.sp-24; height: Theme.control;
+                                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
                                 background: sh.has-hover ? Theme.red-dim : Theme.bg-tertiary;
-                                so := Text { text: "Sign out of " + root.server; font-size: 12px; font-weight: 600; color: sh.has-hover ? Theme.red : Theme.text-primary; }
+                                so := Text { text: "Sign out of " + root.server; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: sh.has-hover ? Theme.red : Theme.text-primary; }
                                 sh := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.sign-out(); } }
                             }
                         }
@@ -248,8 +396,163 @@ export component MainWindow inherits Window {
                 history(i, h) => { root.history(i, h); }
                 hide => { root.drawer-open = false; }
                 close-all => { root.drawer-open = false; }
-                drag-width(d) => { root.drawer-width = max(320px, min(root.width - Theme.sidebar-width - 420px, root.drawer-width + d)); }
+                drag-width(d) => { root.drawer-width = max(Theme.drawer-min, min(root.width - Theme.sidebar-width - Theme.drawer-reserve, root.drawer-width + d)); }
             }
+        }
+    }
+
+    // Full screen: the pane covers the whole window (position: fixed; inset: 0;
+    // radius 0), with no drag handle and no ×. Esc leaves (the web leaves with
+    // the browser's full screen; Electron has no Esc: the spec asks for it).
+    if root.signed-in && root.full-on: FocusScope {
+        x: 0; y: 0; width: root.width; height: root.height;
+        init => { self.focus(); }
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.pane-full(root.full-pane.id); return accept; }
+            return reject;
+        }
+        PaneCard {
+            p: root.full-pane;
+            // Full screen, the whole window is this chat (a dropped file goes
+            // to it: src/app.rs).
+            file-over: Pointer.file-drag && root.full-pane.kind == "chat";
+            close => { root.pane-close(root.full-pane.id); }
+            full-screen => { root.pane-full(root.full-pane.id); }
+            font(d) => { root.pane-font(root.full-pane.id, d); }
+            font-reset => { root.pane-font(root.full-pane.id, 0); }
+            pin => { root.pane-pin(root.full-pane.id); }
+            open-secrets => { root.pane-secrets(root.full-pane.id); }
+            rename(t) => { root.pane-rename(root.full-pane.id, t); }
+            send(t) => { root.send(root.full-pane.key, t); }
+            stop => { root.stop(root.full-pane.key); }
+            respond(id, b, a) => { root.respond(root.full-pane.key, id, b, a); }
+            answer(id, o) => { root.answer(root.full-pane.key, id, o); }
+            draft-changed(t) => { root.draft-changed(root.full-pane.key, t); }
+        }
+    }
+
+    // The dragged pane's clone: the whole pane at the pointer, a little
+    // see-through, with the pane's own edge and a soft shadow. The web turns
+    // it a little: the software renderer can't
+    // rotate (PLAN.md, Known gaps). It takes no input (the grab stays with
+    // the header that started it).
+    if root.signed-in && root.drag-on: Rectangle {
+        x: Pointer.x - root.drag-dx;
+        y: Pointer.y - root.drag-dy;
+        width: root.drag-pane.w;
+        height: root.drag-pane.h;
+        opacity: Theme.o-clone;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-clone; }
+        PaneCard { p: root.drag-pane; clone: true; blocked: true; }
+    }
+
+    // Secret requests (2.12b): over the workbench, under the dialogs and
+    // the toast; not modal.
+    // Always there while signed in (it tells the Pointer where its cards
+    // are; without cards it draws and takes nothing).
+    if root.signed-in: SreqDock {
+        width: root.width; height: root.height;
+        cards: root.sreq-cards; allow: root.sreq-allow; allow-on: root.sreq-allow-on;
+        duration: root.sreq-duration; err: root.sreq-err; busy: root.sreq-busy;
+        pin: root.sreq-pin; pin-gen: root.sreq-pin-gen; focus-armed: root.sreq-focus-armed; sel-gen: root.sreq-sel-gen;
+        approve(id) => { root.sreq-approve(id); }
+        confirm => { root.sreq-confirm(); }
+        reject(id) => { root.sreq-reject(id); }
+        typed(t) => { root.sreq-typed(t); }
+        toggle-allow => { root.sreq-toggle-allow(); }
+        set-duration(d) => { root.sreq-set-duration(d); }
+        escape => { root.sreq-escape(); }
+    }
+
+    // The permission-mode picker, over everything but the toast.
+    if root.signed-in && root.mode-picker-open: ModePicker {
+        width: root.width; height: root.height;
+        modes: root.mode-options;
+        current: root.mode-current;
+        start: root.mode-start;
+        choose(m) => { root.mode-choose(m); }
+        close => { root.mode-close(); }
+    }
+
+    // The resume picker (2.22).
+    if root.signed-in && root.resume-open: ResumePicker {
+        width: root.width; height: root.height;
+        heading: root.resume-heading; rows: root.resume-rows; error: root.resume-error;
+        heavy: root.resume-heavy; heavy-title: root.resume-heavy-title; heavy-intro: root.resume-heavy-intro; heavy-in-use: root.resume-heavy-in-use;
+        pick-new => { root.resume-new(); }
+        pick(i) => { root.resume-pick(i); }
+        compact => { root.resume-compact(); }
+        full => { root.resume-full(); }
+        back => { root.resume-back(); }
+        cancel => { root.resume-cancel(); }
+    }
+
+    // The chat secrets dialog (2.12).
+    if root.signed-in && root.sec-open: SecretsDialog {
+        width: root.width; height: root.height;
+        grants: root.sec-grants; picks: root.sec-picks; pick-line: root.sec-pick-line;
+        duration: root.sec-duration; err: root.sec-err; busy: root.sec-busy;
+        revoking-all: root.sec-revoking-all; unsupported: root.sec-unsupported; pin-gen: root.sec-pin-gen;
+        close => { root.sec-close(); }
+        tick(id) => { root.sec-tick(id); }
+        typed(id, t) => { root.sec-typed(id, t); }
+        set-duration(d) => { root.sec-duration-set(d); }
+        grant => { root.sec-grant(); }
+        revoke(id) => { root.sec-revoke(id); }
+        revoke-all => { root.sec-revoke-all(); }
+        next-field(c, back) => { return root.sec-next-field(c, back); }
+    }
+
+    // The download rows: top right, under the top bar.
+    if root.signed-in && root.dl-rows.length > 0: DlTray {
+        x: root.width - self.width - Theme.sp-16; y: Theme.topbar-height + Theme.sp-48 + Theme.sp-16;
+        width: min(Theme.dl-w, root.width - 2 * Theme.sp-16);
+        rows: root.dl-rows;
+        close(id) => { root.dl-close(id); }
+    }
+
+    // The picture viewer, over everything (2.16m).
+    if root.signed-in && root.viewer-open: Viewer {
+        width: root.width; height: root.height;
+        img: root.viewer-image; at: root.viewer-at; count: root.viewer-count;
+        step(by) => { root.viewer-step(by); }
+        close => { root.viewer-close(); }
+    }
+
+    // The tooltip (chat.slint Tip): under the pointer, shifted left at the
+    // right edge and flipped above it at the bottom, so it stays inside the
+    // window. A press, or the pointer moving well away, puts it away.
+    if TipState.shown: TipBox {
+        text: TipState.text;
+        x: max(Theme.sp-4, min(TipState.x, root.width - self.width - Theme.sp-4));
+        y: TipState.y + Theme.sp-20 + self.height > root.height ? max(0px, TipState.y - self.height - Theme.sp-4) : TipState.y + Theme.sp-20;
+    }
+    property <int> tip-presses: Pointer.presses;
+    changed tip-presses => { TipState.shown = false; }
+    property <bool> tip-far: abs(Pointer.x - TipState.x) > Theme.sp-48 || abs(Pointer.y - TipState.y) > Theme.sp-48;
+    changed tip-far => { if self.tip-far { TipState.shown = false; } }
+
+    // The toast, under the top bar on the right: never wider than a pane at
+    // its least; bg-secondary, a border with an accent (red: an error) left
+    // edge; green: a success), radius 6, a soft shadow.
+    if root.toast != "": Rectangle {
+        property <length> w: min(Theme.pane-min, tm.preferred-width + Theme.sp-40 + Theme.sp-4);
+        x: root.width - Theme.sp-16 - self.w;
+        y: Theme.topbar-height + Theme.sp-10;
+        width: self.w;
+        height: tt.preferred-height + Theme.sp-24 + Theme.sp-2;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.shadow-menu; }
+        Rectangle {
+            background: Theme.bg-secondary;
+            border-radius: Theme.r-control;
+            border-width: 1px;
+            border-color: root.toast-error ? Theme.red : root.toast-ok ? Theme.green : Theme.border;
+        }
+        Rectangle { x: 0; width: Theme.sp-4; border-top-left-radius: Theme.r-control; border-bottom-left-radius: Theme.r-control; background: root.toast-error ? Theme.red : root.toast-ok ? Theme.green : Theme.accent; }
+        tm := Text { visible: false; text: root.toast; font-size: Theme.text-14; }
+        tt := Text {
+            x: Theme.sp-24; y: Theme.sp-12; width: parent.width - Theme.sp-40;
+            text: root.toast; font-size: Theme.text-14; color: Theme.text-primary; wrap: word-wrap;
         }
     }
 
@@ -257,9 +560,12 @@ export component MainWindow inherits Window {
     if root.signed-in && root.add-menu-open: TouchArea {
         clicked => { root.add-menu-open = false; }
     }
+    // At the tab bar's "+": its left (the bar's padding, then the Workbench
+    // tab: its icon, a gap, its label, its padding), its bottom + 4.
+    wb-m := Text { visible: false; text: "Workbench"; font-size: Theme.text-13; font-weight: Theme.w-medium; }
     if root.signed-in && root.add-menu-open: AddMenu {
-        x: Theme.sidebar-width + 134px;
-        y: Theme.topbar-height + 35px;
+        x: Theme.sidebar-width + Theme.sp-12 + Theme.icon-lg + Theme.sp-6 + wb-m.preferred-width + Theme.sp-24;
+        y: Theme.topbar-height + Theme.sp-6 + Theme.sp-24 + Theme.sp-4;
         pick(k) => { root.add-menu-open = false; root.add-pane(k); }
     }
 }

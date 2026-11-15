@@ -1,0 +1,909 @@
+# 2.16 The rest of the log
+
+Everything in a chat's conversation (the log, `.cc-log`) that the earlier
+screens did not cover:
+
+1. **Claude's reply text** (`.cc-assistant`): the markdown it is drawn from,
+   paragraph spacing and line height, inline code, links and file paths.
+2. **Code blocks** (`pre`) and **the copy button** (`.cc-copyhint`) that
+   shows by a hovered code block, code span, link or path.
+3. **Links**: what a click and a right-click do.
+4. **Images and media** Claude shows with `show_image`, `show_video`,
+   `show_audio`, `show_file` and `show_embed`, under that tool's card, and
+   the picture viewer.
+5. **Notices** (`.cc-notice`), including the long-history line.
+6. **Errors** (`.cc-error`) and the end-of-turn line (`.cc-result`).
+7. **Following the bottom** (stick-to-bottom) and **the jump button**
+   (`.cc-jump`). This includes F87.
+8. **Selection** ("Selection stays in the conversation").
+
+Rule 2 of DESIGN.md applies: every size and colour below is a theme token.
+
+Source:
+- `app/vendor/claude-chat.js`
+  - CSS 31-41 (`.cc-root` 13px / 1.55, `.cc-log` padding, `.cc-entry` gap),
+    60-85 (user bubble, `.cc-assistant` p / ul / ol / li / h1-h3 / a /
+    `.cc-path` / code / pre / blockquote, `.cc-cursor`), 77-81
+    (`.cc-copyhint`), 169-172 (`.cc-result`, `.cc-notice`, `.cc-error`),
+    297-308 (`.cc-jump`).
+  - `md()` 541, `inline()` 594, `linkify()` 614, `FILE_EXT` 643,
+    `looksLikePath()` 646.
+  - The jump button 1196-1202; path clicks 1224-1229; the copy hint
+    1231-1288 (`copyTargetOf`, `copyTextOf`, `placeCopyHint`).
+  - `atBottom()` 1402, `followingBottom()` 1409, `scrollDown()` 1410; the
+    log's scroll handler 1427-1439; `jumpAway()` / `syncJump()` /
+    `noteBelow()` / the jump click 1446-1460; "Selection stays in the
+    conversation" 1461-1640; `restoreScroll()` and the resize observer
+    1642-1680.
+  - `paint()` 1744-1812 (`assistant-text`, `result`, `notice`, `error`,
+    `gone`); `toolNode()`'s `toolExtra` 1937-1951 (the media under a call).
+  - `addEntry()` 4589 and the `patch` / `delta` frames 4975-5008.
+- `src/webapp-html.js`: `openPathFromChat()` 8414, `widgetToolExtra()` 8579,
+  `webLinkOf()` / `openLinkMenu()` and the link click and context-menu
+  handlers 12410-12440, `openCtxMenu()` 12162, `crundiDownload()` 12082.
+- `app/vendor/crundi-widgets.js`: media CSS 133-200, `watchMedia()` 765,
+  `zoomImage()` (the viewer) 821, `sizedBox()` 958, `imageItem()` 972,
+  `playerItem()` 1016, `embedItem()` ~1200, `fileItem()` 1250, `mediaNode()`
+  1270, `toolMedia()` 1690, `itemsMedia()` 1705.
+- `app/main.js`: `setWindowOpenHandler` 197 (http(s) to the system
+  browser), `will-download` 511 (a save dialog in Downloads).
+- Server `src/webapp.js`: `GET /api/chat-media` 4749, `GET
+  /api/chat-media/file` 4773, `GET /api/files/resolve` 7806, the `show_*`
+  MCP tools 8385; `src/chat-media.js`.
+
+## Screenshots
+
+`log-rest/web-<state>.png` at 1400×860, one wide pane (the two `narrow`
+shots: a 900 wide window, the pane 650). A `-2x` file is the named region
+cropped and doubled. The reply text, notices and errors were injected
+through the page's WebSocket (`entry` / `delta` frames); the media are real:
+stored on the server by calling `show_image` / `show_video` / `show_audio` /
+`show_file` / `show_embed` through `/api/mcp/call`, with their results
+injected as tool entries.
+
+| State | What it shows |
+|---|---|
+| `web-reply-markdown` | **A reply with everything**: a `##` heading ("The fix", bold), a paragraph with **bold**, *italic*, a `[text](url)` link and a bare URL that wraps (links break anywhere), a code span that is a path (`src/server.js`: chip plus dotted underline), an absolute path linked (`/tmp/…/client.js:12`), a plain code span, a code block, a numbered list, a quote, a rule (`---`), a last paragraph. A user bubble above with a link in it (underlined, the bubble's text colour). |
+| `web-copy-code` (+`-2x`) | **Copy button on a code block**: hovering the block puts the button inside its top-right corner. |
+| `web-copy-code-done` (+`-2x`) | **After a click**: the button shows a green tick; the toast "Copied" at the top right. |
+| `web-copy-span` (+`-2x`) | **Copy button by a code span**: just after its end, centred on its line. |
+| `web-copy-link-wrapped` (+`-2x`) | **By a link that wraps**: after the end of its last line. |
+| `web-link-menu` | **Right-click on a link**: the menu with "Open in new tab" (the PC app says "Open in browser") and "Copy link", at the pointer. |
+| `web-notices-errors` | **Notices and errors**: "Context compacted." (a notice), an error box ("Process error: …"), a failed turn's end ("error_max_turns" in the same box), the end-of-turn line "12.3s · $0.0421", a long error that wraps (breaking a long path), and a long notice that wraps, centred. |
+| `web-jump-on` (+`-2x`) | **The jump button** after scrolling 600px up: a round button at the bottom centre of the log, a down arrow. |
+| `web-jump-hover` (+`-2x`) | Hovered: accent edge, accent tint. |
+| `web-jump-new` (+`-2x`) | **Something arrived below** while reading up: accent edge and an accent dot at its top right; the arrow nudges. |
+| `web-media-single` | **One picture** (`show_image`, 1200×700): under the call's card, 640 wide, its caption under it. |
+| `web-media-row` | **Several pictures** (three, one call): a row 220 tall, 8 apart, each with its caption, the call's caption under the row. |
+| `web-viewer` | **The viewer**: the picture large on a dark backdrop; "1 / 4" top left (the chat's four pictures); ‹ › at the sides; −, 100%, +, × top right. |
+| `web-viewer-zoomed` | After → and +: "2 / 4", "140%"; the side buttons hide while zoomed. |
+| `web-media-video` | **A video** (`show_video`): its first frame (poster), the big play button, the bar (play, 0:00 / 0:06, seek line, sound, full screen); the caption "The test pattern · 0:06". Under it **an audio clip**: a pill with the accent play button, time, seek line, sound; "A440 tone · 0:08". |
+| `web-media-audio-file-embed` | The audio clip; **a file** (`show_file`): a card with a file icon, "export.csv", "12 B · The export" and Download; **a frame** (`show_embed`, stored HTML) 640 × 200 with its title under it. |
+| `web-download-tray` | **Download clicked**: the download row at the top right ("export.csv", "Saved · 12 B", a full bar, ×). |
+| `web-media-gone` | **A picture no longer stored** (404): its box at its size, dashed edge, "This image is no longer stored." centred. |
+| `web-media-loading` | **A picture loading** (a tall one, 600×900: 280 × 420): its box with a spinning ring; the caption already under it. |
+| `web-selection` | **Selecting reply text** with the mouse: the system's selection colour over two paragraphs; the copy button still shows by the hovered code block. |
+| `web-narrow` | **Narrow pane**: text and links wrap ("ws READ ME" breaks inside the link), the code block and error boxes keep the full width. |
+| `web-narrow-media` | Narrow: the single picture shrinks to the pane; the row of three just fits (it scrolls sideways when it does not). |
+| `web-media-formats` (+`-2x`) | **JPEG, WebP and GIF** in one `show_image` call (1200×700 JPEG, 500×500 WebP, a two-frame 500×500 GIF): a row 220 tall; no item captions (the items have none), the call's caption "JPEG, WebP and GIF" under the row. The GIF animates in the web. |
+| `web-embed-https-html` (+`-2x`) | **Frames**: a YouTube page (`show_embed url=`; w/h 16:9, so 640 × 360), its caption "The talk · from 2:10 · Open on YouTube" (the link `accent-hover`, underlined); under it **stored HTML** (`html=`, height 160): 640 × 160, live (its button counts clicks), caption "Counter", no Open. |
+| `web-embed-page-gone-loading` | **An unknown https site** (example.com, height 480): the live page in a 640 × 480 box, "A plain page · Open on example.com"; **a stored frame no longer stored** (404): dashed box, "This embed is no longer stored." centred; **a stored frame loading** (its HTML not yet fetched): the 34 ring. |
+| `web-frame-live-idle` | **Live frames (2.16f)**, the bottom of the log: a GitHub Gist (stored HTML with an Open link: the server wraps the gist's script; the page is white, drawn by the gist itself) still blank while its script loads; **"Scrolls inside"** (stored HTML 160 tall, 40 lines): the page's own scroll bar inside the box; **"Click test"** (stored HTML 200 tall): a button, an input and a `target=_blank` link, all live. |
+| `web-frame-focused-typing` (+`-2x`) | **A frame taking input**: three clicks on its button (count 3, the button green: the page's own script ran), then a click in its input and typing "hello frame": the text is in the frame's input; the composer is empty and has lost its accent focus edge; `document.activeElement` is the `IFRAME`. The frame draws **no focus edge of its own** (only the page's input shows its focus). |
+| `web-frame-back-reset` | **Scrolled far away and back**: with ~16 000 px of replies under the frames, the log at the bottom has **0 iframes** (all released; each box keeps its size); scrolled back, the click test is a **fresh page**: count 0, the input empty. Nothing of a frame's state survives its release. |
+| `web-frame-narrow` | **Narrow** (viewport 560, the phone layout): every frame box is 516 wide (the pane); the 16:9 YouTube box follows its aspect (516 × 290), stored HTML keeps its height (420, 160, 200). The gist has loaded (code and its "hosted with ❤ by GitHub" bar). |
+| `web-frame-youtube-gist` | **A known player** (YouTube "Me at the zoo", `youtube-nocookie.com/embed/…`, 640 × 360) drawn by YouTube itself (title, play button, Watch on YouTube) and the loaded gist (640 × 420), at 1400 wide. |
+| `web-frame-site-refusal` | **The site's own refusal**: after play, YouTube answers this server's address with "Sign in to confirm you're not a bot" inside the box. The client draws nothing over it; the caption's Open link is the way out. (The older `web-embed-https-html` shows YouTube's "This video is unavailable".) |
+| `web-md-image` (+`-2x`) | **Markdown image syntax in a reply**: the web draws no picture. `![Weekly sales](https://…/chart.png)` shows "!" then a link "Weekly sales"; `![logo](./assets/logo.png)` stays text with the path linked. |
+| `web-video-playing` (+`-2x`) | **The video playing inline** (Electron), the pointer over it: the big button gone, the bar: pause, "0:04 / 0:06", the seek line (accent fill, white knob), sound, full screen. Native plays in the system player instead (see Video and audio). |
+
+## 1. Reply text
+
+### The markdown (`md()`, `inline()`, `linkify()`)
+
+Deliberately small: everything is escaped first, then these come back.
+
+| Source | Drawn as |
+|---|---|
+| ```` ```lang ```` … ```` ``` ```` | a code block (see 2); the language is not shown; one trailing newline dropped |
+| blank line | ends a paragraph, a list |
+| lines with no blank between | **one paragraph, the line breaks kept** (`<br>`) |
+| `# x` / `## x` / `### x`… | heading level +2: `#` → h3: 14 (`text-14`), weight 650 (`w-semibold`), 12 above, 6 below; `##` and deeper → h4-h6: **13 bold, no extra space** (the web styles h1-h3 only; `web-reply-markdown`'s "The fix") |
+| `---`, `***`, `___` alone | a rule: full width, 2 tall, a light grey line (the browser's default `hr`; no gaps above or below) |
+| `> x` | a quote line: 2px `border` bar at the left, 10 padding, `text-secondary`, 8 below. **Each `>` line is its own quote** |
+| `- x`, `* x`, `+ x` | bullet list; `1. x` / `1) x`: numbered list (numbers from 1, "1."). 20 indent, items 2 above and below, the list 8 below; indented items are not nested |
+| `` `x` `` | code span: mono 12, `bg-tertiary`, padding 1 × 5, radius 4 (`r-chip`). A span that **looks like a path** (see below) is also a path link |
+| `[text](https://…)` | a link with that text, to that URL (http/https only) |
+| bare `http(s)://…` | a link; trailing `.,;:!?)]'"` and `>` stay outside it |
+| `**x**` | bold; `*x*` (after a space, a bracket or the start) italic |
+| an absolute path `/a/b.js`, `/a/b.js:12`, `/a/b:12:3` | a path link |
+| `./x/y`, `../x`, `a/b.ext` with a known file extension (`FILE_EXT`) | a path link ("and/or", "10/12" stay words) |
+| `![alt](url)` | **not an image**: the text as it is (the web has no markdown images; pictures come only through `show_image`) |
+
+`looksLikePath(c)` for a code span: no spaces, not a URL, no `<>&*|$\``,
+at most 260 characters; either has a `/` between word parts, or is a bare
+name with a known extension (`app.js`, not `obj.prop`).
+
+### Look
+
+| Part | Web | Token |
+|---|---|---|
+| Reply text | 13 × fs, line 1.55 (20.15), `text-primary`, breaks long words | `text-13`, `line-chat` |
+| Paragraph gap | 8 (none after the last) | `sp-8` |
+| List indent / item gap | 20 / 2 above and below | `sp-20` / `sp-2` |
+| Heading (h3) | 14 / 650, 12 above, 6 below | `text-14`, `w-semibold`, `sp-12`, `sp-6` |
+| Quote | bar 2 `border`, 10 in, `text-secondary` | `sp-2`, `sp-10` |
+| Link | `accent-hover`, underlined (offset 2), breaks anywhere | `accent-hover` |
+| Path link | `accent-hover`, **dotted** underline (offset 3); hover: solid | |
+| Path code span | the chip, its text `text-primary`, dotted underline | |
+| Code span | mono 12, `bg-tertiary`, 1 × 5 padding, radius 4, line 18.6 | `text-12`, `bg-tertiary`, `sp-2`×`sp-4`, `r-chip` |
+| Link in a user bubble | the bubble's text colour, underlined | |
+| Streaming reply | a 6 × 13 `accent` block blinking at the end (`.cc-cursor`) | |
+| Entry gap | 10 below every entry | `sp-10` |
+| Log padding | 12 sides and top, 4 bottom | `sp-12`, `sp-4` |
+
+Text size (A- / A+) scales every text above (× fs); gaps and padding do not.
+
+**PLAN "Known gaps" that belong here** (keep them named if Slint still
+cannot do better, otherwise fix them):
+- **Inline-code chip.** The web's chip is a plain `bg-tertiary` fill with
+  radius 4 and 5px side padding; StyledText draws a faint outline and pads
+  nothing (the native pads with thin spaces). Check what Slint 1.18's
+  StyledText offers for the code style; if nothing, keep the gap named.
+- **Paragraph line height.** The web's 1.55 applies inside a wrapped
+  paragraph; StyledText has no line height, so wrapped lines sit tighter.
+  Single lines, list items and paragraph gaps already match (each block is
+  padded to the 1.55 box). If StyledText still has no line height, keep the
+  gap named. Do **not** switch the paragraphs to plain text to get it: bold,
+  links and code spans matter more.
+- **Reply text size.** The web's reply text is 13 × fs; the native
+  paragraphs are drawn at `text-14` (ui/chat.slint, `e.kind == "assistant"`).
+  Use `text-13`, or name why not.
+
+## 2. Code blocks and the copy button
+
+### Code block
+
+| Part | Web | Token |
+|---|---|---|
+| Box | `bg-secondary`, 1px `border-subtle`, radius 6, padding 9 × 11, 8 below | `bg-secondary`, `border-subtle`, `r-control`, `sp-10`×`sp-12`, `sp-8` |
+| Text | mono 12, line 1.5 (18), `text-primary` | `text-12`, mono |
+| Long lines | **do not wrap**: the block scrolls sideways (`overflow-x:auto`) | |
+
+The native code block wraps today (`word-wrap`); it must keep lines whole
+and scroll sideways (a horizontal `ScrollView`/`Flickable` with a thin
+`ScrollThumb` when it overflows). Its text is selectable.
+
+### The copy button (`.cc-copyhint`)
+
+One button per chat, moved to whatever is hovered.
+
+| Part | Web | Token |
+|---|---|---|
+| Button | 24 × 22, `bg-secondary`, 1px `border`, radius 6, shadow 0 4 12 35% black | `sp-24`×(`sp-20`+`sp-2`), `r-control`, `SoftShadow` |
+| Icon | copy (two squares) 13, `text-secondary` | `icon-md` |
+| Hover | icon `text-primary`, fill `bg-hover` | |
+| Done | a tick, `green` | |
+
+- **What shows it:** the pointer over a code block, a code span, a link or a
+  path link **in Claude's reply**, or a link in a user bubble. Not over
+  tool cards, thinking, notices.
+- **Where:** a code block: inside its top-right corner, 6 in from the top and
+  the right. Anything else: 3 after the end of its **last line**, centred on
+  that line; if that would pass the window's right edge (less 4), it sits
+  over the end of the span instead.
+- **Goes:** 250 ms after the pointer leaves both the target and the button;
+  at once when the log scrolls.
+- **Tooltip:** "Copy code" (block or code span), "Copy path" (a path, code or
+  link), "Copy link".
+- **Click:** copies — a block: its whole text; a link: its **URL** (not its
+  text: `[ws README](https://…)` copies the address); a path: the path as
+  written (with its `:12`); a code span: its text. Then the tick and the
+  toast "Copied". If the clipboard refuses: toast "Could not copy" (error).
+  Pressing it does not take the focus or clear a selection.
+- The tick stays until the button moves to another target.
+
+## 3. Links and paths
+
+- **Click a link** (left button, mouse): opens the URL in the **system
+  browser** (Electron's `setWindowOpenHandler` → `shell.openExternal`), not
+  in the drawer. Native: `open::that(url)` (the client already uses it).
+- **Right-click a link**: a menu at the pointer (kept 6 inside the window):
+  "Open in browser" (icon external-link) and "Copy link" (icon copy, toast
+  "Link copied"). Menu: `bg-secondary`, `border`, radius 10, padding 5,
+  shadow; items 14px, 12 padding, icon 14 `text-secondary`, gap 10, radius 6,
+  hover `bg-hover`. Closes on a press outside, Esc, the window losing focus,
+  a resize or any scroll. Use the client's menu widget (`HeadMenu` /
+  `MenuItem` style).
+- **Click a path** (`.cc-path`, text or code): opens the file in the Files
+  panel: an absolute path inside a known project opens there; anything else
+  is asked about with `GET /api/files/resolve?project=<chat's project>&path=`
+  → `{ok, file, dir}`; not found: toast "File not found: <path>" (error);
+  a folder: toast "That is a folder: <path>". **The native client has no
+  Files panel until phase 3**: name the gap in PLAN (a path click does
+  nothing yet; its copy button works).
+
+## 4. Images and media
+
+What Claude shows with `show_image`, `show_video`, `show_audio`, `show_file`
+or `show_embed` (any MCP server prefix) is drawn **under that call's tool
+card**, when the call is done and not an error. The call's result is JSON:
+
+```
+{ ok, shown, items: [ … ], caption?, note }
+item: { kind:'image', name, filename, size, caption, w, h }
+    | { kind:'video', name, filename, size, caption, w, h, duration, poster }
+    | { kind:'audio', name, filename, size, caption, duration }
+    | { kind:'file',  id, filename, size, ext, caption }
+    | { kind:'embed', title, height, name }            (stored HTML)
+    | { kind:'embed', title, provider, src, url, w, h, height, width } (https frame)
+legacy (1.19.19): { images: [ { name, caption } ] }  → kind image
+```
+
+Only names matching `^[0-9a-f]{16}(.poster)?.(png|jpg|gif|webp|mp4|webm|mov|mp3|wav|ogg|m4a|flac|weba)$`
+(embed: `^[0-9a-f]{16}.embed$`, file ids `^[0-9a-f]{16}$`) are used;
+captions and names are text, never markup.
+
+### Layout (`mediaNode`)
+
+| Part | Web | Token |
+|---|---|---|
+| Under the card | 6 above, 2 below | `sp-6`, `sp-2` |
+| Row | side by side, 8 apart, scrolls sideways when too wide, 4 below; files and audio stack instead | `sp-8`, `sp-4` |
+| Item | the box, then its caption 4 below | `sp-4` |
+| Box | 1px `border`, radius 8, `bg-secondary`, clipped | `border`, `r-field`, `bg-secondary` |
+| Size, one item | width `min(w, 420·w/h, 640)`, height from `w/h` (never taller than 420, never wider than 640, never wider than the pane) | |
+| Size, several | **220 tall**, width `220·w/h` | |
+| Size unknown | 16:9, 420 wide (one) or 391 (several) | |
+| Item caption | 11.5, `text-secondary`, line 1.35, at most 440 wide, wraps | `text-12`, `text-secondary` |
+| Call caption (several items) | the same, under the row, 4 above | `sp-4` |
+| Image caption | its `caption` | |
+| Video / audio caption | `caption` (or the file name) · `m:ss` duration | |
+
+The box has its final size **before** anything loads, so the log never
+jumps when a picture arrives.
+
+### Formats (`web-media-formats`)
+
+Stored pictures are `png`, `jpg`, `gif` or `webp` (the name's extension; a
+video's poster is a `.poster.jpg`). The native client must decode all four:
+today slint is built with `default-features = false` and only the `png`
+crate is present, so JPEG, WebP and GIF draw nothing. Turn on Slint's
+`image-default-formats` feature, or decode with the `image` crate (features
+`png`, `jpeg`, `webp`, `gif`) into a `SharedPixelBuffer`. Decode off the UI
+thread, like the fetch.
+
+- **GIF**: the web animates it (an `<img>`). Native: the first frame is
+  enough for this step, named in PLAN (Known gaps) if animation is not done;
+  if it is, play the frames with their delays and loop, and stop when the
+  row is not realised. The viewer shows the same (first frame or animated).
+- An item with no `caption` has no caption line (the formats shot: only the
+  call's caption, under the row).
+- A file that is fetched but will not decode (bad bytes, an unknown
+  format): the web leaves the box empty (no ring, no words; its `<img>`
+  has no error handler). Native: the same empty box. Only a 404 is "gone".
+
+### Images in reply markdown (`web-md-image`)
+
+**The web draws no pictures from markdown.** `md()` has no `![…](…)` rule:
+the `[text](https://…)` link rule matches inside it, so
+`![Weekly sales](https://x/chart.png)` shows a literal "!" followed by the
+link "Weekly sales" (opening the URL); `![logo](./assets/logo.png)` is left
+as text with `./assets/logo.png` linked as a path. Native: the same, nothing
+fetched. Pictures only ever come from `show_image` (and the other
+`show_*` tools). A `cargo test` in md.rs pins both cases.
+
+### Picture
+
+- **Loading** (`web-media-loading`): a ring 34 wide, 3 thick (white 18%,
+  its top `accent`), turning (0.8 s), centred in the box. Then the picture
+  fades in (0.15 s), fitted inside the box (`contain`).
+- **Gone** (the server answers 404): the box keeps its size, its edge dashed;
+  "This image is no longer stored." centred, 11.5 `text-muted`.
+- **Load when near**: a picture loads when it comes within about a screen
+  (900) of the view and is let go when far (4500). Native: load when the
+  row is realised (the ListView already does this), drop the decoded image
+  when it is far, keep the size.
+- A network failure is not "gone": it retries the next time it comes near.
+- **Click a picture** (pointer: zoom-in): the viewer.
+
+### The viewer (`zoomImage`)
+
+| Part | Web | Token |
+|---|---|---|
+| Backdrop | the whole window, black 86% | a theme colour (darker than `scrim`) |
+| Picture | fitted inside 16 padding, centred | `sp-16` |
+| Bar (top right, 10 in) | pill, padding 3, gap 2, `bg-secondary`-like at 88%, `border`: **−** "Zoom out", **100%** "Back to fit" (`text-secondary`, at least 52 wide), **+** "Zoom in", **×** "Close" | `r-pill` |
+| Bar buttons | 34 round, mono 12 / 600, hover white 10% | |
+| Counter (top left, 14 in) | "2 / 4", pill, mono 12 / 600, `text-secondary` | |
+| Side buttons | 44 round, 12 from the sides, centred vertically, ‹ "Previous picture" / › "Next picture"; hidden while zoomed | |
+
+- **Gallery**: the chat's pictures in order (every picture in this pane's
+  log); counter and side buttons only when there are two or more. ← / →
+  and the side buttons move (wrapping round); each step resets the zoom.
+- **Zoom**: + / = (×1.4), − (÷1.4), 0 (fit), the bar's buttons, Ctrl
+  (or ⌘) + wheel at the pointer, a double click (2.5× at the point, or back
+  to fit). From 1× to 8×; the 100% button shows the scale.
+- **Move** when zoomed: drag, or the wheel; never further than the
+  picture's edge plus 40.
+- **Close**: Esc, ×, or a click on the backdrop (not on the picture).
+- Native: a window-level overlay over everything (like the secret-request
+  dock, specs/secret-requests.md), keys taken while open.
+
+### Video and audio (`playerItem`)
+
+- **Video**: the box sized like a picture; its poster frame
+  (`GET /api/chat-media?…&name=<poster>`); a big round play button in the
+  middle (56, black 55%, white 25% edge); a bar along the bottom over a
+  dark gradient: play/pause (32 round), "0:00 / 0:06" (mono 11.5 / 500),
+  the seek line (4 tall, 6 on hover, `accent` fill, buffered part lighter,
+  a white 12 knob on hover), sound on/off, full screen. Nothing is fetched
+  until play is first pressed. While playing and idle the bar hides.
+  Buffering: a white ring 48 in the middle. Playing: `web-video-playing`.
+- **Audio**: a pill at most 440 wide, 50 tall, `bg-card`, `border`; the
+  play button 38 round in `accent` with a white icon; time; seek line
+  (`border` track); sound.
+- Keys on the seek line: ← / → step. Click on the line: jump there.
+- Caption: `caption` (or the file name) · `m:ss` (`fmtDuration`: rounded
+  seconds, minutes not padded: 6 → "0:06", 75 → "1:15").
+- **What Electron does**: plays inline (HTML5 `<video>` / `<audio>`; the
+  web passes the session as `?token=` on the media URL).
+- **Native: the system player.** Slint has no media playback, and CEF's
+  standard build has no H.264/AAC, so an inline CEF player would fail on
+  most `.mp4`/`.m4a`. Name it in PLAN (Known gaps). Draw the video box with
+  its poster (a `.poster.jpg`: JPEG decoding is needed), the big play button,
+  and the caption; the audio pill with its play button, "0:00 / m:ss" and
+  the caption (no seek line or sound button: they would do nothing; name
+  that too). On play: the big button becomes the 48 white ring while the
+  file downloads (`GET /api/chat-media?session=&name=` with the auth
+  header) to the system temp folder under its stored name (reuse it if it
+  is already there with the same size), then `open::that(path)` and the
+  button returns. Never hand the system player a URL with the token in it
+  (it would land in the player's history). A failure: the server's error
+  (or "Could not play <file name>") as an error toast. The Manager decides
+  if a player library is wanted later.
+
+### File (`fileItem`)
+
+| Part | Web | Token |
+|---|---|---|
+| Card | at most 460 wide (and the pane), padding 9 × 10, gap 10, `bg-card`, 1px `border`, radius 10 | `sp-10`, `r-card` |
+| Icon box | 34, `bg-primary`, `border`, radius 8, the Files list's icon for the name (`fileIcon()`, webapp-html 12509: coloured letters for code types, e.g. "JS" `#f7df1e`, "{}" for JSON, "M↓" for md, image / archive / red file-text (pdf) icons, else the plain file icon `text-secondary`, 15 / mono) | `r-field` |
+| Name | 13 / 600 `text-primary`, one line, elided | `text-13`, `w-semibold` |
+| Line under | "12 B · The export" (size, then the caption), 11.5 `text-secondary`, elided, 2 below the name | `text-12` |
+| Download | 28 tall, padding 4 × 10, gap 5, `bg-tertiary`, `border`, radius 6, 12px, a download icon + "Download" | the client's small button |
+
+If the client has no `fileIcon` table yet (it comes with the Files panel,
+phase 3), the plain file icon for every type is acceptable now: name it in
+PLAN. Several files in one call stack (one card per line, 8 apart), never a row.
+Sizes on the card: `fmtBytes` (1024 steps; one decimal under 10: "12 B",
+"26 KB", "1.5 MB", "12 MB").
+
+**Download in Electron** (`crundiDownload`): the download row appears at
+once ("Starting…"), the file is fetched into memory with the auth header
+showing progress, then saved through a link click, which Electron answers
+with **its save dialog** (title "Save <name>", the Downloads folder and the
+name filled in); the row then says "Saved · <size>" even if the dialog was
+cancelled (a web bug). Over 600 MB it lets the browser stream it instead
+(toast "Downloading <name> in the browser (too large to do in the app)").
+
+**Native** (a deliberate difference in order, named in the spec only):
+1. The system save dialog first (`rfd::AsyncFileDialog`, the client already
+   has it): title "Save <name>", the platform's Downloads folder (if
+   there is one), the name filled in. Cancel: nothing
+   happens, no row.
+2. Then stream `GET /api/chat-media/file?session=<chat>&id=<id>` (auth
+   header) to `<path>.part` off the UI thread, renamed to the path when
+   complete (no size limit: it streams).
+3. The download row (below) shows from step 2.
+
+The download row (`.dl-tray` / `.dl-row`, `web-download-tray`), window-level:
+
+| Part | Web | Token |
+|---|---|---|
+| Tray | top right: 16 from the right, the top bar's height + 64 from the top; 320 wide (window − 32 at most); rows 8 apart, newest last; above the panes, under dialogs | `sp-16`, `sp-8` |
+| Row | padding 10 / 10 / 10 / 12, gap 10, `bg-secondary`, 1px `border`, **left edge 3 `accent`** (done `green`, failed `red`), `r-sm`, `shadow-md` | |
+| Icon | download, 15, `accent-hover` (done `green`, failed `red`) | |
+| Name | 12.5 / 600 `text-primary`, elided | `text-12`, `w-semibold` |
+| Line | 11 `text-secondary`, tabular figures, elided; 3 under the name | `text-11` |
+| Bar | 3 tall, pill, `bg-tertiary`; fill `accent` (done `green`); hidden when failed | |
+| × | 17, `text-muted`, padding 6 × 8, radius 6; hover `text-primary` on `bg-tertiary` | |
+
+- Line texts: "Starting…"; while running "<got> of <total>" (or "<got>"
+  when the size is unknown), repainted at most every 120 ms; done
+  "Saved · <size>"; cancelled "Cancelled"; failed: the server's `error`
+  (410: "<name> is no longer where it was.", 404 "Not found") or
+  "Download failed (<status>)"; a write error: the system's message. Sizes here
+  are `fmtDlSize` ("12 B", "26 KB", "1.5 MB": KB rounded, MB one decimal).
+- × while running cancels (the `.part` file is deleted); after it ends, ×
+  removes the row.
+- The row leaves by itself: 4.5 s after "Saved", 1.2 s after "Cancelled",
+  7 s after a failure; it fades and drops 6 (0.2 s).
+- Nothing beyond the web's: no "Open" or "Show in folder" on the row.
+
+### Frame (`embedItem`, `show_embed`)
+
+The item: stored HTML (`name` `<16 hex>.embed`; `GET /api/chat-media?…&name=`
+answers the HTML as text) or an https page (`src`, never this server's own
+host). The server fills `provider` (YouTube, Vimeo, X, Instagram, Spotify,
+CodePen, GitHub Gist… or, for a site it does not know, the host name) and
+`url` (the page to open).
+
+| Part | Web | Token |
+|---|---|---|
+| Box size | with `w`/`h` (a known player): aspect `w:h`, width **640** when `w ≥ h`, else `560·w/h`; without: `width` (default 640) × `height` (default 420; stored HTML: what Claude asked, e.g. 160); never wider than the pane (height follows the aspect when it has one) | |
+| Box | the media box (1px `border`, radius 8, clipped), background `#0f0f14` (a theme colour, darker than `bg-secondary`) | `r-field` |
+| Loading | the 34 ring (as a picture) until the page or the HTML has loaded | |
+| Gone (stored HTML 404) | dashed edge, "This embed is no longer stored." centred, 11.5 `text-muted` | |
+| Caption | 11.5 `text-secondary`, line 1.35, at most 440, wraps: `title · caption` (either alone), else the provider, else "Embedded HTML"; then, with a `url`, " · " and the link | `text-12` |
+| Open link | `accent-hover`, underlined, pointer: "Open on <provider>" (when the caption is not just the provider), else "Open"; opens `url` in the system browser | |
+
+Examples from the shots: "The talk · from 2:10 · Open on YouTube"; "A plain
+page · Open on example.com"; "Counter" (stored HTML: no url, no link).
+
+**What Electron does**: the frame is **live, inline in the log** (an
+`<iframe>`), made when it comes within about a screen of the view and
+removed when far (kept while it is full screen):
+- https: sandbox `allow-scripts allow-same-origin allow-popups
+  allow-popups-to-escape-sandbox allow-forms allow-presentation`, `allow`
+  autoplay / encrypted-media / picture-in-picture / fullscreen /
+  clipboard-write / web-share, referrer `strict-origin-when-cross-origin`
+  (YouTube refuses a frame without it). Its popups and links with a target
+  go to the system browser (`setWindowOpenHandler`).
+- stored HTML: fetched with the auth header, given as `srcdoc`, sandbox
+  `allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms
+  allow-modals allow-pointer-lock` (no origin at all).
+- Many sites refuse to be framed: the box then stays as the site draws it
+  (blank or the site's own refusal); the Open link is the way out.
+
+**Native: an inline CEF view in the box** (PLAN's decision: CEF is for
+browser panels and live web content, embeds included; `src/browser.rs`
+already draws a windowless CEF browser's frames as a Slint `Image` and
+forwards pointer, wheel and keys):
+- When the row is realised, create a windowless browser the box's size
+  (device scale as the window); when the row is dropped (far from the
+  view, as the web's 4500), close it and keep the box, so it reloads when
+  it comes back (the web does the same).
+- https: load `src` with the referrer policy above. Stored HTML: fetch it
+  with the auth header, load it as a `data:text/html;base64,…` URL (an
+  opaque origin, like `srcdoc` in a sandbox).
+- New windows and `target=_blank` links from the frame open in the system
+  browser (`on_before_popup` → `open::that`, cancel the popup). The frame
+  never navigates the client.
+- Input: pointer and wheel over the box go to the frame (as the web: the
+  wheel scrolls the frame first). A click focuses it; keys go to it until a
+  click elsewhere. Esc is the frame's.
+- The loading ring until the first paint (or the HTML's fetch); gone as
+  above.
+- If CEF did not start (the log says "CEF did not start"), draw the box with
+  the caption, the Open link and, centred inside, "Open" as a small button
+  (stored HTML: opens the HTML in the system browser through a temp file).
+  Name this fallback in PLAN; it is not the normal look.
+- Full screen from inside a frame (a player's button): name it as a gap if
+  not done.
+
+#### Live frames in detail (2.16f)
+
+Everything above still holds; this is the full contract for the live view.
+Shots: `web-frame-*` (table at the top) and the older `web-embed-*`.
+
+**Measured** (1400 × 860, one wide pane):
+
+| What | Web | Native |
+|---|---|---|
+| The view inside the box | the iframe fills the box inside its 1px edge: box 640 × 360 → frame **638 × 358** at (+1, +1); clipped to the box's radius 8 | view = box − 2 each way, at +1/+1, in logical px × the window's scale; corners clipped to `r-field` |
+| Box background behind the page | `#0f0f14`; the iframe itself is transparent, so a page without a background shows the box colour | `frame-bg`; create the view with a **transparent** `background_color` (0x00000000), not the panels' white |
+| Caption | 4 under the box (box bottom 529, caption top 533), 11.5 / 15.5 `text-secondary` (`rgb(136,136,168)`) | as the Frame table |
+| Block around the item | the media block's margin 6 top, 2 bottom | as 2.16m |
+| Narrow | width = the pane (516 at a 560 viewport); a `w`/`h` box keeps its aspect (516 × 290), a fixed height stays (420, 160, 200) | the same; the view is resized (`was_resized`) whenever the box changes size |
+
+**Lifetime** (measured in the web):
+- A frame is made when its box comes within **900 px** of the log's
+  viewport and released (iframe removed, the box kept at its size, no
+  ring) when it is more than **4500 px** away. With 16 000 px of replies
+  under four frames and the log at the bottom: 0 iframes; scrolled back:
+  4, each a **fresh page** (`web-frame-back-reset`: the counter is 0
+  again, the typed text gone).
+- Leaving the Workbench tab (the chat hidden) releases every frame
+  (4 → 0); coming back makes them again (0 → 4). Closing the chat removes
+  them. Exception: a frame in full screen is never released.
+- A tool entry patched with the same item keeps its frame (native: keep
+  the view while the item's `name` / `src` is unchanged).
+
+Native rules (the Manager's "watch: memory and CPU"):
+- **Create** a view when the frame's row is realised by the log's
+  `ListView` and within 900 px of the viewport; **release**
+  (`close_browser(true)`, the box stays) when the row is unrealised or
+  more than 4500 px away, when the chat's pane closes, is parked or not
+  shown (another tab in front, Peek, another pane full-screen over it),
+  and when the window closes. Released views come back fresh, as the web.
+- **Cap: at most 6 live frame views in the window** (all panes
+  together; panels in the Panels tab do not count). When one more is
+  needed, release the live view farthest from its own pane's viewport
+  (never one on screen); a box waiting for a view shows the loading ring.
+  The web has no cap: name it in PLAN as a deliberate difference.
+- **Only what is on screen paints**: a live view whose box is outside
+  the viewport (inside the 900 margin), or while the window is minimised
+  or hidden, gets `was_hidden(true)` (no painting, no rAF timers at full
+  rate); back on screen `was_hidden(false)` and `invalidate`. Frame rate
+  30, as the panels.
+- No frame view ever gets the client's JS bindings, message router, CDP
+  hooks that write into the page, or the session token.
+
+**Loading**:
+- https `src`: load it with the referrer the web's iframe sends (policy
+  `strict-origin-when-cross-origin`, i.e. `Referer: <server origin>/`):
+  a `CefRequest` with `set_referrer(<server origin>/,
+  STRICT_ORIGIN_WHEN_CROSS_ORIGIN)` through `frame.load_request`, or the
+  equivalent. YouTube's embed refuses a load without a referrer.
+- Stored HTML: `GET /api/chat-media?session=<chat>&name=<name>` with the
+  auth header (the ring meanwhile); 200 → load
+  `data:text/html;charset=utf-8;base64,…` (the server caps the HTML at
+  512 KB, ~683 KB in base64, under Chromium's 2 MB URL limit); 404 → the
+  gone box; a network error → the box empty, no ring, retried the next
+  time it comes near (the web's `_wgLoaded = false`).
+- The ring stays until the view's first paint.
+- A stored page may load scripts and styles from the internet (the gist
+  does, `show_embed`'s description promises it): a data: URL allows that.
+
+**What the page may do** (the web's sandbox, in CEF terms):
+- New windows, `window.open` and `target=_blank` links: `on_before_popup`
+  → the system browser (`open::that`) for http(s), cancel the popup
+  (Electron: `setWindowOpenHandler` → `shell.openExternal`).
+- A link without a target navigates inside the frame (as an iframe). The
+  frame never navigates the client.
+- Downloads: refused (the sandbox has no `allow-downloads`).
+- `alert` / `confirm` / `prompt` (stored HTML has `allow-modals`): a
+  windowless view shows none; suppress them (`on_jsdialog` → dismissed)
+  and name the gap in PLAN.
+- Right-click: no menu (Electron shows none in a frame):
+  `on_before_context_menu` clears the model.
+- Camera, microphone, location, notifications: denied (not in the
+  iframe's `allow`). Autoplay as Chromium's default (the web's `allow`
+  only delegates it).
+- Full screen from a player: a named gap unless built (then: the view
+  fills the window; Esc leaves; the frame is not released meanwhile).
+
+**Input** (the Manager's "watch: focus"):
+- Pointer: moves, presses, releases and double clicks over the box go to
+  the view, at coordinates inside the 1px edge; leaving the box sends
+  mouse-leave. The pointer shape is the page's (`on_cursor_change`: a
+  hand over YouTube's button, a text bar over an input).
+- A click in the frame gives it the keyboard: the view gets focus, the
+  composer loses its focus edge (`web-frame-focused-typing`); keys
+  (down/up/char, modifiers, IME text) go to the view, so typing never
+  reaches the composer and the client's shortcuts do not fire, Esc
+  included. A click anywhere outside the box takes focus back (the view
+  gets `set_focus(false)`).
+- Wheel over a frame goes to the frame. Chromium chains it to the log when
+  the frame's page cannot scroll that way (the click test, which does not
+  scroll, passes the wheel straight to the log; "Scrolls inside" scrolls
+  itself and, at its end, the log; Chromium's scroll chaining, not
+  measured here: the browser tool sends no real wheel). Native: forward the wheel to the view;
+  chain to the log when the page's root scroller is at that end or does
+  not scroll (read it after load and on `on_scroll_offset_changed`). An
+  inner scrolling element that is not the root then gets no chaining:
+  name that if it stays. The wheel **not** over a frame always scrolls the
+  log.
+- A file dragged over the window: frames stop taking the pointer
+  (`body.file-dragging iframe { pointer-events: none }`), so a file dropped
+  on a frame goes to the chat's attach drop. Native: a drop over a frame
+  box is the pane's drop, never the view's.
+
+**Endpoints and events**: only `GET /api/chat-media` (stored HTML) and
+the frame's own https loads. The frame arrives with its tool entry
+(`chat-event` `entry` / patch, as every media item); no event changes a
+frame afterwards.
+
+## 5. Notices
+
+Centred, 11.5 italic `text-muted`, wraps. Server texts:
+- "— earlier messages in this conversation —" (**the long-history line**:
+  `restoreHistory` puts it between the restored transcript and the new
+  session's messages);
+- "Continuing your previous conversation. Claude has the full context; only
+  recent messages are shown here." (after a resume);
+- "This conversation stopped waiting for an answer. …" (restored while a
+  question was open);
+- "Conversation compacted" (from history), "Context compacted." (live);
+- "Starting Claude…" (patched to an error "Claude failed to start: …" on
+  failure).
+
+Token: `text-12` (or `text-11`; the web's is 11.5) **italic**, `text-muted`,
+centred. The native notice today is not italic.
+
+(The queue drawer's "Shown trimmed ·" hint, `markTrimmed()`, belongs to 2.9
+and is already specced there.)
+
+## 6. Errors and the end of a turn
+
+- **Error** (`kind:'error'`, and a `result` whose `subtype` is not
+  `success`, showing its `text` or else the subtype, e.g. "error_max_turns"):
+  a box, full width: `red` text 12, `red-dim` fill, **1px `red` edge**,
+  radius 6, padding 7 × 10, long words break. Also the client's own errors
+  (a failed send, a failed answer) as the same box.
+  The native draws `error-text` on `error-edge` today, and a failed result
+  as centred red text: use `red` / `red`, and the box for a failed result.
+- **End of turn** (`result`, success): centred 11 `text-muted`, padding 3,
+  a dashed `border-subtle` line above; "12.3s · $0.0421" (only the parts it
+  has; empty when neither).
+- `kind:'gone'`: drawn as nothing.
+
+## 7. Following the bottom, and the jump button
+
+### The web's rules
+
+- `stick` (follow the newest message) starts true.
+- **Only the reader's scrolling changes it**: on every scroll of the log
+  (while the log is visible and has not just changed height),
+  `stick = (distance to the bottom < 60)`.
+- **When content changes** (a new entry, a patch, a streamed delta, the
+  history): if `stick` (or the log is already within 60 of the bottom), the
+  log goes to the very bottom, at once (no animation).
+- The log getting shorter or taller (window resize, a panel opening) while
+  `stick`: back to the bottom. Shorter while reading up: what was at the
+  bottom of the view stays there.
+- A pane shown again (moved, unhidden): back to the bottom if `stick`,
+  else where the reader was.
+
+Measured on the web, from the bottom: three wheel steps up (100 each) left
+the log 100, 200, 300 from the bottom, and a delta arriving then **did not
+move it**. A 40px step (a trackpad flick) stayed within 60, so the next delta
+brought it back to the bottom.
+
+### F87 (native)
+
+From the bottom, single wheel steps up snap back. The native re-sticks in
+`changed content-height` while `stick` is true, and the ListView's
+**estimated** content height changes as rows come into view, so a step up
+is undone. The fix, as the web does it:
+- `stick` is set **only** from the reader's scroll (`scrolled`, i.e. wheel,
+  drag, the scrollbar, keys), with the web's threshold: within
+  `sp-48 + sp-12` (60) of the bottom.
+- Scroll to the bottom **only when content arrives** (the app bumps a
+  counter on every entry / patch / delta / history it applies) and
+  `stick` is true; never on a content-height change alone.
+- After the scroll to the bottom, re-check once on the next frame (the
+  ListView's estimate settles as the last rows are realised), still only
+  for that content change.
+
+### The jump button (`.cc-jump`)
+
+| Part | Web | Token |
+|---|---|---|
+| Button | 38 round, centred, 10 above the log's bottom (over the log, under the composer's top), `bg-secondary`, 1px `border`, shadow 0 6 18 40% | `sp-40` (one step), `sp-10`, `SoftShadow` |
+| Icon | arrow down 18, stroke 2.2, `text-primary` | `icon-lg` |
+| Hover / focus | `accent` edge, `accent-dim` fill | |
+| New | `accent` edge; a 10 `accent` dot with a 2px `bg-primary` ring at the top right (−2, −2); the arrow nudges down every 1.6 s | `sp-10`, `sp-2` |
+| Tooltip | "Go to the newest message" | |
+
+- **Shows** when the reader is more than `max(240, a third of the log's
+  height)` from the bottom; hides again inside that. Appears with a short
+  rise and grow (0.22 s, a little overshoot), the arrow dropping in.
+- **New**: when an entry arrives (not a `gone` one) while `stick` is false
+  and the log is more than 60 from the bottom. Cleared within 60 of the
+  bottom, or by a click.
+- **Click**: `stick` = true, the button goes, the log scrolls smoothly to
+  the bottom.
+- It sits in the log's area, so it moves with the composer's height.
+
+## 8. Selection
+
+On the web all the conversation's text is selectable with the mouse (the
+reply text, bubbles, code, tool bodies, thinking bodies) and copied with
+Ctrl+C or the system menu. "Selection stays in the conversation"
+(1461-1640): while a selection lives in a log, the rest of the page cannot
+be selected; a drag past the log's edge keeps the far end in the log;
+"select all" selects the log; dragging a handle near an edge scrolls the
+log (touch). The point: a selection never runs into the page around the
+chat.
+
+Native: each text block is its own selectable field (TextInput read-only),
+so a selection cannot leave the conversation (the rule holds by
+construction), but it also cannot span blocks. Name that in PLAN. The reply
+paragraphs (StyledText) **cannot be selected at all** today: make them
+selectable if Slint 1.18's StyledText allows it, else name it in PLAN with
+the closest equivalent (the code blocks, bubbles and tool bodies are
+selectable; the copy button covers code, links and paths).
+
+## Data and endpoints
+
+From the chat's stream (specs/live-state.md): `ui-history` and `ui-event`
+(`entry`, `patch`, `delta`) with entries `assistant-text` (`text`,
+`streaming`), `user` (`text`, `by`), `notice` (`text`), `error` (`text`),
+`result` (`subtype`, `text`, `durationMs`, `costUsd`), `gone`, and `tool`
+(for the media: `name` ending in `show_image|video|audio|file|embed`,
+`status:'done'`, `isError:false`, `result` = the JSON above).
+
+| Method, path | Use | Answer |
+|---|---|---|
+| `GET /api/chat-media?session=<chat id>&name=<name>` | a picture, poster, video, audio, or stored embed HTML (auth header) | the bytes, `Content-Type` from the file, byte ranges honoured; 404 `{ok:false,error:'Not found'}` when gone; 403 for a confined principal |
+| `GET /api/chat-media/file?session=<chat id>&id=<id>` | a `show_file` download | the file, `attachment`; 404; 410 `{ok:false,error:'<name> is no longer where it was.',gone:true}` |
+| `GET /api/files/resolve?project=&path=` | a path click (phase 3) | `{ok:true,file,dir,size}` or 404 `{ok:false,error}` |
+| `POST /api/mcp/call` `{tool:'show_image', args:{sessionId, path\|paths, caption}}` (`x-api-key` from `data/dev-mcp/<chat>.json`) | **tests only**: store real media in a chat, as Claude does | `{ok, shown, items, caption?, note}` |
+
+The web adds the session as `&token=` to media URLs it hands to `<img>` /
+`<video>`; the server accepts that, but native always sends the auth header
+and never puts the token in a URL it gives to another program.
+`show_embed` answers `{kind:'embed', title, caption?, url?, provider,
+known, w?, h?, height?, width?, src? | name?}` (see Frame).
+
+`/api/chat-images` is the 1.19.19 name of `/api/chat-media` (same answer).
+
+## End-to-end test (phase2.mjs)
+
+Against `tools/test-server.sh`, one chat open in one wide pane:
+
+1. **Reply**: inject an `assistant-text` entry with a paragraph holding
+   `[docs](https://example.com/a)`, a bare URL, `` `src/app.js` ``, a code
+   block of 3 lines (one longer than the pane), a list and a quote. Check:
+   the link and the bare URL are links; the code block is one block whose
+   long line does not wrap (its content is wider than the block); the list
+   has its items.
+2. **Copy**: hover the code block: the copy button shows in its corner;
+   click it: the system clipboard holds exactly the block's text; the toast
+   says "Copied". Hover the link, click its copy button: the clipboard
+   holds `https://example.com/a`.
+3. **Link click**: clicking the link calls the system opener with the URL
+   (the test control records it instead of opening a browser). Right-click:
+   the menu has "Open in browser" and "Copy link".
+4. **Image**: store a PNG through `POST /api/mcp/call show_image` (the
+   test-server chat's API key), inject the tool entry with that result:
+   the card is followed by an image box of the computed size, which loads
+   (no spinner after a moment). Click it: the viewer opens; Esc closes it.
+   A second `show_image` with a name that does not exist: "This image is
+   no longer stored."
+5. **Scroll**: with the log at the bottom and long enough to scroll, send
+   three wheel steps up, waiting 300 ms after each: the distance to the
+   bottom grows each time and never returns to 0; inject a delta: it still
+   does not return. The jump button shows once past `max(240, h/3)`.
+6. **Jump**: inject an entry: the button gets its dot (new). Click it: the
+   log ends at the bottom (distance < 2) and the button hides.
+7. **Errors and notices**: inject a notice, an error and a failed result:
+   the notice is italic and centred; both errors are boxes.
+
+8. **Media (2.16m)**. Store real files with `POST /api/mcp/call`
+   (`show_image` `paths` [a PNG and a JPEG, plus a WebP and a GIF],
+   `show_file` a small CSV, `show_embed` once with `html` and once with
+   `url: https://example.com/`) using the chat's API key, and inject each
+   result as a done `tool` entry (or let a real turn produce them; the
+   result JSON is the same). Check, through testctl:
+   - the image row: four boxes 220 tall, widths 377 / 220 / 220 / 220
+     (1200×700 → 377), the call's caption; after a moment every box is
+     loaded (no ring) **and has a decoded image of the right pixel size**
+     (JPEG, WebP and GIF included);
+   - a `show_image` with a name that does not exist: "This image is no
+     longer stored.", dashed;
+   - click the PNG: the viewer is open with "1 / 4" (all the chat's
+     pictures); → shows "2 / 4"; + shows "140%"; 0 back to "100%"; Esc
+     closes it; a click on the backdrop closes it too;
+   - the file card: "export.csv", "12 B · The export"; Download with the
+     save path given by testctl (instead of the dialog) to a temp file: the
+     row goes to "Saved · 12 B" and the file's bytes equal the CSV; a
+     second Download of an id the server answers 410 for (delete the
+     source file first): the row shows "export.csv is no longer where it
+     was." and its edge is red;
+   - the frames: the stored HTML's box is 640 × its height, caption the
+     title, no Open; the https one has the caption "… · Open on
+     example.com", and clicking Open calls the system opener with the url
+     (testctl records it); with CEF up, each frame's view has painted
+     (a non-empty frame image) within a few seconds;
+   - a reply with `![chart](https://example.com/c.png)`: the text holds
+     "!chart" with "chart" a link, and no picture box;
+   - `show_video`: the poster box with the big play button and "… · 0:06";
+     play (testctl records the opener instead of the system player): the
+     file lands in the temp folder with the right size, and the opener is
+     called with that path, not a URL.
+
+9. **Live frames (2.16f)**, with CEF up. Store with `show_embed` `html`
+   a click test (`height` 200): a full-width button that, on click,
+   counts, sets `document.title = 'clicked <n>'` and turns the page green
+   (`#16a34a`), plus an `<input>` and an `<a target=_blank
+   href=https://example.com/>`; inject it as a done tool entry. testctl
+   needs: the live frame views (`[{key, url, box, view size, painted,
+   focused, hidden}]`), a view's title, a pixel of a view's last frame,
+   input at a point in the window, and the system opener's record.
+   - the frame's view exists, its size is the box − 2, it has painted
+     within 10 s and the ring is gone; its URL starts `data:text/html`;
+   - click the button through the window (not by script): the view's
+     title becomes "clicked 1" and its pixel under the button is green;
+   - click the input and type "abc": the composer's text is unchanged
+     (empty); a click on the log gives focus back (the view not focused);
+   - click the link: no new window; the opener recorded
+     `https://example.com/`;
+   - a wheel over the log beside the frame scrolls the log;
+   - inject 20 000 px of replies under it and scroll to the bottom: the
+     view is released (none live), the box keeps its size; scroll back:
+     a new view paints and its title is the page's own again (not
+     "clicked 1");
+   - store eight frames in a row and scroll through them: never more
+     than 6 live views at once, and none in a released box on screen;
+   - close the chat's pane: no live frame views remain;
+   - with `show_embed url=https://example.com/`: a view loads
+     `https://example.com/` and paints; the server's 404 for a stored
+     name: the gone box and no view.
+
+`cargo test`: `fmtBytes` (12 → "12 B", 26625 → "26 KB", 1572864 →
+"1.5 MB") and `fmtDlSize` (26625 → "26 KB", 1572864 → "1.5 MB"),
+`fmtDuration` (6 → "0:06", 75 → "1:15"), the frame's box (w/h 16:9 →
+640×360; 9:16 → 315×560; height 160 → 640×160; nothing → 640×420), the
+frame caption and its Open wording, and `![a](https://x)` → "!" + link.
+
+`cargo test`: the markdown split (paragraph line breaks kept; `#` → the
+heading style, `##` → bold body size; each `>` line a quote; numbered and
+bulleted lists; fences with their trailing newline dropped), `linkify`
+(trailing punctuation outside, `and/or` and `10/12` stay words, `a/b.js`
+and `./x` are paths, `obj.prop` is not), `looksLikePath`, the media item
+filter (bad names dropped, legacy `images`), `sizedBox` (one: 1200×700 →
+640×373; 600×900 → 280×420; several: 500×500 → 220×220; unknown → 16:9),
+the token wording of 2.15, and the stick rule (a content change scrolls
+only when `stick`; a height change alone does not).
+
+## Checklist
+
+- [x] Reply text 13 × fs, line 1.55 where Slint allows (else the named gap);
+      paragraphs 8 apart; line breaks inside a paragraph kept.
+- [x] Headings (`#` 14 semibold with its gaps, `##`+ bold body size), quotes
+      (bar, `text-secondary`, one per line), lists (20 indent, numbers),
+      rules, bold, italic.
+- [x] Code span chip (`bg-tertiary`, `r-chip`), or the named gap.
+- [x] Links `accent-hover` underlined; paths dotted; user-bubble links in
+      the bubble's colour.
+- [x] Code block: `bg-secondary`, `border-subtle`, `r-control`, mono 12;
+      long lines scroll sideways, not wrap; selectable.
+- [x] Copy button: on hover of a code block (corner), code span, link or
+      path (after its last line); tooltip by kind; copies the block / URL /
+      path / text; tick + "Copied"; hides 250 ms after leaving and on scroll.
+- [x] Link click → system browser; right-click → "Open in browser" /
+      "Copy link" menu.
+- [x] Path click: named gap until the Files panel (phase 3).
+- [x] Media under `show_*` calls: boxes sized before loading (one / several
+      / unknown), captions, the call's caption, row gap 8, horizontal scroll
+      when too wide.
+- [x] Picture: loading ring, fade in, "gone" box; click → viewer with
+      gallery counter, side buttons, zoom bar, keys (Esc, ← →, + − 0),
+      Ctrl+wheel, drag, double click.
+- [x] Video / audio: poster, play button and caption ("… · 0:06"); the
+      audio pill; play → ring while it downloads to temp → system player
+      (no token in any URL handed out); named gaps in PLAN.
+- [x] File card: icon, name, size · caption (`fmtBytes`), Download → the
+      save dialog first ("Save <name>", Downloads), then streaming to the
+      path; cancel the dialog → nothing.
+- [x] Formats: PNG, JPEG, WebP and GIF all draw (GIF: first frame or
+      animated; named gap if first frame); a poster `.poster.jpg` draws.
+- [x] Markdown `![a](https://…)`: "!" and a link, no picture; nothing fetched.
+- [x] Frame: live inline CEF view (https `src` with the server's origin as
+      referrer; stored HTML as a data URL), sized per the table, loading
+      ring, "This embed is no longer stored.", caption "title · caption ·
+      Open on <provider>", popups to the system browser; made when
+      realised, closed when far; the no-CEF fallback named.
+- [x] Frame view: box − 2 inside the edge, corners clipped, transparent
+      background over `frame-bg` (no white flash), resized with the box
+      (narrow: aspect boxes follow, fixed heights stay).
+- [x] Frame lifetime: made within 900 px, released past 4500 px, on pane
+      close / park / hidden tab, back fresh; at most 6 live views (named
+      difference); off-screen live views hidden (`was_hidden`).
+- [x] Frame input: pointer and page cursor; click focuses it and the
+      composer gets no keys; a click outside gives focus back; wheel over
+      a frame goes to it (chaining to the log at its end, or named); the
+      wheel elsewhere scrolls the log; a dropped file goes to the chat.
+- [x] Frame limits: no downloads, no context menu, dialogs suppressed
+      (named), links navigate inside, never the client.
+- [x] phase2.mjs step 9 (click test: title and pixel change, focus,
+      popup to the opener, release and come back, the cap, pane close).
+- [x] Download row: tray top right, accent / green / red left edge, texts
+      "Starting…", "<got> of <total>", "Saved · <size>", "Cancelled", the
+      server's error; × cancels; leaves after 4.5 / 1.2 / 7 s.
+- [x] Notices italic, centred, `text-muted`, wrap; the long-history line.
+- [x] Errors and failed results: the red box (`red` text and edge,
+      `red-dim`); end-of-turn line dashed, centred, "12.3s · $0.0421".
+- [x] F87: wheel steps up from the bottom stay; `stick` only from the
+      reader's scroll (60); scroll to bottom only when content arrives.
+- [x] Jump button: shows past max(240, h/3); hover; new dot on arrivals;
+      click scrolls to the bottom smoothly and hides it.
+- [x] Selection: reply text selectable, or the named gap; nothing outside
+      the conversation can be pulled into a selection.
+- [x] Text size scales the text; boxes, gaps and the jump button do not.
+- [x] Narrow pane: text, links and errors wrap; media shrink to the pane.
+- [ ] phase2.mjs steps 1-7 pass; cargo tests above; snapshots of every
+      state saved under `log-rest/review/`.

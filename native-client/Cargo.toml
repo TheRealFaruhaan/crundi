@@ -8,15 +8,34 @@ publish = false
 
 [dependencies]
 cef = "156.4.0"
-slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "unstable-winit-030"] }
+slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "unstable-winit-030", "unstable-fontique-011"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 ureq = "3"
 gethostname = "1"
 open = "5"
 base64 = "0.22"
 png = "0.17"
+# The attach button's file picker (the system's own; xdg-desktop-portal on
+# Linux, no GTK) and a pasted picture or file (2.7).
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+arboard = "3.7"
+# Pictures Claude shows (2.16 media): PNG, JPEG, WebP and GIF.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Voice input (2.24): the microphone and the speaker (ALSA on Linux:
+# libasound2-dev to build), tones and Claude's streamed voice.
+cpal = "0.15"
+rodio = { version = "0.20", default-features = false }
+# Local time for scheduled messages (2.10).
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+# The device's own voice for replies (2.24) where there is no Deepgram
+# voice: SAPI / WinRT on Windows, AVSpeechSynthesizer on macOS. Linux uses
+# speech-dispatcher through its spd-say command instead (src/voiceio.rs):
+# linking libspeechd would stop the client starting where it is missing.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tts = "0.26"
 
 [features]
 # The GPU path: CEF hands over its frames as shared GPU textures (DMA-BUF on
@@ -27,6 +46,11 @@ gpu = ["slint/renderer-femtovg-wgpu", "slint/unstable-wgpu-30", "cef/accelerated
 
 [build-dependencies]
 slint-build = "1.18.1"
+
+[dev-dependencies]
+# Slint's own markdown parser, for md.rs's tests: what StyledText makes of a
+# reply's markup (its colour spans and links). The version slint pins.
+i-slint-common = { version = "=1.18.1", features = ["markdown"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

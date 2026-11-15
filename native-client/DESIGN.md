@@ -29,7 +29,11 @@ Electron client (`app/`) shows it. Where the web has no screen for something
    - **Weights:** 400, 500, 600, 700.
    - **Line heights:** chat 1.55, UI 1.3.
    - **Colours:** the web's palette.
-   - **Sizes that recur:** icons, control heights, bars, the sidebar.
+   - **Letter spacing:** tight and wide.
+   - **Named sizes,** only for structure: the window, the bars, the sidebar,
+     the pane header and pane limits, control heights, icons. Anything else
+     is a scale step (or a sum of two).
+   - **Shadows and glows:** `SoftShadow` (smooth gradients, no layers).
 
    Pick the token that fits by eye or a quick measurement. Don't copy
    one-offs (13.12px, a gap of 7 beside a gap of 8) or the web's accidents
@@ -47,11 +51,19 @@ Electron client (`app/`) shows it. Where the web has no screen for something
 ## The method
 
 ```
-native-client/tools/test-server.sh         # an isolated dev Crundi on :8889, seeded
-node native-client/tools/web-session.mjs   # a web session for the browser
+native-client/tools/test-server.sh 4812             # an isolated dev Crundi on :4812, seeded
+node native-client/tools/web-session.mjs 4812       # a web session for the browser
 ```
 
-1. **The web screen.** Open `http://127.0.0.1:8889/` in a hidden browser at
+Always start a server through `tools/test-server.sh <port>`, never with
+`node src/index.js` by hand: without the script's empty `.env` a dev server
+reads the real one and runs the LIVE Telegram bot. The port is the first
+argument (or `DEV_WEB_PORT`, default 8889); in a factory run, use the run's
+range. Its data, config, log and `session.json` live in
+`/tmp/crundi-devtest-<port>`, so servers on different ports run side by side.
+Stop it with `kill $(cat /tmp/crundi-devtest-<port>/server.pid)`.
+
+1. **The web screen.** Open `http://127.0.0.1:<port>/` in a hidden browser at
    1400×860 (Crundi's `browser_open`, on: server), with the session in
    localStorage. Skip the What's-new tour. Bring the screen into each of its
    states and take a screenshot of each.

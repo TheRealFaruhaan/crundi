@@ -14,13 +14,34 @@
 //!
 //! One binary is also CEF's helper processes (renderer, GPU, utility): CEF
 //! starts it again with --type=…, and execute_process() handles those first.
+// The test driver's props are one large json! (src/testctl.rs).
+#![recursion_limit = "512"]
 
 slint::include_modules!();
 
 mod api;
+mod attach;
+mod sched;
+mod slash;
+mod secrets;
+mod sreq;
+mod questions;
+mod tools;
+mod think;
+mod md;
+mod media;
+mod agents;
+mod resume;
+mod fresult;
+mod voice;
+mod voiceio;
+mod frames;
+mod fonts;
+mod drafts;
 mod app;
 mod browser;
 mod chat;
+mod head;
 mod live;
 mod mosaic;
 mod store;
@@ -160,6 +181,13 @@ fn main() {
     // Consolas, monospace) as it lands on each system.
     let mono = if cfg!(target_os = "windows") { "Consolas" } else if cfg!(target_os = "macos") { "Menlo" } else { "DejaVu Sans Mono" };
     ui.global::<Theme>().set_mono(mono.into());
+    // The UI font: the system's on Windows and macOS (Segoe UI, San
+    // Francisco, as the web's system-ui), the bundled DejaVu Sans on Linux
+    // (ui/main.slint: with its italic faces, which the system may lack).
+    if cfg!(target_os = "linux") { ui.global::<Theme>().set_ui_font("DejaVu Sans".into()); }
+    chat_font(&ui);
+    code_font();
+    ui.global::<Theme>().set_px_scale(ui.window().scale_factor());
 
     // The window has no system frame (as the Electron client): the top bar
     // moves it, and has the window buttons.
@@ -173,6 +201,45 @@ fn main() {
     let w = ui.as_weak();
     ui.on_win_max(move || { if let Some(u) = w.upgrade() { let m = u.window().is_maximized(); u.window().set_maximized(!m); } });
     ui.on_win_close(|| { let _ = slint::quit_event_loop(); });
+    // Every pointer press, for fields that save when a click lands outside
+    // them (ui/widgets.slint Pointer), before Slint handles the press.
+    {
+        use slint::winit_030::{winit::event::{ElementState, WindowEvent}, EventResult, WinitWindowAccessor};
+        let w = ui.as_weak();
+        let mut at = (0.0f32, 0.0f32);
+        ui.window().on_winit_window_event(move |win, ev| {
+            match ev {
+                WindowEvent::CursorMoved { position, .. } => {
+                    let k = win.scale_factor();
+                    at = (position.x as f32 / k, position.y as f32 / k);
+                    if let Some(u) = w.upgrade() { pointer_moved(&u, at.0, at.1); }
+                }
+                // Esc puts a dragged pane back (the web has none: DESIGN rule 5).
+                WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed
+                    && event.logical_key == slint::winit_030::winit::keyboard::Key::Named(slint::winit_030::winit::keyboard::NamedKey::Escape) => {
+                    app::drag_cancel();
+                    app::escape();
+                }
+                WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+                    if let Some(u) = w.upgrade() { pointer_pressed(&u, at.0, at.1); }
+                }
+                // A wheel step up (the log under the pointer stops following
+                // the bottom at once: 2.16, F96), before Slint scrolls.
+                WindowEvent::MouseWheel { delta, .. } => {
+                    use slint::winit_030::winit::event::MouseScrollDelta;
+                    let up = match delta { MouseScrollDelta::LineDelta(_, y) => *y > 0.0, MouseScrollDelta::PixelDelta(p) => p.y > 0.0 };
+                    if up { if let Some(u) = w.upgrade() { pointer_wheel_up(&u, at.0, at.1); } }
+                }
+                // Files dragged from the system (2.7): the chat under the
+                // pointer draws its outline; a drop goes there.
+                WindowEvent::HoveredFile(_) => app::file_hover(true),
+                WindowEvent::HoveredFileCancelled => app::file_hover(false),
+                WindowEvent::DroppedFile(path) => app::file_dropped(path.clone()),
+                _ => {}
+            }
+            EventResult::Propagate
+        });
+    }
     // "1m ago" on the usage, kept current.
     let usage_tick = slint::Timer::default();
     usage_tick.start(slint::TimerMode::Repeated, Duration::from_secs(30), app::show_usage);
@@ -182,10 +249,16 @@ fn main() {
     }
 
     ui.run().expect("event loop");
+    // Held lines (2.9) go into their drafts, and drafts typed in the last
+    // moment reach the disk.
+    app::park_held();
+    app::flush_drafts();
 
     // Close the browsers, let CEF finish, then shut it down.
     let browsers: Vec<_> = browser::with(|st| st.panels.iter().filter_map(|p| p.browser.clone()).collect());
     for b in &browsers { if let Some(h) = b.host() { h.close_browser(1); } }
+    // The chats' live frames too (2.16f).
+    frames::release_all();
     for _ in 0..50 { do_message_loop_work(); std::thread::sleep(Duration::from_millis(10)); }
     drop(browsers);
     shutdown();
@@ -196,4 +269,105 @@ fn dirs_cache() -> std::path::PathBuf {
         .or_else(|| std::env::var_os("LOCALAPPDATA").map(Into::into))
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
         .unwrap_or_else(std::env::temp_dir)
+}
+
+/// Where the pointer is, in logical px: hover over a leaf, the dragged
+/// pane's clone, the Layout submenu (ui/widgets.slint Pointer).
+pub fn pointer_moved(ui: &MainWindow, x: f32, y: f32) {
+    let p = ui.global::<Pointer>();
+    p.set_x(x);
+    p.set_y(y);
+}
+
+/// A wheel step up at (x, y), in logical px (ui/widgets.slint Pointer).
+pub fn pointer_wheel_up(ui: &MainWindow, x: f32, y: f32) {
+    let p = ui.global::<Pointer>();
+    p.set_x(x);
+    p.set_y(y);
+    p.set_wheel_up(p.get_wheel_up() + 1);
+}
+
+/// A pointer press at (x, y), in logical px (ui/widgets.slint Pointer).
+pub fn pointer_pressed(ui: &MainWindow, x: f32, y: f32) {
+    let p = ui.global::<Pointer>();
+    p.set_x(x);
+    p.set_y(y);
+    p.set_press_x(x);
+    p.set_press_y(y);
+    // On the "+" menu, a modal's scrim or the secret-request dock: the press
+    // focuses nothing beneath.
+    p.set_press_on_menu(ui.get_add_menu_open() || p.get_modal() || p.get_on_dock());
+    p.set_presses(p.get_presses() + 1);
+}
+
+/// The UI font's faces as bytes: the bundled DejaVu Sans on Linux; the
+/// system's own on Windows (Segoe UI) and macOS (San Francisco).
+fn ui_faces() -> Vec<Vec<u8>> {
+    if cfg!(target_os = "linux") {
+        return vec![
+            include_bytes!("../ui/fonts/DejaVuSans.ttf").to_vec(),
+            include_bytes!("../ui/fonts/DejaVuSans-Bold.ttf").to_vec(),
+            include_bytes!("../ui/fonts/DejaVuSans-Oblique.ttf").to_vec(),
+            include_bytes!("../ui/fonts/DejaVuSans-BoldOblique.ttf").to_vec(),
+        ];
+    }
+    let files: &[&str] = if cfg!(target_os = "windows") {
+        &["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\segoeuii.ttf", "C:\\Windows\\Fonts\\segoeuiz.ttf", "C:\\Windows\\Fonts\\seguisb.ttf", "C:\\Windows\\Fonts\\seguisbi.ttf"]
+    } else {
+        &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/SFNSItalic.ttf"]
+    };
+    files.iter().filter_map(|f| std::fs::read(f).ok()).collect()
+}
+
+/// Inline code's underline (F146, a path chip): Slint draws inline code in
+/// the generic monospace family, whose underline (DejaVu Sans Mono's 0.044
+/// em) the software renderer rounds away on half the lines. A copy of that
+/// family with the underline from 1/11 em (fonts::with_underline), put first
+/// for "monospace"; only the underline differs. A family in a font
+/// collection file (.ttc) is not copied: its thin underline stays.
+fn code_font() {
+    use slint::fontique_011::fontique;
+    let mut coll = slint::fontique_011::shared_collection();
+    let first = coll.generic_families(fontique::GenericFamily::Monospace).next();
+    let Some(fam) = first.and_then(|id| coll.family(id)) else {
+        eprintln!("[native] code font: no monospace family");
+        return;
+    };
+    let mut n = 0;
+    for f in fam.fonts() {
+        let Some(copy) = f.load(None).filter(|_| f.index() == 0).and_then(|b| fonts::with_underline(b.as_ref(), fonts::CODE_UNDERLINE_EMS)) else { continue };
+        let over = fontique::FontInfoOverride { family_name: Some("Crundi Mono"), ..Default::default() };
+        if !coll.register_fonts(fontique::Blob::new(std::sync::Arc::new(copy)), Some(over)).is_empty() { n += 1; }
+    }
+    if let Some(id) = coll.family_id("Crundi Mono").filter(|_| n > 0) {
+        coll.set_generic_families(fontique::GenericFamily::Monospace, std::iter::once(id));
+    }
+    eprintln!("[native] code font: {n} faces of \"{}\" as \"Crundi Mono\", the underline from 1/11 em", fam.name());
+}
+
+/// The chat's font (K1) and the line-height factors (K2), from the UI
+/// font's own metrics. Anything missing: today's factors, no chat font.
+fn chat_font(ui: &MainWindow) {
+    use slint::fontique_011::fontique;
+    let faces = ui_faces();
+    let Some(natural) = faces.first().and_then(|f| fonts::natural_line(f)) else {
+        eprintln!("[native] chat font: none (the UI font's file was not found); lines as before");
+        return;
+    };
+    let th = ui.global::<Theme>();
+    th.set_lh_chat(fonts::factor(natural, 1.55) as f32);
+    th.set_lh_ui(fonts::factor(natural, 1.3) as f32);
+    th.set_lh_composer(fonts::factor(natural, 1.45) as f32);
+    let mut coll = slint::fontique_011::shared_collection();
+    let mut n = 0;
+    for f in &faces {
+        let Some(copy) = fonts::with_line(f, 1.55) else { continue };
+        let over = fontique::FontInfoOverride { family_name: Some("Crundi Chat"), ..Default::default() };
+        if !coll.register_fonts(fontique::Blob::new(std::sync::Arc::new(copy)), Some(over)).is_empty() { n += 1; }
+    }
+    if n > 0 { th.set_chat_font("Crundi Chat".into()); }
+    // (CI's drive test reads this line on each system.)
+    eprintln!("[native] chat font: {n} faces as \"Crundi Chat\", line {:.3}; the UI font's own line {natural:.3} em, lh-chat {:.3}, lh-ui {:.3}, lh-composer {:.3}",
+        faces.first().and_then(|f| fonts::with_line(f, 1.55)).and_then(|c| fonts::natural_line(&c)).unwrap_or(0.0),
+        fonts::factor(natural, 1.55), fonts::factor(natural, 1.3), fonts::factor(natural, 1.45));
 }

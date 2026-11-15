@@ -191,6 +191,24 @@ pub fn refresh(base: &str, refresh_token: &str) -> ApiResult<Tokens> {
     }
 }
 
+/// A body that tells how much of it has been read (sent).
+struct Counting<'a> {
+    data: &'a [u8],
+    at: usize,
+    progress: &'a (dyn Fn(u64, u64) + Send + Sync),
+}
+
+impl std::io::Read for Counting<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // In slices, so the bar moves as the body goes out.
+        let n = (self.data.len() - self.at).min(buf.len()).min(64 * 1024);
+        buf[..n].copy_from_slice(&self.data[self.at..self.at + n]);
+        self.at += n;
+        (self.progress)(self.at as u64, self.data.len() as u64);
+        Ok(n)
+    }
+}
+
 // ─── A signed-in session ───
 
 struct Inner {
@@ -257,6 +275,7 @@ impl Api {
                 let auth = format!("Bearer {token}");
                 match (method, body) {
                     ("GET", _) => self.0.agent.get(&url).header("Authorization", &auth).call(),
+                    ("DELETE", _) => self.0.agent.delete(&url).header("Authorization", &auth).call(),
                     (_, Some(b)) => self.0.agent.post(&url).header("Authorization", &auth).header("Content-Type", "application/json").send(b.to_string()),
                     (_, None) => self.0.agent.post(&url).header("Authorization", &auth).send_empty(),
                 }
@@ -277,8 +296,108 @@ impl Api {
         self.call("GET", path, None)
     }
 
+    pub fn delete(&self, path: &str) -> ApiResult {
+        self.call("DELETE", path, None)
+    }
+
     pub fn post(&self, path: &str, body: &Value) -> ApiResult {
         self.call("POST", path, Some(body))
+    }
+
+    /// POST a JSON body, telling `progress(sent, total)` as it goes out (the
+    /// upload bar); the answer raw, as (status, body), for the caller to read
+    /// (a proxy's HTML is an answer too). Status 0: no answer at all.
+    pub fn post_with_progress(&self, path: &str, body: &[u8], progress: &(dyn Fn(u64, u64) + Send + Sync)) -> ApiResult<(u16, String)> {
+        let url = format!("{}{}", self.0.base, path);
+        let mut access = self.access();
+        for attempt in 0..2 {
+            let mut reader = Counting { data: body, at: 0, progress };
+            let r = self.0.agent.post(&url)
+                .header("Authorization", &format!("Bearer {access}"))
+                .header("Content-Type", "application/json")
+                .header("Content-Length", &body.len().to_string())
+                .send(ureq::SendBody::from_reader(&mut reader));
+            let (status, text) = match r {
+                Ok(mut resp) => (resp.status().as_u16(), resp.body_mut().with_config().limit(16 * 1024 * 1024).read_to_string().unwrap_or_default()),
+                Err(_) => (0, String::new()),
+            };
+            if status == 401 && attempt == 0 {
+                self.refresh_after(&access)?;
+                access = self.access();
+                continue;
+            }
+            if status == 401 { return Err(ApiError::SignedOut); }
+            return Ok((status, text));
+        }
+        unreachable!()
+    }
+
+    /// A GET whose body is streamed to `sink` (bytes, and the total when
+    /// the server says it); `sink` returns false to stop (a cancel). An
+    /// answer other than 200 is read as text instead: (status, text).
+    pub fn get_stream(&self, path: &str, sink: &mut dyn FnMut(&[u8], u64) -> bool) -> ApiResult<(u16, String)> {
+        use std::io::Read;
+        let url = format!("{}{}", self.0.base, path);
+        let mut access = self.access();
+        for attempt in 0..2 {
+            let r = self.0.agent.get(&url).header("Authorization", &format!("Bearer {access}")).call();
+            let mut resp = match r { Ok(resp) => resp, Err(e) => return Err(ApiError::Net(e.to_string())) };
+            let status = resp.status().as_u16();
+            if status == 401 && attempt == 0 { self.refresh_after(&access)?; access = self.access(); continue; }
+            if status == 401 { return Err(ApiError::SignedOut); }
+            if status != 200 { return Ok((status, resp.body_mut().read_to_string().unwrap_or_default())); }
+            let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            let mut rd = resp.body_mut().with_config().limit(u64::MAX).reader();
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = rd.read(&mut buf).map_err(|e| ApiError::Net(e.to_string()))?;
+                if n == 0 { break; }
+                if !sink(&buf[..n], total) { return Ok((499, String::new())); }
+            }
+            return Ok((200, String::new()));
+        }
+        unreachable!()
+    }
+
+    /// POST a JSON body and read the answer as it streams (Claude's voice,
+    /// 2.24): `head(content type, X-Sample-Rate)` first, then `sink(bytes)`
+    /// (false stops). An answer other than 200 comes back as (status, text).
+    pub fn post_stream(&self, path: &str, body: &Value, accept: &str, head: &mut dyn FnMut(&str, Option<&str>), sink: &mut dyn FnMut(&[u8]) -> bool) -> ApiResult<(u16, String)> {
+        use std::io::Read;
+        let url = format!("{}{}", self.0.base, path);
+        let bytes = serde_json::to_vec(body).unwrap_or_default();
+        let mut access = self.access();
+        for attempt in 0..2 {
+            let r = self.0.agent.post(&url)
+                .header("Authorization", &format!("Bearer {access}"))
+                .header("Content-Type", "application/json")
+                .header("Accept", accept)
+                .send(&bytes[..]);
+            let mut resp = match r { Ok(resp) => resp, Err(e) => return Err(ApiError::Net(e.to_string())) };
+            let status = resp.status().as_u16();
+            if status == 401 && attempt == 0 { self.refresh_after(&access)?; access = self.access(); continue; }
+            if status == 401 { return Err(ApiError::SignedOut); }
+            if status != 200 { return Ok((status, resp.body_mut().read_to_string().unwrap_or_default())); }
+            let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let xr = resp.headers().get("x-sample-rate").and_then(|v| v.to_str().ok()).map(str::to_string);
+            head(&ct, xr.as_deref());
+            let mut rd = resp.body_mut().with_config().limit(u64::MAX).reader();
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                let n = rd.read(&mut buf).map_err(|e| ApiError::Net(e.to_string()))?;
+                if n == 0 { break; }
+                if !sink(&buf[..n]) { return Ok((499, String::new())); }
+            }
+            return Ok((200, ct));
+        }
+        unreachable!()
+    }
+
+    /// A GET's bytes (a picture, a poster): (status, bytes or the error text).
+    pub fn get_bytes(&self, path: &str) -> ApiResult<(u16, Vec<u8>)> {
+        let mut out = Vec::new();
+        let (st, text) = self.get_stream(path, &mut |b, _| { out.extend_from_slice(b); true })?;
+        Ok(if st == 200 { (st, out) } else { (st, text.into_bytes()) })
     }
 
     /// The URL of the server's /ws, with a fresh access token.

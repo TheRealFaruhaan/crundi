@@ -8,9 +8,12 @@
 //   4. sign out, then pairing with a link from a signed-in session
 //   5. a restart picks the saved login up again
 //
-// Needs a FRESH dev server with no sign-in set up (this sets a password on it):
+// Needs a FRESH test server with no sign-in set up (this sets a password on
+// it), started through tools/test-server.sh <port> --bare, never by hand; it
+// refuses a server with a Telegram bot configured:
 //
-//   CRUNDI_TEST_SERVER=http://localhost:8889 NATIVE_BIN=… DISPLAY=… node native-client/test/phase1.mjs
+//   native-client/tools/test-server.sh 4811 --bare
+//   CRUNDI_TEST_SERVER=http://localhost:4811 NATIVE_BIN=… DISPLAY=… node native-client/test/phase1.mjs
 //
 // Pictures go to DRIVE_OUT (default: the temp dir).
 
@@ -45,11 +48,24 @@ async function http(method, path, body, token) {
 // ─── The server: a password, a project ───
 const PASSWORD = 'native-client-test-' + Math.random().toString(36).slice(2, 10);
 const methods = await http('GET', '/api/auth/methods');
+// Never against a server running the LIVE Telegram bot (checked again below,
+// once signed in): a test server comes from tools/test-server.sh <port> --bare.
+if (methods.body?.telegram || methods.body?.telegramBotId) {
+  console.error(`Refusing ${SERVER}: it has a Telegram bot configured. Start a test server with native-client/tools/test-server.sh <port> --bare.`);
+  process.exit(2);
+}
 if (!methods.body?.setupRequired) { console.error('This needs a fresh dev server (no sign-in set up yet)'); process.exit(2); }
 const setup = await http('POST', '/api/auth/setup', { method: 'password', password: PASSWORD });
 check('the server takes a password', setup.body?.ok && setup.body.totpSecret, setup.body);
 const SECRET = setup.body.totpSecret;
 let token = setup.body.token;
+
+// No bot behind the sign-in either (an empty .env, no TELEGRAM_BOT_TOKEN).
+const status = await http('GET', '/api/status', null, token);
+if (status.body?.botConfigured !== false) {
+  console.error(`Refusing ${SERVER}: it has a Telegram bot configured (botConfigured=${status.body?.botConfigured}). Start a test server with native-client/tools/test-server.sh <port> --bare.`);
+  process.exit(2);
+}
 const proj = await http('POST', '/api/projects', { alias: 'demo', name: 'Demo', path: process.env.CRUNDI_TEST_PROJECT || join(tmpdir(), 'crundi-native-demo'), create: true }, token);
 check('a project to work in', proj.status < 300, proj.body);
 

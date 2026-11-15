@@ -28,6 +28,11 @@ cargo build --release
 node scripts/stage-cef.mjs target/release       # prints what to run
 ```
 
+On Linux the voice input needs ALSA's development files (`libasound2-dev` on
+Debian/Ubuntu; CI installs it). On a machine without them, such as the
+shared dev server, point pkg-config at the shim in the shared build dir:
+`PKG_CONFIG_PATH=$CARGO_TARGET_DIR/alsa-shim/pc cargo build`.
+
 `fetch-cef.mjs` exists because cef-rs's own download (download-cef 3.0.0)
 fails: CEF's index.json is larger than its 10 MB limit. `stage-cef.mjs` puts
 CEF next to the binary on Linux (symlinks) and Windows (copies). On macOS it
@@ -95,7 +100,8 @@ the web page it shows; this one has no such page.
 - Tabs other than Workbench say they come in a later phase. Sign out is in
   Settings.
 - **The look:** the web UI's colours (`ui/theme.slint`) and its icon set,
-  generated from `ICON_PATHS` by `scripts/gen-icons.mjs` (`ui/icons/`).
+  generated from `ICON_PATHS` by `scripts/gen-icons.mjs` (`ui/icons/`), with
+  the chat's permission-mode icons from `MODE_INFO` in `app/vendor/claude-chat.js`.
 - **The server's browser control** is off unless `CRUNDI_NATIVE_HOST=1` is set.
   It would take that control over from an Electron client signed in to the
   same server.
@@ -109,16 +115,356 @@ driver (`CRUNDI_TEST_PORT`, `src/testctl.rs`):
 4. sign-out, then pairing;
 5. a restart that signs in from the saved login.
 
-It needs a fresh dev Crundi that shares nothing with a live one:
+It needs a fresh dev Crundi that shares nothing with a live one. Start it
+with `tools/test-server.sh`, never with `node src/index.js` by hand: a dev
+server started without its empty `.env` reads the real one and runs the LIVE
+Telegram bot. The script takes the port (`DEV_WEB_PORT` or the first
+argument, default 8889; in a factory run, use the run's range), keeps its data
+and config in `/tmp/crundi-devtest-<port>` so servers on different ports run
+side by side, and stops only the server it started before on that port.
+`--bare` leaves sign-in unset, which phase 1 and phase 2 need; they refuse a
+server that has a Telegram bot configured.
 
 ```
-mkdir -p /tmp/t/config/crundi /tmp/t/data /tmp/t/proj
-printf 'TELEGRAM_BOT_TOKEN=\nPROJECTS_DIR=\n' > /tmp/t/config/crundi/.env   # never the live bot
-env -u TELEGRAM_BOT_TOKEN -u PROJECTS_DIR XDG_CONFIG_HOME=/tmp/t/config DATA_DIR=/tmp/t/data \
-  DOTENV_PATH=/tmp/t/config/crundi/.env node src/index.js --dev &     # port 8889
-CRUNDI_TEST_SERVER=http://localhost:8889 CRUNDI_TEST_PROJECT=/tmp/t/proj \
+native-client/tools/test-server.sh 4811 --bare          # never the live bot
+CRUNDI_TEST_SERVER=http://localhost:4811 CRUNDI_TEST_PROJECT=/tmp/crundi-devtest-4811/proj \
   NATIVE_BIN=native-client/target/debug/crundi-native node native-client/test/phase1.mjs
+kill $(cat /tmp/crundi-devtest-4811/server.pid)          # when done
 ```
+
+Each test needs a fresh server: start `test-server.sh <port> --bare` again
+before the next one (`test/phase2.mjs` the same way).
+
+## Phase 2: chats
+
+Everything a chat does in the PC client, screen by screen: PLAN.md lists
+them (2.1–2.25, all done) and
+each has a spec in `specs/` with the web's screenshots and measurements.
+What phase 2 added, item by item:
+
+- **2.1 The pane header, wide** (`specs/pane-header-wide.md`):
+  - the title: the long form on a wide header (capped at min(440px, 62%)),
+    the short one at 160px; click to rename (Enter or leaving saves, Esc
+    puts it back, empty becomes "Terminal"); a rename on the server shows
+    live and doesn't clobber an open one;
+  - the CHAT tag; the secrets lock with its count of grants, live from the
+    `chat-secrets` event and counted again every 30 s (shown only when the
+    server has `chat-secret-preauth`);
+  - A- / reset / A+: the chat's text size (9 to 24, px/13 on every text size
+    in the log and composer); each chat keeps its own, and every change is
+    the size new chats start at (saved: `font`, `font_default_chat`);
+  - pin: the pane keeps its px size, the dividers by it lock, presets keep
+    it (saved in the layout);
+  - full screen: the pane covers the window; the button or Esc leaves;
+  - the two-click × ("Sure?", disarmed after 3 s or by a layout change; one
+    pane at a time); a refused close (409) keeps the pane and says why in a
+    toast;
+  - double-click the header (not a button) to maximise the pane in its split
+    (92 / 8), again to even it.
+- **2.2 The pane header, narrow** (`specs/pane-header-narrow.md`): when
+  the header's content box is under 560px (a pane of 567px or less), the
+  header is 26px and keeps only full screen, "…" and ×; the short title has no
+  cap and elides when the row runs out. "…" opens the folded tools in a
+  menu under the header (CHAT, the lock with its label, A-, reset, A+, pin),
+  which wraps right-aligned in a tight pane:
+  - one menu at a time; A-, reset, A+ and pin leave it open;
+  - the lock and full screen close it; so does Esc, and a press anywhere
+    outside it, which still does its own job;
+  - it stays open through live updates and closes when its pane goes wide.
+- **2.3 Moving panes** (`specs/moving-panes.md`):
+  - drag a pane by its header (more than 6px): a clone follows the pointer,
+    every pane shows a dashed outline and the one under the pointer lights
+    up; the drop swaps two panes, or moves a pane into an empty one (its old
+    place closes up). A pinned pane is refused with a toast; Esc puts it back;
+    near the grid's left or right edge it scrolls;
+  - the split controls that fade in over a pane; the empty pane with its
+    Terminal chip, Split ▸ / Split ▾ and ×;
+  - the "+" menu's Fit to screen (every split even, a toast when it still
+    doesn't fit) and Layout presets (2 columns, 3 columns, 2×2 cross,
+    Left + right split, Top + bottom split: the web's trees and ids, so the
+    saved layout is the same JSON);
+  - the gutters' look (accent while any is held, locked by a pin), the 6px
+    scrollbar when the grid scrolls sideways, and the 220ms layout motion.
+- **2.4 Live state** (`specs/live-state.md`): each pane's dot (with the
+  needs-input ring and the raw state as its tooltip) and its badge (WORKING,
+  NEEDS INPUT, WAITING); the project's dot in the sidebar (needs input >
+  working > waiting > running, with its ring; the active project with nothing
+  running is green) and its folded avatar; titles changed by the server or
+  another client, live. All from the `state` event's `terminals`, as the web
+  does: an exited chat is grey whatever its stream last said, and a factory's
+  employees don't light a project.
+- **2.T One theme** (DESIGN.md, rule 2): every size and colour is a token
+  in `ui/theme.slint` (spacing 2–48, radii, font sizes, weights, line
+  heights, tracking, recurring sizes, motion, opacities, colours, gradients,
+  and shadows as soft-layer lists). Screens type no number but 0 and 1px;
+  `tools/tokens.sh` lists any that are left. The Rust layout numbers that
+  match a token are named constants (`mosaic::{PAD, GUTTER, MIN_W}`,
+  `head::{PANE_FOLD, TITLE_CAP, LONG_CAP}`).
+- **2.C Theme consolidation**: the theme is the scales (spacing
+  2/4/6/8/10/12/16/20/24/32/40/48, radius 4/6/8/10/12/pill, font
+  10–26, two letter-spacings) plus a short structural list (window, top
+  bar, tab bar, sidebar, pane header and limits, drawer, control heights,
+  icons); every other size is a step or a sum of two. `white` is a token,
+  and `tools/tokens.sh` also flags named colours (`white`, `Colors.*`).
+  Shadows and glows are `SoftShadow` (ui/widgets.slint): one smooth fade
+  of gradients, never stacked layers.
+- **2.5 Composer and Stop** (specs/composer.md): the message box grows
+  from `control` to `composer-max` and then scrolls; Enter (or Ctrl+Enter,
+  by the switch: one setting, saved as `chat_enter`) sends; Send reads
+  Queue while Claude is busy and is never disabled; a send turns the chat
+  working at once; Stop arms on one click ("Sure?", 3 s) and interrupts on
+  the second. The meta row shows the state, the mode, the switch, the clock,
+  the session id (a click copies the whole id), the model and the cost, and
+  wraps. Under `composer-stack` (520) the composer stacks. A refused send
+  shows the server's error in the log and gives the text back.
+- **2.6 Permission-mode picker** (specs/mode-picker.md): the mode button
+  wears each mode's colour; a click opens the picker (`ui/modes.slint`),
+  centred in the window over a scrim, with the chat's modes (Bypass all
+  first, for chats launched with skip permissions). Choosing changes the
+  button at once and posts it; a refused change goes back with a toast.
+  Plan mode puts PLANNING in the pane header (in the "…" tray when narrow).
+  The mode follows `meta`/`init` events live; a mode outside the chat's list
+  is ignored.
+  For every modal to come: `Pointer.modal` (ui/widgets.slint, set by
+  main.slint's `modal-open`) makes whatever follows the pointer ignore it
+  under a scrim, and `RevealFlickable` scrolls a dialog to keep the
+  keyboard's focus in view, with a `ScrollThumb` (also the composer's).
+- **2.7 Attachments and 2.8 Drafts** (specs/attachments-drafts.md): attach
+  opens the system's file picker (`rfd`); a picked or pasted file (a
+  picture as image.png, through `arboard`) uploads to
+  `/api/attachments/upload` with the upload bar (name, share, "42%" then
+  "saving"), and the server's path goes into the box at the caret
+  (`attach::insert_path`). Files dropped from the system on a chat go in as
+  their own paths when the server is on this machine, else upload. Drafts
+  (`src/drafts.rs`) are kept per server and chat with the project's copy
+  (claimed by one open chat), restored when a composer is built, cleared on
+  send, kept on close, pruned after 30 days.
+- **2.9 Queued messages** (specs/queued-messages.md): sent while Claude
+  works, a message is handed over at once and shows in a slate drawer
+  ("SENDING not read yet" → "SENT Claude is reading it"), driven by the
+  server's `queued-state` and `injected` events and its
+  `pendingInjections`; sent while it needs input, lines are held in a
+  dashed drawer and go out as one message when the prompt is answered or
+  the turn ends. A click on either drawer, or ↑ on the box's first row,
+  takes everything back (`cancel-queued` for each that can still be
+  recalled). The rules are in `src/chat.rs` (unit-tested).
+- **2.10 Scheduled messages** (specs/scheduled-messages.md): the clock
+  opens a panel over the chat's foot (not modal; up to `sched-share` of the
+  chat, its body scrolling): the composer's text carried into a message
+  box, At a time (now + 30 minutes, typed or picked) / Turn ends / Limit
+  resets (only with the limit warmer on), Schedule (`POST
+  /api/chat-schedule`), and this chat's messages to come with ✕. The rules
+  are in `src/sched.rs` (unit-tested).
+- **2.11 Slash menu** (specs/slash-menu.md): while the whole message is
+  one `/word`, the chat's commands (from its history and `init`, plus
+  Crundi's /btw) open over the box's row, filtered by prefix; ↑ ↓ pick,
+  Enter, Tab or a press puts "/name " in the box, Esc closes. The rules are
+  in `src/slash.rs` (unit-tested).
+- **2.12 Chat secrets dialog** (specs/chat-secrets.md, `ui/secrets.slint`):
+  the header's lock opens the secrets pre-authorised for that chat (revoke
+  one or all) and the server's secrets to pre-authorise: tick, type each
+  one's PIN or passphrase, pick a duration, Pre-authorise (all or nothing).
+  The lock's count follows; grants update live (`chat-secrets`).
+- **2.12b Secret requests** (specs/secret-requests.md, `ui/sreq.slint`):
+  Claude's `secret_get` / `secret_run` waiting on the owner show as cards
+  docked at the window's bottom right (live from `secret-requests`): what
+  is asked (a run's command and the variable it is bound to), the PIN or
+  passphrase field on the first card, Approve / Reject, and for a chat's
+  run "Allow for this chat" with a duration. Success toasts have a green
+  edge. The rules are in `src/sreq.rs` (unit-tested).
+- **2.13 Questions** (specs/questions.md, `ui/chat.slint` QuestionCard):
+  Claude's AskUserQuestion cards in full: one to four questions, single
+  choice and multi-select with descriptions and previews, a note on a
+  choice (it follows the pick), Other, Submit (once every question has an
+  answer) and Dismiss; answered cards show their tags and notes, live from
+  any client; orphaned cards (the asking process gone) still answer, as a
+  message. Half-answered cards are kept as answer drafts (`ans:<chat>:<entry>`
+  in the drafts store) across pane switches and restarts. The rules are in
+  `src/questions.rs` (unit-tested).
+- **Permission cards** (F107/F110): as the web's (title, description,
+  reason, the input; Allow always only with suggestions; escalated to the
+  owner or a factory's Manager; answered: the name and its tag).
+- **2.14 Tool cards** (specs/tool-cards.md, `ui/chat.slint` ToolCard):
+  each tool call is a card as the web's: a spinner or a dot, the tool's
+  name as sent, the summary of its arguments (the web's toolSummary), and
+  a body that opens on a click with the arguments by tool (Bash's command
+  and description, Write's content, Edit's diff, TodoWrite's list, pretty
+  JSON otherwise) and the result, at most composer-max × 2 then scrolling.
+  Batches Claude Code summed up fold behind a group head; a call that
+  started a sub-agent is an agent row. The rules are in `src/tools.rs`
+  (unit-tested).
+- **2.15 Thinking** (specs/thinking.md, `ui/chat.slint` ThinkBlock): a
+  block with text shows "▾ Thinking" over its reasoning (live: the label
+  shimmers, a caret blinks, the body follows the newest line); it opens
+  when it starts, folds 5 s after it finishes or at once when a newer one
+  starts, and the reader's click wins. Without text: "Thought for ~1.2k
+  tokens". The rules are in `src/think.rs` (unit-tested).
+- **2.16 The rest of the log** (specs/log-rest.md): Claude's markdown as the
+  web's md() (line breaks kept, `#` headings, quotes, rules, numbered
+  lists, bare URLs as links; `src/md.rs`, unit-tested), reply text at 13,
+  code blocks that scroll sideways with a copy button, links to the system
+  browser, notices in italics, errors and failed turns in a red box, and the
+  log following the bottom only when the reader is there (wheel steps up
+  stay; the jump button with its new-content dot).
+- **2.16m Media** (specs/log-rest.md section 4, `src/media.rs`,
+  `ui/viewer.slint`): what Claude shows with show_image / video / audio /
+  file / embed, under the call's card: picture boxes sized before they load
+  (PNG, JPEG, WebP, GIF), loading and gone states, the picture viewer
+  (gallery, zoom, keys); video and audio played in the system's player;
+  the file card's Download (save dialog, streamed, its download row);
+  frames' captions with Open.
+- **2.16f Live frames** (specs/log-rest.md "Live frames in detail",
+  `src/frames.rs`): a `show_embed` frame is live in its box: its own
+  windowless CEF view (transparent, the box less its edge), made while its
+  row is on the log and released when it leaves, the pane closes or parks,
+  or the Workbench is hidden; at most 6 at once. Stored HTML loads as a
+  data: URL, an https page with the server's origin as its referrer. The
+  pointer, the page's cursor, the wheel and the keyboard go to it (a click
+  gives it the keys, a click outside takes them back); new windows go to
+  the system browser; no context menu, downloads or dialogs.
+- **2.17 Suggestions and recaps** (specs/suggestions-recaps.md): the
+  chat's dock at the log's bottom right: Claude Code's suggestion after a
+  turn (a click sends it as it is, the box untouched; × dismisses it on the
+  server) and the recap ("While you were away" / "Where this chat stands").
+- **2.18 The agent dock** (specs/agent-dock.md, `src/agents.rs`): a
+  chat's sub-agents and background commands as two badges in its dock
+  (count, spinner or dot, tooltip), their lists (running first, Dismiss
+  all) and one record's panel (its prompt, summary and live transcript);
+  the log's agent row opens it; dismissing posts dismiss-agents.
+- **2.19 The goal and the plan** (specs/goal-plan.md): the goal bar
+  (condition, checks, clear sends `/goal clear`), the "Goal not yet met"
+  card in the log, the header's PLAN pill (proposed, executing, rejected)
+  and the plan panel over the log.
+- **2.20 Cards** (specs/cards.md, `src/fresult.rs`): a factory's result
+  card in its Manager's chat (which now gets a pane, with the Factory tag):
+  the summary, the files (and the full diff, a virtualised list), the
+  state's message, usage, follow-ups, and the choices (Merge, Request
+  changes with its note, Keep branch, Discard armed for 3 s, Close the run,
+  Undo) posted to /api/factory-runs; the server's patches redraw it in
+  place. Under a widget_render call, the check's screenshots row.
+- **2.21 Side questions** (specs/side-questions.md): `/btw <question>` in
+  any state asks on the side (POST …/aside): a card in the log where it was
+  asked, "Asking…" then the answer or the error; never queued, nothing
+  added to the conversation; a server without it gets the text as typed.
+- **2.22 The resume picker** (specs/resume-picker.md, `ui/resume.slint`,
+  `src/resume.rs`): UI Mode (and Skip Permissions) in a launcher first
+  fetches the project's earlier conversations; none (or a server without
+  the list): a new session at once; else "Open UI Mode" with New session
+  and the rows (title, id · age · tokens, heavy, open elsewhere). A heavy
+  one offers Compact first / Load the full conversation / Back. The
+  launcher spins its pressed button while the chat starts; a refused start
+  is a toast. Keyboard: New session first, ↑/↓, Tab, Enter, Esc.
+- **2.23 Parked panes** (specs/parked-panes.md, `ui/parked.slint`): a chat
+  the server parked (by hand, idle, a restart) keeps its leaf: its stored
+  conversation darkened behind a card (Resume, Peek, why and when, what
+  Resume does, the heavy warning with Compact and resume and New session;
+  tighter when the pane is short). Peek reads it (Parked view or Esc goes
+  back); anything that would change it resumes it first. Resumed, it swaps
+  to the live chat in place; × discards it.
+
+- **2.24 Voice input** (specs/voice-input.md, `src/voice.rs`,
+  `src/voiceio.rs`): the composer's mic (shown when the server has a
+  Deepgram key and `chat-voice`). A tap: voice mode (each pause sends
+  `voice input: …`); a hold: push to talk (sent when let go, dropped over
+  ×). The box shows the words heard (the draft waits underneath), the
+  strip the level, time and status; the server's cancel words drop them.
+  The microphone through cpal (a WAV for tests: `CRUNDI_TEST_MIC_WAV`),
+  16 kHz Int16 frames to `/api/voice/listen`; one chat in voice mode at a
+  time, a hold elsewhere pausing it. Tones and Claude's replies (its
+  `speak`, streamed from `/api/voice/speak`) through rodio; with no
+  Deepgram voice, the device's own (the tts crate on Windows and macOS,
+  `spd-say` on Linux). Building on Linux needs `libasound2-dev`; Windows
+  and macOS need nothing extra.
+
+- **2.25 Chat known gaps** (specs/known-gaps.md, `src/fonts.rs`): the chat
+  has its own font family, "Crundi Chat" (the UI font with a line gap that
+  makes its line the web's 1.55, registered at start), so StyledText's
+  wrapped lines sit as the web's; the line-height factors are worked out
+  from the UI font's own line on each system (CI's drive test checks it);
+  the composer's line is the web's 1.45; a reply's text is in an explicit
+  colour, so inline code gets Slint's faint outline; SoftShadow draws a
+  Gaussian with the web's shadow values. The colour spans close and open
+  at each line break and around real [text](url) links only (F145), and
+  the chat and code fonts' copies draw underlines from 1 px (F146; inline
+  code's font is the system monospace copied as "Crundi Mono" at start,
+  main.rs `code_font`, except a .ttc family such as macOS's, which keeps
+  its own thin underline, a gap named in PLAN.md;
+  `md.rs` tests parse the markup with Slint's own parser, i-slint-common,
+  a dev-dependency).
+
+### Reusable pieces
+
+- **Overlays and `Pointer.modal`** (ui/widgets.slint `Pointer`): one
+  global pointer state (position, presses, the press on a menu or a modal's
+  scrim, the dock's rectangle, wheel steps). A modal (the mode picker, the
+  secrets dialog, the viewer) sets `modal`, so nothing under its scrim
+  takes hover or a press; the secret-request dock tells it where its cards
+  are.
+- **`RevealFlickable` + `ScrollThumb`**: a scrolling box that can bring a
+  part into view (the keyboard's focus), with its thin thumb; used by the
+  dialogs, the pick lists, the prompt and command boxes.
+- **`Tip`** (ui/chat.slint) and `TipBox` (drawn by main.slint): the shared
+  tooltip, clamped to the window.
+- **`AccentFill`**: the accent gradient in a round or rounded shape (a
+  nine-slice image: the software renderer ignores a radius on a gradient).
+- **`SoftShadow`**, **`DashedBox`** (with a square corner when asked),
+  **`Spinner`/`StatusMark`**, **`CardBtn`**, **`Tag`**.
+- **The follow model** (ChatPane): the log follows its end only while the
+  reader is at it; any scroll of theirs away stops it at once (a real wheel
+  step up is caught before Slint scrolls, src/main.rs); while following,
+  every change of size keeps the end pinned; the jump button and its dot.
+  The agent panel follows its end the same way.
+- **Bundled fonts**: DejaVu Sans (and its italic) is bundled and used on
+  Linux (`Theme.ui-font`), so italic text has a real face.
+- **Pure rules in Rust, unit-tested**: `head.rs`, `mosaic.rs`, `sched.rs`,
+  `slash.rs`, `secrets.rs`, `sreq.rs`, `questions.rs`, `tools.rs`,
+  `think.rs`, `md.rs`, `media.rs`, `agents.rs`, `drafts.rs`, `attach.rs`,
+  `fresult.rs`, `resume.rs`, `voice.rs`, `fonts.rs`, `chat.rs`.
+
+### Testing phase 2
+
+- **Always against an isolated test server** from
+  `tools/test-server.sh <port> [--bare]` (ports 4810–4819; never the live
+  server's): a fresh data folder, the caller's Crundi and Claude variables
+  stripped. Stop what you start by PID.
+- `test/phase2.mjs` drives every feature against it (real Claude turns
+  where they matter: questions, tool calls, queues; the server's own
+  ui-event frames through the driver's `chat-event` for what this machine's
+  Claude Code does not send), by the pointer, keys and a real X wheel
+  (xdotool) where it matters:
+
+  ```bash
+  node native-client/tools/deepgram-stub.mjs 4812 &     # voice input (2.24)
+  DEEPGRAM_HOST=127.0.0.1:4812 NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    native-client/tools/test-server.sh 4813 --bare
+  DISPLAY=:99 SLINT_BACKEND=winit-software \
+    CRUNDI_TEST_SERVER=http://localhost:4813 CRUNDI_TEST_PORT=4814 \
+    CRUNDI_TEST_PROJECT=/tmp/crundi-devtest-4813/proj \
+    CRUNDI_TEST_DEEPGRAM=127.0.0.1:4812 \
+    NATIVE_BIN=$CARGO_TARGET_DIR/debug/crundi-native \
+    node native-client/test/phase2.mjs
+  ```
+
+  At the end of every step, `native-client/tools/clean-build.sh` frees the
+  disk the builds and tests took (old build-script outputs, a big
+  `debug/incremental`, the suites' /tmp projects and stopped test servers'
+  data). Build only in the shared `CARGO_TARGET_DIR`
+  (`~/.cache/crundi-native-target`), no release builds unless a test needs
+  one, and keep snapshots in `specs/` or one /tmp scratch dir removed at
+  the end of the step.
+
+  Without the Deepgram stand-in (no `CRUNDI_TEST_DEEPGRAM`) the voice
+  section is skipped. The app's microphone is a WAV the test writes
+  (`CRUNDI_TEST_MIC_WAV`).
+
+  Run it with nothing else on the display (a second client cannot start:
+  CEF's profile is shared). Then `test/phase1.mjs` and `test/drive.mjs`
+  on fresh servers, `cargo test` and `tools/tokens.sh`.
+- The test driver (src/testctl.rs) also takes
+  `{"cmd":"mouse","kind":"move|click|dblclick|leave|wheel","x","y"}` and
+  `{"cmd":"key","text":"Escape|Return|…"}`; `test/look.mjs` has the same
+  as `mouse:<kind>:<x>:<y>` and `key:<text>`, for snapshots of hover and
+  other states.
 
 ## Server test (browser panels)
 
@@ -143,6 +489,8 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
   open chat. Server calls run on worker threads (`bg`, `call`).
 - **`src/chat.rs`**: one chat's conversation; turns the server's entries into
   rows on screen.
+- **`src/head.rs`**: the pane header's rules (rename, text size, the secrets
+  count, titles).
 - **`src/testctl.rs`**: the test driver (`CRUNDI_TEST_PORT`).
 - **`src/browser.rs`**: the Slint and CEF bridge (panels, input, device
   emulation, annotations). `src/server.rs` answers the server's browser

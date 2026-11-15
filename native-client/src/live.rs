@@ -5,7 +5,8 @@
 //!   control (register-native-host → native-host requests, answered by
 //!   src/server.rs). Re-subscribes after every reconnect.
 //! - **/api/events**: the event stream, for changes to the chat list
-//!   (the "state" event).
+//!   (the "state" event), usage, the inbox, and each chat's pre-authorised
+//!   secrets ("chat-secrets").
 //!
 //! Both reconnect on their own with a fresh token, until [Live::stop].
 
@@ -56,6 +57,10 @@ pub enum Event {
     /// The account's usage (the top bar's bars) and the inbox's unread count.
     Usage(Value),
     Inbox(Value),
+    /// One chat's pre-authorised secrets: {sessionId, grants}.
+    ChatSecrets(Value),
+    /// The secret requests waiting on the owner: {requests} (2.12b).
+    SecretRequests(Value),
     SignedOut,
 }
 
@@ -158,6 +163,8 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, to_ui: impl Fn(Event)) {
                 "state" => to_ui(Event::State(v)),
                 "usage" => to_ui(Event::Usage(v)),
                 "inbox" => to_ui(Event::Inbox(v)),
+                "chat-secrets" => to_ui(Event::ChatSecrets(v)),
+                "secret-requests" => to_ui(Event::SecretRequests(v)),
                 _ => {}
             }
         });

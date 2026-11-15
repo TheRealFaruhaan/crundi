@@ -27,6 +27,21 @@ pub struct Saved {
     /// it in localStorage.crundi_wb_mosaic.
     #[serde(default)]
     pub layouts: std::collections::HashMap<String, serde_json::Value>,
+    /// Each chat's text size in px (the header's A- / A+), as the web UI's
+    /// localStorage.crundi_term_font; and the size new chats start at
+    /// (crundi_font_default.chat): every change becomes the new default.
+    #[serde(default)]
+    pub font: std::collections::HashMap<String, i32>,
+    #[serde(default)]
+    pub font_default_chat: Option<i32>,
+    /// Which key sends in every chat: "newline" for Ctrl+Enter (Enter makes a
+    /// newline), otherwise Enter (the web's localStorage.crundi_chat_enter).
+    #[serde(default)]
+    pub chat_enter: String,
+    /// The chats' drafts, per server (src/drafts.rs): {"<server>":
+    /// {"chat:<id>": {v, t}, "project:<alias>": {v, t}}}.
+    #[serde(default)]
+    pub drafts: std::collections::HashMap<String, serde_json::Value>,
 }
 
 pub fn config_dir() -> PathBuf {

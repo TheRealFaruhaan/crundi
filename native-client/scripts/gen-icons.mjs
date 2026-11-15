@@ -21,7 +21,7 @@ const icons = {};
 for (const m of block.matchAll(/^\s*(?:'([a-z0-9-]+)'|([a-z0-9]+)):\s*'([^']*)',?\s*$/gm)) {
   icons[m[1] || m[2]] = m[3];
 }
-const names = Object.keys(icons).sort();
+const names = Object.keys(icons).sort();  // (turned variants are added below)
 if (names.length < 20) throw new Error(`only ${names.length} icons parsed`);
 
 const dir = join(here, '..', 'ui', 'icons');
@@ -31,6 +31,43 @@ for (const n of names) {
   writeFileSync(join(dir, `${n}.svg`),
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${icons[n]}</svg>\n`);
 }
+// Turned variants: Slint's software renderer can't rotate an image, so the
+// pinned pin (the web's transform: rotate(-30deg)) is drawn turned.
+const TURNED = { 'pin-turned': ['pin', 'rotate(-30 12 12)'], 'chevrons-right': ['chevrons-left', 'translate(24 0) scale(-1 1)'] };
+for (const [n, [base, how]] of Object.entries(TURNED)) {
+  writeFileSync(join(dir, `${n}.svg`),
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><g transform="${how}">${icons[base]}</g></svg>\n`);
+  names.push(n);
+}
+// Icons the web draws inline rather than from ICON_PATHS (the workbench's
+// split controls, Fit to screen, the Layout presets), as drawn there.
+const svg = (vb, sw, body) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vb}" fill="none" stroke="#000" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${body}</svg>\n`;
+const INLINE = {
+  'split-right': svg('0 0 24 18', 1.8, '<rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="12" y1="1" x2="12" y2="17"/>'),
+  'split-down': svg('0 0 24 18', 1.8, '<rect x="1" y="1" width="22" height="16" rx="1.5"/><line x1="1" y1="9" x2="23" y2="9"/>'),
+  'fit': svg('0 0 24 24', 2, '<polyline points="7 8 3 12 7 16"/><polyline points="17 8 21 12 17 16"/><line x1="3" y1="12" x2="21" y2="12"/>'),
+  'columns': svg('0 0 24 24', 2, '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="3" x2="12" y2="21"/>'),
+  'lay-cols2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="16" rx="1.5"/><rect x="13" y="1" width="10" height="16" rx="1.5"/>'),
+  'lay-cols3': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="6.3" height="16" rx="1.2"/><rect x="8.85" y="1" width="6.3" height="16" rx="1.2"/><rect x="16.7" y="1" width="6.3" height="16" rx="1.2"/>'),
+  'lay-cross4': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+  'lay-left-right2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="10" height="16" rx="1.2"/><rect x="13" y="1" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+  // The schedule panel's time field (2.10): the browser's own date-time
+  // input shows a calendar glyph there.
+  'calendar': svg('0 0 24 24', 2, '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>'),
+  'lay-top-bottom2': svg('0 0 24 18', 1.6, '<rect x="1" y="1" width="22" height="7.5" rx="1.2"/><rect x="1" y="9.5" width="10" height="7.5" rx="1.2"/><rect x="13" y="9.5" width="10" height="7.5" rx="1.2"/>'),
+};
+for (const [n, body] of Object.entries(INLINE)) { writeFileSync(join(dir, `${n}.svg`), body); names.push(n); }
+// The chat's permission modes (the composer's mode button), from the web
+// chat's MODE_INFO (app/vendor/claude-chat.js): mode-<mode>.
+const chat = readFileSync(join(here, '..', '..', 'app', 'vendor', 'claude-chat.js'), 'utf8');
+let modes = 0;
+for (const m of chat.matchAll(/^\s*'([A-Za-z]+)': \{ icon: MODE_SVG\('([^']*)'\)/gm)) {
+  const n = `mode-${m[1].replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`;
+  writeFileSync(join(dir, `${n}.svg`), svg('0 0 24 24', 2, m[2]));
+  names.push(n); modes++;
+}
+if (modes < 6) throw new Error(`only ${modes} mode icons parsed`);
+names.sort();
 // Slint names: a leading digit or a keyword gets a prefix.
 const slintName = (n) => (/^[0-9]/.test(n) || ['if', 'for', 'in', 'out', 'property', 'callback', 'import', 'export'].includes(n) ? `i-${n}` : n);
 writeFileSync(join(here, '..', 'ui', 'icons.slint'),

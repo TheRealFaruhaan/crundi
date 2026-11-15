@@ -1,5 +1,17 @@
-// The PC client's look: the web UI's colours and sizes (the :root variables at
-// the top of src/webapp-html.js), so the native client looks like Crundi.
+// The PC client's look: one constant theme (DESIGN.md, rule 2). The colours
+// are the web UI's palette; every size is a step of a scale, and the few
+// named sizes are the client's structure (the window, the bars, the
+// sidebar, the pane header, control heights, icons). Screens never type a
+// number but 0 and 1px hairlines: they use these. tools/tokens.sh lists any
+// left.
+
+/// A soft shadow or glow (widgets.slint SoftShadow): it fades from `c` at
+/// the box's edge to nothing over `blur`, moved down by `y`.
+export struct Shadow { blur: length, y: length, c: color }
+
+/// A faint glow on the sign-in page: a circle at a fraction of the window
+/// (fx across, fy down) with a radius of a fraction `fr` of its height.
+export struct Glow { fx: float, fy: float, fr: float }
 
 export global Theme {
     // Surfaces, darkest first.
@@ -11,10 +23,11 @@ export global Theme {
     out property <color> border: #2a2a3d;
     out property <color> border-subtle: #1e1e30;
 
-    // Text.
+    // Text. `white` is text and icons on an accent or red fill.
     out property <color> text-primary: #e8e8f0;
     out property <color> text-secondary: #8888a8;
     out property <color> text-muted: #5a5a78;
+    out property <color> white: #ffffff;
 
     // Accent (the mark's indigo) and the one warm colour.
     out property <color> accent: #6366f1;
@@ -31,18 +44,295 @@ export global Theme {
     out property <color> yellow: #f59e0b;
     out property <color> yellow-dim: #f59e0b26;
     out property <color> sky: #38bdf8;
+    out property <color> sky-dim: #38bdf829;
+    out property <color> sky-ring: #38bdf82e;
+    // Plan mode's border (the mode button).
+    out property <color> sky-edge: #38bdf873;
+    // The parked card's warning edge (2.23): yellow at .35.
+    out property <color> yellow-edge: #f59e0b59;
 
-    // Shape and layout.
-    out property <length> radius: 10px;
-    out property <length> radius-sm: 6px;
-    out property <length> sidebar-width: 240px;
-    out property <length> topbar-height: 48px;
-
-    // Type.
-    out property <length> font-size: 14px;
-    out property <length> font-size-sm: 12px;
-    out property <length> font-size-xs: 11px;
-    // Set at start for the system (src/main.rs).
-    in-out property <string> mono: "DejaVu Sans Mono";
+    // Tints of the palette.
+    out property <color> error-text: #fca5a5;
+    out property <color> error-edge: #ef444466;
+    out property <color> red-ring: #ef444434;
+    out property <color> green-ring: #10b98134;
+    out property <color> accent-edge: #6366f159;
+    out property <color> accent-line: #6366f166;
+    out property <color> accent-ring: #6366f147;
+    out property <color> accent-glow: #6366f140;
+    out property <color> accent-haze: #6366f11a;
+    out property <color> accent-mist: #6366f10f;
+    out property <color> accent-mist2: #6366f11f;
+    out property <color> accent-clear: #6366f100;
+    out property <color> accent-hover-edge: #818cf8d9;
+    out property <color> accent-hover-mist: #818cf80f;
+    out property <color> accent-hover-clear: #818cf800;
+    out property <color> usage-used: #6366f138;
+    out property <color> usage-time: #7daaff29;
+    out property <color> hairline-light: #ffffff0d;
+    out property <color> card-top: #17171f;
+    out property <color> placeholder: #757575;
+    out property <color> annotate: #ea580c;
     out property <color> slate-dim: #94a3b826;
+    // A handed-over message's drawer (2.9): its edge and its fill.
+    out property <color> slate-edge: #94a3b873;
+    out property <color> slate-haze: #94a3b817;
+    // Selected text in a text field.
+    out property <color> selection: #0236a1;
+    // A modal's backdrop.
+    out property <color> scrim: #0000008c;
+    // A reply StyledText's default colour (K3): its text is in an explicit
+    // colour; a dark default makes Slint draw inline code's faint outline.
+    out property <color> chip-key: #0a0a0f;
+    // Media (2.16m): the picture viewer's backdrop, a frame's box, a video's
+    // play button and its ring (over a picture: white on dark).
+    out property <color> backdrop: #000000db;
+    // A parked pane (2.23): its conversation darkened (the web's
+    // brightness .55; no blur, PLAN.md), then the veil, darkest at the centre.
+    out property <color> park-dim: #00000073;
+    out property <brush> park-veil: @radial-gradient(circle, #0a0a0f8c 0%, #0a0a0f26 70%);
+    out property <color> frame-bg: #0f0f14;
+    // The suggestion's dashed edge, and its edge on hover (2.17).
+    out property <color> sug-edge: #818cf88c;
+    out property <color> sug-edge-on: #6366f18c;
+    // A rule in a reply: the browser's 2px inset line (dark top, light bottom).
+    out property <color> rule-dark: #9a9a9a;
+    out property <color> rule-light: #eeeeee;
+    out property <color> play-bg: #0000008c;
+    out property <color> play-edge: #ffffff40;
+    out property <color> ring-faint: #ffffff2e;
+
+    // Spacing: 2, 4, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48. Every gap,
+    // padding and small box is one of these (or a sum of two).
+    out property <length> sp-2: 2px;
+    out property <length> sp-4: 4px;
+    out property <length> sp-6: 6px;
+    out property <length> sp-8: 8px;
+    out property <length> sp-10: 10px;
+    out property <length> sp-12: 12px;
+    out property <length> sp-16: 16px;
+    out property <length> sp-20: 20px;
+    out property <length> sp-24: 24px;
+    out property <length> sp-32: 32px;
+    out property <length> sp-40: 40px;
+    out property <length> sp-48: 48px;
+
+    // Radius: a chip, a control, a field, a card or pane, a bubble, a pill
+    // (also any circle: a radius is held to half the size).
+    out property <length> r-chip: 4px;
+    out property <length> r-control: 6px;
+    out property <length> r-field: 8px;
+    out property <length> r-card: 10px;
+    out property <length> r-bubble: 12px;
+    out property <length> r-pill: 999px;
+
+    // Font sizes: 10, 11, 12, 13, 14, 15, 16, 20, 26.
+    out property <length> text-10: 10px;
+    out property <length> text-11: 11px;
+    out property <length> text-12: 12px;
+    out property <length> text-13: 13px;
+    out property <length> text-14: 14px;
+    out property <length> text-15: 15px;
+    out property <length> text-16: 16px;
+    out property <length> text-20: 20px;
+    out property <length> text-26: 26px;
+    // Weights: 400, 500, 600, 700.
+    out property <int> w-regular: 400;
+    out property <int> w-medium: 500;
+    out property <int> w-semibold: 600;
+    out property <int> w-bold: 700;
+    // Line heights. The chat's line box is 1.55 × its text size (line-chat,
+    // for padding a line to it) and the UI's 1.3; as Slint's
+    // line-height-factor (over the font's own line) those are lh-chat and lh-ui.
+    out property <float> line-chat: 1.55;
+    // The composer's line (the web's .cc-input, K5).
+    out property <float> line-composer: 1.45;
+    // Set at start from the UI font's own line (src/fonts.rs: these are
+    // DejaVu Sans's; Segoe UI's and San Francisco's own lines differ, K2).
+    in-out property <float> lh-chat: 1.33;
+    in-out property <float> lh-ui: 1.12;
+    // The composer's box: the web's 1.45 (K5).
+    in-out property <float> lh-composer: 1.246;
+    // The chat's font (K1): the UI font with a line of line-chat, so a
+    // StyledText's wrapped lines sit as the web's. Empty when it could not
+    // be made (the system's font then, and the one-line padding).
+    in-out property <string> chat-font;
+    // The window's scale (src/main.rs): shadows snap to whole screen pixels.
+    in-out property <float> px-scale: 1;
+    // The font's own line (StyledText's: a user bubble's selectable copy
+    // lines up with the drawn text, F122).
+    out property <float> lh-plain: 1;
+    // Shares: a user bubble's widest (of the log's width), a square icon
+    // button's icon (of the button).
+    out property <float> bubble-share: 0.86;
+    out property <float> icon-share: 0.55;
+    // A queued message's drawer shows at most this many rows (2.9).
+    out property <int> queue-rows: 4;
+    // The schedule panel (2.10): its message box's rows (and an item's text
+    // at most), and its tallest, a share of the chat's height.
+    out property <int> sched-rows: 3;
+    out property <float> sched-share: 0.82;
+    // The slash menu's tallest (2.11), about six and a half items.
+    out property <length> slash-max-h: 190px;
+    // The chat secrets dialog (2.12): its width, its pick list's tallest,
+    // a lock field's width.
+    out property <length> dialog-w-lg: 460px;
+    // The resume picker (2.22): the web's 560 (dialog-w-lg wraps every title).
+    out property <length> dialog-w-xl: 560px;
+    // The parked card's widest (2.23), and the body heights its short and
+    // very short forms start at.
+    out property <length> park-card-w: 330px;
+    // A widget check's screenshot's height (2.20, the web's 150).
+    out property <length> shot-h: 150px;
+    // The factory card's note: three lines tall, growing to six (2.20).
+    out property <int> note-rows: 3;
+    out property <int> note-rows-max: 6;
+    out property <length> park-short-h: 330px;
+    out property <length> park-tiny-h: 210px;
+    out property <length> pick-max-h: 240px;
+    out property <length> lock-field-w: 150px;
+    // Secret requests (2.12b): a run's command box at its tallest, and the
+    // window width at or under which the dock spans the window.
+    out property <length> cmd-max-h: 140px;
+    out property <length> dock-narrow: 640px;
+    // Letter spacing: tight (packed marks, small bold capitals) and wide
+    // (capitals in labels, a code's characters).
+    out property <length> track-tight: -0.5px;
+    out property <length> track-wide: 1px;
+
+    // ─── Structure: the only named sizes ───
+    // The window.
+    out property <length> window-w: 1400px;
+    out property <length> window-h: 860px;
+    out property <length> window-min-w: 900px;
+    out property <length> window-min-h: 520px;
+    // The bars and the sidebar.
+    out property <length> topbar-height: 48px;
+    out property <length> tabbar-height: 36px;
+    out property <length> sidebar-width: 240px;
+    out property <length> sidebar-folded: 60px;
+    // Panes (src/mosaic.rs and src/head.rs hold the same numbers): the
+    // header (narrow under pane-fold), a pane's least width, the gutter
+    // between panes, a title's widest, the composer's stacking width and
+    // tallest input.
+    out property <length> pane-head: 28px;
+    out property <length> pane-head-narrow: 26px;
+    out property <length> pane-min: 340px;
+    out property <length> pane-fold: 560px;
+    out property <length> gutter: 7px;
+    out property <length> title-cap: 160px;
+    out property <length> composer-stack: 520px;
+    out property <length> composer-max: 180px;
+    // The browser drawer: its width, its least, and what it leaves the panes.
+    out property <length> drawer-w: 560px;
+    out property <length> drawer-min: 320px;
+    out property <length> drawer-reserve: 420px;
+    // A small modal dialog (the permission-mode picker): its width and its
+    // tallest.
+    out property <length> dialog-w: 380px;
+    out property <length> dialog-max-h: 560px;
+    // Control heights: small (header and toolbar buttons, chips), regular
+    // (buttons, inputs), large (fields, tabs, launcher buttons).
+    out property <length> control-sm: 28px;
+    out property <length> control: 34px;
+    out property <length> control-lg: 36px;
+    // Icons.
+    out property <length> icon-sm: 12px;
+    out property <length> icon-md: 14px;
+    out property <length> icon-lg: 16px;
+    out property <length> icon-xl: 20px;
+
+    // Motion.
+    out property <duration> motion-fast: 120ms;
+    out property <duration> motion: 220ms;
+    out property <duration> menu-linger: 350ms;
+    // How long the pointer rests before a tooltip shows.
+    out property <duration> tip-delay: 600ms;
+    out property <duration> frame: 16ms;
+    // A tool card's spinner: one turn (2.14, the web's 0.7 s), and its ring.
+    out property <duration> spin: 700ms;
+    out property <length> spin-stroke: 1.5px;
+    // A launching button's spinner (the web's .cr-busy): 15 across, a 2px
+    // white ring at .35 with a white arc.
+    out property <length> spin-busy: 15px;
+    out property <color> spin-busy-ring: #ffffff59;
+    out property <angle> turn: 360deg;
+    // A live thinking block (2.15): the label's shimmer, the caret's blink.
+    out property <duration> shimmer: 1600ms;
+    out property <duration> blink: 1000ms;
+    // Voice input (2.24): the recording dot's blink, and the mic's ring
+    // while Claude speaks (sky at .35).
+    out property <duration> rec-blink: 1200ms;
+    // A live frame on the log tells it is there this often (2.16f).
+    out property <duration> frame-seen: 250ms;
+    out property <color> sky-ring-voice: #38bdf859;
+    // The log (2.16): following the bottom within this of it; the jump
+    // button past the larger of this and a third of the log.
+    out property <length> stick-within: 60px;
+    out property <length> jump-at: 240px;
+    out property <float> jump-share: 0.3333;
+    // The jump button's glide, at most this many frames.
+    out property <int> glide-frames: 20;
+    // Media boxes: one item at most this wide; files at most this wide; the
+    // download rows' width.
+    out property <length> media-max-w: 640px;
+    out property <length> file-max-w: 460px;
+    out property <length> dl-w: 320px;
+    // A chat's dock (suggestion, recap; 2.18's badges) at its widest.
+    out property <length> chat-dock-w: 320px;
+    // A permission card's input box at its tallest (the web's 200).
+    out property <length> pre-max-h: 200px;
+    // The viewer's zoom: a step, a double click's, the most.
+    out property <float> zoom-step: 1.4;
+    out property <float> zoom-double: 2.5;
+    out property <float> zoom-max: 8;
+    // Opacity of things that are there but quiet.
+    out property <float> o-faint: 0.3;
+    out property <float> o-dim: 0.4;
+    out property <float> o-caret: 0.55;
+    out property <float> o-soft: 0.6;
+    out property <float> o-usage: 0.7;
+    out property <float> o-clone: 0.92;
+
+    // Gradients.
+    out property <brush> grad-accent: @linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+    out property <brush> grad-card: @linear-gradient(180deg, #17171f 0%, #12121a 100%);
+    out property <brush> glow-mascot: @radial-gradient(circle, #6366f140 0%, #6366f100 65%);
+    // The sign-in page's two glows (top right, bottom left), in accent-haze
+    // and accent-hover-mist.
+    out property <Glow> glow-a: { fx: 0.82, fy: -0.12, fr: 0.43 };
+    out property <Glow> glow-b: { fx: -0.08, fy: 1.12, fr: 0.33 };
+
+    // Shadows and glows (SoftShadow): a menu or toast, a dragged pane, the
+    // sign-in card, the Send button, the folded rail's working and active
+    // avatars.
+    out property <Shadow> shadow-menu: { blur: 20px, y: 6px, c: #00000080 };
+    out property <Shadow> shadow-clone: { blur: 32px, y: 12px, c: #0000008c };
+    out property <Shadow> shadow-card: { blur: 60px, y: 24px, c: #00000099 };
+    out property <Shadow> glow-send: { blur: 12px, y: 2px, c: #6366f159 };
+    out property <Shadow> glow-yellow: { blur: 8px, y: 0px, c: #f59e0b59 };
+    out property <Shadow> glow-accent: { blur: 10px, y: 0px, c: #6366f159 };
+    // SoftShadow's Gaussian (K4): how much of the colour each stop leaves
+    // out (1 − the erfc profile at 0, ¼, ½, ¾ and 1 of the 2 × blur fade),
+    // and the stops' spacing.
+    out property <float> gauss-0: 0.023;
+    out property <float> gauss-1: 0.159;
+    out property <float> gauss-2: 0.5;
+    out property <float> gauss-3: 0.841;
+    out property <float> gauss-4: 0.977;
+    out property <float> gauss-step: 0.25;
+    // The parked card's Resume (0 0 24px accent at .35).
+    out property <Shadow> glow-resume: { blur: 24px, y: 0px, c: #6366f159 };
+
+    // Type: the mono stack, set at start for the system (src/main.rs).
+    in-out property <string> mono: "DejaVu Sans Mono";
+    // The UI font: empty for the system's own; on Linux the bundled DejaVu
+    // Sans (src/main.rs), whose italic faces the system may lack.
+    in-out property <string> ui-font;
+}
+
+/// Easing curves (a global of their own: Theme is shared with the Rust side,
+/// which can't take an easing). The layout's ease, as the web's.
+export global Motion {
+    out property <easing> layout: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
