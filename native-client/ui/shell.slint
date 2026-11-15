@@ -2,6 +2,7 @@
 // bar, the projects sidebar and the tab bar. Every size, gap and colour here
 // is measured from the running web page (getComputedStyle).
 
+import { Shell } from "hooks.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, AccentFill, SoftShadow, DashedBox } from "widgets.slint";
@@ -128,6 +129,7 @@ export component TopBar inherits Rectangle {
             y: Theme.sp-10; width: Theme.sp-40; height: Theme.control-sm;
             border-radius: Theme.r-pill;
             Image { source: @image-url("brand/cru.svg"); width: Theme.sp-40; height: Theme.sp-24; }
+            TouchArea { mouse-cursor: pointer; clicked => { Shell.cru(); } }
         }
         // The connection badge: a dot (with its ring), mono text.
         Rectangle {
@@ -280,7 +282,7 @@ export component ProjectSidebar inherits Rectangle {
                     color: ap.has-hover ? Theme.accent-hover : Theme.text-muted;
                     font-size: root.folded ? Theme.text-16 : Theme.text-14;
                 }
-                ap := TouchArea { mouse-cursor: pointer; }
+                ap := TouchArea { mouse-cursor: pointer; clicked => { Shell.add-project(); } }
             }
             Rectangle {
                 height: root.inbox-unread > 0 ? Theme.control-lg : Theme.control;
@@ -309,7 +311,7 @@ export component ProjectSidebar inherits Rectangle {
                     background: Theme.accent;
                     fb-n := Text { text: root.inbox-unread > 99 ? "99+" : root.inbox-unread; color: Theme.white; font-size: Theme.text-10; font-weight: Theme.w-bold; }
                 }
-                ib := TouchArea { mouse-cursor: pointer; }
+                ib := TouchArea { mouse-cursor: pointer; clicked => { Shell.inbox(); } }
             }
         }
     }

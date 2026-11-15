@@ -143,24 +143,68 @@ the specification. Nothing changes on the server, the web UI or the Android app.
 
    Not in phase 2: the header's bubble button (`chat-bubble`) is Electron's
    chat bubble, phase 6.
-3. **Workbench**:
-   - the pane layout and Claude panels;
-   - the browser drawer on the phase 0 panels;
-   - the native host's full browser protocol (all of what `app/` answers today).
-4. **Planning**: kanban, mind map, notes, schedules, webhooks, and factories
-   with the factory editor.
-5. **Operations**:
-   - services, forwards, Docker;
-   - secrets, skills, usage;
-   - settings, sign-in, backup;
-   - homepool;
-   - What's new.
-6. **PC-client extras from `app/`**:
-   - notifications and the tray;
-   - the chat bubble;
-   - saved passwords;
-   - the homepool node;
-   - Cru on the PC.
+
+   **Phases 3 to 6** are built in parallel, area by area (`AREAS.md`: who
+   owns which files, the tab host, the shared kit, the test driver's hooks,
+   the ports). Each screen below is ticked when it passes the design review
+   (same parts, order, states, behaviour and wording; theme tokens only)
+   and its area's end-to-end test.
+   - [x] **F. Foundation** (the Lead, 15 Nov 2026): `AREAS.md`; the tab host
+     (`ui/areas.slint`: every tab and workbench panel reaches its area's
+     view), the shell's hooks (`ui/hooks.slint`), the shared kit
+     (`ui/kit.slint`, `ui/dialogs.slint`: pages, toolbars, cards, buttons,
+     states, rows, tables, form fields, modals; one shared confirm, prompt
+     and context menu, `src/kit.rs`), the area registry (`src/areas.rs`),
+     the driver's `<area>:<name>` actions and `areas` props, `test/lib.mjs`
+     and `test/areas.mjs`, `tools/area-build.sh`, and the Browsers tab.
+3. **Workbench** (area **workspace**, and **desktop** for the browser), test
+   `test/workspace.mjs` (and `test/desktop.mjs`):
+   - [ ] **3.1 The workbench's panels.** The "+" menu's Files, Git, Kanban,
+     Notes, Mindmap, Media, Factory and Panel, and the empty pane's chips,
+     each opening its area's view in a pane.
+   - [ ] **3.2 Claude terminal panels.** Empty Shell and Terminal from the
+     launcher: a terminal in a pane, with its own input (owner's decision,
+     below).
+   - [ ] **3.3 Git.** Status, diff, history, commit, branches.
+   - [ ] **3.4 Files.** Browse, view with highlighting, edit, upload,
+     download, the row menu; a path in a reply opens here.
+   - [ ] **3.5 Media.** The library, the viewer, the player.
+   - [ ] **3.6 The browser drawer** (desktop) on the phase 0 panels: tabs
+     per project, networks, devices, annotations sent to a chat; the
+     Browsers tab.
+   - [ ] **3.7 The native host's full browser protocol** (desktop): all of
+     what `app/` answers today.
+4. **Planning** (area **planning**), test `test/planning.mjs`:
+   - [ ] **4.1 Kanban.** Columns, cards, todos, drag to move.
+   - [ ] **4.2 The card dialog.**
+   - [ ] **4.3 Mind map.**
+   - [ ] **4.4 Notes** (the tab and the panel).
+   - [ ] **4.5 Schedules.** The list and the add / edit dialog.
+   - [ ] **4.6 Webhooks.**
+   - [ ] **4.7 Factories.** The list and its badge, the factory editor.
+   - [ ] **4.8 The live run graph** and the factory panel.
+5. **Operations** (area **ops**), test `test/operations.mjs`:
+   - [ ] **5.1 Services and forwards** (cards, logs, register, tunnels).
+   - [ ] **5.2 Docker.**
+   - [ ] **5.3 Secrets** (the PC client's unlock flow) and its badge; the
+     approvals button.
+   - [ ] **5.4 Skills.**
+   - [ ] **5.5 Usage.**
+   - [ ] **5.6 Settings** (all of it, for the owner), sign-in and backup.
+   - [ ] **5.7 Add project.**
+   - [ ] **5.8 Homepool.**
+   - [ ] **5.9 Info.**
+   - [ ] **5.10 Panels** (widgets): the tab, the widget panel, the inline
+     card under `widget_open`.
+   - [ ] **5.11 What's new.**
+6. **PC-client extras from `app/`** (area **desktop**), test
+   `test/desktop.mjs`:
+   - [ ] **6.1 Notifications and the tray.**
+   - [ ] **6.2 The Inbox.**
+   - [ ] **6.3 The chat bubble** (and the pane header's bubble button).
+   - [ ] **6.4 Saved passwords** with the PIN.
+   - [ ] **6.5 The homepool node.**
+   - [ ] **6.6 Cru on the PC.**
 7. **Ship**:
    - installers and auto-update for Windows, macOS and Linux;
    - signing;
@@ -175,6 +219,19 @@ side-by-side comparisons.
 Each phase ends with the screens working against a real server, a
 `test/drive`-style check where it fits, and screenshots from CI on all three
 systems.
+
+## Deliberate differences decided by the owner
+
+- **The terminal input is inside each terminal panel** (owner's decision,
+  15 Nov 2026; Workspace, 3.2). The web has one shared bar under the
+  workbench (`#term-input-bar`, `syncInputBar()`) that types into the
+  focused terminal; the native client has none. Each terminal panel has, at
+  its bottom, as a chat panel has its composer: the text box (Ctrl+Enter or
+  Send sends to that terminal), the keyboard-tools toggle with its key grid
+  (`.ttg`), attach (uploads to `crundi_attachments`, with its progress
+  strip) and Send. Nothing depends on which terminal has focus. Wording,
+  placeholder, upload and key grid are the web bar's. Reviewers: intended,
+  not a finding.
 
 ## Known gaps (to fix during the factory run)
 

@@ -398,3 +398,59 @@ export component DashedBox inherits Rectangle {
     if root.corner > 0 && root.square-br: Rectangle { x: root.inset + root.w - root.thick; y: root.inset + root.h - root.cb; width: root.thick; height: root.cb; background: root.line; }
 }
 
+
+/// Send (the chat composer's, and the terminal input's: shared, AREAS.md):
+/// the accent fill and its glow; never disabled. `fs` scales its label with
+/// the pane's text size. Narrow, it stretches and is `control` high.
+export component SendBtn inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> label;
+    callback clicked();
+    border-radius: Theme.r-control;
+    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-send; }
+    AccentFill { width: parent.width; height: parent.height; }
+    if ta.has-hover: Rectangle { border-radius: Theme.r-control; background: Theme.accent-hover; }
+    st := Text { text: root.label; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.white; }
+    out property <length> text-w: st.preferred-width;
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The upload strip (.cc-up), while a file uploads (and a moment after):
+/// its name, the share sent, the number or "saving". The chat composer's and
+/// the terminal input's (shared, AREAS.md).
+export component UploadStrip inherits HorizontalLayout {
+    in property <string> name;
+    in property <float> frac;
+    in property <string> label;
+    padding-top: Theme.sp-4; padding-left: Theme.sp-2; padding-right: Theme.sp-2;
+    spacing: Theme.sp-8;
+    // Name and track share the room 1:2 whatever the name's
+    // length (no width of their own); a long name elides.
+    Text {
+        horizontal-stretch: 1; min-width: 0; preferred-width: 0;
+        text: root.name; font-size: Theme.text-11; color: Theme.text-muted;
+        overflow: elide; vertical-alignment: center;
+    }
+    // The track, centred on the text's line.
+    VerticalLayout {
+        horizontal-stretch: 2; min-width: 0; preferred-width: 0;
+        alignment: center;
+        Rectangle {
+            height: Theme.sp-4;
+            border-radius: Theme.r-pill;
+            background: Theme.bg-tertiary;
+            clip: true;
+            Rectangle {
+                x: 0; width: parent.width * max(0, min(1, root.frac));
+                animate width { duration: Theme.motion-fast; }
+                border-radius: Theme.r-pill;
+                background: Theme.accent;
+            }
+        }
+    }
+    Text {
+        min-width: Theme.sp-32 + Theme.sp-2; horizontal-stretch: 0;
+        text: root.label; font-size: Theme.text-11; color: Theme.text-muted;
+        horizontal-alignment: right; vertical-alignment: center;
+    }
+}

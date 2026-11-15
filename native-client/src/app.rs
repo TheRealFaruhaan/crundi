@@ -208,11 +208,11 @@ impl PartialEq for FrUi {
 
 pub struct App {
     ui: Weak<MainWindow>,
-    api: Option<Api>,
-    live: Option<Live>,
-    projects: Vec<Value>,
+    pub(crate) api: Option<Api>,
+    pub(crate) live: Option<Live>,
+    pub(crate) projects: Vec<Value>,
     sessions: Vec<Value>,
-    project: String,
+    pub(crate) project: String,
     mosaic: Mosaic,
     chats: HashMap<String, ChatPaneState>,
     focused: u32,
@@ -242,7 +242,7 @@ pub struct App {
     /// A pane being dragged by its header (2.3).
     drag: Option<Drag>,
     /// The last `state` event's `terminals` (chats and Claude terminals).
-    terminals: Option<Vec<Value>>,
+    pub(crate) terminals: Option<Vec<Value>>,
     /// A gutter held: its split and index, the pair's shares and px width at
     /// the press, and where the press was along the axis.
     gutter: Option<(u32, usize, f32, f32, f32, f32)>,
@@ -650,6 +650,9 @@ pub fn init(window: &MainWindow) {
     window.global::<FrAct>().on_diff(|c, i| fr_diff(c.as_str(), i.as_str()));
     window.on_mode_close(close_mode_picker);
 
+    // The areas (AREAS.md): their hooks, the shared dialogs.
+    crate::areas::init(window);
+
     window.on_change_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("server".into()); } });
     window.on_cancel_server(|| { if let Some(w) = ui() { w.set_signin_error("".into()); w.set_signin_step("login".into()); } });
 
@@ -890,6 +893,7 @@ fn start_session(si: SignedIn) {
     call(|api| api.get("/api/inbox/threads"), |r| {
         if let Ok(v) = r { if let (Some(n), Some(w)) = (v.get("unread").and_then(|n| n.as_i64()), ui()) { w.set_inbox_unread(n as i32); } }
     });
+    crate::areas::signed_in(&host_of(&base));
 }
 
 pub fn sign_out(why: &str) {
@@ -924,11 +928,20 @@ pub fn sign_out(why: &str) {
         w.set_current_project("".into());
         w.set_signin_error(why.into());
     }
+    crate::areas::signed_out();
 }
 
 fn api() -> Option<Api> {
     with(|a| a.api.clone()).flatten()
 }
+
+// For the areas (src/kit.rs).
+#[allow(dead_code)]
+pub(crate) fn api_now() -> Option<Api> { api() }
+#[allow(dead_code)]
+pub(crate) fn window() -> Option<MainWindow> { ui() }
+#[allow(dead_code)]
+pub(crate) fn call_api(work: impl FnOnce(&Api) -> api::ApiResult + Send + 'static, done: impl FnOnce(Result<Value, String>) + Send + 'static) { call(work, done) }
 
 fn call(work: impl FnOnce(&Api) -> api::ApiResult + Send + 'static, done: impl FnOnce(Result<Value, String>) + Send + 'static) {
     let Some(api) = api() else { return };
@@ -940,7 +953,10 @@ fn call(work: impl FnOnce(&Api) -> api::ApiResult + Send + 'static, done: impl F
 }
 
 fn on_live(e: Event) {
+    // The areas hear everything but the chats' own messages first.
+    crate::areas::live(&e);
     match e {
+        Event::Server(..) | Event::Ws(..) => {}
         Event::Connected(on) => {
             if let Some(w) = ui() { w.set_online(on); }
             // Back online: requests may have come and gone meanwhile.
@@ -1117,6 +1133,7 @@ pub fn select_project(alias: &str) {
     }
     store::update(|s| s.project = alias.to_string());
     sync_panes();
+    crate::areas::project(alias);
 }
 
 // ─── The workbench ───
@@ -1346,6 +1363,7 @@ fn render() {
                 p.launch_busy = *a.park.launching.get(&l.id).unwrap_or(&0);
             } else if let Some(kind) = key.strip_prefix("panel:") {
                 p.kind = "panel".into();
+                p.panel = kind.into();
                 let mut c = kind.chars();
                 p.title = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default().into();
             }

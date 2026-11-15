@@ -42,6 +42,12 @@ impl Live {
         let _ = self.out.send(json!({ "type": "unsubscribe-ui", "id": id }).to_string());
     }
 
+    /// Send any message on /ws (an area's subscribe-style messages; they are
+    /// not sent again after a reconnect: listen for Event::Connected(true)).
+    pub fn send(&self, msg: &Value) {
+        let _ = self.out.send(msg.to_string());
+    }
+
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
@@ -62,6 +68,10 @@ pub enum Event {
     /// The secret requests waiting on the owner: {requests} (2.12b).
     SecretRequests(Value),
     SignedOut,
+    /// Any other /api/events event (its name, its data) and any other /ws
+    /// message (its type, the whole message): the areas' (src/areas.rs).
+    Server(String, Value),
+    Ws(String, Value),
 }
 
 pub fn start(api: Api, on_event: fn(Event)) -> Live {
@@ -137,7 +147,7 @@ fn socket_loop(api: Api, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>
                     match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
                         "ui-history" | "ui-event" => to_ui(Event::Chat(v)),
                         "native-host" | "native-host-ready" => crate::server::on_message(t.as_str(), host_tx.clone(), "the server"),
-                        _ => {}
+                        other => { let other = other.to_string(); to_ui(Event::Ws(other, v)) }
                     }
                 }
                 Ok(Message::Close(_)) => break,
@@ -165,7 +175,7 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, to_ui: impl Fn(Event)) {
                 "inbox" => to_ui(Event::Inbox(v)),
                 "chat-secrets" => to_ui(Event::ChatSecrets(v)),
                 "secret-requests" => to_ui(Event::SecretRequests(v)),
-                _ => {}
+                other => to_ui(Event::Server(other.to_string(), v)),
             }
         });
         match r {

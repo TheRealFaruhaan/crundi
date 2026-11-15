@@ -3,7 +3,7 @@
 
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
-import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox, RevealFlickable } from "widgets.slint";
+import { Icon, Pointer, AccentFill, SoftShadow, ScrollThumb, DashedBox, RevealFlickable, SendBtn, UploadStrip } from "widgets.slint";
 import { ListView, DatePickerPopup, TimePickerPopup, Date, Time } from "std-widgets.slint";
 
 /// A row of the agent dock's list (2.18): the record's toolUseId, title,
@@ -2936,21 +2936,6 @@ component VoiceLine inherits Rectangle {
 }
 
 
-/// Send (or Queue while Claude is busy): the accent fill and its glow; never
-/// disabled. Narrow, it stretches and is `control` high.
-component SendBtn inherits Rectangle {
-    in property <float> fs: 1;
-    in property <string> label;
-    callback clicked();
-    border-radius: Theme.r-control;
-    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-control; shadow: Theme.glow-send; }
-    AccentFill { width: parent.width; height: parent.height; }
-    if ta.has-hover: Rectangle { border-radius: Theme.r-control; background: Theme.accent-hover; }
-    st := Text { text: root.label; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; color: Theme.white; }
-    out property <length> text-w: st.preferred-width;
-    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
-}
-
 /// A permission mode's look (the mode button, the picker's tiles): its
 /// icon and its colour, as the web chat's.
 export global ModeLook {
@@ -3651,39 +3636,7 @@ export component ChatPane inherits Rectangle {
                 }
                 // The upload bar (.cc-up), while a file uploads (and a moment
                 // after): its name, the share sent, the number or "saving".
-                if root.up-on: HorizontalLayout {
-                    padding-top: Theme.sp-4; padding-left: Theme.sp-2; padding-right: Theme.sp-2;
-                    spacing: Theme.sp-8;
-                    // Name and track share the room 1:2 whatever the name's
-                    // length (no width of their own); a long name elides.
-                    Text {
-                        horizontal-stretch: 1; min-width: 0; preferred-width: 0;
-                        text: root.up-name; font-size: Theme.text-11; color: Theme.text-muted;
-                        overflow: elide; vertical-alignment: center;
-                    }
-                    // The track, centred on the text's line.
-                    VerticalLayout {
-                        horizontal-stretch: 2; min-width: 0; preferred-width: 0;
-                        alignment: center;
-                        Rectangle {
-                            height: Theme.sp-4;
-                            border-radius: Theme.r-pill;
-                            background: Theme.bg-tertiary;
-                            clip: true;
-                            Rectangle {
-                                x: 0; width: parent.width * max(0, min(1, root.up-frac));
-                                animate width { duration: Theme.motion-fast; }
-                                border-radius: Theme.r-pill;
-                                background: Theme.accent;
-                            }
-                        }
-                    }
-                    Text {
-                        min-width: Theme.sp-32 + Theme.sp-2; horizontal-stretch: 0;
-                        text: root.up-label; font-size: Theme.text-11; color: Theme.text-muted;
-                        horizontal-alignment: right; vertical-alignment: center;
-                    }
-                }
+                if root.up-on: UploadStrip { name: root.up-name; frac: root.up-frac; label: root.up-label; }
                 // The meta row (.cc-meta): the state, the mode, the switch (and
                 // the clock), then the id, the model and the cost on the right.
                 // What doesn't fit wraps to a second line, in order.

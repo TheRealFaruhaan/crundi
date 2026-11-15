@@ -9,6 +9,8 @@
 //!   {"cmd":"ui","name":"send","args":["hi"]}  a window action (names below)
 //!   {"cmd":"mouse","kind":"move|click|dblclick|down|up|leave","x":10,"y":20}  the pointer, as a person's
 //!   {"cmd":"key","text":"Escape"|"Return"|"a…"}  a key press and release (to the focused item)
+//!   {"cmd":"ui","name":"planning:open-card","args":[…]}  an area's own action (src/areas.rs)
+//!   {"cmd":"area","area":"planning"}        an area's props alone (cheaper than "props")
 
 use base64::Engine;
 use serde_json::{json, Value};
@@ -71,6 +73,10 @@ fn pick_waiting() -> bool {
     PICK.lock().map(|p| p.is_some()).unwrap_or(false)
 }
 
+/// The last answer of a dialog the driver opened (kit-confirm …).
+static KIT_LAST: std::sync::Mutex<Value> = std::sync::Mutex::new(Value::Null);
+fn kit_last(v: Value) { if let Ok(mut l) = KIT_LAST.lock() { *l = v; } }
+
 fn arg(c: &Value, i: usize) -> String {
     c.pointer(&format!("/args/{i}")).map(|v| match v { Value::String(s) => s.clone(), o => o.to_string() }).unwrap_or_default()
 }
@@ -99,6 +105,11 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "panes": w.get_panes().iter().map(|p| json!({ "id": p.id, "key": p.key.as_str(), "kind": p.kind.as_str(), "title": p.title.as_str(), "shortTitle": p.short_title.as_str(), "titleMax": p.title_max, "state": p.state.as_str(), "focused": p.focused, "x": p.x, "y": p.y, "w": p.w, "h": p.h, "mode": p.mode.as_str(), "modeKey": p.mode_key.as_str(), "session": p.session.as_str(), "sessionFull": p.session_full.as_str(), "model": p.model.as_str(), "cost": p.cost.as_str(), "draft": crate::app::draft_of(p.key.as_str()), "stopArmed": p.stop_armed, "slash": crate::app::slash_of(p.key.as_str()), "question": crate::app::q_of(p.key.as_str()), "tools": crate::app::tools_of(p.key.as_str()), "dock": crate::app::dock_of(p.key.as_str()), "agentDock": crate::app::agents_of(p.key.as_str()), "goal": crate::app::goal_of(p.key.as_str()), "sched": crate::app::sched_of(p.key.as_str()), "qHeld": p.q_held.as_str(), "qHeldN": p.q_held_n, "qSent": p.q_sent.as_str(), "qSentKind": p.q_sent_kind.as_str(), "upOn": crate::app::upload_of(p.key.as_str()).0, "upName": crate::app::upload_of(p.key.as_str()).1, "upLabel": crate::app::upload_of(p.key.as_str()).2, "upBusy": crate::app::upload_of(p.key.as_str()).3, "planning": p.planning, "error": p.error.as_str(), "secrets": p.secrets, "secretsN": p.secrets_n, "secretsTip": p.secrets_tip.as_str(), "pinned": p.pinned, "armed": p.armed, "fs": p.fs, "narrow": p.narrow, "menu": p.menu, "drop": p.drop, "launchBusy": p.launch_busy, "factory": p.factory, "mic": p.mic, "vline": p.vline_text.as_str(), "vlineKind": p.vline_kind.as_str(), "fr": crate::app::fr_of(p.key.as_str().strip_prefix("live:").unwrap_or("")), "entries": p.entries.row_count(), "pk": if p.pk { json!({ "peek": p.pk_peek, "why": p.pk_why.as_str(), "what": p.pk_what.as_str(), "session": p.pk_session, "heavy": p.pk_heavy, "tokens": p.pk_tokens.as_str(), "busy": p.pk_busy.as_str(), "busyLabel": if p.pk_busy.is_empty() { "" } else { p.pk_busy_label.as_str() } }) } else { Value::Null } })).collect::<Vec<_>>(),
             "full": if w.get_full_on() { json!({ "key": w.get_full_pane().key.as_str(), "w": w.get_full_pane().w, "h": w.get_full_pane().h, "title": w.get_full_pane().title.as_str(), "state": w.get_full_pane().state.as_str() }) } else { Value::Null },
             "toast": w.get_toast().as_str(),
+            // The shared dialogs and each area's own props (AREAS.md).
+            "dialog": crate::kit::dialog_of(),
+            "menu": crate::kit::menu_of(),
+            "areas": crate::areas::props(),
+            "kitLast": KIT_LAST.lock().map(|v| v.clone()).unwrap_or(Value::Null),
             "pointerModal": w.global::<crate::Pointer>().get_modal(),
             "secProbe": if w.get_sec_open() { let pr = w.global::<crate::SecProbe>(); json!({ "actionsShown": pr.get_actions_shown() }) } else { Value::Null },
             "modePicker": if w.get_mode_picker_open() { let pr = w.global::<crate::PickerProbe>(); json!({ "focus": pr.get_focus(), "focusTop": pr.get_focus_top(), "focusBottom": pr.get_focus_bottom(), "scroll": pr.get_scroll(), "viewH": pr.get_view_h(), "current": w.get_mode_current().as_str(), "start": w.get_mode_start(), "modes": w.get_mode_options().iter().map(|m| json!({ "key": m.key.as_str(), "name": m.name.as_str(), "desc": m.desc.as_str() })).collect::<Vec<_>>() }) } else { Value::Null },
@@ -136,6 +147,7 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             "gutters": w.get_gutters().row_count(),
             "gutterViews": w.get_gutters().iter().map(|g| json!({ "split": g.split, "index": g.index, "row": g.row, "x": g.x, "y": g.y, "w": g.w, "h": g.h, "locked": g.locked })).collect::<Vec<_>>(),
         }),
+        "area" => json!({ "ok": true, "props": crate::areas::props_of(c.get("area").and_then(|v| v.as_str()).unwrap_or("")) }),
         // Resize the window (logical px), as a person dragging its edge.
         "resize" => {
             let n = |k: &str| c.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
@@ -205,6 +217,12 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
         "ui" => {
             let name = c.get("name").and_then(|v| v.as_str()).unwrap_or("");
             let chat = || format!("live:{}", crate::app::focused_chat());
+            // An area's own actions: "<area>:<name>" (AREAS.md), answered by
+            // the area's test_ui (src/<area>/mod.rs).
+            if let Some((area, rest)) = name.split_once(':') {
+                let args: Vec<String> = (0..c.get("args").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0)).map(|i| arg(c, i)).collect();
+                return crate::areas::test_ui(area, rest, &args);
+            }
             match name {
                 "check-server" => w.invoke_check_server(arg(c, 0).into()),
                 "sign-in-pair" => w.invoke_sign_in_pair(arg(c, 0).into()),
@@ -366,6 +384,16 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
                 "chip" => w.invoke_chip(arg(c, 0).parse().unwrap_or(0), arg(c, 1).into()),
                 "pane-secrets" => w.invoke_pane_secrets(arg(c, 0).parse().unwrap_or(0)),
                 "tab" => w.set_current_tab(arg(c, 0).into()),
+                // The shared dialogs (src/kit.rs): OK / Cancel with the
+                // field's text, and a context menu's item by its id.
+                "dialog-answer" => crate::kit::dialog_answer(arg(c, 0) == "true", arg(c, 1)),
+                "menu-pick" => crate::kit::menu_pick(&arg(c, 0)),
+                // The foundation's own check (test/areas.mjs): open the shared
+                // confirm / prompt / menu; the answer lands in "kitLast".
+                "kit-confirm" => crate::kit::confirm(crate::kit::Confirm { title: &arg(c, 0), message: &arg(c, 1), ok: "Delete", danger: true }, |ok| kit_last(json!({ "confirm": ok }))),
+                "kit-prompt" => crate::kit::prompt(&arg(c, 0), "", &arg(c, 1), "Name", "Save", false, |v| kit_last(json!({ "prompt": v }))),
+                "kit-gallery" => w.global::<crate::Gallery>().set_open(arg(c, 0) == "true"),
+                "kit-menu" => crate::kit::menu(arg(c, 0).parse().unwrap_or(100.0), arg(c, 1).parse().unwrap_or(100.0), vec![crate::kit::item("rename", "Rename"), crate::kit::item("delete", "Delete").danger().sep()], |id| kit_last(json!({ "menu": id }))),
                 "drawer" => w.set_drawer_open(arg(c, 0) == "true"),
                 "add-menu" => w.set_add_menu_open(arg(c, 0) == "true"),
                 other => return json!({ "ok": false, "error": format!("unknown ui action {other}") }),

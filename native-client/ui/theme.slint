@@ -246,6 +246,11 @@ export global Theme {
     out property <duration> motion-fast: 120ms;
     out property <duration> motion: 220ms;
     out property <duration> menu-linger: 350ms;
+    // How long a two-click button stays armed ("Sure?") before it disarms
+    // (kit.slint SmallBtn, the web's .confirming).
+    out property <duration> confirm-arm: 3s;
+    // The shared context menu's least width (.ctx-menu min-width).
+    out property <length> menu-min-w: 190px;
     // How long the pointer rests before a tooltip shows.
     out property <duration> tip-delay: 600ms;
     out property <duration> frame: 16ms;
@@ -329,6 +334,19 @@ export global Theme {
     // The UI font: empty for the system's own; on Linux the bundled DejaVu
     // Sans (src/main.rs), whose italic faces the system may lack.
     in-out property <string> ui-font;
+
+    // ── The areas' named sizes (AREAS.md) ──
+    // An area adds a token only inside its own section below (scales above
+    // are the Lead's), named after its screen (kanban-col-w…), and only for
+    // structure: anything else is a scale step. Never edit another area's.
+    // ── workspace ──
+    // ── end workspace ──
+    // ── planning ──
+    // ── end planning ──
+    // ── ops ──
+    // ── end ops ──
+    // ── desktop ──
+    // ── end desktop ──
 }
 
 /// Easing curves (a global of their own: Theme is shared with the Rust side,

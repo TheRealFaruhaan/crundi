@@ -1,0 +1,17 @@
+// The planning area's face to Rust (AREAS.md): every global Rust reads, sets or
+// handles (`w.global::<crate::PlanningUi>()`), and the structs of their models.
+// Export them all, named with the Planning prefix; components don't go here
+// (ui/planning/index.slint and the files it imports draw the screens).
+
+/// The area's state for Rust (src/planning/): add properties and callbacks here
+/// or in more Planning* globals.
+export global PlanningUi {
+    in-out property <bool> ready;
+}
+
+// ── The export chain (the Lead's line: keep it last, don't change it) ──
+// Slint allows one `export *` per file: main.slint re-exports
+// workspace/api.slint, which re-exports planning's, then ops', then
+// desktop's, so every area's globals and structs reach Rust. Don't add
+// another `export *` here.
+export * from "../ops/api.slint";

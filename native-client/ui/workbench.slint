@@ -6,6 +6,7 @@ import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
 import { ParkedVeil, Unpeek, ParkAct } from "parked.slint";
+import { AreaView } from "areas.slint";
 import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem, SlashItem, AgentRow, AnsBlock, ToolAct, Spinner } from "chat.slint";
 
 export struct PaneView {
@@ -14,6 +15,8 @@ export struct PaneView {
     key: string,
     // chat | launcher | empty | panel
     kind: string,
+    // A panel's kind (files, git, kanban…: its key's panel:<kind>).
+    panel: string,
     x: length,
     y: length,
     w: length,
@@ -467,9 +470,13 @@ export component PaneCard inherits Rectangle {
             busy: p.launch-busy;
             ui-mode(skip) => { root.launch-chat(skip); }
         }
-        if p.kind == "panel": Rectangle {
+        // A panel (Files, Git, Kanban…): its area's view, embedded
+        // (ui/areas.slint; the key is panel:<kind>).
+        if p.kind == "panel": AreaView {
             vertical-stretch: 1;
-            Text { text: p.title + " comes in a later phase of the native client"; font-size: Theme.text-13; color: Theme.text-muted; }
+            kind: p.panel;
+            key: p.key;
+            embedded: true;
         }
         }
         // A parked chat (2.23): the card over its conversation, or, peeking,

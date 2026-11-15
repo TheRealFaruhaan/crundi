@@ -1,0 +1,10 @@
+// The desktop area's face to Rust (AREAS.md): every global Rust reads, sets or
+// handles (`w.global::<crate::DesktopUi>()`), and the structs of their models.
+// Export them all, named with the Desktop prefix; components don't go here
+// (ui/desktop/index.slint and the files it imports draw the screens).
+
+/// The area's state for Rust (src/desktop/): add properties and callbacks here
+/// or in more Desktop* globals.
+export global DesktopUi {
+    in-out property <bool> ready;
+}
