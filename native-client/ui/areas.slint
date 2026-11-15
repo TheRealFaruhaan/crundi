@@ -14,7 +14,7 @@ export global Areas {
         return kind == "git" || kind == "files" || kind == "media" ? "workspace"
             : kind == "kanban" || kind == "notes" || kind == "mindmap" || kind == "factories" || kind == "factory" || kind == "schedule" ? "planning"
             : kind == "services" || kind == "docker" || kind == "homepool" || kind == "info" || kind == "secrets" || kind == "settings" || kind == "panels" || kind == "widget" ? "ops"
-            : kind == "browsers" ? "desktop"
+            : kind == "browsers" || kind == "inbox" ? "desktop"  // inbox: the sidebar's Inbox (desktop, a page with no tab button)
             : "";
     }
 }

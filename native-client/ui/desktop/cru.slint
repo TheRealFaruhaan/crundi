@@ -1,0 +1,178 @@
+// Cru's screen (app/vendor/crundi-voice.js open/render): a dropdown under the
+// top bar's Cru mark. The top row (Cru's mark, the usage legend, the state
+// pill, the ⋯ menu, ×), the field (the Crundi head in its state's colour),
+// the words (what was heard, the reply, the detail, a question's Yes/No, a
+// notice), the chat view, and the bottom row (the mic, the status word,
+// keyboard mode, the hint).
+
+import { Theme, Icons, Icon, Spinner } from "../kit.slint";
+import { Tip } from "../chat.slint";
+import { DesktopCru, DesktopCruTurn } from "api.slint";
+
+global CruLook {
+    // The mic's colours (MIC_COLORS): listen sky, think violet, speak green,
+    // waking indigo, asleep grey, offline amber, problem red.
+    public pure function tint(p: string) -> color {
+        return p == "listen" ? Theme.sky : p == "think" ? Theme.accent-hover : p == "speak" ? Theme.green : p == "waking" ? Theme.accent
+            : p == "offline" ? Theme.amber : p == "problem" ? Theme.red : Theme.text-muted;
+    }
+}
+
+component RowBtn inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> on;
+    callback clicked();
+    width: Theme.control-sm; height: self.width;
+    border-radius: Theme.r-control;
+    background: root.on ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : transparent;
+    Icon { source: root.icon; width: Theme.icon-md; height: Theme.icon-md; tint: root.on ? Theme.accent-hover : ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Tip { on: ta.has-hover; text: root.tip; }
+}
+
+export component CruScreen inherits Rectangle {
+    width: Theme.cru-w;
+    height: min(Theme.cru-h, col.preferred-height);
+    background: Theme.bg-secondary;
+    border-radius: Theme.r-card;
+    border-width: 1px; border-color: Theme.border;
+    drop-shadow-blur: Theme.sp-24; drop-shadow-color: Theme.scrim; drop-shadow-offset-y: Theme.sp-8;
+    clip: true;
+    // Keys inside the screen stay in it; Esc closes.
+    fs := FocusScope {
+        init => { self.focus(); }
+        key-pressed(e) => { if e.text == Key.Escape { DesktopCru.close(); } accept }
+    }
+    TouchArea {}
+    col := VerticalLayout {
+        padding: Theme.sp-12; spacing: Theme.sp-10;
+        // The top row.
+        HorizontalLayout {
+            spacing: Theme.sp-8;
+            Image { source: @image-url("../brand/cru.svg"); width: Theme.sp-40; height: Theme.sp-24; y: (parent.height - self.height) / 2; }
+            Text { text: DesktopCru.legend; color: Theme.text-muted; font-size: Theme.text-11; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+            Rectangle {
+                height: Theme.sp-20 + Theme.sp-2; y: (parent.height - self.height) / 2;
+                width: pt.preferred-width + Theme.sp-16;
+                border-radius: self.height / 2;
+                background: CruLook.tint(DesktopCru.phase).with-alpha(Theme.o-faint);
+                border-width: 1px; border-color: CruLook.tint(DesktopCru.phase);
+                pt := Text { text: DesktopCru.pill; color: CruLook.tint(DesktopCru.phase); font-size: Theme.text-11; font-weight: Theme.w-semibold; }
+            }
+            RowBtn { icon: Icons.more; tip: "More"; on: DesktopCru.menu; clicked => { DesktopCru.menu-open(); } }
+            RowBtn { icon: Icons.x; tip: "Close (Esc)"; clicked => { DesktopCru.close(); } }
+        }
+        // The field: the head in its state's colour.
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: Theme.cru-field; height: self.width; border-radius: self.width / 2;
+                background: CruLook.tint(DesktopCru.phase).with-alpha(Theme.o-faint);
+                border-width: Theme.sp-2; border-color: CruLook.tint(DesktopCru.phase);
+                Image { source: @image-url("../brand/head.svg"); width: parent.width * 0.5; height: self.width; }
+                if DesktopCru.phase == "think": Spinner { y: parent.height - Theme.sp-24; width: Theme.sp-16; height: Theme.sp-16; }
+            }
+        }
+        // The words.
+        Text { text: DesktopCru.words; color: Theme.text-secondary; font-size: Theme.text-14; horizontal-alignment: center; wrap: word-wrap; }
+        if DesktopCru.reply != "" && !DesktopCru.chat-view: Text { text: DesktopCru.reply; color: Theme.text-primary; font-size: Theme.text-15; wrap: word-wrap; }
+        if DesktopCru.detail != "" && DesktopCru.detail != DesktopCru.reply: Text { text: DesktopCru.detail; color: Theme.text-secondary; font-size: Theme.text-13; wrap: word-wrap; }
+        if DesktopCru.question != "": HorizontalLayout {
+            spacing: Theme.sp-8; alignment: center;
+            for b[i] in ["Yes", "No"]: Rectangle {
+                height: Theme.control-sm; width: bt.preferred-width + Theme.sp-24;
+                border-radius: Theme.r-control; background: i == 0 ? Theme.accent : Theme.bg-tertiary; border-width: 1px; border-color: i == 0 ? Theme.accent : Theme.border;
+                bt := Text { text: b; color: i == 0 ? Theme.white : Theme.text-primary; font-size: Theme.text-13; }
+                TouchArea { mouse-cursor: pointer; clicked => { DesktopCru.answer(i == 0); } }
+            }
+        }
+        if DesktopCru.notice != "": Text { text: DesktopCru.notice; color: Theme.text-muted; font-size: Theme.text-12; horizontal-alignment: center; wrap: word-wrap; }
+        // The chat view.
+        if DesktopCru.chat-view: cf := Flickable {
+            height: Theme.cru-chat-h;
+            content-width: self.width;
+            content-height: cv.preferred-height;
+            property <int> n: DesktopCru.turns.length;
+            changed n => { self.content-y = min(0px, self.height - cv.preferred-height); }
+            init => { self.content-y = min(0px, self.height - cv.preferred-height); }
+            changed height => { self.content-y = min(0px, self.height - cv.preferred-height); }
+            cv := VerticalLayout {
+                width: cf.width;
+                spacing: Theme.sp-6;
+                if DesktopCru.more: HorizontalLayout {
+                    alignment: center;
+                    Text { text: "Earlier messages"; color: Theme.accent-hover; font-size: Theme.text-12; TouchArea { mouse-cursor: pointer; clicked => { DesktopCru.older(); } } }
+                }
+                for t in DesktopCru.turns: HorizontalLayout {
+                    alignment: t.mine ? end : start;
+                    Rectangle {
+                        width: min(Theme.cru-w * 0.8, tt.preferred-width + Theme.sp-24);
+                        height: tt.preferred-height + Theme.sp-12;
+                        border-radius: Theme.r-bubble;
+                        background: t.mine ? Theme.accent-dim : Theme.bg-tertiary;
+                        tt := Text { x: Theme.sp-12; width: parent.width - Theme.sp-24; text: t.text; wrap: word-wrap; color: Theme.text-primary; font-size: Theme.text-13; }
+                        if !t.mine: TouchArea { mouse-cursor: pointer; double-clicked => { DesktopCru.say-again(t.text); } }
+                    }
+                }
+            }
+        }
+        // Keyboard mode's box.
+        if DesktopCru.keyboard: Rectangle {
+            height: max(Theme.control, min(Theme.composer-max, kb.preferred-height + Theme.sp-16));
+            border-radius: Theme.r-field; border-width: 1px; border-color: kb.has-focus ? Theme.accent : Theme.border; background: Theme.bg-primary;
+            if kb.text == "": Text { x: Theme.sp-10; y: Theme.sp-8; text: "Type to Cru"; color: Theme.placeholder; font-size: Theme.text-13; }
+            kb := TextInput {
+                x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sp-20;
+                text <=> DesktopCru.draft; wrap: word-wrap; single-line: false;
+                font-size: Theme.text-13; color: Theme.text-primary;
+                key-pressed(e) => {
+                    if e.text == Key.Return && !e.modifiers.shift { DesktopCru.send(self.text); self.text = ""; return accept; }
+                    if e.text == Key.Escape { DesktopCru.close(); return accept; }
+                    reject
+                }
+            }
+        }
+        // The bottom row: the mic, its word, keyboard mode.
+        HorizontalLayout {
+            spacing: Theme.sp-10;
+            alignment: space-between;
+            RowBtn { icon: Icons.paperclip; tip: "Attach"; }
+            Rectangle {
+                width: Theme.control-lg; height: self.width; border-radius: self.width / 2;
+                background: CruLook.tint(DesktopCru.phase);
+                opacity: DesktopCru.keyboard ? Theme.o-dim : 1;
+                Icon { source: Icons.mic; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.white; }
+                ma := TouchArea { mouse-cursor: pointer; clicked => { DesktopCru.mic(); } }
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-6;
+                if DesktopCru.status != "": Text { text: DesktopCru.status; color: CruLook.tint(DesktopCru.phase); font-size: Theme.text-12; vertical-alignment: center; }
+                RowBtn { icon: Icons.file-text; on: DesktopCru.keyboard; tip: DesktopCru.keyboard ? "Back to voice" : "Keyboard mode: type to Cru, no microphone"; clicked => { DesktopCru.keyboard-toggle(); } }
+            }
+        }
+        Text { text: DesktopCru.hint; color: Theme.text-muted; font-size: Theme.text-11; horizontal-alignment: center; }
+    }
+    // The ⋯ menu.
+    if DesktopCru.menu: Rectangle {
+        x: parent.width - self.width - Theme.sp-48; y: Theme.sp-48;
+        width: Theme.menu-min-w; height: ml.preferred-height;
+        background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border; border-radius: Theme.r-field;
+        drop-shadow-blur: Theme.sp-16; drop-shadow-color: Theme.scrim;
+        ml := VerticalLayout {
+            padding: Theme.sp-4;
+            for m[i] in [
+                { id: "chat-view", label: DesktopCru.chat-view ? "Normal view" : "Chat view" },
+                { id: "voice-off", label: DesktopCru.voice-off ? "Cru's voice on" : "Cru's voice off" },
+                { id: "compact", label: "Compact the conversation" },
+            ]: Rectangle {
+                height: Theme.control-sm;
+                border-radius: Theme.r-control;
+                background: ia.has-hover ? Theme.bg-tertiary : transparent;
+                Text { x: Theme.sp-10; text: m.label; color: Theme.text-primary; font-size: Theme.text-13; vertical-alignment: center; }
+                ia := TouchArea { mouse-cursor: pointer; clicked => { DesktopCru.menu-pick(m.id); } }
+                if m.id == "voice-off": Tip { on: ia.has-hover; text: "Replies as text only, until turned back on"; }
+            }
+        }
+    }
+}
