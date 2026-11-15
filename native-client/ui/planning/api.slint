@@ -9,6 +9,129 @@ export global PlanningUi {
     in-out property <bool> ready;
 }
 
+// ─── Kanban (src/planning/kanban.rs; the web's loadKanban / renderKanban) ───
+
+/// A subtask row: its text, done, and how many media hang on it.
+export struct PlanningTodo { id: string, text: string, done: bool, media: int }
+
+/// A card (.kanban-card). `compact`: no subtasks and no open "new subtask"
+/// row (the menu sits in the title row, no footer). `menu-open`: its action
+/// row shows. `adding`: the "new subtask" row is open on it.
+export struct PlanningCard {
+    id: string,
+    title: string,
+    desc: string,
+    mm: int,
+    media: int,
+    compact: bool,
+    menu-open: bool,
+    adding: bool,
+    todos: [PlanningTodo],
+    done: int,
+    total: int,
+    flash: bool,
+}
+
+/// A column: its status, label, cards; `other` is the yellow safety net for
+/// tasks whose status is not a column; `adding` the blank card at its end.
+export struct PlanningColumn { status: string, label: string, other: bool, cards: [PlanningCard], adding: bool }
+
+/// A row of the Trash or History view.
+export struct PlanningRow { text: string, sub: string, task: string, todo: string }
+
+/// A thumbnail in a card's attachments strip.
+export struct PlanningThumb { id: string, name: string, kind: string, has-image: bool, image: image }
+
+export global PlanningKanban {
+    /// "none" (no project), "loading", "error", "ok".
+    in-out property <string> state: "loading";
+    in-out property <string> error;
+    /// board | trash | history
+    in-out property <string> view: "board";
+    in-out property <int> trash-count;
+    in-out property <[PlanningColumn]> columns;
+    in-out property <[PlanningRow]> deleted-tasks;
+    in-out property <[PlanningRow]> deleted-todos;
+    in-out property <[PlanningRow]> history;
+    // What is typed in a column's blank card and in a card's subtask row
+    // (kept across reloads, as the web's kanbanTaskDraft / kanbanAddDraft).
+    in-out property <string> task-draft;
+    in-out property <string> todo-draft;
+    // Bumped to put the caret back in the open blank card / subtask row.
+    in-out property <int> focus-gen;
+
+    // A card being dragged (its id; "" none), the pointer (window), where
+    // it was grabbed inside the card, its size, and its title for the clone.
+    in-out property <string> drag-id;
+    in-out property <length> drag-x;
+    in-out property <length> drag-y;
+    in-out property <length> grab-x;
+    in-out property <length> grab-y;
+    in-out property <length> drag-w;
+    in-out property <length> drag-h;
+    in-out property <string> drag-title;
+    // Where it would land: the column and the index among the other cards.
+    in-out property <string> drop-status;
+    in-out property <int> drop-index: -1;
+    // The card the drop line shows before ("" for the column's end).
+    in-out property <string> drop-before;
+    // Bumped at a drag's start: every card and column reports its box.
+    in-out property <int> measure-gen;
+
+    // The attachments strip (.kc-media-pop): open on a card, at a point.
+    in-out property <string> clip-task;
+    in-out property <length> clip-x;
+    in-out property <length> clip-y;
+    in-out property <length> clip-w;
+    in-out property <[PlanningThumb]> clip-items;
+
+    // Toolbar and card actions: add-task, view-board|trash|history, media,
+    // card-menu, add-subtask, add-task-inline, brainstorm, edit-task,
+    // del-task, restore-task, restore-todo, goto-mindmap.
+    callback act(string, string, string);
+    callback toggle-todo(string, string, bool);
+    // A subtask's "…" (task, todo, the button's window x and bottom y).
+    callback todo-menu(string, string, length, length);
+    // A subtask's paperclip count: its media.
+    callback todo-media(string, string);
+    // The paperclip in a card's title row (task, x, bottom y, card width).
+    callback clip(string, length, length, length);
+    callback clip-add(string);
+    callback thumb-open(string);
+    callback clip-close();
+    // The blank card / subtask row: the text, and whether it stays open
+    // (Enter) or closes (leaving it). Escape drops it.
+    callback task-commit(string, string, bool);
+    callback task-cancel();
+    callback todo-commit(string, string, bool);
+    callback todo-cancel();
+    // A drag: start (task), move (window x, y), end (commit).
+    callback drag-start(string);
+    callback drag-move(length, length);
+    callback drag-end(bool);
+    // Boxes reported after measure-gen changes (window coordinates).
+    callback col-box(string, length, length, length, length);
+    callback card-box(string, string, length, length, length, length);
+}
+
+// ─── The ask dialog (the web's askText with its choice row: Add task, Edit task) ───
+
+export global PlanningAsk {
+    in-out property <bool> open;
+    in-out property <string> title;
+    in-out property <string> label;
+    in-out property <string> value;
+    in-out property <bool> multiline;
+    in-out property <string> ok-label: "OK";
+    // The choice row (pills): its label, the options, the picked one.
+    in-out property <string> choice-label;
+    in-out property <[string]> choice-keys;
+    in-out property <[string]> choice-texts;
+    in-out property <string> choice;
+    in-out property <int> gen;
+    callback answer(bool);
+}
+
 // ── The export chain (the Lead's line: keep it last, don't change it) ──
 // Slint allows one `export *` per file: main.slint re-exports
 // workspace/api.slint, which re-exports planning's, then ops', then

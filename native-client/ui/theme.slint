@@ -413,6 +413,20 @@ export global Theme {
     out property <length> ws-search-w: 280px;
     // ── end workspace ──
     // ── planning ──
+    // Kanban: a column's narrowest and widest (.kanban-col), the panel width
+    // under which columns stack (@container 700px), the width under which
+    // the toolbar folds to icons (480px), and a card under which its
+    // action labels fold (220px; 320px for a compact card).
+    out property <length> kanban-col-min: 220px;
+    out property <length> kanban-col-max: 360px;
+    out property <length> kanban-stack: 700px;
+    out property <length> kanban-fold: 480px;
+    out property <length> kanban-card-fold: 220px;
+    out property <length> kanban-card-fold-compact: 320px;
+    // The attachments strip's width bounds (.kc-media-pop) and its thumbs.
+    out property <length> kanban-pop-min: 220px;
+    out property <length> kanban-pop-max: 360px;
+    out property <length> kanban-thumb: 48px;
     // ── end planning ──
     // ── ops ──
     // ── end ops ──
