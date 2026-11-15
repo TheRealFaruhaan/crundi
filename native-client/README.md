@@ -29,9 +29,13 @@ node scripts/stage-cef.mjs target/release       # prints what to run
 ```
 
 On Linux the voice input needs ALSA's development files (`libasound2-dev` on
-Debian/Ubuntu; CI installs it). On a machine without them, such as the
-shared dev server, point pkg-config at the shim in the shared build dir:
-`PKG_CONFIG_PATH=$CARGO_TARGET_DIR/alsa-shim/pc cargo build`.
+Debian/Ubuntu). CI installs it, and so does the shared dev server. Don't keep
+anything the build needs inside a build folder: build folders get cleaned.
+
+On the shared dev server everyone builds into one folder,
+`CARGO_TARGET_DIR=$HOME/.cache/crundi-native-target`. Development builds keep
+line numbers only (`[profile.dev]` in Cargo.toml), which keeps that folder
+small.
 
 `fetch-cef.mjs` exists because cef-rs's own download (download-cef 3.0.0)
 fails: CEF's index.json is larger than its 10 MB limit. `stage-cef.mjs` puts

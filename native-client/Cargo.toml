@@ -54,3 +54,12 @@ i-slint-common = { version = "=1.18.1", features = ["markdown"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
+
+# Development builds keep line numbers only (not full debug info): the build
+# folder is a fraction of the size on a shared machine, and links faster.
+# Release builds (CI, packages) are not affected.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
