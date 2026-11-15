@@ -28,6 +28,11 @@ cargo build --release
 node scripts/stage-cef.mjs target/release       # prints what to run
 ```
 
+On Linux the voice input needs ALSA's development files (`libasound2-dev` on
+Debian/Ubuntu; CI installs it). On a machine without them, such as the
+shared dev server, point pkg-config at the shim in the shared build dir:
+`PKG_CONFIG_PATH=$CARGO_TARGET_DIR/alsa-shim/pc cargo build`.
+
 `fetch-cef.mjs` exists because cef-rs's own download (download-cef 3.0.0)
 fails: CEF's index.json is larger than its 10 MB limit. `stage-cef.mjs` puts
 CEF next to the binary on Linux (symlinks) and Windows (copies). On macOS it
