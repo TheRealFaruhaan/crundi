@@ -186,6 +186,7 @@ fn main() {
     // (ui/main.slint: with its italic faces, which the system may lack).
     if cfg!(target_os = "linux") { ui.global::<Theme>().set_ui_font("DejaVu Sans".into()); }
     chat_font(&ui);
+    code_font();
     ui.global::<Theme>().set_px_scale(ui.window().scale_factor());
 
     // The window has no system frame (as the Electron client): the top bar
@@ -316,6 +317,32 @@ fn ui_faces() -> Vec<Vec<u8>> {
         &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/SFNSItalic.ttf"]
     };
     files.iter().filter_map(|f| std::fs::read(f).ok()).collect()
+}
+
+/// Inline code's underline (F146, a path chip): Slint draws inline code in
+/// the generic monospace family, whose underline (DejaVu Sans Mono's 0.044
+/// em) the software renderer rounds away on half the lines. A copy of that
+/// family with the underline from 1/11 em (fonts::with_underline), put first
+/// for "monospace"; only the underline differs. A family in a font
+/// collection file (.ttc) is not copied: its thin underline stays.
+fn code_font() {
+    use slint::fontique_011::fontique;
+    let mut coll = slint::fontique_011::shared_collection();
+    let first = coll.generic_families(fontique::GenericFamily::Monospace).next();
+    let Some(fam) = first.and_then(|id| coll.family(id)) else {
+        eprintln!("[native] code font: no monospace family");
+        return;
+    };
+    let mut n = 0;
+    for f in fam.fonts() {
+        let Some(copy) = f.load(None).filter(|_| f.index() == 0).and_then(|b| fonts::with_underline(b.as_ref(), fonts::CODE_UNDERLINE_EMS)) else { continue };
+        let over = fontique::FontInfoOverride { family_name: Some("Crundi Mono"), ..Default::default() };
+        if !coll.register_fonts(fontique::Blob::new(std::sync::Arc::new(copy)), Some(over)).is_empty() { n += 1; }
+    }
+    if let Some(id) = coll.family_id("Crundi Mono").filter(|_| n > 0) {
+        coll.set_generic_families(fontique::GenericFamily::Monospace, std::iter::once(id));
+    }
+    eprintln!("[native] code font: {n} faces of \"{}\" as \"Crundi Mono\", the underline from 1/11 em", fam.name());
 }
 
 /// The chat's font (K1) and the line-height factors (K2), from the UI

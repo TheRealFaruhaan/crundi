@@ -156,6 +156,11 @@ check('the freed panel takes a new browser', D.ok, D);
   const line = readFileSync(join(out, 'native-app.log'), 'utf8').split('\n').find((l) => l.includes('[native] chat font:')) || '';
   const m = line.match(/(\d+) faces as "Crundi Chat", line ([\d.]+); the UI font's own line ([\d.]+) em, lh-chat ([\d.]+)/);
   check('the chat font: the UI font with a 1.55 line, the factors from its own line', m && +m[1] > 0 && Math.abs(+m[2] - 1.55) < 0.002 && Math.abs(+m[3] * +m[4] - 1.55) < 0.01, line);
+  // F146: inline code's monospace copied with an underline from 1 px (a path chip's).
+  const code = readFileSync(join(out, 'native-app.log'), 'utf8').split('\n').find((l) => l.includes('[native] code font:')) || '';
+  // (macOS's Menlo is a .ttc, which is not copied: logged with 0 faces.)
+  const cm = code.match(/code font: (\d+) faces/);
+  check('the code font: the monospace family copied with its underline from 1/11 em', cm && (+cm[1] > 0 || process.platform === 'darwin'), code);
   console.log('  ' + line.trim());
 }
 

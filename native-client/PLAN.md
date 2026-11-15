@@ -422,7 +422,25 @@ Phase 1 left these, each with its workaround in place:
   - a path in a reply (in running text or as a code span) is drawn in the
     text's colour with a solid underline (the web's rest look, but dotted,
     and accent-hover on hover: StyledText has one underline and no hover per
-    span); its click does nothing until the Files panel (phase 3);
+    span); its click does nothing until the Files panel (phase 3). A path
+    chip's underline runs under the chip's padding too (the padding is
+    spaces in the code span);
+  - underlines are drawn from 1 px (F146): the software renderer rounds an
+    underline's edges to whole pixels, and the fonts' own (0.044 em, 0.57 px
+    at 13 px) came out 0 px on about half the lines. The chat font's copy
+    has its underline from 1/12 em and inline code's monospace a copy with
+    it from 1/11 em, put first for "monospace" (`src/fonts.rs`, main.rs
+    `code_font`): 1 px at the default zoom, as the web's; a few px thicker
+    when zoomed in, and it can still drop on some lines when zoomed out
+    below 12 px. A monospace family in a .ttc file (macOS) keeps its thin
+    one;
+  - a link inside **bold** or *emphasis* is drawn in the text's colour,
+    underlined (the web: accent-hover). A reply's text is in explicit
+    colour spans that close around links; an HTML close inside an open
+    markdown style does not parse, so such a block keeps its links inside
+    the colour (md::colorize, app::md_in);
+  - "[text](url)" is a link only when its "]" comes before any other "[" or
+    line break (F145): "[a [b] c](url)", a link the web draws, is text;
   - a user bubble is StyledText (its URLs links in the bubble's colour)
     under a transparent copy of its text that keeps the selection; a click
     that lands on a URL opens it (a drag selects);

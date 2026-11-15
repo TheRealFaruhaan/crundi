@@ -383,7 +383,11 @@ What phase 2 has added so far, item by item:
   from the UI font's own line on each system (CI's drive test checks it);
   the composer's line is the web's 1.45; a reply's text is in an explicit
   colour, so inline code gets Slint's faint outline; SoftShadow draws a
-  Gaussian with the web's shadow values.
+  Gaussian with the web's shadow values. The colour spans close and open
+  at each line break and around real [text](url) links only (F145), and
+  the chat and code fonts' copies draw underlines from 1 px (F146:
+  `md.rs` tests parse the markup with Slint's own parser, i-slint-common,
+  a dev-dependency).
 
 ### Reusable pieces
 

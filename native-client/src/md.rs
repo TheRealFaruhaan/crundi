@@ -61,11 +61,14 @@ pub fn linkify(text: &str) -> String {
         // An image's "!" is a literal one (the web draws no pictures from
         // markdown: `![a](https://…)` is "!" and the link).
         if !code && c == '!' && chars.get(i + 1) == Some(&'[') { out.push_str("\\!"); i += 1; continue; }
-        // [text](target) is a link only to http(s); else its text stays.
+        // [text](target) is a link only to http(s), whole as written; any
+        // other '[' (a footnote's [1], a link to elsewhere) stays text.
         if !code && c == '[' {
-            let rest: String = chars[i..].iter().collect();
-            let http = rest.find("](").is_some_and(|k| { let t = &rest[k + 2..]; t.starts_with("http://") || t.starts_with("https://") });
-            if !http { out.push_str("\\["); i += 1; continue; }
+            match real_link(&chars, i) {
+                Some((t, end)) if is_http(&chars[t + 2..end - 1]) => { out.extend(&chars[i..end]); i = end; }
+                _ => { out.push_str("\\["); i += 1; }
+            }
+            continue;
         }
         let rest: String = chars[i..chars.len().min(i + 8)].iter().collect();
         let prev = if i > 0 { chars[i - 1] } else { ' ' };
@@ -203,47 +206,102 @@ pub fn btw(text: &str) -> Option<String> {
     (!q.is_empty()).then(|| q.to_string())
 }
 
-/// A block's markdown in an explicit colour (K3): `<font color>` around
-/// it, closed around http links (`<https://…>`, `[x](https://…)`) so they
-/// keep the link colour; path links and code spans stay inside. With the
-/// StyledText's default colour dark, Slint draws inline code's faint
-/// outline, not its bright one.
-pub fn colorize(text: &str, color: &str) -> String {
+/// A markdown link at `chars[i]` (a '['): its ']' before any other '['
+/// or a line break, then directly "(", a target without spaces, and ")".
+/// (The '[' index of `](`, the index after `)`.) F145: "Footnote [1] … in
+/// [the docs](https://…)" is a link only from "[the docs".
+pub fn real_link(chars: &[char], i: usize) -> Option<(usize, usize)> {
+    let mut j = i + 1;
+    loop {
+        match chars.get(j)? {
+            '\\' => j += 2,
+            '[' | '\n' => return None,
+            ']' => break,
+            _ => j += 1,
+        }
+    }
+    if chars.get(j + 1) != Some(&'(') { return None; }
+    let mut k = j + 2;
+    loop {
+        match chars.get(k)? {
+            ')' => return Some((j, k + 1)),
+            c if c.is_whitespace() => return None,
+            _ => k += 1,
+        }
+    }
+}
+
+fn is_http(t: &[char]) -> bool {
+    let h: String = t.iter().take(8).collect();
+    h.starts_with("http://") || h.starts_with("https://")
+}
+
+/// The length of the backtick run at `chars[i]`.
+fn ticks(chars: &[char], i: usize) -> usize { chars[i..].iter().take_while(|c| **c == '`').count() }
+
+/// Whether a backtick run of `n` closes later (a code span), not counting
+/// runs of another length.
+fn closes(chars: &[char], from: usize, n: usize) -> bool {
+    let mut k = from;
+    while k < chars.len() {
+        if chars[k] == '`' { let m = ticks(chars, k); if m == n { return true; } k += m; } else { k += 1; }
+    }
+    false
+}
+
+/// A block's markdown in an explicit colour (K3): `<font color>` spans
+/// around it, so no text falls back to the StyledText's default (chip-key,
+/// dark, for inline code's faint outline). Closed around http links
+/// (`<https://…>`, `[x](https://…)`) so they keep the link colour, when
+/// `split_links`; path links and code spans stay inside, in the text's
+/// colour. Closed and opened again at each line break, as Slint starts a
+/// paragraph there and a span cannot cross it. Links keep Slint's link
+/// underline (drawn from 1 px: fonts::with_line). A link inside **bold**
+/// can't be split out (an HTML close inside an open markdown style is an
+/// error): app::md_in then asks again without `split_links`.
+pub fn colorize(text: &str, color: &str, split_links: bool) -> String {
     let open = format!("<font color=\"{color}\">");
     let mut out = open.clone();
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
-    let mut code = false;
+    let mut code = 0usize;
     while i < chars.len() {
         let c = chars[i];
-        if c == '\\' && i + 1 < chars.len() { out.push(c); out.push(chars[i + 1]); i += 2; continue; }
-        if c == '`' { code = !code; out.push(c); i += 1; continue; }
-        if !code && c == '<' {
-            let rest: String = chars[i + 1..chars.len().min(i + 9)].iter().collect();
-            if rest.starts_with("http://") || rest.starts_with("https://") {
-                if let Some(k) = chars[i..].iter().position(|x| *x == '>') {
-                    out.push_str("</font>");
-                    out.extend(&chars[i..i + k + 1]);
-                    out.push_str(&open);
-                    i += k + 1;
-                    continue;
-                }
+        if code == 0 && c == '\\' && i + 1 < chars.len() && chars[i + 1] != '\n' { out.push(c); out.push(chars[i + 1]); i += 2; continue; }
+        if c == '`' {
+            let n = ticks(&chars, i);
+            if code == 0 { if closes(&chars, i + n, n) { code = n; } } else if n == code { code = 0; }
+            out.extend(&chars[i..i + n]);
+            i += n;
+            continue;
+        }
+        if code == 0 && c == '\n' {
+            let kept = out.trim_end_matches(' ').len();
+            let spaces = out.split_off(kept);
+            out.push_str("</font>");
+            out.push_str(&spaces);
+            out.push('\n');
+            out.push_str(&open);
+            i += 1;
+            continue;
+        }
+        if code == 0 && c == '<' && is_http(&chars[i + 1..]) {
+            if let Some(k) = chars[i..].iter().position(|x| *x == '>' || x.is_whitespace()).filter(|k| chars[i + k] == '>') {
+                if split_links { out.push_str("</font>"); }
+                out.extend(&chars[i..i + k + 1]);
+                if split_links { out.push_str(&open); }
+                i += k + 1;
+                continue;
             }
         }
-        if !code && c == '[' {
-            let rest: String = chars[i..].iter().collect();
-            if let Some(k) = rest.find("](") {
-                let target = &rest[k + 2..];
-                if target.starts_with("http://") || target.starts_with("https://") {
-                    if let Some(e) = target.find(')') {
-                        let link = &rest[..k + 2 + e + 1];
-                        out.push_str("</font>");
-                        out.push_str(link);
-                        out.push_str(&open);
-                        i += link.chars().count();
-                        continue;
-                    }
-                }
+        if code == 0 && c == '[' {
+            if let Some((t, end)) = real_link(&chars, i) {
+                let split = split_links && is_http(&chars[t + 2..end - 1]);
+                if split { out.push_str("</font>"); }
+                out.extend(&chars[i..end]);
+                if split { out.push_str(&open); }
+                i = end;
+                continue;
             }
         }
         out.push(c);
@@ -259,12 +317,111 @@ mod tests {
 
     #[test]
     fn colour_spans() {
-        assert_eq!(colorize("plain **bold**", "#fff"), "<font color=\"#fff\">plain **bold**</font>");
-        assert_eq!(colorize("see <https://x.io/a> now", "#fff"), "<font color=\"#fff\">see </font><https://x.io/a><font color=\"#fff\"> now</font>");
-        assert_eq!(colorize("a [doc](https://d.io) b", "#fff"), "<font color=\"#fff\">a </font>[doc](https://d.io)<font color=\"#fff\"> b</font>");
+        let c = |t: &str| colorize(t, "#fff", true);
+        assert_eq!(c("plain **bold**"), "<font color=\"#fff\">plain **bold**</font>");
+        assert_eq!(c("see <https://x.io/a> now"), "<font color=\"#fff\">see </font><https://x.io/a><font color=\"#fff\"> now</font>");
+        assert_eq!(c("a [doc](https://d.io) b"), "<font color=\"#fff\">a </font>[doc](https://d.io)<font color=\"#fff\"> b</font>");
         // Paths and code stay inside.
-        assert_eq!(colorize("[`a/b.js`](path:a/b.js) and `<https://x>`", "#fff"), "<font color=\"#fff\">[`a/b.js`](path:a/b.js) and `<https://x>`</font>");
-        assert_eq!(colorize("\\[x](https://y)", "#fff"), "<font color=\"#fff\">\\[x](https://y)</font>");
+        assert_eq!(c("[`a/b.js`](path:a/b.js) and `<https://x>`"), "<font color=\"#fff\">[`a/b.js`](path:a/b.js) and `<https://x>`</font>");
+        assert_eq!(c("\\[x](https://y)"), "<font color=\"#fff\">\\[x](https://y)</font>");
+        // Not split: links inside, in the text's colour.
+        assert_eq!(colorize("a [doc](https://d.io) <https://x.io>", "#fff", false), "<font color=\"#fff\">a [doc](https://d.io) <https://x.io></font>");
+        // A line break: closed before its two spaces, opened after it.
+        assert_eq!(c("one  \ntwo"), "<font color=\"#fff\">one</font>  \n<font color=\"#fff\">two</font>");
+        // …but not inside a code span that crosses it; a lone backtick is text.
+        assert_eq!(c("`a\nb` c"), "<font color=\"#fff\">`a\nb` c</font>");
+        assert_eq!(c("it`s\nhere"), "<font color=\"#fff\">it`s</font>\n<font color=\"#fff\">here</font>");
+    }
+
+    /// F145: a '[' is a link only for a real [text](url).
+    #[test]
+    fn brackets_that_are_not_links() {
+        let c = |t: &str| colorize(t, "#fff", true);
+        let footnote = "Footnote [1] in the log says the cache is cold; the details are in [the cargo docs](https://doc.rust-lang.org/cargo/).";
+        assert_eq!(c(footnote), "<font color=\"#fff\">Footnote [1] in the log says the cache is cold; the details are in </font>[the cargo docs](https://doc.rust-lang.org/cargo/)<font color=\"#fff\">.</font>");
+        assert_eq!(linkify(footnote), "Footnote \\[1] in the log says the cache is cold; the details are in [the cargo docs](https://doc.rust-lang.org/cargo/).");
+        // Nested: the outer '[' meets another before its ']'; the inner
+        // one's ']' is not followed by '('.
+        assert_eq!(real_link(&"[a [b] c](https://x.io)".chars().collect::<Vec<_>>(), 0), None);
+        assert_eq!(c("[a [b] c](https://x.io)"), "<font color=\"#fff\">[a [b] c](https://x.io)</font>");
+        assert_eq!(linkify("[a [b] c](https://x.io)"), "\\[a \\[b] c](https://x.io)");
+        // …while a link after them is one.
+        assert_eq!(c("[x [y](https://y.io)"), "<font color=\"#fff\">[x </font>[y](https://y.io)<font color=\"#fff\"></font>");
+        // Unbalanced, across a line break, a space in the target.
+        assert_eq!(c("]x[ y [z] (https://z.io)"), "<font color=\"#fff\">]x[ y [z] (https://z.io)</font>");
+        assert_eq!(c("[a\nb](https://x.io)"), "<font color=\"#fff\">[a</font>\n<font color=\"#fff\">b](https://x.io)</font>");
+        assert_eq!(c("[a](https://x.io b)"), "<font color=\"#fff\">[a](https://x.io b)</font>");
+        assert_eq!(linkify("[z](not a link) and [w](ftp://w)"), "\\[z](not a link) and \\[w](ftp://w)");
+        // A bracket at the end of the block.
+        assert_eq!(c("the end ["), "<font color=\"#fff\">the end [</font>");
+        assert_eq!(c("the end [x]("), "<font color=\"#fff\">the end [x](</font>");
+        assert_eq!(linkify("the end ["), "the end \\[");
+        assert_eq!(real_link(&['['], 0), None);
+    }
+
+    /// Parses markup as Slint's StyledText does: its paragraphs, or the errors.
+    fn slint_parse(markup: &str) -> Vec<i_slint_common::styled_text::StyledTextParagraph> {
+        let (p, e) = i_slint_common::styled_text::parse_interpolated::<&[i_slint_common::styled_text::StyledTextParagraph]>(markup, &[]);
+        assert!(e.is_empty(), "{markup}: {e:?}");
+        p
+    }
+
+    /// F145, F146 and the sweep: every character of a reply's block,
+    /// through linkify and colorize as app::md_in does, is in a colour span
+    /// or a link (none in the dark default); links and paths are Slint
+    /// links (drawn underlined: Style::Link pushes parley's underline), an
+    /// http link outside the colour (the link colour), a path inside it.
+    #[test]
+    fn every_reply_character_has_its_ink_and_links_their_underline() {
+        use i_slint_common::styled_text::Style;
+        let ink = 0xffe4e4ed_u32;
+        let lines = [
+            "**What I found**",
+            "Footnote [1] in the log says the cache is cold; the details are in [the cargo docs](https://doc.rust-lang.org/cargo/) and in https://example.com/build as well.",
+            "The build reads `native-client/Cargo.toml` and **then compiles every crate**, *one after another*, with _emphasis_ and ~~struck~~.",
+            "A path ./lib/util.js, a chip `src/server.js` and /tmp/a/client.js:12 here.",
+            "Nested [a [b] c](https://example.com/n) and unbalanced ]x[ y and [z](not a link) end [",
+        ];
+        let para = paragraph(&lines);
+        let markup = colorize(&para, "#e4e4ed", true);
+        let ps = slint_parse(&markup);
+        assert_eq!(ps.len(), lines.len(), "one paragraph a line");
+        let mut links = vec![];
+        for p in &ps {
+            let in_span = |k: usize, f: &dyn Fn(&Style) -> bool| p.formatting.iter().any(|s| s.range.contains(&k) && f(&s.style));
+            for (k, ch) in p.text.char_indices() {
+                if ch.is_whitespace() { continue; }
+                let coloured = in_span(k, &|s| *s == Style::Color(ink));
+                let link = in_span(k, &|s| *s == Style::Link);
+                assert!(coloured || link, "{:?} at {k} in {:?} has no ink", ch, p.text);
+            }
+            for (r, url) in &p.links {
+                let text = &p.text[r.clone()];
+                assert!(p.formatting.iter().any(|s| s.style == Style::Link && s.range == *r), "{text}: not a Link span");
+                let coloured = in_span(r.start, &|s| *s == Style::Color(ink));
+                assert_eq!(coloured, url.starts_with("path:"), "{text} ({url}): colour");
+                links.push((text.to_string(), url.clone()));
+            }
+        }
+        assert_eq!(links, vec![
+            ("the cargo docs".into(), "https://doc.rust-lang.org/cargo/".into()),
+            ("https://example.com/build".into(), "https://example.com/build".into()),
+            ("native-client/Cargo.toml".into(), "path:native-client/Cargo.toml".into()),
+            ("./lib/util.js".into(), "path:./lib/util.js".into()),
+            ("src/server.js".into(), "path:src/server.js".into()),
+            ("/tmp/a/client.js:12".into(), "path:/tmp/a/client.js:12".into()),
+        ]);
+        // The brackets that are not links are text.
+        assert!(ps[1].text.starts_with("Footnote [1] in the log"));
+        assert!(ps[4].text.contains("[a [b] c](https://example.com/n)") && ps[4].text.ends_with("end ["));
+        // A link inside bold can't be split out: the second try keeps it in
+        // the colour, still a link.
+        let bold = colorize(&linkify("**see [docs](https://d.io)**"), "#e4e4ed", true);
+        let (_, e) = i_slint_common::styled_text::parse_interpolated::<&[i_slint_common::styled_text::StyledTextParagraph]>(&bold, &[]);
+        assert!(!e.is_empty());
+        let p = &slint_parse(&colorize(&linkify("**see [docs](https://d.io)**"), "#e4e4ed", false))[0];
+        assert_eq!(p.links.len(), 1);
+        assert!(p.formatting.iter().any(|s| s.style == Style::Link));
     }
 
     #[test]

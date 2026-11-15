@@ -3796,7 +3796,7 @@ export component ChatPane inherits Rectangle {
                 height: self.preferred-height;
                 spacing: Theme.sp-2;
                 Text { text: root.recap-caption; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
-                Text { text: root.recap-text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; line-height-factor: Theme.lh-chat; }
+                Text { text: root.recap-text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; line-height-factor: Theme.lh-composer; }  // (.cc-recap: 1.45)
             }
             DockX { x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4; fs: root.fs; tip: "Dismiss"; clicked => { ToolAct.recap-dismiss(root.key); } }
         }

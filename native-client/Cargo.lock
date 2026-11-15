@@ -1097,6 +1097,7 @@ dependencies = [
  "chrono",
  "cpal",
  "gethostname",
+ "i-slint-common",
  "image",
  "objc2 0.6.5",
  "open",

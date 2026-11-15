@@ -51,7 +51,8 @@ pub fn natural_line(b: &[u8]) -> Option<f64> {
 
 /// A copy of the font whose own line is `line` ems: both hhea's and OS/2's
 /// line gaps set from their own ascent and descent; a variable font's MVAR
-/// (which could move the gap) hidden by renaming its tag.
+/// (which could move the gap) hidden by renaming its tag; its underline at
+/// least 1/12 em thick.
 pub fn with_line(b: &[u8], line: f64) -> Option<Vec<u8>> {
     let t = tables(b)?;
     let mut out = b.to_vec();
@@ -68,7 +69,48 @@ pub fn with_line(b: &[u8], line: f64) -> Option<Vec<u8>> {
     set(&mut out, hhea + 4, hhea + 6, hhea + 8)?;
     if let Some(os2) = find(b"OS/2") { set(&mut out, os2 + 68, os2 + 70, os2 + 72)?; }
     if let Some(&(_, _, _, rec)) = t.iter().find(|x| &x.0 == b"MVAR") { out[rec..rec + 4].copy_from_slice(b"mvar"); }
+    thicken_underline(&mut out, &t, upem, UNDERLINE_EMS)?;
     Some(out)
+}
+
+/// The underline at least 1/`ems` em thick (F146). Slint's software
+/// renderer rounds both edges of the underline's rectangle to whole pixels,
+/// so DejaVu's own 0.044 em (0.57 px at 13 px) came out 0 px on every line
+/// whose baseline fell on the lower half of a pixel: links lost their
+/// underline on about half the lines. From 1 px up it always keeps a row.
+fn thicken_underline(out: &mut [u8], t: &[([u8; 4], usize, usize, usize)], upem: f64, ems: f64) -> Option<()> {
+    if let Some(&(_, post, _, _)) = t.iter().find(|x| &x.0 == b"post") {
+        let min = (upem / ems).ceil() as i16;
+        if i16_at(out, post + 10)? < min { out[post + 10..post + 12].copy_from_slice(&min.to_be_bytes()); }
+    }
+    Some(())
+}
+
+/// The chat font's least underline, 1/12 em: 1 px from 12 px, every chat
+/// size at the default zoom.
+pub const UNDERLINE_EMS: f64 = 12.0;
+/// Inline code's (the path chip's), drawn at 0.9 of the text: 1/11 em, 1 px
+/// at 13 px text.
+pub const CODE_UNDERLINE_EMS: f64 = 11.0;
+
+/// A copy of a font (not a collection) with only its underline thickened
+/// (`CODE_UNDERLINE_EMS`): inline code's monospace face (src/main.rs).
+pub fn with_underline(b: &[u8], ems: f64) -> Option<Vec<u8>> {
+    if b.get(0..4)? == b"ttcf" { return None; }
+    let t = tables(b)?;
+    let upem = u16_at(b, t.iter().find(|x| &x.0 == b"head")?.1 + 18)? as f64;
+    if upem <= 0.0 { return None; }
+    let mut out = b.to_vec();
+    thicken_underline(&mut out, &t, upem, ems)?;
+    Some(out)
+}
+
+/// A font's underline (post table): (position, thickness) in font units.
+#[cfg(test)]
+pub fn underline(b: &[u8]) -> Option<(f64, f64)> {
+    let t = tables(b)?;
+    let post = t.iter().find(|x| &x.0 == b"post")?.1;
+    Some((i16_at(b, post + 8)? as f64, i16_at(b, post + 10)? as f64))
 }
 
 /// The factor over a font's own line that gives `want` ems (Slint's
@@ -106,5 +148,30 @@ mod tests {
             assert!((natural_line(&with_line(f, 1.55).unwrap()).unwrap() - 1.55).abs() < 0.001);
         }
         assert!(with_line(b"not a font", 1.55).is_none());
+    }
+
+    #[test]
+    fn the_chat_copy_underline_is_a_pixel_at_12px() {
+        // DejaVu's own: 90 units of 2048 (0.57 px at 13 px, which the
+        // software renderer rounds to nothing on half the lines).
+        assert_eq!(underline(DEJAVU), Some((-40.0, 90.0)));
+        let c = with_line(DEJAVU, 1.55).unwrap();
+        let (pos, th) = underline(&c).unwrap();
+        assert_eq!(pos, -40.0);
+        assert_eq!(th, 171.0);
+        for px in [12.0, 13.0, 14.0] { assert!(th / 2048.0 * px >= 1.0, "{px}"); }
+        // A thicker one is kept as it is.
+        let mut thick = DEJAVU.to_vec();
+        let post = tables(DEJAVU).unwrap().iter().find(|x| &x.0 == b"post").unwrap().1;
+        thick[post + 10..post + 12].copy_from_slice(&300i16.to_be_bytes());
+        assert_eq!(underline(&with_line(&thick, 1.55).unwrap()).unwrap().1, 300.0);
+        // The code face's copy: only the underline changes (1/11 em: 1 px
+        // at 13 px × 0.9).
+        let m = with_underline(DEJAVU, CODE_UNDERLINE_EMS).unwrap();
+        assert_eq!(underline(&m), Some((-40.0, 187.0)));
+        assert!(187.0 / 2048.0 * 13.0 * 0.9 >= 1.0);
+        assert_eq!(metrics(&m), metrics(DEJAVU));
+        assert_eq!(m.len(), DEJAVU.len());
+        assert!(with_underline(b"ttcf....", 11.0).is_none());
     }
 }

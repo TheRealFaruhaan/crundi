@@ -47,5 +47,10 @@ gpu = ["slint/renderer-femtovg-wgpu", "slint/unstable-wgpu-30", "cef/accelerated
 [build-dependencies]
 slint-build = "1.18.1"
 
+[dev-dependencies]
+# Slint's own markdown parser, for md.rs's tests: what StyledText makes of a
+# reply's markup (its colour spans and links). The version slint pins.
+i-slint-common = { version = "=1.18.1", features = ["markdown"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

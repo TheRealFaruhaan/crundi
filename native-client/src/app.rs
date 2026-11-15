@@ -2303,8 +2303,11 @@ fn md2(text: &str) -> StyledText { md_in(text, true) }
 fn md_in(text: &str, secondary: bool) -> StyledText {
     let ink = INK.with(|i| { let i = i.borrow(); if secondary { i.1.clone() } else { i.0.clone() } });
     let text = &pad_code(text);
-    StyledText::from_markdown(&crate::md::colorize(text, &ink))
-        .unwrap_or_else(|_| StyledText::from_markdown(&crate::md::colorize(&text.replace(['<', '>', '*', '_', '`', '[', ']'], ""), &ink)).unwrap_or_default())
+    // Links split out of the colour (the link colour); else, a link in
+    // **bold** (md::colorize), kept in it; else the text without markdown.
+    StyledText::from_markdown(&crate::md::colorize(text, &ink, true))
+        .or_else(|_| StyledText::from_markdown(&crate::md::colorize(text, &ink, false)))
+        .unwrap_or_else(|_| StyledText::from_markdown(&crate::md::colorize(&text.replace(['<', '>', '*', '_', '`', '[', ']'], ""), &ink, false)).unwrap_or_default())
 }
 
 /// A card as the view draws it: the head (the summary on one line, as the
