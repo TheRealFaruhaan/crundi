@@ -3230,9 +3230,9 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   let n = 0;
   const put = (res) => ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'fr' + (++n), kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tf' + n, input: {}, status: 'done', isError: false, result: JSON.stringify(res) } }));
   const html = '<!doctype html><html><head><title>Click test</title><style>html,body{margin:0;height:100%;background:#1e1e2e;color:#fff;font-family:sans-serif}'
-    + 'button{display:block;width:100%;height:60px;font-size:20px;margin:0}input{display:block;width:90%;height:60px;margin:0;box-sizing:border-box}a{display:block;height:76px;color:#fff}</style></head><body>'
+    + 'button{display:block;width:100%;height:60px;font-size:20px;margin:0}input{display:block;width:90%;height:60px;margin:0;box-sizing:border-box}a{display:block;height:40px;color:#fff}p{margin:0;height:36px;user-select:none}</style></head><body>'
     + '<button onclick="window.n=(window.n||0)+1;document.title=\'clicked \'+window.n;document.body.style.background=\'#16a34a\'">Click me</button>'
-    + '<input placeholder="type here"><a target="_blank" href="https://example.com/">open example</a></body></html>';
+    + '<input placeholder="type here"><a target="_blank" href="https://example.com/">open example</a><p ondblclick="document.title=\'double \'+event.detail">double click here</p></body></html>';
   const r = await show({ html, title: 'Click test', height: 200 });
   check('show_embed stores the click test', r.ok && r.items?.[0]?.name, r);
   const fkey = `${fc}|stored:${r.items?.[0]?.name}`;
@@ -3244,6 +3244,8 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   check('a live frame: the box less its edge (the pane\'s width, 198 high), painted', f && f.live && f.h === 198 && f.w > 200 && f.w <= 638, { f, pane: fp && fp.w });
   await snap('2.16f-live');
   // A click through the window: the page counts and turns green.
+  await sleep(600);
+  f = await fr();
   await mouse('click', f.x + 100, f.y + 30);
   p = await until('clicked', async () => (await fr())?.title === 'clicked 1', 8000);
   if (p) check('a click on the page\'s button: its title "clicked 1"', true);
@@ -3270,6 +3272,11 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   await mouse('click', f.x + 40, f.y + 140);
   p = await until('opened', async () => (await props()).frameOpened === 'https://example.com/', 6000);
   if (p) check('a new-window link goes to the system browser', (await fr())?.live === true);
+  // A double click reaches the page (its click count, F133).
+  f = await fr();
+  await mouse('dblclick', f.x + 60, f.y + 175);
+  p = await until('double', async () => /^double 2$/.test((await fr())?.title || ''), 5000);
+  if (p) check('a double click reaches the page (dblclick, detail 2)', true);
   // Scrolled away (replies under it): released; back: a fresh page.
   for (let i = 0; i < 14; i++) await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'long' + i, kind: 'assistant-text', text: Array(12).fill('A long reply line to push the frame off the log.').join('\n\n') } }));
   p = await until('released', async () => !(await fr())?.live, 10000);
@@ -3285,19 +3292,91 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
     if (win) {
       execFileSync('xdotool', ['mousemove', '--window', win, String(Math.round(WB.x + q.x + q.w / 2)), String(Math.round(WB.y + q.y + q.h / 2))], { env });
       for (let i = 0; i < 200 && !(await fr())?.live; i++) { execFileSync('xdotool', ['click', '4'], { env }); await sleep(60); }
+      // (Then on until the whole box is in the log's view.)
+      for (let i = 0; i < 30; i++) { const x = await fr(); if (x && x.y > WB.y + q.y + 40) break; execFileSync('xdotool', ['click', '4'], { env }); await sleep(80); }
     }
     await parkPointer();
   }
   p = await until('back', async () => (await fr())?.painted, 15000);
   check('scrolled back: a new view, the page fresh (its own title again)', p && (await fr()).title === 'Click test', await fr());
-  // Eight frames at once: never more than 6 live views.
-  const small = [];
-  for (let i = 0; i < 8; i++) small.push(await show({ html: `<title>f${i}</title><body style="margin:0;background:#334">${i}</body>`, title: 'Small ' + i, height: 40 }));
-  for (const s of small) await put(s);
-  let most = 0;
-  for (let i = 0; i < 20; i++) { most = Math.max(most, (await props()).framesLive); await sleep(250); }
-  check('eight frames on the log: at most 6 live views (the cap)', most > 0 && most <= 6, most);
-  await snap('2.16f-cap');
+  // The wheel over a frame (a chat of its own, the frames last on the log,
+  // which follows the bottom): a page that can still scroll takes it; one
+  // that cannot (or at its end) passes it on to the log (F134).
+  {
+    const { execFileSync } = await import('node:child_process');
+    const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':99' };
+    let ids = [];
+    try { ids = execFileSync('xdotool', ['search', '--pid', String(app.pid)], { env }).toString().trim().split('\n').filter(Boolean); } catch { ids = []; }
+    const win = ids.map((id) => { try { const g = execFileSync('xdotool', ['getwindowgeometry', id], { env }).toString(); const m = g.match(/Geometry: (\d+)x(\d+)/); return { id, area: m ? +m[1] * +m[2] : 0 }; } catch { return { id, area: 0 }; } }).sort((x, y) => y.area - x.area)[0]?.id;
+    const fc4 = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Frames 4' }, token)).body?.id;
+    p = await until('its pane', (q) => pane(q, fc4), 30000);
+    await ui('focus-pane', pane(p, fc4).id);
+    const mf4 = join(DATA, 'dev-mcp', `${fc4}.json`);
+    await until('its MCP config', () => existsSync(mf4), 20000);
+    const KEY4 = JSON.parse(readFileSync(mf4, 'utf8')).mcpServers.crundi.env.CRUNDI_API_KEY;
+    const store = async (html) => (await fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': KEY4 }, body: JSON.stringify({ tool: 'show_embed', args: { sessionId: fc4, html, title: 'Wheel', height: 200 } }) })).json();
+    for (let i = 0; i < 6; i++) await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'w-long' + i, kind: 'assistant-text', text: Array(10).fill('Text above the frames, for the log to scroll.').join('\n\n') } }));
+    const tall = await store('<title>tall</title><body style="margin:0;background:#225"><div style="height:2000px">tall page</div></body>');
+    await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'w1', kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tw1', input: {}, status: 'done', isError: false, result: JSON.stringify(tall) } }));
+    const flat = await store('<title>flat</title><body style="margin:0;background:#522">flat page</body>');
+    await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'w2', kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tw2', input: {}, status: 'done', isError: false, result: JSON.stringify(flat) } }));
+    const fw = async (r) => ((await props()).frames || []).find((x) => x.key === `${fc4}|stored:${r.items[0].name}`);
+    await until('both frames painted, their scroll read', async () => (await fw(tall))?.scroll && (await fw(flat))?.scroll, 20000);
+    await ui('log-watch', 'live:' + fc4);
+    await sleep(1200);
+    const over = async (r) => { const x = await fw(r); execFileSync('xdotool', ['mousemove', '--window', win, String(Math.round(x.x + 60)), String(Math.round(x.y + 100))], { env }); };
+    if (win) {
+      // The tall page takes the wheel down while it can (the log stays).
+      await over(tall);
+      const l0 = (await props()).log.dist;
+      for (let i = 0; i < 3; i++) { execFileSync('xdotool', ['click', '5'], { env }); await sleep(200); }
+      await sleep(800);
+      const t = await fw(tall);
+      check('a page that can scroll takes the wheel (it scrolls, the log does not)', t.scroll[0] > 0 && Math.abs((await props()).log.dist - l0) < 2, { scroll: t.scroll, l0, l1: (await props()).log.dist });
+      // The flat page cannot: the wheel up over it scrolls the log.
+      await over(flat);
+      const d0 = (await props()).log.dist;
+      for (let i = 0; i < 3; i++) { execFileSync('xdotool', ['click', '4'], { env }); await sleep(200); }
+      await sleep(800);
+      const d1 = (await props()).log.dist;
+      check('a wheel over a page that does not scroll passes on to the log (F134)', d1 > d0 + 50, { d0, d1 });
+    }
+    await parkPointer();
+    await http('POST', `/api/ui-sessions/${fc4}/close`, {}, token);
+  }
+  // Eight frames at once (a chat of their own): never more than 6 live views.
+  {
+    const fc3 = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Frames 3' }, token)).body?.id;
+    p = await until('its pane', (q) => pane(q, fc3), 30000);
+    await ui('focus-pane', pane(p, fc3).id);
+    const mf3 = join(DATA, 'dev-mcp', `${fc3}.json`);
+    await until('its MCP config', () => existsSync(mf3), 20000);
+    const KEY3 = JSON.parse(readFileSync(mf3, 'utf8')).mcpServers.crundi.env.CRUNDI_API_KEY;
+    for (let i = 0; i < 8; i++) {
+      const r3 = await (await fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': KEY3 }, body: JSON.stringify({ tool: 'show_embed', args: { sessionId: fc3, html: `<title>f${i}</title><body style="margin:0;background:#334">${i}</body>`, title: 'Small ' + i, height: 40 } }) })).json();
+      await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'sm' + i, kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tsm' + i, input: {}, status: 'done', isError: false, result: JSON.stringify(r3) } }));
+    }
+    let most = 0;
+    for (let i = 0; i < 24; i++) { most = Math.max(most, (await props()).framesLive); await sleep(250); }
+    check('eight frames on the log: at most 6 live views (the cap)', most === 6, most);
+    await snap('2.16f-cap');
+    await http('POST', `/api/ui-sessions/${fc3}/close`, {}, token);
+  }
+  // A page from an address (not stored), in a chat of its own: it loads
+  // (F132). The test server's own page, over http on this machine: the same
+  // path as an https page.
+  {
+    const fc2 = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Frames 2' }, token)).body?.id;
+    p = await until('its pane', (q) => pane(q, fc2), 30000);
+    await ui('focus-pane', pane(p, fc2).id);
+    await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'pg1', kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tpg1', input: {}, status: 'done', isError: false, result: JSON.stringify({ ok: true, items: [{ kind: 'embed', src: SERVER + '/', title: 'The server' }] }) } }));
+    const pk = `${fc2}|${SERVER}/`;
+    const pf = async () => ((await props()).frames || []).find((x) => x.key === pk);
+    p = await until('the page loads', async () => { const x = await pf(); return x?.painted && x.title && x.title !== 'about:blank'; }, 20000);
+    check('a frame from an address loads its page (painted, its title)', !!p, await pf());
+    await snap('2.16f-address');
+    await http('POST', `/api/ui-sessions/${fc2}/close`, {}, token);
+  }
   // The chat closed: no view left.
   await http('POST', `/api/ui-sessions/${fc}/close`, {}, token);
   p = await until('no views', async () => (await props()).framesLive === 0, 10000);

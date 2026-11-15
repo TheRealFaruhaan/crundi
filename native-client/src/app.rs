@@ -2369,7 +2369,7 @@ impl MediaCtx<'_> {
             chat: self.chat.as_str().into(),
             // A live frame's page (2.16f): the stored HTML, or the https page.
             fixed_h: i.kind == "embed" && !(i.w > 0.0 && i.h > 0.0),
-            frame: if i.kind != "embed" { SharedString::default() } else if !i.name.is_empty() { format!("stored:{}", i.name).into() } else if i.src.starts_with("https://") { i.src.as_str().into() } else { SharedString::default() },
+            frame: if i.kind != "embed" { SharedString::default() } else if !i.name.is_empty() { format!("stored:{}", i.name).into() } else if i.src.starts_with("https://") || crate::frames::loopback(&i.src) { i.src.as_str().into() } else { SharedString::default() },
         }
     }
 }
@@ -5380,6 +5380,7 @@ fn frames_init(window: &MainWindow) {
     });
     fu.on_pointer(|k, kind, x, y, b| { let k = k.to_string(); crate::browser::defer(move || crate::frames::pointer(&k, kind, x, y, b)); });
     fu.on_wheel(|k, x, y, dx, dy| { let k = k.to_string(); crate::browser::defer(move || crate::frames::wheel(&k, x, y, dx, dy)); });
-    fu.on_key(|k, t, down, ctrl, shift| { let (k, t) = (k.to_string(), t.to_string()); crate::browser::defer(move || crate::frames::key(&k, &t, down, ctrl, shift)); });
+    fu.on_key(|k, t, down, ctrl, shift, alt, meta| { let (k, t) = (k.to_string(), t.to_string()); crate::browser::defer(move || crate::frames::key(&k, &t, down, ctrl, shift, alt, meta)); });
+    fu.on_wheel_takes(|k, dx, dy| crate::frames::wheel_takes(k.as_str(), dx, dy));
     fu.on_focus(|k, on| { let k = k.to_string(); crate::browser::defer(move || crate::frames::focus(&k, on)); });
 }

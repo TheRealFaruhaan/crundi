@@ -69,7 +69,7 @@ pub fn items(result: &str) -> (Vec<Item>, String) {
         let ok = match kind.as_str() {
             "image" | "video" | "audio" => good_name(&it.name),
             "file" => hex16(&it.id),
-            "embed" => (it.name.len() == 22 && it.name.ends_with(".embed") && hex16(&it.name[..16])) || it.src.starts_with("https://"),
+            "embed" => (it.name.len() == 22 && it.name.ends_with(".embed") && hex16(&it.name[..16])) || it.src.starts_with("https://") || crate::frames::loopback(&it.src),
             _ => false,
         };
         let it = if it.kind == "video" && !good_name(&it.poster) { Item { poster: String::new(), ..it } } else { it };

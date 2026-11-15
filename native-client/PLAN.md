@@ -487,9 +487,10 @@ Phase 1 left these, each with its workaround in place:
     (`was_hidden`): rows off the view are not made at all;
   - at most 6 live views in the window (the web has no cap); a box waiting
     for room shows the ring;
-  - the wheel over a frame is the page's and does not pass on to the log
-    at the page's end (no scroll chaining); the wheel beside it scrolls the
-    log;
+  - the wheel over a frame is the page's while its root scroller can still
+    go that way, and the log's at its end or on a page that does not scroll
+    (the root's position read through CDP after a load and each scroll). An
+    inner scrolling element that is not the root gets no chaining (gap);
   - `alert` / `confirm` / `prompt` in a frame are suppressed (a windowless
     view shows none); full screen from a player is not built;
   - a chat in full screen is drawn twice (the full copy over the grid's):

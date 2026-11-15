@@ -68,7 +68,11 @@ export global FrameUi {
     callback seen(string, string, string, length, length, length, length);
     callback pointer(string, int, length, length, int);
     callback wheel(string, length, length, length, length);
-    callback key(string, string, bool, bool, bool);
+    // (key, text, down, Ctrl, Shift, Alt, Meta)
+    callback key(string, string, bool, bool, bool, bool, bool);
+    // Does the page take this wheel (its root can still scroll that way)?
+    // Else the log scrolls (F134).
+    pure callback wheel-takes(string, length, length) -> bool;
     callback focus(string, bool);
 }
 
@@ -1044,8 +1048,8 @@ component LiveFrame inherits Rectangle {
     }
     fs := FocusScope {
         focus-on-click: false;
-        key-pressed(ev) => { FrameUi.key(root.fkey, ev.text, true, ev.modifiers.control, ev.modifiers.shift); accept }
-        key-released(ev) => { FrameUi.key(root.fkey, ev.text, false, ev.modifiers.control, ev.modifiers.shift); accept }
+        key-pressed(ev) => { FrameUi.key(root.fkey, ev.text, true, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.meta); accept }
+        key-released(ev) => { FrameUi.key(root.fkey, ev.text, false, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.meta); accept }
         changed has-focus => { FrameUi.focus(root.fkey, self.has-focus); }
         ta := TouchArea {
             mouse-cursor: root.cur == 1 ? MouseCursor.pointer : root.cur == 2 ? MouseCursor.text : root.cur == 3 ? MouseCursor.crosshair
@@ -1061,7 +1065,12 @@ component LiveFrame inherits Rectangle {
                 if self.has-hover { FrameUi.pointer(root.fkey, 0, self.mouse-x, self.mouse-y, 0); }
                 else { FrameUi.pointer(root.fkey, 3, self.mouse-x, self.mouse-y, 0); }
             }
-            scroll-event(e) => { FrameUi.wheel(root.fkey, self.mouse-x, self.mouse-y, e.delta-x, e.delta-y); accept }
+            // The page's while it can scroll that way; at its end (or a page
+            // that does not scroll) the log's.
+            scroll-event(e) => {
+                if FrameUi.wheel-takes(root.fkey, e.delta-x, e.delta-y) { FrameUi.wheel(root.fkey, self.mouse-x, self.mouse-y, e.delta-x, e.delta-y); return accept; }
+                reject
+            }
         }
     }
 }
@@ -1183,8 +1192,7 @@ component MediaView inherits VerticalLayout {
             }
         }
     }
-    // A frame: its box with the caption and Open (a live frame in the box
-    // is not drawn yet: PLAN, Known gaps).
+    // A frame: its box with its live page (2.16f), then the caption and Open.
     if root.m.kind == "embed": HorizontalLayout {
         alignment: start;
         MediaBox {
@@ -3254,6 +3262,10 @@ component SchedPanel inherits Rectangle {
 
 /// The chat inside a pane: the log, then the composer (specs/composer.md).
 export component ChatPane inherits Rectangle {
+    // The pane's full-screen copy (main.slint); a copy under another chat
+    // in full screen is covered: the wheel there is not its (F131).
+    in property <bool> in-full;
+    property <bool> covered: FrameUi.full-key != "" && !root.in-full;
     // Voice input (2.24): the mic shows (the server can listen); the voice
     // line's kind (error | note | away | speaking | paused) and text.
     in property <bool> mic;
@@ -3389,7 +3401,7 @@ export component ChatPane inherits Rectangle {
     // following stops at once, whatever the scroll's own animation does.
     property <int> wheel-up: Pointer.wheel-up;
     changed wheel-up => {
-        if Pointer.x >= list.absolute-position.x && Pointer.x < list.absolute-position.x + list.width
+        if !root.covered && Pointer.x >= list.absolute-position.x && Pointer.x < list.absolute-position.x + list.width
             && Pointer.y >= list.absolute-position.y && Pointer.y < list.absolute-position.y + list.height {
             root.stick = false; glide.running = false; root.last-dist = root.dist;
         }
