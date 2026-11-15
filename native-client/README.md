@@ -138,9 +138,9 @@ before the next one (`test/phase2.mjs` the same way).
 ## Phase 2: chats
 
 Everything a chat does in the PC client, screen by screen: PLAN.md lists
-them (2.1–2.24) and
+them (2.1–2.25, all done) and
 each has a spec in `specs/` with the web's screenshots and measurements.
-What phase 2 has added so far, item by item:
+What phase 2 added, item by item:
 
 - **2.1 The pane header, wide** (`specs/pane-header-wide.md`):
   - the title: the long form on a wide header (capped at min(440px, 62%)),
@@ -385,7 +385,10 @@ What phase 2 has added so far, item by item:
   colour, so inline code gets Slint's faint outline; SoftShadow draws a
   Gaussian with the web's shadow values. The colour spans close and open
   at each line break and around real [text](url) links only (F145), and
-  the chat and code fonts' copies draw underlines from 1 px (F146:
+  the chat and code fonts' copies draw underlines from 1 px (F146; inline
+  code's font is the system monospace copied as "Crundi Mono" at start,
+  main.rs `code_font`, except a .ttc family such as macOS's, which keeps
+  its own thin underline, a gap named in PLAN.md;
   `md.rs` tests parse the markup with Slint's own parser, i-slint-common,
   a dev-dependency).
 
@@ -415,7 +418,8 @@ What phase 2 has added so far, item by item:
   Linux (`Theme.ui-font`), so italic text has a real face.
 - **Pure rules in Rust, unit-tested**: `head.rs`, `mosaic.rs`, `sched.rs`,
   `slash.rs`, `secrets.rs`, `sreq.rs`, `questions.rs`, `tools.rs`,
-  `think.rs`, `md.rs`, `media.rs`, `agents.rs`, `drafts.rs`.
+  `think.rs`, `md.rs`, `media.rs`, `agents.rs`, `drafts.rs`, `attach.rs`,
+  `fresult.rs`, `resume.rs`, `voice.rs`, `fonts.rs`, `chat.rs`.
 
 ### Testing phase 2
 
