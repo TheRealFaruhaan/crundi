@@ -202,6 +202,26 @@ pub fn speak_rate(x_rate: Option<&str>, content_type: &str) -> u32 {
         .unwrap_or(24_000)
 }
 
+/// A reply in sentences (the device voice says one at a time, so a pause
+/// starts again from the sentence it was in).
+pub fn sentences(text: &str) -> Vec<String> {
+    let mut out = vec![];
+    let mut cur = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    for (i, c) in chars.iter().enumerate() {
+        cur.push(*c);
+        let end = matches!(c, '.' | '!' | '?' | '\n') && chars.get(i + 1).is_none_or(|n| n.is_whitespace());
+        if end { let t = cur.trim().to_string(); if !t.is_empty() { out.push(t); } cur.clear(); }
+    }
+    let t = cur.trim().to_string();
+    if !t.is_empty() { out.push(t); }
+    out
+}
+
+/// The longest a device voice may take for a reply (a lost "end" never
+/// sticks the queue): 8 s + 120 ms a character.
+pub fn say_cap_ms(text: &str) -> u64 { 8000 + 120 * text.chars().count() as u64 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +262,14 @@ mod tests {
         assert_eq!(parse(r#"{"type":"error","error":"Deepgram refused the key."}"#), Msg::Error("Deepgram refused the key.".into()));
         assert_eq!(parse(r#"{"type":"settings"}"#), Msg::Other);
         assert_eq!(parse("nope"), Msg::Other);
+    }
+
+    #[test]
+    fn device_voice() {
+        assert_eq!(sentences("It is Sunday. Rest well!\nBye"), vec!["It is Sunday.", "Rest well!", "Bye"]);
+        assert_eq!(sentences("Version 1.5 is out."), vec!["Version 1.5 is out."]);
+        assert!(sentences("  ").is_empty());
+        assert_eq!(say_cap_ms("abc"), 8360);
     }
 
     #[test]

@@ -529,7 +529,7 @@ POST /api/mcp/call {tool:"speak", args:{sessionId, text}}  with the chat's dev-m
 - [x] The listen tone plays on `ready`; the sent tone on each send.
 - [x] `voice-say` is said in voice mode or within 10 min of a hold, never otherwise; queued; skipped if its id was seen.
 - [x] Replies wait while the person talks (hold, sending, words within 1.5 s) and pause and resume around them; a tap on the mic pauses one; × or a click on the voice line stops it.
-- [ ] Deepgram voice: `POST /api/voice/speak?stream=1` streamed PCM at `X-Sample-Rate`; an mp3 from an older server; the device voice as the fallback. (The streamed PCM is done; the mp3 and the device voice are Known gaps.)
+- [ ] Deepgram voice: `POST /api/voice/speak?stream=1` streamed PCM at `X-Sample-Rate`; an mp3 from an older server; the device voice as the fallback. (The streamed PCM and the device voice are done; the mp3 is a Known gap.)
 - [x] `saying`/`pause` sent while Claude speaks, and `resume`/`said` after it (+450 ms); or the gate (§10.3).
 - [x] After a hold, the voice line "Speaking…" (sky dot) shows above the box, and a click on it stops the reply.
 - [x] Errors on the voice line in red, cleared after 6 s: "This chat has ended.", microphone refused or absent, the server's error text, "Listening stopped (the connection closed)."; each one ends recording and restores the draft.

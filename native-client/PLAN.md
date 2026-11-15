@@ -484,9 +484,15 @@ Phase 1 left these, each with its workaround in place:
     is used: listening pauses while Claude speaks (`pause` / `resume`);
     the person pauses a reply with the mic, or stops it with × or the
     voice line;
-  - the device voice (no Deepgram voice, or over its limit) is not there:
-    the reply is not said (the written one is in the chat). An older
-    server's whole-mp3 answer is not played either;
+  - the device voice (no Deepgram voice, or over its limit): the OS voice
+    through the tts crate on Windows (SAPI / WinRT) and macOS
+    (AVSpeechSynthesizer), en-GB (a male voice where there is one) at
+    speechRate; on Linux speech-dispatcher through its `spd-say` command
+    (named difference: linking libspeechd would stop the client starting
+    where speech-dispatcher is missing). It says a reply sentence by
+    sentence, so a pause starts again from the sentence it was in. A
+    system with no voice says nothing (gap); the UI goes through Speaking
+    and on. An older server's whole-mp3 answer is not played (gap);
   - the mic takes no keyboard focus (Enter/Space as a tap): the mouse
     does everything; Ctrl+Space stays Cru's (phase 6);
   - named differences: the microphone error says "for Crundi"; the mic

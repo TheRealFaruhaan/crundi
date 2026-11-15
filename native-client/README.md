@@ -357,8 +357,10 @@ What phase 2 has added so far, item by item:
   The microphone through cpal (a WAV for tests: `CRUNDI_TEST_MIC_WAV`),
   16 kHz Int16 frames to `/api/voice/listen`; one chat in voice mode at a
   time, a hold elsewhere pausing it. Tones and Claude's replies (its
-  `speak`, streamed from `/api/voice/speak`) through rodio. Building on
-  Linux needs `libasound2-dev`.
+  `speak`, streamed from `/api/voice/speak`) through rodio; with no
+  Deepgram voice, the device's own (the tts crate on Windows and macOS,
+  `spd-say` on Linux). Building on Linux needs `libasound2-dev`; Windows
+  and macOS need nothing extra.
 
 ### Reusable pieces
 

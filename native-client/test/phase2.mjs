@@ -3124,6 +3124,7 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   await dg('/ctl/say', { interim: 'Delete everything' });
   await ui('mic-near', kA, 'on');
   p = await until('over ×: cancelling', async () => (await UI())?.cancelling === true, 3000);
+  check('over ×: the strip still says Listening (in red; F128)', (await UI()).status === 'Listening', await UI());
   await snap('2.24-ptt-cancel');
   await ui('mic-release', kA, 'over');
   await sleep(800);
@@ -3147,6 +3148,22 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   await key('Escape');
   p = await until('Esc ends voice mode', async () => !(await V())?.rec, 3000);
   if (p) check('Esc ends voice mode', true);
+  // A wide composer while recording: the box keeps the row, the strip is
+  // as wide as its contents (F127).
+  {
+    const leaf = pane(await props(), vA).id;
+    await ui('pane-full', leaf);
+    await until('full screen', (q) => q.full, 3000);
+    await ui('mic-tap', kA);
+    p = await until('recording, wide', async () => (await UI())?.key === kA && (await UI())?.stripW > 0 && (await UI())?.boxW > 0, 5000);
+    const u = await UI();
+    check('wide: the box keeps the row, the strip its contents (F127)', u.boxW > u.stripW * 2 && u.stripW < 260, { box: u.boxW, strip: u.stripW });
+    await snap('2.24-wide-recording');
+    await ui('mic-tap', kA);
+    await until('off', async () => !(await V())?.rec, 3000);
+    await ui('pane-full', leaf);
+    await until('not full', (q) => !q.full, 3000);
+  }
   // The server's error: Deepgram refusing the key.
   await dg('/ctl/mode', { mode: 'refuse' });
   await ui('mic-tap', kA);
@@ -3171,6 +3188,19 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   await ui('chat-event', JSON.stringify({ type: 'voice-say', id: 'vs2', text: 'Said after a hold.' }));
   p = await until('voice mode off, a hold here a minute ago: still said (10 min)', async () => (await V())?.said === saidBefore + 2, 15000);
   if (p) check('voice mode off, but a hold here within 10 minutes: the reply is said', true);
+  // No Deepgram voice: the device's own voice says it (F129). (This
+  // machine has none: it fails gracefully, and the reply is done.)
+  await http('POST', '/api/voice/settings', { ttsVoice: '' }, token);
+  await ui('voice-recheck');
+  await sleep(800);
+  await ui('mic-tap', kA);
+  await until('voice mode', async () => (await V())?.rec?.key === kA, 5000);
+  const dev0 = (await V()).deviceSays, said0 = (await V()).said;
+  await ui('chat-event', JSON.stringify({ type: 'voice-say', id: 'vs3', text: 'It is Sunday. Rest well.' }));
+  p = await until('the device voice takes the reply', async () => (await V())?.deviceSays === dev0 + 1 && (await V())?.said === said0 + 1, 20000);
+  if (p) check('no Deepgram voice: the device voice takes the reply (and is done)', true);
+  await ui('mic-tap', kA);
+  await until('off', async () => !(await V())?.rec, 3000);
   // The chat ends: a tap says so.
   await http('POST', `/api/ui-sessions/${vB}/close`, {}, token);
   for (const id of [vA]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);

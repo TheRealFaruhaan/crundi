@@ -2446,6 +2446,9 @@ export global VoiceUi {
     in-out property <bool> cancelling;
     in-out property <length> x-x;
     in-out property <length> x-y;
+    // For the test driver: the recording box's and the strip's widths.
+    in-out property <length> box-w;
+    in-out property <length> strip-w;
 }
 
 export global Composer {
@@ -2735,11 +2738,16 @@ component MicBtn inherits Rectangle {
 /// hold over ×): red-dim on a red edge, red text and bars.
 component RecStrip inherits Rectangle {
     in property <float> fs: 1;
+    // Wide: its contents, at least Send's width (F127); narrow: the rest of
+    // the row (the layout gives it).
+    in property <length> least;
     property <bool> c: VoiceUi.cancelling;
+    changed width => { VoiceUi.strip-w = self.width; }
+    init => { VoiceUi.strip-w = self.width; }
     property <color> ink: root.c ? Theme.red : Theme.white;
     // (Narrow: it takes what the row leaves; the status elides first.)
-    min-width: Theme.control;
-    preferred-width: lay.preferred-width;
+    min-width: max(Theme.control, root.least);
+    preferred-width: max(lay.preferred-width, root.least);
     border-radius: Theme.r-control;
     border-width: root.c ? 1px : 0px; border-color: Theme.red;
     background: root.c ? Theme.red-dim : transparent;
@@ -2763,7 +2771,7 @@ component RecStrip inherits Rectangle {
             }
         }
         Text { vertical-alignment: center; text: VoiceUi.time; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; color: root.ink; }
-        Text { min-width: 0; overflow: elide; vertical-alignment: center; text: root.c ? "Let go to cancel" : VoiceUi.status; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-medium; color: root.ink; }
+        Text { min-width: 0; overflow: elide; vertical-alignment: center; text: VoiceUi.status; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-medium; color: root.ink; }
     }
 }
 
@@ -2800,6 +2808,8 @@ component CancelX inherits Rectangle {
 component RecBox inherits Rectangle {
     in property <float> fs: 1;
     in property <string> text;
+    changed width => { VoiceUi.box-w = self.width; }
+    init => { VoiceUi.box-w = self.width; }
     property <length> want: rt.preferred-height + 2 * Theme.sp-8 + Theme.sp-2;
     height: max(Theme.control, min(Theme.composer-max, self.want));
     border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent;
@@ -3182,7 +3192,10 @@ export component ChatPane inherits Rectangle {
     in property <string> vline-kind;
     in property <string> vline-text;
     property <bool> rec: VoiceUi.key == root.key && VoiceUi.key != "" && VoiceUi.away-key != root.key;
+    // Send's width (its label at the pane's size): the strip's least (F127).
+    send-m := Text { visible: false; text: root.busy ? "Queue" : "Send"; font-size: Theme.text-12 * root.fs; font-weight: Theme.w-semibold; }
     property <string> mic-tip: VoiceUi.speaking && VoiceUi.key == root.key ? "Pause what Claude is saying"
+        : root.rec && VoiceUi.hold && VoiceUi.cancelling ? "Let go to cancel"
         : root.rec && VoiceUi.hold ? "Let go to send (slide to cancel to drop it)"
         : root.rec ? (VoiceUi.text != "" ? "Send what was heard now" : "Voice mode is on: tap to turn it off")
         : "Voice input (tap: voice mode, hold: push to talk)";
@@ -3511,7 +3524,13 @@ export component ChatPane inherits Rectangle {
                     }
                     if !root.narrow && root.rec: VerticalLayout {
                         alignment: end;
-                        RecStrip { fs: root.fs; height: Theme.sp-12 + Theme.sp-16 * root.fs; }
+                        horizontal-stretch: 0;
+                        RecStrip {
+                            horizontal-stretch: 0;
+                            width: self.preferred-width;
+                            least: send-m.preferred-width + 2 * Theme.sp-12;
+                            fs: root.fs; height: Theme.sp-12 + Theme.sp-16 * root.fs;
+                        }
                     }
                     if !root.narrow && root.rec: VerticalLayout {
                         alignment: end;

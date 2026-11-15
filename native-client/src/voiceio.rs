@@ -222,3 +222,119 @@ pub fn speaker(done: impl Fn(u64) + Send + 'static) -> mpsc::Sender<Out> {
     });
     tx
 }
+
+// ─── The device's own voice (no Deepgram voice, or over its limit) ───
+
+/// What the device voice does.
+pub enum Dev {
+    /// Say a reply (its id) at a speed (1 = normal, the settings' speechRate).
+    Say(u64, String, f32),
+    Pause,
+    Resume,
+    Stop,
+}
+
+/// One engine: says a sentence, is it still saying it, stops it.
+trait Engine {
+    fn say(&mut self, text: &str, rate: f32) -> bool;
+    fn busy(&mut self) -> bool;
+    fn stop(&mut self);
+}
+
+/// Linux: speech-dispatcher's spd-say (en, a male voice), waiting for the
+/// sentence to be said (-w).
+#[cfg(not(any(windows, target_os = "macos")))]
+struct Spd { child: Option<std::process::Child> }
+
+#[cfg(not(any(windows, target_os = "macos")))]
+impl Engine for Spd {
+    fn say(&mut self, text: &str, rate: f32) -> bool {
+        // speechRate 0.5..2 to spd-say's -100..100.
+        let r = (((rate - 1.0) * 100.0).round() as i32).clamp(-100, 100);
+        let c = std::process::Command::new("spd-say").args(["-w", "-l", "en", "-t", "male1", "-r", &r.to_string(), "--", text])
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+        match c { Ok(ch) => { self.child = Some(ch); true } Err(_) => false }
+    }
+    fn busy(&mut self) -> bool { self.child.as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None))) }
+    fn stop(&mut self) {
+        if let Some(mut c) = self.child.take() { let _ = c.kill(); let _ = c.wait(); }
+        let _ = std::process::Command::new("spd-say").arg("-S").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn engine() -> Option<Box<dyn Engine>> {
+    // Only where speech-dispatcher's command is there.
+    let ok = std::env::var_os("PATH").is_some_and(|p| std::env::split_paths(&p).any(|d| d.join("spd-say").is_file()));
+    ok.then(|| Box::new(Spd { child: None }) as Box<dyn Engine>)
+}
+
+/// Windows and macOS: the tts crate (SAPI / WinRT, AVSpeechSynthesizer),
+/// an en-GB voice (a male one where there is one) at the given speed.
+#[cfg(any(windows, target_os = "macos"))]
+struct Os { tts: tts::Tts }
+
+#[cfg(any(windows, target_os = "macos"))]
+impl Engine for Os {
+    fn say(&mut self, text: &str, rate: f32) -> bool {
+        let (n, lo, hi) = (self.tts.normal_rate(), self.tts.min_rate(), self.tts.max_rate());
+        let _ = self.tts.set_rate((n * rate).clamp(lo, hi));
+        self.tts.speak(text, true).is_ok()
+    }
+    fn busy(&mut self) -> bool { self.tts.is_speaking().unwrap_or(false) }
+    fn stop(&mut self) { let _ = self.tts.stop(); }
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn engine() -> Option<Box<dyn Engine>> {
+    let mut t = tts::Tts::default().ok()?;
+    if let Ok(voices) = t.voices() {
+        let gb: Vec<_> = voices.iter().filter(|v| v.language().to_string().to_lowercase().starts_with("en-gb")).collect();
+        let pick = gb.iter().find(|v| matches!(v.gender(), Some(tts::Gender::Male))).or(gb.first());
+        if let Some(v) = pick { let _ = t.set_voice(v); }
+    }
+    Some(Box::new(Os { tts: t }))
+}
+
+/// The device voice's thread. `done(id, voiced)` when a reply is said (or
+/// could not be: `voiced` false, the system has no voice).
+pub fn device_voice(done: impl Fn(u64, bool) + Send + 'static) -> mpsc::Sender<Dev> {
+    let (tx, rx) = mpsc::channel::<Dev>();
+    thread::spawn(move || {
+        let mut eng = engine();
+        if eng.is_none() { eprintln!("[native] voice: this system has no voice to say replies with"); }
+        // The reply: its id, sentences, the one being said, its deadline, the speed.
+        let mut cur: Option<(u64, Vec<String>, usize, Instant, f32)> = None;
+        let mut paused = false;
+        loop {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(Dev::Say(id, text, rate)) => {
+                    if let Some(e) = eng.as_mut() { e.stop(); }
+                    if let Some((old, ..)) = cur.take() { done(old, true); }
+                    paused = false;
+                    let Some(e) = eng.as_mut() else { done(id, false); continue };
+                    let s = voice::sentences(&text);
+                    if s.is_empty() || !e.say(&s[0], rate) { done(id, false); continue; }
+                    cur = Some((id, s, 0, Instant::now() + Duration::from_millis(voice::say_cap_ms(&text)), rate));
+                }
+                Ok(Dev::Pause) => { if cur.is_some() { paused = true; if let Some(e) = eng.as_mut() { e.stop(); } } }
+                // Where it can't pause, it starts again from the sentence it was in.
+                Ok(Dev::Resume) => {
+                    if paused { paused = false; if let (Some((_, s, i, _, r)), Some(e)) = (cur.as_ref(), eng.as_mut()) { e.say(&s[*i], *r); } }
+                }
+                Ok(Dev::Stop) => { if let Some(e) = eng.as_mut() { e.stop(); } if let Some((id, ..)) = cur.take() { done(id, true); } paused = false; }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => return,
+            }
+            if paused { continue; }
+            let Some((id, s, i, deadline, rate)) = cur.as_mut() else { continue };
+            let Some(e) = eng.as_mut() else { continue };
+            if Instant::now() > *deadline { e.stop(); let id = *id; cur = None; done(id, true); continue; }
+            if e.busy() { continue; }
+            *i += 1;
+            if *i < s.len() { let (t, r) = (s[*i].clone(), *rate); if !e.say(&t, r) { let id = *id; cur = None; done(id, true); } }
+            else { let id = *id; cur = None; done(id, true); }
+        }
+    });
+    tx
+}

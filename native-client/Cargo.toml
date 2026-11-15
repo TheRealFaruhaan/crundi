@@ -30,6 +30,13 @@ rodio = { version = "0.20", default-features = false }
 # Local time for scheduled messages (2.10).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
+# The device's own voice for replies (2.24) where there is no Deepgram
+# voice: SAPI / WinRT on Windows, AVSpeechSynthesizer on macOS. Linux uses
+# speech-dispatcher through its spd-say command instead (src/voiceio.rs):
+# linking libspeechd would stop the client starting where it is missing.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tts = "0.26"
+
 [features]
 # The GPU path: CEF hands over its frames as shared GPU textures (DMA-BUF on
 # Linux, D3D11 on Windows, IOSurface on macOS), copied into wgpu textures that

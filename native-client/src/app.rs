@@ -4846,6 +4846,12 @@ struct Vo {
     paused: bool,
     say_seq: u64,
     speaker: Option<std::sync::mpsc::Sender<crate::voiceio::Out>>,
+    /// The device's own voice (no Deepgram voice, or over its limit), and
+    /// whether the reply being said is its.
+    device: Option<std::sync::mpsc::Sender<crate::voiceio::Dev>>,
+    on_device: bool,
+    device_says: u32,
+    device_voiced: Option<bool>,
     ticking: bool,
     /// For the test driver: tones played, replies said, the last sent text.
     tones: u32,
@@ -5175,6 +5181,17 @@ fn speaker() -> Option<std::sync::mpsc::Sender<crate::voiceio::Out>> {
     }).flatten()
 }
 
+fn device() -> Option<std::sync::mpsc::Sender<crate::voiceio::Dev>> {
+    with(|a| {
+        if a.vo.device.is_none() {
+            a.vo.device = Some(crate::voiceio::device_voice(|id, voiced| {
+                let _ = slint::invoke_from_event_loop(move || { with(|a| a.vo.device_voiced = Some(voiced)); reply_done(id); });
+            }));
+        }
+        a.vo.device.clone()
+    }).flatten()
+}
+
 fn tone(sent: bool) {
     with(|a| a.vo.tones += 1);
     if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Tone(sent)); }
@@ -5219,10 +5236,16 @@ fn reply_next() {
     let line_key = with(|a| (!a.vo.rec.as_ref().is_some_and(|r| r.chat == chat)).then(|| chat_key(&chat))).flatten();
     if let Some(k) = &line_key { voice_line(k, "speaking", "Speaking…", None); }
     voice_tick();
+    // Without a Deepgram voice (or over its limit): the device's own voice,
+    // at the settings' speed.
+    if voice.is_empty() || limit {
+        let rate = with(|a| a.vo.settings.get("speechRate").and_then(|x| x.as_f64()).unwrap_or(1.0) as f32).unwrap_or(1.0);
+        with(|a| { a.vo.on_device = true; a.vo.device_says += 1; });
+        if let Some(d) = device() { let _ = d.send(crate::voiceio::Dev::Say(id, text, rate)); } else { reply_done(id); }
+        return;
+    }
+    with(|a| a.vo.on_device = false);
     let (Some(out), Some(api)) = (speaker(), api()) else { return reply_done(id) };
-    // Deepgram's voice, streamed; without one (or over the limit), the
-    // device's voice is not there yet (PLAN.md): the written reply stands.
-    if voice.is_empty() || limit { return reply_done(id); }
     let _ = out.send(crate::voiceio::Out::Begin(id, 24_000));
     bg(move || {
         let mut rate = 24_000u32;
@@ -5265,7 +5288,8 @@ fn reply_done(id: u64) {
 /// person has been quiet for QUIET_MS.
 fn reply_pause() {
     with(|a| a.vo.paused = true);
-    if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Pause); }
+    if with(|a| a.vo.on_device).unwrap_or(false) { if let Some(d) = device() { let _ = d.send(crate::voiceio::Dev::Pause); } }
+    else if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Pause); }
     let k = with(|a| a.vo.saying.as_ref().map(|s| chat_key(&s.0))).flatten();
     if let Some(k) = k { if with(|a| a.vo.lines.get(&k).is_some_and(|l| l.0 == "speaking")).unwrap_or(false) { voice_line(&k, "paused", "Paused", None); } }
     voice_tick();
@@ -5278,7 +5302,8 @@ fn reply_resume_later() {
         let still = with(|a| a.vo.paused && a.vo.saying.is_some()).unwrap_or(false);
         if go {
             with(|a| a.vo.paused = false);
-            if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Resume); }
+            if with(|a| a.vo.on_device).unwrap_or(false) { if let Some(d) = device() { let _ = d.send(crate::voiceio::Dev::Resume); } }
+            else if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Resume); }
             let k = with(|a| a.vo.saying.as_ref().map(|s| chat_key(&s.0))).flatten();
             if let Some(k) = k { if with(|a| a.vo.lines.get(&k).is_some_and(|l| l.0 == "paused")).unwrap_or(false) { voice_line(&k, "speaking", "Speaking…", None); } }
             voice_tick();
@@ -5294,7 +5319,10 @@ fn reply_hold() {
 /// Stop the reply being said (×, the voice line, voice mode off).
 fn reply_stop() {
     let id = with(|a| a.vo.saying.as_ref().map(|s| s.1)).flatten();
-    if id.is_some() { if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Stop); } }
+    if id.is_some() {
+        if with(|a| a.vo.on_device).unwrap_or(false) { if let Some(d) = device() { let _ = d.send(crate::voiceio::Dev::Stop); } }
+        else if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Stop); }
+    }
 }
 
 /// A click on the voice line: a reply being said stops.
@@ -5314,5 +5342,6 @@ pub fn voice_of() -> Value {
         "away": a.vo.away, "lines": a.vo.lines.iter().map(|(k, l)| (k.clone(), json!({ "kind": l.0, "text": l.1 }))).collect::<serde_json::Map<String, Value>>(),
         "tones": a.vo.tones, "said": a.vo.said, "saying": a.vo.saying.as_ref().map(|s| s.0.clone()), "paused": a.vo.paused,
         "queue": a.vo.queue.len(), "lastSent": a.vo.last_sent,
+        "deviceSays": a.vo.device_says, "deviceVoiced": a.vo.device_voiced,
     })).unwrap_or(Value::Null)
 }
