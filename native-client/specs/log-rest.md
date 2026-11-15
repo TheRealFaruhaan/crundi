@@ -88,6 +88,12 @@ injected as tool entries.
 | `web-media-formats` (+`-2x`) | **JPEG, WebP and GIF** in one `show_image` call (1200×700 JPEG, 500×500 WebP, a two-frame 500×500 GIF): a row 220 tall; no item captions (the items have none), the call's caption "JPEG, WebP and GIF" under the row. The GIF animates in the web. |
 | `web-embed-https-html` (+`-2x`) | **Frames**: a YouTube page (`show_embed url=`; w/h 16:9, so 640 × 360), its caption "The talk · from 2:10 · Open on YouTube" (the link `accent-hover`, underlined); under it **stored HTML** (`html=`, height 160): 640 × 160, live (its button counts clicks), caption "Counter", no Open. |
 | `web-embed-page-gone-loading` | **An unknown https site** (example.com, height 480): the live page in a 640 × 480 box, "A plain page · Open on example.com"; **a stored frame no longer stored** (404): dashed box, "This embed is no longer stored." centred; **a stored frame loading** (its HTML not yet fetched): the 34 ring. |
+| `web-frame-live-idle` | **Live frames (2.16f)**, the bottom of the log: a GitHub Gist (stored HTML with an Open link: the server wraps the gist's script; the page is white, drawn by the gist itself) still blank while its script loads; **"Scrolls inside"** (stored HTML 160 tall, 40 lines): the page's own scroll bar inside the box; **"Click test"** (stored HTML 200 tall): a button, an input and a `target=_blank` link, all live. |
+| `web-frame-focused-typing` (+`-2x`) | **A frame taking input**: three clicks on its button (count 3, the button green: the page's own script ran), then a click in its input and typing "hello frame": the text is in the frame's input; the composer is empty and has lost its accent focus edge; `document.activeElement` is the `IFRAME`. The frame draws **no focus edge of its own** (only the page's input shows its focus). |
+| `web-frame-back-reset` | **Scrolled far away and back**: with ~16 000 px of replies under the frames, the log at the bottom has **0 iframes** (all released; each box keeps its size); scrolled back, the click test is a **fresh page**: count 0, the input empty. Nothing of a frame's state survives its release. |
+| `web-frame-narrow` | **Narrow** (viewport 560, the phone layout): every frame box is 516 wide (the pane); the 16:9 YouTube box follows its aspect (516 × 290), stored HTML keeps its height (420, 160, 200). The gist has loaded (code and its "hosted with ❤ by GitHub" bar). |
+| `web-frame-youtube-gist` | **A known player** (YouTube "Me at the zoo", `youtube-nocookie.com/embed/…`, 640 × 360) drawn by YouTube itself (title, play button, Watch on YouTube) and the loaded gist (640 × 420), at 1400 wide. |
+| `web-frame-site-refusal` | **The site's own refusal**: after play, YouTube answers this server's address with "Sign in to confirm you're not a bot" inside the box. The client draws nothing over it; the caption's Open link is the way out. (The older `web-embed-https-html` shows YouTube's "This video is unavailable".) |
 | `web-md-image` (+`-2x`) | **Markdown image syntax in a reply**: the web draws no picture. `![Weekly sales](https://…/chart.png)` shows "!" then a link "Weekly sales"; `![logo](./assets/logo.png)` stays text with the path linked. |
 | `web-video-playing` (+`-2x`) | **The video playing inline** (Electron), the pointer over it: the big button gone, the bar: pause, "0:04 / 0:06", the seek line (accent fill, white knob), sound, full screen. Native plays in the system player instead (see Video and audio). |
 
@@ -476,6 +482,119 @@ forwards pointer, wheel and keys):
 - Full screen from inside a frame (a player's button): name it as a gap if
   not done.
 
+#### Live frames in detail (2.16f)
+
+Everything above still holds; this is the full contract for the live view.
+Shots: `web-frame-*` (table at the top) and the older `web-embed-*`.
+
+**Measured** (1400 × 860, one wide pane):
+
+| What | Web | Native |
+|---|---|---|
+| The view inside the box | the iframe fills the box inside its 1px edge: box 640 × 360 → frame **638 × 358** at (+1, +1); clipped to the box's radius 8 | view = box − 2 each way, at +1/+1, in logical px × the window's scale; corners clipped to `r-field` |
+| Box background behind the page | `#0f0f14`; the iframe itself is transparent, so a page without a background shows the box colour | `frame-bg`; create the view with a **transparent** `background_color` (0x00000000), not the panels' white |
+| Caption | 4 under the box (box bottom 529, caption top 533), 11.5 / 15.5 `text-secondary` (`rgb(136,136,168)`) | as the Frame table |
+| Block around the item | the media block's margin 6 top, 2 bottom | as 2.16m |
+| Narrow | width = the pane (516 at a 560 viewport); a `w`/`h` box keeps its aspect (516 × 290), a fixed height stays (420, 160, 200) | the same; the view is resized (`was_resized`) whenever the box changes size |
+
+**Lifetime** (measured in the web):
+- A frame is made when its box comes within **900 px** of the log's
+  viewport and released (iframe removed, the box kept at its size, no
+  ring) when it is more than **4500 px** away. With 16 000 px of replies
+  under four frames and the log at the bottom: 0 iframes; scrolled back:
+  4, each a **fresh page** (`web-frame-back-reset`: the counter is 0
+  again, the typed text gone).
+- Leaving the Workbench tab (the chat hidden) releases every frame
+  (4 → 0); coming back makes them again (0 → 4). Closing the chat removes
+  them. Exception: a frame in full screen is never released.
+- A tool entry patched with the same item keeps its frame (native: keep
+  the view while the item's `name` / `src` is unchanged).
+
+Native rules (the Manager's "watch: memory and CPU"):
+- **Create** a view when the frame's row is realised by the log's
+  `ListView` and within 900 px of the viewport; **release**
+  (`close_browser(true)`, the box stays) when the row is unrealised or
+  more than 4500 px away, when the chat's pane closes, is parked or not
+  shown (another tab in front, Peek, another pane full-screen over it),
+  and when the window closes. Released views come back fresh, as the web.
+- **Cap: at most 6 live frame views in the window** (all panes
+  together; panels in the Panels tab do not count). When one more is
+  needed, release the live view farthest from its own pane's viewport
+  (never one on screen); a box waiting for a view shows the loading ring.
+  The web has no cap: name it in PLAN as a deliberate difference.
+- **Only what is on screen paints**: a live view whose box is outside
+  the viewport (inside the 900 margin), or while the window is minimised
+  or hidden, gets `was_hidden(true)` (no painting, no rAF timers at full
+  rate); back on screen `was_hidden(false)` and `invalidate`. Frame rate
+  30, as the panels.
+- No frame view ever gets the client's JS bindings, message router, CDP
+  hooks that write into the page, or the session token.
+
+**Loading**:
+- https `src`: load it with the referrer the web's iframe sends (policy
+  `strict-origin-when-cross-origin`, i.e. `Referer: <server origin>/`):
+  a `CefRequest` with `set_referrer(<server origin>/,
+  STRICT_ORIGIN_WHEN_CROSS_ORIGIN)` through `frame.load_request`, or the
+  equivalent. YouTube's embed refuses a load without a referrer.
+- Stored HTML: `GET /api/chat-media?session=<chat>&name=<name>` with the
+  auth header (the ring meanwhile); 200 → load
+  `data:text/html;charset=utf-8;base64,…` (the server caps the HTML at
+  512 KB, ~683 KB in base64, under Chromium's 2 MB URL limit); 404 → the
+  gone box; a network error → the box empty, no ring, retried the next
+  time it comes near (the web's `_wgLoaded = false`).
+- The ring stays until the view's first paint.
+- A stored page may load scripts and styles from the internet (the gist
+  does, `show_embed`'s description promises it): a data: URL allows that.
+
+**What the page may do** (the web's sandbox, in CEF terms):
+- New windows, `window.open` and `target=_blank` links: `on_before_popup`
+  → the system browser (`open::that`) for http(s), cancel the popup
+  (Electron: `setWindowOpenHandler` → `shell.openExternal`).
+- A link without a target navigates inside the frame (as an iframe). The
+  frame never navigates the client.
+- Downloads: refused (the sandbox has no `allow-downloads`).
+- `alert` / `confirm` / `prompt` (stored HTML has `allow-modals`): a
+  windowless view shows none; suppress them (`on_jsdialog` → dismissed)
+  and name the gap in PLAN.
+- Right-click: no menu (Electron shows none in a frame):
+  `on_before_context_menu` clears the model.
+- Camera, microphone, location, notifications: denied (not in the
+  iframe's `allow`). Autoplay as Chromium's default (the web's `allow`
+  only delegates it).
+- Full screen from a player: a named gap unless built (then: the view
+  fills the window; Esc leaves; the frame is not released meanwhile).
+
+**Input** (the Manager's "watch: focus"):
+- Pointer: moves, presses, releases and double clicks over the box go to
+  the view, at coordinates inside the 1px edge; leaving the box sends
+  mouse-leave. The pointer shape is the page's (`on_cursor_change`: a
+  hand over YouTube's button, a text bar over an input).
+- A click in the frame gives it the keyboard: the view gets focus, the
+  composer loses its focus edge (`web-frame-focused-typing`); keys
+  (down/up/char, modifiers, IME text) go to the view, so typing never
+  reaches the composer and the client's shortcuts do not fire, Esc
+  included. A click anywhere outside the box takes focus back (the view
+  gets `set_focus(false)`).
+- Wheel over a frame goes to the frame. Chromium chains it to the log when
+  the frame's page cannot scroll that way (the click test, which does not
+  scroll, passes the wheel straight to the log; "Scrolls inside" scrolls
+  itself and, at its end, the log; Chromium's scroll chaining, not
+  measured here: the browser tool sends no real wheel). Native: forward the wheel to the view;
+  chain to the log when the page's root scroller is at that end or does
+  not scroll (read it after load and on `on_scroll_offset_changed`). An
+  inner scrolling element that is not the root then gets no chaining:
+  name that if it stays. The wheel **not** over a frame always scrolls the
+  log.
+- A file dragged over the window: frames stop taking the pointer
+  (`body.file-dragging iframe { pointer-events: none }`), so a file dropped
+  on a frame goes to the chat's attach drop. Native: a drop over a frame
+  box is the pane's drop, never the view's.
+
+**Endpoints and events**: only `GET /api/chat-media` (stored HTML) and
+the frame's own https loads. The frame arrives with its tool entry
+(`chat-event` `entry` / patch, as every media item); no event changes a
+frame afterwards.
+
 ## 5. Notices
 
 Centred, 11.5 italic `text-muted`, wraps. Server texts:
@@ -676,6 +795,34 @@ Against `tools/test-server.sh`, one chat open in one wide pane:
      file lands in the temp folder with the right size, and the opener is
      called with that path, not a URL.
 
+9. **Live frames (2.16f)**, with CEF up. Store with `show_embed` `html`
+   a click test (`height` 200): a full-width button that, on click,
+   counts, sets `document.title = 'clicked <n>'` and turns the page green
+   (`#16a34a`), plus an `<input>` and an `<a target=_blank
+   href=https://example.com/>`; inject it as a done tool entry. testctl
+   needs: the live frame views (`[{key, url, box, view size, painted,
+   focused, hidden}]`), a view's title, a pixel of a view's last frame,
+   input at a point in the window, and the system opener's record.
+   - the frame's view exists, its size is the box − 2, it has painted
+     within 10 s and the ring is gone; its URL starts `data:text/html`;
+   - click the button through the window (not by script): the view's
+     title becomes "clicked 1" and its pixel under the button is green;
+   - click the input and type "abc": the composer's text is unchanged
+     (empty); a click on the log gives focus back (the view not focused);
+   - click the link: no new window; the opener recorded
+     `https://example.com/`;
+   - a wheel over the log beside the frame scrolls the log;
+   - inject 20 000 px of replies under it and scroll to the bottom: the
+     view is released (none live), the box keeps its size; scroll back:
+     a new view paints and its title is the page's own again (not
+     "clicked 1");
+   - store eight frames in a row and scroll through them: never more
+     than 6 live views at once, and none in a released box on screen;
+   - close the chat's pane: no live frame views remain;
+   - with `show_embed url=https://example.com/`: a view loads
+     `https://example.com/` and paints; the server's 404 for a stored
+     name: the gone box and no view.
+
 `cargo test`: `fmtBytes` (12 → "12 B", 26625 → "26 KB", 1572864 →
 "1.5 MB") and `fmtDlSize` (26625 → "26 KB", 1572864 → "1.5 MB"),
 `fmtDuration` (6 → "0:06", 75 → "1:15"), the frame's box (w/h 16:9 →
@@ -725,10 +872,25 @@ only when `stick`; a height change alone does not).
 - [x] Formats: PNG, JPEG, WebP and GIF all draw (GIF: first frame or
       animated; named gap if first frame); a poster `.poster.jpg` draws.
 - [x] Markdown `![a](https://…)`: "!" and a link, no picture; nothing fetched.
-- [ ] Frame: live inline CEF view (https `src`; stored HTML as a data URL),
-      sized per the table, loading ring, "This embed is no longer stored.",
-      caption "title · caption · Open on <provider>", popups to the system
-      browser; made when realised, closed when far; the no-CEF fallback named.
+- [ ] Frame: live inline CEF view (https `src` with the server's origin as
+      referrer; stored HTML as a data URL), sized per the table, loading
+      ring, "This embed is no longer stored.", caption "title · caption ·
+      Open on <provider>", popups to the system browser; made when
+      realised, closed when far; the no-CEF fallback named.
+- [ ] Frame view: box − 2 inside the edge, corners clipped, transparent
+      background over `frame-bg` (no white flash), resized with the box
+      (narrow: aspect boxes follow, fixed heights stay).
+- [ ] Frame lifetime: made within 900 px, released past 4500 px, on pane
+      close / park / hidden tab, back fresh; at most 6 live views (named
+      difference); off-screen live views hidden (`was_hidden`).
+- [ ] Frame input: pointer and page cursor; click focuses it and the
+      composer gets no keys; a click outside gives focus back; wheel over
+      a frame goes to it (chaining to the log at its end, or named); the
+      wheel elsewhere scrolls the log; a dropped file goes to the chat.
+- [ ] Frame limits: no downloads, no context menu, dialogs suppressed
+      (named), links navigate inside, never the client.
+- [ ] phase2.mjs step 9 (click test: title and pixel change, focus,
+      popup to the opener, release and come back, the cap, pane close).
 - [x] Download row: tray top right, accent / green / red left edge, texts
       "Starting…", "<got> of <total>", "Saved · <size>", "Cancelled", the
       server's error; × cancels; leaves after 4.5 / 1.2 / 7 s.
