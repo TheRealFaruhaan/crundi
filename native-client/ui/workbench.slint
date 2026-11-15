@@ -119,6 +119,10 @@ export struct PaneView {
     pk-busy-label: string,
     // A factory's Manager chat (2.20): the header's Factory tag.
     factory: bool,
+    // Voice input (2.24): the mic shows; the voice line's kind and text.
+    mic: bool,
+    vline-kind: string,
+    vline-text: string,
 }
 
 export struct GutterView {
@@ -442,6 +446,7 @@ export component PaneCard inherits Rectangle {
             s-at: p.s-at; s-at-gen: p.s-at-gen; s-note: p.s-note; s-items: p.s-items;
             s-limit-off: p.s-limit-off; s-list: p.s-list; s-unsupported: p.s-unsupported;
             slash-open: p.slash-open; slash-items: p.slash-items; slash-sel: p.slash-sel;
+            mic: p.mic; vline-kind: p.vline-kind; vline-text: p.vline-text;
             file-over: root.file-over;
             model: p.model;
             cost: p.cost;

@@ -359,6 +359,40 @@ impl Api {
         unreachable!()
     }
 
+    /// POST a JSON body and read the answer as it streams (Claude's voice,
+    /// 2.24): `head(content type, X-Sample-Rate)` first, then `sink(bytes)`
+    /// (false stops). An answer other than 200 comes back as (status, text).
+    pub fn post_stream(&self, path: &str, body: &Value, accept: &str, head: &mut dyn FnMut(&str, Option<&str>), sink: &mut dyn FnMut(&[u8]) -> bool) -> ApiResult<(u16, String)> {
+        use std::io::Read;
+        let url = format!("{}{}", self.0.base, path);
+        let bytes = serde_json::to_vec(body).unwrap_or_default();
+        let mut access = self.access();
+        for attempt in 0..2 {
+            let r = self.0.agent.post(&url)
+                .header("Authorization", &format!("Bearer {access}"))
+                .header("Content-Type", "application/json")
+                .header("Accept", accept)
+                .send(&bytes[..]);
+            let mut resp = match r { Ok(resp) => resp, Err(e) => return Err(ApiError::Net(e.to_string())) };
+            let status = resp.status().as_u16();
+            if status == 401 && attempt == 0 { self.refresh_after(&access)?; access = self.access(); continue; }
+            if status == 401 { return Err(ApiError::SignedOut); }
+            if status != 200 { return Ok((status, resp.body_mut().read_to_string().unwrap_or_default())); }
+            let ct = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let xr = resp.headers().get("x-sample-rate").and_then(|v| v.to_str().ok()).map(str::to_string);
+            head(&ct, xr.as_deref());
+            let mut rd = resp.body_mut().with_config().limit(u64::MAX).reader();
+            let mut buf = vec![0u8; 16 * 1024];
+            loop {
+                let n = rd.read(&mut buf).map_err(|e| ApiError::Net(e.to_string()))?;
+                if n == 0 { break; }
+                if !sink(&buf[..n]) { return Ok((499, String::new())); }
+            }
+            return Ok((200, ct));
+        }
+        unreachable!()
+    }
+
     /// A GET's bytes (a picture, a poster): (status, bytes or the error text).
     pub fn get_bytes(&self, path: &str) -> ApiResult<(u16, Vec<u8>)> {
         let mut out = Vec::new();

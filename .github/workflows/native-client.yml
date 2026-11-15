@@ -43,7 +43,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends xvfb libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
+            libasound2-dev libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
 
       - name: Cache CEF
         uses: actions/cache@v4

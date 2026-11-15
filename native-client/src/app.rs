@@ -190,6 +190,8 @@ struct FrUi {
     act_err: String,
     /// The card's state when last drawn: a new state drops the loaded diff.
     state: String,
+    /// The card as last drawn: any patch clears the error line (F124).
+    raw: String,
 }
 
 impl std::fmt::Debug for FrUi {
@@ -289,6 +291,8 @@ pub struct App {
     viewer: Option<(Vec<String>, usize)>,
     /// The resume picker and launching (2.22), parked chats (2.23).
     park: Park,
+    /// Voice input (2.24).
+    vo: Vo,
     /// Factory result cards' own state (2.20), by entry id, and the last
     /// choice's body (the test driver reads it).
     fr: HashMap<String, FrUi>,
@@ -435,6 +439,7 @@ pub fn init(window: &MainWindow) {
             media: HashMap::new(),
             viewer: None,
             park: Park::default(),
+            vo: Vo::default(),
             fr: HashMap::new(),
             fr_last: Value::Null,
             shots: HashMap::new(),
@@ -628,6 +633,12 @@ pub fn init(window: &MainWindow) {
     window.global::<ParkAct>().on_resume(|k, m| park_resume(k.as_str(), m.as_str()));
     window.global::<ParkAct>().on_peek(|k, on| park_peek(k.as_str(), on));
     // Factory result cards (2.20).
+    // Voice input (2.24).
+    window.global::<Composer>().on_mic_press(|k| mic_press(k.as_str()));
+    window.global::<Composer>().on_mic_release(|k, over| mic_release(k.as_str(), over));
+    window.global::<Composer>().on_mic_near(|k, n| mic_near(k.as_str(), n));
+    window.global::<Composer>().on_voice_cancel(|k| voice_cancel(k.as_str()));
+    window.global::<Composer>().on_vline_click(|k| vline_click(k.as_str()));
     window.global::<FrAct>().on_toggle(|c, i, w| fr_toggle(c.as_str(), i.as_str(), w.as_str()));
     window.global::<FrAct>().on_press(|c, i, k| fr_press(c.as_str(), i.as_str(), k.as_str()));
     window.global::<FrAct>().on_note(|_c, i, t| { with(|a| a.fr.entry(i.to_string()).or_default().note = t.to_string()); });
@@ -1163,6 +1174,11 @@ fn sync_panes() {
         for id in &subscribe { l.subscribe(id); }
     });
     for id in previews { load_preview(id); }
+    // Voice input (2.24): new panes ask whether the mic shows (cached a
+    // minute); a recording chat gone or parked stops.
+    if !subscribe.is_empty() { voice_check(); }
+    let gone = with(|a| a.vo.rec.as_ref().map(|r| r.chat.clone()).filter(|c| a.chats.get(c).is_none_or(|cs| cs.parked))).flatten();
+    if let Some(c) = gone { voice_chat_gone(&c); }
     save_layout();
     render();
 }
@@ -1234,6 +1250,9 @@ fn render() {
                 p.title_max = cap;
                 p.short_title = short.into();
                 p.factory = item.is_some_and(head::factory_manager);
+                // Voice input (2.24): the mic (not in a parked chat), the voice line.
+                p.mic = a.vo.ok.is_some_and(|o| o.0) && !a.chats.get(id).is_some_and(|cs| cs.parked);
+                if let Some((kind, text, _)) = a.vo.lines.get(&key) { p.vline_kind = kind.as_str().into(); p.vline_text = text.as_str().into(); }
                 // The lock: the server can, and the chat is the owner's own.
                 p.secrets = a.secrets_cap && !item.and_then(|c| c.get("collaborator")).is_some_and(truthy);
                 let n = head::grant_count(a.grants.get(id), now);
@@ -1415,8 +1434,11 @@ fn render() {
 /// The capability for the secrets lock, then every chat's grants.
 fn load_secrets(base: String) {
     bg(move || api::handshake(&base).ok().and_then(|h| h.pointer("/server/capabilities").cloned()), |caps| {
-        let on = caps.and_then(|c| c.as_array().map(|c| c.iter().any(|x| x == "chat-secret-preauth"))).unwrap_or(false);
-        with(|a| a.secrets_cap = on);
+        let has = |k: &str| caps.as_ref().and_then(|c| c.as_array().map(|c| c.iter().any(|x| x == k))).unwrap_or(false);
+        let on = has("chat-secret-preauth");
+        let voice_cap = has("chat-voice");
+        with(|a| { a.secrets_cap = on; a.vo.cap = voice_cap; a.vo.ok = None; });
+        voice_check();
         render();
         if !on { return; }
         call(|api| api.get("/api/secrets/chat"), |r| {
@@ -1920,7 +1942,7 @@ fn fr_finish(chat: &str, id: &str, choice: &str, note: Option<String>) {
     let body = fresult::finish_body(&s(&e, "runId"), choice, note.as_deref());
     with(|a| { let ui = a.fr.entry(id.to_string()).or_default(); ui.busy = true; ui.armed = false; ui.act_err.clear(); a.fr_last = body.clone(); });
     show_chat(chat);
-    let (c, i) = (chat.to_string(), id.to_string());
+    let (c, i, choice2) = (chat.to_string(), id.to_string(), choice.to_string());
     let stub = crate::testctl::take_stub("fr-finish");
     call(move |api| match stub { Some(v) => stub_result(v), None => api.post("/api/factory-runs", &body) }, move |r| {
         let err = match r {
@@ -1930,9 +1952,20 @@ fn fr_finish(chat: &str, id: &str, choice: &str, note: Option<String>) {
             Err(e) if e.starts_with("Cannot reach the server") => Some("Could not reach the server.".into()),
             Err(e) => Some(e),
         };
-        if let Some(e) = err {
-            with(|a| { let ui = a.fr.entry(i.clone()).or_default(); ui.busy = false; ui.act_err = e; });
-            show_chat(&c);
+        // The card already says it (a refused merge patches its own error
+        // in): not twice (F125).
+        let shown = fr_entry(&c, &i).map(|x| s(&x, "error")).unwrap_or_default();
+        match err {
+            Some(e) => {
+                with(|a| { let ui = a.fr.entry(i.clone()).or_default(); ui.busy = false; if shown != e { ui.act_err = e; } });
+                show_chat(&c);
+            }
+            // Changes accepted: the sent note goes, the form closes (F126).
+            None if choice2 == "changes" => {
+                with(|a| { let ui = a.fr.entry(i.clone()).or_default(); ui.note_open = false; ui.note.clear(); ui.note_gen += 1; });
+                show_chat(&c);
+            }
+            None => {}
         }
     });
 }
@@ -2105,6 +2138,9 @@ fn on_chat_message(m: &Value) {
                 // (An idle that comes before the send's working doesn't undo it.)
                 let st = m.get("event").map(|e| s(e, "state")).unwrap_or_default();
                 if (ty == "state" && st != "idle") || matches!(ty.as_str(), "exit" | "history") { a.sending.remove(&id); }
+                // Voice input (2.24): a reply to say; an exit stops listening.
+                if ty == "voice-say" { if let Some(ev) = m.get("event") { let (i, t) = (s(ev, "id"), s(ev, "text")); let c = id.clone(); slint::Timer::single_shot(Duration::ZERO, move || voice_say(&c, &i, &t)); } }
+                if ty == "exit" { let c = id.clone(); slint::Timer::single_shot(Duration::ZERO, move || voice_chat_gone(&c)); }
                 m.get("event").map(|e| cs.conv.apply(e)).unwrap_or(false) || ty == "exit"
             }
             _ => false,
@@ -2430,7 +2466,13 @@ fn show_chat(id: &str) {
                 if ui.state != e.status {
                     if !ui.state.is_empty() { ui.diff = None; ui.diff_loading = false; ui.diff_gen += 1; }
                     ui.busy = false; ui.armed = false; ui.state = e.status.clone();
+                    // Changes accepted: the sent note goes, the form closes (F126).
+                    if e.status == "changes" { ui.note_open = false; ui.note.clear(); ui.note_gen += 1; }
                 }
+                // The server's patch redraws the card: a choice's error goes, as
+                // the web's rebuild drops it (F124).
+                let raw = e.raw.to_string();
+                if ui.raw != raw { if !ui.raw.is_empty() { ui.act_err.clear(); } ui.raw = raw; }
                 Row::Fr(e, ui.clone())
             }
             r => r,
@@ -2503,19 +2545,25 @@ pub fn send(key: &str, text: String) {
     send_plain(key, text);
 }
 
-fn send_plain(key: &str, text: String) {
+fn send_plain(key: &str, text: String) { send_plain_keep(key, text, true); }
+
+/// Send, clearing the box's draft (`clear`), or leaving it as it is (a
+/// voice input: the draft waits under the words heard, 2.24).
+fn send_plain_keep(key: &str, text: String, clear: bool) {
     let Some(id) = chat_of(key).map(str::to_string) else { return };
     let text = text.trim_end().to_string();
     if text.trim().is_empty() { return; }
     // Peeking at a parked chat: it resumes first, then this goes (2.23).
     if parked_now(&id) {
         let k = key.to_string();
-        return after_resume(&id, move || send_plain(&k, text));
+        return after_resume(&id, move || send_plain_keep(&k, text, clear));
     }
     let k = key.to_string();
     let state = with(|a| {
-        save_draft_in(a, &k, "");
-        *a.draft_gen.entry(k.clone()).or_insert(0) += 1;
+        if clear {
+            save_draft_in(a, &k, "");
+            *a.draft_gen.entry(k.clone()).or_insert(0) += 1;
+        }
         if let Some(cs) = a.chats.get_mut(&id) { cs.error.clear(); }
         let st = chat_state_now(a, &id);
         // Needs input: held here, sent as one when the prompt is answered (2.9).
@@ -2662,6 +2710,8 @@ fn sec_open(leaf: u32) {
 /// went with a grant).
 pub fn escape() {
     if with(|a| a.sec.is_some()).unwrap_or(false) { return sec_close(); }
+    // Voice mode or a hold in the focused chat ends (2.24).
+    if with(|a| a.picker.is_none() && a.viewer.is_none() && a.park.dlg.is_none()).unwrap_or(false) && voice_escape() { return; }
     // Esc in a pane peeking at a parked chat: the parked view again (2.23, a
     // named addition), unless a dialog over it takes the Esc.
     let back = with(|a| {
@@ -4745,4 +4795,524 @@ pub fn goal_of(key: &str) -> Value {
     let Some(p) = w.get_panes().iter().find(|p| p.key == key) else { return Value::Null };
     json!({ "on": p.goal_on, "condition": p.goal_cond.as_str(), "count": p.goal_count.as_str(), "looping": p.goal_looping, "stopped": p.goal_stopped,
         "plan": p.plan_status.as_str(), "planOpen": p.plan_open, "planState": p.plan_state.as_str(), "planBlocks": p.plan_blocks.row_count() })
+}
+
+// ─── Voice input (2.24, specs/voice-input.md) ───
+
+/// One recording: voice mode or a hold, in one chat (the whole client has
+/// one microphone owner).
+struct Rec {
+    key: String,
+    chat: String,
+    hold: bool,
+    listen: Option<crate::voiceio::Listen>,
+    interim: String,
+    /// A hold's utterances so far.
+    heard: Vec<String>,
+    started: std::time::Instant,
+    level: f32,
+    /// A hold let go: its last words awaited.
+    sending: bool,
+    cancelling: bool,
+    sent_now: Option<(String, std::time::Instant)>,
+    last_heard: Option<std::time::Instant>,
+    gen: u64,
+}
+
+#[derive(Default)]
+struct Vo {
+    /// The server lists chat-voice; the mic shows (and when that was asked).
+    cap: bool,
+    ok: Option<(bool, std::time::Instant)>,
+    asking: bool,
+    settings: Value,
+    rec: Option<Rec>,
+    /// The chat in voice mode, paused for a hold elsewhere (its key).
+    away: Option<String>,
+    /// The voice lines, by pane key: kind, text, generation.
+    lines: HashMap<String, (String, String, u64)>,
+    line_gen: u64,
+    /// The last push to talk, by chat: its replies are said for a while.
+    ptt_at: HashMap<String, std::time::Instant>,
+    /// A press on a mic: its key, and whether it is still down.
+    press: Option<(String, u64)>,
+    press_gen: u64,
+    gen: u64,
+    /// Replies: the ids seen, the queue (chat, text), the one being said
+    /// (chat, id), paused, the speaker.
+    seen: HashSet<String>,
+    queue: std::collections::VecDeque<(String, String)>,
+    saying: Option<(String, u64)>,
+    paused: bool,
+    say_seq: u64,
+    speaker: Option<std::sync::mpsc::Sender<crate::voiceio::Out>>,
+    ticking: bool,
+    /// For the test driver: tones played, replies said, the last sent text.
+    tones: u32,
+    said: u32,
+    last_sent: String,
+}
+
+/// Ask the server once a minute whether a chat can listen (the mic shows).
+fn voice_check() {
+    let go = with(|a| {
+        if a.vo.asking || a.vo.ok.is_some_and(|o| o.1.elapsed() < Duration::from_secs(60)) { return false; }
+        if !a.vo.cap { a.vo.ok = Some((false, std::time::Instant::now())); return false; }
+        a.vo.asking = true;
+        true
+    }).unwrap_or(false);
+    if !go { return; }
+    let Some(api) = api() else { with(|a| a.vo.asking = false); return };
+    bg(move || api.get("/api/voice/settings"), |r| {
+        let (st, v) = match r { Ok(v) => (200, v), Err(ApiError::Status(c, _)) => (c, Value::Null), Err(_) => (0, Value::Null) };
+        with(|a| {
+            a.vo.asking = false;
+            let cap = a.vo.cap;
+            a.vo.ok = Some((crate::voice::available(st, &v, cap), std::time::Instant::now()));
+            if st == 200 { a.vo.settings = v; }
+        });
+        render();
+    });
+}
+
+fn voice_line(key: &str, kind: &str, text: &str, for_ms: Option<u64>) {
+    let g = with(|a| { a.vo.line_gen += 1; let g = a.vo.line_gen; a.vo.lines.insert(key.to_string(), (kind.to_string(), text.to_string(), g)); g }).unwrap_or(0);
+    render();
+    if let Some(ms) = for_ms {
+        let k = key.to_string();
+        slint::Timer::single_shot(Duration::from_millis(ms), move || {
+            let gone = with(|a| if a.vo.lines.get(&k).is_some_and(|l| l.2 == g) && a.vo.rec.as_ref().is_none_or(|r| r.key != k) { a.vo.lines.remove(&k); true } else { false }).unwrap_or(false);
+            if gone { render(); }
+        });
+    }
+}
+
+fn voice_line_clear(key: &str) {
+    if with(|a| a.vo.lines.remove(key).is_some()).unwrap_or(false) { render(); }
+}
+
+fn voice_exited(chat: &str) -> bool {
+    with(|a| chat_state_now(a, chat) == "exited").unwrap_or(false)
+}
+
+/// The mic pressed: a tap or a hold, told apart at HOLD_MS. In voice mode
+/// any press is a tap.
+fn mic_press(key: &str) {
+    let in_voice = with(|a| a.vo.rec.as_ref().is_some_and(|r| r.key == key && !r.hold)).unwrap_or(false);
+    let g = with(|a| { a.vo.press_gen += 1; a.vo.press = Some((key.to_string(), a.vo.press_gen)); a.vo.press_gen }).unwrap_or(0);
+    if in_voice { return; }
+    let k = key.to_string();
+    slint::Timer::single_shot(Duration::from_millis(crate::voice::HOLD_MS), move || {
+        let held = with(|a| if a.vo.press.as_ref().is_some_and(|p| p.0 == k && p.1 == g) { a.vo.press = None; true } else { false }).unwrap_or(false);
+        if held { hold_start(&k); }
+    });
+}
+
+fn mic_release(key: &str, over_x: bool) {
+    let holding = with(|a| a.vo.rec.as_ref().is_some_and(|r| r.key == key && r.hold && !r.sending)).unwrap_or(false);
+    if holding { return if over_x { hold_cancel() } else { hold_release() }; }
+    let tap = with(|a| a.vo.press.take().is_some_and(|p| p.0 == key)).unwrap_or(false);
+    if tap { mic_tap(key); }
+}
+
+fn mic_near(key: &str, near: bool) {
+    with(|a| if let Some(r) = a.vo.rec.as_mut() { if r.key == key && r.hold { r.cancelling = near; } });
+    voice_tick();
+}
+
+/// A tap: pauses a reply being said; in voice mode, sends the words in
+/// progress now (or ends voice mode with none); else voice mode on.
+fn mic_tap(key: &str) {
+    let speaking = with(|a| a.vo.saying.is_some() && !a.vo.paused).unwrap_or(false);
+    if speaking { return reply_pause(); }
+    let state = with(|a| a.vo.rec.as_ref().filter(|r| r.key == key && !r.hold).map(|r| r.interim.clone())).flatten();
+    match state {
+        Some(words) if !words.trim().is_empty() => {
+            with(|a| if let Some(r) = a.vo.rec.as_mut() {
+                if let Some(l) = &r.listen { l.send(crate::voiceio::Ctl::Discard); }
+                r.sent_now = Some((words.trim().to_string(), std::time::Instant::now()));
+                r.interim.clear();
+                r.started = std::time::Instant::now();
+            });
+            voice_send(key, &words);
+        }
+        Some(_) => voice_stop(key),
+        None => voice_start(key),
+    }
+}
+
+/// Voice mode on: the one chat with the microphone (another in voice mode
+/// goes off, saying so).
+fn voice_start(key: &str) {
+    let Some(chat) = chat_of(key).map(str::to_string) else { return };
+    if voice_exited(&chat) { return voice_line(key, "error", crate::voice::ERR_ENDED, Some(crate::voice::LINE_MS)); }
+    let moved: Vec<String> = with(|a| {
+        let mut m = vec![];
+        if let Some(r) = a.vo.rec.take() { if r.key != key { m.push(r.key.clone()); } }
+        if let Some(k) = a.vo.away.take() { if k != key { m.push(k); } }
+        m
+    }).unwrap_or_default();
+    for k in moved { voice_line(&k, "note", crate::voice::NOTE_MOVED, Some(crate::voice::LINE_MS)); }
+    rec_start(key, &chat, false);
+}
+
+/// Recording starts: the socket and the microphone; the box shows the words.
+fn rec_start(key: &str, chat: &str, hold: bool) {
+    let gen = with(|a| { a.vo.gen += 1; a.vo.gen }).unwrap_or(0);
+    let Some(api) = api() else { return };
+    let base = api.base().to_string();
+    let listen = crate::voiceio::Listen::start(move || api.fresh_access().ok().map(|t| crate::voice::listen_url(&base, &t)), move |ev| {
+        let _ = slint::invoke_from_event_loop(move || voice_ev(gen, ev));
+    });
+    with(|a| {
+        a.vo.lines.remove(key);
+        a.vo.rec = Some(Rec {
+            key: key.to_string(), chat: chat.to_string(), hold, listen: Some(listen), interim: String::new(), heard: vec![],
+            started: std::time::Instant::now(), level: 0.0, sending: false, cancelling: false, sent_now: None, last_heard: None, gen,
+        });
+    });
+    if hold { reply_hold(); }
+    voice_tick();
+    render();
+    if !with(|a| std::mem::replace(&mut a.vo.ticking, true)).unwrap_or(true) { voice_frames(); }
+}
+
+/// The strip at frame rate while recording.
+fn voice_frames() {
+    let t = slint::Timer::default();
+    t.start(slint::TimerMode::Repeated, Duration::from_millis(33), voice_tick);
+    // The timer lives as long as recording does (it is checked each frame).
+    with(|a| a.timers.push(t));
+}
+
+fn voice_tick() {
+    let Some(w) = ui() else { return };
+    let vu = w.global::<crate::VoiceUi>();
+    let (st, speaking) = with(|a| (a.vo.rec.as_ref().map(|r| (r.key.clone(), r.hold, r.sending, r.cancelling, r.interim.clone(), r.heard.clone(), r.started, r.level)), a.vo.saying.is_some() && !a.vo.paused || a.vo.saying.is_some())).unwrap_or((None, false));
+    let paused = with(|a| a.vo.paused).unwrap_or(false);
+    let away = with(|a| a.vo.away.clone()).flatten().unwrap_or_default();
+    if vu.get_away_key().as_str() != away { vu.set_away_key(away.into()); }
+    match st {
+        None => {
+            if !vu.get_key().is_empty() { vu.set_key("".into()); vu.set_hold(false); vu.set_cancelling(false); vu.set_speaking(false); }
+        }
+        Some((key, hold, sending, cancelling, interim, heard, started, level)) => {
+            if vu.get_key().as_str() != key { vu.set_key(key.as_str().into()); }
+            vu.set_hold(hold);
+            vu.set_cancelling(cancelling);
+            vu.set_speaking(speaking && !hold);
+            let text = if hold { crate::voice::box_text(&heard, &interim) } else { interim };
+            if vu.get_text().as_str() != text { vu.set_text(text.into()); }
+            let secs = started.elapsed().as_secs_f64();
+            vu.set_time(crate::voice::fmt_time(secs).into());
+            vu.set_status(if sending { "Sending" } else if speaking && paused { "Paused" } else if speaking { "Speaking" } else { "Listening" }.into());
+            let b = crate::voice::bars(level, secs as f32);
+            vu.set_b0(b[0]); vu.set_b1(b[1]); vu.set_b2(b[2]); vu.set_b3(b[3]); vu.set_b4(b[4]);
+        }
+    }
+}
+
+/// What a listen session said.
+fn voice_ev(gen: u64, ev: crate::voiceio::Ev) {
+    use crate::voice::Msg;
+    use crate::voiceio::Ev;
+    let current = with(|a| a.vo.rec.as_ref().is_some_and(|r| r.gen == gen)).unwrap_or(false);
+    if !current { return; }
+    match ev {
+        Ev::Level(l) => { with(|a| if let Some(r) = a.vo.rec.as_mut() { r.level = l; }); }
+        Ev::Msg(Msg::Ready) => tone(false),
+        Ev::Msg(Msg::Interim(t)) => { with(|a| if let Some(r) = a.vo.rec.as_mut() { r.interim = t; r.last_heard = Some(std::time::Instant::now()); }); }
+        Ev::Msg(Msg::Utterance(t)) => {
+            let send = with(|a| {
+                let r = a.vo.rec.as_mut()?;
+                r.last_heard = Some(std::time::Instant::now());
+                r.interim.clear();
+                if r.hold { r.heard.push(t.clone()); return None; }
+                // "Send now" already sent these words.
+                if r.sent_now.as_ref().is_some_and(|(w, at)| at.elapsed() < Duration::from_millis(crate::voice::ALREADY_SENT_MS) && w.split_whitespace().eq(t.split_whitespace())) { r.sent_now = None; return None; }
+                r.started = std::time::Instant::now();
+                Some(r.key.clone())
+            }).flatten();
+            if let Some(k) = send { voice_send(&k, &t); }
+        }
+        Ev::Msg(Msg::Discard) => { with(|a| if let Some(r) = a.vo.rec.as_mut() { r.interim.clear(); r.heard.clear(); }); }
+        Ev::Msg(Msg::Error(e)) => voice_fail(&e),
+        Ev::Msg(Msg::Other) => {}
+        Ev::Closed => {
+            let sending = with(|a| a.vo.rec.as_ref().is_some_and(|r| r.hold && r.sending)).unwrap_or(false);
+            if sending { hold_finish(gen); } else { voice_fail(crate::voice::ERR_CLOSED); }
+        }
+        Ev::NoMic => voice_fail(crate::voice::ERR_MIC),
+    }
+    voice_tick();
+}
+
+/// Words sent as "voice input: …" through the normal send (queued while
+/// Claude works); the draft stays as it was; the sent tone.
+fn voice_send(key: &str, words: &str) {
+    let Some(text) = crate::voice::voice_text(words) else { return };
+    let Some(chat) = chat_of(key).map(str::to_string) else { return };
+    if voice_exited(&chat) { return; }
+    with(|a| a.vo.last_sent = text.clone());
+    send_plain_keep(key, text, false);
+    tone(true);
+}
+
+/// An error: on the voice line in red (6 s), and recording ends.
+fn voice_fail(e: &str) {
+    let key = with(|a| a.vo.rec.as_ref().map(|r| r.key.clone())).flatten();
+    let Some(key) = key else { return };
+    rec_end();
+    voice_line(&key, "error", e, Some(crate::voice::LINE_MS));
+}
+
+/// Recording ends (the socket closes); a chat paused for it carries on.
+fn rec_end() {
+    let was_hold = with(|a| a.vo.rec.take().map(|r| r.hold)).flatten().unwrap_or(false);
+    voice_tick();
+    render();
+    if was_hold { away_resume(); }
+}
+
+fn away_resume() {
+    let Some(k) = with(|a| a.vo.away.take()).flatten() else { return };
+    voice_line_clear(&k);
+    if let Some(chat) = chat_of(&k).map(str::to_string) { if !voice_exited(&chat) { rec_start(&k, &chat, false); } }
+}
+
+/// Voice mode off: the socket closes, the reply stops, the draft is back.
+fn voice_stop(key: &str) {
+    let mine = with(|a| a.vo.rec.as_ref().is_some_and(|r| r.key == key)).unwrap_or(false);
+    if mine { rec_end(); }
+    reply_stop();
+    voice_line_clear(key);
+}
+
+/// A hold: the others in voice mode pause; listening while held.
+fn hold_start(key: &str) {
+    let Some(chat) = chat_of(key).map(str::to_string) else { return };
+    if voice_exited(&chat) { return voice_line(key, "error", crate::voice::ERR_ENDED, Some(crate::voice::LINE_MS)); }
+    let paused = with(|a| a.vo.rec.take().filter(|r| r.key != key).map(|r| r.key)).flatten();
+    if let Some(k) = paused {
+        with(|a| a.vo.away = Some(k.clone()));
+        voice_line(&k, "away", crate::voice::NOTE_PAUSED, None);
+    }
+    rec_start(key, &chat, true);
+}
+
+/// Let go: Sending; the server's last words are awaited (on its close, or
+/// SEND_WAIT_MS at most), then they go.
+fn hold_release() {
+    let gen = with(|a| a.vo.rec.as_mut().map(|r| { r.sending = true; r.cancelling = false; if let Some(l) = &r.listen { l.send(crate::voiceio::Ctl::Stop); } r.gen })).flatten();
+    let Some(gen) = gen else { return };
+    voice_tick();
+    slint::Timer::single_shot(Duration::from_millis(crate::voice::SEND_WAIT_MS), move || hold_finish(gen));
+}
+
+fn hold_finish(gen: u64) {
+    let done = with(|a| {
+        let r = a.vo.rec.as_ref().filter(|r| r.gen == gen && r.hold)?;
+        let words = crate::voice::ptt_words(&r.heard, &r.interim);
+        let (key, chat) = (r.key.clone(), r.chat.clone());
+        a.vo.ptt_at.insert(chat, std::time::Instant::now());
+        Some((key, words))
+    }).flatten();
+    let Some((key, words)) = done else { return };
+    rec_end();
+    if !words.is_empty() { voice_send(&key, &words); }
+}
+
+/// Dropped (× or Esc, or let go over ×): nothing sent.
+fn hold_cancel() {
+    with(|a| if let Some(r) = &a.vo.rec { if let Some(l) = &r.listen { l.send(crate::voiceio::Ctl::Discard); } });
+    rec_end();
+}
+
+/// ×: a hold is dropped; in voice mode the words go and the reply stops.
+fn voice_cancel(key: &str) {
+    let hold = with(|a| a.vo.rec.as_ref().filter(|r| r.key == key).map(|r| r.hold)).flatten();
+    match hold {
+        Some(true) => hold_cancel(),
+        Some(false) => {
+            with(|a| if let Some(r) = a.vo.rec.as_mut() { if let Some(l) = &r.listen { l.send(crate::voiceio::Ctl::Discard); } r.interim.clear(); });
+            reply_stop();
+            with(|a| a.vo.queue.clear());
+            voice_tick();
+        }
+        None => {}
+    }
+}
+
+/// Esc in the recording chat ends voice mode or drops a hold.
+fn voice_escape() -> bool {
+    let r = with(|a| {
+        let r = a.vo.rec.as_ref()?;
+        let focused = a.mosaic.layout(1000.0, 1000.0).0.into_iter().find(|l| l.id == a.focused).and_then(|l| l.key);
+        (focused.as_deref() == Some(r.key.as_str())).then(|| (r.key.clone(), r.hold))
+    }).flatten();
+    match r {
+        Some((_, true)) => { hold_cancel(); true }
+        Some((k, false)) => { voice_stop(&k); true }
+        None => false,
+    }
+}
+
+/// A chat gone, exited or parked: its recording ends.
+fn voice_chat_gone(chat: &str) {
+    let mine = with(|a| a.vo.rec.as_ref().is_some_and(|r| r.chat == chat)).unwrap_or(false);
+    if mine { rec_end(); }
+    with(|a| if a.vo.away.as_deref().and_then(chat_of) == Some(chat) { a.vo.away = None; });
+}
+
+// The tones and the replies.
+
+fn speaker() -> Option<std::sync::mpsc::Sender<crate::voiceio::Out>> {
+    with(|a| {
+        if a.vo.speaker.is_none() {
+            a.vo.speaker = Some(crate::voiceio::speaker(|id| { let _ = slint::invoke_from_event_loop(move || reply_done(id)); }));
+        }
+        a.vo.speaker.clone()
+    }).flatten()
+}
+
+fn tone(sent: bool) {
+    with(|a| a.vo.tones += 1);
+    if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Tone(sent)); }
+}
+
+/// A reply Claude gave a voice input: said in voice mode, or a while after
+/// a hold; else ignored. Each id once; they queue.
+fn voice_say(chat: &str, id: &str, text: &str) {
+    let go = with(|a| {
+        if !id.is_empty() && !a.vo.seen.insert(id.to_string()) { return false; }
+        let voice_mode = a.vo.rec.as_ref().is_some_and(|r| r.chat == chat && !r.hold) || a.vo.away.as_deref().and_then(chat_of) == Some(chat);
+        let since = a.vo.ptt_at.get(chat).map(|t| t.elapsed().as_millis() as u64);
+        let ok = crate::voice::should_speak(voice_mode, since.map(|_| 0), since.unwrap_or(0));
+        if ok { a.vo.queue.push_back((chat.to_string(), text.to_string())); }
+        ok
+    }).unwrap_or(false);
+    if go { reply_next(); }
+}
+
+/// The person is talking: a hold, its sending, or words within QUIET_MS.
+fn person_talking(a: &App) -> bool {
+    a.vo.rec.as_ref().is_some_and(|r| r.hold || r.sending || r.last_heard.is_some_and(|t| t.elapsed() < Duration::from_millis(crate::voice::QUIET_MS)))
+}
+
+fn reply_next() {
+    let next = with(|a| {
+        if a.vo.saying.is_some() || person_talking(a) { return None; }
+        let (chat, text) = a.vo.queue.pop_front()?;
+        a.vo.say_seq += 1;
+        a.vo.saying = Some((chat.clone(), a.vo.say_seq));
+        a.vo.paused = false;
+        Some((chat, text, a.vo.say_seq, s(&a.vo.settings, "ttsVoice"), a.vo.settings.get("deepgramLimitReached").and_then(|x| x.as_bool()).unwrap_or(false)))
+    }).flatten();
+    let Some((chat, text, id, voice, limit)) = next else {
+        // Waiting for the person: try again shortly.
+        if with(|a| !a.vo.queue.is_empty() && a.vo.saying.is_none()).unwrap_or(false) { slint::Timer::single_shot(Duration::from_millis(250), reply_next); }
+        return;
+    };
+    // While Claude speaks, listening pauses (no echo gate: PLAN.md).
+    with(|a| if let Some(r) = &a.vo.rec { if let Some(l) = &r.listen { l.send(crate::voiceio::Ctl::Saying(text.clone())); l.send(crate::voiceio::Ctl::Pause); } });
+    // After a hold (not in voice mode): the voice line says so.
+    let line_key = with(|a| (!a.vo.rec.as_ref().is_some_and(|r| r.chat == chat)).then(|| chat_key(&chat))).flatten();
+    if let Some(k) = &line_key { voice_line(k, "speaking", "Speaking…", None); }
+    voice_tick();
+    let (Some(out), Some(api)) = (speaker(), api()) else { return reply_done(id) };
+    // Deepgram's voice, streamed; without one (or over the limit), the
+    // device's voice is not there yet (PLAN.md): the written reply stands.
+    if voice.is_empty() || limit { return reply_done(id); }
+    let _ = out.send(crate::voiceio::Out::Begin(id, 24_000));
+    bg(move || {
+        let mut rate = 24_000u32;
+        let mut carry: Vec<u8> = vec![];
+        let r = api.post_stream("/api/voice/speak?stream=1", &json!({ "text": text }), "audio/L16", &mut |ct, xr| {
+            rate = crate::voice::speak_rate(xr, ct);
+            let _ = out.send(crate::voiceio::Out::Begin(id, rate));
+        }, &mut |b| {
+            carry.extend_from_slice(b);
+            let n = carry.len() / 2 * 2;
+            let samples: Vec<i16> = carry[..n].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+            carry.drain(..n);
+            out.send(crate::voiceio::Out::Pcm(id, samples)).is_ok()
+        });
+        let _ = out.send(crate::voiceio::Out::End(id));
+        r.is_ok()
+    }, move |ok| { if !ok { reply_done(id); } });
+}
+
+fn reply_done(id: u64) {
+    let fin = with(|a| {
+        if a.vo.saying.as_ref().is_none_or(|s| s.1 != id) { return None; }
+        let (chat, _) = a.vo.saying.take()?;
+        a.vo.paused = false;
+        a.vo.said += 1;
+        Some(chat)
+    }).flatten();
+    let Some(chat) = fin else { return };
+    let k = chat_key(&chat);
+    if with(|a| a.vo.lines.get(&k).is_some_and(|l| l.0 == "speaking" || l.0 == "paused")).unwrap_or(false) { voice_line_clear(&k); }
+    // Listening again, 450 ms after the reply.
+    slint::Timer::single_shot(Duration::from_millis(450), || {
+        with(|a| if let Some(r) = &a.vo.rec { if let Some(l) = &r.listen { l.send(crate::voiceio::Ctl::Resume); l.send(crate::voiceio::Ctl::Said); } });
+    });
+    voice_tick();
+    reply_next();
+}
+
+/// A tap on the mic while Claude speaks: paused; it carries on after the
+/// person has been quiet for QUIET_MS.
+fn reply_pause() {
+    with(|a| a.vo.paused = true);
+    if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Pause); }
+    let k = with(|a| a.vo.saying.as_ref().map(|s| chat_key(&s.0))).flatten();
+    if let Some(k) = k { if with(|a| a.vo.lines.get(&k).is_some_and(|l| l.0 == "speaking")).unwrap_or(false) { voice_line(&k, "paused", "Paused", None); } }
+    voice_tick();
+    reply_resume_later();
+}
+
+fn reply_resume_later() {
+    slint::Timer::single_shot(Duration::from_millis(crate::voice::QUIET_MS), || {
+        let go = with(|a| a.vo.paused && a.vo.saying.is_some() && !person_talking(a)).unwrap_or(false);
+        let still = with(|a| a.vo.paused && a.vo.saying.is_some()).unwrap_or(false);
+        if go {
+            with(|a| a.vo.paused = false);
+            if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Resume); }
+            let k = with(|a| a.vo.saying.as_ref().map(|s| chat_key(&s.0))).flatten();
+            if let Some(k) = k { if with(|a| a.vo.lines.get(&k).is_some_and(|l| l.0 == "paused")).unwrap_or(false) { voice_line(&k, "speaking", "Speaking…", None); } }
+            voice_tick();
+        } else if still { reply_resume_later(); }
+    });
+}
+
+/// A hold starts while a reply is said: it pauses (and carries on after).
+fn reply_hold() {
+    if with(|a| a.vo.saying.is_some() && !a.vo.paused).unwrap_or(false) { reply_pause(); }
+}
+
+/// Stop the reply being said (×, the voice line, voice mode off).
+fn reply_stop() {
+    let id = with(|a| a.vo.saying.as_ref().map(|s| s.1)).flatten();
+    if id.is_some() { if let Some(s) = speaker() { let _ = s.send(crate::voiceio::Out::Stop); } }
+}
+
+/// A click on the voice line: a reply being said stops.
+fn vline_click(key: &str) {
+    let saying_here = with(|a| a.vo.saying.as_ref().is_some_and(|s| chat_key(&s.0) == key)).unwrap_or(false);
+    if saying_here { reply_stop(); }
+}
+
+/// Ask again now (the test driver: the key was just set).
+pub fn voice_recheck() { with(|a| a.vo.ok = None); voice_check(); }
+
+/// What the test driver reads of voice input.
+pub fn voice_of() -> Value {
+    with(|a| json!({
+        "ok": a.vo.ok.map(|o| o.0), "cap": a.vo.cap,
+        "rec": a.vo.rec.as_ref().map(|r| json!({ "key": r.key, "hold": r.hold, "interim": r.interim, "heard": r.heard, "sending": r.sending, "cancelling": r.cancelling })),
+        "away": a.vo.away, "lines": a.vo.lines.iter().map(|(k, l)| (k.clone(), json!({ "kind": l.0, "text": l.1 }))).collect::<serde_json::Map<String, Value>>(),
+        "tones": a.vo.tones, "said": a.vo.said, "saying": a.vo.saying.as_ref().map(|s| s.0.clone()), "paused": a.vo.paused,
+        "queue": a.vo.queue.len(), "lastSent": a.vo.last_sent,
+    })).unwrap_or(Value::Null)
 }

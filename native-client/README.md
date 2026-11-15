@@ -133,7 +133,7 @@ before the next one (`test/phase2.mjs` the same way).
 ## Phase 2: chats
 
 Everything a chat does in the PC client, screen by screen: PLAN.md lists
-them (2.1–2.23, with 2.16f live frames and 2.24 voice still to come) and
+them (2.1–2.24, with 2.16f live frames still to come) and
 each has a spec in `specs/` with the web's screenshots and measurements.
 What phase 2 has added so far, item by item:
 
@@ -348,6 +348,18 @@ What phase 2 has added so far, item by item:
   back); anything that would change it resumes it first. Resumed, it swaps
   to the live chat in place; × discards it.
 
+- **2.24 Voice input** (specs/voice-input.md, `src/voice.rs`,
+  `src/voiceio.rs`): the composer's mic (shown when the server has a
+  Deepgram key and `chat-voice`). A tap: voice mode (each pause sends
+  `voice input: …`); a hold: push to talk (sent when let go, dropped over
+  ×). The box shows the words heard (the draft waits underneath), the
+  strip the level, time and status; the server's cancel words drop them.
+  The microphone through cpal (a WAV for tests: `CRUNDI_TEST_MIC_WAV`),
+  16 kHz Int16 frames to `/api/voice/listen`; one chat in voice mode at a
+  time, a hold elsewhere pausing it. Tones and Claude's replies (its
+  `speak`, streamed from `/api/voice/speak`) through rodio. Building on
+  Linux needs `libasound2-dev`.
+
 ### Reusable pieces
 
 - **Overlays and `Pointer.modal`** (ui/widgets.slint `Pointer`): one
@@ -389,13 +401,28 @@ What phase 2 has added so far, item by item:
   (xdotool) where it matters:
 
   ```bash
-  native-client/tools/test-server.sh 4813 --bare
+  node native-client/tools/deepgram-stub.mjs 4812 &     # voice input (2.24)
+  DEEPGRAM_HOST=127.0.0.1:4812 NODE_TLS_REJECT_UNAUTHORIZED=0 \
+    native-client/tools/test-server.sh 4813 --bare
   DISPLAY=:99 SLINT_BACKEND=winit-software \
     CRUNDI_TEST_SERVER=http://localhost:4813 CRUNDI_TEST_PORT=4814 \
     CRUNDI_TEST_PROJECT=/tmp/crundi-devtest-4813/proj \
+    CRUNDI_TEST_DEEPGRAM=127.0.0.1:4812 \
     NATIVE_BIN=$CARGO_TARGET_DIR/debug/crundi-native \
     node native-client/test/phase2.mjs
   ```
+
+  At the end of every step, `native-client/tools/clean-build.sh` frees the
+  disk the builds and tests took (old build-script outputs, a big
+  `debug/incremental`, the suites' /tmp projects and stopped test servers'
+  data). Build only in the shared `CARGO_TARGET_DIR`
+  (`~/.cache/crundi-native-target`), no release builds unless a test needs
+  one, and keep snapshots in `specs/` or one /tmp scratch dir removed at
+  the end of the step.
+
+  Without the Deepgram stand-in (no `CRUNDI_TEST_DEEPGRAM`) the voice
+  section is skipped. The app's microphone is a WAV the test writes
+  (`CRUNDI_TEST_MIC_WAV`).
 
   Run it with nothing else on the display (a second client cannot start:
   CEF's profile is shared). Then `test/phase1.mjs` and `test/drive.mjs`

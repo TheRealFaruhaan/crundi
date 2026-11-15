@@ -134,7 +134,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
    - [x] **2.23 Parked panes.** The parked card (Resume, its other choices,
      the warning, the narrow variants) and Peek / leave Peek
      (`/api/panes/:id/resume`).
-   - [ ] **2.24 Voice input.** The chat's mic button, push-to-talk and the
+   - [x] **2.24 Voice input.** The chat's mic button, push-to-talk and the
      recording strip (`cc-mic`, `cc-rec`, `/api/voice/listen`), and spoken
      replies where the chat has them. In phase 2 by the owner's decision
      (13 Nov 2026); Cru stays in phase 6.
@@ -478,6 +478,23 @@ Phase 1 left these, each with its workaround in place:
   - the note grows to six lines and scrolls (no resize grip);
   - a widget check's screenshot opens in the picture viewer without the
     web's "Render: <frame>" title (the viewer has none).
+- **Voice input** (2.24):
+  - talking over a reply: no echo gate yet (crundi-voice.js's createGate,
+    createPreroll, voicedShare are not ported). The web's own no-gate path
+    is used: listening pauses while Claude speaks (`pause` / `resume`);
+    the person pauses a reply with the mic, or stops it with × or the
+    voice line;
+  - the device voice (no Deepgram voice, or over its limit) is not there:
+    the reply is not said (the written one is in the chat). An older
+    server's whole-mp3 answer is not played either;
+  - the mic takes no keyboard focus (Enter/Space as a tap): the mouse
+    does everything; Ctrl+Space stays Cru's (phase 6);
+  - named differences: the microphone error says "for Crundi"; the mic
+    also needs the server's `chat-voice`; an earlier error clears when
+    recording starts; the cancelling strip says "Let go to cancel";
+  - macOS will need `NSMicrophoneUsageDescription` in the app bundle's
+    Info.plist when the bundle is made (the client is not bundled yet);
+    Linux builds need ALSA's headers (`libasound2-dev`, in CI).
 - **The resume picker** (2.22), deliberate differences: Esc cancels, the
   keyboard starts on New session, ↑/↓ move between rows (the web has none
   of these); the launcher shows its busy look from the picker too (the web

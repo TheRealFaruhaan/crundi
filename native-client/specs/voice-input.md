@@ -512,28 +512,28 @@ POST /api/mcp/call {tool:"speak", args:{sessionId, text}}  with the chat's dev-m
 
 ## Checklist
 
-- [ ] The mic is hidden unless `GET /api/voice/settings` says `deepgramKeySet` (and the server lists `chat-voice`); no message when hidden; checked at mount, cached 60 s across chats; none in Peek.
-- [ ] The mic sits between attach/Stop and Send (wide), and between the clock and Send (narrow); control square, icon-lg, hover accent.
-- [ ] A tap (< 350 ms), or Enter/Space, turns voice mode on. A hold (≥ 350 ms) is push to talk. In voice mode any press is a tap.
-- [ ] Recording: the box is read only, `accent-dim` fill, `accent` edge, placeholder "Listening…" (italic), the live words, growing and following the newest; the draft is kept aside and **restored exactly** afterwards.
-- [ ] The strip in Send's place: blinking dot, 5 level bars (formula in §4), `m:ss`, status Listening/Sending/Speaking/Paused; at least Send's width (wide), the rest of the row (narrow).
-- [ ] The mic shows the send icon while recording, with the pulsing accent ring; the sky ring while Claude speaks; the "away" outline while paused for another chat.
-- [ ] × at the far right: in voice mode it drops the words (`discard`) and stops the reply; in a hold, it cancels. Red on hover.
-- [ ] Hold, slide within 8 px of ×: the strip turns red-dim/red, × solid red and larger; let go there and nothing is sent.
-- [ ] Let go elsewhere: *Sending*, `{type:'stop'}`, sent on close or after 2.5 s, as `voice input: …`.
-- [ ] Voice mode: each `utterance` is sent as `voice input: <text>`, through the normal send (queued while working); the time restarts; the log scrolls down; the sent tone plays.
-- [ ] Tap with words in progress: sent now, and a late duplicate is ignored for 4 s. Tap with none: voice mode off.
-- [ ] `discard` from the server ("scratch that", "never mind", "ignore that") clears the words and sends nothing.
-- [ ] Escape ends voice mode or a hold, from within this chat only.
-- [ ] Audio is 16 kHz mono Int16 LE binary frames on `/api/voice/listen?encoding=linear16&sample_rate=16000&token=…`, buffered (≤ 40) until open; Cru's messages on that socket are ignored.
-- [ ] The listen tone plays on `ready`; the sent tone on each send.
-- [ ] `voice-say` is said in voice mode or within 10 min of a hold, never otherwise; queued; skipped if its id was seen.
-- [ ] Replies wait while the person talks (hold, sending, words within 1.5 s) and pause and resume around them; a tap on the mic pauses one; × or a click on the voice line stops it.
-- [ ] Deepgram voice: `POST /api/voice/speak?stream=1` streamed PCM at `X-Sample-Rate`; an mp3 from an older server; the device voice as the fallback.
-- [ ] `saying`/`pause` sent while Claude speaks, and `resume`/`said` after it (+450 ms); or the gate (§10.3).
-- [ ] After a hold, the voice line "Speaking…" (sky dot) shows above the box, and a click on it stops the reply.
-- [ ] Errors on the voice line in red, cleared after 6 s: "This chat has ended.", microphone refused or absent, the server's error text, "Listening stopped (the connection closed)."; each one ends recording and restores the draft.
-- [ ] One chat in voice mode at a time ("Voice mode moved to another chat."); a hold elsewhere pauses voice mode ("Paused: listening in another chat") and it resumes after.
-- [ ] Exit, close and park stop voice mode and any hold.
-- [ ] Texts scale with A-/A+; tokens only; the named differences in §10 are in PLAN.md.
-- [ ] The end-to-end test, on the rig in §9: a WAV fed through the test hook, frames counted at the stub, the transcript in the box, the utterance sent as `voice input: …`, `discard`, the refused-key error, and a `voice-say` played (or the gap recorded).
+- [x] The mic is hidden unless `GET /api/voice/settings` says `deepgramKeySet` (and the server lists `chat-voice`); no message when hidden; checked at mount, cached 60 s across chats; none in Peek.
+- [x] The mic sits between attach/Stop and Send (wide), and between the clock and Send (narrow); control square, icon-lg, hover accent.
+- [ ] A tap (< 350 ms), or Enter/Space, turns voice mode on. (Done for the mouse; no keyboard focus on the mic: PLAN.md Known gaps.) A hold (≥ 350 ms) is push to talk. In voice mode any press is a tap.
+- [x] Recording: the box is read only, `accent-dim` fill, `accent` edge, placeholder "Listening…" (italic), the live words, growing and following the newest; the draft is kept aside and **restored exactly** afterwards.
+- [x] The strip in Send's place: blinking dot, 5 level bars (formula in §4), `m:ss`, status Listening/Sending/Speaking/Paused; at least Send's width (wide), the rest of the row (narrow).
+- [x] The mic shows the send icon while recording, with the pulsing accent ring; the sky ring while Claude speaks; the "away" outline while paused for another chat.
+- [x] × at the far right: in voice mode it drops the words (`discard`) and stops the reply; in a hold, it cancels. Red on hover.
+- [x] Hold, slide within 8 px of ×: the strip turns red-dim/red, × solid red and larger; let go there and nothing is sent.
+- [x] Let go elsewhere: *Sending*, `{type:'stop'}`, sent on close or after 2.5 s, as `voice input: …`.
+- [x] Voice mode: each `utterance` is sent as `voice input: <text>`, through the normal send (queued while working); the time restarts; the log scrolls down; the sent tone plays.
+- [x] Tap with words in progress: sent now, and a late duplicate is ignored for 4 s. Tap with none: voice mode off.
+- [x] `discard` from the server ("scratch that", "never mind", "ignore that") clears the words and sends nothing.
+- [x] Escape ends voice mode or a hold, from within this chat only.
+- [x] Audio is 16 kHz mono Int16 LE binary frames on `/api/voice/listen?encoding=linear16&sample_rate=16000&token=…`, buffered (≤ 40) until open; Cru's messages on that socket are ignored.
+- [x] The listen tone plays on `ready`; the sent tone on each send.
+- [x] `voice-say` is said in voice mode or within 10 min of a hold, never otherwise; queued; skipped if its id was seen.
+- [x] Replies wait while the person talks (hold, sending, words within 1.5 s) and pause and resume around them; a tap on the mic pauses one; × or a click on the voice line stops it.
+- [ ] Deepgram voice: `POST /api/voice/speak?stream=1` streamed PCM at `X-Sample-Rate`; an mp3 from an older server; the device voice as the fallback. (The streamed PCM is done; the mp3 and the device voice are Known gaps.)
+- [x] `saying`/`pause` sent while Claude speaks, and `resume`/`said` after it (+450 ms); or the gate (§10.3).
+- [x] After a hold, the voice line "Speaking…" (sky dot) shows above the box, and a click on it stops the reply.
+- [x] Errors on the voice line in red, cleared after 6 s: "This chat has ended.", microphone refused or absent, the server's error text, "Listening stopped (the connection closed)."; each one ends recording and restores the draft.
+- [x] One chat in voice mode at a time ("Voice mode moved to another chat."); a hold elsewhere pauses voice mode ("Paused: listening in another chat") and it resumes after.
+- [x] Exit, close and park stop voice mode and any hold.
+- [x] Texts scale with A-/A+; tokens only; the named differences in §10 are in PLAN.md.
+- [x] The end-to-end test, on the rig in §9: a WAV fed through the test hook, frames counted at the stub, the transcript in the box, the utterance sent as `voice input: …`, `discard`, the refused-key error, and a `voice-say` played (or the gap recorded).

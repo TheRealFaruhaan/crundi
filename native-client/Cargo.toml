@@ -23,6 +23,10 @@ rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 arboard = "3.7"
 # Pictures Claude shows (2.16 media): PNG, JPEG, WebP and GIF.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Voice input (2.24): the microphone and the speaker (ALSA on Linux:
+# libasound2-dev to build), tones and Claude's streamed voice.
+cpal = "0.15"
+rodio = { version = "0.20", default-features = false }
 # Local time for scheduled messages (2.10).
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 

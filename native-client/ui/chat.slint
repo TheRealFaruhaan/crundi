@@ -2426,7 +2426,36 @@ component SlashRow inherits Rectangle {
 /// (one setting for every chat, saved), a request to focus a chat's box,
 /// and the controls whose screens come later (attach 2.7, the clock 2.10,
 /// the mode chooser 2.6).
+/// Voice input (2.24), kept by src/app.rs at frame rate: the chat that is
+/// recording (or in voice mode), a hold, the chat paused for a hold
+/// elsewhere, Claude speaking; the box's words, the strip's time, status
+/// and bars (px); cancelling (a hold over ×); where × is (window).
+export global VoiceUi {
+    in-out property <string> key;
+    in-out property <bool> hold;
+    in-out property <string> away-key;
+    in-out property <bool> speaking;
+    in-out property <string> text;
+    in-out property <string> time;
+    in-out property <string> status;
+    in-out property <length> b0;
+    in-out property <length> b1;
+    in-out property <length> b2;
+    in-out property <length> b3;
+    in-out property <length> b4;
+    in-out property <bool> cancelling;
+    in-out property <length> x-x;
+    in-out property <length> x-y;
+}
+
 export global Composer {
+    // Voice input (2.24), by pane key: the mic pressed and let go (over ×?),
+    // a hold moving near × or away, ×, a click on the voice line.
+    callback mic-press(string);
+    callback mic-release(string, bool);
+    callback mic-near(string, bool);
+    callback voice-cancel(string);
+    callback vline-click(string);
     // Ctrl+Enter sends (Enter makes a newline); otherwise Enter sends.
     in-out property <bool> ctrl-enter;
     callback set-ctrl-enter(bool);
@@ -2648,6 +2677,173 @@ component StopBtn inherits Rectangle {
         Tip { on: parent.has-hover; text: root.armed ? "Click again to interrupt" : "Stop this turn (click twice)"; }
     }
 }
+
+/// The mic (.cc-mic, 2.24): a control square. Idle: the mic in
+/// text-secondary (hover: accent-hover on an accent edge). On (recording):
+/// accent, the send icon in white, a pulsing ring (a still sky ring while
+/// Claude speaks). Away (paused for a hold elsewhere): the accent outline.
+/// A press and its release go to the app (a tap or a hold); while held,
+/// coming within sp-8 of × or leaving it is told too.
+component MicBtn inherits Rectangle {
+    in property <string> key;
+    in property <bool> on;
+    in property <bool> away;
+    in property <bool> speaking;
+    in property <string> tip;
+    width: Theme.control; height: Theme.control;
+    property <bool> near;
+    property <float> ph: mod(animation-tick() / Theme.shimmer, 1);
+    if root.on && !root.speaking: Rectangle {
+        property <length> ring: Theme.sp-2 + Theme.sp-4 * abs(sin(root.ph * 180deg));
+        x: -self.ring; y: -self.ring; width: parent.width + 2 * self.ring; height: parent.height + 2 * self.ring;
+        border-radius: Theme.r-control + self.ring; background: Theme.accent-dim;
+    }
+    if root.on && root.speaking: Rectangle {
+        x: -Theme.sp-2 - 1px; y: self.x; width: parent.width - 2 * self.x; height: self.width;
+        border-radius: Theme.r-control - self.x; background: Theme.sky-ring-voice;
+    }
+    Rectangle {
+        border-radius: Theme.r-control; border-width: 1px;
+        border-color: root.on || root.away || ta.has-hover ? Theme.accent : Theme.border;
+        background: root.on ? Theme.accent : Theme.bg-primary;
+        Icon {
+            source: root.on ? Icons.send : Icons.mic; width: Theme.icon-lg; height: Theme.icon-lg;
+            tint: root.on ? Theme.white : root.away || ta.has-hover ? Theme.accent-hover : Theme.text-secondary;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        pointer-event(e) => {
+            if e.button == PointerEventButton.left && e.kind == PointerEventKind.down { root.near = false; Composer.mic-press(root.key); }
+            if e.button == PointerEventButton.left && e.kind == PointerEventKind.up { Composer.mic-release(root.key, root.near); root.near = false; }
+        }
+        moved => {
+            if VoiceUi.hold && VoiceUi.key == root.key {
+                let px = self.absolute-position.x + self.mouse-x;
+                let py = self.absolute-position.y + self.mouse-y;
+                let n = px >= VoiceUi.x-x - Theme.sp-8 && px <= VoiceUi.x-x + Theme.control + Theme.sp-8
+                    && py >= VoiceUi.x-y - Theme.sp-8 && py <= VoiceUi.x-y + Theme.control + Theme.sp-8;
+                if n != root.near { root.near = n; Composer.mic-near(root.key, n); }
+            }
+        }
+        Tip { on: parent.has-hover && !parent.pressed; text: root.tip; }
+    }
+}
+
+/// The recording strip (.cc-rec, 2.24) in Send's place: Send's look, with a
+/// blinking dot, five level bars, the time and the status. Cancelling (a
+/// hold over ×): red-dim on a red edge, red text and bars.
+component RecStrip inherits Rectangle {
+    in property <float> fs: 1;
+    property <bool> c: VoiceUi.cancelling;
+    property <color> ink: root.c ? Theme.red : Theme.white;
+    // (Narrow: it takes what the row leaves; the status elides first.)
+    min-width: Theme.control;
+    preferred-width: lay.preferred-width;
+    border-radius: Theme.r-control;
+    border-width: root.c ? 1px : 0px; border-color: Theme.red;
+    background: root.c ? Theme.red-dim : transparent;
+    if !root.c: AccentFill { width: parent.width; height: parent.height; }
+    lay := HorizontalLayout {
+        alignment: center;
+        spacing: Theme.sp-6;
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        Rectangle {
+            y: (parent.height - self.height) / 2; width: Theme.sp-6 + 1px; height: self.width;
+            border-radius: self.width / 2; background: root.ink;
+            // (On for the first half of each blink.)
+            property <bool> lit: mod(animation-tick() / Theme.rec-blink, 1) * 2 < 1;
+            opacity: self.lit ? 1 : Theme.o-dim;
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-2;
+            for b in [VoiceUi.b0, VoiceUi.b1, VoiceUi.b2, VoiceUi.b3, VoiceUi.b4]: Rectangle {
+                y: (parent.height - self.height) / 2; width: Theme.sp-2 + 1px; height: b;
+                border-radius: Theme.r-chip / 2; background: root.ink;
+            }
+        }
+        Text { vertical-alignment: center; text: VoiceUi.time; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; color: root.ink; }
+        Text { min-width: 0; overflow: elide; vertical-alignment: center; text: root.c ? "Let go to cancel" : VoiceUi.status; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-medium; color: root.ink; }
+    }
+}
+
+/// The cancel × (.cc-rec-x, 2.24): a control square; hover (or a hold over
+/// it) solid red with a white ✕; a hold over it also grows it.
+component CancelX inherits Rectangle {
+    callback clicked();
+    width: Theme.control; height: Theme.control;
+    property <bool> hot: VoiceUi.cancelling;
+    property <bool> lit: ta.has-hover || root.hot;
+    // Where it is, for the hold's slide (VoiceUi).
+    property <length> ax: self.absolute-position.x;
+    property <length> ay: self.absolute-position.y;
+    changed ax => { VoiceUi.x-x = self.ax; }
+    changed ay => { VoiceUi.x-y = self.ay; }
+    init => { VoiceUi.x-x = self.ax; VoiceUi.x-y = self.ay; }
+    Rectangle {
+        x: root.hot ? -Theme.sp-2 : 0; y: self.x; width: parent.width - 2 * self.x; height: self.width;
+        border-radius: Theme.r-control; border-width: 1px;
+        border-color: root.lit ? Theme.red : Theme.border;
+        background: root.lit ? Theme.red : Theme.bg-primary;
+        Icon { source: Icons.x; width: Theme.icon-lg; height: Theme.icon-lg; tint: root.lit ? Theme.white : Theme.text-secondary; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+        Tip { on: parent.has-hover; text: "Cancel: drop what was heard (when holding, slide here and let go)"; }
+    }
+}
+
+/// The box while recording (2.24): read only, accent-dim on an accent edge,
+/// the words heard (or "Listening…", italic), growing to composer-max and
+/// following the newest words.
+component RecBox inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> text;
+    property <length> want: rt.preferred-height + 2 * Theme.sp-8 + Theme.sp-2;
+    height: max(Theme.control, min(Theme.composer-max, self.want));
+    border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent;
+    background: Theme.accent-dim;
+    fl := Flickable {
+        x: Theme.sp-10; y: Theme.sp-8 + 1px; width: parent.width - 2 * Theme.sp-10; height: parent.height - 2 * Theme.sp-8 - Theme.sp-2;
+        content-height: max(self.height, rt.preferred-height);
+        property <length> ch: rt.preferred-height;
+        changed ch => { self.content-y = min(0px, self.height - self.ch); }
+        rt := Text { width: fl.width; text: root.text; wrap: word-wrap; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; }
+    }
+    if root.text == "": Text {
+        x: Theme.sp-10; y: Theme.sp-8 + 1px; text: "Listening…"; font-italic: true;
+        font-size: Theme.text-13 * root.fs; color: Theme.text-secondary;
+    }
+}
+
+/// The voice line above the box (.cc-vline, 2.24): a dot (speaking sky;
+/// a note or paused for another chat yellow; none for an error), the text
+/// (an error red; "Speaking…"/"Paused" italic muted). A click goes to the
+/// app (it stops a reply being said).
+component VoiceLine inherits Rectangle {
+    in property <float> fs: 1;
+    in property <string> kind;
+    in property <string> text;
+    callback clicked();
+    height: lay.preferred-height;
+    lay := HorizontalLayout {
+        spacing: Theme.sp-6;
+        padding-left: Theme.sp-2; padding-right: Theme.sp-2;
+        if root.kind != "error": Rectangle {
+            y: (parent.height - self.height) / 2; width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.sp-4;
+            background: root.kind == "speaking" || root.kind == "paused" ? Theme.sky : Theme.yellow;
+        }
+        Text {
+            horizontal-stretch: 1; overflow: elide; vertical-alignment: center;
+            text: root.text; font-size: Theme.text-12 * root.fs;
+            font-italic: root.kind == "speaking" || root.kind == "paused";
+            color: root.kind == "error" ? Theme.red : root.kind == "speaking" || root.kind == "paused" ? Theme.text-muted : Theme.text-secondary;
+        }
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
 
 /// Send (or Queue while Claude is busy): the accent fill and its glow; never
 /// disabled. Narrow, it stretches and is `control` high.
@@ -2980,6 +3176,16 @@ component SchedPanel inherits Rectangle {
 
 /// The chat inside a pane: the log, then the composer (specs/composer.md).
 export component ChatPane inherits Rectangle {
+    // Voice input (2.24): the mic shows (the server can listen); the voice
+    // line's kind (error | note | away | speaking | paused) and text.
+    in property <bool> mic;
+    in property <string> vline-kind;
+    in property <string> vline-text;
+    property <bool> rec: VoiceUi.key == root.key && VoiceUi.key != "" && VoiceUi.away-key != root.key;
+    property <string> mic-tip: VoiceUi.speaking && VoiceUi.key == root.key ? "Pause what Claude is saying"
+        : root.rec && VoiceUi.hold ? "Let go to send (slide to cancel to drop it)"
+        : root.rec ? (VoiceUi.text != "" ? "Send what was heard now" : "Voice mode is on: tap to turn it off")
+        : "Voice input (tap: voice mode, hold: push to talk)";
     // The pane's key (src/app.rs), for the shared controls (Composer).
     in property <string> key;
     // The pane's text size, a scale of the base size (the web's --cc-fs).
@@ -3241,10 +3447,23 @@ export component ChatPane inherits Rectangle {
                     body: root.q-held;
                     clicked => { Composer.take-back(root.key); }
                 }
+                // The voice line (2.24): above the box.
+                if root.vline-kind != "": VoiceLine {
+                    fs: root.fs; kind: root.vline-kind; text: root.vline-text;
+                    clicked => { Composer.vline-click(root.key); }
+                }
                 // The box; wide, the buttons beside it on its bottom line.
                 boxrow := HorizontalLayout {
                     spacing: Theme.sp-8;
+                    // Recording (2.24): the words heard, in the box's place;
+                    // the draft waits under it and comes back after.
+                    Rectangle {
+                    horizontal-stretch: 1;
+                    height: root.rec ? rb.height : ib.height;
+                    rb := RecBox { y: 0; width: parent.width; visible: root.rec; fs: root.fs; text: VoiceUi.text; }
                     ib := InputBox {
+                        visible: !root.rec;
+                        y: 0; width: parent.width;
                         slash-open: root.slash-open;
                         slash-move(by) => { Composer.slash-move(root.key, by); }
                         slash-choose => { Composer.slash-choose(root.key, -1); }
@@ -3262,6 +3481,7 @@ export component ChatPane inherits Rectangle {
                         up => { return Composer.take-back(root.key); }
                         paste(si) => { return Composer.paste(root.key, si); }
                     }
+                    }
                     if !root.narrow: VerticalLayout {
                         alignment: end;
                         SquareBtn {
@@ -3275,7 +3495,11 @@ export component ChatPane inherits Rectangle {
                         alignment: end;
                         StopBtn { fs: root.fs; armed: root.stop-armed; clicked => { root.stop(); } }
                     }
-                    if !root.narrow: VerticalLayout {
+                    if !root.narrow && root.mic: VerticalLayout {
+                        alignment: end;
+                        MicBtn { key: root.key; on: root.rec; away: VoiceUi.away-key == root.key; speaking: VoiceUi.speaking; tip: root.mic-tip; }
+                    }
+                    if !root.narrow && !root.rec: VerticalLayout {
                         alignment: end;
                         SendBtn {
                             fs: root.fs;
@@ -3284,6 +3508,14 @@ export component ChatPane inherits Rectangle {
                             height: Theme.sp-12 + Theme.sp-16 * root.fs;
                             clicked => { root.do-send(); }
                         }
+                    }
+                    if !root.narrow && root.rec: VerticalLayout {
+                        alignment: end;
+                        RecStrip { fs: root.fs; height: Theme.sp-12 + Theme.sp-16 * root.fs; }
+                    }
+                    if !root.narrow && root.rec: VerticalLayout {
+                        alignment: end;
+                        CancelX { clicked => { Composer.voice-cancel(root.key); } }
                     }
                 }
                 // Narrow: the buttons on their own row, Send filling the rest.
@@ -3302,13 +3534,16 @@ export component ChatPane inherits Rectangle {
                         clicked => { Composer.schedule(root.key); }
                     }
                     if root.state == "working": StopBtn { fs: root.fs; armed: root.stop-armed; clicked => { root.stop(); } }
-                    SendBtn {
+                    if root.mic: MicBtn { key: root.key; on: root.rec; away: VoiceUi.away-key == root.key; speaking: VoiceUi.speaking; tip: root.mic-tip; }
+                    if !root.rec: SendBtn {
                         horizontal-stretch: 1;
                         fs: root.fs;
                         label: root.busy ? "Queue" : "Send";
                         height: Theme.control;
                         clicked => { root.do-send(); }
                     }
+                    if root.rec: RecStrip { horizontal-stretch: 1; fs: root.fs; height: Theme.control; }
+                    if root.rec: CancelX { clicked => { Composer.voice-cancel(root.key); } }
                 }
                 // The upload bar (.cc-up), while a file uploads (and a moment
                 // after): its name, the share sent, the number or "saving".

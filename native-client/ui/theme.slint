@@ -245,6 +245,10 @@ export global Theme {
     // A live thinking block (2.15): the label's shimmer, the caret's blink.
     out property <duration> shimmer: 1600ms;
     out property <duration> blink: 1000ms;
+    // Voice input (2.24): the recording dot's blink, and the mic's ring
+    // while Claude speaks (sky at .35).
+    out property <duration> rec-blink: 1200ms;
+    out property <color> sky-ring-voice: #38bdf859;
     // The log (2.16): following the bottom within this of it; the jump
     // button past the larger of this and a third of the log.
     out property <length> stick-within: 60px;

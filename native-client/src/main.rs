@@ -33,6 +33,8 @@ mod media;
 mod agents;
 mod resume;
 mod fresult;
+mod voice;
+mod voiceio;
 mod drafts;
 mod app;
 mod browser;
