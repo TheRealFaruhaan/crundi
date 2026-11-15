@@ -10,7 +10,9 @@
 // Kinds: kanban, notes, mindmap, factories, schedule (tabs); kanban, notes, mindmap, factory (panels)
 
 import { Theme, Icons, PanelPage, EmptyState } from "../kit.slint";
-import { PlanningUi } from "api.slint";
+import { PlanningUi, PlanningKanban, PlanningAsk } from "api.slint";
+import { KanbanView } from "kanban.slint";
+import { DragClone, ClipPop, AskDialog } from "overlay.slint";
 
 /// One of the area's screens: `kind` is the tab's id (or the pane's kind),
 /// `key` the pane's key when embedded in a workbench pane ("" in a tab).
@@ -19,8 +21,8 @@ export component PlanningView inherits Rectangle {
     in property <string> key;
     in property <bool> embedded;
     background: Theme.bg-primary;
-    // Placeholder until the area builds its screens.
-    PanelPage {
+    if root.kind == "kanban": KanbanView { width: parent.width; height: parent.height; embedded: root.embedded; }
+    if root.kind != "kanban": PanelPage {
         embedded: root.embedded;
         EmptyState { has-icon: false; title: "Not built yet: " + root.kind; hint: "The planning area builds this screen."; }
     }
@@ -29,5 +31,7 @@ export component PlanningView inherits Rectangle {
 /// The area's layer over the whole window (its dialogs and popovers); it
 /// takes no input where it draws nothing.
 export component PlanningOverlay inherits Rectangle {
+    if PlanningKanban.clip-task != "": ClipPop { width: root.width; height: root.height; }
+    if PlanningAsk.open: AskDialog { width: root.width; height: root.height; }
+    if PlanningKanban.drag-id != "": DragClone { }
 }
-
