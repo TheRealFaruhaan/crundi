@@ -1,0 +1,653 @@
+// Ops area: Panels: the widgets tab, the widget panel and the inline widget card (crundi-widgets.js).
+// OpsPanels (the global) is what Rust reads, sets and handles: src/ops/panels.rs.
+// It is exported to Rust by ui/ops/api.slint (one line per file there).
+//
+// A panel ("widget") is HTML Claude wrote. The web shows it in a sandboxed
+// iframe; here each copy on screen is an off-screen CEF view (src/frames.rs,
+// the phase 0 frames), keyed "wg|<frame>|<project>|<id>": its picture comes
+// through FrameUi (as a chat's live frames), and the box reports itself to
+// OpsPanels.seen several times a second while it is drawn (the view lives as
+// long as that). The parts:
+//   OpsPanelsView    the Panels tab (kind "panels"), and a workbench pane
+//                    (kind "widget": "widget:<id>" a panel, "panel:widget"
+//                    the chooser the + menu opens)
+//   OpsWidgetCard    the inline card under a widget_open call (slot inline):
+//                    the workspace area places it in the chat log
+//   OpsWidgetDock    the panels docked to a chat (slot dock): placed by the
+//                    workspace area at the top of the chat's pane
+//   OpsPanelChips    the top bar's chips (slot chip): placed by the Lead
+//   OpsPanelsOverlay a chip's popover
+
+import { Theme, Icons, Icon, IconButton, PanelPage, EmptyState, LoadingState, ErrorState, SmallBtn, Select, Spinner, Pointer, SoftShadow, ScrollThumb } from "../kit.slint";
+import { FrameUi } from "../chat.slint";
+import { OpsPanelIcons } from "panels-icons.slint";
+
+/// A row of the tab's list: its badge ("global", "approve", "error") or its
+/// line ("closed", "docked", "workbench"…).
+export struct OpsPanelItem { id: string, title: string, sub: string, badge: string, tone: string, global: bool, closed: bool, selected: bool }
+/// The panel selected in the tab, for its bar. scope: "local" (Make
+/// global), "global" (Global, primary), "other" (the badge "global · from
+/// <home>"). The slot <select>: its labels and values, the current one.
+export struct OpsPanelSel { id: string, title: string, open: bool, pinned: bool, scope: string, home: string, slot-labels: [string], slot-values: [string], slot-index: int }
+export struct OpsPanelVersion { version: string, when: string, current: bool }
+export struct OpsPanelShot { caption: string, image: image, ready: bool }
+/// A row of the chooser (a "Panel" pane): status as the web's ("already
+/// open", "docked to a chat", "top bar", "Panels tab", "closed").
+export struct OpsPanelPick { id: string, title: string, status: string, here: bool }
+export struct OpsPanelGrantItem { what: string, detail: string }
+/// One copy of a panel on screen (by frame key). state: "loading", "error",
+/// "ready". The approval banner; the content's height (auto-sized frames:
+/// inline card, dock) once measured; a live chip's face width.
+export struct OpsPanelFrame { state: string, error: string, grant: bool, grant-items: [OpsPanelGrantItem], approving: bool, height: length, measured: bool, title: string, chip-w: length }
+export struct OpsPanelChip { id: string, label: string, value: string, title: string, approve: bool, live: bool }
+export struct OpsPanelDock { id: string, title: string, approve: bool, collapsed: bool, slot-labels: [string], slot-values: [string], slot-index: int }
+
+export global OpsPanels {
+    /// A dialog of this screen covers the window (OpsOverlay sets Shell.modal-ops).
+    in-out property <bool> modal;
+    /// The project the panels are listed for (frame keys carry it).
+    in-out property <string> project;
+    /// The tab: "loading", "error", "empty" (no panels), "empty-global"
+    /// (no project, no global panels), "list".
+    in-out property <string> state: "loading";
+    in-out property <string> error;
+    in-out property <[OpsPanelItem]> items;
+    in-out property <OpsPanelSel> sel;
+    /// The tab's stage: "" (the panel), "checks", "history".
+    in-out property <string> pane;
+    in-out property <string> history-state;
+    in-out property <[OpsPanelVersion]> versions;
+    in-out property <string> checks-state;
+    in-out property <[OpsPanelShot]> shots;
+    in-out property <[OpsPanelPick]> picks;
+    in-out property <[OpsPanelChip]> chips;
+    /// A chip's popover.
+    in-out property <bool> pop-open;
+    in-out property <string> pop-id;
+    in-out property <string> pop-title;
+    in-out property <[string]> pop-slot-labels;
+    in-out property <[string]> pop-slot-values;
+    in-out property <int> pop-slot-index;
+    /// The test driver's look at an inline card: (project, widget, chat).
+    in-out property <string> preview-project;
+    in-out property <string> preview-id;
+    in-out property <string> preview-chat;
+    /// Bumped whenever a frame's or a dock's state changes (re-read below).
+    in-out property <int> gen;
+    pure callback frame(string, int) -> OpsPanelFrame;
+    /// A pane's panel: "widget:<id>" -> id; a chooser's chosen one ("" none yet).
+    pure callback picked-of(string, int) -> string;
+    /// The panels docked to a chat (its id).
+    pure callback docks(string, int) -> [OpsPanelDock];
+    /// A widget's title by id (a pane, an inline card before it loads).
+    pure callback title-of(string, int) -> string;
+    callback seen(string, length, length, length, length);
+    callback select(string);
+    callback show-pane(string);
+    callback slot(string, string);
+    callback pin(string);
+    callback scope(string, bool);
+    callback reload(string);
+    callback close(string);
+    callback reopen(string);
+    callback delete(string);
+    callback restore(string, string);
+    callback approve(string);
+    callback not-now(string);
+    callback pick(string, string);
+    callback open-tab(string);
+    callback chip(string);
+    callback pop-close();
+    callback collapse(string, bool);
+    callback retry();
+}
+
+/// A frame key: "wg|<frame>|<project>|<id>".
+export global OpsPanelKeys {
+    public pure function key(frame: string, project: string, id: string) -> string { return "wg|" + frame + "|" + project + "|" + id; }
+}
+
+/// The small pill (.wg-badge): "" quiet (an edge), "warn" yellow, "err" red.
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <string> tone;
+    height: bt.preferred-height + Theme.sp-4;
+    width: bt.preferred-width + Theme.sp-12;
+    border-radius: Theme.r-pill;
+    border-width: root.tone == "" ? 1px : 0px;
+    border-color: Theme.border;
+    background: root.tone == "warn" ? Theme.yellow-dim : root.tone == "err" ? Theme.red-dim : transparent;
+    bt := Text {
+        text: root.text.to-uppercase();
+        font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide;
+        color: root.tone == "warn" ? Theme.yellow : root.tone == "err" ? Theme.red : Theme.text-secondary;
+        vertical-alignment: center; horizontal-alignment: center;
+    }
+}
+
+/// A frame's box: the panel's page, painted by its off-screen view; the
+/// spinner until its first paint. It reports itself while drawn. A press
+/// gives the page the keyboard; a press elsewhere takes it back. The wheel
+/// is the page's (`wheel-own`), or only while it can still scroll that way
+/// (a card in a chat's log: the log scrolls at the page's end).
+component FrameBox inherits Rectangle {
+    in property <string> fkey;
+    in property <bool> interactive: true;
+    in property <bool> wheel-own: true;
+    property <bool> painted: FrameUi.painted(root.fkey, FrameUi.gen);
+    property <int> cur: FrameUi.cursor(root.fkey, FrameUi.gen);
+    function report() { OpsPanels.seen(root.fkey, root.width, root.height, self.absolute-position.x, self.absolute-position.y); }
+    init => { root.report(); }
+    Timer { interval: Theme.frame-seen; running: true; triggered => { root.report(); } }
+    if !root.painted && root.interactive: VerticalLayout { alignment: center; HorizontalLayout { alignment: center; Spinner { } } }
+    if root.painted: Image { width: parent.width; height: parent.height; source: FrameUi.image(root.fkey, FrameUi.gen); image-fit: fill; }
+    property <int> presses: Pointer.presses;
+    changed presses => {
+        let px = Pointer.press-x - self.absolute-position.x;
+        let py = Pointer.press-y - self.absolute-position.y;
+        if fs.has-focus && (px < 0 || py < 0 || px > self.width || py > self.height) { fs.clear-focus(); }
+    }
+    fs := FocusScope {
+        enabled: root.interactive;
+        focus-on-click: false;
+        key-pressed(ev) => { FrameUi.key(root.fkey, ev.text, true, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.meta); accept }
+        key-released(ev) => { FrameUi.key(root.fkey, ev.text, false, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt, ev.modifiers.meta); accept }
+        changed has-focus => { FrameUi.focus(root.fkey, self.has-focus); }
+        if root.interactive: TouchArea {
+            mouse-cursor: root.cur == 1 ? MouseCursor.pointer : root.cur == 2 ? MouseCursor.text : root.cur == 3 ? MouseCursor.crosshair
+                : root.cur == 4 ? MouseCursor.move : root.cur == 6 ? MouseCursor.not-allowed : root.cur == 11 ? MouseCursor.grab
+                : root.cur == 12 ? MouseCursor.grabbing : MouseCursor.default;
+            pointer-event(e) => {
+                let b = e.button == PointerEventButton.middle ? 1 : e.button == PointerEventButton.right ? 2 : 0;
+                if e.kind == PointerEventKind.down { fs.focus(); FrameUi.pointer(root.fkey, 1, self.mouse-x, self.mouse-y, b); }
+                if e.kind == PointerEventKind.up { FrameUi.pointer(root.fkey, 2, self.mouse-x, self.mouse-y, b); }
+            }
+            moved => { FrameUi.pointer(root.fkey, 0, self.mouse-x, self.mouse-y, 0); }
+            changed has-hover => {
+                if self.has-hover { FrameUi.pointer(root.fkey, 0, self.mouse-x, self.mouse-y, 0); }
+                else { FrameUi.pointer(root.fkey, 3, self.mouse-x, self.mouse-y, 0); }
+            }
+            scroll-event(e) => {
+                if root.wheel-own || FrameUi.wheel-takes(root.fkey, e.delta-x, e.delta-y) { FrameUi.wheel(root.fkey, self.mouse-x, self.mouse-y, e.delta-x, e.delta-y); return accept; }
+                reject
+            }
+        }
+    }
+}
+
+/// The approval banner (.wg-banner.grant): what the panel asks for, then
+/// Approve and Not now.
+component GrantBanner inherits Rectangle {
+    in property <string> fkey;
+    in property <OpsPanelFrame> f;
+    background: Theme.yellow-dim;
+    VerticalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10; padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+        spacing: Theme.sp-6;
+        Text {
+            text: "This panel is asking for more than it gets by default. It keeps doing these after the chat that built it is gone.";
+            font-size: Theme.text-12; color: Theme.text-primary; wrap: word-wrap;
+        }
+        for it in root.f.grant-items: Rectangle {
+            border-radius: Theme.r-control;
+            background: Theme.backdrop;
+            VerticalLayout {
+                padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+                spacing: 1px;
+                Text { text: it.what.to-uppercase(); font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.yellow; }
+                if it.detail != "": Text { text: it.detail; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-primary; wrap: word-wrap; }
+            }
+        }
+        HorizontalLayout {
+            alignment: start;
+            spacing: Theme.sp-6;
+            SmallBtn { text: "Approve"; kind: "primary"; has-icon: true; icon: OpsPanelIcons.shield; enabled: !root.f.approving; clicked => { OpsPanels.approve(root.fkey); } }
+            SmallBtn { text: "Not now"; clicked => { OpsPanels.not-now(root.fkey); } }
+        }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+}
+
+/// One copy of a panel (the web's createView): its banners over its frame.
+/// `auto`: as tall as its content (an inline card, a dock), between
+/// panels-frame-min and `max-h`; else it fills what it is given.
+export component OpsWidgetFrame inherits Rectangle {
+    in property <string> fkey;
+    in property <bool> auto;
+    in property <length> max-h: Theme.panels-inline-max;
+    in property <bool> wheel-own: true;
+    property <OpsPanelFrame> f: OpsPanels.frame(root.fkey, OpsPanels.gen);
+    property <length> body-h: max(Theme.panels-frame-min, min(root.max-h, root.f.measured ? root.f.height : Theme.panels-frame-start));
+    out property <length> want-h: (root.f.state == "error" ? err.preferred-height : 0px) + (root.f.grant ? grant.preferred-height : 0px) + (root.f.state == "error" ? 0px : root.body-h);
+    background: Theme.bg-primary;
+    VerticalLayout {
+        err := Rectangle {
+            visible: root.f.state == "error";
+            height: self.visible ? et.preferred-height + Theme.sp-16 : 0px;
+            background: Theme.red-dim;
+            et := Text { x: Theme.sp-10; width: parent.width - Theme.sp-20; text: root.f.error != "" ? root.f.error : "This panel could not be loaded."; font-size: Theme.text-12; color: Theme.red; wrap: word-wrap; vertical-alignment: center; }
+        }
+        grant := GrantBanner { visible: root.f.grant; height: self.visible ? self.preferred-height : 0px; fkey: root.fkey; f: root.f; }
+        if root.f.state != "error": FrameBox { vertical-stretch: 1; fkey: root.fkey; wheel-own: root.wheel-own; }
+    }
+}
+
+/// A slot <select> (.wg-select): "Where this panel sits".
+component SlotSelect inherits Select {
+    in property <string> wid;
+    in property <[string]> labels;
+    in property <[string]> values;
+    in property <int> index;
+    options: root.labels;
+    selected: root.index;
+    width: Theme.panels-select-w;
+    height: Theme.control-sm;
+    picked(i) => { if i != root.index { OpsPanels.slot(root.wid, root.values[i]); } }
+}
+
+/// A tab row (.wg-tab-item): the icon, the title, a badge or its line.
+component TabItem inherits Rectangle {
+    in property <OpsPanelItem> it;
+    min-height: Theme.panels-item-h;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.it.selected ? Theme.border : transparent;
+    background: root.it.selected || ta.has-hover ? Theme.bg-tertiary : transparent;
+    HorizontalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        spacing: Theme.sp-8;
+        Icon { y: (parent.height - self.height) / 2; source: Icons.panel; tint: Theme.accent-hover; }
+        Text { horizontal-stretch: 1; text: root.it.title; font-size: Theme.text-13; color: root.it.closed ? Theme.text-muted : Theme.text-primary; vertical-alignment: center; overflow: elide; }
+        if root.it.global: VerticalLayout { alignment: center; Badge { text: "global"; } }
+        if root.it.badge != "": VerticalLayout { alignment: center; Badge { text: root.it.badge; tone: root.it.tone; } }
+        if root.it.badge == "": Text { text: root.it.sub; font-size: Theme.text-10; color: Theme.text-muted; vertical-alignment: center; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { OpsPanels.select(root.it.id); } }
+}
+
+/// The tab's message in the middle (.wg-msg): the faint panel icon, a line
+/// (bold, primary when `strong`), a hint.
+component Msg inherits VerticalLayout {
+    in property <string> title;
+    in property <bool> strong;
+    in property <string> hint;
+    alignment: center;
+    spacing: Theme.sp-6;
+    padding: Theme.sp-24;
+    HorizontalLayout { alignment: center; Icon { width: Theme.text-26; height: Theme.text-26; source: Icons.panel; tint: Theme.text-secondary; opacity: Theme.o-dim; } }
+    Text { text: root.title; horizontal-alignment: center; font-size: Theme.text-13; font-weight: root.strong ? Theme.w-bold : Theme.w-regular; color: root.strong ? Theme.text-primary : Theme.text-secondary; wrap: word-wrap; }
+    if root.hint != "": HorizontalLayout {
+        alignment: center;
+        Text { max-width: Theme.dialog-w; text: root.hint; horizontal-alignment: center; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+    }
+}
+
+/// The tab's bar (.wg-tab-bar) for the selected panel.
+component TabBar inherits Rectangle {
+    property <OpsPanelSel> s: OpsPanels.sel;
+    background: Theme.bg-secondary;
+    height: lay.preferred-height;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10; padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+        spacing: Theme.sp-6;
+        Text { horizontal-stretch: 1; text: root.s.title; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary; vertical-alignment: center; overflow: elide; }
+        if root.s.open: SlotSelect { wid: root.s.id; labels: root.s.slot-labels; values: root.s.slot-values; index: root.s.slot-index; }
+        SmallBtn { text: root.s.pinned ? "Pinned" : "Pin"; has-icon: true; icon: Icons.pin; clicked => { OpsPanels.pin(root.s.id); } }
+        if root.s.scope == "local": SmallBtn { text: "Make global"; has-icon: true; icon: Icons.globe; clicked => { OpsPanels.scope(root.s.id, true); } }
+        if root.s.scope == "global": SmallBtn { text: "Global"; kind: "primary"; has-icon: true; icon: Icons.globe; clicked => { OpsPanels.scope(root.s.id, false); } }
+        if root.s.scope == "other": VerticalLayout { alignment: center; Badge { text: "global · from " + root.s.home; } }
+        SmallBtn { text: ""; has-icon: true; icon: Icons.refresh; accessible-label: "Reload"; clicked => { OpsPanels.reload(root.s.id); } }
+        SmallBtn { text: "Checks"; has-icon: true; icon: Icons.eye; kind: OpsPanels.pane == "checks" ? "on" : ""; clicked => { OpsPanels.show-pane(OpsPanels.pane == "checks" ? "" : "checks"); } }
+        SmallBtn { text: "History"; has-icon: true; icon: OpsPanelIcons.history; kind: OpsPanels.pane == "history" ? "on" : ""; clicked => { OpsPanels.show-pane(OpsPanels.pane == "history" ? "" : "history"); } }
+        if root.s.open: SmallBtn { text: "Close"; clicked => { OpsPanels.close(root.s.id); } }
+        if !root.s.open: SmallBtn { text: "Reopen"; kind: "primary"; clicked => { OpsPanels.reopen(root.s.id); } }
+        SmallBtn { text: ""; has-icon: true; icon: Icons.trash; kind: "danger"; accessible-label: "Delete this panel and its files"; clicked => { OpsPanels.delete(root.s.id); } }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+}
+
+/// "Checks": the screenshots from Claude's last check of the panel.
+component ChecksPane inherits Rectangle {
+    VerticalLayout {
+        alignment: start;
+        padding: Theme.sp-12;
+        spacing: Theme.sp-10;
+        Text { text: "What Claude saw when it last checked this panel."; font-size: Theme.text-13; font-weight: Theme.w-bold; color: Theme.text-primary; wrap: word-wrap; }
+        if OpsPanels.checks-state == "list": Flickable {
+            height: Theme.shot-h + Theme.sp-24;
+            content-width: row.preferred-width;
+            row := HorizontalLayout {
+                padding-top: Theme.sp-8; padding-bottom: Theme.sp-4;
+                spacing: Theme.sp-8;
+                for sh in OpsPanels.shots: VerticalLayout {
+                    spacing: Theme.sp-4;
+                    Rectangle {
+                        height: Theme.shot-h;
+                        width: sh.ready && sh.image.height > 0 ? Theme.shot-h * sh.image.width / sh.image.height : Theme.shot-h;
+                        border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                        background: Theme.bg-primary;
+                        clip: true;
+                        if sh.ready: Image { width: parent.width; height: parent.height; source: sh.image; image-fit: contain; }
+                        if !sh.ready: Spinner { }
+                    }
+                    Text { text: sh.caption; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; }
+                }
+            }
+        }
+        if OpsPanels.checks-state == "none": Text { text: "No check has been run yet. Claude renders a panel with widget_render before calling it done."; font-size: Theme.text-13; color: Theme.text-muted; wrap: word-wrap; }
+    }
+}
+
+/// "History": earlier versions, the newest first; Restore on all but it.
+component HistoryPane inherits Rectangle {
+    fl := Flickable {
+        content-height: col.preferred-height;
+        col := VerticalLayout {
+            width: fl.width;
+            alignment: start;
+            padding: Theme.sp-12;
+            spacing: Theme.sp-10;
+            if OpsPanels.history-state == "loading": LoadingState { }
+            if OpsPanels.history-state == "empty": Text { text: "No versions yet."; font-size: Theme.text-13; color: Theme.text-secondary; }
+            for v in OpsPanels.versions: Rectangle {
+                height: vl.preferred-height;
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                vl := HorizontalLayout {
+                    padding-left: Theme.sp-10; padding-right: Theme.sp-10; padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+                    spacing: Theme.sp-10;
+                    Text { text: "v" + v.version; font-size: Theme.text-12; font-weight: Theme.w-bold; color: Theme.text-primary; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: v.when; font-size: Theme.text-12; color: Theme.text-secondary; vertical-alignment: center; }
+                    if v.current: VerticalLayout { alignment: center; Badge { text: "current"; } }
+                    if !v.current: SmallBtn { text: "Restore"; clicked => { OpsPanels.restore(OpsPanels.sel.id, v.version); } }
+                }
+            }
+        }
+    }
+}
+
+/// The Panels tab (.wg-tab): the list on the left, the selected panel's bar
+/// and stage on the right.
+component PanelsTab inherits Rectangle {
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    if OpsPanels.state == "loading": LoadingState { }
+    if OpsPanels.state == "error": ErrorState { text: OpsPanels.error; retried => { OpsPanels.retry(); } }
+    if OpsPanels.state == "empty-global": Msg {
+        title: "No global panels yet.";
+        hint: "Select a project to see its panels. Any of them can be made global from here, to show in every project.";
+    }
+    if OpsPanels.state == "empty": Msg {
+        title: "No panels yet"; strong: true;
+        hint: "Claude builds these when something is better seen than read: progress on a long task, a table from a database, a build board. Ask for one, or let it decide.";
+    }
+    if OpsPanels.state == "list": HorizontalLayout {
+        Rectangle {
+            width: Theme.panels-list-w;
+            background: Theme.bg-secondary;
+            lf := Flickable {
+                width: parent.width - 1px; x: 0;
+                content-height: lc.preferred-height;
+                lc := VerticalLayout {
+                    width: lf.width;
+                    alignment: start;
+                    padding: Theme.sp-8;
+                    spacing: Theme.sp-4;
+                    for it in OpsPanels.items: TabItem { it: it; }
+                }
+            }
+            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            if OpsPanels.sel.id != "": TabBar { }
+            Rectangle {
+                vertical-stretch: 1;
+                if OpsPanels.sel.id != "" && OpsPanels.pane == "checks": ChecksPane { width: parent.width; height: parent.height; }
+                if OpsPanels.sel.id != "" && OpsPanels.pane == "history": HistoryPane { width: parent.width; height: parent.height; }
+                if OpsPanels.sel.id != "" && OpsPanels.pane == "" && !OpsPanels.sel.open: Msg {
+                    width: parent.width; height: parent.height;
+                    title: "This panel is closed.";
+                    hint: "Reopen it to see it here and wherever it was placed.";
+                }
+                if OpsPanels.sel.id != "" && OpsPanels.pane == "" && OpsPanels.sel.open: OpsWidgetFrame {
+                    width: parent.width; height: parent.height;
+                    fkey: OpsPanelKeys.key("tab", OpsPanels.project, OpsPanels.sel.id);
+                }
+            }
+        }
+    }
+}
+
+/// The chooser in a "Panel" pane (the web's mountPicker): every panel of
+/// the project, the newest first; one already in the workbench is greyed.
+component Picker inherits Rectangle {
+    in property <string> key;
+    if OpsPanels.picks.length == 0: Msg {
+        width: parent.width; height: parent.height;
+        title: "No panels in this project yet"; strong: true;
+        hint: "Ask Claude for one in a chat: \"make a panel showing…\", or \"show me a live panel of this task\".";
+    }
+    if OpsPanels.picks.length > 0: fl := Flickable {
+        content-height: col.preferred-height;
+        col := VerticalLayout {
+            width: fl.width;
+            alignment: start;
+            padding: Theme.sp-10;
+            spacing: Theme.sp-4;
+            Text {
+                text: "CHOOSE A PANEL TO OPEN HERE";
+                font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-secondary;
+            }
+            Rectangle { height: Theme.sp-4; }
+            for p in OpsPanels.picks: Rectangle {
+                min-height: Theme.panels-item-h;
+                border-radius: Theme.r-control;
+                opacity: p.here ? Theme.o-soft : 1;
+                background: pa.has-hover && !p.here ? Theme.bg-tertiary : transparent;
+                HorizontalLayout {
+                    padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+                    spacing: Theme.sp-8;
+                    Icon { y: (parent.height - self.height) / 2; source: Icons.panel; tint: Theme.accent-hover; }
+                    Text { horizontal-stretch: 1; text: p.title; font-size: Theme.text-13; color: Theme.text-primary; vertical-alignment: center; overflow: elide; }
+                    Text { text: p.status; font-size: Theme.text-10; color: Theme.text-muted; vertical-alignment: center; }
+                }
+                pa := TouchArea { enabled: !p.here; mouse-cursor: p.here ? MouseCursor.default : MouseCursor.pointer; clicked => { OpsPanels.pick(root.key, p.id); } }
+            }
+        }
+    }
+}
+
+/// The screen (a tab, or a panel in a workbench pane: `embedded`, `key`).
+/// kind "panels": the tab. kind "widget": a pane: "widget:<id>" shows that
+/// panel; any other key (the + menu's "panel:widget") is the chooser, and
+/// shows the chosen panel once picked.
+export component OpsPanelsView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    // "widget:<id>": that panel; a chooser: the panel picked in it ("" none yet).
+    property <string> wid: OpsPanels.picked-of(root.key, OpsPanels.gen);
+    if root.kind == "panels": PanelsTab { width: parent.width; height: parent.height; embedded: root.embedded; }
+    if root.kind == "widget" && root.wid != "": OpsWidgetFrame {
+        width: parent.width; height: parent.height;
+        fkey: OpsPanelKeys.key("cell", OpsPanels.project, root.wid);
+    }
+    if root.kind == "widget" && root.wid == "": Picker { width: parent.width; height: parent.height; key: root.key; }
+}
+
+/// The inline card under a widget_open call (.wg-inline): a head with the
+/// title and "Open in the Panels tab", then the panel at its content's
+/// height (at most panels-inline-max). The workspace area places it in the
+/// chat log: project (the chat's), wid (the call's input id), chat (its id).
+export component OpsWidgetCard inherits Rectangle {
+    in property <string> project;
+    in property <string> wid;
+    in property <string> chat;
+    property <string> fkey: OpsPanelKeys.key("inline:" + root.chat, root.project, root.wid);
+    property <OpsPanelFrame> f: OpsPanels.frame(root.fkey, OpsPanels.gen);
+    property <string> name: root.f.title != "" ? root.f.title : OpsPanels.title-of(root.wid, OpsPanels.gen) != "" ? OpsPanels.title-of(root.wid, OpsPanels.gen) : root.wid;
+    // The head, the panel, and the card's edge above and below.
+    height: head.height + body.want-h + 1px + 1px;
+    border-radius: Theme.r-card;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg-card;
+    clip: true;
+    VerticalLayout {
+        padding: 1px;
+        head := Rectangle {
+            height: hl.preferred-height;
+            hl := HorizontalLayout {
+                padding-left: Theme.sp-10; padding-right: Theme.sp-6; padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+                spacing: Theme.sp-6;
+                Icon { y: (parent.height - self.height) / 2; source: Icons.panel; tint: Theme.text-secondary; }
+                Text { horizontal-stretch: 1; text: root.name; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+                IconButton { size: Theme.control-sm; icon: OpsPanelIcons.expand; tooltip: "Open in the Panels tab"; clicked => { OpsPanels.open-tab(root.wid); } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+        }
+        body := OpsWidgetFrame { height: self.want-h; fkey: root.fkey; auto: true; max-h: Theme.panels-inline-max; wheel-own: false; background: transparent; }
+    }
+}
+
+/// The panels docked to a chat (.wg-dock): each a head (its title, which
+/// folds it too; "approve"; the slot select; collapse; ×) over the panel at
+/// its content's height (at most `max-h`). Nothing when none is docked.
+/// The workspace area places it at the top of a chat's pane body (beside
+/// the conversation when the pane is at least 900px wide), chat = its id.
+export component OpsWidgetDock inherits Rectangle {
+    in property <string> chat;
+    in property <length> max-h: Theme.panels-inline-max;
+    property <[OpsPanelDock]> list: OpsPanels.docks(root.chat, OpsPanels.gen);
+    out property <bool> empty: root.list.length == 0;
+    height: col.preferred-height;
+    background: Theme.bg-primary;
+    col := VerticalLayout {
+        for d in root.list: VerticalLayout {
+            Rectangle {
+                background: Theme.bg-secondary;
+                height: dh.preferred-height;
+                dh := HorizontalLayout {
+                    padding-left: Theme.sp-8; padding-right: Theme.sp-6; padding-top: Theme.sp-2; padding-bottom: Theme.sp-2;
+                    spacing: Theme.sp-6;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        min-height: Theme.control-sm;
+                        HorizontalLayout {
+                            spacing: Theme.sp-6;
+                            Icon { y: (parent.height - self.height) / 2; source: Icons.panel; tint: Theme.accent-hover; }
+                            Text { horizontal-stretch: 1; text: d.title.to-uppercase(); font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+                        }
+                        TouchArea { mouse-cursor: pointer; clicked => { OpsPanels.collapse(d.id, !d.collapsed); } }
+                    }
+                    if d.approve: VerticalLayout { alignment: center; Badge { text: "approve"; tone: "warn"; } }
+                    VerticalLayout { alignment: center; SlotSelect { wid: d.id; labels: d.slot-labels; values: d.slot-values; index: d.slot-index; } }
+                    IconButton { size: Theme.control-sm; icon: d.collapsed ? OpsPanelIcons.down : OpsPanelIcons.up; tooltip: d.collapsed ? "Expand" : "Collapse"; clicked => { OpsPanels.collapse(d.id, !d.collapsed); } }
+                    IconButton { size: Theme.control-sm; icon: Icons.x; tooltip: "Close panel"; clicked => { OpsPanels.close(d.id); } }
+                }
+                if !d.collapsed: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+            }
+            if !d.collapsed: OpsWidgetFrame {
+                height: self.want-h;
+                fkey: OpsPanelKeys.key("dock:" + root.chat, OpsPanels.project, d.id);
+                auto: true;
+                max-h: root.max-h;
+            }
+        }
+    }
+    if !root.empty: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+}
+
+/// The top bar's chips (.wg-chips): one per panel placed there, each a pill
+/// (its icon, label and value, "approve" while waiting) or, for a panel with
+/// a chip face, that face, live. A click opens its popover. The Lead places
+/// it in the top bar, after the project's name and badges.
+export component OpsPanelChips inherits HorizontalLayout {
+    spacing: Theme.sp-6;
+    alignment: start;
+    for c in OpsPanels.chips: chip := Rectangle {
+        property <OpsPanelFrame> f: OpsPanels.frame(OpsPanelKeys.key("chip", OpsPanels.project, c.id), OpsPanels.gen);
+        // A face that measured nothing marked data-chip: the label instead.
+        property <bool> face: c.live && !(self.f.measured && self.f.chip-w <= 0px);
+        y: (parent.height - self.height) / 2;
+        height: Theme.control-sm - Theme.sp-2;
+        width: min(Theme.panels-chip-face-max + Theme.sp-20, cl.preferred-width);
+        border-radius: Theme.r-pill;
+        border-width: 1px;
+        border-color: ca.has-hover ? Theme.accent : Theme.border;
+        background: Theme.bg-tertiary;
+        accessible-role: button;
+        accessible-label: c.title;
+        cl := HorizontalLayout {
+            padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+            spacing: Theme.sp-6;
+            if chip.face: FrameBox {
+                y: (parent.height - self.height) / 2;
+                height: Theme.sp-24;
+                width: max(Theme.icon-lg, min(Theme.panels-chip-face-max, chip.f.chip-w));
+                fkey: OpsPanelKeys.key("chip", OpsPanels.project, c.id);
+                interactive: false;
+            }
+            if !chip.face: Icon { y: (parent.height - self.height) / 2; source: Icons.panel; tint: Theme.accent-hover; }
+            if !chip.face: Text { text: c.label; font-size: Theme.text-12; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; max-width: Theme.panels-chip-max; }
+            if !chip.face && c.value != "": Text { text: c.value; font-size: Theme.text-12; color: Theme.text-primary; vertical-alignment: center; overflow: elide; max-width: Theme.panels-chip-max; }
+            if c.approve: VerticalLayout { alignment: center; Badge { text: "approve"; tone: "warn"; } }
+        }
+        ca := TouchArea { mouse-cursor: pointer; clicked => { OpsPanels.chip(c.id); } }
+    }
+}
+
+/// This screen's dialogs over the whole window (no input where it draws nothing):
+/// a chip's popover (.wg-pop): its head (title, slot select, ×) over the
+/// panel; the backdrop closes it. And the driver's look at an inline card.
+export component OpsPanelsOverlay inherits Rectangle {
+    if OpsPanels.pop-open: Rectangle {
+        background: Theme.scrim;
+        TouchArea { clicked => { OpsPanels.pop-close(); } }
+    }
+    if OpsPanels.pop-open: Rectangle {
+        x: parent.width - self.width - Theme.sp-12;
+        y: Theme.topbar-height + Theme.sp-8;
+        width: min(Theme.panels-pop-w, parent.width - Theme.sp-24);
+        height: min(Theme.panels-pop-h, parent.height - Theme.topbar-height - Theme.sp-24);
+        SoftShadow { width: parent.width; height: parent.height; }
+        Rectangle {
+            border-radius: Theme.r-card;
+            border-width: 1px;
+            border-color: Theme.border;
+            background: Theme.bg-primary;
+            clip: true;
+            TouchArea { }
+            VerticalLayout {
+                padding: 1px;
+                Rectangle {
+                    background: Theme.bg-secondary;
+                    height: ph.preferred-height;
+                    ph := HorizontalLayout {
+                        padding-left: Theme.sp-8; padding-right: Theme.sp-6; padding-top: Theme.sp-2; padding-bottom: Theme.sp-2;
+                        spacing: Theme.sp-6;
+                        Icon { y: (parent.height - self.height) / 2; source: Icons.panel; tint: Theme.accent-hover; }
+                        Text { horizontal-stretch: 1; text: OpsPanels.pop-title.to-uppercase(); font-size: Theme.text-11; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+                        VerticalLayout { alignment: center; SlotSelect { wid: OpsPanels.pop-id; labels: OpsPanels.pop-slot-labels; values: OpsPanels.pop-slot-values; index: OpsPanels.pop-slot-index; } }
+                        IconButton { size: Theme.control-sm; icon: Icons.x; tooltip: "Close"; clicked => { OpsPanels.pop-close(); } }
+                    }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+                }
+                OpsWidgetFrame { vertical-stretch: 1; fkey: OpsPanelKeys.key("pop", OpsPanels.project, OpsPanels.pop-id); }
+            }
+        }
+    }
+    if OpsPanels.preview-id != "": Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: Theme.topbar-height + Theme.sp-48;
+        width: Theme.panels-pop-w + Theme.sp-48;
+        height: card.height + Theme.sp-32;
+        background: Theme.bg-primary;
+        border-radius: Theme.r-card;
+        card := OpsWidgetCard {
+            x: Theme.sp-16; y: Theme.sp-16; width: parent.width - Theme.sp-32;
+            project: OpsPanels.preview-project; wid: OpsPanels.preview-id; chat: OpsPanels.preview-chat;
+        }
+    }
+}

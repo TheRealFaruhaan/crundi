@@ -1,0 +1,956 @@
+// Ops area: Docker (app/vendor/crundi-docker.js, loadDockerTab and
+// checkDockerPresence in src/webapp-html.js): the status gate, the nav
+// (Containers, Stacks, Images, Volumes, Networks, Forwards, System, the
+// filter, refresh), each view, a container's detail (Overview, Logs, Stats,
+// Shell, Inspect; actions, rename and remove under the header), the forward
+// form and the job drawer (compose and pull output).
+// OpsDocker (the global) is what Rust reads, sets and handles: src/ops/docker.rs.
+
+import { Theme, Icons, Icon, PanelPage, SmallBtn, TextField, CheckRow, Select, Spinner, Tones } from "../kit.slint";
+import { ListView } from "std-widgets.slint";
+import { Tip } from "../chat.slint";
+import { OpsDkChip, DkInk, DkDot, DkChip, DkChips, DkSegBtn, DkSeg, DkStat, DkSec, DkKv, DkQuiet, DkGroup, DkEmpty, DkList, DkLine } from "docker-parts.slint";
+
+export { OpsDkChip }
+
+export struct OpsDkSeg { key: string, label: string, count: string }
+export struct OpsDkStat { v: string, l: string }
+export struct OpsDkBay { id: string, state: string, tip: string }
+export struct OpsDkCtr { id: string, name: string, sub: string, state: string, chips: [OpsDkChip], cpu: string, mem: string, act: string }
+export struct OpsDkSvc { id: string, state: string, name: string, sub: string, img: string, status: string }
+export struct OpsDkStack { name: string, chip: string, tone: string, where: string, files: bool, live: bool, svcs: [OpsDkSvc] }
+/// An image, volume or network: its name (and chips after it), its line,
+/// the chips of who uses it, its remove button (or why not).
+export struct OpsDkRow { key: string, name: string, tip: string, tags: [OpsDkChip], sub: string, chips: [OpsDkChip], can-rm: bool, arm: string }
+export struct OpsDkFwd { host: string, sub: string, tags: [OpsDkChip], chips: [OpsDkChip], watch: bool }
+export struct OpsDkGroup { title: string, help: string, rows: [OpsDkFwd] }
+export struct OpsDkKv { k: string, v: string, hid: bool }
+export struct OpsDkDisk { label: string, note: string, error: bool, count: string, size: string, reclaim: string, kind: string, arm: string, enabled: bool }
+export struct OpsDkAct { verb: string, label: string, arm: string, kind: string }
+export struct OpsDkPort { port: string, k: string, v: string, fwds: [OpsDkChip], btn: string }
+export struct OpsDkLog { md: styled-text, err: bool }
+export struct OpsDkChart { title: string, value: string, sub: string, a1: string, l1: string, a2: string, l2: string, leg1: string, leg2: string }
+
+export global OpsDocker {
+    /// A dialog of this screen covers the window (it has none: the web's are inline).
+    in-out property <bool> modal;
+    // The status gate: "loading", "absent", "unreachable", "ok".
+    in property <string> gate: "loading";
+    in property <string> gate-error;
+    // The nav.
+    in property <[OpsDkSeg]> segs;
+    in property <string> view: "containers";
+    in-out property <string> filter;
+    // The list view's state: "loading", "error" (err-title, err-text), "data".
+    in property <string> state: "loading";
+    in property <string> err-title;
+    in property <string> err-text;
+    in property <bool> nomatch;
+    // Containers.
+    in property <bool> ctr-empty;
+    in property <[OpsDkStat]> stats;
+    in property <[OpsDkBay]> bay;
+    in property <[OpsDkCtr]> ctrs;
+    // Stacks.
+    in property <bool> stacks-empty;
+    in property <[OpsDkStack]> stacks;
+    // Images, volumes, networks.
+    in property <string> list-head;
+    in property <bool> list-empty;
+    in property <[OpsDkRow]> rows;
+    in-out property <string> pull-ref;
+    // Forwards.
+    in property <bool> fwd-empty;
+    in property <int> orphans;
+    in property <[OpsDkGroup]> groups;
+    // The forward form, open under one port ("" closed, "any" from Forwards).
+    in property <string> form-port;
+    in-out property <string> form-name;
+    in-out property <string> form-target;
+    in property <[string]> form-modes;
+    in-out property <int> form-mode;
+    in-out property <bool> form-public;
+    in-out property <bool> form-watch;
+    in property <string> form-help;
+    // System.
+    in property <[OpsDkKv]> engine;
+    in property <[OpsDkKv]> contents;
+    in property <[string]> warnings;
+    in property <string> disk-state;   // "measuring", "error", "data"
+    in property <string> disk-error;
+    in property <[OpsDkDisk]> disk;
+    // A container's detail.
+    in property <bool> d-open;
+    in property <string> d-state;      // "loading", "error", "data"
+    in property <string> d-error;
+    in property <string> d-name;
+    in property <string> d-sub;
+    in property <string> d-dot;
+    in property <[OpsDkAct]> d-acts;
+    in property <string> d-tab: "overview";
+    in property <string> d-prompt;     // "", "rename", "remove"
+    in-out property <string> d-newname;
+    in-out property <bool> d-rmvol;
+    in-out property <bool> d-rmforce: true;
+    in property <bool> d-rmforce-shown;
+    in property <[OpsDkKv]> ov-state;
+    in property <[OpsDkKv]> ov-runs;
+    in property <[OpsDkPort]> ov-ports;
+    in property <[OpsDkKv]> ov-nets;
+    in property <[OpsDkKv]> ov-mounts;
+    in property <[OpsDkKv]> ov-env;
+    in property <bool> ov-env-note;
+    in property <[OpsDkKv]> ov-labels;
+    in-out property <bool> labels-open;
+    // Logs.
+    in property <[OpsDkLog]> logs;
+    in property <int> log-gen;
+    in-out property <string> log-filter;
+    in-out property <bool> log-follow: true;
+    in-out property <bool> log-ts;
+    in-out property <bool> log-wrap: true;
+    // Stats: "measuring", "msg" (stats-msg), "data".
+    in property <string> stats-state: "measuring";
+    in property <string> stats-msg;
+    in property <[OpsDkChart]> charts;
+    in property <string> stats-note;
+    in property <float> chart-w: 300;
+    in property <float> chart-h: 84;
+    // Shell: its bar's words, its button ("" none), the screen.
+    in property <string> shell-bar;
+    in property <string> shell-name;
+    in property <string> shell-btn;
+    in property <string> shell-text;
+    in property <int> shell-gen;
+    in-out property <string> shell-input;
+    in property <bool> shell-live;
+    // Inspect.
+    in property <string> inspect;
+    // The job drawer.
+    in property <bool> job-open;
+    in property <string> job-title;
+    in property <string> job-text;
+    in property <bool> job-done;
+    in property <bool> job-ok;
+    in property <string> job-code;
+    in property <int> job-gen;
+    // The log's ANSI colours (30..37) and the filter's mark, for Rust's markup.
+    out property <[color]> ansi: [Theme.text-muted, Theme.docker-red, Theme.docker-green, Theme.amber, Theme.accent-hover, Theme.docker-magenta, Theme.docker-cyan, Theme.text-primary];
+    out property <color> mark: Theme.accent-hover;
+
+    callback set-view(string);
+    callback filter-edited(string);
+    callback refresh();
+    callback recheck();
+    callback open(string);
+    callback back();
+    callback dtab(string);
+    callback ctr(string, string);
+    callback prompt(string);
+    callback rename-do();
+    callback remove-do();
+    callback log-clear();
+    callback log-copy();
+    callback log-filter-edited(string);
+    callback log-option(string, bool);
+    callback inspect-copy();
+    callback shell-again();
+    callback shell-send(string);
+    callback shell-key(string);
+    callback stack(string, string);
+    callback pull();
+    callback prune(string);
+    callback rm(string, string);
+    callback chip(OpsDkChip);
+    callback fwd-add(string);
+    callback fwd-create();
+    callback fwd-cancel();
+    callback fwd-watch(string, bool);
+    callback rm-fwd(string);
+    callback rm-orphans();
+    callback job-close();
+}
+
+global DkIcons {
+    public pure function seg(k: string) -> image {
+        return k == "containers" ? Icons.docker : k == "stacks" ? Icons.layers : k == "images" ? Icons.archive
+        : k == "volumes" ? Icons.hard-drive : k == "networks" ? Icons.network : k == "forwards" ? Icons.globe : Icons.server;
+    }
+    public pure function verb(v: string) -> image {
+        return v == "stop" ? Icons.stop : v == "restart" ? Icons.rotate-ccw : v == "pause" ? Icons.pause : v == "kill" ? Icons.zap : Icons.play;
+    }
+}
+
+/// The forward form (.dk-fwdform) and its help line.
+component DkFwdForm inherits VerticalLayout {
+    in property <bool> blind;
+    spacing: Theme.sp-6;
+    Rectangle {
+        background: Theme.bg-tertiary;
+        border-radius: Theme.r-control;
+        border-width: 1px;
+        border-color: Theme.border;
+        HorizontalLayout {
+            padding: Theme.sp-10;
+            spacing: Theme.sp-8;
+            if root.blind: TextField {
+                width: Theme.sp-48 + Theme.sp-40;
+                placeholder: "Port"; mono: true;
+                text <=> OpsDocker.form-target;
+                accepted => { OpsDocker.fwd-create(); }
+                escape => { OpsDocker.fwd-cancel(); }
+            }
+            TextField {
+                horizontal-stretch: 1;
+                placeholder: "name"; mono: true;
+                text <=> OpsDocker.form-name;
+                accepted => { OpsDocker.fwd-create(); }
+                escape => { OpsDocker.fwd-cancel(); }
+            }
+            Select {
+                width: Theme.docker-filter-w + Theme.sp-40;
+                options: OpsDocker.form-modes;
+                selected: OpsDocker.form-mode;
+                picked(i) => { OpsDocker.form-mode = i; }
+            }
+            CheckRow { text: "Public"; checked: OpsDocker.form-public; toggled(on) => { OpsDocker.form-public = on; } }
+            CheckRow { text: "Warn if it goes down"; checked: OpsDocker.form-watch; toggled(on) => { OpsDocker.form-watch = on; } }
+            SmallBtn { kind: "primary"; has-icon: true; icon: Icons.check; text: "Create"; clicked => { OpsDocker.fwd-create(); } }
+            SmallBtn { text: "Cancel"; clicked => { OpsDocker.fwd-cancel(); } }
+        }
+    }
+    Text { text: OpsDocker.form-help; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+}
+
+/// A list row's frame: hover, a click opens it (when `clickable`).
+component DkRow inherits Rectangle {
+    in property <bool> clickable;
+    callback clicked();
+    min-height: Theme.control + Theme.sp-8;
+    background: root.clickable && ta.has-hover ? Theme.bg-hover : transparent;
+    ta := TouchArea { mouse-cursor: root.clickable ? pointer : default; clicked => { if root.clickable { root.clicked(); } } }
+    HorizontalLayout {
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        spacing: Theme.sp-12;
+        @children
+    }
+}
+
+/// A name and its mono line under it (.dk-main).
+component DkMain inherits VerticalLayout {
+    in property <string> name;
+    in property <string> sub;
+    alignment: center;
+    spacing: Theme.sp-2;
+    Text { text: root.name; font-size: Theme.text-13; color: Theme.text-primary; overflow: elide; }
+    if root.sub != "": Text { text: root.sub; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; }
+}
+
+/// A number with its small label under it (.dk-num).
+component DkNum inherits VerticalLayout {
+    in property <string> v;
+    in property <string> l;
+    alignment: center;
+    Text { text: root.v; horizontal-alignment: right; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; }
+    if root.v != "": Text { text: root.l; horizontal-alignment: right; font-size: Theme.text-10; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+}
+
+// ─── The views ───
+
+component DkContainers inherits PanelPage {
+    if OpsDocker.ctr-empty: DkEmpty { icon: Icons.docker; title: "No containers"; hint: "Nothing has been created on this machine yet."; }
+    if !OpsDocker.ctr-empty: HorizontalLayout {
+        alignment: start;
+        spacing: Theme.sp-20;
+        for s in OpsDocker.stats: DkStat { v: s.v; l: s.l; }
+    }
+    // The bay plan: every container at a glance, by state (wrapping squares).
+    if !OpsDocker.ctr-empty: Rectangle {
+        property <length> cell: Theme.sp-12 + Theme.sp-2;
+        property <length> step: self.cell + Theme.sp-4;
+        property <int> per: max(1, floor((self.width - 2 * Theme.sp-10 + Theme.sp-4) / self.step));
+        height: ceil(OpsDocker.bay.length / self.per) * self.step - Theme.sp-4 + 2 * Theme.sp-10;
+        background: Theme.bg-secondary;
+        border-radius: Theme.r-control;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        for b[i] in OpsDocker.bay: Rectangle {
+            x: Theme.sp-10 + mod(i, parent.per) * parent.step;
+            y: Theme.sp-10 + floor(i / parent.per) * parent.step;
+            width: parent.cell; height: parent.cell;
+            border-radius: Theme.sp-2;
+            background: DkInk.state(b.state);
+            opacity: bt.has-hover ? Theme.o-soft : 1;
+            bt := TouchArea { mouse-cursor: pointer; clicked => { OpsDocker.open(b.id); } }
+            Tip { on: bt.has-hover; text: b.tip; }
+        }
+    }
+    if !OpsDocker.ctr-empty && OpsDocker.nomatch: DkQuiet { text: "Nothing matches the filter."; }
+    if !OpsDocker.ctr-empty && !OpsDocker.nomatch: DkList {
+        for c[i] in OpsDocker.ctrs: VerticalLayout {
+            if i > 0: DkLine { }
+            DkRow {
+                clickable: true;
+                clicked => { OpsDocker.open(c.id); }
+                VerticalLayout { alignment: center; DkDot { state: c.state; } }
+                DkMain { horizontal-stretch: 16; name: c.name; sub: c.sub; }
+                DkChips { horizontal-stretch: 10; chips: c.chips; act(x) => { OpsDocker.chip(x); } }
+                DkNum { width: Theme.docker-num-w; v: c.cpu; l: "CPU"; }
+                DkNum { width: Theme.docker-mem-w; v: c.mem; l: "MEM"; }
+                VerticalLayout {
+                    alignment: center;
+                    if c.act == "stop": SmallBtn { has-icon: true; icon: Icons.stop; confirm-text: "Stop?"; clicked => { OpsDocker.ctr(c.id, "stop"); } }
+                    if c.act == "unpause": SmallBtn { has-icon: true; icon: Icons.play; clicked => { OpsDocker.ctr(c.id, "unpause"); } }
+                    if c.act == "start": SmallBtn { has-icon: true; icon: Icons.play; clicked => { OpsDocker.ctr(c.id, "start"); } }
+                }
+            }
+        }
+    }
+}
+
+component DkStacks inherits PanelPage {
+    if OpsDocker.stacks-empty: DkEmpty { icon: Icons.layers; title: "No Compose projects"; hint: "Projects started with docker compose show here, with their services."; }
+    if !OpsDocker.stacks-empty && OpsDocker.nomatch: DkQuiet { text: "Nothing matches the filter."; }
+    if !OpsDocker.stacks-empty && !OpsDocker.nomatch: VerticalLayout { spacing: Theme.sp-12; for s in OpsDocker.stacks: DkList {
+        HorizontalLayout {
+            padding-top: Theme.sp-12; padding-bottom: Theme.sp-12;
+            padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+            spacing: Theme.sp-12;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: Theme.sp-4;
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: Theme.sp-8;
+                    Text { text: s.name; font-size: Theme.text-15; font-weight: Theme.w-semibold; color: Theme.text-primary; vertical-alignment: center; }
+                    VerticalLayout { alignment: center; DkChip { c: { text: s.chip, tone: s.tone }; } }
+                }
+                Text { text: s.where; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; }
+            }
+            HorizontalLayout {
+                spacing: Theme.sp-6;
+                alignment: end;
+                SmallBtn { kind: "primary"; has-icon: true; icon: Icons.arrow-up; text: "Up"; enabled: s.files; clicked => { OpsDocker.stack(s.name, "up"); } }
+                SmallBtn { has-icon: true; icon: Icons.download; text: "Pull"; enabled: s.files; clicked => { OpsDocker.stack(s.name, "pull"); } }
+                if s.live: SmallBtn { has-icon: true; icon: Icons.rotate-ccw; text: "Restart"; clicked => { OpsDocker.stack(s.name, "restart"); } }
+                if s.live: SmallBtn { kind: "danger"; has-icon: true; icon: Icons.stop; text: "Stop"; confirm-text: "Stop " + s.name + "?"; clicked => { OpsDocker.stack(s.name, "stop"); } }
+                if !s.live: SmallBtn { has-icon: true; icon: Icons.play; text: "Start"; clicked => { OpsDocker.stack(s.name, "start"); } }
+                SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Down"; confirm-text: "Down: remove its containers?"; clicked => { OpsDocker.stack(s.name, "down"); } }
+            }
+        }
+        DkLine { }
+        for c[i] in s.svcs: VerticalLayout {
+            if i > 0: DkLine { }
+            DkRow {
+                clickable: true;
+                clicked => { OpsDocker.open(c.id); }
+                VerticalLayout { alignment: center; DkDot { state: c.state; } }
+                DkMain { horizontal-stretch: 1; name: c.name; sub: c.sub; }
+                Text { horizontal-stretch: 1; text: c.img; vertical-alignment: center; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; }
+                Text { text: c.status; vertical-alignment: center; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; }
+            }
+        }
+    }
+}
+}
+
+/// Images, volumes and networks: the toolbar, the count line, the rows.
+component DkThings inherits PanelPage {
+    HorizontalLayout {
+        spacing: Theme.sp-8;
+        if OpsDocker.view == "images": TextField {
+            width: Theme.docker-pull-w;
+            placeholder: "Pull an image, e.g. nginx:alpine"; mono: true;
+            text <=> OpsDocker.pull-ref;
+            accepted => { OpsDocker.pull(); }
+        }
+        if OpsDocker.view == "images": SmallBtn { kind: "primary"; has-icon: true; icon: Icons.download; text: "Pull"; clicked => { OpsDocker.pull(); } }
+        if OpsDocker.view != "images": DkQuiet { text: OpsDocker.list-head; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        if OpsDocker.view == "images": SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Clean untagged"; confirm-text: "Remove untagged images?"; clicked => { OpsDocker.prune("images"); } }
+        if OpsDocker.view == "images": SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Clean unused"; confirm-text: "Remove every unused image?"; clicked => { OpsDocker.prune("images-all"); } }
+        if OpsDocker.view == "volumes": SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Clean unused"; confirm-text: "Delete every unused volume and its data?"; clicked => { OpsDocker.prune("volumes"); } }
+        if OpsDocker.view == "networks": SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Clean unused"; confirm-text: "Remove unused networks?"; clicked => { OpsDocker.prune("networks"); } }
+    }
+    if OpsDocker.view == "images": DkQuiet { text: OpsDocker.list-head; }
+    if OpsDocker.list-empty: DkEmpty {
+        icon: OpsDocker.view == "images" ? Icons.archive : Icons.hard-drive;
+        title: OpsDocker.view == "images" ? "No images" : "No volumes";
+    }
+    if !OpsDocker.list-empty && OpsDocker.nomatch: DkQuiet { text: "Nothing matches the filter."; }
+    if !OpsDocker.list-empty && !OpsDocker.nomatch: DkList {
+        for r[i] in OpsDocker.rows: VerticalLayout {
+            if i > 0: DkLine { }
+            DkRow {
+                VerticalLayout {
+                    horizontal-stretch: 16;
+                    alignment: center;
+                    spacing: Theme.sp-2;
+                    HorizontalLayout {
+                        spacing: Theme.sp-6;
+                        nt := Text { text: r.name; font-size: Theme.text-13; color: Theme.text-primary; overflow: elide; horizontal-stretch: 0; }
+                        for t in r.tags: VerticalLayout { alignment: center; DkChip { c: t; } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    Text { text: r.sub; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; }
+                }
+                DkChips { horizontal-stretch: 10; chips: r.chips; act(x) => { OpsDocker.chip(x); } }
+                VerticalLayout {
+                    alignment: center;
+                    SmallBtn {
+                        kind: r.can-rm ? "danger" : "";
+                        has-icon: true; icon: Icons.trash;
+                        enabled: r.can-rm;
+                        confirm-text: r.arm;
+                        clicked => { OpsDocker.rm(OpsDocker.view, r.key); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component DkForwards inherits PanelPage {
+    if OpsDocker.fwd-empty: DkEmpty {
+        icon: Icons.globe; title: "No forwards";
+        hint: "A forward reaches a port on this machine through Crundi, by name: for a container, or for anything else listening here.";
+        if OpsDocker.form-port != "any": HorizontalLayout { alignment: center; SmallBtn { kind: "primary"; has-icon: true; icon: Icons.plus; text: "Add forward"; clicked => { OpsDocker.fwd-add("any"); } } }
+        if OpsDocker.form-port == "any": DkFwdForm { blind: true; }
+    }
+    if !OpsDocker.fwd-empty: HorizontalLayout {
+        spacing: Theme.sp-8;
+        DkQuiet { text: OpsDocker.list-head; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        SmallBtn { kind: "primary"; has-icon: true; icon: Icons.plus; text: "Add forward"; clicked => { OpsDocker.fwd-add("any"); } }
+        if OpsDocker.orphans > 0: SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Remove orphaned"; confirm-text: "Remove " + OpsDocker.orphans + " orphaned?"; clicked => { OpsDocker.rm-orphans(); } }
+    }
+    if !OpsDocker.fwd-empty && OpsDocker.form-port == "any": DkFwdForm { blind: true; }
+    if !OpsDocker.fwd-empty: VerticalLayout { spacing: Theme.sp-12; for g in OpsDocker.groups: VerticalLayout {
+        spacing: Theme.sp-6;
+        DkGroup { text: g.title; }
+        if g.help != "": Text { text: g.help; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+        DkList {
+            for f[i] in g.rows: VerticalLayout {
+                if i > 0: DkLine { }
+                DkRow {
+                    VerticalLayout {
+                        horizontal-stretch: 16;
+                        alignment: center;
+                        spacing: Theme.sp-2;
+                        HorizontalLayout {
+                            spacing: Theme.sp-6;
+                            Text { text: f.host; font-size: Theme.text-13; color: Theme.text-primary; overflow: elide; }
+                            for t in f.tags: VerticalLayout { alignment: center; DkChip { c: t; } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        Text { text: f.sub; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; }
+                    }
+                    DkChips { horizontal-stretch: 10; chips: f.chips; act(x) => { OpsDocker.chip(x); } }
+                    HorizontalLayout {
+                        spacing: Theme.sp-6;
+                        VerticalLayout { alignment: center; SmallBtn { kind: f.watch ? "primary" : ""; has-icon: true; icon: Icons.bell; clicked => { OpsDocker.fwd-watch(f.host, !f.watch); } } }
+                        VerticalLayout { alignment: center; SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; confirm-text: "Remove?"; clicked => { OpsDocker.rm-fwd(f.host); } } }
+                    }
+                }
+            }
+        }
+    }
+    }
+    if !OpsDocker.fwd-empty && OpsDocker.nomatch: DkQuiet { text: "Nothing matches the filter."; }
+}
+
+component DkSystem inherits PanelPage {
+    if OpsDocker.engine.length == 0: DkQuiet { text: "Loading…"; }
+    if OpsDocker.engine.length > 0: HorizontalLayout {
+        spacing: Theme.sp-12;
+        alignment: stretch;
+        DkSec {
+            horizontal-stretch: 1;
+            title: "ENGINE";
+            for kv in OpsDocker.engine: DkKv { k: kv.k; v: kv.v; }
+        }
+        DkSec {
+            horizontal-stretch: 1;
+            title: "CONTENTS";
+            for kv in OpsDocker.contents: DkKv { k: kv.k; v: kv.v; }
+            for w in OpsDocker.warnings: Text { text: w; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.yellow; wrap: word-wrap; }
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+    if OpsDocker.engine.length > 0: DkSec {
+        title: "DISK USE";
+        if OpsDocker.disk-state == "measuring": DkQuiet { text: "Measuring… Docker walks every layer for this, which can take a while."; }
+        if OpsDocker.disk-state == "error": DkQuiet { text: OpsDocker.disk-error; }
+        if OpsDocker.disk-state == "data": VerticalLayout {
+            HorizontalLayout {
+                padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-bottom: Theme.sp-6;
+                spacing: Theme.sp-8;
+                DkGroup { horizontal-stretch: 1; text: "WHAT"; }
+                DkGroup { width: Theme.docker-num-w; text: "COUNT"; horizontal-alignment: right; }
+                DkGroup { width: Theme.docker-mem-w + Theme.sp-12; text: "SIZE"; horizontal-alignment: right; }
+                DkGroup { width: Theme.docker-mem-w + Theme.sp-24; text: "RECLAIMABLE"; horizontal-alignment: right; }
+                Rectangle { width: Theme.docker-mem-w; }
+            }
+            DkLine { background: Theme.border; }
+            for d[i] in OpsDocker.disk: VerticalLayout {
+                if i > 0: DkLine { }
+                HorizontalLayout {
+                    padding: Theme.sp-8;
+                    spacing: Theme.sp-8;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        Text { text: d.label; font-size: Theme.text-13; color: Theme.text-primary; }
+                        if d.note != "": Text { text: d.note; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; wrap: word-wrap; }
+                    }
+                    Text { width: Theme.docker-num-w; text: d.count; horizontal-alignment: right; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; }
+                    Text { width: Theme.docker-mem-w + Theme.sp-12; text: d.size; horizontal-alignment: right; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; }
+                    Text { width: Theme.docker-mem-w + Theme.sp-24; text: d.reclaim; horizontal-alignment: right; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; }
+                    HorizontalLayout {
+                        width: Theme.docker-mem-w;
+                        alignment: end;
+                        VerticalLayout { alignment: center; SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Clean"; enabled: d.enabled; confirm-text: d.arm; clicked => { OpsDocker.prune(d.kind); } } }
+                    }
+                }
+            }
+            Text { text: "Docker is shared by every project on this machine. A stopped container may be one someone means to start again."; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+        }
+    }
+}
+
+// ─── A container's detail ───
+
+component DkChart inherits Rectangle {
+    in property <OpsDkChart> c;
+    in property <color> c1;
+    in property <color> c2;
+    background: Theme.bg-secondary;
+    border-radius: Theme.r-field;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding-top: Theme.sp-12; padding-bottom: Theme.sp-12;
+        padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+        spacing: Theme.sp-8;
+        HorizontalLayout {
+            spacing: Theme.sp-10;
+            Text { text: root.c.title; vertical-alignment: bottom; font-size: Theme.text-10; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: root.c.value; vertical-alignment: bottom; font-family: Theme.mono; font-size: Theme.text-15; color: Theme.text-primary; }
+            if root.c.sub != "": Text { text: root.c.sub; vertical-alignment: bottom; font-size: Theme.text-11; color: Theme.text-muted; }
+        }
+        Rectangle {
+            height: Theme.docker-chart-h;
+            Rectangle { y: parent.height / 2; height: 1px; background: Theme.border-subtle; }
+            if root.c.a1 != "": Path { width: parent.width; height: parent.height; viewbox-width: OpsDocker.chart-w; viewbox-height: OpsDocker.chart-h; fit: fill; commands: root.c.a1; fill: root.c1; opacity: Theme.docker-fill; }
+            if root.c.l1 != "": Path { width: parent.width; height: parent.height; viewbox-width: OpsDocker.chart-w; viewbox-height: OpsDocker.chart-h; fit: fill; commands: root.c.l1; stroke: root.c1; stroke-width: Theme.spin-stroke; }
+            if root.c.a2 != "": Path { width: parent.width; height: parent.height; viewbox-width: OpsDocker.chart-w; viewbox-height: OpsDocker.chart-h; fit: fill; commands: root.c.a2; fill: root.c2; opacity: Theme.docker-fill; }
+            if root.c.l2 != "": Path { width: parent.width; height: parent.height; viewbox-width: OpsDocker.chart-w; viewbox-height: OpsDocker.chart-h; fit: fill; commands: root.c.l2; stroke: root.c2; stroke-width: Theme.spin-stroke; }
+        }
+        if root.c.leg1 != "": HorizontalLayout {
+            spacing: Theme.sp-12;
+            alignment: start;
+            HorizontalLayout { spacing: Theme.sp-4; VerticalLayout { alignment: center; Rectangle { width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.sp-2; background: root.c1; } } Text { text: root.c.leg1; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; } }
+            HorizontalLayout { spacing: Theme.sp-4; VerticalLayout { alignment: center; Rectangle { width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.sp-2; background: root.c2; } } Text { text: root.c.leg2; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; } }
+        }
+    }
+}
+
+component DkOverview inherits PanelPage {
+    HorizontalLayout {
+        spacing: Theme.sp-12;
+        DkSec { horizontal-stretch: 1; title: "STATE"; for kv in OpsDocker.ov-state: DkKv { k: kv.k; v: kv.v; } Rectangle { vertical-stretch: 1; } }
+        DkSec { horizontal-stretch: 1; title: "RUNS"; for kv in OpsDocker.ov-runs: DkKv { k: kv.k; v: kv.v; } Rectangle { vertical-stretch: 1; } }
+    }
+    HorizontalLayout {
+        spacing: Theme.sp-12;
+        DkSec {
+            horizontal-stretch: 1; title: "PORTS";
+            if OpsDocker.ov-ports.length == 0: DkQuiet { text: "No ports."; }
+            for p[i] in OpsDocker.ov-ports: VerticalLayout {
+                spacing: Theme.sp-6;
+                if i > 0: DkLine { }
+                HorizontalLayout {
+                    spacing: Theme.sp-10;
+                    Text { width: Theme.sp-48 + Theme.sp-40; text: p.k; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                    Text { horizontal-stretch: 1; text: p.v; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-primary; overflow: elide; }
+                    for f in p.fwds: VerticalLayout { alignment: center; DkChip { c: f; act(x) => { OpsDocker.chip(x); } } }
+                    if p.btn != "": SmallBtn { has-icon: true; icon: Icons.plus; text: p.btn; clicked => { OpsDocker.fwd-add(p.port); } }
+                }
+                if OpsDocker.form-port != "" && OpsDocker.form-port == p.port: DkFwdForm { blind: false; }
+            }
+            Rectangle { vertical-stretch: 1; }
+        }
+        DkSec {
+            horizontal-stretch: 1; title: "NETWORKS";
+            if OpsDocker.ov-nets.length == 0: DkQuiet { text: "Not on any network."; }
+            for kv in OpsDocker.ov-nets: DkKv { k: kv.k; v: kv.v; }
+            Rectangle { vertical-stretch: 1; }
+        }
+    }
+    DkSec {
+        title: "MOUNTS";
+        if OpsDocker.ov-mounts.length == 0: DkQuiet { text: "No mounts."; }
+        for kv in OpsDocker.ov-mounts: DkKv { k: kv.k; v: kv.v; }
+    }
+    DkSec {
+        title: "ENVIRONMENT";
+        if OpsDocker.ov-env.length == 0: DkQuiet { text: "None."; }
+        for kv in OpsDocker.ov-env: DkKv { k: kv.k; v: kv.v; hid: kv.hid; }
+        if OpsDocker.ov-env-note: Text { text: "Values that look like secrets are hidden here. Inspect shows everything."; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+    }
+    if OpsDocker.ov-labels.length > 0: DkSec {
+        HorizontalLayout {
+            spacing: Theme.sp-6;
+            Icon { y: (parent.height - self.height) / 2; source: OpsDocker.labels-open ? @image-url("../shapes/chevron-down.svg") : Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-secondary; }
+            Text { horizontal-stretch: 1; text: "Labels (" + OpsDocker.ov-labels.length + ")"; font-size: Theme.text-12; color: Theme.text-secondary; }
+            TouchArea { mouse-cursor: pointer; clicked => { OpsDocker.labels-open = !OpsDocker.labels-open; } }
+        }
+        if OpsDocker.labels-open: VerticalLayout { spacing: Theme.sp-6; for kv in OpsDocker.ov-labels: DkKv { k: kv.k; v: kv.v; } }
+    }
+}
+
+component DkLogs inherits VerticalLayout {
+    Rectangle {
+        height: Theme.control + Theme.sp-8;
+        HorizontalLayout {
+            padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+            spacing: Theme.sp-8;
+            TextField { width: Theme.docker-log-filter-w; placeholder: "Filter lines"; text <=> OpsDocker.log-filter; edited(t) => { OpsDocker.log-filter-edited(t); } }
+            CheckRow { text: "Follow"; checked: OpsDocker.log-follow; toggled(on) => { OpsDocker.log-option("follow", on); } }
+            CheckRow { text: "Times"; checked: OpsDocker.log-ts; toggled(on) => { OpsDocker.log-option("ts", on); } }
+            CheckRow { text: "Wrap"; checked: OpsDocker.log-wrap; toggled(on) => { OpsDocker.log-option("wrap", on); } }
+            Rectangle { horizontal-stretch: 1; }
+            VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.copy; clicked => { OpsDocker.log-copy(); } } }
+            VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.x; clicked => { OpsDocker.log-clear(); } } }
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+    }
+    Rectangle {
+        vertical-stretch: 1;
+        background: Theme.bg-primary;
+        lv := ListView {
+            width: parent.width; height: parent.height;
+            for l in OpsDocker.logs: Rectangle {
+                height: st.preferred-height + Theme.sp-2;
+                st := StyledText {
+                    x: Theme.sp-12; width: parent.width - Theme.sp-24;
+                    text: l.md;
+                    default-font-family: Theme.mono;
+                    default-font-size: Theme.text-12;
+                    default-color: l.err ? Theme.error-text : Theme.text-secondary;
+                    max-lines: OpsDocker.log-wrap ? 0 : 1;
+                }
+            }
+        }
+        // Follow: the end of the log stays in view as lines arrive.
+        property <int> gen: OpsDocker.log-gen;
+        changed gen => { if OpsDocker.log-follow { stick.running = true; } }
+        stick := Timer { interval: Theme.frame; running: false; triggered => { self.running = false; lv.content-y = min(0px, lv.visible-height - lv.content-height); } }
+    }
+}
+
+component DkStats inherits PanelPage {
+    if OpsDocker.stats-state == "measuring": DkQuiet { text: "Measuring…"; }
+    if OpsDocker.stats-state == "msg": DkQuiet { text: OpsDocker.stats-msg; }
+    if OpsDocker.stats-state == "data" && OpsDocker.charts.length == 4: VerticalLayout {
+        spacing: Theme.sp-12;
+        HorizontalLayout {
+            spacing: Theme.sp-12;
+            DkChart { horizontal-stretch: 1; c: OpsDocker.charts[0]; c1: Theme.accent; c2: Theme.accent; }
+            DkChart { horizontal-stretch: 1; c: OpsDocker.charts[1]; c1: Theme.green; c2: Theme.green; }
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-12;
+            DkChart { horizontal-stretch: 1; c: OpsDocker.charts[2]; c1: Theme.docker-cyan; c2: Theme.docker-magenta; }
+            DkChart { horizontal-stretch: 1; c: OpsDocker.charts[3]; c1: Theme.amber; c2: Theme.docker-red; }
+        }
+        Text { text: OpsDocker.stats-note; font-size: Theme.text-12; color: Theme.text-muted; }
+    }
+}
+
+component DkShell inherits VerticalLayout {
+    Rectangle {
+        height: Theme.control + Theme.sp-8;
+        HorizontalLayout {
+            padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            spacing: Theme.sp-8;
+            Text { horizontal-stretch: 1; text: OpsDocker.shell-bar; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-secondary; overflow: elide; }
+            if OpsDocker.shell-btn != "": VerticalLayout {
+                alignment: center;
+                SmallBtn { has-icon: true; icon: OpsDocker.shell-btn == "New shell" ? Icons.rotate-ccw : Icons.terminal; text: OpsDocker.shell-btn; clicked => { OpsDocker.shell-again(); } }
+            }
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+    }
+    Rectangle {
+        vertical-stretch: 1;
+        background: Theme.bg-primary;
+        fl := Flickable {
+            x: Theme.sp-8; width: parent.width - Theme.sp-16; height: parent.height;
+            content-height: max(self.height, out.preferred-height + Theme.sp-12);
+            out := Text {
+                y: Theme.sp-6; width: fl.width;
+                text: OpsDocker.shell-text;
+                font-family: Theme.mono; font-size: Theme.text-13;
+                color: Theme.text-primary;
+                wrap: char-wrap;
+            }
+        }
+        property <int> gen: OpsDocker.shell-gen;
+        changed gen => { stick.running = true; }
+        stick := Timer { interval: Theme.frame; running: false; triggered => { self.running = false; fl.content-y = min(0px, fl.height - fl.content-height); } }
+    }
+    // The keyboard goes to the shell through this line (Slint has no
+    // terminal emulator: Enter sends the line; Ctrl+C/D, Tab and the arrows
+    // are sent as keys).
+    if OpsDocker.shell-live: Rectangle {
+        height: Theme.control + Theme.sp-8;
+        background: Theme.bg-secondary;
+        Rectangle { height: 1px; y: 0; background: Theme.border-subtle; }
+        HorizontalLayout {
+            padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+            spacing: Theme.sp-8;
+            Text { text: "$"; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-13; color: Theme.text-muted; }
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: Theme.r-control;
+                background: Theme.bg-tertiary;
+                border-width: 1px;
+                border-color: inp.has-focus ? Theme.accent : Theme.border;
+                inp := TextInput {
+                    x: Theme.sp-10; width: parent.width - Theme.sp-20;
+                    single-line: true;
+                    vertical-alignment: center;
+                    font-family: Theme.mono; font-size: Theme.text-13;
+                    color: Theme.text-primary;
+                    selection-background-color: Theme.selection;
+                    text <=> OpsDocker.shell-input;
+                    accepted => { OpsDocker.shell-send(self.text); self.text = ""; }
+                    key-pressed(ev) => {
+                        if ev.modifiers.control && (ev.text == "c" || ev.text == "d" || ev.text == "l" || ev.text == "z") && self.text == "" { OpsDocker.shell-key("ctrl-" + ev.text); return accept; }
+                        if ev.text == Key.Tab { OpsDocker.shell-key("tab:" + self.text); self.text = ""; return accept; }
+                        if ev.text == Key.UpArrow { OpsDocker.shell-key("up"); return accept; }
+                        if ev.text == Key.DownArrow { OpsDocker.shell-key("down"); return accept; }
+                        return reject;
+                    }
+                }
+                if OpsDocker.shell-input == "": Text { x: Theme.sp-10; height: parent.height; vertical-alignment: center; text: "Type a command, Enter to run it"; color: Theme.placeholder; font-size: Theme.text-13; }
+            }
+        }
+    }
+}
+
+component DkInspect inherits VerticalLayout {
+    Rectangle {
+        height: Theme.control + Theme.sp-8;
+        HorizontalLayout {
+            padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            alignment: end;
+            VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.copy; text: "Copy JSON"; clicked => { OpsDocker.inspect-copy(); } } }
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+    }
+    Rectangle {
+        vertical-stretch: 1;
+        background: Theme.bg-primary;
+        fl := Flickable {
+            x: Theme.sp-16; y: Theme.sp-12; width: parent.width - Theme.sp-24; height: parent.height - Theme.sp-12;
+            content-height: max(self.height, ti.preferred-height + Theme.sp-12);
+            content-width: max(self.width, ti.preferred-width);
+            ti := TextInput {
+                width: max(fl.width, self.preferred-width);
+                text: OpsDocker.inspect;
+                read-only: true;
+                single-line: false;
+                font-family: Theme.mono; font-size: Theme.text-12;
+                color: Theme.text-secondary;
+                selection-background-color: Theme.selection;
+            }
+        }
+    }
+}
+
+component DkDetail inherits VerticalLayout {
+    // The head: back, the name and its line, the actions.
+    Rectangle {
+        min-height: Theme.control + Theme.sp-16;
+        HorizontalLayout {
+            padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+            padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+            spacing: Theme.sp-10;
+            VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.chevron-left; clicked => { OpsDocker.back(); } } }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: Theme.sp-2;
+                HorizontalLayout {
+                    spacing: Theme.sp-8;
+                    if OpsDocker.d-dot != "": VerticalLayout { alignment: center; DkDot { state: OpsDocker.d-dot; } }
+                    Text { text: OpsDocker.d-name; font-size: Theme.text-16; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if OpsDocker.d-sub != "": Text { text: OpsDocker.d-sub; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; }
+            }
+            if OpsDocker.d-state == "data": HorizontalLayout {
+                spacing: Theme.sp-6;
+                for a in OpsDocker.d-acts: VerticalLayout {
+                    alignment: center;
+                    SmallBtn { kind: a.kind; has-icon: true; icon: DkIcons.verb(a.verb); text: a.label; confirm-text: a.arm; clicked => { OpsDocker.ctr("", a.verb); } }
+                }
+                VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.pencil; text: "Rename"; clicked => { OpsDocker.prompt("rename"); } } }
+                VerticalLayout { alignment: center; SmallBtn { kind: "danger"; has-icon: true; icon: Icons.trash; text: "Remove"; clicked => { OpsDocker.prompt("remove"); } } }
+            }
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    }
+    if OpsDocker.d-state == "loading": PanelPage { DkQuiet { text: "Loading…"; } }
+    if OpsDocker.d-state == "error": PanelPage { DkQuiet { text: OpsDocker.d-error; } }
+    // Rename / remove: inline under the header (.dk-prompt).
+    if OpsDocker.d-state == "data" && OpsDocker.d-prompt != "": Rectangle {
+        background: Theme.bg-secondary;
+        height: Theme.control + Theme.sp-16;
+        HorizontalLayout {
+            padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+            padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+            spacing: Theme.sp-8;
+            if OpsDocker.d-prompt == "rename": Text { text: "New name"; vertical-alignment: center; font-size: Theme.text-13; color: Theme.text-primary; }
+            if OpsDocker.d-prompt == "rename": TextField {
+                horizontal-stretch: 1; mono: true;
+                text <=> OpsDocker.d-newname;
+                accepted => { OpsDocker.rename-do(); }
+                escape => { OpsDocker.prompt(""); }
+                init => { self.focus-input(); self.select-all(); }
+            }
+            if OpsDocker.d-prompt == "rename": VerticalLayout { alignment: center; SmallBtn { kind: "primary"; text: "Rename"; clicked => { OpsDocker.rename-do(); } } }
+            if OpsDocker.d-prompt == "remove": Text { text: "Remove " + OpsDocker.d-name + "? This cannot be undone."; vertical-alignment: center; font-size: Theme.text-13; color: Theme.text-primary; }
+            if OpsDocker.d-prompt == "remove": CheckRow { text: "Also its anonymous volumes"; checked: OpsDocker.d-rmvol; toggled(on) => { OpsDocker.d-rmvol = on; } }
+            if OpsDocker.d-prompt == "remove" && OpsDocker.d-rmforce-shown: CheckRow { text: "Stop it first"; checked: OpsDocker.d-rmforce; toggled(on) => { OpsDocker.d-rmforce = on; } }
+            if OpsDocker.d-prompt == "remove": Rectangle { horizontal-stretch: 1; }
+            if OpsDocker.d-prompt == "remove": VerticalLayout { alignment: center; SmallBtn { kind: "danger"; armed: true; has-icon: true; icon: Icons.trash; text: "Remove"; confirm-text: "Remove"; clicked => { OpsDocker.remove-do(); } } }
+            VerticalLayout { alignment: center; SmallBtn { text: "Cancel"; clicked => { OpsDocker.prompt(""); } } }
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    }
+    if OpsDocker.d-state == "data": Rectangle {
+        height: Theme.control + Theme.sp-4;
+        HorizontalLayout {
+            padding-left: Theme.sp-10;
+            spacing: Theme.sp-2;
+            alignment: start;
+            for t in ["overview", "logs", "stats", "shell", "inspect"]: Rectangle {
+                width: tt.preferred-width + Theme.sp-24;
+                tt := Text {
+                    text: t == "overview" ? "Overview" : t == "logs" ? "Logs" : t == "stats" ? "Stats" : t == "shell" ? "Shell" : "Inspect";
+                    font-size: Theme.text-13;
+                    color: OpsDocker.d-tab == t || ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+                }
+                Rectangle { y: parent.height - Theme.sp-2; height: Theme.sp-2; background: OpsDocker.d-tab == t ? Theme.accent : transparent; }
+                ta := TouchArea { mouse-cursor: pointer; clicked => { OpsDocker.dtab(t); } }
+            }
+        }
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+    }
+    if OpsDocker.d-state == "data" && OpsDocker.d-tab == "overview": DkOverview { vertical-stretch: 1; }
+    if OpsDocker.d-state == "data" && OpsDocker.d-tab == "logs": DkLogs { vertical-stretch: 1; }
+    if OpsDocker.d-state == "data" && OpsDocker.d-tab == "stats": DkStats { vertical-stretch: 1; }
+    if OpsDocker.d-state == "data" && OpsDocker.d-tab == "shell": DkShell { vertical-stretch: 1; }
+    if OpsDocker.d-state == "data" && OpsDocker.d-tab == "inspect": DkInspect { vertical-stretch: 1; }
+    if OpsDocker.d-state != "data": Rectangle { vertical-stretch: 1; }
+}
+
+/// The screen (a tab, or a panel in a workbench pane: `embedded`, `key`).
+export component OpsDockerView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    // The status gate: Docker missing, out of reach, or not asked yet.
+    if OpsDocker.gate == "loading": VerticalLayout { alignment: start; DkEmpty { icon: Icons.docker; title: "Loading…"; } }
+    if OpsDocker.gate == "absent": VerticalLayout { alignment: start; DkEmpty { icon: Icons.docker; title: "Docker is not installed"; hint: "Install Docker Engine on this machine and this tab will manage it."; } }
+    if OpsDocker.gate == "unreachable": VerticalLayout {
+        alignment: start;
+        DkEmpty {
+            icon: Icons.docker; title: "Docker is installed, but Crundi cannot reach it"; hint: OpsDocker.gate-error;
+            HorizontalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.refresh; text: "Try again"; clicked => { OpsDocker.recheck(); } } }
+        }
+    }
+    if OpsDocker.gate == "ok": VerticalLayout {
+        // The nav (.dk-nav).
+        Rectangle {
+            height: Theme.control-sm + Theme.sp-6 + Theme.sp-20;
+            HorizontalLayout {
+                padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+                padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                spacing: Theme.sp-8;
+                DkSeg {
+                    for s in OpsDocker.segs: VerticalLayout {
+                        alignment: center;
+                        DkSegBtn { icon: DkIcons.seg(s.key); label: s.label; count: s.count; on: !OpsDocker.d-open && OpsDocker.view == s.key; clicked => { OpsDocker.set-view(s.key); } }
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if !OpsDocker.d-open && OpsDocker.view != "system": TextField {
+                    width: Theme.docker-filter-w;
+                    placeholder: "Filter";
+                    text <=> OpsDocker.filter;
+                    edited(t) => { OpsDocker.filter-edited(t); }
+                }
+                VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.refresh; clicked => { OpsDocker.refresh(); } } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        if OpsDocker.d-open: DkDetail { vertical-stretch: 1; }
+        if !OpsDocker.d-open && OpsDocker.state == "loading": PanelPage { vertical-stretch: 1; DkQuiet { text: "Loading…"; } }
+        if !OpsDocker.d-open && OpsDocker.state == "error": PanelPage { vertical-stretch: 1; DkEmpty { icon: Icons.docker; title: OpsDocker.err-title; hint: OpsDocker.err-text; } }
+        if !OpsDocker.d-open && OpsDocker.state == "data" && OpsDocker.view == "containers": DkContainers { vertical-stretch: 1; }
+        if !OpsDocker.d-open && OpsDocker.state == "data" && OpsDocker.view == "stacks": DkStacks { vertical-stretch: 1; }
+        if !OpsDocker.d-open && OpsDocker.state == "data" && (OpsDocker.view == "images" || OpsDocker.view == "volumes" || OpsDocker.view == "networks"): DkThings { vertical-stretch: 1; }
+        if !OpsDocker.d-open && OpsDocker.state == "data" && OpsDocker.view == "forwards": DkForwards { vertical-stretch: 1; }
+        if !OpsDocker.d-open && OpsDocker.state == "data" && OpsDocker.view == "system": DkSystem { vertical-stretch: 1; }
+    }
+    // The job drawer (.dk-job): compose and pull output, over the bottom.
+    if OpsDocker.job-open: Rectangle {
+        x: Theme.sp-12; width: parent.width - Theme.sp-24;
+        height: parent.height * Theme.docker-job-share;
+        y: parent.height - self.height - Theme.sp-12;
+        background: Theme.bg-secondary;
+        border-radius: Theme.r-card;
+        border-width: 1px;
+        border-color: Theme.border;
+        TouchArea { }
+        VerticalLayout {
+            Rectangle {
+                height: Theme.control + Theme.sp-4;
+                HorizontalLayout {
+                    padding-left: Theme.sp-12; padding-right: Theme.sp-8;
+                    spacing: Theme.sp-10;
+                    Icon { y: (parent.height - self.height) / 2; source: Icons.terminal; width: Theme.icon-md; height: Theme.icon-md; }
+                    Text { horizontal-stretch: 1; text: OpsDocker.job-title; vertical-alignment: center; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; }
+                    if !OpsDocker.job-done: VerticalLayout { alignment: center; Spinner { } }
+                    if OpsDocker.job-done: VerticalLayout { alignment: center; DkChip { c: { text: OpsDocker.job-ok ? "done" : "exit " + OpsDocker.job-code, tone: OpsDocker.job-ok ? "ok" : "bad" }; } }
+                    VerticalLayout { alignment: center; SmallBtn { has-icon: true; icon: Icons.x; clicked => { OpsDocker.job-close(); } } }
+                }
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+            }
+            Rectangle {
+                vertical-stretch: 1;
+                jf := Flickable {
+                    x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-24; height: parent.height - Theme.sp-16;
+                    content-height: max(self.height, jt.preferred-height);
+                    jt := Text { width: jf.width; text: OpsDocker.job-text; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; wrap: char-wrap; }
+                }
+                property <int> gen: OpsDocker.job-gen;
+                changed gen => { jstick.running = true; }
+                jstick := Timer { interval: Theme.frame; running: false; triggered => { self.running = false; jf.content-y = min(0px, jf.height - jf.content-height); } }
+            }
+        }
+    }
+}
+
+/// This screen's dialogs over the whole window (no input where it draws nothing).
+export component OpsDockerOverlay inherits Rectangle {
+}
