@@ -35,6 +35,7 @@ mod resume;
 mod fresult;
 mod voice;
 mod voiceio;
+mod frames;
 mod drafts;
 mod app;
 mod browser;
@@ -252,6 +253,8 @@ fn main() {
     // Close the browsers, let CEF finish, then shut it down.
     let browsers: Vec<_> = browser::with(|st| st.panels.iter().filter_map(|p| p.browser.clone()).collect());
     for b in &browsers { if let Some(h) = b.host() { h.close_browser(1); } }
+    // The chats' live frames too (2.16f).
+    frames::release_all();
     for _ in 0..50 { do_message_loop_work(); std::thread::sleep(Duration::from_millis(10)); }
     drop(browsers);
     shutdown();

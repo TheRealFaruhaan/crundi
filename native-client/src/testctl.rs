@@ -123,6 +123,8 @@ fn handle(c: &Value, ui: &slint::Weak<crate::MainWindow>) -> Value {
             }) } else { Value::Null },
             "lastCreate": crate::app::last_create(),
             "voice": crate::app::voice_of(),
+            // Live frames (2.16f).
+            "frames": crate::frames::list(), "framesLive": crate::frames::live(), "frameOpened": crate::frames::opened(), "frameFocused": crate::frames::focused(),
             "voiceUi": (json!({ "key": w.global::<crate::VoiceUi>().get_key().as_str(), "text": w.global::<crate::VoiceUi>().get_text().as_str(), "time": w.global::<crate::VoiceUi>().get_time().as_str(), "status": w.global::<crate::VoiceUi>().get_status().as_str(), "away": w.global::<crate::VoiceUi>().get_away_key().as_str(), "cancelling": w.global::<crate::VoiceUi>().get_cancelling(), "speaking": w.global::<crate::VoiceUi>().get_speaking(), "boxW": w.global::<crate::VoiceUi>().get_box_w(), "stripW": w.global::<crate::VoiceUi>().get_strip_w() })),
             "clipboard": arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).unwrap_or_default(),
             "sreqFocused": w.global::<crate::SreqProbe>().get_field_focused(),

@@ -138,7 +138,7 @@ before the next one (`test/phase2.mjs` the same way).
 ## Phase 2: chats
 
 Everything a chat does in the PC client, screen by screen: PLAN.md lists
-them (2.1–2.24, with 2.16f live frames still to come) and
+them (2.1–2.24) and
 each has a spec in `specs/` with the web's screenshots and measurements.
 What phase 2 has added so far, item by item:
 
@@ -313,6 +313,15 @@ What phase 2 has added so far, item by item:
   (gallery, zoom, keys); video and audio played in the system's player;
   the file card's Download (save dialog, streamed, its download row);
   frames' captions with Open.
+- **2.16f Live frames** (specs/log-rest.md "Live frames in detail",
+  `src/frames.rs`): a `show_embed` frame is live in its box: its own
+  windowless CEF view (transparent, the box less its edge), made while its
+  row is on the log and released when it leaves, the pane closes or parks,
+  or the Workbench is hidden; at most 6 at once. Stored HTML loads as a
+  data: URL, an https page with the server's origin as its referrer. The
+  pointer, the page's cursor, the wheel and the keyboard go to it (a click
+  gives it the keys, a click outside takes them back); new windows go to
+  the system browser; no context menu, downloads or dialogs.
 - **2.17 Suggestions and recaps** (specs/suggestions-recaps.md): the
   chat's dock at the log's bottom right: Claude Code's suggestion after a
   turn (a click sends it as it is, the box untouched; × dismisses it on the

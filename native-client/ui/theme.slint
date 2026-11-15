@@ -248,6 +248,8 @@ export global Theme {
     // Voice input (2.24): the recording dot's blink, and the mic's ring
     // while Claude speaks (sky at .35).
     out property <duration> rec-blink: 1200ms;
+    // A live frame on the log tells it is there this often (2.16f).
+    out property <duration> frame-seen: 250ms;
     out property <color> sky-ring-voice: #38bdf859;
     // The log (2.16): following the bottom within this of it; the jump
     // button past the larger of this and a third of the log.

@@ -40,6 +40,12 @@
 //       follow-ups, Discard's arming, a refused choice, Request changes (an
 //       empty note, a note), a second finish asking again in place, Merge
 //       and Undo (dev's commits); a widget check's screenshots row.
+//   2.16f live frames: a stored click test in its own view (painted, the
+//       box less its edge, a fixed height kept), a click through the window
+//       (its title, the page green), typing in it (the composer gets none,
+//       Esc is its), a click outside, a new-window link to the opener,
+//       released when scrolled off and fresh when back, the cap of 6, the
+//       chat closed.
 //   2.24 voice input, against tools/deepgram-stub.mjs (skipped without it):
 //       the mic shown, voice mode (frames at the stub, words in the box, an
 //       utterance sent, scratch that, send now, off with the draft back),
@@ -3204,6 +3210,98 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   // The chat ends: a tap says so.
   await http('POST', `/api/ui-sessions/${vB}/close`, {}, token);
   for (const id of [vA]) await http('POST', `/api/ui-sessions/${id}/close`, {}, token);
+}
+
+
+// ─── 2.16f Live frames in the log ───
+// A stored click test (show_embed html) injected as a done tool entry: its
+// own off-screen view in the box, input through the window, a popup to the
+// opener, release and a fresh return, the cap, pane close.
+{
+  const fc = (await http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Frames' }, token)).body?.id;
+  await ui('select-project', 'demo');
+  p = await until('the frames chat has a pane', (q) => pane(q, fc), 30000);
+  await ui('focus-pane', pane(p, fc).id);
+  const DATA = process.env.CRUNDI_TEST_DATA || `/tmp/crundi-devtest-${new URL(SERVER).port}/data`;
+  const mf = join(DATA, 'dev-mcp', `${fc}.json`);
+  await until('its MCP config', () => existsSync(mf), 20000);
+  const KEY = JSON.parse(readFileSync(mf, 'utf8')).mcpServers.crundi.env.CRUNDI_API_KEY;
+  const show = async (args) => (await fetch(SERVER + '/api/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Api-Key': KEY }, body: JSON.stringify({ tool: 'show_embed', args: { sessionId: fc, ...args } }) })).json();
+  let n = 0;
+  const put = (res) => ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'fr' + (++n), kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tf' + n, input: {}, status: 'done', isError: false, result: JSON.stringify(res) } }));
+  const html = '<!doctype html><html><head><title>Click test</title><style>html,body{margin:0;height:100%;background:#1e1e2e;color:#fff;font-family:sans-serif}'
+    + 'button{display:block;width:100%;height:60px;font-size:20px;margin:0}input{display:block;width:90%;height:60px;margin:0;box-sizing:border-box}a{display:block;height:76px;color:#fff}</style></head><body>'
+    + '<button onclick="window.n=(window.n||0)+1;document.title=\'clicked \'+window.n;document.body.style.background=\'#16a34a\'">Click me</button>'
+    + '<input placeholder="type here"><a target="_blank" href="https://example.com/">open example</a></body></html>';
+  const r = await show({ html, title: 'Click test', height: 200 });
+  check('show_embed stores the click test', r.ok && r.items?.[0]?.name, r);
+  const fkey = `${fc}|stored:${r.items?.[0]?.name}`;
+  await put(r);
+  const fr = async () => ((await props()).frames || []).find((f) => f.key === fkey);
+  p = await until('its own view paints in the box', async () => (await fr())?.painted, 20000);
+  let f = await fr();
+  const fp = pane(await props(), fc);
+  check('a live frame: the box less its edge (the pane\'s width, 198 high), painted', f && f.live && f.h === 198 && f.w > 200 && f.w <= 638, { f, pane: fp && fp.w });
+  await snap('2.16f-live');
+  // A click through the window: the page counts and turns green.
+  await mouse('click', f.x + 100, f.y + 30);
+  p = await until('clicked', async () => (await fr())?.title === 'clicked 1', 8000);
+  if (p) check('a click on the page\'s button: its title "clicked 1"', true);
+  await sleep(500);
+  const img = readPng(Buffer.from((await d.send({ cmd: 'snapshot' })).data, 'base64'));
+  const px = img.at(Math.round(f.x + f.w - 10), Math.round(f.y + 180));
+  check('…and the page turned green (#16a34a)', Math.abs(px[0] - 0x16) < 30 && Math.abs(px[1] - 0xa3) < 30 && Math.abs(px[2] - 0x4a) < 30, px);
+  await snap('2.16f-clicked');
+  // Typing in the page: the frame has the keyboard, the composer none.
+  f = await fr();
+  await mouse('click', f.x + 100, f.y + 90);
+  await until('focused', async (q) => (await props()).frameFocused === fkey, 3000);
+  await key('abc');
+  check('typing in the page: the frame has the keyboard, the composer stays empty', (await props()).frameFocused === fkey && pane(await props(), fc).draft === '', { focused: (await props()).frameFocused, draft: pane(await props(), fc).draft });
+  await key('Escape');
+  check('Esc is the page\'s (the frame keeps the keyboard)', (await props()).frameFocused === fkey);
+  f = await fr();
+  await mouse('click', f.x + 700, f.y - 30);
+  p = await until('a click elsewhere takes the keyboard back', async () => (await props()).frameFocused === null, 3000);
+  if (p) check('a click outside the frame takes the keyboard back', true);
+  // A target=_blank link: no window; the system browser (recorded).
+  await sleep(400);
+  f = await fr();
+  await mouse('click', f.x + 40, f.y + 140);
+  p = await until('opened', async () => (await props()).frameOpened === 'https://example.com/', 6000);
+  if (p) check('a new-window link goes to the system browser', (await fr())?.live === true);
+  // Scrolled away (replies under it): released; back: a fresh page.
+  for (let i = 0; i < 14; i++) await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'long' + i, kind: 'assistant-text', text: Array(12).fill('A long reply line to push the frame off the log.').join('\n\n') } }));
+  p = await until('released', async () => !(await fr())?.live, 10000);
+  if (p) check('the frame scrolled off the log: its view released', (await props()).framesLive === 0);
+  // (Real X wheel notches over the log, as 2.16's F96 check: xdotool.)
+  {
+    const { execFileSync } = await import('node:child_process');
+    const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':99' };
+    let ids = [];
+    try { ids = execFileSync('xdotool', ['search', '--pid', String(app.pid)], { env }).toString().trim().split('\n').filter(Boolean); } catch { ids = []; }
+    const win = ids.map((id) => { try { const g = execFileSync('xdotool', ['getwindowgeometry', id], { env }).toString(); const m = g.match(/Geometry: (\d+)x(\d+)/); return { id, area: m ? +m[1] * +m[2] : 0 }; } catch { return { id, area: 0 }; } }).sort((x, y) => y.area - x.area)[0]?.id;
+    const q = pane(await props(), fc);
+    if (win) {
+      execFileSync('xdotool', ['mousemove', '--window', win, String(Math.round(WB.x + q.x + q.w / 2)), String(Math.round(WB.y + q.y + q.h / 2))], { env });
+      for (let i = 0; i < 200 && !(await fr())?.live; i++) { execFileSync('xdotool', ['click', '4'], { env }); await sleep(60); }
+    }
+    await parkPointer();
+  }
+  p = await until('back', async () => (await fr())?.painted, 15000);
+  check('scrolled back: a new view, the page fresh (its own title again)', p && (await fr()).title === 'Click test', await fr());
+  // Eight frames at once: never more than 6 live views.
+  const small = [];
+  for (let i = 0; i < 8; i++) small.push(await show({ html: `<title>f${i}</title><body style="margin:0;background:#334">${i}</body>`, title: 'Small ' + i, height: 40 }));
+  for (const s of small) await put(s);
+  let most = 0;
+  for (let i = 0; i < 20; i++) { most = Math.max(most, (await props()).framesLive); await sleep(250); }
+  check('eight frames on the log: at most 6 live views (the cap)', most > 0 && most <= 6, most);
+  await snap('2.16f-cap');
+  // The chat closed: no view left.
+  await http('POST', `/api/ui-sessions/${fc}/close`, {}, token);
+  p = await until('no views', async () => (await props()).framesLive === 0, 10000);
+  if (p) check('the chat closed: no live frame views', true);
 }
 
 d.close();

@@ -114,7 +114,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      their sized boxes, the loading and gone states and the viewer; video and
      audio (poster, play button, the system player); the file card's
      Download; frames (caption and Open); JPEG, WebP and GIF decoding.
-   - [ ] **2.16f Live frames** (split out of 2.16m, F95). A `show_embed`
+   - [x] **2.16f Live frames** (split out of 2.16m, F95). A `show_embed`
      frame is live: a windowless CEF view inside each realised frame box
      (https src with its referrer policy, stored HTML as a data: URL, popups
      to the system browser, pointer, wheel and keys forwarded), on the phase
@@ -466,7 +466,7 @@ Phase 1 left these, each with its workaround in place:
     heading sizes); its lists hang as the reply's.
 - **Cards** (2.20):
   - the inline widget under a `widget_open` call (`slot: 'inline'`) is a
-    live page: it waits for the in-log CEF view (2.16f) and the Panels tab
+    live page: it needs the Panels tab
     (phase 3); until then nothing shows under the call. Cru's reply cards
     are phase 6's, the factory's own screens phase 4's;
   - deliberate differences on the factory result card: the summary's lists
@@ -478,6 +478,22 @@ Phase 1 left these, each with its workaround in place:
   - the note grows to six lines and scrolls (no resize grip);
   - a widget check's screenshot opens in the picture viewer without the
     web's "Render: <frame>" title (the viewer has none).
+- **Live frames** (2.16f), named differences and gaps:
+  - a frame's view lives while its row is on the log (Slint's ListView
+    makes the rows it shows): it is made when the row comes into view and
+    released when it leaves (the web keeps it until 4500 px away), so a
+    frame scrolled out and back comes back fresh sooner than the web's;
+    a box off screen inside the list's own margin is not told it is hidden
+    (`was_hidden`): rows off the view are not made at all;
+  - at most 6 live views in the window (the web has no cap); a box waiting
+    for room shows the ring;
+  - the wheel over a frame is the page's and does not pass on to the log
+    at the page's end (no scroll chaining); the wheel beside it scrolls the
+    log;
+  - `alert` / `confirm` / `prompt` in a frame are suppressed (a windowless
+    view shows none); full screen from a player is not built;
+  - a chat in full screen is drawn twice (the full copy over the grid's):
+    the larger box sizes the frame's view.
 - **Voice input** (2.24):
   - talking over a reply: no echo gate yet (crundi-voice.js's createGate,
     createPreroll, voicedShare are not ported). The web's own no-gate path

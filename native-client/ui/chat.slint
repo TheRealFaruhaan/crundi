@@ -52,6 +52,26 @@ export global BubbleProbe {
     in-out property <length> box;
 }
 
+/// Live frames in the log (2.16f, src/frames.rs): the Workbench is shown;
+/// the chat full screen ("" none, else its pane key); a counter bumped on
+/// every paint (the images are re-read on it). By frame key: its picture,
+/// painted yet, its page's cursor. A box on the log reports itself (key,
+/// chat, target, the view's size); the pointer, the wheel, keys and focus
+/// go to its page.
+export global FrameUi {
+    in-out property <bool> shown: true;
+    in-out property <string> full-key;
+    in-out property <int> gen;
+    pure callback image(string, int) -> image;
+    pure callback painted(string, int) -> bool;
+    pure callback cursor(string, int) -> int;
+    callback seen(string, string, string, length, length, length, length);
+    callback pointer(string, int, length, length, int);
+    callback wheel(string, length, length, length, length);
+    callback key(string, string, bool, bool, bool);
+    callback focus(string, bool);
+}
+
 /// The window's height (main.slint keeps it): the full diff is at most half of it.
 export global Win {
     in-out property <length> height;
@@ -62,7 +82,7 @@ export global Win {
 /// in px, before anything loads), caption and a frame's Open link and url,
 /// loading | ready | gone | empty, the picture (or a video's poster),
 /// fetching (on its way to the player), a file's line, a duration.
-export struct MediaItem { kind: string, key: string, name: string, id: string, filename: string, w: float, h: float, caption: string, link: string, url: string, state: string, image: image, fetching: bool, line: string, duration: string, chat: string }
+export struct MediaItem { kind: string, key: string, name: string, id: string, filename: string, w: float, h: float, caption: string, link: string, url: string, state: string, image: image, fetching: bool, line: string, duration: string, chat: string, frame: string, fixed-h: bool }
 /// A download's row: its id, name, line, running | done | failed | cancelled, progress.
 /// A widget check's screenshot (2.20): its picture's key, caption, state,
 /// picture, and width over height.
@@ -997,6 +1017,55 @@ component LoadRing inherits Rectangle {
     }
 }
 
+/// A live frame (2.16f): the page of a show_embed item inside its box (the
+/// box less its 1px edge), painted by its own off-screen view; the ring
+/// until its first paint. While it is on the log it reports itself (the
+/// view lives as long as that, src/frames.rs). A press gives it the
+/// keyboard (the composer then gets none, Esc included); a press anywhere
+/// else takes it back. The wheel over it is its page's.
+component LiveFrame inherits Rectangle {
+    in property <string> fkey;
+    in property <string> chat;
+    in property <string> target;
+    property <bool> shown: FrameUi.shown && (FrameUi.full-key == "" || FrameUi.full-key == "live:" + root.chat);
+    property <bool> painted: FrameUi.painted(root.fkey, FrameUi.gen);
+    property <int> cur: FrameUi.cursor(root.fkey, FrameUi.gen);
+    function report() { if root.shown { FrameUi.seen(root.fkey, root.chat, root.target, root.width, root.height, self.absolute-position.x, self.absolute-position.y); } }
+    init => { root.report(); }
+    Timer { interval: Theme.frame-seen; running: root.shown; triggered => { root.report(); } }
+    if !root.painted: LoadRing { }
+    if root.painted: Image { width: parent.width; height: parent.height; source: FrameUi.image(root.fkey, FrameUi.gen); image-fit: fill; }
+    // A press outside the frame takes the keyboard back.
+    property <int> presses: Pointer.presses;
+    changed presses => {
+        let px = Pointer.press-x - self.absolute-position.x;
+        let py = Pointer.press-y - self.absolute-position.y;
+        if fs.has-focus && (px < 0 || py < 0 || px > self.width || py > self.height) { fs.clear-focus(); }
+    }
+    fs := FocusScope {
+        focus-on-click: false;
+        key-pressed(ev) => { FrameUi.key(root.fkey, ev.text, true, ev.modifiers.control, ev.modifiers.shift); accept }
+        key-released(ev) => { FrameUi.key(root.fkey, ev.text, false, ev.modifiers.control, ev.modifiers.shift); accept }
+        changed has-focus => { FrameUi.focus(root.fkey, self.has-focus); }
+        ta := TouchArea {
+            mouse-cursor: root.cur == 1 ? MouseCursor.pointer : root.cur == 2 ? MouseCursor.text : root.cur == 3 ? MouseCursor.crosshair
+                : root.cur == 4 ? MouseCursor.move : root.cur == 6 ? MouseCursor.not-allowed : root.cur == 11 ? MouseCursor.grab
+                : root.cur == 12 ? MouseCursor.grabbing : MouseCursor.default;
+            pointer-event(e) => {
+                let b = e.button == PointerEventButton.middle ? 1 : e.button == PointerEventButton.right ? 2 : 0;
+                if e.kind == PointerEventKind.down { fs.focus(); FrameUi.pointer(root.fkey, 1, self.mouse-x, self.mouse-y, b); }
+                if e.kind == PointerEventKind.up { FrameUi.pointer(root.fkey, 2, self.mouse-x, self.mouse-y, b); }
+            }
+            moved => { FrameUi.pointer(root.fkey, 0, self.mouse-x, self.mouse-y, 0); }
+            changed has-hover => {
+                if self.has-hover { FrameUi.pointer(root.fkey, 0, self.mouse-x, self.mouse-y, 0); }
+                else { FrameUi.pointer(root.fkey, 3, self.mouse-x, self.mouse-y, 0); }
+            }
+            scroll-event(e) => { FrameUi.wheel(root.fkey, self.mouse-x, self.mouse-y, e.delta-x, e.delta-y); accept }
+        }
+    }
+}
+
 /// A picture's, a video's or a frame's box: its size known before anything
 /// loads (never wider than `avail`), the picture fitted inside; loading:
 /// the ring; gone: a dashed edge and the words.
@@ -1006,7 +1075,8 @@ component MediaBox inherits Rectangle {
     in property <string> gone-text: "This image is no longer stored.";
     property <float> k: min(1, root.avail / max(1px, root.m.w * 1px));
     width: root.m.w * 1px * self.k;
-    height: root.m.h * 1px * self.k;
+    // (A frame with a fixed height keeps it when narrower; aspect boxes follow.)
+    height: root.m.fixed-h ? root.m.h * 1px : root.m.h * 1px * self.k;
     border-radius: Theme.r-field;
     clip: true;
     background: root.m.state == "gone" ? transparent : root.m.kind == "embed" ? Theme.frame-bg : Theme.bg-secondary;
@@ -1019,6 +1089,8 @@ component MediaBox inherits Rectangle {
         opacity: 0; init => { self.opacity = 1; }
         animate opacity { duration: Theme.motion-fast; }
     }
+    // (What the box holds: a live frame, Open: under its corners and edge.)
+    @children
     // Round corners: the software renderer's clip has no radius, so the
     // corners outside it are covered in the log's colour, then the edge.
     if root.m.state != "gone": Image { x: 0; y: 0; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-tl.svg"); colorize: Theme.bg-primary; }
@@ -1026,7 +1098,6 @@ component MediaBox inherits Rectangle {
     if root.m.state != "gone": Image { x: 0; y: parent.height - self.height; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-bl.svg"); colorize: Theme.bg-primary; }
     if root.m.state != "gone": Image { x: parent.width - self.width; y: parent.height - self.height; width: Theme.r-field; height: Theme.r-field; source: @image-url("shapes/corner-br.svg"); colorize: Theme.bg-primary; }
     if root.m.state != "gone": Rectangle { border-radius: Theme.r-field; border-width: 1px; border-color: Theme.border; }
-    @children
 }
 
 /// A caption under an item (or under a row: the call's).
@@ -1118,12 +1189,9 @@ component MediaView inherits VerticalLayout {
         alignment: start;
         MediaBox {
             m: root.m; avail: root.avail; gone-text: "This embed is no longer stored.";
-            if root.m.state == "ready": Rectangle {
-                width: ob.preferred-width + Theme.sp-24; height: Theme.control-sm;
-                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                background: oa.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
-                ob := Text { text: "Open"; font-size: Theme.text-12; color: Theme.text-primary; }
-                oa := TouchArea { mouse-cursor: pointer; clicked => { ToolAct.open-frame(root.m.chat, root.m.name, root.m.url); } }
+            if root.m.state == "ready" && root.m.frame != "": LiveFrame {
+                x: 1px; y: 1px; width: parent.width - Theme.sp-2; height: parent.height - Theme.sp-2;
+                fkey: root.m.chat + "|" + root.m.frame; chat: root.m.chat; target: root.m.frame;
             }
         }
     }

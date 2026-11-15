@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn,
+    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct, FrameUi, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn,
 };
 use serde_json::{json, Value};
 use crate::{fresult, resume};
@@ -633,6 +633,8 @@ pub fn init(window: &MainWindow) {
     window.global::<ParkAct>().on_resume(|k, m| park_resume(k.as_str(), m.as_str()));
     window.global::<ParkAct>().on_peek(|k, on| park_peek(k.as_str(), on));
     // Factory result cards (2.20).
+    // Live frames in the log (2.16f).
+    frames_init(window);
     // Voice input (2.24).
     window.global::<Composer>().on_mic_press(|k| mic_press(k.as_str()));
     window.global::<Composer>().on_mic_release(|k, over| mic_release(k.as_str(), over));
@@ -2365,6 +2367,9 @@ impl MediaCtx<'_> {
             line: { let sz = media::fmt_bytes(i.size); if i.caption.is_empty() { sz } else { format!("{sz} · {}", i.caption) } }.into(),
             duration: if i.duration > 0.0 { media::fmt_duration(i.duration).into() } else { SharedString::default() },
             chat: self.chat.as_str().into(),
+            // A live frame's page (2.16f): the stored HTML, or the https page.
+            fixed_h: i.kind == "embed" && !(i.w > 0.0 && i.h > 0.0),
+            frame: if i.kind != "embed" { SharedString::default() } else if !i.name.is_empty() { format!("stored:{}", i.name).into() } else if i.src.starts_with("https://") { i.src.as_str().into() } else { SharedString::default() },
         }
     }
 }
@@ -2709,6 +2714,8 @@ fn sec_open(leaf: u32) {
 /// dialog closes (its own key handler can miss it when the focused field
 /// went with a grant).
 pub fn escape() {
+    // A live frame with the keyboard: Esc is its page's (2.16f).
+    if crate::frames::focused().is_some() { return; }
     if with(|a| a.sec.is_some()).unwrap_or(false) { return sec_close(); }
     // Voice mode or a hold in the focused chat ends (2.24).
     if with(|a| a.picker.is_none() && a.viewer.is_none() && a.park.dlg.is_none()).unwrap_or(false) && voice_escape() { return; }
@@ -5344,4 +5351,35 @@ pub fn voice_of() -> Value {
         "queue": a.vo.queue.len(), "lastSent": a.vo.last_sent,
         "deviceSays": a.vo.device_says, "deviceVoiced": a.vo.device_voiced,
     })).unwrap_or(Value::Null)
+}
+
+// ─── Live frames (2.16f, src/frames.rs) ───
+
+fn frames_init(window: &MainWindow) {
+    let w = window.as_weak();
+    crate::frames::init(String::new(), |chat, name, key| {
+        // The chat's stored HTML (a 404 or a failure: nothing; retried later).
+        let Some(api) = api() else { return crate::frames::fetched(&key, None) };
+        let path = format!("/api/chat-media?session={}&name={}", enc(&chat), enc(&name));
+        bg(move || api.get_bytes(&path).ok().filter(|(st, _)| *st == 200).map(|(_, b)| b), move |r| crate::browser::defer(move || crate::frames::fetched(&key, r)));
+    }, move |g| { if let Some(u) = w.upgrade() { u.global::<FrameUi>().set_gen(g); } });
+    let fu = window.global::<FrameUi>();
+    fu.on_image(|k, _| crate::frames::image(k.as_str()).unwrap_or_default());
+    fu.on_painted(|k, _| crate::frames::painted(k.as_str()));
+    fu.on_cursor(|k, _| crate::frames::cursor(k.as_str()));
+    fu.on_seen(|k, chat, target, w, h, ax, ay| {
+        let (k, chat, target) = (k.to_string(), chat.to_string(), target.to_string());
+        // Never in a parked chat (its log is a preview), nor for a chat with no pane.
+        let ok = with(|a| a.chats.get(&chat).is_some_and(|cs| !cs.parked)).unwrap_or(false);
+        let origin = api().map(|a| a.base().trim_end_matches('/').to_string()).unwrap_or_default();
+        let scale = ui().map(|u| u.window().scale_factor()).unwrap_or(1.0);
+        crate::browser::defer(move || {
+            crate::frames::set_origin(&origin);
+            if ok { crate::frames::seen(&k, &chat, &target, w, h, ax, ay, scale, true, 0.0); } else { crate::frames::release(&k); }
+        });
+    });
+    fu.on_pointer(|k, kind, x, y, b| { let k = k.to_string(); crate::browser::defer(move || crate::frames::pointer(&k, kind, x, y, b)); });
+    fu.on_wheel(|k, x, y, dx, dy| { let k = k.to_string(); crate::browser::defer(move || crate::frames::wheel(&k, x, y, dx, dy)); });
+    fu.on_key(|k, t, down, ctrl, shift| { let (k, t) = (k.to_string(), t.to_string()); crate::browser::defer(move || crate::frames::key(&k, &t, down, ctrl, shift)); });
+    fu.on_focus(|k, on| { let k = k.to_string(); crate::browser::defer(move || crate::frames::focus(&k, on)); });
 }

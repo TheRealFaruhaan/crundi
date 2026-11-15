@@ -872,24 +872,24 @@ only when `stick`; a height change alone does not).
 - [x] Formats: PNG, JPEG, WebP and GIF all draw (GIF: first frame or
       animated; named gap if first frame); a poster `.poster.jpg` draws.
 - [x] Markdown `![a](https://…)`: "!" and a link, no picture; nothing fetched.
-- [ ] Frame: live inline CEF view (https `src` with the server's origin as
+- [x] Frame: live inline CEF view (https `src` with the server's origin as
       referrer; stored HTML as a data URL), sized per the table, loading
       ring, "This embed is no longer stored.", caption "title · caption ·
       Open on <provider>", popups to the system browser; made when
       realised, closed when far; the no-CEF fallback named.
-- [ ] Frame view: box − 2 inside the edge, corners clipped, transparent
+- [x] Frame view: box − 2 inside the edge, corners clipped, transparent
       background over `frame-bg` (no white flash), resized with the box
       (narrow: aspect boxes follow, fixed heights stay).
-- [ ] Frame lifetime: made within 900 px, released past 4500 px, on pane
+- [x] Frame lifetime: made within 900 px, released past 4500 px, on pane
       close / park / hidden tab, back fresh; at most 6 live views (named
       difference); off-screen live views hidden (`was_hidden`).
-- [ ] Frame input: pointer and page cursor; click focuses it and the
+- [x] Frame input: pointer and page cursor; click focuses it and the
       composer gets no keys; a click outside gives focus back; wheel over
       a frame goes to it (chaining to the log at its end, or named); the
       wheel elsewhere scrolls the log; a dropped file goes to the chat.
-- [ ] Frame limits: no downloads, no context menu, dialogs suppressed
+- [x] Frame limits: no downloads, no context menu, dialogs suppressed
       (named), links navigate inside, never the client.
-- [ ] phase2.mjs step 9 (click test: title and pixel change, focus,
+- [x] phase2.mjs step 9 (click test: title and pixel change, focus,
       popup to the opener, release and come back, the cap, pane close).
 - [x] Download row: tray top right, accent / green / red left edge, texts
       "Starting…", "<got> of <total>", "Saved · <size>", "Cancelled", the

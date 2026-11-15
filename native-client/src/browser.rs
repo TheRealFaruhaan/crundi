@@ -266,6 +266,8 @@ type PageCursor = *mut u8;
 type PageCursor = CursorHandle;
 
 /// CEF's cursor kinds, folded into the ones the panel shows (ui/main.slint, page-cursor).
+pub(crate) fn cursor_kind(t: CursorType) -> i32 { cursor_index(t) }
+
 fn cursor_index(t: CursorType) -> i32 {
     match t {
         CursorType::HAND => 1,
