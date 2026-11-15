@@ -1,0 +1,176 @@
+// The Files tab and panel (the web's renderFilesPanel, .files-panel): the
+// search box, the path bar with paste / up / upload, and the list (or the
+// search's results). A row: click selects, double click opens, right click
+// or "…" opens its menu (kit::menu, from Rust).
+
+import { Theme, Icons, Icon, ScrollThumb, Tip } from "parts.slint";
+import { WorkspaceUi, WorkspaceFileRow } from "api.slint";
+
+/// A file type's mark colour (fileIcon's), by key.
+export global WsTone {
+    public pure function of(t: string) -> color {
+        return t == "js" ? Theme.ws-ft-js : t == "ts" ? Theme.ws-ft-ts : t == "jsx" ? Theme.ws-ft-jsx : t == "json" ? Theme.ws-ft-json
+            : t == "html" ? Theme.ws-ft-html : t == "css" ? Theme.ws-ft-css : t == "scss" ? Theme.ws-ft-scss : t == "py" ? Theme.ws-ft-py
+            : t == "go" ? Theme.ws-ft-go : t == "rs" ? Theme.ws-ft-rs : t == "java" ? Theme.ws-ft-java : t == "c" ? Theme.ws-ft-c
+            : t == "cpp" ? Theme.ws-ft-cpp : t == "sh" ? Theme.ws-ft-sh : t == "ps" ? Theme.ws-ft-ps : t == "sql" ? Theme.ws-ft-sql
+            : t == "md" ? Theme.ws-ft-md : t == "yml" ? Theme.ws-ft-yml : t == "xml" ? Theme.ws-ft-xml : t == "svg" ? Theme.ws-ft-svg
+            : t == "pdf" ? Theme.ws-ft-pdf : t == "lock" ? Theme.ws-ft-lock : t == "vue" ? Theme.ws-ft-vue : t == "svelte" ? Theme.ws-ft-svelte
+            : t == "docker" ? Theme.ws-ft-docker : t == "git" ? Theme.ws-ft-git : t == "npm" ? Theme.ws-ft-npm
+            : t == "dir" ? Theme.yellow : Theme.text-muted;
+    }
+    public pure function icon(n: string) -> image {
+        return n == "folder" ? Icons.folder : n == "arrow-up" ? Icons.arrow-up : n == "docker" ? Icons.docker : n == "lock" ? Icons.lock
+            : n == "image" ? Icons.image : n == "archive" ? Icons.archive : n == "file-text" ? Icons.file-text : n == "list" ? Icons.list
+            : n == "film" ? Icons.film : n == "music" ? Icons.music
+            : Icons.file;
+    }
+}
+
+/// A path bar button (.files-act): bordered; hover primary, accent edge.
+component BarAct inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> lit;
+    callback clicked();
+    width: Theme.sp-24 + Theme.sp-4; height: Theme.sp-24;
+    border-radius: Theme.r-control; border-width: 1px;
+    border-color: ta.has-hover || root.lit ? Theme.accent : Theme.border;
+    Icon { source: root.icon; width: Theme.icon-md; height: Theme.icon-md; tint: root.lit ? Theme.accent-hover : ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Tip { on: ta.has-hover; text: root.tip; }
+}
+
+/// A row of the list (.file-item).
+export component FileItem inherits Rectangle {
+    in property <WorkspaceFileRow> r;
+    height: Theme.control-sm;
+    background: root.r.selected ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : transparent;
+    opacity: root.r.cut ? Theme.o-dim : 1;
+    if root.r.selected: Rectangle { x: 0; width: Theme.sp-2; background: Theme.accent; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { WorkspaceUi.files-select(root.r.path); }
+        double-clicked => { WorkspaceUi.files-open(root.r.path); }
+        pointer-event(ev) => {
+            if ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up && !root.r.up {
+                WorkspaceUi.files-menu(root.r.path, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+    }
+    Tip { on: ta.has-hover; text: root.r.up ? "Double-click to go up" : "Double-click to open. Right-click for more. Drag onto a terminal to insert its path."; }
+    HorizontalLayout {
+        padding-left: Theme.sp-12; padding-right: Theme.sp-8;
+        spacing: Theme.sp-8;
+        Rectangle {
+            width: Theme.icon-lg;
+            if root.r.mark == "": Icon { source: WsTone.icon(root.r.icon); width: Theme.icon-sm; height: Theme.icon-sm; tint: WsTone.of(root.r.tone); }
+            if root.r.mark != "": Text { text: root.r.mark; font-size: Theme.text-10; font-weight: Theme.w-semibold; font-family: Theme.mono; color: WsTone.of(root.r.tone); }
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            min-width: 0;
+            if root.r.dir != "": Text { text: root.r.dir; vertical-alignment: center; font-size: Theme.text-12; font-family: Theme.mono; color: Theme.text-muted; overflow: elide; min-width: 0; horizontal-stretch: 0; }
+            Text { text: root.r.name; vertical-alignment: center; font-size: Theme.text-12; font-family: Theme.mono; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; min-width: 0; }
+        }
+        if root.r.size != "": Text { text: root.r.size; vertical-alignment: center; font-size: Theme.text-11; font-family: Theme.mono; color: Theme.text-muted; }
+        if !root.r.up: Rectangle {
+            width: Theme.sp-24 + Theme.sp-2;
+            opacity: ta.has-hover || mt.has-hover || root.r.selected ? 1 : 0;
+            Rectangle {
+                height: Theme.sp-20; border-radius: Theme.r-chip;
+                background: mt.has-hover ? Theme.bg-tertiary : transparent;
+                Icon { source: Icons.more; width: Theme.icon-md; height: Theme.icon-md; tint: mt.has-hover ? Theme.text-primary : Theme.text-muted; }
+            }
+            mt := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { WorkspaceUi.files-menu(root.r.path, self.absolute-position.x + self.width - Theme.sp-4, self.absolute-position.y + self.height + Theme.sp-2); }
+            }
+            Tip { on: mt.has-hover; text: "More"; }
+        }
+    }
+}
+
+export component FilesView inherits Rectangle {
+    background: Theme.bg-primary;
+    VerticalLayout {
+        // The toolbar: the search box (inside the project), the path bar.
+        Rectangle {
+            height: bar.preferred-height;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+            bar := VerticalLayout {
+                if WorkspaceUi.files-inside: Rectangle {
+                    height: Theme.sp-32;
+                    background: si.has-focus ? Theme.bg-secondary : Theme.bg-primary;
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+                    si := TextInput {
+                        // Set by the app (a new folder clears it).
+                        property <int> gen: WorkspaceUi.files-q-gen;
+                        changed gen => { self.text = WorkspaceUi.files-q; }
+                        x: Theme.sp-12; width: parent.width - Theme.sp-24;
+                        single-line: true; vertical-alignment: center;
+                        font-size: Theme.text-12; font-family: Theme.mono; color: Theme.text-primary;
+                        selection-background-color: Theme.selection;
+                        edited => { WorkspaceUi.files-search(self.text); }
+                        key-pressed(ev) => {
+                            if ev.text == Key.Escape { self.text = ""; WorkspaceUi.files-search(""); return accept; }
+                            return reject;
+                        }
+                    }
+                    if si.text == "": Text { x: Theme.sp-12; height: parent.height; vertical-alignment: center; text: "Search files & folders…"; font-size: Theme.text-12; font-family: Theme.mono; color: Theme.text-muted; }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.sp-12; padding-right: Theme.sp-8; padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+                    spacing: Theme.sp-8;
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+                        spacing: Theme.sp-4;
+                        alignment: start;
+                        if WorkspaceUi.files-crumbs.length == 0: Text { text: "—"; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                        for c[i] in WorkspaceUi.files-crumbs: HorizontalLayout {
+                            spacing: Theme.sp-4;
+                            if i > 0: Text { text: "/"; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; opacity: Theme.o-soft; }
+                            Text {
+                                text: c.name; vertical-alignment: center; font-size: Theme.text-12; color: Theme.accent;
+                                overflow: elide;
+                                TouchArea { mouse-cursor: pointer; clicked => { WorkspaceUi.files-nav(c.path); } }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.sp-4;
+                        if WorkspaceUi.files-can-paste: BarAct { icon: Icons.clipboard; lit: true; tip: WorkspaceUi.files-paste-tip; clicked => { WorkspaceUi.files-paste(); } }
+                        if WorkspaceUi.files-can-up: BarAct { icon: Icons.arrow-up; tip: "Up to parent folder"; clicked => { WorkspaceUi.files-up(); } }
+                        if WorkspaceUi.files-inside: BarAct { icon: Icons.upload; tip: "Upload to this folder"; clicked => { WorkspaceUi.files-upload(); } }
+                    }
+                }
+            }
+        }
+        // The results.
+        Rectangle {
+            vertical-stretch: 1;
+            if WorkspaceUi.files-state != "ok": Text {
+                y: Theme.sp-20; x: Theme.sp-12; width: parent.width - Theme.sp-24;
+                horizontal-alignment: center; wrap: word-wrap;
+                text: WorkspaceUi.files-state == "error" ? WorkspaceUi.files-error : WorkspaceUi.files-state == "loading" ? "Loading…" : "";
+                font-size: Theme.text-12; color: Theme.text-muted;
+            }
+            if WorkspaceUi.files-state == "ok": fl := Flickable {
+                width: parent.width; height: parent.height;
+                content-height: max(self.height, col.preferred-height);
+                col := VerticalLayout {
+                    width: fl.width;
+                    if WorkspaceUi.files-searching && WorkspaceUi.files-note != "": Rectangle {
+                        height: Theme.sp-24 + Theme.sp-2;
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+                        Text { x: Theme.sp-12; text: WorkspaceUi.files-note; vertical-alignment: center; height: parent.height; font-size: Theme.text-11; color: Theme.text-muted; }
+                    }
+                    if WorkspaceUi.files-empty != "": Text {
+                        height: Theme.sp-20 * 2 + Theme.sp-16; horizontal-alignment: center; vertical-alignment: center;
+                        text: WorkspaceUi.files-empty; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap;
+                    }
+                    for r in WorkspaceUi.files-rows: FileItem { r: r; }
+                }
+            }
+        }
+    }
+}

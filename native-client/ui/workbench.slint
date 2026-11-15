@@ -7,7 +7,14 @@ import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
 import { ParkedVeil, Unpeek, ParkAct } from "parked.slint";
 import { AreaView } from "areas.slint";
+import { TermPane } from "workspace/index.slint";
+import { WorkspaceUi } from "workspace/api.slint";
 import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem, SlashItem, AgentRow, AnsBlock, ToolAct, Spinner } from "chat.slint";
+
+/// An empty pane's chip (3.1): the kind it adds, its label; the chips wrap
+/// onto rows, as the web's .me-chips.
+export struct EmptyChip { id: string, label: string }
+export struct EmptyChipRow { items: [EmptyChip] }
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -120,6 +127,8 @@ export struct PaneView {
     pk-tokens: string,
     pk-busy: string,
     pk-busy-label: string,
+    // An empty pane's chips (3.1).
+    chips: [EmptyChipRow],
     // A factory's Manager chat (2.20): the header's Factory tag.
     factory: bool,
     // Voice input (2.24): the mic shows; the voice line's kind and text.
@@ -144,8 +153,12 @@ export struct GutterView {
 /// A new pane: Empty Shell, or Claude in UI Mode (a chat) or Terminal.
 component Launcher inherits Rectangle {
     callback ui-mode(bool /* skip permissions */);
+    // Empty Shell and Terminal (3.2): the workspace area launches them
+    // (WorkspaceUi.launch: shell | normal | skip), on this leaf.
+    in property <int> leaf;
     // Launching (2.22, the web's beginLaunch): 1 UI Mode, 2 its Skip
-    // Permissions. The pressed button spins, the others dim; none take clicks.
+    // Permissions, 3 Empty Shell, 4 Terminal, 5 its Skip Permissions. The
+    // pressed button spins, the others dim; none take clicks.
     in property <int> busy;
     property <bool> busy-skip: root.busy == 2;
     VerticalLayout {
@@ -160,9 +173,12 @@ component Launcher inherits Rectangle {
             Rectangle {
                 x: (parent.width - self.width) / 2;
                 width: Theme.pane-min / 2; height: Theme.control-lg;
-                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                opacity: root.busy != 0 ? Theme.o-dim : Theme.o-soft;
-                Text { text: "Empty Shell"; font-size: Theme.text-14; color: Theme.text-secondary; }
+                border-radius: Theme.r-control; border-width: 1px; border-color: es.has-hover && root.busy == 0 ? Theme.accent : Theme.border;
+                background: es.has-hover && root.busy == 0 ? Theme.bg-hover : transparent;
+                opacity: root.busy != 0 && root.busy != 3 ? Theme.o-dim : 1;
+                Text { visible: root.busy != 3; text: "Empty Shell"; font-size: Theme.text-14; color: es.has-hover ? Theme.text-primary : Theme.text-secondary; }
+                if root.busy == 3: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                es := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "shell"); } }
             }
         }
         Rectangle {
@@ -208,23 +224,30 @@ component Launcher inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: Theme.sp-8;
-                        opacity: Theme.o-soft;
                         Rectangle {
                             horizontal-stretch: 1; height: Theme.control-lg;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-line;
-                            background: Theme.bg-card;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: tm.has-hover && root.busy == 0 ? Theme.accent : Theme.accent-line;
+                            background: tm.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-card;
+                            opacity: root.busy != 0 && root.busy != 4 ? Theme.o-dim : 1;
                             HorizontalLayout {
+                                visible: root.busy != 4;
                                 alignment: center;
                                 spacing: Theme.sp-8;
                                 Icon { source: Icons.terminal; width: Theme.icon-md; height: Theme.icon-md; y: (parent.height - self.height) / 2; tint: Theme.text-primary; }
                                 Text { text: "Terminal"; font-size: Theme.text-14; color: Theme.text-primary; vertical-alignment: center; }
                             }
+                            if root.busy == 4: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            tm := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "normal"); } }
                         }
                         Rectangle {
                             width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: Theme.bg-tertiary;
-                            Icon { source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            background: s2.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-tertiary;
+                            opacity: root.busy != 0 && root.busy != 5 ? Theme.o-dim : 1;
+                            Icon { visible: root.busy != 5; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            if root.busy == 5: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            s2 := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "skip"); } }
+                            Tip { on: s2.has-hover; text: "Terminal — Skip Permissions"; }
                         }
                     }
                 }
@@ -280,9 +303,12 @@ component EmptyBtn inherits Rectangle {
 }
 
 /// A leaf with nothing in it (.mosaic-empty): inset from the leaf, a
-/// dashed edge, radius 10, no fill; a centred column: the message, the chips, then Split ▸ / Split ▾ / ×. Small panes
-/// clip it. Only the chips the native client can open are drawn (Terminal).
+/// dashed edge, radius 10, no fill; a centred column: the message, the
+/// chips (Terminal, the panels not yet in the workbench, Notes always, and
+/// Panel), wrapping onto more rows, then Split ▸ / Split ▾ / ×. Small panes
+/// clip it.
 component EmptyLeaf inherits Rectangle {
+    in property <[EmptyChipRow]> chips;
     callback split-right();
     callback split-down();
     callback close();
@@ -296,11 +322,21 @@ component EmptyLeaf inherits Rectangle {
         alignment: center;
         spacing: Theme.sp-10;
         Text { text: "Drop a panel here or launch a new one"; font-size: Theme.text-13; color: Theme.text-muted; horizontal-alignment: center; }
-        // The chips: a centred row.
-        HorizontalLayout {
-            alignment: center;
+        // The chips: centred rows.
+        VerticalLayout {
+            spacing: Theme.sp-6;
             padding-bottom: Theme.sp-2;
-            Chip { label: "Terminal"; icon: Icons.terminal; clicked => { root.chip("terminal"); } }
+            for row in root.chips: HorizontalLayout {
+                alignment: center;
+                spacing: Theme.sp-6;
+                for c in row.items: Chip {
+                    label: c.label;
+                    icon: c.id == "terminal" ? Icons.terminal : c.id == "files" ? Icons.folder : c.id == "git" ? Icons.git-branch
+                        : c.id == "kanban" ? Icons.kanban : c.id == "notes" ? Icons.note : c.id == "mindmap" ? Icons.mindmap
+                        : c.id == "media" ? Icons.images : c.id == "factory" ? Icons.factory : Icons.panel;
+                    clicked => { root.chip(c.id); }
+                }
+            }
         }
         HorizontalLayout {
             alignment: center;
@@ -391,7 +427,13 @@ export component PaneCard inherits Rectangle {
             title-max: p.title-max;
             short-title: p.short-title;
             state: p.state;
-            chat: p.kind == "chat" && !p.pk;
+            chat: (p.kind == "chat" || p.kind == "terminal") && !p.pk;
+            panel: p.kind == "panel";
+            close-tip: p.kind == "terminal" ? "Close terminal" : p.kind == "panel" ? "Close panel" : p.kind == "launcher" ? "Remove" : "Close chat";
+            panel-icon: p.panel == "files" ? Icons.folder : p.panel == "git" ? Icons.git-branch : p.panel == "kanban" ? Icons.kanban
+                : p.panel == "notes" ? Icons.note : p.panel == "mindmap" ? Icons.mindmap : p.panel == "media" ? Icons.images
+                : p.panel == "factory" ? Icons.factory : p.panel == "widget" ? Icons.panel : Icons.file;
+            refresh => { WorkspaceUi.panel-refresh(p.panel, p.key); }
             parked: p.pk;
             factory: p.factory;
             narrow: p.narrow;
@@ -465,9 +507,17 @@ export component PaneCard inherits Rectangle {
             answer(id, o) => { root.answer(id, o); }
             draft-changed(t) => { root.draft-changed(t); }
         }
+        // A Claude terminal (3.2): the terminal and its own input.
+        if p.kind == "terminal": TermPane {
+            vertical-stretch: 1;
+            key: p.key;
+            fs: p.fs;
+            focused: p.focused;
+        }
         if p.kind == "launcher": Launcher {
             vertical-stretch: 1;
             busy: p.launch-busy;
+            leaf: p.id;
             ui-mode(skip) => { root.launch-chat(skip); }
         }
         // A panel (Files, Git, Kanban…): its area's view, embedded
@@ -629,6 +679,7 @@ export component Workbench inherits Rectangle {
             property <bool> over: !Pointer.modal && !Pointer.on-dock && Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
                 && Pointer.y >= self.absolute-position.y && Pointer.y < self.absolute-position.y + self.height;
             if p.kind == "empty": EmptyLeaf {
+                chips: p.chips;
                 split-right => { root.split(p.id, false); }
                 split-down => { root.split(p.id, true); }
                 close => { root.close-pane(p.id); }

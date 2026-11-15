@@ -9,7 +9,7 @@ use crate::{
     chat::{self, Conversation, Handed, Shown},
     live::{self, Event, Live},
     mosaic::{Dir, Mosaic},
-    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct, FrameUi, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn,
+    agents, head, media, questions, sched, secrets, slash, sreq, store, think, tools, Composer, QAct, QOpt, QView, EntryView, GutterView, MainWindow, ModeOption, PaneView, ProjectItem, SchedItem, SecGrant, SecPick, SlashItem, SreqCard, ToolView, ToolAct, DiffLine, TodoItem, MediaItem, DlRow, AnsBlock, AgentRow, ResumeRow, ParkAct, EmptyChip, EmptyChipRow, FrameUi, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn,
 };
 use serde_json::{json, Value};
 use crate::{fresult, resume};
@@ -88,6 +88,8 @@ struct Sched {
 struct ResumeDlg {
     leaf: u32,
     skip: bool,
+    /// Claude in Terminal mode (3.2), not UI Mode.
+    term: bool,
     list: Vec<resume::Earlier>,
     error: String,
     heavy: Option<usize>,
@@ -379,6 +381,52 @@ fn chat_key(id: &str) -> String {
 
 fn chat_of(key: &str) -> Option<&str> {
     key.strip_prefix("live:")
+}
+
+/// A Claude terminal's pane key (3.2): term:<id>.
+pub(crate) fn term_key(id: &str) -> String {
+    format!("term:{id}")
+}
+
+pub(crate) fn term_of(key: &str) -> Option<&str> {
+    key.strip_prefix("term:")
+}
+
+/// A chat's or a terminal's id, from its pane key.
+fn item_of(key: &str) -> Option<&str> {
+    chat_of(key).or_else(|| term_of(key))
+}
+
+/// The project's Claude terminals in the last `state` (kind terminal).
+fn project_terms(a: &App) -> Vec<Value> {
+    a.terminals.as_ref().map(|t| t.iter().filter(|c| s(c, "kind") == "terminal" && s(c, "project") == a.project).cloned().collect()).unwrap_or_default()
+}
+
+/// The panel kinds open in the workbench (panel:<kind>[:n]).
+pub(crate) fn wb_kinds() -> Vec<String> {
+    with(|a| a.mosaic.keys().iter().filter_map(|k| k.strip_prefix("panel:").map(|r| r.split(':').next().unwrap_or("").to_string())).collect()).unwrap_or_default()
+}
+
+/// The empty pane's chips (3.1, the web's emptyLeafHtml): Terminal, the
+/// panels not in the workbench yet (Notes always), Panel; in rows that fit
+/// the pane (a chip is its icon and padding plus its label, about 6.6px a
+/// character at 12px).
+fn empty_chips(open: &[String], width: f32) -> Vec<EmptyChipRow> {
+    let mut items: Vec<(&str, &str)> = vec![("terminal", "Terminal")];
+    for (k, l) in [("files", "Files"), ("git", "Git"), ("kanban", "Kanban"), ("notes", "Notes"), ("mindmap", "Mindmap"), ("media", "Media"), ("factory", "Factory")] {
+        if k == "notes" || !open.iter().any(|o| o == k) { items.push((k, l)); }
+    }
+    items.push(("widget", "Panel"));
+    let room = (width - 40.0).max(120.0);
+    let mut rows: Vec<Vec<EmptyChip>> = vec![vec![]];
+    let mut used = 0.0;
+    for (id, label) in items {
+        let w = 42.0 + label.chars().count() as f32 * 6.6;
+        if used > 0.0 && used + 6.0 + w > room { rows.push(vec![]); used = 0.0; }
+        used += if used > 0.0 { 6.0 + w } else { w };
+        rows.last_mut().unwrap().push(EmptyChip { id: id.into(), label: label.into() });
+    }
+    rows.into_iter().map(|r| EmptyChipRow { items: ModelRc::new(VecModel::from(r)) }).collect()
 }
 
 // ─── Starting ───
@@ -1158,6 +1206,10 @@ fn sync_panes() {
         let known = a.terminals.is_some();
         a.mosaic.retain(|k| match chat_of(k) { Some(id) => !known || live.iter().chain(&parked).chain(&resumed).any(|l| l == id), None => true });
         for id in live.iter().chain(&parked) { a.mosaic.place(&chat_key(id)); }
+        // Claude terminals (3.2): a pane each, as the chats.
+        let terms: Vec<String> = project_terms(a).iter().map(|c| s(c, "id")).collect();
+        a.mosaic.retain(|k| match term_of(k) { Some(id) => !known || terms.iter().any(|t| t == id), None => true });
+        for id in &terms { a.mosaic.place(&term_key(id)); }
         // Chats in panes: a conversation each, subscribed once (a parked one
         // never: its stored conversation is fetched instead).
         let mut new = vec![];
@@ -1195,6 +1247,8 @@ fn sync_panes() {
         for id in &subscribe { l.subscribe(id); }
     });
     for id in previews { load_preview(id); }
+    let terms: Vec<String> = with(|a| a.mosaic.keys().iter().filter_map(|k| term_of(k).map(str::to_string)).collect()).unwrap_or_default();
+    crate::workspace::terms_sync(&terms);
     // Voice input (2.24): new panes ask whether the mic shows (cached a
     // minute); a recording chat gone or parked stops.
     if !subscribe.is_empty() { voice_check(); }
@@ -1243,6 +1297,7 @@ fn render() {
         if a.focused == 0 || !leaves.iter().any(|l| l.id == a.focused) {
             a.focused = leaves.first().map(|l| l.id).unwrap_or(0);
         }
+        let open_kinds: Vec<String> = a.mosaic.keys().iter().filter_map(|k| k.strip_prefix("panel:").map(|r| r.split(':').next().unwrap_or("").to_string())).collect();
         let panes: Vec<PaneView> = leaves.iter().map(|l| {
             let key = l.key.clone().unwrap_or_default();
             let mut p = PaneView {
@@ -1357,16 +1412,31 @@ fn render() {
                     p.pk_busy = a.park.busy.get(id).cloned().unwrap_or_default().into();
                     p.pk_busy_label = resume::park_busy_label(&p.pk_busy).into();
                 }
+            } else if let Some(id) = term_of(&key) {
+                // A Claude terminal (3.2): its title and state; its text size.
+                let item = a.terminals.as_ref().and_then(|t| t.iter().find(|c| s(c, "id") == id));
+                p.kind = "terminal".into();
+                let short = item.map(|c| s(c, "title")).filter(|t| !t.is_empty()).unwrap_or_else(|| "Terminal".into());
+                let (shown, cap) = head::title_shown(&short, "", l.w);
+                p.title = shown.into();
+                p.title_max = cap;
+                p.short_title = short.into();
+                let st = item.map(|c| if s(c, "status") == "exited" { "exited".to_string() } else { s(c, "state") }).unwrap_or_default();
+                p.state = if st.is_empty() { "idle".into() } else { st.into() };
+                p.fs = head::font_scale(*a.font.get(id).unwrap_or(&a.font_default));
             } else if key.starts_with("pend:") {
                 p.kind = "launcher".into();
                 p.title = "New terminal".into();
                 p.launch_busy = *a.park.launching.get(&l.id).unwrap_or(&0);
-            } else if let Some(kind) = key.strip_prefix("panel:") {
+            } else if let Some(rest) = key.strip_prefix("panel:") {
+                // A panel: panel:<kind>, or panel:<kind>:<n> for the kinds
+                // that open many (Notes, a widget).
+                let kind = rest.split(':').next().unwrap_or("");
                 p.kind = "panel".into();
                 p.panel = kind.into();
-                let mut c = kind.chars();
-                p.title = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default().into();
+                p.title = match kind { "widget" => "Panel".to_string(), _ => { let mut c = kind.chars(); c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default() } }.into();
             }
+            if p.kind == "empty" { p.chips = ModelRc::new(VecModel::from(empty_chips(&open_kinds, l.w))); }
             // Only a chat's header folds its tools into "…" (a launcher or a
             // panel has just Pin and ×, shown at any width, as the web's).
             if p.kind != "chat" || p.pk { p.narrow = false; p.menu = false; }
@@ -1484,6 +1554,12 @@ fn leaf_rect(leaf: u32) -> Option<crate::mosaic::LeafRect> {
 /// The header's ×: the first click arms it ("Sure?", 3 s; one pane at a
 /// time), the second closes.
 pub fn pane_close(leaf: u32) {
+    // A panel's × and a launcher's close at once (the web's wb-close and
+    // term-close-pending); a chat's and a terminal's take two clicks.
+    if leaf_rect(leaf).and_then(|l| l.key).is_some_and(|k| k.starts_with("panel:") || k.starts_with("pend:")) {
+        with(|a| a.armed = 0);
+        return close_pane(leaf);
+    }
     let armed = with(|a| a.armed == leaf).unwrap_or(false);
     if armed {
         with(|a| a.armed = 0);
@@ -1529,7 +1605,7 @@ pub fn pane_menu(leaf: u32, open: bool) {
 /// A- / A+ (`d` = -1 / +1), or reset (`d` = 0, back to 13). Every change is
 /// also the size new chats start at.
 pub fn pane_font(leaf: u32, d: i32) {
-    let Some(id) = leaf_rect(leaf).and_then(|l| l.key).and_then(|k| chat_of(&k).map(str::to_string)) else { return };
+    let Some(id) = leaf_rect(leaf).and_then(|l| l.key).and_then(|k| item_of(&k).map(str::to_string)) else { return };
     let px = with(|a| {
         let now = *a.font.get(&id).unwrap_or(&a.font_default);
         let px = if d == 0 { head::FONT_BASE } else { head::font_step(now, d) };
@@ -1551,6 +1627,14 @@ pub fn pane_pin(leaf: u32) {
 /// Rename a chat: the title changes at once (its long form goes), then the
 /// server is told; an unchanged title sends nothing.
 pub fn pane_rename(leaf: u32, input: &str) {
+    // A Claude terminal (3.2): /api/terminals/:id/rename.
+    if let Some(id) = leaf_rect(leaf).and_then(|l| l.key).and_then(|k| term_of(&k).map(str::to_string)) {
+        let current = with(|a| a.terminals.as_ref().and_then(|t| t.iter().find(|c| s(c, "id") == id).map(|c| s(c, "title")))).flatten().unwrap_or_default();
+        let Some(title) = head::rename_value(input, &current) else { return };
+        with(|a| if let Some(t) = a.terminals.as_mut() { if let Some(c) = t.iter_mut().find(|c| s(c, "id") == id) { c["title"] = json!(title); } });
+        render();
+        return call(move |api| api.post(&format!("/api/terminals/{id}/rename"), &json!({ "title": title })), |_| {});
+    }
     let Some(id) = leaf_rect(leaf).and_then(|l| l.key).and_then(|k| chat_of(&k).map(str::to_string)) else { return };
     let current = with(|a| a.sessions.iter().find(|c| s(c, "id") == id).map(|c| s(c, "title"))).flatten().unwrap_or_default();
     let Some(title) = head::rename_value(input, &current) else { return };
@@ -1581,6 +1665,23 @@ fn toast_kind(text: &str, error: bool, ok: bool) {
 /// goes) the pane stays and a toast says why.
 fn close_pane(leaf: u32) {
     let key = leaf_rect(leaf).and_then(|l| l.key);
+    // A Claude terminal (3.2): the server closes it, then its pane goes.
+    if let Some(id) = key.as_deref().and_then(term_of).map(str::to_string) {
+        let path = format!("/api/terminals/{id}/close");
+        return call(move |api| api.post(&path, &json!({})), move |r| {
+            if let Err(e) = r { return toast(&format!("Failed to close terminal: {e}"), true); }
+            animate();
+            with(|a| {
+                if let Some(l) = a.mosaic.leaf_of(&term_key(&id)) { a.mosaic.close(l); }
+                if let Some(t) = a.terminals.as_mut() { t.retain(|c| s(c, "id") != id); }
+                a.font.remove(&id);
+                if a.full.as_deref() == Some(term_key(&id).as_str()) { a.full = None; }
+            });
+            crate::workspace::terms_sync(&[]);
+            layout_changed();
+            sync_panes();
+        });
+    }
     let Some(id) = key.as_deref().and_then(chat_of).map(str::to_string) else {
         animate();
         with(|a| a.mosaic.close(leaf));
@@ -1636,7 +1737,7 @@ fn close_pane(leaf: u32) {
 fn add_pane(kind: &str) {
     animate();
     if kind == "fit" { return fit(); }
-    with(|a| {
+    let placed = with(|a| {
         if let Some(preset) = kind.strip_prefix("layout:") {
             // The panes in display order: the chats in the server's order.
             let order: Vec<String> = a.sessions.iter().filter(|c| s(c, "project") == a.project).map(|c| chat_key(&s(c, "id"))).collect();
@@ -1645,12 +1746,35 @@ fn add_pane(kind: &str) {
             let key = a.mosaic.layout(cw, a.area.1).0.into_iter().find(|l| l.id == a.focused).and_then(|l| l.key);
             a.mosaic = a.mosaic.preset_from(preset, &order);
             if let Some(l) = key.and_then(|k| a.mosaic.leaf_of(&k)) { a.focused = l; }
-            return;
+            return Ok(());
         }
-        let key = if kind == "terminal" { a.pending += 1; format!("pend:{}", a.pending) } else { format!("panel:{kind}") };
-        a.focused = a.mosaic.place(&key);
+        match panel_key(a, kind) {
+            Ok(key) => { a.focused = a.mosaic.place(&key); Ok(()) }
+            Err(e) => Err(e),
+        }
     });
+    if let Some(Err(e)) = placed { return toast(&e, false); }
     layout_changed();
+    crate::workspace::panel_opened(kind);
+}
+
+/// A new pane's key: a launcher (pend:<n>), a panel (panel:<kind>), or one
+/// of the kinds that open many (panel:notes:<n>, panel:widget:<n>: the
+/// "+" menu's Panel). A panel already in the workbench is refused with the
+/// web's toast (addWbPanel).
+fn panel_key(a: &mut App, kind: &str) -> Result<String, String> {
+    let kind = if kind == "panel" { "widget" } else { kind };
+    if kind == "terminal" { a.pending += 1; return Ok(format!("pend:{}", a.pending)); }
+    if kind == "notes" || kind == "widget" {
+        let n = a.mosaic.keys().iter().filter_map(|k| k.strip_prefix(&format!("panel:{kind}:")).and_then(|n| n.parse::<u32>().ok())).max().unwrap_or(0) + 1;
+        return Ok(format!("panel:{kind}:{n}"));
+    }
+    if a.mosaic.keys().iter().any(|k| k == &format!("panel:{kind}")) {
+        let mut c = kind.chars();
+        let label = c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default();
+        return Err(format!("{label} is already in the workbench"));
+    }
+    Ok(format!("panel:{kind}"))
 }
 
 /// Ease the panes to their new places for the next 220ms (a change of
@@ -1682,10 +1806,11 @@ fn fit() {
 /// puts it in the first empty one: DESIGN rule 5, PLAN.md). The chat it
 /// starts then takes the same pane (launch_chat).
 fn chip(leaf: u32, kind: &str) {
-    if kind != "terminal" { return; }
     animate();
-    with(|a| { a.pending += 1; let k = format!("pend:{}", a.pending); a.mosaic.assign(leaf, Some(k)); a.focused = leaf; });
+    let placed = with(|a| match panel_key(a, kind) { Ok(k) => { a.mosaic.assign(leaf, Some(k)); a.focused = leaf; Ok(()) } Err(e) => Err(e) });
+    if let Some(Err(e)) = placed { return toast(&e, false); }
     layout_changed();
+    crate::workspace::panel_opened(kind);
 }
 
 /// The leaf at a point of the grid's content (none on a gutter or outside).
@@ -1746,7 +1871,20 @@ pub fn drag_cancel() {
 /// earlier ones is fetched (nothing shows meanwhile, and the launcher ignores
 /// more clicks); none: a new session at once; else the picker. An old server
 /// without the list (404): a new session.
-fn launch_chat(leaf: u32, skip: bool) {
+fn launch_chat(leaf: u32, skip: bool) { launch_choose(leaf, skip, false); }
+
+/// The launcher's Empty Shell and Terminal (3.2, the web's launchTerminal):
+/// a shell starts at once; Terminal asks which conversation first, as UI
+/// Mode does.
+pub fn launch_term(leaf: u32, mode: &str) {
+    match mode {
+        "shell" => create_term(leaf, false, true, "", String::new()),
+        "skip" => launch_choose(leaf, true, true),
+        _ => launch_choose(leaf, false, true),
+    }
+}
+
+fn launch_choose(leaf: u32, skip: bool, term: bool) {
     let project = with(|a| a.project.clone()).unwrap_or_default();
     if project.is_empty() { return; }
     let go = with(|a| {
@@ -1766,8 +1904,8 @@ fn launch_chat(leaf: u32, skip: bool) {
         };
         // The launcher went meanwhile: nothing to open.
         if leaf_rect(leaf).and_then(|l| l.key).is_none_or(|k| !k.starts_with("pend:")) { return; }
-        if list.is_empty() && error.is_empty() { return create_chat(leaf, skip, "new", String::new()); }
-        with(|a| a.park.dlg = Some(ResumeDlg { leaf, skip, list, error, heavy: None }));
+        if list.is_empty() && error.is_empty() { return if term { create_term(leaf, skip, false, "new", String::new()) } else { create_chat(leaf, skip, "new", String::new()) }; }
+        with(|a| a.park.dlg = Some(ResumeDlg { leaf, skip, term, list, error, heavy: None }));
         show_resume();
     });
 }
@@ -1787,24 +1925,27 @@ fn resume_choose(c: ResumeChoice) {
             ResumeChoice::New => ("new", String::new()),
             ResumeChoice::Pick(i) => {
                 let e = d.list.get(i)?;
-                if e.heavy { d.heavy = Some(i); return Some(None); }
+                // Terminal mode resumes directly: the CLI asks its own question.
+                if e.heavy && !d.term { d.heavy = Some(i); return Some(None); }
                 ("resume", e.id.clone())
             }
             ResumeChoice::Heavy(m) => (m, d.list.get(d.heavy?)?.id.clone()),
         };
         let d = a.park.dlg.take()?;
-        Some(Some((d.leaf, d.skip, mode, id)))
+        Some(Some((d.leaf, d.skip, d.term, mode, id)))
     }).flatten();
     show_resume();
-    if let Some(Some((leaf, skip, mode, id))) = launch { create_chat(leaf, skip, mode, id); }
+    if let Some(Some((leaf, skip, term, mode, id))) = launch {
+        if term { create_term(leaf, skip, false, mode, id); } else { create_chat(leaf, skip, mode, id); }
+    }
 }
 
 /// The picker on the window, as it stands (its rows rewritten on each change).
 fn show_resume() {
     let Some(w) = ui() else { return };
-    let st = with(|a| a.park.dlg.as_ref().map(|d| (d.skip, d.list.clone(), d.error.clone(), d.heavy))).flatten();
-    let Some((skip, list, error, heavy)) = st else { w.set_resume_open(false); return };
-    w.set_resume_heading(resume::heading(skip).into());
+    let st = with(|a| a.park.dlg.as_ref().map(|d| (d.skip, d.term, d.list.clone(), d.error.clone(), d.heavy))).flatten();
+    let Some((skip, term, list, error, heavy)) = st else { w.set_resume_open(false); return };
+    w.set_resume_heading(if term { if skip { "Open Terminal — Skip Permissions".to_string() } else { "Open Terminal".to_string() } } else { resume::heading(skip) }.into());
     w.set_resume_error(error.into());
     let rows: Vec<ResumeRow> = if heavy.is_some() { vec![] } else {
         list.iter().map(|e| ResumeRow { title: e.title.clone().into(), meta: e.meta.clone().into(), heavy: e.heavy, in_use: e.in_use }).collect()
@@ -1860,6 +2001,50 @@ fn create_chat(leaf: u32, skip: bool, mode: &str, resume_id: String) {
         });
         save_layout();
         load_sessions();
+    });
+}
+
+/// Start a Claude terminal or an empty shell (3.2) in a launcher's leaf:
+/// `/api/terminals/create` (the web's launchTerminal), the pressed button
+/// spinning meanwhile; the terminal takes the leaf. Refused or failed: a
+/// toast, the launcher usable again.
+fn create_term(leaf: u32, skip: bool, shell: bool, mode: &str, resume_id: String) {
+    let project = with(|a| a.project.clone()).unwrap_or_default();
+    if project.is_empty() { return toast("Select a project first", true); }
+    let busy = if shell { 3 } else if skip { 5 } else { 4 };
+    let go = with(|a| a.park.launching.insert(leaf, busy).is_none()).unwrap_or(false);
+    if !go { return; }
+    let mut body = json!({ "project": project, "skipPermissions": skip, "shell": shell });
+    if !shell && !mode.is_empty() { body["sessionMode"] = json!(mode); body["resumeId"] = json!(resume_id); }
+    with(|a| a.park.last_create = body.clone());
+    render();
+    call(move |api| api.post("/api/terminals/create", &body), move |r| {
+        with(|a| a.park.launching.remove(&leaf));
+        let v = match r {
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => {
+                let e = s(&v, "error");
+                toast(if e.is_empty() { "Failed to launch" } else { &e }, true);
+                return render();
+            }
+            Ok(v) => v,
+            Err(e) => { toast(&format!("Failed to launch terminal: {e}"), true); return render(); }
+        };
+        let id = s(&v, "id");
+        if id.is_empty() { return render(); }
+        animate();
+        with(|a| {
+            // Known at once (the next `state` confirms it), so the pane stays.
+            let t = a.terminals.get_or_insert_with(Vec::new);
+            if !t.iter().any(|c| s(c, "id") == id) {
+                t.push(json!({ "id": id, "project": a.project, "title": v.get("title").cloned().unwrap_or(json!(if shell { "Shell" } else { "Terminal" })), "status": "running", "kind": "terminal" }));
+            }
+            let key = term_key(&id);
+            if let Some(other) = a.mosaic.leaf_of(&key) { if other != leaf { a.mosaic.close(other); } }
+            a.mosaic.assign(leaf, Some(key));
+            a.focused = leaf;
+        });
+        save_layout();
+        sync_panes();
     });
 }
 
@@ -4276,6 +4461,8 @@ pub fn tool_toggle_focused(id: &str) {
 /// is only recorded.) Anything else (a path: the Files panel, phase 3)
 /// does nothing yet.
 fn open_link(url: &str) {
+    // A path chip (2.16): the file opens in the editor (3.4).
+    if let Some(p) = url.strip_prefix("path:") { return crate::workspace::open_path(p); }
     if !(url.starts_with("http://") || url.starts_with("https://")) { return; }
     with(|a| a.last_opened = url.to_string());
     if std::env::var_os("CRUNDI_TEST_PORT").is_some() { return; }
@@ -4430,6 +4617,33 @@ pub fn play_media(chat: &str, name: &str, filename: &str) {
     });
 }
 
+/// Open a server file in the system's own app (Media's video, audio and
+/// PDF, 3.5): fetched with the sign-in to the temp folder under `name`,
+/// then opened. (Under the test driver the path is only recorded.)
+pub fn open_fetched(url: String, name: String) {
+    let Some(api) = api() else { return };
+    let path = std::env::temp_dir().join(&name);
+    bg(move || -> Result<std::path::PathBuf, String> {
+        let part = path.with_extension("part");
+        let mut f = std::fs::File::create(&part).map_err(|e| e.to_string())?;
+        let mut err = None;
+        let r = api.get_stream(&url, &mut |b, _| { use std::io::Write; if let Err(e) = f.write_all(b) { err = Some(e.to_string()); false } else { true } });
+        drop(f);
+        match r {
+            Ok((200, _)) if err.is_none() => { std::fs::rename(&part, &path).map_err(|e| e.to_string())?; Ok(path) }
+            Ok((st, text)) => { let _ = std::fs::remove_file(&part); Err(err.unwrap_or_else(|| serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string)).unwrap_or_else(|| format!("Could not open it ({st})")))) }
+            Err(e) => { let _ = std::fs::remove_file(&part); Err(e.to_string()) }
+        }
+    }, move |r| match r {
+        Ok(p) => {
+            let ps = p.to_string_lossy().to_string();
+            with(|a| a.last_opened = ps.clone());
+            if std::env::var_os("CRUNDI_TEST_PORT").is_none() { std::thread::spawn(move || { let _ = open::that(&p); }); }
+        }
+        Err(e) => toast(&e, true),
+    });
+}
+
 fn invalidate_media_rows(chat: &str) {
     with(|a| if let Some(cs) = a.chats.get_mut(chat) { for r in cs.rows.iter_mut() { if matches!(r, Row::Tool(..) | Row::Tools(..)) { *r = Row::Code(String::new(), String::new(), false); } } });
     show_chat(chat);
@@ -4483,7 +4697,14 @@ fn dl_linger(id: u32, ms: u64) {
 /// folder; cancel does nothing), then the file streams to <path>.part,
 /// renamed when complete, with its row.
 pub fn download_file(chat: &str, id: &str, filename: &str) {
-    let (chat, id, name) = (chat.to_string(), id.to_string(), if filename.is_empty() { "file".to_string() } else { filename.to_string() });
+    let name = if filename.is_empty() { "file".to_string() } else { filename.to_string() };
+    download_url(format!("/api/chat-media/file?session={chat}&id={id}"), name);
+}
+
+/// Download a server file (an /api path; the sign-in goes in the header):
+/// where to save first, then it streams into the download rows (Files'
+/// Download, Media's Get, 3.4 / 3.5).
+pub fn download_url(url: String, name: String) {
     std::thread::spawn(move || {
         let picked = crate::testctl::take_pick().or_else(|| {
             let mut d = rfd::FileDialog::new().set_title(format!("Save {name}")).set_file_name(&name);
@@ -4491,7 +4712,7 @@ pub fn download_file(chat: &str, id: &str, filename: &str) {
             d.save_file()
         });
         let Some(path) = picked else { return };
-        let _ = slint::invoke_from_event_loop(move || start_download(chat, id, name, path));
+        let _ = slint::invoke_from_event_loop(move || start_download(url, name, path));
     });
 }
 
@@ -4501,12 +4722,11 @@ fn dirs_downloads() -> Option<std::path::PathBuf> {
     d.is_dir().then_some(d)
 }
 
-fn start_download(chat: String, fid: String, name: String, path: std::path::PathBuf) {
+fn start_download(url: String, name: String, path: std::path::PathBuf) {
     let Some(api) = api() else { return };
     let cancel = Arc::new(AtomicBool::new(false));
     let id = with(|a| { a.dl_seq += 1; let id = a.dl_seq; a.dls.push(Dl { id, name: name.clone(), line: "Starting…".into(), state: "running".into(), frac: 0.0, cancel: cancel.clone() }); id }).unwrap_or(0);
     show_dls();
-    let url = format!("/api/chat-media/file?session={chat}&id={fid}");
     std::thread::spawn(move || {
         let part = { let mut p = path.clone().into_os_string(); p.push(".part"); std::path::PathBuf::from(p) };
         let res: Result<u64, String> = (|| {

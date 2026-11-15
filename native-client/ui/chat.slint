@@ -509,6 +509,13 @@ export component PaneHead inherits Rectangle {
     in property <string> plan-status;
     callback plan-clicked();
     in property <bool> chat;
+    // A panel (3.1, the web's headHtmlPanel): its kind's icon before the
+    // title, which does not rename; Refresh before Pin.
+    in property <bool> panel;
+    in property <image> panel-icon;
+    // The ×'s tooltip at rest (Close terminal, Close panel, Remove).
+    in property <string> close-tip: "Close chat";
+    callback refresh();
     // A parked chat (2.23): the grey dot ("Closed"), the title (its tooltip
     // the whole title, no rename), the kind tag, pin and × only.
     in property <bool> parked;
@@ -579,6 +586,8 @@ export component PaneHead inherits Rectangle {
                 if dh.tip-ok && !dh.pressed && !dh.dragging: Tip { on: parent.has-hover; text: "Drag to reorder"; }
             }
         }
+        // A panel's icon (.wb-head-ic).
+        if root.panel: Icon { y: (parent.height - self.height) / 2; source: root.panel-icon; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
         // The state dot (2.4): green idle, yellow working, accent needs
         // input (with an accent-dim ring), sky waiting, muted exited.
         // Its tooltip is the raw state.
@@ -610,11 +619,11 @@ export component PaneHead inherits Rectangle {
             }
             th := HeadGrab {
                 can-drag: !root.full;
-                rest-cursor: root.parked ? MouseCursor.default : MouseCursor.text;
-                clicked => { if !self.did-drag && !root.parked { root.renaming = true; } }
+                rest-cursor: root.parked || root.panel ? MouseCursor.default : MouseCursor.text;
+                clicked => { if !self.did-drag && !root.parked && !root.panel { root.renaming = true; } }
                 double-clicked => { root.maximize(); }
                 drag(k, x, y) => { root.drag(k, x, y); }
-                if th.tip-ok && !th.pressed && !th.dragging: Tip { on: parent.has-hover; text: root.parked ? root.short-title : "Click to rename"; }
+                if th.tip-ok && !th.pressed && !th.dragging && !root.panel: Tip { on: parent.has-hover; text: root.parked ? root.short-title : "Click to rename"; }
             }
         }
         // Renaming: an input title-cap wide, the short title all
@@ -732,6 +741,13 @@ export component PaneHead inherits Rectangle {
                 ap := Text { visible: false; text: "A+"; font-size: Theme.text-11; }
                 clicked => { root.font(1); }
             }
+            // A panel's Refresh.
+            if root.panel && !root.narrow: HeadBtn {
+                y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sp-24;
+                has-icon: true; icon: Icons.refresh; icon-size: Theme.icon-sm;
+                tip: "Refresh";
+                clicked => { root.refresh(); }
+            }
             // Pin; pinned: accent on accent-dim, the pin turned.
             if !root.narrow && !root.no-pin: HeadBtn {
                 y: (parent.height - self.height) / 2; height: Theme.sp-20; width: Theme.sp-24;
@@ -766,7 +782,7 @@ export component PaneHead inherits Rectangle {
                 label: root.armed ? "Sure?" : "×";
                 label-size: root.armed ? Theme.text-11 : Theme.text-14;
                 look: root.armed ? "armed" : "close";
-                tip: root.armed ? "Click again to close" : root.parked ? "Close this pane for good" : "Close chat";
+                tip: root.armed ? "Click again to close" : root.parked ? "Close this pane for good" : root.close-tip;
                 sure := Text { visible: false; text: "Sure?"; font-size: Theme.text-11; }
                 clicked => { root.close(); }
             }
