@@ -697,13 +697,26 @@ p = await until('a pinned pane is refused', (q) => q.toast === 'This pane is pin
 check('dropping a pinned pane is refused with the toast', p && pane(p, four[0]).x === b.x && pane(p, four[0]).y === b.y);
 await ui('pane-pin', b.id);
 await until('unpinned', (q) => !pane(q, four[0]).pinned);
+// The empty pane's centred column (3.1): the message, the chip rows (24 high,
+// 6 apart; a chip is 1+10+icon 14+6+label+10+1), then Split ▸ / Split ▾ / ×.
+// One row of chips puts the first chip 6.5 above the centre and × 31.5 below
+// it; each more row moves the chips up 15 and × down 15. The Terminal chip
+// leads the first row: its icon is 18 from the row's left.
+const chipRows = (e) => (e.chips && e.chips.length) ? e.chips : [[{ id: 'terminal', label: 'Terminal' }]];
+const chipLabelW = (l) => l.length * 6.6;
+const terminalChipAt = (e) => {
+  const rows = chipRows(e), first = rows[0];
+  const rowW = first.reduce((a, c) => a + 42 + chipLabelW(c.label), 0) + 6 * (first.length - 1);
+  return [WB.x + e.x + e.w / 2 - rowW / 2 + 18, WB.y + e.y + e.h / 2 - 6.5 - 15 * (rows.length - 1)];
+};
+const emptyCloseAt = (e) => [WB.x + e.x + e.w / 2 + 78, WB.y + e.y + e.h / 2 + 31.5 + 15 * (chipRows(e).length - 1)];
 // The empty pane: split right, then its Terminal chip puts a launcher in that pane; × removes a pane.
 b = pane(await props(), four[1]);
 await ui('split', b.id, 'false');
 p = await until('an empty pane', (q) => q.panes.some((x) => x.kind === 'empty'));
 empty = p.panes.find((x) => x.kind === 'empty');
 await snap('2.3-empty');
-await mouse('click', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2 - 6.5);   // the chip: the column is centred
+await mouse('click', ...terminalChipAt(empty));   // the Terminal chip
 p = await until('the chip starts a launcher in that pane', (q) => q.panes.find((x) => x.id === empty.id)?.kind === 'launcher');
 if (p) check('the Terminal chip puts a launcher in the clicked pane', true);
 await ui('close-pane', empty.id);
@@ -711,7 +724,7 @@ p = await until('the launcher closes', (q) => !q.panes.some((x) => x.kind === 'l
 await ui('split', b.id, 'true');
 p = await until('another empty pane', (q) => q.panes.some((x) => x.kind === 'empty'));
 empty = p.panes.find((x) => x.kind === 'empty');
-await mouse('click', WB.x + empty.x + empty.w / 2 + 78, WB.y + empty.y + empty.h / 2 + 31.5);   // its ×
+await mouse('click', ...emptyCloseAt(empty));   // its ×
 p = await until('× removes the empty pane', (q) => !q.panes.some((x) => x.kind === 'empty'));
 if (p) check('the empty pane\'s × removes it', true);
 // The hover split controls again: split right on pane 2 (by the mouse). A new
@@ -730,7 +743,7 @@ check('a split right shares that row evenly (340 + 7 + 340 at least)', p && Math
 check('a click on Split right leaves the focus alone', p && pane(p, four[1]).focused && !pane(p, four[2]).focused);
 // The empty pane's Terminal chip (by the mouse) puts a launcher in that very
 // pane, and the chat the launcher starts (UI Mode) takes the same leaf.
-await mouse('click', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2 - 6.5);
+await mouse('click', ...terminalChipAt(empty));
 p = await until('the chip: a launcher in the clicked pane', (q) => q.panes.find((x) => x.id === empty.id)?.kind === 'launcher');
 if (p) check('the Terminal chip starts a launcher in that pane', true);
 const sessionsBefore = (await http('GET', '/api/ui-sessions', null, token)).body?.sessions?.map((s) => s.id) || [];

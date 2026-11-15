@@ -340,6 +340,77 @@ export global Theme {
     // are the Lead's), named after its screen (kanban-col-w…), and only for
     // structure: anything else is a scale step. Never edit another area's.
     // ── workspace ──
+    // The file editor's highlighting (CodeMirror's oneDark, the web's editor).
+    out property <color> ws-hl-plain: #abb2bf;
+    out property <color> ws-hl-keyword: #c678dd;
+    out property <color> ws-hl-string: #98c379;
+    out property <color> ws-hl-comment: #7d8799;
+    out property <color> ws-hl-number: #d19a66;
+    out property <color> ws-hl-func: #61afef;
+    out property <color> ws-hl-type: #e5c07b;
+    out property <color> ws-hl-prop: #e06c75;
+    out property <color> ws-hl-op: #56b6c2;
+    out property <color> ws-editor-bg: #282c34;
+    out property <color> ws-editor-gutter: #7d8799;
+    out property <color> ws-editor-line: #2c313a;
+    // The Git diff's rows (feOpenDiff): removed, added, the empty side, the
+    // changed words, a chunk's bar.
+    out property <color> ws-diff-del: #2d1215;
+    out property <color> ws-diff-add: #0f291a;
+    out property <color> ws-diff-del-pad: #1a1215;
+    out property <color> ws-diff-add-pad: #0f1a15;
+    out property <color> ws-diff-del-word: #5c2020;
+    out property <color> ws-diff-add-word: #1a4a2a;
+    out property <color> ws-diff-del-text: #f87171;
+    out property <color> ws-diff-add-text: #34d399;
+    out property <color> ws-diff-chunk: #1e293b;
+    // The terminal's palette (TERM_THEME) beyond the theme's own colours.
+    out property <color> ws-term-magenta: #a855f7;
+    out property <color> ws-term-magenta-hi: #c084fc;
+    out property <color> ws-term-cyan: #06b6d4;
+    out property <color> ws-term-cyan-hi: #22d3ee;
+    out property <color> ws-term-sel: #6366f14d;
+    // The Files list's per-type marks (fileIcon).
+    out property <color> ws-ft-js: #f7df1e;
+    out property <color> ws-ft-ts: #3178c6;
+    out property <color> ws-ft-jsx: #61dafb;
+    out property <color> ws-ft-json: #a8a8a2;
+    out property <color> ws-ft-html: #e34c26;
+    out property <color> ws-ft-css: #264de4;
+    out property <color> ws-ft-scss: #cd6799;
+    out property <color> ws-ft-py: #3776ab;
+    out property <color> ws-ft-go: #00add8;
+    out property <color> ws-ft-rs: #dea584;
+    out property <color> ws-ft-java: #f89820;
+    out property <color> ws-ft-c: #555555;
+    out property <color> ws-ft-cpp: #659ad2;
+    out property <color> ws-ft-sh: #4eaa25;
+    out property <color> ws-ft-ps: #012456;
+    out property <color> ws-ft-sql: #e38c00;
+    out property <color> ws-ft-md: #519aba;
+    out property <color> ws-ft-yml: #cb171e;
+    out property <color> ws-ft-xml: #e37933;
+    out property <color> ws-ft-svg: #ffb13b;
+    out property <color> ws-ft-pdf: #e5252a;
+    out property <color> ws-ft-lock: #ecd53f;
+    out property <color> ws-ft-vue: #42b883;
+    out property <color> ws-ft-svelte: #ff3e00;
+    out property <color> ws-ft-docker: #2496ed;
+    out property <color> ws-ft-git: #f1502f;
+    out property <color> ws-ft-npm: #cb3837;
+    // Media: the checker behind a thumbnail.
+    out property <color> ws-checker: #ffffff08;
+    // Structure: the editor window (.fe-window: min(900, 80%) x min(72%, 820),
+    // at least 360 x 200), a media card (.media-card) and its thumbnail, the
+    // terminal's longest input before it scrolls, the media search.
+    out property <length> ws-win-w: 900px;
+    out property <length> ws-win-h: 820px;
+    out property <length> ws-win-min-w: 360px;
+    out property <length> ws-win-min-h: 200px;
+    out property <length> ws-media-card: 150px;
+    out property <length> ws-media-thumb: 110px;
+    out property <length> ws-term-input-max: 120px;
+    out property <length> ws-search-w: 280px;
     // ── end workspace ──
     // ── planning ──
     // ── end planning ──

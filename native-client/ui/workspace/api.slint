@@ -3,10 +3,202 @@
 // Export them all, named with the Workspace prefix; components don't go here
 // (ui/workspace/index.slint and the files it imports draw the screens).
 
-/// The area's state for Rust (src/workspace/): add properties and callbacks here
-/// or in more Workspace* globals.
+// ─── Git ───
+
+/// A changed file (.git-file): its status letter, folder and name, the
+/// added and removed line counts ("" none), staged or not.
+export struct WorkspaceGitFile { file: string, dir: string, name: string, code: string, add: string, del: string, staged: bool }
+
+// ─── Files ───
+
+/// A path bar link (.files-crumbs a).
+export struct WorkspaceCrumb { name: string, path: string }
+
+/// A row of the Files list (.file-item): the ".." row (`up`), a folder or a
+/// file; its folder part (search results), size, per-type mark (`mark`: a
+/// short text, or "" for the icon `icon`), the mark's colour key (`tone`),
+/// cut (waiting to be pasted), selected.
+export struct WorkspaceFileRow { path: string, name: string, dir: string, is-dir: bool, up: bool, size: string, mark: string, icon: string, tone: string, cut: bool, selected: bool }
+
+// ─── Media ───
+
+/// A card of the media library (.media-card).
+export struct WorkspaceMediaCard {
+    id: string, name: string, kind: string, ext: string, project: string,
+    // The link line: Unlinked, a jump tag, or "(deleted)".
+    link: string, link-label: string, link-state: string,
+    has-path: bool, thumb: image, has-thumb: bool,
+}
+
+// ─── The file windows (feNewWindow: editor, viewer, diff) ───
+
+/// A line of the editor: its markup (highlighted, StyledText).
+export struct WorkspaceLine { md: styled-text }
+
+/// A row of the diff's two columns (feOpenDiff): a chunk's bar (`chunk` >= 0,
+/// `staged` once staged), or a line each side; kinds equal | del | add | pad.
+export struct WorkspaceDiffRow {
+    chunk: int, staged: bool,
+    old-ln: string, old: styled-text, old-kind: string,
+    new-ln: string, new: styled-text, new-kind: string,
+}
+
+/// A floating window: edit (a file), view (a picture or a PDF), diff.
+export struct WorkspaceWin {
+    id: int, kind: string, title: string,
+    x: length, y: length, w: length, h: length, max: bool,
+    // Save: shown, enabled (changed), its label (Save, Saving…, Saved ✓).
+    save-shown: bool, save-on: bool, save-label: string,
+    // The editor: its text (set when `text-gen` moves on), the lines'
+    // markup, read-only; loading or an error line instead.
+    text: string, text-gen: int, lines: [WorkspaceLine], read-only: bool,
+    loading: string,
+    // The viewer's picture.
+    img: image, has-img: bool,
+    // The diff: its rows, "—/2" or "1/2", the row to scroll to (and a
+    // counter that moves on for each jump).
+    rows: [WorkspaceDiffRow], counter: string, jump-row: int, jump-gen: int, file: string,
+}
+
+/// The windows' layer: the snap preview while a window is dragged to an
+/// edge, the Arrange bar.
+export struct WorkspaceSnap { on: bool, x: length, y: length, w: length, h: length }
+
+// ─── Terminals ───
+
+/// A run of one style on a terminal line: its column and width in cells.
+export struct WorkspaceRun { col: int, n: int, text: string, fg: color, bg: color, has-bg: bool, bold: bool, italic: bool, underline: bool }
+export struct WorkspaceTermLine { runs: [WorkspaceRun] }
+
+/// A Claude terminal panel's state, by its pane key (term:<id>).
+export struct WorkspaceTerm {
+    key: string, lines: [WorkspaceTermLine],
+    cursor-col: int, cursor-row: int, cursor-on: bool,
+    // Scrolled up from the bottom (the jump button shows).
+    back: bool,
+    // The input: the key tools open; its text set by the app (a send
+    // clears it) when `text-gen` moves on; uploading.
+    tools: bool, text: string, text-gen: int,
+    up-on: bool, up-name: string, up-label: string, up-frac: float, up-busy: bool,
+    exited: bool,
+}
+
 export global WorkspaceUi {
     in-out property <bool> ready;
+    // ── Git ──
+    // loading | ok | not-repo | error | none (no project)
+    in property <string> git-state: "loading";
+    in property <string> git-error;
+    in property <string> git-branch;
+    in property <string> git-sync;
+    in property <[WorkspaceGitFile]> git-staged;
+    in property <[WorkspaceGitFile]> git-changes;
+    in property <bool> git-pulling;
+    in property <bool> git-pushing;
+    // The commit message: cleared by the app after a commit (`git-msg-gen`).
+    in property <int> git-msg-gen;
+    callback git-refresh();
+    callback git-stage(string);
+    callback git-unstage(string);
+    callback git-stage-all();
+    callback git-unstage-all();
+    callback git-discard(string);
+    callback git-diff(string, bool);
+    callback git-commit(string);
+    callback git-push();
+    callback git-pull();
+
+    // ── Files ──
+    // loading | ok | error | none
+    in property <string> files-state: "loading";
+    in property <string> files-error;
+    in property <bool> files-inside;
+    in property <[WorkspaceCrumb]> files-crumbs;
+    in property <[WorkspaceFileRow]> files-rows;
+    // Searching: the note over the results ("3 matches · …"), or the empty
+    // line; the search box's text set by the app (`files-q-gen`).
+    in property <bool> files-searching;
+    in property <string> files-note;
+    in property <string> files-empty;
+    in property <string> files-q;
+    in property <int> files-q-gen;
+    in property <bool> files-can-up;
+    in property <bool> files-can-paste;
+    in property <string> files-paste-tip;
+    callback files-nav(string);
+    callback files-up();
+    callback files-search(string);
+    callback files-select(string);
+    callback files-open(string);
+    callback files-menu(string, length, length);
+    callback files-upload();
+    callback files-paste();
+
+    // ── Media ──
+    // loading | ok | empty | none | nomatch
+    in property <string> media-state: "loading";
+    in property <string> media-empty;
+    in property <[WorkspaceMediaCard]> media-cards;
+    in property <string> media-kind: "all";
+    in property <string> media-scope: "project";
+    in property <bool> media-has-project;
+    in property <string> media-q;
+    callback media-set-kind(string);
+    callback media-set-scope(string);
+    callback media-search(string);
+    callback media-upload();
+    callback media-open(string);
+    callback media-get(string);
+    callback media-copy(string);
+    callback media-jump(string);
+    callback media-delete(string);
+    // The lightbox (#media-lightbox): its title, the picture or the play
+    // card (video, audio: the system player; pdf: the system viewer).
+    in property <bool> lb-open;
+    in property <string> lb-title;
+    in property <string> lb-kind;
+    in property <image> lb-img;
+    in property <string> lb-note;
+    callback lb-close();
+    callback lb-download();
+    callback lb-play();
+
+    // ── The file windows ──
+    in property <[WorkspaceWin]> wins;
+    in property <WorkspaceSnap> snap;
+    in property <bool> arrange;
+    callback win-front(int);
+    callback win-close(int);
+    callback win-expand(int);
+    callback win-save(int, string);
+    callback win-edited(int, string);
+    callback win-drag(int, int, length, length);
+    callback win-resize(int, int, length, length);
+    callback win-arrange(string);
+    callback arrange-hover(bool);
+    callback diff-stage(int, int);
+    callback diff-step(int, int);
+
+    // ── Terminals ──
+    // The launcher's Empty Shell and Terminal (3.2): its leaf, shell |
+    // normal | skip.
+    callback launch(int, string);
+    // A panel pane's Refresh (3.1): its kind and pane key.
+    callback panel-refresh(string, string);
+    in property <[WorkspaceTerm]> terms;
+    callback term-size(string, int, int);
+    callback term-key(string, string, bool, bool, bool) -> bool;
+    callback term-send(string, string);
+    callback term-text(string, string);
+    callback term-tool(string, string);
+    callback term-tools(string);
+    callback term-attach(string);
+    callback term-scroll(string, int);
+    callback term-bottom(string);
+    callback term-paste(string);
+    // A drag over the terminal selected cells (from col, row to col, row):
+    // the text is copied, as xterm.js does on a selection.
+    callback term-select(string, int, int, int, int);
 }
 
 // ── The export chain (the Lead's line: keep it last, don't change it) ──
