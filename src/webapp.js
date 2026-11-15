@@ -2311,9 +2311,18 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Always fetch (so the usage HISTORY / graph keeps updating even with no
   // viewer); getUsage is cached (~1 real Anthropic call per minute). Push to SSE
   // clients only when some are connected.
+  // A stale reading says so in words, for voice and the MCP tool.
+  function withUsageNote(u) {
+    if (!u || !u.stale) return u;
+    const why = `The live usage could not be read (${u.error || 'unavailable'})`;
+    return { ...u, note: u.fromClaude ? `${why}; these figures are from Claude Code's own report at ${u.fetchedAt}.` : `${why}; these are the last figures, from ${u.fetchedAt}.` };
+  }
   async function broadcastUsage(force = false) {
     try {
-      const u = await usage.getUsage({ force });
+      // The freshest known reading: a 429 pushes the last good one (marked
+      // stale, with its real time) rather than nothing, so a client that has
+      // just reconnected doesn't keep the figures it had hours ago.
+      const u = await usage.getUsageView({ force });
       // Owners only. This is the ACCOUNT's 5-hour and weekly usage, and it was
       // reaching collaborators' topbars too.
       if (sseClients.size) {
@@ -2817,20 +2826,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     schedules: (project) => schedule.listSchedules(project),
     // Live when it can be had; otherwise the last good reading (what the top
     // bar shows), so a rate-limited usage API never leaves voice with nothing.
-    usage: async () => {
-      const live = await usage.getUsage();
-      if (live && live.ok) return live;
-      const last = usage.getLatestStored();
-      // Claude Code's own report (rate_limit_event) when it is newer than the last API reading.
-      const cc = usage.getLatestReading();
-      const lastAt = last.ok ? Date.parse(last.fetchedAt) || 0 : 0;
-      if (cc.at > lastAt && (cc.fiveHour || cc.week)) {
-        const pick = (w, old) => (w ? { utilization: w.utilization, resetsAt: w.resetsAt } : old || null);
-        const at = new Date(cc.at).toISOString();
-        return { ok: true, fromClaude: true, fetchedAt: at, fiveHour: pick(cc.fiveHour, last.fiveHour), week: pick(cc.week, last.week), note: `The usage API could not be read (${live?.error || 'unavailable'}); these figures are from Claude Code's own report at ${at}.` };
-      }
-      return last.ok ? { ...last, note: `The live usage could not be read (${live?.error || 'unavailable'}); these are the last figures, from ${last.fetchedAt}.` } : live;
-    },
+    usage: async () => withUsageNote(await usage.getUsageView()),
     secrets: () => secrets.listSecrets(),
     chats: () => (claudeUi ? claudeUi.list() : []).filter(c => !c.collaborator),
     // Parked (sleeping) chats: no process, so claudeUi does not list them.
@@ -3056,6 +3052,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // rate_limit_event from any chat or Cru turn, which keeps coming while the
   // API answers 429. Pushed, not polled: a crossing wakes Cru at once.
   usage.onUsageReading((r) => { try { wakeEngine.usage(r); } catch (err) { console.warn('[voice] usage trigger check failed:', err.message); } });
+  // Claude Code's report reaches the meters too, so they move with every
+  // chat turn while the API is rate limited (at most every 15 s; an API
+  // reading is already being broadcast by whoever fetched it).
+  let ccUsagePushAt = 0;
+  usage.onUsageReading((r) => {
+    if (!r || r.source !== 'claude' || Date.now() - ccUsagePushAt < 15_000) return;
+    ccUsagePushAt = Date.now();
+    broadcastUsage();
+  });
   // What chats do, for the chat_finished / chat_waiting / collaborator triggers.
   const wakeTold = new Map();   // chat id -> pending card ids already told
   if (claudeUi && claudeUi.onTurnEnd) claudeUi.onTurnEnd((id) => {
@@ -5885,7 +5890,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     if (path === '/api/usage' && req.method === 'GET') {
       const force = url.searchParams.get('force') === '1';
-      return json(res, await usage.getUsage({ force }));
+      return json(res, await usage.getUsageView({ force }));
     }
     // Last stored sample — instant, no network call (shown on load).
     if (path === '/api/usage/latest' && req.method === 'GET') {
@@ -8668,7 +8673,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       // ─── Claude usage (real, account-wide limits) ───
       if (body.tool === 'get_usage') {
-        return json(res, await usage.getUsage({ force: !!a.force }));
+        return json(res, withUsageNote(await usage.getUsageView({ force: !!a.force })));
       }
 
       // ─── Secret search (no approval — metadata only, never the value) ───

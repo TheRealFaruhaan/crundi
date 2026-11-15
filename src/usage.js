@@ -23,6 +23,7 @@ const OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const TTL_OK_MS = 60_000;     // refresh good data at most once a minute (~60 req/hr, well under limit)
 const TTL_ERR_MS = 300_000;   // back off 5 min after a failure (e.g. 429) so we don't hammer
 const MIN_FETCH_MS = 15_000;  // hard floor: even force can't fetch more often than this (anti-burst)
+const MAX_BACKOFF_MS = 15 * 60_000; // a Retry-After longer than this is capped
 
 const FIVE_H_MS = 5 * 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -31,7 +32,10 @@ const HISTORY_MIN_GAP_MS = 5 * 60 * 1000;  // append at most every 5 min (unless
 const HISTORY_MAX = 6000;                  // ~3 weeks at 5-min cadence; trimmed beyond this
 const HISTORY_TTL_MS = 30 * 24 * 60 * 60 * 1000; // drop records older than 30 days
 
-let cache = { data: null, at: 0 };
+let cache = { data: null, at: 0, ttl: 0 };
+// The last successful API reading. A failed fetch (a 429, mostly) replaces the
+// cache but must not replace this: it is what the meter shows meanwhile.
+let lastGood = null;
 let history = null; // lazy-loaded array of records
 
 // ─── The latest reading, from any source ───
@@ -106,6 +110,20 @@ export function noteRateLimitEvent(msg) {
 export function _resetLatest() { latest.fiveHour = null; latest.week = null; latest.at = 0; latest.source = ''; }
 
 function ttlFor(data) { return data && data.ok ? TTL_OK_MS : TTL_ERR_MS; }
+
+/** How long to wait after a failed response: its Retry-After (seconds or a date), capped; else the default. */
+export function retryAfterMs(header, now = Date.now()) {
+  if (header == null || header === '') return TTL_ERR_MS;
+  const n = Number(header);
+  let ms = Number.isFinite(n) ? n * 1000 : (Date.parse(header) || 0) - now;
+  if (!Number.isFinite(ms) || ms <= 0) return TTL_ERR_MS;
+  return Math.min(MAX_BACKOFF_MS, Math.max(TTL_ERR_MS, ms));
+}
+
+function fail(data, ttl = TTL_ERR_MS) {
+  cache = { data, at: Date.now(), ttl };
+  return data;
+}
 
 function readOAuth() {
   try {
@@ -245,13 +263,13 @@ export function getHistory(sinceMs = WEEK_MS) {
 export async function getUsage({ force = false } = {}) {
   if (cache.data) {
     const age = Date.now() - cache.at;
-    if (!force && age < ttlFor(cache.data)) return cache.data;
+    if (!force && age < (cache.ttl || ttlFor(cache.data))) return cache.data;
     if (force && age < MIN_FETCH_MS) return cache.data; // throttle bursts even when forced
   }
 
   let oauth = readOAuth();
   if (!oauth || !oauth.accessToken) {
-    return (cache = { data: { ok: false, error: 'Not signed in to Claude (no OAuth token found)' }, at: Date.now() }).data;
+    return fail({ ok: false, error: 'Not signed in to Claude (no OAuth token found)' });
   }
 
   // Proactively refresh when the access token is expired or about to be — so a
@@ -278,10 +296,12 @@ export async function getUsage({ force = false } = {}) {
       if (r && r.accessToken) { oauth = { ...oauth, ...r }; res = await fetchUsage(r.accessToken); }
     }
     if (res.status === 401) {
-      return (cache = { data: { ok: false, error: 'Claude session expired — use Claude once to refresh it', status: 401 }, at: Date.now() }).data;
+      return fail({ ok: false, error: 'Claude session expired — use Claude once to refresh it', status: 401 });
     }
     if (!res.ok) {
-      return (cache = { data: { ok: false, error: `Usage API returned ${res.status}` }, at: Date.now() }).data;
+      // A 429 says when to come back; asking sooner only extends it.
+      const ttl = retryAfterMs(res.headers && res.headers.get ? res.headers.get('retry-after') : null);
+      return fail({ ok: false, error: `Usage API returned ${res.status}`, status: res.status }, ttl);
     }
     const j = await res.json();
     const data = {
@@ -297,8 +317,49 @@ export async function getUsage({ force = false } = {}) {
     };
     recordHistory(data);
     noteReading({ fiveHour: data.fiveHour, week: data.week, source: 'api' });
-    return (cache = { data, at: Date.now() }).data;
+    lastGood = data;
+    return (cache = { data, at: Date.now(), ttl: TTL_OK_MS }).data;
   } catch (err) {
-    return (cache = { data: { ok: false, error: err.message }, at: Date.now() }).data;
+    return fail({ ok: false, error: err.message });
   }
 }
+
+/**
+ * What a meter should show: the live reading when it can be had, otherwise
+ * the freshest one known — the last good API reading (kept in memory, or the
+ * stored history after a restart) or Claude Code's own report from a chat
+ * turn, whichever is newer — marked { stale: true, error } with its real
+ * fetchedAt, so the meter says how old it is instead of freezing on a value
+ * it got hours ago. Only when nothing is known at all does the error come back.
+ * Internal callers that act on the figures (factory pauses, the warmer) keep
+ * using getUsage.
+ */
+export async function getUsageView({ force = false } = {}) {
+  const live = await getUsage({ force });
+  if (live && live.ok) return live;
+  return bestKnown(live);
+}
+
+/** The freshest known reading without a network call (see getUsageView). */
+export function bestKnown(live = cache.data) {
+  const err = (live && live.error) || 'unavailable';
+  const base = lastGood || getLatestStored();
+  const baseAt = base && base.ok ? Date.parse(base.fetchedAt) || 0 : 0;
+  const cc = latest;
+  const ccAt = Math.max(cc.fiveHour && cc.fiveHour.source === 'claude' ? cc.fiveHour.at : 0, cc.week && cc.week.source === 'claude' ? cc.week.at : 0);
+  if (ccAt > baseAt) {
+    const pick = (w, old) => (w && w.source === 'claude' && w.at > baseAt ? { utilization: Math.round(w.utilization), resetsAt: w.resetsAt } : (old || null));
+    return {
+      ...(base && base.ok ? base : {}),
+      ok: true, stale: true, fromClaude: true, error: err,
+      fetchedAt: new Date(ccAt).toISOString(),
+      fiveHour: pick(cc.fiveHour, base && base.fiveHour),
+      week: pick(cc.week, base && base.week),
+    };
+  }
+  if (base && base.ok) return { ...base, ok: true, stale: true, error: err };
+  return live || { ok: false, error: err };
+}
+
+/** Tests only. */
+export function _resetCache() { cache = { data: null, at: 0, ttl: 0 }; lastGood = null; }

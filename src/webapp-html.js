@@ -5677,7 +5677,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
       bg.title = 'Claude usage (real, account-wide)'
         + '\\nWeekly: ' + week + '%  (resets ' + rs(u.week) + ')'
         + '\\n5-hour: ' + five + '%  (resets ' + rs(u.fiveHour) + ')'
-        + (u.subscriptionType ? '\\nPlan: ' + u.subscriptionType : '');
+        + (u.subscriptionType ? '\\nPlan: ' + u.subscriptionType : '')
+        + (u.stale ? '\\nLast known' + (u.fromClaude ? ' (from Claude Code)' : '') + ': the live refresh failed (' + (u.error || '?') + ')' : '');
       tickResets(); // also fills the time bars from resets_at
     }
     const ubLast = {}; // last shown usage % per bar (to shine only on change)
