@@ -1,0 +1,494 @@
+// Ops area: Add project, What's new, the top bar's approvals button.
+// OpsExtras (the global) is what Rust reads, sets and handles: src/ops/extras.rs.
+// It is exported to Rust by ui/ops/api.slint (one line per file there).
+//
+// - Add project (#add-project-modal, showAddModal / addProject): one name in
+//   the single-folder mode, alias + path + display name in the multi mode.
+// - The approvals inbox (renderApprovals): the top bar's button
+//   (ui/ops/extras-appr.slint, placed in ui/shell.slint) and its panel under
+//   the bar, drawn here.
+// - What's new (app/vendor/crundi-whatsnew.js): the full-window stepper.
+
+import { Theme, Icons, Icon, SoftShadow } from "../kit.slint";
+import { OpsCard, OpsDlgBtn } from "vault-parts.slint";
+
+/// One of an approval's buttons: `kind` yes | no | go | dismiss (its hover
+/// colour), `tip` its title.
+export struct OpsApprAct { id: string, label: string, kind: string, tip: string }
+
+/// An approvals item (.appr-item): its source pill, the title line, the
+/// project, the detail, its buttons.
+export struct OpsApprItem { id: string, source: string, title: string, project: string, detail: string, acts: [OpsApprAct] }
+
+/// A What's new key row (.wn-krow): the keys, what they do.
+export struct OpsWnKey { keys: [string], text: string }
+
+/// A What's new step.
+export struct OpsWnStep { tag: string, version: string, title: string, body: string, art-title: string, keys: [OpsWnKey] }
+
+export global OpsExtras {
+    /// A dialog of this screen covers the window (OpsOverlay sets Shell.modal-ops).
+    in-out property <bool> modal;
+
+    // ── Add project ──
+    in-out property <bool> ap-open;
+    in-out property <bool> ap-single;
+    in-out property <string> ap-name;
+    in-out property <string> ap-hint;
+    in-out property <string> ap-alias;
+    in-out property <string> ap-path;
+    in-out property <string> ap-dname;
+    in-out property <bool> ap-busy;
+    callback ap-cancel();
+    callback ap-add();
+
+    // ── Approvals ──
+    in-out property <[OpsApprItem]> appr-items;
+    in-out property <bool> appr-open;
+    callback appr-toggle();
+    callback appr-act(string, string);
+    callback appr-clear();
+
+    // ── What's new ──
+    in-out property <bool> wn-open;
+    in-out property <string> wn-version;
+    in-out property <[OpsWnStep]> wn-steps;
+    in-out property <int> wn-at;
+    callback wn-go(int);
+    callback wn-close(string);
+}
+
+/// A label over an add-project field (#add-project-modal label).
+component ApLabel inherits Text {
+    font-size: Theme.text-12; letter-spacing: Theme.track-wide; color: Theme.text-muted;
+}
+
+/// An add-project input: bg-tertiary, accent when focused; Enter adds.
+component ApField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    callback accepted();
+    callback escape();
+    height: Theme.control;
+    border-radius: Theme.r-control;
+    background: Theme.bg-tertiary;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    input := TextInput {
+        x: Theme.sp-12; width: parent.width - 2 * Theme.sp-12;
+        text <=> root.text;
+        single-line: true;
+        vertical-alignment: center;
+        color: Theme.text-primary; font-size: Theme.text-14;
+        selection-background-color: Theme.selection;
+        accepted => { root.accepted(); }
+        key-pressed(ev) => { if ev.text == Key.Escape { root.escape(); return accept; } return reject; }
+    }
+    if root.text == "": Text {
+        x: Theme.sp-12; height: parent.height; vertical-alignment: center;
+        text: root.placeholder; color: Theme.placeholder; font-size: Theme.text-14;
+    }
+    public function focus-input() { input.focus(); }
+}
+
+component AddProjectDialog inherits OpsCard {
+    card-w: Theme.extras-add-w;
+    pad: Theme.sp-24;
+    gap: Theme.sp-4;
+    escape => { OpsExtras.ap-cancel(); }
+    Text { text: "Add Project"; font-size: Theme.text-16; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+    Rectangle { height: Theme.sp-12; }
+    // Single mode: just a name.
+    if OpsExtras.ap-single: VerticalLayout {
+        spacing: Theme.sp-4;
+        ApLabel { text: "PROJECT NAME"; }
+        ApField { init => { self.focus-input(); } text <=> OpsExtras.ap-name; placeholder: "my-project"; accepted => { OpsExtras.ap-add(); } escape => { OpsExtras.ap-cancel(); } }
+        Text { text: OpsExtras.ap-hint; font-size: Theme.text-12; color: Theme.text-muted; wrap: char-wrap; }
+    }
+    // Multi mode: alias, path, display name.
+    if !OpsExtras.ap-single: VerticalLayout {
+        spacing: Theme.sp-4;
+        ApLabel { text: "ALIAS"; }
+        ApField { init => { self.focus-input(); } text <=> OpsExtras.ap-alias; placeholder: "my-project"; accepted => { OpsExtras.ap-add(); } escape => { OpsExtras.ap-cancel(); } }
+        Rectangle { height: Theme.sp-8; }
+        ApLabel { text: "PATH"; }
+        ApField { text <=> OpsExtras.ap-path; placeholder: "C:\\Projects\\my-project"; accepted => { OpsExtras.ap-add(); } escape => { OpsExtras.ap-cancel(); } }
+        Rectangle { height: Theme.sp-8; }
+        ApLabel { text: "DISPLAY NAME (OPTIONAL)"; }
+        ApField { text <=> OpsExtras.ap-dname; placeholder: "My Project"; accepted => { OpsExtras.ap-add(); } escape => { OpsExtras.ap-cancel(); } }
+    }
+    HorizontalLayout {
+        alignment: end;
+        spacing: Theme.sp-10;
+        padding-top: Theme.sp-16;
+        OpsDlgBtn { text: "Cancel"; clicked => { OpsExtras.ap-cancel(); } }
+        OpsDlgBtn { primary: true; text: "Add"; enabled: !OpsExtras.ap-busy; clicked => { OpsExtras.ap-add(); } }
+    }
+}
+
+/// An approval's button (.appr-acts button): quiet; green, red or accent
+/// on hover by its kind; Dismiss keeps to its text's width.
+component ApprBtn inherits Rectangle {
+    in property <OpsApprAct> act;
+    callback clicked();
+    height: Theme.control-sm - Theme.sp-2;
+    min-width: t.preferred-width + Theme.sp-16;
+    horizontal-stretch: root.act.kind == "dismiss" ? 0 : 1;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    property <color> hot: root.act.kind == "yes" ? Theme.green : root.act.kind == "no" ? Theme.red : root.act.kind == "go" ? Theme.accent : Theme.text-muted;
+    border-color: ta.has-hover ? root.hot : Theme.border;
+    background: Theme.bg-primary;
+    accessible-role: button;
+    accessible-label: root.act.label;
+    t := Text {
+        text: root.act.label; font-size: Theme.text-12;
+        color: ta.has-hover ? (root.act.kind == "go" ? Theme.accent-hover : root.act.kind == "dismiss" ? Theme.text-primary : root.hot)
+            : root.act.kind == "dismiss" ? Theme.text-muted : Theme.text-secondary;
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The approvals panel (.appr-panel): under the top bar at the right.
+component ApprPanel inherits Rectangle {
+    property <length> max-h: root.height * Theme.extras-appr-max-share;
+    property <length> w: min(Theme.extras-appr-w, root.width - 2 * Theme.sp-8);
+    box := Rectangle {
+        x: root.width - Theme.sp-8 - root.w;
+        y: Theme.topbar-height + Theme.sp-4;
+        width: root.w;
+        height: min(col.preferred-height, root.max-h);
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-menu; }
+        Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
+        TouchArea { }
+        fl := Flickable {
+            width: parent.width; height: parent.height;
+            content-height: max(self.height, col.preferred-height);
+            col := VerticalLayout {
+                width: fl.width;
+                padding: Theme.sp-6;
+                if OpsExtras.appr-items.length == 0: Text {
+                    text: "Nothing is waiting."; horizontal-alignment: center;
+                    font-size: Theme.text-12; color: Theme.text-muted;
+                    height: self.preferred-height + 2 * Theme.sp-12; vertical-alignment: center;
+                }
+                if OpsExtras.appr-items.length > 0: VerticalLayout {
+                    HorizontalLayout {
+                        padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-top: Theme.sp-2; padding-bottom: Theme.sp-6;
+                        Text { horizontal-stretch: 1; text: OpsExtras.appr-items.length + " waiting"; font-size: Theme.text-12; color: Theme.text-muted; vertical-alignment: center; }
+                        clr := Rectangle {
+                            height: Theme.control-sm - Theme.sp-4;
+                            width: ct.preferred-width + Theme.sp-20;
+                            border-radius: Theme.r-control;
+                            border-width: 1px;
+                            border-color: ca.has-hover ? Theme.red : Theme.border;
+                            background: Theme.bg-primary;
+                            ct := Text { text: "Clear all"; font-size: Theme.text-11; color: ca.has-hover ? Theme.red : Theme.text-secondary; }
+                            ca := TouchArea { mouse-cursor: pointer; clicked => { OpsExtras.appr-clear(); } }
+                        }
+                    }
+                    Rectangle { height: 1px; background: Theme.border-subtle; }
+                }
+                for it[i] in OpsExtras.appr-items: VerticalLayout {
+                    if i > 0: Rectangle { height: 1px; background: Theme.border-subtle; }
+                    VerticalLayout {
+                        padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                        spacing: Theme.sp-4;
+                        HorizontalLayout {
+                            spacing: Theme.sp-6;
+                            Rectangle {
+                                y: (parent.height - self.height) / 2;
+                                height: src.preferred-height + Theme.sp-2;
+                                width: src.preferred-width + Theme.sp-12;
+                                border-radius: Theme.r-pill;
+                                border-width: 1px;
+                                border-color: it.source == "chat" ? Theme.accent : it.source == "secret" || it.source == "kid" ? Theme.yellow : it.source == "collab" ? Theme.sky : Theme.border;
+                                src := Text { text: it.source; font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: it.source == "secret" || it.source == "kid" ? Theme.yellow : it.source == "collab" ? Theme.sky : it.source == "chat" ? Theme.accent-hover : Theme.text-muted; }
+                            }
+                            Text { horizontal-stretch: 1; text: it.title; font-size: Theme.text-13; color: Theme.text-primary; overflow: elide; vertical-alignment: center; }
+                        }
+                        if it.project != "": Rectangle {
+                            border-radius: Theme.r-control; background: Theme.bg-primary;
+                            opacity: Theme.o-soft;
+                            height: pj.preferred-height + Theme.sp-10;
+                            pj := Text { x: Theme.sp-8; width: parent.width - Theme.sp-16; text: it.project; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-secondary; wrap: char-wrap; }
+                        }
+                        if it.detail != "": Rectangle {
+                            border-radius: Theme.r-control; background: Theme.bg-primary;
+                            height: min(dt.preferred-height + Theme.sp-10, Theme.extras-appr-detail-h);
+                            clip: true;
+                            dfl := Flickable {
+                                x: Theme.sp-8; y: Theme.sp-4; width: parent.width - Theme.sp-16; height: parent.height - Theme.sp-8;
+                                content-height: max(self.height, dt.preferred-height);
+                                dt := Text { width: dfl.width; text: it.detail; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-secondary; wrap: char-wrap; }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.sp-6;
+                            padding-top: Theme.sp-2;
+                            for a in it.acts: ApprBtn { act: a; clicked => { OpsExtras.appr-act(it.id, a.id); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── What's new ──
+
+/// A footer button (.wn-btn): Back (quiet) or Next / Done (accent).
+component WnBtn inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> primary;
+    in property <bool> icon-first;
+    callback clicked();
+    height: Theme.control-lg + Theme.sp-6;
+    width: lay.preferred-width;
+    border-radius: Theme.r-bubble;
+    border-width: 1px;
+    border-color: root.primary ? Theme.accent : Theme.border;
+    background: root.primary ? (ta.has-hover ? Theme.accent-hover : Theme.accent) : ta.has-hover ? Theme.bg-hover : Theme.bg-card;
+    accessible-role: button;
+    accessible-label: root.text;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-16 + Theme.sp-2; padding-right: Theme.sp-16 + Theme.sp-2;
+        spacing: Theme.sp-8;
+        if root.icon-first: Icon { y: (parent.height - self.height) / 2; source: root.icon; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-primary; }
+        Text { text: root.text; vertical-alignment: center; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: root.primary ? Theme.white : Theme.text-primary; }
+        if !root.icon-first: Icon { y: (parent.height - self.height) / 2; source: root.icon; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.white; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// What's new: the steps one at a time, then the recap. Esc skips; the
+/// arrows, Enter and Page Up/Down move; no other key reaches the app.
+component WhatsNew inherits Rectangle {
+    property <int> n: OpsExtras.wn-steps.length + 1;
+    property <int> at: OpsExtras.wn-at;
+    property <bool> last: root.at == root.n - 1;
+    property <OpsWnStep> s: OpsExtras.wn-steps[root.at];
+    property <length> copy-w: max(Theme.extras-wn-copy-min, root.width * Theme.extras-wn-copy-share);
+    background: Theme.bg-primary;
+    TouchArea { }
+    keys := FocusScope {
+        init => { self.focus(); }
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { OpsExtras.wn-close("skip"); return accept; }
+            if ev.text == Key.RightArrow || ev.text == Key.Return || ev.text == Key.PageDown {
+                if root.last { OpsExtras.wn-close("done"); } else { OpsExtras.wn-go(root.at + 1); }
+                return accept;
+            }
+            if ev.text == Key.LeftArrow || ev.text == Key.PageUp { OpsExtras.wn-go(root.at - 1); return accept; }
+            return accept;
+        }
+    }
+    // A soft accent glow behind the art (the web's radial wash).
+    Rectangle {
+        x: root.copy-w; y: 0px;
+        width: root.width - root.copy-w; height: root.height;
+        background: @radial-gradient(circle, Theme.accent-haze 0%, Theme.bg-primary 100%);
+    }
+
+    // The words, on the left.
+    copy := Rectangle {
+        x: 0px; width: root.copy-w; height: root.height;
+        VerticalLayout {
+            padding-top: Theme.sp-48 + Theme.sp-40;
+            padding-bottom: Theme.sp-48 * 2 + Theme.sp-20;
+            padding-left: Theme.sp-48 + Theme.sp-16;
+            padding-right: Theme.sp-48;
+            alignment: center;
+            spacing: Theme.sp-16;
+            HorizontalLayout {
+                spacing: Theme.sp-10;
+                alignment: start;
+                Text { text: root.last ? "THAT IS EVERYTHING" : (root.s.tag == "" ? "NEW" : root.s.tag); font-size: Theme.text-12; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide; color: Theme.accent-hover; }
+                if !root.last && root.s.version != "": Text { text: "new in " + root.s.version; font-size: Theme.text-12; color: Theme.text-muted; }
+            }
+            Text {
+                text: root.last ? "You are up to date" : root.s.title;
+                font-size: Theme.extras-wn-title; font-weight: Theme.w-bold; letter-spacing: Theme.track-tight;
+                color: Theme.text-primary; wrap: word-wrap;
+            }
+            Text {
+                text: root.last ? "This shows once after each update. You can open it again any time from Settings, under What's new." : root.s.body;
+                font-size: Theme.text-16; color: Theme.text-secondary; wrap: word-wrap;
+            }
+            if !root.last && root.s.keys.length > 0: VerticalLayout {
+                spacing: Theme.sp-8;
+                for k in root.s.keys: HorizontalLayout {
+                    spacing: Theme.sp-12;
+                    HorizontalLayout {
+                        width: Theme.extras-wn-key-w;
+                        spacing: Theme.sp-4;
+                        alignment: start;
+                        for kk in k.keys: Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            height: kt.preferred-height + Theme.sp-6;
+                            width: kt.preferred-width + Theme.sp-12;
+                            border-radius: Theme.r-control;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            background: Theme.bg-secondary;
+                            kt := Text { text: kk; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+                        }
+                    }
+                    Text { horizontal-stretch: 1; text: k.text; font-size: Theme.text-14; color: Theme.text-secondary; wrap: word-wrap; vertical-alignment: center; }
+                }
+            }
+        }
+    }
+
+    // The art (or the recap), on the right.
+    art := Rectangle {
+        x: root.copy-w + Theme.sp-8;
+        y: Theme.sp-48 + Theme.sp-40;
+        width: root.width - root.copy-w - Theme.sp-8 - Theme.sp-48 - Theme.sp-8;
+        height: root.height - self.y - (Theme.sp-48 * 2 + Theme.sp-20);
+        property <length> fw: min(self.width, Theme.extras-wn-frame-max, (self.height - Theme.sp-32 - Theme.sp-2) * Theme.extras-wn-stage-w / Theme.extras-wn-stage-h);
+        frame := Rectangle {
+            width: art.fw;
+            height: Theme.sp-32 + Theme.sp-2 + art.fw * Theme.extras-wn-stage-h / Theme.extras-wn-stage-w;
+            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-bubble; shadow: Theme.shadow-card; }
+            Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-bubble; border-width: 1px; border-color: Theme.border; clip: true;
+                // The bar: three dots and the art's title.
+                Rectangle {
+                    y: 0px; height: Theme.sp-32 + Theme.sp-2;
+                    HorizontalLayout {
+                        padding-left: Theme.sp-12 + Theme.sp-2; spacing: Theme.sp-8;
+                        for d in 3: Rectangle { y: (parent.height - self.height) / 2; width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.r-pill; background: Theme.bg-hover; }
+                        Text { horizontal-stretch: 1; text: root.last ? "In this update" : (root.s.art-title != "" ? root.s.art-title : root.s.tag); font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+                    }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                }
+                // The stage. The web's animation is HTML and CSS (a 640 x 400
+                // fragment); Slint can't run it, so the stage shows the step's
+                // mark and tag instead (PLAN.md, Known gaps).
+                if !root.last: Rectangle {
+                    y: Theme.sp-32 + Theme.sp-2; height: parent.height - self.y;
+                    background: @linear-gradient(180deg, Theme.accent-haze 0%, Theme.bg-secondary 100%);
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: Theme.sp-12;
+                        HorizontalLayout { alignment: center; Image { source: @image-url("../brand/head.svg"); width: Theme.sp-48 + Theme.sp-16; height: Theme.sp-48 + Theme.sp-16; } }
+                        Text { text: root.s.tag; horizontal-alignment: center; font-size: Theme.text-20; font-weight: Theme.w-bold; color: Theme.accent-hover; }
+                        Text { text: root.s.title; horizontal-alignment: center; font-size: Theme.text-14; color: Theme.text-secondary; wrap: word-wrap; }
+                    }
+                }
+                // The recap: every step, a click goes back to it.
+                if root.last: Flickable {
+                    y: Theme.sp-32 + Theme.sp-2; height: parent.height - self.y;
+                    content-height: max(self.height, rc.preferred-height);
+                    rc := VerticalLayout {
+                        padding-left: Theme.sp-20; padding-right: Theme.sp-20; padding-top: Theme.sp-16; padding-bottom: Theme.sp-16;
+                        spacing: Theme.sp-8;
+                        for st[i] in OpsExtras.wn-steps: Rectangle {
+                            border-radius: Theme.r-bubble;
+                            border-width: 1px;
+                            border-color: la.has-hover ? Theme.accent : Theme.border;
+                            background: Theme.bg-card;
+                            height: li.preferred-height;
+                            li := HorizontalLayout {
+                                padding-left: Theme.sp-12; padding-right: Theme.sp-12; padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                                spacing: Theme.sp-12;
+                                Icon { source: Icons.check; width: Theme.sp-16; height: Theme.sp-16; tint: Theme.green; }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    Text { text: st.title; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+                                    Text { text: st.tag; font-size: Theme.text-12; color: Theme.text-secondary; }
+                                }
+                            }
+                            la := TouchArea { mouse-cursor: pointer; clicked => { OpsExtras.wn-go(i); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The top: the brand, the version, Skip.
+    HorizontalLayout {
+        y: Theme.sp-16; height: Theme.control-lg;
+        padding-left: Theme.sp-24; padding-right: Theme.sp-24;
+        spacing: Theme.sp-10;
+        Image { y: (parent.height - self.height) / 2; source: @image-url("../brand/head.svg"); width: Theme.sp-24 + Theme.sp-4; height: Theme.sp-24 + Theme.sp-4; }
+        Image { y: (parent.height - self.height) / 2; source: @image-url("../brand/wordmark.svg"); height: Theme.sp-16; width: self.height * self.source.width / self.source.height; image-fit: contain; }
+        if OpsExtras.wn-version != "": Rectangle {
+            y: (parent.height - self.height) / 2;
+            height: vt.preferred-height + Theme.sp-6;
+            width: vt.preferred-width + Theme.sp-16;
+            border-radius: Theme.r-pill;
+            background: Theme.accent-dim;
+            border-width: 1px;
+            border-color: Theme.accent-edge;
+            vt := Text { text: OpsExtras.wn-version; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.accent-hover; }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        if !root.last: Rectangle {
+            y: (parent.height - self.height) / 2;
+            height: Theme.control;
+            width: sk.preferred-width + Theme.sp-24 + Theme.sp-4;
+            border-radius: Theme.r-pill;
+            border-width: 1px;
+            border-color: sa.has-hover ? Theme.accent : Theme.border;
+            sk := HorizontalLayout {
+                x: Theme.sp-16 - Theme.sp-2; spacing: Theme.sp-6;
+                Text { text: "Skip"; font-size: Theme.text-13; color: sa.has-hover ? Theme.text-primary : Theme.text-secondary; vertical-alignment: center; }
+                Icon { y: (parent.height - self.height) / 2; source: Icons.x; width: Theme.icon-md; height: Theme.icon-md; tint: sa.has-hover ? Theme.text-primary : Theme.text-secondary; }
+            }
+            sa := TouchArea { mouse-cursor: pointer; clicked => { OpsExtras.wn-close("skip"); } }
+        }
+    }
+
+    // The foot: Back, the dots, the count, the hint, Next / Done.
+    HorizontalLayout {
+        y: root.height - self.height - Theme.sp-24 - Theme.sp-2;
+        height: Theme.control-lg + Theme.sp-6;
+        padding-left: Theme.sp-48 + Theme.sp-16; padding-right: Theme.sp-48 + Theme.sp-8;
+        spacing: Theme.sp-16;
+        Rectangle {
+            width: bk.preferred-width;
+            opacity: root.at == 0 ? 0 : 1;
+            bk := WnBtn { text: "Back"; icon: Icons.chevron-left; icon-first: true; clicked => { if root.at > 0 { OpsExtras.wn-go(root.at - 1); } } }
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-6;
+            alignment: center;
+            for i in root.n: Rectangle {
+                y: (parent.height - self.height) / 2;
+                width: i == root.at ? Theme.sp-24 + Theme.sp-2 : Theme.sp-6;
+                height: Theme.sp-6;
+                border-radius: Theme.r-pill;
+                background: i == root.at ? Theme.accent : i < root.at ? Theme.accent-edge : Theme.bg-hover;
+                animate width { duration: Theme.motion-fast; }
+                TouchArea { mouse-cursor: pointer; clicked => { OpsExtras.wn-go(i); } }
+            }
+        }
+        Text { text: (root.at + 1) + " / " + root.n; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-muted; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        Text { text: "Arrow keys, or swipe"; font-size: Theme.text-12; color: Theme.text-muted; vertical-alignment: center; }
+        WnBtn {
+            primary: true;
+            text: root.last ? "Done" : "Next";
+            icon: root.last ? Icons.check : Icons.chevron-right;
+            icon-first: root.last;
+            clicked => { if root.last { OpsExtras.wn-close("done"); } else { OpsExtras.wn-go(root.at + 1); } }
+        }
+    }
+}
+
+/// Not a tab: Add project, the approvals and What's new are dialogs.
+export component OpsExtrasView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+}
+
+/// This screen's dialogs over the whole window (no input where it draws nothing).
+export component OpsExtrasOverlay inherits Rectangle {
+    if OpsExtras.appr-open: ApprPanel { width: parent.width; height: parent.height; }
+    if OpsExtras.ap-open: AddProjectDialog { width: parent.width; height: parent.height; }
+    if OpsExtras.wn-open: WhatsNew { width: parent.width; height: parent.height; }
+}

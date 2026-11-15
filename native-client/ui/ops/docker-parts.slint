@@ -1,0 +1,206 @@
+// Ops area: Docker's small parts (app/vendor/crundi-docker.js's .dk-*):
+// chips, the segmented nav's buttons, stats, sections, key/value rows, the
+// state colours. Used by ui/ops/docker.slint only.
+
+import { Theme, Icons, Icon } from "../kit.slint";
+import { Tip } from "../chat.slint";
+
+/// A chip (.dk-chip): its text, its tone ("", ok, warn, bad, fwd: a
+/// forward with its link icon) and what a click does ("" nothing, "open" a
+/// container by name, "url" open a link, "watch" nothing: the watched mark).
+export struct OpsDkChip { text: string, tone: string, act: string, target: string, tip: string }
+
+/// The state colours (.dk-s-*): the dot's, the bay's.
+export global DkInk {
+    public pure function state(s: string) -> color {
+        return s == "running" ? Theme.green
+            : s == "paused" || s == "unhealthy" ? Theme.yellow
+            : s == "restarting" ? Theme.accent
+            : s == "dead" ? Theme.red
+            : Theme.text-muted;
+    }
+    public pure function ring(s: string) -> color {
+        return s == "running" ? Theme.green-dim
+            : s == "paused" || s == "unhealthy" ? Theme.yellow-dim
+            : transparent;
+    }
+    public pure function chip-bg(t: string) -> color {
+        return t == "ok" ? Theme.green-dim : t == "warn" ? Theme.yellow-dim : t == "bad" ? Theme.red-dim : t == "fwd" ? Theme.accent-dim : Theme.bg-tertiary;
+    }
+    public pure function chip-fg(t: string) -> color {
+        return t == "ok" ? Theme.green : t == "warn" ? Theme.yellow : t == "bad" ? Theme.red : t == "fwd" ? Theme.accent-hover : Theme.text-secondary;
+    }
+}
+
+/// A state dot with its ring (.dk-dot).
+export component DkDot inherits Rectangle {
+    in property <string> state;
+    width: Theme.sp-8 + Theme.sp-6; height: Theme.sp-8 + Theme.sp-6;
+    Rectangle { border-radius: self.width / 2; background: DkInk.ring(root.state); }
+    Rectangle { width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.sp-4; background: DkInk.state(root.state); }
+}
+
+export component DkChip inherits Rectangle {
+    in property <OpsDkChip> c;
+    callback act(OpsDkChip);
+    height: t.preferred-height + Theme.sp-2;
+    width: lay.preferred-width;
+    border-radius: Theme.r-pill;
+    background: DkInk.chip-bg(root.c.tone);
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-6; padding-right: Theme.sp-6;
+        spacing: Theme.sp-4;
+        if root.c.tone == "fwd": Icon { y: (parent.height - self.height) / 2; source: Icons.external-link; width: Theme.icon-sm - Theme.sp-2; height: Theme.icon-sm - Theme.sp-2; tint: DkInk.chip-fg(root.c.tone); }
+        if root.c.act == "watch": Icon { y: (parent.height - self.height) / 2; source: Icons.bell; width: Theme.icon-sm - Theme.sp-2; height: Theme.icon-sm - Theme.sp-2; tint: DkInk.chip-fg(root.c.tone); }
+        t := Text {
+            text: root.c.text; vertical-alignment: center;
+            font-family: Theme.mono; font-size: Theme.text-10;
+            color: ta.has-hover && (root.c.act == "open" || root.c.act == "url") ? Theme.text-primary : DkInk.chip-fg(root.c.tone);
+            overflow: elide;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: root.c.act == "open" || root.c.act == "url" ? pointer : default;
+        clicked => { if root.c.act == "open" || root.c.act == "url" { root.act(root.c); } }
+    }
+    Tip { on: ta.has-hover; text: root.c.tip; }
+}
+
+/// A row of chips, left to right, clipped where the room ends.
+export component DkChips inherits Rectangle {
+    in property <[OpsDkChip]> chips;
+    callback act(OpsDkChip);
+    clip: true;
+    min-height: Theme.sp-16;
+    HorizontalLayout {
+        alignment: start;
+        spacing: Theme.sp-4;
+        for c in root.chips: VerticalLayout { alignment: center; DkChip { c: c; act(x) => { root.act(x); } } }
+    }
+}
+
+/// One button of the segmented nav (.dk-seg button): icon, label, count.
+export component DkSegBtn inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    in property <string> count;
+    in property <bool> on;
+    in property <bool> alert;
+    in property <bool> has-icon: true;
+    callback clicked();
+    height: Theme.control-sm;
+    width: lay.preferred-width;
+    border-radius: Theme.r-control;
+    background: root.on ? Theme.bg-hover : transparent;
+    border-width: root.on ? 1px : 0px;
+    border-color: Theme.border;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        spacing: Theme.sp-6;
+        if root.has-icon: VerticalLayout { alignment: center; Icon { source: root.icon; width: Theme.icon-md; height: Theme.icon-md; tint: root.on || ta.has-hover ? Theme.text-primary : Theme.text-secondary; } }
+        Text { text: root.label; vertical-alignment: center; font-size: Theme.text-12; color: root.on || ta.has-hover ? Theme.text-primary : Theme.text-secondary; }
+        if root.count != "" && !root.alert: Text { text: root.count; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; }
+        if root.count != "" && root.alert: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: an.preferred-height; width: an.preferred-width + Theme.sp-10;
+                border-radius: Theme.r-pill; background: Theme.accent;
+                an := Text { text: root.count; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.white; }
+            }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The segmented nav's frame (.dk-seg).
+export component DkSeg inherits Rectangle {
+    height: Theme.control-sm + Theme.sp-6;
+    width: lay.preferred-width;
+    border-radius: Theme.r-field;
+    background: Theme.bg-tertiary;
+    border-width: 1px;
+    border-color: Theme.border;
+    lay := HorizontalLayout { padding: Theme.sp-2; spacing: Theme.sp-2; @children }
+}
+
+/// A big number and its label (.dk-stat).
+export component DkStat inherits VerticalLayout {
+    in property <string> v;
+    in property <string> l;
+    spacing: 1px;
+    Text { text: root.v; font-family: Theme.mono; font-size: Theme.text-16; color: Theme.text-primary; }
+    Text { text: root.l; font-size: Theme.text-10; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+}
+
+/// A section card (.dk-sec): bg-secondary, its title small and upper case.
+export component DkSec inherits Rectangle {
+    in property <string> title;
+    background: Theme.bg-secondary;
+    border-radius: Theme.r-field;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding-top: Theme.sp-12; padding-bottom: Theme.sp-12;
+        padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+        spacing: Theme.sp-8;
+        if root.title != "": Text { text: root.title; font-size: Theme.text-10; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+        @children
+    }
+}
+
+/// A key and its value (.dk-kv); a hidden value is muted and italic.
+export component DkKv inherits HorizontalLayout {
+    in property <string> k;
+    in property <string> v;
+    in property <bool> hid;
+    spacing: Theme.sp-16;
+    Text { width: Theme.docker-kv-w; text: root.k; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+    Text {
+        horizontal-stretch: 1;
+        text: root.v; font-size: Theme.text-12; wrap: char-wrap;
+        font-family: root.hid ? Theme.ui-font : Theme.mono;
+        font-italic: root.hid;
+        color: root.hid ? Theme.text-muted : Theme.text-primary;
+    }
+}
+
+/// A muted line (.dk-quiet).
+export component DkQuiet inherits Text {
+    color: Theme.text-muted; font-size: Theme.text-12; wrap: word-wrap;
+}
+
+/// A group's head (.dk-group): small, upper case.
+export component DkGroup inherits Text {
+    font-size: Theme.text-10; letter-spacing: Theme.track-wide; color: Theme.text-muted;
+}
+
+/// The empty and failed states (.dk-empty): a faint icon, a bold line, a hint.
+export component DkEmpty inherits VerticalLayout {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> hint;
+    alignment: center;
+    spacing: Theme.sp-10;
+    padding-top: Theme.sp-48; padding-bottom: Theme.sp-48;
+    padding-left: Theme.sp-20; padding-right: Theme.sp-20;
+    HorizontalLayout { alignment: center; Icon { width: Theme.sp-40; height: Theme.sp-40; source: root.icon; tint: Theme.text-muted; opacity: Theme.o-dim; } }
+    Text { text: root.title; horizontal-alignment: center; font-size: Theme.text-15; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+    if root.hint != "": Text { text: root.hint; horizontal-alignment: center; font-size: Theme.text-13; color: Theme.text-muted; wrap: word-wrap; }
+    @children
+}
+
+/// A list's frame (.dk-list): rows with hairlines between.
+export component DkList inherits Rectangle {
+    background: Theme.bg-card;
+    border-radius: Theme.r-card;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+    VerticalLayout { @children }
+}
+
+/// A hairline under a row.
+export component DkLine inherits Rectangle {
+    height: 1px;
+    background: Theme.border-subtle;
+}

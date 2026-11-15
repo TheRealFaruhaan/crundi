@@ -6,6 +6,9 @@ import { Shell } from "hooks.slint";
 import { Theme } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, AccentFill, SoftShadow, DashedBox } from "widgets.slint";
+// ops (extras): the approvals button (made by ops, to review: shared/requests.md).
+import { OpsApprovalsBtn } from "ops/extras-appr.slint";
+import { OpsExtras } from "ops/extras.slint";
 
 export struct ProjectItem {
     alias: string,
@@ -131,6 +134,8 @@ export component TopBar inherits Rectangle {
             Image { source: @image-url("brand/cru.svg"); width: Theme.sp-40; height: Theme.sp-24; }
             TouchArea { mouse-cursor: pointer; clicked => { Shell.cru(); } }
         }
+        // ops (extras): the approvals inbox's button, hidden at zero (#approvals-btn).
+        if OpsExtras.appr-items.length > 0: OpsApprovalsBtn { y: Theme.sp-12; }
         // The connection badge: a dot (with its ring), mono text.
         Rectangle {
             y: Theme.sp-12;

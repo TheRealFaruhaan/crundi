@@ -1,0 +1,444 @@
+// Ops area: Info: the server's facts and its log (renderInfo).
+// OpsInfo (the global) is what Rust reads, sets and handles: src/ops/info.rs.
+// It is exported to Rust by ui/ops/api.slint (one line per file there).
+//
+// The web's Info tab, in its order: Project and Status (when a project is
+// open), This machine (renderSystemStats, every 2 s while on show), Reclaim
+// disk space (renderMaintenance), Outside collaborators (loadCollaborators,
+// with the invite form and the passcode / git dialogs), Tunnel, Server Logs
+// (live, with Copy). Rust builds every line's words; every button calls
+// OpsInfo.act(action, argument).
+
+import { Theme, Icons, Icon, PanelPage, SmallBtn, TextField, Select, CheckRow, Modal, ModalActions } from "../kit.slint";
+import { SkHint, SkErr, SkHead, SkLabel, SkBar, SkSection, SkRow } from "skills-parts.slint";
+import { ListView } from "std-widgets.slint";
+
+/// A line of the server log: its text ("[time] words") and level.
+export struct OpsInfoLog { text: string, level: string }
+/// A row of the machine panel: "line" (k, v), "bar" (pct 0..100) or "gap".
+export struct OpsInfoSys { kind: string, k: string, v: string, pct: float }
+/// A reclaim task (.maint-row).
+export struct OpsMaintTask { id: string, label: string, root: bool, danger: bool, desc: string, detail: string, size: string, none: bool, enabled: bool, arm: string, busy: string }
+/// One of a person's grants (.collab-row).
+export struct OpsCollabRow { id: string, project: string, branch: string, exp: string, gone: bool, revoked: bool }
+/// A person outside with access (.collab-person).
+export struct OpsCollabPerson { name: string, tg: string, id: string, usage: string, over: bool, meter: float, limit-btn: string, can-reset: bool, sites: [string], rows: [OpsCollabRow] }
+/// A project to tick in the invite form.
+export struct OpsInfoCheck { key: string, label: string, on: bool }
+
+export global OpsInfo {
+    /// A dialog of this screen covers the window (OpsOverlay sets Shell.modal-ops).
+    in-out property <bool> modal;
+    /// Every button: (action, argument).
+    callback act(string, string);
+
+    // Project and Status.
+    in property <bool> has-project;
+    in property <string> p-alias;
+    in property <string> p-name;
+    in property <string> p-path;
+    in property <string> p-terminal;
+    in property <string> p-services;
+    // This machine.
+    in property <bool> sys-ready;
+    in property <string> cpu-line;
+    in property <[float]> cores;
+    in property <string> spark;
+    in property <float> spark-pct;
+    in property <[OpsInfoSys]> sys-rows;
+    // Reclaim disk space.
+    in property <string> maint-state: "loading";
+    in property <string> maint-total;
+    in property <[OpsMaintTask]> maint;
+    // Outside collaborators.
+    in property <string> collab-state: "loading";
+    in property <bool> sb-ok;
+    in property <[string]> sb-problems;
+    in property <bool> sb-fix;
+    in property <[OpsCollabPerson]> people;
+    in-out property <string> inv-name;
+    in-out property <string> inv-tg;
+    in property <[OpsInfoCheck]> inv-projects;
+    in-out property <string> inv-amount: "7";
+    in-out property <int> inv-unit;
+    in property <string> inv-expiry;
+    in-out property <string> inv-limit;
+    // Tunnel.
+    in property <bool> has-tunnel;
+    in property <string> t-url;
+    in property <string> t-status;
+    in property <string> t-cf;
+    // Server Logs.
+    in property <bool> logs-loading: true;
+    in property <[OpsInfoLog]> logs;
+    in property <int> logs-gen;
+    // The new passcode dialog (showInviteModal).
+    in property <bool> cred-open;
+    in property <string> cred-title;
+    in property <string> cred-url;
+    in property <string> cred-name;
+    in property <string> cred-pass;
+    in property <string> cred-projects;
+    in property <string> cred-ends;
+    in property <string> copied;
+    // "Not a git repository yet" (offerGitInit).
+    in property <bool> git-open;
+    in property <string> git-title;
+    in property <string> git-commit;
+    in property <string> git-kept;
+    in property <string> git-risky;
+    in property <string> git-tail;
+    in property <bool> git-busy;
+}
+
+/// Green until it matters (lvl / lvlColor): 60 % amber, 85 % red.
+global InfoLevel {
+    public pure function of(pct: float) -> color {
+        return pct >= 85 ? Theme.red : pct >= 60 ? Theme.yellow : Theme.green;
+    }
+    public pure function dim(pct: float) -> color {
+        return pct >= 85 ? Theme.red-dim : pct >= 60 ? Theme.yellow-dim : Theme.green-dim;
+    }
+}
+
+/// A quiet line (.sys-quiet).
+component Quiet inherits Text {
+    font-size: Theme.text-13;
+    color: Theme.text-muted;
+    wrap: word-wrap;
+}
+
+/// This machine (#sys-stats-body).
+component SysPanel inherits VerticalLayout {
+    spacing: Theme.sp-6;
+    if !OpsInfo.sys-ready: Quiet { text: "Reading the machine…"; }
+    if OpsInfo.sys-ready: VerticalLayout {
+        spacing: Theme.sp-6;
+        SkRow { label: "CPU"; value: OpsInfo.cpu-line; rule: false; }
+        if OpsInfo.cores.length > 0: HorizontalLayout {
+            height: Theme.sp-24 + Theme.sp-4;
+            spacing: Theme.sp-2 + 1px;
+            for c[i] in OpsInfo.cores: Rectangle {
+                horizontal-stretch: 1;
+                border-radius: Theme.sp-2;
+                background: Theme.bg-tertiary;
+                clip: true;
+                Rectangle {
+                    y: parent.height - self.height;
+                    height: parent.height * max(0, min(100, c)) / 100;
+                    background: InfoLevel.of(c);
+                    animate height { duration: Theme.motion; }
+                }
+            }
+        }
+        // The CPU history (sparkSvg): the area faint, the line over it.
+        Rectangle {
+            height: Theme.sp-40;
+            if OpsInfo.spark != "": Path {
+                width: parent.width; height: parent.height;
+                viewbox-width: 100; viewbox-height: 20;
+                commands: OpsInfo.spark + "L100 20L0 20Z";
+                fill: InfoLevel.dim(OpsInfo.spark-pct);
+            }
+            if OpsInfo.spark != "": Path {
+                width: parent.width; height: parent.height;
+                viewbox-width: 100; viewbox-height: 20;
+                commands: OpsInfo.spark;
+                stroke: InfoLevel.of(OpsInfo.spark-pct);
+                stroke-width: 1px;
+            }
+        }
+        for r in OpsInfo.sys-rows: VerticalLayout {
+            if r.kind == "gap": Rectangle { height: Theme.sp-8; }
+            if r.kind == "line": SkRow { label: r.k; value: r.v; rule: false; }
+            if r.kind == "bar": SkBar { frac: r.pct / 100; fill: InfoLevel.of(r.pct); thick: Theme.sp-6; }
+        }
+    }
+}
+
+/// Reclaim disk space (#maint-body).
+component MaintPanel inherits VerticalLayout {
+    spacing: Theme.sp-4;
+    if OpsInfo.maint-state == "loading": Quiet { text: "Measuring…"; }
+    if OpsInfo.maint-state == "error": Quiet { text: "Could not read reclaimable space."; }
+    if OpsInfo.maint-state == "empty": Quiet { text: "Nothing on this machine to reclaim."; }
+    if OpsInfo.maint-state == "data": VerticalLayout {
+        spacing: 0px;
+        Text { text: OpsInfo.maint-total; font-size: Theme.text-12; color: Theme.text-secondary; }
+        for t[i] in OpsInfo.maint: Rectangle {
+            if i > 0: Rectangle { y: 0px; height: 1px; background: Theme.border-subtle; }
+            HorizontalLayout {
+                padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                spacing: Theme.sp-12;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    spacing: Theme.sp-2;
+                    HorizontalLayout {
+                        spacing: Theme.sp-6;
+                        alignment: start;
+                        Text { text: t.label; font-size: Theme.text-13; color: Theme.text-primary; }
+                        if t.root: Rectangle {
+                            width: rt.preferred-width + Theme.sp-10; border-radius: Theme.r-chip; background: Theme.yellow-dim;
+                            rt := Text { text: "root"; font-size: Theme.text-10; color: Theme.yellow; }
+                        }
+                        if t.danger: Rectangle {
+                            width: dt.preferred-width + Theme.sp-10; border-radius: Theme.r-chip; background: Theme.red-dim;
+                            dt := Text { text: "destructive"; font-size: Theme.text-10; color: Theme.red; }
+                        }
+                    }
+                    Text { text: t.desc; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+                    if t.detail != "": Text { text: t.detail; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.yellow; wrap: word-wrap; }
+                }
+                Text { text: t.size; vertical-alignment: center; font-family: Theme.mono; font-size: Theme.text-13; color: t.none ? Theme.text-muted : Theme.text-primary; }
+                VerticalLayout {
+                    alignment: center;
+                    SmallBtn {
+                        text: t.busy != "" ? t.busy : t.danger ? "Remove" : "Clear";
+                        has-icon: t.busy == ""; icon: Icons.trash;
+                        kind: t.danger ? "danger" : "";
+                        enabled: t.enabled && t.busy == "";
+                        confirm-text: t.arm;
+                        clicked => { OpsInfo.act("maint-run", t.id); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Outside collaborators (#collab-body).
+component CollabPanel inherits VerticalLayout {
+    spacing: Theme.sp-8;
+    if OpsInfo.collab-state == "loading": Quiet { text: "Loading…"; }
+    if OpsInfo.collab-state == "error": Quiet { text: "Could not load collaborators."; }
+    if OpsInfo.collab-state == "data": VerticalLayout {
+        spacing: Theme.sp-8;
+        // The sandbox (.collab-sb).
+        if OpsInfo.sb-ok: Rectangle {
+            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+            VerticalLayout { padding: Theme.sp-8; Text { text: "Sandbox ready. Collaborators’ shells are confined to their own worktree."; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; } }
+        }
+        if !OpsInfo.sb-ok: Rectangle {
+            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.yellow-edge; background: Theme.yellow-dim;
+            VerticalLayout {
+                padding: Theme.sp-8; spacing: Theme.sp-4;
+                Text { text: "Sandbox not set up. Invites are disabled and collaborator chats will not start until it is."; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+                for p in OpsInfo.sb-problems: Text { text: "•  " + p; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+                if OpsInfo.sb-fix: HorizontalLayout { alignment: start; SmallBtn { text: "Set up sandbox"; clicked => { OpsInfo.act("collab-sandbox-setup", ""); } } }
+                if !OpsInfo.sb-fix: Text { text: "On the server run: sudo apt-get install -y bubblewrap socat"; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+            }
+        }
+        if OpsInfo.people.length == 0: Quiet { text: "Nobody outside has access right now."; }
+        for p in OpsInfo.people: Rectangle {
+            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+            VerticalLayout {
+                padding: Theme.sp-8; spacing: Theme.sp-4;
+                HorizontalLayout {
+                    spacing: Theme.sp-8;
+                    Text { text: p.name; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: p.tg; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+                    SmallBtn { text: "New passcode"; clicked => { OpsInfo.act("collab-reissue", p.id); } }
+                }
+                HorizontalLayout {
+                    spacing: Theme.sp-6;
+                    Text { text: p.usage; font-size: Theme.text-11; color: p.over ? Theme.red : Theme.text-muted; vertical-alignment: center; }
+                    if p.meter >= 0: VerticalLayout { alignment: center; max-width: Theme.sp-48 + Theme.sp-48 + Theme.sp-48 + Theme.sp-16; SkBar { frac: p.meter; fill: p.over ? Theme.red : Theme.accent; } }
+                    SmallBtn { text: p.limit-btn; clicked => { OpsInfo.act("collab-limit", p.id); } }
+                    if p.can-reset: SmallBtn { text: "Reset"; clicked => { OpsInfo.act("collab-reset-usage", p.id); } }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if p.sites.length > 0: HorizontalLayout {
+                    spacing: Theme.sp-4;
+                    alignment: start;
+                    Text { text: "Allowed sites:"; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+                    for s in p.sites: Rectangle {
+                        height: Theme.sp-20;
+                        width: sl.preferred-width + Theme.sp-8;
+                        border-radius: Theme.r-chip; background: Theme.bg-tertiary;
+                        sl := HorizontalLayout {
+                            padding-left: Theme.sp-6; padding-right: Theme.sp-2;
+                            spacing: Theme.sp-2;
+                            Text { text: s; font-size: Theme.text-11; color: Theme.text-secondary; vertical-alignment: center; }
+                            Rectangle {
+                                width: Theme.sp-16;
+                                Text { text: "×"; font-size: Theme.text-13; color: xa.has-hover ? Theme.red : Theme.text-muted; }
+                                xa := TouchArea { mouse-cursor: pointer; clicked => { OpsInfo.act("collab-domain-remove", p.id + "\n" + s); } }
+                            }
+                        }
+                    }
+                }
+                for r in p.rows: HorizontalLayout {
+                    opacity: r.gone ? Theme.o-soft : 1;
+                    spacing: Theme.sp-8;
+                    Text { min-width: Theme.sp-48 + Theme.sp-40; text: r.project; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; vertical-alignment: center; }
+                    Text { text: r.branch; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.sky; vertical-alignment: center; overflow: elide; }
+                    Text { horizontal-stretch: 1; text: r.exp; horizontal-alignment: right; font-size: Theme.text-12; color: Theme.text-muted; vertical-alignment: center; }
+                    SmallBtn { text: "Extend"; clicked => { OpsInfo.act("collab-extend", r.id); } }
+                    SmallBtn { text: "Merge"; clicked => { OpsInfo.act("collab-merge-owner", r.id); } }
+                    if r.revoked: SmallBtn { text: "Restore"; clicked => { OpsInfo.act("collab-unrevoke", r.id); } }
+                    if !r.revoked: SmallBtn { text: "Revoke"; clicked => { OpsInfo.act("collab-revoke", r.id); } }
+                    SmallBtn { text: "Remove"; kind: "danger"; clicked => { OpsInfo.act("collab-remove", r.id); } }
+                }
+            }
+        }
+        // Invite someone (.collab-invite).
+        Rectangle { height: 1px; background: Theme.border; }
+        VerticalLayout {
+            spacing: Theme.sp-4;
+            Text { text: "Invite someone"; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+            SkLabel { text: "Their name"; }
+            TextField { text <=> OpsInfo.inv-name; placeholder: "e.g. Sam"; }
+            SkHint { text: "They type this to sign in."; }
+            SkLabel { text: "Telegram username (optional)"; }
+            TextField { text <=> OpsInfo.inv-tg; placeholder: "without the @"; }
+            SkHint { text: "Lets them use the Telegram button instead of a passcode."; }
+            SkLabel { text: "Projects (pick one or more)"; }
+            Rectangle {
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border; background: Theme.bg-tertiary;
+                VerticalLayout {
+                    padding: Theme.sp-6; spacing: Theme.sp-4;
+                    for c[i] in OpsInfo.inv-projects: CheckRow { text: c.label; checked: c.on; toggled => { OpsInfo.act("inv-project", c.key); } }
+                }
+            }
+            SkHint { text: "Tick several for several. Each gets its own git worktree and branch."; }
+            SkLabel { text: "Access lasts"; }
+            HorizontalLayout {
+                spacing: Theme.sp-6; alignment: start;
+                TextField { width: Theme.sp-48 + Theme.sp-32; text <=> OpsInfo.inv-amount; edited => { OpsInfo.act("inv-edit", ""); } }
+                Select { width: Theme.sp-48 + Theme.sp-40; options: ["days", "hours"]; selected: OpsInfo.inv-unit; picked(i) => { OpsInfo.inv-unit = i; OpsInfo.act("inv-edit", ""); } }
+            }
+            SkHint { text: OpsInfo.inv-expiry; }
+            SkLabel { text: "Token limit (optional)"; }
+            TextField { text <=> OpsInfo.inv-limit; placeholder: "e.g. 2M or 500k — blank for no limit"; }
+            SkHint { text: "Counted across all their projects. Their chat stops the moment it is reached, and you can change it later."; }
+            HorizontalLayout { alignment: start; padding-top: Theme.sp-4; SmallBtn { text: "Create access"; enabled: OpsInfo.sb-ok; clicked => { OpsInfo.act("collab-create", ""); } } }
+            Quiet { text: "They see only the projects you pick, and nothing else on this machine."; }
+        }
+    }
+}
+
+/// The server's log box (#server-logs-area): newest at the bottom, kept
+/// scrolled there as lines arrive.
+component LogBox inherits Rectangle {
+    height: Theme.info-logs-h;
+    background: Theme.bg-primary;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: Theme.border;
+    clip: true;
+    if OpsInfo.logs-loading: Text { x: Theme.sp-8; y: Theme.sp-8; text: "(loading...)"; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; }
+    lv := ListView {
+        x: Theme.sp-2; y: Theme.sp-2; width: parent.width - 2 * Theme.sp-2; height: parent.height - 2 * Theme.sp-2;
+        for l in OpsInfo.logs: VerticalLayout {
+            padding-left: Theme.sp-6; padding-right: Theme.sp-6;
+            Text {
+                text: l.text;
+                font-family: Theme.mono; font-size: Theme.text-11;
+                wrap: word-wrap;
+                color: l.level == "error" ? Theme.red : l.level == "warn" ? Theme.yellow : Theme.text-muted;
+            }
+        }
+    }
+    property <int> gen: OpsInfo.logs-gen;
+    changed gen => { tail.running = true; }
+    tail := Timer {
+        interval: Theme.motion-fast;
+        running: false;
+        triggered => { self.running = false; lv.content-y = min(0px, lv.visible-height - lv.content-height); }
+    }
+}
+
+/// The Info tab.
+export component OpsInfoView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    PanelPage {
+        embedded: root.embedded;
+        if OpsInfo.has-project: SkSection {
+            title: "PROJECT";
+            SkRow { label: "Alias"; value: OpsInfo.p-alias; }
+            SkRow { label: "Name"; value: OpsInfo.p-name; }
+            SkRow { label: "Path"; value: OpsInfo.p-path; rule: false; }
+        }
+        if OpsInfo.has-project: SkSection {
+            title: "STATUS";
+            SkRow { label: "Claude Terminal"; value: OpsInfo.p-terminal; }
+            SkRow { label: "Services"; value: OpsInfo.p-services; rule: false; }
+        }
+        SkSection { title: "THIS MACHINE"; SysPanel { } }
+        SkSection { title: "RECLAIM DISK SPACE"; MaintPanel { } }
+        SkSection { title: "OUTSIDE COLLABORATORS"; CollabPanel { } }
+        if OpsInfo.has-tunnel: SkSection {
+            title: "TUNNEL";
+            SkRow { label: "URL"; value: OpsInfo.t-url; link: OpsInfo.t-url != "—"; clicked => { OpsInfo.act("open-url", OpsInfo.t-url); } }
+            SkRow { label: "Status"; value: OpsInfo.t-status; rule: OpsInfo.t-cf != ""; }
+            if OpsInfo.t-cf != "": SkRow { label: "Cloudflare service"; value: OpsInfo.t-cf; rule: false; }
+        }
+        SkSection {
+            HorizontalLayout {
+                spacing: Theme.sp-8;
+                Text {
+                    horizontal-stretch: 1; vertical-alignment: center;
+                    text: "SERVER LOGS";
+                    font-size: Theme.text-12; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted;
+                }
+                SmallBtn { text: "Copy"; has-icon: true; icon: Icons.copy; clicked => { OpsInfo.act("copy-logs", ""); } }
+            }
+            LogBox { }
+        }
+    }
+}
+
+/// A read-only value with its Copy button (.inv-row).
+component CredField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> id;
+    in property <bool> big;
+    spacing: Theme.sp-4;
+    SkLabel { text: root.label; }
+    HorizontalLayout {
+        spacing: Theme.sp-6;
+        TextField { horizontal-stretch: 1; text: root.value; mono: root.big; }
+        SmallBtn { text: OpsInfo.copied == root.id ? "Copied" : "Copy"; kind: OpsInfo.copied == root.id ? "on" : ""; clicked => { OpsInfo.act("cred-copy", root.id); } }
+    }
+}
+
+/// This screen's dialogs: a new passcode, and "not a git repository yet".
+export component OpsInfoOverlay inherits Rectangle {
+    if OpsInfo.cred-open: Modal {
+        title: OpsInfo.cred-title;
+        close => { OpsInfo.act("cred-close", ""); }
+        SkHint { text: "Send these three things to them however you like."; }
+        CredField { label: "Sign in at"; value: OpsInfo.cred-url; id: "url"; }
+        CredField { label: "Name"; value: OpsInfo.cred-name; id: "name"; }
+        CredField { label: "Passcode"; value: OpsInfo.cred-pass; id: "pass"; big: true; }
+        Rectangle {
+            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.yellow-edge; background: Theme.yellow-dim;
+            VerticalLayout { padding: Theme.sp-8; Text { text: "The passcode is shown only here. It is stored hashed, so it cannot be looked up later — only replaced with a new one."; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; } }
+        }
+        if OpsInfo.cred-projects != "": Text { text: "Projects: " + OpsInfo.cred-projects; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        if OpsInfo.cred-ends != "": Text { text: "Access ends: " + OpsInfo.cred-ends; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        ModalActions {
+            SmallBtn { text: OpsInfo.copied == "all" ? "Copied" : "Copy everything"; kind: OpsInfo.copied == "all" ? "on" : ""; clicked => { OpsInfo.act("cred-copy", "all"); } }
+            SmallBtn { text: "Done"; kind: "primary"; clicked => { OpsInfo.act("cred-close", ""); } }
+        }
+    }
+    if OpsInfo.git-open: Modal {
+        title: OpsInfo.git-title;
+        close => { OpsInfo.act("git-cancel", ""); }
+        SkHint { text: "Sharing gives each person their own branch, so it needs one. Setting it up makes a first commit of what is in the folder now."; }
+        Text { text: OpsInfo.git-commit; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        if OpsInfo.git-kept != "": Text { text: OpsInfo.git-kept; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-secondary; wrap: word-wrap; }
+        if OpsInfo.git-risky != "": Rectangle {
+            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.yellow-edge; background: Theme.yellow-dim;
+            VerticalLayout { padding: Theme.sp-8; Text { text: OpsInfo.git-risky; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; } }
+        }
+        SkHint { text: OpsInfo.git-tail; }
+        ModalActions {
+            SmallBtn { text: "Cancel"; clicked => { OpsInfo.act("git-cancel", ""); } }
+            SmallBtn { text: OpsInfo.git-busy ? "Setting up…" : "Set up git and share"; kind: "primary"; enabled: !OpsInfo.git-busy; clicked => { OpsInfo.act("git-go", ""); } }
+        }
+    }
+}

@@ -429,6 +429,80 @@ export global Theme {
     out property <length> kanban-thumb: 48px;
     // ── end planning ──
     // ── ops ──
+    // Vault (ui/ops/vault*.slint): a PIN's letter spacing, the PIN modal's
+    // card (.pin-box 320), the lock dialogs' (.csl-card 420).
+    out property <length> vault-pin-track: 6px;
+    out property <length> vault-pin-w: 320px;
+    out property <length> vault-lock-w: 420px;
+    // Extras (ui/ops/extras*.slint): the approvals panel (.appr-panel 420,
+    // its detail's most 140), the add-project card (.modal 400), What's new
+    // (its copy column's least 340, the stage 640 x 400, the frame's most
+    // 760, the title, a key's column 150).
+    out property <length> extras-appr-w: 420px;
+    out property <length> extras-appr-detail-h: 140px;
+    out property <length> extras-add-w: 400px;
+    out property <length> extras-wn-copy-min: 340px;
+    out property <length> extras-wn-stage-w: 640px;
+    out property <length> extras-wn-stage-h: 400px;
+    out property <length> extras-wn-frame-max: 760px;
+    out property <length> extras-wn-title: 40px;
+    out property <length> extras-wn-key-w: 150px;
+    // What's new's copy column (42% of the window), the approvals panel's
+    // most height (70% of it).
+    out property <float> extras-wn-copy-share: 0.42;
+    out property <float> extras-appr-max-share: 0.7;
+    // Panels (widgets, ui/ops/panels.slint): the tab's list column, a tab
+    // row, the slot <select>, an inline card's and a dock's frame limits,
+    // the chip popover, a chip's widest.
+    out property <length> panels-list-w: 232px;
+    out property <length> panels-item-h: 40px;
+    out property <length> panels-select-w: 132px;
+    out property <length> panels-frame-min: 36px;
+    out property <length> panels-frame-start: 80px;
+    out property <length> panels-inline-max: 460px;
+    out property <length> panels-dock-floor: 120px;
+    out property <float> panels-dock-share: 0.44;
+    out property <length> panels-pop-w: 440px;
+    out property <length> panels-pop-h: 560px;
+    out property <length> panels-chip-max: 220px;
+    out property <length> panels-chip-face-max: 260px;
+    // Skills + Info (ui/ops/skills.slint, ui/ops/info.slint): an info row's
+    // value share (.info-row .value max-width 60%), the server log box's
+    // height (300), the status key column (.bk-k 92), the restore card (340).
+    out property <float> info-value-share: 0.6;
+    out property <length> info-logs-h: 300px;
+    out property <length> skills-key-w: 92px;
+    out property <length> skills-restore-w: 340px;
+    // Settings (ui/ops/settings.slint): the notification matrix's mode
+    // column (.ntf-row 62px), the idle-minutes field (110), the Telegram
+    // chat id field (260), Cru's selects and fields (340), the pairing
+    // picture (300).
+    out property <length> settings-ntf-col: 62px;
+    out property <length> settings-num-w: 110px;
+    out property <length> settings-chat-w: 260px;
+    out property <length> settings-select-w: 340px;
+    out property <length> settings-pair-pic: 300px;
+    // Docker + Homepool (ui/ops/docker*.slint, ui/ops/homepool.slint): a
+    // row's number columns (.dk-num 64, .mem 76), the nav's filter (180),
+    // the pull field (300), the log filter (280), a key column (.dk-kv 160),
+    // a chart's height (84), the job drawer's share of the tab (46%), a
+    // chart's fill (opacity .13), the log's ANSI colours the theme lacks
+    // (.dk-a-31/32/35/36), homepool's dialog (.hp-dlg 560), its QR (180).
+    out property <length> docker-num-w: 64px;
+    out property <length> docker-mem-w: 76px;
+    out property <length> docker-filter-w: 180px;
+    out property <length> docker-pull-w: 300px;
+    out property <length> docker-log-filter-w: 280px;
+    out property <length> docker-kv-w: 160px;
+    out property <length> docker-chart-h: 84px;
+    out property <float> docker-job-share: 0.46;
+    out property <float> docker-fill: 0.13;
+    out property <color> docker-red: #f87171;
+    out property <color> docker-green: #34d399;
+    out property <color> docker-magenta: #c084fc;
+    out property <color> docker-cyan: #22d3ee;
+    out property <length> homepool-dlg-w: 560px;
+    out property <length> homepool-qr: 180px;
     // ── end ops ──
     // ── desktop ──
     // ── end desktop ──
