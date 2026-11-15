@@ -32,7 +32,7 @@ export component DesktopView inherits Rectangle {
 export component DesktopOverlay inherits Rectangle {
     // Cru's screen, under the top bar's Cru mark (right aligned).
     if DesktopCru.open: CruScreen {
-        x: parent.width - self.width - Theme.sp-48 * 4;
+        x: parent.width - self.width - Theme.cru-right;
         y: Theme.topbar-height + Theme.sp-4;
     }
 }

@@ -524,6 +524,21 @@ export global Theme {
     out property <length> cru-h: 760px;
     out property <length> cru-field: 120px;
     out property <length> cru-chat-h: 260px;
+    // The drawer's tab underline inset (both sides), the chat cursor's
+    // outline, the address bar's suggestions (left of them: the three
+    // nav buttons; right: the three tool buttons), the small chevron's and
+    // the menu check's scale.
+    out property <length> drawer-tab-inset: 2px;
+    out property <length> drawer-cursor-stroke: 1.5px;
+    out property <int> drawer-nav-buttons: 3;
+    out property <int> drawer-tool-buttons: 3;
+    out property <float> drawer-chevron-k: 0.75;
+    out property <float> drawer-check-k: 0.85;
+    // Cru: the head's share of the field, a turn's widest share, and how far
+    // (in sp-48 steps) the screen sits left of the window's right edge.
+    out property <float> cru-head-k: 0.5;
+    out property <float> cru-turn-k: 0.8;
+    out property <length> cru-right: 192px;
     // ── end desktop ──
 }
 

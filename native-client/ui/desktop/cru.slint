@@ -70,7 +70,7 @@ export component CruScreen inherits Rectangle {
                 width: Theme.cru-field; height: self.width; border-radius: self.width / 2;
                 background: CruLook.tint(DesktopCru.phase).with-alpha(Theme.o-faint);
                 border-width: Theme.sp-2; border-color: CruLook.tint(DesktopCru.phase);
-                Image { source: @image-url("../brand/head.svg"); width: parent.width * 0.5; height: self.width; }
+                Image { source: @image-url("../brand/head.svg"); width: parent.width * Theme.cru-head-k; height: self.width; }
                 if DesktopCru.phase == "think": Spinner { y: parent.height - Theme.sp-24; width: Theme.sp-16; height: Theme.sp-16; }
             }
         }
@@ -107,7 +107,7 @@ export component CruScreen inherits Rectangle {
                 for t in DesktopCru.turns: HorizontalLayout {
                     alignment: t.mine ? end : start;
                     Rectangle {
-                        width: min(Theme.cru-w * 0.8, tt.preferred-width + Theme.sp-24);
+                        width: min(Theme.cru-w * Theme.cru-turn-k, tt.preferred-width + Theme.sp-24);
                         height: tt.preferred-height + Theme.sp-12;
                         border-radius: Theme.r-bubble;
                         background: t.mine ? Theme.accent-dim : Theme.bg-tertiary;
