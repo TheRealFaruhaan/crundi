@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const home = mkdtempSync(join(tmpdir(), 'cru-usage-view-'));
 process.env.HOME = home;
+process.env.USERPROFILE = home;   // os.homedir() on Windows (the release jobs run there)
 process.env.DATA_DIR = join(home, 'data');
 mkdirSync(join(home, '.claude'), { recursive: true });
 writeFileSync(join(home, '.claude', '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 't', refreshToken: 'r', expiresAt: Date.now() + 3600e3, subscriptionType: 'max' } }));
