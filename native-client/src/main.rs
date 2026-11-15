@@ -36,6 +36,7 @@ mod fresult;
 mod voice;
 mod voiceio;
 mod frames;
+mod fonts;
 mod drafts;
 mod app;
 mod browser;
@@ -184,6 +185,8 @@ fn main() {
     // Francisco, as the web's system-ui), the bundled DejaVu Sans on Linux
     // (ui/main.slint: with its italic faces, which the system may lack).
     if cfg!(target_os = "linux") { ui.global::<Theme>().set_ui_font("DejaVu Sans".into()); }
+    chat_font(&ui);
+    ui.global::<Theme>().set_px_scale(ui.window().scale_factor());
 
     // The window has no system frame (as the Electron client): the top bar
     // moves it, and has the window buttons.
@@ -294,4 +297,50 @@ pub fn pointer_pressed(ui: &MainWindow, x: f32, y: f32) {
     // focuses nothing beneath.
     p.set_press_on_menu(ui.get_add_menu_open() || p.get_modal() || p.get_on_dock());
     p.set_presses(p.get_presses() + 1);
+}
+
+/// The UI font's faces as bytes: the bundled DejaVu Sans on Linux; the
+/// system's own on Windows (Segoe UI) and macOS (San Francisco).
+fn ui_faces() -> Vec<Vec<u8>> {
+    if cfg!(target_os = "linux") {
+        return vec![
+            include_bytes!("../ui/fonts/DejaVuSans.ttf").to_vec(),
+            include_bytes!("../ui/fonts/DejaVuSans-Bold.ttf").to_vec(),
+            include_bytes!("../ui/fonts/DejaVuSans-Oblique.ttf").to_vec(),
+            include_bytes!("../ui/fonts/DejaVuSans-BoldOblique.ttf").to_vec(),
+        ];
+    }
+    let files: &[&str] = if cfg!(target_os = "windows") {
+        &["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\segoeuib.ttf", "C:\\Windows\\Fonts\\segoeuii.ttf", "C:\\Windows\\Fonts\\segoeuiz.ttf", "C:\\Windows\\Fonts\\seguisb.ttf", "C:\\Windows\\Fonts\\seguisbi.ttf"]
+    } else {
+        &["/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/SFNSItalic.ttf"]
+    };
+    files.iter().filter_map(|f| std::fs::read(f).ok()).collect()
+}
+
+/// The chat's font (K1) and the line-height factors (K2), from the UI
+/// font's own metrics. Anything missing: today's factors, no chat font.
+fn chat_font(ui: &MainWindow) {
+    use slint::fontique_011::fontique;
+    let faces = ui_faces();
+    let Some(natural) = faces.first().and_then(|f| fonts::natural_line(f)) else {
+        eprintln!("[native] chat font: none (the UI font's file was not found); lines as before");
+        return;
+    };
+    let th = ui.global::<Theme>();
+    th.set_lh_chat(fonts::factor(natural, 1.55) as f32);
+    th.set_lh_ui(fonts::factor(natural, 1.3) as f32);
+    th.set_lh_composer(fonts::factor(natural, 1.45) as f32);
+    let mut coll = slint::fontique_011::shared_collection();
+    let mut n = 0;
+    for f in &faces {
+        let Some(copy) = fonts::with_line(f, 1.55) else { continue };
+        let over = fontique::FontInfoOverride { family_name: Some("Crundi Chat"), ..Default::default() };
+        if !coll.register_fonts(fontique::Blob::new(std::sync::Arc::new(copy)), Some(over)).is_empty() { n += 1; }
+    }
+    if n > 0 { th.set_chat_font("Crundi Chat".into()); }
+    // (CI's drive test reads this line on each system.)
+    eprintln!("[native] chat font: {n} faces as \"Crundi Chat\", line {:.3}; the UI font's own line {natural:.3} em, lh-chat {:.3}, lh-ui {:.3}, lh-composer {:.3}",
+        faces.first().and_then(|f| fonts::with_line(f, 1.55)).and_then(|c| fonts::natural_line(&c)).unwrap_or(0.0),
+        fonts::factor(natural, 1.55), fonts::factor(natural, 1.3), fonts::factor(natural, 1.45));
 }

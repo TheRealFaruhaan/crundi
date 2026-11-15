@@ -91,75 +91,96 @@ export component AccentFill inherits Image {
 }
 
 /// A soft shadow or glow under a box, given the box's geometry and corner
-/// radius. The software renderer has no blur, so it is drawn as gradients
-/// that fade smoothly to nothing: a core under the box, four edge strips
-/// (linear) and four corners (radial, centred on the core's corners). The
-/// core is the box inset by its radius, so a rounded box gets a rounded
-/// shadow. It grows by `shadow.blur` and moves down by `shadow.y`.
+/// radius (2.25 K4). The software renderer has no blur, so the CSS shadow's
+/// Gaussian (σ = blur / 2: 50% at the box's edge, from `blur` inside to
+/// `blur` outside) is drawn with five-stop gradients: a core under the box,
+/// four edge strips (linear) and four corners (radial, centred on the
+/// core's corners). The core is the box inset by its radius (at least by
+/// the blur, so the fade has room inside); the strips run from there to
+/// `blur` past the edge, solid first when the radius is larger than the
+/// blur. It moves down by `shadow.y`. The tokens are the web's own values.
 export component SoftShadow {
     in property <length> radius;
     in property <Shadow> shadow;
     // Whole pixels for every piece: an edge that falls between pixels is
     // rounded per piece, which left one-pixel seams where they meet. So the
     // pieces sit on whole window pixels (ox, oy) and whole sizes.
-    property <length> ox: round(self.absolute-position.x / 1px) * 1px - self.absolute-position.x;
-    property <length> oy: round(self.absolute-position.y / 1px) * 1px - self.absolute-position.y;
-    property <length> w: round(root.width / 1px) * 1px;
-    property <length> h: round(root.height / 1px) * 1px;
-    property <length> core: round(min(root.radius, min(self.w, self.h) / 2) / 1px) * 1px;
-    property <length> fade: root.shadow.blur + root.core;
-    property <length> dy: root.shadow.y;
+    // (Whole physical pixels: at a fractional scale, whole logical ones still
+    // fell between pixels and left faint seams.)
+    property <float> k: max(1, Theme.px-scale);
+    property <length> ox: round(self.absolute-position.x / 1px * root.k) / root.k * 1px - self.absolute-position.x;
+    property <length> oy: round(self.absolute-position.y / 1px * root.k) / root.k * 1px - self.absolute-position.y;
+    property <length> w: round(root.width / 1px * root.k) / root.k * 1px;
+    property <length> h: round(root.height / 1px * root.k) / root.k * 1px;
+    property <length> b: round(root.shadow.blur / 1px * root.k) / root.k * 1px;
+    // (Never so deep that a side strip is under sp-8 long: the software
+    // renderer left a short strip's many-stop gradient undrawn.)
+    property <length> core: round(max(0px, min(max(root.radius, root.b), min(self.w, self.h) / 2 - Theme.sp-4)) / 1px * root.k) / root.k * 1px;
+    // A strip: from the core's edge to `blur` outside the box.
+    property <length> fade: root.core + root.b;
+    // The solid part of a strip, as a share of it (the Gaussian takes 2 × blur).
+    property <float> f: max(0, (root.fade - 2 * root.b) / max(1px, root.fade));
+    property <length> dy: round(root.shadow.y / 1px * root.k) / root.k * 1px;
     property <color> c: root.shadow.c;
-    // The same colour, clear: a gradient to `transparent` (black, clear)
-    // darkens a coloured glow on its way out.
-    property <color> clear: root.c.with-alpha(0);
+    // The Gaussian's five stops (nine banded at fractional scales): its
+    // alpha (× the colour's) and place.
+    property <color> c0: root.c.transparentize(Theme.gauss-0);
+    property <float> p0: root.f;
+    property <color> c1: root.c.transparentize(Theme.gauss-1);
+    property <float> p1: root.f + (1 - root.f) * Theme.gauss-step;
+    property <color> c2: root.c.transparentize(Theme.gauss-2);
+    property <float> p2: root.f + (1 - root.f) * Theme.gauss-step * 2;
+    property <color> c3: root.c.transparentize(Theme.gauss-3);
+    property <float> p3: root.f + (1 - root.f) * (1 - Theme.gauss-step);
+    property <color> c4: root.c.transparentize(Theme.gauss-4);
+    property <float> p4: 1;
     // The core: under the box (it shows only past a round corner).
     Rectangle {
         x: root.ox + root.core; y: root.oy + root.core + root.dy;
         width: root.w - 2 * root.core; height: root.h - 2 * root.core;
-        background: root.c;
+        background: root.c0;
     }
     // Edges: top, bottom, left, right.
     Rectangle {
         x: root.ox + root.core; y: root.oy + root.core - root.fade + root.dy;
         width: root.w - 2 * root.core; height: root.fade;
-        background: @linear-gradient(0deg, root.c 0%, root.clear 100%);
+        background: @linear-gradient(0deg, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     Rectangle {
         x: root.ox + root.core; y: root.oy + root.h - root.core + root.dy;
         width: root.w - 2 * root.core; height: root.fade;
-        background: @linear-gradient(180deg, root.c 0%, root.clear 100%);
+        background: @linear-gradient(180deg, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     Rectangle {
         x: root.ox + root.core - root.fade; y: root.oy + root.core + root.dy;
         width: root.fade; height: root.h - 2 * root.core;
-        background: @linear-gradient(270deg, root.c 0%, root.clear 100%);
+        background: @linear-gradient(270deg, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     Rectangle {
         x: root.ox + root.w - root.core; y: root.oy + root.core + root.dy;
         width: root.fade; height: root.h - 2 * root.core;
-        background: @linear-gradient(90deg, root.c 0%, root.clear 100%);
+        background: @linear-gradient(90deg, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     // Corners: top-left, top-right, bottom-left, bottom-right.
     Rectangle {
         x: root.ox + root.core - root.fade; y: root.oy + root.core - root.fade + root.dy;
         width: root.fade; height: root.fade;
-        background: @radial-gradient(circle root.fade at root.fade root.fade, root.c 0%, root.clear 100%);
+        background: @radial-gradient(circle root.fade at root.fade root.fade, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     Rectangle {
         x: root.ox + root.w - root.core; y: root.oy + root.core - root.fade + root.dy;
         width: root.fade; height: root.fade;
-        background: @radial-gradient(circle root.fade at 0px root.fade, root.c 0%, root.clear 100%);
+        background: @radial-gradient(circle root.fade at 0px root.fade, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     Rectangle {
         x: root.ox + root.core - root.fade; y: root.oy + root.h - root.core + root.dy;
         width: root.fade; height: root.fade;
-        background: @radial-gradient(circle root.fade at root.fade 0px, root.c 0%, root.clear 100%);
+        background: @radial-gradient(circle root.fade at root.fade 0px, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
     Rectangle {
         x: root.ox + root.w - root.core; y: root.oy + root.h - root.core + root.dy;
         width: root.fade; height: root.fade;
-        background: @radial-gradient(circle root.fade at 0px 0px, root.c 0%, root.clear 100%);
+        background: @radial-gradient(circle root.fade at 0px 0px, root.c0 root.p0, root.c1 root.p1, root.c2 root.p2, root.c3 root.p3, root.c4 root.p4);
     }
 }
 

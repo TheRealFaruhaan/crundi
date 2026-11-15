@@ -138,7 +138,7 @@ the specification. Nothing changes on the server, the web UI or the Android app.
      recording strip (`cc-mic`, `cc-rec`, `/api/voice/listen`), and spoken
      replies where the chat has them. In phase 2 by the owner's decision
      (13 Nov 2026); Cru stays in phase 6.
-   - [ ] **2.25 Chat known gaps.** Inline-code chip, paragraph line height,
+   - [x] **2.25 Chat known gaps.** Inline-code chip, paragraph line height,
      glows (Send): fixed where Slint allows, the rest kept below.
 
    Not in phase 2: the header's bubble button (`chat-bubble`) is Electron's
@@ -181,17 +181,25 @@ systems.
 Phase 1 left these, each with its workaround in place:
 
 - **Telegram sign-in.** It needs Telegram's web widget: open it in a CEF panel.
-- **Inline code.** Slint's StyledText gives the chip a faint outline; the
-  web's is a plain fill (#1a1a28, radius 4).
-- **Line height inside a paragraph.** StyledText has no line height, so a
-  wrapped paragraph's lines sit tighter than the web's 1.55. (Single lines,
-  list items and paragraph gaps match.)
+- **Inline code** (2.25 K3). Slint draws the chip itself: a translucent
+  grey capsule (its height and radius, the code at 0.85 of the size) with a
+  faint outline (the reply's text is in an explicit colour and the
+  StyledText's default is dark, which picks Slint's faint one); the web's is
+  a plain #1a1a28 fill, radius 4, no outline.
+- **Line height inside a paragraph** (2.25 K1): fixed. StyledText takes its
+  default font's own line, so the chat has its own family ("Crundi Chat",
+  `src/fonts.rs`: the UI font with a line gap making its line 1.55,
+  registered at start); every chat StyledText uses it. Without it (the font
+  could not be read), lines sit at the font's own line and one-line blocks
+  are padded to 1.55, as before.
 - **Shadows and glows** (Send, the login card, menus, the toast, the dragged
-  pane, the folded rail's avatars). The software renderer has no blur, and
-  stacked layers left visible steps (dark blocks at the edges). Each is now
-  one smooth fade drawn with gradients (`SoftShadow` in `ui/widgets.slint`: a
-  core, four linear edges, four radial corners), its strength a Theme
-  `Shadow`. The fade is linear, not a blur's curve.
+  pane, the folded rail's avatars; 2.25 K4). The software renderer has no
+  blur: `SoftShadow` (`ui/widgets.slint`) draws the CSS shadow's Gaussian
+  (σ = blur / 2) as nine-stop gradients (a core, four edges, four radial
+  corners), and the tokens take the web's own values; its pieces sit on
+  whole screen pixels. No real blur, so a shadow is cut at a scrolling
+  box's edge; at a fractional scale (1.25) the joins between its pieces
+  can differ by one level.
 - **The connection dot's ring** doesn't pulse; it's drawn at rest.
 - **The login step sits under the 32px title bar.** In Electron the web page
   fills the window. Keep the bar (the window needs it), or give the login a
@@ -258,9 +266,7 @@ Phase 1 left these, each with its workaround in place:
   (`DashedBox`). Chromium runs one pattern round the corners as well, so
   near the far corners (bottom, right) the dashes sit up to 5px from the
   web's; the top-left corner and the dash and gap lengths match.
-- **Live state left to other screens** (2.4): the composer's foot label
-  ("idle", "working…", "needs your input"; a waiting chat reads "idle") is
-  2.5's; the parked pane's grey dot is 2.23's; the top bar's approvals button
+- **Live state left to other screens** (2.4): the top bar's approvals button
   (the shield with a count, for chat cards, secrets requests and
   collaborators) is its own screen, for a later phase (5, operations); Cru's
   cells belong to Cru on the PC (phase 6).
@@ -286,8 +292,8 @@ Phase 1 left these, each with its workaround in place:
     text;
   - the Enter mode is one saved setting that every open pane follows at
     once; the web's other open panes keep their old mode until rebuilt;
-  - Queue sends to the server, which hands it to the running turn, until
-    the client's own queue (2.9);
+  - Queue sends to the server, which hands it to the running turn (one path
+    with Send, as 2.9's "Queued messages" says);
   - the cost is the snapshot's, as the web's (it refreshes on the next
     snapshot, not after each turn).
 - **The permission-mode picker** (2.6), deliberate differences:
@@ -386,14 +392,15 @@ Phase 1 left these, each with its workaround in place:
     card on every patch, which closes it);
   - the agent row is padded as a card's head (the web's has no padding);
   - a done to-do is struck with a line across each of its lines, the
-    whole width of the text column (Slint's text has no strike-through,
-    and a wrapped line's own width is not known);
+    whole width of the text column (low, kept: StyledText's per-line strike
+    would need a mono copy of the chat font for its line height, K6);
   - the spinner is two paths (a ring, a turning quarter): the software
     renderer cannot turn an image;
   - tabs in a body are expanded to stops of 8 in Rust (Slint's text has no
     tab stops);
   - the wheel over an open body scrolls the body; it does not pass on to
-    the log at the body's end.
+    the log at the body's end (Slint's Flickable takes the wheel and has no
+    scroll-event to give it back at its end, K7).
 - **Thinking** (2.15):
   - the live label's shimmer is a brighter band sliding over it (the web's
     is a gradient fading in and out: the software renderer fills text in
@@ -412,22 +419,19 @@ Phase 1 left these, each with its workaround in place:
   - reply paragraphs cannot be selected (StyledText has no selection); code
     blocks, bubbles, tool and thinking bodies can, each on its own (a
     selection cannot span blocks);
-  - a path in a reply (in running text or as a code span) is drawn as a
-    link in accent-hover with a solid underline (the web's is dotted:
-    StyledText has one underline); its click does nothing until the Files
-    panel (phase 3);
+  - a path in a reply (in running text or as a code span) is drawn in the
+    text's colour with a solid underline (the web's rest look, but dotted,
+    and accent-hover on hover: StyledText has one underline and no hover per
+    span); its click does nothing until the Files panel (phase 3);
   - a user bubble is StyledText (its URLs links in the bubble's colour)
     under a transparent copy of its text that keeps the selection; a click
     that lands on a URL opens it (a drag selects);
   - a code block scrolls sideways with the wheel (Shift) and has no
     sideways thumb;
-  - the jump button's click scrolls down in a few eased frames;
+  - the jump button's click scrolls down in a few eased frames.
 - **Media under show_* calls** (2.16m):
-  - a frame (show_embed) is its box with the caption and an "Open" button
-    (the page, or the stored HTML through a temp file, in the system
-    browser): the live inline frame (a windowless CEF view per box) is not
-    built yet;
-  - a GIF shows its first frame (not animated);
+  - a GIF shows its first frame (low, kept: its frames could be swapped on
+    a timer from the image crate's decoder, K9);
   - video and audio play in the system's player: the file is fetched (with
     the sign-in, never a URL with the token) to the temp folder, then
     opened; the video box shows its poster and the play button, the audio
@@ -462,12 +466,13 @@ Phase 1 left these, each with its workaround in place:
     badge); the mouse does everything;
   - "1 tools" is "1 tool" (the web's plural slip).
 - **The goal and the plan** (2.19):
-  - the plan's headings are bold body text in the panel (StyledText has no
-    heading sizes); its lists hang as the reply's.
+  - its lists hang as the reply's.
 - **Cards** (2.20):
-  - the inline widget under a `widget_open` call (`slot: 'inline'`) is a
-    live page: it needs the Panels tab
-    (phase 3); until then nothing shows under the call. Cru's reply cards
+  - the inline widget under a `widget_open` call (`slot: 'inline'`) needs
+    the widget runtime (its bridge, data feeds and auto height up to 460)
+    and its Open goes to the Panels tab, both phase 3's (the in-log view it
+    would sit in exists since 2.16f); until then nothing shows under the
+    call. Cru's reply cards
     are phase 6's, the factory's own screens phase 4's;
   - deliberate differences on the factory result card: the summary's lists
     and headings are drawn as in replies (the web's hang outside the card);
@@ -536,11 +541,15 @@ Phase 1 left these, each with its workaround in place:
   hairline dashes (sp-2 every sp-4) under the id.
 - **Scroll thumbs** (2.5 the composer, 2.6 the picker in a short window):
   `ScrollThumb` shows where the view is; the wheel, the caret and the
-  keyboard's focus scroll it, but the thumb can't be dragged (the web's are
-  the system's own scrollbars).
-- **The composer's tallest box** (2.5): composer-max holds eight lines at
-  the default size (the web's nine: its line box is 1.45, the native box
-  pads its lines to line-chat).
+  keyboard's focus scroll it, but the thumb can't be dragged (low, kept:
+  a TouchArea on the thumb could move the view, K8).
+- **Line-height factors** (2.25 K2): the UI's and the composer's factors
+  are worked out at start from the UI font's own line (DejaVu Sans, Segoe
+  UI, San Francisco), not constants for one font; the composer's line is
+  the web's 1.45 (K5).
+- **Motion** (2.25 K10, K11, low, kept): the agent badge's arrival and
+  finish rings are not played, and the system's reduced-motion setting is
+  not read (the shimmer, the caret's blink and the spinners always move).
 - **"Run a server on this machine"** (the Server step) needs a bundled server.
   Decide whether the native installer carries one, as the Electron installer
   does.

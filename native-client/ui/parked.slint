@@ -111,13 +111,13 @@ component PkWarn inherits Rectangle {
         x: Theme.sp-10; y: root.pill ? (parent.height - self.height) / 2 : Theme.sp-8 + Theme.sp-2;
         source: Icons.shield-alert; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.yellow;
     }
-    pw := StyledText {
+    pw := StyledText { default-font-family: Theme.chat-font;
         visible: root.pill;
         x: Theme.sp-10 + Theme.icon-sm + Theme.sp-6; y: (parent.height - self.preferred-height) / 2;
         text: root.form == "short" ? @markdown("<font color=\"\{Theme.yellow}\">**\{root.tokens}**</font>, a long conversation") : @markdown("<font color=\"\{Theme.yellow}\">**\{root.tokens}**</font>");
         default-color: Theme.text-primary; default-font-size: Theme.text-11;
     }
-    lw := StyledText {
+    lw := StyledText { default-font-family: Theme.chat-font;
         visible: !root.pill;
         x: Theme.sp-10 + Theme.icon-sm + Theme.sp-6; y: Theme.sp-8; width: root.text-w;
         text: @markdown("<font color=\"\{Theme.yellow}\">**\{root.tokens}**</font> — continuing loads all of it into every turn. Compacting loads it once, then summarises it so later turns stay small.");

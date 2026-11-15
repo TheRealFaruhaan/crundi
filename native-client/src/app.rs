@@ -633,6 +633,8 @@ pub fn init(window: &MainWindow) {
     window.global::<ParkAct>().on_resume(|k, m| park_resume(k.as_str(), m.as_str()));
     window.global::<ParkAct>().on_peek(|k, on| park_peek(k.as_str(), on));
     // Factory result cards (2.20).
+    // The chat's inks (K3).
+    { let th = window.global::<crate::Theme>(); INK.with(|i| *i.borrow_mut() = (hex(th.get_text_primary()), hex(th.get_text_secondary()))); }
     // Live frames in the log (2.16f).
     frames_init(window);
     // Voice input (2.24).
@@ -1874,7 +1876,7 @@ fn fr_view(e: &Value, ui: &FrUi) -> FrView {
         diff_cols: ui.diff_cols,
         diff_err: match &ui.diff { Some(Err(x)) => x.as_str().into(), _ => SharedString::default() },
         msg_on: !msg.is_empty(),
-        msg: md(&msg),
+        msg: md2(&msg),
         usage: fresult::usage(e).into(),
         fu_line: fresult::followups_line(fus.len()).into(),
         fu_open: ui.fu_open,
@@ -2280,9 +2282,29 @@ fn pad_code(text: &str) -> String {
     out
 }
 
-fn md(text: &str) -> StyledText {
+thread_local! {
+    /// The chat's two inks as #rrggbb (Theme text-primary, text-secondary),
+    /// read at start: a reply's text is drawn in its explicit colour (K3).
+    static INK: RefCell<(String, String)> = RefCell::new(("#e4e4ed".into(), "#a0a0b8".into()));
+}
+
+fn hex(c: slint::Color) -> String { format!("#{:02x}{:02x}{:02x}", c.red(), c.green(), c.blue()) }
+
+/// A block's markdown for StyledText in the primary ink.
+fn md(text: &str) -> StyledText { md_in(text, false) }
+
+/// …in the secondary ink (quotes, side answers, a card's message).
+fn md2(text: &str) -> StyledText { md_in(text, true) }
+
+/// The text in its ink (`colorize`: links keep theirs), the StyledText's
+/// default colour dark (Theme.chip-key): Slint then draws inline code's
+/// faint outline (K3). A text that does not parse loses its markdown
+/// characters, and is wrapped again.
+fn md_in(text: &str, secondary: bool) -> StyledText {
+    let ink = INK.with(|i| { let i = i.borrow(); if secondary { i.1.clone() } else { i.0.clone() } });
     let text = &pad_code(text);
-    StyledText::from_markdown(text).unwrap_or_else(|_| StyledText::from_markdown(&text.replace(['<', '>', '*', '_', '`', '[', ']'], "")).unwrap_or_default())
+    StyledText::from_markdown(&crate::md::colorize(text, &ink))
+        .unwrap_or_else(|_| StyledText::from_markdown(&crate::md::colorize(&text.replace(['<', '>', '*', '_', '`', '[', ']'], ""), &ink)).unwrap_or_default())
 }
 
 /// A card as the view draws it: the head (the summary on one line, as the
@@ -2377,7 +2399,7 @@ impl MediaCtx<'_> {
 fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
     match r {
         Row::Prose(id, t, kind, marker, last) => EntryView {
-            id: id.clone().into(), kind: "assistant".into(), text: t.clone().into(), md: md(t),
+            id: id.clone().into(), kind: "assistant".into(), text: t.clone().into(), md: if *kind == "quote" { md2(t) } else { md(t) },
             status: (*kind).into(), title: marker.clone().into(),
             // Paragraphs and quotes 8 apart, list items 4 (their 2 margins), a
             // heading 6 below (12 above: its own padding), `##` and rules
@@ -2406,9 +2428,9 @@ fn to_view(r: &Row, mc: &MediaCtx) -> EntryView {
         Row::Aside(x) => EntryView {
             id: format!("aside-{}", x.id).into(), kind: "aside".into(), text: x.question.as_str().into(), status: x.state.as_str().into(),
             detail: if x.state == "error" { x.text.as_str().into() } else { SharedString::default() },
-            md: if x.state == "done" { md(&crate::md::linkify(&x.text)) } else { StyledText::default() },
+            md: if x.state == "done" { md2(&crate::md::linkify(&x.text)) } else { StyledText::default() },
             blocks: if x.state == "done" { ModelRc::new(VecModel::from(split_blocks("aside", &x.text).into_iter().filter_map(|r| match r {
-                Row::Prose(_, t, kind, marker, _) => Some(AnsBlock { kind: if kind.starts_with("li") { "li".into() } else { "p".into() }, marker: marker.into(), md: md(&t), text: t.into() }),
+                Row::Prose(_, t, kind, marker, _) => Some(AnsBlock { kind: if kind.starts_with("li") { "li".into() } else { "p".into() }, marker: marker.into(), md: md2(&t), text: t.into() }),
                 Row::Code(_, t, _) => Some(AnsBlock { kind: "code".into(), marker: SharedString::default(), md: StyledText::default(), text: t.into() }),
                 _ => None,
             }).collect::<Vec<_>>())) } else { ModelRc::default() },

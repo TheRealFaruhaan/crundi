@@ -376,6 +376,15 @@ What phase 2 has added so far, item by item:
   `spd-say` on Linux). Building on Linux needs `libasound2-dev`; Windows
   and macOS need nothing extra.
 
+- **2.25 Chat known gaps** (specs/known-gaps.md, `src/fonts.rs`): the chat
+  has its own font family, "Crundi Chat" (the UI font with a line gap that
+  makes its line the web's 1.55, registered at start), so StyledText's
+  wrapped lines sit as the web's; the line-height factors are worked out
+  from the UI font's own line on each system (CI's drive test checks it);
+  the composer's line is the web's 1.45; a reply's text is in an explicit
+  colour, so inline code gets Slint's faint outline; SoftShadow draws a
+  Gaussian with the web's shadow values.
+
 ### Reusable pieces
 
 - **Overlays and `Pointer.modal`** (ui/widgets.slint `Pointer`): one

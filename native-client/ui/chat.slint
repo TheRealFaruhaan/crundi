@@ -1602,7 +1602,7 @@ component FrLine inherits Rectangle {
     callback toggled();
     height: max(Theme.icon-sm, st.preferred-height);
     Icon { x: 0; y: (parent.height - self.height) / 2; source: root.open ? @image-url("shapes/chevron-down.svg") : Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-secondary; }
-    st := StyledText {
+    st := StyledText { default-font-family: Theme.chat-font;
         x: Theme.icon-sm + Theme.sp-4; y: 0; width: root.w - Theme.icon-sm - Theme.sp-4;
         text: root.text; default-color: Theme.text-secondary; default-font-size: Theme.text-12 * root.fs;
     }
@@ -1636,11 +1636,11 @@ component FactoryCard inherits Rectangle {
                 for b in root.f.blocks: Rectangle {
                     height: bl.preferred-height;
                     bl := HorizontalLayout {
-                        if b.kind == "li": Text { width: Theme.sp-20; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
-                        if b.kind != "code": StyledText {
+                        if b.kind == "li": Text { width: Theme.sp-20; font-family: Theme.chat-font; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
+                        if b.kind != "code": StyledText { default-font-family: Theme.chat-font;
                             width: root.inner - (b.kind == "li" ? Theme.sp-20 : 0px);
                             text: b.md;
-                            default-color: Theme.text-primary;
+                            default-color: Theme.chip-key;
                             default-font-size: (b.kind == "h" ? Theme.text-14 : Theme.text-13) * root.fs;
                             link-color: Theme.accent-hover;
                             link-clicked(url) => { ToolAct.open-link(url); }
@@ -1697,7 +1697,7 @@ component FactoryCard inherits Rectangle {
         Rectangle { height: Theme.sp-8; }
         if root.f.msg-on: Rectangle {
             height: mt.preferred-height + Theme.sp-8;
-            mt := StyledText { y: 0; width: root.inner; text: root.f.msg; default-color: Theme.text-secondary; default-font-size: Theme.text-12 * root.fs; }
+            mt := StyledText { default-font-family: Theme.chat-font; y: 0; width: root.inner; text: root.f.msg; default-color: Theme.chip-key; default-font-size: Theme.text-12 * root.fs; }
         }
         if root.f.usage != "": Rectangle {
             height: ut.preferred-height + Theme.sp-2 + Theme.sp-6;
@@ -1713,7 +1713,7 @@ component FactoryCard inherits Rectangle {
             spacing: Theme.sp-2;
             for x in root.f.fus: Rectangle {
                 height: ft.preferred-height;
-                ft := StyledText {
+                ft := StyledText { default-font-family: Theme.chat-font;
                     y: 0; width: root.inner;
                     text: x.blocking
                         ? (x.place != "" ? @markdown("**\{x.id}** <font color=\"\{Theme.red}\">blocking</font> \{x.text}<font color=\"\{Theme.text-muted}\"> (\{x.place})</font>") : @markdown("**\{x.id}** <font color=\"\{Theme.red}\">blocking</font> \{x.text}"))
@@ -2017,7 +2017,7 @@ component EntryRow inherits VerticalLayout {
             // Drawn as StyledText (its URLs links in the bubble's colour,
             // underlined); a transparent copy of the text over it keeps the
             // selection, and a click on a URL opens it.
-            ust := StyledText {
+            ust := StyledText { default-font-family: Theme.chat-font;
                 x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20;
                 text: e.md;
                 default-color: Theme.text-primary;
@@ -2027,6 +2027,7 @@ component EntryRow inherits VerticalLayout {
             // (At the font's own line, as the StyledText it lies over.)
             ub := Prose {
                 line-height-factor: Theme.lh-plain;
+                font-family: Theme.chat-font;
                 fs: root.fs; x: Theme.sp-12; y: Theme.sp-8; width: parent.width - Theme.sp-20; text: e.text;
                 color: transparent; selection-foreground-color: transparent;
                 changed cursor-position-byte-offset => {
@@ -2042,15 +2043,17 @@ component EntryRow inherits VerticalLayout {
     // to that box: half the difference above and below.
     if e.kind == "assistant" && (e.status == "p" || e.status == "h" || e.status == "h4"): pl := VerticalLayout {
         property <length> size: (e.status == "h" ? Theme.text-14 : Theme.text-13) * root.fs;
-        padding-top: max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2) + (e.status == "h" ? Theme.sp-4 : 0px);
-        padding-bottom: max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2);
+        // (With the chat font (K1) its own line is the web's: no padding.)
+        property <length> pad: Theme.chat-font != "" ? 0px : max(0px, (self.size * Theme.line-chat - pm.preferred-height) / 2);
+        padding-top: self.pad + (e.status == "h" ? Theme.sp-4 : 0px);
+        padding-bottom: self.pad;
         Rectangle { height: 0; pm := Text { visible: false; text: "X"; font-size: pl.size; } }
         // Its width given, so its wrapped height is measured at the width it
         // is drawn at (F24: a long inline code token wrapped differently).
-        StyledText {
+        StyledText { default-font-family: Theme.chat-font;
             width: root.avail;
             text: e.md;
-            default-color: Theme.text-primary;
+            default-color: Theme.chip-key;
             default-font-size: pl.size;
             link-color: Theme.accent-hover;
             link-clicked(url) => { ToolAct.open-link(url); }
@@ -2058,14 +2061,14 @@ component EntryRow inherits VerticalLayout {
     }
     // A quote line: a bar, then the text in text-secondary.
     if e.kind == "assistant" && e.status == "quote": HorizontalLayout {
-        padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - qm.preferred-height) / 2);
+        padding-top: Theme.chat-font != "" ? 0px : max(0px, (Theme.text-13 * root.fs * Theme.line-chat - qm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         spacing: Theme.sp-10 - Theme.sp-2;
         Rectangle { width: Theme.sp-2; background: Theme.border; qm := Text { visible: false; text: "X"; font-size: Theme.text-13 * root.fs; } }
-        StyledText {
+        StyledText { default-font-family: Theme.chat-font;
             width: root.avail - Theme.sp-10;
             text: e.md;
-            default-color: Theme.text-secondary;
+            default-color: Theme.chip-key;
             default-font-size: Theme.text-13 * root.fs;
             link-color: Theme.accent-hover;
             link-clicked(url) => { ToolAct.open-link(url); }
@@ -2079,14 +2082,15 @@ component EntryRow inherits VerticalLayout {
         Rectangle { y: 1px; height: 1px; background: Theme.rule-light; }
     }
     if e.kind == "assistant" && (e.status == "li" || e.status == "lie"): HorizontalLayout {
-        padding-top: max(0px, (Theme.text-13 * root.fs * Theme.line-chat - lm.preferred-height) / 2);
+        padding-top: Theme.chat-font != "" ? 0px : max(0px, (Theme.text-13 * root.fs * Theme.line-chat - lm.preferred-height) / 2);
         padding-bottom: self.padding-top;
         Rectangle { width: 0; lm := Text { visible: false; text: "X"; font-size: Theme.text-13 * root.fs; } }
-        Text { width: Theme.sp-20; text: e.title; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
-        StyledText {
+        // (The marker in the chat font too: on the item's first line.)
+        Text { width: Theme.sp-20; text: e.title; font-family: Theme.chat-font; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
+        StyledText { default-font-family: Theme.chat-font;
             width: root.avail - Theme.sp-20;
             text: e.md;
-            default-color: Theme.text-primary;
+            default-color: Theme.chip-key;
             default-font-size: Theme.text-13 * root.fs;
             link-color: Theme.accent-hover;
             link-clicked(url) => { ToolAct.open-link(url); }
@@ -2191,11 +2195,11 @@ component EntryRow inherits VerticalLayout {
                 for b in e.blocks: Rectangle {
                     height: bl.preferred-height;
                     bl := HorizontalLayout {
-                        if b.kind == "li": Text { width: Theme.sp-20; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-secondary; horizontal-alignment: center; }
-                        if b.kind != "code": StyledText {
+                        if b.kind == "li": Text { width: Theme.sp-20; font-family: Theme.chat-font; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-secondary; horizontal-alignment: center; }
+                        if b.kind != "code": StyledText { default-font-family: Theme.chat-font;
                             width: al.width - (b.kind == "li" ? Theme.sp-20 : 0px);
                             text: b.md;
-                            default-color: Theme.text-secondary;
+                            default-color: Theme.chip-key;
                             default-font-size: Theme.text-13 * root.fs;
                             link-color: Theme.accent-hover;
                             link-clicked(url) => { ToolAct.open-link(url); }
@@ -2615,7 +2619,7 @@ component InputBox inherits Rectangle {
         if focus { te.focus(); }
     }
     out property <bool> focused: te.has-focus && root.enabled;
-    property <length> line: Theme.text-13 * root.fs * Theme.line-chat;
+    property <length> line: Theme.text-13 * root.fs * Theme.line-composer;
     // Dimmed while it can't take text (an exited chat).
     opacity: root.enabled ? 1 : Theme.o-soft;
     height: max(Theme.control, min(Theme.composer-max, te.preferred-height + 2 * Theme.sp-8));
@@ -2663,7 +2667,8 @@ component InputBox inherits Rectangle {
                 te := TextInput {
                     width: fl.width;
                     height: max(fl.height, self.preferred-height);
-                    line-height-factor: Theme.lh-chat;
+                    // The web's .cc-input line, 1.45 (K5).
+                    line-height-factor: Theme.lh-composer;
                     text <=> root.draft;
                     enabled: root.enabled;
                     single-line: false;
@@ -3791,7 +3796,7 @@ export component ChatPane inherits Rectangle {
                 height: self.preferred-height;
                 spacing: Theme.sp-2;
                 Text { text: root.recap-caption; font-size: Theme.text-11 * root.fs; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
-                Text { text: root.recap-text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; }
+                Text { text: root.recap-text; font-size: Theme.text-12 * root.fs; color: Theme.text-secondary; wrap: word-wrap; line-height-factor: Theme.lh-chat; }
             }
             DockX { x: parent.width - self.width - Theme.sp-4; y: Theme.sp-4; fs: root.fs; tip: "Dismiss"; clicked => { ToolAct.recap-dismiss(root.key); } }
         }
@@ -3878,10 +3883,10 @@ export component ChatPane inherits Rectangle {
                     for b in root.plan-blocks: Rectangle {
                         height: pbl.preferred-height;
                         pbl := HorizontalLayout {
-                            if b.kind == "li": Text { width: Theme.sp-20; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
-                            if b.kind != "code": StyledText {
+                            if b.kind == "li": Text { width: Theme.sp-20; font-family: Theme.chat-font; text: b.marker; font-size: Theme.text-13 * root.fs; color: Theme.text-primary; horizontal-alignment: center; }
+                            if b.kind != "code": StyledText { default-font-family: Theme.chat-font;
                                 width: list.width - Theme.sp-32 - (b.kind == "li" ? Theme.sp-20 : 0px);
-                                text: b.md; default-color: Theme.text-primary; default-font-size: Theme.text-13 * root.fs; link-color: Theme.accent-hover;
+                                text: b.md; default-color: Theme.chip-key; default-font-size: Theme.text-13 * root.fs; link-color: Theme.accent-hover;
                                 link-clicked(url) => { ToolAct.open-link(url); }
                             }
                             if b.kind == "code": Text { width: list.width - Theme.sp-32; text: b.text; font-family: Theme.mono; font-size: Theme.text-12 * root.fs; color: Theme.text-primary; wrap: word-wrap; }
@@ -4006,7 +4011,7 @@ export component ChatPane inherits Rectangle {
                     }
                     if root.panel-has-summary: Rectangle {
                         height: psm.preferred-height + Theme.sp-10;
-                        psm := StyledText { y: 0; width: list.width - Theme.sp-16 - Theme.sp-24 - Theme.sp-2; text: root.panel-summary; default-color: Theme.text-primary; default-font-size: Theme.text-13 * root.fs; link-color: Theme.accent-hover; }
+                        psm := StyledText { default-font-family: Theme.chat-font; y: 0; width: list.width - Theme.sp-16 - Theme.sp-24 - Theme.sp-2; text: root.panel-summary; default-color: Theme.chip-key; default-font-size: Theme.text-13 * root.fs; link-color: Theme.accent-hover; }
                     }
                     // The transcript, spaced as the log (each row's own gap).
                     for pe in root.panel-entries: EntryRow { e: pe; fs: root.fs; avail: list.width - Theme.sp-16 - Theme.sp-24 - Theme.sp-2; }

@@ -203,9 +203,69 @@ pub fn btw(text: &str) -> Option<String> {
     (!q.is_empty()).then(|| q.to_string())
 }
 
+/// A block's markdown in an explicit colour (K3): `<font color>` around
+/// it, closed around http links (`<https://…>`, `[x](https://…)`) so they
+/// keep the link colour; path links and code spans stay inside. With the
+/// StyledText's default colour dark, Slint draws inline code's faint
+/// outline, not its bright one.
+pub fn colorize(text: &str, color: &str) -> String {
+    let open = format!("<font color=\"{color}\">");
+    let mut out = open.clone();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut code = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() { out.push(c); out.push(chars[i + 1]); i += 2; continue; }
+        if c == '`' { code = !code; out.push(c); i += 1; continue; }
+        if !code && c == '<' {
+            let rest: String = chars[i + 1..chars.len().min(i + 9)].iter().collect();
+            if rest.starts_with("http://") || rest.starts_with("https://") {
+                if let Some(k) = chars[i..].iter().position(|x| *x == '>') {
+                    out.push_str("</font>");
+                    out.extend(&chars[i..i + k + 1]);
+                    out.push_str(&open);
+                    i += k + 1;
+                    continue;
+                }
+            }
+        }
+        if !code && c == '[' {
+            let rest: String = chars[i..].iter().collect();
+            if let Some(k) = rest.find("](") {
+                let target = &rest[k + 2..];
+                if target.starts_with("http://") || target.starts_with("https://") {
+                    if let Some(e) = target.find(')') {
+                        let link = &rest[..k + 2 + e + 1];
+                        out.push_str("</font>");
+                        out.push_str(link);
+                        out.push_str(&open);
+                        i += link.chars().count();
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out.push_str("</font>");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colour_spans() {
+        assert_eq!(colorize("plain **bold**", "#fff"), "<font color=\"#fff\">plain **bold**</font>");
+        assert_eq!(colorize("see <https://x.io/a> now", "#fff"), "<font color=\"#fff\">see </font><https://x.io/a><font color=\"#fff\"> now</font>");
+        assert_eq!(colorize("a [doc](https://d.io) b", "#fff"), "<font color=\"#fff\">a </font>[doc](https://d.io)<font color=\"#fff\"> b</font>");
+        // Paths and code stay inside.
+        assert_eq!(colorize("[`a/b.js`](path:a/b.js) and `<https://x>`", "#fff"), "<font color=\"#fff\">[`a/b.js`](path:a/b.js) and `<https://x>`</font>");
+        assert_eq!(colorize("\\[x](https://y)", "#fff"), "<font color=\"#fff\">\\[x](https://y)</font>");
+    }
 
     #[test]
     fn links() {

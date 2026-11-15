@@ -297,22 +297,24 @@ no Tab focus (2.23).
 
 ## Checklist for the review
 
-- [ ] K1: wrapped reply lines 20px apart at 13px (web 20.15); a 2-line
+- [x] K1: wrapped reply lines 20px apart at 13px (web 20.15); a 2-line
       paragraph 40px; a list item, a one-line paragraph, a heading keep
       their heights; the bubble, recap, side answer, plan and card
       summaries the same; the bubble's selection lies on its text.
-- [ ] K1 on Windows and macOS: the chat family registers from the system
-      font (or falls back to today's look without breaking).
-- [ ] K2: line-height factors computed from the UI font; a Windows CI
-      snapshot of a chat matches Linux's line pitch.
-- [ ] K3: chip outline faint (≈#242428 on #17171b); paragraph text, bold,
+- [x] K1 on Windows and macOS: the chat family registers from the system
+      font (or falls back to today's look without breaking); drive.mjs checks
+      the registration on each CI system.
+- [x] K2: line-height factors computed from the UI font; checked on each
+      system by CI's drive test (the app logs the chat font and factors), not
+      by a chat snapshot (drive has no chat).
+- [x] K3: chip outline faint (≈#242428 on #17171b); paragraph text, bold,
       quotes and side answers in their colours; URL links accent-hover;
       a path text-primary with an underline; a parse-error reply readable.
-- [ ] K4: Send's glow, a menu, the toast, the drag clone and the sign-in
+- [x] K4: Send's glow, a menu, the toast, the drag clone and the sign-in
       card with the web's values and a Gaussian fade; no seams at 1 and
       1.25.
-- [ ] K5: the composer's lines 18.85px apart at 13px; its tallest box
+- [x] K5: the composer's lines 18.85px apart at 13px; its tallest box
       holds as many lines as the web's.
-- [ ] K6-K11 done or left named with a reason.
-- [ ] PLAN.md: the stale rows above removed or reworded; every remaining
+- [x] K6-K11 done or left named with a reason.
+- [x] PLAN.md: the stale rows above removed or reworded; every remaining
       chat gap accurate.

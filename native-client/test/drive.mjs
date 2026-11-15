@@ -11,7 +11,7 @@
 //   DRIVE_OUT=dir     where the screenshots go (default: the temp dir)
 
 import http from 'node:http';
-import { writeFileSync, mkdirSync, openSync } from 'node:fs';
+import { writeFileSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -149,6 +149,15 @@ r = await browser.closeBrowser(A.key);
 check('browser_close frees panel A', r.ok, r);
 const D = await browser.openBrowser({ alias: 'proto', name: 'd', url: pageUrl + '/d' });
 check('the freed panel takes a new browser', D.ok, D);
+
+// The chat's font (2.25 K1, K2) on this system: the chat family made from
+// the UI font with a 1.55 line, and the factors worked out from its own line.
+{
+  const line = readFileSync(join(out, 'native-app.log'), 'utf8').split('\n').find((l) => l.includes('[native] chat font:')) || '';
+  const m = line.match(/(\d+) faces as "Crundi Chat", line ([\d.]+); the UI font's own line ([\d.]+) em, lh-chat ([\d.]+)/);
+  check('the chat font: the UI font with a 1.55 line, the factors from its own line', m && +m[1] > 0 && Math.abs(+m[2] - 1.55) < 0.002 && Math.abs(+m[3] * +m[4] - 1.55) < 0.01, line);
+  console.log('  ' + line.trim());
+}
 
 console.log(failed ? `${failed} failed` : 'all passed');
 finish(failed ? 1 : 0);
