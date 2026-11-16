@@ -1,0 +1,13 @@
+[package]
+name = "crundi-chat-model"
+description = "One chat as a GPUI entity (the conversation from crundi-core, the link to the server), shared by the chat's log and composer (Lead)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+serde_json.workspace = true
+crundi-core.workspace = true
+crundi-shell.workspace = true

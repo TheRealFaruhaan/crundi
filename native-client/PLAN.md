@@ -1,5 +1,7 @@
 # Native PC client: plan
 
+> **Superseded** (the owner, 16 Nov 2026): the PC client is now built on GPUI in `native-gpui/` (`native-gpui/AREAS.md`). This Slint client stays as the reference.
+
 Scope: the **PC client only**. It replaces the Electron client (`app/`) with a
 native one on Windows, macOS and Linux. It is the PC client's installer from
 then on, not an addition beside Electron. The Android app is out of scope, and

@@ -1,0 +1,13 @@
+[package]
+name = "crundi-widgets"
+description = "Every control, built once on the theme's tokens (the owner's rule: areas never copy one)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+crundi-theme.workspace = true

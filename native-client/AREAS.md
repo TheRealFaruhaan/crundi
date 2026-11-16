@@ -1,5 +1,7 @@
 # Areas: building phases 3 to 6 in parallel
 
+> **Superseded** (the owner, 16 Nov 2026): the PC client is now built on GPUI in `native-gpui/` (`native-gpui/AREAS.md`). This Slint client stays as the reference.
+
 Four developers build the rest of the PC client at the same time, in the
 same checkout, each in an **area** of its own. This file is the contract
 between them: where each area's files go, how an area plugs into the

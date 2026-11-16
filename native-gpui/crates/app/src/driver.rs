@@ -1,0 +1,126 @@
+//! The test driver's commands, answered on the UI thread (the protocol is
+//! crundi_core::driver's, the Slint client's testctl): the window's own
+//! actions and props here, every part's through the registry (unprefixed
+//! names are offered to each part in turn, "<area>:<name>" to that part).
+
+use crundi_core::driver::Request;
+use crundi_shell::{registry, session};
+use gpui::*;
+use serde_json::{json, Map, Value};
+
+pub fn handle(r: Request, window: &mut Window, cx: &mut App) {
+    let answer = match r.name() {
+        "state" => json!({ "ok": true, "state": Value::Object(registry::merged(window, cx, true)) }),
+        "props" => json!(props(window, cx)),
+        "area" => json!({ "ok": true, "props": registry::props_of(&r.str("area"), window, cx) }),
+        "snapshot" => snapshot(window, &r.str("path")),
+        "resize" => { window.resize(size(px(r.num("w") as f32), px(r.num("h") as f32))); json!({ "ok": true }) }
+        "mouse" => { mouse(&r, window, cx); json!({ "ok": true }) }
+        "key" => { key(&r, window, cx); json!({ "ok": true }) }
+        "ui" => ui(&r, window, cx),
+        other => json!({ "ok": false, "error": format!("unknown cmd {other}") }),
+    };
+    window.refresh();
+    r.answer(answer);
+}
+
+fn props(window: &mut Window, cx: &mut App) -> Map<String, Value> {
+    let mut m = Map::new();
+    m.insert("ok".into(), json!(true));
+    if let Some(Value::Object(s)) = crundi_shell::shell(cx).map(|s| s.read(cx).props(cx)) { m.extend(s); }
+    m.insert("pickWaiting".into(), json!(crundi_core::driver::pick_waiting()));
+    m.insert("dialogOpen".into(), json!(crundi_widgets::dialog_open(window, cx)));
+    m.extend(registry::merged(window, cx, false));
+    m
+}
+
+fn ui(r: &Request, window: &mut Window, cx: &mut App) -> Value {
+    let name = r.str("name");
+    let a = |i| r.arg(i);
+    match name.as_str() {
+        "check-server" => session::check_server(cx, &a(0)),
+        "sign-in-password" => session::sign_in_password(cx, &a(0), &a(1), &a(2)),
+        "sign-in-pair" => session::sign_in_pair(cx, &a(0)),
+        "sign-out" => session::sign_out(cx, ""),
+        "select-project" => session::select_project(cx, &a(0)),
+        "tab" => { if let Some(s) = crundi_shell::shell(cx) { let t = a(0); s.update(cx, |s, cx| s.show_tab(&t, cx)); } }
+        "drawer" => crundi_shell::set_drawer(cx, a(0) == "true"),
+        "pick-next" => { let p = a(0); crundi_core::driver::set_pick((!p.is_empty()).then(|| p.into())); }
+        "stub" => crundi_core::driver::push_stub(&a(0), serde_json::from_str(&a(1)).unwrap_or(Value::Null)),
+        "dialog-answer" => crundi_widgets::close_dialog(window, cx),
+        _ => {
+            return registry::test_ui(&name, &r.args(), window, cx)
+                .unwrap_or_else(|| json!({ "ok": false, "error": format!("unknown ui action {name}") }));
+        }
+    }
+    json!({ "ok": true })
+}
+
+fn point_of(r: &Request) -> Point<Pixels> { point(px(r.num("x") as f32), px(r.num("y") as f32)) }
+
+/// The pointer, as a person's: move, click, dblclick, down, up, leave, wheel (dy).
+fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
+    let p = point_of(r);
+    let m = Modifiers::default();
+    let mv = |w: &mut Window, cx: &mut App, b: Option<MouseButton>| { w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, pressed_button: b, modifiers: m }), cx); };
+    let down = |w: &mut Window, cx: &mut App, n: usize| { w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, modifiers: m, click_count: n, first_mouse: false }), cx); };
+    let up = |w: &mut Window, cx: &mut App, n: usize| { w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, modifiers: m, click_count: n }), cx); };
+    match r.str("kind").as_str() {
+        "click" => { mv(window, cx, None); down(window, cx, 1); up(window, cx, 1); }
+        "dblclick" => { mv(window, cx, None); down(window, cx, 1); up(window, cx, 1); down(window, cx, 2); up(window, cx, 2); }
+        "down" => { mv(window, cx, None); down(window, cx, 1); }
+        "up" => { mv(window, cx, Some(MouseButton::Left)); up(window, cx, 1); }
+        "leave" => { window.dispatch_event(PlatformInput::MouseExited(MouseExitEvent { position: p, pressed_button: None, modifiers: m }), cx); }
+        "wheel" => {
+            mv(window, cx, None);
+            let dy = r.num("dy") as f32;
+            window.dispatch_event(PlatformInput::Scroll(ScrollEvent { position: p, delta: ScrollDelta::Pixels(point(px(0.), px(dy))), modifiers: m, touch_phase: TouchPhase::Moved, source: ScrollSource::Pointer }), cx);
+        }
+        _ => mv(window, cx, None),
+    }
+}
+
+/// A key press and release to the focused element; a named key (Escape,
+/// Return, Up…) or text (each character typed); mods: ctrl, shift, alt, meta.
+fn key(r: &Request, window: &mut Window, cx: &mut App) {
+    let mods: Vec<String> = r.cmd.get("mods").and_then(|m| m.as_array()).map(|m| m.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+    let has = |k: &str| mods.iter().any(|m| m == k);
+    let modifiers = Modifiers { control: has("ctrl"), shift: has("shift"), alt: has("alt"), platform: has("meta"), ..Default::default() };
+    let text = r.str("text");
+    let named = match text.as_str() {
+        "Escape" => Some("escape"), "Return" => Some("enter"), "Backspace" => Some("backspace"), "Tab" => Some("tab"),
+        "Backtab" => Some("tab"), "Insert" => Some("insert"), "Up" => Some("up"), "Down" => Some("down"), "Left" => Some("left"),
+        "Right" => Some("right"), "Home" => Some("home"), "End" => Some("end"), "Delete" => Some("delete"), "Space" => Some("space"),
+        _ => None,
+    };
+    let press = |key: String, ch: Option<String>, modifiers: Modifiers, window: &mut Window, cx: &mut App| {
+        let ks = Keystroke { modifiers, key, key_char: ch };
+        window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke: ks.clone(), is_held: false, prefer_character_input: false }), cx);
+        window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: ks }), cx);
+    };
+    match named {
+        Some(k) => { let m = if text == "Backtab" { Modifiers { shift: true, ..modifiers } } else { modifiers }; press(k.into(), None, m, window, cx) }
+        None => for c in text.chars() {
+            let k = c.to_lowercase().to_string();
+            let typed = (!modifiers.control && !modifiers.platform).then(|| c.to_string());
+            press(k, typed, Modifiers { shift: modifiers.shift || c.is_uppercase(), ..modifiers }, window, cx);
+        },
+    }
+}
+
+/// The window as drawn: xwd of its X window, as a PNG (ImageMagick's
+/// convert). The GPUI client has no snapshot of its own (it draws with wgpu).
+fn snapshot(window: &mut Window, path: &str) -> Value {
+    use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+    let id = match window.window_handle().map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Xlib(h)) => h.window as u64,
+        Ok(RawWindowHandle::Xcb(h)) => h.window.get() as u64,
+        _ => return json!({ "ok": false, "error": "snapshots need X11 (Xvfb)" }),
+    };
+    let cmd = format!("xwd -silent -id {id} | convert xwd:- png:{path}");
+    match std::process::Command::new("sh").arg("-c").arg(&cmd).status() {
+        Ok(s) if s.success() => json!({ "ok": true, "path": path }),
+        Ok(s) => json!({ "ok": false, "error": format!("xwd/convert failed: {s}") }),
+        Err(e) => json!({ "ok": false, "error": e.to_string() }),
+    }
+}

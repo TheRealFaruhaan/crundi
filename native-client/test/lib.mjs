@@ -127,7 +127,11 @@ export async function begin(area, { project = true } = {}) {
   const secret = setup.body.totpSecret;
   const status = await api.http('GET', '/api/status');
   if (status.body?.botConfigured !== false) { console.error(`Refusing ${SERVER}: a Telegram bot is configured.`); process.exit(2); }
-  const projDir = `/tmp/crundi-devtest-${sPort}/proj`;
+  // The project folder of the server actually used (its own port's test
+  // dir, which tools/test-server.sh makes fresh each start): never a folder
+  // shared with another run or reviewer (F17).
+  const usedPort = new URL(SERVER).port || sPort;
+  const projDir = `/tmp/crundi-devtest-${usedPort}/proj`;
   if (project) {
     const p = await api.http('POST', '/api/projects', { alias: 'demo', name: 'Demo', path: projDir, create: true });
     check('a project to work in', p.status < 300, p.body);

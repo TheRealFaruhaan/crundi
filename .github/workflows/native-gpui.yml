@@ -1,0 +1,108 @@
+# The native PC client on GPUI (native-gpui/): build the workspace on Linux,
+# Windows and macOS, run its unit tests, start the client on each and check
+# it answers its test driver, and keep a picture of the window and the logs.
+# Nothing here builds or releases Crundi itself.
+name: native-gpui
+
+on:
+  push:
+    paths: ['native-gpui/**', 'native-client/scripts/**', '.github/workflows/native-gpui.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      RUST_LOG: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      # GPUI's X11 and Wayland windows, ALSA for voice, CEF's libraries, and
+      # Mesa's software Vulkan (lavapipe) to draw on a machine with no GPU.
+      - name: Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb x11-apps imagemagick mesa-vulkan-drivers \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libfontconfig1-dev libfreetype-dev \
+            libasound2-dev libnss3 libgbm1 libasound2t64 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libpango-1.0-0
+
+      - name: Cache CEF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/cef
+          key: cef-156.0.26-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-gpui/target
+          key: gpui-cargo-${{ runner.os }}-${{ hashFiles('native-gpui/Cargo.lock') }}
+          restore-keys: gpui-cargo-${{ runner.os }}-
+
+      - name: Fetch CEF
+        run: |
+          CEF=$(node native-client/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
+          echo "CEF_PATH=$CEF" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: native-gpui
+        run: cargo build --release --workspace
+
+      - name: Stage CEF next to the binary
+        working-directory: native-gpui
+        run: |
+          BIN=$(STAGE_NAME=crundi-gpui node ../native-client/scripts/stage-cef.mjs target/release)
+          echo "GPUI_BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        working-directory: native-gpui
+        run: |
+          case "$RUNNER_OS" in
+            Windows) export PATH="$PWD/target/release:$PATH" ;;
+            Linux) export LD_LIBRARY_PATH="$PWD/target/release:$LD_LIBRARY_PATH" ;;
+          esac
+          cargo test --release --workspace
+
+      # Start the client with its test driver, ask it what it shows (the
+      # sign-in page: no server), take a picture of the window (Linux), stop it.
+      - name: Run it
+        env:
+          OUT: ${{ runner.temp }}/run
+          CRUNDI_TEST_PORT: '7612'
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+        run: |
+          mkdir -p "$OUT"
+          export CRUNDI_CONFIG_DIR="$OUT/config" CRUNDI_CEF_CACHE="$OUT/cef"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1440x900x24" node native-gpui/tools/smoke.mjs "$GPUI_BIN" "$OUT"
+          else
+            node native-gpui/tools/smoke.mjs "$GPUI_BIN" "$OUT"
+          fi
+
+      - name: Pictures and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpui-${{ matrix.os }}
+          path: ${{ runner.temp }}/run
+          if-no-files-found: ignore

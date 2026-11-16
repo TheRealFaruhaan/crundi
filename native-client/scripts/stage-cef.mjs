@@ -24,7 +24,9 @@ const target = resolve(process.argv[2] || join(here, '..', 'target', 'debug'));
 const os = { linux: 'linux', win32: 'windows', darwin: 'macos' }[process.platform];
 const arch = process.arch === 'arm64' ? 'aarch64' : 'x86_64';
 const cef = process.env.CEF_PATH || join(homedir(), '.local', 'share', 'cef', `cef_${os}_${arch}`);
-const NAME = 'crundi-native';
+// The binary's name: the Slint client's by default, STAGE_NAME for another
+// (the GPUI client: crundi-gpui).
+const NAME = process.env.STAGE_NAME || 'crundi-native';
 if (!existsSync(cef)) throw new Error(`No CEF at ${cef}: run scripts/fetch-cef.mjs first`);
 
 if (process.platform === 'darwin') {
