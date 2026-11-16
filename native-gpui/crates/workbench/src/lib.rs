@@ -103,10 +103,14 @@ pub(crate) fn chip_w(label: &str) -> f32 { f32::from(crundi_theme::T::WS_CHIP_BA
 
 /// The pane kinds a key can be.
 pub fn pane_kind(key: &str) -> &'static str {
-    if key.is_empty() { "empty" } else if key.starts_with("live:") { "chat" } else if key.starts_with("pend:") { "launcher" } else if key.starts_with("panel:") { "panel" } else { "other" }
+    if key.is_empty() { "empty" } else if key.starts_with("live:") { "chat" } else if key.starts_with("term:") { "terminal" } else if key.starts_with("pend:") { "launcher" } else if key.starts_with("panel:") { "panel" } else { "other" }
 }
 
 fn chat_of(key: &str) -> Option<&str> { key.strip_prefix("live:") }
+/// A Claude terminal's id (3.2), from its pane key "term:<id>".
+pub fn term_of(key: &str) -> Option<&str> { key.strip_prefix("term:") }
+/// A chat's or a terminal's id (their text size and close are kept by it).
+fn item_of(key: &str) -> Option<&str> { chat_of(key).or_else(|| term_of(key)) }
 
 /// A header press that becomes a drag once it moves 6px.
 #[derive(Clone, Copy)]
@@ -239,7 +243,7 @@ impl Workbench {
     /// A chat seen for the first time starts at the default size and keeps it.
     fn ensure_fonts(&mut self) {
         let Some(m) = self.layouts.get(&self.project) else { return };
-        let new: Vec<String> = m.keys().iter().filter_map(|k| chat_of(k).map(String::from)).filter(|id| !self.font.contains_key(id)).collect();
+        let new: Vec<String> = m.keys().iter().filter_map(|k| item_of(k).map(String::from)).filter(|id| !self.font.contains_key(id)).collect();
         if new.is_empty() { return; }
         let d = self.font_default;
         for id in &new { self.font.insert(id.clone(), d); }
@@ -248,7 +252,7 @@ impl Workbench {
 
     /// Put a pane in the layout (added to the right, as the web's); its leaf.
     pub fn place(&mut self, key: &str, cx: &mut Context<Self>) -> u32 {
-        if chat_of(key).is_some_and(|id| self.closed.contains(id)) { return 0; }
+        if item_of(key).is_some_and(|id| self.closed.contains(id)) { return 0; }
         let leaf = self.mosaic().place(key);
         self.focused = leaf;
         self.ensure_fonts();
@@ -328,6 +332,15 @@ impl Workbench {
             let state = item.as_ref().map(rules::chat_state).filter(|s| !s.is_empty()).unwrap_or(if ks.is_empty() { "idle".into() } else { ks });
             return (title, long, state);
         }
+        if let Some(id) = term_of(key) {
+            // A Claude terminal (3.2): its title (a rename made here first) and state.
+            let item = Self::chat_item(cx, id);
+            let s = |k: &str| item.as_ref().and_then(|c| c.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mut title = self.titles.get(id).cloned().unwrap_or_else(|| s("title"));
+            if title.is_empty() { title = if kt.is_empty() { "Terminal".into() } else { kt }; }
+            let st = if s("status") == "exited" { "exited".to_string() } else { s("state") };
+            return (title, String::new(), if st.is_empty() { "idle".into() } else { st });
+        }
         match pane_kind(key) {
             "empty" => (String::new(), String::new(), String::new()),
             "launcher" => ("New pane".into(), String::new(), String::new()),
@@ -361,6 +374,7 @@ impl Workbench {
             let (short, long, state) = self.title_of(&key, cx);
             let (title, cap) = rules::title_shown(&short, &long, l.w);
             let id = chat_of(&key).unwrap_or("").to_string();
+            let item_id = item_of(&key).unwrap_or("").to_string();
             let collab = Self::chat_item(cx, &id).and_then(|c| c.get("collaborator").cloned()).is_some_and(|v| v.as_bool().unwrap_or(!v.is_null()));
             let n = rules::grant_count(self.grants.get(&id), now);
             let item = Self::chat_item(cx, &id);
@@ -370,7 +384,7 @@ impl Workbench {
             // A parked chat's header (2.23) has only grip, dot, title, tag, pin and ×: it never folds.
             let parked = Self::chat_item(cx, &id).is_some_and(|c| c.get("kind").and_then(|k| k.as_str()) == Some("parked"));
             Info {
-                focused: l.id == self.focused, fs: if kind == "chat" { rules::font_scale(self.font_px(&id)) } else { 1.0 },
+                focused: l.id == self.focused, fs: if kind == "chat" || kind == "terminal" { rules::font_scale(self.font_px(&item_id)) } else { 1.0 },
                 armed: self.armed == l.id, narrow: rules::narrow(l.w) && !parked, menu: self.menu == l.id && rules::narrow(l.w) && !parked,
                 drop: self.drag.is_some_and(|d| d.target == l.id && d.src != l.id),
                 secrets: kind == "chat" && self.secrets_cap && !collab, secrets_n: n,
@@ -434,7 +448,8 @@ impl Workbench {
     /// clicks (the first arms "Sure?", which disarms after 3 s).
     pub fn pane_close(&mut self, leaf: u32, cx: &mut Context<Self>) {
         let key = self.rect(leaf).and_then(|l| l.key).unwrap_or_default();
-        if !key.starts_with("live:") { self.armed = 0; return self.close_pane(leaf, cx); }
+        // A chat's and a Claude terminal's take two clicks.
+        if !key.starts_with("live:") && !key.starts_with("term:") { self.armed = 0; return self.close_pane(leaf, cx); }
         if self.armed == leaf { self.armed = 0; cx.notify(); return self.close_pane(leaf, cx); }
         self.armed = leaf;
         self.arm_gen += 1;
@@ -450,6 +465,24 @@ impl Workbench {
     /// the pane stays and a toast says why.
     pub fn close_pane(&mut self, leaf: u32, cx: &mut Context<Self>) {
         let key = self.rect(leaf).and_then(|l| l.key).unwrap_or_default();
+        // A Claude terminal (3.2): the server closes it, then its pane goes.
+        if let Some(id) = term_of(&key).map(String::from) {
+            let me = cx.entity().downgrade();
+            let path = format!("/api/terminals/{id}/close");
+            return crundi_shell::call(cx, move |api| api.post(&path, &json!({})), move |r, cx| {
+                let _ = me.update(cx, |w, cx| {
+                    if let Err(e) = r { return w.toast(&format!("Failed to close terminal: {e}"), true, cx); }
+                    let k = format!("term:{id}");
+                    w.closed.insert(id.clone());
+                    w.protect.remove(&k);
+                    if let Some(l) = w.mosaic().leaf_of(&k) { w.mosaic().close(l); }
+                    w.font.remove(&id);
+                    store::update(|s| { s.font.remove(&id); });
+                    if w.full.as_deref() == Some(k.as_str()) { w.full = None; }
+                    w.changed(cx);
+                });
+            });
+        }
         let Some(id) = chat_of(&key).map(String::from) else { self.mosaic().close(leaf); if self.menu == leaf { self.menu = 0; } return self.changed(cx); };
         let Some(api) = crundi_shell::api(cx) else { return };
         let me = cx.entity().downgrade();
@@ -483,7 +516,7 @@ impl Workbench {
 
     /// A- / A+ (d = -1 / 1) or reset (0): per chat, and the new-chat default.
     pub fn pane_font(&mut self, leaf: u32, d: i32, cx: &mut Context<Self>) {
-        let Some(id) = self.rect(leaf).and_then(|l| l.key).and_then(|k| chat_of(&k).map(String::from)) else { return };
+        let Some(id) = self.rect(leaf).and_then(|l| l.key).and_then(|k| item_of(&k).map(String::from)) else { return };
         let px = if d == 0 { rules::FONT_BASE } else { rules::font_step(self.font_px(&id), d) };
         self.font.insert(id.clone(), px);
         self.font_default = px;
@@ -511,6 +544,14 @@ impl Workbench {
     /// Rename a chat: the title changes at once, then the server is told;
     /// an unchanged title sends nothing.
     pub fn pane_rename(&mut self, leaf: u32, input: &str, cx: &mut Context<Self>) {
+        // A Claude terminal (3.2): /api/terminals/:id/rename.
+        if let Some(id) = self.rect(leaf).and_then(|l| l.key).and_then(|k| term_of(&k).map(String::from)) {
+            let (current, _, _) = self.title_of(&format!("term:{id}"), cx);
+            let Some(title) = rules::rename_value(input, &current) else { return };
+            self.titles.insert(id.clone(), title.clone());
+            cx.notify();
+            return crundi_shell::call(cx, move |api| api.post(&format!("/api/terminals/{id}/rename"), &json!({ "title": title })), |_, _| {});
+        }
         let Some(id) = self.rect(leaf).and_then(|l| l.key).and_then(|k| chat_of(&k).map(String::from)) else { return };
         let (current, _, _) = self.title_of(&format!("live:{id}"), cx);
         let Some(title) = rules::rename_value(input, &current) else { return };
@@ -521,7 +562,7 @@ impl Workbench {
 
     /// Click on the title: the input, all selected, focused.
     pub(crate) fn start_rename(&mut self, leaf: u32, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(key) = self.rect(leaf).and_then(|l| l.key).filter(|k| k.starts_with("live:")) else { return };
+        let Some(key) = self.rect(leaf).and_then(|l| l.key).filter(|k| k.starts_with("live:") || k.starts_with("term:")) else { return };
         let (short, _, _) = self.title_of(&key, cx);
         let st = cx.new(|cx| w::InputState::new(window, cx));
         st.update(cx, |s, cx| { s.set_value(short, window, cx); s.select_all(window, cx); s.focus(window, cx); });
@@ -672,6 +713,61 @@ impl Workbench {
                 };
                 let Some(id) = v.get("id").and_then(|i| i.as_str()).map(String::from) else { return cx.notify() };
                 let key = format!("live:{id}");
+                if let Some(other) = w.mosaic().leaf_of(&key) { if other != leaf { w.mosaic().close(other); } }
+                w.mosaic().assign(leaf, Some(key.clone()));
+                w.protect.insert(key, Instant::now());
+                w.focused = leaf;
+                w.ensure_fonts();
+                w.changed(cx);
+            });
+        });
+    }
+
+    /// The launcher's Empty Shell, Terminal and its Skip Permissions (3.2,
+    /// the web's launchTerminal; mode shell | normal | skip): a shell starts
+    /// at once; Terminal asks which conversation first, as UI Mode does.
+    pub fn launch_term(&mut self, leaf: u32, mode: &str, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        if project.is_empty() || self.launching.contains_key(&leaf) { return; }
+        if mode == "shell" { return self.create_term(leaf, false, true, "", "", cx); }
+        let skip = mode == "skip";
+        if let Some(choose) = cx.try_global::<Chooser>().map(|c| c.0.clone()) {
+            let me = cx.entity().downgrade();
+            let go: Rc<dyn Fn(&'static str, String, &mut App)> = Rc::new(move |m, id, cx| {
+                let _ = me.update(cx, |w, cx| if w.mosaic().layout(1000., 1000.).0.iter().find(|l| l.id == leaf).and_then(|l| l.key.clone()).is_some_and(|k| k.starts_with("pend:")) { w.create_term(leaf, skip, false, m, &id, cx) });
+            });
+            choose(&project, skip, true, cx, go);
+            return;
+        }
+        self.create_term(leaf, skip, false, "new", "", cx);
+    }
+
+    /// Start a Claude terminal (/api/terminals/create) in a launcher's leaf:
+    /// the pressed button busy (3 shell, 4 Terminal, 5 its Skip Permissions)
+    /// until it answers; refused or failed, a toast.
+    pub fn create_term(&mut self, leaf: u32, skip: bool, shell: bool, mode: &str, resume_id: &str, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        if project.is_empty() { return self.toast("Select a project first", true, cx); }
+        if self.launching.contains_key(&leaf) { return; }
+        self.launching.insert(leaf, if shell { 3 } else if skip { 5 } else { 4 });
+        cx.notify();
+        let mut body = json!({ "project": project, "skipPermissions": skip, "shell": shell });
+        if !shell && !mode.is_empty() { body["sessionMode"] = json!(mode); body["resumeId"] = json!(resume_id); }
+        self.last_create = body.clone();
+        let me = cx.entity().downgrade();
+        crundi_shell::call(cx, move |api| api.post("/api/terminals/create", &body), move |r, cx| {
+            let _ = me.update(cx, |w, cx| {
+                w.launching.remove(&leaf);
+                let v = match r {
+                    Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(false) => {
+                        let e = v.get("error").and_then(|e| e.as_str()).unwrap_or("").to_string();
+                        return w.toast(if e.is_empty() { "Failed to launch" } else { &e }, true, cx);
+                    }
+                    Ok(v) => v,
+                    Err(e) => return w.toast(&format!("Failed to launch terminal: {e}"), true, cx),
+                };
+                let Some(id) = v.get("id").and_then(|i| i.as_str()).map(String::from) else { return cx.notify() };
+                let key = format!("term:{id}");
                 if let Some(other) = w.mosaic().leaf_of(&key) { if other != leaf { w.mosaic().close(other); } }
                 w.mosaic().assign(leaf, Some(key.clone()));
                 w.protect.insert(key, Instant::now());
@@ -869,6 +965,7 @@ pub fn init(cx: &mut App) {
                 "split" => wb.update(cx, |w, cx| w.split(num(a, 0), s(1) == "true", cx)),
                 "chip" => wb.update(cx, |w, cx| w.chip(num(a, 0), &s(1), cx)),
                 "launch-chat" => wb.update(cx, |w, cx| w.launch_chat(num(a, 0), s(1) == "skip", cx)),
+                "launch-term" => wb.update(cx, |w, cx| w.launch_term(num(a, 0), &s(1), cx)),
                 _ => return None,
             }
             Some(json!({ "ok": true }))

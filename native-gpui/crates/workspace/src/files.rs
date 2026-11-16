@@ -300,6 +300,7 @@ impl FilesView {
     fn copy_path(&mut self, p: &str, cx: &mut Context<Self>) {
         cx.write_to_clipboard(ClipboardItem::new_string(p.to_string()));
         self.copied = p.to_string();
+        cx.set_global(crate::Copied(p.to_string()));
         toast(cx, "Path copied".into(), w::Toast::Info);
     }
 

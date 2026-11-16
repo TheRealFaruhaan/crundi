@@ -9,12 +9,16 @@
 //!   files.rs     3.4 Files: browse, search, the row menu, upload, download
 //!   wins.rs      the floating file windows: the editor and the picture viewer
 //!   media.rs     3.5 Media: the library, its cards and the lightbox
+//!   terms.rs     3.2 the Claude terminal panels (term:<id> panes)
+//!   vt.rs        their terminal emulator (the Slint client's, unchanged)
 
 pub mod diff;
 pub mod diffview;
 pub mod files;
 pub mod git;
 pub mod media;
+pub mod terms;
+pub mod vt;
 pub mod wins;
 
 use crundi_shell::Area;
@@ -54,6 +58,17 @@ pub(crate) fn save_url(url: String, name: String, cx: &mut App) {
     });
 }
 
+/// What the area last put on the clipboard (the driver's "copied": the
+/// test machine may have no clipboard).
+#[derive(Default)]
+pub(crate) struct Copied(pub(crate) String);
+impl Global for Copied {}
+
+pub(crate) fn note_copy(cx: &mut App, text: String) {
+    if let Some(f) = files::view(cx) { let t = text.clone(); f.update(cx, |f, _| f.copied = t); }
+    cx.set_global(Copied(text));
+}
+
 /// A toast from anywhere.
 pub(crate) fn toast(cx: &mut App, text: String, kind: w::Toast) { with_window(cx, move |window, cx| w::toast(window, cx, text, kind)); }
 
@@ -64,6 +79,10 @@ pub fn init(cx: &mut App) {
     crundi_workbench::register_kind(cx, crundi_workbench::PaneKind { prefix: "panel:git", render: Rc::new(|_, window, cx| git::ensure(window, cx).into_any_element()), title: Rc::new(|_, _| ("Git".into(), String::new())) });
     crundi_workbench::register_kind(cx, crundi_workbench::PaneKind { prefix: "panel:files", render: Rc::new(|_, window, cx| files::ensure(window, cx).into_any_element()), title: Rc::new(|_, _| ("Files".into(), String::new())) });
     crundi_workbench::register_kind(cx, crundi_workbench::PaneKind { prefix: "panel:media", render: Rc::new(|_, window, cx| media::ensure(window, cx).into_any_element()), title: Rc::new(|_, _| ("Media".into(), String::new())) });
+    // The Claude terminal panels (3.2): a pane kind, kept in step with the
+    // workbench (a terminal's pane gone: let go).
+    crundi_workbench::register_kind(cx, crundi_workbench::PaneKind { prefix: "term:", render: Rc::new(|key, _, cx| terms::ensure(key.trim_start_matches("term:"), cx).into_any_element()), title: Rc::new(|_, _| (String::new(), String::new())) });
+    if let Some(wb) = crundi_workbench::workbench(cx) { cx.observe(&wb, |_, cx| terms::sync_views(cx)).detach(); }
     crundi_shell::register(cx, Area::new("workspace")
         .tabs(&["git", "files", "media"], |tab, window, cx| match tab {
             "git" => git::ensure(window, cx).into_any_element(),
@@ -76,10 +95,26 @@ pub fn init(cx: &mut App) {
             if let Some(f) = files::view(cx) { f.update(cx, |f, cx| { f.clear(cx); f.load(None, cx); }); }
             if let Some(m) = media::view(cx) { m.update(cx, |m, cx| m.load(cx)); }
         })
+        .on_event(|e, cx| match e {
+            crundi_shell::AreaEvent::State(_) => terms::sync_panes(cx),
+            crundi_shell::AreaEvent::Connected(true) => terms::resubscribe(cx),
+            crundi_shell::AreaEvent::Ws("output", v) => {
+                let g = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+                terms::output(&g("id"), &g("data"), cx);
+            }
+            _ => {}
+        })
         .on_tab(|tab, cx| if tab == "git" { if let Some(g) = git::view(cx) { g.update(cx, |g, cx| g.load(cx)); } })
         .test_ui(|name, a, window, cx| {
             let s = |i: usize| a.get(i).cloned().unwrap_or_default();
             if name == "ping" { return Some(json!({ "ok": true, "area": "workspace" })); }
+            // The launcher's Empty Shell / Terminal / Skip Permissions (3.2): leaf, mode.
+            if name == "launch" {
+                let (leaf, mode) = (s(0).parse::<u32>().unwrap_or(0), s(1));
+                if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| w.launch_term(leaf, &mode, cx)); }
+                return Some(json!({ "ok": true }));
+            }
+            if name.starts_with("term-") { return terms::act(name, &a, cx); }
             if let Some(op) = name.strip_prefix("git-") {
                 let g = git::ensure(window, cx);
                 g.update(cx, |g, cx| match op {
@@ -161,7 +196,8 @@ pub fn init(cx: &mut App) {
             "git": git::view(cx).map(|g| g.read(cx).props(cx)).unwrap_or(json!({ "state": "loading" })),
             "wins": all_wins,
             "files": files::view(cx).map(|f| f.read(cx).props(cx)).unwrap_or(json!({ "state": "loading", "rows": [] })),
-            "copied": files::view(cx).map(|f| f.read(cx).copied.clone()).unwrap_or_default(),
+            "copied": cx.try_global::<Copied>().map(|c| c.0.clone()).filter(|c| !c.is_empty()).or_else(|| files::view(cx).map(|f| f.read(cx).copied.clone())).unwrap_or_default(),
+            "terms": terms::props(cx),
             "media": media::view(cx).map(|m| m.read(cx).props()).unwrap_or(json!({ "state": "loading", "cards": [] })),
         } } }) }));
 }

@@ -204,6 +204,21 @@ impl T {
     /// A replaced line's changed words (the web's wordDiffHtml backgrounds).
     pub fn ws_diff_del_word() -> Hsla { rgb(0x5c2020).into() }
     pub fn ws_diff_add_word() -> Hsla { rgb(0x1a4a2a).into() }
+    /// The Claude terminal panels (3.2): the palette's colours beyond the
+    /// theme's own (the web's TERM_THEME), the selection, a cell's line
+    /// height (of its font size), the input box at its tallest, the cursor's
+    /// blink (each half), and how many lines a wheel notch scrolls.
+    pub fn ws_term_magenta() -> Hsla { rgb(0xa855f7).into() }
+    pub fn ws_term_magenta_hi() -> Hsla { rgb(0xc084fc).into() }
+    pub fn ws_term_cyan() -> Hsla { rgb(0x06b6d4).into() }
+    pub fn ws_term_cyan_hi() -> Hsla { rgb(0x22d3ee).into() }
+    pub fn ws_term_sel() -> Hsla { rgba(0x6366f14d).into() }
+    pub const WS_TERM_LH: f32 = 1.2;
+    pub const WS_TERM_INPUT_MAX: Pixels = px(120.);
+    pub const WS_TERM_BLINK_MS: u64 = 500;
+    pub const WS_TERM_WHEEL: i32 = 3;
+    /// Dim (SGR 2) text: its colour at this opacity.
+    pub const WS_TERM_DIM: f32 = 0.5;
     // ── end workspace ──
     // ── planning ──
     /// secrets (2.12): the dialog's pick list stops here and scrolls.
