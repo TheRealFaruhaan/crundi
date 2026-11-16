@@ -74,9 +74,10 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
 5. [x] **Operations** (Operations), test `test/operations.mjs`: Services,
    forwards, Docker; Secrets, Skills, Usage; Settings, sign-in, backup; Add
    project; Homepool; Info; Panels (widgets); What's new; the approvals button.
-6. [ ] **PC-client extras from `app/`** (Desktop; all but Cru's live screen, kid mode and wake word, below), test `test/desktop.mjs`:
+6. [x] **PC-client extras from `app/`** (Desktop), test `test/desktop.mjs`:
    notifications and the tray, the Inbox, the chat bubble, saved passwords,
-   the homepool node, Cru on the PC.
+   the homepool node, Cru on the PC (the voice screen, the live screen, kid
+   mode and the wake word "Hey Cru").
 7. **Ship** (not this run): installers and auto-update, signing, the release
    workflow, moving PC users off Electron.
 
@@ -104,13 +105,24 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
 - **macOS** loads CEF's framework and makes NSApp CEF's (`webview/src/mac.rs`,
   from the Slint client), not yet tried by a person on a Mac; CI's macOS job builds it, runs the
   unit tests and starts it (green since 17 Nov, F83).
-- **Cru on the PC** (`crates/desktop/src/cru.rs`) has the voice screen,
-  listen / ask / speak, barge-in, keyboard mode, history, the Deepgram spend
-  line, the top-bar mark and the per-device push-to-talk shortcut. Still to
-  port from `app/vendor/crundi-voice.js` and `app/voice-wake` (Desktop,
-  `shared/cru-plan.md`): the live screen (Cru's panel: blocks, pages, video),
-  kid mode, and the wake word "Hey Cru" (sherpa-onnx keyword spotter,
-  training from the owner's voice, the controller).
+- **Cru on the PC** (`crates/desktop/src/cru*.rs`, `wake/`): the voice
+  screen, the live screen (blocks native; pages and videos in frames of their
+  own, with the message bridge; the full view), kid mode (the kid screen, the
+  PIN pad, the break, the tray's Kid mode) and "Hey Cru" (sherpa-onnx's
+  keyword spotter compiled in, static; the model downloaded once and
+  hash-checked; enroll/voiceprint/owner ported; the controller's conditions;
+  training in Settings › Voice assistant › On this device). Gaps:
+  - a video on the live screen plays, but the voice is not gated while it
+    plays (createVideoGate: the YouTube player's state messages);
+  - kid mode does not lock the window (kiosk) as the Electron app's
+    kidLock does, and the kid cursor and pointer are the system's;
+  - kid mode opens on the device that started it (the tray here); the web's
+    "kid mode is on elsewhere" card is not shown;
+  - the wake word's power and lock readings: Linux (sysfs, logind) and
+    macOS (pmset; no lock reading); Windows assumes AC and unlocked;
+  - the voice check uses sherpa-onnx's own fbank on the same 3D-Speaker
+    model, so a profile trained by the Electron client is not reused (it
+    lives in that app's folder anyway): train once on the native client.
 - **Buttons with a label** use gpui-component's Button with the theme's
   sizes (`widgets/src/control.rs`); its own hover tooltip for `.tooltip()`
   on such a Button is gpui-component's managed style, not `w::tooltip`.

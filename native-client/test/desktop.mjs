@@ -9,10 +9,10 @@
 //   NATIVE_BIN=$BIN xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/desktop.mjs
 //
 // (CRUNDI_TEST_SERVER=http://localhost:<port> CRUNDI_TEST_PORT=<port> for
-// other ports.) ONLY=drawer,host,inbox,cru,passwords,bubble,tray,node runs some parts.
+// other ports.) ONLY=drawer,host,inbox,cru,cruscreen,kid,wake,passwords,bubble,tray,node runs some parts.
 
 import http from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import * as t from './lib.mjs';
 
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
@@ -39,6 +39,8 @@ const PAGE = `http://127.0.0.1:${page.address().port}`;
 // Saved passwords under the test driver: no desktop keyring here, so the
 // app takes its key from CRUNDI_PW_TEST_KEY (honoured only with the driver on).
 process.env.CRUNDI_PW_TEST_KEY ||= Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
+// "Hey Cru": the models already on this machine when there (else the app downloads them).
+if (existsSync('/tmp/vw-install/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01')) process.env.CRUNDI_WAKE_MODELS ||= '/tmp/vw-install';
 const T = await t.begin('desktop');
 const D = (p) => p.areas.desktop;
 const dr = (p) => D(p).drawer;
@@ -303,6 +305,121 @@ if (part('passwords')) {
   await T.act('panel-close');
 }
 
+if (part('cruscreen')) {
+  // ─── Cru's live screen: blocks, a page in a frame (talking both ways), the full view ───
+  const CS = (p) => D(p).cruScreen;
+  await T.act('cru-keyboard', 'true');
+  await T.act('cru');
+  await T.until('Cru opens, with its events socket', (p) => D(p).cru.open && CS(p).socket);
+  const blocks = [
+    { type: 'heading', text: 'Your day' }, { type: 'text', text: 'Three things, one done.' },
+    { type: 'checklist', items: [{ text: 'Walk', done: true }, { text: 'Write the report' }, { text: 'Call Mum' }] },
+    { type: 'table', headers: ['When', 'What'], rows: [['9:00', 'Stand-up'], ['14:00', 'Dentist']] },
+    { type: 'progress', label: 'Report', value: 40 },
+    { type: 'chips', items: [{ text: 'on time', tone: 'ok' }, { text: 'busy', tone: 'warn' }, { text: 'late', tone: 'bad' }] },
+  ];
+  await T.act('cru-event', JSON.stringify({ type: 'screen', screen: { title: 'Today', blocks } }));
+  await T.until('blocks on the live screen', (p) => CS(p).screen?.title === 'Today' && !CS(p).frame);
+  await T.snap('cru-screen-blocks');
+  const doc = `<!doctype html><html><body style="margin:0;font:28px sans-serif;background:#fde68a;display:flex;align-items:center;justify-content:center;height:100vh"><div>A game for you</div>
+<script>addEventListener('message',function(e){if(e.data&&e.data.cru==='volume'){document.title='volume '+e.data.value;parent.postMessage({cru:'event',kind:'start',detail:'loaded'},'*');}});</script></body></html>`;
+  await T.act('cru-event', JSON.stringify({ type: 'screen', screen: { title: 'A game', doc } }));
+  await T.until('a page in its own frame, painted', (p) => CS(p).frame && CS(p).painted, 30000);
+  await T.until('…Cru sends it the volume on load', (p) => CS(p).title === 'volume 1', 15000);
+  await T.until('…and hears it back (the message bridge)', (p) => CS(p).lastMessage?.cru === 'event' && CS(p).lastMessage?.detail === 'loaded', 15000);
+  await t.sleep(500);
+  await T.snap('cru-screen-frame');
+  await T.act('cru-screen-full');
+  await T.until('Full view: Cru\'s whole view', (p) => CS(p).full);
+  await t.sleep(500);
+  await T.snap('cru-full');
+  await T.act('cru-screen-normal');
+  await T.until('Normal view: the panel again', (p) => !CS(p).full && CS(p).screen);
+  await T.act('cru-screen-close');
+  await T.until('× takes it down', (p) => !CS(p).screen && !CS(p).frame);
+  await T.act('cru');
+  await T.until('Cru closes', (p) => !D(p).cru.open);
+}
+
+if (part('kid')) {
+  // ─── Kid mode: started from the tray, left only with the PIN ───
+  const K = (p) => D(p).kid;
+  await T.api.http('POST', '/api/voice/kid/pin', { pin: '2468' });
+  await T.act('kid-start', 'tray');
+  await T.until('the kid screen opens over everything', (p) => K(p).on && D(p).cru.open, 15000);
+  await t.sleep(500);
+  await T.snap('cru-kid');
+  await T.key('Escape');
+  await t.sleep(300);
+  t.check('Esc does not leave it', K(await T.props()).on);
+  await T.act('kid-pin');
+  for (const k of ['1', '1', '1', '1', 'OK']) await T.act('kid-key', k);
+  await T.until('a wrong PIN: "That is not the PIN"', (p) => /not the PIN/.test(K(p).pinError) && K(p).on, 10000);
+  await T.snap('cru-kid-pin');
+  for (const k of ['2', '4', '6', '8', 'OK']) await T.act('kid-key', k);
+  await T.until('the right PIN leaves kid mode', (p) => !K(p).on && !D(p).cru.open, 10000);
+}
+
+if (part('wake')) {
+  // ─── "Hey Cru": trained from five recordings, listening only when it may, the owner's voice opens Cru ───
+  const W = (p) => D(p).wake;
+  const fx = (n) => new URL(`./fixtures/heycru/${n}.wav`, import.meta.url).pathname;
+  // A second of silence, as a recording.
+  const silent = '/tmp/crundi-wake-silent.wav';
+  { const n = 16000, b = Buffer.alloc(44 + n * 2); b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(16000, 24); b.writeUInt32LE(32000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40); writeFileSync(silent, b); }
+  let p = await T.props();
+  t.check('off and untrained at first', !W(p).enabled && !W(p).trained, W(p));
+  await T.ui('tab', 'settings');
+  await T.ui('ops:settings-open', 'voice');
+  await t.sleep(800);
+  // Down to "On this device", at the voice section's end.
+  const toDevice = async () => { await T.ui('ops:settings-open', 'voice'); await t.sleep(600); for (let i = 0; i < 5; i++) await T.mouse('wheel', 800, 500, { dy: -300 }); await t.sleep(600); };
+  await toDevice();
+  await T.snap('settings-voice-device');
+  await T.act('wake-train-start');
+  await T.until('Train: five recordings, the first', (p) => W(p).training && W(p).trainPos === 0);
+  await T.act('wake-take', silent);
+  await T.until('a silent take is refused, as the web says', (p) => W(p).trainBad && /Nothing was heard\. Speak a little closer\. Record it again\./.test(W(p).trainMsg) && W(p).trainPos === 0);
+  for (let i = 1; i <= 2; i++) await T.act('wake-take', fx(`draco-train${i}`));
+  await T.until('…two kept', (p) => W(p).trainPos === 2 && W(p).trainMsg === 'Got it.');
+  await toDevice();
+  await T.snap('wake-training');
+  for (let i = 3; i <= 5; i++) await T.act('wake-take', fx(`draco-train${i}`));
+  p = await T.until('…the fifth trains it', (p) => W(p).trained && !W(p).training, 120000);
+  t.check('…with the owner\'s voice check', W(p).voiceCheck === 'on' || !process.env.CRUNDI_WAKE_MODELS, W(p));
+  await toDevice();
+  await T.snap('wake-trained');
+  await T.act('wake-cond', 'false', 'false');
+  await T.act('wake-set', 'true');
+  await T.until('on: listening (on AC, unlocked, Cru closed)', (p) => W(p).state === 'listening', 60000);
+  await T.act('wake-cond', 'true', 'false');
+  await T.until('on battery: paused', (p) => W(p).state === 'on-battery' && W(p).label === 'Paused: on battery');
+  await T.act('wake-cond', 'false', 'true');
+  await T.until('screen locked: paused', (p) => W(p).state === 'paused' && W(p).label === 'Paused: screen locked');
+  await T.act('wake-cond', 'false', 'false');
+  await T.until('…listening again', (p) => W(p).state === 'listening', 30000);
+  await T.ui('tab', 'workbench');
+  await T.act('wake-hear', fx('draco-neg-heyyou'));
+  await t.sleep(4000);
+  t.check('a decoy ("hey you") does not open Cru', !D(await T.props()).cru.open);
+  if (process.env.CRUNDI_WAKE_MODELS) {
+    await T.act('wake-hear', fx('arcas-pos-heycru'));
+    await t.sleep(4000);
+    t.check('another voice\'s "Hey Cru" does not open Cru', !D(await T.props()).cru.open, W(await T.props()).log);
+  }
+  await T.act('wake-hear', fx('draco-pos-heycru'));
+  await T.until('the owner\'s "Hey Cru" opens Cru', (p) => D(p).cru.open && W(p).lastHeard?.keyword === 'HEY_CRU', 15000);
+  await T.until('…and it pauses while Cru\'s screen is open', (p) => W(p).state === 'voice-open');
+  await T.act('cru');
+  await T.until('Cru closed: listening again', (p) => !D(p).cru.open && W(p).state === 'listening', 30000);
+  await T.act('wake-set', 'false');
+  await T.act('wake-forget');
+  await T.until('Forget asks first', (p) => /Forget your/.test(p.dialog?.title || ''));
+  await T.dialog(true);
+  await T.until('…and forgets: off, untrained', (p) => !W(p).trained && !W(p).enabled);
+  await T.act('wake-cond', '', '');
+}
+
 if (part('bubble')) {
   // ─── The chat bubble: a chat in a floating window of its own (6.3) ───
   const B = (p) => D(p).bubble;
@@ -334,7 +451,7 @@ if (part('tray')) {
   // ─── The tray: its menu in the PC client's order and words; Server… opens the server's settings ───
   const tr = (p) => D(p).tray;
   const p = await T.until('the tray says the connection', (p) => tr(p).tooltip === 'Crundi — Running');
-  t.check('its menu', JSON.stringify(tr(p).menu.map((m) => m.label)) === JSON.stringify(['Crundi', '', 'Running', '', 'Open', 'Server…', '', 'Quit']), tr(p).menu);
+  t.check('its menu', JSON.stringify(tr(p).menu.map((m) => m.label)) === JSON.stringify(['Crundi', '', 'Running', '', 'Open', 'Kid mode', 'Server…', '', 'Quit']), tr(p).menu);
   // With a session bus (dbus-run-session), the item is on it.
   if (process.env.DBUS_SESSION_BUS_ADDRESS) {
     t.check('the tray is up', tr(p).shown, tr(p));

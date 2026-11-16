@@ -19,6 +19,10 @@ use gpui::{CursorStyle, Keystroke, MouseButton, RenderImage};
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 struct Fv {
+    /// The page's messages to its host (MSG_PREFIX console lines), oldest first.
+    messages: Vec<serde_json::Value>,
+    /// Loads finished (the host sends what a page wants on load).
+    loads: u64,
     browser: Option<Browser>,
     w: i32,
     h: i32,
@@ -70,7 +74,7 @@ pub fn open(key: &str, target: &str, w: f32, h: f32, scale: f32) -> bool {
     if with(|s| s.frames.contains_key(key)) { resize(key, w, h, scale); return true; }
     let referrer = target.starts_with("https://") || loopback(target);
     let origin = if referrer { with(|s| s.origin.clone()) } else { String::new() };
-    with(|s| s.frames.insert(key.to_string(), Fv { browser: None, w: w.round().max(1.0) as i32, h: h.round().max(1.0) as i32, scale: scale.max(1.0), raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, _observer: None }));
+    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, w: w.round().max(1.0) as i32, h: h.round().max(1.0) as i32, scale: scale.max(1.0), raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, _observer: None }));
     let mut client = FrameClient::new(FrameRender::new(key.to_string()), FrameLife::new(key.to_string()), FrameDisplay::new(key.to_string()), FrameDialogs::new(), FrameMenu::new(), FrameLoad::new(key.to_string()), FrameRequests::new(FrameResource::new(target.to_string(), origin)));
     let window_info = WindowInfo::default().set_as_windowless(Default::default());
     // Transparent: a page without a background shows the box's colour.
@@ -127,6 +131,38 @@ pub fn title(key: &str) -> String { with(|s| s.frames.get(key).map(|f| f.title.c
 pub fn cursor(key: &str) -> CursorStyle { crate::view::cursor_style(with(|s| s.frames.get(key).map(|f| f.cursor).unwrap_or(0))) }
 /// The last page a frame asked to open in a new window.
 pub fn opened() -> String { with(|s| s.opened.clone()) }
+
+/// The message bridge (a page's window.postMessage to its host, and back).
+/// A top-level page's `parent` is itself: what it posts to "parent" reaches
+/// its own window, where `BRIDGE_JS` (put first in a page the host makes)
+/// passes the host's kinds on as console lines with this prefix.
+pub const MSG_PREFIX: &str = "\u{2063}crundi-msg:";
+
+/// The page's side of the bridge: messages of the given kinds (`cru` values,
+/// or `type` values) posted to the window go to the host.
+pub fn bridge_js(cru: &[&str], types: &[&str]) -> String {
+    let j = |v: &[&str]| serde_json::to_string(v).unwrap_or_default();
+    format!("<script>(function(){{var P={},C={},T={};addEventListener('message',function(e){{var d=e.data;if(e.source!==window||!d||typeof d!=='object')return;if(C.indexOf(d.cru)<0&&T.indexOf(d.type)<0)return;try{{console.debug(P+JSON.stringify(d));}}catch(x){{}}}});}})();</script>",
+        serde_json::to_string(MSG_PREFIX).unwrap_or_default(), j(cru), j(types))
+}
+
+/// Post a message into the frame's page (window.postMessage(m, '*')).
+pub fn post(key: &str, m: &serde_json::Value) {
+    let Some(b) = with(|s| s.frames.get(key).and_then(|f| f.browser.clone())) else { return };
+    if let Some(f) = b.main_frame() {
+        let code = format!("window.postMessage({}, '*')", m);
+        f.execute_java_script(Some(&CefString::from(code.as_str())), None, 0);
+    }
+}
+
+/// The page's messages since the last call.
+pub fn take_messages(key: &str) -> Vec<serde_json::Value> { with(|s| s.frames.get_mut(key).map(|f| std::mem::take(&mut f.messages)).unwrap_or_default()) }
+
+/// How many loads the page finished.
+pub fn loads(key: &str) -> u64 { with(|s| s.frames.get(key).map(|f| f.loads).unwrap_or(0)) }
+/// Is there a view for this key?
+pub fn exists(key: &str) -> bool { with(|s| s.frames.contains_key(key)) }
+
 /// The views live now.
 pub fn live() -> usize { with(|s| s.frames.values().filter(|f| f.browser.is_some()).count()) }
 
@@ -272,6 +308,13 @@ wrap_display_handler! {
         key: String,
     }
     impl DisplayHandler {
+        fn on_console_message(&self, _browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
+            let m = message.map(|m| m.to_string()).unwrap_or_default();
+            if std::env::var_os("CRUNDI_DEBUG_FRAMES").is_some() { eprintln!("[frame console] {m:?}"); }
+            let Some(rest) = m.strip_prefix(MSG_PREFIX) else { return 0 };
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.messages.push(v); }); changed(); }
+            1
+        }
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             let t = title.map(|t| t.to_string()).unwrap_or_default();
             with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.title = t; });
@@ -317,7 +360,7 @@ wrap_load_handler! {
     }
     impl LoadHandler {
         fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: ::std::os::raw::c_int, _back: ::std::os::raw::c_int, _fwd: ::std::os::raw::c_int) {
-            if is_loading == 0 { ask_scroll(&self.key); }
+            if is_loading == 0 { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.loads += 1; }); changed(); ask_scroll(&self.key); }
         }
     }
 }

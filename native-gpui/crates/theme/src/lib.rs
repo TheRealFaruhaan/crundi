@@ -47,6 +47,18 @@ impl T {
     pub fn error_edge() -> Hsla { rgba(0xef444466).into() }
     pub fn placeholder() -> Hsla { rgb(0x757575).into() }
     pub fn annotate() -> Hsla { rgb(0xea580c).into() }
+    // Kid mode's palette (desktop's; crundi-voice.js .cv-ov.kid): the sky
+    // to the sun, the deep-indigo type, the white bubbles, the button indigo,
+    // the "Wait for me!" amber, what the child said.
+    pub fn kid_sky() -> Hsla { rgb(0xbae6fd).into() }
+    pub fn kid_sun() -> Hsla { rgb(0xfef9c3).into() }
+    pub fn kid_text() -> Hsla { rgb(0x312e81).into() }
+    pub fn kid_button() -> Hsla { rgb(0x4f46e5).into() }
+    pub fn kid_wait() -> Hsla { rgb(0xb45309).into() }
+    pub fn kid_heard_bg() -> Hsla { rgb(0xdbeafe).into() }
+    pub fn kid_heard() -> Hsla { rgb(0x1e3a8a).into() }
+    pub fn kid_break() -> Hsla { rgba(0x0a0a0feb).into() }
+    pub fn kid_break_text() -> Hsla { rgb(0xfde68a).into() }
     pub fn selection() -> Hsla { rgb(0x0236a1).into() }
     pub fn scrim() -> Hsla { rgba(0x0000008c).into() }
     pub fn backdrop() -> Hsla { rgba(0x000000db).into() }
@@ -480,6 +492,27 @@ impl T {
     pub const BUBBLE_HEAD: Pixels = px(56.);
     pub const BUBBLE_W: Pixels = px(380.);
     pub const BUBBLE_H: Pixels = px(640.);
+    /// Cru's live screen: the panel's frame height, the full view's least
+    /// window width, a chip's edge and fill strength.
+    pub const CRU_SCREEN_H: Pixels = px(300.);
+    pub const CRU_FULL_MIN_W: Pixels = px(900.);
+    pub const CHIP_EDGE: f32 = 0.45;
+    pub const CHIP_FILL: f32 = 0.12;
+    /// Kid mode (crundi-voice.js .cv-ov.kid): the type, the big mic, the
+    /// round buttons and the PIN pad's keys and width.
+    pub const KID_HEADING: Pixels = px(30.);
+    pub const KID_TEXT: Pixels = px(22.);
+    pub const KID_REPLY: Pixels = px(28.);
+    pub const KID_HEARD: Pixels = px(20.);
+    pub const KID_MIC: Pixels = px(150.);
+    pub const KID_MIC_ICON: Pixels = px(56.);
+    pub const KID_BTN: Pixels = px(64.);
+    pub const KID_KEY: Pixels = px(64.);
+    pub const KID_PAD_W: Pixels = px(300.);
+    pub const KID_BUBBLE_W: Pixels = px(900.);
+    pub const KID_REPLY_R: Pixels = px(28.);
+    /// The wake word training's level meter.
+    pub const WAKE_METER_W: Pixels = px(160.);
     // ── end desktop ──
 }
 

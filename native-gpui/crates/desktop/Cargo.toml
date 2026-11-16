@@ -32,6 +32,15 @@ gethostname.workspace = true
 # added to this crate only, pinned): the tray, and saved passwords' key in
 # the OS keychain with AES-GCM.
 aes-gcm = "=0.10.3"
+# "Hey Cru" (phase 6.6): sherpa-onnx's keyword spotter and speaker embedding,
+# its static libraries linked in (no code loaded at run time); the model is
+# data, downloaded once and checked (wake/engine.rs).
+sherpa-onnx = { version = "=2.0.1", default-features = false, features = ["static"] }
+sha2 = "0.10"
+bzip2 = "0.5"
+tar = "0.4"
+ureq.workspace = true
+cpal.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "=0.3.7", default-features = false, features = ["blocking", "async-io"] }

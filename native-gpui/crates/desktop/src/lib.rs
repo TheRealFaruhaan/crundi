@@ -17,6 +17,10 @@ mod browsers;
 mod bubble;
 mod ctx;
 mod cru;
+mod cru_blocks;
+mod cru_frame;
+mod cru_kid;
+mod cru_screen;
 mod cru_ui;
 pub mod homepool;
 pub mod drawer;
@@ -32,6 +36,7 @@ pub mod rules;
 pub mod startup;
 mod tray;
 mod ui;
+pub mod wake;
 
 use crundi_shell::{Area, AreaEvent, Drawer};
 use crundi_webview as web;
@@ -67,6 +72,8 @@ pub fn init(window: &mut Window, cx: &mut App) {
     let cscreen = cx.new(|cx| cru_ui::CruScreen::new(window, cx));
     crundi_shell::register_overlay(cx, cscreen.clone().into());
     homepool::init();
+    wake::init();
+    crundi_shell::registry::register_settings_part(cx, "voice-device", wake::settings_part);
     tray::start(false);
     cx.set_global(DrawerHandle(view.clone(), bpage.clone(), ipage.clone(), cscreen));
     crundi_shell::register_drawer(cx, Drawer {
@@ -89,6 +96,7 @@ pub fn init(window: &mut Window, cx: &mut App) {
             AreaEvent::Connected(true) => { drawer::render(); inbox::load(); cru::load_unread(); tray::set_online(true); }
             AreaEvent::Connected(false) => tray::set_online(false),
             AreaEvent::Ws("voice-report", v) => cru::report(v),
+            AreaEvent::Server("voice-kid", v) | AreaEvent::Ws("voice-kid", v) => cru_kid::state(v),
             AreaEvent::Server("inbox", v) => inbox::event(v),
             _ => {}
         })
@@ -107,6 +115,8 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     web::frames::drop_old(window);
     host::pump();
     passwords::pump();
+    cru_screen::pump();
+    wake::tick();
     cru::tick();
     let (live, unread) = cru::mark();
     crundi_shell::set_cru_mark(cx, live, unread);
@@ -149,6 +159,7 @@ fn signed_in(cx: &mut App) {
     web::net::set_local(local);
     drawer::with(|d| { d.mode = if local { "local".into() } else { "remote".into() }; d.status = if local { "direct".into() } else { "offline".into() }; });
     drawer::render();
+    cru_kid::load();
 }
 
 // ─── What the host and the pages tell the area ───
@@ -273,6 +284,28 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "bubble-snap" => Some(json!({ "ok": bubble::snap(&a(0)) })),
         "tray-pick" => { tray::test_pick(&a(0)); ok() }
         "startup" => Some(json!({ "ok": true, "enabled": startup::enabled() })),
+        // Cru's live screen: an event as the voice socket brings it ({type: "screen", screen}).
+        "cru-event" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::event(&v); } ok() }
+        "cru-screen-close" => { cru_screen::close_screen(); ok() }
+        "cru-screen-full" => { cru_screen::full_view(); ok() }
+        "cru-screen-normal" => { cru_screen::normal_view(); ok() }
+        // A message as Cru's page posts it.
+        "cru-frame-message" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::message(&v); } ok() }
+        "kid-start" => { cru_kid::start(&Some(a(0)).filter(|x| !x.is_empty()).unwrap_or_else(|| "tray".into())); ok() }
+        "kid-device" => { cru_kid::test_mark(a(0) != "false"); ok() }
+        "kid-state" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_kid::state(&v); } ok() }
+        "kid-pin" => { cru_kid::pin_open(); ok() }
+        "kid-key" => { cru_kid::pin_key(&a(0)); ok() }
+        "kid-mute" => { cru_kid::mute(); ok() }
+        // "Hey Cru": the status, the setting, training from recordings, a recording heard, the conditions.
+        "wake-status" => Some(json!({ "ok": true, "status": wake::status() })),
+        "wake-set" => { wake::set(a(0) != "false"); ok() }
+        "wake-train-start" => { wake::train_start(); ok() }
+        "wake-train-stop" => { wake::train_stop(); ok() }
+        "wake-take" => match std::fs::read(a(0)).ok().and_then(|b| wake::engine::read_wav(&b)) { Some(s) => { wake::take(s); ok() } None => Some(json!({ "ok": false, "error": "no such recording" })) },
+        "wake-hear" => match std::fs::read(a(0)).ok().and_then(|b| wake::engine::read_wav(&b)) { Some(s) => Some(json!({ "ok": wake::hear(s) })), None => Some(json!({ "ok": false, "error": "no such recording" })) },
+        "wake-cond" => { let b = |x: String| match x.as_str() { "true" => Some(true), "false" => Some(false), _ => None }; wake::test_conditions(b(a(0)), b(a(1))); ok() }
+        "wake-forget" => { wake::forget(); ok() }
         "homepool-status" => Some(json!({ "ok": true, "status": homepool::status() })),
         "browsers-open" => { browsers::open(&a(0)); ok() }
         "browsers-shot" => { browsers::shot(&a(0)); ok() }
@@ -299,7 +332,7 @@ fn props() -> Value {
     json!({
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "inbox": inbox::props(), "cru": cru::props(), "homepool": homepool::status(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
+        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "wake": wake::status(), "homepool": homepool::status(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
     })
 }

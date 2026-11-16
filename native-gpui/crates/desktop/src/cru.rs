@@ -159,10 +159,21 @@ pub fn open(report_only: bool) {
         render();
     });
     if with(|c| c.chat_view) { history(None); }
+    crate::cru_screen::opened();
+    render();
+}
+
+/// The microphone and Cru's voice stop (kid mode's mute, a break).
+pub fn stop() {
+    with(|c| { c.listen = None; c.phase = "ended".into(); c.interim.clear(); });
+    stop_saying();
     render();
 }
 
 pub fn close() {
+    // The kid screen is left only with the PIN (cru_kid::exit).
+    if crate::cru_kid::on() { return; }
+    crate::cru_screen::closed();
     with(|c| { c.open = false; c.how.clear(); c.ptt = false; c.leave_at = None; c.ptt_send_at = None; c.listen = None; c.phase = "ended".into(); c.heard.clear(); c.interim.clear(); c.menu = false; c.epoch += 1; });
     stop_saying();
     render();

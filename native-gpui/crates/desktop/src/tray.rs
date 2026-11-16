@@ -25,6 +25,7 @@ pub fn menu(status: &str) -> Vec<(&'static str, String, bool)> {
         ("status", status.to_string(), false),
         ("-", String::new(), false),
         ("open", "Open".into(), true),
+        ("kid", "Kid mode".into(), true),
         ("server", "Server\u{2026}".into(), true),
         ("-", String::new(), false),
         ("quit", "Quit".into(), true),
@@ -53,6 +54,8 @@ pub fn take_picks() -> Vec<String> {
 pub fn act(id: &str) {
     match id {
         "open" => ctx::raise(),
+        // A.3's "Kid mode": started here (the kid screen opens on this PC).
+        "kid" => { ctx::raise(); crate::cru_kid::start("tray"); }
         // The server's settings (the PC client's "Server…" shows its server page).
         "server" => { ctx::raise(); ctx::show_tab("settings"); }
         "quit" => ctx::on_app(|_, cx| cx.quit()),
@@ -201,7 +204,7 @@ mod tests {
     fn the_menu_and_its_words() {
         let m = menu("Running");
         let labels: Vec<&str> = m.iter().map(|x| x.1.as_str()).collect();
-        assert_eq!(labels, ["Crundi", "", "Running", "", "Open", "Server…", "", "Quit"]);
+        assert_eq!(labels, ["Crundi", "", "Running", "", "Open", "Kid mode", "Server…", "", "Quit"]);
         assert!(!m[0].2 && !m[2].2 && m[4].2);
         assert_eq!(tooltip("Stopped"), "Crundi — Stopped");
         assert_eq!(status_label(true), "Running");
