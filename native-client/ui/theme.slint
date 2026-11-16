@@ -427,6 +427,59 @@ export global Theme {
     out property <length> kanban-pop-min: 220px;
     out property <length> kanban-pop-max: 360px;
     out property <length> kanban-thumb: 48px;
+    // Mind map: the tree's column step and an idea's width (MM_COL_W 235,
+    // MM_NODE_W 180), the dialogs' card (.im-box max-width 520), the
+    // shortcut sheet's keys column (.mmh-keys 176), and the sheet's little
+    // trees (mmDiagram: column and row steps 92 / 30, a box 74 x 20).
+    out property <length> mindmap-col: 235px;
+    out property <length> mindmap-node: 180px;
+    out property <length> mindmap-dialog-w: 520px;
+    out property <length> mindmap-help-keys: 176px;
+    out property <length> mindmap-dia-col: 92px;
+    out property <length> mindmap-dia-row: 30px;
+    out property <length> mindmap-dia-box-w: 74px;
+    out property <length> mindmap-dia-box-h: 20px;
+    // Factories: a step on the graph (.ff-node 220px; Start and End 170px;
+    // src/planning/factories_model.rs stacks the same scale steps), the
+    // Library's card column (minmax 280px), the editor's palette and side
+    // (190px, 340px), the dialogs (560px, the wide 680px, the PIN 340px),
+    // the transcript sheet (560px), the viewer's narrow fold (560px), the
+    // minimap (200 x 150), the Cleanup days box (80px), the width under
+    // which a dialog's pairs stack (520px), an attachment chip (220px).
+    out property <length> factories-node-w: 220px;
+    out property <length> factories-node-w-small: 170px;
+    out property <length> factories-card-min: 280px;
+    out property <length> factories-left: 190px;
+    out property <length> factories-right: 340px;
+    out property <length> factories-modal-w: 560px;
+    out property <length> factories-modal-wide: 680px;
+    out property <length> factories-pin-w: 340px;
+    out property <length> factories-sheet-w: 560px;
+    out property <length> factories-compact: 560px;
+    out property <length> factories-mini-w: 200px;
+    out property <length> factories-mini-h: 150px;
+    out property <length> factories-days-w: 80px;
+    out property <length> factories-pair-stack: 520px;
+    out property <length> factories-chip-max: 220px;
+    // Notes (ui/planning/notes*.slint): the tab's page list (.nt-side 280),
+    // the width under which it stacks over the page (700), the page's
+    // column (72ch + 72px), the room under its last block (160), the
+    // picker's column (.nt-pick-box 520), a menu's width and most height
+    // (.nt-menu 220 x 320), the link input (220).
+    out property <length> notes-side-w: 280px;
+    out property <length> notes-stack: 700px;
+    out property <length> notes-page-max: 680px;
+    out property <length> notes-page-tail: 160px;
+    out property <length> notes-pick-max: 520px;
+    out property <length> notes-menu-w: 220px;
+    out property <length> notes-menu-max-h: 320px;
+    out property <length> notes-link-w: 220px;
+    // The list's share of a narrow tab's height (max-height: 40%).
+    out property <float> notes-side-share: 0.4;
+    // Factories: the live graph's canvas share on a narrow tab (52%), the
+    // panel's Details drawer at most 92% of the panel.
+    out property <float> factories-canvas-share: 0.52;
+    out property <float> factories-drawer-share: 0.92;
     // ── end planning ──
     // ── ops ──
     // Vault (ui/ops/vault*.slint): a PIN's letter spacing, the PIN modal's

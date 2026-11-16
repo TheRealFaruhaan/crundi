@@ -1,0 +1,371 @@
+// Notes (4.4): the notes tab and panel (app/vendor/crundi-notes.js and its
+// host in src/webapp-html.js, loadNotesTab / mountNotesCell).
+//
+// The tab (mountManager): its bar (Notes; A-, reset, A+), the page list
+// (+ New page, Search pages, Pages | Trash) and the page open beside it.
+// A workbench pane (kind "notes", keyed by its key): the picker (mountPicker)
+// until a page is picked, then that page alone. A page is open in one place
+// at a time. Driven by src/planning/notes.rs through PlanningNotes.
+
+import { Theme, Icons, Icon, ScrollThumb, TextField, Seg, SoftShadow } from "../kit.slint";
+import { Tip } from "../chat.slint";
+import { PlanningNotes, PlanningNotesPane, PlanningNotesItem, PlanningNotesMenuItem } from "notes-api.slint";
+import { FontBtn, FontBtns, NewPage, PageItem, Grip } from "notes-parts.slint";
+import { NotesEditor } from "notes-editor.slint";
+
+/// A muted line in the middle (.nt-main-empty, .kanban-empty).
+component Middle inherits Rectangle {
+    in property <string> text;
+    Text {
+        x: Theme.sp-20; width: parent.width - 2 * Theme.sp-20;
+        text: root.text; wrap: word-wrap;
+        font-size: Theme.text-13; color: Theme.text-muted;
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+}
+
+/// The picker (.nt-pick): start a page, or open one of the project's.
+component Picker inherits Rectangle {
+    in property <PlanningNotesPane> p;
+    background: Theme.bg-primary;
+    fl := Flickable {
+        width: parent.width; height: parent.height;
+        content-height: max(self.height, col.preferred-height);
+        col := VerticalLayout {
+            x: max(0, (fl.width - self.width) / 2);
+            width: min(fl.width, Theme.notes-pick-max + 2 * Theme.sp-20);
+            padding: Theme.sp-20;
+            spacing: 0;
+            alignment: start;
+            Text { text: "Notes"; font-size: Theme.text-16; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+            Rectangle { height: Theme.sp-4; }
+            Text { text: "Start a new page, or open one of this project’s."; wrap: word-wrap; font-size: Theme.text-12; color: Theme.text-muted; }
+            Rectangle { height: Theme.sp-12 + Theme.sp-2; }
+            NewPage { busy: root.p.new-busy; clicked => { PlanningNotes.new-page(root.p.key); } }
+            Rectangle { height: Theme.sp-12; }
+            TextField { placeholder: "Search pages"; edited(t) => { PlanningNotes.search(root.p.key, t); } }
+            Rectangle { height: Theme.sp-8; }
+            if root.p.list-msg != "": Text {
+                text: root.p.list-msg; wrap: word-wrap;
+                font-size: Theme.text-12; color: Theme.text-muted; horizontal-alignment: center;
+            }
+            VerticalLayout {
+                spacing: Theme.sp-4;
+                for it in root.p.items: PageItem { it: it; clicked => { if !it.busy { PlanningNotes.pick(root.p.key, it.id); } } }
+            }
+        }
+    }
+    ScrollThumb { width: root.width; height: root.height; view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y; }
+}
+
+/// The tab's page list (.nt-side).
+component Side inherits Rectangle {
+    background: Theme.bg-secondary;
+    VerticalLayout {
+        VerticalLayout {
+            padding: Theme.sp-12;
+            spacing: Theme.sp-8;
+            NewPage { pad: Theme.sp-8; busy: PlanningNotes.tab-new-busy; clicked => { PlanningNotes.new-page(""); } }
+            TextField { text: PlanningNotes.tab-search; placeholder: "Search pages"; edited(t) => { PlanningNotes.search("", t); } }
+            Seg {
+                options: ["Pages", "Trash"];
+                selected: PlanningNotes.tab-view == "trash" ? 1 : 0;
+                picked(i) => { PlanningNotes.tab-view-set(i == 1 ? "trash" : "pages"); }
+            }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            lf := Flickable {
+                width: parent.width; height: parent.height;
+                content-height: max(self.height, lc.preferred-height);
+                lc := VerticalLayout {
+                    width: lf.width;
+                    padding-left: Theme.sp-10; padding-right: Theme.sp-10; padding-bottom: Theme.sp-12;
+                    spacing: Theme.sp-4;
+                    alignment: start;
+                    if PlanningNotes.tab-list-msg != "": Text {
+                        text: PlanningNotes.tab-list-msg; wrap: word-wrap;
+                        font-size: Theme.text-12; color: Theme.text-muted; horizontal-alignment: center;
+                    }
+                    for it in PlanningNotes.tab-items: PageItem {
+                        it: it; quiet: true; trash: PlanningNotes.tab-view == "trash";
+                        clicked => { PlanningNotes.pick("", it.id); }
+                        context(x, y) => { PlanningNotes.item-menu(it.id, x, y); }
+                        restore => { PlanningNotes.trash-act("restore", it.id); }
+                        purge => { PlanningNotes.trash-act("purge", it.id); }
+                    }
+                }
+            }
+            ScrollThumb { width: parent.width; height: parent.height; view-h: lf.height; content-h: lf.content-height; offset: -lf.content-y; }
+        }
+    }
+}
+
+/// One place's body: the picker, the page, or a line.
+component Body inherits Rectangle {
+    in property <PlanningNotesPane> p;
+    if root.p.mode == "picker": Picker { width: parent.width; height: parent.height; p: root.p; }
+    if root.p.mode == "editor": NotesEditor { width: parent.width; height: parent.height; p: root.p; }
+    if root.p.mode == "msg" || root.p.mode == "empty": Middle { width: parent.width; height: parent.height; text: root.p.msg; }
+}
+
+/// The place keyed `key` (the tab is ""): its body, and in a pane, the
+/// pane's tools in a row of their own while the pane header lacks them.
+component Of inherits Rectangle {
+    in property <string> key;
+    in property <bool> head;
+    for p in PlanningNotes.panes: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        if p.key == root.key: VerticalLayout {
+            if root.head: Rectangle {
+                height: hb.preferred-height;
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+                hb := HorizontalLayout {
+                    padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+                    padding-top: Theme.sp-2; padding-bottom: Theme.sp-2;
+                    spacing: Theme.sp-2;
+                    if p.mode != "picker": FontBtn { has-icon: true; icon: Icons.pages; tip: "Pages: open another page here"; clicked => { PlanningNotes.pages(root.key); } }
+                    Rectangle { horizontal-stretch: 1; }
+                    FontBtns { }
+                }
+            }
+            Body { vertical-stretch: 1; p: p; }
+        }
+    }
+}
+
+/// The screen: `kind` the tab id or pane kind, `key` the pane's key ("" in a tab).
+export component NotesView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    init => { PlanningNotes.attach(root.key); }
+    property <bool> stack: root.width < Theme.notes-stack;
+    // The tab: the bar, then the list beside (or over) the page.
+    if !root.embedded: VerticalLayout {
+        Rectangle {
+            height: tb.preferred-height;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            tb := HorizontalLayout {
+                padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+                padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+                spacing: Theme.sp-6;
+                Text { text: "Notes"; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-secondary; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                FontBtns { }
+            }
+        }
+        if !PlanningNotes.tab-project: Middle { vertical-stretch: 1; text: "Select a project to see its notes."; }
+        if PlanningNotes.tab-project && !root.stack: HorizontalLayout {
+            vertical-stretch: 1;
+            Side { width: Theme.notes-side-w; }
+            Rectangle { width: 1px; background: Theme.border; }
+            Of { horizontal-stretch: 1; key: ""; }
+        }
+        // Narrow: the list over the page, at most 40% of the height.
+        if PlanningNotes.tab-project && root.stack: Rectangle {
+            vertical-stretch: 1;
+            Side { x: 0; y: 0; width: parent.width; height: parent.height * Theme.notes-side-share; }
+            Rectangle { x: 0; y: parent.height * Theme.notes-side-share; width: parent.width; height: 1px; background: Theme.border; }
+            Of { x: 0; y: parent.height * Theme.notes-side-share + 1px; width: parent.width; height: parent.height - self.y; key: ""; }
+        }
+    }
+    // A pane: its tools (until the pane header has them), then its body.
+    if root.embedded: Of { width: parent.width; height: parent.height; key: root.key; head: !PlanningNotes.head-hosted; }
+}
+
+/// A menu's row (.nt-menu button): the key box, the name, its hint or a check.
+component MenuRow inherits Rectangle {
+    in property <PlanningNotesMenuItem> it;
+    in property <bool> act;
+    callback picked();
+    height: rl.preferred-height;
+    border-radius: Theme.r-control;
+    background: ta.has-hover || root.act ? (root.it.danger && ta.has-hover ? Theme.red-dim : Theme.bg-hover) : transparent;
+    property <color> fg: root.it.danger && ta.has-hover ? Theme.red : Theme.text-primary;
+    rl := HorizontalLayout {
+        padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+        padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+        spacing: Theme.sp-10;
+        if root.it.k != "": Rectangle {
+            width: Theme.sp-24; height: Theme.sp-24;
+            border-radius: Theme.r-chip;
+            border-width: 1px; border-color: Theme.border;
+            Text { text: root.it.k; font-size: Theme.text-11; font-weight: Theme.w-semibold; color: root.it.danger && ta.has-hover ? Theme.red : Theme.text-secondary; horizontal-alignment: center; vertical-alignment: center; }
+        }
+        Text { horizontal-stretch: 1; text: root.it.name; font-size: Theme.text-13; color: root.fg; vertical-alignment: center; overflow: elide; }
+        if root.it.d != "": Text { text: root.it.d; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+        if root.it.check: Text { text: "✓"; font-size: Theme.text-13; color: Theme.accent-hover; vertical-alignment: center; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.picked(); } }
+}
+
+/// A button of the format bar (.nt-fmt button).
+component FmtBtn inherits Rectangle {
+    in property <styled-text> md;
+    in property <string> tip;
+    callback clicked();
+    width: max(Theme.sp-24 + Theme.sp-4, fl.preferred-width + Theme.sp-12);
+    height: Theme.sp-24 + Theme.sp-2;
+    border-radius: Theme.r-control;
+    background: ta.has-hover ? Theme.bg-hover : transparent;
+    fl := StyledText {
+        x: (parent.width - self.preferred-width) / 2;
+        y: (parent.height - self.preferred-height) / 2;
+        text: root.md;
+        default-font-size: Theme.text-13;
+        default-color: ta.has-hover ? Theme.accent-hover : Theme.text-primary;
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Tip { on: ta.has-hover; text: root.tip; }
+}
+
+/// This screen's popovers over the window: the menus (slash, block,
+/// language, a page's), the format bar, a dragged block. No input where it
+/// draws nothing.
+export component NotesOverlay inherits Rectangle {
+    // ── A menu (.nt-menu): a press outside closes it. ──
+    if PlanningNotes.menu-open: TouchArea {
+        width: root.width; height: root.height;
+        pointer-event(ev) => { if ev.kind == PointerEventKind.down { PlanningNotes.menu-close(); } }
+    }
+    if PlanningNotes.menu-open: Rectangle {
+        property <length> w: Theme.notes-menu-w;
+        property <length> h: min(Theme.notes-menu-max-h, mc.preferred-height);
+        x: max(Theme.sp-8, min(PlanningNotes.menu-x, root.width - self.w - Theme.sp-8));
+        y: PlanningNotes.menu-y + self.h + Theme.sp-8 > root.height ? max(Theme.sp-8, PlanningNotes.menu-y - self.h - Theme.sp-32) : PlanningNotes.menu-y;
+        width: self.w;
+        height: self.h;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-field; shadow: Theme.shadow-menu; }
+        Rectangle {
+            border-radius: Theme.r-field;
+            background: Theme.bg-secondary;
+            border-width: 1px;
+            border-color: Theme.border;
+            clip: true;
+            TouchArea { }
+            // The active row stays in view as the keys move it (rows are about
+            // a key box plus their padding high).
+            property <int> act: PlanningNotes.menu-act;
+            property <length> row-h: Theme.sp-24 + Theme.sp-12;
+            changed act => {
+                if self.act >= 0 {
+                    if (self.act + 2) * self.row-h > -mf.content-y + mf.height { mf.content-y = min(0, mf.height - (self.act + 2) * self.row-h); }
+                    if self.act * self.row-h < -mf.content-y { mf.content-y = -self.act * self.row-h; }
+                }
+            }
+            mf := Flickable {
+                width: parent.width; height: parent.height;
+                content-height: mc.preferred-height;
+                mc := VerticalLayout {
+                    width: mf.width;
+                    padding: Theme.sp-4;
+                    spacing: 0;
+                    if PlanningNotes.menu-query-on: Rectangle {
+                        height: q.preferred-height + Theme.sp-12 + Theme.sp-6;
+                        Rectangle {
+                            y: Theme.sp-2; height: parent.height - Theme.sp-6;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                            background: Theme.bg-primary;
+                            q := TextInput {
+                                x: Theme.sp-8; width: parent.width - 2 * Theme.sp-8;
+                                vertical-alignment: center;
+                                text: PlanningNotes.menu-query;
+                                font-size: Theme.text-12;
+                                color: Theme.text-primary;
+                                selection-background-color: Theme.selection;
+                                single-line: true;
+                                edited => { PlanningNotes.menu-query-edited(self.text); }
+                                key-pressed(ev) => {
+                                    if PlanningNotes.key-name(ev) == "" { return reject; }
+                                    if PlanningNotes.menu-key(PlanningNotes.key-name(ev)) { return accept; }
+                                    return reject;
+                                }
+                                init => { self.focus(); }
+                            }
+                            if q.text == "": Text { x: Theme.sp-8; height: parent.height; vertical-alignment: center; text: "Search languages"; font-size: Theme.text-12; color: Theme.placeholder; }
+                        }
+                    }
+                    if PlanningNotes.menu-label != "": HorizontalLayout {
+                        padding-left: Theme.sp-8; padding-top: Theme.sp-6; padding-bottom: Theme.sp-2;
+                        Text { text: PlanningNotes.menu-label; font-size: Theme.text-11; color: Theme.text-muted; }
+                    }
+                    if PlanningNotes.menu-items.length == 0 && PlanningNotes.menu-empty != "": Text {
+                        text: PlanningNotes.menu-empty;
+                        height: self.preferred-height + Theme.sp-24 + Theme.sp-12;
+                        font-size: Theme.text-12; color: Theme.text-muted;
+                        horizontal-alignment: center; vertical-alignment: center;
+                    }
+                    for it[i] in PlanningNotes.menu-items: VerticalLayout {
+                        if it.sep: Rectangle { height: Theme.sp-8 + 1px; Rectangle { height: 1px; background: Theme.border-subtle; } }
+                        MenuRow { it: it; act: i == PlanningNotes.menu-act; picked => { PlanningNotes.menu-pick(i); } }
+                    }
+                }
+            }
+        }
+    }
+    // ── The format bar (.nt-fmt) over a selection. ──
+    if PlanningNotes.fmt-open: Rectangle {
+        property <length> w: fb.preferred-width;
+        property <length> h: fb.preferred-height;
+        x: max(Theme.sp-8, min(PlanningNotes.fmt-x - self.w / 2, root.width - self.w - Theme.sp-8));
+        y: PlanningNotes.fmt-y - self.h - Theme.sp-8 < Theme.sp-8 ? PlanningNotes.fmt-y + Theme.sp-24 + Theme.sp-8 : PlanningNotes.fmt-y - self.h - Theme.sp-8;
+        width: self.w;
+        height: self.h;
+        SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-field; shadow: Theme.shadow-menu; }
+        Rectangle {
+            border-radius: Theme.r-field;
+            background: Theme.bg-secondary;
+            border-width: 1px;
+            border-color: Theme.border;
+            TouchArea { }
+        }
+        fb := HorizontalLayout {
+            padding: Theme.sp-4;
+            spacing: Theme.sp-2;
+            if !PlanningNotes.fmt-link: Grip { pkey: "__fmt"; bid: ""; tip: "Drag the selected text onto a chat or terminal"; clicked(x, y) => { } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("**B**"); tip: "Bold (Ctrl+B)"; clicked => { PlanningNotes.fmt("bold"); } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("*I*"); tip: "Italic (Ctrl+I)"; clicked => { PlanningNotes.fmt("italic"); } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("<u>U</u>"); tip: "Underline (Ctrl+U)"; clicked => { PlanningNotes.fmt("underline"); } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("~~S~~"); tip: "Strikethrough (Ctrl+Shift+S)"; clicked => { PlanningNotes.fmt("strike"); } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("\\<\\/\\>"); tip: "Code (Ctrl+E)"; clicked => { PlanningNotes.fmt("code"); } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("Link"); tip: "Link (Ctrl+K)"; clicked => { PlanningNotes.fmt("link"); } }
+            if !PlanningNotes.fmt-link: Rectangle { width: 1px; background: Theme.border; }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("Copy"); tip: "Copy as Markdown"; clicked => { PlanningNotes.fmt("copy"); } }
+            if !PlanningNotes.fmt-link: FmtBtn { md: @markdown("Select all"); tip: "Select every block (Ctrl+Shift+A)"; clicked => { PlanningNotes.fmt("all"); } }
+            if PlanningNotes.fmt-link: Rectangle {
+                width: Theme.notes-link-w;
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                background: Theme.bg-primary;
+                li := TextInput {
+                    x: Theme.sp-8; width: parent.width - 2 * Theme.sp-8;
+                    vertical-alignment: center;
+                    text: PlanningNotes.fmt-link-value;
+                    font-size: Theme.text-12;
+                    color: Theme.text-primary;
+                    selection-background-color: Theme.selection;
+                    single-line: true;
+                    accepted => { PlanningNotes.link-apply(self.text); }
+                    key-pressed(ev) => { if ev.text == Key.Escape { PlanningNotes.link-cancel(); return accept; } return reject; }
+                    init => { self.focus(); self.select-all(); }
+                }
+                if li.text == "": Text { x: Theme.sp-8; height: parent.height; vertical-alignment: center; text: "Paste or type a link, Enter to apply"; font-size: Theme.text-12; color: Theme.placeholder; }
+            }
+            if PlanningNotes.fmt-link && PlanningNotes.fmt-has-link: FmtBtn { md: @markdown("Remove"); tip: "Remove the link"; clicked => { PlanningNotes.link-apply(""); } }
+        }
+    }
+    // ── A block being dragged: its label by the pointer. ──
+    if PlanningNotes.drag-on: Rectangle {
+        x: PlanningNotes.drag-x + Theme.sp-12;
+        y: PlanningNotes.drag-y + Theme.sp-8;
+        width: min(dl.preferred-width + 2 * Theme.sp-10, Theme.notes-menu-w + Theme.sp-40);
+        height: dl.preferred-height + 2 * Theme.sp-6;
+        border-radius: Theme.r-control;
+        background: Theme.bg-secondary;
+        border-width: 1px;
+        border-color: Theme.accent;
+        opacity: Theme.o-clone;
+        dl := Text { x: Theme.sp-10; width: parent.width - 2 * Theme.sp-10; text: PlanningNotes.drag-label; font-size: Theme.text-12; color: Theme.text-primary; overflow: elide; vertical-alignment: center; }
+    }
+}

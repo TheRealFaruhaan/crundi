@@ -13,6 +13,10 @@ import { Theme, Icons, PanelPage, EmptyState } from "../kit.slint";
 import { PlanningUi, PlanningKanban, PlanningAsk } from "api.slint";
 import { KanbanView } from "kanban.slint";
 import { DragClone, ClipPop, AskDialog } from "overlay.slint";
+import { MindmapView, MindmapOverlay } from "mindmap.slint";
+import { NotesView, NotesOverlay } from "notes.slint";
+import { ScheduleView, ScheduleOverlay } from "schedule.slint";
+import { FactoriesView, FactoriesOverlay } from "factories.slint";
 
 /// One of the area's screens: `kind` is the tab's id (or the pane's kind),
 /// `key` the pane's key when embedded in a workbench pane ("" in a tab).
@@ -22,10 +26,10 @@ export component PlanningView inherits Rectangle {
     in property <bool> embedded;
     background: Theme.bg-primary;
     if root.kind == "kanban": KanbanView { width: parent.width; height: parent.height; embedded: root.embedded; }
-    if root.kind != "kanban": PanelPage {
-        embedded: root.embedded;
-        EmptyState { has-icon: false; title: "Not built yet: " + root.kind; hint: "The planning area builds this screen."; }
-    }
+    if root.kind == "mindmap": MindmapView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "notes": NotesView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "schedule": ScheduleView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "factories" || root.kind == "factory": FactoriesView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
 }
 
 /// The area's layer over the whole window (its dialogs and popovers); it
@@ -33,5 +37,9 @@ export component PlanningView inherits Rectangle {
 export component PlanningOverlay inherits Rectangle {
     if PlanningKanban.clip-task != "": ClipPop { width: root.width; height: root.height; }
     if PlanningAsk.open: AskDialog { width: root.width; height: root.height; }
+    MindmapOverlay { width: root.width; height: root.height; }
+    NotesOverlay { width: root.width; height: root.height; }
+    ScheduleOverlay { width: root.width; height: root.height; }
+    FactoriesOverlay { width: root.width; height: root.height; }
     if PlanningKanban.drag-id != "": DragClone { }
 }

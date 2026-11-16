@@ -1,0 +1,142 @@
+// Notes (4.4): one page being edited (mountEditor, .nt-root): the save
+// status, the title, the blocks, the room under them, the selection bar
+// and the drop line of a block being moved.
+
+import { Theme, ScrollThumb } from "../kit.slint";
+import { Tip } from "../chat.slint";
+import { PlanningNotes, PlanningNotesPane } from "notes-api.slint";
+import { QuietBtn, Grip } from "notes-parts.slint";
+import { NoteBlock } from "notes-blocks.slint";
+
+export component NotesEditor inherits Rectangle {
+    in property <PlanningNotesPane> p;
+    property <float> k: PlanningNotes.scale;
+    property <bool> narrow: root.width < Theme.notes-stack;
+    property <length> margin: root.narrow ? Theme.sp-32 : Theme.sp-40;
+    background: Theme.bg-primary;
+    clip: true;
+    // Keys while blocks are selected (the focus sits here then).
+    fsel := FocusScope {
+        key-pressed(ev) => {
+            if PlanningNotes.key-name(ev) == "" { return reject; }
+            if PlanningNotes.sel-key(root.p.key, PlanningNotes.key-name(ev)) { return accept; }
+            return reject;
+        }
+    }
+    property <int> fg: root.p.focus-gen;
+    changed fg => { if root.p.focus-id == "__sel" { fsel.focus(); } if root.p.focus-id == "title" { title.focus(); title.set-selection-offsets(root.p.focus-a, root.p.focus-b); } }
+    property <int> tg: root.p.title-gen;
+    changed tg => { if title.text != root.p.title { title.text = root.p.title; } }
+    property <int> mg: root.p.measure-gen;
+    changed mg => { PlanningNotes.page-box(root.p.key, page.absolute-position.x, fl.absolute-position.y, page.width, fl.height); }
+    fl := Flickable {
+        width: parent.width;
+        height: parent.height;
+        content-height: max(self.height, page.preferred-height);
+        page := VerticalLayout {
+            x: max(0, (fl.width - self.width) / 2);
+            width: min(fl.width, Theme.notes-page-max + root.margin);
+            padding-top: root.narrow ? Theme.sp-16 : Theme.sp-32;
+            padding-right: root.narrow ? Theme.sp-16 : Theme.sp-24;
+            padding-left: root.narrow ? Theme.sp-2 : Theme.sp-16;
+            padding-bottom: 0;
+            alignment: start;
+            // The title (.nt-title): "Untitled" while empty.
+            Rectangle {
+                height: max(title.preferred-height, Theme.sp-32) + Theme.sp-16 + Theme.sp-2;
+                if title.text == "": Text {
+                    x: root.margin; y: Theme.sp-2;
+                    text: "Untitled";
+                    font-size: (Theme.text-26 + Theme.sp-2) * root.k;
+                    font-weight: Theme.w-bold;
+                    color: Theme.text-muted;
+                }
+                title := TextInput {
+                    x: root.margin; y: Theme.sp-2;
+                    width: parent.width - root.margin;
+                    text: root.p.title;
+                    single-line: false;
+                    wrap: word-wrap;
+                    font-size: (Theme.text-26 + Theme.sp-2) * root.k;
+                    font-weight: Theme.w-bold;
+                    letter-spacing: Theme.track-tight;
+                    color: Theme.text-primary;
+                    selection-background-color: Theme.selection;
+                    edited => { PlanningNotes.title-edited(root.p.key, self.text); }
+                    key-pressed(ev) => {
+                        if PlanningNotes.key-name(ev) == "" { return reject; }
+                        if PlanningNotes.title-key(root.p.key, PlanningNotes.key-name(ev)) { return accept; }
+                        return reject;
+                    }
+                    changed has-focus => { if self.has-focus { PlanningNotes.focused(root.p.key, "title", -1, -1); } }
+                }
+            }
+            for b in root.p.blocks: NoteBlock { p: root.p; b: b; k: root.k; margin: root.margin; }
+            // The room under the last block: a click there writes on.
+            Rectangle {
+                height: Theme.notes-page-tail - (root.narrow ? Theme.sp-40 : 0);
+                TouchArea { mouse-cursor: MouseCursor.text; clicked => { PlanningNotes.tail(root.p.key); } }
+            }
+        }
+    }
+    ScrollThumb { width: root.width; height: root.height; view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y; }
+    // The save status (.nt-bar), top right.
+    sv := HorizontalLayout {
+        x: parent.width - self.preferred-width - Theme.sp-16;
+        y: Theme.sp-10 + (root.p.sel-count > 0 ? Theme.sp-40 : 0);
+        width: self.preferred-width;
+        height: Theme.sp-16;
+        spacing: Theme.sp-4;
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: Theme.sp-6; height: Theme.sp-6; border-radius: Theme.r-pill;
+                background: root.p.save-state == "busy" ? Theme.yellow : root.p.save-state == "err" ? Theme.red : Theme.green;
+            }
+        }
+        Text { text: root.p.save-text; font-size: Theme.text-11 * root.k; color: Theme.text-muted; vertical-alignment: center; }
+    }
+    if root.p.save-tip != "": TouchArea {
+        x: sv.x; y: sv.y; width: sv.width; height: sv.height;
+        Tip { on: parent.has-hover; text: root.p.save-tip; }
+    }
+    // The drop line where a dragged block would land.
+    if root.p.drop-on: Rectangle {
+        x: page.x + page.padding-left + root.margin;
+        y: root.p.drop-y - root.absolute-position.y - Theme.sp-2;
+        width: page.width - page.padding-left - page.padding-right - root.margin;
+        height: Theme.sp-4;
+        border-radius: Theme.r-chip;
+        background: Theme.accent;
+    }
+    // The selection bar (.nt-selbar): over the page, not in it.
+    if root.p.sel-count > 0: Rectangle {
+        y: 0;
+        height: sb.preferred-height;
+        background: Theme.bg-secondary;
+        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        TouchArea { }
+        sb := HorizontalLayout {
+            padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+            spacing: Theme.sp-4;
+            Grip { pkey: root.p.key; bid: ""; tip: "Drag the selection onto a chat or terminal"; clicked(x, y) => { } }
+            Text {
+                text: root.p.sel-count == 1 ? "1 block selected" : root.p.sel-count + " blocks selected";
+                font-size: Theme.text-12 * root.k; color: Theme.text-secondary; vertical-alignment: center;
+            }
+            Rectangle { horizontal-stretch: 1; }
+            QuietBtn { text: "Copy"; tip: "Copy as Markdown (Ctrl+C)"; fs: Theme.text-12 * root.k; clicked => { PlanningNotes.sel-act(root.p.key, "copy"); } }
+            QuietBtn { text: "Select all"; tip: "Select every block (Ctrl+Shift+A)"; fs: Theme.text-12 * root.k; clicked => { PlanningNotes.sel-act(root.p.key, "all"); } }
+            QuietBtn { text: "Delete"; tip: "Delete the selected blocks"; danger: true; fs: Theme.text-12 * root.k; clicked => { PlanningNotes.sel-act(root.p.key, "delete"); } }
+            Rectangle {
+                width: Theme.sp-24 + Theme.sp-2;
+                border-radius: Theme.r-control;
+                background: xa.has-hover ? Theme.bg-hover : transparent;
+                Text { text: "✕"; font-size: Theme.text-12 * root.k; color: xa.has-hover ? Theme.text-primary : Theme.text-muted; horizontal-alignment: center; vertical-alignment: center; }
+                xa := TouchArea { mouse-cursor: pointer; clicked => { PlanningNotes.sel-act(root.p.key, "clear"); } }
+                Tip { on: xa.has-hover; text: "Clear the selection (Esc)"; }
+            }
+        }
+    }
+}

@@ -1,0 +1,48 @@
+// Webhooks (4.6): the schedule dialog's "When called" mode (the web's
+// renderSchedModal, w.mode === 'webhook'): the note, Security (key in the
+// URL or signed with a secret), the signature and timestamp headers, the
+// idempotency key, and once saved the URL, the secret and New key / New
+// secret. Driven by src/planning/schedule_webhook.rs through PlanningSchedule.
+
+import { Theme, TextField, Seg } from "../kit.slint";
+import { PlanningSchedule } from "schedule-api.slint";
+import { KBtn } from "parts.slint";
+import { Label, Note, ReadField } from "schedule-parts.slint";
+
+export component WebhookSection inherits VerticalLayout {
+    property <bool> signed: PlanningSchedule.hook-auth == "signature";
+    Note { text: "Runs a background chat (or a service action) when its URL is called. Calls that arrive while it is still working go into the same chat, marked Mid-run, so it can tell whether it is the same issue. With One ongoing chat, every run comes back to the same conversation."; }
+    Label { text: "SECURITY"; }
+    Seg {
+        options: ["Key in the URL", "Signed with a secret"];
+        selected: root.signed ? 1 : 0;
+        picked(i) => { PlanningSchedule.seg("hookauth", i == 1 ? "signature" : "key"); }
+    }
+    if root.signed: HorizontalLayout {
+        spacing: Theme.sp-10;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            Label { text: "SIGNATURE HEADER"; }
+            TextField { text <=> PlanningSchedule.sig-header; }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            Label { text: "TIMESTAMP HEADER"; hint: "(optional)"; }
+            TextField { text <=> PlanningSchedule.ts-header; placeholder: "X-Grafana-Alerting-Signature-Timestamp"; }
+        }
+    }
+    Label { text: "IDEMPOTENCY KEY"; hint: "(a call with a key already seen is not processed again)"; }
+    TextField { text <=> PlanningSchedule.idem; placeholder: "{{payload.messageId}}"; }
+    if PlanningSchedule.hook-url != "": VerticalLayout {
+        Label { text: "URL"; hint: "(POST, JSON body)"; }
+        ReadField { text: PlanningSchedule.hook-url; }
+        if root.signed: Label { text: "SECRET"; hint: PlanningSchedule.ts-header == "" ? "(HMAC-SHA256 of the raw body; hex or sha256=hex)" : "(HMAC-SHA256 of the raw body, or of time:body with the timestamp header, as Grafana does; hex or sha256=hex)"; }
+        if root.signed: ReadField { text: PlanningSchedule.hook-secret; }
+        HorizontalLayout {
+            padding-top: Theme.sp-6;
+            alignment: start;
+            KBtn { text: root.signed ? "New secret" : "New key"; clicked => { PlanningSchedule.rotate(); } }
+        }
+    }
+    if PlanningSchedule.hook-url == "": Note { text: "Save the schedule to get its URL."; }
+}

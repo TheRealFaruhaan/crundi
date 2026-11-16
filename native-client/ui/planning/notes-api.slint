@@ -1,0 +1,188 @@
+// Notes (4.4): the notes tab and panel: the globals and structs Rust uses
+// (src/planning/notes.rs). The web's app/vendor/crundi-notes.js
+// (mountManager, mountPicker, mountEditor) and its host in webapp-html.js.
+
+/// A table's row: each cell's source and its drawn form.
+export struct PlanningNoteRow { cells: [string], mds: [styled-text] }
+
+/// A block of a page (.nt-block). `src` is a text block's source (the
+/// markup the native editor edits, notes_doc.rs) or a code block's code;
+/// `md` the block drawn (formatted text, or highlighted code).
+export struct PlanningNoteBlock {
+    id: string,
+    kind: string,
+    src: string,
+    md: styled-text,
+    ph: string,
+    // A numbered item's number ("3.").
+    num: string,
+    checked: bool,
+    lang-name: string,
+    wrap: bool,
+    header: bool,
+    rows: [PlanningNoteRow],
+    // In the block selection (.bsel), and the ends of its run.
+    sel: bool,
+    sel-top: bool,
+    sel-bottom: bool,
+    menu-open: bool,
+}
+
+/// A page in a list (.nt-item): `meta` the "Edited 5m ago" line, `busy`
+/// open in another pane, `cur` the page open in the tab.
+export struct PlanningNotesItem { id: string, title: string, preview: string, meta: string, busy: bool, cur: bool }
+
+/// One place a page is shown: the tab (key "") or a workbench pane.
+export struct PlanningNotesPane {
+    key: string,
+    // "picker" (a pane with no page), "editor", "msg" (a line instead of the
+    // page: not found, in the trash), "empty" (the tab with no page open).
+    mode: string,
+    msg: string,
+    page-id: string,
+    title: string,
+    title-gen: int,
+    // The save status (.nt-save): ok | busy | err, its words, its tooltip.
+    save-state: string,
+    save-text: string,
+    save-tip: string,
+    blocks: [PlanningNoteBlock],
+    sel-count: int,
+    // A focus request: the block ("title" for the title), the table cell,
+    // the selection (byte offsets; -1 the end), bumped each time.
+    focus-id: string,
+    focus-r: int,
+    focus-c: int,
+    focus-a: int,
+    focus-b: int,
+    focus-gen: int,
+    // The table cell with the caret (− Row, − Column act on it).
+    cur-id: string,
+    // A block drag over the page: where the drop line is (window y).
+    drop-on: bool,
+    drop-y: length,
+    measure-gen: int,
+    // The picker's list.
+    items: [PlanningNotesItem],
+    list-msg: string,
+    new-busy: bool,
+}
+
+/// An item of the editor's menus (.nt-menu): the slash menu, a block's
+/// menu, the language list, a page's menu. `k` the key box, `d` its hint.
+export struct PlanningNotesMenuItem { id: string, k: string, name: string, d: string, check: bool, danger: bool, sep: bool }
+
+export global PlanningNotes {
+    in-out property <bool> ready;
+    in-out property <[PlanningNotesPane]> panes;
+    // The shared text size (crundi_notes_font): its size over 15.
+    in-out property <float> scale: 1;
+    // The workbench pane header draws Pages, A-, reset, A+ (workspace sets
+    // it once it does); until then the pane draws them in its own top row.
+    in-out property <bool> head-hosted;
+
+    // The tab (mountManager): no project, its list, Pages or Trash.
+    in-out property <bool> tab-project: true;
+    in-out property <string> tab-view: "pages";
+    in-out property <[PlanningNotesItem]> tab-items;
+    in-out property <string> tab-list-msg;
+    in-out property <bool> tab-new-busy;
+    in-out property <string> tab-search;
+    in-out property <int> tab-trash-n;
+
+    // The open menu (one at a time), over the window.
+    in-out property <bool> menu-open;
+    in-out property <length> menu-x;
+    in-out property <length> menu-y;
+    in-out property <string> menu-label;
+    in-out property <[PlanningNotesMenuItem]> menu-items;
+    in-out property <int> menu-act: -1;
+    in-out property <bool> menu-query-on;
+    in-out property <string> menu-query;
+    in-out property <string> menu-empty;
+    in-out property <int> menu-gen;
+
+    // The format bar (.nt-fmt) over a selection; its link input.
+    in-out property <bool> fmt-open;
+    in-out property <length> fmt-x;
+    in-out property <length> fmt-y;
+    in-out property <bool> fmt-link;
+    in-out property <string> fmt-link-value;
+    in-out property <bool> fmt-has-link;
+    in-out property <int> fmt-gen;
+
+    // A block (or the selection) being dragged: the pointer and its label.
+    in-out property <bool> drag-on;
+    in-out property <length> drag-x;
+    in-out property <length> drag-y;
+    in-out property <string> drag-label;
+
+    callback attach(string);
+    callback font(int);
+    callback pages(string);
+    callback new-page(string);
+    callback pick(string, string);
+    callback search(string, string);
+    callback tab-view-set(string);
+    callback item-menu(string, length, length);
+    callback trash-act(string, string);
+    callback title-edited(string, string);
+    callback title-key(string, string) -> bool;
+    callback edited(string, string, string, int);
+    callback text-key(string, string, string, int, int, bool, bool) -> bool;
+    callback sel-moved(string, string, int, int, length, length);
+    callback blur(string, string);
+    callback focused(string, string, int, int);
+    callback check(string, string, bool);
+    callback add-below(string, string);
+    callback grip(string, string, length, length);
+    callback code-act(string, string, string, length, length);
+    callback cell-edited(string, string, int, int, string);
+    callback cell-key(string, string, int, int, string, int, int) -> bool;
+    callback table-act(string, string, string);
+    callback divider-key(string, string, string) -> bool;
+    callback link(string);
+    callback tail(string);
+    callback blk-press(string, string, bool);
+    callback blk-over(string, length);
+    callback blk-release(string);
+    callback sel-act(string, string);
+    callback sel-key(string, string) -> bool;
+    callback drag-start(string, string);
+    callback drag-move(string, length, length);
+    callback drag-end(string, bool);
+    callback block-box(string, string, length, length);
+    callback page-box(string, length, length, length, length);
+    callback menu-pick(int);
+    callback menu-query-edited(string);
+    callback menu-key(string) -> bool;
+    callback menu-close();
+    callback fmt(string);
+    callback link-apply(string);
+    callback link-cancel();
+
+    /// A key as the editor's name for it ("enter", "shift-up", "ctrl-b" …).
+    public pure function key-name(ev: KeyEvent) -> string {
+        if ev.text == Key.Return { return ev.modifiers.shift ? "shift-enter" : (ev.modifiers.control || ev.modifiers.meta) ? "ctrl-enter" : "enter"; }
+        if ev.text == Key.Backspace { return "backspace"; }
+        if ev.text == Key.Delete { return "delete"; }
+        if ev.text == Key.UpArrow { return ev.modifiers.shift ? "shift-up" : "up"; }
+        if ev.text == Key.DownArrow { return ev.modifiers.shift ? "shift-down" : "down"; }
+        if ev.text == Key.Escape { return "escape"; }
+        if ev.text == Key.Backtab { return "shift-tab"; }
+        if ev.text == Key.Tab { return ev.modifiers.shift ? "shift-tab" : "tab"; }
+        if ev.modifiers.control || ev.modifiers.meta {
+            if ev.modifiers.shift && (ev.text == "a" || ev.text == "A") { return "ctrl-shift-a"; }
+            if ev.modifiers.shift && (ev.text == "s" || ev.text == "S") { return "ctrl-shift-s"; }
+            if ev.text == "a" || ev.text == "A" { return "ctrl-a"; }
+            if ev.text == "b" || ev.text == "B" { return "ctrl-b"; }
+            if ev.text == "i" || ev.text == "I" { return "ctrl-i"; }
+            if ev.text == "u" || ev.text == "U" { return "ctrl-u"; }
+            if ev.text == "e" || ev.text == "E" { return "ctrl-e"; }
+            if ev.text == "k" || ev.text == "K" { return "ctrl-k"; }
+            if ev.text == "c" || ev.text == "C" { return "ctrl-c"; }
+            if ev.text == "v" || ev.text == "V" { return "ctrl-v"; }
+        }
+        return "";
+    }
+}
