@@ -51,6 +51,9 @@ pub(crate) struct Tab {
     gn: u64,
     // What the tab shows (the Slint global's properties).
     lib_loading: bool,
+    /// The library could not be loaded (the server unreachable, say): shown
+    /// with Retry instead of an empty library (F66; the web shows it empty).
+    lib_err: String,
     factories: Vec<Card>,
     templates: Vec<Tpl>,
     runs_loading: bool,
@@ -227,12 +230,15 @@ pub(crate) fn open_run_in_tab(id: &str, cx: &mut App) {
 fn load_library(cx: &mut App) {
     let gn = with(|s| { s.tab.gn += 1; s.tab.gn });
     crundi_shell::call(cx, |api| {
-        let f = api.get("/api/factories").unwrap_or_else(|_| json!({ "factories": [] }));
+        let f = match api.get("/api/factories") { Ok(v) => v, Err(e) => return Ok(json!({ "err": e.to_string() })) };
         let t = api.get("/api/factory-templates").unwrap_or_else(|_| json!({ "templates": [] }));
         Ok(json!({ "f": f, "t": t }))
     }, move |r, cx| {
-        let v = r.unwrap_or(Value::Null);
+        let v = match r { Ok(v) => v, Err(e) => json!({ "err": e }) };
         if with(|s| s.tab.gn != gn) { return; }
+        let err = s(&v, "err");
+        with(|st| st.tab.lib_err = if err.is_empty() { String::new() } else { format!("Could not load the factories: {err}") });
+        if !err.is_empty() { with(|st| st.tab.lib_loading = false); cx.refresh_windows(); return; }
         let list = arr(&v["f"], "factories").to_vec();
         let tpls = arr(&v["t"], "templates").to_vec();
         with(|s| s.tab.lib = Some((list, tpls)));
@@ -589,7 +595,13 @@ fn tab_page(window: &mut Window, cx: &mut App) -> AnyElement {
             if with(|s| s.tab.clean_loading) { body = body.child(note("note", "Looking for leftovers…")); } else { body = body.gap(T::SP_10).child(cleanup_body(window, cx)); }
         }
         _ => {
-            let (loading, cards, tpls) = with(|s| (s.tab.lib_loading, s.tab.factories.clone(), s.tab.templates.clone()));
+            let (loading, cards, tpls, err) = with(|s| (s.tab.lib_loading, s.tab.factories.clone(), s.tab.templates.clone(), s.tab.lib_err.clone()));
+            if !err.is_empty() {
+                let body = body.child(w::error_state("fx-retry", err, |_, _, cx| { with(|s| { s.tab.lib_err.clear(); s.tab.lib_loading = true; }); load_library(cx); cx.refresh_windows(); }));
+                return div().relative().flex().flex_col().size_full().min_h_0()
+                    .child(parts::probe("fx-tab", |_, _| {}))
+                    .child(head).child(body).into_any_element();
+            }
             let cols = lib_cols();
             body = body.child(div().relative().w_full().h(px(1.)).child(parts::probe("fx-lib", |_, _| {})));
             if loading { body = body.child(note("note", "Loading…")); }
@@ -718,7 +730,7 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
     let f = with(|s| json!({
         "view": s.tab.view, "sub": s.tab.sub, "subError": s.tab.sub_error, "badge": s.badge,
         "library": {
-            "loading": s.tab.lib_loading, "empty": s.tab.factories.is_empty(), "cols": lib_cols(),
+            "loading": s.tab.lib_loading, "error": s.tab.lib_err, "empty": s.tab.factories.is_empty(), "cols": lib_cols(),
             "factories": s.tab.factories.iter().map(|c| json!({ "id": c.id, "name": c.name, "runnable": c.runnable, "chip": c.chip, "desc": c.desc, "meta": c.meta })).collect::<Vec<_>>(),
             "templates": s.tab.templates.iter().map(|c| json!({ "id": c.id, "name": c.name, "team": c.team })).collect::<Vec<_>>(),
         },

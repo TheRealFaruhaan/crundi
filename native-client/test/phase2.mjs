@@ -141,7 +141,7 @@ const MIC_WAV = join(OUT, 'mic.wav');
 }
 function launch(tag) {
   const log = openSync(join(OUT, `native2-${tag}.log`), 'w');
-  return spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank', CRUNDI_TEST_MIC_WAV: MIC_WAV }, stdio: ['ignore', log, log] });
+  return spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank', CRUNDI_TEST_MIC_WAV: MIC_WAV, CRUNDI_TEST_UPLOAD_KBPS: '256' }, stdio: ['ignore', log, log] });
 }
 
 function driver() {
@@ -1213,7 +1213,9 @@ const notes = join(tmpA, 'notes.txt'); writeFileSync(notes, 'hello notes\n');
 const otherF = join(tmpA, 'other file.md'); writeFileSync(otherF, '# other\n');
 const emptyF = join(tmpA, 'empty.txt'); writeFileSync(emptyF, '');
 // Big enough that the upload is still under way when the test looks (the bar, attach busy).
-const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(12 * 1024 * 1024, 7));   // small enough to leave no mark (F54), big enough to watch
+// Small (it leaves no mark: F54); the app uploads at 256 KB/s under the test
+// (CRUNDI_TEST_UPLOAD_KBPS, given at launch), so it is under way for ~10 s (F64).
+const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(2 * 1024 * 1024, 7));
 const pic = join(tmpA, 'shot.png'); writeFileSync(pic, Buffer.from((await d.send({ cmd: 'snapshot' })).data, 'base64'));
 const liveA = await make('demo', 'Attach', false);
 const liveB2 = await make('demo', 'Attach two', false);
