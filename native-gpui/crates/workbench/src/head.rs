@@ -43,7 +43,8 @@ impl Workbench {
         }
         if chat {
             let badge = match i.state.as_str() { "working" => Some(("WORKING", "warn")), "needs-input" => Some(("NEEDS INPUT", "accent")), "waiting" => Some(("WAITING", "sky")), _ => None };
-            if let Some((b, tone)) = badge { row = row.child(w::tag(b, tone)); }
+            // The badge's words as the web's .term-state (11px bold, not the tag's 10px mono).
+            if let Some((b, tone)) = badge { row = row.child(w::tag(b, tone).font_family(T::UI_FONT).text_size(T::TEXT_11).font_weight(T::W_BOLD)); }
         }
         row = row.child(div().flex_1().min_w_0());
         row = row.child(self.tools(i, full, cx));

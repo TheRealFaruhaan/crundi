@@ -129,6 +129,7 @@ impl Render for Workbench {
         }
         // Full screen: the pane over the whole window.
         if let Some(i) = full.as_ref().and_then(|k| infos.iter().find(|i| &i.key == k)).cloned() {
+            let i = self.as_full(i, cx);
             let frame = self.pane_frame(&i, true, window, cx);
             root = root.child(deferred(anchored().position(point(px(0.), px(0.))).child(
                 div().occlude().w(vs.width).h(vs.height).bg(T::bg()).child(frame))).with_priority(1));

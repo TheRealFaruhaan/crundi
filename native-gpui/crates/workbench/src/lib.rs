@@ -284,6 +284,18 @@ impl Workbench {
         }
     }
 
+    /// A pane as drawn full screen: the header as wide as the window (the
+    /// long title when there is one, never folded).
+    pub(crate) fn as_full(&self, mut i: Info, cx: &App) -> Info {
+        let (short, long, _) = self.title_of(&i.key, cx);
+        let (title, cap) = rules::title_shown(&short, &long, self.win_size.0);
+        i.title = title;
+        i.cap = cap;
+        i.narrow = false;
+        i.menu = false;
+        i
+    }
+
     fn font_px(&self, id: &str) -> i32 { *self.font.get(id).unwrap_or(&self.font_default) }
 
     /// Every pane, laid out, as drawn and listed.
@@ -331,7 +343,12 @@ impl Workbench {
         let panes = self.panes(cx);
         let (gw, gh) = self.grid_size();
         let gutters = self.mosaic().layout(gw, gh).1;
-        let full = self.full.clone().map(|k| { let (vw, vh) = self.window_size(cx); json!({ "key": k, "w": vw, "h": vh }) }).unwrap_or(Value::Null);
+        let full = self.full.clone().map(|k| {
+            let (vw, vh) = self.window_size(cx);
+            let (short, long, _) = self.title_of(&k, cx);
+            let (title, cap) = rules::title_shown(&short, &long, vw);
+            json!({ "key": k, "w": vw, "h": vh, "title": title, "titleMax": cap })
+        }).unwrap_or(Value::Null);
         let mut v = json!({
             "panes": panes, "full": full, "dragOn": self.drag.is_some(), "addMenu": self.add_menu,
             "lockedGutters": gutters.iter().filter(|g| g.locked).count(),
