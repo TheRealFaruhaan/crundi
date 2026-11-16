@@ -11,6 +11,9 @@ use gpui::*;
 use serde_json::json;
 
 pub fn init(cx: &mut App) {
+    // The chat composer's part (Planning's, phase 2). The app doesn't call it yet
+    // (shared/requests.md); planning registers it meanwhile.
+    crundi_chat_composer::init(cx);
     crundi_shell::register(cx, Area::new("planning")
         .tabs(&["kanban", "notes", "mindmap", "factories", "schedule"], |tab, _, _| w::empty(format!("{} comes with phases 3 to 6 of the GPUI client.", crundi_shell::registry::tab_label(tab))).into_any_element())
         .test_ui(|name, _, _, _| match name {

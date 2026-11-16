@@ -29,6 +29,17 @@ use gpui_component::{
 
 pub use crundi_theme::IconName;
 pub use gpui_component::input::{Input, InputEvent, InputState};
+pub mod square; pub use square::{square_button, SquareLook};
+pub mod textarea; pub use textarea::{textarea, Textarea, TextareaState};
+pub mod dropdown; pub use dropdown::dropdown;
+pub mod tip; pub use tip::tip;
+pub mod tone_button; pub use tone_button::tone_button;
+pub mod stop_button; pub use stop_button::stop_button;
+pub mod choice_row; pub use choice_row::choice_row;
+pub mod suggest_row; pub use suggest_row::suggest_row;
+pub mod overlay; pub use overlay::{overlay_modal, modal_head, Modal};
+pub mod queue_drawer; pub use queue_drawer::{queue_drawer, Drawer};
+pub mod send_button; pub use send_button::send_button;
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};

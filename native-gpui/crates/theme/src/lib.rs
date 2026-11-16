@@ -145,6 +145,23 @@ impl T {
     // ── workspace ──
     // ── end workspace ──
     // ── planning ──
+    /// secrets (2.12): the dialog's pick list stops here and scrolls.
+    pub const SEC_PICK_MAX_H: Pixels = px(240.);
+    /// secrets (2.12): a ticked secret's PIN or passphrase field.
+    pub const SEC_LOCK_FIELD_W: Pixels = px(150.);
+    /// secrets (2.12b): a request card's command box stops here and scrolls.
+    pub const SREQ_CMD_MAX_H: Pixels = px(140.);
+    /// media (2.7, 2.24): the faded look (attach while uploading; the Slint o-soft).
+    pub const MEDIA_O_SOFT: f32 = 0.6;
+    /// media (2.24): the recording dot's off half of a blink (the Slint o-dim).
+    pub const MEDIA_O_DIM: f32 = 0.4;
+    // The composer (2.5-2.11; colours named here by the composer, for the
+    // Lead to review, shared/requests.md): the queue drawers' fills and
+    // edges (slate at 9% / 45%, accent at 10%), Plan mode's sky edge.
+    pub fn composer_slate_haze() -> Hsla { rgba(0x94a3b817).into() }
+    pub fn composer_slate_edge() -> Hsla { rgba(0x94a3b873).into() }
+    pub fn composer_accent_haze() -> Hsla { rgba(0x6366f11a).into() }
+    pub fn composer_sky_edge() -> Hsla { rgba(0x38bdf866).into() }
     // ── end planning ──
     // ── operations ──
     // ── end operations ──
