@@ -16,3 +16,8 @@ crundi-theme.workspace = true
 crundi-widgets.workspace = true
 crundi-chat-model.workspace = true
 crundi-shell.workspace = true
+crundi-workbench.workspace = true
+# media (2.7 attachments, 2.10 schedule, 2.24 voice):
+base64.workspace = true
+chrono.workspace = true
+rfd.workspace = true
