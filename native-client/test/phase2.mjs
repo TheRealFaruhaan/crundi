@@ -1258,7 +1258,7 @@ if (p) check('a big file uploads and its path goes in', true);
 // keeps about two thirds of the bar's room.
 {
   const longF = join(tmpA, 'quarterly-report-final-version-with-all-the-appendices-and-the-notes-included.bin');
-  writeFileSync(longF, Buffer.alloc(12 * 1024 * 1024, 7));
+  writeFileSync(longF, Buffer.alloc(2 * 1024 * 1024, 7));   // 2 MB like big.bin: at the test's 256 KB/s upload it finishes in ~10 s (F76)
   await clearBox();
   await ui('attach', longF);
   p = await until('the long-named upload shows its bar', (q) => pane(q, liveA)?.upOn && pane(q, liveA)?.upBusy, 10000);
