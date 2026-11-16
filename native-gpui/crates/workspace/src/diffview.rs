@@ -49,18 +49,18 @@ impl DiffWin {
     /// says so and goes quiet, and Git loads again.
     pub fn stage(&mut self, chunk: usize, cx: &mut Context<Self>) {
         let win = self.window;
-        let Some(ch) = self.chunks.get(chunk).cloned() else { return crate::toast(win, "Invalid chunk".into(), w::Toast::Error, cx) };
+        let Some(ch) = self.chunks.get(chunk).cloned() else { return crate::toast(cx, "Invalid chunk".into(), w::Toast::Error) };
         let patch = diff::chunk_patch(&self.file, &self.ops, &ch);
         let project = self.project.clone();
         let me = cx.entity().downgrade();
         crundi_shell::call(cx, move |api| api.post("/api/git/stageHunk", &json!({ "project": project, "patch": patch })), move |r, cx| match r {
             Ok(d) if d.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) => {
-                crate::toast(win, format!("Chunk {} staged", chunk + 1), w::Toast::Success, cx);
+                crate::toast(cx, format!("Chunk {} staged", chunk + 1), w::Toast::Success);
                 let _ = me.update(cx, |w, cx| { w.staged.insert(chunk); cx.notify(); });
                 if let Some(g) = crate::git::view(cx) { g.update(cx, |g, cx| g.load(cx)); }
             }
-            Ok(d) => { let e = d.get("error").and_then(|e| e.as_str()).unwrap_or("unknown").to_string(); crate::toast(win, format!("Stage failed: {e}"), w::Toast::Error, cx) }
-            Err(e) => crate::toast(win, format!("Error: {e}"), w::Toast::Error, cx),
+            Ok(d) => { let e = d.get("error").and_then(|e| e.as_str()).unwrap_or("unknown").to_string(); crate::toast(cx, format!("Stage failed: {e}"), w::Toast::Error) }
+            Err(e) => crate::toast(cx, format!("Error: {e}"), w::Toast::Error),
         });
     }
 

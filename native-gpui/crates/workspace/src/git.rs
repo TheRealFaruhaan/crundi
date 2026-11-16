@@ -64,7 +64,7 @@ impl GitView {
     }
 
     pub(crate) fn toast(&self, text: String, error: bool, cx: &mut App) {
-        crate::toast(self.window, text, if error { w::Toast::Error } else { w::Toast::Success }, cx);
+        crate::toast(cx, text, if error { w::Toast::Error } else { w::Toast::Success });
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -155,7 +155,7 @@ impl GitView {
         let win = self.window;
         crundi_shell::call(cx, move |api| api.get(&path), move |r, cx| match r {
             Ok(v) if v.get("ok").is_some_and(truthy) => diffview::open(win, &project, &f, &s(&v, "old"), &s(&v, "new"), cx),
-            _ => crate::toast(win, "Failed to load diff".into(), w::Toast::Error, cx),
+            _ => crate::toast(cx, "Failed to load diff".into(), w::Toast::Error),
         });
     }
 
@@ -171,11 +171,11 @@ impl GitView {
             match r {
                 Ok(v) if v.get("ok").is_some_and(truthy) => {
                     if let Some(h) = win { let _ = cx.update_window(h, |_, window, cx| input.update(cx, |st, cx| st.set_value("", window, cx))); }
-                    crate::toast(win, "Committed".into(), w::Toast::Success, cx);
+                    crate::toast(cx, "Committed".into(), w::Toast::Success);
                     let _ = me.update(cx, |g, cx| g.load(cx));
                 }
-                Ok(v) => { let e = s(&v, "error"); crate::toast(win, format!("Commit failed: {}", if e.is_empty() { "unknown".into() } else { e }), w::Toast::Error, cx) }
-                Err(e) => crate::toast(win, format!("Commit failed: {e}"), w::Toast::Error, cx),
+                Ok(v) => { let e = s(&v, "error"); crate::toast(cx, format!("Commit failed: {}", if e.is_empty() { "unknown".into() } else { e }), w::Toast::Error) }
+                Err(e) => crate::toast(cx, format!("Commit failed: {e}"), w::Toast::Error),
             }
         });
     }

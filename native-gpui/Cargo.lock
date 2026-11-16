@@ -1717,6 +1717,7 @@ dependencies = [
 name = "crundi-workspace"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",
@@ -1725,6 +1726,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "rfd",
  "serde_json",
 ]
 
