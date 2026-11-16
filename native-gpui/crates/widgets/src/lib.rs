@@ -398,15 +398,38 @@ pub struct Confirm { pub title: SharedString, pub message: SharedString, pub ok:
 /// Ask first (the web's confirm()): `on_ok` runs on OK; Cancel, Esc or the
 /// scrim close it. One dialog layer for the whole window (gpui-component's Root).
 pub fn confirm(window: &mut Window, cx: &mut App, c: Confirm, on_ok: impl Fn(&mut Window, &mut App) + 'static) {
-    let on_ok = std::rc::Rc::new(on_ok);
+    let on_ok: std::rc::Rc<dyn Fn(&mut Window, &mut App)> = std::rc::Rc::new(on_ok);
+    // Kept for the test driver: its title, and OK (answer_dialog).
+    cx.set_global(OpenConfirm(Some((c.title.clone(), on_ok.clone()))));
     window.open_alert_dialog(cx, move |d, _, _| {
         let on_ok = on_ok.clone();
         d.confirm()
             .title(c.title.clone())
             .description(c.message.clone())
             .button_props(DialogButtonProps::default().ok_text(c.ok.clone()).ok_variant(variant(c.danger)))
-            .on_ok(move |_, w, cx| { on_ok(w, cx); true })
+            .on_ok(move |_, w, cx| { cx.set_global(OpenConfirm(None)); on_ok(w, cx); true })
+            .on_cancel(|_, _, cx| { cx.set_global(OpenConfirm(None)); true })
     });
+}
+
+/// The confirm on show (its title and OK), for the test driver.
+#[derive(Default)]
+struct OpenConfirm(Option<(SharedString, std::rc::Rc<dyn Fn(&mut Window, &mut App)>)>);
+impl Global for OpenConfirm {}
+
+/// The open confirm's title ("" when none), for the test driver.
+pub fn dialog_title(window: &mut Window, cx: &mut App) -> SharedString {
+    if !window.has_active_dialog(cx) { return SharedString::default(); }
+    cx.try_global::<OpenConfirm>().and_then(|c| c.0.as_ref().map(|x| x.0.clone())).unwrap_or_default()
+}
+
+/// The test driver's answer: OK on a confirm runs its action; else the
+/// dialog on top closes (Cancel, Esc).
+pub fn answer_dialog(window: &mut Window, cx: &mut App, ok: bool) {
+    let open = cx.try_global::<OpenConfirm>().and_then(|c| c.0.clone()).filter(|_| window.has_active_dialog(cx));
+    cx.set_global(OpenConfirm(None));
+    close_dialog(window, cx);
+    if ok { if let Some((_, f)) = open { f(window, cx); } }
 }
 
 /// Close the dialog on top (the test driver's Cancel, Esc).

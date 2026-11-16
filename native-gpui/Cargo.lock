@@ -1597,10 +1597,12 @@ dependencies = [
  "crundi-webview",
  "crundi-widgets",
  "crundi-workbench",
+ "gethostname",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
  "image",
+ "open",
  "serde_json",
  "tungstenite",
 ]

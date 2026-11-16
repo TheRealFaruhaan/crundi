@@ -299,6 +299,21 @@ impl T {
     pub const DRAWER_NOTE_W: Pixels = px(240.);
     /// A hidden browser's screenshot on the Browsers tab, at its tallest.
     pub const SHOT_H: Pixels = px(150.);
+    /// The Inbox: the threads' width, a message's widest, a picture's tallest,
+    /// and how strong a thread's colour is behind its glyph.
+    pub const INBOX_LIST_W: Pixels = px(360.);
+    pub const INBOX_MSG_W: Pixels = px(760.);
+    pub const INBOX_PIC_H: Pixels = px(240.);
+    pub const INBOX_TINT: f32 = 0.3;
+    /// Cru's screen: its width and tallest, the field and the head in it,
+    /// a bubble's widest, the chat view's height, and its place from the right.
+    pub const CRU_W: Pixels = px(420.);
+    pub const CRU_H: Pixels = px(760.);
+    pub const CRU_FIELD: Pixels = px(120.);
+    pub const CRU_HEAD: Pixels = px(60.);
+    pub const CRU_TURN_W: Pixels = px(336.);
+    pub const CRU_CHAT_H: Pixels = px(260.);
+    pub const CRU_RIGHT: Pixels = px(192.);
     // ── end desktop ──
 }
 

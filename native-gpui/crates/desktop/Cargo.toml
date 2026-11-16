@@ -22,3 +22,5 @@ tungstenite.workspace = true
 base64.workspace = true
 chrono.workspace = true
 image.workspace = true
+open.workspace = true
+gethostname.workspace = true

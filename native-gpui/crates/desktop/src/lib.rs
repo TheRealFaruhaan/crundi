@@ -15,8 +15,14 @@
 
 mod browsers;
 mod ctx;
+mod cru;
+mod cru_ui;
+pub mod homepool;
 pub mod drawer;
 mod host;
+mod inbox;
+mod inbox_ui;
+mod notify;
 mod marks;
 mod passwords;
 mod pointer;
@@ -32,7 +38,7 @@ use std::{cell::RefCell, rc::Rc};
 pub use ui::BrowserDrawer;
 
 /// The drawer and the Browsers tab's page, for the pump.
-pub struct DrawerHandle(pub Entity<BrowserDrawer>, pub Entity<browsers::BrowsersPage>);
+pub struct DrawerHandle(pub Entity<BrowserDrawer>, pub Entity<browsers::BrowsersPage>, pub Entity<inbox_ui::InboxPage>, pub Entity<cru_ui::CruScreen>);
 impl Global for DrawerHandle {}
 
 /// Make the drawer and register it, the area and the native host (once,
@@ -51,18 +57,27 @@ pub fn init(window: &mut Window, cx: &mut App) {
     drawer::init();
     let view = cx.new(|cx| BrowserDrawer::new(window, cx));
     let bpage = cx.new(|cx| browsers::BrowsersPage::new(window, cx));
-    cx.set_global(DrawerHandle(view.clone(), bpage.clone()));
+    let ipage = cx.new(inbox_ui::InboxPage::new);
+    let cscreen = cx.new(|cx| cru_ui::CruScreen::new(window, cx));
+    crundi_shell::register_overlay(cx, cscreen.clone().into());
+    homepool::init();
+    cx.set_global(DrawerHandle(view.clone(), bpage.clone(), ipage.clone(), cscreen));
     crundi_shell::register_drawer(cx, Drawer {
         view: view.into(),
         has_pages: Rc::new(|_| drawer::with(|d| d.projects.get(&d.project.to_lowercase()).is_some_and(|p| !p.tabs.is_empty()))),
     });
     crundi_shell::register(cx, Area::new("desktop")
-        .tabs(&["browsers"], move |_, _, _| bpage.clone().into_any_element())
-        .on_tab(|tab, _| if tab == "browsers" { browsers::load(); })
+        .tabs(&["browsers", "inbox"], move |tab, _, _| if tab == "inbox" { ipage.clone().into_any_element() } else { bpage.clone().into_any_element() })
+        .on_tab(|tab, _| match tab { "browsers" => browsers::load(), "inbox" => inbox::load(), _ => {} })
         .on_project(|alias, _| drawer::set_project(alias))
         .on_signed_in(|cx| signed_in(cx))
-        .on_signed_out(|_| drawer::close())
-        .on_event(|e, _| if let AreaEvent::Connected(true) = e { drawer::render(); })
+        .on_signed_out(|_| { drawer::close(); inbox::signed_out(); })
+        .on_event(|e, _| match e {
+            AreaEvent::Connected(true) => { drawer::render(); inbox::load(); cru::load_unread(); }
+            AreaEvent::Ws("voice-report", v) => cru::report(v),
+            AreaEvent::Server("inbox", v) => inbox::event(v),
+            _ => {}
+        })
         .test_ui(|name, args, window, cx| { refresh(window, cx); test_ui(name, args) })
         .props(|_, _| json!({ "areas": { "desktop": props() } })));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
@@ -75,10 +90,13 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     refresh(window, cx);
     host::pump();
     for f in ctx::take_effects() { f(window, cx); }
-    if let Some((d, b)) = cx.try_global::<DrawerHandle>().map(|d| (d.0.clone(), d.1.clone())) {
+    notify::pump();
+    for f in ctx::take_main() { f(); }
+    if let Some((d, b, i, c)) = cx.try_global::<DrawerHandle>().map(|d| (d.0.clone(), d.1.clone(), d.2.clone(), d.3.clone())) {
         let dirty = ctx::take_dirty();
         d.update(cx, |d, cx| d.pump(dirty, window, cx));
-        if dirty { b.update(cx, |_, cx| cx.notify()); }
+        c.update(cx, |c, cx| c.pump(window, cx));
+        if dirty { b.update(cx, |_, cx| cx.notify()); i.update(cx, |_, cx| cx.notify()); c.update(cx, |_, cx| cx.notify()); }
     }
 }
 
@@ -87,7 +105,7 @@ fn refresh(_window: &mut Window, cx: &mut App) {
     let s = crundi_shell::session::get(cx);
     let mut c = ctx::Ctx {
         signed_in: s.api.is_some(), base: s.server.clone(), project: s.project.clone(),
-        projects: s.projects.clone(), terminals: s.terminals.clone(), tab: crundi_shell::current_tab(cx), ..Default::default()
+        projects: s.projects.clone(), terminals: s.terminals.clone(), tab: crundi_shell::current_tab(cx), api: s.api.clone(), ..Default::default()
     };
     c.panes = crundi_workbench::workbench(cx).map(|wb| wb.update(cx, |wb, cx| wb.panes(cx))).unwrap_or_default()
         .iter().filter_map(|p| p.get("key").and_then(|k| k.as_str()).map(str::to_string)).collect();
@@ -121,13 +139,20 @@ fn host_down() {
 /// A hidden browser opened or closed: the Browsers tab, when shown, loads again.
 fn hidden_changed() { browsers::reload_soon(); }
 
-/// The server's notification for this PC (phase 6.1 shows it): kept for the driver.
-fn notify(p: &Value) {
-    NOTIFIED.with(|n| n.borrow_mut().push(json!({ "title": ctx::s(p, "title"), "body": ctx::s(p, "body"), "url": ctx::s(p, "url") })));
+/// The server's notification for this PC: the system's (notify.rs).
+fn notify(p: &Value) { notify::from_server(p); }
+
+/// Go to a chat (a notification's click, the Inbox's Open chat): its
+/// project, the workbench. (Focusing its composer waits for the chats'
+/// focus_composer, shared/requests.md.)
+fn go_to_chat(chat: &str) {
+    let c = ctx::get();
+    let project = c.terminals.iter().find(|t| ctx::s(t, "id") == chat).map(|t| ctx::s(t, "project")).unwrap_or_default();
+    if !project.is_empty() && !project.eq_ignore_ascii_case(&c.project) { ctx::select_project(&project); }
+    ctx::show_tab("workbench");
 }
 
 thread_local! {
-    static NOTIFIED: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
     /// The driver's evals: the last token, and the answers by token.
     static EVALS: RefCell<(u64, serde_json::Map<String, Value>)> = RefCell::new((0, serde_json::Map::new()));
 }
@@ -150,7 +175,7 @@ fn hp_available() -> bool { false }
 fn hp_has_key() -> bool { false }
 fn hp_exit_up(_net: &str) -> bool { false }
 fn exit_text(_net: &str) -> String { "checking…".into() }
-fn cru_available() -> bool { false }
+fn cru_available() -> bool { cru::available() }
 
 // ─── The test driver ───
 
@@ -188,6 +213,19 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
             let r = web::engine::mouse(i, a(1).parse().unwrap_or(0.0), a(2).parse().unwrap_or(0.0), "click");
             Some(json!({ "ok": r.is_ok() }))
         }
+        "inbox" => { inbox::open_page(); ok() }
+        "inbox-open" => { inbox::open_thread(&a(0)); ok() }
+        "inbox-mark-all" => { inbox::mark_all(); ok() }
+        "inbox-mark-read" => { inbox::mark_read(); ok() }
+        "inbox-delete-thread" => { inbox::delete_thread(); ok() }
+        "inbox-delete" => { inbox::delete_item(&a(0)); ok() }
+        "inbox-open-chat" => { inbox::open_chat(); ok() }
+        "notify-click" => { notify::clicked(&a(0)); ok() }
+        "cru" => { cru::toggle(); ok() }
+        "cru-keyboard" => { cru::set_keyboard(a(0) != "false"); ok() }
+        "cru-send" => { cru::ask(&a(0), true); ok() }
+        "cru-menu" => { cru::menu_pick(&a(0)); ok() }
+        "homepool-status" => Some(json!({ "ok": true, "status": homepool::status() })),
         "browsers-open" => { browsers::open(&a(0)); ok() }
         "browsers-shot" => { browsers::shot(&a(0)); ok() }
         "browsers-go" => { browsers::go(&a(0), &a(1)); ok() }
@@ -213,7 +251,7 @@ fn props() -> Value {
     json!({
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "notifications": NOTIFIED.with(|n| Value::Array(n.borrow().clone())), "hidden": hidden,
+        "inbox": inbox::props(), "cru": cru::props(), "homepool": homepool::status(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
     })
 }

@@ -21,6 +21,8 @@ pub struct Ctx {
     pub panes: Vec<String>,
     pub focused: String,
     pub tab: String,
+    /// The signed-in server's API (a clone: cheap).
+    pub api: Option<crundi_core::api::Api>,
 }
 
 type Effect = Box<dyn FnOnce(&mut Window, &mut App)>;
@@ -75,3 +77,32 @@ pub fn enc(s: &str) -> String {
     }
     o
 }
+
+/// Show a project tab (or the Inbox's page, "inbox").
+pub fn show_tab(tab: &str) {
+    let t = tab.to_string();
+    on_app(move |_, cx| if let Some(s) = crundi_shell::shell(cx) { s.update(cx, |s, cx| s.show_tab(&t, cx)); });
+}
+
+/// Open another project.
+pub fn select_project(alias: &str) {
+    let a = alias.to_string();
+    on_app(move |_, cx| crundi_shell::session::select_project(cx, &a));
+}
+
+/// Work with the signed-in API off the UI thread (bytes, say); `done` back on it.
+pub fn bg<T: Send + 'static>(work: impl FnOnce(&crundi_core::api::Api) -> T + Send + 'static, done: impl FnOnce(T) + 'static) {
+    on_app(move |_, cx| {
+        let Some(api) = crundi_shell::api(cx) else { return };
+        crundi_shell::run(cx, move || work(&api), move |r, _| done(r));
+    });
+}
+
+/// Bring the window to the front (a notification's click).
+pub fn raise() { on_app(|win, _| win.activate_window()); }
+
+/// Calls from other threads (the microphone's, the speaker's), run on the
+/// main thread at the next pump.
+static MAIN: std::sync::Mutex<Vec<Box<dyn FnOnce() + Send>>> = std::sync::Mutex::new(Vec::new());
+pub fn main_thread(f: impl FnOnce() + Send + 'static) { MAIN.lock().unwrap().push(Box::new(f)); }
+pub fn take_main() -> Vec<Box<dyn FnOnce() + Send>> { std::mem::take(&mut *MAIN.lock().unwrap()) }

@@ -116,6 +116,9 @@ pub struct Areas {
     pub drawer: Option<Drawer>,
     /// The project bar's "+" by Workbench (the workbench's add menu).
     pub add_menu: Option<Rc<dyn Fn(&mut App)>>,
+    /// A part's layer over the whole window, not modal (Desktop's Cru
+    /// screen): it draws only what it shows, positioned absolutely.
+    pub overlays: Vec<AnyView>,
 }
 
 impl Global for Areas {}
@@ -145,6 +148,16 @@ pub fn register_add_menu(cx: &mut App, f: impl Fn(&mut App) + 'static) {
 pub fn add_menu(cx: &mut App) {
     if let Some(f) = cx.try_global::<Areas>().and_then(|a| a.add_menu.clone()) { f(cx); }
 }
+
+/// Register a layer drawn over the whole window (a part's popover that is
+/// not modal: Desktop's Cru screen). Added by Desktop, for the Lead to review.
+pub fn register_overlay(cx: &mut App, view: AnyView) {
+    if !cx.has_global::<Areas>() { cx.set_global(Areas::default()); }
+    cx.global_mut::<Areas>().overlays.push(view);
+}
+
+/// The layers over the window, for the shell to draw.
+pub(crate) fn overlays(cx: &App) -> Vec<AnyView> { cx.try_global::<Areas>().map(|a| a.overlays.clone()).unwrap_or_default() }
 
 /// Register the browser drawer's view (Desktop, once).
 pub fn register_drawer(cx: &mut App, drawer: Drawer) {
