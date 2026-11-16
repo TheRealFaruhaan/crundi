@@ -367,7 +367,12 @@ impl Render for ComposerView {
         // menu's (↑ ↓ Enter Tab Esc) and ↑'s take-back come before the box's.
         let the_box = if recording { voice::rec_box(self, window, cx) } else {
             div().flex_1().min_w_0().when(exited, |d| d.opacity(0.5))
-                .capture_action(cx.listener(|this, _: &Enter, window, cx| if slash::enter(this, window, cx) { cx.stop_propagation(); }))
+                .capture_action(cx.listener(|this, a: &Enter, window, cx| {
+                    if slash::enter(this, window, cx) { cx.stop_propagation(); return; }
+                    // The Enter that would send, in a blank box: nothing happens (no
+                    // send, no newline), as the web's (2.5).
+                    if !a.shift && a.secondary == ctrl_enter(cx) && this.text(cx).trim().is_empty() { cx.stop_propagation(); }
+                }))
                 .capture_action(cx.listener(|this, _: &IndentInline, window, cx| if slash::enter(this, window, cx) { cx.stop_propagation(); }))
                 .capture_action(cx.listener(|this, _: &MoveUp, window, cx| if slash::step(this, -1, cx) || queue::up(this, window, cx) { cx.stop_propagation(); }))
                 .capture_action(cx.listener(|this, _: &MoveDown, _, cx| if slash::step(this, 1, cx) { cx.stop_propagation(); }))
@@ -382,10 +387,13 @@ impl Render for ComposerView {
         let send = if recording {
             div().flex().items_center().gap(T::SP_8).when(narrow, |d| d.flex_1()).child(voice::strip(self, window, cx)).child(voice::cancel_x(self, window, cx)).into_any_element()
         } else {
-            // One Send in every state (the owner, 16 Nov): the shared button at
-            // the control height, beside (or under) the box, never stretched.
-            w::send_button("send", if busy { "Queue" } else { "Send" }, fs)
-                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))).into_any_element()
+            // One Send control in every state (the owner, 16 Nov): the shared
+            // button at the control height. Wide, it sits beside the box at its
+            // own width; narrow (stacked), Send / Queue fills the rest of the
+            // row under the box (specs/composer.md, web-narrow).
+            let b = w::send_button("send", if busy { "Queue" } else { "Send" }, fs)
+                .on_click(cx.listener(|this, _, window, cx| this.send(window, cx)));
+            if narrow { div().flex_1().flex().child(b.w_full()).into_any_element() } else { b.into_any_element() }
         };
         let mic = voice::mic(self, window, cx);
         let attach_btn = attach::button(self, window, cx);
@@ -451,13 +459,38 @@ pub fn composer(cx: &App, chat: &str) -> Option<Entity<ComposerView>> {
 }
 
 /// A chat's pane fields (for the workbench's pane list; see shared/requests.md).
+thread_local! {
+    /// Set while the composer lists the workbench's panes for itself: the
+    /// workbench then asks every pane-props hook, and ours must not read a
+    /// composer that may be in the middle of an update (GPUI panics).
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The workbench's panes (keys, focus, sizes) without the composer's own
+/// pane fields: what the composer's code uses inside its updates.
+pub(crate) fn wb_panes(cx: &mut App) -> Vec<Value> {
+    QUIET.with(|q| q.set(true));
+    let r = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default();
+    QUIET.with(|q| q.set(false));
+    r
+}
+
 pub fn pane_props(chat: &str, cx: &App) -> Value {
-    composer(cx, chat).map(|c| c.read(cx).pane_props(cx)).unwrap_or_else(|| json!({}))
+    if QUIET.with(|q| q.get()) { return json!({}); }
+    if let Some(c) = composer(cx, chat) { return c.read(cx).pane_props(cx); }
+    // Its pane isn't drawn yet: the same fields, from the chat's model.
+    let (sid, model, cost) = crundi_chat_model::find(cx, chat).map(|m| { let m = m.read(cx); (m.conv.session_id.clone(), m.conv.model.clone(), m.conv.cost) }).unwrap_or_default();
+    json!({
+        "draft": "", "state": chat_state(cx, chat, false),
+        "session": sid.chars().take(8).collect::<String>(), "sessionFull": sid, "model": model,
+        "cost": if cost > 0.0 { format!("${cost:.4}") } else { String::new() },
+        "stopArmed": false,
+    })
 }
 
 /// The chat in the focused pane (else the first chat pane).
 pub fn focused_chat(cx: &mut App) -> String {
-    let panes = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default();
+    let panes = crate::wb_panes(cx);
     let chat = |p: &Value| p.get("key").and_then(|k| k.as_str()).and_then(|k| k.strip_prefix("live:")).map(String::from);
     panes.iter().find(|p| p.get("focused") == Some(&json!(true))).and_then(chat).or_else(|| panes.iter().find_map(chat)).unwrap_or_default()
 }
@@ -470,6 +503,10 @@ pub fn init(cx: &mut App) {
     attach::init(cx); voice::init(cx); // media: attach's window state; voice's area (mic-*, voice-say) and pump
     secrets::init(cx); sreq::init(cx); // secrets: their own areas (chat-secrets, sreq): live events, sec-*/sreq-* actions, props
     mode::init(cx);
+    // The chat panes' fields in the driver's pane list, and the header's lock
+    // opening this chat's secrets dialog (the workbench's hooks).
+    crundi_workbench::register_pane_props(cx, "live:", |key, cx| pane_props(key.trim_start_matches("live:"), cx));
+    crundi_workbench::set_on_secrets(cx, |chat, window, cx| secrets::open(chat, window, cx));
     cx.on_app_quit(|cx| { drafts::flush(cx); async {} }).detach();
     crundi_shell::register(cx, Area::new("composer")
         .on_event(|e, cx| if let AreaEvent::State(_) = e { drafts::sync(cx); })

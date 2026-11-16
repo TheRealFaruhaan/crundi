@@ -524,7 +524,7 @@ pub fn props(_c: &ComposerView, cx: &App) -> Value {
 
 /// The chat of a pane, by its leaf id (the driver's sec-open).
 fn chat_of_leaf(leaf: &str, cx: &mut App) -> Option<String> {
-    let panes = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default();
+    let panes = crate::wb_panes(cx);
     panes.iter().find(|p| p.get("id").map(|i| i.to_string()) == Some(leaf.to_string()))
         .and_then(|p| p.get("key").and_then(|k| k.as_str()).and_then(|k| k.strip_prefix("live:")).map(String::from))
 }

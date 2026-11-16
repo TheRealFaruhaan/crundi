@@ -103,7 +103,7 @@ pub fn restore_if_needed(c: &mut ComposerView, window: &mut Window, cx: &mut Con
 /// The chat panes on screen now: a composer whose pane went lets its claim
 /// go (and takes its draft back when it is drawn again).
 pub fn sync(cx: &mut App) {
-    let on: HashSet<String> = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default().iter()
+    let on: HashSet<String> = crate::wb_panes(cx).iter()
         .filter_map(|p| p.get("key").and_then(|k| k.as_str()).and_then(|k| k.strip_prefix("live:")).map(String::from)).collect();
     let all: Vec<(String, Entity<ComposerView>)> = cx.try_global::<crate::Composers>().map(|c| c.0.iter().filter_map(|(k, w)| w.upgrade().map(|e| (k.clone(), e))).collect()).unwrap_or_default();
     for (chat, e) in all {

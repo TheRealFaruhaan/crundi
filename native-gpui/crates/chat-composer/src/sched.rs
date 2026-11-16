@@ -195,7 +195,7 @@ pub fn render(c: &mut ComposerView, _window: &mut Window, cx: &mut Context<Compo
     let sc = &c.sched;
     let chat = c.chat_id(cx);
     // Its tallest: 82% of the pane (Slint's sched-share).
-    let pane_h = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default().iter()
+    let pane_h = crate::wb_panes(cx).iter()
         .find(|p| p.get("key").and_then(|k| k.as_str()) == Some(&format!("live:{chat}"))).and_then(|p| p.get("h")).and_then(|h| h.as_f64()).unwrap_or(600.0) as f32;
     // Above the composer (its bottom on the composer's top): the pane less
     // its head, the composer and a gap, at most 82% of the pane (Slint's sched-share).
@@ -231,7 +231,7 @@ pub fn render(c: &mut ComposerView, _window: &mut Window, cx: &mut Context<Compo
             .child(trig("sched-limit", "Limit resets", "limit-reset", limit_off, cx)))
         .when(sc.trigger == "time", |d| d.child(w::input(&at)))
         .when(!sc.note.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(sc.note.clone())))
-        .child(w::disabled(w::primary("sched-save", "Schedule"), unsupported).w_full().on_click(cx.listener(|this, _, _, cx| save(this, cx))))
+        .child(w::disabled(w::primary("sched-save", "Schedule"), unsupported).w_full().flex_none().h(T::CONTROL_SM).on_click(cx.listener(|this, _, _, cx| save(this, cx))))
         .child(w::rule())
         .child(list);
     // Drawn after the composer's own row (deferred), so the box never shows through.
