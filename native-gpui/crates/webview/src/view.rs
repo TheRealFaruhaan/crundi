@@ -85,7 +85,7 @@ impl PageView {
 /// A mark's colour: a chat's in the accent, yours in the annotate colour.
 fn mark_color(a: &Ann) -> Hsla { if a.by == "claude" { T::accent() } else { T::annotate() } }
 
-fn cursor_style(kind: i32) -> CursorStyle {
+pub(crate) fn cursor_style(kind: i32) -> CursorStyle {
     match kind {
         1 => CursorStyle::PointingHand,
         2 => CursorStyle::IBeam,

@@ -9,7 +9,7 @@
 //   NATIVE_BIN=$BIN xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/desktop.mjs
 //
 // (CRUNDI_TEST_SERVER=http://localhost:<port> CRUNDI_TEST_PORT=<port> for
-// other ports.) ONLY=drawer,host,inbox runs some parts.
+// other ports.) ONLY=drawer,host,inbox,cru,passwords,tray,node runs some parts.
 
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -22,6 +22,10 @@ const part = (p) => !ONLY.length || ONLY.includes(p);
 // a login form; its title says which path it is.
 const page = http.createServer((req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  // A sign-in form (saved passwords): it posts to /welcome, which has none.
+  if (req.url.startsWith('/login')) return res.end(`<!doctype html><title>login</title><body style="font:16px sans-serif;margin:20px">
+<form action="/welcome" method="post"><input id=u name=u type=text placeholder=Email><input id=p name=p type=password placeholder=Password><button id=go type=submit>Sign in</button></form>`);
+  if (req.url.startsWith('/welcome')) return res.end('<!doctype html><title>welcome</title><body style="font:16px sans-serif;margin:20px">Welcome back.');
   res.end(`<!doctype html><meta name=viewport content="width=device-width"><title>page ${req.url}</title>
 <body style="font:16px sans-serif;margin:20px">
 <button id=b style="position:absolute;left:40px;top:80px;width:160px;height:50px" onclick="this.textContent='clicked '+(++window.n)">Click me</button>
@@ -32,6 +36,9 @@ const page = http.createServer((req, res) => {
 await new Promise((r) => page.listen(0, '127.0.0.1', r));
 const PAGE = `http://127.0.0.1:${page.address().port}`;
 
+// Saved passwords under the test driver: no desktop keyring here, so the
+// app takes its key from CRUNDI_PW_TEST_KEY (honoured only with the driver on).
+process.env.CRUNDI_PW_TEST_KEY ||= Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 const T = await t.begin('desktop');
 const D = (p) => p.areas.desktop;
 const dr = (p) => D(p).drawer;
@@ -252,6 +259,64 @@ if (part('cru')) {
   await T.snap('cru-open');
   await T.key('Escape');
   await T.until('Esc closes it', (p) => !D(p).cru.open);
+}
+
+if (part('passwords')) {
+  // ─── Saved passwords: offered after a sign-in that worked, saved behind the PIN, filled, shown with the PIN ───
+  const PW = (p) => D(p).passwords;
+  await T.api.http('POST', '/api/voice/kid/pin', { pin: '2468' });
+  await T.until('the passwords\' key is ready', (p) => PW(p).ready && PW(p).available, 15000);
+  if (!dr(await T.props()).open) await T.act('browser');
+  const nt = await T.act('new-tab', `${PAGE}/login`);
+  const tab = nt.id;
+  await T.until('a sign-in page in a tab', (p) => dr(p).tabs.some((x) => x.id === tab && /login/.test(x.title)));
+  await t.sleep(800);
+  await evalTab(tab, "document.getElementById('u').value='me@example.com';document.getElementById('p').value='s3cret-pw!';document.getElementById('go').click();true");
+  let p = await T.until('a sign-in that worked offers to save', (p) => PW(p).bars[tab]?.kind === 'save' && PW(p).bars[tab].username === 'me@example.com', 30000);
+  await T.snap('pw-offer');
+  await T.act('pw-save', 'me@example.com');
+  p = await T.until('Save keeps it (the PIN is set)', (p) => PW(p).logins.length === 1 && !PW(p).bars[tab]);
+  const id = PW(p).logins[0].id;
+  let r = await mcp('browser_eval', { key: `drawer:${tab}`, code: "'the password is s3cret-pw!'" });
+  t.check('a chat never reads it back from the tab', r.ok && r.result === 'the password is ••••••••', r);
+  await T.act('go', `${PAGE}/login`);
+  p = await T.until('back on the sign-in page: the fill bar', (p) => PW(p).bars[tab]?.kind === 'fill' && PW(p).bars[tab].logins[0].id === id, 15000);
+  await T.snap('pw-fill');
+  await T.act('pw-fill', id);
+  let v;
+  for (let i = 0; i < 20; i++) { v = await evalTab(tab, "document.getElementById('u').value+'|'+document.getElementById('p').value"); if (v.result === 'me@example.com|s3cret-pw!') break; await t.sleep(300); }
+  t.check('Fill puts the login in the page', v.result === 'me@example.com|s3cret-pw!', v);
+  await T.act('panel', 'passwords');
+  await T.act('pw-show', id);
+  await T.until('Show asks for the PIN first', (p) => PW(p).pinFor === id);
+  await T.act('pw-unlock', '0000');
+  await t.sleep(800);
+  t.check('…a wrong PIN shows nothing', !PW(await T.props()).revealed.includes(id));
+  await T.act('pw-unlock', '2468');
+  await T.until('…the PIN shows it', (p) => PW(p).revealed.includes(id));
+  await T.until('(the wrong PIN\'s toast has gone)', (p) => !p.toast, 10000);
+  await T.snap('pw-panel');
+  await T.act('pw-remove', id);
+  await T.until('Delete asks first', (p) => /Delete this saved password/.test(p.dialog?.title || ''));
+  await T.dialog(true);
+  await T.until('…and deletes it', (p) => PW(p).logins.length === 0);
+  await T.act('panel-close');
+}
+
+if (part('tray')) {
+  // ─── The tray: its menu in the PC client's order and words; Server… opens the server's settings ───
+  const tr = (p) => D(p).tray;
+  const p = await T.until('the tray says the connection', (p) => tr(p).tooltip === 'Crundi — Running');
+  t.check('its menu', JSON.stringify(tr(p).menu.map((m) => m.label)) === JSON.stringify(['Crundi', '', 'Running', '', 'Open', 'Server…', '', 'Quit']), tr(p).menu);
+  // With a session bus (dbus-run-session), the item is on it.
+  if (process.env.DBUS_SESSION_BUS_ADDRESS) {
+    t.check('the tray is up', tr(p).shown, tr(p));
+    const names = (await import('node:child_process')).execSync('gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.ListNames').toString();
+    t.check('…a StatusNotifierItem on the session bus', /org\.kde\.StatusNotifierItem-\d+-\d+/.test(names), names.slice(0, 300));
+  } else console.log('  no session bus: the tray is not checked (run under dbus-run-session)');
+  await T.act('tray-pick', 'server');
+  await T.until('Server… shows the server\'s settings', (p) => p.currentTab === 'settings');
+  await T.ui('tab', 'workbench');
 }
 
 if (part('node')) {
