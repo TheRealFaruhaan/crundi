@@ -1625,6 +1625,8 @@ dependencies = [
 name = "crundi-planning"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "crundi-chat-composer",
  "crundi-core",
  "crundi-shell",
@@ -1634,6 +1636,8 @@ dependencies = [
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "open",
+ "rfd",
  "serde_json",
 ]
 
@@ -1685,6 +1689,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "serde_json",
 ]
 
 [[package]]

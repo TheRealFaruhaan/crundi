@@ -378,8 +378,7 @@ impl Render for ComposerView {
                 .capture_action(cx.listener(|this, _: &MoveDown, _, cx| if slash::step(this, 1, cx) { cx.stop_propagation(); }))
                 .capture_action(cx.listener(|this, _: &Escape, _, cx| if slash::escape(this, cx) { cx.stop_propagation(); }))
                 .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| if attach::shift_insert(this, e, window, cx) { cx.stop_propagation(); }))
-                .child(w::textarea(&self.input).on_paste(attach::paste_handler(cx)).bg(T::bg()).border_color(T::border()).rounded(T::R_CONTROL)
-                    .text_size(T::TEXT_13 * fs).min_h(T::CONTROL).max_h(T::COMPOSER_MAX))
+                .child(w::message_box(&self.input, fs).on_paste(attach::paste_handler(cx)))
                 .into_any_element()
         };
         let stop = (st == "working").then(|| w::stop_button("stop", self.stop_armed, fs).on_click(cx.listener(|this, _, _, cx| this.stop(cx))).into_any_element());

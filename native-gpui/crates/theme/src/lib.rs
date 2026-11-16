@@ -162,6 +162,101 @@ impl T {
     pub fn composer_slate_edge() -> Hsla { rgba(0x94a3b873).into() }
     pub fn composer_accent_haze() -> Hsla { rgba(0x6366f11a).into() }
     pub fn composer_sky_edge() -> Hsla { rgba(0x38bdf866).into() }
+    // The Mind map (4.3; the Slint client's mindmap-* and its o-* opacities).
+    /// The map's columns (one per depth) and an idea's width.
+    pub const MINDMAP_COL: Pixels = px(235.);
+    pub const MINDMAP_NODE: Pixels = px(180.);
+    /// The canvas's dot grid (the web's background-size).
+    pub const MINDMAP_DOTS: Pixels = px(22.);
+    /// How far from the canvas's edge an idea the keyboard goes to is kept.
+    pub const MINDMAP_SCROLL_MARGIN: Pixels = px(70.);
+    /// The toolbar folds to its narrow look below this width.
+    pub const MINDMAP_FOLD: Pixels = px(480.);
+    /// The idea dialog and the link picker; the picker's list at its tallest.
+    pub const MINDMAP_DIALOG_W: Pixels = px(520.);
+    pub const MINDMAP_LIST_MAX_H: Pixels = px(320.);
+    /// The shortcut sheet: its keys column, its little trees' grid and boxes.
+    pub const MINDMAP_HELP_KEYS: Pixels = px(176.);
+    pub const MINDMAP_DIA_COL: Pixels = px(92.);
+    pub const MINDMAP_DIA_ROW: Pixels = px(30.);
+    pub const MINDMAP_DIA_BOX_W: Pixels = px(74.);
+    pub const MINDMAP_DIA_BOX_H: Pixels = px(20.);
+    /// Faded (held in a drag, dimmed by the filter), half seen (an "add
+    /// idea" box), a project chip turned off, the idea in hand.
+    pub const MINDMAP_O_FAINT: f32 = 0.3;
+    pub const MINDMAP_O_DIM: f32 = 0.4;
+    pub const MINDMAP_O_OFF: f32 = 0.7;
+    pub const MINDMAP_O_CLONE: f32 = 0.92;
+    /// schedule (4.5): a switched-off schedule's faded row (the web's .sched-item.off).
+    pub const SCHED_O_OFF: f32 = 0.55;
+    // Kanban (4.1): a column's narrowest and widest (.kanban-col), the panel
+    // width under which columns stack (@container 700px), the width under
+    // which the toolbar folds (480), a card under which its action labels
+    // fold (220; 320 compact), the attachments strip's bounds and thumbs,
+    // the dragged card's look (o-dim), its clone (o-clone), Trash's faded
+    // cards (o-soft), a subtask's resting "…" (o-caret), the slate edge.
+    pub const KANBAN_COL_MIN: Pixels = px(220.);
+    pub const KANBAN_COL_MAX: Pixels = px(360.);
+    pub const KANBAN_STACK: Pixels = px(700.);
+    pub const KANBAN_FOLD: Pixels = px(480.);
+    pub const KANBAN_CARD_FOLD: Pixels = px(220.);
+    pub const KANBAN_CARD_FOLD_COMPACT: Pixels = px(320.);
+    pub const KANBAN_POP_MIN: Pixels = px(220.);
+    pub const KANBAN_POP_MAX: Pixels = px(360.);
+    pub const KANBAN_THUMB: Pixels = px(48.);
+    pub const KANBAN_O_DIM: f32 = 0.4;
+    pub const KANBAN_O_CLONE: f32 = 0.92;
+    pub const KANBAN_O_SOFT: f32 = 0.6;
+    pub const KANBAN_O_CARET: f32 = 0.55;
+    pub fn kanban_slate_edge() -> Hsla { rgba(0x94a3b873).into() }
+    // Notes (4.4): the tab's page list (.nt-side), the width under which the
+    // list goes over the page and the page's margins shrink, the page's
+    // widest, the room under the last block, the picker's widest, a menu's
+    // width and tallest, the link box; the list's share of the height when
+    // stacked; a busy page in a list (o-soft), a dragged block's label (o-clone).
+    pub const NOTES_SIDE_W: Pixels = px(280.);
+    pub const NOTES_STACK: Pixels = px(700.);
+    pub const NOTES_PAGE_MAX: Pixels = px(680.);
+    pub const NOTES_PAGE_TAIL: Pixels = px(160.);
+    pub const NOTES_PICK_MAX: Pixels = px(520.);
+    pub const NOTES_MENU_W: Pixels = px(220.);
+    pub const NOTES_MENU_MAX_H: Pixels = px(320.);
+    pub const NOTES_LINK_W: Pixels = px(220.);
+    pub const NOTES_SIDE_SHARE: f32 = 0.4;
+    pub const NOTES_O_SOFT: f32 = 0.6;
+    pub const NOTES_O_CLONE: f32 = 0.92;
+    // factories (4.7, 4.8): a Library card at least (280), the editor's
+    // palette (190) and the side (340), the dialogs (560, wide 680), the
+    // PIN card (340), the transcript sheet (560), the width under which the
+    // graph's bar keeps only icons (560) and a tab goes narrow (the web's
+    // 640), the minimap (200 x 150), the Cleanup days box (80), the width
+    // under which a dialog's pairs stack (520), an attachment chip (220);
+    // the canvas's share of a narrow tab (52%), the panel's Details drawer at
+    // most (92%); the faded looks (0.6, 0.4, 0.3); and the graph's rings and
+    // edges (the Slint theme's green-ring, accent-ring, yellow-edge, slate-edge).
+    pub const FACTORIES_CARD_MIN: Pixels = px(280.);
+    pub const FACTORIES_LEFT: Pixels = px(190.);
+    pub const FACTORIES_RIGHT: Pixels = px(340.);
+    pub const FACTORIES_MODAL_W: Pixels = px(560.);
+    pub const FACTORIES_MODAL_WIDE: Pixels = px(680.);
+    pub const FACTORIES_PIN_W: Pixels = px(340.);
+    pub const FACTORIES_SHEET_W: Pixels = px(560.);
+    pub const FACTORIES_COMPACT: Pixels = px(560.);
+    pub const FACTORIES_NARROW: Pixels = px(640.);
+    pub const FACTORIES_MINI_W: Pixels = px(200.);
+    pub const FACTORIES_MINI_H: Pixels = px(150.);
+    pub const FACTORIES_DAYS_W: Pixels = px(80.);
+    pub const FACTORIES_PAIR_STACK: Pixels = px(520.);
+    pub const FACTORIES_CHIP_MAX: Pixels = px(220.);
+    pub const FACTORIES_CANVAS_SHARE: f32 = 0.52;
+    pub const FACTORIES_DRAWER_SHARE: f32 = 0.92;
+    pub const FACTORIES_O_SOFT: f32 = 0.6;
+    pub const FACTORIES_O_DIM: f32 = 0.4;
+    pub const FACTORIES_O_FAINT: f32 = 0.3;
+    pub fn factories_green_ring() -> Hsla { rgba(0x10b98134).into() }
+    pub fn factories_accent_ring() -> Hsla { rgba(0x6366f147).into() }
+    pub fn factories_yellow_edge() -> Hsla { rgba(0xf59e0b59).into() }
+    pub fn factories_slate_edge() -> Hsla { rgba(0x94a3b873).into() }
     // ── end planning ──
     // ── operations ──
     /// A parked pane's card, at most (the web's .pk-card 330; 2.23).

@@ -1,8 +1,19 @@
 // Planning 4.1 Kanban and 4.2 the card dialog (run by test/planning.mjs).
 
 let T;
-const K = (p) => p.areas?.planning?.kanban;
-const A = (p) => p.areas?.planning?.ask;
+// (GPUI: the driver has no `areas` map yet, shared/requests.md; the planning part also answers as `planningArea`.)
+const K = (p) => (p.areas?.planning ?? p.planningArea)?.kanban;
+const A = (p) => (p.areas?.planning ?? p.planningArea)?.ask;
+// (GPUI: the driver in this tree has no window-wide "dialog" / "menu" props, its dialog-answer
+// only closes, and lib.rs puts the planning part's props under planningArea, so pointerModal,
+// dialog and menu are read there too, and the shared prompt / menu are answered through the
+// planning part's own dialog-answer / menu-pick: planning-asks.md. The checks are the same.)
+const PA = (p) => p.areas?.planning ?? p.planningArea ?? {};
+const modal = (p) => !!(p.pointerModal || PA(p).pointerModal);
+const menu = (p) => PA(p).menu ?? p.menu;
+const dialog = (p) => PA(p).dialog ?? p.dialog;
+const answerDialog = (ok, value = '') => T.act('dialog-answer', ok ? 'true' : 'false', value);
+const pick = (id) => T.act('menu-pick', id);
 const col = (p, st) => K(p)?.columns?.find((c) => c.status === st && !c.other);
 const cardBy = (p, title) => K(p)?.columns?.flatMap((c) => c.cards.map((x) => ({ ...x, status: c.status }))).find((x) => x.title === title);
 const kpost = (body) => T.api.http('POST', '/api/kanban', { project: 'demo', ...body });
@@ -18,14 +29,14 @@ export async function run(T_, t) {
   // The toolbar's + Add task: the card dialog with its Column choice.
   await T.act('kanban-act', 'add-task');
   await T.until('Add task asks for a title and a column', (p) => A(p)?.title === 'Add task' && A(p).label === 'Task title'
-    && A(p).choices.join() === 'backlog,todo,in_progress,done' && A(p).ok === 'Add task' && p.pointerModal);
+    && A(p).choices.join() === 'backlog,todo,in_progress,done' && A(p).ok === 'Add task' && modal(p));
   await T.snap('kanban-add-task');
   await T.act('ask-answer', 'true', 'Write the plan', 'in_progress');
   await T.until('the task lands in In Progress', (p) => cardBy(p, 'Write the plan')?.status === 'in_progress');
   await T.act('kanban-act', 'add-task');
   await T.until('the column picked last is remembered', (p) => A(p)?.choice === 'in_progress');
   await T.act('ask-answer', 'false');
-  await T.until('Cancel closes it', (p) => !A(p) && !p.pointerModal);
+  await T.until('Cancel closes it', (p) => !A(p) && !modal(p));
 
   // "+ Add task" at a column's end: the blank card; Enter adds and stays open.
   await T.act('kanban-act', 'add-task-inline', '', 'backlog');
@@ -56,15 +67,15 @@ export async function run(T_, t) {
 
   // The subtask's "…": the shared menu (Attach media, Rename, Delete).
   await T.act('kanban-todo-menu', c1.id, c1.todos[1].id, '700', '300');
-  await T.until('the subtask menu', (p) => p.menu?.items?.map((i) => i.id).join() === 'media,rename,delete' && p.menu.items[2].danger);
+  await T.until('the subtask menu', (p) => menu(p)?.items?.map((i) => i.id).join() === 'media,rename,delete' && menu(p).items[2].danger);
   await T.snap('kanban-subtask-menu');
-  await T.menuPick('rename');
-  await T.until('Rename asks', (p) => p.dialog?.title === 'Edit subtask' && p.dialog.value === 'Step two');
-  await T.dialog(true, 'Step 2');
+  await pick('rename');
+  await T.until('Rename asks', (p) => dialog(p)?.title === 'Edit subtask' && dialog(p).value === 'Step two');
+  await answerDialog(true, 'Step 2');
   await T.until('the subtask is renamed', (p) => cardBy(p, 'First card').todos[1].text === 'Step 2');
   await T.act('kanban-todo-menu', c1.id, c1.todos[1].id, '700', '300');
-  await T.until('the menu again', (p) => !!p.menu);
-  await T.menuPick('delete');
+  await T.until('the menu again', (p) => !!menu(p));
+  await pick('delete');
   await T.until('the subtask is deleted', (p) => cardBy(p, 'First card').total === 1);
 
   // 4.2 The card dialog: Edit (title and column, Next, then the description).

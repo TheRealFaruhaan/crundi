@@ -17,3 +17,7 @@ crundi-widgets.workspace = true
 crundi-shell.workspace = true
 crundi-workbench.workspace = true
 crundi-chat-composer.workspace = true
+chrono.workspace = true
+base64.workspace = true
+rfd.workspace = true
+open.workspace = true

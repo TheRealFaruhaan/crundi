@@ -15,15 +15,31 @@ pub fn dropdown(
     disabled: bool,
     pick: impl Fn(usize, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let items: Vec<&'static str> = items.to_vec();
-    let label = items.get(on).copied().unwrap_or("");
+    dropdown_of(id, items.iter().map(|s| SharedString::from(*s)).collect(), on, disabled, false, pick)
+}
+
+/// The same dropdown over choices known only at run time (a schedule's
+/// projects, a board's tasks); `full`: as wide as its parent, the label
+/// left and the chevron right (a form's select). Added by Planning
+/// (schedules, 4.5); `dropdown` is this with fixed items.
+pub fn dropdown_of(
+    id: impl Into<ElementId>,
+    items: Vec<SharedString>,
+    on: usize,
+    disabled: bool,
+    full: bool,
+    pick: impl Fn(usize, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let label = items.get(on).cloned().unwrap_or_default();
     let pick = std::rc::Rc::new(pick);
-    Button::new(id).label(label).icon(IconName::ChevronDown).small().text_size(T::TEXT_12).disabled(disabled)
-        .dropdown_menu(move |mut menu, _, _| {
-            for (i, l) in items.iter().enumerate() {
-                let pick = pick.clone();
-                menu = menu.item(PopupMenuItem::new(*l).checked(i == on).on_click(move |_, window, cx| pick(i, window, cx)));
-            }
-            menu
-        })
+    let b = Button::new(id).label(label).icon(IconName::ChevronDown).small().text_size(T::TEXT_12).disabled(disabled);
+    let b = if full { b.w_full().justify_between() } else { b };
+    b.dropdown_menu(move |mut menu, _, _| {
+        menu = menu.max_h(T::DIALOG_MAX_H).scrollable(true);
+        for (i, l) in items.iter().enumerate() {
+            let pick = pick.clone();
+            menu = menu.item(PopupMenuItem::new(l.clone()).checked(i == on).on_click(move |_, window, cx| pick(i, window, cx)));
+        }
+        menu
+    })
 }

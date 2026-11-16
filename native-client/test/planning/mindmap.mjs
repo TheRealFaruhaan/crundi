@@ -1,7 +1,8 @@
 // Planning 4.3 the Mind map (run by test/planning.mjs). Snapshots named mindmap-*.
 
 let T;
-const M = (p) => p.areas?.planning?.mindmap;
+// (GPUI: the driver has no `areas` map yet, shared/requests.md; the planning part also answers as `planningArea`.)
+const M = (p) => (p.areas?.planning ?? p.planningArea)?.mindmap;
 const node = (p, text) => M(p)?.nodes?.find((n) => n.kind === 'node' && n.text === text);
 const mm = async () => (await T.api.http('GET', '/api/mindmap')).body?.mindmap?.nodes || [];
 const mpost = async (body) => (await T.api.http('POST', '/api/mindmap', body)).body;

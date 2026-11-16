@@ -3,7 +3,8 @@
 // menus, the format bar, the block selection, saving and live changes, and
 // Notes panes in the workbench (the picker, one page one pane).
 
-const N = (p) => p.areas?.planning?.notes;
+// (GPUI: the driver has no `areas` map yet, shared/requests.md; the planning part also answers as `planningArea`.)
+const N = (p) => (p.areas?.planning ?? p.planningArea)?.notes;
 const at = (p, key) => N(p)?.places?.find((x) => x.key === key);
 const tabPage = (p) => at(p, '');
 const blocks = (p, key = '') => at(p, key)?.blocks || [];
@@ -120,7 +121,8 @@ export async function run(T, t) {
   await T.act('notes-select', '', '2', '4');
   await T.until('three blocks selected, the bar says so', (p) => tabPage(p).selCount === 3 && blocks(p).filter((x) => x.sel).length === 3);
   await T.act('notes-sel-act', '', 'copy');
-  await T.until('Copy puts them on the clipboard as Markdown', (p) => p.clipboard === '- [x] Done already\n- [ ] Still to do\n- A point');
+  // (GPUI: the driver has no `clipboard` prop yet; the notes part answers with the text it copied.)
+  await T.until('Copy puts them on the clipboard as Markdown', (p) => (p.clipboard ?? N(p).clipboard) === '- [x] Done already\n- [ ] Still to do\n- A point');
   await T.act('notes-sel-key', '', 'escape');
   await T.until('Escape ends the selection', (p) => tabPage(p).selCount === 0);
 
