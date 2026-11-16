@@ -824,7 +824,7 @@ component PhoneBody inherits VerticalLayout {
         // A custom relay is for a custom build of the app: folded away (<details>).
         HorizontalLayout {
             spacing: Theme.sp-4;
-            VerticalLayout { alignment: center; Icon { source: Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-muted; transform-rotation: OpsSettings.relay-open ? 90deg : 0deg; } }
+            VerticalLayout { alignment: center; Icon { source: OpsSettings.relay-open ? @image-url("../shapes/chevron-down.svg") : Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-muted; } }
             Text {
                 text: "Relay: " + OpsSettings.relay-summary; font-size: Theme.text-12; color: Theme.text-muted; vertical-alignment: center;
                 TouchArea { mouse-cursor: pointer; clicked => { OpsSettings.relay-open = !OpsSettings.relay-open; } }

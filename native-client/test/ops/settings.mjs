@@ -60,6 +60,11 @@ export async function run(T, t) {
   // What's new: Show it again (the tour is the extras screen's).
   await T.act('settings-open', 'whatsnew');
   await T.act('settings-do', 'whats-new');
+  // "Show it again" opens the whole tour (the web's openWhatsNew(true)); close it so it covers nothing after.
+  if (await T.until('settings: "Show it again" opens What\'s new', (p) => p.areas.ops.extras.wn?.all === true, 10000)) {
+    await T.act('extras-wn-close', 'done');
+    await T.until('settings: the tour closes', (p) => p.areas.ops.extras.wn === null, 5000);
+  }
   await T.act('settings-open', 'whatsnew', 'false');
 
   // Claude: the system prompts (everywhere, and the open project's).
@@ -67,7 +72,6 @@ export async function run(T, t) {
   p = await T.until('settings: the project prompt is offered for the open project', (p) => st(p).prompt.project === 'Demo');
   await T.act('settings-field', 'sysprompt', 'Prefer small commits.');
   await T.act('settings-field', 'proj-sysprompt', 'Never push to main.');
-  await T.snap('settings-sysprompt');
   await T.act('settings-do', 'save-prompts');
   p = await T.until('settings: "System prompt saved"', (p) => /applies to new conversations/.test(st(p).prompt.status));
   let s = await api('GET', '/api/settings');
@@ -87,7 +91,6 @@ export async function run(T, t) {
     t.check('settings: the telegram channel has its extra line', st(p).channels.some((c) => c.telegram), st(p).channels);
     t.check('settings: the matrix shows the server’s choice', st(p).notify.finished === 'away', st(p).notify);
   }
-  await T.snap('settings-notifications');
   await T.act('settings-do', 'notify-pref', 'finished', 'always');
   p = await T.until('settings: a lamp lights at once', (p) => st(p).notify.finished === 'always');
   for (let i = 0; i < 20; i++) { s = await api('GET', '/api/settings'); if (s.body?.notifyPrefs?.finished === 'always') break; await t.sleep(250); }
@@ -121,7 +124,6 @@ export async function run(T, t) {
   await T.act('settings-do', 'oauth-save', 'google');
   p = await T.until('settings: Google saved, not tested', (p) => st(p).signin.google.configured === true && /not tested/.test(st(p).signin.google.status));
   if (p) t.check('settings: the saved client id shows', st(p).signin.googleId === 'test-client.apps.googleusercontent.com', st(p).signin.googleId);
-  await T.snap('settings-signin-google');
   await T.act('settings-do', 'oauth-clear', 'google');
   await T.until('settings: Remove asks first', (p) => p.dialog && /forget its client ID/.test(p.dialog.message || ''));
   await T.dialog(true);
@@ -134,18 +136,15 @@ export async function run(T, t) {
   await T.act('settings-field', 'new-password', 'a-brand-new-password-123');
   await T.act('settings-do', 'set-password');
   p = await T.until('settings: the new authenticator secret shows', (p) => st(p).signin.enrol.length >= 16);
-  await T.snap('settings-signin-enrol');
   await T.act('settings-open', 'signin', 'false');
 
   // Phone app: the push box; the pairing dialog (this server is localhost: it says so).
   await T.act('settings-open', 'phone');
   p = await T.until('settings: the phone push box', (p) => st(p).phone.push === 'data');
   if (p) t.check('settings: no key yet, who to ask', /needs a key/.test(st(p).phone.line) && /^Message @/.test(st(p).phone.contact), st(p).phone);
-  await T.snap('settings-phone');
   await T.act('settings-do', 'phone-connect');
   p = await T.until('settings: Connect a phone opens and answers', (p) => st(p).phone.pairOpen && st(p).modal && st(p).phone.pairLine && !/Getting a code/.test(st(p).phone.pairLine));
   if (p) t.check('settings: New code is offered after the refusal', st(p).phone.pairAgain === true, st(p).phone);
-  await T.snap('settings-pair');
   await T.act('settings-do', 'pair-close');
   await T.until('settings: Close closes it', (p) => !st(p).phone.pairOpen && !st(p).modal);
   await T.act('settings-open', 'phone', 'false');
@@ -158,7 +157,6 @@ export async function run(T, t) {
     t.check('settings: this device is marked', st(p).session.rows.some((r) => r.current && r.label === 'Desktop app'), st(p).session.rows);
     t.check('settings: the others are counted', st(p).session.others >= 1, st(p).session);
   }
-  await T.snap('settings-session');
   const other = p && st(p).session.rows.find((r) => r.id === spare);
   if (other) {
     await T.act('settings-do', 'sess-revoke', other.id);
@@ -170,7 +168,6 @@ export async function run(T, t) {
   // This server: Configuration (saved; restart required).
   await T.act('settings-open', 'config');
   p = await T.until('settings: the .env path', (p) => /\.env$/.test(st(p).config.envPath));
-  await T.snap('settings-config');
   await T.act('settings-field', 'tunnel-url', 'https://crundi.example.com');
   await T.act('settings-do', 'save-config');
   await T.until('settings: "Saved — restart required"', (p) => /restart required/.test(st(p).config.status));
@@ -190,7 +187,6 @@ export async function run(T, t) {
   await T.until('settings: "Idle panes close after 30 minutes"', (p) => /after 30 minutes/.test(p.toast || ''));
   s = await api('GET', '/api/settings');
   t.check('settings: the server keeps 30', s.body?.autoParkMinutes === 30, s.body?.autoParkMinutes);
-  await T.snap('settings-terminal');
   await T.act('settings-do', 'set-newline-key', '0');
   await T.act('settings-open', 'terminal', 'false');
 
@@ -198,7 +194,6 @@ export async function run(T, t) {
   await T.act('settings-open', 'voice');
   p = await T.until('settings: Cru’s settings load', (p) => st(p).voice.shown && st(p).voice.models > 0);
   if (p) t.check('settings: the spending line', /^Claude API: \$/.test(st(p).voice.spend), st(p).voice.spend);
-  await T.snap('settings-voice');
   await T.act('settings-do', 'vs-pick', 'model', '1');
   await T.until('settings: the model is saved', (p) => /Model saved/.test(st(p).voice.status));
   let vs = await api('GET', '/api/voice/settings');
@@ -215,7 +210,6 @@ export async function run(T, t) {
   p = await T.until('settings: the Desktop App section', (p) => /v\d/.test(st(p).desktop.status));
   await T.act('settings-do', 'launch-toggle', 'true');
   await T.until('settings: Launch at startup on', (p) => st(p).desktop.launch === true);
-  await T.snap('settings-desktop');
   await T.act('settings-do', 'launch-toggle', 'false');
   await T.until('settings: and off again', (p) => st(p).desktop.launch === false);
   await T.act('settings-do', 'upd-set-channel', '1');
