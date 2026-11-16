@@ -119,6 +119,8 @@ pub struct Areas {
     /// A part's layer over the whole window, not modal (Desktop's Cru
     /// screen): it draws only what it shows, positioned absolutely.
     pub overlays: Vec<AnyView>,
+    /// Opens a chat's bubble (Desktop's), for the pane header's Bubble button.
+    pub bubble: Option<Rc<dyn Fn(&str, &mut App)>>,
 }
 
 impl Global for Areas {}
@@ -177,6 +179,18 @@ pub fn register_overlay(cx: &mut App, view: AnyView) {
 
 /// The layers over the window, for the shell to draw.
 pub(crate) fn overlays(cx: &App) -> Vec<AnyView> { cx.try_global::<Areas>().map(|a| a.overlays.clone()).unwrap_or_default() }
+
+/// Register what opens a chat's bubble (Desktop, once). Added by Desktop,
+/// for the Lead to review.
+pub fn register_bubble(cx: &mut App, f: impl Fn(&str, &mut App) + 'static) {
+    if !cx.has_global::<Areas>() { cx.set_global(Areas::default()); }
+    cx.global_mut::<Areas>().bubble = Some(Rc::new(f));
+}
+
+/// Open a chat's bubble (the pane header's Bubble button); false: no bubble here.
+pub fn open_bubble(cx: &mut App, chat: &str) -> bool {
+    match cx.try_global::<Areas>().and_then(|a| a.bubble.clone()) { Some(f) => { f(chat, cx); true } None => false }
+}
 
 /// Register the browser drawer's view (Desktop, once).
 pub fn register_drawer(cx: &mut App, drawer: Drawer) {

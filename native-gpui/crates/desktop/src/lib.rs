@@ -14,6 +14,7 @@
 //! - `ctx`: what the logic reads of the window and asks of it.
 
 mod browsers;
+mod bubble;
 mod ctx;
 mod cru;
 mod cru_ui;
@@ -86,7 +87,9 @@ pub fn init(window: &mut Window, cx: &mut App) {
             _ => {}
         })
         .test_ui(|name, args, window, cx| { refresh(window, cx); test_ui(name, args) })
-        .props(|_, _| json!({ "areas": { "desktop": props() } })));
+        .props(|_, cx| { let mut p = props(); p["bubble"] = bubble::props(cx); json!({ "areas": { "desktop": p } }) }));
+    // The pane header's Bubble button (Workspace's) opens a chat's bubble through this hook.
+    crundi_shell::register_bubble(cx, |chat, cx| bubble::open(chat, cx));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
@@ -99,6 +102,14 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     host::pump();
     passwords::pump();
     for p in tray::take_picks() { tray::act(&p); }
+    if let Some((what, arg)) = BUBBLE_ASK.with(|b| b.borrow_mut().take()) {
+        match what {
+            "open" => { let id = if arg.is_empty() { crundi_chats::focused_chat(cx) } else { arg }; bubble::open(&id, cx); }
+            "toggle" => bubble::toggle(cx),
+            "close" => bubble::close(cx),
+            _ => bubble::send(&arg, cx),
+        }
+    }
     for f in ctx::take_effects() { f(window, cx); }
     notify::pump();
     for f in ctx::take_main() { f(); }
@@ -164,6 +175,8 @@ fn go_to_chat(chat: &str) {
 
 thread_local! {
     /// The driver's evals: the last token, and the answers by token.
+    /// A bubble action from the driver, for the next pump (it needs the App).
+    static BUBBLE_ASK: RefCell<Option<(&'static str, String)>> = const { RefCell::new(None) };
     static EVALS: RefCell<(u64, serde_json::Map<String, Value>)> = RefCell::new((0, serde_json::Map::new()));
 }
 
@@ -244,6 +257,11 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "pw-unlock" => { passwords::unlock(&a(0)); ok() }
         "pw-remove" => { passwords::remove(&a(0)); ok() }
         "pw-unnever" => { passwords::unnever(&a(0)); ok() }
+        "bubble-open" => { let id = Some(a(0)).filter(|x| !x.is_empty()); BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("open", id.unwrap_or_default()))); ok() }
+        "bubble-toggle" => { BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("toggle", String::new()))); ok() }
+        "bubble-close" => { BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("close", String::new()))); ok() }
+        "bubble-send" => { BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("send", a(0)))); ok() }
+        "bubble-snap" => Some(json!({ "ok": bubble::snap(&a(0)) })),
         "tray-pick" => { tray::test_pick(&a(0)); ok() }
         "startup" => Some(json!({ "ok": true, "enabled": startup::enabled() })),
         "homepool-status" => Some(json!({ "ok": true, "status": homepool::status() })),

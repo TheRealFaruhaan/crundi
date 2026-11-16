@@ -463,6 +463,10 @@ impl T {
     pub const CRU_TURN_W: Pixels = px(336.);
     pub const CRU_CHAT_H: Pixels = px(260.);
     pub const CRU_RIGHT: Pixels = px(192.);
+    /// The chat bubble: its round head, and the expanded chat's window.
+    pub const BUBBLE_HEAD: Pixels = px(56.);
+    pub const BUBBLE_W: Pixels = px(380.);
+    pub const BUBBLE_H: Pixels = px(640.);
     // ── end desktop ──
 }
 
