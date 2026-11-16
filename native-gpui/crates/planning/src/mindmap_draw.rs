@@ -78,7 +78,7 @@ fn card(r: &Row, mode: Mode, z: f32, edit: Option<&Entity<w::TextareaState>>) ->
     let border = if strong { T::accent() } else if r.linked { T::green() } else if r.root || r.scoped { T::accent() } else { T::border() };
     let words = div().min_w_0().text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_height(relative(T::LH_UI));
     let body: AnyElement = match mode {
-        Mode::Normal => words.line_clamp(2).child(r.text.clone()).into_any_element(),
+        Mode::Normal => words.line_clamp(2).text_ellipsis().child(r.text.clone()).into_any_element(),
         Mode::Open => div().id(SharedString::from(format!("mm-open-{}", r.id))).max_h(T::TEXT_13 * z * T::LH_UI * 7.).overflow_y_scroll()
             .child(words.child(r.text.clone())).into_any_element(),
         Mode::Editing => keys_first(div()).children(edit.map(|e| w::textarea(e).appearance(false).text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD))).into_any_element(),
@@ -120,7 +120,7 @@ fn card(r: &Row, mode: Mode, z: f32, edit: Option<&Entity<w::TextareaState>>) ->
         d = d.child(div().absolute().top_0().bottom_0().left(T::MINDMAP_NODE * z - T::SP_10 * z).flex().items_center()
             .child(div().id(SharedString::from(format!("mm-fold-{tag}-{id}"))).size(T::SP_16 * z + T::SP_2 * z).rounded_full().border_1().border_color(T::border())
                 .hover(|d| d.border_color(T::accent())).bg(T::bg_tertiary()).flex().items_center().justify_center().cursor_pointer()
-                .text_size(T::TEXT_11 * z).text_color(T::text_secondary()).child(if r.collapsed { "+" } else { "\u{2212}" })
+                .text_color(T::text_secondary()).child(w::icon(if r.collapsed { IconName::Plus } else { IconName::Minus }, T::ICON_SM * z))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(move |_, window, cx| super::act("toggle", &fid, window, cx))));
     }
@@ -134,7 +134,7 @@ fn ghost(r: &Row, z: f32) -> AnyElement {
         .flex().items_center().justify_center().gap(T::SP_6 * z).py(T::SP_8 * z).rounded(T::R_BUBBLE * z)
         .border_1().border_dashed().border_color(T::border()).opacity(T::MINDMAP_O_DIM).text_color(T::text_muted()).cursor_pointer()
         .hover(|d| d.opacity(1.).border_color(T::accent()).text_color(T::accent_hover()))
-        .child(div().text_size(T::TEXT_16 * z).font_weight(T::W_BOLD).child("+"))
+        .child(w::icon(IconName::Plus, T::ICON_MD * z))
         .child(div().text_size(T::TEXT_12 * z).font_weight(T::W_MEDIUM).child("add idea"))
         .child(measure(r.id.clone(), z))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -184,7 +184,7 @@ fn clone_box(s: &M, z: f32) -> AnyElement {
     div().absolute().left(px((s.drag_x - s.grab_x) * z)).top(px((s.drag_y - s.grab_y) * z)).w(T::MINDMAP_NODE * z)
         .px(T::SP_10 * z).py(T::SP_8 * z).rounded(T::R_BUBBLE * z).border_1().border_color(T::accent()).bg(T::bg_card())
         .opacity(T::MINDMAP_O_CLONE).shadow(lift())
-        .child(div().text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_clamp(2).child(s.drag_text.clone()))
+        .child(div().text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_clamp(2).text_ellipsis().child(s.drag_text.clone()))
         .into_any_element()
 }
 

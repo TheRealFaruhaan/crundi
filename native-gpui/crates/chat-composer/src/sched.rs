@@ -221,7 +221,7 @@ pub fn render(c: &mut ComposerView, _window: &mut Window, cx: &mut Context<Compo
             .child(div().flex().font_family(T::MONO).text_size(T::TEXT_11)
                 .when(it.next, |d| d.child(div().font_weight(T::W_BOLD).text_color(T::accent_hover()).child("next")).child(div().text_color(T::text_muted()).child(" · ")))
                 .child(div().text_color(T::text_muted()).child(it.when.clone())))
-            .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).line_clamp(3).child(it.text.clone()))
+            .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).line_clamp(3).text_ellipsis().child(it.text.clone()))
             .child(div().absolute().top(T::SP_4).right(T::SP_4)
                 .child(w::icon_button(("sched-del", i), IconName::X, "Cancel this message").on_click(cx.listener(move |this, _, _, cx| delete(this, id.clone(), cx))))));
     }

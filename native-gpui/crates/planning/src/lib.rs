@@ -49,6 +49,9 @@ pub fn init(cx: &mut App) {
             for v in [kanban::props(window, cx), mindmap::props(window, cx), notes::props(window, cx), schedule::props(window, cx), factories::props(window, cx)] {
                 if let Value::Object(o) = v { m.extend(o); }
             }
-            json!({ "planningArea": Value::Object(m) })
+            // Under areas.planning (the driver deep-merges a part's own "areas"
+            // into its map: F41/F44), and planningArea for the tests' fallback.
+            let o = Value::Object(m);
+            json!({ "areas": { "planning": o.clone() }, "planningArea": o })
         }));
 }
