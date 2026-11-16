@@ -120,6 +120,8 @@ pub fn drop_old(window: &mut gpui::Window) {
     for img in with(|s| std::mem::take(&mut s.old)) { let _ = window.drop_image(img); }
 }
 
+/// The page's root scroller: (top, most top, left, most left); None until read (added by Operations for the log's props, 2.16f).
+pub fn scroll(key: &str) -> Option<(f64, f64, f64, f64)> { with(|s| s.frames.get(key).and_then(|f| f.scroll)) }
 pub fn painted(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.painted)) }
 pub fn title(key: &str) -> String { with(|s| s.frames.get(key).map(|f| f.title.clone()).unwrap_or_default()) }
 pub fn cursor(key: &str) -> CursorStyle { crate::view::cursor_style(with(|s| s.frames.get(key).map(|f| f.cursor).unwrap_or(0))) }

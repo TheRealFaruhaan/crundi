@@ -1630,10 +1630,12 @@ dependencies = [
 name = "crundi-chat-log"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "crundi-chat-model",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",
+ "crundi-webview",
  "crundi-widgets",
  "crundi-workbench",
  "gpui-component",
