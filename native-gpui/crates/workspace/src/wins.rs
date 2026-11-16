@@ -90,7 +90,7 @@ pub struct FileWin {
     pub file: String,
     pub original: String,
     pub save_label: String,
-    pub text: Option<Entity<w::TextareaState>>,
+    pub text: Option<Entity<w::EditorState>>,
     pub img: Option<Arc<Image>>,
     pub loading: String,
     pub r: Rect,
@@ -199,10 +199,12 @@ impl WinLayer {
         let body: AnyElement = if !wn.loading.is_empty() {
             w::loading(wn.loading.clone()).into_any_element()
         } else if let Some(img) = &wn.img {
-            div().size_full().flex().items_center().justify_center().bg(T::bg()).p(T::SP_12)
-                .child(gpui::img(img.clone()).max_w_full().max_h_full().object_fit(ObjectFit::Contain)).into_any_element()
+            // The picture fills the body, kept in proportion (Contain): with
+            // only max sizes in a centring box it laid out at nothing (F88).
+            div().size_full().min_h_0().min_w_0().bg(T::bg()).p(T::SP_12)
+                .child(gpui::img(img.clone()).size_full().object_fit(ObjectFit::Contain)).into_any_element()
         } else if let Some(t) = &wn.text {
-            div().size_full().font_family(T::MONO).text_size(T::TEXT_13).child(w::textarea(t).size_full()).into_any_element()
+            div().size_full().font_family(T::MONO).text_size(T::TEXT_13).child(w::code_editor(t).size_full()).into_any_element()
         } else { div().into_any_element() };
         let mut tools = div().flex().flex_none().items_center().gap(T::SP_4).on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
         if wn.text.is_some() {
@@ -292,8 +294,9 @@ pub fn open_file(project: &str, file: &str, cx: &mut App) {
         Ok(d) if ok(&d) => {
             let content = s(&d, "content");
             let Some(id) = add("edit", &project, &file, cx) else { return };
+            let file2 = file.clone();
             crate::with_window(cx, move |window, cx| {
-                let st = cx.new(|cx| { let mut st = w::TextareaState::new(window, cx); st.set_value(content.clone(), window, cx); st });
+                let st = cx.new(|cx| { let mut st = w::code_state(&file2, window, cx); st.set_value(content.clone(), window, cx); st });
                 if let Some(l) = layer(cx) {
                     let l2 = l.clone();
                     cx.subscribe(&st, move |_, _: &w::InputEvent, cx| l2.update(cx, |_, cx| cx.notify())).detach();

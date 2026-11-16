@@ -57,7 +57,71 @@ fn live_chats(cx: &App) -> Vec<Value> {
         Some("parked") => t.get("paneKind").and_then(|k| k.as_str()).unwrap_or("ui") == "ui",
         _ => false,
     };
-    s.terminals.iter().filter(|t| chat(t) && t.get("project").and_then(|p| p.as_str()) == Some(s.project.as_str())).cloned().collect()
+    let mut out: Vec<Value> = s.terminals.iter().filter(|t| chat(t) && t.get("project").and_then(|p| p.as_str()) == Some(s.project.as_str())).cloned().collect();
+    // The safety net (F75/F84): the project's chats from GET /api/ui-sessions
+    // that the event stream's state doesn't list (yet): a state event missed
+    // late in a long session must not leave a new chat without its pane.
+    // Only chats the state has never listed: one it listed is the state's
+    // (closed since, it must not come back from a list 10 s old).
+    if let Some(p) = cx.try_global::<Polled>() {
+        let id = |v: &Value| v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+        let seen = cx.try_global::<Seen>();
+        for c in &p.0 {
+            let i = id(c);
+            if c.get("project").and_then(|x| x.as_str()) == Some(s.project.as_str()) && !out.iter().any(|o| id(o) == i) && !seen.is_some_and(|x| x.0.contains(&i)) { out.push(c.clone()); }
+        }
+    }
+    out
+}
+
+/// Every chat id the state's terminals have listed (this sign-in).
+#[derive(Default)]
+struct Seen(std::collections::HashSet<String>);
+impl Global for Seen {}
+
+fn note_seen(cx: &mut App) {
+    let ids: Vec<String> = crundi_shell::session::get(cx).terminals.iter().filter_map(|t| t.get("id").and_then(|i| i.as_str()).map(String::from)).collect();
+    if !cx.has_global::<Seen>() { cx.set_global(Seen::default()); }
+    cx.global_mut::<Seen>().0.extend(ids);
+}
+
+/// The last GET /api/ui-sessions (the safety net above).
+#[derive(Default)]
+struct Polled(Vec<Value>);
+impl Global for Polled {}
+
+/// Poll the chat list every 10 s while signed in: one poller for the
+/// app's life, started at the first sign-in. It re-arms whether or not a
+/// session is up yet, so an early tick can't end it (F84).
+fn poll(cx: &mut App) {
+    if cx.has_global::<Polling>() { return; }
+    cx.set_global(Polling);
+    tick(cx);
+}
+struct Polling;
+impl Global for Polling {}
+
+fn tick(cx: &mut App) {
+    fn again(cx: &mut App) {
+        let t = cx.background_executor().timer(std::time::Duration::from_secs(10));
+        cx.spawn(async move |cx: &mut AsyncApp| { t.await; let _ = cx.update(tick); }).detach();
+    }
+    if !crundi_shell::signed_in(cx) { return again(cx); }
+    crundi_shell::call(cx, |api| api.get("/api/ui-sessions"), |r, cx| {
+        if let Ok(v) = r {
+            let list = v.get("sessions").and_then(|s| s.as_array()).cloned().or_else(|| v.as_array().cloned()).unwrap_or_default();
+            // Only chats that are running (or parked): an ended one is the state's to show.
+            // As the server's state: a factory's employees are not panes (its Manager is).
+            let live: Vec<Value> = list.into_iter().filter(|c| {
+                let employee = c.get("factory").is_some_and(|f| !f.is_null() && f.get("role").and_then(|r| r.as_str()) != Some("manager"));
+                !employee && !c.get("background").and_then(|b| b.as_bool()).unwrap_or(false)
+                    && !matches!(c.get("status").and_then(|x| x.as_str()), Some("exited" | "ended" | "closed"))
+            }).collect();
+            cx.set_global(Polled(live));
+            sync(cx);
+        }
+        again(cx);
+    });
 }
 
 /// Every running chat has a pane; panes of chats that are gone close.
@@ -99,11 +163,12 @@ pub fn init(cx: &mut App) {
         .on_event(|e, cx| match e {
             AreaEvent::Chat(v) => model::route(cx, v),
             AreaEvent::Connected(on) => model::set_connected(cx, *on),
-            AreaEvent::State(_) => sync(cx),
+            AreaEvent::State(_) => { note_seen(cx); sync(cx) }
             _ => {}
         })
         .on_project(|_, cx| { model::clear(cx); sync(cx); })
-        .on_signed_out(|cx| model::clear(cx))
+        .on_signed_in(poll)
+        .on_signed_out(|cx| { cx.set_global(Polled::default()); cx.set_global(Seen::default()); model::clear(cx) })
         .test_ui(|name, args, window, cx| match name {
             // A message to the focused chat, as typed in its box and sent.
             "send" => {

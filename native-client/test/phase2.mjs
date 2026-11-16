@@ -89,12 +89,22 @@ let failed = 0;
 const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  ' + JSON.stringify(extra).slice(0, 400)}`); if (!ok) failed++; return ok; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function http(method, path, body, token) {
-  const res = await fetch(SERVER + path, {
+// The whole run outlasts the server's 15-minute access token (the GPUI
+// client gets through every section): on a 401 for the test's own token,
+// renew it once with the refresh token from the setup and try again.
+let refreshTok = '';
+async function http(method, path, body, tok) {
+  const go = (t) => fetch(SERVER + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: 'Bearer ' + t } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
+  let res = await go(tok);
+  if (res.status === 401 && tok && tok === token && refreshTok) {
+    const r = await fetch(SERVER + '/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: refreshTok }) });
+    const j = await r.json().catch(() => null);
+    if (j?.ok && j.token) { token = j.token; refreshTok = j.refreshToken; res = await go(token); }
+  }
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
@@ -111,7 +121,8 @@ if (!methods.body?.setupRequired) { console.error('This needs a fresh dev server
 const setup = await http('POST', '/api/auth/setup', { method: 'password', password: PASSWORD });
 check('the server takes a password', setup.body?.ok && setup.body.totpSecret, setup.body);
 const SECRET = setup.body.totpSecret;
-const token = setup.body.token;
+let token = setup.body.token;
+refreshTok = setup.body.refreshToken || '';
 
 // No bot behind the sign-in either (an empty .env, no TELEGRAM_BOT_TOKEN).
 const status = await http('GET', '/api/status', null, token);

@@ -41,7 +41,7 @@ pub fn head_button(id: impl Into<ElementId>, content: HeadContent, look: HeadLoo
         .cursor_pointer()
         .when(look == HeadLook::Close, |d| d.hover(|s| s.border_color(T::red()).text_color(T::red())))
         .when(look == HeadLook::Rest, |d| d.hover(|s| s.border_color(T::accent()).text_color(T::text())))
-        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+        .tooltip(crate::tooltip(tip.clone()))
         .child(body)
 }
 

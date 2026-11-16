@@ -35,11 +35,15 @@ pub fn sized(b: Button, label: Option<SharedString>, icon: Option<IconName>, tra
             b.w(side).h(side).px(px(0.)).when_some(icon, |b, i| b.child(icon_of(i, T::ICON_BTN_ICON)))
         }
         Some(l) => {
-            let ic = icon.map(|i| icon_of(i, T::BTN_ICON));
-            let text = div().text_size(T::BTN_TEXT).font_weight(weight).whitespace_nowrap().child(l);
-            let row = div().flex().items_center().justify_center().gap(T::BTN_GAP).min_w_0();
-            let row = if trailing { row.child(text).when_some(ic, |r, i| r.child(i)) } else { row.when_some(ic, |r, i| r.child(i)).child(text) };
-            b.h(h).px(pad).child(row)
+            // gpui-component lays out the icon and the label (so a chained
+            // `.icon(…)` fits too); its custom size makes the icon exactly
+            // BTN_ICON (it draws icons at 0.75 of the size) and the label 1 rem,
+            // the theme's font size (BTN_TEXT); height, padding and weight are
+            // ours. A dropdown's chevron (`trailing`) is the button's icon.
+            let _ = trailing;
+            b.label(l).when_some(icon, |b, i| b.icon(i))
+                .with_size(gpui_component::Size::Size(T::BTN_ICON / 0.75))
+                .h(h).px(pad).font_weight(weight)
         }
     }
 }

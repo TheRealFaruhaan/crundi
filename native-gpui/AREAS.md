@@ -35,7 +35,7 @@ A crate's owner is its only editor. Inside a crate, one file per screen or
 feature. A part that needs something from another part's crate asks its
 owner (`shared/requests.md`), never edits it.
 
-## This round: phases 0 to 2 on GPUI
+## Phases 0 to 2 on GPUI (built; phases 3 to 6 too, see PLAN.md)
 
 Each must behave as the Slint client does, checked with its tests
 (`native-client/test/phase1.mjs`, `native-client/test/phase2.mjs`), item by
@@ -82,9 +82,24 @@ crundi_shell::register(cx, Area::new("planning")
   `pend:<n>`, `panel:<kind>`).
 - The project bar's "+" by Workbench: the workbench registers what it does
   (`register_add_menu`: its add menu).
-- The shell's own buttons that a part provides: `register_action(cx,
-  "add-project", f)` (Operations: the Add project dialog). The sidebar's
-  Inbox shows Desktop's `inbox` page.
+- The shell's own buttons that a part provides, by name with
+  `register_action(cx, name, f)`, run with `registry::run_action(cx, name)`:
+  `add-project` (Operations: the Add project dialog), `open-usage`
+  (Operations: Settings, its Usage section open; the top bar's usage bars
+  and their "updated … ago" badge); Cru's mark in the top bar (Desktop):
+  `cru` (a click: toggles, a hover-opened screen stays), `cru-hover` (resting
+  on it 350 ms on a window ≥ `T::CRU_HOVER_MIN_W`, unless a chat holds the
+  mic), `cru-leave`, `cru-ptt` / `cru-ptt-up` (Ctrl+Space held / let go).
+  Desktop tells the mark what to show with `crundi_shell::set_cru_mark(cx,
+  live, unread)`. The sidebar's Inbox shows Desktop's `inbox` page.
+- The top bar (the shell's, 17 Nov): the logo and project; for the owner
+  the weekly and 5-hour usage bars (`shell/src/usage.rs`: used against time
+  passed, the over-pace slice yellow to red, the reset countdown, live from
+  the `usage` event, else `/api/usage/latest`); Cru's mark (`w::cru_mark`:
+  the bars and "cru" in the theme's `CRU_MARK` gradient, the short bars
+  breathing while Cru is live, the red unread dot); Telegram as Lucide
+  `send` with its dot (`/api/status`, every 30 s; hidden without a bot); the
+  connection badge; the window buttons. Its props: `usage`, `cruMark`, `telegram`.
 - A chat's side question: the composer's send asks `crundi_chat_model::aside`
   first (`/btw`); the log registers it (`register_aside`).
 - The drawer: Desktop registers its view (`register_drawer`); the shell
@@ -107,6 +122,13 @@ Every control comes from here: `button`, `primary`, `danger`, `ghost`,
 `outline_button`, `empty`, `error_state`, `loading`, `list_row`, `confirm`,
 `close_dialog`, `dialog_open`, `toast`, `divider`, `rule`.
 
+- Since 17 Nov also: `cru_mark` (Cru's mark, full colour), `primary_icon` (a primary button with its icon),
+  `code_state` / `code_editor` (gpui-component's code editor with syntect
+  highlighting by the file's extension: the Workspace editor).
+  Tooltips (`tooltip`, `tip`) are gpui's own, under the pointer (a clear
+  cursor-high gap), as wide as the room to its right allows (min
+  `T::TIP_MIN_W`), flipping above near the bottom edge; toasts are one slot (`toast`), so a new one replaces
+  the last, below the bars.
 - Since the phase 2 merge (16 Nov) also: `tip` and `tooltip` (one tooltip:
   `tip(el, text)` puts it on an element, `tooltip(text)` is the builder for
   `.tooltip(…)`), `modal` (a part's view as a modal) and `overlay_modal` /
@@ -155,6 +177,8 @@ parts' `test_ui` (unprefixed names to each part in turn, the phase tests'
 names: `send`, `respond`…; `<part>:<name>` to that part). `props` and `state`
 merge every part's, under the Slint client's names, so the phase tests read
 them as before.
+`pointerModal` is the driver's own: true when any part says so, the shared
+view modal is up or the ask layer has a confirm or menu open (F58).
 
 ## Building and testing side by side
 

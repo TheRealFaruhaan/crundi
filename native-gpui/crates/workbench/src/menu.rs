@@ -34,7 +34,7 @@ impl Workbench {
                 .on_click(cx.listener(move |this, _, _, cx| this.add_pane(id, cx))));
         }
         menu = menu.child(w::menu_item("fit", IconName::Maximize2, "Fit to screen", false, false)
-            .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Share the width out again so every pane fits the window (pinned panes keep their size)").build(window, cx))
+            .tooltip(w::tooltip("Share the width out again so every pane fits the window (pinned panes keep their size)"))
             .on_hover(cx.listener(|this, h: &bool, _, cx| if *h && this.layouts_open { this.layouts_open = false; cx.notify(); }))
             .on_click(cx.listener(|this, _, _, cx| this.add_pane("fit", cx))));
         menu = menu.child(w::menu_item("layout", IconName::Columns3, "Layout", true, self.layouts_open)

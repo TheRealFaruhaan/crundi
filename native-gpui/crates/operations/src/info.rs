@@ -137,8 +137,9 @@ pub fn on_event(e: &AreaEvent, cx: &mut App) {
             if cx.has_global::<Handle>() && ent(cx).read(cx).rendered { with(cx, |s, _| s.append_log(&m)); }
         }
         AreaEvent::Connected(true) => {
-            if cx.has_global::<Handle>() && ent(cx).read(cx).shown { session::ws_send(cx, &json!({ "type": "subscribe-logs" })); }
+            if cx.has_global::<Handle>() && ent(cx).read(cx).shown { session::ws_send(cx, &json!({ "type": "subscribe-logs" })); render_all(cx); }
         }
+        AreaEvent::Connected(false) => if cx.has_global::<Handle>() { with(cx, |_, _| {}); },
         _ => {}
     }
 }
@@ -715,6 +716,10 @@ impl InfoView {
 impl Render for InfoView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut page = w::page("info-page");
+        // A down server: say so over the last figures, with Retry (F66).
+        if !crundi_shell::session::get(cx).online {
+            page = page.child(w::error_state("info-retry", "Not connected to the server: these figures may be out of date.", |_, _, cx| { render_all(cx); cx.refresh_windows(); }));
+        }
         if let Some((alias, name, path, term, svc)) = project_facts(&self.services, cx) {
             page = page
                 .child(section("PROJECT").gap(px(0.)).child(kv("Alias", alias, true)).child(kv("Name", name, true)).child(kv("Path", path, false)))

@@ -37,6 +37,10 @@ pub struct Session {
     pub offer_github: bool,
     pub offer_telegram: bool,
     pub app_login: bool,
+    /// The account's usage (the top bar's bars): the server's answer and when it came.
+    pub usage: Option<(Value, std::time::Instant)>,
+    /// The Telegram bot (GET /api/status): configured, connected, its @name.
+    pub tg: Option<(bool, bool, String)>,
     /// Signing in through the browser: the code to compare with the page's ("" none).
     pub oauth_code: String,
     oauth_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
@@ -301,6 +305,12 @@ fn start_session(cx: &mut App, si: SignedIn) {
     if let Some(old) = old { old.stop(); }
     registry::each(cx, |a, cx| if let Some(f) = &a.on_signed_in { f(cx) });
     load_projects(cx, saved.project);
+    // The top bar: the usage now (latest, else fresh; then the usage events),
+    // and the Telegram bot's status (again every 30 s, as the web's).
+    call(cx, |api| api.get("/api/usage/latest").or_else(|_| api.get("/api/usage")), |r, cx| {
+        if let Ok(u) = r { with(cx, |s| s.usage = Some((u, std::time::Instant::now()))); cx.refresh_windows(); }
+    });
+    load_status(cx);
     cx.refresh_windows();
 }
 
@@ -345,6 +355,8 @@ pub fn sign_out(cx: &mut App, why: &str) {
         s.projects.clear();
         s.project.clear();
         s.terminals.clear();
+        s.usage = None;
+        s.tg = None;
         s.online = false;
         s.signin_error = why.to_string();
         s.step = Step::Login;
@@ -364,6 +376,7 @@ pub fn pump(cx: &mut App) {
         match &e {
             Event::SignedOut => { sign_out(cx, "Your sign-in ended. Sign in again."); return; }
             Event::Connected(on) => with(cx, |s| s.online = *on),
+            Event::Usage(u) => with(cx, |s| s.usage = Some((u.clone(), std::time::Instant::now()))),
             Event::State(st) => {
                 if let Some(p) = st.get("projects").and_then(|p| p.as_array()) { if !p.is_empty() { with(cx, |s| s.projects = p.clone()); } }
                 if let Some(t) = st.get("terminals").and_then(|t| t.as_array()) { with(cx, |s| s.terminals = t.clone()); }
@@ -375,4 +388,20 @@ pub fn pump(cx: &mut App) {
         }
     }
     cx.refresh_windows();
+}
+
+/// The Telegram bot's status for the top bar (GET /api/status), then again
+/// every 30 s while signed in (the web's updateTgBadge).
+pub fn load_status(cx: &mut App) {
+    call(cx, |api| api.get("/api/status"), |r, cx| {
+        if let Ok(d) = r {
+            let configured = d.get("botConfigured").and_then(|v| v.as_bool()).unwrap_or(true);
+            let connected = d.get("botConnected").and_then(|v| v.as_bool()).unwrap_or(false);
+            let name = d.get("botUsername").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            with(cx, |s| s.tg = Some((configured, connected, name)));
+            cx.refresh_windows();
+        }
+        let task = cx.background_executor().timer(std::time::Duration::from_secs(30));
+        cx.spawn(async move |cx: &mut AsyncApp| { task.await; let _ = cx.update(|cx| if signed_in(cx) { load_status(cx) }); }).detach();
+    });
 }

@@ -45,6 +45,14 @@ pub struct Cru {
     pub epoch: u64,
     pub unread: i64,
     pub menu: bool,
+    /// How the screen was opened (the web's S.how): "click", "hover", "ptt".
+    pub how: String,
+    /// Push to talk held.
+    pub ptt: bool,
+    /// A hover-opened screen closes then, unless Cru is busy (maybeLeave).
+    pub leave_at: Option<Instant>,
+    /// Push to talk let go: what was heard goes then (pttRelease).
+    pub ptt_send_at: Option<Instant>,
 }
 
 thread_local! { static C: RefCell<Cru> = RefCell::new(Cru { chat_view: true, phase: "ended".into(), ..Default::default() }); }
@@ -78,6 +86,53 @@ pub fn available() -> bool { kit::get().api.is_some() }
 
 pub fn toggle() { if with(|c| c.open) { close() } else { open(false) } }
 
+/// The top-bar mark's click: a hover-opened screen stays; else it toggles.
+pub fn click() {
+    if with(|c| c.open) {
+        if with(|c| c.how == "hover") { with(|c| { c.how = "click".into(); c.leave_at = None; }); } else { close() }
+    } else { open(false); with(|c| c.how = "click".into()); }
+}
+
+/// Resting on the mark: open (hover), unless a chat's voice holds the mic.
+pub fn hover(mic_taken: bool) {
+    if with(|c| c.open) { with(|c| c.leave_at = None); return; }
+    if mic_taken { return; }
+    open(false);
+    with(|c| c.how = "hover".into());
+}
+
+/// The pointer left the mark: a hover-opened screen closes in a moment.
+pub fn leave() { with(|c| if c.open && c.how == "hover" { c.leave_at = Some(Instant::now() + Duration::from_millis(700)); }); }
+
+/// Push to talk pressed: open listening, or stop Cru talking (barge in).
+pub fn ptt_down() {
+    if !with(|c| c.open) { open(false); with(|c| c.how = "ptt".into()); }
+    with(|c| c.ptt = true);
+    if with(|c| c.phase == "speak") { stop_saying(); with(|c| c.phase = "listen".into()); render(); }
+}
+
+/// Push to talk let go: what was heard goes without waiting for a pause.
+pub fn ptt_up() {
+    with(|c| if c.ptt { c.ptt = false; c.how = "click".into(); c.ptt_send_at = Some(Instant::now() + Duration::from_millis(700)); });
+}
+
+/// The timers above, from the main pump.
+pub fn tick() {
+    let now = Instant::now();
+    if with(|c| c.leave_at.is_some_and(|t| now >= t)) {
+        let busy = with(|c| { c.leave_at = None; c.how != "hover" || c.phase == "think" || c.phase == "speak" || !c.heard.is_empty() });
+        if !busy { close(); }
+    }
+    if with(|c| c.ptt_send_at.is_some_and(|t| now >= t)) {
+        let heard = with(|c| { c.ptt_send_at = None; if c.open && c.phase == "listen" { c.heard.clone() } else { String::new() } });
+        if !heard.is_empty() { ask(&heard, false); }
+    }
+}
+
+/// The top bar's mark: Cru live (the screen open, Cru listening, thinking
+/// or talking), and the unread reports.
+pub fn mark() -> (bool, i64) { with(|c| (c.open && c.phase != "ended", c.unread)) }
+
 /// Open the screen: warm the brain, its settings, the history, the mic.
 pub fn open(report_only: bool) {
     let p = prefs();
@@ -108,7 +163,7 @@ pub fn open(report_only: bool) {
 }
 
 pub fn close() {
-    with(|c| { c.open = false; c.listen = None; c.phase = "ended".into(); c.heard.clear(); c.interim.clear(); c.menu = false; c.epoch += 1; });
+    with(|c| { c.open = false; c.how.clear(); c.ptt = false; c.leave_at = None; c.ptt_send_at = None; c.listen = None; c.phase = "ended".into(); c.heard.clear(); c.interim.clear(); c.menu = false; c.epoch += 1; });
     stop_saying();
     render();
 }

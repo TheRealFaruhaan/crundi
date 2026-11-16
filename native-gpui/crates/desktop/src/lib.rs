@@ -73,6 +73,12 @@ pub fn init(window: &mut Window, cx: &mut App) {
         view: view.into(),
         has_pages: Rc::new(|_| drawer::with(|d| d.projects.get(&d.project.to_lowercase()).is_some_and(|p| !p.tabs.is_empty()))),
     });
+    // The top bar's Cru button (the shell's hook).
+    crundi_shell::register_action(cx, "cru", |_| cru::click());
+    crundi_shell::register_action(cx, "cru-hover", |cx| cru::hover(crundi_chat_composer::voice::any_recording(cx)));
+    crundi_shell::register_action(cx, "cru-leave", |_| cru::leave());
+    crundi_shell::register_action(cx, "cru-ptt", |_| cru::ptt_down());
+    crundi_shell::register_action(cx, "cru-ptt-up", |_| cru::ptt_up());
     crundi_shell::register(cx, Area::new("desktop")
         .tabs(&["browsers", "inbox"], move |tab, _, _| if tab == "inbox" { ipage.clone().into_any_element() } else { bpage.clone().into_any_element() })
         .on_tab(|tab, _| match tab { "browsers" => browsers::load(), "inbox" => inbox::load(), _ => {} })
@@ -101,6 +107,9 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     web::frames::drop_old(window);
     host::pump();
     passwords::pump();
+    cru::tick();
+    let (live, unread) = cru::mark();
+    crundi_shell::set_cru_mark(cx, live, unread);
     for p in tray::take_picks() { tray::act(&p); }
     if let Some((what, arg)) = BUBBLE_ASK.with(|b| b.borrow_mut().take()) {
         match what {

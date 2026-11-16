@@ -20,6 +20,9 @@ use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
+/// The run graph's lowest opening zoom: its step text stays readable (F78).
+const READABLE_Z: f32 = 0.75;
+
 /// The Slint client's PlanningFxView: what the graph's bars and panes show.
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct Vx {
@@ -325,7 +328,12 @@ pub fn build() {
     let (follow, fitted, old_key, cw, ch) = with(|v| (v.follow, v.fitted, v.active_key.clone(), v.cw, v.ch));
     if cw > 0.0 && (!fitted || (follow && active_key != old_key)) {
         let pick: Vec<Rect> = if follow && !active_key.is_empty() { active_key.split(',').filter_map(|id| rect_of.get(id).copied()).collect() } else { vec![] };
-        let (z, px, py) = if !pick.is_empty() { model::fit(model::union(&pick).unwrap(), cw, ch, 0.45, 0.15, 0.95) } else { model::fit(bounds, cw, ch, 0.15, 0.15, 1.0) };
+        let (z, px, py) = if !pick.is_empty() { model::fit(model::union(&pick).unwrap(), cw, ch, 0.45, 0.15, 0.95) } else {
+            // F78: a long graph fitted whole is unreadable (6 px text): open at
+            // a readable floor instead, from the graph's top (the run's start).
+            let (z, px, py) = model::fit(bounds, cw, ch, 0.15, 0.15, 1.0);
+            if z >= READABLE_Z { (z, px, py) } else { (READABLE_Z, cw / 2.0 - (bounds.x + bounds.w / 2.0) * READABLE_Z, ch * 0.06 - bounds.y * READABLE_Z) }
+        };
         with(|v| { v.z = z; v.px = px; v.py = py; v.fitted = true; v.active_key = active_key.clone(); });
     } else { with(|v| v.active_key = active_key.clone()); }
 

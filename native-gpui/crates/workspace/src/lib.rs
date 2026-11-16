@@ -104,7 +104,13 @@ pub fn init(cx: &mut App) {
             }
             _ => {}
         })
-        .on_tab(|tab, cx| if tab == "git" { if let Some(g) = git::view(cx) { g.update(cx, |g, cx| g.load(cx)); } })
+        // Each shown tab reloads, so a down server shows its error, not a stale list (F66).
+        .on_tab(|tab, cx| match tab {
+            "git" => if let Some(g) = git::view(cx) { g.update(cx, |g, cx| g.load(cx)); },
+            "media" => if let Some(m) = media::view(cx) { m.update(cx, |m, cx| m.load(cx)); },
+            "files" => if let Some(f) = files::view(cx) { f.update(cx, |f, cx| f.load(None, cx)); },
+            _ => {}
+        })
         .test_ui(|name, a, window, cx| {
             let s = |i: usize| a.get(i).cloned().unwrap_or_default();
             if name == "ping" { return Some(json!({ "ok": true, "area": "workspace" })); }

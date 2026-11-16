@@ -55,6 +55,11 @@ pub fn init(cx: &mut App) {
     // actions and props. Until the app calls crundi_chat_log::init itself
     // (shared/requests.md), operations does.
     crundi_chat_log::init(cx);
+    // The top bar's usage badge and bars: Settings, its Usage section open.
+    crundi_shell::register_action(cx, "open-usage", |cx| {
+        settings::set_open(cx, "usage", true);
+        if let Some(s) = crundi_shell::shell(cx) { s.update(cx, |s, cx| s.show_tab("settings", cx)); }
+    });
     crundi_shell::register(cx, Area::new("operations")
         .tabs(&["panels", "services", "docker", "homepool", "info", "secrets", "settings"], page)
         .on_event(|e, cx| { each!(on_event(e, cx)); })

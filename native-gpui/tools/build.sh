@@ -33,17 +33,23 @@ flock 9
 # folders); the crates then rebuild from this worktree's files.
 HERE=$(pwd -P)
 LAST="$CARGO_TARGET_DIR/.gpui-last-worktree"
-if [ "$(cat "$LAST" 2>/dev/null)" != "$HERE" ]; then
+# Also when any crundi-* build output is newer than this marker: a build that
+# didn't come through this script (a direct cargo test from another
+# worktree) left it, and the marker alone can't see that (F82).
+OTHER=""
+[ -f "$LAST" ] && OTHER=$(find "$CARGO_TARGET_DIR/debug/build" "$CARGO_TARGET_DIR/release/build" -mindepth 2 -maxdepth 2 -path '*/crundi-*' -newer "$LAST" -print -quit 2>/dev/null || true)
+if [ "$(cat "$LAST" 2>/dev/null)" != "$HERE" ] || [ -n "$OTHER" ]; then
   find crates -name '*.rs' -path '*/src/*' -exec touch {} +
   find crates -name 'Cargo.toml' -exec touch {} +
   echo "sources touched: the last build was from $(cat "$LAST" 2>/dev/null || echo nowhere)" >&2
 fi
-echo "$HERE" > "$LAST"
 PEAKS=/tmp/crundi-gpui-peaks-$$.log
 tools/rustc-peak.sh "$PEAKS" & PK=$!
 trap 'kill $PK 2>/dev/null; rm -f "$PEAKS" "$PEAKS.tmp"' EXIT
 S=$(date +%s)
 cargo "$CMD" -j4 "$@"
+# The marker after the build: this build's own outputs are older than it.
+echo "$HERE" > "$LAST"
 PROFILE=debug; for a in "$@"; do [ "$a" = "--release" ] && PROFILE=release; done
 [ -f "$CARGO_TARGET_DIR/$PROFILE/crundi-gpui" ] && STAGE_NAME=crundi-gpui node ../native-client/scripts/stage-cef.mjs "$CARGO_TARGET_DIR/$PROFILE" >/dev/null 2>&1 || true
 echo "build took $(( $(date +%s) - S )) s; top rustc peaks:"; sleep 1.2; head -5 "$PEAKS" 2>/dev/null || true

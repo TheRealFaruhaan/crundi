@@ -667,3 +667,9 @@ fn props_app(cx: &mut App) -> Value {
         },
     })
 }
+
+/// Some chat holds the microphone (voice mode or a hold, not paused): Cru's
+/// mark doesn't open on hover then (the web's CrundiChat.voiceActive).
+pub fn any_recording(cx: &App) -> bool {
+    vor(cx).is_some_and(|v| v.rec.as_ref().is_some_and(|r| v.away.as_deref() != Some(r.key.as_str())))
+}

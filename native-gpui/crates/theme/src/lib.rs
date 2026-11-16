@@ -148,7 +148,9 @@ impl T {
     pub const BTN_PAD_X: Pixels = Self::SP_10;
     pub const BTN_GAP: Pixels = Self::SP_6;
     pub const BTN_ICON: Pixels = Self::ICON_MD;
-    pub const BTN_TEXT: Pixels = Self::TEXT_12;
+    /// A button's label: the theme's base size (gpui-component draws it at
+    /// 1 rem, and the registered theme's font size is this token).
+    pub const BTN_TEXT: Pixels = Self::TEXT_13;
     pub const BTN_WEIGHT: FontWeight = Self::W_MEDIUM;
     pub const BTN_RADIUS: Pixels = Self::R_CONTROL;
     /// The big button (Send, a form's main action): the control height.
@@ -424,6 +426,17 @@ impl T {
     pub fn vault_yellow_edge() -> Hsla { rgba(0xf59e0b40).into() }
     // ── end operations ──
     // ── desktop ──
+    /// Cru's mark (app/vendor/crundi-voice.js cruIcon): the stroke's gradient,
+    /// sky to indigo to violet to pink, at these offsets; the dark layer
+    /// behind it; its height in the top bar (its width is 150/90 of it).
+    pub const CRU_MARK: [(f32, u32); 4] = [(0.0, 0x38bdf8), (0.4, 0x6366f1), (0.72, 0xa78bfa), (1.0, 0xe879f9)];
+    pub const CRU_MARK_DARK: [(f32, u32); 3] = [(0.0, 0x0c4a6e), (0.45, 0x312e81), (1.0, 0x701a75)];
+    pub const CRU_MARK_H: Pixels = px(24.);
+    /// A tooltip is never narrower than this: with less room right of the
+    /// pointer it goes to the pointer's left instead.
+    pub const TIP_MIN_W: Pixels = px(160.);
+    /// Hovering Cru's mark opens it only on a window at least this wide.
+    pub const CRU_HOVER_MIN_W: Pixels = px(900.);
     /// An annotation stroke on a page.
     pub const ANNOTATE_STROKE: Pixels = px(3.);
     /// The marks' colours as bytes, for pictures drawn off screen (a page's
@@ -509,7 +522,7 @@ pub fn theme_config(mode: &str) -> serde_json::Value {
     };
     serde_json::json!({
         "name": "Crundi", "mode": mode,
-        "font.family": T::UI_FONT, "font.size": 13.0,
+        "font.family": T::UI_FONT, "font.size": f32::from(T::BTN_TEXT),
         "mono_font.family": T::MONO, "mono_font.size": 12.0,
         "radius": 6,
         "colors": {
@@ -542,6 +555,15 @@ pub fn init(cx: &mut App) {
     t.light_theme = light;
     t.apply_config(&dark);
     gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+    // The code editor's highlighting for a dark ground (the config has no
+    // highlight of its own, so it kept the light one: dark blue on dark).
+    gpui_component::Theme::global_mut(cx).highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
+    // The toast where the web puts it: under the top bar, at the right edge
+    // (top: the bar's height and sp-10; right sp-16), at most a dialog's width wide.
+    let n = &mut gpui_component::Theme::global_mut(cx).notification;
+    n.margins.top = T::TOPBAR_H + T::SP_10;
+    n.margins.right = T::SP_16;
+    n.width = T::DIALOG_W_LG;
 }
 
 #[cfg(test)]

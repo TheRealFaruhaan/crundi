@@ -37,7 +37,8 @@ mod shimmer; pub use shimmer::shimmer;
 mod markdown; pub use markdown::markdown;
 pub mod tip; pub use tip::{tip, tooltip};
 mod icon; pub use icon::icon;
-pub mod textarea; pub use textarea::{message_box, textarea, Textarea, TextareaState};
+pub mod cru_mark; pub use cru_mark::cru_mark;
+pub mod textarea; pub use textarea::{code_editor, code_state, message_box, textarea, Editor, EditorState, Textarea, TextareaState};
 pub mod square; pub use square::{square_button, SquareLook};
 pub mod dropdown; pub use dropdown::{dropdown, dropdown_of};
 pub mod tone_button; pub use tone_button::tone_button;
@@ -78,6 +79,11 @@ pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Butto
 /// A button with an icon before its label (a card's Logs, Restart…).
 pub fn icon_label_button(id: impl Into<ElementId>, icon: IconName, label: impl Into<SharedString>) -> Button {
     sized(Button::new(id), Some(label.into()), Some(icon), false, Ctl::Normal)
+}
+
+/// The accent button with an icon before its label (Upload, + Register service).
+pub fn primary_icon(id: impl Into<ElementId>, icon: IconName, label: impl Into<SharedString>) -> Button {
+    sized(Button::new(id).primary(), Some(label.into()), Some(icon), false, Ctl::Normal)
 }
 
 /// The accent button (+ Register service, Schedule…).
@@ -508,8 +514,13 @@ pub fn toast(window: &mut Window, cx: &mut App, text: impl Into<SharedString>, k
         Toast::Error => gpui_component::notification::Notification::error(text),
         Toast::Success => gpui_component::notification::Notification::success(text),
     };
-    window.push_notification(n, cx);
+    // One toast at a time, as the web's: a new one replaces the one on show
+    // (never two stacked over each other: F51, F59).
+    window.push_notification(n.id::<ToastSlot>(), cx);
 }
+
+/// The one toast's slot (its notification id).
+struct ToastSlot;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Toast { Info, Error, Success }

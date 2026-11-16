@@ -260,9 +260,11 @@ impl Render for MediaView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let filt = |id: &'static str, label: &'static str, on: bool| w::toggle(id, label, on);
         let has_project = !crundi_shell::project(cx).is_empty();
-        let bar = w::toolbar()
-            .child(w::primary("media-upload", "Upload").icon(IconName::Upload).on_click(cx.listener(|m, _, _, cx| m.upload(cx))))
-            .child(div().w(T::WS_MEDIA_SEARCH).child(w::input(&self.search)))
+        // The bar wraps in a narrow pane (the web's flex-wrap): the search
+        // keeps its width instead of collapsing (F86).
+        let bar = w::toolbar().flex_wrap()
+            .child(w::primary_icon("media-upload", IconName::Upload, "Upload").on_click(cx.listener(|m, _, _, cx| m.upload(cx))))
+            .child(div().flex_none().w(T::WS_MEDIA_SEARCH).child(w::input(&self.search)))
             .child(filt("mk-all", "All", self.kind == "all").on_click(cx.listener(|m, _, _, cx| m.set_kind("all", cx))))
             .child(filt("mk-kanban", "Kanban", self.kind == "kanban").on_click(cx.listener(|m, _, _, cx| m.set_kind("kanban", cx))))
             .child(filt("mk-mindmap", "Mindmap", self.kind == "mindmap").on_click(cx.listener(|m, _, _, cx| m.set_kind("mindmap", cx))))

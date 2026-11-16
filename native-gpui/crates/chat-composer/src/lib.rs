@@ -428,14 +428,15 @@ impl Render for ComposerView {
                     attach::toast(cx, &format!("Session id copied: {full}"), false);
                 }).into_any_element()
         });
-        let meta = div().flex().flex_wrap().items_center().gap(if narrow { T::SP_6 } else { T::SP_8 }).text_size(meta_text).text_color(T::text_muted())
+        // One row (the web's): a narrow pane elides the model and session id, never wraps them under.
+        let meta = div().flex().items_center().min_w_0().overflow_hidden().gap(if narrow { T::SP_6 } else { T::SP_8 }).text_size(meta_text).text_color(T::text_muted())
             .child(div().text_color(label_c).child(label))
             .child(mode::button(self, narrow, fs, cx))
             .child(switch)
             .when(!narrow, |d| d.child(sched::clock_button(self, false, cx)))
             .child(div().flex_1())
-            .children(sid_el)
-            .when(!model.is_empty(), |d| d.child(model))
+            .children(sid_el.map(|e| div().min_w_0().overflow_hidden().child(e)))
+            .when(!model.is_empty(), |d| d.child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(model)))
             .when(cost > 0.0, |d| d.child(format!("${cost:.4}")));
 
         div().relative().flex().flex_col().gap(T::SP_6).p(T::SP_8).border_t_1().border_color(T::border()).bg(T::bg_secondary())

@@ -41,5 +41,5 @@ pub fn square_button(id: impl Into<ElementId>, icon: IconName, tip: impl Into<Sh
         .when(look != SquareLook::Busy, |d| d.cursor_pointer())
         .when(hover, |d| d.hover(|s| s.border_color(T::accent()).text_color(T::accent_hover())))
         .child(icon)
-        .tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(tip.clone()).build(window, cx))
+        .tooltip(crate::tooltip(tip.clone()))
 }

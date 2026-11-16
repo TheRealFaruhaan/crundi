@@ -6,6 +6,7 @@
 
 pub mod registry;
 pub mod session;
+pub mod usage;
 
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
@@ -22,6 +23,10 @@ pub struct Shell {
     pub drawer_open: bool,
     pub drawer_w: Pixels,
     dragging: bool,
+    /// Ctrl+Space is held (Cru's push to talk).
+    ptt_held: bool,
+    /// Bumped on each hover of Cru's mark: a hover timer that outlives it does nothing.
+    cru_hover: u64,
     server_input: Entity<w::InputState>,
     password_input: Entity<w::InputState>,
     code_input: Entity<w::InputState>,
@@ -32,6 +37,20 @@ pub struct Shell {
 pub struct ShellHandle(pub WeakEntity<Shell>);
 impl Global for ShellHandle {}
 
+/// What Cru's mark in the top bar shows: Cru live (listening, thinking,
+/// talking), and its unread reports. Desktop sets it (set_cru_mark).
+#[derive(Clone, Default, PartialEq)]
+pub struct CruMark { pub live: bool, pub unread: i64 }
+impl Global for CruMark {}
+
+/// Desktop's Cru tells the top bar; redraws only on a change.
+pub fn set_cru_mark(cx: &mut App, live: bool, unread: i64) {
+    let m = CruMark { live, unread };
+    if cx.try_global::<CruMark>() == Some(&m) { return; }
+    cx.set_global(m);
+    cx.refresh_windows();
+}
+
 impl Shell {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let server_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("dev.example.com"));
@@ -39,7 +58,7 @@ impl Shell {
         let code_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("6-digit code"));
         let pair_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("Pairing link"));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, server_input, password_input, code_input, pair_input }
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -63,6 +82,9 @@ impl Shell {
             "oauthCode": s.oauth_code,
             "server": s.server, "username": s.username,
             "currentProject": s.project, "projectName": session::project_name(cx),
+            "usage": s.usage.as_ref().and_then(|(u, _)| usage::rows(u, crundi_core::time::now_secs())).map(|r| r.iter().map(|x| json!({ "tag": x.tag, "used": x.used, "time": x.time, "left": x.left, "over": x.over })).collect::<Vec<_>>()),
+            "cruMark": cx.try_global::<CruMark>().map(|m| json!({ "live": m.live, "unread": m.unread })),
+            "telegram": s.tg.as_ref().map(|(c, on, n)| json!({ "configured": c, "connected": on, "name": n })),
             "currentTab": self.tab, "drawerOpen": self.drawer_open, "sidebar": self.sidebar,
             "projects": s.projects.iter().map(|p| p.get("alias").cloned().unwrap_or(Value::Null)).collect::<Vec<_>>(),
             // The sidebar's dots (the web's priority over the state event's terminals).
@@ -76,22 +98,93 @@ impl Shell {
 
     // ─── The top bar ───
 
+    /// The top bar (the PC client's): the usage rows behind it (weekly, then
+    /// 5-hour: used, the window passed, the slice running ahead of the clock,
+    /// the labels); the logo and project; the "updated … ago" badge (a click
+    /// opens Usage); Cru; Telegram's status; the connection badge; the
+    /// window buttons.
+    /// Cru's mark (the PC client's top-bar button, crundi-voice.js attach()):
+    /// no outline or background; the bars breathe while Cru is live; a red
+    /// dot for unread reports. A click toggles Cru; resting on it opens Cru
+    /// (on a wide window, after a moment), and it closes again when the
+    /// pointer leaves unless Cru is busy (Desktop's "cru-hover", "cru-leave").
+    fn cru_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let m = cx.try_global::<CruMark>().cloned().unwrap_or_default();
+        let tip: SharedString = if m.unread > 0 { format!("Talk to Cru ({} unread)", m.unread).into() } else { "Talk to Cru (voice assistant)".into() };
+        let wide = window.viewport_size().width >= T::CRU_HOVER_MIN_W;
+        div().id("cru").relative().flex_none().flex().items_center().p(T::SP_2).cursor_pointer()
+            .child(w::cru_mark(m.live))
+            .when(m.unread > 0, |d| d.child(w::dot(T::red()).absolute().top(px(1.)).right(px(1.)).border_2().border_color(T::bg_secondary())))
+            .tooltip(w::tooltip(tip))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, _, cx| { this.cru_hover += 1; registry::run_action(cx, "cru"); }))
+            .on_hover(cx.listener(move |this, on: &bool, _, cx| {
+                this.cru_hover += 1;
+                if !*on { registry::run_action(cx, "cru-leave"); return; }
+                if !wide { return; }
+                let n = this.cru_hover;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(std::time::Duration::from_millis(350)).await;
+                    let _ = this.update(cx, |this, cx| if this.cru_hover == n { registry::run_action(cx, "cru-hover"); });
+                }).detach();
+            }))
+    }
+
     fn top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = session::get(cx);
         let (name, online, server) = (session::project_name(cx), s.online, s.server.clone());
+        let now = crundi_core::time::now_secs();
+        let usage = s.usage.as_ref().and_then(|(u, at)| usage::rows(u, now).map(|r| (r, at.elapsed().as_secs_f64(), u.get("fetchedAt").and_then(|f| f.as_str()).and_then(crundi_core::time::parse_iso))));
+        let tg = s.tg.clone();
+        // The rows behind the bar (no input: the bar's own parts stay on top).
+        let mut rows = div().absolute().inset_0().flex().flex_col();
+        if let Some((r, _, _)) = &usage {
+            for (i, row) in r.iter().enumerate() {
+                let (used, time) = (row.used / 100.0, row.time.unwrap_or(0.0) / 100.0);
+                let over_c = { let t = usage::over_strength(row.over); let c = T::yellow().blend(T::red().opacity(t)); c.opacity(0.18 + 0.4 * t) };
+                rows = rows.child(div().relative().flex_1().overflow_hidden().when(i > 0, |d| d.border_t_1().border_color(T::border_subtle()))
+                    .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(time)).bg(T::usage_time()))
+                    .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(used)).bg(T::usage_used()))
+                    .when(row.over > 0.0, |d| d.child(div().absolute().top(px(0.)).bottom(px(0.)).left(relative(time)).w(relative(row.over / 100.0)).bg(over_c)))
+                    .child(div().absolute().top(px(0.)).left(relative(used.min(0.92))).pl(T::SP_6).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text()).opacity(0.9)
+                        .child(format!("{} {}%", row.tag, row.used.round())))
+                    .when(row.time.is_some(), |d| d.child(div().absolute().bottom(px(0.)).left(relative(time.min(0.9))).pl(T::SP_6).flex().items_center().gap(T::SP_2)
+                        .text_size(T::TEXT_10).text_color(T::text_secondary()).opacity(0.7)
+                        .child(w::icon(IconName::Clock, T::TEXT_10)).child(row.left.clone()))));
+            }
+        }
+        let badge = usage.as_ref().map(|(_, age, fetched)| {
+            let age = fetched.map(|f| now - f).unwrap_or(*age);
+            w::tip(div().id("usage-updated").flex().items_center().gap(T::SP_4).h(T::SP_24).px(T::SP_10).rounded(T::R_PILL).cursor_pointer()
+                .bg(T::bg_hover()).text_size(T::TEXT_11).font_family(T::MONO).text_color(T::text_secondary()).hover(|d| d.text_color(T::text()))
+                .child(w::icon(IconName::ChartBar, T::ICON_SM)).child(usage::ago(age))
+                .on_click(|_, _, cx| registry::run_action(cx, "open-usage")), "Claude usage: click for its history")
+        });
+        let tg_el = tg.filter(|(configured, connected, _)| *configured || *connected).map(|(_, connected, n)| {
+            let tip = if connected { format!("Telegram: @{}", if n.is_empty() { "bot".to_string() } else { n }) } else { "Telegram: offline".to_string() };
+            w::tip(div().id("tg").relative().flex().items_center().justify_center().size(T::ICON_BTN).text_color(T::text_secondary())
+                .child(w::icon(IconName::Send, T::ICON_LG))
+                .child(div().absolute().right(T::SP_4).bottom(T::SP_4).size(T::SP_6 + px(1.)).rounded(T::R_PILL).border_1().border_color(T::bg_secondary())
+                    .bg(if connected { T::green() } else { T::red() })), tip)
+        });
         div()
-            .id("topbar").flex().flex_none().items_center().gap(T::SP_12).h(T::TOPBAR_H).pl(T::SP_16).pr(T::SP_4)
+            .id("topbar").relative().flex().flex_none().h(T::TOPBAR_H)
             .bg(T::bg_secondary()).border_b_1().border_color(T::border())
             .on_mouse_down(MouseButton::Left, |e, window, _| if e.click_count == 1 { window.start_window_move(); })
             .on_click(|e, window, _| if e.click_count() == 2 { window.zoom_window(); })
-            .child(div().text_color(T::accent()).text_size(T::TEXT_20).child(IconName::Bot))
-            .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_20).child("crundi"))
-            .when(!name.is_empty(), |d| d.child(div().text_color(T::text_muted()).child("/")).child(div().text_color(T::text_secondary()).child(name)))
-            .child(div().flex_1())
-            .child(w::status_badge(if online { "connected" } else { "offline" }, online).id("conn").tooltip(move |window, cx| gpui_component::tooltip::Tooltip::new(server.clone()).build(window, cx)))
-            .child(w::icon_button("win-min", IconName::Minus, "Minimize").on_click(|_, window, _| window.minimize_window()))
-            .child(w::icon_button("win-max", IconName::Square, if window.is_maximized() { "Restore" } else { "Maximize" }).on_click(|_, window, _| window.zoom_window()))
-            .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit()))
+            .child(rows)
+            .child(div().relative().flex().flex_1().items_center().gap(T::SP_12).pl(T::SP_16).pr(T::SP_4)
+                .child(div().text_color(T::accent()).text_size(T::TEXT_20).child(IconName::Bot))
+                .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_20).child("crundi"))
+                .when(!name.is_empty(), |d| d.child(div().text_color(T::text_muted()).child("/")).child(div().text_color(T::text_secondary()).child(name)))
+                .child(div().flex_1())
+                .children(badge)
+                .child(self.cru_button(window, cx))
+                .children(tg_el)
+                .child(w::status_badge(if online { "connected" } else { "offline" }, online).id("conn").tooltip(w::tooltip(server.clone())))
+                .child(w::icon_button("win-min", IconName::Minus, "Minimize").on_click(|_, window, _| window.minimize_window()))
+                .child(w::icon_button("win-max", IconName::Square, if window.is_maximized() { "Restore" } else { "Maximize" }).on_click(|_, window, _| window.zoom_window()))
+                .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit())))
     }
 
     // ─── The sidebar ───
@@ -230,7 +323,7 @@ impl Render for Shell {
             .child(project)
             .when_some(drawer, |d, dr| d
                 .child(w::divider("drawer-split", self.dragging)
-                    .tooltip(|window, cx| gpui_component::tooltip::Tooltip::new("Drag to resize; double-click to reset").build(window, cx))
+                    .tooltip(w::tooltip("Drag to resize; double-click to reset"))
                     .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
                         if e.click_count >= 2 { this.drawer_w = T::DRAWER_W; this.dragging = false; } else { this.dragging = true; }
                         cx.notify();
@@ -245,6 +338,18 @@ impl Render for Shell {
                 cx.notify();
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))
+            // Cru's push to talk (the web's default, Ctrl+Space): held, Cru
+            // opens listening (or stops talking); let go, what was heard goes.
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
+                let k = &e.keystroke;
+                if k.key == "space" && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift && !k.modifiers.platform {
+                    cx.stop_propagation();
+                    if !this.ptt_held && !e.is_held { this.ptt_held = true; registry::run_action(cx, "cru-ptt"); }
+                }
+            }))
+            .capture_key_up(cx.listener(|this, e: &KeyUpEvent, _, cx| {
+                if this.ptt_held && (e.keystroke.key == "space" || e.keystroke.key == "control") { this.ptt_held = false; registry::run_action(cx, "cru-ptt-up"); }
+            }))
             .child(self.top_bar(window, cx))
             .child(main)
             // The parts' layers (not modal: Cru's screen), then a view modal (w::modal), over the window.

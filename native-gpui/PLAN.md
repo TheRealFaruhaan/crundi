@@ -42,33 +42,39 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
    pairing and sign-in as the PC client does (server step, password and
    code, Google / GitHub / Telegram through the browser), saved settings,
    the window (projects and navigation). Test: `test/phase1.mjs` in full.
-   - [ ] sign-in through the browser (`sign-in-browser`, app-login)
-   - [ ] a restart signs in from the saved login
-   - [ ] the top bar's usage bars and Cru's mark; the sidebar's dots and folding
+   - [x] sign-in through the browser (`sign-in-browser`, app-login)
+   - [x] a restart signs in from the saved login
+   - [x] the top bar (17 Nov): weekly and 5-hour usage bars (used against
+     time passed, over-pace colour, countdowns, "updated … ago", a click
+     opens Usage; owner only), Cru's mark (the PC client's: bars and "cru",
+     breathing while live, unread dot, hover / click / Ctrl+Space push to
+     talk), Telegram's `send` icon and dot, the
+     connection badge, the window buttons; the sidebar's dots, folding,
+     Add project and Inbox
 2. **Chats** (Workspace: 2.1-2.4; Planning: 2.5-2.12b, 2.24; Operations:
    2.13-2.23), each item as `native-client/PLAN.md` describes it, with its
    spec in `native-client/specs/`. Test: `test/phase2.mjs`.
-   - [ ] 2.1 Pane header, wide · [ ] 2.2 narrow · [ ] 2.3 moving panes · [ ] 2.4 live state (Workspace)
-   - [ ] 2.5 Composer and Stop · [ ] 2.6 permission-mode picker · [ ] 2.7 attachments · [ ] 2.8 drafts ·
-     [ ] 2.9 queued messages · [ ] 2.10 scheduled messages · [ ] 2.11 slash menu · [ ] 2.12 chat secrets dialog ·
-     [ ] 2.12b secret requests · [ ] 2.24 voice input (Planning)
-   - [ ] 2.13 questions · [ ] 2.14 tool cards · [ ] 2.15 thinking · [ ] 2.16 the rest of the log (2.16m media,
-     2.16f live frames) · [ ] 2.17 suggestions and recaps · [ ] 2.18 agent dock · [ ] 2.19 goal and plan ·
-     [ ] 2.20 cards · [ ] 2.21 side questions · [ ] 2.22 resume picker · [ ] 2.23 parked panes (Operations)
+   - [x] 2.1 Pane header, wide · [x] 2.2 narrow · [x] 2.3 moving panes · [x] 2.4 live state (Workspace)
+   - [x] 2.5 Composer and Stop · [x] 2.6 permission-mode picker · [x] 2.7 attachments · [x] 2.8 drafts ·
+     [x] 2.9 queued messages · [x] 2.10 scheduled messages · [x] 2.11 slash menu · [x] 2.12 chat secrets dialog ·
+     [x] 2.12b secret requests · [x] 2.24 voice input (Planning)
+   - [x] 2.13 questions · [x] 2.14 tool cards · [x] 2.15 thinking · [x] 2.16 the rest of the log (2.16m media,
+     2.16f live frames) · [x] 2.17 suggestions and recaps · [x] 2.18 agent dock · [x] 2.19 goal and plan ·
+     [x] 2.20 cards · [x] 2.21 side questions · [x] 2.22 resume picker · [x] 2.23 parked panes (Operations)
    - The gate: `test/phase1.mjs` and `test/phase2.mjs` pass against this
      client, and the UI reviewer passes the screens. Then phases 3 to 6.
-3. **Workbench** (Workspace; Desktop for the browser), test `test/workspace.mjs`:
+3. [x] **Workbench** (Workspace; Desktop for the browser), test `test/workspace.mjs`:
    the workbench's panels (Files, Git, Kanban, Notes, Mindmap, Media,
    Factory, Panel), Claude terminal panels (their input inside each panel:
    key tools, attach, Send; no shared bar), Git, Files, Media; the browser
    drawer in full and the native host's full protocol (Desktop, `test/desktop.mjs`).
-4. **Planning** (Planning), test `test/planning.mjs`: Kanban (and the card
+4. [x] **Planning** (Planning), test `test/planning.mjs`: Kanban (and the card
    dialog), Mind map, Notes, Schedules, webhooks, Factories (the editor, the
    live run graph, the factory panel).
-5. **Operations** (Operations), test `test/operations.mjs`: Services,
+5. [x] **Operations** (Operations), test `test/operations.mjs`: Services,
    forwards, Docker; Secrets, Skills, Usage; Settings, sign-in, backup; Add
    project; Homepool; Info; Panels (widgets); What's new; the approvals button.
-6. **PC-client extras from `app/`** (Desktop), test `test/desktop.mjs`:
+6. [x] **PC-client extras from `app/`** (Desktop, but for Cru's gaps below), test `test/desktop.mjs`:
    notifications and the tray, the Inbox, the chat bubble, saved passwords,
    the homepool node, Cru on the PC.
 7. **Ship** (not this run): installers and auto-update, signing, the release
@@ -96,8 +102,21 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
 - **CPU on this server** is not representative: no GPU, so wgpu draws with
   Mesa's llvmpipe (lavapipe).
 - **macOS** loads CEF's framework and makes NSApp CEF's (`webview/src/mac.rs`,
-  from the Slint client), not yet tried on a Mac; CI builds and starts it.
-- **The drawer** is the GPUI test's (one tab; Network and DevTools do
-  nothing yet); the native host (`server.rs`) is not ported yet (Desktop).
-- **Toasts** are gpui-component's notifications; the driver can't read them
-  yet (the Slint client's `toast` prop).
+  from the Slint client), not yet tried by a person on a Mac; CI's macOS job builds it, runs the
+  unit tests and starts it (green since 17 Nov, F83).
+- **Cru on the PC** (`crates/desktop/src/cru.rs`) has the voice screen,
+  listen / ask / speak, barge-in, keyboard mode, history and the Deepgram
+  spend line. Not ported from `app/vendor/crundi-voice.js`: the **wake word**
+  (`app/voice-wake`, an on-device model), the **live screen** (Cru's own
+  canvas: games, kid mode) and **Cru's settings** page (voice, wake word,
+  limits; edited on the web for now), so the push-to-talk shortcut is
+  Ctrl+Space only (the web binds it per device there).
+- **Buttons with a label** use gpui-component's Button with the theme's
+  sizes (`widgets/src/control.rs`); its own hover tooltip for `.tooltip()`
+  on such a Button is gpui-component's managed style, not `w::tooltip`.
+- **Switches and checkboxes** keep gpui-component's drawing, sized from
+  the tokens.
+- **Toasts** are gpui-component's notifications in one slot: a new toast
+  replaces the last (the web stacks a few).
+- **Editor highlighting** is syntect's (gpui-component's lighter
+  highlighter), not tree-sitter: no code folding or outline.

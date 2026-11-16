@@ -49,15 +49,20 @@ fn props(window: &mut Window, cx: &mut App) -> Map<String, Value> {
     // there; "ops" is Operations' name in the tests), unless the part put
     // its own there (F41).
     let mut areas = serde_json::Map::new();
+    // pointerModal: any part's dialog over the window, the shared view modal
+    // or the ask layer (F58): computed here, so no part's false hides another's true.
+    let mut modal = crundi_widgets::modal_open(cx) || !crundi_widgets::ask_props(cx).is_null();
     for name in registry::names(cx) {
         let v = registry::props_of(name, window, cx);
         if v.is_null() { continue; }
+        modal |= v.get("pointerModal") == Some(&json!(true));
         if name == "operations" { areas.insert("ops".into(), v.clone()); }
         areas.insert(name.to_string(), v);
     }
     let have = m.remove("areas").and_then(|a| if let Value::Object(o) = a { Some(o) } else { None }).unwrap_or_default();
     registry::deep_merge(&mut areas, have);
     m.insert("areas".into(), Value::Object(areas));
+    m.insert("pointerModal".into(), json!(modal));
     // The toast on show: the widgets crate's one record of it (after the
     // parts' props, so no part's own copy hides it).
     m.insert("toast".into(), json!(crundi_widgets::toast_text(cx).to_string()));
