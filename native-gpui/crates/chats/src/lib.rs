@@ -112,9 +112,15 @@ pub fn init(cx: &mut App) {
                 });
                 Some(json!({ "ok": true }))
             }
+            // Stop, as its button: the composer's arming Stop (one click "Sure?"
+            // for 3 s, a second interrupts; 2.5). A chat whose composer isn't
+            // drawn yet stops at once (planning, F29).
             "stop" => {
                 let id = focused_chat(cx);
-                if let Some(m) = model::find(cx, &id) { m.update(cx, |m, cx| m.stop(cx)); }
+                match crundi_chat_composer::composer(cx, &id) {
+                    Some(c) => c.update(cx, |c, cx| c.stop(cx)),
+                    None => if let Some(m) = model::find(cx, &id) { m.update(cx, |m, cx| m.stop(cx)); },
+                }
                 Some(json!({ "ok": true }))
             }
             // A new chat in the project (the launcher's UI mode comes with 2.3).

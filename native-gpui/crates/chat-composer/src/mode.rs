@@ -67,7 +67,6 @@ pub fn button(c: &ComposerView, narrow: bool, fs: f32, cx: &mut Context<Composer
     let (name, _) = head::mode_info(key);
     let (fg, edge, keep) = tone(key);
     let b = w::tone_button("mode", icon(key), (!narrow).then(|| SharedString::from(name)), fg, edge, keep, format!("Permission mode: {name}. Click to change."), fs);
-    let b = if narrow { b.min_w(T::CONTROL * fs).h(T::CONTROL_SM * fs) } else { b };
     b.on_click(cx.listener(|this, _, window, cx| open(this, window, cx))).into_any_element()
 }
 

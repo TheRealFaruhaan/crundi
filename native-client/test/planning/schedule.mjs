@@ -3,8 +3,16 @@ import { createHmac } from 'node:crypto';
 // Planning 4.5 Schedules and 4.6 webhooks (run by test/planning.mjs). Snapshots named schedule-*.
 
 let T;
-const S = (p) => p.areas?.planning?.schedule;
+// (GPUI: the driver has no `areas` map yet, shared/requests.md; the planning part also answers as `planningArea`.)
+const S = (p) => (p.areas?.planning ?? p.planningArea)?.schedule;
 const D = (p) => S(p)?.dialog;
+// (GPUI: the driver has no top-level `pointerModal` or `dialog` (the open confirm) yet, and its
+// dialog-answer doesn't answer the widgets' ask layer, shared/requests.md; the schedule screen
+// reports both itself and answers its confirm. Once the driver has them, these use the driver's.)
+// (The composer's top-level pointerModal covers only its own modals: either one counts.)
+const modal = (p) => !!(p.pointerModal || S(p)?.pointerModal);
+const DLG = (p) => p.dialog ?? S(p)?.ask;
+const answer = async (ok) => ((await T.props()).dialog ? T.dialog(ok) : T.act('schedule-ask-answer', ok ? 'true' : 'false'));
 const item = (p, name) => S(p)?.items?.find((x) => x.name === name);
 const spost = (body) => T.api.http('POST', '/api/schedules', body);
 // A call to a webhook from outside: no session, only the key or the signature.
@@ -33,7 +41,7 @@ export async function run(T_, t) {
   // ── + Add schedule: the dialog, an Agent run every day, with conditions ──
   await T.act('schedule-act', 'add');
   await T.until('New schedule opens: recurring, every day, Agent', (p) => D(p)?.title === 'New schedule' && D(p).when === 'recurring'
-    && D(p).days.every(Boolean) && D(p).time === '09:00' && D(p).kind === 'agent' && D(p).projects[0] === 'Demo' && p.pointerModal);
+    && D(p).days.every(Boolean) && D(p).time === '09:00' && D(p).kind === 'agent' && D(p).projects[0] === 'Demo' && modal(p));
   await T.act('schedule-save');
   await T.until('a name first', (p) => /Give the schedule a name/.test(p.toast) && D(p));
   await T.act('schedule-type', 'name', 'Morning review');
@@ -53,15 +61,18 @@ export async function run(T_, t) {
     && D(p).conds[2].statuses.join() === 'Backlog,To Do,In Progress,Done' && D(p).tasks.includes('Ship it'));
   await T.act('schedule-cond-pick', '0', 'op', '1');
   await T.act('schedule-cond-value', '0', '80');
-  await T.act('schedule-cond-pick', '2', 'task', '1');
-  await T.until('a task gives its subtasks', (p) => D(p).conds[2].task === 1 && D(p).conds[2].todos.join() === 'whole task,Tests pass');
+  // "Ship it" by name: with the other screens' tests run first, the board
+  // has their tasks too, so its place in the list isn't always 1.
+  const ship = D(await T.props()).tasks.indexOf('Ship it');
+  await T.act('schedule-cond-pick', '2', 'task', String(ship));
+  await T.until('a task gives its subtasks', (p) => D(p).conds[2].task === ship && D(p).conds[2].todos.join() === 'whole task,Tests pass');
   await T.act('schedule-cond-pick', '2', 'todo', '1');
   await T.until('a subtask: done or pending', (p) => D(p).conds[2].statuses.join() === 'done,pending' && D(p).conds[2].status === 0);
   await T.snap('schedule-dialog-agent');
   await T.act('schedule-remove-cond', '1');
   await T.until('× removes a row', (p) => D(p).conds.map((c) => c.title).join() === '5h usage,Kanban');
   await T.act('schedule-save');
-  await T.until('saved and closed; the card shows it', (p) => !D(p) && !p.pointerModal && item(p, 'Morning review')?.summary === 'Agent · Claude · skip-perms · opus · new session'
+  await T.until('saved and closed; the card shows it', (p) => !D(p) && !modal(p) && item(p, 'Morning review')?.summary === 'Agent · Claude · skip-perms · opus · new session'
     && item(p, 'Morning review').when === 'Mo,Tu,We,Th,Fr 09:00' && item(p, 'Morning review').conds.join() === '5h usage above 80%,kanban subtask = done');
 
   // ── One-time, a CLI command ──
@@ -95,7 +106,7 @@ export async function run(T_, t) {
   await T.act('schedule-seg', 'op', 'toggle');
   await T.until('Toggle picked', (p) => D(p).op === 'toggle');
   await T.act('schedule-close');
-  await T.until('Cancel closes it', (p) => !D(p) && !p.pointerModal);
+  await T.until('Cancel closes it', (p) => !D(p) && !modal(p));
 
   // ── 4.6 Webhooks: the dialog's "When called" mode ──
   await webhooks(t);
@@ -120,8 +131,8 @@ export async function run(T_, t) {
 
   const fe = item(await T.props(), 'From elsewhere');
   await T.act('schedule-act', 'delete', fe.id);
-  await T.until('Delete asks', (p) => p.dialog?.title === 'Delete schedule "From elsewhere"?');
-  await T.dialog(true);
+  await T.until('Delete asks', (p) => DLG(p)?.title === 'Delete schedule "From elsewhere"?');
+  await answer(true);
   await T.until('deleted', (p) => !item(p, 'From elsewhere') && S(p).items.length === 4);
 }
 
@@ -172,8 +183,8 @@ async function webhooks(t) {
 
   // New key: the old URL stops working, the new one works.
   await T.act('schedule-rotate');
-  await T.until('New key asks first', (p) => /The old URL stops working\. Make a new key\?/.test(p.dialog?.title || ''));
-  await T.dialog(true);
+  await T.until('New key asks first', (p) => /The old URL stops working\. Make a new key\?/.test(DLG(p)?.title || ''));
+  await answer(true);
   p = await T.until('a new key in the URL', (p) => D(p)?.hookUrl && D(p).hookUrl !== keyUrl);
   r = await hook(keyUrl, { id: 'call-3' });
   t.check('the old key no longer works', r.status === 403, r);
@@ -196,8 +207,8 @@ async function webhooks(t) {
   await T.act('schedule-act', 'edit', item(await T.props(), 'Deploy hook').id);
   await T.until('reopened, signed', (p) => D(p)?.hookAuth === 'signature' && D(p).hookSecret === secret);
   await T.act('schedule-rotate');
-  await T.until('New secret asks first', (p) => /Calls signed with the old secret stop working/.test(p.dialog?.title || ''));
-  await T.dialog(true);
+  await T.until('New secret asks first', (p) => /Calls signed with the old secret stop working/.test(DLG(p)?.title || ''));
+  await answer(true);
   p = await T.until('a new secret', (p) => D(p)?.hookSecret && D(p).hookSecret !== secret);
   const raw6 = JSON.stringify({ id: 'call-6' });
   r = await hook(url, { id: 'call-6' }, { 'x-crundi-signature': sign(secret, raw6) });

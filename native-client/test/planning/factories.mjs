@@ -11,12 +11,19 @@
 import { execSync } from 'node:child_process';
 
 let T;
-const F = (p) => p.areas?.planning?.factories;
+// (GPUI: the driver has no `areas` map yet, shared/requests.md; the planning part also answers as `planningArea`.)
+const F = (p) => (p.areas?.planning ?? p.planningArea)?.factories;
 const V = (p) => F(p)?.viewer;
 const E = (p) => F(p)?.editor;
 const D = (p) => F(p)?.dialogs;
 const fx = (...a) => T.act('factories-act', ...a);
 const fe = (...a) => T.act('factories-edit', ...a);
+// GPUI: the driver has no "dialog" prop and its dialog-answer only closes a
+// dialog (shared/requests.md); the factories part carries the open confirm or
+// prompt (the widgets' ask) as its own `dialog` and answers it with
+// factories-dialog. With the driver's, p.dialog and T.dialog work as before.
+const DLG = (p) => p.dialog || F(p)?.dialog;
+const answer = (ok, v = '') => T.act('factories-dialog', ok ? 'true' : 'false', v);
 
 export async function run(T_, t) {
   T = T_;
@@ -62,8 +69,8 @@ export async function run(T_, t) {
 
   // New factory: a name, the skeleton (Task, Manager, Result); add a person and wire them.
   await fx('new');
-  await T.until('New factory asks for a name', (p) => p.dialog?.value === 'New factory');
-  await T.dialog(true, 'Two step');
+  await T.until('New factory asks for a name', (p) => DLG(p)?.value === 'New factory');
+  await answer(true, 'Two step');
   const sk = await T.until('the skeleton opens', (p) => E(p)?.state === 'ok' && E(p).name === 'Two step' && E(p).nodes.length === 3);
   const skm = E(sk).nodes.find((n) => n.kind === 'manager');
   await fx('e-add', 'employee:');
@@ -98,7 +105,7 @@ export async function run(T_, t) {
   await fx('view', 'library');
   await fx('start-one', pair.id);
   const st = await T.until('the start form: project, factory, the change request, the precheck', (p) => D(p)?.start?.open && !D(p).start.loading && D(p).start.sections.length >= 3
-    && D(p).start.info.some((x) => /own worktree/.test(x.text)) && p.pointerModal, 20000);
+    && D(p).start.info.some((x) => /own worktree/.test(x.text)) && (p.pointerModal || F(p).pointerModal), 20000); // GPUI: the part's own pointerModal (the composer's top-level one is the chat's)
   t.check('it starts from the factory picked', D(st).start.factories[D(st).start.factory] === pair.name, D(st).start);
   await fx('st-go');
   await T.until('Start without a title asks for one', (p) => D(p).start.titleBad);
@@ -136,8 +143,8 @@ export async function run(T_, t) {
 
   // Stop it: asked first; the panel then offers a new start, the earlier run, triggers.
   await fx('v-stop');
-  await T.until('Stop asks first', (p) => /Stop this factory/.test(p.dialog?.message || ''));
-  await T.dialog(true);
+  await T.until('Stop asks first', (p) => /Stop this factory/.test(DLG(p)?.message || ''));
+  await answer(true);
   const idle = await T.until('stopped: the panel shows the start, the earlier run and Triggers', (p) => F(p).panel.state === 'idle' && F(p).panel.earlier.length === 1 && F(p).panel.earlier[0].chip === 'Stopped', 30000);
   t.check('the earlier run is the one stopped', F(idle)?.panel.earlier[0].task.includes('Add a health check'), F(idle)?.panel);
 

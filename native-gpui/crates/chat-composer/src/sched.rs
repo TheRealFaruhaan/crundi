@@ -132,10 +132,15 @@ fn set_trigger(c: &mut ComposerView, t: &str, cx: &mut Context<ComposerView>) {
 fn save(c: &mut ComposerView, cx: &mut Context<ComposerView>) {
     if c.sched.unsupported { return; }
     let (text, at) = (text_of(c, cx), at_of(c, cx));
-    let trigger = match rules::check(&text, &c.sched.trigger, &at) {
+    let mut trigger = match rules::check(&text, &c.sched.trigger, &at) {
         Err(n) => { c.sched.note = n.into(); cx.notify(); return; }
         Ok(t) => t,
     };
+    // The field has minutes only: the current minute is already up to 59 s
+    // past, and the server refuses a time over 60 s past, so a slow moment
+    // between picking and saving turned "this minute" into "That time has
+    // already passed" (F33). A time in the past this close is sent as now.
+    trigger = due_now(trigger, chrono::Utc::now());
     let chat = c.chat_id(cx);
     let sent = text.trim().to_string();
     let body = json!({ "project": crundi_shell::project(cx), "text": sent, "trigger": trigger, "chat": chat });
@@ -231,7 +236,7 @@ pub fn render(c: &mut ComposerView, _window: &mut Window, cx: &mut Context<Compo
             .child(trig("sched-limit", "Limit resets", "limit-reset", limit_off, cx)))
         .when(sc.trigger == "time", |d| d.child(w::input(&at)))
         .when(!sc.note.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(sc.note.clone())))
-        .child(w::disabled(w::primary("sched-save", "Schedule"), unsupported).w_full().flex_none().h(T::CONTROL_SM).on_click(cx.listener(|this, _, _, cx| save(this, cx))))
+        .child(w::disabled(w::primary("sched-save", "Schedule"), unsupported).w_full().flex_none().on_click(cx.listener(|this, _, _, cx| save(this, cx))))
         .child(w::rule())
         .child(list);
     // Drawn after the composer's own row (deferred), so the box never shows through.
@@ -272,3 +277,36 @@ pub fn pane_props(c: &ComposerView, cx: &App) -> Value {
 }
 
 pub fn props(_c: &ComposerView, _cx: &App) -> Value { json!({}) }
+
+/// A time trigger already past, but by less than a minute and a half (the
+/// field's minute plus a slow save), becomes now; anything else is as it was.
+pub(crate) fn due_now(mut trigger: Value, now: chrono::DateTime<chrono::Utc>) -> Value {
+    let at = trigger.get("at").and_then(|a| a.as_str()).and_then(|a| chrono::DateTime::parse_from_rfc3339(a).ok());
+    if let Some(at) = at {
+        let past = now.signed_duration_since(at.with_timezone(&chrono::Utc));
+        if past > chrono::Duration::zero() && past < chrono::Duration::seconds(90) {
+            trigger["at"] = json!(now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+        }
+    }
+    trigger
+}
+
+#[cfg(test)]
+mod tests {
+    // Only what the test needs: `super::*` would bring gpui's own `test`
+    // attribute in over the built-in one.
+    use super::due_now;
+    use serde_json::json;
+
+    #[test]
+    fn this_minute_is_now() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-16T10:00:58Z").unwrap().with_timezone(&chrono::Utc);
+        let t = due_now(json!({ "type": "time", "at": "2026-11-16T10:00:00.000Z" }), now);
+        assert_eq!(t["at"], "2026-11-16T10:00:58.000Z");
+        let later = due_now(json!({ "type": "time", "at": "2026-11-16T11:00:00.000Z" }), now);
+        assert_eq!(later["at"], "2026-11-16T11:00:00.000Z");
+        let old = due_now(json!({ "type": "time", "at": "2026-11-16T09:00:00.000Z" }), now);
+        assert_eq!(old["at"], "2026-11-16T09:00:00.000Z");
+        assert_eq!(due_now(json!({ "type": "turn-end" }), now), json!({ "type": "turn-end" }));
+    }
+}
