@@ -4896,6 +4896,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "spike-host"
+version = "0.1.0"
+dependencies = [
+ "slint",
+ "slint-build",
+ "spike-panel",
+]
+
+[[package]]
+name = "spike-panel"
+version = "0.1.0"
+dependencies = [
+ "slint",
+ "slint-build",
+]
+
+[[package]]
 name = "spin_on"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

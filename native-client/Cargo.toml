@@ -63,3 +63,9 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# The UI-split spike (AREAS.md; shared/ui-split/REPORT.md): a screen compiled
+# in its own crate and embedded through ComponentContainer. `cargo build`
+# here still builds only the client (the root package).
+[workspace]
+members = ["crates/spike-panel", "crates/spike-host"]

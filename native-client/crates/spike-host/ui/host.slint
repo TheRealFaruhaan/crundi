@@ -1,0 +1,23 @@
+export component Host inherits Window {
+    width: 600px;
+    height: 400px;
+    background: #000000;
+    in property <component-factory> panel;
+    in property <component-factory> panel2;
+    out property <length> c1x: c1.absolute-position.x;
+    out property <length> c1y: c1.absolute-position.y;
+    out property <string> geo: "c1 " + c1.width/1px + "x" + c1.height/1px + " c2 at " + c2.absolute-position.y/1px + " " + c2.width/1px + "x" + c2.height/1px;
+    in-out property <string> host-typed;
+    HorizontalLayout {
+        Rectangle {
+            width: 200px;
+            background: #333333;
+            hti := TextInput { y: 10px; height: 24px; text <=> root.host-typed; color: white; }
+        }
+        Rectangle {
+            c1 := ComponentContainer { x: 0; y: 0; width: parent.width; height: parent.height - 100px; component-factory: root.panel; }
+            c2 := ComponentContainer { x: 0; y: parent.height - 100px; width: parent.width; height: 100px; component-factory: root.panel2; }
+        }
+    }
+    public function focus-host() { hti.focus(); }
+}
