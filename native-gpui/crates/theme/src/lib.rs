@@ -143,6 +143,18 @@ impl T {
 
     // ─── The areas' named sizes (AREAS.md): each only in its own section ───
     // ── workspace ──
+    /// The diff window (feOpenDiff): its size, and the side-by-side's colours.
+    pub const WS_DIFF_W: Pixels = px(1100.);
+    pub const WS_DIFF_H: Pixels = px(620.);
+    /// A diff row's line-number gutter.
+    pub const WS_DIFF_LN: Pixels = px(44.);
+    pub fn ws_diff_del() -> Hsla { rgb(0x2d1215).into() }
+    pub fn ws_diff_add() -> Hsla { rgb(0x0f291a).into() }
+    pub fn ws_diff_del_pad() -> Hsla { rgb(0x1a1215).into() }
+    pub fn ws_diff_add_pad() -> Hsla { rgb(0x0f1a15).into() }
+    pub fn ws_diff_del_text() -> Hsla { rgb(0xf87171).into() }
+    pub fn ws_diff_add_text() -> Hsla { rgb(0x34d399).into() }
+    pub fn ws_diff_chunk() -> Hsla { rgb(0x1e293b).into() }
     // ── end workspace ──
     // ── planning ──
     /// secrets (2.12): the dialog's pick list stops here and scrolls.

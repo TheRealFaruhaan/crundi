@@ -17,7 +17,7 @@ impl Workbench {
         let renaming = self.renaming.as_ref().filter(|(l, _)| *l == id).map(|(_, s)| s.clone());
         let mut row = div().flex().items_center().size_full().pl(T::SP_2).pr(T::SP_4).gap(T::SP_4);
         if !full {
-            row = row.child(div().flex_none().w(T::SP_24).h(T::SP_12).flex().items_center().pl(T::SP_4).text_size(T::TEXT_12).text_color(T::text_muted()).child("⋮⋮"));
+            row = row.child(div().flex_none().w(T::SP_24).h(T::SP_12).flex().items_center().justify_center().text_color(T::text_muted()).child(w::icon(IconName::GripVertical, T::ICON_SM)));
         }
         if chat {
             let color = pane_state_color(&i.state);
@@ -33,7 +33,11 @@ impl Workbench {
                 .on_mouse_down_out(cx.listener(move |this, _, _, cx| this.commit_rename(id, cx)))
                 .child(w::input(&st)));
         } else {
-            let t = div().id(("title", id)).flex_none().max_w(px(i.cap)).min_w_0().h(T::SP_16).px(T::SP_6).rounded(T::R_CONTROL)
+            // With the hover split controls on show (the header's middle), the
+            // title stops short of them.
+            let split_on = self.hover == id && !full && self.drag.is_none();
+            let room = if split_on { (i.l.w / 2. - f32::from(T::SP_24 + T::SP_48 + T::SP_6 + T::SP_8)).max(0.) } else { i.cap };
+            let t = div().id(("title", id)).flex_none().max_w(px(i.cap.min(room))).min_w_0().h(T::SP_16).px(T::SP_6).rounded(T::R_CONTROL)
                 .flex().items_center().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text())
                 .child(div().truncate().child(i.title.clone()));
             row = row.child(if chat {
@@ -96,7 +100,7 @@ impl Workbench {
             t = t.child(if i.armed {
                 w::head_button(("x", id), C::Text("Sure?".into()), L::Armed, T::SP_40 + T::SP_4, T::SP_16, tip)
             } else {
-                w::head_button(("x", id), C::Text("×".into()), L::Close, T::SP_24 + T::SP_4, T::SP_16, tip)
+                w::head_button(("x", id), C::Icon(IconName::X), L::Close, T::SP_24 + T::SP_4, T::SP_16, tip)
             }.on_click(cx.listener(move |this, _, _, cx| { this.menu = 0; this.pane_close(id, cx) })));
         }
         t
