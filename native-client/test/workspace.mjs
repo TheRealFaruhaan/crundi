@@ -181,6 +181,7 @@ await T.until('Download saves where asked', () => existsSync(join(scratch, 'note
 // A picture opens in the viewer.
 await T.act('files-open', join(P, 'docs/shot.png'));
 p = await T.until('a picture opens in the viewer', (p) => W(p).wins.some((w) => w.kind === 'view' && w.img));
+await T.ui('toasts-clear'); await new Promise((r) => setTimeout(r, 300));
 await T.snap('viewer');
 for (const w of W(p).wins) await T.act('win-close', String(w.id));
 

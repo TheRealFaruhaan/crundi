@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+image.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 gpui-kit-assets.workspace = true

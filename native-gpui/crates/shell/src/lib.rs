@@ -7,13 +7,14 @@
 pub mod registry;
 pub mod session;
 pub mod usage;
+pub mod ptt;
 
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 
-pub use registry::{open_bubble, register, register_action, register_add_menu, register_bubble, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
+pub use registry::{open_bubble, register, register_action, register_settings_part, register_add_menu, register_bubble, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
 pub use session::{api, call, project, run, signed_in, subscribe, unsubscribe, ws_send, Session, Step};
 
 /// The window's own state: the tab, the sidebar, the drawer, sign-in's fields.
@@ -23,6 +24,8 @@ pub struct Shell {
     pub drawer_open: bool,
     pub drawer_w: Pixels,
     dragging: bool,
+    /// The project tab bar's sideways scroll (its overflow cue reads it).
+    tab_scroll: ScrollHandle,
     /// Ctrl+Space is held (Cru's push to talk).
     ptt_held: bool,
     /// Bumped on each hover of Cru's mark: a hover timer that outlives it does nothing.
@@ -58,7 +61,7 @@ impl Shell {
         let code_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("6-digit code"));
         let pair_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("Pairing link"));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input }
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -83,6 +86,7 @@ impl Shell {
             "server": s.server, "username": s.username,
             "currentProject": s.project, "projectName": session::project_name(cx),
             "usage": s.usage.as_ref().and_then(|(u, _)| usage::rows(u, crundi_core::time::now_secs())).map(|r| r.iter().map(|x| json!({ "tag": x.tag, "used": x.used, "time": x.time, "left": x.left, "over": x.over })).collect::<Vec<_>>()),
+            "ptt": ptt::label(&ptt::get()), "pttCapturing": ptt::capturing(cx),
             "cruMark": cx.try_global::<CruMark>().map(|m| json!({ "live": m.live, "unread": m.unread })),
             "telegram": s.tg.as_ref().map(|(c, on, n)| json!({ "configured": c, "connected": on, "name": n })),
             "currentTab": self.tab, "drawerOpen": self.drawer_open, "sidebar": self.sidebar,
@@ -146,11 +150,17 @@ impl Shell {
                     .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(time)).bg(T::usage_time()))
                     .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(used)).bg(T::usage_used()))
                     .when(row.over > 0.0, |d| d.child(div().absolute().top(px(0.)).bottom(px(0.)).left(relative(time)).w(relative(row.over / 100.0)).bg(over_c)))
-                    .child(div().absolute().top(px(0.)).left(relative(used.min(0.92))).pl(T::SP_6).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text()).opacity(0.9)
-                        .child(format!("{} {}%", row.tag, row.used.round())))
-                    .when(row.time.is_some(), |d| d.child(div().absolute().bottom(px(0.)).left(relative(time.min(0.9))).pl(T::SP_6).flex().items_center().gap(T::SP_2)
-                        .text_size(T::TEXT_10).text_color(T::text_secondary()).opacity(0.7)
-                        .child(w::icon(IconName::Clock, T::TEXT_10)).child(row.left.clone()))));
+                    // The label and its countdown together, in the bar's margin
+                    // clear of the header's contents (the Electron client's):
+                    // the weekly row's on its top edge, the 5-hour row's on its
+                    // bottom edge; each starts where its usage fill ends.
+                    .child({
+                        let lab = div().absolute().left(relative(used.min(0.85))).pl(T::SP_6).flex().items_center().gap(T::SP_8).text_size(T::TEXT_10)
+                            .child(div().font_weight(T::W_BOLD).text_color(T::text()).opacity(0.9).child(format!("{} {}%", row.tag, row.used.round())))
+                            .when(row.time.is_some(), |d| d.child(div().flex().items_center().gap(T::SP_2).text_color(T::text_secondary()).opacity(0.7)
+                                .child(w::icon(IconName::Clock, T::TEXT_10)).child(row.left.clone())));
+                        if i == 0 { lab.top(px(0.)) } else { lab.bottom(px(0.)) }
+                    }));
             }
         }
         let badge = usage.as_ref().map(|(_, age, fetched)| {
@@ -229,18 +239,41 @@ impl Shell {
     // ─── The project bar ───
 
     fn project_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut bar = div().id("tabbar").flex().flex_none().items_center().h(T::TABBAR_H).px(T::SP_12).bg(T::bg_secondary()).border_b_1().border_color(T::border()).overflow_x_scroll();
+        // The tabs scroll sideways when they don't fit (the web's, scrollbar
+        // hidden); the wheel scrolls them too, and a fade at an edge shows
+        // there are tabs past it (F93). The Browser button stays at the
+        // right, outside the scroll, as the web's sticky toggle.
+        let mut tabs = div().id("tabbar").flex().flex_1().min_w_0().h_full().items_center().overflow_x_scroll().track_scroll(&self.tab_scroll);
         for (i, (id, label, icon, _)) in TABS.iter().enumerate() {
             let id = id.to_string();
-            bar = bar.child(w::nav_tab(icon.clone(), *label, self.tab == id).id(("tab", i)).cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.show_tab(&id, cx))));
-            if i == 0 { bar = bar.child(w::icon_button("add-pane", IconName::Plus, "Add to workbench").on_click(|_, _, cx| registry::add_menu(cx))); }
+            tabs = tabs.child(w::nav_tab(icon.clone(), *label, self.tab == id).id(("tab", i)).flex_none().cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.show_tab(&id, cx))));
+            if i == 0 { tabs = tabs.child(w::icon_button("add-pane", IconName::Plus, "Add to workbench").on_click(|_, _, cx| registry::add_menu(cx))); }
         }
-        bar = bar.child(div().flex_1());
+        let sh = self.tab_scroll.clone();
+        tabs = tabs.on_scroll_wheel(move |e: &ScrollWheelEvent, window, cx| {
+            let d = e.delta.pixel_delta(window.line_height());
+            if d.x.abs() >= d.y.abs() || sh.max_offset().x <= px(0.) { return; }
+            let o = sh.offset();
+            sh.set_offset(point((o.x + d.y).clamp(-sh.max_offset().x, px(0.)), o.y));
+            cx.stop_propagation();
+            window.refresh();
+        });
+        let (off, max) = (self.tab_scroll.offset().x, self.tab_scroll.max_offset().x);
+        let fade = |right: bool| {
+            let (a, b) = (T::bg_secondary().opacity(0.), T::bg_secondary());
+            div().absolute().top(px(0.)).bottom(px(0.)).w(T::SP_32)
+                .map(|d| if right { d.right(px(0.)).bg(linear_gradient(90., linear_color_stop(a, 0.), linear_color_stop(b, 1.))) } else { d.left(px(0.)).bg(linear_gradient(90., linear_color_stop(b, 0.), linear_color_stop(a, 1.))) })
+        };
+        let scroller = div().relative().flex().flex_1().min_w_0().h_full().child(tabs)
+            .when(off < px(-1.), |d| d.child(fade(false)))
+            .when(max > px(1.) && off > -max + px(1.), |d| d.child(fade(true)));
+        let mut bar = div().flex().flex_none().items_center().h(T::TABBAR_H).px(T::SP_12).bg(T::bg_secondary()).border_b_1().border_color(T::border())
+            .child(scroller);
         // The Browser button: gone while the drawer is open (it has its own
         // hide and close); a dot while it is hidden with pages open.
         if !self.drawer_open {
             let pages = registry::drawer(cx).is_some_and(|d| (d.has_pages)(cx));
-            bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false).id("browser").cursor_pointer()
+            bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false).id("browser").flex_none().cursor_pointer()
                 .when(pages, |d| d.child(w::dot(T::accent())))
                 .on_click(cx.listener(|this, _, _, cx| this.set_drawer(true, cx))));
         }
@@ -340,15 +373,17 @@ impl Render for Shell {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))
             // Cru's push to talk (the web's default, Ctrl+Space): held, Cru
             // opens listening (or stops talking); let go, what was heard goes.
+            // The shortcut is per device (ptt.rs); Settings may be waiting for
+            // the next key to become it.
             .capture_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
-                let k = &e.keystroke;
-                if k.key == "space" && k.modifiers.control && !k.modifiers.alt && !k.modifiers.shift && !k.modifiers.platform {
+                if ptt::capture(cx, &e.keystroke) { cx.stop_propagation(); return; }
+                if ptt::matches(&ptt::get(), &e.keystroke) {
                     cx.stop_propagation();
                     if !this.ptt_held && !e.is_held { this.ptt_held = true; registry::run_action(cx, "cru-ptt"); }
                 }
             }))
             .capture_key_up(cx.listener(|this, e: &KeyUpEvent, _, cx| {
-                if this.ptt_held && (e.keystroke.key == "space" || e.keystroke.key == "control") { this.ptt_held = false; registry::run_action(cx, "cru-ptt-up"); }
+                if this.ptt_held && ptt::releases(&ptt::get(), &e.keystroke.key) { this.ptt_held = false; registry::run_action(cx, "cru-ptt-up"); }
             }))
             .child(self.top_bar(window, cx))
             .child(main)

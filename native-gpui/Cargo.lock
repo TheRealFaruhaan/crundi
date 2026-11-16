@@ -1795,6 +1795,7 @@ dependencies = [
  "gpui-kit-assets",
  "gpui-pre",
  "open",
+ "serde",
  "serde_json",
 ]
 
@@ -1862,6 +1863,7 @@ dependencies = [
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "image",
  "rfd",
  "serde_json",
 ]

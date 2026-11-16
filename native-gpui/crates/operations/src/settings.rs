@@ -1470,10 +1470,20 @@ fn voice_body(window: &mut Window, cx: &mut App) -> AnyElement {
     let ak = c::line::<St>(window, cx, "vs-akey", keep, true, None);
     let dk = c::line::<St>(window, cx, "vs-dkey", keep, true, None);
     let xk = c::line::<St>(window, cx, "vs-xkey", keep, true, None);
+    // On this device (the web's, kept per device): the push-to-talk shortcut.
+    let capturing = crundi_shell::ptt::capturing(cx);
+    let device = col(T::SP_8).child(sub_head("On this device"))
+        .child(row().flex_wrap()
+            .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child("Push to talk"))
+            .child(w::kbd(if capturing { "Press the new shortcut\u{2026}".to_string() } else { crundi_shell::ptt::label(&crundi_shell::ptt::get()) }).id("vs-ptt-key"))
+            .child(w::button("vs-ptt-change", if capturing { "Waiting\u{2026}" } else { "Change" }).on_click(|_, _, cx| crundi_shell::ptt::begin_capture(cx)))
+            .child(w::button("vs-ptt-reset", "Reset").on_click(|_, _, cx| { crundi_shell::ptt::set(None); cx.refresh_windows(); })))
+        .when(capturing, |d| d.child(hint("Press the keys together (with Ctrl, Alt or Super, or a function key). Esc cancels.")))
+        .children(crundi_shell::registry::settings_parts(window, cx, "voice-device"));
     let s = cx.global::<St>();
     let v = &s.voice;
     let mut d = col(T::SP_10).child(hint("Click the mic in the top bar, hover over it, or hold the shortcut anywhere to talk to Cru, the voice assistant. What follows applies to Cru on every device."));
-    if !v.shown { return d.into_any_element(); }
+    if !v.shown { return d.child(device).into_any_element(); }
     let set = |b: bool| if b { "set" } else { "not set" };
     d = d.child(sub_head("Brain and model"))
         .when(v.has_brain, |d| d.child(vs_select("brain", "Brain", "An experiment: the same tools, rules and notebook either way. Each keeps its own conversation.", s)))
@@ -1514,7 +1524,8 @@ fn voice_body(window: &mut Window, cx: &mut App) -> AnyElement {
         .child(sub_head("Conversation and notebook"))
         .child(row().child(w::button("vs-reset", "Start a fresh conversation").on_click(|_, _, cx| voice_reset(cx))).child(note(v.reset_note.clone(), v.reset_bad)))
         .child(hint("Nothing is lost: memory search keeps every earlier turn."))
-        .when(!v.status.is_empty(), |d| d.child(note(v.status.clone(), v.status_bad)));
+        .when(!v.status.is_empty(), |d| d.child(note(v.status.clone(), v.status_bad)))
+        .child(device);
     d.into_any_element()
 }
 

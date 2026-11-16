@@ -1126,7 +1126,14 @@ if (p) {
 await snap('2.6-open-bypass');
 await ui('mode-choose', 'acceptEdits');
 { const q = await props(); check('choosing closes the picker and the button changes at once', q.modePicker === null && pane(q, liveM).mode === 'Accept edits' && pane(q, liveM).modeKey === 'acceptEdits', pane(q, liveM)); }
-await until('the server has the new mode', async () => (await serverChat(liveM))?.permissionMode === 'acceptEdits', 10000) && check('…and the server has it; the turn carries on', pane(await props(), liveM).state === 'working');
+// The turn carries on: the pane still works, unless the server says Claude
+// itself ended the turn meanwhile (a real turn's timing; F85/F92). A turn the
+// switch cut short would read working on neither side.
+if (await until('the server has the new mode', async () => (await serverChat(liveM))?.permissionMode === 'acceptEdits', 10000)) {
+  const sc = await serverChat(liveM), st = pane(await props(), liveM).state;
+  // (Under acceptEdits Claude's next command may ask: needs-input is the turn going on too.)
+  check('…and the server has it; the turn carries on', st === 'working' || st === 'needs-input' || (sc?.agentState !== 'working' && sc?.status === 'running'), { pane: st, server: sc?.agentState });
+}
 await ui('mode-open');
 await until('the picker opens again', (q) => q.modePicker?.current === 'acceptEdits', 5000);
 await ui('mode-choose', 'plan');
@@ -1876,7 +1883,9 @@ if (p) {
 }
 await snap('2.12-granted');
 await ui('sec-revoke', 'E2E_TOKEN');
-p = await until('revoked', (q) => q.secretsDialog?.grants?.length === 0 && pane(q, liveSec)?.secretsN === 0, 10000);
+// (The toast comes with the revoke's answer, which may land after the
+// server's grants event: wait for both; F92.)
+p = await until('revoked', (q) => q.secretsDialog?.grants?.length === 0 && pane(q, liveSec)?.secretsN === 0 && q.toast === 'Revoked E2E_TOKEN', 10000);
 if (p) check('Revoke: gone from the server and the lock; the toast', (await grantsOf()).length === 0 && p.toast === 'Revoked E2E_TOKEN', p.toast);
 // F74: Tab and Shift+Tab move between the ticked secrets' fields, and what
 // is typed lands in the field Tab went to.

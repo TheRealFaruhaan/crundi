@@ -91,7 +91,12 @@ crundi_shell::register(cx, Area::new("planning")
   on it 350 ms on a window ≥ `T::CRU_HOVER_MIN_W`, unless a chat holds the
   mic), `cru-leave`, `cru-ptt` / `cru-ptt-up` (Ctrl+Space held / let go).
   Desktop tells the mark what to show with `crundi_shell::set_cru_mark(cx,
-  live, unread)`. The sidebar's Inbox shows Desktop's `inbox` page.
+  live, unread)`.
+  The push-to-talk shortcut is per device (`crundi_shell::ptt`: ptt.json,
+  Ctrl+Space by default, changed in Settings › Voice assistant › On this
+  device). A part adds its own controls to another part's settings with
+  `register_settings_part(cx, slot, f)` (slot "voice-device": Desktop's
+  wake word). The sidebar's Inbox shows Desktop's `inbox` page.
 - The top bar (the shell's, 17 Nov): the logo and project; for the owner
   the weekly and 5-hour usage bars (`shell/src/usage.rs`: used against time
   passed, the over-pace slice yellow to red, the reset countdown, live from
@@ -172,11 +177,12 @@ The Slint client's protocol, unchanged (`crundi_core::driver`): `state`,
 `props`, `snapshot` (xwd of the window under X11), `ui`, `area`, `mouse`,
 `key`, `resize`. The window's own `ui` actions (`check-server`,
 `sign-in-password`, `sign-in-pair`, `sign-out`, `select-project`, `tab`,
-`drawer`, `pick-next`, `stub`) are the app's; every other name goes to the
+`drawer`, `pick-next`, `stub`, `toasts-clear`) are the app's; every other name goes to the
 parts' `test_ui` (unprefixed names to each part in turn, the phase tests'
 names: `send`, `respond`…; `<part>:<name>` to that part). `props` and `state`
 merge every part's, under the Slint client's names, so the phase tests read
-them as before.
+them as before. Screens go to `native-gpui/screens/<area>` (Operations,
+which runs as "ops", to `screens/operations`).
 `pointerModal` is the driver's own: true when any part says so, the shared
 view modal is up or the ask layer has a confirm or menu open (F58).
 

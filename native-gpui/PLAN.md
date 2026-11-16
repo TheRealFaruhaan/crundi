@@ -74,7 +74,7 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
 5. [x] **Operations** (Operations), test `test/operations.mjs`: Services,
    forwards, Docker; Secrets, Skills, Usage; Settings, sign-in, backup; Add
    project; Homepool; Info; Panels (widgets); What's new; the approvals button.
-6. [x] **PC-client extras from `app/`** (Desktop, but for Cru's gaps below), test `test/desktop.mjs`:
+6. [ ] **PC-client extras from `app/`** (Desktop; all but Cru's live screen, kid mode and wake word, below), test `test/desktop.mjs`:
    notifications and the tray, the Inbox, the chat bubble, saved passwords,
    the homepool node, Cru on the PC.
 7. **Ship** (not this run): installers and auto-update, signing, the release
@@ -105,12 +105,12 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
   from the Slint client), not yet tried by a person on a Mac; CI's macOS job builds it, runs the
   unit tests and starts it (green since 17 Nov, F83).
 - **Cru on the PC** (`crates/desktop/src/cru.rs`) has the voice screen,
-  listen / ask / speak, barge-in, keyboard mode, history and the Deepgram
-  spend line. Not ported from `app/vendor/crundi-voice.js`: the **wake word**
-  (`app/voice-wake`, an on-device model), the **live screen** (Cru's own
-  canvas: games, kid mode) and **Cru's settings** page (voice, wake word,
-  limits; edited on the web for now), so the push-to-talk shortcut is
-  Ctrl+Space only (the web binds it per device there).
+  listen / ask / speak, barge-in, keyboard mode, history, the Deepgram spend
+  line, the top-bar mark and the per-device push-to-talk shortcut. Still to
+  port from `app/vendor/crundi-voice.js` and `app/voice-wake` (Desktop,
+  `shared/cru-plan.md`): the live screen (Cru's panel: blocks, pages, video),
+  kid mode, and the wake word "Hey Cru" (sherpa-onnx keyword spotter,
+  training from the owner's voice, the controller).
 - **Buttons with a label** use gpui-component's Button with the theme's
   sizes (`widgets/src/control.rs`); its own hover tooltip for `.tooltip()`
   on such a Button is gpui-component's managed style, not `w::tooltip`.

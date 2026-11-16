@@ -87,6 +87,8 @@ fn ui(r: &Request, window: &mut Window, cx: &mut App) -> Value {
         // The ask layer's confirm or prompt (OK / Cancel, the prompt's text), else the dialog on top closes.
         "dialog-answer" => { let v = r.args().get(1).cloned(); if !crundi_widgets::ask_answer(a(0) == "true", v, window, cx) { crundi_widgets::close_dialog(window, cx) } }
         "menu-pick" => { crundi_widgets::menu_pick(&a(0), window, cx); }
+        // Take the toasts down (a screen shot without an earlier step's toast over it).
+        "toasts-clear" => crundi_widgets::clear_toasts(window, cx),
         _ => {
             return registry::test_ui(&name, &r.args(), window, cx)
                 .unwrap_or_else(|| json!({ "ok": false, "error": format!("unknown ui action {name}") }));

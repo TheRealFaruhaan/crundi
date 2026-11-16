@@ -92,6 +92,8 @@ pub struct FileWin {
     pub save_label: String,
     pub text: Option<Entity<w::EditorState>>,
     pub img: Option<Arc<Image>>,
+    /// The picture's own size in pixels (None for SVG): it is shown at most this big.
+    pub nat: Option<(u32, u32)>,
     pub loading: String,
     pub r: Rect,
     pub max: bool,
@@ -201,8 +203,12 @@ impl WinLayer {
         } else if let Some(img) = &wn.img {
             // The picture fills the body, kept in proportion (Contain): with
             // only max sizes in a centring box it laid out at nothing (F88).
-            div().size_full().min_h_0().min_w_0().bg(T::bg()).p(T::SP_12)
-                .child(gpui::img(img.clone()).size_full().object_fit(ObjectFit::Contain)).into_any_element()
+            // As the web's: at its own size, scaled down only to fit (contain,
+            // never enlarged past 1:1; F98), centred.
+            let pic = gpui::img(img.clone()).object_fit(ObjectFit::Contain).max_w_full().max_h_full();
+            let pic = match wn.nat { Some((w_, h_)) => pic.w(px(w_ as f32)).h(px(h_ as f32)), None => pic.size_full() };
+            div().size_full().min_h_0().min_w_0().bg(T::bg()).p(T::SP_12).flex().items_center().justify_center()
+                .child(pic).into_any_element()
         } else if let Some(t) = &wn.text {
             div().size_full().font_family(T::MONO).text_size(T::TEXT_13).child(w::code_editor(t).size_full()).into_any_element()
         } else { div().into_any_element() };
@@ -275,7 +281,7 @@ fn add(kind: &'static str, project: &str, file: &str, cx: &mut App) -> Option<u3
         l.next += 1;
         let id = l.next;
         let r = new_rect(l.wins.len() as u32, l.vw.max(MIN_W * 2.), l.vh.max(MIN_H * 3.));
-        l.wins.push(FileWin { id, kind, project: project.into(), file: file.into(), original: String::new(), save_label: "Save".into(), text: None, img: None, loading: String::new(), r, max: false });
+        l.wins.push(FileWin { id, kind, project: project.into(), file: file.into(), original: String::new(), save_label: "Save".into(), text: None, img: None, nat: None, loading: String::new(), r, max: false });
         cx.notify();
         id
     }))
@@ -323,7 +329,7 @@ fn open_viewer(project: &str, file: &str, ext: &str, cx: &mut App) {
         if st != 200 { return Err("Cannot open file".into()); }
         Ok(bytes)
     }, move |r, cx| if let Some(l) = layer(cx) { l.update(cx, |l, cx| {
-        if let Some(wn) = l.find(id) { match r { Ok(b) => { wn.img = Some(Arc::new(Image::from_bytes(format, b))); wn.loading.clear(); } Err(e) => wn.loading = if e.is_empty() { "Cannot open file".into() } else { e } } }
+        if let Some(wn) = l.find(id) { match r { Ok(b) => { wn.nat = image::ImageReader::new(std::io::Cursor::new(&b)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok()); wn.img = Some(Arc::new(Image::from_bytes(format, b))); wn.loading.clear(); } Err(e) => wn.loading = if e.is_empty() { "Cannot open file".into() } else { e } } }
         cx.notify();
     }); });
 }

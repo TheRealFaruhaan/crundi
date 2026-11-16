@@ -113,7 +113,10 @@ export async function begin(area, { project = true } = {}) {
   // The GPUI client's screens go to native-gpui/screens/<area>, never over
   // the Slint client's reference ones here (F40).
   const gpui = /crundi-gpui/.test(process.env.NATIVE_BIN || '');
-  const SCREENS = process.env.SCREENS_DIR || (gpui ? join(here, '..', '..', 'native-gpui', 'screens', area) : join(here, '..', 'screens', area));
+  // Operations runs as 'ops' (its ports' name); its pictures go to
+  // screens/operations, the one folder (F94).
+  const folder = area === 'ops' ? 'operations' : area;
+  const SCREENS = process.env.SCREENS_DIR || (gpui ? join(here, '..', '..', 'native-gpui', 'screens', folder) : join(here, '..', 'screens', folder));
   const OUT = process.env.DRIVE_OUT || join(tmpdir(), `crundi-native-${area}-out`);
   mkdirSync(OUT, { recursive: true });
 

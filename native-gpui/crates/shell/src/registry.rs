@@ -268,3 +268,22 @@ pub fn props_of(name: &str, window: &mut Window, cx: &mut App) -> Value {
 pub fn tab_label(id: &str) -> SharedString {
     TABS.iter().find(|t| t.0 == id).map(|t| t.1).unwrap_or(id).into()
 }
+
+
+/// A part's piece of another part's settings, by slot ("voice-device":
+/// Settings › Voice assistant › On this device; Desktop's wake word).
+type SettingsPart = Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+#[derive(Default)]
+struct SettingsParts(Vec<(&'static str, SettingsPart)>);
+impl Global for SettingsParts {}
+
+pub fn register_settings_part(cx: &mut App, slot: &'static str, f: impl Fn(&mut Window, &mut App) -> AnyElement + 'static) {
+    if !cx.has_global::<SettingsParts>() { cx.set_global(SettingsParts::default()); }
+    cx.global_mut::<SettingsParts>().0.push((slot, Rc::new(f)));
+}
+
+/// What the parts put in `slot`, drawn now.
+pub fn settings_parts(window: &mut Window, cx: &mut App, slot: &str) -> Vec<AnyElement> {
+    let fs: Vec<SettingsPart> = cx.try_global::<SettingsParts>().map(|p| p.0.iter().filter(|(s, _)| *s == slot).map(|(_, f)| f.clone()).collect()).unwrap_or_default();
+    fs.iter().map(|f| f(window, cx)).collect()
+}
