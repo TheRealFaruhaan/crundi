@@ -212,6 +212,7 @@ pub fn ensure(id: &str) -> Option<usize> {
     let i = browser::open_panel(&url, &t.network);
     browser::with(|st| { let p = &mut st.panels[i]; p.tab = Some(id.to_string()); p.device = t.device.unwrap_or(0); p.custom = if t.device.is_none() { t.custom } else { None }; p.title = t.title.clone(); });
     tab_mut(id, |x| { x.panel = Some(i); x.diag.clear(); x.used = now(); x.sleeping = false; x.unloaded = false; });
+    crate::passwords::attach(i);
     if t.device != Some(0) { let i2 = i; later(Duration::from_millis(300), move || browser::apply_device(i2)); }
     Some(i)
 }
@@ -562,7 +563,7 @@ pub fn open_panel(which: &str) {
             let site = active_tab().map(|t| rules::norm_site(&rules::host_of(&t.url)).unwrap_or_default()).unwrap_or_default();
             with(|d| d.clr = Clear { site_only: false, site, history: true, cookies: false, cache: true, passwords: false });
         }
-        "passwords" => crate::passwords::show(),
+        "passwords" => crate::passwords::show_panel(),
         "homepool" => {}
         _ => {}
     }

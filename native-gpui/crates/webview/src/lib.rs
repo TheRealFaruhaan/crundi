@@ -16,6 +16,7 @@
 //! lives in its own modules (`engine`, `net`, `shot`, `cef_app`).
 
 pub mod engine;
+pub mod frames;
 pub mod net;
 pub mod shot;
 mod view;

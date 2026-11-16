@@ -26,7 +26,10 @@ mod notify;
 mod marks;
 mod passwords;
 mod pointer;
+mod pwstore;
 pub mod rules;
+pub mod startup;
+mod tray;
 mod ui;
 
 use crundi_shell::{Area, AreaEvent, Drawer};
@@ -46,14 +49,16 @@ impl Global for DrawerHandle {}
 pub fn init(window: &mut Window, cx: &mut App) {
     web::engine::set_hooks(web::Hooks {
         changed: |i| drawer::panel_changed(i),
-        visited: |i, u| drawer::visited(i, u),
+        visited: |i, u| { drawer::visited(i, u); if let Some(t) = drawer::tab_of_panel(i) { passwords::visited(&t.id, u); } },
         popup: |i, u| drawer::popup(i, u),
         load_failed,
         annotating: || drawer::with(|d| d.annotating),
         ask_note: |i, n| drawer::ask_note(i, n),
+        console: passwords::console,
     });
     web::net::set_link(host::send_binary, || host::features().iter().any(|f| f == "net-tunnel"));
     crundi_core::host::set(Box::new(host::Host));
+    passwords::init();
     drawer::init();
     let view = cx.new(|cx| BrowserDrawer::new(window, cx));
     let bpage = cx.new(|cx| browsers::BrowsersPage::new(window, cx));
@@ -61,6 +66,7 @@ pub fn init(window: &mut Window, cx: &mut App) {
     let cscreen = cx.new(|cx| cru_ui::CruScreen::new(window, cx));
     crundi_shell::register_overlay(cx, cscreen.clone().into());
     homepool::init();
+    tray::start(false);
     cx.set_global(DrawerHandle(view.clone(), bpage.clone(), ipage.clone(), cscreen));
     crundi_shell::register_drawer(cx, Drawer {
         view: view.into(),
@@ -73,7 +79,8 @@ pub fn init(window: &mut Window, cx: &mut App) {
         .on_signed_in(|cx| signed_in(cx))
         .on_signed_out(|_| { drawer::close(); inbox::signed_out(); })
         .on_event(|e, _| match e {
-            AreaEvent::Connected(true) => { drawer::render(); inbox::load(); cru::load_unread(); }
+            AreaEvent::Connected(true) => { drawer::render(); inbox::load(); cru::load_unread(); tray::set_online(true); }
+            AreaEvent::Connected(false) => tray::set_online(false),
             AreaEvent::Ws("voice-report", v) => cru::report(v),
             AreaEvent::Server("inbox", v) => inbox::event(v),
             _ => {}
@@ -88,7 +95,10 @@ pub fn init(window: &mut Window, cx: &mut App) {
 /// the effects the logic asked for, and the drawer's view.
 pub fn pump(window: &mut Window, cx: &mut App) {
     refresh(window, cx);
+    web::frames::drop_old(window);
     host::pump();
+    passwords::pump();
+    for p in tray::take_picks() { tray::act(&p); }
     for f in ctx::take_effects() { f(window, cx); }
     notify::pump();
     for f in ctx::take_main() { f(); }
@@ -225,6 +235,17 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "cru-keyboard" => { cru::set_keyboard(a(0) != "false"); ok() }
         "cru-send" => { cru::ask(&a(0), true); ok() }
         "cru-menu" => { cru::menu_pick(&a(0)); ok() }
+        "pw-save" => { if let Some(t) = drawer::active_tab() { passwords::save(&t.id, &a(0)); } ok() }
+        "pw-never" => { if let Some(t) = drawer::active_tab() { passwords::never(&t.id); } ok() }
+        "pw-dismiss" => { if let Some(t) = drawer::active_tab() { passwords::dismiss(&t.id); } ok() }
+        "pw-fill" => { if let Some(t) = drawer::active_tab() { passwords::fill(&t.id, &a(0)); } ok() }
+        "pw-site" => { passwords::site_menu(); ok() }
+        "pw-show" => { passwords::show(&a(0)); ok() }
+        "pw-unlock" => { passwords::unlock(&a(0)); ok() }
+        "pw-remove" => { passwords::remove(&a(0)); ok() }
+        "pw-unnever" => { passwords::unnever(&a(0)); ok() }
+        "tray-pick" => { tray::test_pick(&a(0)); ok() }
+        "startup" => Some(json!({ "ok": true, "enabled": startup::enabled() })),
         "homepool-status" => Some(json!({ "ok": true, "status": homepool::status() })),
         "browsers-open" => { browsers::open(&a(0)); ok() }
         "browsers-shot" => { browsers::shot(&a(0)); ok() }
@@ -251,7 +272,7 @@ fn props() -> Value {
     json!({
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "inbox": inbox::props(), "cru": cru::props(), "homepool": homepool::status(), "notifications": notify::props(), "hidden": hidden,
+        "inbox": inbox::props(), "cru": cru::props(), "homepool": homepool::status(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
     })
 }

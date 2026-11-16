@@ -31,11 +31,15 @@ pub struct Hooks {
     pub annotating: fn() -> bool,
     /// A mark was made: its note field opens (panel, mark).
     pub ask_note: fn(usize, usize),
+    /// A console line: true when the area took it (the saved passwords'
+    /// page script reports this way); taken lines are not kept, so a
+    /// chat's browser_console never reads them.
+    pub console: fn(usize, &str) -> bool,
 }
 
 impl Default for Hooks {
     fn default() -> Self {
-        Hooks { changed: |_| {}, visited: |_, _| {}, popup: |_, _| false, load_failed: |_| {}, annotating: || false, ask_note: |_, _| {} }
+        Hooks { changed: |_| {}, visited: |_, _| {}, popup: |_, _| false, load_failed: |_| {}, annotating: || false, ask_note: |_, _| {}, console: |_, _| false }
     }
 }
 
@@ -332,6 +336,8 @@ type PageCursor = CursorHandle;
 
 
 /// CEF's cursor kinds, folded into the ones a view shows.
+pub(crate) fn cursor_kind(t: CursorType) -> i32 { cursor_index(t) }
+
 fn cursor_index(t: CursorType) -> i32 {
     match t {
         CursorType::HAND => 1,
@@ -369,6 +375,7 @@ wrap_display_handler! {
             1
         }
         fn on_console_message(&self, _browser: Option<&mut Browser>, level: LogSeverity, message: Option<&CefString>, source: Option<&CefString>, line: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
+            if let Some(m) = message { if (hooks().console)(self.index, &m.to_string()) { return 1; } }
             let lv = match level { LogSeverity::ERROR | LogSeverity::FATAL => "error", LogSeverity::WARNING => "warning", LogSeverity::VERBOSE => "debug", _ => "log" };
             let m = json!({ "type": lv, "text": message.map(|m| m.to_string()).unwrap_or_default(), "url": source.map(|m| m.to_string()).unwrap_or_default(), "line": line, "time": now_ms() });
             with(|st| { let c = &mut st.panels[self.index].console; c.push_back(m); while c.len() > MAX_CONSOLE { c.pop_front(); } });
@@ -653,9 +660,15 @@ pub fn set_device(i: usize, d: usize) {
     apply_device(i);
 }
 
-pub fn resized(i: usize, w: f32, h: f32) {
+pub fn resized(i: usize, w: f32, h: f32) { resized_as(i, w, h, true) }
+
+/// A panel that is not a drawer page (a widget panel's card or chip) took
+/// a size: the drawer's stage size is left as it is.
+pub fn resized_panel(i: usize, w: f32, h: f32) { resized_as(i, w, h, false) }
+
+fn resized_as(i: usize, w: f32, h: f32, drawer: bool) {
     let follow = with(|st| {
-        st.stage = (w, h);
+        if drawer { st.stage = (w, h); }
         let p = &mut st.panels[i];
         let changed = (p.stage_w - w).abs() > 0.5 || (p.stage_h - h).abs() > 0.5;
         p.stage_w = w; p.stage_h = h;
