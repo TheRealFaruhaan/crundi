@@ -19,14 +19,15 @@ impl Workbench {
             None => w::empty("Not built yet in the GPUI client.").into_any_element(),
         };
         let head = self.head(i, full, cx);
-        w::panel(head, body).when(i.focused && !full, |d| d.border_color(T::accent_edge())).into_any_element()
+        w::panel(head, body).when(i.focused && !full, |d| d.border_color(T::accent())).into_any_element()
     }
 
-    fn leaf(&self, i: &Info, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn leaf(&mut self, i: &Info, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let id = i.l.id;
         let inner: AnyElement = if i.kind == "empty" { self.empty_leaf(i, cx).into_any_element() } else { self.pane_frame(i, false, window, cx) };
+        let fh = self.leaf_focus.get(&id).cloned().unwrap_or_else(|| cx.focus_handle());
         div()
-            .id(("leaf", id)).absolute().left(px(i.l.x)).top(px(i.l.y)).w(px(i.l.w)).h(px(i.l.h))
+            .id(("leaf", id)).track_focus(&fh).absolute().left(px(i.l.x)).top(px(i.l.y)).w(px(i.l.w)).h(px(i.l.h))
             .on_hover(cx.listener(move |this, h: &bool, _, cx| { if *h { this.hover = id; } else if this.hover == id { this.hover = 0; } cx.notify(); }))
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.focus_pane(id, cx)))
             .child(inner)
@@ -36,10 +37,10 @@ impl Workbench {
     }
 
     /// A leaf with nothing in it (.mosaic-empty): a dashed edge, the
-    /// message, the chips, then Split ▸ / Split ▾ / ×, in a centred column.
+    /// message, the chips, then Split right / Split down / remove, in a centred column.
     fn empty_leaf(&self, i: &Info, cx: &mut Context<Self>) -> Div {
         let id = i.l.id;
-        let btn = |key: &'static str, label: &'static str, tip: &'static str| w::head_button((key, id), C::Text(label.into()), L::Rest, T::SP_48 + T::SP_24, T::CONTROL_SM, tip);
+        let btn = |key: &'static str, icon: IconName, tip: &'static str| w::head_button((key, id), C::IconText(icon, "Split".into()), L::Rest, T::SP_48 + T::SP_24, T::CONTROL_SM, tip);
         div().size_full().p(T::SP_4).child(
             div().size_full().rounded(T::R_CARD).border_1().border_dashed().border_color(T::border()).overflow_hidden()
                 .flex().flex_col().items_center().justify_center()
@@ -50,9 +51,9 @@ impl Workbench {
                         .child(w::chip(IconName::Terminal, "Terminal", false))))
                 .child(div().h(T::SP_10))
                 .child(div().flex().items_center().gap(T::SP_6)
-                    .child(btn("e-right", "Split ▸", "Split right").on_click(cx.listener(move |this, _, _, cx| this.split(id, false, cx))))
-                    .child(btn("e-down", "Split ▾", "Split down").on_click(cx.listener(move |this, _, _, cx| this.split(id, true, cx))))
-                    .child(w::head_button(("e-x", id), C::Text("×".into()), L::Close, T::CONTROL_SM, T::CONTROL_SM, "Remove this pane")
+                    .child(btn("e-right", IconName::Columns2, "Split right").on_click(cx.listener(move |this, _, _, cx| this.split(id, false, cx))))
+                    .child(btn("e-down", IconName::Rows2, "Split down").on_click(cx.listener(move |this, _, _, cx| this.split(id, true, cx))))
+                    .child(w::head_button(("e-x", id), C::Icon(IconName::X), L::Close, T::CONTROL_SM, T::CONTROL_SM, "Remove this pane")
                         .on_click(cx.listener(move |this, _, _, cx| this.close_pane(id, cx))))))
     }
 
@@ -84,7 +85,24 @@ impl Render for Workbench {
         let (gw, gh) = self.grid_size();
         let gutters = self.mosaic().layout(gw, gh).1;
         let full = self.full.clone();
+        // Typing in a pane brings it into view: the grid scrolls sideways to
+        // the focused pane (Slint's Flickable does it for its focused input).
+        if self.reveal {
+            self.reveal = false;
+            if let Some(i) = infos.iter().find(|i| i.l.id == self.focused) {
+                let aw = self.area.0;
+                let at = -f32::from(self.scroll.offset().x);
+                let pad = crundi_core::mosaic::PAD;
+                // Right of the room: only as far as its inside (Slint brought the
+                // focused input into view, not the pane's edge).
+                let inset = f32::from(T::SP_10);
+                let to = if i.l.x < at { Some(i.l.x - pad) } else if i.l.x + i.l.w - inset > at + aw { Some(i.l.x + i.l.w - inset - aw) } else { None };
+                if let Some(to) = to { self.scroll.set_offset(point(px(-to.max(0.)), px(0.))); }
+            }
+        }
         let mut grid = div().relative().w(px(gw)).h(px(gh)).flex_none();
+        for i in &infos { if !self.leaf_focus.contains_key(&i.l.id) { let h = cx.focus_handle(); self.leaf_focus.insert(i.l.id, h); } }
+        self.leaf_focus.retain(|l, _| infos.iter().any(|i| i.l.id == *l));
         for i in &infos {
             if full.as_deref() == Some(i.key.as_str()) { continue; }
             grid = grid.child(self.leaf(i, window, cx));
@@ -110,15 +128,25 @@ impl Render for Workbench {
                 move |_, _, window, _| {
                     let m = me2.clone();
                     window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| if phase == DispatchPhase::Bubble {
-                        let _ = m.update(cx, |this, cx| if this.gutter.is_some() || this.press.is_some() { this.pointer_move(f32::from(e.position.x), f32::from(e.position.y), cx) });
+                        let _ = m.update(cx, |this, cx| if this.gutter.is_some() || this.press.is_some() || this.sbar.is_some() { this.pointer_move(f32::from(e.position.x), f32::from(e.position.y), cx) });
                     });
                     let m = me2.clone();
                     window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| if phase == DispatchPhase::Bubble {
-                        let _ = m.update(cx, |this, cx| if this.gutter.is_some() || this.press.is_some() || this.drag.is_some() { this.pointer_up(f32::from(e.position.x), f32::from(e.position.y), cx) });
+                        let _ = m.update(cx, |this, cx| if this.gutter.is_some() || this.press.is_some() || this.drag.is_some() || this.sbar.is_some() { this.pointer_up(f32::from(e.position.x), f32::from(e.position.y), cx) });
                     });
                 },
             ).absolute().size_full())
             .child(div().id("wb-grid").size_full().overflow_x_scroll().track_scroll(&self.scroll).child(grid));
+        // Wider than the room (panes at their 340px least): the row scrolls
+        // sideways, with its scrollbar under the panes (the web's grid).
+        let aw = self.area.0;
+        if gw > aw + 0.5 && aw > 0. {
+            let at = -f32::from(self.scroll.offset().x);
+            let (tw, tx) = (aw * aw / gw, at * aw / gw);
+            root = root.child(div().id("wb-scrollbar").absolute().left_0().bottom_0().w(px(aw)).h(T::SP_6)
+                .child(div().id("wb-thumb").absolute().top_0().left(px(tx)).w(px(tw)).h_full().rounded(T::R_PILL).bg(T::border()).hover(|s| s.bg(T::text_muted()))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, cx| { cx.stop_propagation(); this.sbar = Some((f32::from(e.position.x), at)); }))));
+        }
         // The pane being dragged follows the pointer: its header's frame.
         if let Some(d) = self.drag {
             if let Some(i) = infos.iter().find(|i| i.l.id == d.src) {

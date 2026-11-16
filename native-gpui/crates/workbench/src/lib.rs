@@ -142,6 +142,12 @@ pub struct Workbench {
     pub(crate) win_size: (f32, f32),
     /// The event stream's first state has come: until then no pane goes.
     seen_state: bool,
+    /// Keys were typed in the focused pane: scroll it into view.
+    pub(crate) reveal: bool,
+    /// The sideways scrollbar's thumb being dragged: the pointer's x and the offset at the press.
+    pub(crate) sbar: Option<(f32, f32)>,
+    /// Each leaf's focus handle (tracked by its container), to know which pane holds the keys.
+    pub(crate) leaf_focus: HashMap<u32, FocusHandle>,
 }
 
 pub struct WorkbenchHandle(pub Entity<Workbench>);
@@ -156,7 +162,7 @@ impl Workbench {
             font: saved.font.clone(), font_default: saved.font_default_chat.unwrap_or(rules::FONT_BASE),
             titles: HashMap::new(), pending: 0, protect: HashMap::new(), closed: HashSet::new(),
             hover: 0, press: None, drag: None, gutter: None, add_menu: false, layouts_open: false,
-            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), window: None, win_size: (0., 0.), seen_state: false,
+            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(),
         }
     }
 
@@ -628,6 +634,13 @@ impl Workbench {
     }
 
     pub(crate) fn pointer_move(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
+        if let Some((x0, off0)) = self.sbar {
+            let (gw, _) = self.grid_size();
+            let aw = self.area.0.max(1.);
+            let to = (off0 + (x - x0) * gw / aw).clamp(0., (gw - aw).max(0.));
+            self.scroll.set_offset(point(px(-to), px(0.)));
+            return cx.notify();
+        }
         if let Some(g) = self.gutter {
             let at = if g.row { x } else { y };
             self.mosaic().drag_from(g.split, g.index, g.a0, g.b0, g.total, at - g.start);
@@ -652,6 +665,7 @@ impl Workbench {
 
     pub(crate) fn pointer_up(&mut self, x: f32, y: f32, cx: &mut Context<Self>) {
         self.press = None;
+        if self.sbar.take().is_some() { return cx.notify(); }
         if self.gutter.take().is_some() { return self.changed(cx); }
         let Some(d) = self.drag.take() else { return };
         let target = self.leaf_at(x, y).map(|l| l.id);
@@ -733,6 +747,14 @@ pub fn init(cx: &mut App) {
     cx.intercept_keystrokes(|e, _window, cx| {
         if e.keystroke.key != "escape" { return; }
         if let Some(w) = workbench(cx) { if w.update(cx, |w, cx| w.escape(cx)) { cx.stop_propagation(); } }
+    }).detach();
+    // Typing brings the focused pane into view (as Slint's focus does).
+    cx.observe_keystrokes(|e, window, cx| {
+        if e.keystroke.key_char.is_none() { return; }
+        let Some(w) = workbench(cx) else { return };
+        let holder = w.read(cx).leaf_focus.iter().find(|(_, h)| h.contains_focused(window, cx)).map(|(l, _)| *l);
+        let Some(leaf) = holder else { return };
+        w.update(cx, |w, cx| { if w.focused != leaf || !w.reveal { w.focus_pane(leaf, cx); w.reveal = true; cx.notify(); } });
     }).detach();
     crundi_shell::register(cx, crundi_shell::Area::new("workbench")
         .tabs(&["workbench"], move |_, _, _| wb.clone().into_any_element())
