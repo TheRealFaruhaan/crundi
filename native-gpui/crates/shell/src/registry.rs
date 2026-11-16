@@ -144,6 +144,25 @@ pub fn register_add_menu(cx: &mut App, f: impl Fn(&mut App) + 'static) {
     cx.global_mut::<Areas>().add_menu = Some(Rc::new(f));
 }
 
+/// A named action of the shell's own buttons that a part provides
+/// ("add-project": Operations' Add project dialog), registered once.
+#[derive(Default)]
+pub struct Actions(pub std::collections::HashMap<&'static str, Rc<dyn Fn(&mut App)>>);
+impl Global for Actions {}
+
+pub fn register_action(cx: &mut App, name: &'static str, f: impl Fn(&mut App) + 'static) {
+    if !cx.has_global::<Actions>() { cx.set_global(Actions::default()); }
+    cx.global_mut::<Actions>().0.insert(name, Rc::new(f));
+}
+
+/// Run a named action (nothing when no part provides it yet).
+pub fn run_action(cx: &mut App, name: &str) {
+    if let Some(f) = cx.try_global::<Actions>().and_then(|a| a.0.get(name).cloned()) { f(cx); }
+}
+
+/// The sidebar's "+ Add project".
+pub fn add_project(cx: &mut App) { run_action(cx, "add-project"); }
+
 /// The project bar's "+": the registered hook.
 pub fn add_menu(cx: &mut App) {
     if let Some(f) = cx.try_global::<Areas>().and_then(|a| a.add_menu.clone()) { f(cx); }
@@ -204,11 +223,26 @@ pub fn merged(window: &mut Window, cx: &mut App, state: bool) -> Map<String, Val
     for a in list(cx) {
         let f = if state { a.state.clone() } else { a.props.clone() };
         if let Some(f) = f {
-            if let Value::Object(m) = f(window, cx) { out.extend(m); }
+            if let Value::Object(m) = f(window, cx) { deep_merge(&mut out, m); }
         }
     }
     out
 }
+
+/// Merge `m` into `out`: an object under the same key on both sides is
+/// merged key by key (two parts' "areas" maps both survive: F44); anything
+/// else, the later part's value.
+pub fn deep_merge(out: &mut Map<String, Value>, m: Map<String, Value>) {
+    for (k, v) in m {
+        match (out.get_mut(&k), v) {
+            (Some(Value::Object(a)), Value::Object(b)) => deep_merge(a, b),
+            (_, v) => { out.insert(k, v); }
+        }
+    }
+}
+
+/// The registered parts' names.
+pub fn names(cx: &App) -> Vec<&'static str> { list(cx).iter().map(|a| a.name).collect() }
 
 /// One part's props alone ({"cmd":"area"}).
 pub fn props_of(name: &str, window: &mut Window, cx: &mut App) -> Value {

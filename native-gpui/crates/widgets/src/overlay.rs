@@ -40,5 +40,5 @@ pub fn modal_head(id: &'static str, title: impl Into<SharedString>, close_focuse
         .child(div().flex_1().text_size(T::TEXT_11).font_weight(T::W_BOLD).text_color(T::text_secondary()).child(title.into().to_uppercase()))
         .child(div().id(id).px(T::SP_8).py(T::SP_4).rounded(T::R_CONTROL).cursor_pointer().text_color(T::text_secondary()).border_1()
             .border_color(if close_focused { T::accent() } else { transparent_black() })
-            .hover(|d| d.bg(T::bg_tertiary()).text_color(T::text())).child("×").on_click(on_close))
+            .hover(|d| d.bg(T::bg_tertiary()).text_color(T::text())).child(crate::control::icon_of(crundi_theme::IconName::X, T::ICON_MD)).on_click(on_close))
 }

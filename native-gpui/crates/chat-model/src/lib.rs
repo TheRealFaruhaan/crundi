@@ -114,3 +114,19 @@ pub fn set_connected(cx: &mut App, on: bool) {
     let ms: Vec<Entity<ChatModel>> = cx.try_global::<Chats>().map(|c| c.0.values().cloned().collect()).unwrap_or_default();
     for m in ms { m.update(cx, |m, cx| { m.connected = on; cx.notify(); }); }
 }
+
+/// A side question from the composer's box (`/btw <question>`): the chat's
+/// log asks it on the side (2.21). The log registers the handler; the
+/// composer calls `aside` first on send (true: handled, send nothing).
+#[derive(Default)]
+pub struct Aside(pub Option<std::rc::Rc<dyn Fn(&mut App, &str, &str) -> bool>>);
+impl Global for Aside {}
+
+pub fn register_aside(cx: &mut App, f: impl Fn(&mut App, &str, &str) -> bool + 'static) {
+    cx.set_global(Aside(Some(std::rc::Rc::new(f))));
+}
+
+pub fn aside(cx: &mut App, chat: &str, text: &str) -> bool {
+    let Some(f) = cx.try_global::<Aside>().and_then(|a| a.0.clone()) else { return false };
+    f(cx, chat, text)
+}

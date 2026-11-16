@@ -202,6 +202,11 @@ process.on('exit', () => { try { app.kill(); } catch {} });
 // Every temporary folder the run makes goes when it ends, failed or not
 // (the attachments' files piled up to gigabytes in /tmp otherwise). A
 // timeout's SIGTERM or a Ctrl+C ends through process.exit, so they go too.
+// A run killed from outside (timeout, SIGKILL) skips the exit hook below:
+// folders of earlier runs older than an hour go first (F54).
+for (const f of readdirSync(tmpdir()).filter((x) => /^crundi-attach-/.test(x))) {
+  try { const p = join(tmpdir(), f); const st = (await import('node:fs')).statSync(p); if (Date.now() - st.mtimeMs > 3600e3) rmSync(p, { recursive: true, force: true }); } catch { /* not ours, or gone */ }
+}
 const tmpDirs = [];
 const tmpDir = (prefix) => { const t = mkdtempSync(join(tmpdir(), prefix)); tmpDirs.push(t); return t; };
 process.on('exit', () => { for (const t of tmpDirs) { try { rmSync(t, { recursive: true, force: true }); } catch {} } });
@@ -1208,7 +1213,7 @@ const notes = join(tmpA, 'notes.txt'); writeFileSync(notes, 'hello notes\n');
 const otherF = join(tmpA, 'other file.md'); writeFileSync(otherF, '# other\n');
 const emptyF = join(tmpA, 'empty.txt'); writeFileSync(emptyF, '');
 // Big enough that the upload is still under way when the test looks (the bar, attach busy).
-const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(20 * 1024 * 1024, 7));
+const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(12 * 1024 * 1024, 7));   // small enough to leave no mark (F54), big enough to watch
 const pic = join(tmpA, 'shot.png'); writeFileSync(pic, Buffer.from((await d.send({ cmd: 'snapshot' })).data, 'base64'));
 const liveA = await make('demo', 'Attach', false);
 const liveB2 = await make('demo', 'Attach two', false);
@@ -1251,7 +1256,7 @@ if (p) check('a big file uploads and its path goes in', true);
 // keeps about two thirds of the bar's room.
 {
   const longF = join(tmpA, 'quarterly-report-final-version-with-all-the-appendices-and-the-notes-included.bin');
-  writeFileSync(longF, Buffer.alloc(60 * 1024 * 1024, 7));
+  writeFileSync(longF, Buffer.alloc(12 * 1024 * 1024, 7));
   await clearBox();
   await ui('attach', longF);
   p = await until('the long-named upload shows its bar', (q) => pane(q, liveA)?.upOn && pane(q, liveA)?.upBusy, 10000);

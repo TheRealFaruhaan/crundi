@@ -138,6 +138,9 @@ impl ComposerView {
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.text(cx).trim_end().to_string();
         if text.trim().is_empty() { return; }
+        // A side question (/btw) is the log's to ask (F37): nothing is sent.
+        let chat = self.chat_id(cx);
+        if crundi_chat_model::aside(cx, &chat, &text) { self.set_text("", window, cx); return; }
         self.set_text("", window, cx);
         self.send_text(text, cx);
     }

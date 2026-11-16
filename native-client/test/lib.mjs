@@ -110,7 +110,10 @@ export async function begin(area, { project = true } = {}) {
   const BIN = process.env.NATIVE_BIN;
   if (!BIN) { console.error('Set NATIVE_BIN (tools/area-build.sh <area> prints it)'); process.exit(2); }
   // SCREENS_DIR: elsewhere (the GPUI client's, native-gpui/screens/<area>).
-  const SCREENS = process.env.SCREENS_DIR || join(here, '..', 'screens', area);
+  // The GPUI client's screens go to native-gpui/screens/<area>, never over
+  // the Slint client's reference ones here (F40).
+  const gpui = /crundi-gpui/.test(process.env.NATIVE_BIN || '');
+  const SCREENS = process.env.SCREENS_DIR || (gpui ? join(here, '..', '..', 'native-gpui', 'screens', area) : join(here, '..', 'screens', area));
   const OUT = process.env.DRIVE_OUT || join(tmpdir(), `crundi-native-${area}-out`);
   mkdirSync(OUT, { recursive: true });
 

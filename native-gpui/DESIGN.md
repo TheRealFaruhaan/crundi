@@ -22,7 +22,8 @@ Electron client (`app/`) shows it. Where the web has no screen for something
    choices, text boxes, menus, chips, badges, tags, cards, panes and their
    heads, toolbars, tabs, list rows, empty / error / loading states, dialogs
    and toasts are built there once, on the tokens, wrapping gpui-component
-   once. A screen never draws its own copy of one, and never uses a
+   once, sized by the theme's control tokens (never gpui-component's size
+   presets). A screen never draws its own copy of one, sizes one, or uses a
    gpui-component control directly: a duplicate is a **blocking** finding.
 
 

@@ -18,7 +18,7 @@ pub fn select(
 ) -> impl IntoElement {
     let label = on.and_then(|i| items.get(i).cloned()).unwrap_or_else(|| none.into());
     let pick = std::rc::Rc::new(pick);
-    Button::new(id).label(label).icon(IconName::ChevronDown).small().text_size(T::TEXT_12).disabled(disabled)
+    crate::control::sized(Button::new(id), Some(label), Some(IconName::ChevronDown), true, crate::control::Ctl::Normal).disabled(disabled)
         .dropdown_menu(move |mut menu, _, _| {
             menu = menu.max_h(T::DIALOG_MAX_H).scrollable(true);
             for (i, l) in items.iter().enumerate() {

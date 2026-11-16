@@ -32,7 +32,7 @@ pub fn dropdown_of(
 ) -> impl IntoElement {
     let label = items.get(on).cloned().unwrap_or_default();
     let pick = std::rc::Rc::new(pick);
-    let b = Button::new(id).label(label).icon(IconName::ChevronDown).small().text_size(T::TEXT_12).disabled(disabled);
+    let b = crate::control::sized(Button::new(id), Some(label), Some(IconName::ChevronDown), true, crate::control::Ctl::Normal).disabled(disabled);
     let b = if full { b.w_full().justify_between() } else { b };
     b.dropdown_menu(move |mut menu, _, _| {
         menu = menu.max_h(T::DIALOG_MAX_H).scrollable(true);

@@ -44,7 +44,20 @@ fn props(window: &mut Window, cx: &mut App) -> Map<String, Value> {
     // The ask layer's open confirm / prompt and context menu (the Slint client's "dialog", "menu").
     m.insert("dialog".into(), crundi_widgets::ask_props(cx));
     m.insert("menu".into(), crundi_widgets::menu_props(cx));
-    m.extend(registry::merged(window, cx, false));
+    registry::deep_merge(&mut m, registry::merged(window, cx, false));
+    // Each part's props under areas.<part> too (the area tests read them
+    // there; "ops" is Operations' name in the tests), unless the part put
+    // its own there (F41).
+    let mut areas = serde_json::Map::new();
+    for name in registry::names(cx) {
+        let v = registry::props_of(name, window, cx);
+        if v.is_null() { continue; }
+        if name == "operations" { areas.insert("ops".into(), v.clone()); }
+        areas.insert(name.to_string(), v);
+    }
+    let have = m.remove("areas").and_then(|a| if let Value::Object(o) = a { Some(o) } else { None }).unwrap_or_default();
+    registry::deep_merge(&mut areas, have);
+    m.insert("areas".into(), Value::Object(areas));
     // The toast on show: the widgets crate's one record of it (after the
     // parts' props, so no part's own copy hides it).
     m.insert("toast".into(), json!(crundi_widgets::toast_text(cx).to_string()));

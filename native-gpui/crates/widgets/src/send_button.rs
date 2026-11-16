@@ -8,6 +8,5 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants as _};
 
 pub fn send_button(id: impl Into<ElementId>, label: impl Into<SharedString>, scale: f32) -> Button {
-    Button::new(id).label(label.into()).primary().flex_none().h(T::CONTROL).min_w(T::SP_48 + T::SP_16).px(T::SP_12)
-        .rounded(T::R_CONTROL).text_size(T::TEXT_12 * scale).font_weight(T::W_SEMIBOLD)
+    crate::control::sized_text(Button::new(id).primary(), label.into(), T::BTN_TEXT * scale, crate::control::Ctl::Large).min_w(T::SP_48 + T::SP_16)
 }

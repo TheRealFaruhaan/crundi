@@ -12,7 +12,7 @@ use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 
-pub use registry::{register, register_add_menu, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
+pub use registry::{register, register_action, register_add_menu, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
 pub use session::{api, call, project, run, signed_in, subscribe, unsubscribe, ws_send, Session, Step};
 
 /// The window's own state: the tab, the sidebar, the drawer, sign-in's fields.
@@ -96,35 +96,47 @@ impl Shell {
 
     // ─── The sidebar ───
 
+    /// The projects sidebar, as the Slint client's (its geometry is what the
+    /// phase tests read): the header (PROJECTS and the fold button) the top
+    /// bar's height; rows 32 high, 2 apart; folded, a rail of avatars 48 apart.
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let s = session::get(cx);
-        let mut list = div().id("projects").flex().flex_col().flex_1().p(T::SP_8).gap(T::SP_4).overflow_y_scroll();
+        let folded = !self.sidebar;
+        let mut list = div().id("projects").flex().flex_col().flex_1().pt(T::SP_4).pb(T::SP_4).px(if folded { T::SP_6 } else { T::SP_8 }).gap(T::SP_2).overflow_y_scroll();
         for (i, p) in s.projects.iter().enumerate() {
             let alias = p.get("alias").and_then(|a| a.as_str()).unwrap_or("").to_string();
             let name = p.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).unwrap_or(&alias).to_string();
             let on = alias == s.project;
             let dot = crundi_core::head::project_dot(&s.terminals, &alias);
-            list = list.child(w::sidebar_item(name, dot, on).id(("project", i)).cursor_pointer()
+            let row = if folded {
+                div().flex().items_center().justify_center().h(T::SP_48)
+                    .child(w::tip(w::rail_avatar(crundi_core::head::project_initials(&name), dot, on).id(("avatar", i)).cursor_pointer(), name.clone()))
+                    .into_any_element()
+            } else { w::sidebar_item(name, dot, on).into_any_element() };
+            list = list.child(div().id(("project", i)).cursor_pointer().child(row)
                 .on_click(cx.listener(move |_, _, _, cx| session::select_project(cx, &alias))));
         }
+        let fold = w::icon_button("fold", if folded { IconName::ChevronsRight } else { IconName::ChevronsLeft }, if folded { "Show the projects" } else { "Fold the projects" })
+            .on_click(cx.listener(|this, _, _, cx| { this.sidebar = !this.sidebar; cx.notify(); }));
+        let head = div().flex().flex_none().items_center().h(T::TOPBAR_H).border_b_1().border_color(T::border_subtle());
+        let head = if folded { head.justify_center().child(fold) } else {
+            head.pl(T::SP_16).pr(T::SP_12)
+                .child(div().flex_1().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child("PROJECTS"))
+                .child(fold)
+        };
         div()
-            .flex().flex_col().flex_none().w(T::SIDEBAR_W).h_full().bg(T::bg_secondary()).border_r_1().border_color(T::border())
-            .child(div().flex().items_center().h(T::TABBAR_H).px(T::SP_16)
-                .child(div().flex_1().text_size(T::TEXT_11).font_weight(T::W_BOLD).text_color(T::text_muted()).child("PROJECTS"))
-                .child(w::icon_button("fold", IconName::ChevronsLeft, "Hide the projects").on_click(cx.listener(|this, _, _, cx| { this.sidebar = false; cx.notify(); }))))
+            .flex().flex_col().flex_none().w(if folded { T::SIDEBAR_FOLDED } else { T::SIDEBAR_W }).h_full().bg(T::bg_secondary()).border_r_1().border_color(T::border())
+            .child(head)
             .child(list)
-            .child(div().flex().flex_col().gap(T::SP_8).p(T::SP_8).border_t_1().border_color(T::border_subtle())
-                .child(w::dashed_button("add-project", "+ Add project"))
-                .child(w::outline_button("inbox", IconName::Mail, "Inbox")))
+            .child(div().flex().flex_col().gap(T::SP_8).py(T::SP_10).px(if folded { T::SP_6 } else { T::SP_8 }).border_t_1().border_color(T::border_subtle())
+                .child(w::dashed_button("add-project", if folded { "+" } else { "+ Add project" }).on_click(|_, _, cx| registry::add_project(cx)))
+                .child(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" }).on_click(cx.listener(|this, _, _, cx| this.show_tab("inbox", cx)))))
     }
 
     // ─── The project bar ───
 
     fn project_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut bar = div().id("tabbar").flex().flex_none().items_center().h(T::TABBAR_H).px(T::SP_12).bg(T::bg_secondary()).border_b_1().border_color(T::border()).overflow_x_scroll();
-        if !self.sidebar {
-            bar = bar.child(w::icon_button("unfold", IconName::ChevronRight, "Show the projects").on_click(cx.listener(|this, _, _, cx| { this.sidebar = true; cx.notify(); })));
-        }
         for (i, (id, label, icon, _)) in TABS.iter().enumerate() {
             let id = id.to_string();
             bar = bar.child(w::nav_tab(icon.clone(), *label, self.tab == id).id(("tab", i)).cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.show_tab(&id, cx))));
@@ -214,7 +226,7 @@ impl Render for Shell {
         // The drawer: beside the whole project area, below the top bar.
         let drawer = registry::drawer(cx).filter(|_| self.drawer_open);
         let main = div().flex().flex_1().min_h_0()
-            .when(self.sidebar, |d| d.child(self.sidebar(cx)))
+            .child(self.sidebar(cx))
             .child(project)
             .when_some(drawer, |d, dr| d
                 .child(w::divider("drawer-split", self.dragging)

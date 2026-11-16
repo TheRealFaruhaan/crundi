@@ -41,10 +41,9 @@ impl RenderOnce for ArmButton {
         let state = window.use_keyed_state(self.id.clone(), cx, |_, _| false);
         let armed = *state.read(cx) && !self.ask.is_empty();
         let label = if armed { self.ask.clone() } else { self.label.clone() };
-        let mut b = Button::new(self.id).small();
-        if !label.is_empty() { b = b.label(label); }
-        if let Some(i) = self.icon.filter(|_| !armed) { b = b.icon(i); }
+        let mut b = Button::new(self.id);
         b = if armed || self.look == "danger" { b.danger() } else if self.look == "primary" { b.primary() } else { b };
+        b = crate::control::sized(b, (!label.is_empty()).then(|| label.clone()), self.icon.filter(|_| !armed), false, crate::control::Ctl::Normal);
         let (fire, asks) = (self.fire.clone(), !self.ask.is_empty());
         b.disabled(self.disabled).on_click(move |_, window, cx| {
             if !asks || armed {

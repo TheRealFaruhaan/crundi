@@ -137,6 +137,32 @@ impl T {
     pub const DOT: Pixels = px(8.);
     pub const MENU_MIN_W: Pixels = px(190.);
 
+    // ─── Controls: every control's dimensions (the owner, 16 Nov: "buttons
+    // and such dimensions on the theme"). The widgets crate sets each control
+    // from these, overriding gpui-component's own presets; no part sizes a
+    // control. ───
+    /// A button (text, icon and text, a dropdown, an armed button): its
+    /// height, side padding, the gap between icon and label, the icon, the
+    /// label's size and weight, the radius (the web's .svc-btn).
+    pub const BTN_H: Pixels = Self::CONTROL_SM;
+    pub const BTN_PAD_X: Pixels = Self::SP_10;
+    pub const BTN_GAP: Pixels = Self::SP_6;
+    pub const BTN_ICON: Pixels = Self::ICON_MD;
+    pub const BTN_TEXT: Pixels = Self::TEXT_12;
+    pub const BTN_WEIGHT: FontWeight = Self::W_MEDIUM;
+    pub const BTN_RADIUS: Pixels = Self::R_CONTROL;
+    /// The big button (Send, a form's main action): the control height.
+    pub const BTN_H_LG: Pixels = Self::CONTROL;
+    pub const BTN_PAD_X_LG: Pixels = Self::SP_12;
+    pub const BTN_WEIGHT_LG: FontWeight = Self::W_SEMIBOLD;
+    /// An icon-only button: a square of BTN_H, its icon.
+    pub const ICON_BTN: Pixels = Self::BTN_H;
+    pub const ICON_BTN_ICON: Pixels = Self::ICON_LG;
+    /// A text box: its height, side padding and text size.
+    pub const INPUT_H: Pixels = Self::CONTROL;
+    pub const INPUT_PAD_X: Pixels = Self::SP_10;
+    pub const INPUT_TEXT: Pixels = Self::TEXT_13;
+
     // ─── Type ───
     pub const UI_FONT: &'static str = "DejaVu Sans";
     pub const MONO: &'static str = "DejaVu Sans Mono";

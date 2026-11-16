@@ -28,6 +28,7 @@ use gpui_component::{
 };
 
 pub use crundi_theme::IconName;
+pub mod control; pub use control::{sized, sized_text, icon_of, Ctl};
 pub use gpui_component::input::{Input, InputEvent, InputState};
 // One file per control (AREAS.md "A new control"), each once.
 pub mod modal; pub use modal::{modal, modal_open, render_modal};
@@ -66,41 +67,50 @@ pub mod pick_menu; pub use pick_menu::{pick_menu, PickItem};
 
 // ─── Buttons ───
 
-/// A quiet text button (Cancel, Retry, a card's action).
+/// A quiet text button (Cancel, Retry, a card's action). Every button's
+/// dimensions are the theme's (control.rs).
 pub fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
-    Button::new(id).label(label.into()).small()
+    sized(Button::new(id), Some(label.into()), None, false, Ctl::Normal)
 }
 
-/// The accent button (Send-like actions, + Register service).
+/// A button with an icon before its label (a card's Logs, Restart…).
+pub fn icon_label_button(id: impl Into<ElementId>, icon: IconName, label: impl Into<SharedString>) -> Button {
+    sized(Button::new(id), Some(label.into()), Some(icon), false, Ctl::Normal)
+}
+
+/// The accent button (+ Register service, Schedule…).
 pub fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
-    Button::new(id).label(label.into()).small().primary()
+    sized(Button::new(id).primary(), Some(label.into()), None, false, Ctl::Normal)
 }
 
 /// A destructive button (Delete, Remove).
 pub fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
-    Button::new(id).label(label.into()).small().danger()
+    sized(Button::new(id).danger(), Some(label.into()), None, false, Ctl::Normal)
 }
 
 /// A text button with no fill until hovered.
 pub fn ghost(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
-    Button::new(id).label(label.into()).small().ghost()
+    sized(Button::new(id).ghost(), Some(label.into()), None, false, Ctl::Normal)
 }
 
-/// A small icon-only button with a tooltip (the bars' and the head's buttons).
+/// An icon-only button with a tooltip (the bars' buttons): a square of the
+/// theme's ICON_BTN, its icon ICON_BTN_ICON.
 pub fn icon_button(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>) -> Button {
-    Button::new(id).icon(icon).ghost().small().tooltip(tip.into())
+    sized(Button::new(id).ghost(), None, Some(icon), false, Ctl::Normal).tooltip(tip.into())
 }
 
 /// An icon button that stays pressed while `on` (Annotate, pin).
 pub fn icon_toggle(id: impl Into<ElementId>, icon: IconName, tip: impl Into<SharedString>, on: bool) -> Button {
-    let b = Button::new(id).icon(icon).small().tooltip(tip.into());
-    if on { b.primary() } else { b.ghost() }
+    let b = Button::new(id);
+    let b = if on { b.primary() } else { b.ghost() };
+    sized(b, None, Some(icon), false, Ctl::Normal).tooltip(tip.into())
 }
 
 /// A text button that stays pressed while `on` (a device, a filter).
 pub fn toggle(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Button {
-    let b = Button::new(id).label(label.into()).compact();
-    if on { b.primary() } else { b.ghost() }
+    let b = Button::new(id);
+    let b = if on { b.primary() } else { b.ghost() };
+    sized(b, Some(label.into()), None, false, Ctl::Normal)
 }
 
 /// A button's look by name, for buttons built elsewhere (dialogs).
@@ -143,7 +153,7 @@ pub fn segmented(id: &'static str, labels: &[&'static str], on: usize, pick: imp
 /// A one-line text box over an InputState (create the state once, with
 /// `InputState::new(window, cx)`, and keep it in the view).
 pub fn input(state: &Entity<InputState>) -> Input {
-    Input::new(state).small()
+    Input::new(state).h(T::INPUT_H).px(T::INPUT_PAD_X).text_size(T::INPUT_TEXT)
 }
 
 /// A form field's label: small, upper case, muted, wide.
@@ -336,12 +346,39 @@ pub fn nav_tab(icon: IconName, label: impl Into<SharedString>, on: bool) -> Div 
 
 // ─── The sidebar ───
 
-/// A project in the sidebar: its dot and name; the open one highlighted.
+/// A project in the sidebar (the Slint client's and the web's row): its
+/// dot (with a soft ring while it needs input, works or waits; green for
+/// the open project with nothing running) and its name; the open one
+/// accent-dim with the accent bar at its left.
 pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool) -> Div {
-    let d = div().flex().items_center().gap(T::SP_8).h(T::CONTROL_LG).px(T::SP_12).rounded(T::R_FIELD)
-        .child(dot(project_dot_color(state)))
-        .child(div().flex_1().min_w_0().truncate().child(name.into()));
-    if on { d.bg(T::accent_dim()).border_l_2().border_color(T::accent()).text_color(T::accent_hover()) } else { d.text_color(T::text_secondary()) }
+    let color = if state.is_empty() && on { T::green() } else { project_dot_color(state) };
+    let ring = match state { "needs-input" => Some(T::accent_dim()), "working" => Some(T::yellow_dim()), "waiting" => Some(T::sky_dim()), _ => None };
+    let dot = div().flex_none().size(T::SP_12).flex().items_center().justify_center()
+        .when_some(ring, |d, r| d.rounded(T::R_PILL).bg(r))
+        .child(div().size(T::DOT).rounded(T::R_PILL).bg(color));
+    let d = div().relative().flex().items_center().gap(T::SP_10).h(T::SP_32).pl(T::SP_10).pr(T::SP_8).rounded(T::R_CONTROL)
+        .child(dot)
+        .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).child(name.into()));
+    if on {
+        d.bg(T::accent_dim()).text_color(T::accent_hover())
+            .child(div().absolute().left(px(0.)).top(T::SP_8).bottom(T::SP_4).w(T::SP_4).rounded_r(T::R_CHIP).bg(T::accent()))
+    } else { d.text_color(T::text_secondary()).hover(|d| d.bg(T::bg_hover()).text_color(T::text())) }
+}
+
+/// A project in the folded rail (the Slint client's avatar): its initials
+/// in a round badge, the border in the state's colour (running green,
+/// working yellow, needs input accent); the open one filled with the accent.
+pub fn rail_avatar(initials: impl Into<SharedString>, state: &str, on: bool) -> Div {
+    let st = if state == "waiting" { "" } else { state };
+    let border = match st { "running" => T::green(), "working" => T::yellow(), "needs-input" => T::accent(), _ if on => T::accent(), _ => T::border() };
+    let fg = match st { "running" | "working" => T::text(), "needs-input" => T::white(), _ if on => T::white(), _ => T::text_secondary() };
+    // A state shows as a ring the rail can read at a glance (2 px); at rest a hairline.
+    let ringed = matches!(st, "running" | "working" | "needs-input");
+    div().flex_none().size(T::CONTROL_LG).rounded(T::R_PILL).flex().items_center().justify_center()
+        .when(ringed, |d| d.border_2()).when(!ringed, |d| d.border_1()).border_color(border)
+        .bg(if on { T::accent() } else { T::bg_tertiary() })
+        .text_color(fg).font_family(T::MONO).text_size(T::TEXT_12).font_weight(T::W_BOLD)
+        .child(initials.into())
 }
 
 /// A full-width button with a dashed border (+ Add project).
@@ -414,7 +451,7 @@ pub fn confirm(window: &mut Window, cx: &mut App, c: Confirm, on_ok: impl Fn(&mu
 pub fn close_dialog(window: &mut Window, cx: &mut App) { if !modal::close(window, cx) { window.close_dialog(cx); } }
 
 /// A dialog is open.
-pub fn dialog_open(window: &mut Window, cx: &mut App) -> bool { modal::modal_open(cx) || window.has_active_dialog(cx) }
+pub fn dialog_open(window: &mut Window, cx: &mut App) -> bool { modal::modal_open(cx) || !ask_props(cx).is_null() || window.has_active_dialog(cx) }
 
 /// The toast, top right: info, error or success.
 /// The toast on show, as long as it shows (the Slint client's 3.5 s): the

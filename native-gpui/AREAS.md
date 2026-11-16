@@ -82,6 +82,11 @@ crundi_shell::register(cx, Area::new("planning")
   `pend:<n>`, `panel:<kind>`).
 - The project bar's "+" by Workbench: the workbench registers what it does
   (`register_add_menu`: its add menu).
+- The shell's own buttons that a part provides: `register_action(cx,
+  "add-project", f)` (Operations: the Add project dialog). The sidebar's
+  Inbox shows Desktop's `inbox` page.
+- A chat's side question: the composer's send asks `crundi_chat_model::aside`
+  first (`/btw`); the log registers it (`register_aside`).
 - The drawer: Desktop registers its view (`register_drawer`); the shell
   draws it beside the project area with the divider, and hides or shows it
   (`crundi_shell::set_drawer`).
@@ -110,6 +115,18 @@ Every control comes from here: `button`, `primary`, `danger`, `ghost`,
   `choice_mark`, `head_button` / `menu_item` / `menu_panel`, `send_button`,
   `stop_button`, `tone_button`, `square_button`, `suggest_row`,
   `queue_drawer`, `textarea`, `spinner`, `shimmer`, `markdown`, `icon`.
+- **Every control's dimensions are the theme's** (the owner, 16 Nov: "use
+  the theme; buttons and such dimensions on the theme"). `crates/theme` holds
+  them (`T::BTN_H`, `BTN_PAD_X`, `BTN_GAP`, `BTN_ICON`, `BTN_TEXT`,
+  `BTN_WEIGHT`, `BTN_RADIUS`, `BTN_H_LG`…, `ICON_BTN`, `ICON_BTN_ICON`,
+  `INPUT_H`, `INPUT_PAD_X`, `INPUT_TEXT`); widgets sets each control from
+  them (`control.rs`: `sized`, `sized_text`, `icon_of`), never from
+  gpui-component's presets (`.small()`, `.xsmall()`, `.compact()`). A part
+  never sizes a control (no `.h`, `.px`, `.text_size`, `.small()` on a
+  control outside widgets); a box around one may have a width.
+- One confirm / prompt and context menu for the window: the ask layer
+  (`w::confirm`, `w::ask`, `w::ask_confirm`, `w::menu_at`), drawn once by
+  the shell. A part never draws `w::ask_layer` itself.
 - Never a copy in a part, and never a gpui-component control used directly
   in a screen (wrap it here once). The UI reviewer flags either as blocking.
 - **A new control** (one that two parts need, or that is a control by
