@@ -162,6 +162,17 @@ impl T {
     pub const INPUT_H: Pixels = Self::CONTROL;
     pub const INPUT_PAD_X: Pixels = Self::SP_10;
     pub const INPUT_TEXT: Pixels = Self::TEXT_13;
+    /// A switch (the web's .toggle): its track, the thumb, the inset between them (F69).
+    pub const TOGGLE_W: Pixels = px(36.);
+    pub const TOGGLE_H: Pixels = Self::SP_20;
+    pub const TOGGLE_THUMB: Pixels = Self::ICON_MD;
+    pub const TOGGLE_INSET: Pixels = Self::SP_2;
+    /// A checkbox's box and the gap to its label (F69).
+    pub const CHECK_BOX: Pixels = Self::ICON_MD;
+    pub const CHECK_GAP: Pixels = Self::SP_8;
+    pub const CHECK_TEXT: Pixels = Self::TEXT_13;
+    /// The loading spinner (F69).
+    pub const SPINNER: Pixels = Self::ICON_LG;
 
     // ─── Type ───
     pub const UI_FONT: &'static str = "DejaVu Sans";

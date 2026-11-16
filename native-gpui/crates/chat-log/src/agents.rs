@@ -236,7 +236,8 @@ pub fn dock(v: &mut LogView, window: &mut Window, cx: &mut Context<LogView>) -> 
         if v.st.agents.dock_h != 0. { v.st.agents.dock_h = 0.; cx.notify(); }
         return None;
     }
-    let mut col = div().absolute().right(T::SP_10).bottom(T::SP_8).max_w(T::DRAWER_MIN).flex().flex_col().items_end().gap(T::SP_4);
+    // Never taller than the log (a short pane): it stays inside, clipped at the top (F70).
+    let mut col = div().absolute().right(T::SP_10).bottom(T::SP_8).max_h(relative(0.9)).max_w(T::DRAWER_MIN).overflow_hidden().flex().flex_col().justify_end().items_end().gap(T::SP_4);
     if cn + an > 0 {
         let mut b = div().flex().justify_end().gap(T::SP_6);
         if cn > 0 { b = b.child(badge(true, cn, cr, ct, list == Some(true), z, cx)); }

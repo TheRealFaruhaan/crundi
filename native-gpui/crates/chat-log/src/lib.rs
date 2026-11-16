@@ -202,7 +202,8 @@ impl Render for LogView {
         // suggestion), the plan panel (2.19), the agent sheet (2.18); the
         // goal bar between the log and the composer (2.19).
         with_fallbacks(div()).flex().flex_col().flex_1().min_w_0().min_h_0().text_size(T::TEXT_13 + px(zoom as f32))
-            .child(div().relative().flex().flex_col().flex_1().min_w_0().min_h_0().child(log)
+            // The log's box clips what floats over it (the dock, the plan, the sheet: F70).
+            .child(div().relative().overflow_hidden().flex().flex_col().flex_1().min_w_0().min_h_0().child(log)
                 .children(agents::dock(self, window, cx))
                 .children(goal::panel(self, window, cx))
                 .children(prose::jump(self, cx))
