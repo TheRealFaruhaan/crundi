@@ -12,7 +12,7 @@ use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 
-pub use registry::{register, register_add_menu, register_drawer, Area, AreaEvent, Drawer, TABS};
+pub use registry::{register, register_add_menu, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
 pub use session::{api, call, project, run, signed_in, subscribe, unsubscribe, ws_send, Session, Step};
 
 /// The window's own state: the tab, the sidebar, the drawer, sign-in's fields.
@@ -235,7 +235,8 @@ impl Render for Shell {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))
             .child(self.top_bar(window, cx))
             .child(main)
-            // A part's view modal (w::modal), over the window.
+            // The parts' layers (not modal: Cru's screen), then a view modal (w::modal), over the window.
+            .children(registry::overlays(cx))
             .children(w::render_modal(window, cx))
             .into_any_element()
     }

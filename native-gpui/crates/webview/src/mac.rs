@@ -63,12 +63,10 @@ pub fn adopt_cef_app_protocol() {
 
 // ─── CEF's message loop on macOS ───
 //
-// Elsewhere a Slint timer calls do_message_loop_work. On macOS that timer runs
-// inside winit's event handler, and CEF's work spins the run loop itself, which
-// hands winit an event while it is still handling one: winit aborts ("tried to
-// handle event while another event is currently being handled"). So here the
-// pump is a CFRunLoop timer: it fires from the run loop directly, outside
-// winit's handler (src/pump.rs).
+// The app pumps CEF from a GPUI timer (lib.rs `pump`). Should that ever run
+// inside the window's event handling on macOS (CEF's work spins the run loop
+// itself), this CFRunLoop timer is the fallback: it fires from the run loop
+// directly, in every mode, outside any handler.
 
 use std::ffi::c_void;
 
@@ -82,7 +80,7 @@ struct CFRunLoopTimerContext {
 }
 
 #[link(name = "CoreFoundation", kind = "framework")]
-extern "C" {
+unsafe extern "C" {
     fn CFRunLoopGetMain() -> *mut c_void;
     fn CFAbsoluteTimeGetCurrent() -> f64;
     fn CFRunLoopTimerCreate(
@@ -99,11 +97,12 @@ extern "C" {
 }
 
 extern "C" fn pump(_timer: *mut c_void, _info: *mut c_void) {
-    crate::pump::pump_once();
+    crate::pump();
 }
 
 /// Pump CEF every [interval_ms] from the main run loop (in every run-loop mode,
 /// so it keeps going during window drags and menus).
+#[allow(dead_code)]
 pub fn start_run_loop_timer(interval_ms: u64) {
     let secs = interval_ms as f64 / 1000.0;
     unsafe {
