@@ -26,7 +26,7 @@ component ChkLine inherits Rectangle {
             border-width: 1px;
             border-color: root.checked ? Theme.accent : Theme.border;
             background: root.checked && !root.radio ? Theme.accent : Theme.bg-primary;
-            if root.checked && !root.radio: Icon { source: Icons.check; width: Theme.icon-sm * 0.85; height: self.width; tint: Theme.white; }
+            if root.checked && !root.radio: Icon { source: Icons.check; width: Theme.icon-sm * Theme.drawer-check-k; height: self.width; tint: Theme.white; }
             if root.checked && root.radio: Rectangle { width: Theme.sp-8; height: Theme.sp-8; border-radius: Theme.sp-4; background: Theme.accent; }
         }
         VerticalLayout {

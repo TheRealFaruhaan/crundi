@@ -104,7 +104,7 @@ component BrdTab inherits Rectangle {
     border-width: root.t.active ? 1px : 0px;
     border-color: Theme.border;
     // The tab's lower edge open into the bar under it.
-    if root.t.active: Rectangle { y: parent.height - 1px; height: 1px; x: 1px; width: parent.width - 2px; background: Theme.bg-secondary; }
+    if root.t.active: Rectangle { y: parent.height - 1px; height: 1px; x: Theme.drawer-tab-inset / 2; width: parent.width - Theme.drawer-tab-inset; background: Theme.bg-secondary; }
     ta := TouchArea {
         mouse-cursor: MouseCursor.pointer;
         pointer-event(e) => {
@@ -260,7 +260,7 @@ export component BrowserPanel inherits Rectangle {
             x: 0; y: 0; width: Theme.sp-20; height: Theme.sp-20;
             viewbox-width: 24; viewbox-height: 24;
             commands: "M5 2v16.4l4.2-4 2.8 6.4 3-1.3-2.8-6.3h5.9z";
-            fill: Theme.accent; stroke: Theme.white; stroke-width: 1.5px;
+            fill: Theme.accent; stroke: Theme.white; stroke-width: Theme.drawer-cursor-stroke;
         }
         Rectangle {
             x: Theme.sp-16; y: Theme.sp-20;
@@ -462,7 +462,7 @@ export component BrowserDrawer inherits Rectangle {
                             text: DesktopDrawer.chat >= 0 && DesktopDrawer.chat < DesktopDrawer.chats.length ? DesktopDrawer.chats[DesktopDrawer.chat] : "No chat open in this project";
                             color: Theme.text-secondary; font-size: Theme.text-12; overflow: elide; vertical-alignment: center;
                         }
-                        Icon { x: parent.width - Theme.sp-16; source: Icons.chevron-right; transform-rotation: 90deg; width: Theme.icon-sm * 0.75; height: self.width; tint: Theme.text-muted; }
+                        Icon { x: parent.width - Theme.sp-16; source: Icons.chevron-right; transform-rotation: 90deg; width: Theme.icon-sm * Theme.drawer-chevron-k; height: self.width; tint: Theme.text-muted; }
                         ca := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { DesktopDrawer.pop-open("chat"); } }
                         Tip { on: ca.has-hover; text: "Chat to send to"; }
                     }
@@ -562,9 +562,9 @@ export component BrowserDrawer inherits Rectangle {
 
     // The address field's suggestions (from the history), under it.
     if url-edit.has-focus && DesktopDrawer.suggest.length > 0: Rectangle {
-        x: Theme.sp-6 + Theme.sp-8 + 3 * (Theme.control-sm + Theme.sp-4);
+        x: Theme.sp-6 + Theme.sp-8 + Theme.drawer-nav-buttons * (Theme.control-sm + Theme.sp-4);
         y: Theme.control + Theme.control-sm + Theme.sp-12;
-        width: root.width - self.x - Theme.sp-48 * 3;
+        width: root.width - self.x - Theme.sp-48 * Theme.drawer-tool-buttons;
         height: sug.preferred-height;
         background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border; border-radius: Theme.r-field;
         drop-shadow-blur: Theme.sp-20; drop-shadow-color: Theme.scrim; drop-shadow-offset-y: Theme.sp-6;
