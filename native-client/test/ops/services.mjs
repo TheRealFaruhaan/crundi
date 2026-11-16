@@ -61,7 +61,6 @@ export async function run(T, t) {
   // Logs, a toggle.
   await T.act('services-act', 'logs', KEY);
   await T.until('services: Logs opens the log under the card', (p) => card(p, KEY)?.logsOpen && card(p, KEY).logs.length > 0);
-  await T.snap('services-logs');
   await T.act('services-act', 'logs', KEY);
   await T.until('services: Logs again closes it', (p) => card(p, KEY) && !card(p, KEY).logsOpen);
 
@@ -85,7 +84,6 @@ export async function run(T, t) {
     const c = card(p, KEY);
     t.check('services: /tunnel/ name / and the default name', c.editPrefix === '/tunnel/' && c.editSuffix === '/' && c.editName === 'web' && !c.editPublic, c);
   }
-  await T.snap('services-expose-form');
   await T.act('services-edit-name', 'Bad_Name');
   await T.act('services-edit-save');
   await T.until('services: a bad name is refused', (p) => /Lowercase letters, digits and hyphens/.test(p.toast || ''));
@@ -107,7 +105,6 @@ export async function run(T, t) {
   p = await T.until('services: publishing asks first', (p) => p.dialog && /Publish webx\?/.test(p.dialog.message));
   await T.dialog(true);
   await T.until('services: the forward is public', (p) => card(p, KEY)?.public && /\/tunnel\/webx\/$/.test(card(p, KEY)?.link || ''));
-  await T.snap('services-public');
 
   // Off: the forward goes.
   await T.act('services-expose', KEY, 'off');
@@ -120,7 +117,6 @@ export async function run(T, t) {
   p = await T.until('services: the Tunnel port prompt', (p) => p.dialog && p.dialog.title === 'Tunnel port' && p.dialog.value === '4561');
   await T.dialog(true, '');
   await T.until('services: the port is cleared', (p) => card(p, KEY) && !card(p, KEY).expose && card(p, KEY).tunnelBtn);
-  await T.snap('services-no-port');
 
   // Other forwards: one on a port no service has.
   const add = await T.api.http('POST', '/api/forwards', { name: 'loose', port: 4560, mode: 'path' });
@@ -131,7 +127,6 @@ export async function run(T, t) {
     const f = svc(p).others.find((f) => f.host === 'loose');
     t.check('services: its address, port and project', /\/tunnel\/loose\/$/.test(f.url) && f.port === '4560' && f.project === '', f);
   }
-  await T.snap('services-other-forwards');
   await T.act('services-fwd-project', 'loose', 'demo');
   await T.until('services: it now serves demo', (p) => (svc(p).others || []).find((f) => f.host === 'loose')?.project === 'demo');
   await T.act('services-fwd-remove', 'loose');
@@ -148,7 +143,6 @@ export async function run(T, t) {
   await T.act('services-act', 'stop', KEY);
   p = await T.until('services: Stop stops it (Start, no strip)', (p) => card(p, KEY) && !card(p, KEY).running && !card(p, KEY).stats, 20000);
   if (p) t.check('services: the pill says STOPPED', card(p, KEY).status === 'STOPPED', card(p, KEY));
-  await T.snap('services-stopped');
 
   // Delete: asks first; Cancel keeps it.
   await T.act('services-act', 'delete', 'demo:other');

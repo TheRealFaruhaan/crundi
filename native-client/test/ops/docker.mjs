@@ -61,7 +61,6 @@ export async function run(T, t) {
     await T.until('docker: the filter narrows the list', (p) => dk(p).ctrs.length === 1 && dk(p).ctrs[0].name === NAME);
     await T.act('docker-filter', 'zz-nothing-here-zz');
     await T.until('docker: nothing matches', (p) => dk(p).nomatch === true);
-    await T.snap('docker-nomatch');
     await T.act('docker-filter', '');
 
     // The detail.
@@ -78,7 +77,6 @@ export async function run(T, t) {
     await T.act('docker-fwd-add', hostPort);
     p = await T.until('docker: the forward form opens under the port', (p) => dk(p).form === hostPort && dk(p).formModes.length >= 1);
     t.check('docker: it suggests a name from the container', dk(p).formName === NAME.replace(/[^a-z0-9-]/g, '-').slice(0, 32).replace(/-+$/, ''), dk(p).formName);
-    await T.snap('docker-forward-form');
     const pathMode = dk(p).formModes.length - 1;
     await T.act('docker-fwd-fill', `dk${tag}`, String(pathMode), 'false', 'false', '');
     await T.act('docker-fwd-create');
@@ -104,7 +102,6 @@ export async function run(T, t) {
     await T.act('docker-tab', 'stats');
     p = await T.until('docker: the charts draw', (p) => dk(p).detail.statsState === 'data' && dk(p).detail.charts.length === 4 && dk(p).detail.charts[0].line, 20000);
     if (p) t.check('docker: CPU, Memory, Network, Disk', dk(p).detail.charts.map((c) => c.title).join(',') === 'CPU,MEMORY,NETWORK,DISK' && /processes/.test(dk(p).detail.statsNote), dk(p).detail);
-    await T.snap('docker-stats');
 
     // Shell over /ws.
     await T.act('docker-tab', 'shell');
@@ -124,13 +121,11 @@ export async function run(T, t) {
     const ij = await T.act('docker-inspect-copy');
     let parsed = null; try { parsed = JSON.parse(ij.text); } catch { /* no */ }
     t.check('docker: Copy JSON copies the inspect', parsed && parsed.Name === '/' + NAME, (ij.text || '').slice(0, 100));
-    await T.snap('docker-inspect');
 
     // Rename.
     await T.act('docker-tab', 'overview');
     await T.act('docker-prompt', 'rename');
     await T.until('docker: the rename line opens with its name', (p) => dk(p).detail.prompt === 'rename' && dk(p).detail.newname === NAME);
-    await T.snap('docker-rename');
     const NAME2 = NAME + '-b';
     await T.act('docker-rename', NAME2);
     await T.until('docker: renamed', (p) => dk(p).detail.name === NAME2 && dk(p).detail.prompt === '', 15000);
@@ -138,7 +133,6 @@ export async function run(T, t) {
     // Stop and start.
     await T.act('docker-ctr', '', 'stop');
     p = await T.until('docker: stopped, it offers Start', (p) => dk(p).detail.dot === 'exited' && dk(p).detail.acts.join(',') === 'Start', 30000);
-    await T.snap('docker-detail-stopped');
     await T.act('docker-tab', 'stats');
     await T.until('docker: stats say there is nothing to measure', (p) => /not running/.test(dk(p).detail.statsMsg), 10000);
     await T.act('docker-tab', 'shell');
@@ -148,7 +142,6 @@ export async function run(T, t) {
     await T.act('docker-tab', 'overview');
     await T.act('docker-prompt', 'remove');
     await T.until('docker: the remove line, with Stop it first', (p) => dk(p).detail.prompt === 'remove' && dk(p).detail.rmforceShown);
-    await T.snap('docker-remove');
     await T.act('docker-prompt', '');
     await T.act('docker-back');
     await T.until('docker: back to the list', (p) => dk(p).detail === null && dk(p).view === 'containers');
@@ -157,17 +150,14 @@ export async function run(T, t) {
     await T.act('docker-view', 'stacks');
     p = await T.until('docker: stacks load', (p) => dk(p).view === 'stacks' && dk(p).state === 'data' && (dk(p).stacksEmpty || dk(p).stacks.length > 0), 20000);
     if (p && !dk(p).stacksEmpty) t.check('docker: a stack says how many run', /\d+\/\d+ running/.test(dk(p).stacks[0].chip), dk(p).stacks[0]);
-    await T.snap('docker-stacks');
 
     // Images, and a pull that fails (a name that does not exist): the job drawer.
     await T.act('docker-view', 'images');
     p = await T.until('docker: images load', (p) => dk(p).view === 'images' && dk(p).state === 'data' && dk(p).rows.length > 0, 20000);
     if (p) t.check('docker: the images line', /images, \d+ in use/.test(dk(p).listHead) && dk(p).rows.some((r) => r.name === 'alpine:3' && !r.canRm), dk(p).listHead);
-    await T.snap('docker-images');
     await T.act('docker-pull', `ops-native-test/does-not-exist-${tag}:none`);
     await T.until('docker: the job drawer shows the pull', (p) => dk(p).job && /^Pull /.test(dk(p).job.title), 10000);
     p = await T.until('docker: the failed pull ends with its exit', (p) => dk(p).job?.done && !dk(p).job.ok, 60000);
-    await T.snap('docker-job');
     await T.act('docker-job-close');
     await T.until('docker: the drawer closes', (p) => dk(p).job === null);
 
@@ -175,7 +165,6 @@ export async function run(T, t) {
     await T.act('docker-view', 'volumes');
     await T.act('docker-filter', VOL);
     p = await T.until('docker: our volume, unused', (p) => dk(p).view === 'volumes' && dk(p).rows.length === 1 && dk(p).rows[0].canRm && dk(p).rows[0].chips[0] === 'unused', 20000);
-    await T.snap('docker-volumes');
     await T.act('docker-rm', 'volumes', VOL);
     if (!await T.until('docker: the volume is removed', (p) => dk(p).rows.length === 0 && dk(p).nomatch, 20000)) { const m = await T.mine(); console.log('     volumes:', JSON.stringify({ rows: m.docker.rows, nomatch: m.docker.nomatch, state: m.docker.state, toast: m.toast }).slice(0, 1500)); }
     t.check('docker: and gone from Docker', sh('volume', 'ls', '-q', '--filter', `name=${VOL}`) === '');
@@ -184,7 +173,6 @@ export async function run(T, t) {
     await T.act('docker-view', 'networks');
     await T.act('docker-filter', '');
     p = await T.until('docker: networks load, the built-in ones locked', (p) => dk(p).view === 'networks' && dk(p).rows.some((r) => r.name === 'bridge' && !r.canRm && r.tags.includes('built in')), 20000);
-    await T.snap('docker-networks');
     await T.act('docker-filter', NET);
     await T.until('docker: our network', (p) => dk(p).rows.length === 1 && dk(p).rows[0].canRm);
     const netKey = (await T.mine()).docker.rows[0].key;
@@ -208,13 +196,11 @@ export async function run(T, t) {
     await T.until('docker: Remove orphaned removes it', (p) => dk(p).orphans === 0, 20000);
     await T.act('docker-rm-fwd', `dk${tag}`);
     await T.until('docker: the last forward removed: the empty state', (p) => dk(p).fwdEmpty, 20000);
-    await T.snap('docker-forwards-empty');
 
     // System.
     await T.act('docker-view', 'system');
     p = await T.until('docker: the engine', (p) => dk(p).view === 'system' && dk(p).engine.some(([k]) => k === 'Docker'), 20000);
     await T.until('docker: the disk use, measured', (p) => dk(p).diskState === 'data' && dk(p).disk.length === 4, 120000);
-    await T.snap('docker-system');
 
     // Remove the container from its detail (it is running: stopped first).
     await T.act('docker-view', 'containers');

@@ -35,7 +35,6 @@ export async function run(T, t) {
     await act('extras-add-set', 'dname', 'Second');
     await act('extras-add-submit');
     p = await T.until('a missing path asks to create it', (q) => q.dialog?.message === 'Path does not exist. Create empty folder?', 5000);
-    await T.snap('extras-add-create');
     await T.dialog(true);
     p = await until('added and opened', (x, q) => x.add === null && q.currentProject === 'secondproj', 15000);
   }
@@ -57,7 +56,6 @@ export async function run(T, t) {
   if (p) {
     const it = X(p).appr.items[0];
     check('a secret item: its source, its buttons', it.source === 'secret' && JSON.stringify(it.acts) === JSON.stringify(['Open secrets', 'Dismiss']), it);
-    await T.snap('extras-appr-button');
     await act('extras-appr-toggle');
     await until('the panel opens', (x) => x.appr.open, 5000);
     await T.snap('extras-appr-open');
@@ -95,7 +93,6 @@ export async function run(T, t) {
     await until('Left: back', (x) => x.wn?.at === 0, 5000);
     await act('extras-wn-go', String(before.steps.length));
     p = await until('the recap', (x) => x.wn?.last === true && x.wn.title === 'You are up to date', 5000);
-    await T.snap('extras-whatsnew-recap');
     await T.key('Escape');
     await until('Esc skips', (x) => x.wn === null && !x.modal, 5000);
     let after = null;

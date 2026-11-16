@@ -23,7 +23,6 @@ export async function run(T, t) {
   // A node in Home: its code shown once, with the QR.
   await T.act('homepool-act', 'node-add', '');
   p = await T.until('homepool: the node dialog', (p) => hp(p).dlg === 'node' && hp(p).dlgTitle === 'Add a node' && hp(p).modal);
-  await T.snap('homepool-node-dialog');
   await T.act('homepool-dlg-ok');
   await T.until('homepool: a node needs a name', (p) => p.toast && /name/.test(JSON.stringify(p.toast)) && hp(p).dlg === 'node');
   await T.act('homepool-node-fill', 'Test node', '1');
@@ -55,17 +54,14 @@ export async function run(T, t) {
   // Access for a piece of software: the secret shown once.
   await T.act('homepool-tab', 'access');
   p = await T.until('homepool: no access yet', (p) => hp(p).tab === 'access' && hp(p).keys.length === 0);
-  await T.snap('homepool-access-empty');
   await T.act('homepool-act', 'key-add', '');
   p = await T.until('homepool: the access dialog', (p) => hp(p).dlg === 'key' && hp(p).dlgTitle === 'Give access' && hp(p).kNets.some(([l, on]) => l === 'Server' && on));
-  await T.snap('homepool-key-dialog');
   await T.act('homepool-key-fill', '0', 'scraper-test', '', 'false', '0', '8', '', '0', '');
   await T.act('homepool-dlg-ok');
   await T.until('homepool: at least one network', (p) => /network/.test(JSON.stringify(p.toast || '')) && hp(p).dlg === 'key');
   await T.act('homepool-key-fill', '0', 'scraper-test', `server,${office}`, 'true', '0', '4', '', '0', '');
   await T.act('homepool-dlg-ok');
   p = await T.until('homepool: the secret is shown once', (p) => hp(p).dlg === 'show' && hp(p).dlgTitle === 'Access "scraper-test"' && /^user: .*\npassword: /.test(hp(p).show[0]?.[1] || ''), 15000);
-  await T.snap('homepool-secret');
   const cp = await T.act('homepool-copy', hp(p).show[0][1]);
   t.check('homepool: Copy copies', cp.text === hp(p).show[0][1]);
   await T.act('homepool-dlg-close');
@@ -86,7 +82,6 @@ export async function run(T, t) {
   // Requests (none: a chat asks through its MCP tool) and the activity log.
   await T.act('homepool-tab', 'requests');
   await T.until('homepool: no requests', (p) => hp(p).tab === 'requests' && hp(p).reqs.length === 0);
-  await T.snap('homepool-requests');
   await T.act('homepool-tab', 'activity');
   p = await T.until('homepool: the activity log', (p) => hp(p).tab === 'activity' && hp(p).log.some((l) => l.startsWith('added network Office')) && hp(p).log.some((l) => l.startsWith('gave access scraper-test')));
   await T.snap('homepool-activity');

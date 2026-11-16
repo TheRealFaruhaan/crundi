@@ -56,7 +56,6 @@ export async function run(T, t) {
   await act('vault-add-set', 'pin2', PASS);
   v = (await T.mine()).vault;
   check('typed twice: Save on, no warning', v.add.ok && !v.add.warn, v.add);
-  await T.snap('vault-add-filled');
   await act('vault-add-save');
   p = await until('saved: listed, the form empty', (v, q) => v.secrets.some((s) => s.name === 'E2E_ONE') && v.add.name === '' && q.toast === 'Secret saved');
   const listed = (await http('GET', '/api/secrets')).body?.secrets || [];
@@ -80,7 +79,6 @@ export async function run(T, t) {
   await act('vault-pin-submit');
   p = await until('a wrong passphrase: the server says so, the modal stays', (v) => v.pin && v.pin.error !== '' && v.pin.error !== 'Enter the passphrase' && !v.pin.busy, 10000);
   if (p) check('nothing revealed', !V(p).secrets.some((s) => s.revealed));
-  await T.snap('vault-pin-wrong');
   await act('vault-pin-type', PASS);
   await act('vault-pin-submit');
   p = await until('the right one: the value shows', (v) => v.pin === null && v.secrets.find((s) => s.name === 'E2E_ONE')?.value === 'v-one', 10000);
@@ -108,7 +106,6 @@ export async function run(T, t) {
   if (p) check('Edit: the lock is a passphrase, nothing changed, Save off', V(p).edit.lock === 'passphrase' && !V(p).edit.ok && !V(p).edit.relock, V(p).edit);
   await act('vault-edit-set', 'desc', 'changed words');
   p = await until('a new description: Save on without a lock', (v) => v.edit?.ok === true, 5000);
-  await T.snap('vault-edit');
   await act('vault-edit-save');
   p = await until('saved', (v, q) => v.edit === null && q.toast === 'Secret saved', 10000);
   p = await until('the new description shows', (v) => v.secrets.find((s) => s.name === 'E2E_ONE')?.desc === 'changed words', 5000);
@@ -120,7 +117,6 @@ export async function run(T, t) {
   await act('vault-edit-set', 'cur', 'wrong-pass-1');
   await act('vault-edit-save');
   p = await until('a wrong lock: the error, still open', (v) => v.edit && v.edit.err !== '' && !v.edit.busy, 10000);
-  await T.snap('vault-edit-wrong');
   await act('vault-edit-relock', 'true');
   await act('vault-edit-set', 'new', 'brand-new-pass');
   await act('vault-edit-set', 'new2', 'brand-new-pas');
@@ -141,7 +137,6 @@ export async function run(T, t) {
   await act('vault-up-offer', 'E2E_ONE', 'passphrase', 'brand-new-pass');
   p = await until('the offer opens', (v) => v.upgrade !== null, 5000);
   if (p) check('its words and Update off', V(p).upgrade.name === 'E2E_ONE' && !V(p).upgrade.oldPin && !V(p).upgrade.ok, V(p).upgrade);
-  await T.snap('vault-upgrade');
   await act('vault-up-set', 'new', 'third-pass-1');
   await act('vault-up-set', 'new2', 'third-pass-1');
   await act('vault-up-go');
@@ -152,7 +147,6 @@ export async function run(T, t) {
   // ── Delete ──
   await act('vault-delete', 'E2E_TWO');
   p = await T.until('Delete asks first', (q) => q.dialog?.message === 'Delete secret "E2E_TWO"? This cannot be undone.', 5000);
-  await T.snap('vault-delete');
   await T.dialog(true);
   await until('deleted', (v, q) => v.secrets.length === 1 && q.toast === 'Deleted', 10000);
 
@@ -161,7 +155,6 @@ export async function run(T, t) {
   p = await until('a request: listed, the badge counts 1', (v) => v.requests.length === 1 && v.badge === '1', 30000);
   if (p) {
     check('its meta line', V(p).requests[0].name === 'E2E_ONE' && V(p).requests[0].meta === 'project: demo · e2e', V(p).requests[0]);
-    await T.snap('vault-request');
     await act('vault-approve', 'E2E_ONE');
     p = await until('Approve opens the PIN modal', (v) => v.pin?.title === 'Approve access', 5000);
     if (p) check('its words', V(p).pin.sub === 'Enter the passphrase for "E2E_ONE" to release it to Claude.' && V(p).pin.label === 'Approve', V(p).pin);

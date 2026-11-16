@@ -328,7 +328,7 @@ fn refresh() {
                 s.loaded = true;
                 s.error.clear();
             }
-            Err(e) => { if !s.loaded { s.error = e; } }
+            Err(e) => { s.error = e; }   // shown (with Retry) unless panels are on screen already
         });
         after_list();
     });
@@ -378,7 +378,7 @@ fn push() {
     let (p, list, loaded, error, selected, pane, chip_values, pop) = with(|s| (s.project.clone(), s.widgets.clone(), s.loaded, s.error.clone(), s.selected.clone(), s.pane.clone(), s.chip_values.clone(), s.pop.clone()));
     let live = live_chats(&p);
     g.set_project(p.clone().into());
-    let state = if !error.is_empty() && !loaded { "error" } else if !loaded { "loading" } else if list.is_empty() { if p.is_empty() { "empty-global" } else { "empty" } } else { "list" };
+    let state = if !error.is_empty() && (!loaded || list.is_empty()) { "error" } else if !loaded { "loading" } else if list.is_empty() { if p.is_empty() { "empty-global" } else { "empty" } } else { "list" };
     g.set_state(state.into());
     g.set_error(error.into());
     let items: Vec<crate::OpsPanelItem> = tab_order(&list).iter().map(|w| {

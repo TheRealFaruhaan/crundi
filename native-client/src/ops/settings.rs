@@ -133,7 +133,8 @@ pub fn init(w: &MainWindow) {
     g.on_cc_apply(claude_apply);
     g.on_whats_new(|| {
         let f = with(|s| s.whats_new.clone());
-        match f { Some(f) => f(), None => kit::toast("What\u{2019}s new is not available yet") }
+        // The web's openWhatsNew(true): the whole tour, or "Nothing new to show for this version."
+        match f { Some(f) => f(), None => crate::ops::extras::open_whatsnew(true) }
     });
     // Configuration, prompts, terminal.
     g.on_save_config(save_config);

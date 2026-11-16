@@ -36,9 +36,8 @@ export component SetFold inherits Rectangle {
                 VerticalLayout {
                     alignment: center;
                     Icon {
-                        source: Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: root.fg;
-                        transform-rotation: root.open ? 90deg : 0deg;
-                        animate transform-rotation { duration: Theme.motion-fast; }
+                        // Down when open, right when closed (as the chat's folds: a rotated image doesn't draw everywhere).
+                        source: root.open ? @image-url("../shapes/chevron-down.svg") : Icons.chevron-right; width: Theme.icon-sm; height: Theme.icon-sm; tint: root.fg;
                     }
                 }
             }
@@ -49,13 +48,20 @@ export component SetFold inherits Rectangle {
             accessible-role: button;
             accessible-label: root.title;
         }
-        body := VerticalLayout {
-            padding-left: Theme.sp-16; padding-right: Theme.sp-16;
-            padding-bottom: root.open ? Theme.sp-16 : 0;
-            spacing: Theme.sp-12;
+        // The body's height, its arrow and what is drawn follow the one flag:
+        // an explicit (clipped) height, so the children's minimum height can't
+        // keep a closed card tall and empty.
+        Rectangle {
+            clip: true;
             visible: root.open;
-            max-height: root.open ? self.preferred-height : 0;
-            @children
+            height: root.open ? body.preferred-height : 0;
+            body := VerticalLayout {
+                y: 0; width: parent.width; height: self.preferred-height;
+                padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+                padding-bottom: Theme.sp-16;
+                spacing: Theme.sp-12;
+                @children
+            }
         }
     }
 }

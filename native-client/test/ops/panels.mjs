@@ -51,7 +51,6 @@ export async function run(T, t) {
   await mcp('widget_open', { alias: 'demo', id: ID, html: html('v2') });
   await T.act('panels-pane', 'history');
   await T.until('panels: History lists the versions', (p) => mine(p).pane === 'history' && mine(p).versionsState === 'list' && mine(p).versions.length >= 2);
-  await T.snap('panels-history');
   const v1 = (await T.mine()).panels.versions.slice(-1)[0];
   await T.act('panels-restore', ID, v1);
   await T.until('panels: Restore says so and goes back to the panel', (p) => String(p.toast?.text || p.toast || '').includes('Restored v' + v1) && mine(p).pane === '');
@@ -59,7 +58,6 @@ export async function run(T, t) {
   // ── Checks: none run yet ──
   await T.act('panels-pane', 'checks');
   await T.until('panels: Checks says no check has run', (p) => mine(p).checksState === 'none');
-  await T.snap('panels-checks');
   await T.act('panels-pane', '');
 
   // ── Pin, global and back ──
@@ -67,7 +65,6 @@ export async function run(T, t) {
   await T.until('panels: Pin keeps it', (p) => mine(p).widgets.find((w) => w.id === ID)?.lifecycle === 'pinned');
   await T.act('panels-scope', ID, 'true');
   await T.until('panels: Make global', (p) => mine(p).widgets.find((w) => w.id === ID)?.global === true && String(p.toast?.text || p.toast || '').includes('Now global'));
-  await T.snap('panels-global');
   await T.act('panels-scope', ID, 'false');
   await T.until('panels: back in this project only', (p) => mine(p).widgets.find((w) => w.id === ID)?.global === false);
 
@@ -76,7 +73,6 @@ export async function run(T, t) {
   await T.until('panels: moved to the top bar', (p) => mine(p).widgets.find((w) => w.id === ID)?.place === 'chip');
   await T.act('panels-chip', ID);
   await T.until('panels: the chip\'s popover shows the panel', (p) => mine(p).pop === ID && view(p, `wg|pop|demo|${ID}`)?.painted, 30000);
-  await T.snap('panels-pop');
   await T.act('panels-pop-close');
   await T.until('panels: the popover closes', (p) => mine(p).pop === '');
 
@@ -87,8 +83,11 @@ export async function run(T, t) {
   await T.ui('add-pane', 'widget');
   await t.sleep(1500);
   await T.snap('panels-chooser');
-  await T.act('panels-pick', 'panel:widget', ID);
-  await T.until('panels: picked: the panel is a workbench pane', (p) => mine(p).widgets.find((w) => w.id === ID)?.place === 'cell' && view(p, `wg|cell|demo|${ID}`)?.painted, 30000);
+  // The pane the "+" menu's Panel made (the workbench keys them panel:widget:<n>): pick into it, as a click in its chooser does.
+  const pane = (await T.props()).panes.filter((x) => x.key.startsWith('panel:widget')).pop();
+  t.check('panels: an empty Panel pane with its chooser', !!pane, (await T.props()).panes.map((x) => x.key));
+  await T.act('panels-pick', pane?.key || 'panel:widget', ID);
+  await T.until('panels: picked: the panel is a workbench pane', (p) => mine(p).widgets.find((w) => w.id === ID)?.place === 'cell' && mine(p).picked[pane?.key] === ID && view(p, `wg|cell|demo|${ID}`)?.painted, 30000);
   await T.snap('panels-cell');
   const cells = await T.act('panels-cells');
   t.check('panels: cell_ids() lists it for the workbench', cells.cells?.includes(ID), cells);
@@ -114,14 +113,12 @@ export async function run(T, t) {
   await T.act('panels-card', 'demo', ID, 'chat-x');
   const IK = `wg|inline:chat-x|demo|${ID}`;
   await T.until('panels: the inline card sizes to its content', (p) => view(p, IK)?.painted && view(p, IK)?.measured && view(p, IK)?.height > 0, 30000);
-  await T.snap('panels-inline');
   await T.act('panels-card', '', '', '');
 
   // ── Close, reopen, delete ──
   await T.act('panels-select', ID);
   await T.act('panels-close', ID);
   await T.until('panels: closed', (p) => mine(p).widgets.find((w) => w.id === ID)?.state === 'closed');
-  await T.snap('panels-closed');
   await T.act('panels-reopen', ID);
   await T.until('panels: reopened', (p) => mine(p).widgets.find((w) => w.id === ID)?.state === 'open');
   await T.act('panels-delete', GID);

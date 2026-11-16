@@ -365,9 +365,10 @@ export component OpsServicesView inherits Rectangle {
             AddButton { text: "Register service"; clicked => { OpsServices.register-open(); } }
         }
         if OpsServices.reg-open: RegisterForm { }
-        if OpsServices.error != "" && !OpsServices.loaded: ErrorState { text: OpsServices.error; retried => { OpsServices.reload(); } }
+        // A failed load never reads as "nothing registered": the error with Retry instead.
+        if OpsServices.error != "" && (!OpsServices.loaded || OpsServices.cards.length == 0): ErrorState { text: OpsServices.error; retried => { OpsServices.reload(); } }
         if OpsServices.loading && !OpsServices.loaded: LoadingState { }
-        if OpsServices.loaded && OpsServices.cards.length == 0: EmptyState { icon: Icons.server; title: OpsServices.empty; }
+        if OpsServices.error == "" && OpsServices.loaded && OpsServices.cards.length == 0: EmptyState { icon: Icons.server; title: OpsServices.empty; }
         for c in OpsServices.cards: ServiceCard { c: c; }
         if OpsServices.others.length > 0: OtherForwards { }
     }

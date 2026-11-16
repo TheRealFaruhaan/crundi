@@ -42,7 +42,6 @@ export async function run(T, t) {
   t.check('skills: New opens its form', m.skills.form === 'new', m.skills.form);
   await T.act('skills-field', 'new-name', 'native-test');
   await T.act('skills-field', 'new-desc', 'A skill the native test made');
-  await T.snap('skills-new-form');
   await T.act('skills-act', 'new-go', '');
   await T.until('skills: the new skill opens with SKILL.md in the editor', (p) => sk(p).open?.name === 'native-test' && sk(p).editor?.path === 'SKILL.md');
   m = await T.mine();
@@ -86,7 +85,6 @@ export async function run(T, t) {
   // ── Rename ──
   await T.act('skills-act', 'rename', '');
   await T.act('skills-field', 'rename', 'native-renamed');
-  await T.snap('skills-rename-form');
   await T.act('skills-act', 'rename-go', '');
   if (!await T.until('skills: Rename renames it and keeps it open', (p) => sk(p).open?.name === 'native-renamed' && sk(p).form === '')) {
     const m2 = await T.props(); console.log('     rename:', JSON.stringify({ open: m2.areas.ops.skills.open, form: m2.areas.ops.skills.form, busy: m2.areas.ops.skills.busy, toast: m2.toast, dialog: m2.dialog }).slice(0, 800));
@@ -105,7 +103,6 @@ export async function run(T, t) {
   await T.act('skills-field', 'as', 'native-renamed');
   await T.act('skills-act', 'copy-go', '');
   await T.until('skills: a copy onto an existing one asks to replace', (p) => sk(p).pending?.kind === 'replace');
-  await T.snap('skills-replace');
   await T.act('skills-act', 'pending-replace', '');
   await T.until('skills: Replace overwrites it', (p) => sk(p).pending === null && sk(p).open?.scope === 'project:demo2');
 
@@ -118,7 +115,6 @@ export async function run(T, t) {
   await T.until('skills: an upload with no name asks for one', (p) => sk(p).pending?.kind === 'name' || sk(p).open?.name === 'skill');
   m = await T.mine();
   if (m.skills.pending?.kind === 'name') {
-    await T.snap('skills-name');
     await T.act('skills-field', 'pending-name', 'native-upload');
     await T.act('skills-act', 'pending-name', '');
     await T.until('skills: named, it installs and opens', (p) => sk(p).open?.name === 'native-upload' && sk(p).pending === null);
@@ -136,7 +132,6 @@ export async function run(T, t) {
   await T.until('skills: a bad link shows the server\'s words', (p) => !sk(p).linkBusy && sk(p).error !== '');
   m = await T.mine();
   t.check('skills: the server says whether it installs from links', m.skills.linkOk !== null, m.skills.linkOk);
-  await T.snap('skills-link-error');
 
   // ── Synced: Show / Hide toggles the group (when the account has any) ──
   const synced = m.skills.rows.find((r) => r.toggle);
@@ -211,7 +206,6 @@ export async function run(T, t) {
   t.check('backup: an empty storage fails the test', m.skills.backup.testTone === 'bad', m.skills.backup);
   // Schedule: weekly / every few hours change the row.
   await T.act('skills-field', 'bk-freq', '2');
-  await T.snap('skills-backup-hours');
   await T.act('skills-field', 'bk-freq', '0');
   // Show the backups: no storage, so the server's error.
   await T.act('skills-act', 'bk-list', '');
