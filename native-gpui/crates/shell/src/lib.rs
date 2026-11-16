@@ -218,6 +218,8 @@ impl Render for Shell {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))
             .child(self.top_bar(window, cx))
             .child(main)
+            // A part's view modal (w::modal), over the window.
+            .children(w::render_modal(window, cx))
             .into_any_element()
     }
 }

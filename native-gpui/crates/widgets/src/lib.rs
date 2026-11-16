@@ -29,12 +29,19 @@ use gpui_component::{
 
 pub use crundi_theme::IconName;
 pub use gpui_component::input::{Input, InputEvent, InputState};
-pub mod square; pub use square::{square_button, SquareLook};
+// One file per control (AREAS.md "A new control"), each once.
+pub mod modal; pub use modal::{modal, modal_open, render_modal};
+mod spinner; pub use spinner::spinner;
+mod shimmer; pub use shimmer::shimmer;
+mod markdown; pub use markdown::markdown;
+pub mod tip; pub use tip::{tip, tooltip};
+mod icon; pub use icon::icon;
 pub mod textarea; pub use textarea::{textarea, Textarea, TextareaState};
+pub mod square; pub use square::{square_button, SquareLook};
 pub mod dropdown; pub use dropdown::dropdown;
-pub mod tip; pub use tip::tip;
 pub mod tone_button; pub use tone_button::tone_button;
 pub mod stop_button; pub use stop_button::stop_button;
+pub mod choice; pub use choice::choice_mark;
 pub mod choice_row; pub use choice_row::choice_row;
 pub mod suggest_row; pub use suggest_row::suggest_row;
 pub mod overlay; pub use overlay::{overlay_modal, modal_head, Modal};
@@ -385,10 +392,10 @@ pub fn confirm(window: &mut Window, cx: &mut App, c: Confirm, on_ok: impl Fn(&mu
 }
 
 /// Close the dialog on top (the test driver's Cancel, Esc).
-pub fn close_dialog(window: &mut Window, cx: &mut App) { window.close_dialog(cx); }
+pub fn close_dialog(window: &mut Window, cx: &mut App) { if !modal::close(window, cx) { window.close_dialog(cx); } }
 
 /// A dialog is open.
-pub fn dialog_open(window: &mut Window, cx: &mut App) -> bool { window.has_active_dialog(cx) }
+pub fn dialog_open(window: &mut Window, cx: &mut App) -> bool { modal::modal_open(cx) || window.has_active_dialog(cx) }
 
 /// The toast, top right: info, error or success.
 pub fn toast(window: &mut Window, cx: &mut App, text: impl Into<SharedString>, kind: Toast) {
