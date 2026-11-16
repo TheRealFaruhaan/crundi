@@ -30,6 +30,9 @@ use gpui_component::{
 pub use crundi_theme::IconName;
 pub use gpui_component::input::{Input, InputEvent, InputState};
 
+mod head_button;
+pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
+
 // ─── Buttons ───
 
 /// A quiet text button (Cancel, Retry, a card's action).
@@ -196,6 +199,7 @@ pub fn tag(text: impl Into<SharedString>, tone: &str) -> Div {
         "error" => (T::red(), T::red_dim()),
         "warn" => (T::yellow(), T::yellow_dim()),
         "accent" => (T::accent_hover(), T::accent_dim()),
+        "sky" => (T::sky(), T::sky_dim()),
         _ => (T::text_muted(), T::bg_tertiary()),
     };
     div().flex_none().px(T::SP_8).rounded(T::R_PILL).bg(bg).text_color(fg).text_size(T::TEXT_10).font_family(T::MONO).child(text.into())
