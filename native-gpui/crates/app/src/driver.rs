@@ -41,6 +41,9 @@ fn props(window: &mut Window, cx: &mut App) -> Map<String, Value> {
     if let Some(Value::Object(s)) = crundi_shell::shell(cx).map(|s| s.read(cx).props(cx)) { m.extend(s); }
     m.insert("pickWaiting".into(), json!(crundi_core::driver::pick_waiting()));
     m.insert("dialogOpen".into(), json!(crundi_widgets::dialog_open(window, cx)));
+    // The ask layer's open confirm / prompt and context menu (the Slint client's "dialog", "menu").
+    m.insert("dialog".into(), crundi_widgets::ask_props(cx));
+    m.insert("menu".into(), crundi_widgets::menu_props(cx));
     m.extend(registry::merged(window, cx, false));
     // The toast on show: the widgets crate's one record of it (after the
     // parts' props, so no part's own copy hides it).
@@ -63,7 +66,9 @@ fn ui(r: &Request, window: &mut Window, cx: &mut App) -> Value {
         "drawer" => crundi_shell::set_drawer(cx, a(0) == "true"),
         "pick-next" => { let p = a(0); crundi_core::driver::set_pick((!p.is_empty()).then(|| p.into())); }
         "stub" => crundi_core::driver::push_stub(&a(0), serde_json::from_str(&a(1)).unwrap_or(Value::Null)),
-        "dialog-answer" => crundi_widgets::close_dialog(window, cx),
+        // The ask layer's confirm or prompt (OK / Cancel, the prompt's text), else the dialog on top closes.
+        "dialog-answer" => { let v = r.args().get(1).cloned(); if !crundi_widgets::ask_answer(a(0) == "true", v, window, cx) { crundi_widgets::close_dialog(window, cx) } }
+        "menu-pick" => { crundi_widgets::menu_pick(&a(0), window, cx); }
         _ => {
             return registry::test_ui(&name, &r.args(), window, cx)
                 .unwrap_or_else(|| json!({ "ok": false, "error": format!("unknown ui action {name}") }));

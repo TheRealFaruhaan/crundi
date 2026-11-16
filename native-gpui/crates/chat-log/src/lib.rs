@@ -255,6 +255,9 @@ pub fn init(cx: &mut App) {
     // SIL OFL 1.1, assets/fonts/NotoEmoji-OFL.txt) as the log's fallback.
     let _ = cx.text_system().add_fonts(vec![std::borrow::Cow::Borrowed(EMOJI_FONT)]);
     resume::bind_keys(cx);
+    // Each chat pane's log fields (question, tools, entries, agentDock, goal,
+    // fr, pk…) in the pane's own props, as the Slint client's (F30).
+    crundi_workbench::register_pane_props(cx, "live:", |key, cx| pane_props(cx, key.trim_start_matches("live:")));
     prose::init(cx);
     crundi_shell::register(cx, crundi_shell::Area::new("log")
         .test_ui(|name, args, window, cx| {
