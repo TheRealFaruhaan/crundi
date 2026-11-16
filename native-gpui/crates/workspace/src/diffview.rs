@@ -64,16 +64,21 @@ impl DiffWin {
         });
     }
 
-    fn half(ln: &str, text: &str, kind: &str) -> Div {
-        let (bg, fg) = match kind {
-            "del" => (T::ws_diff_del(), T::ws_diff_del_text()),
-            "add" => (T::ws_diff_add(), T::ws_diff_add_text()),
-            "pad" => (T::bg_secondary(), T::text_muted()),
-            _ => (T::bg(), T::text()),
+    /// One side of a row: its line number, then the line in its colour, the
+    /// changed words of a replaced line on a stronger background.
+    fn half(ln: &str, text: &str, kind: &str, words: &[(usize, usize)]) -> Div {
+        let (bg, fg, word) = match kind {
+            "del" => (T::ws_diff_del(), T::ws_diff_del_text(), T::ws_diff_del_word()),
+            "add" => (T::ws_diff_add(), T::ws_diff_add_text(), T::ws_diff_add_word()),
+            "pad" => (T::bg_secondary(), T::text_muted(), T::bg_secondary()),
+            _ => (T::bg(), T::text(), T::bg()),
         };
+        let line: SharedString = if text.is_empty() { " ".into() } else { text.to_string().into() };
+        let marks: Vec<(std::ops::Range<usize>, HighlightStyle)> = words.iter().filter(|(a, b)| a < b && *b <= text.len())
+            .map(|(a, b)| (*a..*b, HighlightStyle { background_color: Some(word), ..Default::default() })).collect();
         div().flex().flex_1().min_w_0().bg(bg).text_size(T::TEXT_12).font_family(T::MONO)
             .child(div().flex_none().w(T::WS_DIFF_LN).pr(T::SP_8).flex().justify_end().text_color(T::text_muted()).child(ln.to_string()))
-            .child(div().flex_1().min_w_0().text_color(fg).whitespace_nowrap().overflow_hidden().child(if text.is_empty() { " ".to_string() } else { text.to_string() }))
+            .child(div().flex_1().min_w_0().text_color(fg).whitespace_nowrap().overflow_hidden().child(StyledText::new(line).with_highlights(marks)))
     }
 }
 
@@ -91,8 +96,8 @@ impl Render for DiffWin {
                 continue;
             }
             list = list.child(div().flex().gap(px(1.)).bg(T::border())
-                .child(Self::half(&r.old_ln, &r.old, r.old_kind))
-                .child(Self::half(&r.new_ln, &r.new, r.new_kind)));
+                .child(Self::half(&r.old_ln, &r.old, r.old_kind, &r.old_words))
+                .child(Self::half(&r.new_ln, &r.new, r.new_kind, &r.new_words)));
         }
         let col = |t: &'static str| div().flex_1().px(T::SP_8).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_muted()).child(t);
         div().flex().flex_col().w(T::WS_DIFF_W).h(T::WS_DIFF_H)

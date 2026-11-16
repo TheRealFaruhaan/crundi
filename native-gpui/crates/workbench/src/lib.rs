@@ -76,6 +76,31 @@ pub struct OnSecrets(pub Rc<dyn Fn(&str, &mut Window, &mut App)>);
 impl Global for OnSecrets {}
 pub fn set_on_secrets(cx: &mut App, f: impl Fn(&str, &mut Window, &mut App) + 'static) { cx.set_global(OnSecrets(Rc::new(f))); }
 
+/// An empty pane's chips (the web's emptyLeafHtml): Terminal, the panels
+/// not in the workbench yet (Notes always), Panel; in rows that fit the pane
+/// (a chip is its icon and padding plus about 6.6px a character, as the
+/// phase 2 test reads them).
+pub(crate) fn empty_chips(open: &[String], width: f32) -> Vec<Vec<(&'static str, &'static str)>> {
+    let mut items: Vec<(&'static str, &'static str)> = vec![("terminal", "Terminal")];
+    for (k, l) in [("files", "Files"), ("git", "Git"), ("kanban", "Kanban"), ("notes", "Notes"), ("mindmap", "Mindmap"), ("media", "Media"), ("factory", "Factory")] {
+        if k == "notes" || !open.iter().any(|o| o == k) { items.push((k, l)); }
+    }
+    items.push(("widget", "Panel"));
+    let room = (width - 40.0).max(120.0);
+    let mut rows: Vec<Vec<(&'static str, &'static str)>> = vec![vec![]];
+    let mut used = 0.0;
+    for (id, label) in items {
+        let w = chip_w(label);
+        if used > 0.0 && used + 6.0 + w > room { rows.push(vec![]); used = 0.0; }
+        used += if used > 0.0 { 6.0 + w } else { w };
+        rows.last_mut().unwrap().push((id, label));
+    }
+    rows
+}
+
+/// A chip's width for its label.
+pub(crate) fn chip_w(label: &str) -> f32 { f32::from(crundi_theme::T::WS_CHIP_BASE) + label.chars().count() as f32 * crundi_theme::T::WS_CHIP_CHAR }
+
 /// The pane kinds a key can be.
 pub fn pane_kind(key: &str) -> &'static str {
     if key.is_empty() { "empty" } else if key.starts_with("live:") { "chat" } else if key.starts_with("pend:") { "launcher" } else if key.starts_with("panel:") { "panel" } else { "other" }
@@ -112,6 +137,12 @@ pub(crate) struct Info {
     pub secrets: bool,
     pub secrets_n: usize,
     pub launch_busy: i32,
+    /// A parked chat (2.23): the header keeps only grip, dot, title, CHAT, pin and ×.
+    pub parked: bool,
+    /// A factory's Manager chat (2.20): the Factory tag.
+    pub factory: bool,
+    /// An empty pane's chips, in rows that fit it.
+    pub chips: Vec<Vec<(&'static str, &'static str)>>,
 }
 
 /// The workbench: one mosaic per project.
@@ -323,6 +354,7 @@ impl Workbench {
         let (gw, gh) = self.grid_size();
         let leaves = self.mosaic().layout(gw, gh).0;
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        let open_kinds: Vec<String> = leaves.iter().filter_map(|l| l.key.as_deref()).filter_map(|k| k.strip_prefix("panel:").map(|r| r.split(':').next().unwrap_or("").to_string())).collect();
         leaves.into_iter().map(|l| {
             let key = l.key.clone().unwrap_or_default();
             let kind = pane_kind(&key);
@@ -331,6 +363,10 @@ impl Workbench {
             let id = chat_of(&key).unwrap_or("").to_string();
             let collab = Self::chat_item(cx, &id).and_then(|c| c.get("collaborator").cloned()).is_some_and(|v| v.as_bool().unwrap_or(!v.is_null()));
             let n = rules::grant_count(self.grants.get(&id), now);
+            let item = Self::chat_item(cx, &id);
+            let parked = item.as_ref().is_some_and(|c| c.get("kind").and_then(|k| k.as_str()) == Some("parked"));
+            let factory = item.as_ref().is_some_and(rules::factory_manager);
+            let chips = if kind == "empty" { empty_chips(&open_kinds, l.w) } else { vec![] };
             // A parked chat's header (2.23) has only grip, dot, title, tag, pin and ×: it never folds.
             let parked = Self::chat_item(cx, &id).is_some_and(|c| c.get("kind").and_then(|k| k.as_str()) == Some("parked"));
             Info {
@@ -339,6 +375,7 @@ impl Workbench {
                 drop: self.drag.is_some_and(|d| d.target == l.id && d.src != l.id),
                 secrets: kind == "chat" && self.secrets_cap && !collab, secrets_n: n,
                 launch_busy: *self.launching.get(&l.id).unwrap_or(&0),
+                parked, factory, chips,
                 key, kind, title, short, cap, state, l,
             }
         }).collect()
@@ -353,6 +390,8 @@ impl Workbench {
                 "state": i.state, "focused": i.focused, "x": i.l.x, "y": i.l.y, "w": i.l.w, "h": i.l.h, "pinned": i.l.pinned,
                 "fs": i.fs, "armed": i.armed, "narrow": i.narrow, "menu": i.menu, "drop": i.drop,
                 "secrets": i.secrets, "secretsN": i.secrets_n, "secretsTip": rules::secrets_tip(i.secrets_n), "launchBusy": i.launch_busy,
+                "parked": i.parked, "factory": i.factory,
+                "chips": i.chips.iter().map(|r| r.iter().map(|(id, label)| json!({ "id": id, "label": label })).collect::<Vec<_>>()).collect::<Vec<_>>(),
             });
             for (p, f) in &extra {
                 if i.key.starts_with(p) { if let (Some(o), Value::Object(add)) = (v.as_object_mut(), f(&i.key, cx)) { o.extend(add); } }

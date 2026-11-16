@@ -19,6 +19,8 @@ impl Workbench {
             None => w::empty("Not built yet in the GPUI client.").into_any_element(),
         };
         let head = self.head(i, full, cx);
+        // The body clipped to its box (a long log never draws over the header).
+        let body = div().relative().size_full().overflow_hidden().child(body);
         w::panel(head, body).when(i.focused && !full, |d| d.border_color(T::accent())).into_any_element()
     }
 
@@ -46,9 +48,20 @@ impl Workbench {
                 .flex().flex_col().items_center().justify_center()
                 .child(div().h(T::SP_16).flex().items_center().text_size(T::TEXT_13).text_color(T::text_muted()).child("Drop a panel here or launch a new one"))
                 .child(div().h(T::SP_10))
-                .child(div().h(T::SP_24).mb(T::SP_2).flex().items_center().justify_center().gap(T::SP_6)
-                    .child(div().id(("chip-terminal", id)).cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.chip(id, "terminal", cx)))
-                        .child(w::chip(IconName::Terminal, "Terminal", false))))
+                .child({
+                    let mut rows = div().flex().flex_col().gap(T::SP_6).mb(T::SP_2);
+                    for row in &i.chips {
+                        let mut r = div().h(T::SP_24).flex().items_center().justify_center().gap(T::SP_6);
+                        for (k, label) in row.iter().copied() {
+                            let icon = match k { "terminal" => IconName::Terminal, "files" => IconName::Folder, "git" => IconName::GitBranch, "kanban" => IconName::Kanban, "notes" => IconName::FileText, "mindmap" => IconName::Network, "media" => IconName::Images, "factory" => IconName::Factory, _ => IconName::PanelsTopLeft };
+                            r = r.child(div().id(SharedString::from(format!("chip-{k}-{id}"))).flex_none().w(px(crate::chip_w(label))).cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| this.chip(id, k, cx)))
+                                .child(w::chip(icon, label, false)));
+                        }
+                        rows = rows.child(r);
+                    }
+                    rows
+                })
                 .child(div().h(T::SP_10))
                 .child(div().flex().items_center().gap(T::SP_6)
                     .child(btn("e-right", IconName::Columns2, "Split right").on_click(cx.listener(move |this, _, _, cx| this.split(id, false, cx))))

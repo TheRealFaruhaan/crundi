@@ -129,13 +129,29 @@ pub fn rows(ops: &[Op]) -> Vec<Row> {
         }
         match &ops[i] {
             Op::Equal(t) => { out.push(row(o.to_string(), t, "equal", n.to_string(), t, "equal")); o += 1; n += 1; }
-            Op::Remove(t) if matches!(ops.get(i + 1), Some(Op::Add(_))) => {
-                let a = ops[i + 1].text();
-                let (ow, nw) = word_diff(t, a);
-                out.push(Row { old_words: ow, new_words: nw, ..row(o.to_string(), t, "del", n.to_string(), a, "add") });
-                o += 1; n += 1; i += 1;
+            // A run of removed lines and the run of added lines after it
+            // pair up row by row (old 2 beside new 2…), with their changed
+            // words; the longer run's extra lines face an empty filler.
+            Op::Remove(_) => {
+                let mut j = i;
+                while matches!(ops.get(j), Some(Op::Remove(_))) { j += 1; }
+                let mut k = j;
+                while matches!(ops.get(k), Some(Op::Add(_))) { k += 1; }
+                let (rem, add) = (&ops[i..j], &ops[j..k]);
+                for x in 0..rem.len().max(add.len()) {
+                    match (rem.get(x), add.get(x)) {
+                        (Some(r), Some(a)) => {
+                            let (ow, nw) = word_diff(r.text(), a.text());
+                            out.push(Row { old_words: ow, new_words: nw, ..row(o.to_string(), r.text(), "del", n.to_string(), a.text(), "add") });
+                            o += 1; n += 1;
+                        }
+                        (Some(r), None) => { out.push(row(o.to_string(), r.text(), "del", String::new(), "", "pad")); o += 1; }
+                        (None, Some(a)) => { out.push(row(String::new(), "", "pad", n.to_string(), a.text(), "add")); n += 1; }
+                        (None, None) => {}
+                    }
+                }
+                i = k - 1;
             }
-            Op::Remove(t) => { out.push(row(o.to_string(), t, "del", String::new(), "", "pad")); o += 1; }
             Op::Add(t) => { out.push(row(String::new(), "", "pad", n.to_string(), t, "add")); n += 1; }
         }
         i += 1;
