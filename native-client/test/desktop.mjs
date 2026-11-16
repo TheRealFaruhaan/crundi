@@ -55,6 +55,9 @@ if (part('drawer')) {
   const first = dr(p).tabs[0].id;
   await T.act('go', `${PAGE.replace('http://', '')}/a`);
   p = await T.until('the address field opens a host typed without a scheme', (p) => dr(p).tabs[0].url === `${PAGE}/a` && /page \/a/.test(dr(p).tabs[0].title));
+  // (The page's next frame can come a moment after its title: let it paint
+  // before the picture, which the GPUI client takes from the X server.)
+  await t.sleep(800);
   await T.snap('drawer-tab');
 
   // Tabs: a second, switching, the history.

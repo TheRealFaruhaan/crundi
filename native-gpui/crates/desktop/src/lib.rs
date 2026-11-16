@@ -1,124 +1,219 @@
 //! The desktop area (AREAS.md): the browser drawer (beside the whole project
 //! area, below the top bar, as the PC client's app/vendor/crundi-browser-drawer.js)
-//! on the webview crate's pages, and later the Browsers tab, the native
-//! host's full browser protocol, notifications and the tray, the Inbox, the
-//! chat bubble, saved passwords, the homepool node and Cru.
+//! on the webview crate's pages, the native host's full browser protocol
+//! (the server's browser_* tools drive this client's pages), and later the
+//! Browsers tab, notifications and the tray, the Inbox, saved passwords,
+//! the homepool node and Cru.
 //!
-//! The foundation's drawer is the GPUI test's: one tab, the tabs row, the
-//! address bar (back, forward, reload, the address, the Network and Device
-//! menus, Annotate, DevTools), the annotation bar while annotating, the page.
+//! - `drawer`: tabs per project, the address bar, devices, networks,
+//!   annotating, history, clearing, sleep (the Slint client's logic);
+//! - `ui`: the drawer's view;
+//! - `host`: the native host (the Slint client's src/server.rs);
+//! - `marks`, `pointer`: a chat's marks and pointer on a page;
+//! - `rules`: the pure rules, unit-tested;
+//! - `ctx`: what the logic reads of the window and asks of it.
 
-use crundi_shell::{Area, Drawer};
-use crundi_theme::{IconName, T};
-use crundi_webview::{self as web, WebPage};
-use crundi_widgets as w;
-use gpui::{prelude::FluentBuilder as _, *};
-use serde_json::json;
-use std::rc::Rc;
+mod browsers;
+mod ctx;
+pub mod drawer;
+mod host;
+mod marks;
+mod passwords;
+mod pointer;
+pub mod rules;
+mod ui;
 
-const NETWORKS: &[&str] = &["This computer's network", "The server's network"];
+use crundi_shell::{Area, AreaEvent, Drawer};
+use crundi_webview as web;
+use gpui::*;
+use serde_json::{json, Value};
+use std::{cell::RefCell, rc::Rc};
 
-pub struct BrowserDrawer {
-    page: Entity<WebPage>,
-    address: Entity<w::InputState>,
-    shown_url: String,
-    network: usize,
-    _sub: Subscription,
-}
+pub use ui::BrowserDrawer;
 
-impl BrowserDrawer {
-    pub fn new(home: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let page = cx.new(|cx| WebPage::new(home, cx));
-        let address = cx.new(|cx| w::InputState::new(window, cx).placeholder("Enter URL or search"));
-        let p2 = page.clone();
-        let sub = cx.subscribe_in(&address, window, move |_, st, ev: &w::InputEvent, _, cx| {
-            if let w::InputEvent::PressEnter { .. } = ev {
-                let typed = st.read(cx).value().trim().to_string();
-                if typed.is_empty() { return; }
-                let url = if typed.contains("://") { typed } else if typed.contains('.') && !typed.contains(' ') { format!("https://{typed}") } else { format!("https://duckduckgo.com/?q={}", typed.replace(' ', "+")) };
-                let open = p2.read(cx).tab;
-                if !open { p2.update(cx, |p, cx| { p.home = url; p.open_tab(cx); }); } else { web::nav("load", &url); }
-            }
-        });
-        BrowserDrawer { page, address, shown_url: String::new(), network: 0, _sub: sub }
-    }
-
-    /// After each CEF pump: the page's new frame, and the address follows the page.
-    pub fn pump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (_, url, _, _) = web::page_state();
-        if url != self.shown_url && !self.address.read(cx).focus_handle(cx).is_focused(window) {
-            self.shown_url = url.clone();
-            self.address.update(cx, |st, cx| st.set_value(url, window, cx));
-        }
-        self.page.update(cx, |p, cx| p.pump(window, cx));
-    }
-
-    pub fn has_pages(&self, cx: &App) -> bool { self.page.read(cx).tab }
-}
-
-impl Render for BrowserDrawer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (title, url, back, fwd) = web::page_state();
-        let (tab_open, annotate, marks, device) = { let p = self.page.read(cx); (p.tab, p.annotate, p.strokes.len(), p.device) };
-        let tab_title = if !title.is_empty() { title } else if !url.is_empty() { url } else { "New tab".into() };
-        let page = self.page.clone();
-        let tabs = w::tab_row()
-            .when(tab_open, |d| d.child(w::tab(tab_title, true)
-                .child(w::icon_button("tab-x", IconName::X, "Close tab").on_click({ let p = page.clone(); move |_, _, cx| p.update(cx, |p, cx| p.close_tab(cx)) }))))
-            .child(w::icon_button("new", IconName::Plus, "New tab").on_click({ let p = page.clone(); move |_, _, cx| if !p.read(cx).tab { p.update(cx, |p, cx| p.open_tab(cx)); } }))
-            .child(div().flex_1())
-            .child(w::icon_button("menu", IconName::Ellipsis, "History and browsing data"))
-            .child(w::icon_button("hide", IconName::ChevronRight, "Hide the browser (pages keep running)").on_click(|_, _, cx| crundi_shell::set_drawer(cx, false)))
-            .child(w::icon_button("closeall", IconName::X, "Close the browser: every tab in this project").on_click({ let p = page.clone(); move |_, _, cx| { p.update(cx, |p, cx| p.close_tab(cx)); crundi_shell::set_drawer(cx, false); } }));
-        let devices: Vec<&'static str> = web::DEVICES.iter().map(|d| d.0).collect();
-        let bar = w::toolbar()
-            .child(w::disabled(w::icon_button("back", IconName::ChevronLeft, "Back"), !back).on_click(|_, _, _| web::nav("back", "")))
-            .child(w::disabled(w::icon_button("forward", IconName::ChevronRight, "Forward"), !fwd).on_click(|_, _, _| web::nav("forward", "")))
-            .child(w::icon_button("reload", IconName::RefreshCw, "Reload").on_click(|_, _, _| web::nav("reload", "")))
-            .child(div().flex_1().min_w_0().child(w::input(&self.address)))
-            .child(w::menu_button("net", IconName::Network, "Network", NETWORKS, self.network, cx.entity().downgrade(), |this, i, cx| { this.network = i; cx.notify(); }))
-            .child(w::menu_button("device", IconName::Smartphone, "Device size", &devices, device, cx.entity().downgrade(), |this, i, cx| { this.page.update(cx, |p, cx| p.set_device(i, cx)); cx.notify(); }))
-            .child(w::icon_toggle("annotate", IconName::MessageSquare, "Annotate the page", annotate).on_click({ let p = page.clone(); move |_, _, cx| p.update(cx, |p, cx| { p.annotate = !p.annotate; cx.notify(); }) }))
-            .child(w::icon_button("devtools", IconName::Terminal, "DevTools"));
-        let body = if tab_open {
-            div().flex().flex_col().flex_1().min_h_0()
-                .when(annotate, |d| d.child(w::toolbar()
-                    .child(w::icon_toggle("pen", IconName::Pencil, "Draw: freehand", true))
-                    .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(match marks { 0 => "Draw on the page".to_string(), 1 => "1 mark".into(), n => format!("{n} marks") }))
-                    .child(div().flex_1())
-                    .child(w::icon_button("clear", IconName::Trash, "Remove your marks").on_click({ let p = page.clone(); move |_, _, cx| p.update(cx, |p, cx| { p.strokes.clear(); cx.notify(); }) }))))
-                .child(self.page.clone())
-                .into_any_element()
-        } else {
-            w::empty("No browser tabs in this project yet.")
-                .child(w::button("open", "Open a tab").on_click({ let p = page.clone(); move |_, _, cx| p.update(cx, |p, cx| p.open_tab(cx)) }))
-                .into_any_element()
-        };
-        div().flex().flex_col().size_full().min_h_0().min_w_0().bg(T::bg_secondary()).overflow_hidden().child(tabs).child(bar).child(body)
-    }
-}
-
-/// The drawer, for the app's pump.
-pub struct DrawerHandle(pub Entity<BrowserDrawer>);
+/// The drawer and the Browsers tab's page, for the pump.
+pub struct DrawerHandle(pub Entity<BrowserDrawer>, pub Entity<browsers::BrowsersPage>);
 impl Global for DrawerHandle {}
 
-/// Make the drawer and register it, and the Browsers tab (once, after the window opens).
+/// Make the drawer and register it, the area and the native host (once,
+/// after the window opens; only when CEF started).
 pub fn init(window: &mut Window, cx: &mut App) {
-    let home = std::env::var("CRUNDI_URL").unwrap_or_else(|_| "about:blank".into());
-    let drawer = cx.new(|cx| BrowserDrawer::new(home, window, cx));
-    cx.set_global(DrawerHandle(drawer.clone()));
-    let d2 = drawer.clone();
-    crundi_shell::register_drawer(cx, Drawer { view: drawer.into(), has_pages: Rc::new(move |cx| d2.read(cx).has_pages(cx)) });
+    web::engine::set_hooks(web::Hooks {
+        changed: |i| drawer::panel_changed(i),
+        visited: |i, u| drawer::visited(i, u),
+        popup: |i, u| drawer::popup(i, u),
+        load_failed,
+        annotating: || drawer::with(|d| d.annotating),
+        ask_note: |i, n| drawer::ask_note(i, n),
+    });
+    web::net::set_link(host::send_binary, || host::features().iter().any(|f| f == "net-tunnel"));
+    crundi_core::host::set(Box::new(host::Host));
+    drawer::init();
+    let view = cx.new(|cx| BrowserDrawer::new(window, cx));
+    let bpage = cx.new(|cx| browsers::BrowsersPage::new(window, cx));
+    cx.set_global(DrawerHandle(view.clone(), bpage.clone()));
+    crundi_shell::register_drawer(cx, Drawer {
+        view: view.into(),
+        has_pages: Rc::new(|_| drawer::with(|d| d.projects.get(&d.project.to_lowercase()).is_some_and(|p| !p.tabs.is_empty()))),
+    });
     crundi_shell::register(cx, Area::new("desktop")
-        .tabs(&["browsers"], |_, _, _| w::empty("The Browsers tab comes with phase 3 of the GPUI client.").into_any_element())
-        .test_ui(|name, args, _, cx| match name {
-            "ping" => Some(json!({ "ok": true, "area": "desktop" })),
-            "drawer" => { crundi_shell::set_drawer(cx, args.first().is_some_and(|a| a == "true")); Some(json!({ "ok": true })) }
-            _ => None,
-        }));
+        .tabs(&["browsers"], move |_, _, _| bpage.clone().into_any_element())
+        .on_tab(|tab, _| if tab == "browsers" { browsers::load(); })
+        .on_project(|alias, _| drawer::set_project(alias))
+        .on_signed_in(|cx| signed_in(cx))
+        .on_signed_out(|_| drawer::close())
+        .on_event(|e, _| if let AreaEvent::Connected(true) = e { drawer::render(); })
+        .test_ui(|name, args, window, cx| { refresh(window, cx); test_ui(name, args) })
+        .props(|_, _| json!({ "areas": { "desktop": props() } })));
+    // Browser-only mode (test/drive.mjs): a socket of its own to a server.
+    if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
 
-/// After each CEF pump (the app's): the drawer's page and address.
+/// The pump (the app's, every 8 ms after CEF's work): the host's requests,
+/// the effects the logic asked for, and the drawer's view.
 pub fn pump(window: &mut Window, cx: &mut App) {
-    if let Some(d) = cx.try_global::<DrawerHandle>().map(|d| d.0.clone()) { d.update(cx, |d, cx| d.pump(window, cx)); }
+    refresh(window, cx);
+    host::pump();
+    for f in ctx::take_effects() { f(window, cx); }
+    if let Some((d, b)) = cx.try_global::<DrawerHandle>().map(|d| (d.0.clone(), d.1.clone())) {
+        let dirty = ctx::take_dirty();
+        d.update(cx, |d, cx| d.pump(dirty, window, cx));
+        if dirty { b.update(cx, |_, cx| cx.notify()); }
+    }
+}
+
+/// The session as the logic reads it (ctx), each pump.
+fn refresh(_window: &mut Window, cx: &mut App) {
+    let s = crundi_shell::session::get(cx);
+    let mut c = ctx::Ctx {
+        signed_in: s.api.is_some(), base: s.server.clone(), project: s.project.clone(),
+        projects: s.projects.clone(), terminals: s.terminals.clone(), tab: crundi_shell::current_tab(cx), ..Default::default()
+    };
+    c.panes = crundi_workbench::workbench(cx).map(|wb| wb.update(cx, |wb, cx| wb.panes(cx))).unwrap_or_default()
+        .iter().filter_map(|p| p.get("key").and_then(|k| k.as_str()).map(str::to_string)).collect();
+    c.focused = crundi_chats::focused_chat(cx);
+    if c.project != ctx::project() { let p = c.project.clone(); ctx::set(c); drawer::set_project(&p); } else { ctx::set(c); }
+}
+
+fn signed_in(cx: &mut App) {
+    let base = crundi_shell::session::get(cx).server.clone();
+    let local = base.contains("://localhost") || base.contains("://127.0.0.1") || base.contains("://[::1]");
+    web::net::set_local(local);
+    drawer::with(|d| { d.mode = if local { "local".into() } else { "remote".into() }; d.status = if local { "direct".into() } else { "offline".into() }; });
+    drawer::render();
+}
+
+// ─── What the host and the pages tell the area ───
+
+/// Registered: the server's features are known (the drawer's network labels).
+fn host_up() {
+    let tunnel = host::features().iter().any(|f| f == "net-tunnel");
+    drawer::with(|d| if d.mode == "remote" { d.status = if tunnel { "tunnel".into() } else { "unsupported".into() }; });
+    drawer::render();
+}
+
+fn host_down() {
+    web::net::dropped();
+    drawer::with(|d| if d.mode == "remote" { d.status = "offline".into(); });
+    drawer::render();
+}
+
+/// A hidden browser opened or closed: the Browsers tab, when shown, loads again.
+fn hidden_changed() { browsers::reload_soon(); }
+
+/// The server's notification for this PC (phase 6.1 shows it): kept for the driver.
+fn notify(p: &Value) {
+    NOTIFIED.with(|n| n.borrow_mut().push(json!({ "title": ctx::s(p, "title"), "body": ctx::s(p, "body"), "url": ctx::s(p, "url") })));
+}
+
+thread_local! {
+    static NOTIFIED: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+    /// The driver's evals: the last token, and the answers by token.
+    static EVALS: RefCell<(u64, serde_json::Map<String, Value>)> = RefCell::new((0, serde_json::Map::new()));
+}
+
+/// A page's load failed: a drawer tab shows why.
+fn load_failed(i: usize) {
+    let e = web::engine::with(|st| st.panels[i].load_error.clone()).unwrap_or_default();
+    if let Some(t) = drawer::tab_of_panel(i) {
+        drawer::with(|d| if let Some(x) = d.projects.values_mut().flat_map(|p| p.tabs.iter_mut()).find(|x| x.id == t.id) { x.diag = e; });
+        drawer::render();
+    }
+}
+
+// ─── Homepool and Cru for the drawer (phase 6) ───
+
+fn hp_name(_id: &str) -> Option<String> { None }
+fn hp_refresh() {}
+fn hp_offered() -> Vec<(String, String, bool)> { vec![] }
+fn hp_available() -> bool { false }
+fn hp_has_key() -> bool { false }
+fn hp_exit_up(_net: &str) -> bool { false }
+fn exit_text(_net: &str) -> String { "checking…".into() }
+fn cru_available() -> bool { false }
+
+// ─── The test driver ───
+
+/// The driver's "desktop:<name>" actions (the Slint client's names).
+fn test_ui(name: &str, args: &[String]) -> Option<Value> {
+    let a = |i: usize| args.get(i).cloned().unwrap_or_default();
+    let ok = || Some(json!({ "ok": true }));
+    match name {
+        "ping" => Some(json!({ "ok": true, "area": "desktop" })),
+        "browser" => { drawer::toggle(); ok() }
+        "drawer" => { if a(0) == "true" { drawer::open() } else { drawer::close() }; ok() }
+        "new-tab" => match drawer::new_tab(&ctx::project(), &Some(a(0)).filter(|u| !u.is_empty()).unwrap_or_else(|| drawer::START.into()), &Some(a(1)).filter(|u| !u.is_empty()).unwrap_or_else(|| "client".into()), true, true) {
+            Ok(id) => { drawer::show_active(); Some(json!({ "ok": true, "id": id })) }
+            Err(e) => Some(json!({ "ok": false, "error": e })),
+        },
+        "close-tab" => { drawer::close_tab(&a(0)); ok() }
+        "activate" => { drawer::activate(&a(0)); ok() }
+        "go" => { drawer::go(&a(0)); ok() }
+        "pop" => { drawer::pop_open(&a(0)); ok() }
+        "pick" => { drawer::pop_pick(&a(0)); ok() }
+        "annotate" => { drawer::annotate(a(0) != "false"); ok() }
+        "tool" => { drawer::set_tool(&a(0)); ok() }
+        "note" => { drawer::note(&a(0), a(1) != "false"); ok() }
+        "send" => { drawer::send(a(0) == "shot"); ok() }
+        "panel" => { drawer::open_panel(&a(0)); ok() }
+        "panel-close" => { drawer::panel_close(); ok() }
+        "history-query" => { drawer::history_query(&a(0)); ok() }
+        "clear-run" => { drawer::clear_run(); ok() }
+        "hide" => { drawer::close(); ok() }
+        "close-all" => { drawer::close_all(); ok() }
+        "url-typed" => { drawer::url_typed(&a(0)); ok() }
+        // A real click on a tab's page, at page px.
+        "click" => {
+            let Some(i) = drawer::find(&a(0)).and_then(|(_, t)| t.panel) else { return Some(json!({ "ok": false, "error": "no page" })) };
+            let r = web::engine::mouse(i, a(1).parse().unwrap_or(0.0), a(2).parse().unwrap_or(0.0), "click");
+            Some(json!({ "ok": r.is_ok() }))
+        }
+        "browsers-open" => { browsers::open(&a(0)); ok() }
+        "browsers-shot" => { browsers::shot(&a(0)); ok() }
+        "browsers-go" => { browsers::go(&a(0), &a(1)); ok() }
+        "browsers-close" => { browsers::close(&a(0)); ok() }
+        // Run code in a tab's page; the answer comes in props.evals[token].
+        "eval" => {
+            let Some(i) = drawer::find(&a(0)).and_then(|(_, t)| t.panel) else { return Some(json!({ "ok": false, "error": "no page" })) };
+            let token = EVALS.with(|e| { let mut e = e.borrow_mut(); e.0 += 1; e.0 });
+            web::engine::eval(i, &a(1), Box::new(move |r| {
+                let v = match r { Ok(v) => json!({ "ok": true, "result": v }), Err(e) => json!({ "ok": false, "error": e }) };
+                EVALS.with(|e| { e.borrow_mut().1.insert(token.to_string(), v); });
+            }));
+            Some(json!({ "ok": true, "token": token.to_string() }))
+        }
+        _ => None,
+    }
+}
+
+/// What the test driver sees of the area (the Slint client's names).
+fn props() -> Value {
+    let active = drawer::active_tab().and_then(|t| t.panel).map(|i| i as i64).unwrap_or(-1);
+    let hidden: Vec<Value> = web::engine::with(|st| st.panels.iter().enumerate().filter(|(_, p)| !p.closed && p.key.is_some()).map(|(i, p)| json!({ "key": p.key, "panel": i, "url": p.url })).collect());
+    json!({
+        "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
+        "browsers": browsers::props(),
+        "notifications": NOTIFIED.with(|n| Value::Array(n.borrow().clone())), "hidden": hidden,
+        "host": { "features": host::features() },
+    })
 }

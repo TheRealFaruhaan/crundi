@@ -29,6 +29,7 @@ use gpui_component::{
 
 pub use crundi_theme::IconName;
 pub use gpui_component::input::{Input, InputEvent, InputState};
+mod pick_menu; pub use pick_menu::{pick_menu, PickItem};
 
 // ─── Buttons ───
 

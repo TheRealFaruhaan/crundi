@@ -151,6 +151,28 @@ impl T {
     // ── desktop ──
     /// An annotation stroke on a page.
     pub const ANNOTATE_STROKE: Pixels = px(3.);
+    /// The marks' colours as bytes, for pictures drawn off screen (a page's
+    /// screenshot with its marks): the person's (annotate) and a chat's (accent).
+    pub const ANNOTATE_RGB: [u8; 3] = [0xea, 0x58, 0x0c];
+    pub const ACCENT_RGB: [u8; 3] = [0x63, 0x66, 0xf1];
+    /// A mark's numbered disc: its radius and width.
+    pub const MARK_R: Pixels = px(11.);
+    pub const MARK_D: Pixels = px(22.);
+    /// An arrow mark's head: each stroke's angle from the shaft (radians).
+    pub const ARROW_SPREAD: f32 = 0.45;
+    /// Where the address suggestions sit: under the two bars, between the
+    /// back/forward/reload buttons and the Network..DevTools ones.
+    pub const DRAWER_BARS_H: Pixels = px(76.);
+    pub const DRAWER_NAV_W: Pixels = px(96.);
+    pub const DRAWER_TOOLS_W: Pixels = px(136.);
+    /// The chat's cursor on a page.
+    pub const PAGE_CURSOR: Pixels = px(18.);
+    /// A drawer tab's widest, the address suggestions' and a popover's width.
+    pub const DRAWER_TAB_MAX: Pixels = px(200.);
+    pub const DRAWER_POP_W: Pixels = px(240.);
+    pub const DRAWER_NOTE_W: Pixels = px(240.);
+    /// A hidden browser's screenshot on the Browsers tab, at its tallest.
+    pub const SHOT_H: Pixels = px(150.);
     // ── end desktop ──
 }
 

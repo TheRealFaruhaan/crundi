@@ -141,7 +141,7 @@ check('browserMarks reads the annotations', r.ok && r.marks && r.marks.pin && r.
 console.log('  marks', JSON.stringify(r.marks ?? null).slice(0, 200));
 
 r = await raw('windowSnapshot', {});
-check('windowSnapshot: the whole window as Slint drew it', r.ok && r.data && r.data.length > 1000, r.error);
+check('windowSnapshot: the whole window as drawn', r.ok && r.data && r.data.length > 1000, r.error);
 if (r.ok) writeFileSync(join(out, 'native-window.png'), Buffer.from(r.data, 'base64'));
 
 if (process.env.KEEP) { console.log('KEEP set: leaving the panels open'); await sleep(Number(process.env.KEEP)); }
@@ -154,7 +154,9 @@ check('  and it is the new page', r.result === 'drive /d', r);
 
 // The chat's font (2.25 K1, K2) on this system: the chat family made from
 // the UI font with a 1.55 line, and the factors worked out from its own line.
-{
+// (Slint only: those checks read the Slint client's font log, a Slint
+// internal. The GPUI client bundles its fonts and has no such log.)
+if (!/crundi-gpui/.test(process.env.NATIVE_BIN || '')) {
   const line = readFileSync(join(out, 'native-app.log'), 'utf8').split('\n').find((l) => l.includes('[native] chat font:')) || '';
   const m = line.match(/(\d+) faces as "Crundi Chat", line ([\d.]+); the UI font's own line ([\d.]+) em, lh-chat ([\d.]+)/);
   check('the chat font: the UI font with a 1.55 line, the factors from its own line', m && +m[1] > 0 && Math.abs(+m[2] - 1.55) < 0.002 && Math.abs(+m[3] * +m[4] - 1.55) < 0.01, line);
