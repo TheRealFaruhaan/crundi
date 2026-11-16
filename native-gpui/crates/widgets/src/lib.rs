@@ -50,6 +50,7 @@ pub mod send_button; pub use send_button::send_button;
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
+pub mod pick_menu; pub use pick_menu::{pick_menu, PickItem};
 
 // ─── Buttons ───
 
@@ -141,39 +142,35 @@ pub fn field_label(text: impl Into<SharedString>) -> Div {
 // ─── Menus ───
 
 /// An icon button that opens a menu of choices, the current one ticked
-/// (the drawer's Network and Device). `pick` runs on the view.
+/// (the drawer's Network and Device). `pick` runs on the view. One menu
+/// control: this is `pick_menu` with fixed items.
 pub fn menu_button<V: 'static>(id: &'static str, icon: IconName, tip: &'static str, items: &[&'static str], on: usize, view: WeakEntity<V>, pick: impl Fn(&mut V, usize, &mut Context<V>) + 'static) -> impl IntoElement {
-    use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
     let items: Vec<&'static str> = items.to_vec();
     let pick = std::rc::Rc::new(pick);
-    icon_button(id, icon, tip).dropdown_menu(move |mut menu, _, _| {
-        for (i, label) in items.iter().enumerate() {
-            let (view, pick) = (view.clone(), pick.clone());
-            menu = menu.item(PopupMenuItem::new(*label).checked(i == on).on_click(move |_, _, cx| {
-                let _ = view.update(cx, |v, cx| pick(v, i, cx));
-            }));
-        }
-        menu
-    })
+    pick_menu(id, icon, tip, "", move || items.iter().enumerate().map(|(i, l)| PickItem { id: i.to_string(), label: (*l).into(), kind: "item", on: i == on, icon: None }).collect(),
+        move |id, _, cx| { let i: usize = id.parse().unwrap_or(0); let pick = pick.clone(); let _ = view.update(cx, |v, cx| pick(v, i, cx)); })
 }
 
 /// One item of a menu: an id for the answer, its label, an icon, danger.
 #[derive(Clone)]
 pub struct MenuItem { pub id: &'static str, pub label: SharedString, pub icon: Option<IconName>, pub danger: bool, pub sep_before: bool }
 
-/// A "…" button opening a menu of actions (a row's, a head's).
+/// A "…" button opening a menu of actions (a row's, a head's): `pick_menu`
+/// with these items.
 pub fn more_menu<V: 'static>(id: impl Into<ElementId>, items: Vec<MenuItem>, view: WeakEntity<V>, pick: impl Fn(&mut V, &'static str, &mut Context<V>) + 'static) -> impl IntoElement {
-    use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
     let pick = std::rc::Rc::new(pick);
-    icon_button(id, IconName::Ellipsis, "More").dropdown_menu(move |mut menu, _, _| {
-        for it in items.iter() {
-            if it.sep_before { menu = menu.separator(); }
-            let (view, pick, item_id) = (view.clone(), pick.clone(), it.id);
-            let mut m = PopupMenuItem::new(it.label.clone());
-            if let Some(i) = it.icon.clone() { m = m.icon(i); }
-            menu = menu.item(m.on_click(move |_, _, cx| { let _ = view.update(cx, |v, cx| pick(v, item_id, cx)); }));
+    let ids: Vec<&'static str> = items.iter().map(|i| i.id).collect();
+    pick_menu(id, IconName::Ellipsis, "More", "", move || {
+        let mut out = vec![];
+        for it in &items {
+            if it.sep_before { out.push(PickItem { kind: "group", ..Default::default() }); }
+            out.push(PickItem { id: it.id.to_string(), label: it.label.clone(), kind: "item", on: false, icon: it.icon.clone() });
         }
-        menu
+        out
+    }, move |id, _, cx| {
+        let Some(item) = ids.iter().copied().find(|i| *i == id) else { return };
+        let pick = pick.clone();
+        let _ = view.update(cx, |v, cx| pick(v, item, cx));
     })
 }
 

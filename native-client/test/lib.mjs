@@ -109,7 +109,8 @@ export async function begin(area, { project = true } = {}) {
   const PORT = Number(process.env.CRUNDI_TEST_PORT || dPort);
   const BIN = process.env.NATIVE_BIN;
   if (!BIN) { console.error('Set NATIVE_BIN (tools/area-build.sh <area> prints it)'); process.exit(2); }
-  const SCREENS = join(here, '..', 'screens', area);
+  // SCREENS_DIR: elsewhere (the GPUI client's, native-gpui/screens/<area>).
+  const SCREENS = process.env.SCREENS_DIR || join(here, '..', 'screens', area);
   const OUT = process.env.DRIVE_OUT || join(tmpdir(), `crundi-native-${area}-out`);
   mkdirSync(OUT, { recursive: true });
 

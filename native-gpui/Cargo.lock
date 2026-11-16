@@ -1587,15 +1587,21 @@ dependencies = [
 name = "crundi-desktop"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "crundi-chats",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",
  "crundi-webview",
  "crundi-widgets",
+ "crundi-workbench",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "image",
  "serde_json",
+ "tungstenite",
 ]
 
 [[package]]
@@ -1657,6 +1663,7 @@ dependencies = [
 name = "crundi-webview"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cef",
  "crundi-theme",
  "gpui-component",
@@ -1664,6 +1671,7 @@ dependencies = [
  "gpui-pre",
  "image",
  "objc2 0.6.5",
+ "png 0.17.16",
  "serde_json",
 ]
 
