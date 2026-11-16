@@ -514,6 +514,13 @@ pub fn toast(window: &mut Window, cx: &mut App, text: impl Into<SharedString>, k
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Toast { Info, Error, Success }
 
+/// Take every toast down (an error that an action has since answered, as a
+/// right PIN after a wrong one).
+pub fn clear_toasts(window: &mut Window, cx: &mut App) {
+    cx.set_global(LastToast(None));
+    window.clear_notifications(cx);
+}
+
 // ─── Dividers ───
 
 /// The draggable divider between two parts (the drawer's): the accent while

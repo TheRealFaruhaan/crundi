@@ -452,7 +452,12 @@ pub fn unlock(pin: &str) {
     let Some(id) = pin_for() else { return };
     let body = json!({ "pin": pin });
     kit::call(move |api| api.post("/api/lock/check", &body), move |r| match r {
-        Ok(v) if kit::truthy(&v["ok"]) => { with(|s| s.unlocked = Some(Instant::now())); reveal(&id); }
+        Ok(v) if kit::truthy(&v["ok"]) => {
+            with(|s| s.unlocked = Some(Instant::now()));
+            // A wrong PIN's toast goes once the right one is in (F81).
+            kit::on_app(|win, cx| crundi_widgets::clear_toasts(win, cx));
+            reveal(&id);
+        }
         Ok(v) => kit::toast_error(&Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| "That is not the PIN".into())),
         Err(e) => kit::toast_error(if e.is_empty() { "That is not the PIN" } else { &e }),
     });

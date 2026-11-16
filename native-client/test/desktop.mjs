@@ -9,7 +9,7 @@
 //   NATIVE_BIN=$BIN xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/desktop.mjs
 //
 // (CRUNDI_TEST_SERVER=http://localhost:<port> CRUNDI_TEST_PORT=<port> for
-// other ports.) ONLY=drawer,host,inbox,cru,passwords,tray,node runs some parts.
+// other ports.) ONLY=drawer,host,inbox,cru,passwords,bubble,tray,node runs some parts.
 
 import http from 'node:http';
 import { readFileSync } from 'node:fs';
@@ -301,6 +301,33 @@ if (part('passwords')) {
   await T.dialog(true);
   await T.until('…and deletes it', (p) => PW(p).logins.length === 0);
   await T.act('panel-close');
+}
+
+if (part('bubble')) {
+  // ─── The chat bubble: a chat in a floating window of its own (6.3) ───
+  const B = (p) => D(p).bubble;
+  const shotDir = process.env.SCREENS_DIR || '/tmp';
+  const id = (await T.api.http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Bubble chat' })).body?.id;
+  t.check('a chat to float', !!id);
+  await T.until('…with its pane', (p) => (p.panes || []).some((q) => q.key === `live:${id}`), 30000);
+  await T.act('bubble-open', id);
+  let p = await T.until('the bubble opens on it, expanded', (p) => B(p).open && B(p).expanded && B(p).chat === id && B(p).title === 'Bubble chat');
+  const n0 = B(p).entries;
+  await T.act('bubble-send', 'Hello from the bubble');
+  p = await T.until('a message sent from the bubble goes into the chat', (p) => B(p).entries > n0, 30000);
+  await t.sleep(1500);
+  await T.act('bubble-snap', `${shotDir}/bubble.png`);
+  await T.act('bubble-toggle');
+  p = await T.until('the head collapses it', (p) => B(p).open && !B(p).expanded && !B(p).unread);
+  const n1 = B(p).entries;
+  await T.ui('send', 'A message from the main window');
+  await T.until('…a new message while collapsed: the unread dot', (p) => B(p).entries > n1 && B(p).unread, 30000);
+  await t.sleep(500);
+  await T.act('bubble-snap', `${shotDir}/bubble-head.png`);
+  await T.act('bubble-toggle');
+  await T.until('expanded again, read', (p) => B(p).expanded && !B(p).unread);
+  await T.act('bubble-close');
+  await T.until('× closes it', (p) => !B(p).open);
 }
 
 if (part('tray')) {

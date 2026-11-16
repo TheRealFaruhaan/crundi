@@ -12,7 +12,7 @@ use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 
-pub use registry::{register, register_action, register_add_menu, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
+pub use registry::{open_bubble, register, register_action, register_add_menu, register_bubble, register_drawer, register_overlay, Area, AreaEvent, Drawer, TABS};
 pub use session::{api, call, project, run, signed_in, subscribe, unsubscribe, ws_send, Session, Step};
 
 /// The window's own state: the tab, the sidebar, the drawer, sign-in's fields.
