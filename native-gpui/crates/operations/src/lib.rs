@@ -11,6 +11,10 @@ use gpui::*;
 use serde_json::json;
 
 pub fn init(cx: &mut App) {
+    // The chat's log side (crundi-chat-log, Operations' 2.13-2.23): its driver
+    // actions and props. Until the app calls crundi_chat_log::init itself
+    // (shared/requests.md), operations does.
+    crundi_chat_log::init(cx);
     crundi_shell::register(cx, Area::new("operations")
         .tabs(&["panels", "services", "docker", "homepool", "info", "secrets", "settings"], |tab, _, _| w::empty(format!("{} comes with phases 3 to 6 of the GPUI client.", crundi_shell::registry::tab_label(tab))).into_any_element())
         .test_ui(|name, _, _, _| match name {

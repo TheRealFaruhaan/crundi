@@ -28,7 +28,15 @@ use gpui_component::{
 };
 
 pub use crundi_theme::IconName;
+mod modal; pub use modal::modal;
+mod spinner; pub use spinner::spinner;
+mod shimmer; pub use shimmer::shimmer;
+mod markdown; pub use markdown::markdown;
+mod tip; pub use tip::tip;
+mod icon; pub use icon::icon;
+pub mod textarea; pub use textarea::{textarea, Textarea, TextareaState};
 pub use gpui_component::input::{Input, InputEvent, InputState};
+pub mod choice; pub use choice::choice_mark;
 
 // ─── Buttons ───
 

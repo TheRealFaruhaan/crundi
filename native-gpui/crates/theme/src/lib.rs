@@ -147,6 +147,8 @@ impl T {
     // ── planning ──
     // ── end planning ──
     // ── operations ──
+    /// A parked pane's card, at most (the web's .pk-card 330; 2.23).
+    pub const PARK_CARD_W: Pixels = px(330.);
     // ── end operations ──
     // ── desktop ──
     /// An annotation stroke on a page.

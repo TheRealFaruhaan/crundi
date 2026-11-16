@@ -1527,9 +1527,11 @@ dependencies = [
  "crundi-shell",
  "crundi-theme",
  "crundi-widgets",
+ "crundi-workbench",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "image",
  "serde_json",
 ]
 
@@ -1596,6 +1598,7 @@ dependencies = [
 name = "crundi-operations"
 version = "0.1.0"
 dependencies = [
+ "crundi-chat-log",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",

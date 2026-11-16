@@ -16,3 +16,5 @@ crundi-theme.workspace = true
 crundi-widgets.workspace = true
 crundi-chat-model.workspace = true
 crundi-shell.workspace = true
+crundi-workbench.workspace = true
+image.workspace = true
