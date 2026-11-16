@@ -1611,15 +1611,20 @@ dependencies = [
 name = "crundi-operations"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "crundi-chat-log",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",
+ "crundi-webview",
  "crundi-widgets",
  "crundi-workbench",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
+ "open",
+ "rfd",
  "serde_json",
 ]
 

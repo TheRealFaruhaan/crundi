@@ -65,7 +65,7 @@ pub fn view(embedded: bool, window: &mut Window, cx: &mut App) -> AnyElement {
             window.on_mouse_event(|e: &MouseUpEvent, phase, _, cx| { if phase == DispatchPhase::Bubble && e.button == MouseButton::Left { super::pointer_up(cx); } });
         }).absolute().top_0().left_0().size_full())
         .child(body);
-    root = root.children(drag_clone(cx)).children(clip_pop(window, cx)).children(super::ask::render(window, cx)).child(w::ask_layer(cx));
+    root = root.children(drag_clone(cx)).children(clip_pop(window, cx)).children(super::ask::render(window, cx));
     root.into_any_element()
 }
 

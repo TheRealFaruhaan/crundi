@@ -161,15 +161,24 @@ export async function begin(area, { project = true } = {}) {
     ui: (name, ...args) => d.send({ cmd: 'ui', name, args }),
     /** The area's own action: "<area>:<name>". */
     act: (name, ...args) => d.send({ cmd: 'ui', name: `${area}:${name}`, args }),
-    props: async () => (await d.send({ cmd: 'props' })),
+    // (The GPUI client's props have no "areas": the area's own filled in from {"cmd":"area"}, as `until` does.)
+    props: async () => {
+      const p = await d.send({ cmd: 'props' });
+      if (!p.areas?.[area]) { const a = (await d.send({ cmd: 'area', area })).props; p.areas = { ...(p.areas || {}), [area]: a?.areas?.[area] ?? a }; }
+      return p;
+    },
     /** The area's props alone. */
-    mine: async () => (await d.send({ cmd: 'area', area })).props,
+    // (The GPUI client's part answers with { areas: { <area>: … } }.)
+    mine: async () => { const p = (await d.send({ cmd: 'area', area })).props; return p?.areas?.[area] ?? p; },
     /** Wait until test(props) holds (props has .areas.<area>); a failed check otherwise. */
     async until(what, test, ms = 20000) {
       const end = Date.now() + ms;
       let last;
       while (Date.now() < end) {
         last = await d.send({ cmd: 'props' });
+        // The GPUI client's props have no "areas" (each part's are merged at
+        // the top): the area's own from {"cmd":"area"}, under the Slint name.
+        if (!last.areas?.[area]) { const p = (await d.send({ cmd: 'area', area })).props; last.areas = { ...(last.areas || {}), [area]: p?.areas?.[area] ?? p }; }
         try { if (test(last)) { check(what, true); return last; } } catch { /* not yet */ }
         await sleep(250);
       }

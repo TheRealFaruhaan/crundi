@@ -204,6 +204,14 @@ fn do_note(v: &mut LogView, entry: &str, qi: usize, oi: usize, window: &mut Wind
     ensure_ui(v, entry, window, cx);
     edit(v, entry, window, cx, |k| { let l = k.label(qi, oi); if let (Some(qq), Some(p)) = (k.qs.get(qi).cloned(), k.picks.get_mut(qi)) { q::open_note(&qq, p, &l); } });
     let st = v.st.questions.cards.get(entry).and_then(|k| k.ui.as_ref()).and_then(|u| u.note.get(qi).cloned());
+    // The note's box is drawn only from the next frame (it opens with the
+    // pick): the keyboard goes to it then, as well as now.
+    if let Some(s2) = st.clone() {
+        cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor().timer(std::time::Duration::from_millis(60)).await;
+            let _ = cx.update(|window, cx| s2.update(cx, |s, cx| s.focus(window, cx)));
+        }).detach();
+    }
     focus_input(st, window, cx);
 }
 
@@ -423,6 +431,7 @@ pub fn row(v: &mut LogView, e: &Shown, window: &mut Window, cx: &mut Context<Log
             let note_open = !p.note_opt.is_empty() && p.note_opt == o.label;
             let h = radios.get(qi).and_then(|r| r.get(oi)).cloned().unwrap_or_else(|| cx.focus_handle());
             let focused = h.is_focused(window);
+            let hk = h.clone();
             let multi = qq.multi;
             let (e1, e2, e3, e4) = (entry.clone(), entry.clone(), entry.clone(), entry.clone());
             let mut text = div().flex().flex_col().flex_1().min_w_0()
@@ -459,6 +468,8 @@ pub fn row(v: &mut LogView, e: &Shown, window: &mut Window, cx: &mut Context<Log
                 // The keyboard: Space picks (or toggles); in a radio group
                 // the arrows move to and pick the next choice, wrapping.
                 .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                    // Only the row's own keys (not a note's or Other's typed inside it).
+                    if !hk.is_focused(window) { return; }
                     match ev.keystroke.key.as_str() {
                         "space" | " " => do_pick(this, &e4, qi, oi, window, cx),
                         "down" | "right" if !multi => do_move(this, &e4, qi, oi as i32, 1, window, cx),

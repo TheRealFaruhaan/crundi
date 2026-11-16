@@ -490,7 +490,6 @@ pub fn view(_tab: &str, _key: &str, window: &mut Window, cx: &mut App) -> AnyEle
     };
     div().flex().flex_col().size_full().min_h_0().bg(T::bg()).child(body)
         .children(dlg::render(window, cx))
-        .child(w::ask_layer(cx))
         .into_any_element()
 }
 
@@ -655,7 +654,6 @@ fn panel_view(_key: &str, window: &mut Window, cx: &mut App) -> AnyElement {
     };
     div().flex().flex_col().size_full().min_h_0().bg(T::bg()).child(body)
         .children(dlg::render(window, cx))
-        .child(w::ask_layer(cx))
         .into_any_element()
 }
 

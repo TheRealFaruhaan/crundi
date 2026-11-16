@@ -102,7 +102,9 @@ pub fn ask_answer(ok: bool, value: Option<String>, window: &mut Window, cx: &mut
     let l = layer(cx);
     let Some(p) = l.update(cx, |l, cx| { cx.notify(); l.pending.take() }) else { return false };
     let r = if !ok { None } else if let Some(i) = &p.input {
-        Some(value.filter(|v| !v.is_empty() || p.a.prompt.is_none()).unwrap_or_else(|| i.read(cx).value().to_string()))
+        // The driver's value as given (an empty one too, as the Slint client's
+        // dialog_answer); a press on OK or Enter: what the box holds.
+        Some(value.unwrap_or_else(|| i.read(cx).value().to_string()))
     } else { Some(String::new()) };
     (p.then)(r, window, cx);
     true

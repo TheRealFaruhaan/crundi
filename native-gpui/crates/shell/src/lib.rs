@@ -238,6 +238,8 @@ impl Render for Shell {
             // The parts' layers (not modal: Cru's screen), then a view modal (w::modal), over the window.
             .children(registry::overlays(cx))
             .children(w::render_modal(window, cx))
+            // The ask layer (the one confirm / prompt and context menu), once, over the window.
+            .child(w::ask_layer(cx))
             .into_any_element()
     }
 }

@@ -883,8 +883,7 @@ impl Render for Sched {
             .child(main)
             .children(dialog)
             // The window's confirm layer (until the shell draws it once at its root).
-            .child(w::ask_layer(cx))
-    }
+        }
 }
 
 // ─── The part's hooks (lib.rs) ───

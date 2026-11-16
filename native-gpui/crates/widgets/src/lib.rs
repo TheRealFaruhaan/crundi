@@ -53,6 +53,12 @@ pub mod filter_chip; pub use filter_chip::filter_chip;
 pub mod kbd; pub use kbd::kbd;
 pub mod key_row; pub use key_row::key_row;
 pub mod page_item; pub use page_item::page_item;
+pub mod meter; pub use meter::meter;
+pub mod seg_tabs; pub use seg_tabs::{seg_tabs, SegTab};
+pub mod arm_button; pub use arm_button::{arm_button, ArmButton};
+pub mod select; pub use select::select;
+pub mod link; pub use link::link;
+pub mod spark; pub use spark::{spark, Series};
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
@@ -396,40 +402,12 @@ pub fn list_row(id: impl Into<ElementId>, icon: IconName, title: impl Into<Share
 pub struct Confirm { pub title: SharedString, pub message: SharedString, pub ok: SharedString, pub danger: bool }
 
 /// Ask first (the web's confirm()): `on_ok` runs on OK; Cancel, Esc or the
-/// scrim close it. One dialog layer for the whole window (gpui-component's Root).
+/// scrim close it. The ask layer's confirm (one confirm for the whole
+/// window: the shell draws the layer; the driver reads and answers it
+/// through ask_props / ask_answer).
 pub fn confirm(window: &mut Window, cx: &mut App, c: Confirm, on_ok: impl Fn(&mut Window, &mut App) + 'static) {
-    let on_ok: std::rc::Rc<dyn Fn(&mut Window, &mut App)> = std::rc::Rc::new(on_ok);
-    // Kept for the test driver: its title, and OK (answer_dialog).
-    cx.set_global(OpenConfirm(Some((c.title.clone(), on_ok.clone()))));
-    window.open_alert_dialog(cx, move |d, _, _| {
-        let on_ok = on_ok.clone();
-        d.confirm()
-            .title(c.title.clone())
-            .description(c.message.clone())
-            .button_props(DialogButtonProps::default().ok_text(c.ok.clone()).ok_variant(variant(c.danger)))
-            .on_ok(move |_, w, cx| { cx.set_global(OpenConfirm(None)); on_ok(w, cx); true })
-            .on_cancel(|_, _, cx| { cx.set_global(OpenConfirm(None)); true })
-    });
-}
-
-/// The confirm on show (its title and OK), for the test driver.
-#[derive(Default)]
-struct OpenConfirm(Option<(SharedString, std::rc::Rc<dyn Fn(&mut Window, &mut App)>)>);
-impl Global for OpenConfirm {}
-
-/// The open confirm's title ("" when none), for the test driver.
-pub fn dialog_title(window: &mut Window, cx: &mut App) -> SharedString {
-    if !window.has_active_dialog(cx) { return SharedString::default(); }
-    cx.try_global::<OpenConfirm>().and_then(|c| c.0.as_ref().map(|x| x.0.clone())).unwrap_or_default()
-}
-
-/// The test driver's answer: OK on a confirm runs its action; else the
-/// dialog on top closes (Cancel, Esc).
-pub fn answer_dialog(window: &mut Window, cx: &mut App, ok: bool) {
-    let open = cx.try_global::<OpenConfirm>().and_then(|c| c.0.clone()).filter(|_| window.has_active_dialog(cx));
-    cx.set_global(OpenConfirm(None));
-    close_dialog(window, cx);
-    if ok { if let Some((_, f)) = open { f(window, cx); } }
+    ask_confirm(window, cx, Ask { title: c.title, message: c.message, ok: c.ok, danger: c.danger, prompt: None, placeholder: SharedString::default() },
+        move |ok, w, cx| if ok { on_ok(w, cx) });
 }
 
 /// Close the dialog on top (the test driver's Cancel, Esc).

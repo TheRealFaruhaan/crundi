@@ -273,6 +273,91 @@ impl T {
     // ── operations ──
     /// A parked pane's card, at most (the web's .pk-card 330; 2.23).
     pub const PARK_CARD_W: Pixels = px(330.);
+    /// homepool: its dialogs (.hp-dlg 560) and the node code's QR (180).
+    pub const HOMEPOOL_DLG_W: Pixels = px(560.);
+    pub const HOMEPOOL_QR: Pixels = px(180.);
+    /// homepool: a decided request's card (the Slint o-soft).
+    pub const HOMEPOOL_O_SOFT: f32 = 0.6;
+    /// info: the server log's box (#server-logs-area max-height 300).
+    pub const INFO_LOGS_H: Pixels = px(300.);
+    /// info: a row's value takes at most this share of the row (.info-row).
+    pub const INFO_VALUE_SHARE: f32 = 0.6;
+    /// info: a person's token meter, at most (.collab-meter 160).
+    pub const INFO_METER_W: Pixels = px(160.);
+    /// info: an expired grant's row (the Slint o-soft).
+    pub const INFO_O_SOFT: f32 = 0.6;
+    /// info: the yellow edge of a warning note (.collab-sb.warn).
+    pub fn info_yellow_edge() -> Hsla { rgba(0xf59e0b59).into() }
+    /// services / docker: a chart's line (the widgets' spark; the Slint spin-stroke).
+    pub const CHART_STROKE: Pixels = px(1.5);
+    /// services: the inline logs' box, at its tallest (.svc-logs max-height).
+    pub const SERVICES_LOGS_H: Pixels = px(200.);
+    /// services: the usage strip's sparkline box (.stat-spark) and a value's width.
+    pub const SERVICES_SPARK_H: Pixels = px(20.);
+    pub const SERVICES_VALUE_W: Pixels = px(64.);
+    /// docker: the rows' CPU and MEM columns, the filter, the pull field,
+    /// the log filter, a key's column, a chart's height (.dk-*).
+    pub const DOCKER_NUM_W: Pixels = px(64.);
+    pub const DOCKER_MEM_W: Pixels = px(76.);
+    pub const DOCKER_FILTER_W: Pixels = px(180.);
+    pub const DOCKER_PULL_W: Pixels = px(300.);
+    pub const DOCKER_LOG_FILTER_W: Pixels = px(280.);
+    pub const DOCKER_KV_W: Pixels = px(160.);
+    pub const DOCKER_CHART_H: Pixels = px(84.);
+    /// docker: a bay-plan square (.dk-bay i 14).
+    pub const DOCKER_BAY: Pixels = px(14.);
+    /// docker: the job drawer's share of the tab's height.
+    pub const DOCKER_JOB_SHARE: f32 = 0.46;
+    /// docker: the log's ANSI colours the palette lacks, and a chart's fill.
+    pub fn docker_red() -> Hsla { rgb(0xf87171).into() }
+    pub fn docker_magenta() -> Hsla { rgb(0xc084fc).into() }
+    pub fn docker_cyan() -> Hsla { rgb(0x22d3ee).into() }
+    pub const DOCKER_FILL: f32 = 0.13;
+    /// panels: the tab's list (.wg-tab-list), a row, the slot select, a
+    /// frame's least / first / inline-most height, a chip's popover, a chip's
+    /// text and face at most, the checks' shot height, a greyed row.
+    pub const PANELS_LIST_W: Pixels = px(232.);
+    pub const PANELS_ITEM_H: Pixels = px(40.);
+    pub const PANELS_SELECT_W: Pixels = px(132.);
+    pub const PANELS_FRAME_MIN: Pixels = px(36.);
+    pub const PANELS_FRAME_START: Pixels = px(80.);
+    pub const PANELS_INLINE_MAX: Pixels = px(460.);
+    pub const PANELS_POP_W: Pixels = px(440.);
+    pub const PANELS_POP_H: Pixels = px(560.);
+    pub const PANELS_CHIP_MAX: Pixels = px(220.);
+    pub const PANELS_SHOT_H: Pixels = px(150.);
+    pub const PANELS_O_SOFT: f32 = 0.6;
+    /// extras: the approvals panel (.appr-panel 420, its share of the window,
+    /// a detail's box 140), Add project (400), What's new (the copy's least
+    /// width and share, the stage 640x400, the frame at most, the title, a key column).
+    pub const EXTRAS_APPR_W: Pixels = px(420.);
+    pub const EXTRAS_APPR_MAX_SHARE: f32 = 0.7;
+    pub const EXTRAS_APPR_DETAIL_H: Pixels = px(140.);
+    pub const EXTRAS_ADD_W: Pixels = px(400.);
+    pub const EXTRAS_WN_COPY_MIN: Pixels = px(340.);
+    pub const EXTRAS_WN_COPY_SHARE: f32 = 0.42;
+    pub const EXTRAS_WN_STAGE_W: f32 = 640.;
+    pub const EXTRAS_WN_STAGE_H: f32 = 400.;
+    pub const EXTRAS_WN_FRAME_MAX: Pixels = px(760.);
+    pub const EXTRAS_WN_TITLE: Pixels = px(40.);
+    pub const EXTRAS_WN_KEY_W: Pixels = px(150.);
+    pub fn extras_wn_haze() -> Hsla { rgba(0x6366f11f).into() }
+    /// settings: Cru's selects and fields, the Telegram chat id, a matrix column, the idle-minutes box, the pairing picture.
+    pub const SETTINGS_SELECT_W: Pixels = px(340.);
+    pub const SETTINGS_CHAT_W: Pixels = px(260.);
+    pub const SETTINGS_NTF_COL: Pixels = px(62.);
+    pub const SETTINGS_NUM_W: Pixels = px(110.);
+    pub const SETTINGS_PAIR_PIC: Pixels = px(300.);
+    /// settings: a locked switch, the classes while "on its own" is off (the Slint o-dim).
+    pub const SETTINGS_O_DIM: f32 = 0.5;
+    /// skills: the backup status's key column, the sign-in restore's card, the editor's rows' height.
+    pub const SKILLS_KEY_W: Pixels = px(92.);
+    pub const SKILLS_RESTORE_W: Pixels = px(340.);
+    /// vault: the PIN modal (.pin-box 320) and the lock dialogs (.csl-card 420).
+    pub const VAULT_PIN_W: Pixels = px(320.);
+    pub const VAULT_LOCK_W: Pixels = px(420.);
+    /// vault: a request's separator (.secret-request rgba(245,158,11,0.25)).
+    pub fn vault_yellow_edge() -> Hsla { rgba(0xf59e0b40).into() }
     // ── end operations ──
     // ── desktop ──
     /// An annotation stroke on a page.
