@@ -1651,13 +1651,26 @@ pub fn toast_ok(text: &str) { toast_kind(text, false, true); }
 
 fn toast_kind(text: &str, error: bool, ok: bool) {
     let Some(w) = ui() else { return };
-    w.set_toast(text.into());
+    w.set_toast(clamp_toast(text).into());
     w.set_toast_error(error);
     w.set_toast_ok(ok);
     let gen = with(|a| { a.toast_gen += 1; a.toast_gen }).unwrap_or(0);
     slint::Timer::single_shot(Duration::from_millis(3500), move || {
         if with(|a| a.toast_gen == gen).unwrap_or(false) { if let Some(w) = ui() { w.set_toast("".into()); } }
     });
+}
+
+/// A toast stays a few lines: a long message (a git error's whole output)
+/// keeps its first lines and characters, then "…".
+fn clamp_toast(text: &str) -> String {
+    const LINES: usize = 3;
+    const CHARS: usize = 240;
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    let mut out = lines.iter().take(LINES).copied().collect::<Vec<_>>().join("\n");
+    let mut cut = lines.len() > LINES;
+    if out.chars().count() > CHARS { out = out.chars().take(CHARS).collect::<String>().trim_end().to_string(); cut = true; }
+    if cut { out.push('…'); }
+    out
 }
 
 /// Close a pane. A chat's pane closes the chat, as in the web UI: the
@@ -5646,4 +5659,15 @@ fn frames_init(window: &MainWindow) {
     fu.on_key(|k, t, down, ctrl, shift, alt, meta| { let (k, t) = (k.to_string(), t.to_string()); crate::browser::defer(move || crate::frames::key(&k, &t, down, ctrl, shift, alt, meta)); });
     fu.on_wheel_takes(|k, dx, dy| crate::frames::wheel_takes(k.as_str(), dx, dy));
     fu.on_focus(|k, on| { let k = k.to_string(); crate::browser::defer(move || crate::frames::focus(&k, on)); });
+}
+
+#[cfg(test)]
+mod toast_tests {
+    #[test]
+    fn a_long_toast_is_clamped() {
+        assert_eq!(super::clamp_toast("Saved"), "Saved");
+        assert_eq!(super::clamp_toast("Push failed: a\nb\nc\nd\ne"), "Push failed: a\nb\nc…");
+        let long = "x".repeat(500);
+        assert_eq!(super::clamp_toast(&long).chars().count(), 241);
+    }
 }

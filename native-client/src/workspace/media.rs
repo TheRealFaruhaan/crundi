@@ -16,6 +16,8 @@ struct St {
     q: String,
     items: Vec<Value>,
     state: String,
+    // Why the list failed to load (state "error").
+    err: String,
     thumbs: HashMap<String, Option<slint::Image>>,
     cards: Rc<VecModel<WorkspaceMediaCard>>,
     lb: Option<Value>,
@@ -23,7 +25,7 @@ struct St {
 }
 
 thread_local! {
-    static ST: RefCell<St> = RefCell::new(St { kind: "all".into(), scope: "project".into(), q: String::new(), items: vec![], state: "loading".into(), thumbs: HashMap::new(), cards: Rc::new(VecModel::default()), lb: None, gen: 0 });
+    static ST: RefCell<St> = RefCell::new(St { kind: "all".into(), scope: "project".into(), q: String::new(), items: vec![], state: "loading".into(), err: String::new(), thumbs: HashMap::new(), cards: Rc::new(VecModel::default()), lb: None, gen: 0 });
 }
 
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R { ST.with(|s| f(&mut s.borrow_mut())) }
@@ -65,6 +67,7 @@ pub fn init(w: &MainWindow) {
     ws.on_media_set_kind(|k| set_kind(&k));
     ws.on_media_set_scope(|k| set_scope(&k));
     ws.on_media_search(|q| search(&q));
+    ws.on_media_reload(|| { with(|s| s.state = "loading".into()); show(); load(); });
     ws.on_media_upload(upload);
     ws.on_media_open(|id| open(&id));
     ws.on_media_get(|id| get(&id));
@@ -107,6 +110,7 @@ fn show() {
         let has_project = !kit::project().is_empty();
         let shown: Vec<&Value> = s.items.iter().filter(|it| matches(it, &s.q)).collect();
         let (state, empty) = if s.state == "loading" { ("loading", String::new()) }
+            else if s.state == "error" { ("error", s.err.clone()) }
             else if s.scope == "project" && !has_project { ("empty", "Select a project, or switch to All projects.".to_string()) }
             else if s.items.is_empty() { ("empty", "No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.".to_string()) }
             else if shown.is_empty() { ("empty", format!("No media matches \u{201c}{}\u{201d}.", s.q)) }
@@ -154,8 +158,15 @@ pub fn load() {
     let path = list_url(&scope, &kind, &project);
     kit::call(move |api| api.get(&path), move |r| {
         if with(|s| s.gen) != gen { return; }
-        let items = match r { Ok(v) if v.get("ok").is_some_and(kit::truthy) => v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default(), _ => vec![] };
-        with(|s| { s.items = items; s.state = "ok".into(); });
+        // A failed load says so, with Retry (as Git and Files), never "No media here yet".
+        match r {
+            Ok(v) if v.get("ok").is_some_and(kit::truthy) => {
+                let items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+                with(|s| { s.items = items; s.state = "ok".into(); s.err.clear(); });
+            }
+            Ok(v) => with(|s| { s.items.clear(); s.state = "error".into(); s.err = { let e = kit::s(&v, "error"); if e.is_empty() { "Could not load media".into() } else { e } }; }),
+            Err(e) => with(|s| { s.items.clear(); s.state = "error".into(); s.err = format!("Could not load media: {e}"); }),
+        }
         show();
     });
 }
@@ -300,7 +311,7 @@ pub fn delete(id: &str) {
 
 pub fn props() -> Value {
     with(|s| json!({
-        "state": s.state, "kind": s.kind, "scope": s.scope, "q": s.q,
+        "state": s.state, "error": s.err, "kind": s.kind, "scope": s.scope, "q": s.q,
         "cards": s.cards.iter().map(|c| json!({ "id": c.id.as_str(), "name": c.name.as_str(), "kind": c.kind.as_str(), "thumb": c.has_thumb, "link": c.link_state.as_str() })).collect::<Vec<_>>(),
         "lightbox": s.lb.as_ref().map(|i| kit::s(i, "originalName")),
     }))

@@ -82,8 +82,8 @@ component TermBody inherits Rectangle {
     in property <WorkspaceTerm> t;
     in property <float> fs;
     in property <bool> focused;
-    probe := Text { visible: false; text: "MMMMMMMMMM"; font-family: Theme.mono; font-size: Theme.text-13 * root.fs; }
-    property <length> cw: probe.preferred-width / 10;
+    probe := Text { visible: false; text: Theme.ws-term-probe; font-family: Theme.mono; font-size: Theme.text-13 * root.fs; }
+    property <length> cw: probe.preferred-width / Theme.ws-term-probe-n;
     property <length> ch: probe.preferred-height;
     property <length> pad: Theme.sp-4;
     property <string> text;
