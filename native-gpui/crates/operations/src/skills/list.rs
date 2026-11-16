@@ -646,7 +646,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                 .child(col(T::SP_6).children(skills.iter().enumerate().map(|(i, (nm, ds))| {
                     let nm2 = nm.clone();
                     row().p(T::SP_6).pl(T::SP_8).rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg())
-                        .child(div().flex_1().text_size(T::TEXT_12).text_color(T::text_secondary()).child(if ds.is_empty() { nm.clone() } else { format!("{nm} {ds}") }))
+                        .child(div().flex_1().min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary()).child(if ds.is_empty() { nm.clone() } else { format!("{nm} {ds}") }))
                         .child(w::disabled(w::button(("sk-pick", i), "Install"), l.link_busy).on_click(move |_, _, cx| act(cx, "link-pick", &nm2)))
                 })))
                 .child(row().child(w::disabled(w::primary("sk-link-all", format!("Install all {n}")), l.link_busy).on_click(|_, _, cx| act(cx, "link-all", "")))
@@ -688,9 +688,9 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                     .when(r.open, |d| d.bg(T::bg_hover())).hover(|d| d.bg(T::bg_hover()))
                     .child(row().child(div().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).truncate().child(r.name.clone()))
                         .children(tags.into_iter().filter(|t| t.0).map(|t| w::tag(t.1, t.2)))
-                        .child(div().flex_1())
+                        .child(div().flex_1().min_w_0())
                         .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(r.meta.clone())))
-                    .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).when(!r.open, |d| d.line_clamp(2)).child(r.desc.clone()))
+                    .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).when(!r.open, |d| d.line_clamp(2).text_ellipsis()).child(r.desc.clone()))
                     .on_click(move |_, _, cx| act(cx, "open", &arg));
                 let rad = T::R_FIELD;
                 out = out.child(div().flex().flex_col().border_1().border_color(T::border()).overflow_hidden()
@@ -736,7 +736,7 @@ fn detail(window: &mut Window, cx: &mut App) -> AnyElement {
         d = d.child(sk_note(IconName::GitBranch, false, "").child(row().gap(T::SP_4).text_size(T::TEXT_12)
             .child(div().text_color(T::text_secondary()).child("From"))
             .child(w::link("sk-src", repo).on_click(move |_, _, _| c::open_url(&url)))
-            .child(div().flex_1().text_color(T::text_secondary()).child(source_rest(src)))));
+            .child(div().flex_1().min_w_0().text_color(T::text_secondary()).child(source_rest(src)))));
     }
     d = d.child(row()
         .when(can_update, |d| d.child(btn("sd-update", "Update", Some(IconName::RefreshCw), false, l.busy, |cx| act(cx, "update", ""))))

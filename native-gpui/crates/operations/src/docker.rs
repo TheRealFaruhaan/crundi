@@ -1391,7 +1391,7 @@ impl Docker {
         let _ = cx;
         div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_16).py(T::SP_10).border_b_1().border_color(T::border())
             .child(w::seg_tabs("dk-nav", tabs, on, |i, window, cx| set_view(VIEWS[i].0, window, cx)))
-            .child(div().flex_1())
+            .child(div().flex_1().min_w_0())
             .when(self.detail.is_none() && self.view != "system", |d| d.children(self.inputs.as_ref().map(|i| div().w(T::DOCKER_FILTER_W).child(w::input(&i.filter)))))
             .child(w::icon_button("dk-refresh", IconName::RefreshCw, "Refresh").on_click(|_, _, cx| refresh(cx)))
     }
@@ -1462,7 +1462,7 @@ impl Docker {
                 l = l.child(row_frame(("dk-st-svc", i * 1000 + j)).cursor_pointer().hover(|d| d.bg(T::bg_hover())).on_click(move |_, _, cx| open_detail(&id, cx))
                     .child(dk_dot(&c.state))
                     .child(div().flex().flex_col().flex_1().min_w_0().child(div().truncate().text_size(T::TEXT_13).text_color(T::text()).child(c.name.clone())).child(mono_sub(c.sub.clone())))
-                    .child(mono_sub(c.img.clone()).flex_1())
+                    .child(mono_sub(c.img.clone()).flex_1().min_w_0())
                     .child(mono_sub(c.status.clone()).flex_none()));
             }
             l
@@ -1479,7 +1479,7 @@ impl Docker {
         } else {
             bar = bar.child(quiet(head.clone()));
         }
-        bar = bar.child(div().flex_1());
+        bar = bar.child(div().flex_1().min_w_0());
         match view.as_str() {
             "images" => {
                 bar = bar.child(w::arm_button("dk-prune-untagged", "Clean untagged", Some(IconName::Trash), "Remove untagged images?", |_, cx| prune("images", cx)).look("danger"))
@@ -1516,7 +1516,7 @@ impl Docker {
         div().flex().flex_col().gap(T::SP_6)
             .child(div().flex().flex_wrap().items_center().gap(T::SP_8).p(T::SP_10).rounded(T::R_CONTROL).bg(T::bg_tertiary()).border_1().border_color(T::border())
                 .when(blind, |d| d.child(div().w(T::SP_48 + T::SP_40).child(w::input(&i.form_target))))
-                .child(div().flex_1().min_w(T::SP_48 + T::SP_48).child(w::input(&i.form_name)))
+                .child(div().flex_1().min_w_0().min_w(T::SP_48 + T::SP_48).child(w::input(&i.form_name)))
                 .child(w::select("dk-form-mode", labels, Some(self.form_mode), "", false, |m, _, cx| upd(cx, |s| s.form_mode = m)))
                 .child(w::check("dk-form-public", "Public", self.form_public, |on, _, cx| { let on = *on; upd(cx, |s| s.form_public = on); }))
                 .child(w::check("dk-form-watch", "Warn if it goes down", self.form_watch, |on, _, cx| { let on = *on; upd(cx, |s| s.form_watch = on); }))
@@ -1534,7 +1534,7 @@ impl Docker {
             e = if blind { e.child(self.render_form(true)) } else { e.child(w::primary("dk-fwd-add-empty", "Add forward").icon(IconName::Plus).on_click(|_, window, cx| open_form("any", window, cx))) };
             return p.child(e);
         }
-        p = p.child(div().flex().items_center().gap(T::SP_8).child(quiet(head)).child(div().flex_1())
+        p = p.child(div().flex().items_center().gap(T::SP_8).child(quiet(head)).child(div().flex_1().min_w_0())
             .child(w::primary("dk-fwd-add", "Add forward").icon(IconName::Plus).on_click(|_, window, cx| open_form("any", window, cx)))
             .when(orphans > 0, |d| d.child(w::arm_button("dk-rm-orphans", "Remove orphaned", Some(IconName::Trash), format!("Remove {orphans} orphaned?"), |_, cx| remove_orphans(cx)).look("danger"))));
         if blind { p = p.child(self.render_form(true)); }
@@ -1571,7 +1571,7 @@ impl Docker {
             "error" => d = d.child(quiet(derr)),
             _ => {
                 let cols = |a: Div, b: Div, c: Div, e: Div, f: AnyElement| div().flex().items_center().gap(T::SP_8).px(T::SP_8)
-                    .child(a.flex_1()).child(b.w(T::DOCKER_NUM_W).flex().justify_end()).child(c.w(T::DOCKER_MEM_W + T::SP_12).flex().justify_end())
+                    .child(a.flex_1().min_w_0()).child(b.w(T::DOCKER_NUM_W).flex().justify_end()).child(c.w(T::DOCKER_MEM_W + T::SP_12).flex().justify_end())
                     .child(e.w(T::DOCKER_MEM_W + T::SP_24).flex().justify_end()).child(div().w(T::DOCKER_MEM_W).flex().justify_end().child(f));
                 d = d.child(cols(group_title("WHAT"), group_title("COUNT"), group_title("SIZE"), group_title("RECLAIMABLE"), div().into_any_element()).pb(T::SP_6))
                     .child(div().h(px(1.)).w_full().bg(T::border()));
@@ -1588,8 +1588,8 @@ impl Docker {
             }
         }
         p.child(div().flex().gap(T::SP_12)
-                .child(dk_sec("ENGINE").flex_1().children(engine.iter().map(|(k, v)| dk_kv(k, v, false))))
-                .child(dk_sec("CONTENTS").flex_1().children(contents.iter().map(|(k, v)| dk_kv(k, v, false)))
+                .child(dk_sec("ENGINE").flex_1().min_w_0().children(engine.iter().map(|(k, v)| dk_kv(k, v, false))))
+                .child(dk_sec("CONTENTS").flex_1().min_w_0().children(contents.iter().map(|(k, v)| dk_kv(k, v, false)))
                     .children(warnings.into_iter().map(|w| div().font_family(T::MONO).text_size(T::TEXT_12).text_color(T::yellow()).child(w)))))
             .child(d)
     }
@@ -1598,10 +1598,10 @@ impl Docker {
         let ov = &d.data["overview"];
         let [st, runs, nets, mounts, env, labels] = overview_rows(ov);
         let sec = |title: &str, rows: &[(String, String, bool)], none: &'static str| {
-            let s = dk_sec(title).flex_1();
+            let s = dk_sec(title).flex_1().min_w_0();
             if rows.is_empty() && !none.is_empty() { s.child(quiet(none)) } else { s.children(rows.iter().map(|(k, v, h)| dk_kv(k, v, *h))) }
         };
-        let mut ports_sec = dk_sec("PORTS").flex_1();
+        let mut ports_sec = dk_sec("PORTS").flex_1().min_w_0();
         let ps = ports(ov, self.fwd_list.as_ref());
         if ps.is_empty() { ports_sec = ports_sec.child(quiet("No ports.")); }
         for (i, p) in ps.iter().enumerate() {
@@ -1651,16 +1651,16 @@ impl Docker {
                 _ => div().into_any_element(),
             }
         }).size_full();
-        div().flex().flex_col().flex_1().min_h_0()
+        div().flex().flex_col().flex_1().min_w_0().min_h_0()
             .child(div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_12).py(T::SP_4).border_b_1().border_color(T::border_subtle())
                 .children(self.inputs.as_ref().map(|i| div().w(T::DOCKER_LOG_FILTER_W).child(w::input(&i.log_filter))))
                 .child(w::check("dk-log-follow", "Follow", self.log_follow, |on, _, cx| log_option("follow", *on, cx)))
                 .child(w::check("dk-log-ts", "Times", self.log_ts, |on, _, cx| log_option("ts", *on, cx)))
                 .child(w::check("dk-log-wrap", "Wrap", self.log_wrap, |on, _, cx| log_option("wrap", *on, cx)))
-                .child(div().flex_1())
+                .child(div().flex_1().min_w_0())
                 .child(w::icon_button("dk-log-copy", IconName::Copy, "Copy").on_click(|_, _, cx| log_copy(cx)))
                 .child(w::icon_button("dk-log-clear", IconName::X, "Clear").on_click(|_, _, cx| upd(cx, |s| if let Some(d) = s.detail.as_mut() { d.lines.clear(); }))))
-            .child(div().flex_1().min_h_0().bg(T::bg()).pt(T::SP_6).child(list))
+            .child(div().flex_1().min_w_0().min_h_0().bg(T::bg()).pt(T::SP_6).child(list))
     }
 
     fn render_stats(&self, d: &Detail) -> Div {
@@ -1675,10 +1675,10 @@ impl Docker {
             if !c.b.is_empty() { series.push(w::Series { values: c.b.clone(), max: c.max, stroke: c2, fill: fill(c2) }); }
             let leg = |col: Hsla, text: String| div().flex().items_center().gap(T::SP_4).child(div().size(T::SP_8).rounded(T::SP_2).bg(col))
                 .child(div().font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_muted()).child(text));
-            div().flex().flex_col().flex_1().gap(T::SP_8).px(T::SP_16).py(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1().border_color(T::border())
+            div().flex().flex_col().flex_1().min_w_0().gap(T::SP_8).px(T::SP_16).py(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1().border_color(T::border())
                 .child(div().flex().items_end().gap(T::SP_10)
                     .child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(c.title.clone()))
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0())
                     .child(div().font_family(T::MONO).text_size(T::TEXT_15).text_color(T::text()).child(c.value.clone()))
                     .when(!c.sub.is_empty(), |x| x.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(c.sub.clone()))))
                 .child(div().h(T::DOCKER_CHART_H).w_full().child(w::spark(series, fmt::CHART_N, Some(T::border_subtle())).size_full()))
@@ -1692,11 +1692,11 @@ impl Docker {
     fn render_shell(&self, d: &Detail) -> Div {
         let (bar, btn) = shell_bar(d);
         let live = d.shell_ref.is_some();
-        div().flex().flex_col().flex_1().min_h_0()
+        div().flex().flex_col().flex_1().min_w_0().min_h_0()
             .child(div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_12).h(T::CONTROL + T::SP_8).border_b_1().border_color(T::border_subtle())
                 .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).text_color(T::text_secondary()).child(bar))
                 .when(!btn.is_empty(), |x| x.child(w::button("dk-shell-again", btn).icon(if btn == "New shell" { IconName::RotateCcw } else { IconName::Terminal }).on_click(|_, _, cx| open_shell(cx)))))
-            .child(div().id("dk-shell-out").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.shell_scroll).bg(T::bg()).px(T::SP_8).py(T::SP_6)
+            .child(div().id("dk-shell-out").flex_1().min_w_0().min_h_0().overflow_y_scroll().track_scroll(&self.shell_scroll).bg(T::bg()).px(T::SP_8).py(T::SP_6)
                 .font_family(T::MONO).text_size(T::TEXT_13).text_color(T::text()).child(d.screen.text()))
             // The keyboard goes to the shell through this line (no terminal
             // emulator here: Enter sends the line; Ctrl+C/D/L/Z on an empty
@@ -1715,7 +1715,7 @@ impl Docker {
                         shell_key(&key, cx);
                     })
                     .child(div().font_family(T::MONO).text_size(T::TEXT_13).text_color(T::text_muted()).child("$"))
-                    .child(div().flex_1().child(w::input(&i.shell)))
+                    .child(div().flex_1().min_w_0().child(w::input(&i.shell)))
             })))
     }
 
@@ -1743,7 +1743,7 @@ impl Docker {
             head = head.child(w::button("dk-rename", "Rename").icon(IconName::Pencil).on_click(|_, window, cx| open_prompt("rename", window, cx)))
                 .child(w::danger("dk-remove", "Remove").icon(IconName::Trash).on_click(|_, window, cx| open_prompt("remove", window, cx)));
         }
-        let mut out = div().flex().flex_col().flex_1().min_h_0().child(head);
+        let mut out = div().flex().flex_col().flex_1().min_w_0().min_h_0().child(head);
         if state == "loading" { return out.child(div().p(T::SP_16).child(quiet("Loading\u{2026}"))); }
         if state == "error" { return out.child(div().p(T::SP_16).child(quiet(d.error.clone()))); }
         // Rename / remove: inline under the head (.dk-prompt).
@@ -1752,14 +1752,14 @@ impl Docker {
                 .on_key_down(|e: &KeyDownEvent, window, cx| if e.keystroke.key == "escape" { open_prompt("", window, cx); });
             if d.prompt == "rename" {
                 pr = pr.child(div().text_size(T::TEXT_13).text_color(T::text()).child("New name"))
-                    .children(self.inputs.as_ref().map(|i| div().flex_1().child(w::input(&i.newname))))
+                    .children(self.inputs.as_ref().map(|i| div().flex_1().min_w_0().child(w::input(&i.newname))))
                     .child(w::primary("dk-rename-do", "Rename").on_click(|_, _, cx| rename_do(cx)));
             } else {
                 let force_shown = running(&c) || ss(&c, "state") == "paused";
                 pr = pr.child(div().text_size(T::TEXT_13).text_color(T::text()).child(format!("Remove {name}? This cannot be undone.")))
                     .child(w::check("dk-rmvol", "Also its anonymous volumes", self.rmvol, |on, _, cx| { let on = *on; upd(cx, |s| s.rmvol = on); }))
                     .when(force_shown, |x| x.child(w::check("dk-rmforce", "Stop it first", self.rmforce, |on, _, cx| { let on = *on; upd(cx, |s| s.rmforce = on); })))
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0())
                     .child(w::danger("dk-remove-do", "Remove").icon(IconName::Trash).on_click(|_, _, cx| remove_do(cx)));
             }
             out = out.child(pr.child(w::button("dk-prompt-cancel", "Cancel").on_click(|_, window, cx| open_prompt("", window, cx))));
@@ -1779,17 +1779,17 @@ impl Docker {
             _ => {
                 let d = self.detail.as_ref().unwrap();
                 match tab.as_str() {
-                    "stats" => div().id("dk-stats").flex_1().min_h_0().overflow_y_scroll().p(T::SP_16).child(self.render_stats(d)).into_any_element().into_div(),
+                    "stats" => div().id("dk-stats").flex_1().min_w_0().min_h_0().overflow_y_scroll().p(T::SP_16).child(self.render_stats(d)).into_any_element().into_div(),
                     "shell" => self.render_shell(d),
                     "inspect" => {
                         let text = serde_json::to_string_pretty(&d.data["inspect"]).unwrap_or_default();
-                        div().flex().flex_col().flex_1().min_h_0()
+                        div().flex().flex_col().flex_1().min_w_0().min_h_0()
                             .child(div().flex().flex_none().justify_end().items_center().px(T::SP_12).h(T::CONTROL + T::SP_8).border_b_1().border_color(T::border_subtle())
                                 .child(w::button("dk-inspect-copy", "Copy JSON").icon(IconName::Copy).on_click(|_, _, cx| { let t = inspect_text(cx); copy(cx, &t); })))
-                            .child(div().id("dk-inspect").flex_1().min_h_0().overflow_scroll().bg(T::bg()).px(T::SP_16).py(T::SP_12)
+                            .child(div().id("dk-inspect").flex_1().min_w_0().min_h_0().overflow_scroll().bg(T::bg()).px(T::SP_16).py(T::SP_12)
                                 .font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text_secondary()).whitespace_nowrap().child(text))
                     }
-                    _ => div().id("dk-overview").flex_1().min_h_0().overflow_y_scroll().p(T::SP_16).child(self.render_overview(d)).into_any_element().into_div(),
+                    _ => div().id("dk-overview").flex_1().min_w_0().min_h_0().overflow_y_scroll().p(T::SP_16).child(self.render_overview(d)).into_any_element().into_div(),
                 }
             }
         };
@@ -1799,7 +1799,7 @@ impl Docker {
 
 /// An element in a flex column filling the rest (a scrolling page in the detail).
 trait IntoDiv { fn into_div(self) -> Div; }
-impl IntoDiv for AnyElement { fn into_div(self) -> Div { div().flex().flex_col().flex_1().min_h_0().child(self) } }
+impl IntoDiv for AnyElement { fn into_div(self) -> Div { div().flex().flex_col().flex_1().min_w_0().min_h_0().child(self) } }
 
 fn inspect_text(cx: &mut App) -> String {
     rd(cx, |s| s.detail.as_ref().map(|d| serde_json::to_string_pretty(&d.data["inspect"]).unwrap_or_default()).unwrap_or_default())
@@ -1834,7 +1834,7 @@ impl Render for Docker {
                     _ => self.render_system(),
                 },
             };
-            root = root.child(div().id("dk-page").flex_1().min_h_0().overflow_y_scroll().p(T::SP_16).child(body));
+            root = root.child(div().id("dk-page").flex_1().min_w_0().min_h_0().overflow_y_scroll().p(T::SP_16).child(body));
         }
         // The job drawer (.dk-job): compose and pull output, over the bottom.
         if let Some(j) = &self.job {
@@ -1845,7 +1845,7 @@ impl Render for Docker {
                     .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(j.title.clone()))
                     .child(if j.done { w::tag(if j.code == 0 { "done".to_string() } else { format!("exit {}", j.code) }, if j.code == 0 { "ok" } else { "error" }).into_any_element() } else { w::spinner(T::ICON_MD).into_any_element() })
                     .child(w::icon_button("dk-job-close", IconName::X, "Hide").on_click(|_, _, cx| upd(cx, |s| s.job = None))))
-                .child(div().id("dk-job-out").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.job_scroll).px(T::SP_12).py(T::SP_8)
+                .child(div().id("dk-job-out").flex_1().min_w_0().min_h_0().overflow_y_scroll().track_scroll(&self.job_scroll).px(T::SP_12).py(T::SP_8)
                     .font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text_secondary()).child(j.text.clone())));
         }
         root

@@ -53,6 +53,18 @@ pub fn register_pane_props(cx: &mut App, prefix: &'static str, f: impl Fn(&str, 
     cx.global_mut::<Kinds>().1.push((prefix, Rc::new(f)));
 }
 
+/// Which conversation a launch starts (2.22, the resume picker: Operations'
+/// crundi_chat_log::resume::choose): (project, skip, terminal, cx, go).
+/// It calls `go(mode, resume id, cx)` once ("new" | "resume" | "compact"),
+/// or never (cancelled), and returns false when it ignores the launch (its
+/// list is loading, its picker open). Added by Operations (AREAS.md).
+pub type LaunchChooser = Rc<dyn Fn(&str, bool, bool, &mut App, Rc<dyn Fn(&'static str, String, &mut App)>) -> bool>;
+struct Chooser(LaunchChooser);
+impl Global for Chooser {}
+
+/// Set the launch chooser (once, at start).
+pub fn set_launch_chooser(cx: &mut App, f: LaunchChooser) { cx.set_global(Chooser(f)); }
+
 fn kind_of(cx: &App, key: &str) -> Option<PaneKind> {
     cx.try_global::<Kinds>()?.0.iter().filter(|k| key.starts_with(k.prefix)).max_by_key(|k| k.prefix.len()).cloned()
 }
@@ -138,6 +150,8 @@ pub struct Workbench {
     secrets_cap: bool,
     grants: HashMap<String, Value>,
     pub(crate) launching: HashMap<u32, i32>,
+    /// The last create call's body (the driver's "lastCreate").
+    last_create: Value,
     pub(crate) window: Option<AnyWindowHandle>,
     pub(crate) win_size: (f32, f32),
     /// The event stream's first state has come: until then no pane goes.
@@ -162,7 +176,7 @@ impl Workbench {
             font: saved.font.clone(), font_default: saved.font_default_chat.unwrap_or(rules::FONT_BASE),
             titles: HashMap::new(), pending: 0, protect: HashMap::new(), closed: HashSet::new(),
             hover: 0, press: None, drag: None, gutter: None, add_menu: false, layouts_open: false,
-            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(),
+            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), last_create: Value::Null, window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(),
         }
     }
 
@@ -317,9 +331,11 @@ impl Workbench {
             let id = chat_of(&key).unwrap_or("").to_string();
             let collab = Self::chat_item(cx, &id).and_then(|c| c.get("collaborator").cloned()).is_some_and(|v| v.as_bool().unwrap_or(!v.is_null()));
             let n = rules::grant_count(self.grants.get(&id), now);
+            // A parked chat's header (2.23) has only grip, dot, title, tag, pin and ×: it never folds.
+            let parked = Self::chat_item(cx, &id).is_some_and(|c| c.get("kind").and_then(|k| k.as_str()) == Some("parked"));
             Info {
                 focused: l.id == self.focused, fs: if kind == "chat" { rules::font_scale(self.font_px(&id)) } else { 1.0 },
-                armed: self.armed == l.id, narrow: rules::narrow(l.w), menu: self.menu == l.id && rules::narrow(l.w),
+                armed: self.armed == l.id, narrow: rules::narrow(l.w) && !parked, menu: self.menu == l.id && rules::narrow(l.w) && !parked,
                 drop: self.drag.is_some_and(|d| d.target == l.id && d.src != l.id),
                 secrets: kind == "chat" && self.secrets_cap && !collab, secrets_n: n,
                 launch_busy: *self.launching.get(&l.id).unwrap_or(&0),
@@ -356,7 +372,7 @@ impl Workbench {
             json!({ "key": k, "w": vw, "h": vh, "title": title, "titleMax": cap })
         }).unwrap_or(Value::Null);
         let mut v = json!({
-            "panes": panes, "full": full, "dragOn": self.drag.is_some(), "addMenu": self.add_menu,
+            "panes": panes, "full": full, "dragOn": self.drag.is_some(), "addMenu": self.add_menu, "lastCreate": self.last_create,
             "lockedGutters": gutters.iter().filter(|g| g.locked).count(),
             "gutterViews": gutters.iter().map(|g| json!({ "split": g.split, "index": g.index, "row": g.dir == Dir::Row, "x": g.x, "y": g.y, "w": g.w, "h": g.h, "locked": g.locked })).collect::<Vec<_>>(),
         });
@@ -398,7 +414,9 @@ impl Workbench {
         let Some(id) = chat_of(&key).map(String::from) else { self.mosaic().close(leaf); if self.menu == leaf { self.menu = 0; } return self.changed(cx); };
         let Some(api) = crundi_shell::api(cx) else { return };
         let me = cx.entity().downgrade();
-        let path = format!("/api/ui-sessions/{id}/close");
+        // A parked chat (2.23) is discarded for good; a live one closed.
+        let parked = crundi_shell::session::get(cx).terminals.iter().any(|t| t.get("id").and_then(|i| i.as_str()) == Some(id.as_str()) && t.get("kind").and_then(|k| k.as_str()) == Some("parked"));
+        let path = if parked { format!("/api/panes/{id}/discard") } else { format!("/api/ui-sessions/{id}/close") };
         crundi_shell::run(cx, move || api.post(&path, &json!({})), move |r, cx| {
             match rules::close_outcome(r) {
                 rules::Closed::Yes => { let _ = me.update(cx, |w, cx| {
@@ -578,11 +596,31 @@ impl Workbench {
     pub fn launch_chat(&mut self, leaf: u32, skip: bool, cx: &mut Context<Self>) {
         let project = self.project.clone();
         if project.is_empty() || self.launching.contains_key(&leaf) { return; }
+        // Which conversation first (the resume picker), when someone chooses.
+        if let Some(choose) = cx.try_global::<Chooser>().map(|c| c.0.clone()) {
+            let me = cx.entity().downgrade();
+            let go: Rc<dyn Fn(&'static str, String, &mut App)> = Rc::new(move |mode, id, cx| {
+                // The launcher went meanwhile: nothing to start.
+                let _ = me.update(cx, |w, cx| if w.mosaic().layout(1000., 1000.).0.iter().find(|l| l.id == leaf).and_then(|l| l.key.clone()).is_some_and(|k| k.starts_with("pend:")) { w.create_chat(leaf, skip, mode, &id, cx) });
+            });
+            choose(&project, skip, false, cx, go);
+            return;
+        }
+        self.create_chat(leaf, skip, "new", "", cx);
+    }
+
+    /// Start the chat (new | resume | compact) in a launcher's leaf: the
+    /// pressed button busy until it answers; refused or failed, a toast.
+    pub fn create_chat(&mut self, leaf: u32, skip: bool, mode: &str, resume_id: &str, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        if project.is_empty() || self.launching.contains_key(&leaf) { return; }
         self.launching.insert(leaf, if skip { 2 } else { 1 });
         cx.notify();
-        let body = crundi_core::resume::create_body(&project, skip, "new", "");
+        let body = crundi_core::resume::create_body(&project, skip, mode, resume_id);
+        self.last_create = body.clone();
+        let stub = crundi_core::driver::take_stub("create");
         let me = cx.entity().downgrade();
-        crundi_shell::call(cx, move |api| api.post("/api/ui-sessions/create", &body), move |r, cx| {
+        crundi_shell::call(cx, move |api| match stub { Some(v) => stub_result(v), None => api.post("/api/ui-sessions/create", &body) }, move |r, cx| {
             let _ = me.update(cx, |w, cx| {
                 w.launching.remove(&leaf);
                 let v = match r {
@@ -797,4 +835,16 @@ pub fn init(cx: &mut App) {
             Some(json!({ "ok": true }))
         })
         .props(|_, cx| workbench(cx).map(|wb| wb.update(cx, |w, cx| w.props(cx))).unwrap_or_else(|| json!({ "panes": [] }))));
+}
+
+/// A driver stub's answer, as a server's (delayMs, status >= 400, net).
+fn stub_result(v: Value) -> crundi_core::api::ApiResult {
+    use crundi_core::api::ApiError;
+    let st = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    if let Some(ms) = v.get("delayMs").and_then(|x| x.as_u64()) { std::thread::sleep(Duration::from_millis(ms)); }
+    match v.get("status").and_then(|x| x.as_u64()) {
+        Some(c) if c >= 400 => Err(ApiError::Status(c as u16, st("error"))),
+        _ if v.get("net").is_some() => Err(ApiError::Net(st("net"))),
+        _ => Ok(v),
+    }
 }

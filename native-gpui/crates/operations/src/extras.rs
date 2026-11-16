@@ -391,7 +391,7 @@ pub fn approvals_panel(window: &mut Window, _cx: &mut App) -> Option<AnyElement>
         col = col.child(div().py(T::SP_12).text_center().text_size(T::TEXT_12).text_color(T::text_muted()).child("Nothing is waiting."));
     } else {
         col = col.child(div().flex().items_center().px(T::SP_8).pt(T::SP_2).pb(T::SP_6).border_b_1().border_color(T::border_subtle())
-            .child(div().flex_1().text_size(T::TEXT_12).text_color(T::text_muted()).child(format!("{} waiting", items.len())))
+            .child(div().flex_1().min_w_0().text_size(T::TEXT_12).text_color(T::text_muted()).child(format!("{} waiting", items.len())))
             .child(w::button("appr-clear", "Clear all").on_click(|_, window, cx| appr_clear(window, cx))));
     }
     for (i, it) in items.iter().enumerate() {
@@ -526,23 +526,23 @@ impl Render for WhatsNew {
                     keys = keys.child(div().px(T::SP_6).py(T::SP_2).rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg_secondary())
                         .font_family(T::MONO).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(kk.as_str().unwrap_or("").to_string()));
                 }
-                copy = copy.child(div().flex().items_center().gap(T::SP_12).child(keys).child(div().flex_1().text_size(T::TEXT_14).text_color(T::text_secondary()).child(s(&kr, "text"))));
+                copy = copy.child(div().flex().items_center().gap(T::SP_12).child(keys).child(div().flex_1().min_w_0().text_size(T::TEXT_14).text_color(T::text_secondary()).child(s(&kr, "text"))));
             }
         }
         // The art (or the recap), on the right.
         let stage: AnyElement = if !last {
-            div().flex().flex_col().flex_1().items_center().justify_center().gap(T::SP_12).bg(T::extras_wn_haze())
+            div().flex().flex_col().flex_1().min_w_0().items_center().justify_center().gap(T::SP_12).bg(T::extras_wn_haze())
                 .child(div().text_color(T::accent()).child(w::icon(IconName::Bot, T::SP_48 + T::SP_16)))
                 .child(div().text_size(T::TEXT_20).font_weight(T::W_BOLD).text_color(T::accent_hover()).child(tag.clone()))
                 .child(div().text_size(T::TEXT_14).text_color(T::text_secondary()).child(s(&step, "title")))
                 .into_any_element()
         } else {
-            let mut rc = div().id("wn-recap").flex().flex_col().flex_1().gap(T::SP_8).px(T::SP_20).py(T::SP_16).overflow_y_scroll();
+            let mut rc = div().id("wn-recap").flex().flex_col().flex_1().min_w_0().gap(T::SP_8).px(T::SP_20).py(T::SP_16).overflow_y_scroll();
             for (i, st) in steps.iter().enumerate() {
                 rc = rc.child(div().id(("wn-recap-item", i)).flex().items_center().gap(T::SP_12).px(T::SP_12).py(T::SP_10).rounded(T::R_BUBBLE).border_1().border_color(T::border()).bg(T::bg_card())
                     .cursor_pointer().hover(|d| d.border_color(T::accent()))
                     .child(div().text_color(T::green()).child(w::icon(IconName::Check, T::ICON_LG)))
-                    .child(div().flex().flex_col().flex_1()
+                    .child(div().flex().flex_col().flex_1().min_w_0()
                         .child(div().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(s(st, "title")))
                         .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(s(st, "tag"))))
                     .on_click(move |_, _, cx| wn_go(i as i64, cx)));
@@ -552,18 +552,18 @@ impl Render for WhatsNew {
         let art_title = if last { "In this update".to_string() } else { Some(s(&step, "artTitle")).filter(|t| !t.is_empty()).unwrap_or_else(|| tag.clone()) };
         let fw = T::EXTRAS_WN_FRAME_MAX.min(vp.width - copy_w - T::SP_48 - T::SP_24);
         let fh = (fw * (T::EXTRAS_WN_STAGE_H / T::EXTRAS_WN_STAGE_W) + T::SP_32).min(vp.height - T::SP_48 * 4.);
-        let art = div().flex().flex_1().items_center().justify_center().pr(T::SP_48)
+        let art = div().flex().flex_1().min_w_0().items_center().justify_center().pr(T::SP_48)
             .child(div().flex().flex_col().w(fw).h(fh).rounded(T::R_BUBBLE).border_1().border_color(T::border()).bg(T::bg_secondary()).overflow_hidden()
                 .child(div().flex().flex_none().items_center().gap(T::SP_8).h(T::SP_32).pl(T::SP_12).border_b_1().border_color(T::border())
                     .children((0..3).map(|_| w::dot(T::bg_hover())))
-                    .child(div().flex_1().truncate().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(art_title)))
+                    .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(art_title)))
                 .child(stage));
         // The top: the brand, the version, Skip.
         let top = div().flex().flex_none().items_center().gap(T::SP_10).h(T::CONTROL_LG).mt(T::SP_16).px(T::SP_24)
             .child(div().text_color(T::accent()).text_size(T::TEXT_20).child(IconName::Bot))
             .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_20).text_color(T::text()).child("crundi"))
             .when(!version.is_empty(), |d| d.child(w::tag(version.clone(), "accent")))
-            .child(div().flex_1())
+            .child(div().flex_1().min_w_0())
             .when(!last, |d| d.child(w::button("wn-skip", "Skip").icon(IconName::X).on_click(|_, window, cx| wn_close(window, cx))));
         // The foot: Back, the dots, the count, the hint, Next / Done.
         let mut dots = div().flex().items_center().gap(T::SP_6);
@@ -577,7 +577,7 @@ impl Render for WhatsNew {
             .child(div().when(at == 0, |d| d.invisible()).child(w::button("wn-back", "Back").icon(IconName::ChevronLeft).on_click(move |_, _, cx| if at_i > 0 { wn_go(at_i - 1, cx) })))
             .child(dots)
             .child(div().font_family(T::MONO).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child(format!("{} / {}", at + 1, k)))
-            .child(div().flex_1())
+            .child(div().flex_1().min_w_0())
             .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Arrow keys, or swipe"))
             .child(w::primary("wn-next", if last { "Done" } else { "Next" }).icon(if last { IconName::Check } else { IconName::ChevronRight })
                 .on_click(move |_, window, cx| if last { wn_close(window, cx) } else { wn_go(at_i + 1, cx) }));
@@ -585,7 +585,7 @@ impl Render for WhatsNew {
             .w(vp.width).h(vp.height).flex().flex_col().bg(T::bg()).text_color(T::text()).font(crundi_theme::ui_font())
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(top)
-            .child(div().flex().flex_1().min_h_0().items_center().child(copy).child(art))
+            .child(div().flex().flex_1().min_w_0().min_h_0().items_center().child(copy).child(art))
             .child(foot);
         div().child(deferred(anchored().position(point(px(0.), px(0.))).child(full)).with_priority(2)).into_any_element()
     }
