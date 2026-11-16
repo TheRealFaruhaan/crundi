@@ -146,6 +146,8 @@ export global WorkspaceUi {
     callback media-set-kind(string);
     callback media-set-scope(string);
     callback media-search(string);
+    // Retry after a failed load.
+    callback media-reload();
     callback media-upload();
     callback media-open(string);
     callback media-get(string);

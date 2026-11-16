@@ -212,7 +212,7 @@ component Win inherits Rectangle {
     // A press anywhere brings it to the front.
     TouchArea { pointer-event(ev) => { if ev.kind == PointerEventKind.down { WorkspaceUi.win-front(root.w.id); } } }
     Rectangle {
-        x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px;
+        x: 1px; y: 1px; width: parent.width - 1px - 1px; height: parent.height - 1px - 1px;
         border-radius: Theme.r-card; clip: true;
         VerticalLayout {
             // The header: the path, expand, Save, Close; dragged to move.
@@ -246,7 +246,7 @@ component Win inherits Rectangle {
                 if root.w.loading == "" && root.w.kind == "view" && root.w.has-img: Rectangle {
                     background: Theme.bg-primary;
                     Image {
-                        property <float> k: min(parent.width * 0.96 / max(1px, self.source.width * 1px), parent.height * 0.96 / max(1px, self.source.height * 1px), 1);
+                        property <float> k: min(parent.width * Theme.ws-view-fit / max(1px, self.source.width * 1px), parent.height * Theme.ws-view-fit / max(1px, self.source.height * 1px), 1);
                         source: root.w.img;
                         width: self.source.width * 1px * self.k; height: self.source.height * 1px * self.k;
                         image-fit: contain;

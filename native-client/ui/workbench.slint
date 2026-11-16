@@ -160,7 +160,13 @@ component Launcher inherits Rectangle {
     // Permissions, 3 Empty Shell, 4 Terminal, 5 its Skip Permissions. The
     // pressed button spins, the others dim; none take clicks.
     in property <int> busy;
+    // The launch codes (app.rs, park.launching) as named states.
+    property <bool> idle: root.busy == 0;
+    property <bool> busy-ui: root.busy == 1;
     property <bool> busy-skip: root.busy == 2;
+    property <bool> busy-shell: root.busy == 3;
+    property <bool> busy-term: root.busy == 4;
+    property <bool> busy-term-skip: root.busy == 5;
     VerticalLayout {
         alignment: center;
         spacing: Theme.sp-12;
@@ -173,12 +179,12 @@ component Launcher inherits Rectangle {
             Rectangle {
                 x: (parent.width - self.width) / 2;
                 width: Theme.pane-min / 2; height: Theme.control-lg;
-                border-radius: Theme.r-control; border-width: 1px; border-color: es.has-hover && root.busy == 0 ? Theme.accent : Theme.border;
-                background: es.has-hover && root.busy == 0 ? Theme.bg-hover : transparent;
-                opacity: root.busy != 0 && root.busy != 3 ? Theme.o-dim : 1;
-                Text { visible: root.busy != 3; text: "Empty Shell"; font-size: Theme.text-14; color: es.has-hover ? Theme.text-primary : Theme.text-secondary; }
-                if root.busy == 3: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
-                es := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "shell"); } }
+                border-radius: Theme.r-control; border-width: 1px; border-color: es.has-hover && root.idle ? Theme.accent : Theme.border;
+                background: es.has-hover && root.idle ? Theme.bg-hover : transparent;
+                opacity: !root.idle && !root.busy-shell ? Theme.o-dim : 1;
+                Text { visible: !root.busy-shell; text: "Empty Shell"; font-size: Theme.text-14; color: es.has-hover ? Theme.text-primary : Theme.text-secondary; }
+                if root.busy-shell: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                es := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "shell"); } }
             }
         }
         Rectangle {
@@ -202,51 +208,51 @@ component Launcher inherits Rectangle {
                             Image { width: parent.width; height: parent.height; source: @image-url("shapes/launcher-control.png", nine-slice(6)); image-fit: fill; }
                             Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-hover-edge; }
                             HorizontalLayout {
-                                visible: root.busy != 1;
+                                visible: !root.busy-ui;
                                 alignment: center;
                                 spacing: Theme.sp-10;
                                 Rectangle { width: Theme.sp-2; height: Theme.sp-16; y: (parent.height - self.height) / 2; background: Theme.white; }
                                 Text { text: "UI Mode"; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; vertical-alignment: center; }
                             }
-                            if root.busy == 1: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            if root.busy-ui: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
                             opacity: root.busy-skip ? Theme.o-dim : 1;
-                            TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { root.ui-mode(false); } }
+                            TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { root.ui-mode(false); } }
                         }
                         Rectangle {
                             width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: s1.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-tertiary;
-                            opacity: root.busy == 1 ? Theme.o-dim : 1;
-                            Icon { visible: root.busy != 2; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
-                            if root.busy == 2: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
-                            s1 := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { root.ui-mode(true); } }
+                            background: s1.has-hover && root.idle ? Theme.bg-hover : Theme.bg-tertiary;
+                            opacity: root.busy-ui ? Theme.o-dim : 1;
+                            Icon { visible: !root.busy-skip; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            if root.busy-skip: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            s1 := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { root.ui-mode(true); } }
                         }
                     }
                     HorizontalLayout {
                         spacing: Theme.sp-8;
                         Rectangle {
                             horizontal-stretch: 1; height: Theme.control-lg;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: tm.has-hover && root.busy == 0 ? Theme.accent : Theme.accent-line;
-                            background: tm.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-card;
-                            opacity: root.busy != 0 && root.busy != 4 ? Theme.o-dim : 1;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: tm.has-hover && root.idle ? Theme.accent : Theme.accent-line;
+                            background: tm.has-hover && root.idle ? Theme.bg-hover : Theme.bg-card;
+                            opacity: !root.idle && !root.busy-term ? Theme.o-dim : 1;
                             HorizontalLayout {
-                                visible: root.busy != 4;
+                                visible: !root.busy-term;
                                 alignment: center;
                                 spacing: Theme.sp-8;
                                 Icon { source: Icons.terminal; width: Theme.icon-md; height: Theme.icon-md; y: (parent.height - self.height) / 2; tint: Theme.text-primary; }
                                 Text { text: "Terminal"; font-size: Theme.text-14; color: Theme.text-primary; vertical-alignment: center; }
                             }
-                            if root.busy == 4: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
-                            tm := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "normal"); } }
+                            if root.busy-term: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            tm := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "normal"); } }
                         }
                         Rectangle {
                             width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: s2.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-tertiary;
-                            opacity: root.busy != 0 && root.busy != 5 ? Theme.o-dim : 1;
-                            Icon { visible: root.busy != 5; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
-                            if root.busy == 5: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
-                            s2 := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "skip"); } }
+                            background: s2.has-hover && root.idle ? Theme.bg-hover : Theme.bg-tertiary;
+                            opacity: !root.idle && !root.busy-term-skip ? Theme.o-dim : 1;
+                            Icon { visible: !root.busy-term-skip; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            if root.busy-term-skip: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            s2 := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "skip"); } }
                             Tip { on: s2.has-hover; text: "Terminal — Skip Permissions"; }
                         }
                     }

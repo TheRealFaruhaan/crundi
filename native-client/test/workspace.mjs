@@ -26,6 +26,8 @@ const P = T.projDir;
 const sh = (c) => execSync(c, { cwd: P, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
 
 // ─── A project with history and changes ───
+// (From scratch: a folder left by an earlier run keeps its history.)
+for (const f of ['.git', 'src', 'docs', 'README.md']) rmSync(join(P, f), { recursive: true, force: true });
 mkdirSync(join(P, 'src'), { recursive: true });
 mkdirSync(join(P, 'docs'), { recursive: true });
 writeFileSync(join(P, 'src/app.js'), 'function hello(name) {\n  // greet\n  const n = 42;\n  return "Hello, " + name;\n}\nmodule.exports = { hello };\n');
@@ -93,6 +95,7 @@ await T.ui('tab', 'files');
 p = await T.until('Files lists the project', (p) => W(p).files.state === 'ok' && W(p).files.rows.some((r) => r.name === 'src' && r.isDir) && W(p).files.rows.some((r) => r.name === 'README.md' && r.mark === 'M↓'));
 t.check('the path bar ends at the project', W(p).files.crumbs.at(-1) === 'proj', W(p).files.crumbs);
 t.check('a ".." row goes up', W(p).files.rows[0].name === '..');
+await T.until('the Git step\'s toast has cleared', (p) => !p.toast);
 await T.snap('files');
 await T.act('files-nav', join(P, 'src'));
 await T.until('a folder opens', (p) => W(p).files.path === join(P, 'src') && W(p).files.rows.some((r) => r.name === 'app.js' && r.mark === 'JS'));

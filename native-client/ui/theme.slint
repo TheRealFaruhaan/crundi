@@ -370,6 +370,14 @@ export global Theme {
     out property <color> ws-term-cyan: #06b6d4;
     out property <color> ws-term-cyan-hi: #22d3ee;
     out property <color> ws-term-sel: #6366f14d;
+    // The terminal's cell width: a probe of this many "M"s, measured.
+    out property <string> ws-term-probe: "MMMMMMMMMM";
+    out property <int> ws-term-probe-n: 10;
+    // A picture in Media's lightbox (.media-lightbox img: 90vw x 82vh) and
+    // in the viewer window (96% of the window's body).
+    out property <float> ws-lb-fit-w: 0.9;
+    out property <float> ws-lb-fit-h: 0.82;
+    out property <float> ws-view-fit: 0.96;
     // The Files list's per-type marks (fileIcon).
     out property <color> ws-ft-js: #f7df1e;
     out property <color> ws-ft-ts: #3178c6;

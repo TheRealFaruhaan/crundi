@@ -5,6 +5,7 @@
 import { Theme, Icons, Icon, ScrollThumb, Tip, SoftShadow } from "parts.slint";
 import { WorkspaceUi, WorkspaceMediaCard } from "api.slint";
 import { WsTone } from "files.slint";
+import { ErrorState } from "../kit.slint";
 
 /// A filter chip (.media-chip): a pill; on: accent fill.
 component Chip inherits Rectangle {
@@ -165,7 +166,12 @@ export component MediaView inherits Rectangle {
             property <int> cols: max(1, floor((self.width - 2 * self.pad + self.gap) / (Theme.ws-media-card + self.gap)));
             property <length> cw: (self.width - 2 * self.pad - (self.cols - 1) * self.gap) / self.cols;
             property <length> ch: Theme.ws-media-thumb + Theme.sp-48 + Theme.sp-32 + Theme.sp-6;
-            if WorkspaceUi.media-state != "ok": Text {
+            if WorkspaceUi.media-state == "error": ErrorState {
+                y: Theme.sp-16; width: parent.width;
+                text: WorkspaceUi.media-empty;
+                retried => { WorkspaceUi.media-reload(); }
+            }
+            if WorkspaceUi.media-state != "ok" && WorkspaceUi.media-state != "error": Text {
                 x: Theme.sp-12; y: Theme.sp-40; width: parent.width - Theme.sp-24;
                 horizontal-alignment: center; wrap: word-wrap;
                 text: WorkspaceUi.media-state == "loading" ? "Loading…" : WorkspaceUi.media-empty;
@@ -209,7 +215,7 @@ export component MediaLightbox inherits Rectangle {
     }
     // The stage.
     if WorkspaceUi.lb-kind == "image": Image {
-        property <float> k: min(root.width * 0.9 / max(1px, self.source.width * 1px), root.height * 0.82 / max(1px, self.source.height * 1px), 1);
+        property <float> k: min(root.width * Theme.ws-lb-fit-w / max(1px, self.source.width * 1px), root.height * Theme.ws-lb-fit-h / max(1px, self.source.height * 1px), 1);
         source: WorkspaceUi.lb-img;
         width: self.source.width * 1px * self.k; height: self.source.height * 1px * self.k;
         x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
