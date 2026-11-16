@@ -172,6 +172,12 @@ impl T {
     /// The diff window (feOpenDiff): its size, and the side-by-side's colours.
     pub const WS_DIFF_W: Pixels = px(1100.);
     pub const WS_DIFF_H: Pixels = px(620.);
+    /// Media's cards (.media-card), their thumbnail, the search box.
+    pub const WS_MEDIA_CARD: Pixels = px(200.);
+    pub const WS_MEDIA_THUMB: Pixels = px(120.);
+    pub const WS_MEDIA_SEARCH: Pixels = px(220.);
+    /// A file row that is cut (waiting to be pasted).
+    pub const WS_O_CUT: f32 = 0.5;
     /// A diff row's line-number gutter.
     pub const WS_DIFF_LN: Pixels = px(44.);
     pub fn ws_diff_del() -> Hsla { rgb(0x2d1215).into() }
