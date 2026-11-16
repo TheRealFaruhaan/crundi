@@ -126,13 +126,46 @@ pub fn disabled(b: Button, off: bool) -> Button { b.disabled(off) }
 // ─── Choices ───
 
 /// An on/off switch (settings).
-pub fn switch(id: impl Into<ElementId>, on: bool, toggled: impl Fn(&bool, &mut Window, &mut App) + 'static) -> gpui_component::switch::Switch {
-    gpui_component::switch::Switch::new(id).checked(on).small().on_click(toggled)
+pub fn switch(id: impl Into<ElementId>, on: bool, toggled: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Switch {
+    Switch { id: id.into(), on, disabled: false, toggled: std::rc::Rc::new(toggled) }
+}
+
+/// The switch (every dimension a token: F69); off, the track shows on a card (F67).
+#[derive(IntoElement)]
+pub struct Switch { id: ElementId, on: bool, disabled: bool, toggled: std::rc::Rc<dyn Fn(&bool, &mut Window, &mut App)> }
+impl gpui_component::Disableable for Switch { fn disabled(mut self, d: bool) -> Self { self.disabled = d; self } }
+impl RenderOnce for Switch {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let (on, off, f) = (self.on, self.disabled, self.toggled);
+        div().id(self.id).flex_none().flex().items_center().w(T::TOGGLE_W).h(T::TOGGLE_H).p(T::TOGGLE_INSET).rounded(T::R_PILL)
+            .bg(if on { T::accent() } else { T::bg_hover() }).border_1().border_color(if on { T::accent() } else { T::text_muted() })
+            .when(on, |d| d.justify_end())
+            .when(off, |d| d.opacity(0.5))
+            .when(!off, |d| d.cursor_pointer().on_click(move |_, window, cx| f(&!on, window, cx)))
+            .child(div().flex_none().size(T::TOGGLE_THUMB).rounded(T::R_PILL).bg(if on { T::white() } else { T::text_secondary() }))
+    }
 }
 
 /// A ticked row: the box and its label.
-pub fn check(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool, toggled: impl Fn(&bool, &mut Window, &mut App) + 'static) -> gpui_component::checkbox::Checkbox {
-    gpui_component::checkbox::Checkbox::new(id).label(label.into()).checked(on).small().on_click(toggled)
+pub fn check(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool, toggled: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Check {
+    Check { id: id.into(), label: label.into(), on, disabled: false, toggled: std::rc::Rc::new(toggled) }
+}
+
+/// The checkbox (every dimension a token: F69).
+#[derive(IntoElement)]
+pub struct Check { id: ElementId, label: SharedString, on: bool, disabled: bool, toggled: std::rc::Rc<dyn Fn(&bool, &mut Window, &mut App)> }
+impl gpui_component::Disableable for Check { fn disabled(mut self, d: bool) -> Self { self.disabled = d; self } }
+impl RenderOnce for Check {
+    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        let (on, off, f, label) = (self.on, self.disabled, self.toggled, self.label);
+        div().id(self.id).flex().items_center().gap(T::CHECK_GAP)
+            .when(off, |d| d.opacity(0.5))
+            .when(!off, |d| d.cursor_pointer().on_click(move |_, window, cx| f(&!on, window, cx)))
+            .child(div().flex_none().flex().items_center().justify_center().size(T::CHECK_BOX).rounded(T::R_CHIP).border_1()
+                .border_color(if on { T::accent() } else { T::text_muted() }).bg(if on { T::accent() } else { T::bg() })
+                .when(on, |d| d.text_color(T::white()).child(crate::icon(IconName::Check, T::CHECK_BOX - T::SP_2 * 2.))))
+            .when(!label.is_empty(), |d| d.child(div().min_w_0().text_size(T::CHECK_TEXT).text_color(T::text()).child(label)))
+    }
 }
 
 /// Two or more choices side by side, one on (the Enter-sends switch, .seg-pref).
@@ -414,7 +447,7 @@ pub fn error_state(id: impl Into<ElementId>, text: impl Into<SharedString>, retr
 /// Loading: the spinner and a muted line.
 pub fn loading(text: impl Into<SharedString>) -> Div {
     div().flex().items_center().justify_center().gap(T::SP_8).p(T::SP_24)
-        .child(gpui_component::spinner::Spinner::new().small())
+        .child(gpui_component::spinner::Spinner::new().with_size(gpui_component::Size::Size(T::SPINNER)))
         .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child(text.into()))
 }
 

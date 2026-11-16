@@ -2705,6 +2705,9 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     check('the card: "Closed · just now", what Resume does, Peek (it has a conversation), not heavy', c?.pk.why === 'Closed · just now' && c.pk.what === 'Resume picks up this conversation.' && c.pk.session && !c.pk.heavy, c?.pk);
     check('its header: exited, the title, no chat tools', c?.state === 'exited' && !c.narrow && !c.menu, c && { state: c.state, title: c.title });
     p = await until('its stored conversation behind the card', (q) => pane(q, lightChat)?.entries > 0, 8000);
+    // (A clean picture: the last step's toast gone first; F73.)
+    for (let i = 0; i < 20 && (await props()).toast; i++) await sleep(250);
+    await sleep(2500);
     await snap('2.23-parked');
     // Peek, then Esc (native) and Parked view back.
     await ui('peek', 'live:' + lightChat, 'on');
@@ -2730,6 +2733,9 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     pk = await http('POST', `/api/panes/${heavyChat}/park`, {}, token);
     p = await until('a heavy parked chat', (q) => pane(q, heavyChat)?.pk?.heavy);
     check('…its warning\'s tokens: 138.2k tokens', p && pane(p, heavyChat).pk.tokens === '138.2k tokens' && pane(p, heavyChat).pk.session, p && pane(p, heavyChat).pk);
+    // (A clean picture: the last step's toast gone first; F73.)
+    for (let i = 0; i < 20 && (await props()).toast; i++) await sleep(250);
+    await sleep(2500);
     await snap('2.23-heavy');
     // Short panes: the card gets tighter (no What, the warning a pill), then
     // one row (no Why, a smaller Resume, the tokens only).
