@@ -40,7 +40,7 @@ impl Workbench {
             let t = div().id(("title", id)).flex_none().max_w(px(i.cap.min(room))).min_w_0().h(T::SP_16).px(T::SP_6).rounded(T::R_CONTROL)
                 .flex().items_center().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text())
                 .child(div().truncate().child(i.title.clone()));
-            row = row.child(if chat {
+            row = row.child(if chat && !i.parked {
                 t.cursor_text().hover(|s| s.bg(T::bg_tertiary()))
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| if e.click_count() == 1 && this.drag.is_none() { this.start_rename(id, window, cx); }))
             } else { t });
@@ -66,10 +66,13 @@ impl Workbench {
     /// The header's tools, right to left from the ×.
     fn tools(&self, i: &Info, full: bool, cx: &mut Context<Self>) -> Div {
         let id = i.l.id;
-        let chat = i.kind == "chat";
+        // A parked chat keeps only pin and × here (specs/parked-panes.md).
+        let chat = i.kind == "chat" && !i.parked;
         let h = T::SP_20;
         let mut t = div().flex().flex_none().items_center().gap(T::SP_4)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| { this.focus_pane(id, cx); cx.stop_propagation(); }));
+        if i.factory && !i.narrow { t = t.child(w::tag("FACTORY", "accent")); }
+        if i.parked { t = t.child(w::tag("CHAT", "accent")); }
         if !i.narrow {
             if chat && i.secrets {
                 let n = i.secrets_n;

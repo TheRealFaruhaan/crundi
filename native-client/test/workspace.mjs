@@ -96,6 +96,8 @@ p = await T.until('Files lists the project', (p) => W(p).files.state === 'ok' &&
 t.check('the path bar ends at the project', W(p).files.crumbs.at(-1) === 'proj', W(p).files.crumbs);
 t.check('a ".." row goes up', W(p).files.rows[0].name === '..');
 await T.until('the Git step\'s toast has cleared', (p) => !p.toast);
+// (GPUI: the toast on screen fades a few seconds after its record clears; let it go before the picture.)
+await t.sleep(6000);
 await T.snap('files');
 await T.act('files-nav', join(P, 'src'));
 await T.until('a folder opens', (p) => W(p).files.path === join(P, 'src') && W(p).files.rows.some((r) => r.name === 'app.js' && r.mark === 'JS'));

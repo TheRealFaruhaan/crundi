@@ -251,7 +251,7 @@ impl Render for Lightbox {
             .child(w::modal_head("lb-head", s(&it, "originalName"), false, |_, window, cx| w::close_dialog(window, cx)))
             .child(div().flex_1().min_h_0().flex().items_center().justify_center().bg(T::bg()).p(T::SP_12)
                 .child(match thumb { Some(img) => gpui::img(img).max_w_full().max_h_full().object_fit(ObjectFit::Contain).into_any_element(), None => w::empty(if note.is_empty() { "Loading…" } else { note }).into_any_element() }))
-            .child(w::toolbar().child(div().flex_1()).child(w::button("lb-download", "Download").icon(IconName::Download).on_click(move |_, _, cx| { let id = id.clone(); mv.update(cx, |m, cx| m.get(&id, cx)); })))
+            .child(w::toolbar().px(T::SP_16).py(T::SP_10).child(div().flex_1()).child(w::button("lb-download", "Download").icon(IconName::Download).on_click(move |_, _, cx| { let id = id.clone(); mv.update(cx, |m, cx| m.get(&id, cx)); })))
             .into_any_element()
     }
 }

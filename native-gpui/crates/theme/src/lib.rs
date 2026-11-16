@@ -169,6 +169,9 @@ impl T {
 
     // ─── The areas' named sizes (AREAS.md): each only in its own section ───
     // ── workspace ──
+    /// An empty pane's chip: its icon and padding, and a character of its label.
+    pub const WS_CHIP_BASE: Pixels = px(42.);
+    pub const WS_CHIP_CHAR: f32 = 6.6;
     /// The diff window (feOpenDiff): its size, and the side-by-side's colours.
     pub const WS_DIFF_W: Pixels = px(1100.);
     pub const WS_DIFF_H: Pixels = px(620.);
@@ -187,6 +190,9 @@ impl T {
     pub fn ws_diff_del_text() -> Hsla { rgb(0xf87171).into() }
     pub fn ws_diff_add_text() -> Hsla { rgb(0x34d399).into() }
     pub fn ws_diff_chunk() -> Hsla { rgb(0x1e293b).into() }
+    /// A replaced line's changed words (the web's wordDiffHtml backgrounds).
+    pub fn ws_diff_del_word() -> Hsla { rgb(0x5c2020).into() }
+    pub fn ws_diff_add_word() -> Hsla { rgb(0x1a4a2a).into() }
     // ── end workspace ──
     // ── planning ──
     /// secrets (2.12): the dialog's pick list stops here and scrolls.
