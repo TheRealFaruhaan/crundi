@@ -241,7 +241,7 @@ fn chat_under_pointer(cx: &mut App) -> Option<String> {
     let m = media(cx);
     if !(m.file_hover && m.inside) { return None; }
     let (p, bounds) = (m.pointer, m.bounds.clone());
-    let panes = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default();
+    let panes = crate::wb_panes(cx);
     bounds.into_iter().find(|(chat, b)| {
         let h = panes.iter().find(|q| q.get("key").and_then(|k| k.as_str()) == Some(&format!("live:{chat}"))).and_then(|q| q.get("h")).and_then(|h| h.as_f64()).unwrap_or(0.0) as f32;
         let (x0, x1, y1) = (f32::from(b.origin.x), f32::from(b.origin.x + b.size.width), f32::from(b.origin.y + b.size.height));
