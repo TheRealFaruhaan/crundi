@@ -8,6 +8,13 @@
 pub mod board;
 pub mod kanban;
 pub mod media_bridge;
+pub mod mindmap;
+pub mod notes;
+pub mod schedule;
+pub mod factories;
+
+/// Every screen but Kanban, each in its own module with the registry's functions.
+macro_rules! each { ($f:ident ( $($a:expr),* )) => { mindmap::$f($($a),*); notes::$f($($a),*); schedule::$f($($a),*); factories::$f($($a),*); } }
 
 use crate::{areas::AreaEvent, kit, MainWindow, PlanningAsk};
 use serde_json::{json, Value};
@@ -16,23 +23,27 @@ use std::cell::RefCell;
 
 pub fn init(w: &MainWindow) {
     kanban::init(w);
+    each!(init(w));
     w.global::<PlanningAsk>().on_answer(ask_answer);
 }
 
-pub fn signed_in() { kanban::project(&kit::project()); }
+pub fn signed_in() { kanban::project(&kit::project()); each!(signed_in()); }
 
 pub fn signed_out() {
     kanban::signed_out();
+    each!(signed_out());
     if let Some(w) = kit::ui() { if w.global::<PlanningAsk>().get_open() { ask_answer(false); } }
 }
 
-pub fn project(alias: &str) { kanban::project(alias); }
+pub fn project(alias: &str) { kanban::project(alias); each!(project(alias)); }
 
 pub fn tab_shown(tab: &str) {
     if tab == "kanban" { kanban::load(); }
+    each!(tab_shown(tab));
 }
 
 pub fn event(e: &AreaEvent) {
+    each!(event(e));
     match e {
         AreaEvent::Server("kanban", v) => {
             let p = kit::project().to_lowercase();
@@ -144,11 +155,11 @@ pub fn test_ui(name: &str, args: &[String]) -> Option<Value> {
             ask_answer(a(0) == "true");
             Some(json!({ "ok": true }))
         }
-        _ => kanban::test_ui(name, args),
+        _ => kanban::test_ui(name, args).or_else(|| mindmap::test_ui(name, args)).or_else(|| notes::test_ui(name, args)).or_else(|| schedule::test_ui(name, args)).or_else(|| factories::test_ui(name, args)),
     }
 }
 
 /// What the test driver sees of the area ({"cmd":"area","area":"planning"}).
 pub fn props() -> Value {
-    json!({ "kanban": kanban::props(), "ask": ask_of() })
+    json!({ "kanban": kanban::props(), "ask": ask_of(), "mindmap": mindmap::props(), "notes": notes::props(), "schedule": schedule::props(), "factories": factories::props() })
 }

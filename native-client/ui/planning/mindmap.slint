@@ -1,0 +1,547 @@
+// the Mind map (4.3): the mindmap tab and panel: the web's #mindmap-panel
+// (renderMindmap, renderMindmapProjectBar, layoutMindmap, setupMindmapHandlers,
+// src/webapp-html.js). The toolbar (+ Add idea, Media, Filter ideas…,
+// Shortcuts), the project bar, and the canvas: the ideas laid out as a tree
+// (columns by depth, by src/planning/mindmap_tree.rs), the links, the "add
+// idea" boxes, the box an idea is typed in, the ring the keyboard moves, a
+// drag's clone. Zoom scales every size here by PlanningMindmap.zoom (the
+// software renderer has no transforms; the web scales one layer).
+// Driven by src/planning/mindmap.rs; the dialogs are mindmap-dialogs.slint.
+
+import { Theme, Icons, Icon, LoadingState, DashedBox, SoftShadow, ScrollThumb } from "../kit.slint";
+import { PlanningMindmap, PlanningMmNode, PlanningMmChip } from "mindmap-api.slint";
+import { KBtn } from "parts.slint";
+import { MmIcons, MmDetailDialog, MmLinkDialog, MmHelpDialog } from "mindmap-dialogs.slint";
+
+/// A meta chip (.mm-chip): link (green), missing (muted), scope (accent),
+/// inherited (muted, dashed), note (secondary).
+component MmChip inherits Rectangle {
+    in property <string> kind;
+    in property <string> text;
+    in property <int> todo;
+    in property <float> zf;
+    height: cl.preferred-height;
+    border-radius: Theme.r-field * root.zf;
+    background: root.kind == "link" ? Theme.green-dim : root.kind == "scope" ? Theme.accent-dim : Theme.bg-tertiary;
+    property <color> fg: root.kind == "link" ? Theme.green : root.kind == "scope" ? Theme.accent-hover : root.kind == "note" ? Theme.text-secondary : Theme.text-muted;
+    if root.kind == "inherited": DashedBox { width: parent.width; height: parent.height; corner: Theme.r-field * root.zf; }
+    cl := HorizontalLayout {
+        padding-left: Theme.sp-6 * root.zf; padding-right: Theme.sp-6 * root.zf;
+        padding-top: 1px * root.zf; padding-bottom: 1px * root.zf;
+        spacing: Theme.sp-2 * root.zf;
+        // The web's emoji (🔗 📁 📝 ☐ ☑) are flat icons here.
+        if root.kind == "link" || root.kind == "missing": VerticalLayout { alignment: center; Icon { source: MmIcons.link; width: Theme.icon-sm * root.zf; height: Theme.icon-sm * root.zf; tint: root.fg; } }
+        if root.todo > 0: VerticalLayout { alignment: center; Icon { source: root.todo == 2 ? Icons.check : Icons.square; width: Theme.icon-sm * root.zf; height: Theme.icon-sm * root.zf; tint: root.fg; } }
+        if root.kind == "scope": VerticalLayout { alignment: center; Icon { source: Icons.folder; width: Theme.icon-sm * root.zf; height: Theme.icon-sm * root.zf; tint: root.fg; } }
+        if root.kind == "note": VerticalLayout { alignment: center; Icon { source: Icons.note; width: Theme.icon-sm * root.zf; height: Theme.icon-sm * root.zf; tint: root.fg; } }
+        Text { text: root.text; font-size: Theme.text-11 * root.zf; color: root.fg; overflow: elide; vertical-alignment: center; }
+    }
+}
+
+/// An idea (.mm-node): its words (two lines; `open`: all of it, up to about
+/// seven, then it scrolls), its chips, the − / + that folds what is under
+/// it. `editing`: a text box in place of its words. Placed by itself on the
+/// canvas (its middle on n.y, kept on the canvas near the top).
+component MmCard inherits Rectangle {
+    in property <PlanningMmNode> n;
+    in property <bool> open;
+    in property <bool> editing;
+    property <float> zf: PlanningMindmap.zoom;
+    x: root.n.x * root.zf;
+    y: max(Theme.sp-4 * root.zf, root.n.y * root.zf - self.height / 2);
+    width: Theme.mindmap-node * root.zf;
+    height: col.preferred-height;
+    property <length> inner-w: self.width - 2 * Theme.sp-10 * root.zf - Theme.sp-2;
+    // Two lines and seven lines of an idea's words, and all of them.
+    two := Text { visible: false; text: "M\nM"; font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold; }
+    seven := Text { visible: false; text: "M\nM\nM\nM\nM\nM\nM"; font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold; }
+    full := Text { visible: false; width: root.inner-w; text: root.n.text; wrap: word-wrap; font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold; }
+    out property <bool> clamped: full.preferred-height > two.preferred-height + 1px;
+    property <bool> hot: ta.has-hover;
+    property <bool> on: root.open || root.editing;
+    // Its height as drawn, for the layout (not while opened up: it lies over
+    // its neighbours then, as the web's).
+    property <length> natural: self.height;
+    init => { if !root.on { PlanningMindmap.measured(root.n.id, self.natural / root.zf); } }
+    changed natural => { if !root.on { PlanningMindmap.measured(root.n.id, self.natural / root.zf); } }
+    opacity: root.n.lifted || root.n.dim ? Theme.o-faint : 1;
+    if root.on || root.n.flash || root.n.target: SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-bubble * root.zf; shadow: root.n.flash || root.n.target ? Theme.glow-accent : Theme.shadow-menu; }
+    body := Rectangle {
+        border-radius: Theme.r-bubble * root.zf;
+        border-width: root.n.hit || root.n.target || root.n.flash || root.on ? Theme.sp-2 : 1px;
+        background: root.n.root && !root.on ? Theme.accent-dim : Theme.bg-card;
+        border-color: root.n.hit || root.n.target || root.n.flash || root.on ? Theme.accent
+            : root.n.linked ? Theme.green
+            : root.n.root || root.n.scoped || root.hot ? Theme.accent
+            : Theme.border;
+    }
+    // A root opened up keeps its tint over the card it covers.
+    if root.n.root && root.on: Rectangle { border-radius: Theme.r-bubble * root.zf; background: Theme.accent-dim; }
+    // Being saved (.mm-pending): a dashed edge.
+    if root.n.pending: DashedBox { width: parent.width; height: parent.height; corner: Theme.r-bubble * root.zf; line: Theme.text-muted; }
+    ta := TouchArea {
+        mouse-cursor: root.editing ? MouseCursor.text : PlanningMindmap.drag-id != "" ? MouseCursor.grabbing : MouseCursor.pointer;
+        property <bool> moving;
+        changed has-hover => {
+            if root.open && !self.has-hover { PlanningMindmap.hover(root.n.id, false); }
+            if !root.open && self.has-hover && root.clamped { PlanningMindmap.hover(root.n.id, true); }
+        }
+        clicked => { if !self.moving && !root.editing { PlanningMindmap.node-click(root.n.id); } }
+        double-clicked => { if !root.editing { PlanningMindmap.node-dbl(root.n.id); } }
+        scroll-event(ev) => {
+            if ev.modifiers.control { PlanningMindmap.wheel-zoom(ev.delta-y, root.x + self.mouse-x + PlanningMindmap.scroll-x, root.y + self.mouse-y + PlanningMindmap.scroll-y); return accept; }
+            return reject;
+        }
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left { self.moving = false; }
+            if ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left {
+                if self.moving { PlanningMindmap.drag-end(true); }
+            }
+        }
+        moved => {
+            if !self.pressed || root.editing || root.n.pending { return; }
+            if !self.moving && (abs(self.mouse-x - self.pressed-x) > Theme.sp-6 || abs(self.mouse-y - self.pressed-y) > Theme.sp-6) {
+                self.moving = true;
+                PlanningMindmap.grab-x = self.pressed-x / root.zf;
+                PlanningMindmap.grab-y = self.pressed-y / root.zf;
+                PlanningMindmap.drag-text = root.n.text;
+                PlanningMindmap.drag-start(root.n.id);
+            }
+            if self.moving { PlanningMindmap.drag-move((root.x + self.mouse-x) / root.zf, (root.y + self.mouse-y) / root.zf); }
+        }
+    }
+    col := VerticalLayout {
+        padding-left: Theme.sp-10 * root.zf + 1px; padding-right: Theme.sp-10 * root.zf + 1px;
+        padding-top: Theme.sp-8 * root.zf; padding-bottom: Theme.sp-8 * root.zf;
+        spacing: Theme.sp-6 * root.zf;
+        if !root.on: Text {
+            text: root.n.text;
+            wrap: word-wrap;
+            overflow: elide;
+            max-height: two.preferred-height;
+            font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold;
+            color: Theme.text-primary;
+        }
+        // Opened up under the pointer: the whole idea, about seven lines, then it scrolls.
+        if root.open && !root.editing: Flickable {
+            height: min(full.preferred-height, seven.preferred-height);
+            content-height: ot.preferred-height;
+            ot := Text {
+                width: root.inner-w;
+                text: root.n.text;
+                wrap: word-wrap;
+                font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold;
+                color: Theme.text-primary;
+            }
+        }
+        // Edited in place (.mm-edit-input).
+        if root.editing: efl := Flickable {
+            height: min(max(two.preferred-height / 2, ei.preferred-height), seven.preferred-height);
+            content-height: ei.preferred-height;
+            ei := TextInput {
+                width: root.inner-w;
+                text <=> PlanningMindmap.edit-text;
+                single-line: false;
+                wrap: word-wrap;
+                font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold;
+                color: Theme.text-primary;
+                selection-background-color: Theme.selection;
+                init => { self.focus(); self.set-selection-offsets(self.text.character-count, self.text.character-count); }
+                key-pressed(ev) => {
+                    if PlanningMindmap.edit-key(ev.text, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt || ev.modifiers.meta) { return accept; }
+                    return reject;
+                }
+                changed has-focus => { if !self.has-focus { PlanningMindmap.edit-blur(); } }
+            }
+            property <int> fg: PlanningMindmap.focus-gen;
+            changed fg => { ei.focus(); ei.set-selection-offsets(ei.text.character-count, ei.text.character-count); }
+        }
+        if root.n.chip != "" || root.n.notes > 0: HorizontalLayout {
+            spacing: Theme.sp-4 * root.zf;
+            alignment: start;
+            if root.n.chip != "": MmChip { kind: root.n.chip; text: root.n.chip-text; todo: root.n.todo; zf: root.zf; }
+            if root.n.notes > 0: MmChip { kind: "note"; text: root.n.notes + (root.n.notes == 1 ? " note" : " notes"); zf: root.zf; }
+        }
+    }
+    // Folds or unfolds what is under it (.mm-collapse), on its right edge.
+    if root.n.kids: Rectangle {
+        x: parent.width - Theme.sp-10 * root.zf;
+        y: (parent.height - self.height) / 2;
+        width: Theme.sp-16 * root.zf + Theme.sp-2 * root.zf; height: self.width;
+        border-radius: self.width / 2;
+        border-width: 1px;
+        border-color: cta.has-hover ? Theme.accent : Theme.border;
+        background: Theme.bg-tertiary;
+        Text { text: root.n.collapsed ? "+" : "−"; font-size: Theme.text-11 * root.zf; color: Theme.text-secondary; }
+        cta := TouchArea { mouse-cursor: pointer; clicked => { PlanningMindmap.act("toggle", root.n.id); } }
+    }
+}
+
+/// The dashed "add idea" box under an idea (.mm-ghost).
+component MmGhost inherits Rectangle {
+    in property <PlanningMmNode> n;
+    property <float> zf: PlanningMindmap.zoom;
+    x: root.n.x * root.zf;
+    y: root.n.y * root.zf - self.height / 2;
+    width: Theme.mindmap-node * root.zf;
+    height: max(Theme.sp-40 * root.zf, gl.preferred-height);
+    property <length> natural: self.height;
+    init => { PlanningMindmap.measured(root.n.id, self.natural / root.zf); }
+    changed natural => { PlanningMindmap.measured(root.n.id, self.natural / root.zf); }
+    property <bool> hot: ta.has-hover;
+    // .mm-ghost: half seen until hovered; the drag over it outlines its parent.
+    opacity: root.hot ? 1 : Theme.o-dim;
+    border-radius: Theme.r-bubble * root.zf;
+    if !root.hot: DashedBox { width: parent.width; height: parent.height; corner: Theme.r-bubble * root.zf; }
+    if root.hot: Rectangle { border-radius: Theme.r-bubble * root.zf; border-width: 1px; border-color: Theme.accent; }
+    gl := HorizontalLayout {
+        alignment: center;
+        spacing: Theme.sp-6 * root.zf;
+        padding-top: Theme.sp-8 * root.zf; padding-bottom: Theme.sp-8 * root.zf;
+        Text { text: "+"; vertical-alignment: center; font-size: Theme.text-16 * root.zf; font-weight: Theme.w-bold; color: root.hot ? Theme.accent-hover : Theme.text-muted; }
+        Text { text: "add idea"; vertical-alignment: center; font-size: Theme.text-12 * root.zf; font-weight: Theme.w-medium; color: root.hot ? Theme.accent-hover : Theme.text-muted; }
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { PlanningMindmap.act("ghost", root.n.parent); }
+        scroll-event(ev) => {
+            if ev.modifiers.control { PlanningMindmap.wheel-zoom(ev.delta-y, root.x + self.mouse-x + PlanningMindmap.scroll-x, root.y + self.mouse-y + PlanningMindmap.scroll-y); return accept; }
+            return reject;
+        }
+    }
+}
+
+/// Where a dragged idea would land (.mm-placeholder): a dashed accent box
+/// that holds the place open.
+component MmDrop inherits Rectangle {
+    in property <PlanningMmNode> n;
+    property <float> zf: PlanningMindmap.zoom;
+    x: root.n.x * root.zf;
+    y: root.n.y * root.zf - self.height / 2;
+    width: Theme.mindmap-node * root.zf;
+    height: root.n.h * root.zf;
+    border-radius: Theme.r-bubble * root.zf;
+    background: Theme.accent-dim;
+    DashedBox { width: parent.width; height: parent.height; corner: Theme.r-bubble * root.zf; line: Theme.accent; thick: Theme.sp-2; }
+}
+
+/// The idea being typed (.mm-draft): its box, where it will sit, and the
+/// hint under it. Enter saves, Ctrl+Enter saves and opens the next, Tab
+/// nests, Shift+Tab steps out, Escape closes.
+component MmDraft inherits Rectangle {
+    property <float> zf: PlanningMindmap.zoom;
+    x: PlanningMindmap.draft-x * root.zf;
+    y: max(Theme.sp-4 * root.zf, PlanningMindmap.draft-y * root.zf - self.height / 2);
+    width: Theme.mindmap-node * root.zf;
+    height: dl.preferred-height;
+    property <length> natural: self.height;
+    init => { PlanningMindmap.measured("__draft__", self.natural / root.zf); }
+    changed natural => { PlanningMindmap.measured("__draft__", self.natural / root.zf); }
+    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-bubble * root.zf; shadow: Theme.glow-accent; }
+    Rectangle { border-radius: Theme.r-bubble * root.zf; border-width: Theme.sp-2; border-color: Theme.accent; background: Theme.bg-card; }
+    // Its own presses (the canvas's would close it).
+    TouchArea { mouse-cursor: MouseCursor.text; clicked => { di.focus(); } }
+    seven := Text { visible: false; text: "M\nM\nM\nM\nM\nM\nM"; font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold; }
+    dl := VerticalLayout {
+        padding-left: Theme.sp-8 * root.zf + 1px; padding-right: Theme.sp-8 * root.zf + 1px;
+        padding-top: Theme.sp-6 * root.zf + 1px; padding-bottom: Theme.sp-4 * root.zf + 1px;
+        spacing: Theme.sp-4 * root.zf;
+        Rectangle {
+            height: min(di.preferred-height, seven.preferred-height);
+            fl := Flickable {
+                content-height: di.preferred-height;
+                di := TextInput {
+                    width: fl.width;
+                    text <=> PlanningMindmap.draft-text;
+                    single-line: false;
+                    wrap: word-wrap;
+                    font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold;
+                    color: Theme.text-primary;
+                    selection-background-color: Theme.selection;
+                    init => { self.focus(); }
+                    key-pressed(ev) => {
+                        if PlanningMindmap.draft-key(ev.text, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt || ev.modifiers.meta) { return accept; }
+                        return reject;
+                    }
+                    changed has-focus => { if !self.has-focus { PlanningMindmap.draft-blur(); } }
+                }
+            }
+            if PlanningMindmap.draft-text == "": Text {
+                x: 0; y: 0;
+                text: "New idea";
+                font-size: Theme.text-13 * root.zf; font-weight: Theme.w-medium;
+                color: Theme.text-muted;
+            }
+        }
+        // .mm-draft-hint: "Enter save · Ctrl+Enter next · Tab nested".
+        HorizontalLayout {
+            spacing: Theme.sp-2 * root.zf;
+            alignment: start;
+            Text { text: "Enter"; font-size: Theme.text-10 * root.zf; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+            Text { text: "save ·"; font-size: Theme.text-10 * root.zf; color: Theme.text-muted; }
+            Text { text: "Ctrl+Enter"; font-size: Theme.text-10 * root.zf; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+            Text { text: "next ·"; font-size: Theme.text-10 * root.zf; color: Theme.text-muted; }
+            Text { text: "Tab"; font-size: Theme.text-10 * root.zf; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+            Text { text: "nested"; font-size: Theme.text-10 * root.zf; color: Theme.text-muted; overflow: elide; }
+        }
+    }
+    property <int> fg: PlanningMindmap.focus-gen;
+    changed fg => { di.focus(); }
+}
+
+/// The ring where the keyboard is (.mm-cursor); amber with what a second
+/// Delete would remove (.mm-cursor.warn).
+component MmRing inherits Rectangle {
+    property <float> zf: PlanningMindmap.zoom;
+    x: (PlanningMindmap.ring-x - Theme.sp-4) * root.zf;
+    y: max(0px, PlanningMindmap.ring-y * root.zf - self.height / 2);
+    width: (Theme.mindmap-node + Theme.sp-8) * root.zf;
+    height: (PlanningMindmap.ring-h + Theme.sp-8) * root.zf;
+    animate x, y, height { duration: Theme.motion-fast; }
+    border-radius: (Theme.r-bubble + Theme.sp-4) * root.zf;
+    border-width: Theme.sp-2;
+    border-color: PlanningMindmap.ring-warn ? Theme.yellow : Theme.accent;
+    // The halo around it (box-shadow 0 0 0 4px accent-dim): a translucent
+    // edge outside the ring, never over the idea.
+    Rectangle {
+        x: -Theme.sp-4; y: -Theme.sp-4;
+        width: parent.width + Theme.sp-8; height: parent.height + Theme.sp-8;
+        border-radius: parent.border-radius + Theme.sp-4;
+        border-width: Theme.sp-4;
+        border-color: PlanningMindmap.ring-warn ? Theme.yellow-dim : Theme.accent-dim;
+    }
+    if PlanningMindmap.ring-warn: Rectangle {
+        x: 0; y: parent.height + Theme.sp-8;
+        width: wt.preferred-width + 2 * Theme.sp-8;
+        height: wt.preferred-height + 2 * Theme.sp-4;
+        border-radius: Theme.r-control;
+        background: Theme.yellow;
+        wt := Text { text: PlanningMindmap.ring-msg; font-size: Theme.text-11; font-weight: Theme.w-semibold; color: Theme.chip-key; }
+    }
+}
+
+/// The idea in hand while dragging (.drag-clone).
+component MmClone inherits Rectangle {
+    property <float> zf: PlanningMindmap.zoom;
+    x: (PlanningMindmap.drag-x - PlanningMindmap.grab-x) * root.zf;
+    y: (PlanningMindmap.drag-y - PlanningMindmap.grab-y) * root.zf;
+    width: Theme.mindmap-node * root.zf;
+    height: cl.preferred-height;
+    opacity: Theme.o-clone;
+    SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-bubble * root.zf; shadow: Theme.shadow-clone; }
+    Rectangle { border-radius: Theme.r-bubble * root.zf; border-width: 1px; border-color: Theme.accent; background: Theme.bg-card; }
+    cl := VerticalLayout {
+        padding-left: Theme.sp-10 * root.zf; padding-right: Theme.sp-10 * root.zf;
+        padding-top: Theme.sp-8 * root.zf; padding-bottom: Theme.sp-8 * root.zf;
+        Text { text: PlanningMindmap.drag-text; wrap: word-wrap; overflow: elide; font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+    }
+}
+
+/// A project chip (.mm-proj-chip): its dot and name; off: muted and
+/// struck through (Slint has no strikethrough: a line over the words).
+component ProjChip inherits Rectangle {
+    in property <string> text;
+    in property <bool> off;
+    in property <bool> reset;
+    callback clicked();
+    height: Theme.sp-24;
+    width: pl.preferred-width;
+    border-radius: Theme.r-pill;
+    border-width: root.reset ? 0 : 1px;
+    border-color: ta.has-hover ? Theme.accent : Theme.border;
+    background: root.reset ? transparent : Theme.bg-tertiary;
+    opacity: root.off ? Theme.o-usage : 1;
+    if root.reset: DashedBox { width: parent.width; height: parent.height; corner: Theme.r-pill; line: ta.has-hover ? Theme.accent : Theme.border; }
+    pl := HorizontalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        spacing: Theme.sp-6;
+        if !root.off && !root.reset: VerticalLayout { alignment: center; Rectangle { width: Theme.sp-6 + 1px; height: self.width; border-radius: self.width / 2; background: Theme.green; } }
+        lt := Text {
+            text: root.text; vertical-alignment: center; font-size: Theme.text-12;
+            color: root.off ? Theme.text-muted : root.reset ? Theme.text-secondary : Theme.text-primary;
+        }
+    }
+    if root.off: Rectangle { x: lt.x; width: lt.width; y: root.height / 2; height: 1px; background: Theme.text-muted; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The muted line of an empty or failed panel (.kanban-empty).
+component MmEmpty inherits Rectangle {
+    in property <string> text;
+    height: t.preferred-height + 2 * Theme.sp-24;
+    t := Text { text: root.text; wrap: word-wrap; horizontal-alignment: center; font-size: Theme.text-13; color: Theme.text-muted; width: parent.width - 2 * Theme.sp-24; }
+}
+
+/// The screen: `kind` the tab id or pane kind, `key` the pane's key ("" in a tab).
+export component MindmapView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    property <bool> fold: self.width < Theme.kanban-fold;
+    property <float> zf: PlanningMindmap.zoom;
+    // The keys of the map (the web's document keydown while the map was the
+    // last thing pressed): a press anywhere in it gives it the keys.
+    keys := FocusScope {
+        key-pressed(ev) => {
+            if PlanningMindmap.key(ev.text, ev.modifiers.control, ev.modifiers.shift, ev.modifiers.alt || ev.modifiers.meta) { return accept; }
+            return reject;
+        }
+        property <int> cg: PlanningMindmap.canvas-gen;
+        changed cg => { if !PlanningMindmap.draft-on && !PlanningMindmap.edit-on { self.focus(); } }
+    if PlanningMindmap.state == "loading": LoadingState { y: Theme.sp-24; height: Theme.control; x: (parent.width - self.preferred-width) / 2; }
+    if PlanningMindmap.state == "error": MmEmpty { y: 0; width: parent.width; text: PlanningMindmap.error; }
+    if PlanningMindmap.state == "ok" || PlanningMindmap.state == "empty": VerticalLayout {
+        // The toolbar (.kanban-toolbar).
+        Rectangle {
+            height: tb.preferred-height;
+            tb := HorizontalLayout {
+                padding-left: root.fold ? Theme.sp-8 : Theme.sp-12; padding-right: root.fold ? Theme.sp-8 : Theme.sp-12;
+                padding-top: root.fold ? Theme.sp-6 : Theme.sp-10; padding-bottom: root.fold ? Theme.sp-6 : Theme.sp-10;
+                spacing: root.fold ? Theme.sp-4 : Theme.sp-8;
+                KBtn { primary: true; text: "+ Add idea"; clicked => { PlanningMindmap.act("add-root", ""); } }
+                KBtn { fold: root.fold; has-icon: true; icon: Icons.images; text: "Media"; clicked => { PlanningMindmap.act("media", ""); } }
+                // .mm-search
+                search := Rectangle {
+                    horizontal-stretch: 0;
+                    width: max(Theme.sp-48 + Theme.sp-48 + Theme.sp-48 + Theme.sp-16, sl.preferred-width);
+                    height: Theme.control-sm;
+                    border-radius: Theme.r-control;
+                    background: Theme.bg-primary;
+                    border-width: 1px;
+                    border-color: si.has-focus ? Theme.accent : Theme.border;
+                    sl := HorizontalLayout {
+                        padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+                        si := TextInput {
+                            text <=> PlanningMindmap.search;
+                            single-line: true;
+                            vertical-alignment: center;
+                            font-size: Theme.text-13;
+                            color: Theme.text-primary;
+                            selection-background-color: Theme.selection;
+                            edited => { PlanningMindmap.searched(self.text); }
+                        }
+                    }
+                    if PlanningMindmap.search == "": Text {
+                        x: Theme.sp-10; height: parent.height; vertical-alignment: center;
+                        text: "Filter ideas…"; color: Theme.placeholder; font-size: Theme.text-13;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                KBtn { fold: root.fold; text: root.fold ? "?" : "? Shortcuts"; clicked => { PlanningMindmap.act("help", ""); } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        if PlanningMindmap.state == "empty": MmEmpty { text: "No ideas yet. Add one, or hit “Brainstorm” on a Kanban card to extend a task here."; }
+        if PlanningMindmap.state == "empty": Rectangle { vertical-stretch: 1; }
+        // The project bar (.mm-proj-bar). The web's chips wrap; here they
+        // scroll sideways in one row (Slint has no flowing layout).
+        if PlanningMindmap.state == "ok" && PlanningMindmap.bar: Rectangle {
+            height: bl.preferred-height + 1px;
+            background: Theme.bg-secondary;
+            bfl := Flickable {
+                height: bl.preferred-height;
+                content-width: bl.preferred-width;
+                bl := HorizontalLayout {
+                    padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+                    padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+                    spacing: Theme.sp-6;
+                    alignment: start;
+                    Text { text: "Projects:"; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                    for c in PlanningMindmap.chips: ProjChip { text: c.label; off: c.off; clicked => { PlanningMindmap.act("chip", c.key); } }
+                    if PlanningMindmap.hidden-count > 0: HorizontalLayout {
+                        spacing: Theme.sp-4;
+                        padding-left: Theme.sp-4;
+                        VerticalLayout { alignment: center; Icon { source: MmIcons.filter; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.amber; } }
+                        Text { text: "filtered (" + PlanningMindmap.hidden-count + " hidden)"; vertical-alignment: center; font-size: Theme.text-12; color: Theme.amber; }
+                    }
+                    if PlanningMindmap.hidden-count > 0: ProjChip { text: "Show all"; reset: true; clicked => { PlanningMindmap.act("chip-all", ""); } }
+                }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        // The canvas (.mindmap-canvas): dotted, scrolls both ways; Ctrl and
+        // the wheel zoom about the pointer.
+        if PlanningMindmap.state == "ok": canvas := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            Image {
+                width: parent.width; height: parent.height;
+                source: MmIcons.dots;
+                colorize: Theme.border-subtle;
+                horizontal-tiling: repeat;
+                vertical-tiling: repeat;
+            }
+            fl := Flickable {
+                width: parent.width; height: parent.height;
+                // The web's canvas scrolls (wheel, bars); a press and drag is
+                // for moving ideas, never panning.
+                mouse-drag-pan-enabled: false;
+                content-width: max(self.width, PlanningMindmap.base-w * root.zf);
+                content-height: max(self.height, PlanningMindmap.base-h * root.zf);
+                content-x <=> PlanningMindmap.scroll-x;
+                content-y <=> PlanningMindmap.scroll-y;
+                init => { PlanningMindmap.view-w = self.width; PlanningMindmap.view-h = self.height; }
+                changed width => { PlanningMindmap.view-w = self.width; }
+                changed height => { PlanningMindmap.view-h = self.height; }
+                property <int> mg: PlanningMindmap.measure-gen;
+                changed mg => { PlanningMindmap.canvas-x = self.absolute-position.x; PlanningMindmap.canvas-y = self.absolute-position.y; }
+                // The bare canvas: a press lets go of the ring and closes a box.
+                TouchArea {
+                    width: fl.content-width; height: fl.content-height;
+                    changed has-hover => { if self.has-hover { PlanningMindmap.hover("", false); } }
+                    pointer-event(ev) => {
+                        if ev.kind == PointerEventKind.down { keys.focus(); PlanningMindmap.canvas-press(); }
+                    }
+                    scroll-event(ev) => {
+                        if ev.modifiers.control { PlanningMindmap.wheel-zoom(ev.delta-y, self.mouse-x + PlanningMindmap.scroll-x, self.mouse-y + PlanningMindmap.scroll-y); return accept; }
+                        return reject;
+                    }
+                }
+                // The links (.mindmap-edges): solid to ideas, dashed (drawn as
+                // short strokes: Slint has no dash pattern) to "add idea".
+                Path {
+                    x: 0; y: 0;
+                    width: PlanningMindmap.base-w * root.zf; height: PlanningMindmap.base-h * root.zf;
+                    viewbox-x: 0; viewbox-y: 0;
+                    viewbox-width: PlanningMindmap.base-w / 1px; viewbox-height: PlanningMindmap.base-h / 1px;
+                    commands: PlanningMindmap.edges;
+                    stroke: Theme.border;
+                    stroke-width: Theme.sp-2 * root.zf;
+                }
+                Path {
+                    x: 0; y: 0;
+                    width: PlanningMindmap.base-w * root.zf; height: PlanningMindmap.base-h * root.zf;
+                    viewbox-x: 0; viewbox-y: 0;
+                    viewbox-width: PlanningMindmap.base-w / 1px; viewbox-height: PlanningMindmap.base-h / 1px;
+                    commands: PlanningMindmap.dashes;
+                    stroke: Theme.border;
+                    stroke-width: Theme.sp-2 * root.zf;
+                    opacity: Theme.o-dim;
+                }
+                for n in PlanningMindmap.nodes: Rectangle {
+                    if n.kind == "node": MmCard { n: n; }
+                    if n.kind == "ghost" && !n.hidden: MmGhost { n: n; }
+                    if n.kind == "drop": MmDrop { n: n; }
+                }
+                if PlanningMindmap.ring-on: MmRing { }
+                if PlanningMindmap.hover-on && !(PlanningMindmap.edit-on && PlanningMindmap.edit-node.id == PlanningMindmap.hover-node.id): MmCard { n: PlanningMindmap.hover-node; open: true; }
+                if PlanningMindmap.edit-on: MmCard { n: PlanningMindmap.edit-node; editing: true; }
+                if PlanningMindmap.draft-on: MmDraft { }
+                if PlanningMindmap.drag-id != "": MmClone { }
+            }
+            ScrollThumb {
+                width: parent.width; height: parent.height;
+                view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y;
+            }
+        }
+    }
+    }
+}
+
+/// This screen's dialogs over the window; no input where it draws nothing.
+export component MindmapOverlay inherits Rectangle {
+    if PlanningMindmap.d-open: MmDetailDialog { width: root.width; height: root.height; }
+    if PlanningMindmap.l-open: MmLinkDialog { width: root.width; height: root.height; }
+    if PlanningMindmap.h-open: MmHelpDialog { width: root.width; height: root.height; }
+}

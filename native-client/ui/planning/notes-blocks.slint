@@ -1,0 +1,313 @@
+// Notes (4.4): one block of a page (.nt-block): its margin controls (+ and
+// the grip), and each kind: text, headings, to-do, lists, quote, code,
+// table, divider. Driven through PlanningNotes (src/planning/notes.rs).
+
+import { Theme, Icons, Icon, Pointer } from "../kit.slint";
+import { Tip } from "../chat.slint";
+import { PlanningNotes, PlanningNotesPane, PlanningNoteBlock, PlanningNoteRow } from "notes-api.slint";
+import { RichText, Grip, QuietBtn } from "notes-parts.slint";
+
+/// The code block's head (.nt-code-head) buttons.
+component HeadBtn inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> on;
+    in property <length> fs;
+    callback clicked(length, length);
+    height: Theme.sp-20 + Theme.sp-2;
+    width: hl.preferred-width;
+    border-radius: Theme.r-chip;
+    background: root.on ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : transparent;
+    property <color> fg: root.on ? Theme.accent-hover : ta.has-hover ? Theme.text-primary : Theme.text-muted;
+    hl := HorizontalLayout {
+        padding-left: Theme.sp-6; padding-right: Theme.sp-6; spacing: Theme.sp-4;
+        VerticalLayout { alignment: center; Icon { source: root.icon; width: Theme.icon-sm; height: Theme.icon-sm; tint: root.fg; } }
+        if root.text != "": Text { text: root.text; font-size: root.fs; color: root.fg; vertical-alignment: center; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(self.absolute-position.x + self.width, self.absolute-position.y + self.height + Theme.sp-4); } }
+    Tip { on: ta.has-hover; text: root.tip; }
+}
+
+/// A code block (.nt-code-wrap): the language, wrap and copy above it while
+/// hovered or edited; the code (mono), highlighted when not being edited.
+/// Slint limit: no live highlighting while typing (CodeMirror's); the code
+/// shows highlighted as soon as the caret leaves it.
+component CodeBlock inherits Rectangle {
+    in property <PlanningNotesPane> p;
+    in property <PlanningNoteBlock> b;
+    in property <float> k;
+    in property <bool> hot;
+    // Hovered, the head above it included (it sits outside the block).
+    property <bool> over: !Pointer.modal && Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
+        && Pointer.y >= self.absolute-position.y - Theme.sp-24 && Pointer.y < self.absolute-position.y + self.height;
+    property <bool> show-head: root.hot || root.over || rt.editing;
+    height: box.height + Theme.sp-8;
+    box := Rectangle {
+        y: Theme.sp-4;
+        height: rt.height + 2 * Theme.sp-12;
+        border-radius: Theme.r-field;
+        background: Theme.bg-secondary;
+        border-width: 1px;
+        border-color: rt.editing ? Theme.accent-line : Theme.border-subtle;
+        clip: true;
+        fl := Flickable {
+            x: Theme.sp-12; y: Theme.sp-12;
+            width: parent.width - 2 * Theme.sp-12;
+            height: rt.height;
+            content-width: root.b.wrap ? self.width : max(self.width, rt.natural-w);
+            interactive: false;
+            rt := RichText {
+                width: root.b.wrap ? fl.width : max(fl.width, self.natural-w);
+                pkey: root.p.key; bid: root.b.id;
+                src: root.b.src; md: root.b.md; ph: "Code";
+                fs: Theme.text-12 * root.k;
+                mono: true;
+                nowrap: !root.b.wrap;
+                focus-id: root.p.focus-id; focus-r: root.p.focus-r; focus-c: root.p.focus-c;
+                focus-a: root.p.focus-a; focus-b: root.p.focus-b; focus-gen: root.p.focus-gen;
+                edited(t, c) => { PlanningNotes.edited(root.p.key, root.b.id, t, c); }
+                key(n, a, c, f, l) => { return PlanningNotes.text-key(root.p.key, root.b.id, n, a, c, f, l); }
+            }
+        }
+        // Long lines scroll sideways (the wheel with Shift, or this bar).
+        if !root.b.wrap && rt.natural-w > fl.width: Rectangle {
+            x: Theme.sp-12; y: parent.height - Theme.sp-6;
+            width: fl.width; height: Theme.sp-4;
+            Rectangle {
+                x: -fl.content-x / max(1px, rt.natural-w) * parent.width;
+                width: fl.width / max(1px, rt.natural-w) * parent.width;
+                border-radius: Theme.r-chip;
+                background: sa.has-hover || sa.pressed ? Theme.text-muted : Theme.border;
+            }
+            sa := TouchArea {
+                property <length> start;
+                pointer-event(ev) => { if ev.kind == PointerEventKind.down { self.start = fl.content-x; } }
+                moved => {
+                    if self.pressed { fl.content-x = max(fl.width - rt.natural-w, min(0, self.start - (self.mouse-x - self.pressed-x) * rt.natural-w / fl.width)); }
+                }
+                scroll-event(ev) => { fl.content-x = max(fl.width - rt.natural-w, min(0, fl.content-x + ev.delta-x + ev.delta-y)); return accept; }
+            }
+        }
+    }
+    // The head over the block's top-right corner.
+    if root.show-head: Rectangle {
+        x: parent.width - self.width - Theme.sp-6;
+        y: box.y - self.height + 1px;
+        width: hd.preferred-width;
+        height: hd.preferred-height;
+        background: Theme.bg-secondary;
+        border-top-left-radius: Theme.r-control;
+        border-top-right-radius: Theme.r-control;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        TouchArea { }
+        hd := HorizontalLayout {
+            padding: Theme.sp-2;
+            spacing: Theme.sp-2;
+            HeadBtn {
+                text: root.b.lang-name; icon: @image-url("icons/notes-code.svg"); tip: "Code language"; fs: Theme.text-11 * root.k;
+                clicked(x, y) => { PlanningNotes.code-act(root.p.key, root.b.id, "lang", x, y); }
+            }
+            HeadBtn {
+                icon: @image-url("icons/notes-wrap.svg"); on: root.b.wrap; fs: Theme.text-11 * root.k;
+                tip: root.b.wrap ? "Wrapping long lines (click to scroll instead)" : "Wrap long lines";
+                clicked(x, y) => { PlanningNotes.code-act(root.p.key, root.b.id, "wrap", x, y); }
+            }
+            HeadBtn {
+                icon: Icons.copy; tip: "Copy code"; fs: Theme.text-11 * root.k;
+                clicked(x, y) => { PlanningNotes.code-act(root.p.key, root.b.id, "copy", x, y); }
+            }
+        }
+    }
+}
+
+/// A table (.nt-table): equal columns, the first row bold on a tint when it
+/// is a header; its buttons under it while a cell is being edited.
+component TableBlock inherits VerticalLayout {
+    in property <PlanningNotesPane> p;
+    in property <PlanningNoteBlock> b;
+    in property <float> k;
+    padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+    spacing: Theme.sp-4;
+    Rectangle {
+        border-width: 1px;
+        border-color: Theme.border;
+        height: grid.preferred-height;
+        grid := VerticalLayout {
+            for row[ri] in root.b.rows: HorizontalLayout {
+                for cell[ci] in row.cells: Rectangle {
+                    horizontal-stretch: 1;
+                    min-width: Theme.sp-40;
+                    height: cl.preferred-height;
+                    background: root.b.header && ri == 0 ? Theme.bg-secondary : transparent;
+                    border-width: ct.editing ? 1px : 0;
+                    border-color: Theme.accent-line;
+                    // The lines between cells (right, bottom).
+                    if ci < row.cells.length - 1: Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: Theme.border; }
+                    if ri < root.b.rows.length - 1: Rectangle { y: parent.height - 1px; height: 1px; width: parent.width; background: Theme.border; }
+                    cl := VerticalLayout {
+                        padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+                        padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+                        ct := RichText {
+                            pkey: root.p.key; bid: root.b.id; r: ri; c: ci;
+                            src: cell; md: row.mds[ci];
+                            fs: Theme.text-15 * root.k;
+                            weight: root.b.header && ri == 0 ? Theme.w-semibold : Theme.w-regular;
+                            focus-id: root.p.focus-id; focus-r: root.p.focus-r; focus-c: root.p.focus-c;
+                            focus-a: root.p.focus-a; focus-b: root.p.focus-b; focus-gen: root.p.focus-gen;
+                            edited(t, c) => { PlanningNotes.cell-edited(root.p.key, root.b.id, ri, ci, t); }
+                            key(n, a, c, f, l) => { return PlanningNotes.cell-key(root.p.key, root.b.id, ri, ci, n, a, c); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.p.cur-id == root.b.id: HorizontalLayout {
+        spacing: Theme.sp-4;
+        alignment: start;
+        QuietBtn { text: "+ Row"; h: Theme.sp-24; fs: Theme.text-11 * root.k; clicked => { PlanningNotes.table-act(root.p.key, root.b.id, "add-row"); } }
+        QuietBtn { text: "+ Column"; h: Theme.sp-24; fs: Theme.text-11 * root.k; clicked => { PlanningNotes.table-act(root.p.key, root.b.id, "add-col"); } }
+        QuietBtn { text: "− Row"; h: Theme.sp-24; fs: Theme.text-11 * root.k; clicked => { PlanningNotes.table-act(root.p.key, root.b.id, "del-row"); } }
+        QuietBtn { text: "− Column"; h: Theme.sp-24; fs: Theme.text-11 * root.k; clicked => { PlanningNotes.table-act(root.p.key, root.b.id, "del-col"); } }
+        QuietBtn { text: "Header row"; h: Theme.sp-24; fs: Theme.text-11 * root.k; clicked => { PlanningNotes.table-act(root.p.key, root.b.id, "header"); } }
+    }
+}
+
+/// A divider (.nt-hr): a line that takes the focus (accent then); Backspace
+/// or Delete removes it, Enter adds a line after it, the arrows move on.
+component DividerBlock inherits Rectangle {
+    in property <PlanningNotesPane> p;
+    in property <PlanningNoteBlock> b;
+    height: Theme.sp-12 + Theme.sp-16 + 1px;
+    Rectangle { y: Theme.sp-12 + Theme.sp-2; height: 1px; background: fsc.has-focus ? Theme.accent : Theme.border; }
+    TouchArea { mouse-cursor: pointer; clicked => { fsc.focus(); } }
+    fsc := FocusScope {
+        key-pressed(ev) => {
+            if PlanningNotes.key-name(ev) == "" { return reject; }
+            if PlanningNotes.divider-key(root.p.key, root.b.id, PlanningNotes.key-name(ev)) { return accept; }
+            return reject;
+        }
+        changed has-focus => { if self.has-focus { PlanningNotes.focused(root.p.key, root.b.id, -1, -1); } }
+    }
+    property <int> fg: root.p.focus-gen;
+    changed fg => { if root.p.focus-id == root.b.id { fsc.focus(); } }
+    init => { if root.p.focus-id == root.b.id { fsc.focus(); } }
+}
+
+/// One block: the margin (its + and grip on hover) and the block itself.
+export component NoteBlock inherits Rectangle {
+    in property <PlanningNotesPane> p;
+    in property <PlanningNoteBlock> b;
+    in property <float> k;
+    // The room on the left for the + and the grip.
+    in property <length> margin;
+    property <bool> hot: !Pointer.modal && Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
+        && Pointer.y >= self.absolute-position.y && Pointer.y < self.absolute-position.y + self.height;
+    property <length> fs: root.b.kind == "h1" ? (Theme.text-20 + Theme.sp-2) * root.k
+        : root.b.kind == "h2" ? (Theme.text-16 + Theme.sp-2) * root.k
+        : root.b.kind == "h3" ? Theme.text-16 * root.k
+        : Theme.text-15 * root.k;
+    property <length> top: root.b.kind == "h1" ? Theme.sp-16 : root.b.kind == "h2" ? Theme.sp-12 : root.b.kind == "h3" ? Theme.sp-8 : 0;
+    height: body.preferred-height + root.top;
+    // Its box when a drag starts (where a moved block would land).
+    property <int> mg: root.p.measure-gen;
+    changed mg => { PlanningNotes.block-box(root.p.key, root.b.id, self.absolute-position.y, self.height); }
+    // The block selection's tint, one run rounded at its ends.
+    if root.b.sel: Rectangle {
+        x: root.margin - Theme.sp-6; width: parent.width - root.margin + Theme.sp-6;
+        background: Theme.accent-dim;
+        border-top-left-radius: root.b.sel-top ? Theme.r-control : 0;
+        border-top-right-radius: root.b.sel-top ? Theme.r-control : 0;
+        border-bottom-left-radius: root.b.sel-bottom ? Theme.r-control : 0;
+        border-bottom-right-radius: root.b.sel-bottom ? Theme.r-control : 0;
+    }
+    // A press in the margin selects blocks (Shift: from the block with the
+    // caret); dragging from it across blocks selects them too.
+    TouchArea {
+        width: root.margin;
+        property <bool> moving;
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left { self.moving = false; PlanningNotes.blk-press(root.p.key, root.b.id, ev.modifiers.shift); }
+            if ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left { PlanningNotes.blk-release(root.p.key); }
+        }
+        moved => { if self.pressed { PlanningNotes.blk-over(root.p.key, self.absolute-position.y + self.mouse-y); } }
+    }
+    // The margin: + (a block below, with the menu) and the grip.
+    if root.hot || root.b.menu-open: HorizontalLayout {
+        x: root.margin - Theme.sp-40 - Theme.sp-2;
+        y: root.top + Theme.sp-2;
+        width: Theme.sp-40;
+        height: Theme.sp-24;
+        spacing: 1px;
+        Rectangle {
+            width: Theme.sp-20;
+            border-radius: Theme.r-chip;
+            background: pa.has-hover ? Theme.bg-hover : transparent;
+            Text { text: "+"; font-size: Theme.text-14 * root.k; color: pa.has-hover ? Theme.text-primary : Theme.text-muted; horizontal-alignment: center; vertical-alignment: center; }
+            pa := TouchArea { mouse-cursor: pointer; clicked => { PlanningNotes.add-below(root.p.key, root.b.id); } }
+            Tip { on: pa.has-hover; text: "Add a block below"; }
+        }
+        Grip {
+            pkey: root.p.key; bid: root.b.id; fs: Theme.text-14 * root.k;
+            tip: "Click: turn into, move, duplicate, delete. Drag: onto a chat or terminal to send it as Markdown";
+            clicked(x, y) => { PlanningNotes.grip(root.p.key, root.b.id, x, y); }
+        }
+    }
+    body := HorizontalLayout {
+        x: root.margin;
+        y: root.top;
+        width: parent.width - root.margin;
+        spacing: Theme.sp-6;
+        padding-top: 1px; padding-bottom: 1px;
+        // To-do: the box (.nt-check), accent with a check when done.
+        if root.b.kind == "todo": VerticalLayout {
+            alignment: start;
+            padding-top: (root.fs * Theme.line-chat - Theme.sp-16) / 2;
+            padding-left: Theme.sp-2;
+            padding-right: Theme.sp-4;
+            Rectangle {
+                width: Theme.sp-16; height: Theme.sp-16;
+                border-radius: Theme.r-chip;
+                border-width: 1px;
+                border-color: root.b.checked ? Theme.accent : cb.has-hover ? Theme.accent-hover : Theme.slate-edge;
+                background: root.b.checked ? Theme.accent : Theme.bg-primary;
+                if root.b.checked: Icon { source: Icons.check; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.white; }
+                cb := TouchArea { mouse-cursor: pointer; clicked => { PlanningNotes.check(root.p.key, root.b.id, !root.b.checked); } }
+            }
+        }
+        // Bullet: a dot; numbered: its number.
+        if root.b.kind == "bullet": Rectangle {
+            width: Theme.sp-20 + Theme.sp-2;
+            Rectangle {
+                y: (root.fs * Theme.line-chat - Theme.sp-6) / 2 + 1px;
+                width: Theme.sp-6; height: Theme.sp-6;
+                border-radius: Theme.r-pill;
+                background: Theme.text-secondary;
+            }
+        }
+        if root.b.kind == "number": Rectangle {
+            width: Theme.sp-20 + Theme.sp-2;
+            Text { y: 0; width: parent.width - Theme.sp-2; height: root.fs * Theme.line-chat; text: root.b.num; font-size: root.fs; color: Theme.text-secondary; horizontal-alignment: right; vertical-alignment: center; }
+        }
+        // Quote: the bar on its left.
+        if root.b.kind == "quote": Rectangle { width: Theme.sp-2 + 1px; background: Theme.border; }
+        if root.b.kind == "quote": Rectangle { width: Theme.sp-6; }
+        if root.b.kind != "code" && root.b.kind != "table" && root.b.kind != "divider": RichText {
+            horizontal-stretch: 1;
+            pkey: root.p.key; bid: root.b.id;
+            src: root.b.src; md: root.b.md; ph: root.b.ph;
+            fs: root.fs;
+            weight: root.b.kind == "h1" ? Theme.w-bold : (root.b.kind == "h2" || root.b.kind == "h3") ? Theme.w-semibold : Theme.w-regular;
+            ink: root.b.kind == "quote" ? Theme.text-secondary : root.b.kind == "todo" && root.b.checked ? Theme.text-muted : Theme.text-primary;
+            focus-id: root.p.focus-id; focus-r: root.p.focus-r; focus-c: root.p.focus-c;
+            focus-a: root.p.focus-a; focus-b: root.p.focus-b; focus-gen: root.p.focus-gen;
+            edited(t, c) => { PlanningNotes.edited(root.p.key, root.b.id, t, c); }
+            key(n, a, c, f, l) => { return PlanningNotes.text-key(root.p.key, root.b.id, n, a, c, f, l); }
+        }
+        if root.b.kind == "code": CodeBlock { horizontal-stretch: 1; p: root.p; b: root.b; k: root.k; hot: root.hot; }
+        if root.b.kind == "table": TableBlock { horizontal-stretch: 1; p: root.p; b: root.b; k: root.k; }
+        if root.b.kind == "divider": DividerBlock { horizontal-stretch: 1; p: root.p; b: root.b; }
+    }
+}

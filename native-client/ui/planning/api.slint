@@ -132,6 +132,12 @@ export global PlanningAsk {
     callback answer(bool);
 }
 
+// ── Each screen's globals and structs (one line per screen; its owner edits only its line) ──
+export { PlanningMindmap, PlanningMmNode, PlanningMmChip, PlanningMmKey, PlanningMmKeyLine, PlanningMmBox, PlanningMmHelp, PlanningMmLinkRow, PlanningMmThumb } from "mindmap-api.slint";   // mindmap: add this screen's names here
+export { PlanningNotes, PlanningNoteRow, PlanningNoteBlock, PlanningNotesItem, PlanningNotesPane, PlanningNotesMenuItem } from "notes-api.slint";   // notes: add this screen's names here
+export { PlanningSchedule, PlanningSched, PlanningSchedCond } from "schedule-api.slint";   // schedule: add this screen's names here
+export { PlanningFactories, PlanningFxCard, PlanningFxCardRow, PlanningFxTpl, PlanningFxTplRow, PlanningFxRun, PlanningFxClean, PlanningFxLine, PlanningFxSec, PlanningFxFile, PlanningFxOpt, PlanningFxOptRow, PlanningFxCheck, PlanningFxOut, PlanningFxNode, PlanningFxEdge, PlanningFxWorker, PlanningFxKv, PlanningFxAsk, PlanningFxWait, PlanningFxTl, PlanningFxStep, PlanningFxIssue, PlanningFxPerson, PlanningFxCrSec, PlanningFxView, PlanningFxEd, PlanningFxInsp, PlanningFxStart, PlanningFxPin, PlanningFxTrig } from "factories-api.slint";   // factories: add this screen's names here
+
 // ── The export chain (the Lead's line: keep it last, don't change it) ──
 // Slint allows one `export *` per file: main.slint re-exports
 // workspace/api.slint, which re-exports planning's, then ops', then
