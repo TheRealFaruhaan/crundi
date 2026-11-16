@@ -70,21 +70,33 @@ impl Workbench {
                         .on_click(cx.listener(move |this, _, _, cx| this.close_pane(id, cx))))))
     }
 
-    /// A new pane's launcher: Claude in UI Mode, or with Skip Permissions.
-    /// The pressed one spins (here: says Starting…) until the chat is up.
+    /// A new pane's launcher (the web's term-launch): Empty Shell, then
+    /// Claude's box: UI Mode and Terminal, each with its Skip Permissions.
+    /// The pressed one spins until it is up; the others are off meanwhile.
     fn launcher(&self, i: &Info, cx: &mut Context<Self>) -> Div {
+        use gpui_component::Disableable as _;
         let id = i.l.id;
         let busy = i.launch_busy;
-        let mut row = div().flex().items_center().gap(T::SP_8);
-        if busy != 0 {
-            row = row.child(w::loading("Starting…"));
-        } else {
-            row = row.child(w::primary(("ui-mode", id), "UI Mode").on_click(cx.listener(move |this, _, _, cx| this.launch_chat(id, false, cx))))
-                .child(w::icon_button(("ui-skip", id), IconName::ShieldAlert, "UI Mode — Skip Permissions").on_click(cx.listener(move |this, _, _, cx| this.launch_chat(id, true, cx))));
-        }
+        let idle = busy == 0;
+        // busy: 1 UI Mode, 2 its Skip Permissions, 3 Empty Shell, 4 Terminal, 5 its Skip Permissions.
+        let state = |b: gpui_component::button::Button, n: i32| b.loading(busy == n).disabled(!idle);
+        let shell = div().w(T::PANE_MIN / 2.).child(state(w::button(("empty-shell", id), "Empty Shell"), 3).w_full()
+            .on_click(cx.listener(move |this, _, _, cx| this.launch_term(id, "shell", cx))));
+        let ui_row = div().flex().items_center().gap(T::SP_8)
+            .child(div().flex_1().child(state(w::primary(("ui-mode", id), "UI Mode"), 1).w_full().on_click(cx.listener(move |this, _, _, cx| this.launch_chat(id, false, cx)))))
+            .child(state(w::icon_button(("ui-skip", id), IconName::ShieldAlert, "UI Mode — Skip Permissions"), 2).on_click(cx.listener(move |this, _, _, cx| this.launch_chat(id, true, cx))));
+        let term_row = div().flex().items_center().gap(T::SP_8)
+            .child(div().flex_1().child(state(w::icon_label_button(("term-mode", id), IconName::Terminal, "Terminal"), 4).w_full().on_click(cx.listener(move |this, _, _, cx| this.launch_term(id, "normal", cx)))))
+            .child(state(w::icon_button(("term-skip", id), IconName::ShieldAlert, "Terminal — Skip Permissions"), 5).on_click(cx.listener(move |this, _, _, cx| this.launch_term(id, "skip", cx))));
+        let claude = div().w(T::PANE_MIN).p(T::SP_20).flex().flex_col().gap(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::border())
+            .child(div().flex().justify_center().text_size(T::TEXT_12).font_weight(T::W_BOLD).text_color(T::text_muted()).child("CLAUDE"))
+            .child(ui_row)
+            .child(term_row);
         div().size_full().flex().flex_col().items_center().justify_center().gap(T::SP_12)
-            .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("Start Claude in this pane"))
-            .child(row)
+            // The big terminal mark (the web's ">_"), as an icon.
+            .child(div().text_color(T::text_muted()).child(w::icon(IconName::Terminal, T::SP_48)))
+            .child(shell)
+            .child(claude)
     }
 }
 

@@ -116,6 +116,8 @@ await T.act('files-open', join(P, 'src/lib.rs'));
 p = await T.until('a file opens in the editor, line by line', (p) => W(p).wins.some((w) => w.kind === 'edit' && w.title === join(P, 'src/lib.rs') && w.lines === 4));
 win = W(p).wins.find((w) => w.kind === 'edit');
 t.check('Save starts off', !win.dirty && win.save === 'Save', win);
+// (GPUI: the editor's text comes a frame after its window; let it draw before the picture.)
+await t.sleep(800);
 await T.snap('editor');
 await T.act('files-open', join(P, 'src/lib.rs'));
 await t.sleep(400);

@@ -13,7 +13,8 @@ use gpui::{prelude::FluentBuilder as _, *};
 impl Workbench {
     pub(crate) fn head(&self, i: &Info, full: bool, cx: &mut Context<Self>) -> Div {
         let id = i.l.id;
-        let chat = i.kind == "chat";
+        // A Claude terminal's header (3.2) is a chat's: dot, rename, badge, A- ↺ A+, full screen.
+        let chat = i.kind == "chat" || i.kind == "terminal";
         let renaming = self.renaming.as_ref().filter(|(l, _)| *l == id).map(|(_, s)| s.clone());
         let mut row = div().flex().items_center().size_full().pl(T::SP_2).pr(T::SP_4).gap(T::SP_4);
         if !full {
@@ -67,14 +68,14 @@ impl Workbench {
     fn tools(&self, i: &Info, full: bool, cx: &mut Context<Self>) -> Div {
         let id = i.l.id;
         // A parked chat keeps only pin and × here (specs/parked-panes.md).
-        let chat = i.kind == "chat" && !i.parked;
+        let chat = (i.kind == "chat" || i.kind == "terminal") && !i.parked;
         let h = T::SP_20;
         let mut t = div().flex().flex_none().items_center().gap(T::SP_4)
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| { this.focus_pane(id, cx); cx.stop_propagation(); }));
         if i.factory && !i.narrow { t = t.child(w::tag("FACTORY", "accent")); }
         if i.parked { t = t.child(w::tag("CHAT", "accent")); }
         if !i.narrow {
-            if chat && i.secrets {
+            if i.kind == "chat" && !i.parked && i.secrets {
                 let n = i.secrets_n;
                 let content = if n > 0 { C::IconText(IconName::Lock, n.to_string().into()) } else { C::Icon(IconName::Lock) };
                 t = t.child(w::head_button(("lock", id), content, if n > 0 { L::On } else { L::Rest }, if n > 0 { T::SP_24 + T::SP_12 } else { T::SP_24 }, h, crundi_core::head::secrets_tip(n))
@@ -99,7 +100,7 @@ impl Workbench {
                 .on_click(cx.listener(move |this, _, _, cx| this.pane_menu(id, !open, cx))));
         }
         if !full {
-            let tip = if i.armed { "Click again to close" } else if chat { "Close chat" } else if i.kind == "launcher" { "Remove" } else { "Close panel" };
+            let tip = if i.armed { "Click again to close" } else if i.kind == "terminal" { "Close terminal" } else if chat { "Close chat" } else if i.kind == "launcher" { "Remove" } else { "Close panel" };
             t = t.child(if i.armed {
                 w::head_button(("x", id), C::Text("Sure?".into()), L::Armed, T::SP_40 + T::SP_4, T::SP_16, tip)
             } else {
@@ -124,10 +125,10 @@ impl Workbench {
     /// close it.
     pub(crate) fn narrow_menu(&self, i: &Info, cx: &mut Context<Self>) -> Stateful<Div> {
         let id = i.l.id;
-        let chat = i.kind == "chat";
+        let chat = i.kind == "chat" || i.kind == "terminal";
         let h = T::SP_20 + px(1.);
         let mut row = div().flex().items_center().gap(T::SP_6);
-        if chat && i.secrets {
+        if i.kind == "chat" && i.secrets {
             let n = i.secrets_n;
             let label = if n > 0 { format!("{n} secrets") } else { "Secrets".into() };
             row = row.child(w::head_button(("m-lock", id), C::IconText(IconName::Lock, label.into()), if n > 0 { L::On } else { L::Rest }, T::SP_48 + T::SP_24, h, crundi_core::head::secrets_tip(n))

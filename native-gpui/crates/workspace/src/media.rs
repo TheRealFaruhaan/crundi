@@ -160,7 +160,7 @@ impl MediaView {
     pub fn copy(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(p) = self.item(id).map(|i| s(&i, "path")).filter(|p| !p.is_empty()) else { return };
         cx.write_to_clipboard(ClipboardItem::new_string(p.clone()));
-        if let Some(f) = crate::files::view(cx) { f.update(cx, |f, _| f.copied = p); }
+        crate::note_copy(cx, p);
         toast(cx, "Path copied".into(), w::Toast::Info);
     }
 
