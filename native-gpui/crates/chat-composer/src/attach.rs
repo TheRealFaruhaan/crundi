@@ -163,7 +163,18 @@ pub fn upload(cx: &mut App, chat: &str, name: String, bytes: Vec<u8>) {
     crundi_shell::run(cx, move || {
         use base64::Engine;
         let body = serde_json::to_vec(&json!({ "project": project, "name": name, "data": base64::engine::general_purpose::STANDARD.encode(&bytes) })).unwrap_or_default();
-        let progress = move |sent: u64, total: u64| { let mut g = p2.lock().unwrap(); g.0 = sent; g.1 = total; };
+        // Under the test driver only, CRUNDI_TEST_UPLOAD_KBPS slows the upload
+        // to that rate, so a test can watch it under way with a small file
+        // (loopback would finish before it looks: F64).
+        let rate = test_upload_rate();
+        let started = std::time::Instant::now();
+        let progress = move |sent: u64, total: u64| {
+            { let mut g = p2.lock().unwrap(); g.0 = sent; g.1 = total; }
+            if let Some(bps) = rate {
+                let due = std::time::Duration::from_secs_f64(sent as f64 / bps);
+                if let Some(wait) = due.checked_sub(started.elapsed()) { std::thread::sleep(wait); }
+            }
+        };
         let r = api.post_with_progress("/api/attachments/upload", &body, &progress);
         prog.lock().unwrap().2 = true;
         r
@@ -338,3 +349,11 @@ pub fn pane_props(c: &ComposerView, _cx: &App) -> Value {
 }
 
 pub fn props(_c: &ComposerView, _cx: &App) -> Value { json!({}) }
+
+/// The test's upload rate in bytes a second (CRUNDI_TEST_UPLOAD_KBPS), only
+/// with the test driver on (CRUNDI_TEST_PORT); None otherwise.
+fn test_upload_rate() -> Option<f64> {
+    std::env::var("CRUNDI_TEST_PORT").ok()?;
+    let kbps: f64 = std::env::var("CRUNDI_TEST_UPLOAD_KBPS").ok()?.parse().ok()?;
+    (kbps > 0.0).then_some(kbps * 1024.0)
+}
