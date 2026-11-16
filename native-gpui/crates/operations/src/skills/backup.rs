@@ -541,7 +541,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
             "line" => div().flex().gap(T::SP_10).text_size(T::TEXT_12)
                 .when(!l.key.is_empty(), |d| d.child(div().flex_none().w(T::SKILLS_KEY_W).text_color(T::text_muted()).child(l.key.clone())))
                 .when(!l.bold.is_empty(), |d| d.child(div().flex_none().font_weight(T::W_SEMIBOLD).text_color(match l.tone.as_str() { "bad" => T::red(), "good" => T::green(), _ => T::text() }).child(l.bold.clone())))
-                .child(div().flex_1().text_color(T::text_secondary()).child(l.text.clone())).into_any_element(),
+                .child(div().flex_1().min_w_0().text_color(T::text_secondary()).child(l.text.clone())).into_any_element(),
             "bar" => bar(frac).into_any_element(),
             "waiting" => row().pt(T::SP_4).child(btn(("bk-run", i), "Back up now", None, true, b.busy, |cx| act(cx, "bk-run", "")))
                 .child(btn(("bk-skip", i), "Skip this one", None, false, false, |cx| act(cx, "bk-skip", ""))).into_any_element(),
@@ -563,7 +563,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     sched = sched.child(div().w(T::SP_48 + T::SP_32).font_family(T::MONO).child(w::input(&tm)))
         .child(small(if b.tz.is_empty() { String::new() } else { format!("{} time", b.tz) }, ""));
     let mut items = col(T::SP_10).pt(T::SP_2)
-        .child(row().child(head("Backups in storage").flex_1()).child(btn("bk-list", list_btn, None, false, false, |cx| act(cx, "bk-list", ""))));
+        .child(row().child(head("Backups in storage").flex_1().min_w_0()).child(btn("bk-list", list_btn, None, false, false, |cx| act(cx, "bk-list", ""))));
     match (items_st, &b.items) {
         ("error", Some(Err(e))) => items = items.child(small(e.clone(), "bad").text_size(T::TEXT_12)),
         ("empty", _) => items = items.child(div().p(T::SP_12).rounded(T::R_FIELD).border_1().border_color(T::border()).text_size(T::TEXT_13).text_color(T::text_muted())
@@ -577,7 +577,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                 let host = c::s(it, "host");
                 list = list.child(col(T::SP_4).px(T::SP_12).py(T::SP_10).when(i > 0, |d| d.border_t_1().border_color(T::border_subtle()))
                     .child(row().gap(T::SP_6)
-                        .child(col(T::SP_4).flex_1()
+                        .child(col(T::SP_4).flex_1().min_w_0()
                             .child(div().text_size(T::TEXT_13).text_color(T::text()).child(c::ms_of(it, "at").map(c::medium_short).unwrap_or_default()))
                             .child(row().gap(T::SP_10).child(w::tag(if c::s(it, "reason") == "scheduled" { "Scheduled" } else { "By hand" }, ""))
                                 .child(small(c::fmt_bytes(c::n(it, "size")), "")).when(!host.is_empty(), |d| d.child(small(host.clone(), "")))))
@@ -585,7 +585,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                         .child(w::icon_button(("bk-delete", i), IconName::Trash, "Delete").on_click(move |_, _, cx| act(cx, "bk-delete", &k2))))
                     .when(confirming, |d| d.child(col(T::SP_8).p(T::SP_12).rounded(T::R_FIELD).border_1().border_color(T::yellow()).bg(T::yellow_dim())
                         .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child("This replaces this Crundi’s settings, sign-in, projects, layouts, kanban, notes, mindmap, media, schedules and services with the backup’s, and adds back its Claude transcripts and any global skills that are not already here. What it replaces is kept in a pre-restore folder. Crundi restarts to finish."))
-                        .child(row().gap(T::SP_10).children(rp.as_ref().map(|e| div().flex_1().child(w::input(e))))
+                        .child(row().gap(T::SP_10).children(rp.as_ref().map(|e| div().flex_1().min_w_0().child(w::input(e))))
                             .child(btn(("bk-restore-go", i), "Restore and restart", None, true, b.busy, move |cx| act(cx, "bk-restore-go", &k3)))
                             .child(btn(("bk-restore-cancel", i), "Cancel", None, false, false, |cx| act(cx, "bk-restore-cancel", "")))))));
             }
@@ -627,7 +627,7 @@ pub fn usage_render(_window: &mut Window, cx: &mut App) -> AnyElement {
     }
     let (last, reset) = b.us.as_ref().map(|w| usage_lines(w, c::now_ms(), &c::locale)).unwrap_or_default();
     div().flex().gap(T::SP_16)
-        .child(col(T::SP_4).flex_1()
+        .child(col(T::SP_4).flex_1().min_w_0()
             .child(div().text_size(T::TEXT_14).text_color(T::text()).child("Keep the 5-hour window warm"))
             .child(hint("Claude’s 5-hour allowance is a rolling window that starts on your first message — so beginning real work also starts the clock, and it can run out mid-session. When on, Crundi checks about once a minute and, if the window has lapsed while you were idle, sends a one-word message to open the next one. Never while a session is working, and never if your own work already opened a window."))
             .when(!last.is_empty(), |d| d.child(hint(last.clone())))
@@ -671,7 +671,7 @@ pub fn lr_render(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .bg(T::bg_secondary()).rounded(T::R_CARD).border_1().border_color(T::border()).shadow_lg()
         .child(div().flex().justify_center().text_size(T::TEXT_16).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Restore from a backup"))
         .child(w::input(&ep))
-        .child(row().child(div().flex_1().child(w::input(&bu))).child(div().w(T::SP_48 + T::SP_48 + T::SP_24).child(w::input(&rg))))
+        .child(row().child(div().flex_1().min_w_0().child(w::input(&bu))).child(div().w(T::SP_48 + T::SP_48 + T::SP_24).child(w::input(&rg))))
         .child(w::input(&pf)).child(w::input(&ky)).child(w::input(&se))
         .child(w::check("lr-vhost", "Virtual-hosted addresses (bucket in the hostname)", b.lr_vhost, |v, _, cx| upd(cx, |s| s.b.lr_vhost = *v)))
         .child(div().flex().justify_center().child(btn("lr-find", if b.lr_finding { "Looking…" } else { "Find backups" }, None, true, b.lr_finding, |cx| lr_act(cx, "lr-find"))));
@@ -687,7 +687,7 @@ pub fn lr_render(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 .child(w::choice_mark(false, i == b.lr_picked, false))
                 .child(div().text_size(T::TEXT_12).text_color(T::text()).child(c::ms_of(it, "at").map(c::medium_short).unwrap_or_default()))
                 .when(!host.is_empty(), |d| d.child(small(host.clone(), "")))
-                .child(div().flex_1())
+                .child(div().flex_1().min_w_0())
                 .child(small(c::fmt_bytes(c::n(it, "size")), ""))
                 .on_click(move |_, _, cx| upd(cx, |s| s.b.lr_picked = i)));
         }

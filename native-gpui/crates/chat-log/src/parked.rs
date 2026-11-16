@@ -28,6 +28,8 @@ pub struct State {
     preview: bool,
     /// The body's height (the card's size variants).
     body_h: f32,
+    /// The keyboard while peeking (Esc leaves Peek).
+    focus: Option<FocusHandle>,
 }
 
 /// The parked item of a chat in the state's terminals (None: the chat is live).
@@ -144,12 +146,17 @@ fn load_preview(v: &mut LogView, cx: &mut Context<LogView>) {
 }
 
 /// The driver: `peek <pane key> on|off`, `park-resume <pane key> resume|compact|new`.
-pub fn act(name: &str, args: &[String], v: &mut LogView, _window: &mut Window, cx: &mut Context<LogView>) -> Option<Value> {
+pub fn act(name: &str, args: &[String], v: &mut LogView, window: &mut Window, cx: &mut Context<LogView>) -> Option<Value> {
     let key = args.first().cloned().unwrap_or_default();
     let me = format!("live:{}", v.chat(cx));
     if !key.is_empty() && key != me { return None; }
     match name {
-        "peek" => { v.st.parked.peek = args.get(1).is_some_and(|a| a == "on"); cx.notify(); }
+        "peek" => {
+            v.st.parked.peek = args.get(1).is_some_and(|a| a == "on");
+            // Peeking takes the keyboard (Esc goes back to the card).
+            if v.st.parked.peek { let h = v.st.parked.focus.get_or_insert_with(|| cx.focus_handle()).clone(); window.focus(&h, cx); }
+            cx.notify();
+        }
         "park-resume" => { let mode = args.get(1).cloned().unwrap_or_else(|| "resume".into()); resume_chat(v, &mode, None, cx); }
         _ => return None,
     }
@@ -171,11 +178,13 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
         let h = f32::from(b.size.height);
         let _ = me.update(cx, |v, cx| if (v.st.parked.body_h - h).abs() > 0.5 { v.st.parked.body_h = h; cx.notify(); });
     }, |_, _, _, _| {}).absolute().size_full();
-    let base = div().relative().flex_1().min_h_0().flex().flex_col().child(measure);
+    let base = div().relative().flex_1().min_w_0().min_h_0().flex().flex_col().child(measure);
     if v.st.parked.peek {
         let pill = w::button("pk-unpeek", "Parked view").icon(IconName::EyeOff).tooltip("Back to the parked view")
             .on_click(cx.listener(|v, _, _, cx| { v.st.parked.peek = false; cx.notify(); }));
+        let fh = v.st.parked.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         return Ok(base
+            .track_focus(&fh)
             .on_key_down(cx.listener(|v, ev: &KeyDownEvent, _, cx| if ev.keystroke.key == "escape" { v.st.parked.peek = false; cx.notify(); cx.stop_propagation(); }))
             .child(log)
             .child(div().absolute().top(T::SP_10).right(T::SP_12).child(pill))
@@ -189,15 +198,15 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
     let resume_btn = w::disabled(w::primary("pk-resume", label("resume", "Resume")).icon(IconName::Play), off)
         .on_click(cx.listener(|v, _, _, cx| resume_chat(v, "resume", None, cx)));
     let peek_btn = c.session.then(|| w::disabled(w::button("pk-peek", "Peek").icon(IconName::Eye).tooltip("Read the conversation without resuming it"), off)
-        .on_click(cx.listener(|v, _, _, cx| { v.st.parked.peek = true; cx.notify(); })));
+        .on_click(cx.listener(|v, _, window, cx| { v.st.parked.peek = true; let h = v.st.parked.focus.get_or_insert_with(|| cx.focus_handle()).clone(); window.focus(&h, cx); cx.notify(); })));
     let warn = c.heavy.then(|| {
         let long = " — continuing loads all of it into every turn. Compacting loads it once, then summarises it so later turns stay small.";
         let rest = match var { 0 => long, 1 => ", a long conversation", _ => "" };
-        div().flex().items_center().gap(T::SP_6).px(T::SP_10).py(if var == 0 { T::SP_8 } else { T::SP_4 })
+        div().w_full().flex().items_center().gap(T::SP_6).px(T::SP_10).py(if var == 0 { T::SP_8 } else { T::SP_4 })
             .rounded(if var == 0 { T::R_CONTROL } else { T::R_PILL }).bg(T::yellow_dim()).border_1().border_color(T::yellow())
             .text_size(T::TEXT_11).line_height(relative(T::LH_UI)).text_color(T::text_secondary())
             .child(div().text_color(T::yellow()).child(IconName::ShieldAlert))
-            .child(div().child(div().font_weight(T::W_BOLD).text_color(T::yellow()).child(c.tokens.clone())).when(!rest.is_empty(), |d| d.child(rest)))
+            .child(div().flex_1().min_w_0().child(div().font_weight(T::W_BOLD).text_color(T::yellow()).child(c.tokens.clone())).when(!rest.is_empty(), |d| d.child(rest)))
     });
     let choices = c.session.then(|| {
         if c.heavy {
@@ -211,7 +220,7 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
         }
     });
     let card = div().flex().flex_col().items_center().gap(if var == 0 { T::SP_8 } else { T::SP_6 })
-        .p(match var { 0 => T::SP_16, 1 => T::SP_12, _ => T::SP_8 }).max_w(T::PARK_CARD_W).text_center()
+        .p(match var { 0 => T::SP_16, 1 => T::SP_12, _ => T::SP_8 }).w_full().max_w(T::PARK_CARD_W).text_center()
         .when(var == 2, |d| d.flex_row().flex_wrap().justify_center().max_w_full())
         .child(div().flex().flex_wrap().justify_center().gap(T::SP_8).child(resume_btn).children(peek_btn))
         .when(var < 2, |d| d.child(div().text_size(T::TEXT_12).text_color(T::text()).child(c.why.clone())))

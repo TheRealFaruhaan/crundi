@@ -8,7 +8,7 @@ use crundi_theme::{IconName, T};
 use gpui::prelude::FluentBuilder as _;
 
 fn msg(title: &'static str, strong: bool, hint: &'static str) -> Div {
-    div().flex().flex_col().flex_1().size_full().items_center().justify_center().gap(T::SP_6).p(T::SP_24)
+    div().flex().flex_col().flex_1().min_w_0().size_full().items_center().justify_center().gap(T::SP_6).p(T::SP_24)
         .child(div().text_size(T::TEXT_26).text_color(T::text_secondary()).opacity(T::PANELS_O_SOFT).child(w::icon(IconName::PanelsTopLeft, T::TEXT_26)))
         .child(div().text_size(T::TEXT_13).font_weight(if strong { T::W_BOLD } else { T::W_REGULAR }).text_color(if strong { T::text() } else { T::text_secondary() }).child(title))
         .when(!hint.is_empty(), |d| d.child(div().max_w(T::DIALOG_W).text_center().text_size(T::TEXT_12).text_color(T::text_secondary()).child(hint)))
@@ -64,9 +64,9 @@ fn list(window: &mut Window, cx: &mut App) -> AnyElement {
             else if pane == "history" { history(&id).into_any_element() }
             else if s(&sv, "state") != "open" { msg("This panel is closed.", false, "Reopen it to see it here and wherever it was placed.").into_any_element() }
             else { frame(&frame_key("tab", &project, &id), false, T::PANELS_INLINE_MAX, true, window, cx) };
-        main = main.child(div().flex().flex_col().flex_1().min_h_0().child(stage));
+        main = main.child(div().flex().flex_col().flex_1().min_w_0().min_h_0().child(stage));
     }
-    div().flex().flex_1().size_full().min_h_0()
+    div().flex().flex_1().min_w_0().size_full().min_h_0()
         .child(div().flex_none().w(T::PANELS_LIST_W).h_full().bg(T::bg_secondary()).border_r_1().border_color(T::border()).child(col))
         .child(main)
         .into_any_element()
@@ -137,7 +137,7 @@ fn history(id: &str) -> impl IntoElement {
         let (id2, ver2) = (id.to_string(), ver.clone());
         col = col.child(div().flex().flex_none().items_center().gap(T::SP_10).px(T::SP_10).py(T::SP_8).rounded(T::R_CONTROL).border_1().border_color(T::border())
             .child(div().text_size(T::TEXT_12).font_weight(T::W_BOLD).text_color(T::text()).child(format!("v{ver}")))
-            .child(div().flex_1().text_size(T::TEXT_12).text_color(T::text_secondary()).child(when(n(v, "at"))))
+            .child(div().flex_1().min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary()).child(when(n(v, "at"))))
             .when(i == 0, |d| d.child(w::tag("CURRENT", "")))
             .when(i > 0, |d| d.child(w::button(("wg-restore", i), "Restore").on_click(move |_, _, cx| restore(&id2, &ver2, cx)))));
     }
@@ -171,12 +171,12 @@ pub(crate) fn frame(key: &str, auto: bool, max_h: Pixels, wheel: bool, _window: 
     let body_h = f.height.map(px).unwrap_or(T::PANELS_FRAME_START).min(max_h).max(T::PANELS_FRAME_MIN);
     let k = key.to_string();
     let body = div().relative().w_full().overflow_hidden().bg(T::bg())
-        .map(|d| if auto { d.flex_none().h(body_h) } else { d.flex_1().min_h_0() })
+        .map(|d| if auto { d.flex_none().h(body_h) } else { d.flex_1().min_w_0().min_h_0() })
         .children(page.map(|p| div().absolute().inset_0().size_full().child(p)))
         .when(!painted, |d| d.child(div().absolute().inset_0().flex().items_center().justify_center().bg(T::bg()).child(w::spinner(T::ICON_LG))))
         .child(canvas(move |b, _, cx| seen_box(&k, b, cx), |_, _, _, _| {}).absolute().inset_0().size_full());
     div().flex().flex_col().w_full().bg(T::bg())
-        .map(|d| if auto { d.flex_none() } else { d.flex_1().size_full().min_h_0() })
+        .map(|d| if auto { d.flex_none() } else { d.flex_1().min_w_0().size_full().min_h_0() })
         .when(err, |d| d.child(div().flex_none().px(T::SP_10).py(T::SP_8).bg(T::red_dim()).text_size(T::TEXT_12).text_color(T::red())
             .child(if f.error.is_empty() { "This panel could not be loaded.".to_string() } else { f.error.clone() })))
         .when_some(f.grant, |d, items| d.child(grant_banner(key, items, f.approving)))

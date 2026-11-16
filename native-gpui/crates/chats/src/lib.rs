@@ -12,7 +12,7 @@ use crundi_chat_model::{self as model, ChatModel};
 use crundi_shell::{Area, AreaEvent};
 use crundi_theme::T;
 use crundi_workbench::{self as wb, PaneKind};
-use gpui::*;
+use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 use std::{collections::HashMap, rc::Rc};
 
@@ -23,8 +23,12 @@ pub struct ChatPane {
 }
 
 impl Render for ChatPane {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().flex_col().size_full().min_h_0().bg(T::bg()).child(self.log.clone()).child(self.composer.clone())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // A parked chat: the log draws its card over what it was; the composer
+        // only while peeking (a send then resumes it first).
+        let id = self.model.read(cx).id().to_string();
+        let card = crundi_chat_log::parked::is_parked(cx, &id) && !crundi_chat_log::parked::peeking(cx, &id);
+        div().flex().flex_col().size_full().min_h_0().bg(T::bg()).child(self.log.clone()).when(!card, |d| d.child(self.composer.clone()))
     }
 }
 
@@ -47,7 +51,13 @@ fn pane(id: &str, window: &mut Window, cx: &mut App) -> Entity<ChatPane> {
 /// The project's running chats (the event stream's terminals of kind "ui").
 fn live_chats(cx: &App) -> Vec<Value> {
     let s = crundi_shell::session::get(cx);
-    s.terminals.iter().filter(|t| t.get("kind").and_then(|k| k.as_str()) == Some("ui") && t.get("project").and_then(|p| p.as_str()) == Some(s.project.as_str())).cloned().collect()
+    // Running chats, and parked ones (2.23: they keep their pane, showing the card).
+    let chat = |t: &Value| match t.get("kind").and_then(|k| k.as_str()) {
+        Some("ui") => true,
+        Some("parked") => t.get("paneKind").and_then(|k| k.as_str()).unwrap_or("ui") == "ui",
+        _ => false,
+    };
+    s.terminals.iter().filter(|t| chat(t) && t.get("project").and_then(|p| p.as_str()) == Some(s.project.as_str())).cloned().collect()
 }
 
 /// Every running chat has a pane; panes of chats that are gone close.
@@ -76,7 +86,11 @@ pub fn init(cx: &mut App) {
         title: Rc::new(|key, cx| {
             let id = key.trim_start_matches("live:");
             match model::find(cx, id) {
-                Some(m) => { let m = m.read(cx); (if m.conv.title.is_empty() { "Chat".into() } else { m.conv.title.clone() }, if m.conv.state.is_empty() { "idle".into() } else { m.conv.state.clone() }) }
+                Some(m) => {
+                    let parked = crundi_chat_log::parked::is_parked(cx, id);
+                    let m = m.read(cx);
+                    (if m.conv.title.is_empty() { "Chat".into() } else { m.conv.title.clone() }, if parked { "exited".into() } else if m.conv.state.is_empty() { "idle".into() } else { m.conv.state.clone() })
+                }
                 None => ("Chat".into(), "idle".into()),
             }
         }),
@@ -98,6 +112,14 @@ pub fn init(cx: &mut App) {
                 let p = pane(&id, window, cx);
                 let comp = p.read(cx).composer.clone();
                 let text = args.first().cloned().unwrap_or_default();
+                // A parked chat (peeking) resumes first, then sends (2.23).
+                if crundi_chat_log::parked::is_parked(cx, &id) {
+                    let win = window.window_handle();
+                    crundi_chat_log::parked::resume_first(cx, &id, move |cx| {
+                        let _ = win.update(cx, |_, window, cx| comp.update(cx, |c, cx| { c.set_text(&text, window, cx); c.send(window, cx); }));
+                    });
+                    return Some(json!({ "ok": true }));
+                }
                 comp.update(cx, |c, cx| { c.set_text(&text, window, cx); c.send(window, cx); });
                 Some(json!({ "ok": true }))
             }

@@ -131,7 +131,8 @@ pub fn choose(project: &str, skip: bool, term: bool, cx: &mut App, done: impl Fn
             p.update(cx, |p, cx| { p.dlg = Some(Dlg { skip, term, list, error, heavy: None, focus: 0, done }); p.scroll.set_offset(point(px(0.), px(0.))); cx.notify(); });
             let fh = p.read(cx).focus.clone();
             let pc = p.clone();
-            w::modal(window, cx, T::DIALOG_W_XL, p.clone().into(), move |_, cx| pc.update(cx, |p, cx| { p.dlg = None; cx.notify(); }));
+            // (Deferred: an answer closes the modal from inside the picker's own update.)
+            w::modal(window, cx, T::DIALOG_W_XL, p.clone().into(), move |_, cx| { let pc = pc.clone(); cx.defer(move |cx| pc.update(cx, |p, cx| { p.dlg = None; cx.notify(); })); });
             window.focus(&fh, cx);
         });
     });

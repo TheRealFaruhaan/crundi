@@ -1260,7 +1260,7 @@ pub fn group(text: &str, first: bool) -> Div {
 pub fn fold(key: &'static str, title: &str, open: bool, body: impl FnOnce() -> AnyElement) -> Div {
     let headc = div().id(eid("set-fold", key)).flex().items_center().gap(T::SP_8).px(T::SP_16).py(T::SP_12).cursor_pointer()
         .text_color(T::text()).hover(|d| d.text_color(T::accent()))
-        .child(div().flex_1().text_size(T::TEXT_14).font_weight(T::W_MEDIUM).child(title.to_string()))
+        .child(div().flex_1().min_w_0().text_size(T::TEXT_14).font_weight(T::W_MEDIUM).child(title.to_string()))
         .child(w::icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, T::ICON_SM))
         .on_click(move |_, _, cx| { let on = !is_open(cx, key); set_open(cx, key, on); });
     div().flex().flex_col().flex_none().bg(T::bg_secondary()).rounded(T::R_FIELD).border_1().border_color(T::border())
@@ -1272,7 +1272,7 @@ pub fn fold(key: &'static str, title: &str, open: bool, body: impl FnOnce() -> A
 fn toggle_row(id: impl Into<ElementId>, title: &str, mark: Option<&'static [u8]>, hint_text: &str, on: bool, enabled: bool, extra: Option<AnyElement>, toggled: impl Fn(bool, &mut App) + 'static) -> Div {
     let title_row = row().gap(T::SP_6)
         .children(mark.map(|m| img(Arc::new(Image::from_bytes(ImageFormat::Svg, m.to_vec()))).size(T::ICON_SM)))
-        .child(div().flex_1().text_size(T::TEXT_14).text_color(T::text()).child(title.to_string()));
+        .child(div().flex_1().min_w_0().text_size(T::TEXT_14).text_color(T::text()).child(title.to_string()));
     div().flex().gap(T::SP_16)
         .child(col(T::SP_4).flex_1().min_w_0().child(title_row).when(!hint_text.is_empty(), |d| d.child(hint(hint_text.to_string()))).children(extra))
         .child(div().flex_none().opacity(if enabled { 1.0 } else { T::SETTINGS_O_DIM })
@@ -1328,7 +1328,7 @@ fn sections(window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
     let b = if o("cc") { claude_body(cx) } else { div().into_any_element() };
     v.push(fold("cc", "Claude Code", o("cc"), || b).into_any_element());
     v.push(fold("whatsnew", "What\u{2019}s new", o("whatsnew"), || row().gap(T::SP_12)
-        .child(div().flex_1().text_size(T::TEXT_12).text_color(T::text_muted()).child("A short tour of what the latest update added. It shows by itself once after each update."))
+        .child(div().flex_1().min_w_0().text_size(T::TEXT_12).text_color(T::text_muted()).child("A short tour of what the latest update added. It shows by itself once after each update."))
         .child(w::button("set-whatsnew", "Show it again").on_click(|_, _, cx| whats_new(cx))).into_any_element()).into_any_element());
     v.push(group("CLAUDE", false).into_any_element());
     let b = if o("sysprompt") { sysprompt_body(window, cx) } else { div().into_any_element() };
@@ -1550,7 +1550,7 @@ fn notify_body(cx: &mut App) -> AnyElement {
         .child(div().id(("ntf", i * 3 + ["always", "away", "never"].iter().position(|x| *x == m).unwrap_or(0))).cursor_pointer().child(w::choice_mark(false, on, false))
             .on_click(move |_, _, cx| notify_pref(cx, &key, m)));
     let head = div().flex().items_stretch().min_h(T::CONTROL_LG).pl(T::SP_12).bg(T::bg_tertiary())
-        .child(div().flex_1().flex().items_center().font_family(T::MONO).text_size(T::TEXT_10).text_color(T::text_muted()).child("EVENT"))
+        .child(div().flex_1().min_w_0().flex().items_center().font_family(T::MONO).text_size(T::TEXT_10).text_color(T::text_muted()).child("EVENT"))
         .children(["ALWAYS", "WHEN AWAY", "NEVER"].into_iter().map(|m| div().w(T::SETTINGS_NTF_COL).flex().items_center().justify_center().border_l_1().border_color(T::border())
             .font_family(T::MONO).text_size(T::TEXT_10).text_color(T::text_muted()).child(m)));
     let mut table = div().flex().flex_col().rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg_secondary()).overflow_hidden().child(head);
@@ -1560,7 +1560,7 @@ fn notify_body(cx: &mut App) -> AnyElement {
             table = table.child(div().pl(T::SP_12).py(T::SP_6).bg(T::bg_tertiary()).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::accent()).child(r.cat.clone()));
         } else {
             table = table.child(div().id(("ntf-row", i)).flex().items_stretch().min_h(T::CONTROL_LG).pl(T::SP_12).hover(|d| d.bg(T::bg_hover()))
-                .child(div().flex_1().flex().items_center().text_size(T::TEXT_13).text_color(T::text()).child(r.label.clone()))
+                .child(div().flex_1().min_w_0().flex().items_center().text_size(T::TEXT_13).text_color(T::text()).child(r.label.clone()))
                 .child(cell(i, "always", r.mode == "always", r.key.clone()))
                 .child(cell(i, "away", r.mode == "away", r.key.clone()))
                 .child(cell(i, "never", r.mode == "never", r.key.clone())));
@@ -1586,15 +1586,15 @@ fn oauth_block(window: &mut Window, cx: &mut App, k: &'static str) -> AnyElement
         .child(hairline())
         .child(toggle_row(eid("oauth-on", k), &o.v.label, Some(if k == "google" { GOOGLE } else { GITHUB }), &o.v.status, o.v.on, o.v.can_on || o.v.on, None, move |on, cx| method_toggle(cx, k, on)))
         .child(label(format!("Callback URL to give {}", o.v.label)))
-        .child(row().child(div().flex_1().px(T::SP_10).py(T::SP_8).bg(T::bg()).rounded(T::R_CONTROL).border_1().border_color(T::border())
+        .child(row().child(div().flex_1().min_w_0().px(T::SP_10).py(T::SP_8).bg(T::bg()).rounded(T::R_CONTROL).border_1().border_color(T::border())
                 .font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text())
                 .child(if url.is_empty() { "Unknown until this server has a public address".to_string() } else { url.clone() }))
             .when(!url.is_empty(), |d| d.child(w::button(eid("oauth-copy", k), "Copy").on_click(move |_, _, cx| oauth_copy(cx, k)))))
-        .child(div().flex().gap(T::SP_6).child(hint(format!("{}{}", o.v.howto, if o.v.local { " This is a local address: it only works when signing in on this computer." } else { "" })).flex_1())
+        .child(div().flex().gap(T::SP_6).child(hint(format!("{}{}", o.v.howto, if o.v.local { " This is a local address: it only works when signing in on this computer." } else { "" })).flex_1().min_w_0())
             .child(w::link(eid("oauth-open", k), "Open").on_click(move |_, _, cx| open_url(cx, open))))
         .child(div().flex().gap(T::SP_8)
-            .child(col(T::SP_4).flex_1().child(label("Client ID")).child(mono_box(&id)))
-            .child(col(T::SP_4).flex_1().child(label("Client secret")).child(mono_box(&sec))))
+            .child(col(T::SP_4).flex_1().min_w_0().child(label("Client ID")).child(mono_box(&id)))
+            .child(col(T::SP_4).flex_1().min_w_0().child(label("Client secret")).child(mono_box(&sec))))
         .child(col(T::SP_4).child(label(o.v.acct.clone())).child(input_box(&al)))
         .child(row()
             .child(w::primary(eid("oauth-save", k), "Save").on_click(move |_, _, cx| oauth_save(cx, k)))
@@ -1617,7 +1617,7 @@ fn signin_body(window: &mut Window, cx: &mut App) -> AnyElement {
         .child(toggle_row("pw-on", "Password + authenticator code", None,
             if s.pw_set { "A password and a 6-digit code. Setting a new password issues a new code source." } else { "Not set up yet. Choose a password below to enable it." },
             s.pw_on, s.pw_set, None, |on, cx| method_toggle(cx, "password", on)))
-        .child(row().child(div().flex_1().child(w::input(&pw))).child(w::primary("pw-set", if s.pw_set { "Change" } else { "Set" }).on_click(|_, _, cx| set_password(cx))))
+        .child(row().child(div().flex_1().min_w_0().child(w::input(&pw))).child(w::primary("pw-set", if s.pw_set { "Change" } else { "Set" }).on_click(|_, _, cx| set_password(cx))))
         .when(!s.enrol.is_empty(), |d| d.child(col(T::SP_6).p(T::SP_12).rounded(T::R_FIELD).border_1().border_color(T::accent()).bg(T::accent_dim())
             .child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Add this to your authenticator app"))
             .child(hint("Shown once. Without it you will not be able to sign in with the new password."))
@@ -1629,11 +1629,11 @@ fn signin_body(window: &mut Window, cx: &mut App) -> AnyElement {
     } else {
         d = d.child(col(T::SP_8).pt(T::SP_6).child(hairline())
             .child(toggle_row("tg-on", "Telegram", Some(TELEGRAM), &s.tg_status, s.tg_on, s.tg_can || s.tg_on, None, |on, cx| method_toggle(cx, "telegram", on)))
-            .child(div().flex().gap(T::SP_6).child(hint("In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel.").flex_1())
+            .child(div().flex().gap(T::SP_6).child(hint("In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel.").flex_1().min_w_0())
                 .child(w::link("tg-open", "Open").on_click(|_, _, cx| open_url(cx, "https://t.me/BotFather"))))
             .child(div().flex().gap(T::SP_8)
-                .child(col(T::SP_4).flex_1().child(label("Bot token")).child(mono_box(&tok)))
-                .child(col(T::SP_4).flex_1().child(label("Allowed Telegram username")).child(input_box(&user))))
+                .child(col(T::SP_4).flex_1().min_w_0().child(label("Bot token")).child(mono_box(&tok)))
+                .child(col(T::SP_4).flex_1().min_w_0().child(label("Allowed Telegram username")).child(input_box(&user))))
             .child(row().child(w::primary("tg-save", "Save").on_click(|_, _, cx| tg_save(cx)))
                 .when(s.tg_restart, |d| d.child(w::button("tg-restart", "Restart now").on_click(|_, _, cx| restart_server(cx))))
                 .when(s.tg_token_set, |d| d.child(w::button("tg-clear", "Remove").on_click(|_, _, cx| tg_clear(cx))))));
@@ -1647,7 +1647,7 @@ fn phone_body(window: &mut Window, cx: &mut App) -> AnyElement {
     let relay = c::line::<St>(window, cx, "relay-url", "https://your-relay.example", false, None);
     let s = cx.global::<St>();
     let mut d = col(T::SP_10)
-        .child(row().gap(T::SP_12).child(hint("Pair the Crundi app on a phone with this server. It shows a picture for the phone to scan, so no password is typed on the phone.").flex_1())
+        .child(row().gap(T::SP_12).child(hint("Pair the Crundi app on a phone with this server. It shows a picture for the phone to scan, so no password is typed on the phone.").flex_1().min_w_0())
             .child(w::button("phone-connect", "Connect a phone").on_click(|_, _, cx| pair_start(cx))))
         .child(label("Notifications on the phone"));
     match s.push_state.as_str() {
@@ -1660,7 +1660,7 @@ fn phone_body(window: &mut Window, cx: &mut App) -> AnyElement {
                 .child(label(s.push_line.clone()))
                 .when(!s.push_contact.is_empty(), |d| d.child(row().child(w::link("push-contact", s.push_contact.clone()).on_click(move |_, _, cx| open_url(cx, &url)))))
                 .when(!s.push_error.is_empty(), |d| d.child(hint(s.push_error.clone()).text_color(T::yellow())))
-                .child(row().child(div().flex_1().child(w::input(&key))).child(w::primary("push-save", "Save").on_click(|_, _, cx| push_save(cx)))
+                .child(row().child(div().flex_1().min_w_0().child(w::input(&key))).child(w::primary("push-save", "Save").on_click(|_, _, cx| push_save(cx)))
                     .when(s.push_has_key, |d| d.child(w::button("push-mtest", "Test").on_click(|_, _, cx| push_mobile_test(cx))).child(w::button("push-remove", "Remove").on_click(|_, _, cx| push_remove(cx)))))
                 // A custom relay is for a custom build of the app: folded away (<details>).
                 .child(div().id("relay-fold").flex().items_center().gap(T::SP_4).cursor_pointer().text_size(T::TEXT_12).text_color(T::text_muted())
@@ -1668,7 +1668,7 @@ fn phone_body(window: &mut Window, cx: &mut App) -> AnyElement {
                     .on_click(|_, _, cx| upd(cx, |s| s.relay_open = !s.relay_open)))
                 .when(s.relay_open, |d| d.child(col(T::SP_8)
                     .child(hint("Only change this if you use your own build of the app, with its own relay. The published app works with the published relay and no other. Changing the relay removes the key."))
-                    .child(row().child(div().flex_1().child(w::input(&relay)))
+                    .child(row().child(div().flex_1().min_w_0().child(w::input(&relay)))
                         .child(w::button("relay-save", if custom { "Save" } else { "Use this relay" }).on_click(|_, _, cx| { let u = field(cx, "relay-url"); relay_save(cx, u); }))
                         .when(custom, |d| d.child(w::button("relay-pub", "Use the published relay").on_click(|_, _, cx| relay_save(cx, String::new()))))))));
         }
@@ -1680,10 +1680,10 @@ fn session_body(cx: &mut App) -> AnyElement {
     let server = crundi_shell::session::get(cx).server.clone();
     let s = cx.global::<St>();
     let mut d = col(T::SP_10)
-        .child(row().gap(T::SP_12).child(hint("Ends this sign-in on this device and revokes its tokens, so they cannot be refreshed. Also clears the cookie that reaches private forwards.").flex_1())
+        .child(row().gap(T::SP_12).child(hint("Ends this sign-in on this device and revokes its tokens, so they cannot be refreshed. Also clears the cookie that reaches private forwards.").flex_1().min_w_0())
             // Two-step, as the web's: easy to hit by accident, and the way back is the sign-in screen.
             .child(w::arm_button("sess-signout", format!("Sign out of {server}"), None, "Sign out?", |_, cx| crundi_shell::session::sign_out(cx, ""))))
-        .child(row().child(label("Signed in devices").flex_1()).child(w::button("sess-toggle", if s.sess_open { "Hide" } else { "Show" }).on_click(|_, _, cx| sess_toggle(cx))));
+        .child(row().child(label("Signed in devices").flex_1().min_w_0()).child(w::button("sess-toggle", if s.sess_open { "Hide" } else { "Show" }).on_click(|_, _, cx| sess_toggle(cx))));
     if !s.sess_open { return d.into_any_element(); }
     match s.sess_state.as_str() {
         "loading" => d = d.child(hint("Loading\u{2026}").text_size(T::TEXT_13)),
@@ -1754,7 +1754,7 @@ fn desktop_body(cx: &mut App) -> AnyElement {
         .child(info_row("Release channel", "Dev gets preview builds early. A newer production release is offered either way.",
             vec![w::segmented("upd-channel", &["Production", "Dev"], s.upd_channel.max(0) as usize, |i, _, cx| desktop_channel(cx, *i as i32)).into_any_element()]))
         .child(row().gap(T::SP_12)
-            .child(row().flex_1().child(w::dot(if s.upd_avail { T::accent() } else { T::green() }))
+            .child(row().flex_1().min_w_0().child(w::dot(if s.upd_avail { T::accent() } else { T::green() }))
                 .child(div().text_size(T::TEXT_13).text_color(if s.upd_avail { T::accent_hover() } else { T::text_secondary() }).child(s.upd_status.clone())))
             .child(w::button("update-check", "Check now").on_click(|_, _, cx| update_check(cx))))
         .into_any_element()

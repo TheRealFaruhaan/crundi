@@ -484,7 +484,7 @@ fn hp_card(head: Vec<AnyElement>, body: Div) -> Div {
         .child(body.px(T::SP_12).pt(T::SP_8).pb(T::SP_10))
 }
 fn hp_title(text: impl Into<SharedString>) -> AnyElement { div().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(text.into()).into_any_element() }
-fn spacer() -> AnyElement { div().flex_1().into_any_element() }
+fn spacer() -> AnyElement { div().flex_1().min_w_0().into_any_element() }
 
 /// "code": a mono box and its Copy (.hp-code); "quiet": muted words; "warn": the yellow note.
 fn use_el(key: String, u: &Use) -> Div {
@@ -637,8 +637,8 @@ impl Hp {
                     .child(meta("Off: with no exit up, connections are refused rather than quietly leaving from the server.")).into_any_element());
                 out.push(field("EXPIRES", w::input(&i.k_exp), "Empty: until you revoke it.").into_any_element());
                 out.push(div().flex().gap(T::SP_12)
-                    .child(field("DATA CAP PER DAY (MB, 0 = NONE)", w::input(&i.k_cap), "").flex_1())
-                    .child(field("SLOTS", w::input(&i.k_slots), "").flex_1()).into_any_element());
+                    .child(field("DATA CAP PER DAY (MB, 0 = NONE)", w::input(&i.k_cap), "").flex_1().min_w_0())
+                    .child(field("SLOTS", w::input(&i.k_slots), "").flex_1().min_w_0()).into_any_element());
                 out.push(meta("Slots: identities that should each keep one exit (one per account).").into_any_element());
                 if self.k_kind == 0 {
                     out.push(div().flex().flex_col().gap(T::SP_6)
@@ -699,7 +699,7 @@ impl Render for Hp {
         let tabs = m.tabs.iter().map(|t| w::SegTab { icon: None, label: t.label.into(), count: t.count.clone().into(), alert: t.alert }).collect();
         let mut bar = div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_16).py(T::SP_10).border_b_1().border_color(T::border())
             .child(w::seg_tabs("hp-tabs", tabs, on, move |i, _, cx| set_tab(keys[i], cx)))
-            .child(div().flex_1());
+            .child(div().flex_1().min_w_0());
         match self.tab.as_str() {
             "networks" => {
                 bar = bar.child(w::button("hp-net-add", "Network").icon(IconName::Plus).on_click(|_, window, cx| action("net-add", "", window, cx)))

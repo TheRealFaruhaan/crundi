@@ -698,10 +698,10 @@ fn link(id: impl Into<ElementId>, url: String) -> Stateful<Div> {
 
 /// One readout of the usage strip (.stat-cell): the label, the value, the sparkline.
 fn stat_cell(label: &'static str, value: String, vals: &[f64], max: f64, stroke: Hsla, fill: Hsla) -> Div {
-    div().flex().flex_1().items_center().gap(T::SP_8)
+    div().flex().flex_1().min_w_0().items_center().gap(T::SP_8)
         .child(div().text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_muted()).child(label))
         .child(div().min_w(T::SERVICES_VALUE_W).font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text()).child(value))
-        .child(div().flex_1().min_w(T::SP_32 + T::SP_4).h(T::SERVICES_SPARK_H)
+        .child(div().flex_1().min_w_0().min_w(T::SP_32 + T::SP_4).h(T::SERVICES_SPARK_H)
             .child(w::spark(vec![w::Series { values: vals.iter().map(|v| *v as f32).collect(), max: max as f32, stroke, fill }], 0, None).size_full()))
 }
 
@@ -763,7 +763,7 @@ fn card_view(i: usize, c: &Card, edit_input: Option<&Entity<w::InputState>>, scr
                 .child(div().flex_none().h(px(1.)).w_full().bg(T::border()))
                 .child(div().flex().items_center().gap(T::SP_8)
                     .when(!c.edit_prefix.is_empty(), |d| d.child(mono_muted(c.edit_prefix.clone())))
-                    .child(div().flex_1().min_w(T::SP_48 + T::SP_40).child(w::input(input)))
+                    .child(div().flex_1().min_w_0().min_w(T::SP_48 + T::SP_40).child(w::input(input)))
                     .child(mono_muted(c.edit_suffix.clone()))
                     .child(w::primary(k("save"), "Save").icon(IconName::Check).on_click(move |_, window, cx| save_expose(&sk, window, cx)))
                     .child(w::button(k("cancel"), "Cancel").on_click(|_, _, cx| { upd(cx, |st, _| st.edit = None); })))
@@ -828,7 +828,7 @@ impl Render for Services {
                 let on = al.iter().position(|a| *a == p).map(|i| i + 1).unwrap_or(0);
                 let (h1, h2, al2) = (host.clone(), host.clone(), al.clone());
                 b = b.child(w::rule()).child(div().id(("svc-other", i)).flex().items_center().gap(T::SP_6)
-                    .child(link(("svc-other-link", i), url).flex_1())
+                    .child(link(("svc-other-link", i), url).flex_1().min_w_0())
                     .when(t(f, "public"), |d| d.child(w::tag("PUBLIC", "warn")))
                     .child(mono_muted(format!("port {}", s(f, "port"))))
                     .child(w::select(("svc-other-proj", i), items.clone(), Some(on), "No project", false, move |i, _, cx| {

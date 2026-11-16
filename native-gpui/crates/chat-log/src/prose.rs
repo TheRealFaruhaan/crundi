@@ -49,12 +49,20 @@ fn toast(text: &str, kind: w::Toast, window: &mut Window, cx: &mut App) {
     w::toast(window, cx, text.to_string(), kind);
 }
 
+/// The last user bubble drawn: its box's and its text's heights (F122).
+#[derive(Default)]
+pub struct Bubble { box_h: f32, drawn_h: f32 }
+impl Global for Bubble {}
+
 /// The driver's props for no chat in particular: lastOpened, clipboard,
 /// and toast (the last one the log showed: the window has no toast prop yet).
 pub fn global_props(cx: &mut App) -> Value {
     let d = cx.default_global::<Done>();
     let (lo, t) = (d.last_opened.clone(), d.toast.clone());
-    json!({ "lastOpened": lo, "toast": t, "clipboard": cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default() })
+    let b = cx.default_global::<Bubble>();
+    // (Measured inside the border: the text plus the padding, as the Slint client's.)
+    let bubble = (b.box_h > 0.).then(|| json!({ "box": b.box_h, "drawn": b.drawn_h, "copy": b.drawn_h }));
+    json!({ "lastOpened": lo, "toast": t, "clipboard": cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default(), "bubble": bubble })
 }
 
 // ─── Following the bottom, and the jump button (log-rest.md §7, F87) ───
@@ -171,10 +179,15 @@ pub fn entry(v: &mut LogView, _i: usize, e: &Shown, cx: &mut Context<LogView>) -
     Some(match e.kind {
         // The bubble: accent tint and edge, one sharp corner (bottom right).
         "user" => div().flex().justify_end()
-            .child(div().max_w(relative(0.82)).px(T::SP_12).py(T::SP_8)
+            .child(div().relative().max_w(relative(0.82)).px(T::SP_12).py(T::SP_8)
                 .rounded_tl(T::R_BUBBLE).rounded_tr(T::R_BUBBLE).rounded_bl(T::R_BUBBLE).rounded_br(T::R_CHIP)
                 .bg(T::accent_dim()).border_1().border_color(T::accent_edge())
-                .text_size(T::TEXT_13 * fs).line_height(relative(T::LH_CHAT)).text_color(T::text()).child(e.text.clone()))
+                .text_size(T::TEXT_13 * fs).line_height(relative(T::LH_CHAT)).text_color(T::text())
+                // The driver's "bubble" (F122): the box's height and its text's (the
+                // text is drawn once, so the selectable copy is the drawn text).
+                .child(canvas(|b, _, cx| { cx.default_global::<Bubble>().box_h = f32::from(b.size.height); }, |_, _, _, _| {}).absolute().size_full())
+                .child(div().relative().child(e.text.clone())
+                    .child(canvas(|b, _, cx| { cx.default_global::<Bubble>().drawn_h = f32::from(b.size.height); }, |_, _, _, _| {}).absolute().size_full())))
             .into_any_element(),
         // A failed turn: the box with its text (or "Error").
         "result" if e.error => error_box(if e.text.is_empty() { "Error" } else { &e.text }, fs).into_any_element(),

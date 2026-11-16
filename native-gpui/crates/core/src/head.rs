@@ -113,7 +113,8 @@ fn field<'a>(c: &'a Value, k: &str) -> &'a str { c.get(k).and_then(|v| v.as_str(
 /// everything; a pending card is needs input; else its agent state (idle
 /// when it has none yet).
 pub fn chat_state(c: &Value) -> String {
-    if field(c, "status") == "exited" { return "exited".into(); }
+    // A parked chat (2.23) reads exited too (its pane shows the card).
+    if field(c, "status") == "exited" || field(c, "kind") == "parked" { return "exited".into(); }
     if c.get("pending").and_then(|p| p.as_array()).is_some_and(|p| !p.is_empty()) { return "needs-input".into(); }
     let st = field(c, "agentState");
     if st.is_empty() { "idle".into() } else { st.to_string() }

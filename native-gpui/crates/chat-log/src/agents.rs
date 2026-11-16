@@ -288,7 +288,7 @@ pub fn sheet(v: &mut LogView, window: &mut Window, cx: &mut Context<LogView>) ->
             else { "A finished agent leaves this list after 5 minutes. Its transcript stays on its Agent row in the chat." };
         return Some(frame()
             .child(head(None, (if task { "Commands" } else { "Agents" }).into(), agents::list_sub(r, l.len() - r), Some(task), z, cx))
-            .child(div().id("ag-list").flex_1().min_h_0().overflow_y_scroll().p(T::SP_6).child(div().flex().flex_col().children(rows)))
+            .child(div().id("ag-list").flex_1().min_w_0().min_h_0().overflow_y_scroll().p(T::SP_6).child(div().flex().flex_col().children(rows)))
             .child(div().flex_none().px(T::SP_12).py(T::SP_8).border_t_1().border_color(T::border_subtle()).text_size(T::TEXT_11 + z).text_color(T::text_muted()).child(foot))
             .into_any_element());
     }
@@ -322,7 +322,7 @@ pub fn sheet(v: &mut LogView, window: &mut Window, cx: &mut Context<LogView>) ->
     let empty = els.is_empty().then(|| agents::empty_text(&a));
     Some(frame()
         .child(head(back, agents::label(&a), agents::panel_sub(&a), None, z, cx))
-        .child(div().id("ag-panel").flex_1().min_h_0().overflow_y_scroll().track_scroll(&v.st.agents.panel_scroll)
+        .child(div().id("ag-panel").flex_1().min_w_0().min_h_0().overflow_y_scroll().track_scroll(&v.st.agents.panel_scroll)
             .child(div().flex().flex_col().gap(T::SP_10).px(T::SP_12).py(T::SP_10)
                 .when(!prompt.is_empty(), |d| d.child(div().id("ag-prompt").max_h(T::COMPOSER_MAX).overflow_y_scroll().px(T::SP_8).py(T::SP_6)
                     .rounded(T::R_CONTROL).bg(T::bg_secondary()).border_1().border_color(T::border_subtle())

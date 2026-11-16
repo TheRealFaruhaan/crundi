@@ -499,7 +499,7 @@ fn section(title: &str) -> Div {
 fn kv(label: impl Into<SharedString>, value: impl Into<SharedString>, rule: bool) -> Div {
     div().flex().items_center().gap(T::SP_8).py(T::SP_6).when(rule, |d| d.border_b_1().border_color(T::border_subtle()))
         .child(div().flex_none().text_size(T::TEXT_13).text_color(T::text_secondary()).child(label.into()))
-        .child(div().flex_1())
+        .child(div().flex_1().min_w_0())
         .child(div().max_w(relative(T::INFO_VALUE_SHARE)).text_right().font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text()).child(value.into()))
 }
 
@@ -518,7 +518,7 @@ impl InfoView {
         if !sys.cores.is_empty() {
             d = d.child(div().flex().h(T::SP_24 + T::SP_4).gap(T::SP_2).children(sys.cores.iter().map(|c| {
                 let c = c.clamp(0.0, 100.0);
-                div().flex_1().h_full().flex().flex_col().justify_end().rounded(T::SP_2).bg(T::bg_tertiary()).overflow_hidden()
+                div().flex_1().min_w_0().h_full().flex().flex_col().justify_end().rounded(T::SP_2).bg(T::bg_tertiary()).overflow_hidden()
                     .child(div().w_full().h(relative((c / 100.0) as f32)).bg(level_color(c)))
             })));
         }
@@ -602,7 +602,7 @@ impl InfoView {
             let mut card = note(false)
                 .child(div().flex().items_center().gap(T::SP_8)
                     .child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(p.name.clone()))
-                    .child(div().flex_1().text_size(T::TEXT_11).text_color(T::text_muted()).child(p.tg.clone()))
+                    .child(div().flex_1().min_w_0().text_size(T::TEXT_11).text_color(T::text_muted()).child(p.tg.clone()))
                     .child(w::button(("reissue", pi), "New passcode").on_click(on("collab-reissue", p.id.clone()))))
                 .child(div().flex().items_center().gap(T::SP_6)
                     .child(div().text_size(T::TEXT_11).text_color(if p.over { T::red() } else { T::text_muted() }).child(p.usage.clone()))
@@ -621,7 +621,7 @@ impl InfoView {
                 card = card.child(div().flex().items_center().gap(T::SP_8).when(r.gone, |d| d.opacity(T::INFO_O_SOFT))
                     .child(div().min_w(T::SP_48 + T::SP_40).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(r.project.clone()))
                     .child(div().min_w_0().truncate().font_family(T::MONO).text_size(T::TEXT_11).text_color(T::sky()).child(r.branch.clone()))
-                    .child(div().flex_1().text_right().text_size(T::TEXT_12).text_color(T::text_muted()).child(r.exp.clone()))
+                    .child(div().flex_1().min_w_0().text_right().text_size(T::TEXT_12).text_color(T::text_muted()).child(r.exp.clone()))
                     .child(w::button(("extend", k), "Extend").on_click(on("collab-extend", r.id.clone())))
                     .child(w::button(("merge", k), "Merge").on_click(on("collab-merge-owner", r.id.clone())))
                     .child(if r.revoked { w::button(("restore", k), "Restore").on_click(on("collab-unrevoke", r.id.clone())) }
@@ -730,7 +730,7 @@ impl Render for InfoView {
             page = page.child(section("TUNNEL").gap(px(0.))
                 .child(div().flex().items_center().gap(T::SP_8).py(T::SP_6).border_b_1().border_color(T::border_subtle())
                     .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("URL"))
-                    .child(div().flex_1())
+                    .child(div().flex_1().min_w_0())
                     .child(div().id("tunnel-url").max_w(relative(T::INFO_VALUE_SHARE)).font_family(T::MONO).text_size(T::TEXT_12)
                         .text_color(if link { T::accent() } else { T::text() })
                         .when(link, |d| d.cursor_pointer().hover(|d| d.text_color(T::accent_hover())))
@@ -741,7 +741,7 @@ impl Render for InfoView {
         }
         page = page.child(section("")
             .child(div().flex().items_center().gap(T::SP_8)
-                .child(div().flex_1().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child("SERVER LOGS"))
+                .child(div().flex_1().min_w_0().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child("SERVER LOGS"))
                 .child(w::button("copy-logs", "Copy").icon(IconName::Copy).on_click(cx.listener(|_, _, window, cx| act("copy-logs", "", window, cx)))))
             .child(self.log_box()));
         let dlg = self.dialogs(window, cx);

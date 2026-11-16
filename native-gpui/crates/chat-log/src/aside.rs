@@ -140,7 +140,7 @@ pub fn row(v: &mut LogView, a: &Aside, cx: &mut Context<LogView>) -> AnyElement 
     };
     div().flex().flex_col().px(T::SP_10).py(T::SP_8).rounded(T::R_CONTROL).border_1().border_dashed().border_color(T::border()).bg(T::bg_secondary())
         .child(div().flex().items_center().gap(T::SP_8)
-            .child(div().flex_1().text_size(T::TEXT_11 + z).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child("ON THE SIDE"))
+            .child(div().flex_1().min_w_0().text_size(T::TEXT_11 + z).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child("ON THE SIDE"))
             .child(w::icon_button(SharedString::from(format!("aside-x-{id}")), IconName::X, "Close").on_click(cx.listener(move |v, _, _, cx| close(v, id, cx)))))
         .child(div().mt(T::SP_4).mb(T::SP_6).text_color(T::text()).line_height(relative(T::LH_CHAT)).child(a.question.clone()))
         .child(answer)

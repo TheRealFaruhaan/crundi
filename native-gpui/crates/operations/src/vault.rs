@@ -591,7 +591,7 @@ fn hint(text: impl Into<SharedString>, warn: bool) -> Div {
 fn lock_head(title: &'static str) -> Div {
     div().flex().items_center().gap(T::SP_8)
         .child(div().text_color(T::accent_hover()).child(w::icon(IconName::Lock, T::ICON_MD)))
-        .child(div().flex_1().text_size(T::TEXT_15).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
+        .child(div().flex_1().min_w_0().text_size(T::TEXT_15).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
 }
 
 /// A lock field: a PIN mono and centred, a passphrase plain (both hidden).
@@ -685,8 +685,8 @@ impl Vault {
                 .child(lock_field(&i.pin, &p.lock, true))
                 .child(div().flex().justify_center().min_h(T::SP_16).text_size(T::TEXT_12).text_color(T::red()).child(p.error.clone()))
                 .child(div().flex().gap(T::SP_10)
-                    .child(div().flex_1().child(w::button("vault-pin-cancel", "Cancel").w_full().on_click(|_, _, cx| pin_close(cx))))
-                    .child(div().flex_1().child(w::disabled(w::primary("vault-pin-ok", label), p.busy).w_full().on_click(|_, window, cx| pin_submit(window, cx)))))
+                    .child(div().flex_1().min_w_0().child(w::button("vault-pin-cancel", "Cancel").w_full().on_click(|_, _, cx| pin_close(cx))))
+                    .child(div().flex_1().min_w_0().child(w::disabled(w::primary("vault-pin-ok", label), p.busy).w_full().on_click(|_, window, cx| pin_submit(window, cx)))))
                 .into_any_element()];
             (T::VAULT_PIN_W, kids, pin_close)
         } else if let Some(e) = &self.edit {

@@ -123,7 +123,7 @@ pub fn panel(v: &mut LogView, _window: &mut Window, cx: &mut Context<LogView>) -
             .child(tag("PLAN", z))
             .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_11 + z).text_color(T::text_muted()).child(plan_state(&st)))
             .child(w::button("plan-close", "Close").on_click(cx.listener(|v, _, _, cx| { v.st.goal.plan_open = false; cx.notify(); }))))
-        .child(div().id("plan-body").flex_1().min_h_0().overflow_y_scroll()
+        .child(div().id("plan-body").flex_1().min_w_0().min_h_0().overflow_y_scroll()
             .child(div().flex().flex_col().gap(T::SP_6).px(T::SP_16).py(T::SP_12).children(blocks)))
         .into_any_element())
 }

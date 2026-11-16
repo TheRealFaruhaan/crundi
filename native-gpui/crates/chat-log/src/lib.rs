@@ -189,20 +189,20 @@ impl Render for LogView {
         let rows = self.rows(cx);
         let els: Vec<AnyElement> = rows.iter().enumerate().filter_map(|(i, r)| self.row(i, r, window, cx)).collect();
         // The floating dock's room at the end (2.17/2.18: the newest line scrolls clear of it).
-        let log = div().id("log").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.scroll)
+        let log = div().id("log").flex_1().min_w_0().min_h_0().overflow_y_scroll().track_scroll(&self.scroll)
             .on_scroll_wheel(cx.listener(|this, e: &ScrollEvent, window, _| prose::wheel(this, e, window)))
             .child(div().flex().flex_col().gap(T::SP_10).p(T::SP_12).children(els)
                 .child(agents::pad(self)));
         // A parked chat (2.23): its card over what it was (or Peek), nothing else.
         let log = match parked::wrap(self, log.into_any_element(), window, cx) {
-            Ok(p) => return with_fallbacks(div()).flex().flex_col().flex_1().min_h_0().text_size(T::TEXT_13 + px(zoom as f32)).child(p).into_any_element(),
+            Ok(p) => return with_fallbacks(div()).flex().flex_col().flex_1().min_w_0().min_h_0().text_size(T::TEXT_13 + px(zoom as f32)).child(p).into_any_element(),
             Err(l) => l,
         };
         // Over the log (its area only): the floating dock (badges, recap,
         // suggestion), the plan panel (2.19), the agent sheet (2.18); the
         // goal bar between the log and the composer (2.19).
-        with_fallbacks(div()).flex().flex_col().flex_1().min_h_0().text_size(T::TEXT_13 + px(zoom as f32))
-            .child(div().relative().flex().flex_col().flex_1().min_h_0().child(log)
+        with_fallbacks(div()).flex().flex_col().flex_1().min_w_0().min_h_0().text_size(T::TEXT_13 + px(zoom as f32))
+            .child(div().relative().flex().flex_col().flex_1().min_w_0().min_h_0().child(log)
                 .children(agents::dock(self, window, cx))
                 .children(goal::panel(self, window, cx))
                 .children(prose::jump(self, cx))
@@ -213,13 +213,10 @@ impl Render for LogView {
     }
 }
 
-/// The fallback font for chat content (registered in `init`).
-static EMOJI_FONT: &[u8] = include_bytes!("../assets/fonts/NotoEmoji.ttf");
-pub const EMOJI_FAMILY: &str = "Noto Emoji";
 
 /// Chat content's fallback chain: after the theme's font, Noto Emoji.
 pub fn with_fallbacks<E: Styled>(mut el: E) -> E {
-    el.text_style().font_fallbacks = Some(FontFallbacks::from_fonts(vec![EMOJI_FAMILY.to_string()]));
+    el.text_style().font_fallbacks = Some(FontFallbacks::from_fonts(vec![crundi_theme::EMOJI_FONT.to_string()]));
     el
 }
 
@@ -250,11 +247,12 @@ pub fn pane_props(cx: &App, chat: &str) -> Value {
 /// The log's part in the window (called once at start): its driver actions
 /// (to the focused chat's log) and its props (every open log's fields).
 pub fn init(cx: &mut App) {
-    // What people and Claude write must draw, emoji included (DejaVu has
-    // none; the no-emoji rule is for our own UI): Noto Emoji (monochrome,
-    // SIL OFL 1.1, assets/fonts/NotoEmoji-OFL.txt) as the log's fallback.
-    let _ = cx.text_system().add_fonts(vec![std::borrow::Cow::Borrowed(EMOJI_FONT)]);
+    // Emoji in chat text: the theme's Noto Emoji (registered by crundi_theme), as the log's fallback (F57).
     resume::bind_keys(cx);
+    // The launcher asks which conversation first (2.22).
+    crundi_workbench::set_launch_chooser(cx, std::rc::Rc::new(|project, skip, term, cx, go| {
+        resume::choose(project, skip, term, cx, move |c, _, cx| go(c.mode, c.resume_id.clone(), cx))
+    }));
     // `/btw <question>` from the composer's box: asked on the side here (F37).
     crundi_chat_model::register_aside(cx, |cx, chat, text| aside::ask_from_box(cx, chat, text));
     // Each chat pane's log fields (question, tools, entries, agentDock, goal,
@@ -279,7 +277,10 @@ pub fn init(cx: &mut App) {
             }
             // Actions for no chat in particular first (the resume picker…).
             if let Some(r) = resume::global_act(name, args, window, cx) { return Some(r); }
-            let id = focused_chat(cx);
+            // Actions naming their pane ("peek live:<id> on", "park-resume live:<id> …")
+            // go to that chat; the rest to the focused one.
+            let named = matches!(name, "peek" | "park-resume").then(|| args.first().and_then(|k| k.strip_prefix("live:")).map(String::from)).flatten();
+            let id = named.unwrap_or_else(|| focused_chat(cx));
             let v = view_of(cx, &id)?;
             v.update(cx, |v, cx| v.act(name, args, window, cx))
         })
