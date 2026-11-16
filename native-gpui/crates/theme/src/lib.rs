@@ -204,7 +204,26 @@ const FONTS: &[&[u8]] = &[
     include_bytes!("../assets/fonts/DejaVuSans-BoldOblique.ttf"),
     include_bytes!("../assets/fonts/DejaVuSansMono.ttf"),
     include_bytes!("../assets/fonts/DejaVuSansMono-Bold.ttf"),
+    // Emoji and symbols in content (a chat, a file): DejaVu has none, and a
+    // Linux may have no emoji font, so it shows boxes. Noto Emoji (OFL,
+    // monochrome) is the fallback. The no-emoji rule is for our own UI only.
+    include_bytes!("../assets/fonts/NotoEmoji.ttf"),
 ];
+
+/// The emoji and symbol fallback font's family.
+pub const EMOJI_FONT: &str = "Noto Emoji";
+
+/// The UI font with its fallbacks (emoji, symbols), for the window's root:
+/// everything under it inherits the fallbacks, whatever family it sets.
+pub fn ui_font() -> gpui::Font {
+    gpui::Font {
+        family: T::UI_FONT.into(),
+        features: Default::default(),
+        fallbacks: Some(gpui::FontFallbacks::from_fonts(vec![EMOJI_FONT.to_string()])),
+        weight: Default::default(),
+        style: Default::default(),
+    }
+}
 
 /// gpui-component's theme from the tokens: its colours are rebuilt from a
 /// theme definition, so editing them directly does nothing.

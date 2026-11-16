@@ -270,7 +270,7 @@ fn card(i: usize, q: &Req, armed: bool, field: Option<Entity<w::InputState>>, cx
         Some(f) => {
             let busy = r.busy;
             c = c.child(div().pt(T::SP_2).flex().items_center().gap(T::SP_6)
-                    .child(div().flex_1().min_w_0().key_context("SreqField").on_action(|_: &SreqEsc, window, cx| escape(window, cx)).on_key_down(secrets::type_shim(f.clone())).child(w::input(&f)))
+                    .child(div().flex_1().min_w_0().key_context("SreqField").on_action(|_: &SreqEsc, window, cx| escape(window, cx)).child(w::input(&f)))
                     .child(w::disabled(w::primary(("sreq-approve", i), if busy { "Approving…" } else { "Approve" }), busy).on_click(|_, window, cx| confirm(window, cx)))
                     .child(w::button(("sreq-reject", i), "Reject").on_click(move |_, _, cx| reject(rid.clone(), cx))));
             if can_allow(q, cx) {

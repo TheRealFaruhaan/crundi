@@ -710,6 +710,8 @@ fn num(a: &[String], i: usize) -> u32 { a.get(i).and_then(|s| s.parse().ok()).un
 pub fn init(cx: &mut App) {
     let wb = cx.new(Workbench::new);
     cx.set_global(WorkbenchHandle(wb.clone()));
+    // The project bar's "+" by Workbench opens the add menu (F21).
+    crundi_shell::register_add_menu(cx, toggle_add_menu);
     // Esc goes to the workbench first while it has a use for it.
     cx.intercept_keystrokes(|e, _window, cx| {
         if e.keystroke.key != "escape" { return; }

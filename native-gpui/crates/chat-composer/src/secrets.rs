@@ -437,7 +437,7 @@ fn body(window: &mut Window, cx: &mut App) -> AnyElement {
             .child(div().flex_1().min_w_0().font_family(T::MONO).text_size(T::TEXT_13)
                 .child(w::check(("sec-tick", i), name, chosen, move |_, window, cx| tick(&id, window, cx))))
             .when_some(field.filter(|_| chosen), |r, f| r.child(div().flex_none().w(T::SEC_LOCK_FIELD_W)
-                .on_key_down(type_shim(f.clone())).child(w::input(&f).when(bad, |i| i.border_color(T::red()))))));
+                .child(w::input(&f).when(bad, |i| i.border_color(T::red()))))));
     }
 
     let mut chips = div().flex().flex_wrap().gap(T::SP_6);
@@ -502,19 +502,6 @@ pub fn render(c: &mut ComposerView, window: &mut Window, cx: &mut Context<Compos
         on_key: std::rc::Rc::new(|e, window, cx| if e.keystroke.key == "escape" { close(window, cx); cx.stop_propagation(); }),
     };
     Some(w::overlay_modal(m, window, vec![b, f]).into_any_element())
-}
-
-/// The test driver's typed keys: under the driver only, typed text goes into
-/// a focused field as the platform's input handler would (the driver's key
-/// events don't reach it yet; shared/requests.md asks the Lead's driver).
-pub(crate) fn type_shim(input: Entity<w::InputState>) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
-    move |e, window, cx| if std::env::var_os("CRUNDI_TEST_PORT").is_some() {
-        let k = &e.keystroke;
-        if let (Some(ch), true) = (k.key_char.clone(), k.modifiers.is_subset_of(&Modifiers::shift())) {
-            input.update(cx, |st, cx| st.replace(ch, window, cx));
-            cx.stop_propagation();
-        }
-    }
 }
 
 /// The driver's actions are this part's own (`init`), not the composer's.

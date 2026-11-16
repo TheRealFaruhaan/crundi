@@ -221,7 +221,9 @@ pub fn render(c: &mut ComposerView, _window: &mut Window, cx: &mut Context<Compo
                 .child(w::icon_button(("sched-del", i), IconName::X, "Cancel this message").on_click(cx.listener(move |this, _, _, cx| delete(this, id.clone(), cx))))));
     }
     let unsupported = sc.unsupported;
-    let body = div().id("sched-body").flex().flex_col().gap(T::SP_8).p(T::SP_10).overflow_y_scroll().flex_shrink(1.).min_h_0()
+    // The body scrolls inside the panel's own height (its head's room taken
+    // off), so a long list never runs past the panel onto the message box.
+    let body = div().id("sched-body").flex().flex_col().flex_1().gap(T::SP_8).p(T::SP_10).overflow_y_scroll().min_h_0().max_h((max_h - T::PANE_HEAD - T::SP_16).max(T::CONTROL))
         .child(w::textarea(&text))
         .child(div().flex().gap(T::SP_6)
             .child(trig("sched-time", "At a time", "time", false, cx))

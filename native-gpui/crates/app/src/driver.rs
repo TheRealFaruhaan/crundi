@@ -13,7 +13,18 @@ pub fn handle(r: Request, window: &mut Window, cx: &mut App) {
         "state" => json!({ "ok": true, "state": Value::Object(registry::merged(window, cx, true)) }),
         "props" => json!(props(window, cx)),
         "area" => json!({ "ok": true, "props": registry::props_of(&r.str("area"), window, cx) }),
-        "snapshot" => snapshot(window, &r.str("path")),
+        // With a path: the PNG written there; without: the PNG as base64 `data` (phase2's `shot`).
+        "snapshot" => {
+            let path = r.str("path");
+            if path.is_empty() {
+                let tmp = std::env::temp_dir().join(format!("crundi-gpui-shot-{}.png", std::process::id()));
+                let v = snapshot(window, &tmp.to_string_lossy());
+                match std::fs::read(&tmp) {
+                    Ok(b) if v.get("ok") == Some(&json!(true)) => { let _ = std::fs::remove_file(&tmp); use base64::Engine as _; json!({ "ok": true, "data": base64::engine::general_purpose::STANDARD.encode(b) }) }
+                    _ => v,
+                }
+            } else { snapshot(window, &path) }
+        }
         "resize" => { window.resize(size(px(r.num("w") as f32), px(r.num("h") as f32))); json!({ "ok": true }) }
         "mouse" => { mouse(&r, window, cx); json!({ "ok": true }) }
         "key" => { key(&r, window, cx); json!({ "ok": true }) }
@@ -31,6 +42,9 @@ fn props(window: &mut Window, cx: &mut App) -> Map<String, Value> {
     m.insert("pickWaiting".into(), json!(crundi_core::driver::pick_waiting()));
     m.insert("dialogOpen".into(), json!(crundi_widgets::dialog_open(window, cx)));
     m.extend(registry::merged(window, cx, false));
+    // The toast on show: the widgets crate's one record of it (after the
+    // parts' props, so no part's own copy hides it).
+    m.insert("toast".into(), json!(crundi_widgets::toast_text(cx).to_string()));
     m
 }
 
@@ -41,6 +55,8 @@ fn ui(r: &Request, window: &mut Window, cx: &mut App) -> Value {
         "check-server" => session::check_server(cx, &a(0)),
         "sign-in-password" => session::sign_in_password(cx, &a(0), &a(1), &a(2)),
         "sign-in-pair" => session::sign_in_pair(cx, &a(0)),
+        "sign-in-browser" => session::sign_in_oauth(cx, &a(0), &a(1)),
+        "cancel-sign-in" => session::cancel_browser(cx),
         "sign-out" => session::sign_out(cx, ""),
         "select-project" => session::select_project(cx, &a(0)),
         "tab" => { if let Some(s) = crundi_shell::shell(cx) { let t = a(0); s.update(cx, |s, cx| s.show_tab(&t, cx)); } }
@@ -84,8 +100,9 @@ fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
 /// Return, Up…) or text (each character typed); mods: ctrl, shift, alt, meta.
 fn key(r: &Request, window: &mut Window, cx: &mut App) {
     let mods: Vec<String> = r.cmd.get("mods").and_then(|m| m.as_array()).map(|m| m.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
-    let has = |k: &str| mods.iter().any(|m| m == k);
-    let modifiers = Modifiers { control: has("ctrl"), shift: has("shift"), alt: has("alt"), platform: has("meta"), ..Default::default() };
+    // The Slint client's names ("Control", "Shift", "Alt", "Meta") and short ones.
+    let has = |k: &[&str]| mods.iter().any(|m| k.iter().any(|x| m.eq_ignore_ascii_case(x)));
+    let modifiers = Modifiers { control: has(&["ctrl", "control"]), shift: has(&["shift"]), alt: has(&["alt"]), platform: has(&["meta", "cmd", "super"]), ..Default::default() };
     let text = r.str("text");
     let named = match text.as_str() {
         "Escape" => Some("escape"), "Return" => Some("enter"), "Backspace" => Some("backspace"), "Tab" => Some("tab"),
@@ -93,13 +110,19 @@ fn key(r: &Request, window: &mut Window, cx: &mut App) {
         "Right" => Some("right"), "Home" => Some("home"), "End" => Some("end"), "Delete" => Some("delete"), "Space" => Some("space"),
         _ => None,
     };
+    // dispatch_keystroke, as the platform: the key bindings first, then the
+    // focused text input's handler gets the typed character (F20).
     let press = |key: String, ch: Option<String>, modifiers: Modifiers, window: &mut Window, cx: &mut App| {
         let ks = Keystroke { modifiers, key, key_char: ch };
-        window.dispatch_event(PlatformInput::KeyDown(KeyDownEvent { keystroke: ks.clone(), is_held: false, prefer_character_input: false }), cx);
+        window.dispatch_keystroke(ks.clone(), cx);
         window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: ks }), cx);
     };
     match named {
-        Some(k) => { let m = if text == "Backtab" { Modifiers { shift: true, ..modifiers } } else { modifiers }; press(k.into(), None, m, window, cx) }
+        Some(k) => {
+            let m = if text == "Backtab" { Modifiers { shift: true, ..modifiers } } else { modifiers };
+            let ch = (k == "space" && !modifiers.control && !modifiers.platform).then(|| " ".to_string());
+            press(k.into(), ch, m, window, cx)
+        }
         None => for c in text.chars() {
             let k = c.to_lowercase().to_string();
             let typed = (!modifiers.control && !modifiers.platform).then(|| c.to_string());

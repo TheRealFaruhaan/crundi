@@ -327,9 +327,6 @@ pub(crate) fn in_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 's
     if let Some(h) = cx.windows().first().copied() { let _ = cx.update_window(h, |_, window, cx| f(window, cx)); }
 }
 
-/// The test driver is on (its typed keys need the shim above).
-fn driven() -> bool { std::env::var_os("CRUNDI_TEST_PORT").is_some() }
-
 /// Later, on the UI thread.
 pub(crate) fn after(cx: &mut App, ms: u64, f: impl FnOnce(&mut App) + 'static) {
     cx.spawn(async move |cx: &mut AsyncApp| {
@@ -376,16 +373,6 @@ impl Render for ComposerView {
                 .capture_action(cx.listener(|this, _: &MoveDown, _, cx| if slash::step(this, 1, cx) { cx.stop_propagation(); }))
                 .capture_action(cx.listener(|this, _: &Escape, _, cx| if slash::escape(this, cx) { cx.stop_propagation(); }))
                 .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| if attach::shift_insert(this, e, window, cx) { cx.stop_propagation(); }))
-                // Under the test driver only: typed text goes in as the platform's
-                // input handler would put it (the driver's key events don't reach
-                // it; shared/requests.md asks the Lead's driver to do this itself).
-                .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| if driven() {
-                    let k = &e.keystroke;
-                    if let (Some(ch), true) = (k.key_char.clone(), k.modifiers.is_subset_of(&Modifiers::shift())) {
-                        this.input.update(cx, |st, cx| st.replace(ch, window, cx));
-                        cx.stop_propagation();
-                    }
-                }))
                 .child(w::textarea(&self.input).on_paste(attach::paste_handler(cx)).bg(T::bg()).border_color(T::border()).rounded(T::R_CONTROL)
                     .text_size(T::TEXT_13 * fs).min_h(T::CONTROL).max_h(T::COMPOSER_MAX))
                 .into_any_element()
@@ -395,9 +382,9 @@ impl Render for ComposerView {
         let send = if recording {
             div().flex().items_center().gap(T::SP_8).when(narrow, |d| d.flex_1()).child(voice::strip(self, window, cx)).child(voice::cancel_x(self, window, cx)).into_any_element()
         } else {
+            // One Send in every state (the owner, 16 Nov): the shared button at
+            // the control height, beside (or under) the box, never stretched.
             w::send_button("send", if busy { "Queue" } else { "Send" }, fs)
-                // Narrow: it fills the rest of the button row (the Slint client's and the web's .cc-narrow), the same height.
-                .when(narrow, |b| b.flex_1())
                 .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))).into_any_element()
         };
         let mic = voice::mic(self, window, cx);

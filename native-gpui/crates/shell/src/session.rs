@@ -37,6 +37,9 @@ pub struct Session {
     pub offer_github: bool,
     pub offer_telegram: bool,
     pub app_login: bool,
+    /// Signing in through the browser: the code to compare with the page's ("" none).
+    pub oauth_code: String,
+    oauth_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Global for Session {}
@@ -160,6 +163,111 @@ pub fn sign_in_pair(cx: &mut App, link: &str) {
     busy(cx, true, "");
     run(cx, move || api::pair_claim(&link), finish_sign_in);
 }
+
+/// Sign in with Google or GitHub (the login step's buttons): through the
+/// server's own page when it signs apps in (app-login), else its OAuth flow
+/// (the Slint client's sign_in_oauth).
+pub fn sign_in_oauth(cx: &mut App, server: &str, provider: &str) {
+    let base = api::normalize_base(server);
+    if get(cx).app_login || provider == "telegram" { return sign_in_browser(cx, base); }
+    busy(cx, true, "");
+    let cancel = new_cancel(cx);
+    let provider = provider.to_string();
+    run(cx, move || api::oauth_start(&base, &provider).map(|v| (base, v)), move |r, cx| {
+        let (base, v) = match r { Ok(x) => x, Err(e) => return busy(cx, false, &e.to_string()) };
+        let (url, poll_id, code) = (st(&v, "url"), st(&v, "pollId"), st(&v, "confirmCode"));
+        if url.is_empty() || poll_id.is_empty() { return busy(cx, false, "The server did not start the sign-in"); }
+        if let Err(e) = open_url(&url) { return busy(cx, false, &format!("Could not open the browser: {e}")); }
+        with(cx, |s| { s.oauth_code = if code.is_empty() { "…".into() } else { code }; s.signin_busy = false; });
+        cx.refresh_windows();
+        run(cx, move || {
+            for _ in 0..300 {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err(ApiError::Status(0, String::new())); }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                match api::oauth_poll(&base, &poll_id) {
+                    Ok(v) => match st(&v, "status").as_str() {
+                        "done" => return api::Tokens::from_answer(&v).map(|t| SignedIn { base: base.clone(), tokens: t, username: String::new() }).ok_or(ApiError::Status(0, "The server sent no session".into())),
+                        "failed" | "expired" => return Err(ApiError::Status(0, format!("Sign-in {}", st(&v, "status")))),
+                        _ => {}
+                    },
+                    Err(ApiError::Net(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Err(ApiError::Status(0, "Sign-in timed out".into()))
+        }, browser_done);
+    });
+}
+
+/// Through the browser, as other apps sign in with an OAuth service: the
+/// server's own web page, where the person signs in with any method it
+/// offers and allows this computer; the client waits for its login (the
+/// server's src/app-login.js; the Slint client's sign_in_browser).
+pub fn sign_in_browser(cx: &mut App, base: String) {
+    busy(cx, true, "");
+    let cancel = new_cancel(cx);
+    run(cx, move || api::app_login_start(&base).map(|v| (base, v)), move |r, cx| {
+        let (base, v) = match r { Ok(x) => x, Err(e) => return busy(cx, false, &e.to_string()) };
+        let (url, poll_id, code) = (st(&v, "url"), st(&v, "pollId"), st(&v, "confirmCode"));
+        if url.is_empty() || poll_id.is_empty() { return busy(cx, false, "The server did not start the sign-in"); }
+        if let Err(e) = open_url(&url) { return busy(cx, false, &format!("Could not open the browser: {e}")); }
+        with(cx, |s| { s.oauth_code = code; s.signin_busy = false; });
+        cx.refresh_windows();
+        run(cx, move || {
+            // The request lives ten minutes on the server.
+            for _ in 0..300 {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err(ApiError::Status(0, String::new())); }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                match api::app_login_poll(&base, &poll_id) {
+                    Ok(v) => match st(&v, "status").as_str() {
+                        "approved" => {
+                            let tokens = v.pointer("/sessions/page").and_then(api::Tokens::from_answer).ok_or(ApiError::Status(0, "The server sent no session".into()))?;
+                            return Ok(SignedIn { base: base.clone(), tokens, username: st(&v, "username") });
+                        }
+                        "denied" => return Err(ApiError::Status(0, "The sign-in was denied in the browser.".into())),
+                        "expired" => return Err(ApiError::Status(0, "The sign-in request expired. Try again.".into())),
+                        _ => {}
+                    },
+                    Err(ApiError::Net(_)) => {}
+                    Err(e) => return Err(e),
+                }
+            }
+            Err(ApiError::Status(0, "The sign-in request expired. Try again.".into()))
+        }, browser_done);
+    });
+}
+
+/// Stop waiting for the browser (Cancel on the code step).
+pub fn cancel_browser(cx: &mut App) {
+    if let Some(c) = with(cx, |s| s.oauth_cancel.take()) { c.store(true, std::sync::atomic::Ordering::Relaxed); }
+    with(cx, |s| { s.oauth_code.clear(); s.signin_busy = false; });
+    cx.refresh_windows();
+}
+
+fn new_cancel(cx: &mut App) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    let c = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Some(old) = with(cx, |s| s.oauth_cancel.replace(c.clone())) { old.store(true, std::sync::atomic::Ordering::Relaxed); }
+    c
+}
+
+fn browser_done(r: Result<SignedIn, ApiError>, cx: &mut App) {
+    with(cx, |s| { s.oauth_code.clear(); s.oauth_cancel = None; });
+    match r {
+        Err(ApiError::Status(0, m)) if m.is_empty() => busy(cx, false, ""),
+        r => finish_sign_in(r, cx),
+    }
+}
+
+/// Open the browser at a page; tests (no desktop browser) get the address
+/// in CRUNDI_OPEN_URL_FILE instead.
+fn open_url(url: &str) -> Result<(), String> {
+    match std::env::var_os("CRUNDI_OPEN_URL_FILE") {
+        Some(f) => std::fs::write(f, url).map_err(|e| e.to_string()),
+        None => open::that(url).map_err(|e| e.to_string()),
+    }
+}
+
+fn st(v: &Value, k: &str) -> String { v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string() }
 
 fn finish_sign_in(r: Result<SignedIn, ApiError>, cx: &mut App) {
     match r {

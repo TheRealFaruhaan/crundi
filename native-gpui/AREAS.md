@@ -80,6 +80,8 @@ crundi_shell::register(cx, Area::new("planning")
 - A workbench pane kind: `crundi_workbench::register_kind(cx, PaneKind {
   prefix: "panel:kanban", render, title })` (pane keys: `live:<chat>`,
   `pend:<n>`, `panel:<kind>`).
+- The project bar's "+" by Workbench: the workbench registers what it does
+  (`register_add_menu`: its add menu).
 - The drawer: Desktop registers its view (`register_drawer`); the shell
   draws it beside the project area with the divider, and hides or shows it
   (`crundi_shell::set_drawer`).
@@ -100,6 +102,14 @@ Every control comes from here: `button`, `primary`, `danger`, `ghost`,
 `outline_button`, `empty`, `error_state`, `loading`, `list_row`, `confirm`,
 `close_dialog`, `dialog_open`, `toast`, `divider`, `rule`.
 
+- Since the phase 2 merge (16 Nov) also: `tip` and `tooltip` (one tooltip:
+  `tip(el, text)` puts it on an element, `tooltip(text)` is the builder for
+  `.tooltip(…)`), `modal` (a part's view as a modal) and `overlay_modal` /
+  `modal_head` (one modal look), `pick_menu` (the menu control:
+  `menu_button` and `more_menu` are made on it), `dropdown`, `choice_row`,
+  `choice_mark`, `head_button` / `menu_item` / `menu_panel`, `send_button`,
+  `stop_button`, `tone_button`, `square_button`, `suggest_row`,
+  `queue_drawer`, `textarea`, `spinner`, `shimmer`, `markdown`, `icon`.
 - Never a copy in a part, and never a gpui-component control used directly
   in a screen (wrap it here once). The UI reviewer flags either as blocking.
 - **A new control** (one that two parts need, or that is a control by
@@ -135,7 +145,12 @@ them as before.
   shared `CARGO_TARGET_DIR=$HOME/.cache/crundi-native-target`, `-j2`, the
   shared lock, `oom_score_adj 1000`, CEF staged next to the binary. Never
   `CARGO_INCREMENTAL=0`, no other build folder, no copy of the source.
-  `tools/build.sh -p crundi-chat-log` builds one crate (seconds).
+  `tools/build.sh -p crundi-chat-log` builds one crate (seconds);
+  `tools/build.sh test --workspace` runs the tests the same way. Four jobs
+  (the owner, 16 Nov), still one build at a time. When the last build in
+  the shared folder came from another worktree, build.sh first touches this
+  worktree's crate sources, so cargo never takes another worktree's build of
+  a crate as yours (F18): always build through it.
 - **The binary** is `$CARGO_TARGET_DIR/debug/crundi-gpui`. One build in a
   shared checkout serves everyone's tests: if a test needs your build to
   hold still, copy it next to CEF's files (`debug/crundi-gpui-<area>`).
@@ -172,7 +187,7 @@ them as before.
   at the end of a step; screens under `native-gpui/screens/<area>/` (latest
   round only), scratch in one /tmp folder you remove.
 - **Before handing off:** your parts of the phase tests pass;
-  `tools/build.sh` and `cargo test --workspace` (through the lock) pass;
+  `tools/build.sh` and `tools/build.sh test --workspace` pass;
   `tools/smoke.mjs` passes.
 
 ## Changing a shared file

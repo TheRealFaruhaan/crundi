@@ -381,23 +381,6 @@ pub fn act(name: &str, args: &[String], v: &mut LogView, window: &mut Window, cx
 
 // ─── Drawing ───
 
-/// The test driver is on.
-fn driven() -> bool { std::env::var_os("CRUNDI_TEST_PORT").is_some() }
-
-/// Test-only shim (as the composer's): the driver's typed characters are
-/// put where the platform's input handler would put them (its key events
-/// don't reach it; shared/requests.md asks the Lead's driver to do this).
-fn typed(d: Div, st: &Entity<w::InputState>) -> Div {
-    let st = st.clone();
-    d.on_key_down(move |e: &KeyDownEvent, window, cx| if driven() {
-        let k = &e.keystroke;
-        if let (Some(ch), true) = (k.key_char.clone(), k.modifiers.is_subset_of(&Modifiers::shift())) {
-            st.update(cx, |st, cx| st.replace(ch, window, cx));
-            cx.stop_propagation();
-        }
-    })
-}
-
 /// A question's or a permission's card.
 pub fn row(v: &mut LogView, e: &Shown, window: &mut Window, cx: &mut Context<LogView>) -> Option<AnyElement> {
     if e.kind == "permission" { return Some(permission(v, e, cx)); }
@@ -454,7 +437,7 @@ pub fn row(v: &mut LogView, e: &Shown, window: &mut Window, cx: &mut Context<Log
                     // A press in the note does not toggle the row.
                     text = text.child(div().flex().items_center().gap(T::SP_6).pt(T::SP_8)
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(typed(div().flex_1().min_w_0().text_size(T::TEXT_12), ns).child(w::input(ns)))
+                        .child(div().flex_1().min_w_0().text_size(T::TEXT_12).child(w::input(ns)))
                         .child(w::icon_button(SharedString::from(format!("qnx-{entry}-{qi}")), IconName::X, "Remove the note")
                             .on_click(cx.listener(move |this, _, window, cx| { cx.stop_propagation(); do_note_remove(this, &e3, qi, window, cx); }))));
                 }
@@ -487,7 +470,7 @@ pub fn row(v: &mut LogView, e: &Shown, window: &mut Window, cx: &mut Context<Log
             opts = opts.child(row);
         }
         col = col.child(opts);
-        if let Some(os) = others.get(qi) { col = col.child(typed(div().pt(T::SP_4).text_size(T::TEXT_12), os).child(w::input(os))); }
+        if let Some(os) = others.get(qi) { col = col.child(div().pt(T::SP_4).text_size(T::TEXT_12).child(w::input(os))); }
         card = card.child(col);
     }
     let (es, ed) = (entry.clone(), entry.clone());

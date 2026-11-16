@@ -12,7 +12,7 @@ use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 
-pub use registry::{register, register_drawer, Area, AreaEvent, Drawer, TABS};
+pub use registry::{register, register_add_menu, register_drawer, Area, AreaEvent, Drawer, TABS};
 pub use session::{api, call, project, run, signed_in, subscribe, unsubscribe, ws_send, Session, Step};
 
 /// The window's own state: the tab, the sidebar, the drawer, sign-in's fields.
@@ -59,11 +59,18 @@ impl Shell {
             "signedIn": s.api.is_some(), "online": s.online,
             "signinError": s.signin_error, "signinBusy": s.signin_busy, "signinChecked": s.signin_checked,
             "signinStep": if s.step == Step::Server { "server" } else { "login" },
-            "offerPassword": s.offer_password, "offerTelegram": s.offer_telegram,
+            "offerPassword": s.offer_password, "offerTelegram": s.offer_telegram, "offerGoogle": s.offer_google, "offerGithub": s.offer_github,
+            "oauthCode": s.oauth_code,
             "server": s.server, "username": s.username,
             "currentProject": s.project, "projectName": session::project_name(cx),
             "currentTab": self.tab, "drawerOpen": self.drawer_open, "sidebar": self.sidebar,
             "projects": s.projects.iter().map(|p| p.get("alias").cloned().unwrap_or(Value::Null)).collect::<Vec<_>>(),
+            // The sidebar's dots (the web's priority over the state event's terminals).
+            "projectDots": s.projects.iter().map(|p| {
+                let alias = p.get("alias").and_then(|a| a.as_str()).unwrap_or("");
+                let name = p.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).unwrap_or(alias);
+                json!({ "alias": alias, "state": crundi_core::head::project_dot(&s.terminals, alias), "initials": crundi_core::head::project_initials(name) })
+            }).collect::<Vec<_>>(),
         })
     }
 
@@ -96,7 +103,8 @@ impl Shell {
             let alias = p.get("alias").and_then(|a| a.as_str()).unwrap_or("").to_string();
             let name = p.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).unwrap_or(&alias).to_string();
             let on = alias == s.project;
-            list = list.child(w::sidebar_item(name, "idle", on).id(("project", i)).cursor_pointer()
+            let dot = crundi_core::head::project_dot(&s.terminals, &alias);
+            list = list.child(w::sidebar_item(name, dot, on).id(("project", i)).cursor_pointer()
                 .on_click(cx.listener(move |_, _, _, cx| session::select_project(cx, &alias))));
         }
         div()
@@ -120,7 +128,7 @@ impl Shell {
         for (i, (id, label, icon, _)) in TABS.iter().enumerate() {
             let id = id.to_string();
             bar = bar.child(w::nav_tab(icon.clone(), *label, self.tab == id).id(("tab", i)).cursor_pointer().on_click(cx.listener(move |this, _, _, cx| this.show_tab(&id, cx))));
-            if i == 0 { bar = bar.child(w::icon_button("add-pane", IconName::Plus, "Add to workbench")); }
+            if i == 0 { bar = bar.child(w::icon_button("add-pane", IconName::Plus, "Add to workbench").on_click(|_, _, cx| registry::add_menu(cx))); }
         }
         bar = bar.child(div().flex_1());
         // The Browser button: gone while the drawer is open (it has its own
@@ -139,6 +147,7 @@ impl Shell {
     fn sign_in(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = session::get(cx);
         let (step, err, busy, srv) = (s.step.clone(), s.signin_error.clone(), s.signin_busy, s.signin_server.clone());
+        let (code, google, github, telegram, password) = (s.oauth_code.clone(), s.offer_google, s.offer_github, s.offer_telegram, s.offer_password);
         let card = w::card().w(T::DIALOG_W_LG).p(T::SP_24).gap(T::SP_12)
             .child(div().flex().items_center().justify_center().gap(T::SP_8)
                 .child(div().text_color(T::accent()).text_size(T::TEXT_26).child(IconName::Bot))
@@ -151,12 +160,20 @@ impl Shell {
                     let v = this.server_input.read(cx).value().to_string();
                     session::check_server(cx, &v);
                 }))),
+            // Waiting for the browser: the code to compare with the page's, and Cancel.
+            Step::Login if !code.is_empty() => card
+                .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("Finish signing in in your browser. Check that it shows this code:"))
+                .child(div().flex().justify_center().font_family(T::MONO).text_size(T::TEXT_26).font_weight(T::W_BOLD).text_color(T::accent_hover()).child(code))
+                .child(w::button("cancel-sign-in", "Cancel").on_click(|_, _, cx| session::cancel_browser(cx))),
             Step::Login => card
                 .child(div().flex().items_center().gap(T::SP_8).text_size(T::TEXT_13).text_color(T::text_secondary())
                     .child(format!("Sign in to {srv}"))
                     .child(w::ghost("change-server", "Change").on_click(|_, _, cx| { session::with(cx, |s| { s.step = Step::Server; s.signin_error.clear(); }); cx.refresh_windows(); })))
-                .child(w::input(&self.password_input))
-                .child(w::input(&self.code_input))
+                .when(google || github || telegram, |d| d
+                    .when(google, |d| d.child(w::button("oauth-google", "Sign in with Google").on_click(|_, _, cx| { let srv = session::get(cx).signin_server.clone(); session::sign_in_oauth(cx, &srv, "google"); })))
+                    .when(github, |d| d.child(w::button("oauth-github", "Sign in with GitHub").on_click(|_, _, cx| { let srv = session::get(cx).signin_server.clone(); session::sign_in_oauth(cx, &srv, "github"); })))
+                    .when(telegram, |d| d.child(w::button("oauth-telegram", "Sign in with Telegram").on_click(|_, _, cx| { let srv = session::get(cx).signin_server.clone(); session::sign_in_oauth(cx, &srv, "telegram"); }))))
+                .when(password, |d| d.child(w::input(&self.password_input)).child(w::input(&self.code_input)))
                 .child(w::disabled(w::primary("sign-in", if busy { "Signing in…" } else { "Sign in" }), busy).on_click(cx.listener(|this, _, _, cx| {
                     let (p, c) = (this.password_input.read(cx).value().to_string(), this.code_input.read(cx).value().to_string());
                     let srv = session::get(cx).signin_server.clone();
@@ -183,7 +200,7 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let root = div().flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font_family(T::UI_FONT);
+        let root = div().flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font());
         if !session::signed_in(cx) {
             return root.child(self.sign_in(window, cx)).into_any_element();
         }

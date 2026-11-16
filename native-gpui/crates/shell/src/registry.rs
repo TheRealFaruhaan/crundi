@@ -114,6 +114,8 @@ impl Area {
 pub struct Areas {
     pub list: Vec<Area>,
     pub drawer: Option<Drawer>,
+    /// The project bar's "+" by Workbench (the workbench's add menu).
+    pub add_menu: Option<Rc<dyn Fn(&mut App)>>,
 }
 
 impl Global for Areas {}
@@ -130,6 +132,18 @@ pub struct Drawer {
 pub fn register(cx: &mut App, area: Area) {
     if !cx.has_global::<Areas>() { cx.set_global(Areas::default()); }
     cx.global_mut::<Areas>().list.push(area);
+}
+
+/// What the project bar's "+" by Workbench does (the workbench's, once:
+/// the shell can't depend on the workbench).
+pub fn register_add_menu(cx: &mut App, f: impl Fn(&mut App) + 'static) {
+    if !cx.has_global::<Areas>() { cx.set_global(Areas::default()); }
+    cx.global_mut::<Areas>().add_menu = Some(Rc::new(f));
+}
+
+/// The project bar's "+": the registered hook.
+pub fn add_menu(cx: &mut App) {
+    if let Some(f) = cx.try_global::<Areas>().and_then(|a| a.add_menu.clone()) { f(cx); }
 }
 
 /// Register the browser drawer's view (Desktop, once).

@@ -181,6 +181,19 @@ pub fn dot(color: Hsla) -> Div {
     div().flex_none().size(T::DOT).rounded_full().bg(color)
 }
 
+/// A project's dot in the sidebar, by the web UI's priority (renderProjects;
+/// the Slint client's ProjectDot): needs input accent, working yellow,
+/// waiting sky, running green, nothing running muted.
+pub fn project_dot_color(state: &str) -> Hsla {
+    match state {
+        "needs-input" => T::accent(),
+        "working" => T::yellow(),
+        "waiting" => T::sky(),
+        "running" => T::green(),
+        _ => T::text_muted(),
+    }
+}
+
 /// The colour of an agent state (idle, working, needs-input, error, exited).
 pub fn state_color(state: &str) -> Hsla {
     match state {
@@ -283,9 +296,11 @@ pub fn page(id: impl Into<ElementId>) -> Stateful<Div> {
 
 // ─── Tabs ───
 
-/// A row of tabs (the drawer's): tabs sit on its bottom edge.
+/// A row of tabs (the drawer's): tabs sit on its bottom edge. The project
+/// tab bar's height (TABBAR_H, its border inside it), so the two bars' lines
+/// run straight across the drawer's divider.
 pub fn tab_row() -> Div {
-    div().flex().flex_none().items_end().gap(T::SP_2).px(T::SP_6).pt(T::SP_4).min_h(T::CONTROL).bg(T::bg()).border_b_1().border_color(T::border())
+    div().flex().flex_none().items_end().gap(T::SP_2).px(T::SP_6).pt(T::SP_4).h(T::TABBAR_H).bg(T::bg()).border_b_1().border_color(T::border())
 }
 
 /// One tab in a tab row; the active one joins the area below it.
@@ -312,7 +327,7 @@ pub fn nav_tab(icon: IconName, label: impl Into<SharedString>, on: bool) -> Div 
 /// A project in the sidebar: its dot and name; the open one highlighted.
 pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool) -> Div {
     let d = div().flex().items_center().gap(T::SP_8).h(T::CONTROL_LG).px(T::SP_12).rounded(T::R_FIELD)
-        .child(dot(state_color(state)))
+        .child(dot(project_dot_color(state)))
         .child(div().flex_1().min_w_0().truncate().child(name.into()));
     if on { d.bg(T::accent_dim()).border_l_2().border_color(T::accent()).text_color(T::accent_hover()) } else { d.text_color(T::text_secondary()) }
 }
@@ -395,7 +410,20 @@ pub fn close_dialog(window: &mut Window, cx: &mut App) { if !modal::close(window
 pub fn dialog_open(window: &mut Window, cx: &mut App) -> bool { modal::modal_open(cx) || window.has_active_dialog(cx) }
 
 /// The toast, top right: info, error or success.
+/// The toast on show, as long as it shows (the Slint client's 3.5 s): the
+/// one record of it, for the test driver's "toast" prop.
+#[derive(Default)]
+struct LastToast(Option<(SharedString, std::time::Instant)>);
+impl Global for LastToast {}
+
+pub fn toast_text(cx: &App) -> SharedString {
+    cx.try_global::<LastToast>().and_then(|t| t.0.clone())
+        .filter(|(_, at)| at.elapsed() < std::time::Duration::from_millis(3500)).map(|(t, _)| t).unwrap_or_default()
+}
+
 pub fn toast(window: &mut Window, cx: &mut App, text: impl Into<SharedString>, kind: Toast) {
+    let text: SharedString = text.into();
+    cx.set_global(LastToast(Some((text.clone(), std::time::Instant::now()))));
     let n = match kind {
         Toast::Info => gpui_component::notification::Notification::info(text),
         Toast::Error => gpui_component::notification::Notification::error(text),

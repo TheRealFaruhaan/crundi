@@ -14,3 +14,4 @@ serde_json.workspace = true
 crundi-core.workspace = true
 crundi-theme.workspace = true
 crundi-widgets.workspace = true
+open.workspace = true
