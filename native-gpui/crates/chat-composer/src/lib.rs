@@ -34,7 +34,7 @@ pub mod voice;
 use crundi_chat_model::{ChatEvent, ChatModel};
 use crundi_core::{chat as cchat, head, store};
 use crundi_shell::{Area, AreaEvent};
-use crundi_theme::T;
+use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use gpui_component::input::{Enter, Escape, IndentInline, InputEvent, MoveDown, MoveUp};
@@ -412,7 +412,7 @@ impl Render for ComposerView {
         let meta_text = if narrow { T::TEXT_10 } else { T::TEXT_11 } * fs;
         let me2 = me.clone();
         let switch = w::tip(div().id("enter-switch").flex().items_center().gap(T::SP_4)
-            .child(w::segmented("enter", &["⏎", "⌃⏎"], if ctrl { 1 } else { 0 }, move |i, window, cx| {
+            .child(w::segmented_icons("enter", &[&[IconName::CornerDownLeft], &[IconName::ChevronUp, IconName::CornerDownLeft]], if ctrl { 1 } else { 0 }, move |i, window, cx| {
                 set_ctrl_enter(cx, *i == 1);
                 let _ = me2.update(cx, |c, cx| c.input.update(cx, |st, cx| st.focus(window, cx)));
             }))

@@ -1419,10 +1419,14 @@ const drawerAt = async (id, rgb) => {
   const q = await qp(id), img = await shot();
   // (Clear of the window's resize border at its right edge.)
   const x = Math.min(img.w - 30, Math.round(WB.x + q.x + q.w - 24));
+  // The lowest run of that fill at least 20 px tall: the drawers sit at the
+  // pane's bottom, above the box. (Not the tallest: a user bubble higher up
+  // has nearly the same fill, and in a narrow pane its wrapped text makes it
+  // the taller one, as the GPUI client's 378 px panes do.)
   let best = [0, 0], run = [0, 0];
   for (let y = Math.round(WB.y + q.y); y < Math.min(img.h, WB.y + q.y + q.h); y++) {
     const c = img.at(x, y);
-    if (rgb.every((v, i) => Math.abs(c[i] - v) <= 4)) { run = run[1] ? [run[0], run[1] + 1] : [y, 1]; if (run[1] > best[1]) best = run; } else run = [0, 0];
+    if (rgb.every((v, i) => Math.abs(c[i] - v) <= 4)) { run = run[1] ? [run[0], run[1] + 1] : [y, 1]; if (run[1] >= 20) best = run; } else run = [0, 0];
   }
   return best[1] >= 20 ? { x, y: best[0] + best[1] / 2 } : null;
 };

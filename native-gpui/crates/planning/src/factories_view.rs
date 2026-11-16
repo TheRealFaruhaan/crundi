@@ -869,7 +869,7 @@ fn timeline_pane(mut d: Stateful<Div>) -> Stateful<Div> {
             .child(div().pt(T::SP_4).child(w::dot(dotc)))
             .child(div().flex().flex_col().flex_1().min_w_0().gap(T::SP_2)
                 .child(div().text_size(T::TEXT_12).text_color(fg).child(t.main.clone()))
-                .when(!t.sub.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).line_clamp(2).child(t.sub.clone()))))
+                .when(!t.sub.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).line_clamp(2).text_ellipsis().child(t.sub.clone()))))
             .on_click(move |_, _, cx| fact("v-at", &i, "", cx)));
     }
     d

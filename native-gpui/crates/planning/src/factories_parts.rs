@@ -297,7 +297,7 @@ pub fn issue(id: impl Into<ElementId>, level: &str, message: &str, fix: &str) ->
 /// The skills a text names (.ff-chip ok / warn).
 pub fn mentions(items: &[Check]) -> Div {
     let mut d = div().flex().flex_wrap().gap(T::SP_4);
-    for m in items { d = d.child(w::tag(format!("{} /{}", if m.on { "✓" } else { "!" }, m.label), if m.on { "ok" } else { "warn" })); }
+    for m in items { d = d.child(w::icon_tag(if m.on { IconName::Check } else { IconName::CircleAlert }, format!("/{}", m.label), if m.on { "ok" } else { "warn" })); }
     d
 }
 

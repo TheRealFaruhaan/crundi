@@ -64,6 +64,8 @@ pub mod spark; pub use spark::{spark, Series};
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
 pub mod pick_menu; pub use pick_menu::{pick_menu, PickItem};
+pub mod segmented_icons; pub use segmented_icons::segmented_icons;
+pub mod icon_tag; pub use icon_tag::icon_tag;
 
 // ─── Buttons ───
 
