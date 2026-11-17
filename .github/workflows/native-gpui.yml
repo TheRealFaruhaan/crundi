@@ -86,12 +86,16 @@ jobs:
           PKG="$RUNNER_TEMP/crundi-gpui-linux-x86_64"
           rm -rf "$PKG" && mkdir -p "$PKG"
           cp target/release/crundi-gpui target/release/crundi-browser-host "$PKG/"
+          # Crundi's icon, and the script that adds it to the desktop's apps.
+          cp crates/app/assets/icon-256.png "$PKG/crundi.png"
+          cp scripts/install-desktop-entry.sh "$PKG/"
           for f in "$CEF_PATH"/*; do
             case "$(basename "$f")" in include|cmake|libcef_dll|CMakeLists.txt|CREDITS.html|archive.json|cef_sandbox*|*.lib) continue ;; esac
             cp -rL "$f" "$PKG/"
           done
           printf '%s\n' 'Crundi native PC client (GPUI), a CI build to try.' \
             'Run ./crundi-gpui from this folder (Ubuntu 24.04 or newer, x86_64).' \
+            'For Crundi in the dock and the app grid with its icon, run ./install-desktop-entry.sh once.' \
             'Needs: libnss3 libgbm1 libasound2t64 libxkbcommon-x11-0 and a Vulkan driver (mesa-vulkan-drivers, or your GPU vendor'"'"'s).' > "$PKG/README.txt"
           tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/crundi-gpui-linux-x86_64.tar.gz" crundi-gpui-linux-x86_64
 

@@ -224,8 +224,7 @@ impl Shell {
             .on_click(|e, window, _| if e.click_count() == 2 { window.zoom_window(); })
             .child(rows)
             .child(div().relative().flex().flex_1().items_center().gap(T::SP_12).pl(T::SP_16).pr(T::SP_4)
-                .child(div().text_color(T::accent()).text_size(T::TEXT_20).child(IconName::Bot))
-                .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_20).child("crundi"))
+                .child(w::brand_mark(T::BRAND_HEAD))
                 .when(!name.is_empty(), |d| d.child(div().text_color(T::text_muted()).child("/")).child(div().text_color(T::text_secondary()).child(name)))
                 .child(div().flex_1())
                 .children(badge)
@@ -328,8 +327,7 @@ impl Shell {
         let (code, google, github, telegram, password) = (s.oauth_code.clone(), s.offer_google, s.offer_github, s.offer_telegram, s.offer_password);
         let card = w::card().w(T::DIALOG_W_LG).p(T::SP_24).gap(T::SP_12)
             .child(div().flex().items_center().justify_center().gap(T::SP_8)
-                .child(div().text_color(T::accent()).text_size(T::TEXT_26).child(IconName::Bot))
-                .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_26).child("crundi")));
+                .child(w::brand_mark(T::BRAND_HEAD_LG)));
         let card = match step {
             Step::Server => card
                 .child(div().text_color(T::text_secondary()).text_size(T::TEXT_13).child("Which Crundi server?"))

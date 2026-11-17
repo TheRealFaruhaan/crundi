@@ -446,6 +446,12 @@ impl T {
     pub const CRU_MARK: [(f32, u32); 4] = [(0.0, 0x38bdf8), (0.4, 0x6366f1), (0.72, 0xa78bfa), (1.0, 0xe879f9)];
     pub const CRU_MARK_DARK: [(f32, u32); 3] = [(0.0, 0x0c4a6e), (0.45, 0x312e81), (1.0, 0x701a75)];
     pub const CRU_MARK_H: Pixels = px(24.);
+    /// Crundi's mark (widgets::brand_mark): the head in the top bar (the web's 24),
+    /// larger on the sign-in screen; the name 15/24 of the head's height, 8/24 apart.
+    pub const BRAND_HEAD: Pixels = px(24.);
+    pub const BRAND_HEAD_LG: Pixels = px(40.);
+    pub const BRAND_WORD_OF_HEAD: f32 = 15.0 / 24.0;
+    pub const BRAND_GAP_OF_HEAD: f32 = 8.0 / 24.0;
     /// A tooltip is never narrower than this: with less room right of the
     /// pointer it goes to the pointer's left instead.
     pub const TIP_MIN_W: Pixels = px(160.);

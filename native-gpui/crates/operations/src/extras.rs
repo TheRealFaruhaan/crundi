@@ -676,8 +676,7 @@ impl Render for WhatsNew {
                 .child(stage));
         // The top: the brand, the version, Skip.
         let top = div().flex().flex_none().items_center().gap(T::SP_10).h(T::CONTROL_LG).mt(T::SP_16).px(T::SP_24)
-            .child(div().text_color(T::accent()).text_size(T::TEXT_20).child(IconName::Bot))
-            .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_20).text_color(T::text()).child("crundi"))
+            .child(w::brand_mark(T::BRAND_HEAD))
             .when(!version.is_empty(), |d| d.child(w::tag(version.clone(), "accent")))
             .child(div().flex_1().min_w_0())
             .when(!last, |d| d.child(w::label_icon_button("wn-skip", "Skip", IconName::X, true, w::Look::Quiet, false).rounded(T::R_PILL).on_click(|_, window, cx| wn_close(window, cx))));

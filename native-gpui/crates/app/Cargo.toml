@@ -19,6 +19,8 @@ serde_json.workspace = true
 base64.workspace = true
 env_logger.workspace = true
 raw-window-handle = "0.6"
+# The window's icon (X11), from the app's PNG.
+image.workspace = true
 crundi-core.workspace = true
 crundi-theme.workspace = true
 crundi-widgets.workspace = true
@@ -30,3 +32,7 @@ crundi-workspace.workspace = true
 crundi-planning.workspace = true
 crundi-operations.workspace = true
 crundi-desktop.workspace = true
+
+# The .exe's icon on Windows (assets/icon.ico).
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

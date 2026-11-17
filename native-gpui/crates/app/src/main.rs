@@ -47,6 +47,10 @@ fn main() {
             titlebar: None,
             window_decorations: Some(WindowDecorations::Client),
             app_id: Some("crundi".into()),
+            // Crundi's icon for the window (X11: the taskbar, the window
+            // switcher). Wayland docks take it from the desktop entry the
+            // Linux package installs (crundi.desktop, StartupWMClass crundi).
+            icon: app_icon(),
             ..Default::default()
         };
         let handle = cx.open_window(opts, |window, cx| {
@@ -78,4 +82,10 @@ fn main() {
         }).detach();
     });
     crundi_webview::shutdown();
+}
+
+/// The app's icon, 256 px (assets/icon-256.png, the PC client's).
+fn app_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    let png = include_bytes!("../assets/icon-256.png");
+    image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| std::sync::Arc::new(i.to_rgba8()))
 }
