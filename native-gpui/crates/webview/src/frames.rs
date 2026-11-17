@@ -40,6 +40,10 @@ struct Fv {
     scroll: Option<(f64, f64, f64, f64)>,
     cdp_next: i32,
     _observer: Option<Registration>,
+    /// The page asked for, and whether its main load failed (a network
+    /// error, or an HTTP status of 400 or more).
+    url: String,
+    failed: bool,
 }
 
 #[derive(Default)]
@@ -74,7 +78,7 @@ pub fn open(key: &str, target: &str, w: f32, h: f32, scale: f32) -> bool {
     if with(|s| s.frames.contains_key(key)) { resize(key, w, h, scale); return true; }
     let referrer = target.starts_with("https://") || loopback(target);
     let origin = if referrer { with(|s| s.origin.clone()) } else { String::new() };
-    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, w: w.round().max(1.0) as i32, h: h.round().max(1.0) as i32, scale: scale.max(1.0), raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, _observer: None }));
+    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, w: w.round().max(1.0) as i32, h: h.round().max(1.0) as i32, scale: scale.max(1.0), raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, _observer: None, url: target.to_string(), failed: false }));
     let mut client = FrameClient::new(FrameRender::new(key.to_string()), FrameLife::new(key.to_string()), FrameDisplay::new(key.to_string()), FrameDialogs::new(), FrameMenu::new(), FrameLoad::new(key.to_string()), FrameRequests::new(FrameResource::new(target.to_string(), origin)));
     let window_info = WindowInfo::default().set_as_windowless(Default::default());
     // Transparent: a page without a background shows the box's colour.
@@ -127,6 +131,10 @@ pub fn drop_old(window: &mut gpui::Window) {
 /// The page's root scroller: (top, most top, left, most left); None until read (added by Operations for the log's props, 2.16f).
 pub fn scroll(key: &str) -> Option<(f64, f64, f64, f64)> { with(|s| s.frames.get(key).and_then(|f| f.scroll)) }
 pub fn painted(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.painted)) }
+/// The page the view was opened at.
+pub fn url(key: &str) -> String { with(|s| s.frames.get(key).map(|f| f.url.clone()).unwrap_or_default()) }
+/// The main load failed: a network error, or an HTTP status of 400 or more.
+pub fn failed(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.failed)) }
 pub fn title(key: &str) -> String { with(|s| s.frames.get(key).map(|f| f.title.clone()).unwrap_or_default()) }
 pub fn cursor(key: &str) -> CursorStyle { crate::view::cursor_style(with(|s| s.frames.get(key).map(|f| f.cursor).unwrap_or(0))) }
 /// The last page a frame asked to open in a new window.
@@ -361,6 +369,16 @@ wrap_load_handler! {
     impl LoadHandler {
         fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: ::std::os::raw::c_int, _back: ::std::os::raw::c_int, _fwd: ::std::os::raw::c_int) {
             if is_loading == 0 { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.loads += 1; }); changed(); ask_scroll(&self.key); }
+        }
+        fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: ::std::os::raw::c_int) {
+            if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
+            if http_status_code >= 400 { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.failed = true; }); changed(); }
+        }
+        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, _error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
+            if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
+            if *error_code.as_ref() as i32 == -3 { return; } // ERR_ABORTED: a navigation replaced it
+            with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.failed = true; });
+            changed();
         }
     }
 }

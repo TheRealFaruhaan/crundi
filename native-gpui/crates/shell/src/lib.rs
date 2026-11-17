@@ -34,6 +34,11 @@ pub struct Shell {
     password_input: Entity<w::InputState>,
     code_input: Entity<w::InputState>,
     pair_input: Entity<w::InputState>,
+    /// The window's own focus (the root key context's): where the keys go when
+    /// nothing else has them, so the window's shortcuts (Cru's push to talk)
+    /// reach it whatever was focused and has gone.
+    root_focus: FocusHandle,
+    _focus_lost: Subscription,
 }
 
 /// The window's Shell, for the parts and the test driver.
@@ -45,6 +50,13 @@ impl Global for ShellHandle {}
 #[derive(Clone, Default, PartialEq)]
 pub struct CruMark { pub live: bool, pub unread: i64 }
 impl Global for CruMark {}
+
+/// Where Cru's mark is in the window (as last drawn): Cru's screen opens
+/// under it, at its right (the web's anchor). Added by Desktop.
+#[derive(Clone, Copy, Default)]
+pub struct CruAnchor(pub Bounds<Pixels>);
+impl Global for CruAnchor {}
+pub fn cru_anchor(cx: &App) -> Option<Bounds<Pixels>> { cx.try_global::<CruAnchor>().map(|a| a.0) }
 
 /// Desktop's Cru tells the top bar; redraws only on a change.
 pub fn set_cru_mark(cx: &mut App, live: bool, unread: i64) {
@@ -61,7 +73,14 @@ impl Shell {
         let code_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("6-digit code"));
         let pair_input = cx.new(|cx| w::InputState::new(window, cx).placeholder("Pairing link"));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input }
+        // A focused element gone (a closed drawer's page or field, Cru's screen): the focus goes to its
+        // nearest focusable ancestor still drawn, else to the window's root, never to nothing (GPUI
+        // sends keys along the focused element's path only, so with none the window hears no key).
+        let focus_lost = cx.on_focus_lost(window, |this, window, cx| {
+            let to = window.focus_lost_restore_target(cx).unwrap_or_else(|| this.root_focus.clone());
+            window.focus(&to, cx);
+        });
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -118,6 +137,8 @@ impl Shell {
         let wide = window.viewport_size().width >= T::CRU_HOVER_MIN_W;
         div().id("cru").relative().flex_none().flex().items_center().p(T::SP_2).cursor_pointer()
             .child(w::cru_mark(m.live))
+            // Where the mark is: Cru's screen opens under it (cru_anchor).
+            .child(canvas(|b, _, cx| { if cx.try_global::<CruAnchor>().map(|a| a.0) != Some(b) { cx.set_global(CruAnchor(b)); } }, |_, _, _, _| {}).absolute().inset_0())
             .when(m.unread > 0, |d| d.child(w::dot(T::red()).absolute().top(px(1.)).right(px(1.)).border_2().border_color(T::bg_secondary())))
             .tooltip(w::tooltip(tip))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -338,7 +359,11 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let root = div().flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font());
+        // Nothing focused (the window just opened): the window's root has the keys.
+        if window.focused(cx).is_none() { window.focus(&self.root_focus, cx); }
+        // The root key context; its focus on an empty node (a click never moves the focus to it).
+        let root = div().key_context("CrundiWindow").flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font())
+            .child(div().absolute().size_0().track_focus(&self.root_focus));
         if !session::signed_in(cx) {
             return root.child(self.sign_in(window, cx)).into_any_element();
         }

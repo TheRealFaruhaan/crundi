@@ -31,6 +31,14 @@ pub struct BrowserDrawer {
 }
 
 impl BrowserDrawer {
+    /// The address field takes the keys (the test driver: a drawer holding the focus as it closes).
+    pub fn focus_address(&self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.address.update(cx, |s, cx| s.focus(window, cx));
+        self.address.read(cx).focus_handle(cx).is_focused(window)
+    }
+}
+
+impl BrowserDrawer {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let page = cx.new(PageView::new);
         let address = cx.new(|cx| w::InputState::new(window, cx).placeholder("Enter URL or search"));

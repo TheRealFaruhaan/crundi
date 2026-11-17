@@ -137,10 +137,12 @@ fn key(r: &Request, window: &mut Window, cx: &mut App) {
     };
     // dispatch_keystroke, as the platform: the key bindings first, then the
     // focused text input's handler gets the typed character (F20).
+    // "phase": "down" presses and holds, "up" lets go (a held shortcut: Cru's push to talk); else both.
+    let phase = r.str("phase");
     let press = |key: String, ch: Option<String>, modifiers: Modifiers, window: &mut Window, cx: &mut App| {
         let ks = Keystroke { modifiers, key, key_char: ch };
-        window.dispatch_keystroke(ks.clone(), cx);
-        window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: ks }), cx);
+        if phase != "up" { window.dispatch_keystroke(ks.clone(), cx); }
+        if phase != "down" { window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: ks }), cx); }
     };
     match named {
         Some(k) => {

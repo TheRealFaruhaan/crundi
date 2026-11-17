@@ -18,6 +18,7 @@ mod bubble;
 mod ctx;
 mod cru;
 mod cru_blocks;
+mod cru_field;
 mod cru_frame;
 mod cru_kid;
 mod cru_screen;
@@ -100,7 +101,15 @@ pub fn init(window: &mut Window, cx: &mut App) {
             AreaEvent::Server("inbox", v) => inbox::event(v),
             _ => {}
         })
-        .test_ui(|name, args, window, cx| { refresh(window, cx); test_ui(name, args) })
+        .test_ui(|name, args, window, cx| {
+            refresh(window, cx);
+            if name == "drawer-focus" {
+                let d = cx.try_global::<DrawerHandle>().map(|d| d.0.clone())?;
+                let ok = d.update(cx, |d, cx| d.focus_address(window, cx));
+                return Some(json!({ "ok": ok }));
+            }
+            test_ui(name, args)
+        })
         .props(|_, cx| { let mut p = props(); p["bubble"] = bubble::props(cx); json!({ "areas": { "desktop": p } }) }));
     // The pane header's Bubble button (Workspace's) opens a chat's bubble through this hook.
     crundi_shell::register_bubble(cx, |chat, cx| bubble::open(chat, cx));
@@ -266,8 +275,19 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "notify-click" => { notify::clicked(&a(0)); ok() }
         "cru" => { cru::toggle(); ok() }
         "cru-keyboard" => { cru::set_keyboard(a(0) != "false"); ok() }
-        "cru-send" => { cru::ask(&a(0), true); ok() }
+        "cru-send" => { cru::utter(&a(0), true); ok() }
+        "cru-utter" => { cru::utter(&a(0), false); ok() }
+        "cru-cancel" => { cru::cancel_words(); ok() }
+        "cru-drop" => { cru::drop_live(&a(0)); ok() }
         "cru-menu" => { cru::menu_pick(&a(0)); ok() }
+        // The ⋯ menu shown or hidden; words as the microphone hears them; the mic tapped; the history again.
+        "cru-menu-open" => { cru::with(|c| c.menu = a(0) != "false"); cru::render(); ok() }
+        "cru-hear" => { cru::test_hear(&a(0)); ok() }
+        // A state as the microphone and the server would bring it (the blocked notice cleared).
+        "cru-state" => { cru::test_state(&a(0)); ok() }
+        "cru-mic" => { cru::mic(); ok() }
+        "cru-attach" => { cru::attach(); ok() }
+        "cru-history" => { cru::history(None); ok() }
         "pw-save" => { if let Some(t) = drawer::active_tab() { passwords::save(&t.id, &a(0)); } ok() }
         "pw-never" => { if let Some(t) = drawer::active_tab() { passwords::never(&t.id); } ok() }
         "pw-dismiss" => { if let Some(t) = drawer::active_tab() { passwords::dismiss(&t.id); } ok() }

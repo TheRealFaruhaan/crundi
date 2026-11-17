@@ -73,7 +73,9 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
    live run graph, the factory panel).
 5. [x] **Operations** (Operations), test `test/operations.mjs`: Services,
    forwards, Docker; Secrets, Skills, Usage; Settings, sign-in, backup; Add
-   project; Homepool; Info; Panels (widgets); What's new; the approvals button.
+   project; Homepool; Info; Panels (widgets); What's new (17 Nov: each step's
+   picture is its own page from the server, live in the frame; a native-only
+   feature adds its step on the server, README "What's new"); the approvals button.
 6. [x] **PC-client extras from `app/`** (Desktop), test `test/desktop.mjs`:
    notifications and the tray, the Inbox, the chat bubble, saved passwords,
    the homepool node, Cru on the PC (the voice screen, the live screen, kid
@@ -123,6 +125,19 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
   - the voice check uses sherpa-onnx's own fbank on the same 3D-Speaker
     model, so a profile trained by the Electron client is not reused (it
     lives in that app's folder anyway): train once on the native client.
+  - Cru's screen is the PC client's (17 Nov, the owner): the same parts and
+    states as crundi-voice.js (cru_ui.rs, cru_field.rs, w::liquid_mic). GPUI
+    paints no radial or conic gradients and no additive blending: the glows
+    are stacked discs, the contours' sweep is drawn in twelve arcs per line,
+    and the mic's three layers blend normally (a little darker than the
+    web's "lighter"); the head is the LOGO in two tints (its body the accent,
+    not its gradient). With no output analyser, Cru's speaking level is the
+    web's browser-voice bump, not the streamed voice's loudness.
+- **What's new on a server older than the native client** gives no step
+  `page`: the frame shows the step's title (the web inlines the fragment;
+  the client draws pages, not HTML). No swipe between steps (no touch).
+  Its kickers' wide letter-spacing is a hair space between letters (GPUI
+  has no letter-spacing).
 - **Buttons with a label** use gpui-component's Button with the theme's
   sizes (`widgets/src/control.rs`); its own hover tooltip for `.tooltip()`
   on such a Button is gpui-component's managed style, not `w::tooltip`.

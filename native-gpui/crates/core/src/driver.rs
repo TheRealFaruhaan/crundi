@@ -12,6 +12,7 @@
 //!   {"cmd":"area","area":"planning"}          an area's props alone
 //!   {"cmd":"mouse","kind":"move|click|dblclick|down|up|leave|wheel","x":10,"y":20}
 //!   {"cmd":"key","text":"Escape"|"Return"|"a…","mods":["ctrl"]}
+//!       ("phase":"down" holds the key, "up" lets it go; neither: both)
 //!   {"cmd":"resize","w":1400,"h":860}
 
 use serde_json::{json, Value};

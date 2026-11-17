@@ -42,6 +42,7 @@ export function compareVersions(a, b) {
 }
 
 const SAFE = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+const ART_FILE = /^[a-z0-9][a-z0-9_-]{0,58}\.html$/i;
 const text = (v, max) => String(v == null ? '' : v).slice(0, max);
 
 /**
@@ -63,6 +64,10 @@ export function listEditions(dir) {
       if (!s || !SAFE.test(String(s.id || '')) || !String(s.title || '').trim()) continue;
       let art = '';
       if (s.art && SAFE.test(String(s.art))) { try { art = readFileSync(join(folder, String(s.art)), 'utf8'); } catch { art = ''; } }
+      // The step's animation as a page of its own (artPage, served at this
+      // path): what a client that draws pages, not HTML, shows (the native
+      // PC client's tour).
+      const page = art && ART_FILE.test(String(s.art)) ? `/whatsnew/${name}/${s.art}` : '';
       steps.push({
         id: String(s.id), version: name,
         tag: text(s.tag, 40), title: text(s.title, 120), body: text(s.body, 600),
@@ -72,6 +77,7 @@ export function listEditions(dir) {
         })).filter((k) => k.text),
         artTitle: text(s.artTitle || s.tag, 40),
         art: art.length <= 64 * 1024 ? art : '',
+        page: art.length <= 64 * 1024 ? page : '',
       });
     }
     if (steps.length) out.push({ version: name, steps });
@@ -128,3 +134,50 @@ export function markSeen(file, { editions, current, channel }) {
 }
 
 export const hasState = (file) => existsSync(file);
+
+// ─── A step's animation as a page (GET /whatsnew/<version>/<file>.html) ───
+//
+// The web tour puts a step's fragment straight into its own page, where the
+// app's colours and box model already are. A client that shows pages instead
+// (the native PC client draws this in an off-screen browser inside the
+// tour's frame) loads this: the same fragment on the same 640 x 400 stage,
+// the app's colours, scaled to fit whatever size it is shown at.
+
+/** The fragment's file for a page request, or null: a version folder, a plain .html name, on disk. */
+export function artFile(dir, version, file) {
+  if (!parseVersion(version) || !SAFE.test(String(version)) || !ART_FILE.test(String(file || ''))) return null;
+  const f = join(dir, String(version), String(file));
+  try { return statSync(f).isFile() ? f : null; } catch { return null; }
+}
+
+// The web UI's palette (src/webapp-html.js :root), what the fragments may use.
+const PALETTE = {
+  'bg-primary': '#0a0a0f', 'bg-secondary': '#12121a', 'bg-tertiary': '#1a1a28', 'bg-hover': '#22223a', 'bg-card': '#14141f',
+  border: '#2a2a3d', 'border-subtle': '#1e1e30', 'text-primary': '#e8e8f0', 'text-secondary': '#8888a8', 'text-muted': '#5a5a78',
+  accent: '#6366f1', 'accent-hover': '#818cf8', 'accent-deep': '#4f46e5', amber: '#fbbf24', 'accent-dim': 'rgba(99, 102, 241, 0.15)',
+  green: '#10b981', 'green-dim': 'rgba(16, 185, 129, 0.15)', red: '#ef4444', 'red-dim': 'rgba(239, 68, 68, 0.15)',
+  yellow: '#f59e0b', sky: '#38bdf8', 'yellow-dim': 'rgba(245, 158, 11, 0.15)',
+  mono: '"Cascadia Code", "Fira Code", "JetBrains Mono", "Consolas", monospace',
+};
+
+/**
+ * The whole page around a fragment. `nonce` is the one script's (the fitting);
+ * the response's Content-Security-Policy allows only it, so a script in a
+ * fragment never runs here either.
+ */
+export function artPage(fragment, { title = '', nonce = '' } = {}) {
+  const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const vars = Object.entries(PALETTE).map(([k, v]) => `--${k}:${v}`).join(';');
+  return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+    + `<title>${esc(title)}</title><style>`
+    + `:root{${vars}}`
+    + '*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}'
+    + 'html,body{height:100%;overflow:hidden;background:var(--bg-secondary);color:var(--text-primary);font-family:-apple-system,"Segoe UI",system-ui,sans-serif}'
+    + '.wn-stage{position:absolute;left:0;top:0;width:640px;height:400px;transform-origin:0 0}'
+    + '.wn-stage .wna{position:absolute;inset:0;overflow:hidden}'
+    + '</style></head><body><div class="wn-stage" id="wn-stage">' + String(fragment || '') + '</div>'
+    + `<script nonce="${esc(nonce)}">(function(){var s=document.getElementById('wn-stage');`
+    + 'function fit(){var w=innerWidth,h=innerHeight,k=Math.min(w/640,h/400)||1;'
+    + "s.style.transform='translate('+Math.max(0,(w-640*k)/2)+'px,'+Math.max(0,(h-400*k)/2)+'px) scale('+k+')';}"
+    + "fit();addEventListener('resize',fit);})();</script></body></html>";
+}

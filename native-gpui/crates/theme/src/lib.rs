@@ -419,6 +419,8 @@ impl T {
     pub const EXTRAS_WN_FRAME_MAX: Pixels = px(760.);
     pub const EXTRAS_WN_TITLE: Pixels = px(40.);
     pub const EXTRAS_WN_KEY_W: Pixels = px(150.);
+    /// What's new: the title's line height (the web's .wn-title, a tight 1.1).
+    pub const EXTRAS_WN_TITLE_LH: f32 = 1.1;
     pub fn extras_wn_haze() -> Hsla { rgba(0x6366f11f).into() }
     /// settings: Cru's selects and fields, the Telegram chat id, a matrix column, the idle-minutes box, the pairing picture.
     pub const SETTINGS_SELECT_W: Pixels = px(340.);
@@ -479,15 +481,63 @@ impl T {
     pub const INBOX_MSG_W: Pixels = px(760.);
     pub const INBOX_PIC_H: Pixels = px(240.);
     pub const INBOX_TINT: f32 = 0.3;
-    /// Cru's screen: its width and tallest, the field and the head in it,
-    /// a bubble's widest, the chat view's height, and its place from the right.
-    pub const CRU_W: Pixels = px(420.);
-    pub const CRU_H: Pixels = px(760.);
-    pub const CRU_FIELD: Pixels = px(120.);
-    pub const CRU_HEAD: Pixels = px(60.);
-    pub const CRU_TURN_W: Pixels = px(336.);
-    pub const CRU_CHAT_H: Pixels = px(260.);
-    pub const CRU_RIGHT: Pixels = px(192.);
+    /// Cru's screen (crundi-voice.js .cv-ov on a wide window): 400 by 600
+    /// under the top bar's mark, 580 by 760 with Cru's live screen up; the
+    /// room it leaves under the window (100vh - 70); the field's least height.
+    pub const CRU_W: Pixels = px(400.);
+    pub const CRU_H: Pixels = px(600.);
+    pub const CRU_W_SCR: Pixels = px(580.);
+    pub const CRU_H_SCR: Pixels = px(760.);
+    pub const CRU_ROOM: Pixels = px(70.);
+    pub const CRU_FIELD_MIN: Pixels = px(230.);
+    /// The field's share of the room against the words' (.cv-field flex 1.5, .cv-words flex 1).
+    pub const CRU_FIELD_GROW: f32 = 1.5;
+    /// The round buttons (.cv-x), the ⋯ menu's least width, a bubble's
+    /// sharp corner (.cv-m border-bottom radius 5), the say-it button's room.
+    pub const CRU_BTN: Pixels = px(34.);
+    pub const CRU_BTN_ICON: Pixels = px(16.);
+    pub const CRU_MENU_W: Pixels = px(220.);
+    pub const CRU_BUBBLE_R: Pixels = px(16.);
+    pub const CRU_BUBBLE_TAIL: Pixels = px(5.);
+    pub const CRU_SAY_ROOM: Pixels = px(40.);
+    /// The × by his words (.cv-cx 26) and on a faded bubble (.cv-drop 28).
+    pub const CRU_CX: Pixels = px(26.);
+    pub const CRU_DROP_BTN: Pixels = px(28.);
+    /// A bubble's widest share of the chat (.cv-m max-width 82%).
+    pub const CRU_BUBBLE_SHARE: f32 = 0.82;
+    /// The liquid mic (.cv-mic): its box (112, 64 in the chat view), the
+    /// canvas around it (272 by 152), the sphere's radius.
+    pub const CRU_MIC: Pixels = px(112.);
+    pub const CRU_MIC_CHAT: Pixels = px(64.);
+    pub const CRU_MIC_CANVAS_W: Pixels = px(272.);
+    pub const CRU_MIC_CANVAS_H: Pixels = px(152.);
+    pub const CRU_MIC_R: Pixels = px(30.);
+    /// The field (drawField): the head's largest size unit (L), a cell's
+    /// radius (idle, busy), the strands' and the drops' widths, the cells'
+    /// ring from the field's edge, a cell's name under it.
+    pub const CRU_HEAD_L: Pixels = px(38.);
+    pub const CRU_CELL_R: Pixels = px(17.);
+    pub const CRU_CELL_R_IDLE: Pixels = px(13.);
+    pub const CRU_CELL_INSET_X: Pixels = px(46.);
+    pub const CRU_CELL_INSET_Y: Pixels = px(34.);
+    pub const CRU_STRAND: Pixels = px(4.);
+    pub const CRU_DROP: Pixels = px(2.2);
+    pub const CRU_CELL_NAME: Pixels = px(10.5);
+    /// Cru's own colours (crundi-voice.js C, KIND, PALETTE, MIC_COLORS):
+    /// violet (ask), fuchsia (wait), orange and soft red (the mic's offline
+    /// and problem), the mic's dark layers, the disc, the cells' names, the
+    /// mic's ripples and drops, the owner's bubble.
+    pub fn cru_violet() -> Hsla { rgb(0xc084fc).into() }
+    pub fn cru_fuchsia() -> Hsla { rgb(0xd946ef).into() }
+    pub fn cru_orange() -> Hsla { rgb(0xfb923c).into() }
+    pub fn cru_red_soft() -> Hsla { rgb(0xf87171).into() }
+    pub fn cru_deep_blue() -> Hsla { rgb(0x1e3a8a).into() }
+    pub fn cru_deep_indigo() -> Hsla { rgb(0x312e81).into() }
+    pub fn cru_deep_violet() -> Hsla { rgb(0x4c1d95).into() }
+    pub fn cru_disc() -> Hsla { rgb(0x05050a).into() }
+    pub fn cru_label() -> Hsla { rgb(0xb8b8d0).into() }
+    pub fn cru_drop() -> Hsla { rgb(0x7dd3fc).into() }
+    pub fn cru_me() -> Hsla { rgb(0x2b2b55).into() }
     /// The chat bubble: its round head, and the expanded chat's window.
     pub const BUBBLE_HEAD: Pixels = px(56.);
     pub const BUBBLE_W: Pixels = px(380.);

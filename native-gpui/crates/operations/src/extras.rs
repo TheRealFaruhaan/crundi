@@ -13,7 +13,12 @@
 //! - What's new (crundi-whatsnew.js): shown once after an install or an
 //!   update (GET /api/whatsnew, 1.6 s after sign-in, never over a dialog);
 //!   Skip or Done marks it seen; Settings opens it again with
-//!   `open_whatsnew(true, cx)`.
+//!   `open_whatsnew(true, cx)`. Each step's picture is the step's own page
+//!   (its `page`: /whatsnew/<version>/<file>.html on the signed-in server,
+//!   the fragment the web tour inlines) live in an off-screen CEF view of its
+//!   own inside the frame (crundi_webview::frames): only the visible step's,
+//!   swapped on a change of step, closed with the tour. Display-only, as the
+//!   web's stage (the animations take no input): the keys stay the tour's.
 
 use crate::panels::{s, toast, toast_error, truthy, with_window};
 use crundi_shell::AreaEvent;
@@ -117,9 +122,37 @@ pub fn decided(r: &Value, approve: bool) -> (String, bool) {
 /// What's new: the step shown at `at` of `n` (the last one is the recap).
 pub fn wn_step(steps: &[Value], at: usize) -> Option<&Value> { steps.get(at) }
 
+/// What's new: a kicker's words as the web sets them (upper case, wide
+/// letter-spacing). GPUI has no letter-spacing: a hair space between the
+/// letters is the closest (PLAN.md, Known gaps).
+pub fn wn_kicker(t: &str) -> String {
+    let up = t.to_uppercase();
+    let mut out = String::with_capacity(up.len() * 4);
+    for (i, c) in up.chars().enumerate() { if i > 0 { out.push('\u{200A}'); } out.push(c); }
+    out
+}
+
+/// What's new: the dots, one per step and the recap: "on" (this one),
+/// "done" (before it), "" (still to come).
+pub fn wn_dots(at: usize, k: usize) -> Vec<&'static str> {
+    (0..k).map(|i| if i == at { "on" } else if i < at { "done" } else { "" }).collect()
+}
+
+/// What's new: the address of a step's page on the server at `base` (its
+/// `page`, a path the server gives; empty: none, an older server).
+pub fn wn_page_url(base: &str, step: &Value) -> String {
+    let p = s(step, "page");
+    if !p.starts_with('/') || p.starts_with("//") { return String::new(); }
+    format!("{}{}", base.trim_end_matches('/'), p)
+}
+
 // ─── State ───
 
-struct Wn { version: String, steps: Vec<Value>, at: usize, all: bool }
+struct Wn { version: String, steps: Vec<Value>, at: usize, all: bool, page: Option<WnPage> }
+
+/// The live view of the visible step's page: its frames key, the step and
+/// the address it was opened at.
+struct WnPage { key: String, at: usize, url: String }
 
 #[derive(Default)]
 struct St {
@@ -133,6 +166,14 @@ struct St {
     wn: Option<Wn>,
     wn_tries: u32,
     wn_gen: u32,
+    /// The tour's view (drawn again when its page paints) and each page
+    /// view's number (a fresh key per view: a closing one's late callbacks
+    /// never reach the next).
+    wn_view: Option<WeakEntity<WhatsNew>>,
+    wn_seq: u64,
+    wn_ticking: bool,
+    /// Every page view the tour made (the driver's count of those still held).
+    wn_keys: Vec<String>,
 }
 
 thread_local! { static ST: RefCell<St> = RefCell::new(St::default()); }
@@ -463,9 +504,11 @@ pub fn open_whatsnew(all: bool, cx: &mut App) {
             return;
         }
         with_window(cx, move |window, cx| {
+            wn_page_close(cx);
             let view = cx.new(|cx| WhatsNew { focus: cx.focus_handle() });
             let fh = view.read(cx).focus.clone();
-            with(|st| st.wn = Some(Wn { version: s(&v, "version"), steps, at: 0, all }));
+            let weak = view.downgrade();
+            with(|st| { st.wn = Some(Wn { version: s(&v, "version"), steps, at: 0, all, page: None }); st.wn_view = Some(weak); });
             // A full-window view: drawn by the modal host (its own card is
             // hidden under it), so it covers every tab and takes the keys.
             w::modal(window, cx, T::DIALOG_W, view.into(), |_, cx| { wn_finish(cx); });
@@ -476,12 +519,68 @@ pub fn open_whatsnew(all: bool, cx: &mut App) {
 
 fn wn_go(i: i64, cx: &mut App) {
     with(|st| if let Some(wn) = &mut st.wn { let k = wn.steps.len() as i64 + 1; wn.at = i.clamp(0, k - 1) as usize; });
+    // Another step: its page swaps in as the frame draws (wn_page_seen).
+    let stale = with(|st| st.wn.as_ref().is_some_and(|wn| wn.page.as_ref().is_some_and(|p| p.at != wn.at)));
+    if stale { wn_page_close(cx); }
     cx.refresh_windows();
+}
+
+/// Release the page's view (another step, the recap, the tour closed).
+fn wn_page_close(_cx: &mut App) {
+    let key = with(|st| st.wn.as_mut().and_then(|wn| wn.page.take()).map(|p| p.key));
+    if let Some(k) = key { crundi_webview::frames::close(&k); }
+}
+
+/// The frame's stage reports where it is as it is drawn: the visible step's
+/// page gets a view that size (made, swapped or resized).
+fn wn_page_seen(b: Bounds<Pixels>, scale: f32, cx: &mut App) {
+    if !crundi_webview::started() { return; }
+    let Some(base) = crundi_shell::api(cx).map(|a| a.base().to_string()) else { return };
+    let Some((at, url, held)) = with(|st| st.wn.as_ref().map(|wn| {
+        let url = wn.steps.get(wn.at).map(|x| wn_page_url(&base, x)).unwrap_or_default();
+        (wn.at, url, wn.page.as_ref().map(|p| (p.key.clone(), p.at, p.url.clone())))
+    })) else { return };
+    let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+    match held {
+        Some((key, a, u)) if a == at && u == url => { crundi_webview::frames::resize(&key, w, h, scale); return; }
+        Some(_) => wn_page_close(cx),
+        None => {}
+    }
+    if url.is_empty() || w < 1.0 || h < 1.0 { return; }
+    let key = with(|st| { st.wn_seq += 1; format!("whatsnew-{}", st.wn_seq) });
+    if !crundi_webview::frames::open(&key, &url, w, h, scale) { return; }
+    with(|st| {
+        st.wn_keys.retain(|k| crundi_webview::frames::exists(k));
+        st.wn_keys.push(key.clone());
+        if let Some(wn) = &mut st.wn { wn.page = Some(WnPage { key, at, url }); }
+    });
+    wn_ticker(cx);
+}
+
+/// While a page is live: the tour draws again when it paints (its own
+/// animation), at most every 33 ms.
+fn wn_ticker(cx: &mut App) {
+    if with(|st| std::mem::replace(&mut st.wn_ticking, true)) { return; }
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let mut last = 0u64;
+        loop {
+            cx.background_executor().timer(Duration::from_millis(33)).await;
+            let go = cx.update(|cx| {
+                let view = with(|st| st.wn.as_ref().and_then(|wn| wn.page.as_ref()).and(st.wn_view.clone()));
+                let Some(v) = view.and_then(|v| v.upgrade()) else { with(|st| st.wn_ticking = false); return false };
+                let now = crundi_webview::frames::generation();
+                if now != last { last = now; v.update(cx, |_, cx| cx.notify()); }
+                true
+            });
+            if !go { break; }
+        }
+    }).detach();
 }
 
 /// Closed (Skip, Esc, Done): marked seen unless opened from Settings. True when it was open.
 fn wn_finish(cx: &mut App) -> bool {
-    let Some(wn) = with(|st| st.wn.take()) else { return false };
+    wn_page_close(cx);
+    let Some(wn) = with(|st| { st.wn_view = None; st.wn.take() }) else { return false };
     if !wn.all { crundi_shell::call(cx, |api| api.post("/api/whatsnew/seen", &json!({})), |_, _| {}); }
     cx.refresh_windows();
     true
@@ -505,7 +604,7 @@ fn wn_key(e: &KeyDownEvent, window: &mut Window, cx: &mut App) {
 
 impl Render for WhatsNew {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let Some((version, steps, at)) = with(|st| st.wn.as_ref().map(|wn| (wn.version.clone(), wn.steps.clone(), wn.at))) else { return div().into_any_element() };
+        let Some((version, steps, at, page)) = with(|st| st.wn.as_ref().map(|wn| (wn.version.clone(), wn.steps.clone(), wn.at, wn.page.as_ref().filter(|p| p.at == wn.at).map(|p| p.key.clone())))) else { return div().into_any_element() };
         let k = steps.len() + 1;
         let last = at == k - 1;
         let step = wn_step(&steps, at).cloned().unwrap_or(Value::Null);
@@ -513,11 +612,11 @@ impl Render for WhatsNew {
         let copy_w = T::EXTRAS_WN_COPY_MIN.max(vp.width * T::EXTRAS_WN_COPY_SHARE);
         let tag = s(&step, "tag");
         // The words, on the left.
-        let mut copy = div().flex().flex_col().justify_center().gap(T::SP_16).w(copy_w).h_full().pl(T::SP_48 + T::SP_16).pr(T::SP_48)
+        let mut copy = div().flex().flex_col().justify_center().gap(T::SP_12).w(copy_w).h_full().pl(T::SP_48 + T::SP_16).pr(T::SP_48)
             .child(div().flex().items_center().gap(T::SP_10)
-                .child(div().text_size(T::TEXT_12).font_weight(T::W_BOLD).text_color(T::accent_hover()).child(if last { "THAT IS EVERYTHING".to_string() } else if tag.is_empty() { "NEW".into() } else { tag.to_uppercase() }))
-                .when(!last && !s(&step, "version").is_empty(), |d| d.child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child(format!("new in {}", s(&step, "version"))))))
-            .child(div().text_size(T::EXTRAS_WN_TITLE).font_weight(T::W_BOLD).text_color(T::text()).child(if last { "You are up to date".to_string() } else { s(&step, "title") }))
+                .child(div().text_size(T::TEXT_12).font_weight(T::W_BOLD).text_color(T::accent_hover()).child(wn_kicker(if last { "That is everything" } else if tag.is_empty() { "New" } else { &tag })))
+                .when(!last && !s(&step, "version").is_empty(), |d| d.child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child(wn_kicker(&format!("new in {}", s(&step, "version")))))))
+            .child(div().text_size(T::EXTRAS_WN_TITLE).line_height(relative(T::EXTRAS_WN_TITLE_LH)).font_weight(T::W_BOLD).text_color(T::text()).child(if last { "You are up to date".to_string() } else { s(&step, "title") }))
             .child(div().text_size(T::TEXT_16).text_color(T::text_secondary()).child(if last { "This shows once after each update. You can open it again any time from Settings, under What's new.".to_string() } else { s(&step, "body") }));
         if !last {
             for kr in step.get("keys").and_then(|x| x.as_array()).cloned().unwrap_or_default() {
@@ -531,10 +630,24 @@ impl Render for WhatsNew {
         }
         // The art (or the recap), on the right.
         let stage: AnyElement = if !last {
-            div().flex().flex_col().flex_1().min_w_0().items_center().justify_center().gap(T::SP_12).bg(T::extras_wn_haze())
-                .child(div().text_color(T::accent()).child(w::icon(IconName::Bot, T::SP_48 + T::SP_16)))
-                .child(div().text_size(T::TEXT_20).font_weight(T::W_BOLD).text_color(T::accent_hover()).child(tag.clone()))
-                .child(div().text_size(T::TEXT_14).text_color(T::text_secondary()).child(s(&step, "title")))
+            // The step's page, live: its view's picture once it has painted;
+            // until then a quiet spinner; the step's title when it can't load
+            // (no CEF, no page from an older server, a failed load).
+            use crundi_webview::frames as web;
+            let report = canvas(|b, window, cx| wn_page_seen(b, window.scale_factor(), cx), |_, _, _, _| {}).absolute().inset_0().size_full();
+            let no_page = !crundi_webview::started() || s(&step, "page").is_empty();
+            let failed = no_page || page.as_ref().is_some_and(|k| web::failed(k));
+            let image = page.as_ref().filter(|k| !failed && web::painted(k)).and_then(|k| web::image(k));
+            let inner: AnyElement = if failed {
+                w::empty(s(&step, "title")).size_full().into_any_element()
+            } else if let Some(img) = image {
+                gpui::img(ImageSource::Render(img)).absolute().inset_0().size_full().into_any_element()
+            } else {
+                div().size_full().flex().items_center().justify_center().child(w::spinner(T::SPINNER)).into_any_element()
+            };
+            div().id("wn-stage").relative().flex_1().min_w_0().min_h_0().overflow_hidden()
+                .child(report)
+                .child(inner)
                 .into_any_element()
         } else {
             let mut rc = div().id("wn-recap").flex().flex_col().flex_1().min_w_0().gap(T::SP_8).px(T::SP_20).py(T::SP_16).overflow_y_scroll();
@@ -564,22 +677,22 @@ impl Render for WhatsNew {
             .child(div().font_weight(T::W_BOLD).text_size(T::TEXT_20).text_color(T::text()).child("crundi"))
             .when(!version.is_empty(), |d| d.child(w::tag(version.clone(), "accent")))
             .child(div().flex_1().min_w_0())
-            .when(!last, |d| d.child(w::button("wn-skip", "Skip").icon(IconName::X).on_click(|_, window, cx| wn_close(window, cx))));
+            .when(!last, |d| d.child(w::label_icon_button("wn-skip", "Skip", IconName::X, true, w::Look::Quiet, false).rounded(T::R_PILL).on_click(|_, window, cx| wn_close(window, cx))));
         // The foot: Back, the dots, the count, the hint, Next / Done.
         let mut dots = div().flex().items_center().gap(T::SP_6);
-        for i in 0..k {
-            let c = if i == at { T::accent() } else if i < at { T::accent_edge() } else { T::bg_hover() };
-            dots = dots.child(div().id(("wn-dot", i)).h(T::SP_6).w(if i == at { T::SP_24 } else { T::SP_6 }).rounded(T::R_PILL).bg(c).cursor_pointer()
+        for (i, d) in wn_dots(at, k).into_iter().enumerate() {
+            let c = match d { "on" => T::accent(), "done" => T::accent_edge(), _ => T::bg_hover() };
+            dots = dots.child(div().id(("wn-dot", i)).h(T::SP_6).w(if d == "on" { T::SP_24 } else { T::SP_6 }).rounded(T::R_PILL).bg(c).cursor_pointer()
                 .on_click(move |_, _, cx| wn_go(i as i64, cx)));
         }
         let at_i = at as i64;
         let foot = div().flex().flex_none().items_center().gap(T::SP_16).h(T::CONTROL_LG).mb(T::SP_24).pl(T::SP_48 + T::SP_16).pr(T::SP_48)
-            .child(div().when(at == 0, |d| d.invisible()).child(w::button("wn-back", "Back").icon(IconName::ChevronLeft).on_click(move |_, _, cx| if at_i > 0 { wn_go(at_i - 1, cx) })))
+            .child(div().when(at == 0, |d| d.invisible()).child(w::label_icon_button("wn-back", "Back", IconName::ChevronLeft, false, w::Look::Quiet, true).on_click(move |_, _, cx| if at_i > 0 { wn_go(at_i - 1, cx) })))
             .child(dots)
             .child(div().font_family(T::MONO).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_muted()).child(format!("{} / {}", at + 1, k)))
             .child(div().flex_1().min_w_0())
             .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Arrow keys, or swipe"))
-            .child(w::primary("wn-next", if last { "Done" } else { "Next" }).icon(if last { IconName::Check } else { IconName::ChevronRight })
+            .child(w::label_icon_button("wn-next", if last { "Done" } else { "Next" }, if last { IconName::Check } else { IconName::ChevronRight }, !last, w::Look::Primary, true)
                 .on_click(move |_, window, cx| if last { wn_close(window, cx) } else { wn_go(at_i + 1, cx) }));
         let full = div().id("whatsnew").occlude().track_focus(&self.focus).on_key_down(wn_key)
             .w(vp.width).h(vp.height).flex().flex_col().bg(T::bg()).text_color(T::text()).font(crundi_theme::ui_font())
@@ -622,7 +735,8 @@ pub fn on_signed_in(cx: &mut App) {
 }
 
 pub fn on_signed_out(cx: &mut App) {
-    with(|st| { st.items.clear(); st.select = None; st.wn_gen += 1; st.appr_open = false; st.add = None; st.wn = None; });
+    wn_page_close(cx);
+    with(|st| { st.wn_view = None; st.items.clear(); st.select = None; st.wn_gen += 1; st.appr_open = false; st.add = None; st.wn = None; });
     with_window(cx, |window, cx| if w::modal_open(cx) { w::close_dialog(window, cx); });
     cx.refresh_windows();
 }
@@ -654,6 +768,11 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
         "extras-wn-auto" => { let g = with(|st| { st.wn_tries = 0; st.wn_gen += 1; st.wn_gen }); maybe_show(g, cx); }
         "extras-wn-go" => wn_go(a(0).parse().unwrap_or(0), cx),
         "extras-wn-close" => wn_close(window, cx),
+        // The visible step's page path replaced (the fallback's check: a page that isn't there).
+        "extras-wn-page" => {
+            with(|st| if let Some(wn) = &mut st.wn { let at = wn.at; if let Some(x) = wn.steps.get_mut(at) { x["page"] = json!(a(0)); } });
+            cx.refresh_windows();
+        }
         _ => return None,
     }
     Some(json!({ "ok": true }))
@@ -665,9 +784,18 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
     let wn = with(|st| st.wn.as_ref().map(|wn| {
         let k = wn.steps.len() + 1;
         let step = wn.steps.get(wn.at);
+        // The visible step's page view: the address the step names, the
+        // view's (opened at), whether it painted or failed, its title.
+        let page = wn.page.as_ref().filter(|p| p.at == wn.at).map(|p| {
+            use crundi_webview::frames as web;
+            json!({ "key": p.key, "url": web::url(&p.key), "painted": web::painted(&p.key), "failed": web::failed(&p.key), "title": web::title(&p.key), "loads": web::loads(&p.key) })
+        });
         json!({ "version": wn.version, "at": wn.at, "n": k, "last": wn.at == k - 1,
-            "title": step.map(|x| s(x, "title")).unwrap_or_else(|| "You are up to date".into()), "tag": step.map(|x| s(x, "tag")).unwrap_or_default(), "all": wn.all })
+            "title": step.map(|x| s(x, "title")).unwrap_or_else(|| "You are up to date".into()), "tag": step.map(|x| s(x, "tag")).unwrap_or_default(), "all": wn.all,
+            "pagePath": step.map(|x| s(x, "page")).unwrap_or_default(), "dots": wn_dots(wn.at, k), "page": page.unwrap_or(Value::Null) })
     }));
+    // The tour's page views still held (none once it closed).
+    let wn_views = with(|st| st.wn_keys.iter().filter(|k| crundi_webview::frames::exists(k)).count());
     let add_v = add.as_ref().map(|v| { let x = v.read(cx); json!({ "single": x.single, "hint": x.hint, "name": val(&x.name, cx), "alias": val(&x.alias, cx), "path": val(&x.path, cx), "dname": val(&x.dname, cx), "busy": x.busy }) });
     json!({
         "modal": add.is_some() || wn.is_some(),
@@ -677,13 +805,14 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
             "acts": acts_of(i).into_iter().map(|a| a.1).collect::<Vec<_>>(),
         })).collect::<Vec<_>>() },
         "wn": wn.unwrap_or(Value::Null),
+        "wnViews": wn_views,
         "pendingSelect": select,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{acts_of, alias_multi, alias_single, decided, declines, folder_hint, title_of, wn_step};
+    use super::{acts_of, alias_multi, alias_single, decided, declines, folder_hint, title_of, wn_dots, wn_kicker, wn_page_url, wn_step};
     use serde_json::json;
 
     #[::core::prelude::v1::test]
@@ -727,5 +856,13 @@ mod tests {
         let steps = vec![json!({ "title": "A" })];
         assert!(wn_step(&steps, 0).is_some());
         assert!(wn_step(&steps, 1).is_none(), "the recap is past the steps");
+        assert_eq!(wn_kicker("new in 1.2"), "N\u{200A}E\u{200A}W\u{200A} \u{200A}I\u{200A}N\u{200A} \u{200A}1\u{200A}.\u{200A}2");
+        assert_eq!(wn_dots(1, 4), ["done", "on", "", ""]);
+        assert_eq!(wn_dots(3, 4), ["done", "done", "done", "on"]);
+        let page = json!({ "page": "/whatsnew/1.21.6/inbox.html" });
+        assert_eq!(wn_page_url("https://dev.example.com/", &page), "https://dev.example.com/whatsnew/1.21.6/inbox.html");
+        assert_eq!(wn_page_url("http://127.0.0.1:4392", &page), "http://127.0.0.1:4392/whatsnew/1.21.6/inbox.html");
+        assert_eq!(wn_page_url("http://x", &json!({ "title": "an older server: no page" })), "");
+        assert_eq!(wn_page_url("http://x", &json!({ "page": "//elsewhere.com/x.html" })), "", "only a path on the signed-in server");
     }
 }

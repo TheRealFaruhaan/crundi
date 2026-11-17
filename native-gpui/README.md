@@ -23,6 +23,35 @@ test driver.
 | `webview`, `desktop` | the CEF bridge; the browser drawer and the PC extras |
 | `workspace`, `planning`, `operations` | phases 3 to 5's screens |
 
+## What's new: a step for a native-only feature
+
+The tour (`crates/operations/src/extras.rs`) keeps its words, dots, Skip,
+Next, arrow keys and the recap native; each step's picture is the step's own
+page, live in an off-screen CEF view inside the tour's frame
+(`crundi_webview::frames`). The page comes from the signed-in server:
+`/api/whatsnew` gives each step a `page`, `/whatsnew/<version>/<file>.html`,
+which the server serves as a whole page (`src/whatsnew.js` `artPage`: the
+step's fragment on the 640 x 400 stage, the app's colours, scaled to the
+frame). Only the visible step's view is live; it is swapped on a change of
+step and freed when the tour closes. If the page can't load, the frame shows
+the step's title.
+
+So a feature only the native client has gets its step exactly as any other
+feature does, on the server, never in the client:
+
+1. an HTML fragment under `app/vendor/whatsnew/<version>/` (markup and styles
+   only, one root `<div class="wna a-name">`, looping, the app's colours:
+   `app/vendor/whatsnew/README.md`, "An animation");
+2. its entry in that folder's `steps.json`, the manifest the server reads
+   (`id`, `tag`, `title`, `body`, optional `keys`, `art` = the file,
+   `artTitle`); the server adds `page` itself;
+3. `node scripts/test-whatsnew.mjs` (it checks the step has its page).
+
+The version is the server's release that ships with the client's feature
+(the README's rules on editions, dev editions and bug fixes apply as they
+are). The web and Android tours show the step too, so word it for everyone
+("On the PC app, ...").
+
 ## Stack (pinned)
 
 - `gpui-pre =0.3.12` (as `gpui`) and `gpui-pre-platform =0.3.12` with `x11`

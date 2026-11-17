@@ -27,6 +27,7 @@ chrono.workspace = true
 image.workspace = true
 open.workspace = true
 gethostname.workspace = true
+rfd.workspace = true
 
 # Phase 6 (shared/requests.md: asked of the Lead since the Slint client;
 # added to this crate only, pinned): the tray, and saved passwords' key in

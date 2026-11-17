@@ -7,7 +7,8 @@
 //! The chat view keeps the conversation (/api/voice/history).
 //!
 //! Ported from the Slint client's src/desktop/cru.rs; the screen is
-//! cru_ui.rs, drawn from this state over the window.
+//! cru_ui.rs (the web's screen, part by part), drawn from this state over
+//! the window; its field and mic are cru_field.rs and w::liquid_mic.
 
 use crate::ctx as kit;
 use crundi_core::{voice, voiceio};
@@ -17,6 +18,13 @@ use std::{cell::RefCell, time::{Duration, Instant}};
 
 pub const SILENCE_MS: u64 = 30_000;
 pub const REPORT_LINGER_MS: u64 = 8_000;
+/// The projects' services are read again this often while Cru is open (the field's cells).
+const SERVICES_EVERY: Duration = Duration::from_secs(15);
+
+/// A file for Cru's next turn (the web's S.att): uploading, uploaded (its
+/// id and kind), or failed (why).
+#[derive(Clone, Default, Debug)]
+pub struct Att { pub name: String, pub id: String, pub kind: String, pub up: bool, pub bad: String }
 
 #[derive(Default)]
 pub struct Cru {
@@ -45,6 +53,8 @@ pub struct Cru {
     pub epoch: u64,
     pub unread: i64,
     pub menu: bool,
+    /// Compact asks first (the web's .cv-confirm under the top row).
+    pub confirm: bool,
     /// How the screen was opened (the web's S.how): "click", "hover", "ptt".
     pub how: String,
     /// Push to talk held.
@@ -53,9 +63,28 @@ pub struct Cru {
     pub leave_at: Option<Instant>,
     /// Push to talk let go: what was heard goes then (pttRelease).
     pub ptt_send_at: Option<Instant>,
+    /// Voice can work here (a Deepgram key, its limit not reached).
+    pub voice_usable: bool,
+    /// The services (GET /api/services), for the field's cells, and when read.
+    pub services: Vec<Value>,
+    pub services_at: Option<Instant>,
+    /// Files for the next turn.
+    pub att: Vec<Att>,
+    /// The reply being said now (the chat view's speaking head).
+    pub saying: String,
+    /// Words said or typed while Cru answers (the web's S.pending): queued,
+    /// asked as soon as the answer is in; typed or not.
+    pub pending: String,
+    pub pending_typed: bool,
+    /// Numbers each question: an answer to a cancelled one is dropped.
+    pub turn: u64,
+    /// The server takes words back (voice-cancel); off once it says it can't.
+    pub no_cancel: bool,
+    /// What the screen drew last (for the test driver): its place and size, its parts.
+    pub ui: Value,
 }
 
-thread_local! { static C: RefCell<Cru> = RefCell::new(Cru { chat_view: true, phase: "ended".into(), ..Default::default() }); }
+thread_local! { static C: RefCell<Cru> = RefCell::new(Cru { chat_view: true, phase: "ended".into(), voice_usable: true, ..Default::default() }); }
 pub fn with<R>(f: impl FnOnce(&mut Cru) -> R) -> R { C.with(|c| f(&mut c.borrow_mut())) }
 
 fn prefs() -> Value { std::fs::read(crundi_core::store::config_dir().join("cru.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(json!({})) }
@@ -64,15 +93,18 @@ fn save_prefs() {
     let _ = std::fs::write(crundi_core::store::config_dir().join("cru.json"), v.to_string());
 }
 
-/// The state pill's word.
-pub fn pill(phase: &str) -> &'static str {
-    match phase { "waking" => "Waking", "listen" => "Listening", "think" => "Thinking", "speak" => "Speaking", _ => "Asleep" }
+/// The state as the web names its colours (micTone, then the phase):
+/// problem (unavailable, or a problem), offline (the stream lost), start
+/// (waking), listen, think, speak, ended.
+pub fn tone(phase: &str, unavailable: bool) -> &'static str {
+    if unavailable || phase == "problem" { return "problem"; }
+    match phase { "offline" => "offline", "waking" => "start", "listen" => "listen", "think" => "think", "speak" => "speak", _ => "ended" }
 }
 
-/// The status word under the mic, only when the colour is not enough.
+/// The word at the bottom right, only when the blob does not make it plain
+/// (render: Unavailable, Offline, Waking, Asleep).
 pub fn status_word(phase: &str, unavailable: bool) -> &'static str {
-    if unavailable { return "Unavailable"; }
-    match phase { "offline" => "Offline", "waking" => "Waking", "ended" => "Asleep", _ => "" }
+    match tone(phase, unavailable) { "problem" => "Unavailable", "offline" => "Offline", "start" => "Waking", "ended" => "Asleep", _ => "" }
 }
 
 /// "web (<host>), <ui>" (at most 200 characters): where the owner is.
@@ -104,63 +136,94 @@ pub fn hover(mic_taken: bool) {
 /// The pointer left the mark: a hover-opened screen closes in a moment.
 pub fn leave() { with(|c| if c.open && c.how == "hover" { c.leave_at = Some(Instant::now() + Duration::from_millis(700)); }); }
 
+/// The pointer on Cru's screen (mouseenter / mouseleave): staying keeps it open.
+pub fn panel_hover(on: bool) { if on { with(|c| c.leave_at = None); } else { leave(); } }
+
+/// A press on Cru's screen: a hover-opened one stays (pointerdown).
+pub fn panel_pressed() { with(|c| if c.how == "hover" { c.how = "click".into(); c.leave_at = None; }); }
+
 /// Push to talk pressed: open listening, or stop Cru talking (barge in).
 pub fn ptt_down() {
     if !with(|c| c.open) { open(false); with(|c| c.how = "ptt".into()); }
     with(|c| c.ptt = true);
     if with(|c| c.phase == "speak") { stop_saying(); with(|c| c.phase = "listen".into()); render(); }
+    render();
 }
 
 /// Push to talk let go: what was heard goes without waiting for a pause.
 pub fn ptt_up() {
     with(|c| if c.ptt { c.ptt = false; c.how = "click".into(); c.ptt_send_at = Some(Instant::now() + Duration::from_millis(700)); });
+    render();
 }
 
 /// The timers above, from the main pump.
 pub fn tick() {
     let now = Instant::now();
     if with(|c| c.leave_at.is_some_and(|t| now >= t)) {
-        let busy = with(|c| { c.leave_at = None; c.how != "hover" || c.phase == "think" || c.phase == "speak" || !c.heard.is_empty() });
+        let busy = with(|c| { c.leave_at = None; c.how != "hover" || c.phase == "think" || c.phase == "speak" || !c.interim.is_empty() });
         if !busy { close(); }
     }
     if with(|c| c.ptt_send_at.is_some_and(|t| now >= t)) {
-        let heard = with(|c| { c.ptt_send_at = None; if c.open && c.phase == "listen" { c.heard.clone() } else { String::new() } });
-        if !heard.is_empty() { ask(&heard, false); }
+        // What is being heard (the web's S.heard: the words so far).
+        let heard = with(|c| { c.ptt_send_at = None; if c.open && c.phase == "listen" { c.interim.clone() } else { String::new() } });
+        if !heard.trim().is_empty() { with(|c| c.interim.clear()); utter(&heard, false); }
     }
+    if with(|c| c.open && c.services_at.is_none_or(|t| t.elapsed() >= SERVICES_EVERY)) { load_services(); }
 }
 
 /// The top bar's mark: Cru live (the screen open, Cru listening, thinking
 /// or talking), and the unread reports.
 pub fn mark() -> (bool, i64) { with(|c| (c.open && c.phase != "ended", c.unread)) }
 
-/// Open the screen: warm the brain, its settings, the history, the mic.
+/// Open the screen: warm the brain, its settings, the history, the mic
+/// (the web's open and start).
 pub fn open(report_only: bool) {
     let p = prefs();
     with(|c| {
-        c.open = true; c.report_only = report_only; c.notice.clear(); c.menu = false;
+        c.open = true; c.report_only = report_only; c.notice.clear(); c.menu = false; c.confirm = false; c.unavailable.clear();
         c.keyboard = p.get("keyboard").and_then(|x| x.as_bool()).unwrap_or(false);
         c.voice_off = p.get("voiceOff").and_then(|x| x.as_bool()).unwrap_or(false);
         c.chat_view = p.get("chatView").and_then(|x| x.as_bool()).unwrap_or(true);
+        c.phase = if c.keyboard { "listen".into() } else { "waking".into() };
+        c.services_at = None;
         c.epoch += 1;
     });
     kit::call(|api| api.post("/api/voice/warm", &json!({})), |_| {});
     kit::call(|api| api.post("/api/voice/seen", &json!({})), |_| {});
     with(|c| c.unread = 0);
     kit::call(|api| api.get("/api/voice/settings"), |r| {
+        if !with(|c| c.open) { return; }
         match r {
-            Ok(v) => {
-                let blocked = if !kit::truthy(&v["anthropicKeySet"]) && kit::s(&v, "brain") != "claude-code" { "There is no Claude API key on the server yet. Add one in Settings, Voice assistant.".to_string() } else { String::new() };
-                let no_voice = if !kit::truthy(&v["deepgramKeySet"]) { "Voice needs a Deepgram key: add one in Settings, Voice assistant." } else if kit::truthy(&v["deepgramLimitReached"]) { "Voice is off: this month's Deepgram limit is reached." } else { "" };
-                with(|c| { c.settings = v; c.unavailable = blocked; if !no_voice.is_empty() { c.keyboard = true; c.notice = no_voice.into(); } });
+            Ok(v) if v.get("ok").and_then(|o| o.as_bool()) != Some(false) => {
+                let usable = kit::truthy(&v["deepgramKeySet"]) && !kit::truthy(&v["deepgramLimitReached"]);
+                // The Claude Code brain needs no key: it runs on the subscription.
+                let blocked = !kit::truthy(&v["anthropicKeySet"]) && kit::s(&v, "brain") != "claude-code";
+                with(|c| { c.settings = v; c.voice_usable = usable; });
+                if blocked {
+                    with(|c| { c.unavailable = "There is no Claude API key on the server yet. Add one in Settings, Voice assistant.".into(); c.phase = "ended".into(); });
+                } else if !usable || with(|c| c.keyboard) {
+                    // Keyboard mode when voice can't work here, or when the owner chose it last time on this device.
+                    with(|c| { c.keyboard = true; c.listen = None; c.phase = "listen".into(); });
+                } else if !with(|c| c.report_only) { listen(); }
             }
-            Err(e) => with(|c| c.unavailable = if e.contains("Not supported") { "The voice assistant is not available on this server.".into() } else { e }),
+            Ok(v) => with(|c| { c.unavailable = Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| "The voice assistant is not available on this server.".into()); c.phase = "ended".into(); }),
+            Err(e) => with(|c| { c.unavailable = if e.contains("Not supported") { "The voice assistant is not available on this server.".into() } else if e.is_empty() { "Could not reach the server".into() } else { e }; c.phase = "ended".into(); }),
         }
-        if with(|c| !c.keyboard && !c.report_only && c.unavailable.is_empty()) { listen(); }
         render();
     });
     if with(|c| c.chat_view) { history(None); }
+    load_services();
     crate::cru_screen::opened();
     render();
+}
+
+/// The services, for the field's cells (a project's service running or not).
+fn load_services() {
+    with(|c| c.services_at = Some(Instant::now()));
+    kit::call(|api| api.get("/api/services"), |r| if let Ok(v) = r {
+        with(|c| c.services = v.get("services").and_then(|s| s.as_array()).cloned().unwrap_or_default());
+        render();
+    });
 }
 
 /// The microphone and Cru's voice stop (kid mode's mute, a break).
@@ -174,7 +237,7 @@ pub fn close() {
     // The kid screen is left only with the PIN (cru_kid::exit).
     if crate::cru_kid::on() { return; }
     crate::cru_screen::closed();
-    with(|c| { c.open = false; c.how.clear(); c.ptt = false; c.leave_at = None; c.ptt_send_at = None; c.listen = None; c.phase = "ended".into(); c.heard.clear(); c.interim.clear(); c.menu = false; c.epoch += 1; });
+    with(|c| { c.open = false; c.how.clear(); c.ptt = false; c.leave_at = None; c.ptt_send_at = None; c.listen = None; c.phase = "ended".into(); c.heard.clear(); c.interim.clear(); c.menu = false; c.confirm = false; c.saying.clear(); c.pending.clear(); c.epoch += 1; });
     stop_saying();
     render();
 }
@@ -212,16 +275,20 @@ fn on_listen(epoch: u64, ev: voiceio::Ev) {
     match ev {
         voiceio::Ev::Msg(voice::Msg::Ready) => {
             with(|c| { if c.phase == "waking" { c.phase = "listen".into(); } c.last_voice = Some(Instant::now()); });
-            tone(false);
+            tone_out(false);
         }
         voiceio::Ev::Msg(voice::Msg::Interim(t)) => with(|c| { c.interim = t; c.last_voice = Some(Instant::now()); }),
-        voiceio::Ev::Msg(voice::Msg::Utterance(t)) => { with(|c| c.interim.clear()); if !t.trim().is_empty() { ask(&t, false); } }
+        voiceio::Ev::Msg(voice::Msg::Utterance(t)) => {
+            with(|c| c.interim.clear());
+            // Push to talk held: the words wait for the key to be let go.
+            if with(|c| c.ptt) { with(|c| c.interim = t); } else if !t.trim().is_empty() { utter(&t, false); }
+        }
         voiceio::Ev::Msg(voice::Msg::Discard) => with(|c| c.interim.clear()),
         voiceio::Ev::Msg(voice::Msg::Error(e)) => with(|c| { c.notice = e; c.phase = "problem".into(); }),
         voiceio::Ev::Msg(_) => {}
         voiceio::Ev::Level(l) => { with(|c| { c.level = l; if l > 0.08 { c.last_voice = Some(Instant::now()); } }); }
         voiceio::Ev::Closed => with(|c| { c.listen = None; if c.phase != "ended" { c.phase = "offline".into(); } }),
-        voiceio::Ev::NoMic => with(|c| { c.listen = None; c.keyboard = true; c.phase = "ended".into(); c.notice = "The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.".into(); }),
+        voiceio::Ev::NoMic => with(|c| { c.listen = None; c.keyboard = true; c.phase = "listen".into(); c.notice = "The microphone is not allowed here, so it is keyboard mode. Allow the microphone for this site to talk.".into(); }),
     }
     render();
 }
@@ -233,24 +300,121 @@ fn speaker() -> std::sync::mpsc::Sender<voiceio::Out> {
     s
 }
 
-fn tone(sent: bool) { let _ = speaker().send(voiceio::Out::Tone(sent)); }
+fn tone_out(sent: bool) { let _ = speaker().send(voiceio::Out::Tone(sent)); }
 
-/// A turn: what was said (or typed) to Cru's brain.
+/// After a reply, or with nothing to say: listening (the mic, or the keyboard), or asleep.
+fn after_phase(c: &Cru) -> String { if c.listen.is_some() || c.keyboard { "listen".into() } else { "ended".into() } }
+
+/// Words from the owner (the web's utter): while Cru thinks they are queued
+/// and asked next; typed over Cru speaking, it stops and asks; said over it,
+/// they wait for it to finish; otherwise asked now.
+pub fn utter(text: &str, typed: bool) {
+    let t = text.trim().to_string();
+    if t.is_empty() && with(|c| c.att.iter().all(|a| a.id.is_empty())) { return; }
+    let phase = with(|c| c.phase.clone());
+    if phase == "speak" && typed { stop_saying(); let id = with(|c| c.say_id); said(id); }
+    let phase = with(|c| c.phase.clone());
+    if (phase == "think" || phase == "speak") && !t.is_empty() {
+        with(|c| { c.pending_typed = (c.pending.is_empty() || c.pending_typed) && typed; c.pending = format!("{} {t}", c.pending).trim().to_string(); c.interim.clear(); });
+        render();
+        return;
+    }
+    ask(&t, typed);
+}
+
+/// What waits to be asked next, while Cru answers (queuedOf).
+pub fn queued(c: &Cru) -> String { if c.phase == "think" || c.phase == "speak" { c.pending.trim().to_string() } else { String::new() } }
+
+/// The words still coming in (hearingOf): listening, what is heard; thinking,
+/// what is heard beyond what was asked and what is queued.
+pub fn hearing(c: &Cru) -> String {
+    let h = c.interim.trim();
+    if h.is_empty() || !(c.phase == "listen" || c.phase == "think") { return String::new(); }
+    if c.phase == "listen" { return h.to_string(); }
+    if h == c.heard.trim() || h == c.pending.trim() { String::new() } else { h.to_string() }
+}
+
+/// The × by his words (canCancel): there are words to take back, listening or thinking.
+pub fn can_cancel(c: &Cru) -> bool {
+    !c.no_cancel && match c.phase.as_str() { "listen" => !c.interim.trim().is_empty(), "think" => !c.heard.trim().is_empty() || !c.pending.trim().is_empty(), _ => false }
+}
+
+/// What a cancelled turn says (cancelledNotice): what it had already done.
+pub fn cancelled_notice(acted: &Value) -> String {
+    let a: Vec<String> = acted.as_array().map(|l| l.iter().map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| kit::s(x, "what"))).filter(|x| !x.is_empty()).collect()).unwrap_or_default();
+    if a.is_empty() { "Cancelled.".into() } else { format!("Cancelled. Already done: {}.", a.join("; ")) }
+}
+
+/// Take back what he said (takeBack): listening, the words go (the stream
+/// is told); thinking, the turn is cancelled on the server with what was
+/// queued, and its answer is neither said nor shown.
+pub fn cancel_words() {
+    if !with(|c| can_cancel(c)) { return; }
+    with(|c| if let Some(l) = &c.listen { l.send(voiceio::Ctl::Discard); });
+    if with(|c| c.phase == "listen") { with(|c| c.interim.clear()); render(); return; }
+    with(|c| {
+        c.turn += 1; c.phase = after_phase(c); c.heard.clear(); c.interim.clear(); c.pending.clear(); c.pending_typed = false; c.notice = "Cancelled.".into();
+        if c.turns.last().is_some_and(|t| !kit::s(t, "said").is_empty() && kit::s(t, "speak").is_empty() && kit::s(t, "show").is_empty()) { c.turns.pop(); }
+    });
+    render();
+    let turn = with(|c| c.turn);
+    kit::call(|api| api.post("/api/voice/cancel", &json!({})), move |r| {
+        match r {
+            Err(e) if e.contains("404") || e.contains("Not supported") => with(|c| c.no_cancel = true),
+            Ok(v) if v.get("acted").and_then(|a| a.as_array()).is_some_and(|a| !a.is_empty()) => with(|c| if c.turn == turn && c.phase == "listen" && c.interim.is_empty() { c.notice = cancelled_notice(&v["acted"]); }),
+            _ => {}
+        }
+        render();
+    });
+}
+
+/// The × on a faded bubble (dropLive): only that phrase goes. "queued": it
+/// is never asked; "hearing": the stream drops it. The answer is untouched.
+pub fn drop_live(which: &str) {
+    let stream = with(|c| {
+        if which == "queued" {
+            if queued(c).is_empty() { return None; }
+            c.pending.clear(); c.pending_typed = false;
+            return Some(false);
+        }
+        if hearing(c).is_empty() { return None; }
+        c.interim.clear();
+        Some(true)
+    });
+    if stream == Some(true) { with(|c| if let Some(l) = &c.listen { l.send(voiceio::Ctl::Discard); }); }
+    if stream.is_some() { render(); }
+}
+
+/// Cru is free again: what was queued meanwhile is asked now (afterSpeech).
+fn ask_pending() {
+    let p = with(|c| if c.phase == "listen" && !c.pending.trim().is_empty() { let p = (std::mem::take(&mut c.pending), c.pending_typed); c.pending_typed = false; Some(p) } else { None });
+    if let Some((p, typed)) = p { ask(&p, typed); }
+}
+
+/// A turn: what was said (or typed) to Cru's brain, with the files attached.
 pub fn ask(text: &str, typed: bool) {
     let text = text.trim().to_string();
-    if text.is_empty() { return; }
+    let ready: Vec<Att> = with(|c| c.att.iter().filter(|a| !a.id.is_empty()).cloned().collect());
+    if text.is_empty() && ready.is_empty() { return; }
+    with(|c| c.att.retain(|a| a.up));
+    let label = ready.iter().map(|a| format!("[The owner attached: \"{}\" ({}), id {}.]", a.name, if a.kind.is_empty() { "file" } else { &a.kind }, a.id)).collect::<Vec<_>>().join("\n");
+    let asked = if label.is_empty() { text.clone() } else if text.is_empty() { label } else { format!("{label}\n{text}") };
     let host = gethostname::gethostname().to_string_lossy().to_string();
     let wh = where_text(&host, &kit::project(), &kit::get().tab);
     let rid = format!("w{}", crundi_webview::engine::now_ms());
-    with(|c| { c.heard = text.clone(); c.phase = "think".into(); c.reply.clear(); c.detail.clear(); c.question.clear(); c.notice.clear(); c.turns.push(json!({ "said": text, "at": crundi_webview::engine::now_ms() })); });
-    if !typed { tone(true); }
+    let turn = with(|c| { c.turn += 1; c.turn });
+    with(|c| { c.heard = asked.clone(); c.interim.clear(); c.phase = "think".into(); c.reply.clear(); c.detail.clear(); c.question.clear(); c.notice.clear(); c.turns.push(json!({ "said": asked, "at": crundi_webview::engine::now_ms() })); });
+    if !typed { tone_out(true); }
     render();
-    let body = json!({ "text": text, "where": wh, "page": "", "locked": false, "typed": typed, "attachments": [], "refs": [], "requestId": rid, "sayNow": true });
+    let ids: Vec<String> = ready.iter().map(|a| a.id.clone()).collect();
+    let body = json!({ "text": text, "where": wh, "page": "", "locked": false, "typed": typed, "attachments": ids, "refs": [], "requestId": rid, "sayNow": true });
     kit::call(move |api| api.post("/api/voice/turn", &body), move |r| {
+        // Taken back meanwhile (or a newer question): not this answer's place.
+        if with(|c| c.turn != turn || c.phase != "think") { return; }
         match r {
             Ok(v) if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(true) && v.get("error").is_none() => answered(&v, typed),
-            Ok(v) => { with(|c| { c.notice = Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| "Something went wrong".into()); c.phase = "listen".into(); }); render(); }
-            Err(e) => { with(|c| { c.notice = if e.is_empty() { "Something went wrong".into() } else { e }; c.phase = "listen".into(); }); render(); }
+            Ok(v) => { with(|c| { c.notice = Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| "Something went wrong".into()); c.phase = after_phase(c); }); render(); ask_pending(); }
+            Err(e) => { with(|c| { c.notice = if e.is_empty() { "Something went wrong".into() } else { e }; c.phase = after_phase(c); }); render(); ask_pending(); }
         }
     });
 }
@@ -267,9 +431,10 @@ fn answered(v: &Value, typed: bool) {
     let close_after = kit::truthy(v.get("close").unwrap_or(&Value::Null));
     // Typed turns are read, not said; "voice off" is never said.
     if typed || with(|c| c.voice_off) || speak.is_empty() {
-        with(|c| c.phase = if c.listen.is_some() { "listen".into() } else { "ended".into() });
+        with(|c| c.phase = after_phase(c));
         render();
-        if close_after { close(); }
+        if close_after { close(); return; }
+        ask_pending();
         return;
     }
     say(&speak, close_after);
@@ -277,7 +442,7 @@ fn answered(v: &Value, typed: bool) {
 
 /// Say a reply: the server's voice, streamed (the mic paused meanwhile).
 pub fn say(text: &str, close_after: bool) {
-    let id = with(|c| { c.say_id += 1; c.phase = "speak".into(); if let Some(l) = &c.listen { l.send(voiceio::Ctl::Saying(text.to_string())); l.send(voiceio::Ctl::Pause); } c.say_id });
+    let id = with(|c| { c.say_id += 1; c.phase = "speak".into(); c.saying = text.to_string(); if let Some(l) = &c.listen { l.send(voiceio::Ctl::Saying(text.to_string())); l.send(voiceio::Ctl::Pause); } c.say_id });
     if close_after { with(|c| c.notice = "closing".into()); }
     render();
     if kit::get().api.is_none() { return said(id); }
@@ -307,11 +472,13 @@ fn said(id: u64) {
     let report = with(|c| {
         if c.say_id != id || c.phase != "speak" { return None; }
         if let Some(l) = &c.listen { l.send(voiceio::Ctl::Said); l.send(voiceio::Ctl::Resume); }
-        c.phase = if c.listen.is_some() { "listen".into() } else { "ended".into() };
+        c.phase = after_phase(c);
+        c.saying.clear();
         c.last_voice = Some(Instant::now());
         Some(c.report_only)
     });
     render();
+    if report.is_some() { ask_pending(); }
     // A report closes again after a moment, unless the owner talks.
     if report == Some(true) {
         let epoch = with(|c| c.epoch);
@@ -324,15 +491,32 @@ pub fn history(before: Option<u64>) {
     let path = format!("/api/voice/history?limit=40{}", before.map(|b| format!("&before={b}")).unwrap_or_default());
     kit::call(move |api| api.get(&path), move |r| {
         if let Ok(v) = r {
-            let turns = v.get("turns").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+            let turns = expand_turns(v.get("turns").and_then(|t| t.as_array()).cloned().unwrap_or_default());
             with(|c| { c.more = kit::truthy(&v["more"]); if before.is_some() { let mut t = turns; t.extend(std::mem::take(&mut c.turns)); c.turns = t; } else { c.turns = turns; } });
             render();
         }
     });
 }
 
-/// The mic: wake (asleep), or stop Cru speaking (barge in).
+/// A turn with lines said during it (say_now): his words, each line, then
+/// the answer, each its own message (the web's expandTurns).
+pub fn expand_turns(list: Vec<Value>) -> Vec<Value> {
+    let mut out = vec![];
+    for t in list {
+        let ups: Vec<String> = t.get("updates").and_then(|u| u.as_array()).map(|u| u.iter().map(|x| x.as_str().map(str::to_string).unwrap_or_else(|| kit::s(x, "speak"))).filter(|s| !s.trim().is_empty()).collect()).unwrap_or_default();
+        if ups.is_empty() { out.push(t); continue; }
+        let at = t.get("at").cloned().unwrap_or(Value::Null);
+        if !kit::s(&t, "said").is_empty() { out.push(json!({ "at": at, "said": kit::s(&t, "said") })); }
+        for u in ups { out.push(json!({ "at": at, "speak": u.trim() })); }
+        out.push(json!({ "at": at, "speak": kit::s(&t, "speak"), "show": kit::s(&t, "show") }));
+    }
+    out
+}
+
+/// The mic (tapMic): stop Cru speaking (barge in), or wake it.
 pub fn mic() {
+    with(|c| c.report_only = false);
+    if with(|c| !c.unavailable.is_empty()) { return; }
     let phase = with(|c| c.phase.clone());
     match phase.as_str() {
         "speak" => { stop_saying(); let id = with(|c| c.say_id); said(id); }
@@ -350,31 +534,82 @@ pub fn report(v: &Value) {
     say(&speak, false);
 }
 
+/// The ⋯ menu (its open state), and its items: the chat or voice view,
+/// Cru's voice muted, compact (asks first, under the top row).
+pub fn menu_toggle() { with(|c| c.menu = !c.menu); render(); }
+
 pub fn menu_pick(id: &str) {
     with(|c| c.menu = false);
     match id {
-        "chat-view" => { with(|c| c.chat_view = !c.chat_view); save_prefs(); if with(|c| c.chat_view) { history(None); } }
-        "voice-off" => { with(|c| c.voice_off = !c.voice_off); save_prefs(); }
-        "compact" => kit::confirm("Compact the conversation?", "Compact", false, |ok| {
-            if !ok { return; }
-            with(|c| c.notice = "Compacting the conversation…".into());
-            render();
+        "chat-view" => { with(|c| c.chat_view = !c.chat_view); save_prefs(); if with(|c| c.chat_view) { history(None); with(|c| c.unread = 0); } }
+        "voice-view" => { with(|c| c.chat_view = false); save_prefs(); }
+        "voice-off" => { with(|c| c.voice_off = !c.voice_off); save_prefs(); if with(|c| c.voice_off && c.phase == "speak") { stop_saying(); let id = with(|c| c.say_id); said(id); } }
+        "compact" => with(|c| c.confirm = !c.confirm),
+        "compact-no" => with(|c| c.confirm = false),
+        "compact-yes" => {
+            with(|c| { c.confirm = false; c.notice = "Compacting the conversation…".into(); });
             kit::call(|api| api.post("/api/voice/compact", &json!({})), |r| {
-                with(|c| c.notice = match r { Ok(v) if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(true) => "Compacted: Cru carries on from a summary, its notebook kept.".into(), Ok(v) => format!("Not compacted: {}", kit::s(&v, "error")), Err(e) => format!("Not compacted: {e}") });
+                with(|c| c.notice = match r {
+                    Ok(v) if kit::truthy(v.get("ok").unwrap_or(&Value::Null)) => "Compacted: Cru carries on from a summary, its notebook kept.".into(),
+                    Ok(v) => { let why = Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| kit::s(&v, "skipped")); if why.is_empty() { "Not compacted".into() } else { format!("Not compacted: {why}") } }
+                    Err(_) => "Not compacted".into(),
+                });
                 render();
             });
-        }),
+        }
         _ => {}
     }
     render();
 }
 
+/// Keyboard mode on or off (the web's keyboard(on, chosen)): off needs a
+/// usable voice; on lets the microphone go and listens to the keys.
 pub fn set_keyboard(on: bool) {
-    with(|c| { c.keyboard = on; if on { c.listen = None; c.phase = "ended".into(); } });
+    if !on && !with(|c| c.voice_usable) {
+        with(|c| c.notice = if kit::truthy(&c.settings["deepgramLimitReached"]) { "Voice is off: this month's Deepgram limit is reached.".into() } else { "Voice needs a Deepgram key: add one in Settings, Voice assistant.".into() });
+        render();
+        return;
+    }
+    with(|c| { c.keyboard = on; c.listen = None; if on { if c.unavailable.is_empty() { c.phase = "listen".into(); } c.interim.clear(); } });
     save_prefs();
-    if !on { listen(); }
+    if !on && with(|c| c.open && c.unavailable.is_empty()) { listen(); }
     render();
 }
+
+/// The attach button: the system's file picker (the driver may answer it),
+/// each file uploaded for Cru (/api/voice/attach), shown as a chip until the
+/// next turn takes it.
+pub fn attach() {
+    kit::bg(|_| crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default(), |paths| {
+        for p in paths.into_iter().take(10) { attach_file(p); }
+    });
+}
+
+fn attach_file(p: std::path::PathBuf) {
+    use base64::Engine;
+    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+    let i = with(|c| { c.att.push(Att { name: name.clone(), up: true, ..Default::default() }); c.att.len() - 1 });
+    render();
+    let n2 = name.clone();
+    kit::bg(move |api| {
+        let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+        if bytes.len() > 50 * 1024 * 1024 { return Err("Too large (50 MB at most)".to_string()); }
+        let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        api.post("/api/voice/attach", &json!({ "name": n2, "type": "", "data": data, "from": "web" })).map_err(|e| e.to_string())
+    }, move |r| {
+        with(|c| if let Some(a) = c.att.get_mut(i).filter(|a| a.name == name) {
+            a.up = false;
+            match r {
+                Ok(v) if kit::truthy(v.get("ok").unwrap_or(&Value::Null)) => { a.id = kit::s(&v, "id"); a.kind = kit::s(&v, "kind"); let n = kit::s(&v, "name"); if !n.is_empty() { a.name = n; } }
+                Ok(v) => a.bad = Some(kit::s(&v, "error")).filter(|e| !e.is_empty()).unwrap_or_else(|| "Could not attach".into()),
+                Err(e) => a.bad = if e.contains("404") || e.contains("Not supported") { "This server does not take files for Cru yet: update it".into() } else { e },
+            }
+        });
+        render();
+    });
+}
+
+pub fn unattach(i: usize) { with(|c| if i < c.att.len() { c.att.remove(i); }); render(); }
 
 /// The unread dot's count.
 pub fn load_unread() {
@@ -384,35 +619,121 @@ pub fn load_unread() {
 /// The screen draws again (cru_ui.rs reads the state).
 pub fn render() { kit::dirty(); }
 
-/// The words under the head: what is being heard, what was heard, or the invitation.
+/// The words under the field (render): what is being heard (listening),
+/// what was asked; the invitation when listening with no reply yet.
 pub fn words() -> String {
-    with(|c| if !c.interim.is_empty() { format!("“{}”", c.interim) } else if !c.heard.is_empty() { format!("“{}”", c.heard) } else { "Ask me anything, Sir.".into() })
-}
-
-/// Deepgram's spend this month, as the head's legend.
-pub fn legend() -> String {
     with(|c| {
-        let spend = c.settings.get("spend").cloned().unwrap_or(Value::Null);
-        if spend.is_null() { String::new() } else { format!("Deepgram ${:.2} / ${:.0}", kit::n(&spend, "deepgramUsd"), kit::n(&c.settings, "deepgramLimitUsd")) }
+        let h = if c.phase == "listen" { c.interim.clone() } else { c.heard.clone() };
+        if !h.is_empty() { format!("“{h}”") } else if c.phase == "listen" && c.reply.is_empty() { "Ask me anything, Sir.".into() } else { String::new() }
     })
 }
 
-/// The chat view's bubbles: (mine, text), oldest first.
-pub fn turns() -> Vec<(bool, String)> {
+/// Usage and spend under the top row (refreshData): wk %, 5h %, Claude
+/// $spent / $limit (the API brain only), Deepgram $spent / $limit, each
+/// with its colour's name ("wk", "5h", "claude", "deepgram").
+pub fn legend(usage: Option<(Option<f64>, Option<f64>)>) -> Vec<(&'static str, String)> {
+    let mut items = vec![];
+    if let Some((week, five)) = usage {
+        if let Some(w) = week { items.push(("wk", format!("wk {}%", (w * 100.).round()))); }
+        if let Some(f) = five { items.push(("5h", format!("5h {}%", (f * 100.).round()))); }
+    }
+    with(|c| {
+        let s = &c.settings;
+        let Some(sp) = s.get("spend").filter(|x| x.is_object()) else { return };
+        // The Claude API's spend means nothing while Cru answers through Claude Code.
+        let brain = Some(kit::s(s, "brain")).filter(|b| !b.is_empty()).unwrap_or_else(|| "api".into());
+        if brain == "api" { items.push(("claude", format!("Claude ${:.2} / ${}", kit::n(sp, "claudeUsd"), js_num(s.get("monthlyLimitUsd"))))); }
+        let dg = s.get("deepgramLimitUsd").filter(|x| x.as_f64().is_some_and(|v| v != 0.0)).cloned().unwrap_or(json!(200));
+        items.push(("deepgram", format!("Deepgram ${:.2} / ${}", kit::n(sp, "deepgramUsd"), js_num(Some(&dg)))));
+    });
+    items
+}
+
+/// A number as JavaScript prints it (50, 12.5).
+fn js_num(v: Option<&Value>) -> String {
+    match v.and_then(|x| x.as_f64()) { Some(n) if n.fract() == 0.0 => format!("{}", n as i64), Some(n) => format!("{n}"), None => "undefined".into() }
+}
+
+/// The usage arcs in the disc, 0..1 each with its colour's name (drawField).
+pub fn arcs(usage: Option<(Option<f64>, Option<f64>)>) -> Vec<(&'static str, f32)> {
+    let mut a = vec![];
+    if let Some((week, five)) = usage {
+        if let Some(w) = week { a.push(("wk", w as f32)); }
+        if let Some(f) = five { a.push(("5h", f as f32)); }
+    }
+    with(|c| {
+        let s = &c.settings;
+        let Some(sp) = s.get("spend").filter(|x| x.is_object()) else { return };
+        let lim = kit::n(s, "monthlyLimitUsd");
+        a.push(("claude", if lim > 0. { (kit::n(sp, "claudeUsd") / lim) as f32 } else { 1. }));
+        let dg = Some(kit::n(s, "deepgramLimitUsd")).filter(|x| *x != 0.).unwrap_or(200.);
+        a.push(("deepgram", if dg > 0. { (kit::n(sp, "deepgramUsd") / dg) as f32 } else { 1. }));
+    });
+    a
+}
+
+/// One project as a cell (the web's voiceOpts cells): its name, its kind
+/// (needs, working, waiting, running, idle) and its service (running or
+/// not; None without one). At most twelve.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cell { pub name: String, pub kind: &'static str, pub service: Option<bool> }
+
+pub fn cells() -> Vec<Cell> {
+    let k = kit::get();
+    let services = with(|c| c.services.clone());
+    k.projects.iter().take(12).map(|p| {
+        let alias = kit::s(p, "alias");
+        let name = Some(kit::s(p, "name")).filter(|n| !n.is_empty()).unwrap_or_else(|| alias.clone());
+        let svc: Vec<&Value> = services.iter().filter(|s| kit::s(s, "alias") == alias).collect();
+        let svc_up = svc.iter().any(|s| kit::s(s, "status") == "running");
+        let kind = match crundi_core::head::project_dot(&k.terminals, &alias) {
+            "needs-input" => "needs", "working" => "working", "waiting" => "waiting", "running" => "running",
+            _ if svc_up => "running", _ => "idle",
+        };
+        Cell { name, kind, service: if svc.is_empty() { None } else { Some(svc_up) } }
+    }).collect()
+}
+
+/// The chat view's messages, oldest first: (mine, text, show, at ms).
+pub fn turns() -> Vec<(bool, String, String, f64)> {
     with(|c| c.turns.iter().flat_map(|t| {
         let mut v = vec![];
-        if !kit::s(t, "said").is_empty() { v.push((true, kit::s(t, "said"))); }
-        let s = Some(kit::s(t, "speak")).filter(|x| !x.is_empty()).unwrap_or_else(|| kit::s(t, "show"));
-        if !s.is_empty() { v.push((false, s)); }
+        let at = kit::n(t, "at");
+        if !kit::s(t, "said").is_empty() { v.push((true, kit::s(t, "said"), String::new(), at)); }
+        let (sp, sh) = (kit::s(t, "speak"), kit::s(t, "show"));
+        if !sp.is_empty() || !sh.is_empty() { v.push((false, sp, sh, at)); }
         v
     }).collect())
+}
+
+/// A message's time as the web shows it (toLocaleString: "Nov 17, 07:45 AM").
+pub fn when(at_ms: f64) -> String {
+    use chrono::TimeZone;
+    chrono::Local.timestamp_millis_opt(at_ms as i64).single().map(|d| d.format("%b %-d, %I:%M %p").to_string()).unwrap_or_default()
 }
 
 /// Earlier messages (the chat view's top).
 pub fn older() { let at = with(|c| c.turns.first().map(|t| kit::n(t, "at") as u64)); history(at); }
 
+/// The test driver's stand-in for the microphone: words being heard.
+pub fn test_state(phase: &str) {
+    with(|c| { c.unavailable.clear(); c.notice.clear(); c.phase = phase.to_string(); });
+    render();
+}
+
+pub fn test_hear(text: &str) {
+    with(|c| { c.phase = "listen".into(); c.interim = text.to_string(); c.last_voice = Some(Instant::now()); });
+    render();
+}
+
 pub fn props() -> Value {
-    with(|c| json!({ "open": c.open, "phase": c.phase, "heard": c.heard, "reply": c.reply, "notice": c.notice, "keyboard": c.keyboard, "turns": c.turns.len(), "unavailable": c.unavailable, "listening": c.listen.is_some() }))
+    let un = with(|c| !c.unavailable.is_empty());
+    let leg: Vec<String> = legend(None).into_iter().map(|(_, s)| s).collect();
+    with(|c| json!({
+        "open": c.open, "phase": c.phase, "heard": c.heard, "interim": c.interim, "reply": c.reply, "notice": c.notice, "keyboard": c.keyboard, "turns": c.turns.len(),
+        "unavailable": c.unavailable, "listening": c.listen.is_some(), "chatView": c.chat_view, "menu": c.menu, "confirm": c.confirm, "voiceOff": c.voice_off,
+        "how": c.how, "ptt": c.ptt, "tone": tone(&c.phase, un), "word": status_word(&c.phase, un), "legend": leg, "attachments": c.att.len(), "ui": c.ui, "pending": c.pending, "queued": queued(c), "hearing": hearing(c), "canCancel": can_cancel(c),
+    }))
 }
 
 #[cfg(test)]
@@ -421,13 +742,26 @@ mod tests {
 
     #[test]
     fn words() {
-        assert_eq!(pill("listen"), "Listening");
-        assert_eq!(pill("ended"), "Asleep");
         assert_eq!(status_word("offline", false), "Offline");
         assert_eq!(status_word("listen", true), "Unavailable");
         assert_eq!(status_word("listen", false), "");
+        assert_eq!(status_word("waking", false), "Waking");
+        assert_eq!(status_word("ended", false), "Asleep");
+        assert_eq!(status_word("think", false), "");
+        assert_eq!(tone("waking", false), "start");
+        assert_eq!(tone("speak", true), "problem");
         assert_eq!(where_text("pc1", "demo", "kanban"), "web (pc1), project demo, kanban tab");
         assert_eq!(where_text("pc1", "", "inbox"), "web (pc1), inbox tab");
         assert!(where_text(&"x".repeat(300), "", "a").chars().count() <= 200);
+        assert_eq!(js_num(Some(&json!(50))), "50");
+        assert_eq!(js_num(Some(&json!(12.5))), "12.5");
+    }
+
+    #[test]
+    fn turns_with_updates() {
+        let t = expand_turns(vec![json!({ "at": 5, "said": "hi", "speak": "done", "updates": ["one moment", ""] }), json!({ "at": 6, "said": "x", "speak": "y" })]);
+        assert_eq!(t.len(), 4);
+        assert_eq!(t[1]["speak"], "one moment");
+        assert_eq!(t[2]["speak"], "done");
     }
 }

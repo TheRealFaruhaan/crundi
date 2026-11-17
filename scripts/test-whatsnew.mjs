@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { compareVersions, isPrerelease, listEditions, plan, loadState, markSeen, parseVersion } from '../src/whatsnew.js';
+import { compareVersions, isPrerelease, listEditions, plan, loadState, markSeen, parseVersion, artFile, artPage } from '../src/whatsnew.js';
 
 let failed = 0;
 const ok = (cond, name, detail = '') => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond || !detail ? '' : '\n      ' + detail}`); if (!cond) failed++; };
@@ -28,6 +28,13 @@ ok(E[0].steps[0].art === '<div>media</div>' && E[0].steps[0].version === '1.19.2
 writeFileSync(join(t, 'wn', '1.19.24', 'steps.json'), JSON.stringify({ steps: [{ id: 'media', title: 'M', art: '../../../etc/passwd' }, { id: 'embeds', title: 'E', art: 'embeds.html' }, { id: '../x', title: 'bad id' }, { id: 'untitled' }] }));
 const E2 = listEditions(join(t, 'wn'));
 ok(E2[0].steps.length === 2 && E2[0].steps[0].art === '' && E2[0].steps[1].art === '<div>embeds</div>', 'an animation name that reaches outside the folder is ignored; a step with a bad id or no title is dropped');
+
+// ─── a step's animation as a page (the native client's tour) ───
+ok(E[0].steps[0].page === '/whatsnew/1.19.24/media.html', 'a step names its animation\'s page', E[0].steps[0].page);
+ok(artFile(join(t, 'wn'), '1.19.24', 'media.html') === join(t, 'wn', '1.19.24', 'media.html'), 'the page\'s file is found by version and name');
+ok([['1.19.24', '../steps.json'], ['1.19.24', 'steps.json'], ['notes', 'x.html'], ['..', 'media.html'], ['1.19.24', 'missing.html'], ['1.19.24', '.html']].every(([v, f]) => artFile(join(t, 'wn'), v, f) === null), 'nothing but an animation in a version folder is served as one');
+const pg = artPage('<div class="wna a-x">hi</div>', { title: 'T<', nonce: 'abc' });
+ok(pg.startsWith('<!doctype html>') && pg.includes('<div class="wn-stage" id="wn-stage"><div class="wna a-x">hi</div></div>') && pg.includes('--bg-secondary:#12121a') && pg.includes('<script nonce="abc">') && pg.includes('<title>T&lt;</title>'), 'the page: the fragment on the 640 x 400 stage, the app\'s colours, one script (the fitting) with its nonce');
 
 // ─── who sees what ───
 const P = (o) => plan({ editions: E, channel: 'production', ...o });
@@ -68,6 +75,7 @@ const allIds = R.filter((e) => !isPrerelease(e.version)).flatMap((e) => e.steps.
 ok(new Set(allIds).size === allIds.length, 'no step id is used twice across the released editions', allIds.join(','));
 ok(R.every((e) => e.steps.every((s) => !/<script|javascript:|\son[a-z]+\s*=/i.test(s.art))), 'the animations are markup and styles only: no scripts');
 ok(R.every((e) => readdirSync(join(realDir, e.version)).filter((n) => n.endsWith('.html')).every((n) => e.steps.some((s) => readFileSync(join(realDir, e.version, n), 'utf8') === s.art))), 'no animation file is left over without a step');
+ok(R.every((e) => e.steps.every((s) => s.page && artFile(realDir, e.version, s.page.split('/').pop()))), 'every step that ships has its page');
 const newest = R.length ? R[R.length - 1].version : '';
 ok(!!newest && (compareVersions(newest, pkg) <= 0 || isPrerelease(pkg)), `the newest edition (${newest || 'none found'}) is not ahead of the package version (${pkg})`);
 

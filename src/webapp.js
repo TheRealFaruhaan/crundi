@@ -3905,6 +3905,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       return;
     }
 
+    // What's new: one step's animation as a page of its own (whatsnew.js
+    // artPage), what the native PC client's tour shows in its frame. Public
+    // like the vendor files: it is shipped content, the fragment the web tour
+    // inlines. Which steps someone is shown stays /api/whatsnew's (the owner's).
+    const wnPage = path.match(/^\/whatsnew\/([^/]+)\/([^/]+)$/);
+    if (wnPage && req.method === 'GET') {
+      const file = whatsNew.artFile(WHATSNEW_DIR, wnPage[1], wnPage[2]);
+      if (!file) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }); res.end('Not found'); return; }
+      try {
+        const nonce = randomBytes(12).toString('base64');
+        const body = whatsNew.artPage(readFileSync(file, 'utf8'), { title: "What's new", nonce });
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          'Content-Security-Policy': `default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'nonce-${nonce}'`,
+        });
+        res.end(body);
+      } catch { res.writeHead(500); res.end('Error reading file'); }
+      return;
+    }
+
     // Serve vendor files (xterm.js, addon-fit.js, xterm.css)
     const vendorMatch = path.match(/^\/vendor\/([a-z0-9._-]+)$/i);
     if (vendorMatch && req.method === 'GET') {
