@@ -131,10 +131,23 @@ fn paint(bounds: Bounds<Pixels>, l: &Liquid, look: &MicLook, t: f32, ms: f64, wi
             point(px(cx + sx + (bx - sx) * m), px(cy + sy + (by - sy) * m))
         }).collect()
     };
+    // The web draws the three layers adding light ('lighter', each at 0.55),
+    // which is what makes a red state glow red and pink. GPUI paints over,
+    // not adding, so each layer is painted opaque in the colour the adding
+    // would give: what is under the blob (the panel and the glow at its
+    // middle) plus 0.55 of every layer so far. The layers nearly overlap, so
+    // this is the web's colour everywhere but a hair at their edges.
+    let under = mix(T::bg(), look.layers[0].0, 0.18 + 0.2 * l.lv);
+    let k = 0.55 * look.dim;
+    let (mut s0, mut s1) = (under, under);
     for (i, (c0, c1)) in look.layers.iter().enumerate() {
         let pts = shape(t + i as f32 * 0.7, i as f32 * 1.3);
-        let a = 0.6 * look.dim;
-        let bg = linear_gradient(116., linear_color_stop(c0.opacity(a), 0.), linear_color_stop(c1.opacity(a), 1.));
+        // The web's gradient runs from (-2r,-r) to (2r,r): wider than the
+        // blob, which shows only its middle (0.276 to 0.724 along it).
+        // GPUI's spans the blob itself, so its ends are those colours.
+        s0 = add(s0, mix(*c0, *c1, 0.276), k);
+        s1 = add(s1, mix(*c0, *c1, 0.724), k);
+        let bg = linear_gradient(116., linear_color_stop(Hsla::from(s0), 0.), linear_color_stop(Hsla::from(s1), 1.));
         polygon(window, &pts, Some(bg), None);
     }
     polygon(window, &shape(t, 0.), None, Some((px(1.), T::white().opacity(0.22))));
@@ -160,4 +173,16 @@ pub fn liquid_mic(id: impl Into<ElementId>, liquid: &Liquid, look: MicLook, t: f
         .child(canvas(|_, _, _| {}, move |b, _, window, _| paint(b, &l, &look, t, ms, window))
             .absolute().left((box_size - cw) / 2.).top((box_size - ch) / 2.).w(cw).h(ch))
         .tooltip(crate::tooltip(tip.into()))
+}
+
+/// `base` with `color` laid over it at `alpha` (normal blending), as RGB.
+fn mix(base: Hsla, color: Hsla, alpha: f32) -> Rgba {
+    let (b, c, a) = (base.to_rgb(), color.to_rgb(), alpha.clamp(0., 1.));
+    Rgba { r: b.r + (c.r - b.r) * a, g: b.g + (c.g - b.g) * a, b: b.b + (c.b - b.b) * a, a: 1. }
+}
+
+/// `color` at `k` added to `base`, each channel capped at full: the canvas's
+/// 'lighter' blending.
+fn add(base: Rgba, color: Rgba, k: f32) -> Rgba {
+    Rgba { r: (base.r + color.r * k).min(1.), g: (base.g + color.g * k).min(1.), b: (base.b + color.b * k).min(1.), a: 1. }
 }

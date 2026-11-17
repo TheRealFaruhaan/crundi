@@ -34,5 +34,13 @@ pub fn label_icon_button(id: impl Into<ElementId>, label: impl Into<SharedString
     let b = Button::new(id);
     let b = if look == Look::Primary { b.primary() } else { b };
     b.rounded(radius).flex_none().h(h).px(pad).child(inner)
-        .when(look == Look::Primary && large, |b| b.shadow(vec![BoxShadow { color: T::accent_hover(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: T::SP_2, inset: false }]))
+        // The large primary (the tour's Next and Done) as the web's .wn-btn.primary:
+        // its accent glow under it, and the focus ring it has from opening.
+        .when(look == Look::Primary && large, |b| b.shadow(vec![
+            BoxShadow { color: T::accent().opacity(0.35), offset: point(px(0.), T::SP_8), blur_radius: T::SP_24, spread_radius: px(0.), inset: false },
+            // The focus ring as the PC client shows it (the browser's own):
+            // a light ring outside a dark gap.
+            BoxShadow { color: T::text(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: T::SP_4, inset: false },
+            BoxShadow { color: T::bg(), offset: point(px(0.), px(0.)), blur_radius: px(0.), spread_radius: T::SP_2, inset: false },
+        ]))
 }
