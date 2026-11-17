@@ -56,15 +56,18 @@ saves the server's CPU and RAM, not usage.
     progress on it is then treated as "PC offline" (sections 2-4).
   - **Headless** (`crundi-worker --headless`) for Linux servers: no tray,
     runs as a systemd unit, logs to the journal.
-  - **Built into the Crundi PC client:** the same crate is linked into the
-    native PC client, with an on/off switch in the client's settings, so a
-    PC with the client needs no separate install. The tray app and the
+  - **Built into the Crundi PC client:** for now the **Electron** client
+    (the native one is still being built). It ships the worker binary and
+    runs it as a child process behind an on/off switch in the client's
+    settings, so a PC with the client needs no separate install. The native
+    client links the same crate later; the owner briefs that chat once this
+    is built. The tray app and the
     client never both run as a worker on one PC: the second one says so and
     stays off.
 - **Building it:** with the native client's build rules (CARGO_BUILD_JOBS=2,
   one build at a time), in its own crate, so the tray app does not pull in
-  GPUI. The PC client's build links it later, coordinated with whoever owns
-  the native client at that point.
+  GPUI. The Electron client's release jobs build it per OS and put it in
+  the app's resources.
 - **Joining:**
   1. Settings, Cluster, Add a PC makes a one-time join code (5 minutes,
      like pairing).
@@ -97,13 +100,27 @@ saves the server's CPU and RAM, not usage.
     range, as `net-tunnel-client.js` already does. Streams carry stdout and
     stderr, stdin, tar archives and MCP calls.
   - Backpressure uses the existing pause threshold.
-- **Safety on the PC:**
-  - Every cwd must be under the worker's work folder.
-  - Each capability is the PC owner's switch: run commands, run chats,
-    install tools. Anything off is refused on the PC, not just hidden on the
-    server.
-  - Only the owner can target a worker. Collaborators' chats never can,
-    because the tools refuse a collaborator key.
+- **Trust follows the chat's permission mode** (the owner, 18 Nov). A PC
+  is trusted the way the owner's own PC is when he runs `claude` there:
+  - A whole chat on a PC is `claude` on that PC, with the permission mode
+    the chat has (bypass included). It installs, edits, builds and pushes
+    exactly as it would on the server.
+  - A command on a PC (`worker_run`) is an ordinary tool call of a server
+    chat: run at once in bypass mode, asked for like any tool otherwise.
+  - So there are no command allowlists, no folder fence and no separate
+    install approvals. The work folder is where clones and copies go, not
+    a limit.
+- **What stays, because it is not about the chat:**
+  - Joining with a one-time code and a revocable key: which machines the
+    server may command at all.
+  - Per-PC switches, "allow chats" and "allow commands", for a machine the
+    owner wants used one way only.
+  - **Never collaborators:** their chats cannot reach a worker in any
+    mode; the tools refuse a collaborator's key.
+  - The job history (what ran, where, for which chat): a record for the
+    owner, not a gate.
+  - Secrets as on the server today: a job gets one only through the
+    existing secret tools.
 
 ### 2. Commands only on a PC
 
@@ -280,9 +297,13 @@ saves the server's CPU and RAM, not usage.
   - A job that needs a missing one stops before it starts and says what is
     missing, with the install command for that OS (winget, Homebrew,
     apt/dnf, rustup, the Claude Code installer).
-  - Installing is done in the PC's terminal (section 1): by the owner, or
-    by a chat after the owner says yes. Crundi never installs anything on a
-    PC by itself. (Proposed; see "Still open".)
+  - **Installing is seamless, as in any chat** (the owner, 18 Nov): the
+    chat (or the job's chat) installs what is missing itself, under its
+    permission mode; in bypass it just does it. The only stop is what the
+    OS itself guards: a Windows UAC prompt, or `sudo` needing a password
+    where the PC does not allow it without one. The chat says so and
+    carries on with what it can. The PC's terminal is there for the owner
+    too.
 - **Memory rule:** the `-j2` / one-build-at-a-time limits are a server rule.
   A worker uses its own per-worker job limit instead.
 
@@ -302,6 +323,8 @@ saves the server's CPU and RAM, not usage.
 - **PC client:** the "Use this PC as a worker" switch in its settings,
   running the built-in worker.
 - **Tray app:** status, Pause, Open work folder, Quit; first-run setup.
+- **Electron client:** the "Use this PC as a worker" switch runs the
+  bundled worker binary.
 - **What's new:** one step per phase that ships something visible.
 - **Compatibility:**
   - Everything is new endpoints and optional fields: `/api/cluster/*`,
@@ -370,15 +393,41 @@ An in-process fake worker on a loopback websocket:
    for a PC without git or a task that does not want it: `source: 'copy'`,
    sections 2-4.
 
+8. **Installs:** seamless, as in any chat, under the chat's permission
+   mode (bypass included). No separate approvals.
+9. **Unpushed commits:** the PC clones the pushed commit from GitHub and
+   fetches what the server has ahead of it over the worker link.
+10. **PC client:** the Electron client for now (it bundles and runs the
+    worker binary). The native client later; the owner briefs its chat.
+11. **Security follows the chat's permission mode** (section 1): no
+    allowlists, no folder fence; joining, per-PC switches, never
+    collaborators and the job history stay.
+
+## Proposed for revision 3 (awaiting the owner)
+
+From the "not gimmicky, professional" review, 18 Nov:
+1. Warm build caches per worker (cargo target, node_modules by lockfile),
+   and content-addressed copies, so offloading is actually faster; show
+   "ran on X in N" on the job card.
+2. Labels per worker (os, gpu, ram, tools); jobs and factories ask for
+   labels, a PC name is an override; a fallback per job (wait, server,
+   fail).
+3. Be a good guest on the PC: low priority, core and RAM caps, "only when
+   I'm away", pause on battery or a full-screen app, instant Pause that
+   suspends rather than kills.
+4. Jobs survive a dropped link: they keep running, the log is spooled on
+   the PC and resumes from its offset, a lease and job id prevent running
+   twice; offline only after a grace period.
+5. Job history and a per-worker page (what ran, queue, load, disk).
+6. Signed worker updates, applied when idle; version handling by the
+   capability lists.
+7. Artifacts in Crundi's data folder with retention and checksums, not in
+   the project; a disk limit and clean-up per worker.
+8. Copy mode handles case-insensitive file systems, long Windows paths,
+   the executable bit, symlinks and line endings, each with a test.
+9. Name it "Workers" (or "Compute") rather than "Cluster".
+10. Ship commands first and use them for a while before whole chats.
+
 ## Still open
 
-- **Installs** (section 5): proposed that Crundi only detects and suggests
-  the install command, and installing happens in the PC's terminal by the
-  owner or by a chat once he says yes. Never automatic.
-- **Unpushed server commits** (section 2): proposed that the PC fetches
-  them from the server's worktree over the worker link, so a build does
-  not need a push first. The alternative is to require a push and refuse
-  otherwise.
-- **The PC client the worker is built into:** proposed the native PC
-  client, once its build allows (the Electron client could run the tray
-  app's binary meanwhile if wanted).
+- Revision 3 above.
