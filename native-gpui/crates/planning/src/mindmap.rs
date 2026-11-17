@@ -11,7 +11,7 @@
 //! mindmap_help.rs (moved over with their tests); the screen is drawn by
 //! mindmap_draw.rs. The map is global (every project's ideas), loaded whole
 //! after each change and on the server's `mindmap` event. Checked by
-//! native-client/test/planning/mindmap.mjs.
+//! native-gpui/test/planning/mindmap.mjs.
 
 #[path = "mindmap_tree.rs"]
 mod tree;

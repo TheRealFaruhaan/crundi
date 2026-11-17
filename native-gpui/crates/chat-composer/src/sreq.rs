@@ -1,5 +1,5 @@
 //! 2.12b: the secret-request dock (sreq-dock): Run a command with X, Approve / Reject, PIN or passphrase, Allow for this chat with a duration.
-//! Spec: native-client/specs/secret-requests.md; the Slint client's app.rs
+//! Spec: native-gpui/specs/secret-requests.md; the Slint client's app.rs
 //! (sreq_*), ui/sreq.slint; the web's src/webapp-html.js renderSecretPrompt.
 //!
 //! When Claude's secret_get / secret_run waits on the owner, a card per

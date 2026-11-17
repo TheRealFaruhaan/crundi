@@ -6,7 +6,7 @@
 // (never). Tabs behind the active one follow the unload rule
 // (CRUNDI_BROWSER_UNLOAD_SECS, passed through: set it high to keep them).
 //
-//   native-client/tools/test-server.sh 4392          (seeded: session.json)
+//   native-gpui/tools/test-server.sh 4392          (seeded: session.json)
 //   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json xvfb-run -a -s "-screen 0 1440x900x24" \
 //     node native-gpui/tools/pss.mjs <bin> http://localhost:4392 /tmp/crundi-devtest-4392/session.json [driver port, 4394]
 //

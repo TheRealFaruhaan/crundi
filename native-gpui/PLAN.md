@@ -8,10 +8,10 @@ not fixed or changed on the way.
 Decision (16 Nov 2026, the owner): the native client is built on **GPUI**
 (Zed's UI framework, `gpui-pre 0.3.12` with `gpui-component 0.10.0`), not
 Slint. CEF stays for the browser. Everything is compiled Rust: no screens
-loaded at run time. The Slint client in `native-client/` (phases 0 to 2 done
-there) is the reference: its behaviour, its specs (`native-client/specs/`)
-and its tests (`native-client/test/`), which run against this client through
-the same test driver.
+loaded at run time. The Slint client (phases 0 to 2 were first done
+there) was removed on 17 Nov 2026 and is in git history; its specs
+(`specs/`, its plan as `specs/slint-plan.md`) and its tests (`test/`), which
+drive this client through the same test driver, live here now.
 
 What it must do is what the PC client does today: the Electron shell
 (`app/`), plus the Crundi interface it shows (`src/webapp-html.js`). Those are
@@ -52,8 +52,8 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
      connection badge, the window buttons; the sidebar's dots, folding,
      Add project and Inbox
 2. **Chats** (Workspace: 2.1-2.4; Planning: 2.5-2.12b, 2.24; Operations:
-   2.13-2.23), each item as `native-client/PLAN.md` describes it, with its
-   spec in `native-client/specs/`. Test: `test/phase2.mjs`.
+   2.13-2.23), each item as `specs/slint-plan.md` describes it, with its
+   spec in `native-gpui/specs/`. Test: `test/phase2.mjs`.
    - [x] 2.1 Pane header, wide · [x] 2.2 narrow · [x] 2.3 moving panes · [x] 2.4 live state (Workspace)
    - [x] 2.5 Composer and Stop · [x] 2.6 permission-mode picker · [x] 2.7 attachments · [x] 2.8 drafts ·
      [x] 2.9 queued messages · [x] 2.10 scheduled messages · [x] 2.11 slash menu · [x] 2.12 chat secrets dialog ·
@@ -185,7 +185,7 @@ Gaps:
 - **The browser is a drawer** beside the whole project area, below the top
   bar, with a draggable divider; hidden, the project bar's Browser button
   returns with a dot.
-- The Slint client's own deliberate differences (`native-client/PLAN.md`,
+- The Slint client's own deliberate differences (`specs/slint-plan.md`,
   Known gaps) carry over where they are behaviour, not Slint workarounds.
 
 ## Known gaps

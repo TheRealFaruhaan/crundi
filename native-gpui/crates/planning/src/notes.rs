@@ -7,7 +7,7 @@
 //! logic as it was: this file is the state and every rule; notes_view.rs draws
 //! it (the Slint ui/planning/notes*.slint redrawn); notes_doc.rs is the page
 //! model and the pure rules, moved over as they were with their unit tests.
-//! Checked by native-client/test/planning/notes.mjs.
+//! Checked by native-gpui/test/planning/notes.mjs.
 //!
 //! One place shows a page: the tab (key "") or a workbench pane (its key,
 //! panel:notes:<n>). A page is open in one place at a time ("one page, one

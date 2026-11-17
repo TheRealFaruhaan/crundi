@@ -4,7 +4,7 @@
 # four jobs, one build at a time across everyone (the shared lock), and the
 # kernel kills this build first if memory runs out, never Crundi. Records
 # each rustc's peak memory and the build's wall time, and stages CEF next to
-# the binary (native-client/scripts/stage-cef.mjs, shared with the Slint client).
+# the binary (native-gpui/scripts/stage-cef.mjs).
 #
 #   tools/build.sh                     the client (crates/app: debug/crundi-gpui)
 #   tools/build.sh -p crundi-planning  one crate
@@ -51,5 +51,5 @@ cargo "$CMD" -j4 "$@"
 # The marker after the build: this build's own outputs are older than it.
 echo "$HERE" > "$LAST"
 PROFILE=debug; for a in "$@"; do [ "$a" = "--release" ] && PROFILE=release; done
-[ -f "$CARGO_TARGET_DIR/$PROFILE/crundi-gpui" ] && STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node ../native-client/scripts/stage-cef.mjs "$CARGO_TARGET_DIR/$PROFILE" >/dev/null 2>&1 || true
+[ -f "$CARGO_TARGET_DIR/$PROFILE/crundi-gpui" ] && STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node scripts/stage-cef.mjs "$CARGO_TARGET_DIR/$PROFILE" >/dev/null 2>&1 || true
 echo "build took $(( $(date +%s) - S )) s; top rustc peaks:"; sleep 1.2; head -5 "$PEAKS" 2>/dev/null || true

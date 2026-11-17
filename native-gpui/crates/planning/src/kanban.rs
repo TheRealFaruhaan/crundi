@@ -1,7 +1,7 @@
 //! Planning 4.1, 4.2: Kanban (columns, cards, todos, drag to move) and the card dialog (phase 4 on GPUI).
 //! Port of the Slint client's native-client/src/planning/kanban.rs, board.rs and media_bridge.rs (the
 //! web's loadKanban, renderKanban, setupKanbanHandlers and kanbanPost), checked by
-//! native-client/test/planning/kanban.mjs. The board is loaded whole after every change and on the
+//! native-gpui/test/planning/kanban.mjs. The board is loaded whole after every change and on the
 //! server's `kanban` event. kanban_board.rs: the pure rules (unit-tested); kanban_view.rs: the screen;
 //! kanban_ask.rs: the ask dialog (Add task, Edit task). One developer owns this file and kanban_*.rs.
 

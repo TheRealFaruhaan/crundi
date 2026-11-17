@@ -7,9 +7,10 @@ crate, how a part plugs into the window, what is shared, how to build and
 test. Read `DESIGN.md` (layout and experience, tokens only, every control
 from the widgets crate) first.
 
-The Slint client in `native-client/` stays as the reference (its code, its
-specs under `native-client/specs/`, its tests and the test-server tools).
-Don't delete or change it, apart from its shared tools when a test needs it.
+The Slint client was removed on 17 Nov 2026 (it is in git history). What
+it left that is still used lives here: its specs (`specs/`, with its plan as
+`specs/slint-plan.md`), the tests (`test/`), the test-server tools
+(`tools/`) and the CEF scripts (`scripts/`).
 
 ## The crates
 
@@ -40,9 +41,9 @@ owner (`shared/requests.md`), never edits it.
 ## Phases 0 to 2 on GPUI (built; phases 3 to 6 too, see PLAN.md)
 
 Each must behave as the Slint client does, checked with its tests
-(`native-client/test/phase1.mjs`, `native-client/test/phase2.mjs`), item by
-item as `native-client/PLAN.md` lists them (2.1-2.25) and their specs in
-`native-client/specs/`:
+(`native-gpui/test/phase1.mjs`, `native-gpui/test/phase2.mjs`), item by
+item as `specs/slint-plan.md` lists them (2.1-2.25) and their specs in
+`native-gpui/specs/`:
 
 | Who | What | Crates |
 |---|---|---|
@@ -208,14 +209,14 @@ view modal is up or the ask layer has a confirm or menu open (F58).
   (`tools/run-xvfb.sh` for one picture, `tools/smoke.mjs` to check it
   starts). CPU figures on this server aren't representative (no GPU).
 - **Tests** against a fresh test server, only through
-  `native-client/tools/test-server.sh <port> --bare`:
+  `native-gpui/tools/test-server.sh <port> --bare`:
 
   ```
-  native-client/tools/test-server.sh 4392 --bare
+  native-gpui/tools/test-server.sh 4392 --bare
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json CRUNDI_CEF_CACHE=/tmp/crundi-gpui-cef-planning \
     CRUNDI_TEST_SERVER=http://localhost:4392 CRUNDI_TEST_PORT=4393 CRUNDI_TEST_PROJECT=/tmp/crundi-devtest-4392/proj \
     NATIVE_BIN=$HOME/.cache/crundi-native-target/debug/crundi-gpui \
-    xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/phase2.mjs
+    xvfb-run -a -s "-screen 0 1440x900x24" node native-gpui/test/phase2.mjs
   kill $(cat /tmp/crundi-devtest-4392/server.pid)      # yours only, by PID
   ```
 
@@ -232,7 +233,7 @@ view modal is up or the ask layer has a confirm or menu open (F58).
 - **One checkout, several people:** keep your crate compiling at every save;
   if the build fails in another part's crate, wait and build again, never
   fix theirs; git is off limits (Crundi commits at hand-off).
-- **Disk:** keep 20 GB free (`df -h /`); `native-client/tools/clean-build.sh`
+- **Disk:** keep 20 GB free (`df -h /`); `native-gpui/tools/clean-build.sh`
   at the end of a step; screens under `native-gpui/screens/<area>/` (latest
   round only), scratch in one /tmp folder you remove.
 - **Before handing off:** your parts of the phase tests pass;

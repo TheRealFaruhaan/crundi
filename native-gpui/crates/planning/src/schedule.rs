@@ -1,6 +1,6 @@
 //! Planning 4.5, 4.6: Schedules (the list, the add / edit dialog) and webhooks (phase 4 on GPUI).
 //! Port of the Slint client's native-client/src/planning/schedule*.rs and ui/planning/schedule*.slint (its
-//! logic as it was; only the screens are redrawn), checked by native-client/test/planning/schedule.mjs.
+//! logic as it was; only the screens are redrawn), checked by native-gpui/test/planning/schedule.mjs.
 //! Spec: the web UI (src/webapp-html.js: loadSchedules, renderSchedules, openSchedModal,
 //! renderSchedModal, captureSchedForm, saveSchedule, provisionChatConversation).
 //!

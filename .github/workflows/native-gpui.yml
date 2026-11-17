@@ -6,7 +6,7 @@ name: native-gpui
 
 on:
   push:
-    paths: ['native-gpui/**', 'native-client/scripts/**', '.github/workflows/native-gpui.yml']
+    paths: ['native-gpui/**', '.github/workflows/native-gpui.yml']
   workflow_dispatch:
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
 
       - name: Fetch CEF
         run: |
-          CEF=$(node native-client/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
+          CEF=$(node native-gpui/scripts/fetch-cef.mjs "$RUNNER_TEMP/cef")
           echo "CEF_PATH=$CEF" >> "$GITHUB_ENV"
 
       - name: Build
@@ -74,7 +74,7 @@ jobs:
       - name: Stage CEF next to the binaries
         working-directory: native-gpui
         run: |
-          BIN=$(STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node ../native-client/scripts/stage-cef.mjs target/release)
+          BIN=$(STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node scripts/stage-cef.mjs target/release)
           echo "GPUI_BIN=$BIN" >> "$GITHUB_ENV"
 
       - name: Unit tests

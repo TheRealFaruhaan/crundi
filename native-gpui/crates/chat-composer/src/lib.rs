@@ -1,5 +1,5 @@
 //! A chat's composer (Planning's, phase 2: 2.5-2.12b and voice 2.24;
-//! AREAS.md, native-client/specs/composer.md): the message box, Send and
+//! AREAS.md, native-gpui/specs/composer.md): the message box, Send and
 //! Stop, and the meta row (state, the permission mode, the Enter switch,
 //! schedule, session id, model, cost).
 //!

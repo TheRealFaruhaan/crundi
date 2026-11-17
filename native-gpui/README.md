@@ -1,10 +1,10 @@
 # Crundi's native PC client on GPUI
 
 The PC client, native, on GPUI (Zed's UI framework) with CEF for the
-browser: the owner's decision of 16 Nov 2026 (`PLAN.md`). It replaces the
-Slint client in `native-client/`, which stays as the reference: its
-behaviour, its specs and its tests, which drive this client through the same
-test driver.
+browser: the owner's decision of 16 Nov 2026 (`PLAN.md`). It replaced the
+Slint client, removed on 17 Nov 2026 (in git history). Its specs (`specs/`)
+and its tests (`test/`), which drive this client through the same test
+driver, live here.
 
 - `PLAN.md`: the phases, what is done, the gaps.
 - `AREAS.md`: the crates, who owns which, how a part plugs in, the shared
@@ -222,7 +222,7 @@ the host), each embed's in `frames`; `desktop:browser-host-stop` stops it,
 host, `ps -g <host pid>` it and its helpers. `CRUNDI_BROWSER_IDLE_SECS=5`
 makes the idle stop quick; `CRUNDI_NO_BROWSER=1` runs with no browser.
 `crundi-browser-host --browser-host` by hand waits for `Hello` on stdin (30 s).
-`native-client/test/desktop.mjs` part `hostproc` (`ONLY=hostproc`) checks
+`native-gpui/test/desktop.mjs` part `hostproc` (`ONLY=hostproc`) checks
 all of the above. `tools/pss.mjs` measures the app's memory (PSS over the
 app's and the host's processes, idle and with one tab; its header says how
 to run it); the numbers are in PLAN.md, "The browser host".
@@ -241,7 +241,7 @@ The phase tests run against it with `NATIVE_BIN=$CARGO_TARGET_DIR/debug/crundi-g
 (`AREAS.md`, "Building and testing side by side"). Linux needs `libxcb1-dev`,
 `libxkbcommon-x11-dev` and `libasound2-dev` to link, and Mesa's
 `mesa-vulkan-drivers` (lavapipe) to draw without a GPU. CEF's files sit next
-to the binary (`tools/build.sh` stages them; `native-client/scripts/fetch-cef.mjs`
+to the binary (`tools/build.sh` stages them; `native-gpui/scripts/fetch-cef.mjs`
 fetches CEF once, shared with the Slint client).
 
 CI: `.github/workflows/native-gpui.yml` builds the workspace on Linux,

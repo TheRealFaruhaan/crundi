@@ -64,8 +64,8 @@ Electron client (`app/`) shows it. Where the web has no screen for something
 ## The method
 
 ```
-native-client/tools/test-server.sh 4812             # an isolated dev Crundi on :4812, seeded
-node native-client/tools/web-session.mjs 4812       # a web session for the browser
+native-gpui/tools/test-server.sh 4812             # an isolated dev Crundi on :4812, seeded
+node native-gpui/tools/web-session.mjs 4812       # a web session for the browser
 ```
 
 Always start a server through `tools/test-server.sh <port>`, never with
@@ -84,7 +84,7 @@ Stop it with `kill $(cat /tmp/crundi-devtest-<port>/server.pid)`.
    what each control does, keyboard handling, live updates and the events
    behind them, and the endpoints it calls. `tools/measure.js` is there for a
    quick check of a size or an order, not for a spec sheet of every element.
-3. **The spec** (`native-client/specs/<screen>.md`):
+3. **The spec** (`native-gpui/specs/<screen>.md`):
    - the parts and their arrangement;
    - every control and what it does;
    - the states, with web screenshots;
@@ -93,7 +93,7 @@ Stop it with `kill $(cat /tmp/crundi-devtest-<port>/server.pid)`.
 4. **The native screen,** built from the theme's tokens and the shared
    widgets. Snapshot it in the same states (the test driver's `snapshot`, or
    `native-gpui/tools/run-xvfb.sh`) and put the two side by side
-   (`native-client/tools/compare.sh`).
+   (`native-gpui/tools/compare.sh`).
 
 ## Reviewing a screen
 

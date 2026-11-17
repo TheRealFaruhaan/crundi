@@ -1,5 +1,5 @@
 //! 2.12: the chat secrets dialog: list, add, remove, the PIN step.
-//! Spec: native-client/specs/chat-secrets.md; the Slint client's app.rs
+//! Spec: native-gpui/specs/chat-secrets.md; the Slint client's app.rs
 //! (sec_*), ui/secrets.slint; the web's app/vendor/crundi-chat-secrets.js.
 //!
 //! What the pane header's lock opens, for that chat: the secrets

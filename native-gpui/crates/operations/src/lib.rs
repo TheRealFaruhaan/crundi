@@ -1,6 +1,6 @@
 //! The operations area's screens (Operations: phase 5; AREAS.md), one
 //! module per screen, as the Slint client's src/ops/ (its specs:
-//! native-client/specs/ops/<stem>.md):
+//! native-gpui/specs/ops/<stem>.md):
 //!
 //! | module | tab | what |
 //! |---|---|---|
@@ -16,7 +16,7 @@
 //!
 //! The test driver: "ops:<name>" actions and the `ops` area's props (one
 //! key per screen), as the Slint client's ops area, so
-//! native-client/test/operations.mjs runs unchanged.
+//! native-gpui/test/operations.mjs runs unchanged.
 
 pub mod services;
 pub mod docker;

@@ -101,7 +101,7 @@ fn start_cef() -> Result<(), String> {
     crate::mac::host_app();
     let args = cef::args::Args::new();
     let mut app = crate::cef_app::NativeApp::new();
-    // CEF's files sit next to the binary (native-client/scripts/stage-cef.mjs).
+    // CEF's files sit next to the binary (native-gpui/scripts/stage-cef.mjs).
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_default();
     let cache = crate::common::cef_root();
     let _ = std::fs::create_dir_all(&cache);

@@ -21,7 +21,7 @@ pub fn load_framework(helper: bool) -> cef::library_loader::LibraryLoader {
     let exe = std::env::current_exe().expect("current exe");
     let loader = cef::library_loader::LibraryLoader::new(&exe, helper);
     if !loader.load() {
-        eprintln!("[native] could not load the Chromium Embedded Framework (run from the .app bundle: native-client/scripts/stage-cef.mjs)");
+        eprintln!("[native] could not load the Chromium Embedded Framework (run from the .app bundle: native-gpui/scripts/stage-cef.mjs)");
         std::process::exit(1);
     }
     loader

@@ -6,7 +6,7 @@
 //!
 //! Port of the Slint client's native-client/src/planning/factories*.rs (its
 //! logic as it was; only the screens are redrawn) and
-//! ui/planning/factories*.slint, checked by native-client/test/planning/factories.mjs.
+//! ui/planning/factories*.slint, checked by native-gpui/test/planning/factories.mjs.
 //! Spec: app/vendor/crundi-factories.js and factory-flow.js. This file holds
 //! the shared state, the tab, the panel, the badge and the live events; the
 //! live graph is factories_view.rs, the editor factories_edit.rs, the
