@@ -228,6 +228,13 @@ fn canvas_view(s: &M, window: &mut Window) -> AnyElement {
             super::wheel_zoom(dy, f32::from(e.position.x) - ox, f32::from(e.position.y) - oy, window, cx);
             cx.stop_propagation();
         })
+        // A touchpad's pinch zooms about its centre, as Ctrl and the wheel do
+        // (the help promised it; the owner, 18 Nov: no pinch to zoom).
+        .on_pinch(|e: &PinchEvent, window, cx| {
+            let (ox, oy) = cx.try_global::<M>().map(|s| (s.canvas_x, s.canvas_y)).unwrap_or_default();
+            super::pinch_zoom(e.delta, f32::from(e.position.x) - ox, f32::from(e.position.y) - oy, window, cx);
+            cx.stop_propagation();
+        })
         .child(edges);
     for r in &s.rows {
         match r.kind {

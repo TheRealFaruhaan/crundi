@@ -1034,6 +1034,12 @@ fn wheel_zoom(delta: f32, px_: f32, py_: f32, window: &mut Window, cx: &mut App)
     set_zoom(z * step.exp(), px_, py_, window, cx);
 }
 
+/// A pinch (`delta` 0.1: 10% larger) zooms about the point (`px`, `py` in the canvas's view).
+pub(crate) fn pinch_zoom(delta: f32, px_: f32, py_: f32, window: &mut Window, cx: &mut App) {
+    let z = with(cx, |s| s.zoom);
+    set_zoom(z * (1.0 + delta).max(0.05), px_, py_, window, cx);
+}
+
 /// Zoom to `z` keeping the point (cx, cy) of the canvas's view still.
 fn set_zoom(z: f32, cx_: f32, cy_: f32, window: &mut Window, cx: &mut App) {
     let (sx, sy) = scroll_now(cx);

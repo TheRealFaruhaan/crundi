@@ -425,6 +425,14 @@ pub fn canvas_view(c: Canvas, window: &mut Window, cx: &mut App) -> AnyElement {
                 (cb.zoom)(f32::from(d.y), mx, my, cx);
                 cx.refresh_windows();
             } })
+            // A touchpad's pinch zooms about its centre (the owner, 18 Nov): the
+            // wheel's zoom is exp(d × 0.0025), so a pinch's scale is that d.
+            .on_pinch({ let cb = cb.clone(); move |e, _, cx| {
+                let (mx, my) = local(which, e.position);
+                (cb.zoom)((1.0 + e.delta).max(0.05).ln() / 0.0025, mx, my, cx);
+                cx.stop_propagation();
+                cx.refresh_windows();
+            } })
             .on_key_down({ let cb = cb.clone(); move |e, _w, cx| {
                 let k = e.keystroke.key.as_str();
                 if k == "delete" || k == "backspace" { (cb.key)("delete", cx); cx.refresh_windows(); } else if k == "escape" { (cb.key)("escape", cx); cx.refresh_windows(); }

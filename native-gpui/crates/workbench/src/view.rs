@@ -161,7 +161,11 @@ impl Render for Workbench {
                     });
                 },
             ).absolute().size_full())
-            .child(div().id("wb-grid").size_full().overflow_x_scroll().track_scroll(&self.scroll).child(grid));
+            // Only a sideways scroll moves the workbench: without this GPUI turns
+            // a vertical wheel into a sideways scroll for an x-only scroller, so
+            // scrolling a chat or zooming the mind map also slid the workbench
+            // (the owner, 18 Nov). A touchpad's gesture keeps to its main axis.
+            .child(div().id("wb-grid").size_full().overflow_x_scroll().restrict_scroll_to_axis().track_scroll(&self.scroll).child(grid));
         // Wider than the room (panes at their 340px least): the row scrolls
         // sideways, with its scrollbar under the panes (the web's grid).
         let aw = self.area.0;
