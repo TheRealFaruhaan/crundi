@@ -113,6 +113,13 @@ export const CAPABILITIES = Object.freeze([
   // behind). An older server drops them and pauses at the line as before;
   // clients show the controls only when the factory's limits carry paceOnly.
   'factory-pace-limits',
+  // More than one desktop app attached as a native host at once: each keeps
+  // its own pages, tunnel and homepool endpoint; new pages go to the one used
+  // last (register-native-host may carry name, clientKind and version; a
+  // native-host-active message marks it used). browser_open on
+  // "desktop:<device>" and browser_drawer_open device pick one. An older
+  // server keeps one host, the last to register.
+  'browser-hosts',
   // Urgent alerts carry alertId; the phone reports what happened to one
   // (POST /api/alerts/answer: ringing with ringMs, attended, dismissed,
   // snoozed with minutes) and alert_user waits for it. An older server sends

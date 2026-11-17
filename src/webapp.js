@@ -9139,6 +9139,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // Set when this socket is acting as the server's native host (a desktop
       // app lending us its GUI for the browser panel).
       let detachHost = null;
+      let hostRec = null;   // { id, deviceId } of that host, once registered
       // Its browser tabs on this server's network: streams carried as binary
       // frames on this same socket (see net-tunnel.js). Exists only once the
       // app has registered as a native host, which a collaborator cannot.
@@ -9157,19 +9158,27 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (msg.type === 'register-native-host') {
           if (confined) return;                         // not a collaborator's to offer
           if (detachHost) return;                       // already registered
+          // One of possibly several desktop apps: each keeps its own pages,
+          // tunnel and homepool endpoint (all per socket, below).
+          hostRec = { deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '' };
           detachHost = browserMod.setRemoteHost({
             send: (m) => { if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'native-host', payload: m })); },
             // What this app version can do. Absent from older clients, which is
             // exactly what it is here to tell us.
             capabilities: Array.isArray(msg.capabilities) ? msg.capabilities : [],
             // This app's device (as its homepool node knows it), if it says.
-            deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '',
+            deviceId: hostRec.deviceId,
+            // Newer clients say who they are (all optional; older ones do not).
+            name: typeof msg.name === 'string' ? msg.name : '',
+            kind: typeof msg.clientKind === 'string' ? msg.clientKind : '',
+            version: typeof msg.version === 'string' ? msg.version : '',
           });
+          hostRec.id = detachHost.hostId || null;
           hostTunnel = createTunnelEndpoint({
             send: (b) => { if (ws.readyState === 1) ws.send(b, { binary: true }); },
             buffered: () => ws.bufferedAmount,
             // Drawer tabs on a homepool network: through the PC browser key.
-            connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: typeof msg.deviceId === 'string' ? msg.deviceId.slice(0, 80) : '' }),
+            connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: hostRec.deviceId }),
           });
           console.log('[crundi] Desktop app attached as native host');
           // features: what this server offers the app (absent on older servers).
@@ -9178,7 +9187,13 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         }
         // A reply coming back from that desktop app.
         if (msg.type === 'native-host-result') {
-          browserMod.handleHostMessage(msg.payload);
+          if (detachHost) browserMod.handleHostMessage(msg.payload, hostRec && hostRec.id);
+          return;
+        }
+        // The person brought this desktop app to the front: new pages go to it.
+        // Sent by newer clients only; with older ones the latest to connect wins.
+        if (msg.type === 'native-host-active') {
+          if (detachHost && hostRec && hostRec.id) browserMod.markHostUsed(hostRec.id);
           return;
         }
 

@@ -2061,6 +2061,11 @@ function handleNativeHostMessage(msg, reply) {
 // being stored separately: the web UI already owns that session and refreshes
 // it, and a second credential to keep in sync would only drift.
 let hostWs = null;
+// The person came to this app's window: tell the server, so with several PCs
+// attached its new browser pages come here (older servers ignore it).
+app.on('browser-window-focus', () => {
+  if (hostWs && hostWs.readyState === 1) { try { hostWs.send(JSON.stringify({ type: 'native-host-active' })); } catch { /* reconnecting */ } }
+});
 let hostToken = null;
 let hostRetry = null;
 let hostClosing = false;
@@ -2115,7 +2120,9 @@ function connectNativeHost() {
     appendLog('[nativehost] connected — registering as native host');
     // Tell the server what this build can do, so it does not offer the user a
     // notification channel that an older app would silently drop.
-    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer', 'browser-mouse'], deviceId: hpDeviceId() })); }
+    // name, clientKind and version: so a server with several PCs attached can
+    // tell them apart (older servers ignore them).
+    try { ws.send(JSON.stringify({ type: 'register-native-host', capabilities: ['notify', 'browser-touch', 'browser-drawer', 'browser-mouse'], deviceId: hpDeviceId(), name: osHostname(), clientKind: 'electron', version: app.getVersion() })); }
     catch (err) { appendLog(`[nativehost] register failed: ${err.message}`); }
   });
   ws.on('message', (raw, isBinary) => {

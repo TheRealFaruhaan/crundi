@@ -29,7 +29,10 @@ export async function gateBrowserCall({ tool, args: a, collaborator = false, hom
   }
   if (onto) {
     const net = String(a.network).split(':')[1] || '';
-    if (homepool.isSelfNode(browser.drawerDeviceId(), net)) {
+    // The PC that holds (or will hold) the tab: with several connected, the
+    // tab's own, the one named, or the one used last.
+    const where = tool === 'browser_tab_network' ? a.key : (a.device || (/^drawer:/i.test(String(a.on || '')) ? String(a.on).slice(7) : ''));
+    if (homepool.isSelfNode(browser.drawerDeviceId(where || ''), net)) {
       return { ok: false, error: `The PC the drawer runs on is itself a node of homepool network "${net}", so its tabs are not offered it (they would leave through that PC). Use another network.` };
     }
   }

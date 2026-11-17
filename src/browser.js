@@ -72,8 +72,18 @@ let nextRequestId = 1;
 // The choice is made once, at open, and every later call on that instance goes
 // to the same place: the page only exists where it was opened.
 
-let remoteHost = null;   // { send(msg) } registered by a connected desktop app
-const keyBackend = new Map();   // instance key -> 'parent' | 'remote' | 'headless'
+// More than one desktop app can lend this server its browser at once (a
+// laptop and a desktop PC, say). Each is a host here, under its own id, and a
+// page lives on the host that opened it for its whole life: its key's backend
+// is 'remote:<host id>'. New pages go to the host the person used last (the
+// latest to connect, or to say it was in use), unless a caller names one
+// (on: "desktop:<device>"). When a host leaves, only its own pages go.
+// With one host this is exactly the old single-host behaviour.
+
+const remoteHosts = new Map();   // host id -> { id, send, deviceId, name, capabilities, kind, version, connectedAt, lastUsedAt }
+let hostSeq = 0;
+const keyBackend = new Map();   // instance key -> 'parent' | 'remote:<host id>' | 'headless'
+const REMOTE = 'remote:';
 
 function isElectron() {
   return process.env.ELECTRON_RUN === '1';
@@ -83,36 +93,116 @@ function hasParentIpc() {
   return isElectron() && typeof process.send === 'function';
 }
 
-/** Attach a desktop app as this server's native host. Returns a detach fn. */
-export function setRemoteHost(host) {
-  remoteHost = host && typeof host.send === 'function' ? host : null;
-  return () => { if (remoteHost === host) clearRemoteHost(); };
+const isRemote = (backend) => typeof backend === 'string' && (backend === 'remote' || backend.startsWith(REMOTE));
+
+/** The host a backend names: 'remote:<id>', or plain 'remote' (any: the preferred one). */
+function hostOf(backend) {
+  if (backend === 'remote') return preferredHost();
+  if (typeof backend === 'string' && backend.startsWith(REMOTE)) return remoteHosts.get(backend.slice(REMOTE.length)) || null;
+  return null;
 }
 
-export function clearRemoteHost() {
-  remoteHost = null;
-  // Pages opened on that app went with it.
+/** The host the person used last, optionally among those that can do a feature. */
+function preferredHost(feature = null) {
+  let best = null;
+  for (const h of remoteHosts.values()) {
+    if (feature && !h.capabilities.includes(feature)) continue;
+    if (!best || h.lastUsedAt > best.lastUsedAt || (h.lastUsedAt === best.lastUsedAt && h.seq > best.seq)) best = h;
+  }
+  return best;
+}
+
+/** A host by what a caller calls it: its id, device id or name (case-insensitive). */
+export function findHost(name) {
+  const v = String(name || '').trim().toLowerCase();
+  if (!v) return null;
+  for (const h of remoteHosts.values()) if (h.id.toLowerCase() === v) return h;
+  for (const h of remoteHosts.values()) if (h.deviceId && h.deviceId.toLowerCase() === v) return h;
+  for (const h of remoteHosts.values()) if (h.name && h.name.toLowerCase() === v) return h;
+  return null;
+}
+
+/** The connected hosts, for browser_list and the UI. */
+export function listHosts() {
+  const pref = preferredHost();
+  return [...remoteHosts.values()].map(h => ({
+    id: h.id, device: h.deviceId || null, name: h.name || h.deviceId || h.id,
+    kind: h.kind || null, version: h.version || null,
+    connectedSince: new Date(h.connectedAt).toISOString(), lastUsed: new Date(h.lastUsedAt).toISOString(),
+    capabilities: [...h.capabilities], preferred: h === pref,
+    pages: [...keyBackend.values()].filter(b => b === REMOTE + h.id).length,
+  }));
+}
+
+/**
+ * Attach a desktop app as one of this server's native hosts. Returns a detach
+ * fn that drops this host (and only this host's pages); its hostId is the
+ * id the host goes by.
+ *   host: { send(msg), capabilities?, deviceId?, name?, kind?, version? }
+ */
+export function setRemoteHost(host) {
+  if (!host || typeof host.send !== 'function') return () => {};
+  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
+  const seq = ++hostSeq;
+  const deviceId = str(host.deviceId, 80);
+  // An id a caller can say: the device id when it is free, else a numbered one.
+  let id = deviceId && !remoteHosts.has(deviceId) ? deviceId : `pc${seq}`;
+  while (remoteHosts.has(id)) id = `pc${++hostSeq}`;
+  const now = Date.now();
+  const rec = {
+    id, seq, send: host.send, deviceId,
+    name: str(host.name, 80), kind: str(host.kind, 40), version: str(host.version, 40),
+    capabilities: Array.isArray(host.capabilities) ? host.capabilities.filter(c => typeof c === 'string') : [],
+    connectedAt: now, lastUsedAt: now,
+  };
+  remoteHosts.set(id, rec);
+  const detach = () => { if (remoteHosts.get(id) === rec) removeRemoteHost(id); };
+  detach.hostId = id;
+  return detach;
+}
+
+/** The person used this host (its window came to the front): new pages go there. */
+export function markHostUsed(id) {
+  const h = remoteHosts.get(id);
+  if (h) h.lastUsedAt = Math.max(Date.now(), ...[...remoteHosts.values()].map(x => x.lastUsedAt + 1));
+}
+
+/** One host leaves: its pages go with it, the others' stay. */
+function removeRemoteHost(id) {
+  if (!remoteHosts.delete(id)) return;
+  const backend = REMOTE + id;
   let dropped = false;
   for (const [key, where] of keyBackend) {
-    if (where !== 'remote') continue;
+    if (where !== backend) continue;
     keyBackend.delete(key);
-    const inst = instFor(key);
+    const inst = browsers.get(key);
     if (inst) { if (inst.idleTimer) clearTimeout(inst.idleTimer); browsers.delete(key); dropped = true; }
   }
   if (dropped) emitBrowserUpdate();
-  // Anything still in flight can never be answered now — fail it rather than
-  // leaving callers hanging until the 40s backstop.
-  for (const [id, entry] of pendingRequests) {
+  // Anything in flight on that host can never be answered now: fail it rather
+  // than leave callers hanging until the 40s backstop.
+  for (const [rid, entry] of pendingRequests) {
+    if (entry.hostId !== id) continue;
     clearTimeout(entry.timer);
     entry.reject(new Error('The desktop app disconnected'));
-    pendingRequests.delete(id);
+    pendingRequests.delete(rid);
   }
 }
 
-/** The device the drawer's app runs on (its homepool node's deviceId), if known. */
-export function drawerDeviceId() {
+/** Every host leaves (the old single-host clear). */
+export function clearRemoteHost() {
+  for (const id of [...remoteHosts.keys()]) removeRemoteHost(id);
+}
+
+/**
+ * The device a drawer tab's app runs on (its homepool node's deviceId), if
+ * known: the tab's own host for a drawer key, a named host, else the one new
+ * tabs go to.
+ */
+export function drawerDeviceId(keyOrDevice = '') {
   if (hasParentIpc()) return process.env.CRUNDI_DEVICE_ID || '';
-  return (remoteHost && remoteHost.deviceId) || '';
+  const h = (isDrawerKey(keyOrDevice) && hostOf(keyBackend.get(keyOrDevice))) || findHost(keyOrDevice) || preferredHost(DRAWER_CAPABILITY);
+  return (h && h.deviceId) || '';
 }
 
 // The bundled server's end of the drawer's tunnel: with an Electron parent the
@@ -122,7 +212,7 @@ export function setParentTunnel(endpoint) { parentTunnel = endpoint; }
 export function sendParentTunnel(buf) { if (hasParentIpc()) process.send({ type: 'netTunnel', b64: buf.toString('base64') }); }
 
 export function hasNativeHost() {
-  return hasParentIpc() || !!remoteHost;
+  return hasParentIpc() || remoteHosts.size > 0;
 }
 
 /**
@@ -134,10 +224,10 @@ export function hasNativeHost() {
  * when it registers; the parent process in an all-in-one install is the same
  * build as this server, so it can be taken at its word.
  */
-export function hostSupports(feature) {
-  if (hasParentIpc()) return true;
-  return !!(remoteHost && Array.isArray(remoteHost.capabilities)
-    && remoteHost.capabilities.indexOf(feature) !== -1);
+export function hostSupports(feature, backend = null) {
+  if (hasParentIpc() && (!backend || backend === 'parent')) return true;
+  const h = backend ? hostOf(backend) : preferredHost();
+  return !!(h && h.capabilities.includes(feature));
 }
 
 /**
@@ -152,7 +242,9 @@ export function notifyHost(payload) {
 }
 
 /** Deliver a reply from a remote host. Shares the parent-IPC handler. */
-export function handleHostMessage(msg) {
+export function handleHostMessage(msg, hostId = null) {
+  // A tab the person closed on one PC: only that PC's record of it goes.
+  if (msg && msg.type === 'browserClosed' && msg.key && hostId && keyBackend.has(msg.key) && keyBackend.get(msg.key) !== REMOTE + hostId) return;
   handleIpcMessage(msg);
 }
 
@@ -170,17 +262,29 @@ function backendUnavailableReason() {
   return 'No browser available: connect the Crundi desktop app, or re-run the installer to provision a headless browser.';
 }
 
+/** To the parent, else the host the person used last. */
 function postToHost(msg) {
   if (hasParentIpc()) { process.send(msg); return true; }
-  if (remoteHost) { remoteHost.send(msg); return true; }
+  const h = preferredHost();
+  if (h) { h.send(msg); return true; }
   return false;
+}
+
+/** To the parent and every host (what all of them show, like the browser list). */
+function postToAllHosts(msg) {
+  let any = false;
+  if (hasParentIpc()) { process.send(msg); any = true; }
+  for (const h of remoteHosts.values()) { try { h.send(msg); any = true; } catch { /* gone */ } }
+  return any;
 }
 
 /** Which places a browser can run right now, for the UI and browser_list. */
 export function browserPlaces() {
   return {
     server: hasParentIpc() || headless.isSupported(),
-    desktop: !!remoteHost || hasParentIpc(),
+    desktop: remoteHosts.size > 0 || hasParentIpc(),
+    // Each desktop app connected as a host (absent on older servers).
+    hosts: listHosts(),
   };
 }
 
@@ -196,13 +300,19 @@ function chooseBackend(on) {
     return { error: 'This server has no browser of its own. Re-run the installer to provision a headless one, or use on: "desktop".' };
   }
   if (where === 'desktop') {
-    if (remoteHost) return { backend: 'remote' };
+    const h = preferredHost();
+    if (h) return { backend: REMOTE + h.id };
     if (hasParentIpc()) return { backend: 'parent' };
     return { error: 'No Crundi desktop app is connected to this server. Open the desktop app, or use on: "server".' };
   }
-  if (where) return { error: 'on must be "server", "desktop" or "drawer"' };
+  if (where.startsWith('desktop:')) {
+    const h = findHost(String(on).trim().slice('desktop:'.length));
+    if (h) return { backend: REMOTE + h.id };
+    return { error: remoteHosts.size ? `No desktop app "${String(on).slice(8)}" is connected. Connected: ${listHosts().map(x => x.id + (x.name !== x.id ? ` (${x.name})` : '')).join(', ')}.` : 'No Crundi desktop app is connected to this server. Open the desktop app, or use on: "server".' };
+  }
+  if (where) return { error: 'on must be "server", "desktop", "desktop:<device>" or "drawer"' };
   if (hasParentIpc()) return { backend: 'parent' };
-  if (remoteHost) return { backend: 'remote' };
+  { const h = preferredHost(); if (h) return { backend: REMOTE + h.id }; }
   if (headless.isSupported()) return { backend: 'headless' };
   return { error: backendUnavailableReason() };
 }
@@ -232,8 +342,11 @@ function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS, backendOverride = nu
     return headless.handle({ type, ...payload });
   }
 
+  // No record (opened before hosts were kept apart): the host new pages go to.
+  if (!backend && !hasParentIpc()) { const h = preferredHost(); if (h) backend = REMOTE + h.id; }
+  const host = isRemote(backend) ? hostOf(backend) : null;
   return new Promise((resolve, reject) => {
-    if (backend === 'remote' && !remoteHost) return reject(new Error('The desktop app this browser ran on has disconnected.'));
+    if (isRemote(backend) && !host) return reject(new Error('The desktop app this browser ran on has disconnected.'));
     if (backend === 'parent' && !hasParentIpc()) return reject(new Error('The desktop app this browser ran on has gone.'));
     if (!backend && !hasNativeHost()) {
       return reject(new Error('Browser tools need the Crundi desktop app — run one, or connect it to this server.'));
@@ -245,10 +358,10 @@ function sendIpc(type, payload, timeoutMs = IPC_TIMEOUT_MS, backendOverride = nu
       reject(new Error('Browser request timed out'));
     }, timeoutMs);
 
-    pendingRequests.set(requestId, { resolve, reject, timer });
+    pendingRequests.set(requestId, { resolve, reject, timer, hostId: host ? host.id : null });
     try {
       const msg = { type, requestId, ...payload };
-      if (backend === 'remote') remoteHost.send(msg);
+      if (host) host.send(msg);
       else if (backend === 'parent') process.send(msg);
       else postToHost(msg);
     } catch (err) {
@@ -314,8 +427,10 @@ function clampDimensions(width, height) {
 
 // ─── Public API ───
 
-export async function openBrowser({ alias, name, url, width, height, on, network, show }) {
-  if (String(on || '').toLowerCase() === 'drawer') return openDrawerTab({ alias, url, network, show });
+export async function openBrowser({ alias, name, url, width, height, on, network, show, device }) {
+  const onLc = String(on || '').toLowerCase();
+  if (onLc === 'drawer') return openDrawerTab({ alias, url, network, show, device });
+  if (onLc.startsWith('drawer:')) return openDrawerTab({ alias, url, network, show, device: String(on).trim().slice(7) });
   if (!browserBackendReady()) return { ok: false, error: backendUnavailableReason() };
   const chosen = chooseBackend(on);
   if (chosen.error) return { ok: false, error: chosen.error };
@@ -358,7 +473,7 @@ export async function openBrowser({ alias, name, url, width, height, on, network
     });
     resetIdleTimer(key);
     emitBrowserUpdate();
-    return { ok: true, key, on: placeOf(chosen.backend) };
+    return { ok: true, key, on: placeOf(chosen.backend), ...hostField(chosen.backend) };
   } catch (err) {
     keyBackend.delete(key);
     return { ok: false, error: err.message };
@@ -384,7 +499,7 @@ export async function closeBrowser(key) {
 
 /** 'server' or 'desktop', as a caller would name it. */
 function placeOf(backend) {
-  if (backend === 'remote') return 'desktop';
+  if (isRemote(backend)) return 'desktop';
   if (backend === 'headless') return 'server';
   return hasParentIpc() ? 'server' : 'desktop';   // all-in-one: one machine
 }
@@ -557,7 +672,7 @@ function mouseSupported(key, action) {
   let backend = keyBackend.get(key);
   if (!backend) backend = isDrawerKey(key) ? drawerBackend() : (hasNativeHost() ? null : 'headless');
   if (backend === 'headless' || backend === 'parent') return true;
-  return hostSupports(MOUSE_CAPABILITY);   // a remote app announces it
+  return hostSupports(MOUSE_CAPABILITY, backend);   // a remote app announces it
 }
 
 export async function mouseBrowser(key, x, y, action, opts = {}) {
@@ -622,7 +737,7 @@ function touchSupported(key) {
   let backend = keyBackend.get(key);
   if (!backend) backend = hasNativeHost() ? null : 'headless';
   if (backend === 'headless' || backend === 'parent') return true;
-  return hostSupports(TOUCH_CAPABILITY);   // a remote app announces it
+  return hostSupports(TOUCH_CAPABILITY, backend);   // a remote app announces it
 }
 
 export async function touchBrowser(key, opts = {}) {
@@ -747,6 +862,7 @@ export function listBrowsers(alias) {
     lastActivityAt: b.lastActivityAt,
     consoleLogCount: b.consoleLogs.length,
     on: placeOf(keyBackend.get(b.key) || (hasNativeHost() ? (hasParentIpc() ? 'parent' : 'remote') : 'headless')),
+    ...hostField(keyBackend.get(b.key)),
   }));
 }
 
@@ -895,7 +1011,7 @@ export async function closeAllBrowsers() {
 }
 
 export function emitBrowserUpdate() {
-  try { postToHost({ type: 'browsers', data: listBrowsers() }); }
+  try { postToAllHosts({ type: 'browsers', data: listBrowsers() }); }
   catch { /* channel closed */ }
 }
 
@@ -934,16 +1050,29 @@ function instFor(key) {
 function drawerHosts() {
   const out = [];
   if (hasParentIpc()) out.push('parent');
-  if (remoteHost && hostSupports(DRAWER_CAPABILITY)) out.push('remote');
+  const pref = preferredHost(DRAWER_CAPABILITY);
+  if (pref) out.push(REMOTE + pref.id);   // the one new tabs go to, first
+  for (const h of remoteHosts.values()) if (h !== pref && h.capabilities.includes(DRAWER_CAPABILITY)) out.push(REMOTE + h.id);
   return out;
 }
 
-function drawerBackend() {
+/** Where a new drawer tab goes: a named host, else the parent, else the host used last. */
+function drawerBackend(device = '') {
+  if (device) {
+    const h = findHost(device);
+    return h && h.capabilities.includes(DRAWER_CAPABILITY) ? REMOTE + h.id : null;
+  }
   return drawerHosts()[0] || null;
 }
 
+/** { host, hostName } for a page on a remote host, so browser_list says which PC. */
+function hostField(backend) {
+  const h = isRemote(backend) ? hostOf(backend) : null;
+  return h ? { host: h.id, hostName: h.name || h.deviceId || h.id } : {};
+}
+
 function drawerUnavailableReason() {
-  if (remoteHost && !hostSupports(DRAWER_CAPABILITY)) return 'The browser drawer is not supported by the Crundi desktop app connected to this server. Update the app.';
+  if (remoteHosts.size && !preferredHost(DRAWER_CAPABILITY)) return 'The browser drawer is not supported by the Crundi desktop app connected to this server. Update the app.';
   return 'The browser drawer is in the Crundi desktop app, and none is connected to this server.';
 }
 
@@ -984,6 +1113,7 @@ export async function listDrawerTabs(alias) {
           key, alias: t.project, name: t.title || t.url || 'tab', url: t.url, on: 'drawer',
           network: outNetwork(t.network), networkLabel: t.networkLabel, exit: t.exit || undefined, active: !!t.active, shown: !!t.shown, sleeping: !!t.sleeping, unloaded: !t.loaded,
           device: t.device || null,
+          ...hostField(backend),
         });
       }
     } catch (err) { if (out.problems) out.problems.push(err.message); else Object.defineProperty(out, 'problems', { value: [err.message] }); }
@@ -999,14 +1129,20 @@ export async function listAllBrowsers(alias) {
   // Why there are no drawer tabs, when that is not simply "none open".
   const why = !drawerHosts().length ? drawerUnavailableReason() : (drawer.problems && drawer.problems.length && !drawer.length ? drawer.problems[0] : '');
   const out = { browsers: [...hidden, ...drawer], drawer: why || 'available' };
+  // Each desktop app connected to this server, and which one new pages go to.
+  const hosts = listHosts();
+  if (hosts.length) {
+    out.hosts = hosts.map(({ capabilities, ...h }) => h);
+    if (hosts.length > 1) out.hostHint = 'New pages go to the preferred host (the PC used last). Name another with browser_open on: "desktop:<id or name>", or browser_drawer_open device: "<id or name>".';
+  }
   // Say how to open one, so "available" with no tabs is not a dead end.
   if (!why) out.openTab = 'browser_drawer_open { url, network: "server" (this machine, its localhost) or "client" (the person\'s own network), show: true }';
   return out;
 }
 
-export async function openDrawerTab({ alias, url, network, show }) {
-  const backend = drawerBackend();
-  if (!backend) return { ok: false, error: drawerUnavailableReason() };
+export async function openDrawerTab({ alias, url, network, show, device }) {
+  const backend = drawerBackend(device);
+  if (!backend) return { ok: false, error: device ? `No desktop app "${device}" with a browser drawer is connected.${remoteHosts.size ? ` Connected: ${listHosts().map(x => x.id).join(', ')}.` : ''}` : drawerUnavailableReason() };
   const net = normNetwork(network);
   if (net === undefined) return { ok: false, error: NETWORK_HINT };
   const ctx = callerContext.getStore() || {};
@@ -1016,7 +1152,7 @@ export async function openDrawerTab({ alias, url, network, show }) {
     if (!r.ok) return { ok: false, error: r.error };
     const key = DRAWER_PREFIX + r.tabId;
     keyBackend.set(key, backend);
-    return { ok: true, key, on: 'drawer', network: outNetwork(r.network), networkLabel: r.networkLabel, url: r.url, ...(r.warning ? { warning: r.warning } : {}) };
+    return { ok: true, key, on: 'drawer', ...hostField(backend), network: outNetwork(r.network), networkLabel: r.networkLabel, url: r.url, ...(r.warning ? { warning: r.warning } : {}) };
   } catch (err) { return { ok: false, error: err.message }; }
 }
 
