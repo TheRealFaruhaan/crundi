@@ -77,6 +77,33 @@ jobs:
           BIN=$(STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node scripts/stage-cef.mjs target/release)
           echo "GPUI_BIN=$BIN" >> "$GITHUB_ENV"
 
+      # A ready-to-run Linux build to download and try (the app, its browser
+      # host and CEF's files, real copies of the staged symlinks), kept a week.
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        working-directory: native-gpui
+        run: |
+          PKG="$RUNNER_TEMP/crundi-gpui-linux-x86_64"
+          rm -rf "$PKG" && mkdir -p "$PKG"
+          cp target/release/crundi-gpui target/release/crundi-browser-host "$PKG/"
+          for f in "$CEF_PATH"/*; do
+            case "$(basename "$f")" in include|cmake|libcef_dll|CMakeLists.txt|CREDITS.html|archive.json|cef_sandbox*|*.lib) continue ;; esac
+            cp -rL "$f" "$PKG/"
+          done
+          printf '%s\n' 'Crundi native PC client (GPUI), a CI build to try.' \
+            'Run ./crundi-gpui from this folder (Ubuntu 24.04 or newer, x86_64).' \
+            'Needs: libnss3 libgbm1 libasound2t64 libxkbcommon-x11-0 and a Vulkan driver (mesa-vulkan-drivers, or your GPU vendor'"'"'s).' > "$PKG/README.txt"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/crundi-gpui-linux-x86_64.tar.gz" crundi-gpui-linux-x86_64
+
+      - name: Upload the Linux build
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: crundi-gpui-linux-x86_64
+          path: ${{ runner.temp }}/crundi-gpui-linux-x86_64.tar.gz
+          retention-days: 7
+          compression-level: 0
+
       - name: Unit tests
         working-directory: native-gpui
         run: |
