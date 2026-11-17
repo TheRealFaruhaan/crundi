@@ -131,6 +131,9 @@ pub struct Drawer {
     pub view: AnyView,
     /// Pages are open (the project bar's Browser button shows its dot).
     pub has_pages: Rc<dyn Fn(&App) -> bool>,
+    /// The drawer is on the left (its menu's "Open on the left"): between the
+    /// projects list and the project, as the web's .brd-on-left.
+    pub left: Rc<dyn Fn(&App) -> bool>,
 }
 
 /// Register a part (once, at start).

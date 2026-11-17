@@ -400,24 +400,33 @@ impl Render for Shell {
             .child(self.project_bar(cx))
             .child(div().flex().flex_col().flex_1().min_h_0().child(body));
         // The drawer: beside the whole project area, below the top bar.
+        // On the left (its menu's "Open on the left"), between the projects
+        // list and the project: sidebar, drawer, divider, project (the web's
+        // .brd-on-left order). The owner, 18 Nov: it didn't switch sides.
         let drawer = registry::drawer(cx).filter(|_| self.drawer_open);
-        let main = div().flex().flex_1().min_h_0()
-            .child(self.sidebar(cx))
-            .child(project)
-            .when_some(drawer, |d, dr| d
-                .child(w::divider("drawer-split", self.dragging)
-                    .tooltip(w::tooltip("Drag to resize; double-click to reset"))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                        if e.click_count >= 2 { this.drawer_w = T::DRAWER_W; this.dragging = false; } else { this.dragging = true; }
-                        cx.notify();
-                    })))
-                .child(div().flex_none().w(self.drawer_w).h_full().min_h_0().child(dr.view)));
+        let left = drawer.as_ref().is_some_and(|d| (d.left)(cx));
+        let split = w::divider("drawer-split", self.dragging)
+            .tooltip(w::tooltip("Drag to resize; double-click to reset"))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                if e.click_count >= 2 { this.drawer_w = T::DRAWER_W; this.dragging = false; } else { this.dragging = true; }
+                cx.notify();
+            }));
+        let dview = drawer.map(|dr| div().flex_none().w(self.drawer_w).h_full().min_h_0().child(dr.view));
+        let main = div().flex().flex_1().min_h_0().child(self.sidebar(cx));
+        let main = match dview {
+            Some(v) if left => main.child(v).child(split).child(project),
+            Some(v) => main.child(project).child(split).child(v),
+            None => main.child(project),
+        };
         root
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
                 if !this.dragging { return; }
                 if e.pressed_button != Some(MouseButton::Left) { this.dragging = false; cx.notify(); return; }
                 let total = window.viewport_size().width;
-                this.drawer_w = (total - e.position.x).clamp(T::DRAWER_MIN, (total - T::DRAWER_RESERVE).max(T::DRAWER_MIN));
+                let left = registry::drawer(cx).is_some_and(|d| (d.left)(cx));
+                // On the left the drawer starts where the projects list ends.
+                let w = if left { e.position.x - if this.sidebar { T::SIDEBAR_W } else { T::SIDEBAR_FOLDED } } else { total - e.position.x };
+                this.drawer_w = w.clamp(T::DRAWER_MIN, (total - T::DRAWER_RESERVE).max(T::DRAWER_MIN));
                 cx.notify();
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))

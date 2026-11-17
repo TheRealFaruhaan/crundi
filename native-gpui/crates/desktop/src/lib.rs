@@ -83,6 +83,7 @@ pub fn init(window: &mut Window, cx: &mut App) {
     crundi_shell::register_drawer(cx, Drawer {
         view: view.into(),
         has_pages: Rc::new(|_| drawer::with(|d| d.projects.get(&d.project.to_lowercase()).is_some_and(|p| !p.tabs.is_empty()))),
+        left: Rc::new(|_| drawer::with(|d| d.side == "left")),
     });
     // The top bar's Cru button (the shell's hook).
     crundi_shell::register_action(cx, "cru", |_| cru::click());
