@@ -773,11 +773,11 @@ private fun ColumnScope.SettingsPanel(st: FactoryEditorState) {
             Field("5-hour, pause at %", modifier = Modifier.weight(1f)) { NumField("lim1", l.pauseAt5h, 50, 100) { v -> set("lim1") { it.copy(limits = it.limits.copy(pauseAt5h = if (v == 0) 100 else v)) } } }
             Field("Weekly, pause at %", modifier = Modifier.weight(1f)) { NumField("lim2", l.pauseAtWeek, 50, 100) { v -> set("lim2") { it.copy(limits = it.limits.copy(pauseAtWeek = if (v == 0) 100 else v)) } } }
         }
-        if (st.hasLimit("paceOnly")) CheckRow("Pause only when ahead of pace", l.paceOnly) { v -> set("lim5") { it.copy(limits = it.limits.copy(paceOnly = v)) } }
-        if (l.paceOnly && st.hasLimit("paceOnly")) {
+        if (st.hasLimit("paceOnly")) CheckRow("Pause only when ahead of pace", l.paceOnly == true) { v -> set("lim5") { it.copy(limits = it.limits.copy(paceOnly = v)) } }
+        if (l.paceOnly == true && st.hasLimit("paceOnly")) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Field("Always pause at %", "The hard ceiling, whatever the pace", modifier = Modifier.weight(1f)) { NumField("lim6", l.paceCeiling, 50, 100) { v -> set("lim6") { it.copy(limits = it.limits.copy(paceCeiling = if (v == 0) 100 else v)) } } }
-                Field("Resume when behind pace by", "Points. 0: wait for the reset", modifier = Modifier.weight(1f)) { NumField("lim7", l.paceResumeBehind, 0, 50) { v -> set("lim7") { it.copy(limits = it.limits.copy(paceResumeBehind = v)) } } }
+                Field("Always pause at %", "The hard ceiling, whatever the pace", modifier = Modifier.weight(1f)) { NumField("lim6", l.paceCeiling ?: 100, 50, 100) { v -> set("lim6") { it.copy(limits = it.limits.copy(paceCeiling = if (v == 0) 100 else v)) } } }
+                Field("Resume when behind pace by", "Points. 0: wait for the reset", modifier = Modifier.weight(1f)) { NumField("lim7", l.paceResumeBehind ?: 0, 0, 50) { v -> set("lim7") { it.copy(limits = it.limits.copy(paceResumeBehind = v)) } } }
             }
             Hint("Past the line above, it keeps going while the window's use is behind the time passed in it (say 85% used with 90% of the 5 hours gone), and pauses once it gets ahead. Paused that way, it carries on at the reset, or sooner once it is as many points behind pace as you set.")
         }

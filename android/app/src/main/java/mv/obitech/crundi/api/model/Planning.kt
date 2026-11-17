@@ -315,8 +315,12 @@ data class FactorySettings(
 )
 
 /** How hard a run may use the person's Claude usage (normalizeLimits). */
-/** paceOnly: past pauseAt, pause only when ahead of pace; always at paceCeiling (factory-model.js normalizeLimits). */
-@Serializable data class FactoryLimits(val pauseAt5h: Int = 100, val pauseAtWeek: Int = 100, val maxParallel: Int = 0, val oneAtATimeAbove: Int = 0, val paceOnly: Boolean = false, val paceCeiling: Int = 100, val paceResumeBehind: Int = 0)
+/**
+ * paceOnly: past pauseAt, pause only when ahead of pace; always at paceCeiling (factory-model.js normalizeLimits).
+ * The pace fields are null when the server's copy has none (an older server): a save then leaves them out
+ * rather than adding keys it never sent (FactoryJson.overlay skips a null the server did not have).
+ */
+@Serializable data class FactoryLimits(val pauseAt5h: Int = 100, val pauseAtWeek: Int = 100, val maxParallel: Int = 0, val oneAtATimeAbove: Int = 0, val paceOnly: Boolean? = null, val paceCeiling: Int? = null, val paceResumeBehind: Int? = null)
 @Serializable data class FactoryGatekeeper(val enabled: Boolean = false, val model: String = "haiku")
 @Serializable data class FactoryCaps(val maxHandoffs: Int = 200, val maxMinutes: Int = 480, val tokenBudget: Long = 0)
 
