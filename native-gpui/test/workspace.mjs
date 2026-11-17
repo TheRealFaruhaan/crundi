@@ -167,7 +167,7 @@ await T.until('then it is gone', (p) => !W(p).files.rows.some((r) => r.name === 
 // Upload into the folder on show, and Download.
 const scratch = join(T.OUT, 'scratch');
 mkdirSync(scratch, { recursive: true });
-const png = join(here, '..', 'specs', 'thinking', 'web-shimmer-frames-4x.png');
+const png = join(here, '..', 'crates', 'app', 'assets', 'icon-256.png'); // any PNG in the repo
 copyFileSync(png, join(scratch, 'shot.png'));
 await T.ui('pick-next', join(scratch, 'shot.png'));
 await T.act('files-upload');
