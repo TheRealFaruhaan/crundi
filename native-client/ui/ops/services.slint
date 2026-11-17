@@ -1,0 +1,380 @@
+// Ops area: Services (the web's renderServices, src/webapp-html.js ~13749):
+// the toolbar, the register form, one card per service (state, command,
+// uptime, the live usage strip, Start/Stop/Restart, Logs, Tunnel, Delete,
+// the exposure row: port, Off/Tunnel/Subdomain/Path, the link, the naming
+// form), the inline logs, and "Other forwards" (forwards no card shows).
+// OpsServices (the global) is what Rust reads, sets and handles: src/ops/services.rs.
+// It is exported to Rust by ui/ops/api.slint (one line per file there).
+
+import { Theme, Icons, Icon, PanelPage, Toolbar, AddButton, Card, CardHead, MetaLine, SmallBtn, StatusTag, Tones,
+    EmptyState, ErrorState, LoadingState, TextField, CheckRow, Select, Seg, ScrollThumb } from "../kit.slint";
+
+/// One service card, everything already worded by Rust.
+export struct OpsSvcCard {
+    key: string,
+    name: string,
+    // The pill's words (upper case) and the dot's tone: "running", "error", "".
+    status: string,
+    tone: string,
+    running: bool,
+    command: string,
+    // "· up 3m" ("" when not running).
+    uptime: string,
+    // The usage strip (.stat-strip): shown while running and measured.
+    stats: bool,
+    cpu: string,
+    cpu-tone: string,
+    cpu-line: string,
+    cpu-area: string,
+    mem: string,
+    mem-line: string,
+    mem-area: string,
+    // "pid 123", "2 containers", "no containers".
+    badge: string,
+    // The actions row's Tunnel button (only while no port and no tunnel).
+    tunnel-btn: bool,
+    // The exposure row (.svc-tunnel): a port, a tunnel or a forward.
+    expose: bool,
+    port-label: string,
+    // 0 Off, 1 Tunnel, 2 Subdomain, 3 Path.
+    mode: int,
+    // The address (a forward's or the tunnel's), or a state word.
+    link: string,
+    public: bool,
+    state-word: string,
+    state-tone: string,
+    // The forward on this port (its trash button), "" none.
+    fwd-host: string,
+    // The naming form (subdomain or path).
+    editing: bool,
+    edit-prefix: string,
+    edit-suffix: string,
+    edit-name: string,
+    edit-public: bool,
+    edit-gen: int,
+    // The inline logs.
+    logs-open: bool,
+    logs: string,
+}
+
+/// A forward no service card shows (.svc-other-row).
+export struct OpsSvcForward {
+    host: string,
+    url: string,
+    port: string,
+    public: bool,
+    // In OpsServices.projects (0: "No project").
+    project: int,
+}
+
+export global OpsServices {
+    /// A dialog of this screen covers the window (OpsOverlay sets Shell.modal-ops).
+    in-out property <bool> modal;
+    in property <bool> loading;
+    in property <bool> loaded;
+    in property <string> error;
+    in property <string> title: "Services";
+    in property <string> empty: "No services registered";
+    in property <[OpsSvcCard]> cards;
+    in property <[OpsSvcForward]> others;
+    /// "No project", then every project's alias (the other forwards' select).
+    in property <[string]> projects;
+    /// The sparklines' viewbox (the web's 100 × 20), set by Rust.
+    in property <float> spark-w;
+    in property <float> spark-h;
+
+    // The register form.
+    in-out property <bool> reg-open;
+    in-out property <int> reg-gen;
+    in-out property <string> reg-name;
+    in-out property <string> reg-command;
+    in-out property <string> reg-cwd;
+    in-out property <string> reg-stop;
+    in-out property <string> reg-port;
+
+    callback reload();
+    callback register-open();
+    callback register-submit();
+    callback register-cancel();
+    /// start, stop, restart, logs, delete, port (the Tunnel / Port button).
+    callback act(string, string);
+    /// The exposure switch: the card's key and 0..3 (Off, Tunnel, Subdomain, Path).
+    callback expose(string, int);
+    callback edit-name(string, string);
+    callback edit-public(string, bool);
+    callback edit-save(string);
+    callback edit-cancel();
+    callback fwd-remove(string);
+    callback fwd-project(string, int);
+    callback open-url(string);
+}
+
+/// An address that opens in the browser (.tunnel-link).
+component Link inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    min-width: Theme.sp-48;
+    preferred-width: t.preferred-width;
+    height: t.preferred-height;
+    t := Text {
+        width: parent.width;
+        text: root.text;
+        font-size: Theme.text-12;
+        color: ta.has-hover ? Theme.accent-hover : Theme.accent;
+        overflow: elide;
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// "public" (.svc-pub-tag): reachable without signing in.
+component PubTag inherits Rectangle {
+    height: t.preferred-height + Theme.sp-4;
+    width: t.preferred-width + Theme.sp-12;
+    border-radius: Theme.r-chip;
+    background: Theme.yellow-dim;
+    t := Text { text: "PUBLIC"; font-size: Theme.text-10; letter-spacing: Theme.track-wide; color: Theme.yellow; }
+}
+
+/// A muted mono word (.svc-tunnel-badge).
+component Badge inherits Text {
+    font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted;
+    vertical-alignment: center;
+}
+
+/// One readout of the usage strip (.stat-cell): the label, the value, the sparkline.
+component StatCell inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> line;
+    in property <string> area;
+    in property <color> stroke;
+    in property <color> fill;
+    horizontal-stretch: 1;
+    spacing: Theme.sp-8;
+    Text {
+        text: root.label; vertical-alignment: center;
+        font-size: Theme.text-10; font-weight: Theme.w-bold; letter-spacing: Theme.track-wide;
+        color: Theme.text-muted;
+    }
+    Text {
+        min-width: Theme.sp-48 + Theme.sp-16;
+        text: root.value; vertical-alignment: center;
+        font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-primary;
+    }
+    Rectangle {
+        horizontal-stretch: 1;
+        min-width: Theme.sp-32 + Theme.sp-4;
+        height: Theme.sp-20;
+        y: (parent.height - self.height) / 2;
+        // Zero-anchored area, then the line (sparkSvg); nothing below two samples.
+        if root.area != "": Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: OpsServices.spark-w; viewbox-height: OpsServices.spark-h;
+            fit: ImageFit.fill;
+            commands: root.area;
+            fill: root.fill;
+        }
+        if root.line != "": Path {
+            width: parent.width; height: parent.height;
+            viewbox-width: OpsServices.spark-w; viewbox-height: OpsServices.spark-h;
+            fit: ImageFit.fill;
+            commands: root.line;
+            stroke: root.stroke;
+            stroke-width: Theme.spin-stroke;
+        }
+    }
+}
+
+/// The inline logs (.svc-logs): mono, muted, scrolled to the end.
+component Logs inherits Rectangle {
+    in property <string> text;
+    height: min(Theme.pre-max-h, t.preferred-height + 2 * Theme.sp-10);
+    background: Theme.bg-primary;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: Theme.r-control;
+    clip: true;
+    fl := Flickable {
+        x: Theme.sp-10; y: Theme.sp-10;
+        width: parent.width - 2 * Theme.sp-10; height: parent.height - 2 * Theme.sp-10;
+        content-height: max(self.height, t.preferred-height);
+        changed content-height => { self.content-y = min(0px, self.height - self.content-height); }
+        t := Text {
+            width: fl.width;
+            text: root.text;
+            wrap: char-wrap;
+            font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted;
+        }
+    }
+    ScrollThumb { width: root.width; height: root.height; view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y; }
+}
+
+/// One service (.svc-card).
+component ServiceCard inherits Card {
+    in property <OpsSvcCard> c;
+    CardHead { name: root.c.name; tone: root.c.tone; tag: root.c.status; }
+    HorizontalLayout {
+        spacing: Theme.sp-4;
+        MetaLine { horizontal-stretch: 1; text: root.c.command; }
+        if root.c.uptime != "": Text { text: root.c.uptime; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.text-secondary; }
+    }
+    if root.c.stats: Rectangle {
+        background: Theme.bg-primary;
+        border-width: 1px; border-color: Theme.border-subtle;
+        border-radius: Theme.r-control;
+        HorizontalLayout {
+            padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+            padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+            spacing: Theme.sp-16;
+            StatCell { label: "CPU"; value: root.c.cpu; line: root.c.cpu-line; area: root.c.cpu-area; stroke: Tones.fg(root.c.cpu-tone); fill: Tones.bg(root.c.cpu-tone); }
+            StatCell { label: "MEMORY"; value: root.c.mem; line: root.c.mem-line; area: root.c.mem-area; stroke: Theme.sky; fill: Theme.sky-dim; }
+            if root.c.badge != "": Badge { text: root.c.badge; }
+        }
+    }
+    HorizontalLayout {
+        spacing: Theme.sp-6; alignment: start;
+        if root.c.running: SmallBtn { text: "Stop"; has-icon: true; icon: Icons.stop; clicked => { OpsServices.act(root.c.key, "stop"); } }
+        if root.c.running: SmallBtn { text: "Restart"; has-icon: true; icon: Icons.refresh; clicked => { OpsServices.act(root.c.key, "restart"); } }
+        if !root.c.running: SmallBtn { text: "Start"; kind: "primary"; has-icon: true; icon: Icons.play; clicked => { OpsServices.act(root.c.key, "start"); } }
+        SmallBtn { text: "Logs"; has-icon: true; icon: Icons.file-text; clicked => { OpsServices.act(root.c.key, "logs"); } }
+        if root.c.tunnel-btn: SmallBtn { text: "Tunnel"; has-icon: true; icon: Icons.globe; clicked => { OpsServices.act(root.c.key, "port"); } }
+        SmallBtn { text: "Delete"; kind: "danger"; has-icon: true; icon: Icons.trash; clicked => { OpsServices.act(root.c.key, "delete"); } }
+    }
+    if root.c.expose: VerticalLayout {
+        spacing: Theme.sp-8;
+        Rectangle { height: 1px; background: Theme.border-subtle; }
+        HorizontalLayout {
+            spacing: Theme.sp-6;
+            VerticalLayout { alignment: center; Icon { width: Theme.icon-md; height: Theme.icon-md; source: Icons.globe; tint: Theme.text-muted; } }
+            SmallBtn { text: root.c.port-label; clicked => { OpsServices.act(root.c.key, "port"); } }
+            Seg {
+                options: ["Off", "Tunnel", "Subdomain", "Path"];
+                selected: root.c.mode;
+                picked(i) => { OpsServices.expose(root.c.key, i); }
+            }
+            if root.c.link != "": Link { horizontal-stretch: 1; y: (parent.height - self.height) / 2; text: root.c.link; clicked => { OpsServices.open-url(root.c.link); } }
+            if root.c.link != "" && root.c.public: PubTag { y: (parent.height - self.height) / 2; }
+            if root.c.link == "": Badge { text: root.c.state-word; color: root.c.state-tone == "" ? Theme.text-muted : Tones.fg(root.c.state-tone); }
+            if root.c.fwd-host != "": SmallBtn { has-icon: true; icon: Icons.trash; kind: "danger"; clicked => { OpsServices.fwd-remove(root.c.fwd-host); } }
+            Rectangle { horizontal-stretch: root.c.link != "" ? 0 : 1; }
+        }
+        if root.c.editing: VerticalLayout {
+            spacing: Theme.sp-8;
+            Rectangle { height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                spacing: Theme.sp-8;
+                if root.c.edit-prefix != "": Badge { text: root.c.edit-prefix; }
+                name := TextField {
+                    horizontal-stretch: 1;
+                    min-width: Theme.sp-48 + Theme.sp-40;
+                    height: Theme.control-sm;
+                    mono: true;
+                    placeholder: "name";
+                    text: root.c.edit-name;
+                    edited(t) => { OpsServices.edit-name(root.c.key, t); }
+                    accepted => { OpsServices.edit-save(root.c.key); }
+                    escape => { OpsServices.edit-cancel(); }
+                    property <int> gen: root.c.edit-gen;
+                    changed gen => { self.focus-input(); self.select-all(); }
+                    init => { self.focus-input(); self.select-all(); }
+                }
+                Badge { text: root.c.edit-suffix; }
+                SmallBtn { text: "Save"; kind: "primary"; has-icon: true; icon: Icons.check; clicked => { OpsServices.edit-save(root.c.key); } }
+                SmallBtn { text: "Cancel"; clicked => { OpsServices.edit-cancel(); } }
+            }
+            CheckRow {
+                checked: root.c.edit-public;
+                text: "Public — reachable without signing in to Crundi";
+                toggled(on) => { OpsServices.edit-public(root.c.key, on); }
+            }
+        }
+    }
+    if root.c.logs-open: Logs { text: root.c.logs; }
+}
+
+/// "Register a service" (.svc-register-form), under the toolbar.
+component RegisterForm inherits Rectangle {
+    background: Theme.bg-card;
+    border-width: 1px; border-color: Theme.border;
+    border-radius: Theme.r-card;
+    VerticalLayout {
+        padding: Theme.sp-12;
+        spacing: Theme.sp-8;
+        Text { text: "Register a service"; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+        name := TextField {
+            mono: true; placeholder: "Service name"; text <=> OpsServices.reg-name;
+            init => { self.focus-input(); }
+            property <int> gen: OpsServices.reg-gen;
+            changed gen => { self.focus-input(); }
+        }
+        TextField { mono: true; placeholder: "Command (e.g. npm run dev)"; text <=> OpsServices.reg-command; }
+        TextField { mono: true; placeholder: "Working directory (optional)"; text <=> OpsServices.reg-cwd; }
+        TextField { mono: true; placeholder: "Stop command (optional, e.g. docker compose down)"; text <=> OpsServices.reg-stop; }
+        TextField { mono: true; placeholder: "Tunnel port (optional) — expose via Cloudflare"; text <=> OpsServices.reg-port; }
+        HorizontalLayout {
+            spacing: Theme.sp-6; alignment: start;
+            SmallBtn { text: "Register"; kind: "primary"; has-icon: true; icon: Icons.check; clicked => { OpsServices.register-submit(); } }
+            SmallBtn { text: "Cancel"; clicked => { OpsServices.register-cancel(); } }
+        }
+    }
+}
+
+/// "Other forwards" (.svc-other-fwd): forwards on ports no service records.
+component OtherForwards inherits Rectangle {
+    border-width: 1px; border-color: Theme.border;
+    border-radius: Theme.r-control;
+    VerticalLayout {
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        spacing: Theme.sp-4;
+        Text { text: "Other forwards"; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+        Text {
+            text: "Not linked to a service. Pick the project each one serves: outside collaborators on that project can open it.";
+            font-size: Theme.text-11; color: Theme.text-muted; wrap: word-wrap;
+        }
+        for f in OpsServices.others: VerticalLayout {
+            spacing: Theme.sp-4;
+            Rectangle { height: 1px; background: Theme.border-subtle; }
+            HorizontalLayout {
+                spacing: Theme.sp-6;
+                Link { horizontal-stretch: 1; y: (parent.height - self.height) / 2; text: f.url; clicked => { OpsServices.open-url(f.url); } }
+                if f.public: PubTag { y: (parent.height - self.height) / 2; }
+                Badge { text: "port " + f.port; }
+                Select {
+                    width: Theme.sp-48 + Theme.sp-48 + Theme.sp-40;
+                    height: Theme.control-sm;
+                    options: OpsServices.projects;
+                    selected: f.project;
+                    picked(i) => { OpsServices.fwd-project(f.host, i); }
+                }
+                SmallBtn { has-icon: true; icon: Icons.trash; kind: "danger"; clicked => { OpsServices.fwd-remove(f.host); } }
+            }
+        }
+    }
+}
+
+/// The screen (a tab, or a panel in a workbench pane: `embedded`, `key`).
+export component OpsServicesView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    PanelPage {
+        embedded: root.embedded;
+        Toolbar {
+            title: OpsServices.title;
+            AddButton { text: "Register service"; clicked => { OpsServices.register-open(); } }
+        }
+        if OpsServices.reg-open: RegisterForm { }
+        // A failed load never reads as "nothing registered": the error with Retry instead.
+        if OpsServices.error != "" && (!OpsServices.loaded || OpsServices.cards.length == 0): ErrorState { text: OpsServices.error; retried => { OpsServices.reload(); } }
+        if OpsServices.loading && !OpsServices.loaded: LoadingState { }
+        if OpsServices.error == "" && OpsServices.loaded && OpsServices.cards.length == 0: EmptyState { icon: Icons.server; title: OpsServices.empty; }
+        for c in OpsServices.cards: ServiceCard { c: c; }
+        if OpsServices.others.length > 0: OtherForwards { }
+    }
+}
+
+/// This screen's dialogs over the whole window: none of its own (it uses the
+/// shared confirm and prompt).
+export component OpsServicesOverlay inherits Rectangle {
+}

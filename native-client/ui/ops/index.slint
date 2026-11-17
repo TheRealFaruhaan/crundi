@@ -1,0 +1,54 @@
+// The ops area (AREAS.md): phase 5: Services, forwards, Docker, Secrets, Skills, Usage, Settings, Homepool, Info, Panels, What's new.
+//
+// The area's entry point: main.slint and the workbench reach the area only
+// through OpsView (a tab, or a panel in a workbench pane) and OpsOverlay (the
+// area's dialogs, over the whole window). Each screen lives in its own file
+// (ui/ops/<screen>.slint: its global, its view, its overlay) with its Rust in
+// src/ops/<screen>.rs; this file only routes to them.
+//
+// Kinds: services, docker, homepool, info, secrets, settings, panels (tabs); widget (panel)
+
+import { Theme } from "../kit.slint";
+import { Shell } from "../hooks.slint";
+import { OpsServices, OpsServicesView, OpsServicesOverlay } from "services.slint";
+import { OpsDocker, OpsDockerView, OpsDockerOverlay } from "docker.slint";
+import { OpsHomepool, OpsHomepoolView, OpsHomepoolOverlay } from "homepool.slint";
+import { OpsInfo, OpsInfoView, OpsInfoOverlay } from "info.slint";
+import { OpsVault, OpsVaultView, OpsVaultOverlay } from "vault.slint";
+import { OpsSettings, OpsSettingsView, OpsSettingsOverlay } from "settings.slint";
+import { OpsSkills, OpsSkillsView, OpsSkillsOverlay } from "skills.slint";
+import { OpsPanels, OpsPanelsView, OpsPanelsOverlay } from "panels.slint";
+import { OpsExtras, OpsExtrasView, OpsExtrasOverlay } from "extras.slint";
+
+/// One of the area's screens: `kind` is the tab's id (or the pane's kind),
+/// `key` the pane's key when embedded in a workbench pane ("" in a tab).
+export component OpsView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    if root.kind == "services": OpsServicesView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "docker": OpsDockerView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "homepool": OpsHomepoolView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "info": OpsInfoView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "secrets": OpsVaultView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "settings": OpsSettingsView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "panels" || root.kind == "widget": OpsPanelsView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+}
+
+/// The area's layer over the whole window (its dialogs and popovers); it
+/// takes no input where it draws nothing.
+export component OpsOverlay inherits Rectangle {
+    // Any screen's modal open: the window keeps the pointer off what is under it.
+    property <bool> any-modal: OpsServices.modal || OpsDocker.modal || OpsHomepool.modal || OpsInfo.modal || OpsVault.modal || OpsSettings.modal || OpsSkills.modal || OpsPanels.modal || OpsExtras.modal;
+    changed any-modal => { Shell.modal-ops = self.any-modal; }
+    OpsServicesOverlay { width: parent.width; height: parent.height; }
+    OpsDockerOverlay { width: parent.width; height: parent.height; }
+    OpsHomepoolOverlay { width: parent.width; height: parent.height; }
+    OpsInfoOverlay { width: parent.width; height: parent.height; }
+    OpsVaultOverlay { width: parent.width; height: parent.height; }
+    OpsSettingsOverlay { width: parent.width; height: parent.height; }
+    OpsSkillsOverlay { width: parent.width; height: parent.height; }
+    OpsPanelsOverlay { width: parent.width; height: parent.height; }
+    OpsExtrasOverlay { width: parent.width; height: parent.height; }
+}

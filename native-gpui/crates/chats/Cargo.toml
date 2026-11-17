@@ -1,0 +1,21 @@
+[package]
+name = "crundi-chats"
+description = "A chat pane: the chat's state and the pane that holds its log and composer"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+serde_json.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-workbench.workspace = true
+crundi-chat-composer.workspace = true
+crundi-chat-log.workspace = true
+crundi-chat-model.workspace = true
+crundi-shell.workspace = true

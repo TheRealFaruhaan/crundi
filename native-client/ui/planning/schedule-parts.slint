@@ -1,0 +1,53 @@
+// Schedules (4.5, 4.6): the dialog's small parts, shared by
+// schedule.slint and schedule-webhook.slint.
+
+import { Theme, FormLabel } from "../kit.slint";
+
+/// A field's label (.sm-label) with its hint (.sm-hint, not upper case).
+export component Label inherits HorizontalLayout {
+    in property <string> text;
+    in property <string> hint;
+    in property <bool> first;
+    padding-top: root.first ? 0 : Theme.sp-12;
+    padding-bottom: Theme.sp-4;
+    spacing: Theme.sp-4;
+    FormLabel { text: root.text; horizontal-stretch: 0; }
+    if root.hint != "": Text { text: root.hint; font-size: Theme.text-11; color: Theme.text-muted; wrap: word-wrap; horizontal-stretch: 1; }
+    if root.hint == "": Rectangle { horizontal-stretch: 1; }
+}
+
+/// A note under a field (.sm-note). Slint draws no inline code chips: the
+/// web's <code> spans are plain text here.
+export component Note inherits VerticalLayout {
+    in property <string> text;
+    padding-top: Theme.sp-6;
+    Text { text: root.text; wrap: word-wrap; font-size: Theme.text-12; color: Theme.text-muted; }
+}
+
+/// A read-only field (the webhook's URL and secret): selectable, all of it
+/// selected when it takes the focus (the web's onfocus="this.select()").
+export component ReadField inherits Rectangle {
+    in property <string> text;
+    height: Theme.control;
+    // A long URL must not widen the dialog: the input is placed, not laid out.
+    min-width: 0;
+    border-radius: Theme.r-control;
+    background: Theme.bg-tertiary;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border;
+    clip: true;
+    input := TextInput {
+        x: Theme.sp-10;
+        width: parent.width - 2 * Theme.sp-10;
+        height: parent.height;
+        text: root.text;
+        read-only: true;
+        single-line: true;
+        vertical-alignment: center;
+        color: Theme.text-primary;
+        font-size: Theme.text-13;
+        selection-background-color: Theme.selection;
+        changed has-focus => { if self.has-focus { self.select-all(); } }
+    }
+}
+

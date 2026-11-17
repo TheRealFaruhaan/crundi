@@ -1,0 +1,164 @@
+// Ops area (skills + info helpers): the small parts the Skills, Backup,
+// Usage and Info screens share (the web's .bk-hint, .sk-note, .sk-form,
+// .bk-bar, .info-section). Only ui/ops/skills*.slint and ui/ops/info*.slint
+// use these.
+
+import { Theme, Icons, Icon } from "../kit.slint";
+
+/// A muted hint line (.bk-hint), wrapping.
+export component SkHint inherits Text {
+    font-size: Theme.text-11;
+    color: Theme.text-muted;
+    wrap: word-wrap;
+    horizontal-stretch: 1;
+}
+
+/// A red error line (.bk-err).
+export component SkErr inherits Text {
+    font-size: Theme.text-12;
+    color: Theme.red;
+    wrap: word-wrap;
+    horizontal-stretch: 1;
+}
+
+/// A sub-heading inside a section (.bk-group > h5, .sk-group > h5).
+export component SkHead inherits Text {
+    font-size: Theme.text-13;
+    font-weight: Theme.w-semibold;
+    color: Theme.text-primary;
+    vertical-alignment: center;
+}
+
+/// A field's label (.bk-grid label).
+export component SkLabel inherits Text {
+    font-size: Theme.text-12;
+    color: Theme.text-secondary;
+    wrap: word-wrap;
+}
+
+/// A note with an icon (.sk-note; `warn`: the amber edge).
+export component SkNote inherits Rectangle {
+    in property <image> icon;
+    in property <bool> warn;
+    in property <string> text;
+    border-radius: Theme.r-control;
+    background: root.warn ? Theme.yellow-dim : Theme.bg-tertiary;
+    border-width: root.warn ? 1px : 0px;
+    border-color: Theme.yellow-edge;
+    HorizontalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10;
+        padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+        spacing: Theme.sp-8;
+        VerticalLayout { alignment: start; padding-top: Theme.sp-2; Icon { width: Theme.icon-md; height: Theme.icon-md; source: root.icon; tint: Theme.text-secondary; } }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.sp-8;
+            if root.text != "": Text { text: root.text; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+            @children
+        }
+    }
+}
+
+/// An inline form (.sk-form): a box on the page's colour, its label on a line
+/// of its own, then the fields and buttons in a row.
+export component SkForm inherits Rectangle {
+    in property <string> label;
+    border-radius: Theme.r-field;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg-primary;
+    VerticalLayout {
+        padding: Theme.sp-10;
+        spacing: Theme.sp-8;
+        if root.label != "": Text { text: root.label; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        HorizontalLayout {
+            spacing: Theme.sp-8;
+            @children
+        }
+    }
+}
+
+/// A progress bar (.bk-bar, .sys-bar): `frac` 0..1, or below 0 for a bar
+/// that does not know (it slides).
+export component SkBar inherits Rectangle {
+    in property <float> frac;
+    in property <color> fill: Theme.accent;
+    in property <length> thick: Theme.sp-4;
+    height: root.thick;
+    border-radius: root.thick / 2;
+    background: Theme.bg-tertiary;
+    clip: true;
+    if root.frac >= 0: Rectangle {
+        x: 0px;
+        width: parent.width * min(1, root.frac);
+        height: parent.height;
+        border-radius: root.thick / 2;
+        background: root.fill;
+        animate width { duration: Theme.motion; }
+    }
+    if root.frac < 0: Rectangle {
+        property <length> seg: Theme.sp-48 + Theme.sp-32;
+        x: (parent.width + self.seg) * mod(animation-tick() / Theme.shimmer, 1) - self.seg;
+        width: self.seg;
+        height: parent.height;
+        border-radius: root.thick / 2;
+        background: root.fill;
+    }
+}
+
+/// A clickable text link (accent, underlined on hover).
+export component SkLink inherits Text {
+    callback clicked();
+    color: lt.has-hover ? Theme.accent-hover : Theme.accent;
+    font-size: Theme.text-12;
+    lt := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// A section card (.info-section): bg-secondary, a border, its h4 title
+/// (muted, upper case, wide) and the children under it.
+export component SkSection inherits Rectangle {
+    in property <string> title;
+    background: Theme.bg-secondary;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: Theme.border;
+    VerticalLayout {
+        padding: Theme.sp-16;
+        spacing: Theme.sp-10;
+        if root.title != "": Text {
+            text: root.title;
+            font-size: Theme.text-12; font-weight: Theme.w-semibold;
+            letter-spacing: Theme.track-wide;
+            color: Theme.text-muted;
+        }
+        @children
+    }
+}
+
+/// A two-sided row (.info-row, .sys-line): the label left, the value right
+/// (mono), a hairline under it when `rule`.
+export component SkRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> rule: true;
+    in property <bool> link;
+    in property <color> value-color: Theme.text-primary;
+    callback clicked();
+    min-height: lay.preferred-height;
+    lay := HorizontalLayout {
+        padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+        spacing: Theme.sp-8;
+        Text { text: root.label; font-size: Theme.text-13; color: Theme.text-secondary; vertical-alignment: center; }
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: root.value;
+            horizontal-alignment: right; vertical-alignment: center;
+            font-family: Theme.mono; font-size: Theme.text-12;
+            color: root.link ? (vt.has-hover ? Theme.accent-hover : Theme.accent) : root.value-color;
+            wrap: word-wrap;
+            max-width: root.width * Theme.info-value-share;
+            vt := TouchArea { enabled: root.link; mouse-cursor: root.link ? pointer : default; clicked => { root.clicked(); } }
+        }
+    }
+    if root.rule: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+}

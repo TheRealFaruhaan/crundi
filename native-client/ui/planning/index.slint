@@ -1,0 +1,45 @@
+// The planning area (AREAS.md): phase 4: Kanban, Mind map, Notes, Schedules, webhooks, Factories.
+//
+// This file is the area's entry point: main.slint and the workbench reach
+// the area only through PlanningView (a tab, or a panel in a workbench pane) and
+// PlanningOverlay (the area's dialogs, over the whole window). Everything else
+// the area draws lives in ui/planning/ and is imported from here. What Rust
+// sets and hears (globals, and the structs of their models) goes in
+// ui/planning/api.slint, named with the Planning prefix.
+//
+// Kinds: kanban, notes, mindmap, factories, schedule (tabs); kanban, notes, mindmap, factory (panels)
+
+import { Theme, Icons, PanelPage, EmptyState } from "../kit.slint";
+import { PlanningUi, PlanningKanban, PlanningAsk } from "api.slint";
+import { KanbanView } from "kanban.slint";
+import { DragClone, ClipPop, AskDialog } from "overlay.slint";
+import { MindmapView, MindmapOverlay } from "mindmap.slint";
+import { NotesView, NotesOverlay } from "notes.slint";
+import { ScheduleView, ScheduleOverlay } from "schedule.slint";
+import { FactoriesView, FactoriesOverlay } from "factories.slint";
+
+/// One of the area's screens: `kind` is the tab's id (or the pane's kind),
+/// `key` the pane's key when embedded in a workbench pane ("" in a tab).
+export component PlanningView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    if root.kind == "kanban": KanbanView { width: parent.width; height: parent.height; embedded: root.embedded; }
+    if root.kind == "mindmap": MindmapView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "notes": NotesView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "schedule": ScheduleView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.kind == "factories" || root.kind == "factory": FactoriesView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+}
+
+/// The area's layer over the whole window (its dialogs and popovers); it
+/// takes no input where it draws nothing.
+export component PlanningOverlay inherits Rectangle {
+    if PlanningKanban.clip-task != "": ClipPop { width: root.width; height: root.height; }
+    if PlanningAsk.open: AskDialog { width: root.width; height: root.height; }
+    MindmapOverlay { width: root.width; height: root.height; }
+    NotesOverlay { width: root.width; height: root.height; }
+    ScheduleOverlay { width: root.width; height: root.height; }
+    FactoriesOverlay { width: root.width; height: root.height; }
+    if PlanningKanban.drag-id != "": DragClone { }
+}

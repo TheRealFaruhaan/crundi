@@ -1,0 +1,18 @@
+[package]
+name = "crundi-shell"
+description = "The window: frameless, the top bar, the projects sidebar, the project tab bar, the tab host, sign-in (Lead)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+open.workspace = true

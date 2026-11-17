@@ -1,0 +1,28 @@
+// The ops area's face to Rust (AREAS.md): every global Rust reads, sets or
+// handles (`w.global::<crate::OpsUi>()`), and the structs of their models.
+// Export them all, named with the Ops prefix; components don't go here
+// (ui/ops/index.slint and the files it imports draw the screens).
+
+/// The area's state for Rust (src/ops/): add properties and callbacks here
+/// or in more Ops* globals.
+export global OpsUi {
+    in-out property <bool> ready;
+}
+
+// One line per screen file: its globals and the structs Rust builds.
+export { OpsServices, OpsSvcCard, OpsSvcForward } from "services.slint";   // services: add this file's structs to this line
+export { OpsDocker, OpsDkChip, OpsDkSeg, OpsDkStat, OpsDkBay, OpsDkCtr, OpsDkSvc, OpsDkStack, OpsDkRow, OpsDkFwd, OpsDkGroup, OpsDkKv, OpsDkDisk, OpsDkAct, OpsDkPort, OpsDkLog, OpsDkChart } from "docker.slint";   // docker
+export { OpsHomepool, OpsHpTab, OpsHpStat, OpsHpNode, OpsHpNet, OpsHpUse, OpsHpKey, OpsHpReq, OpsHpLog, OpsHpCheck } from "homepool.slint";   // homepool
+export { OpsInfo, OpsInfoLog, OpsInfoSys, OpsMaintTask, OpsCollabRow, OpsCollabPerson, OpsInfoCheck } from "info.slint";   // info: add this file's structs to this line
+export { OpsVault, OpsVaultReq, OpsVaultSecret } from "vault.slint";   // vault
+export { OpsSettings, OpsSettingsOAuth, OpsSettingsChannel, OpsSettingsNotify, OpsSettingsSession, OpsSettingsCheck } from "settings.slint";   // settings
+export { OpsSkills, OpsSkillRow, OpsSkillFile, OpsSkillPick, OpsBkLine, OpsBkItem, OpsLrItem } from "skills.slint";   // skills: add this file's structs to this line
+export { OpsPanels, OpsPanelItem, OpsPanelSel, OpsPanelVersion, OpsPanelShot, OpsPanelPick, OpsPanelGrantItem, OpsPanelFrame, OpsPanelChip, OpsPanelDock } from "panels.slint";   // panels: add this file's structs to this line
+export { OpsExtras, OpsApprItem, OpsApprAct, OpsWnStep, OpsWnKey } from "extras.slint";   // extras
+
+// ── The export chain (the Lead's line: keep it last, don't change it) ──
+// Slint allows one `export *` per file: main.slint re-exports
+// workspace/api.slint, which re-exports planning's, then ops', then
+// desktop's, so every area's globals and structs reach Rust. Don't add
+// another `export *` here.
+export * from "../desktop/api.slint";

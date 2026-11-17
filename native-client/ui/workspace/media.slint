@@ -1,0 +1,247 @@
+// The Media tab and panel (the web's renderMediaBrowser, .media-panel): the
+// toolbar (Upload, search, the filter and scope chips) and the grid of
+// cards; and the lightbox (#media-lightbox) a card's View opens.
+
+import { Theme, Icons, Icon, ScrollThumb, Tip, SoftShadow } from "parts.slint";
+import { WorkspaceUi, WorkspaceMediaCard } from "api.slint";
+import { WsTone } from "files.slint";
+import { ErrorState } from "../kit.slint";
+
+/// A filter chip (.media-chip): a pill; on: accent fill.
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> has-icon;
+    in property <bool> on;
+    callback clicked();
+    height: Theme.control-sm;
+    width: lay.preferred-width;
+    border-radius: Theme.r-pill; border-width: 1px;
+    background: root.on ? Theme.accent : Theme.bg-tertiary;
+    border-color: root.on || ta.has-hover ? Theme.accent : Theme.border;
+    property <color> fg: root.on ? Theme.white : ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12; spacing: Theme.sp-6;
+        if root.has-icon: VerticalLayout { alignment: center; Icon { source: root.icon; width: Theme.icon-md; height: Theme.icon-md; tint: root.fg; } }
+        Text { text: root.text; vertical-alignment: center; font-size: Theme.text-12; color: root.fg; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// A card's small button (.media-actions button).
+component CardBtn inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    callback clicked();
+    height: Theme.sp-24;
+    width: lay.preferred-width;
+    border-radius: Theme.r-control; border-width: 1px;
+    border-color: !root.enabled ? Theme.border : ta.has-hover ? (root.danger ? Theme.red : Theme.accent) : Theme.border;
+    opacity: root.enabled ? 1 : Theme.o-dim;
+    property <color> fg: !root.enabled ? Theme.text-muted : ta.has-hover ? (root.danger ? Theme.red : Theme.text-primary) : Theme.text-secondary;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-8; padding-right: Theme.sp-8; spacing: Theme.sp-4;
+        VerticalLayout { alignment: center; Icon { source: root.icon; width: Theme.icon-sm; height: Theme.icon-sm; tint: root.fg; } }
+        if root.text != "": Text { text: root.text; vertical-alignment: center; font-size: Theme.text-11; color: root.fg; }
+    }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Tip { on: ta.has-hover; text: root.tip; }
+}
+
+component MediaCard inherits Rectangle {
+    in property <WorkspaceMediaCard> c;
+    border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+    background: Theme.bg-secondary;
+    clip: true;
+    Tip { on: card-ta.has-hover && root.c.has-path; text: "Drag onto a terminal to insert this path"; }
+    card-ta := TouchArea {}
+    VerticalLayout {
+        // The thumbnail.
+        Rectangle {
+            height: Theme.ws-media-thumb;
+            background: Theme.ws-checker;
+            clip: true;
+            if root.c.has-thumb: Image { width: parent.width; height: parent.height; source: root.c.thumb; image-fit: cover; }
+            if !root.c.has-thumb: VerticalLayout {
+                alignment: center; spacing: Theme.sp-6;
+                HorizontalLayout { alignment: center; Icon { source: WsTone.icon(root.c.kind == "image" ? "image" : root.c.kind == "pdf" ? "file-text" : root.c.kind == "video" ? "film" : root.c.kind == "audio" ? "music" : "file"); width: Theme.sp-32 + Theme.sp-2; height: self.width; tint: Theme.text-muted; } }
+                Text { text: root.c.ext; horizontal-alignment: center; font-size: Theme.text-10; letter-spacing: Theme.track-wide; color: Theme.text-muted; }
+            }
+            // The kind's badge, top left.
+            Rectangle {
+                x: Theme.sp-6; y: Theme.sp-6; width: Theme.sp-20; height: Theme.sp-20;
+                border-radius: Theme.r-control; background: Theme.play-bg;
+                Icon { source: WsTone.icon(root.c.kind == "image" ? "image" : root.c.kind == "pdf" ? "file-text" : root.c.kind == "video" ? "film" : root.c.kind == "audio" ? "music" : "file"); width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.white; }
+            }
+            TouchArea { mouse-cursor: pointer; clicked => { WorkspaceUi.media-open(root.c.id); } }
+        }
+        // The name and the line under it.
+        VerticalLayout {
+            padding-left: Theme.sp-10; padding-right: Theme.sp-10; padding-top: Theme.sp-8; padding-bottom: Theme.sp-8;
+            spacing: Theme.sp-4;
+            Text { text: root.c.name; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; }
+            HorizontalLayout {
+                spacing: Theme.sp-6;
+                if root.c.project != "": Text { text: root.c.project; font-size: Theme.text-10; color: Theme.text-muted; overflow: elide; }
+                if root.c.link-state == "none": Text { text: "Unlinked"; font-size: Theme.text-10; color: Theme.text-muted; }
+                if root.c.link-state != "none": HorizontalLayout {
+                    spacing: Theme.sp-2;
+                    Icon { source: Icons.external-link; width: Theme.sp-10; height: Theme.sp-10; tint: root.c.link-state == "deleted" ? Theme.text-muted : Theme.accent-hover; }
+                    Text {
+                        text: root.c.link-state == "deleted" ? root.c.link + " (deleted)" : root.c.link-label;
+                        font-size: Theme.text-10; color: root.c.link-state == "deleted" ? Theme.text-muted : Theme.accent-hover; overflow: elide;
+                        jt := TouchArea { enabled: root.c.link-state != "deleted"; mouse-cursor: pointer; clicked => { WorkspaceUi.media-jump(root.c.id); } }
+                    }
+                    Tip { on: jt.has-hover; text: "Jump to " + root.c.link; }
+                }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+        // The actions.
+        HorizontalLayout {
+            padding-left: Theme.sp-10; padding-right: Theme.sp-10; padding-bottom: Theme.sp-10;
+            spacing: Theme.sp-4; alignment: start;
+            if root.c.kind != "other": CardBtn { text: "View"; icon: Icons.image; tip: "Preview"; clicked => { WorkspaceUi.media-open(root.c.id); } }
+            if root.c.kind == "other": CardBtn { text: "Get"; icon: Icons.download; tip: "Download"; clicked => { WorkspaceUi.media-get(root.c.id); } }
+            if root.c.has-path: CardBtn { icon: Icons.copy; tip: "Copy file path"; clicked => { WorkspaceUi.media-copy(root.c.id); } }
+            if root.c.link-state != "none": CardBtn { icon: Icons.external-link; tip: "Jump to source"; enabled: root.c.link-state != "deleted"; clicked => { WorkspaceUi.media-jump(root.c.id); } }
+            CardBtn { icon: Icons.trash; tip: "Delete"; danger: true; clicked => { WorkspaceUi.media-delete(root.c.id); } }
+        }
+    }
+}
+
+export component MediaView inherits Rectangle {
+    background: Theme.bg-primary;
+    VerticalLayout {
+        // The toolbar (.media-toolbar).
+        Rectangle {
+            height: tb.preferred-height;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            tb := HorizontalLayout {
+                padding-left: Theme.sp-12; padding-right: Theme.sp-12; padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                spacing: Theme.sp-8;
+                Rectangle {
+                    width: ul.preferred-width; height: Theme.control-sm + Theme.sp-2;
+                    border-radius: Theme.r-control;
+                    background: ut.has-hover ? Theme.accent-hover : Theme.accent;
+                    ul := HorizontalLayout {
+                        padding-left: Theme.sp-12; padding-right: Theme.sp-12; spacing: Theme.sp-6;
+                        VerticalLayout { alignment: center; Icon { source: Icons.upload; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.white; } }
+                        Text { text: "Upload"; vertical-alignment: center; font-size: Theme.text-13; color: Theme.white; }
+                    }
+                    ut := TouchArea { mouse-cursor: pointer; clicked => { WorkspaceUi.media-upload(); } }
+                }
+                Rectangle {
+                    width: Theme.ws-search-w; height: Theme.control-sm + Theme.sp-2;
+                    border-radius: Theme.r-control; border-width: 1px;
+                    border-color: si.has-focus ? Theme.accent : Theme.border;
+                    background: Theme.bg-primary;
+                    si := TextInput {
+                        x: Theme.sp-10; width: parent.width - Theme.sp-20;
+                        single-line: true; vertical-alignment: center;
+                        text: WorkspaceUi.media-q;
+                        font-size: Theme.text-12; font-family: Theme.mono; color: Theme.text-primary;
+                        selection-background-color: Theme.selection;
+                        edited => { WorkspaceUi.media-search(self.text); }
+                    }
+                    if si.text == "": Text { x: Theme.sp-10; height: parent.height; vertical-alignment: center; text: "Search media…"; font-size: Theme.text-12; font-family: Theme.mono; color: Theme.text-muted; }
+                }
+                Chip { text: "All"; on: WorkspaceUi.media-kind == "all"; clicked => { WorkspaceUi.media-set-kind("all"); } }
+                Chip { text: "Kanban"; has-icon: true; icon: Icons.kanban; on: WorkspaceUi.media-kind == "kanban"; clicked => { WorkspaceUi.media-set-kind("kanban"); } }
+                Chip { text: "Mindmap"; has-icon: true; icon: Icons.mindmap; on: WorkspaceUi.media-kind == "mindmap"; clicked => { WorkspaceUi.media-set-kind("mindmap"); } }
+                Chip { text: "Unlinked"; on: WorkspaceUi.media-kind == "unlinked"; clicked => { WorkspaceUi.media-set-kind("unlinked"); } }
+                Rectangle { horizontal-stretch: 1; }
+                if WorkspaceUi.media-has-project: Chip { text: "This project"; on: WorkspaceUi.media-scope == "project"; clicked => { WorkspaceUi.media-set-scope("project"); } }
+                Chip { text: "All projects"; on: WorkspaceUi.media-scope == "all"; clicked => { WorkspaceUi.media-set-scope("all"); } }
+            }
+        }
+        // The grid.
+        body := Rectangle {
+            vertical-stretch: 1;
+            property <length> pad: Theme.sp-12;
+            property <length> gap: Theme.sp-12;
+            property <int> cols: max(1, floor((self.width - 2 * self.pad + self.gap) / (Theme.ws-media-card + self.gap)));
+            property <length> cw: (self.width - 2 * self.pad - (self.cols - 1) * self.gap) / self.cols;
+            property <length> ch: Theme.ws-media-thumb + Theme.sp-48 + Theme.sp-32 + Theme.sp-6;
+            if WorkspaceUi.media-state == "error": ErrorState {
+                y: Theme.sp-16; width: parent.width;
+                text: WorkspaceUi.media-empty;
+                retried => { WorkspaceUi.media-reload(); }
+            }
+            if WorkspaceUi.media-state != "ok" && WorkspaceUi.media-state != "error": Text {
+                x: Theme.sp-12; y: Theme.sp-40; width: parent.width - Theme.sp-24;
+                horizontal-alignment: center; wrap: word-wrap;
+                text: WorkspaceUi.media-state == "loading" ? "Loading…" : WorkspaceUi.media-empty;
+                font-size: Theme.text-13; color: Theme.text-muted;
+            }
+            if WorkspaceUi.media-state == "ok": fl := Flickable {
+                width: parent.width; height: parent.height;
+                content-height: max(self.height, 2 * body.pad + ceil(WorkspaceUi.media-cards.length / body.cols) * (body.ch + body.gap));
+                for c[i] in WorkspaceUi.media-cards: MediaCard {
+                    x: body.pad + mod(i, body.cols) * (body.cw + body.gap);
+                    y: body.pad + floor(i / body.cols) * (body.ch + body.gap);
+                    width: body.cw; height: body.ch;
+                    c: c;
+                }
+            }
+        }
+    }
+}
+
+/// A lightbox button (.ml-btn): white on a faint white.
+component LbBtn inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: Theme.sp-32; width: t.preferred-width + Theme.sp-20;
+    border-radius: Theme.r-control;
+    background: ta.has-hover ? Theme.play-edge : Theme.ring-faint;
+    t := Text { text: root.text; font-size: Theme.text-13; color: Theme.white; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The lightbox: dark over the window, the title and Download / Close at
+/// the top, the picture in the middle (or, for video, audio and PDF, the
+/// way to open it in the system's player: CEF has no H.264, Slint no
+/// playback). Esc, Close or the backdrop close it.
+export component MediaLightbox inherits Rectangle {
+    background: Theme.backdrop;
+    fs := FocusScope {
+        init => { self.focus(); }
+        key-pressed(ev) => { if ev.text == Key.Escape { WorkspaceUi.lb-close(); return accept; } return reject; }
+        TouchArea { clicked => { WorkspaceUi.lb-close(); } }
+    }
+    // The stage.
+    if WorkspaceUi.lb-kind == "image": Image {
+        property <float> k: min(root.width * Theme.ws-lb-fit-w / max(1px, self.source.width * 1px), root.height * Theme.ws-lb-fit-h / max(1px, self.source.height * 1px), 1);
+        source: WorkspaceUi.lb-img;
+        width: self.source.width * 1px * self.k; height: self.source.height * 1px * self.k;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        image-fit: contain;
+        TouchArea {}
+    }
+    if WorkspaceUi.lb-kind != "image": Rectangle {
+        width: Theme.dl-w; height: card.preferred-height;
+        x: (root.width - self.width) / 2; y: (root.height - self.height) / 2;
+        border-radius: Theme.r-card; background: Theme.bg-secondary; border-width: 1px; border-color: Theme.border;
+        TouchArea {}
+        card := VerticalLayout {
+            padding: Theme.sp-24; spacing: Theme.sp-12; alignment: center;
+            HorizontalLayout { alignment: center; Icon { source: WsTone.icon(WorkspaceUi.lb-kind == "video" ? "film" : WorkspaceUi.lb-kind == "audio" ? "music" : "file-text"); width: Theme.sp-40; height: Theme.sp-40; tint: Theme.text-muted; } }
+            Text { text: WorkspaceUi.lb-note; horizontal-alignment: center; wrap: word-wrap; font-size: Theme.text-12; color: Theme.text-secondary; }
+            HorizontalLayout { alignment: center; LbBtn { text: WorkspaceUi.lb-kind == "pdf" ? "Open" : "Play"; clicked => { WorkspaceUi.lb-play(); } } }
+        }
+    }
+    // The head.
+    HorizontalLayout {
+        y: 0; height: Theme.sp-32 + Theme.sp-24;
+        padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+        spacing: Theme.sp-10;
+        Text { text: WorkspaceUi.lb-title; vertical-alignment: center; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; overflow: elide; }
+        Rectangle { horizontal-stretch: 1; }
+        VerticalLayout { alignment: center; LbBtn { text: "Download"; clicked => { WorkspaceUi.lb-download(); } } }
+        VerticalLayout { alignment: center; LbBtn { text: "Close"; clicked => { WorkspaceUi.lb-close(); } } }
+    }
+}

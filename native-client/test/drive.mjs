@@ -94,7 +94,7 @@ check('browser_open fills panel A', A.ok, A);
 const B = await browser.openBrowser({ alias: 'proto', name: 'b', url: pageUrl + '/b' });
 check('browser_open fills panel B', B.ok, B);
 const C = await browser.openBrowser({ alias: 'proto', name: 'c', url: pageUrl + '/c' });
-check('a third browser is refused (two panels)', !C.ok, C);
+check('a third browser opens (a page per browser, made on demand)', C.ok, C);
 
 let r = await browser.evalBrowser(A.key, 'document.title');
 check('browser_eval on A', r.ok && r.result === 'drive /a', r);
@@ -141,18 +141,22 @@ check('browserMarks reads the annotations', r.ok && r.marks && r.marks.pin && r.
 console.log('  marks', JSON.stringify(r.marks ?? null).slice(0, 200));
 
 r = await raw('windowSnapshot', {});
-check('windowSnapshot: the whole window as Slint drew it', r.ok && r.data && r.data.length > 1000, r.error);
+check('windowSnapshot: the whole window as drawn', r.ok && r.data && r.data.length > 1000, r.error);
 if (r.ok) writeFileSync(join(out, 'native-window.png'), Buffer.from(r.data, 'base64'));
 
 if (process.env.KEEP) { console.log('KEEP set: leaving the panels open'); await sleep(Number(process.env.KEEP)); }
 r = await browser.closeBrowser(A.key);
-check('browser_close frees panel A', r.ok, r);
+check('browser_close closes A', r.ok, r);
 const D = await browser.openBrowser({ alias: 'proto', name: 'd', url: pageUrl + '/d' });
-check('the freed panel takes a new browser', D.ok, D);
+check('a closed page\'s place takes a new browser', D.ok, D);
+r = await browser.evalBrowser(D.key, 'document.title');
+check('  and it is the new page', r.result === 'drive /d', r);
 
 // The chat's font (2.25 K1, K2) on this system: the chat family made from
 // the UI font with a 1.55 line, and the factors worked out from its own line.
-{
+// (Slint only: those checks read the Slint client's font log, a Slint
+// internal. The GPUI client bundles its fonts and has no such log.)
+if (!/crundi-gpui/.test(process.env.NATIVE_BIN || '')) {
   const line = readFileSync(join(out, 'native-app.log'), 'utf8').split('\n').find((l) => l.includes('[native] chat font:')) || '';
   const m = line.match(/(\d+) faces as "Crundi Chat", line ([\d.]+); the UI font's own line ([\d.]+) em, lh-chat ([\d.]+)/);
   check('the chat font: the UI font with a 1.55 line, the factors from its own line', m && +m[1] > 0 && Math.abs(+m[2] - 1.55) < 0.002 && Math.abs(+m[3] * +m[4] - 1.55) < 0.01, line);

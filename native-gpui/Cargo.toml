@@ -1,0 +1,65 @@
+# Crundi's native PC client on GPUI (AREAS.md): one crate per part, each
+# compiled on its own. Versions are pinned here once: GPUI and its kit are
+# republished every week and their API moves.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+default-members = ["crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+
+[workspace.dependencies]
+# GPUI as gpui-component pins it: gpui-pre is a snapshot of Zed's gpui
+# (named gpui in the code), gpui-pre-platform each OS's window and renderer.
+# X11 and Wayland must be asked for: without them GPUI quietly runs headless.
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12", features = ["x11", "wayland"] }
+# syntect: the editor's highlighting (F87), pure Rust, lighter than tree-sitter.
+gpui-component = { version = "=0.10.0", features = ["syntect"] }
+# The icons (Lucide, the PC client's flat icon family) as the app's assets.
+gpui-kit-assets = "=0.10.0"
+# The browser (off-screen), the same CEF as the Slint client.
+cef = "=156.4.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
+ureq = "3"
+gethostname = "1"
+open = "5"
+base64 = "0.22"
+png = "0.17"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+cpal = "0.15"
+rodio = { version = "0.20", default-features = false }
+tts = "0.26"
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+arboard = "3.7"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+log = "0.4"
+# The parts.
+crundi-core = { path = "crates/core" }
+crundi-theme = { path = "crates/theme" }
+crundi-widgets = { path = "crates/widgets" }
+crundi-webview = { path = "crates/webview" }
+crundi-shell = { path = "crates/shell" }
+crundi-workbench = { path = "crates/workbench" }
+crundi-chats = { path = "crates/chats" }
+crundi-chat-composer = { path = "crates/chat-composer" }
+crundi-chat-log = { path = "crates/chat-log" }
+crundi-chat-model = { path = "crates/chat-model" }
+crundi-workspace = { path = "crates/workspace" }
+crundi-planning = { path = "crates/planning" }
+crundi-operations = { path = "crates/operations" }
+crundi-desktop = { path = "crates/desktop" }
+
+# Line numbers only in dev builds, so the shared build folder stays small and
+# links are quick. Release builds are unaffected.
+[profile.dev]
+debug = "line-tables-only"
+[profile.dev.package."*"]
+debug = false

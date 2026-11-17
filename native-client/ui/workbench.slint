@@ -6,7 +6,15 @@ import { Theme, Motion } from "theme.slint";
 import { Icons } from "icons.slint";
 import { Icon, Pointer, DashedBox, SoftShadow } from "widgets.slint";
 import { ParkedVeil, Unpeek, ParkAct } from "parked.slint";
+import { AreaView } from "areas.slint";
+import { TermPane } from "workspace/index.slint";
+import { WorkspaceUi } from "workspace/api.slint";
 import { ChatPane, PaneHead, HeadMenu, EntryView, TipBox, Tip, SchedItem, SlashItem, AgentRow, AnsBlock, ToolAct, Spinner } from "chat.slint";
+
+/// An empty pane's chip (3.1): the kind it adds, its label; the chips wrap
+/// onto rows, as the web's .me-chips.
+export struct EmptyChip { id: string, label: string }
+export struct EmptyChipRow { items: [EmptyChip] }
 
 export struct PaneView {
     // The leaf's id in the mosaic, and its pane's key (live:<chat>, pend:<n>, panel:<kind>).
@@ -14,6 +22,8 @@ export struct PaneView {
     key: string,
     // chat | launcher | empty | panel
     kind: string,
+    // A panel's kind (files, git, kanban…: its key's panel:<kind>).
+    panel: string,
     x: length,
     y: length,
     w: length,
@@ -117,6 +127,8 @@ export struct PaneView {
     pk-tokens: string,
     pk-busy: string,
     pk-busy-label: string,
+    // An empty pane's chips (3.1).
+    chips: [EmptyChipRow],
     // A factory's Manager chat (2.20): the header's Factory tag.
     factory: bool,
     // Voice input (2.24): the mic shows; the voice line's kind and text.
@@ -141,10 +153,20 @@ export struct GutterView {
 /// A new pane: Empty Shell, or Claude in UI Mode (a chat) or Terminal.
 component Launcher inherits Rectangle {
     callback ui-mode(bool /* skip permissions */);
+    // Empty Shell and Terminal (3.2): the workspace area launches them
+    // (WorkspaceUi.launch: shell | normal | skip), on this leaf.
+    in property <int> leaf;
     // Launching (2.22, the web's beginLaunch): 1 UI Mode, 2 its Skip
-    // Permissions. The pressed button spins, the others dim; none take clicks.
+    // Permissions, 3 Empty Shell, 4 Terminal, 5 its Skip Permissions. The
+    // pressed button spins, the others dim; none take clicks.
     in property <int> busy;
+    // The launch codes (app.rs, park.launching) as named states.
+    property <bool> idle: root.busy == 0;
+    property <bool> busy-ui: root.busy == 1;
     property <bool> busy-skip: root.busy == 2;
+    property <bool> busy-shell: root.busy == 3;
+    property <bool> busy-term: root.busy == 4;
+    property <bool> busy-term-skip: root.busy == 5;
     VerticalLayout {
         alignment: center;
         spacing: Theme.sp-12;
@@ -157,9 +179,12 @@ component Launcher inherits Rectangle {
             Rectangle {
                 x: (parent.width - self.width) / 2;
                 width: Theme.pane-min / 2; height: Theme.control-lg;
-                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                opacity: root.busy != 0 ? Theme.o-dim : Theme.o-soft;
-                Text { text: "Empty Shell"; font-size: Theme.text-14; color: Theme.text-secondary; }
+                border-radius: Theme.r-control; border-width: 1px; border-color: es.has-hover && root.idle ? Theme.accent : Theme.border;
+                background: es.has-hover && root.idle ? Theme.bg-hover : transparent;
+                opacity: !root.idle && !root.busy-shell ? Theme.o-dim : 1;
+                Text { visible: !root.busy-shell; text: "Empty Shell"; font-size: Theme.text-14; color: es.has-hover ? Theme.text-primary : Theme.text-secondary; }
+                if root.busy-shell: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                es := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "shell"); } }
             }
         }
         Rectangle {
@@ -183,45 +208,52 @@ component Launcher inherits Rectangle {
                             Image { width: parent.width; height: parent.height; source: @image-url("shapes/launcher-control.png", nine-slice(6)); image-fit: fill; }
                             Rectangle { border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-hover-edge; }
                             HorizontalLayout {
-                                visible: root.busy != 1;
+                                visible: !root.busy-ui;
                                 alignment: center;
                                 spacing: Theme.sp-10;
                                 Rectangle { width: Theme.sp-2; height: Theme.sp-16; y: (parent.height - self.height) / 2; background: Theme.white; }
                                 Text { text: "UI Mode"; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.white; vertical-alignment: center; }
                             }
-                            if root.busy == 1: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            if root.busy-ui: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
                             opacity: root.busy-skip ? Theme.o-dim : 1;
-                            TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { root.ui-mode(false); } }
+                            TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { root.ui-mode(false); } }
                         }
                         Rectangle {
                             width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: s1.has-hover && root.busy == 0 ? Theme.bg-hover : Theme.bg-tertiary;
-                            opacity: root.busy == 1 ? Theme.o-dim : 1;
-                            Icon { visible: root.busy != 2; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
-                            if root.busy == 2: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
-                            s1 := TouchArea { enabled: root.busy == 0; mouse-cursor: root.busy == 0 ? pointer : default; clicked => { root.ui-mode(true); } }
+                            background: s1.has-hover && root.idle ? Theme.bg-hover : Theme.bg-tertiary;
+                            opacity: root.busy-ui ? Theme.o-dim : 1;
+                            Icon { visible: !root.busy-skip; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            if root.busy-skip: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            s1 := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { root.ui-mode(true); } }
                         }
                     }
                     HorizontalLayout {
                         spacing: Theme.sp-8;
-                        opacity: Theme.o-soft;
                         Rectangle {
                             horizontal-stretch: 1; height: Theme.control-lg;
-                            border-radius: Theme.r-control; border-width: 1px; border-color: Theme.accent-line;
-                            background: Theme.bg-card;
+                            border-radius: Theme.r-control; border-width: 1px; border-color: tm.has-hover && root.idle ? Theme.accent : Theme.accent-line;
+                            background: tm.has-hover && root.idle ? Theme.bg-hover : Theme.bg-card;
+                            opacity: !root.idle && !root.busy-term ? Theme.o-dim : 1;
                             HorizontalLayout {
+                                visible: !root.busy-term;
                                 alignment: center;
                                 spacing: Theme.sp-8;
                                 Icon { source: Icons.terminal; width: Theme.icon-md; height: Theme.icon-md; y: (parent.height - self.height) / 2; tint: Theme.text-primary; }
                                 Text { text: "Terminal"; font-size: Theme.text-14; color: Theme.text-primary; vertical-alignment: center; }
                             }
+                            if root.busy-term: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            tm := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "normal"); } }
                         }
                         Rectangle {
                             width: Theme.sp-40; height: Theme.control-lg;
                             border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                            background: Theme.bg-tertiary;
-                            Icon { source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            background: s2.has-hover && root.idle ? Theme.bg-hover : Theme.bg-tertiary;
+                            opacity: !root.idle && !root.busy-term-skip ? Theme.o-dim : 1;
+                            Icon { visible: !root.busy-term-skip; source: Icons.shield-alert; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-secondary; }
+                            if root.busy-term-skip: Spinner { width: Theme.spin-busy; height: Theme.spin-busy; stroke: Theme.sp-2; ring: Theme.spin-busy-ring; arc: Theme.white; }
+                            s2 := TouchArea { enabled: root.idle; mouse-cursor: root.idle ? pointer : default; clicked => { WorkspaceUi.launch(root.leaf, "skip"); } }
+                            Tip { on: s2.has-hover; text: "Terminal — Skip Permissions"; }
                         }
                     }
                 }
@@ -277,9 +309,12 @@ component EmptyBtn inherits Rectangle {
 }
 
 /// A leaf with nothing in it (.mosaic-empty): inset from the leaf, a
-/// dashed edge, radius 10, no fill; a centred column: the message, the chips, then Split ▸ / Split ▾ / ×. Small panes
-/// clip it. Only the chips the native client can open are drawn (Terminal).
+/// dashed edge, radius 10, no fill; a centred column: the message, the
+/// chips (Terminal, the panels not yet in the workbench, Notes always, and
+/// Panel), wrapping onto more rows, then Split ▸ / Split ▾ / ×. Small panes
+/// clip it.
 component EmptyLeaf inherits Rectangle {
+    in property <[EmptyChipRow]> chips;
     callback split-right();
     callback split-down();
     callback close();
@@ -293,11 +328,21 @@ component EmptyLeaf inherits Rectangle {
         alignment: center;
         spacing: Theme.sp-10;
         Text { text: "Drop a panel here or launch a new one"; font-size: Theme.text-13; color: Theme.text-muted; horizontal-alignment: center; }
-        // The chips: a centred row.
-        HorizontalLayout {
-            alignment: center;
+        // The chips: centred rows.
+        VerticalLayout {
+            spacing: Theme.sp-6;
             padding-bottom: Theme.sp-2;
-            Chip { label: "Terminal"; icon: Icons.terminal; clicked => { root.chip("terminal"); } }
+            for row in root.chips: HorizontalLayout {
+                alignment: center;
+                spacing: Theme.sp-6;
+                for c in row.items: Chip {
+                    label: c.label;
+                    icon: c.id == "terminal" ? Icons.terminal : c.id == "files" ? Icons.folder : c.id == "git" ? Icons.git-branch
+                        : c.id == "kanban" ? Icons.kanban : c.id == "notes" ? Icons.note : c.id == "mindmap" ? Icons.mindmap
+                        : c.id == "media" ? Icons.images : c.id == "factory" ? Icons.factory : Icons.panel;
+                    clicked => { root.chip(c.id); }
+                }
+            }
         }
         HorizontalLayout {
             alignment: center;
@@ -388,7 +433,13 @@ export component PaneCard inherits Rectangle {
             title-max: p.title-max;
             short-title: p.short-title;
             state: p.state;
-            chat: p.kind == "chat" && !p.pk;
+            chat: (p.kind == "chat" || p.kind == "terminal") && !p.pk;
+            panel: p.kind == "panel";
+            close-tip: p.kind == "terminal" ? "Close terminal" : p.kind == "panel" ? "Close panel" : p.kind == "launcher" ? "Remove" : "Close chat";
+            panel-icon: p.panel == "files" ? Icons.folder : p.panel == "git" ? Icons.git-branch : p.panel == "kanban" ? Icons.kanban
+                : p.panel == "notes" ? Icons.note : p.panel == "mindmap" ? Icons.mindmap : p.panel == "media" ? Icons.images
+                : p.panel == "factory" ? Icons.factory : p.panel == "widget" ? Icons.panel : Icons.file;
+            refresh => { WorkspaceUi.panel-refresh(p.panel, p.key); }
             parked: p.pk;
             factory: p.factory;
             narrow: p.narrow;
@@ -462,14 +513,26 @@ export component PaneCard inherits Rectangle {
             answer(id, o) => { root.answer(id, o); }
             draft-changed(t) => { root.draft-changed(t); }
         }
+        // A Claude terminal (3.2): the terminal and its own input.
+        if p.kind == "terminal": TermPane {
+            vertical-stretch: 1;
+            key: p.key;
+            fs: p.fs;
+            focused: p.focused;
+        }
         if p.kind == "launcher": Launcher {
             vertical-stretch: 1;
             busy: p.launch-busy;
+            leaf: p.id;
             ui-mode(skip) => { root.launch-chat(skip); }
         }
-        if p.kind == "panel": Rectangle {
+        // A panel (Files, Git, Kanban…): its area's view, embedded
+        // (ui/areas.slint; the key is panel:<kind>).
+        if p.kind == "panel": AreaView {
             vertical-stretch: 1;
-            Text { text: p.title + " comes in a later phase of the native client"; font-size: Theme.text-13; color: Theme.text-muted; }
+            kind: p.panel;
+            key: p.key;
+            embedded: true;
         }
         }
         // A parked chat (2.23): the card over its conversation, or, peeking,
@@ -622,6 +685,7 @@ export component Workbench inherits Rectangle {
             property <bool> over: !Pointer.modal && !Pointer.on-dock && Pointer.x >= self.absolute-position.x && Pointer.x < self.absolute-position.x + self.width
                 && Pointer.y >= self.absolute-position.y && Pointer.y < self.absolute-position.y + self.height;
             if p.kind == "empty": EmptyLeaf {
+                chips: p.chips;
                 split-right => { root.split(p.id, false); }
                 split-down => { root.split(p.id, true); }
                 close => { root.close-pane(p.id); }

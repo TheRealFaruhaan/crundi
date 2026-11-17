@@ -11,6 +11,7 @@
 //!   CRUNDI_URL_A / CRUNDI_URL_B   what the two panels open first
 //!   CRUNDI_TEST_PORT=<port>       the test driver (src/testctl.rs)
 //!   CRUNDI_CONFIG_DIR=<dir>       where the login is saved (src/store.rs)
+//!   CRUNDI_CEF_CACHE=<dir>        CEF's profile (default <cache>/crundi-native): one per client running at once
 //!
 //! One binary is also CEF's helper processes (renderer, GPU, utility): CEF
 //! starts it again with --type=…, and execute_process() handles those first.
@@ -39,6 +40,12 @@ mod frames;
 mod fonts;
 mod drafts;
 mod app;
+mod areas;
+mod kit;
+mod workspace;
+mod planning;
+mod ops;
+mod desktop;
 mod browser;
 mod chat;
 mod head;
@@ -93,7 +100,9 @@ fn main() {
 
     // CEF's files sit next to the binary (scripts/stage-cef.sh).
     let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_default();
-    let cache = dirs_cache().join("crundi-native");
+    // CRUNDI_CEF_CACHE: CEF's profile elsewhere, so two clients (areas
+    // testing side by side, AREAS.md) can run at once.
+    let cache = std::env::var_os("CRUNDI_CEF_CACHE").map(std::path::PathBuf::from).unwrap_or_else(|| dirs_cache().join("crundi-native"));
     let _ = std::fs::create_dir_all(&cache);
     let mut settings = Settings {
         no_sandbox: 1,

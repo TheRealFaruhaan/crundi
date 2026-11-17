@@ -1,0 +1,250 @@
+// Factories (4.7, 4.8): the small parts the factories screens share: the
+// web's .fx-btn, .fx-chip, .fx-seg, .fx-warn/.fx-err, .ff-field, the
+// folding <details> summary, and the icons factory-flow.js draws inline.
+
+import { Theme, Icons, Icon } from "../kit.slint";
+import { PlanningFxCheck } from "factories-api.slint";
+
+/// The icons the factory editor carries itself (tools/factory-flow/src/icons.jsx).
+export global FxIcons {
+    out property <image> crown: @image-url("icons/factories-crown.svg");
+    out property <image> user: @image-url("icons/factories-user.svg");
+    out property <image> branch: @image-url("icons/factories-branch.svg");
+    out property <image> merge: @image-url("icons/factories-merge.svg");
+    out property <image> ask: @image-url("icons/factories-ask.svg");
+    out property <image> flag: @image-url("icons/factories-flag.svg");
+    out property <image> undo: @image-url("icons/factories-undo.svg");
+    out property <image> redo: @image-url("icons/factories-redo.svg");
+    out property <image> layout: @image-url("icons/factories-layout.svg");
+    out property <image> alert: @image-url("icons/factories-alert.svg");
+    out property <image> back: @image-url("icons/factories-back.svg");
+    out property <image> team: @image-url("icons/factories-team.svg");
+    out property <image> sliders: @image-url("icons/factories-sliders.svg");
+    out property <image> route: @image-url("icons/factories-route.svg");
+    out property <image> note: @image-url("icons/factories-note.svg");
+    out property <image> key: @image-url("icons/factories-key.svg");
+    out property <image> loop: @image-url("icons/factories-loop.svg");
+    out property <image> up: @image-url("icons/factories-chevron-up.svg");
+    out property <image> down: @image-url("icons/factories-chevron-down.svg");
+    out property <image> minus: @image-url("icons/factories-minus.svg");
+    out property <image> play: @image-url("icons/factories-play-fill.svg");
+
+    /// A step's icon by its type (nodes.jsx META).
+    public pure function of-kind(k: string) -> image {
+        return k == "start" ? Icons.play : k == "manager" ? self.crown : k == "decision" ? self.branch
+            : k == "join" ? self.merge : k == "ask" ? self.ask : k == "wait" ? Icons.clock : k == "end" ? self.flag : self.user;
+    }
+}
+
+/// The colours of the factories' looks.
+export global FxTone {
+    /// A chip's text (.fx-chip.ok / draft / crashed / finished).
+    public pure function fg(t: string) -> color {
+        return t == "ok" ? Theme.green : t == "warn" ? Theme.yellow : t == "bad" ? Theme.red : t == "info" ? Theme.sky : Theme.text-secondary;
+    }
+    public pure function edge(t: string) -> color {
+        return t == "ok" ? Theme.green-ring : t == "warn" ? Theme.yellow-edge : t == "bad" ? Theme.red-ring : t == "info" ? Theme.sky-edge : Theme.border;
+    }
+    /// A step's head colour (.ff-manager .ff-node-head …).
+    public pure function head(k: string) -> color {
+        return k == "manager" ? Theme.yellow : k == "decision" || k == "join" ? Theme.sky : k == "ask" ? Theme.accent-hover
+            : k == "wait" ? Theme.accent-hover : k == "start" || k == "end" ? Theme.green : Theme.text-secondary;
+    }
+    /// An edge's stroke (.ff-edge.note / loop / sel / bad / used, the job line).
+    public pure function stroke(t: string, sel: bool) -> color {
+        return sel ? Theme.accent : t == "bad" ? Theme.red : t == "used" ? Theme.green : t == "note" ? Theme.yellow
+            : t == "loop" ? Theme.sky : t == "job" ? Theme.accent-hover : Theme.text-secondary;
+    }
+    /// A token pill (.ff-token.work / ask / wait / blocked / join).
+    public pure function token(k: string) -> color {
+        return k == "blocked" ? Theme.yellow : k == "ask" || k == "wait" ? Theme.accent-hover : k == "join" ? Theme.text-secondary : Theme.green;
+    }
+    /// A run state's chip in the viewer's top bar (.ff-runstate).
+    public pure function state(st: string) -> string {
+        return st == "running" ? "ok" : st == "waiting" || st == "paused" ? "warn" : st == "crashed" || st == "stopped" ? "bad"
+            : st == "finishing" || st == "finished" ? "info" : "";
+    }
+}
+
+/// .fx-btn / .ff-btn: kind "" (card), "primary", "ghost", "danger" (red
+/// text, card), "ghost-danger"; an icon before the label; `fold` hides the
+/// label (a narrow view).
+export component FxBtn inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> has-icon;
+    in property <string> kind;
+    in property <bool> enabled: true;
+    in property <bool> fold;
+    in property <bool> on;
+    callback clicked();
+    out property <length> want: lay.preferred-width;
+    height: Theme.control-sm;
+    min-width: lay.preferred-width;
+    property <bool> primary: root.kind == "primary" || root.on;
+    property <bool> ghost: root.kind == "ghost" || root.kind == "ghost-danger";
+    property <bool> hot: ta.has-hover && root.enabled;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.primary ? Theme.accent : Theme.border;
+    background: root.primary ? (root.hot ? Theme.accent-hover : Theme.accent) : root.hot ? Theme.bg-hover : root.ghost ? transparent : Theme.bg-card;
+    opacity: root.enabled ? 1 : Theme.o-dim;
+    property <color> fg: root.primary ? Theme.white : root.kind == "danger" || root.kind == "ghost-danger" ? Theme.red : Theme.text-primary;
+    accessible-role: button;
+    accessible-label: root.text;
+    lay := HorizontalLayout {
+        padding-left: root.fold ? Theme.sp-8 : Theme.sp-10;
+        padding-right: root.fold ? Theme.sp-8 : Theme.sp-10;
+        spacing: Theme.sp-6;
+        alignment: center;
+        if root.has-icon: VerticalLayout { alignment: center; Icon { width: Theme.icon-md; height: Theme.icon-md; source: root.icon; tint: root.fg; } }
+        if !root.fold || !root.has-icon: Text { text: root.text; vertical-alignment: center; font-size: Theme.text-12; color: root.fg; }
+    }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: root.enabled ? pointer : default; clicked => { root.clicked(); } }
+}
+
+/// .ff-iconbtn: a quiet square icon button (`danger`: red on hover).
+export component FxIconBtn inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> enabled: true;
+    in property <bool> danger;
+    callback clicked();
+    width: Theme.sp-32 - Theme.sp-2; height: Theme.sp-32 - Theme.sp-2;
+    border-radius: Theme.r-control;
+    background: ta.has-hover && root.enabled ? Theme.bg-hover : transparent;
+    opacity: root.enabled ? 1 : Theme.o-faint;
+    accessible-role: button;
+    accessible-label: root.tip;
+    Icon { width: Theme.icon-lg; height: Theme.icon-lg; source: root.icon; tint: ta.has-hover && root.enabled ? (root.danger ? Theme.red : Theme.text-primary) : Theme.text-secondary; }
+    ta := TouchArea { enabled: root.enabled; mouse-cursor: root.enabled ? pointer : default; clicked => { root.clicked(); } }
+}
+
+/// .fx-chip: a small outlined pill; tone ok | warn | bad | info | "".
+export component FxChip inherits Rectangle {
+    in property <string> text;
+    in property <string> tone;
+    height: t.preferred-height + Theme.sp-2;
+    width: t.preferred-width + Theme.sp-16;
+    border-radius: Theme.r-pill;
+    border-width: 1px;
+    border-color: FxTone.edge(root.tone);
+    t := Text { text: root.text; font-size: Theme.text-11; color: FxTone.fg(root.tone); }
+}
+
+/// The head's segmented choice (.fx-seg).
+export component FxSeg inherits Rectangle {
+    in property <[string]> options;
+    in property <int> selected;
+    callback picked(int);
+    height: Theme.control-sm + Theme.sp-2;
+    width: lay.preferred-width;
+    border-radius: Theme.r-field;
+    background: Theme.bg-tertiary;
+    lay := HorizontalLayout {
+        padding: Theme.sp-2;
+        spacing: Theme.sp-2;
+        for o[i] in root.options: Rectangle {
+            width: tx.preferred-width + Theme.sp-24;
+            border-radius: Theme.r-control;
+            background: i == root.selected ? Theme.bg-hover : transparent;
+            tx := Text { text: o; font-size: Theme.text-12; color: i == root.selected ? Theme.text-primary : Theme.text-secondary; }
+            TouchArea { mouse-cursor: pointer; clicked => { root.picked(i); } }
+        }
+    }
+}
+
+/// .fx-warn / .fx-err / .fx-note / .fx-meta / .ff-hint: a line of words.
+export component FxNote inherits Rectangle {
+    in property <string> text;
+    in property <string> kind: "note";
+    property <bool> boxed: root.kind == "warn" || root.kind == "err";
+    border-radius: root.boxed ? Theme.r-control : 0;
+    background: root.kind == "warn" ? Theme.yellow-dim : root.kind == "err" ? Theme.red-dim : transparent;
+    height: t.preferred-height + (root.boxed ? Theme.sp-16 : 0px);
+    t := Text {
+        x: root.boxed ? Theme.sp-10 : 0px;
+        width: parent.width - (root.boxed ? Theme.sp-20 : 0px);
+        text: root.text;
+        wrap: word-wrap;
+        font-size: root.kind == "meta" || root.kind == "hint" ? Theme.text-11 : Theme.text-12;
+        font-weight: root.kind == "b" ? Theme.w-semibold : Theme.w-regular;
+        color: root.kind == "warn" ? Theme.yellow : root.kind == "err" ? Theme.error-text : root.kind == "b" ? Theme.text-primary : Theme.text-muted;
+    }
+}
+
+/// .ff-field / .fx-field: the label over its control, a hint under it.
+export component FxField inherits VerticalLayout {
+    in property <string> label;
+    in property <string> hint;
+    in property <string> tag;     // "required", or a muted note after the label
+    spacing: Theme.sp-4;
+    HorizontalLayout {
+        spacing: Theme.sp-4;
+        alignment: start;
+        Text { text: root.label; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+        if root.tag != "": Text { text: root.tag; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+    }
+    @children
+    if root.hint != "": Text { text: root.hint; font-size: Theme.text-11; color: Theme.text-muted; wrap: word-wrap; }
+}
+
+/// A <details> summary line: a chevron, the words; a click folds.
+export component FxSummary inherits Rectangle {
+    in property <string> text;
+    in property <bool> open;
+    callback toggled();
+    height: lay.preferred-height;
+    lay := HorizontalLayout {
+        spacing: Theme.sp-4;
+        alignment: start;
+        VerticalLayout { alignment: center; Icon { width: Theme.icon-sm; height: Theme.icon-sm; source: root.open ? FxIcons.down : Icons.chevron-right; tint: Theme.text-secondary; } }
+        Text { text: root.text; font-size: Theme.text-12; color: ta.has-hover ? Theme.text-primary : Theme.text-secondary; wrap: word-wrap; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+}
+
+/// .ff-issue: an alert icon and the words (error red, warning yellow),
+/// its fix under it; clickable when `pick`.
+export component FxIssue inherits Rectangle {
+    in property <string> level;
+    in property <string> message;
+    in property <string> fix;
+    in property <bool> pick;
+    callback clicked();
+    border-radius: Theme.r-control;
+    background: root.level == "error" ? Theme.red-dim : Theme.yellow-dim;
+    height: lay.preferred-height;
+    property <color> fg: root.level == "error" ? Theme.error-text : Theme.yellow;
+    lay := HorizontalLayout {
+        padding: Theme.sp-8;
+        spacing: Theme.sp-8;
+        VerticalLayout { alignment: start; padding-top: Theme.sp-2; Icon { width: Theme.icon-md; height: Theme.icon-md; source: FxIcons.alert; tint: root.fg; } }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.sp-2;
+            Text { text: root.message; wrap: word-wrap; font-size: Theme.text-12; color: root.fg; }
+            if root.fix != "": Text { text: root.fix; wrap: word-wrap; font-size: Theme.text-11; color: root.fg; opacity: Theme.o-soft; }
+        }
+    }
+    TouchArea { enabled: root.pick; mouse-cursor: root.pick ? pointer : default; clicked => { root.clicked(); } }
+}
+
+/// The small skill chips under a text that names /skills (.ff-chip ok / warn).
+export component FxMentions inherits HorizontalLayout {
+    in property <[PlanningFxCheck]> items;
+    spacing: Theme.sp-4;
+    alignment: start;
+    for m in root.items: Rectangle {
+        height: mt.preferred-height + Theme.sp-2;
+        width: mt.preferred-width + Theme.sp-16 + Theme.icon-sm;
+        border-radius: Theme.r-pill;
+        border-width: 1px;
+        border-color: m.on ? Theme.green-ring : Theme.yellow-edge;
+        HorizontalLayout {
+            padding-left: Theme.sp-6; padding-right: Theme.sp-6; spacing: Theme.sp-2; alignment: center;
+            VerticalLayout { alignment: center; Icon { width: Theme.icon-sm; height: Theme.icon-sm; source: m.on ? Icons.check : FxIcons.alert; tint: m.on ? Theme.green : Theme.yellow; } }
+            mt := Text { text: "/" + m.label; font-size: Theme.text-11; color: m.on ? Theme.green : Theme.yellow; vertical-alignment: center; }
+        }
+    }
+}

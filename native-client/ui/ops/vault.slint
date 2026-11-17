@@ -1,0 +1,417 @@
+// Ops area: The Secrets tab with the PC client's unlock flow (renderSecrets, crundi-secret-lock.js), and its badge.
+// OpsVault (the global) is what Rust reads, sets and handles: src/ops/vault.rs.
+// It is exported to Rust by ui/ops/api.slint (one line per file there).
+//
+// The web's (src/webapp-html.js, "Secrets"): pending access requests (a
+// yellow box), "Add a secret", then the list. A value is never on screen
+// without its lock typed in the PIN modal (Reveal); leaving the tab forgets
+// every revealed value. Edit and the "update this secret's lock" offer are
+// crundi-secret-lock.js's dialogs.
+
+import { Theme, Icons, Icon, PanelPage, EmptyState, ErrorState, LoadingState, TextField, TextArea, SmallBtn, CheckRow, SoftShadow } from "../kit.slint";
+import { OpsCard, OpsDlgBtn, OpsLockField, OpsLockHead, OpsSecLabel, OpsHint } from "vault-parts.slint";
+
+/// A pending access request (.secret-request): the secret, its meta line.
+export struct OpsVaultReq { id: string, name: string, meta: string }
+
+/// A secret (.secret-item). `tag`: "Old PIN" / "Old lock" (needsUpgrade),
+/// `tip` its title. `value` is set only while revealed.
+export struct OpsVaultSecret { id: string, name: string, desc: string, tag: string, tip: string, revealed: bool, value: string }
+
+export global OpsVault {
+    /// A dialog of this screen covers the window (OpsOverlay sets Shell.modal-ops).
+    in-out property <bool> modal;
+
+    // ── The tab ──
+    in-out property <bool> loaded;
+    in-out property <string> error;
+    in-out property <[OpsVaultReq]> requests;
+    in-out property <[OpsVaultSecret]> secrets;
+    callback retry();
+    callback approve(string);
+    callback deny(string);
+    callback reveal(string);
+    callback hide(string);
+    callback copy(string);
+    callback edit(string);
+    callback delete(string);
+
+    // ── Add a secret ──
+    in-out property <string> add-name;
+    in-out property <string> add-desc;
+    in-out property <string> add-value;
+    in-out property <string> add-pin;
+    in-out property <string> add-pin2;
+    in-out property <string> add-rule: "At least 8 characters, and not only digits.";
+    in-out property <bool> add-warn;
+    in-out property <bool> add-ok;
+    in-out property <bool> add-busy;
+    callback add-edited();
+    callback add-save();
+
+    // ── The PIN modal (the web's openPinModal) ──
+    in-out property <bool> pin-open;
+    in-out property <string> pin-title;
+    in-out property <string> pin-sub;
+    in-out property <string> pin-label: "Unlock";
+    in-out property <string> pin-lock;
+    in-out property <string> pin-text;
+    in-out property <string> pin-error;
+    in-out property <bool> pin-busy;
+    // Counts refusals: the field selects its text and takes the focus.
+    in-out property <int> pin-sel;
+    callback pin-typed(string);
+    callback pin-submit();
+    callback pin-cancel();
+
+    // ── Edit secret (CrundiSecretLock.edit) ──
+    in-out property <bool> ed-open;
+    in-out property <string> ed-lock;
+    in-out property <string> ed-name;
+    in-out property <string> ed-desc;
+    in-out property <string> ed-value;
+    in-out property <bool> ed-relock;
+    in-out property <string> ed-new;
+    in-out property <string> ed-new2;
+    in-out property <string> ed-hint;
+    in-out property <bool> ed-warn;
+    in-out property <string> ed-cur;
+    in-out property <string> ed-err;
+    in-out property <bool> ed-ok;
+    in-out property <bool> ed-busy;
+    in-out property <int> ed-sel;
+    callback ed-changed();
+    callback ed-cur-typed(string);
+    callback ed-toggle(bool);
+    callback ed-cancel();
+    callback ed-save();
+
+    // ── Update this secret's lock (CrundiSecretLock.upgrade) ──
+    in-out property <bool> up-open;
+    in-out property <string> up-name;
+    in-out property <bool> up-old-pin;
+    in-out property <string> up-new;
+    in-out property <string> up-new2;
+    in-out property <string> up-hint;
+    in-out property <bool> up-warn;
+    in-out property <string> up-err;
+    in-out property <bool> up-ok;
+    in-out property <bool> up-busy;
+    callback up-changed();
+    callback up-later();
+    callback up-go();
+}
+
+/// A section's title (.secrets-section-title): upper case, secondary.
+component SecTitle inherits Text {
+    font-size: Theme.text-13; font-weight: Theme.w-semibold; letter-spacing: Theme.track-wide;
+    color: Theme.text-secondary;
+}
+
+/// A secret's row button (.sec-actions button): quiet; Delete reds on hover.
+component RowBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> danger;
+    callback clicked();
+    height: Theme.control-sm - Theme.sp-4;
+    width: t.preferred-width + Theme.sp-20;
+    border-radius: Theme.r-chip;
+    border-width: 1px;
+    border-color: ta.has-hover && root.danger ? Theme.red : Theme.border;
+    background: Theme.bg-tertiary;
+    accessible-role: button;
+    accessible-label: root.text;
+    t := Text {
+        text: root.text; font-size: Theme.text-12;
+        color: ta.has-hover ? (root.danger ? Theme.red : Theme.text-primary) : Theme.text-secondary;
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// The add form's inputs (.secrets-add input): bg-primary under the card.
+component AddField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <bool> password;
+    in property <bool> multi;
+    in property <bool> mono;
+    callback edited();
+    height: root.multi ? Theme.sp-48 + Theme.sp-8 : Theme.control;
+    border-radius: Theme.r-control;
+    background: Theme.bg-primary;
+    border-width: 1px;
+    border-color: one.has-focus || many.has-focus ? Theme.accent : Theme.border;
+    one := TextInput {
+        visible: !root.multi;
+        enabled: !root.multi;
+        x: Theme.sp-10; width: parent.width - 2 * Theme.sp-10;
+        text <=> root.text;
+        single-line: true;
+        vertical-alignment: center;
+        input-type: root.password ? InputType.password : InputType.text;
+        color: Theme.text-primary; font-size: Theme.text-13;
+        font-family: root.mono ? Theme.mono : Theme.ui-font;
+        selection-background-color: Theme.selection;
+        edited => { root.edited(); }
+    }
+    fl := Flickable {
+        visible: root.multi;
+        x: Theme.sp-10; y: Theme.sp-8;
+        width: parent.width - 2 * Theme.sp-10; height: parent.height - 2 * Theme.sp-8;
+        content-height: max(self.height, many.preferred-height);
+        many := TextInput {
+            enabled: root.multi;
+            width: fl.width;
+            text <=> root.text;
+            single-line: false;
+            wrap: word-wrap;
+            color: Theme.text-primary; font-size: Theme.text-13;
+            font-family: root.mono ? Theme.mono : Theme.ui-font;
+            selection-background-color: Theme.selection;
+            edited => { root.edited(); }
+        }
+    }
+    if root.text == "": Text {
+        x: Theme.sp-10; y: root.multi ? Theme.sp-8 : 0px;
+        height: root.multi ? self.preferred-height : parent.height;
+        vertical-alignment: root.multi ? top : center;
+        text: root.placeholder; color: Theme.placeholder; font-size: Theme.text-13;
+    }
+}
+
+/// The screen (a tab, or a panel in a workbench pane: `embedded`, `key`).
+export component OpsVaultView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    if !OpsVault.loaded && OpsVault.error == "": PanelPage {
+        embedded: root.embedded;
+        LoadingState { }
+    }
+    if OpsVault.error != "": PanelPage {
+        embedded: root.embedded;
+        ErrorState { text: "Failed to load: " + OpsVault.error; retried => { OpsVault.retry(); } }
+    }
+    if OpsVault.loaded && OpsVault.error == "": PanelPage {
+        embedded: root.embedded;
+        // Pending access requests.
+        if OpsVault.requests.length > 0: Rectangle {
+            border-radius: Theme.r-card;
+            background: Theme.yellow-dim;
+            border-width: 1px;
+            border-color: Theme.yellow;
+            VerticalLayout {
+                padding: Theme.sp-12;
+                spacing: Theme.sp-8;
+                SecTitle { text: "PENDING ACCESS REQUESTS"; }
+                for r[i] in OpsVault.requests: VerticalLayout {
+                    spacing: Theme.sp-8;
+                    if i > 0: Rectangle { height: 1px; background: Theme.yellow-edge; }
+                    HorizontalLayout {
+                        spacing: Theme.sp-10;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            spacing: Theme.sp-2;
+                            Text { text: r.name; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+                            Text { text: r.meta; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+                        }
+                        SmallBtn { text: "Approve"; kind: "primary"; clicked => { OpsVault.approve(r.id); } }
+                        SmallBtn { text: "Deny"; clicked => { OpsVault.deny(r.id); } }
+                    }
+                }
+            }
+        }
+        // Add a secret.
+        Rectangle {
+            border-radius: Theme.r-card;
+            background: Theme.bg-secondary;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                padding: Theme.sp-16;
+                spacing: Theme.sp-8;
+                SecTitle { text: "ADD A SECRET"; }
+                AddField { text <=> OpsVault.add-name; placeholder: "Name (e.g. AWS Access Key)"; edited => { OpsVault.add-edited(); } }
+                AddField { text <=> OpsVault.add-desc; multi: true; placeholder: "Description — Claude searches names & descriptions"; edited => { OpsVault.add-edited(); } }
+                AddField { text <=> OpsVault.add-value; multi: true; placeholder: "Secret value"; edited => { OpsVault.add-edited(); } }
+                AddField { text <=> OpsVault.add-pin; password: true; placeholder: "Passphrase to encrypt this secret"; edited => { OpsVault.add-edited(); } }
+                AddField { text <=> OpsVault.add-pin2; password: true; placeholder: "Confirm the passphrase"; edited => { OpsVault.add-edited(); } }
+                Text { text: OpsVault.add-rule; font-size: Theme.text-12; color: OpsVault.add-warn ? Theme.yellow : Theme.text-muted; wrap: word-wrap; }
+                Text { text: "The passphrase is never stored. If you lose it, this secret can only be deleted & recreated."; font-size: Theme.text-12; color: Theme.text-muted; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: start;
+                    SmallBtn { text: "Save secret"; kind: "primary"; enabled: OpsVault.add-ok && !OpsVault.add-busy; clicked => { OpsVault.add-save(); } }
+                }
+            }
+        }
+        // The list.
+        VerticalLayout {
+            spacing: Theme.sp-8;
+            SecTitle { text: "SECRETS (" + OpsVault.secrets.length + ")"; }
+            if OpsVault.secrets.length == 0: Text {
+                text: "No secrets yet."; horizontal-alignment: center;
+                font-size: Theme.text-13; color: Theme.text-muted;
+                height: self.preferred-height + 2 * Theme.sp-24;
+                vertical-alignment: center;
+            }
+            for s in OpsVault.secrets: Rectangle {
+                border-radius: Theme.r-control;
+                background: ha.has-hover ? Theme.bg-hover : Theme.bg-card;
+                border-width: 1px;
+                border-color: Theme.border;
+                ha := TouchArea { }
+                HorizontalLayout {
+                    padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+                    padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                    spacing: Theme.sp-10;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: Theme.sp-2;
+                        HorizontalLayout {
+                            spacing: Theme.sp-6;
+                            alignment: start;
+                            Text { text: s.name; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+                            if s.tag != "": Rectangle {
+                                y: (parent.height - self.height) / 2;
+                                height: tg.preferred-height + Theme.sp-2;
+                                width: tg.preferred-width + Theme.sp-12;
+                                border-radius: Theme.r-pill;
+                                background: Theme.yellow-dim;
+                                border-width: 1px;
+                                border-color: Theme.yellow;
+                                tg := Text { text: s.tag; font-size: Theme.text-10; font-weight: Theme.w-semibold; color: Theme.yellow; }
+                            }
+                        }
+                        if s.desc != "": Text { text: s.desc; font-size: Theme.text-12; color: Theme.text-secondary; wrap: word-wrap; }
+                        if s.revealed: Text { text: s.value; font-size: Theme.text-12; font-family: Theme.mono; color: Theme.green; wrap: char-wrap; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.sp-6;
+                        alignment: center;
+                        VerticalLayout { alignment: center; HorizontalLayout {
+                            spacing: Theme.sp-6;
+                            if s.revealed: RowBtn { text: "Copy"; clicked => { OpsVault.copy(s.id); } }
+                            if s.revealed: RowBtn { text: "Hide"; clicked => { OpsVault.hide(s.id); } }
+                            if !s.revealed: RowBtn { text: "Reveal"; clicked => { OpsVault.reveal(s.id); } }
+                            RowBtn { text: "Edit"; clicked => { OpsVault.edit(s.id); } }
+                            RowBtn { text: "Delete"; danger: true; clicked => { OpsVault.delete(s.id); } }
+                        } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The PIN modal (#pin-modal): title, words, the field, the error line,
+/// Cancel and the action side by side.
+component PinDialog inherits OpsCard {
+    card-w: Theme.vault-pin-w;
+    pad: Theme.sp-20;
+    gap: Theme.sp-6;
+    escape => { OpsVault.pin-cancel(); }
+    init => { field.focus-input(); }
+    property <int> sel: OpsVault.pin-sel;
+    changed sel => { field.focus-input(); field.select-all(); }
+    Text { text: OpsVault.pin-title; horizontal-alignment: center; font-size: Theme.text-16; font-weight: Theme.w-semibold; color: Theme.text-primary; wrap: word-wrap; }
+    Text { text: OpsVault.pin-sub; horizontal-alignment: center; font-size: Theme.text-13; color: Theme.text-secondary; wrap: word-wrap; }
+    Rectangle { height: Theme.sp-6; }
+    field := OpsLockField {
+        big: true;
+        lock: OpsVault.pin-lock;
+        text <=> OpsVault.pin-text;
+        placeholder: OpsVault.pin-lock == "passphrase" ? "Passphrase" : "••••••";
+        edited(t) => { OpsVault.pin-typed(t); }
+        accepted => { OpsVault.pin-submit(); }
+        escape => { OpsVault.pin-cancel(); }
+    }
+    Text { text: OpsVault.pin-error; min-height: Theme.sp-16; horizontal-alignment: center; font-size: Theme.text-12; color: Theme.red; wrap: word-wrap; }
+    HorizontalLayout {
+        spacing: Theme.sp-10;
+        OpsDlgBtn { horizontal-stretch: 1; text: "Cancel"; clicked => { OpsVault.pin-cancel(); } }
+        OpsDlgBtn { horizontal-stretch: 1; primary: true; text: OpsVault.pin-label; enabled: !OpsVault.pin-busy; clicked => { OpsVault.pin-submit(); } }
+    }
+}
+
+/// Edit secret (csl edit): name and description, a new value, a new
+/// passphrase (ticked), the current lock, Cancel / Save.
+component EditDialog inherits OpsCard {
+    card-w: Theme.vault-lock-w;
+    gap: Theme.sp-8;
+    escape => { OpsVault.ed-cancel(); }
+    init => { nm.focus-input(); }
+    property <int> sel: OpsVault.ed-sel;
+    changed sel => { cur.focus-input(); cur.select-all(); }
+    OpsLockHead { title: "Edit secret"; }
+    OpsSecLabel { text: "NAME AND DESCRIPTION"; }
+    nm := TextField { text <=> OpsVault.ed-name; placeholder: "Name"; edited => { OpsVault.ed-changed(); } escape => { OpsVault.ed-cancel(); } }
+    TextArea { rows: 3; text <=> OpsVault.ed-desc; placeholder: "Description"; edited => { OpsVault.ed-changed(); } }
+    OpsSecLabel { text: "NEW VALUE"; }
+    TextArea { rows: 3; mono: true; text <=> OpsVault.ed-value; placeholder: "Leave empty to keep the value"; edited => { OpsVault.ed-changed(); } }
+    OpsSecLabel { text: "NEW PASSPHRASE"; }
+    CheckRow {
+        checked: OpsVault.ed-relock;
+        text: OpsVault.ed-lock == "passphrase" ? "Change the passphrase" : "Replace the 6-digit PIN with a passphrase";
+        toggled(on) => { OpsVault.ed-toggle(on); }
+    }
+    if OpsVault.ed-relock: VerticalLayout {
+        spacing: Theme.sp-8;
+        OpsLockField { init => { self.focus-input(); } lock: "passphrase"; text <=> OpsVault.ed-new; placeholder: "New passphrase"; edited => { OpsVault.ed-changed(); } escape => { OpsVault.ed-cancel(); } }
+        OpsLockField { lock: "passphrase"; text <=> OpsVault.ed-new2; placeholder: "Confirm the passphrase"; edited => { OpsVault.ed-changed(); } escape => { OpsVault.ed-cancel(); } }
+        OpsHint { text: OpsVault.ed-hint; warn: OpsVault.ed-warn; }
+    }
+    OpsSecLabel { text: OpsVault.ed-lock == "passphrase" ? "CURRENT PASSPHRASE" : "CURRENT PIN"; }
+    cur := OpsLockField {
+        lock: OpsVault.ed-lock;
+        text <=> OpsVault.ed-cur;
+        placeholder: OpsVault.ed-lock == "passphrase" ? "Passphrase" : "PIN";
+        edited(t) => { OpsVault.ed-cur-typed(t); }
+        escape => { OpsVault.ed-cancel(); }
+    }
+    OpsHint { text: "Needed for any change to the value or the lock. It is never stored."; }
+    if OpsVault.ed-err != "": Text { text: OpsVault.ed-err; font-size: Theme.text-12; color: Theme.red; wrap: word-wrap; }
+    HorizontalLayout {
+        alignment: end;
+        spacing: Theme.sp-8;
+        padding-top: Theme.sp-4;
+        OpsDlgBtn { text: "Cancel"; clicked => { OpsVault.ed-cancel(); } }
+        OpsDlgBtn { primary: true; text: OpsVault.ed-busy ? "Saving…" : "Save"; enabled: OpsVault.ed-ok && !OpsVault.ed-busy; clicked => { OpsVault.ed-save(); } }
+    }
+}
+
+/// Update this secret's lock (csl upgrade): after an old lock was accepted.
+component UpgradeDialog inherits OpsCard {
+    card-w: Theme.vault-lock-w;
+    gap: Theme.sp-8;
+    escape => { OpsVault.up-later(); }
+    init => { a.focus-input(); }
+    OpsLockHead { title: "Update this secret’s lock"; }
+    Text { text: OpsVault.up-name; font-family: Theme.mono; font-size: Theme.text-13; color: Theme.accent-hover; wrap: char-wrap; }
+    Text {
+        text: OpsVault.up-old-pin
+            ? "This secret uses an old 6-digit PIN. Set a new passphrase (8+ characters)."
+            : "This secret uses an older, weaker lock. Set a passphrase (8+ characters) to seal it again; it may be the same one.";
+        font-size: Theme.text-13; color: Theme.text-primary; wrap: word-wrap;
+    }
+    a := OpsLockField { lock: "passphrase"; text <=> OpsVault.up-new; placeholder: "New passphrase"; edited => { OpsVault.up-changed(); } escape => { OpsVault.up-later(); } }
+    OpsLockField { lock: "passphrase"; text <=> OpsVault.up-new2; placeholder: "Confirm the passphrase"; edited => { OpsVault.up-changed(); } accepted => { OpsVault.up-go(); } escape => { OpsVault.up-later(); } }
+    OpsHint { text: OpsVault.up-hint; warn: OpsVault.up-warn; }
+    if OpsVault.up-err != "": Text { text: OpsVault.up-err; font-size: Theme.text-12; color: Theme.red; wrap: word-wrap; }
+    HorizontalLayout {
+        alignment: end;
+        spacing: Theme.sp-8;
+        padding-top: Theme.sp-4;
+        OpsDlgBtn { text: "Not now"; enabled: !OpsVault.up-busy; clicked => { OpsVault.up-later(); } }
+        OpsDlgBtn { primary: true; text: OpsVault.up-busy ? "Updating…" : "Update"; enabled: OpsVault.up-ok && !OpsVault.up-busy; clicked => { OpsVault.up-go(); } }
+    }
+}
+
+/// This screen's dialogs over the whole window (no input where it draws nothing).
+export component OpsVaultOverlay inherits Rectangle {
+    if OpsVault.pin-open: PinDialog { width: parent.width; height: parent.height; }
+    if OpsVault.ed-open: EditDialog { width: parent.width; height: parent.height; }
+    if OpsVault.up-open: UpgradeDialog { width: parent.width; height: parent.height; }
+}

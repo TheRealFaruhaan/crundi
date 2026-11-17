@@ -1,0 +1,323 @@
+// Factories (4.7, 4.8): the graph canvas, the editor's and the live
+// graph's (React Flow in tools/factory-flow: nodes.jsx FactoryNode and
+// FactoryEdge, its Controls and MiniMap). Steps and connections come in
+// flow units (the web's pixels at zoom 1) from src/planning/factories.rs;
+// the canvas places them with the view's zoom and pan. A node's parts are
+// stacked with the same steps src/planning/factories_model.rs measures.
+//
+// Slint limits (PLAN.md Known gaps): no dashed strokes (a note's connection
+// is drawn solid in its yellow, the job line solid in its violet); no dot
+// grid behind the canvas; a connection is picked by its label or the small
+// dot at its middle (a path takes no clicks).
+
+import { Theme, Icons, Icon } from "../kit.slint";
+import { PlanningFactories, PlanningFxNode, PlanningFxEdge } from "factories-api.slint";
+import { FxIcons, FxTone } from "factories-parts.slint";
+
+/// A source handle: a ring at a step's edge; in the editor, drag it to a
+/// step to connect (the pointer goes to Rust in canvas coordinates).
+component Handle inherits Rectangle {
+    in property <float> zf;
+    in property <color> tone;
+    in property <string> node;
+    in property <string> handle;
+    in property <string> which;
+    in property <bool> editable;
+    in property <length> cx0;
+    in property <length> cy0;
+    width: Theme.sp-10 * root.zf + (ta.has-hover && root.editable ? Theme.sp-2 * root.zf : 0px);
+    height: self.width;
+    border-radius: self.width / 2;
+    background: ta.has-hover && root.editable ? Theme.accent : Theme.bg-card;
+    border-width: Theme.sp-2 * root.zf;
+    border-color: ta.has-hover && root.editable ? Theme.accent : root.tone;
+    ta := TouchArea {
+        enabled: root.editable;
+        mouse-cursor: crosshair;
+        moved => {
+            if self.pressed { PlanningFactories.cv-handle-drag(root.which, root.node, root.handle, self.absolute-position.x + self.mouse-x - root.cx0, self.absolute-position.y + self.mouse-y - root.cy0); }
+        }
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left {
+                PlanningFactories.cv-handle-up(root.which, root.node, root.handle, self.absolute-position.x + self.mouse-x - root.cx0, self.absolute-position.y + self.mouse-y - root.cy0);
+            }
+        }
+    }
+}
+
+/// One step (.ff-node), drawn at the canvas's zoom `z`.
+component FxNodeView inherits Rectangle {
+    in property <PlanningFxNode> n;
+    in property <float> zf;
+    in property <string> which;
+    in property <bool> editable;
+    in property <length> cx0;   // the canvas's window position
+    in property <length> cy0;
+    property <length> u: 1px * root.zf;
+    width: root.n.w * root.u;
+    height: root.n.h * root.u;
+    opacity: root.n.retired ? Theme.o-soft : 1;
+    // The glow of a step at work (.ff-node.active) and of the selected one.
+    if root.n.active || root.n.sel: Rectangle {
+        x: -Theme.sp-4 * root.zf; y: -Theme.sp-4 * root.zf;
+        width: parent.width + Theme.sp-8 * root.zf; height: parent.height + Theme.sp-8 * root.zf;
+        border-radius: (Theme.r-card + Theme.sp-4) * root.zf;
+        background: root.n.sel ? Theme.accent-ring : Theme.green-ring;
+    }
+    body := Rectangle {
+        border-radius: Theme.r-card * root.zf;
+        background: Theme.bg-card;
+        border-width: 1px;
+        border-color: root.n.sel ? Theme.accent : root.n.active ? Theme.green : root.n.bad ? Theme.red : root.n.visited ? Theme.green-ring : Theme.border;
+        clip: true;
+        // Head: icon and kind (upper case).
+        HorizontalLayout {
+            x: Theme.sp-10 * root.zf; y: Theme.sp-10 * root.zf;
+            width: parent.width - Theme.sp-20 * root.zf; height: Theme.sp-16 * root.zf;
+            spacing: Theme.sp-6 * root.zf;
+            VerticalLayout { alignment: center; Icon { width: Theme.icon-md * root.zf; height: Theme.icon-md * root.zf; source: FxIcons.of-kind(root.n.kind); tint: FxTone.head(root.n.kind); } }
+            Text { text: root.n.kind-label; font-size: Theme.text-10 * root.zf; letter-spacing: Theme.track-wide * root.zf; color: FxTone.head(root.n.kind); vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        }
+        Text {
+            x: Theme.sp-10 * root.zf; y: (Theme.sp-10 + Theme.sp-16 + Theme.sp-2) * root.zf;
+            width: parent.width - Theme.sp-20 * root.zf; height: Theme.sp-20 * root.zf;
+            text: root.n.title; font-size: Theme.text-13 * root.zf; font-weight: Theme.w-semibold; color: Theme.text-primary;
+            vertical-alignment: center; overflow: elide;
+        }
+        // Body: what the step is, or who is here and what they are doing.
+        if !root.n.doing: Text {
+            x: Theme.sp-10 * root.zf; y: (Theme.sp-10 + Theme.sp-16 + Theme.sp-2 + Theme.sp-20) * root.zf;
+            width: parent.width - Theme.sp-20 * root.zf; height: root.n.lines * Theme.sp-16 * root.zf;
+            text: root.n.body; font-size: Theme.text-11 * root.zf; color: Theme.text-muted; wrap: word-wrap; overflow: elide;
+        }
+        if root.n.doing: HorizontalLayout {
+            x: Theme.sp-10 * root.zf; y: (Theme.sp-10 + Theme.sp-16 + Theme.sp-2 + Theme.sp-20) * root.zf;
+            width: parent.width - Theme.sp-20 * root.zf; height: root.n.lines * Theme.sp-16 * root.zf;
+            spacing: Theme.sp-6 * root.zf;
+            VerticalLayout { alignment: start; padding-top: Theme.sp-4 * root.zf;
+                Rectangle { width: Theme.sp-8 * root.zf; height: Theme.sp-8 * root.zf; border-radius: Theme.sp-4 * root.zf; background: root.n.doing-busy ? Theme.green : Theme.text-muted; }
+            }
+            Text { horizontal-stretch: 1; text: root.n.doing-who + " " + root.n.doing-text; font-size: Theme.text-11 * root.zf; color: Theme.text-secondary; wrap: word-wrap; overflow: elide; }
+        }
+        if root.n.skills != "": Text {
+            x: Theme.sp-10 * root.zf; y: (Theme.sp-10 + Theme.sp-16 + Theme.sp-2 + Theme.sp-20 + Theme.sp-8) * root.zf + root.n.lines * Theme.sp-16 * root.zf;
+            width: parent.width - Theme.sp-20 * root.zf; height: Theme.sp-20 * root.zf;
+            text: root.n.skills; font-size: Theme.text-10 * root.zf; color: Theme.accent-hover; font-family: Theme.mono; overflow: elide; vertical-alignment: center;
+        }
+        // Outputs (.ff-outs): their labels side by side above the bottom edge.
+        if root.n.outs.length > 0: Rectangle {
+            y: parent.height - Theme.sp-32 * root.zf; height: 1px; background: Theme.border;
+        }
+        for o[i] in root.n.outs: Text {
+            x: parent.width * i / root.n.outs.length; y: parent.height - Theme.sp-32 * root.zf + Theme.sp-4 * root.zf;
+            width: parent.width / root.n.outs.length; height: Theme.sp-16 * root.zf;
+            text: o.label; horizontal-alignment: center; overflow: elide;
+            font-size: Theme.text-10 * root.zf; color: o.finish ? Theme.green : Theme.text-secondary;
+        }
+    }
+    // The whole step: select (and drag, in the editor); a click opens it.
+    property <length> ax; property <length> ay; property <bool> moved;
+    ta := TouchArea {
+        mouse-cursor: root.editable ? (self.pressed ? grabbing : grab) : pointer;
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
+                root.ax = self.absolute-position.x + self.mouse-x; root.ay = self.absolute-position.y + self.mouse-y; root.moved = false;
+                if root.editable { PlanningFactories.cv-node-down(root.which, root.n.id); }
+            }
+            if ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left {
+                PlanningFactories.cv-node-up(root.which, root.n.id, root.moved);
+            }
+        }
+        moved => {
+            if self.pressed && root.editable {
+                root.moved = true;
+                PlanningFactories.cv-node-drag(root.which, root.n.id, self.absolute-position.x + self.mouse-x - root.ax, self.absolute-position.y + self.mouse-y - root.ay);
+            }
+        }
+    }
+    // Handles: in (top), outputs (bottom), notes (sides of a person).
+    if root.n.has-in: Rectangle {
+        x: (parent.width - self.width) / 2; y: -self.height / 2;
+        width: Theme.sp-10 * root.zf; height: self.width; border-radius: self.width / 2;
+        background: Theme.bg-card; border-width: Theme.sp-2 * root.zf; border-color: Theme.text-secondary;
+    }
+    if root.n.agent: Rectangle {
+        x: -self.width / 2; y: (parent.height - self.height) / 2;
+        width: Theme.sp-10 * root.zf; height: self.width; border-radius: self.width / 2;
+        background: Theme.bg-card; border-width: Theme.sp-2 * root.zf; border-color: Theme.yellow;
+    }
+    if root.n.agent: Handle {
+        x: parent.width - self.width / 2; y: (parent.height - self.height) / 2;
+        zf: root.zf; tone: Theme.yellow; node: root.n.id; handle: "note"; which: root.which; editable: root.editable; cx0: root.cx0; cy0: root.cy0;
+    }
+    for o[i] in root.n.outs: Handle {
+        x: parent.width * (2 * i + 1) / (2 * root.n.outs.length) - self.width / 2; y: parent.height - self.height / 2;
+        zf: root.zf; tone: o.finish ? Theme.green : Theme.text-secondary; node: root.n.id; handle: o.id; which: root.which; editable: root.editable; cx0: root.cx0; cy0: root.cy0;
+    }
+    // The issues badge (.ff-badge) and the token pill (.ff-token).
+    if root.n.badge > 0: Rectangle {
+        x: parent.width - self.width + Theme.sp-8 * root.zf; y: -Theme.sp-8 * root.zf;
+        height: Theme.sp-16 * root.zf; width: bl.preferred-width + Theme.sp-10 * root.zf;
+        border-radius: self.height / 2;
+        background: root.n.badge-level == "error" ? Theme.red : Theme.yellow;
+        bl := HorizontalLayout {
+            padding-left: Theme.sp-4 * root.zf; padding-right: Theme.sp-6 * root.zf; spacing: Theme.sp-2 * root.zf; alignment: center;
+            VerticalLayout { alignment: center; Icon { width: Theme.icon-sm * root.zf; height: Theme.icon-sm * root.zf; source: FxIcons.alert; tint: root.n.badge-level == "error" ? Theme.white : Theme.bg-primary; } }
+            Text { text: root.n.badge; font-size: Theme.text-10 * root.zf; font-weight: Theme.w-bold; color: root.n.badge-level == "error" ? Theme.white : Theme.bg-primary; vertical-alignment: center; }
+        }
+    }
+    if root.n.token != "": Rectangle {
+        x: Theme.sp-10 * root.zf; y: -Theme.sp-10 * root.zf;
+        height: Theme.sp-16 * root.zf; width: tl.preferred-width + Theme.sp-12 * root.zf;
+        border-radius: self.height / 2;
+        background: FxTone.token(root.n.token-kind);
+        tl := Text { text: root.n.token; font-size: Theme.text-10 * root.zf; font-weight: Theme.w-bold; color: Theme.bg-primary; }
+    }
+}
+
+/// The canvas: pan by dragging the background, zoom with the wheel; the
+/// steps and connections; Controls (zoom in, out, fit) and the MiniMap.
+export component FxCanvas inherits Rectangle {
+    in property <string> which;
+    in property <[PlanningFxNode]> nodes;
+    in property <[PlanningFxEdge]> edges;
+    in property <float> zoom: 1;
+    in property <float> pan-x;
+    in property <float> pan-y;
+    in property <bool> editable;
+    in property <bool> minimap;
+    in property <bool> controls-top;
+    in property <float> bx;
+    in property <float> by;
+    in property <float> bw;
+    in property <float> bh;
+    in property <bool> conn;
+    in property <string> conn-path;
+    background: Theme.bg-primary;
+    clip: true;
+    init => { PlanningFactories.cv-size(root.which, self.width, self.height); }
+    changed width => { PlanningFactories.cv-size(root.which, self.width, self.height); }
+    changed height => { PlanningFactories.cv-size(root.which, self.width, self.height); }
+    property <float> vw: root.width / 1px / root.zoom;
+    property <float> vh: root.height / 1px / root.zoom;
+
+    keys := FocusScope {
+        key-pressed(ev) => {
+            if ev.text == Key.Delete || ev.text == Key.Backspace { PlanningFactories.cv-key(root.which, "delete"); return accept; }
+            if ev.text == Key.Escape { PlanningFactories.cv-key(root.which, "escape"); return accept; }
+            return reject;
+        }
+    }
+    // The background: pan, click to deselect, the wheel zooms.
+    property <length> px; property <length> py; property <bool> dragged;
+    pane := TouchArea {
+        mouse-cursor: self.pressed ? grabbing : default;
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down { root.px = self.mouse-x; root.py = self.mouse-y; root.dragged = false; keys.focus(); }
+        }
+        moved => {
+            if self.pressed {
+                PlanningFactories.cv-pan(root.which, self.mouse-x - root.px, self.mouse-y - root.py);
+                root.px = self.mouse-x; root.py = self.mouse-y; root.dragged = true;
+            }
+        }
+        clicked => { if !root.dragged { PlanningFactories.cv-pane(root.which); } }
+        scroll-event(ev) => {
+            PlanningFactories.cv-zoom(root.which, ev.delta-y / 1px, self.mouse-x, self.mouse-y);
+            return accept;
+        }
+    }
+    // Connections, under the steps.
+    for e in root.edges: Path {
+        width: root.width; height: root.height;
+        viewbox-x: -root.pan-x / root.zoom; viewbox-y: -root.pan-y / root.zoom;
+        viewbox-width: root.vw; viewbox-height: root.vh;
+        commands: e.path;
+        stroke: FxTone.stroke(e.tone, e.sel);
+        stroke-width: (e.sel || e.pulse ? Theme.sp-2 + 1px : Theme.sp-2) * root.zoom;
+        fill: transparent;
+    }
+    for e in root.edges: Path {
+        width: root.width; height: root.height;
+        viewbox-x: -root.pan-x / root.zoom; viewbox-y: -root.pan-y / root.zoom;
+        viewbox-width: root.vw; viewbox-height: root.vh;
+        commands: e.arrow;
+        fill: FxTone.stroke(e.tone, e.sel);
+    }
+    if root.conn: Path {
+        width: root.width; height: root.height;
+        viewbox-x: -root.pan-x / root.zoom; viewbox-y: -root.pan-y / root.zoom;
+        viewbox-width: root.vw; viewbox-height: root.vh;
+        commands: root.conn-path;
+        stroke: Theme.accent; stroke-width: Theme.sp-2 * root.zoom; fill: transparent;
+    }
+    for nd in root.nodes: FxNodeView {
+        x: (nd.x * root.zoom + root.pan-x) * 1px;
+        y: (nd.y * root.zoom + root.pan-y) * 1px;
+        n: nd; zf: root.zoom; which: root.which; editable: root.editable;
+        cx0: root.absolute-position.x; cy0: root.absolute-position.y;
+    }
+    // Edge labels (.ff-elabel), above the steps; a click picks the connection.
+    for e in root.edges: Rectangle {
+        property <bool> has: e.label != "";
+        visible: self.has || root.editable;
+        x: (e.lx * root.zoom + root.pan-x) * 1px - self.width / 2;
+        y: (e.ly * root.zoom + root.pan-y) * 1px - self.height / 2;
+        height: self.has ? Theme.sp-20 * root.zoom : Theme.sp-10 * root.zoom;
+        width: self.has ? el.preferred-width + Theme.sp-12 * root.zoom : self.height;
+        border-radius: self.height / 2;
+        background: self.has ? Theme.bg-secondary : (et.has-hover || e.sel ? Theme.accent : Theme.border);
+        border-width: self.has ? 1px : 0px;
+        border-color: e.sel ? Theme.accent : e.tone == "bad" ? Theme.red : e.tone == "note" ? Theme.yellow-edge : Theme.border;
+        el := HorizontalLayout {
+            visible: parent.has;
+            padding-left: Theme.sp-6 * root.zoom; padding-right: Theme.sp-6 * root.zoom; spacing: Theme.sp-4 * root.zoom; alignment: center;
+            if e.icon != "": VerticalLayout { alignment: center; Icon { width: Theme.icon-sm * root.zoom; height: Theme.icon-sm * root.zoom; source: e.icon == "loop" ? FxIcons.loop : FxIcons.note; tint: e.tone == "note" ? Theme.yellow : Theme.text-secondary; } }
+            Text { text: e.label; font-size: Theme.text-10 * root.zoom; vertical-alignment: center; color: e.sel ? Theme.text-primary : e.tone == "bad" ? Theme.error-text : e.tone == "note" ? Theme.yellow : Theme.text-secondary; }
+        }
+        et := TouchArea { enabled: root.editable || parent.has; mouse-cursor: root.editable ? pointer : default; clicked => { PlanningFactories.cv-edge(root.which, e.id); keys.focus(); } }
+    }
+    // Controls (zoom in, zoom out, fit view): bottom left, or top left on a narrow editor.
+    Rectangle {
+        x: Theme.sp-12;
+        y: root.controls-top ? Theme.sp-12 : root.height - self.height - Theme.sp-12;
+        width: Theme.sp-32 - Theme.sp-4; height: ctl.preferred-height;
+        border-radius: Theme.r-field; border-width: 1px; border-color: Theme.border; background: Theme.bg-card; clip: true;
+        ctl := VerticalLayout {
+            for c[i] in [{ a: "zoom-in", ic: Icons.plus }, { a: "zoom-out", ic: FxIcons.minus }, { a: "fit", ic: Icons.fit }]: Rectangle {
+                height: Theme.sp-32 - Theme.sp-4;
+                background: ct.has-hover ? Theme.bg-hover : transparent;
+                Icon { width: Theme.icon-md; height: Theme.icon-md; source: c.ic; tint: Theme.text-primary; }
+                if i < 2: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                ct := TouchArea { mouse-cursor: pointer; clicked => { PlanningFactories.act("cv-" + c.a, root.which, ""); } }
+            }
+        }
+    }
+    // The minimap: the steps in small, the view's frame; a click moves the view there.
+    if root.minimap && root.bw > 0: Rectangle {
+        property <float> s: min(self.width / 1px / root.bw, self.height / 1px / root.bh);
+        property <length> ox: (self.width - root.bw * self.s * 1px) / 2;
+        property <length> oy: (self.height - root.bh * self.s * 1px) / 2;
+        x: root.width - self.width - Theme.sp-12; y: root.height - self.height - Theme.sp-12;
+        width: Theme.factories-mini-w; height: Theme.factories-mini-h;
+        border-radius: Theme.r-field; border-width: 1px; border-color: Theme.border; background: Theme.bg-secondary; clip: true;
+        for nd in root.nodes: Rectangle {
+            x: parent.ox + (nd.x - root.bx) * parent.s * 1px; y: parent.oy + (nd.y - root.by) * parent.s * 1px;
+            width: nd.w * parent.s * 1px; height: nd.h * parent.s * 1px;
+            border-radius: Theme.sp-2;
+            background: nd.bad ? Theme.red : nd.active ? Theme.green : nd.visited ? Theme.green-ring : Theme.slate-edge;
+        }
+        Rectangle {
+            x: parent.ox + (-root.pan-x / root.zoom - root.bx) * parent.s * 1px;
+            y: parent.oy + (-root.pan-y / root.zoom - root.by) * parent.s * 1px;
+            width: root.vw * parent.s * 1px; height: root.vh * parent.s * 1px;
+            border-width: 1px; border-color: Theme.accent; background: Theme.accent-dim;
+        }
+        TouchArea {
+            mouse-cursor: pointer;
+            clicked => { PlanningFactories.cv-mini(root.which, root.bx + (self.mouse-x - parent.ox) / 1px / parent.s, root.by + (self.mouse-y - parent.oy) / 1px / parent.s); }
+            moved => { if self.pressed { PlanningFactories.cv-mini(root.which, root.bx + (self.mouse-x - parent.ox) / 1px / parent.s, root.by + (self.mouse-y - parent.oy) / 1px / parent.s); } }
+        }
+    }
+    public function focus-keys() { keys.focus(); }
+}

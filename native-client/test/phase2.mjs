@@ -72,7 +72,7 @@
 
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, openSync, readFileSync, readdirSync, writeFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
@@ -89,12 +89,22 @@ let failed = 0;
 const check = (name, ok, extra = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : '  ' + JSON.stringify(extra).slice(0, 400)}`); if (!ok) failed++; return ok; };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function http(method, path, body, token) {
-  const res = await fetch(SERVER + path, {
+// The whole run outlasts the server's 15-minute access token (the GPUI
+// client gets through every section): on a 401 for the test's own token,
+// renew it once with the refresh token from the setup and try again.
+let refreshTok = '';
+async function http(method, path, body, tok) {
+  const go = (t) => fetch(SERVER + path, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: 'Bearer ' + t } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
+  let res = await go(tok);
+  if (res.status === 401 && tok && tok === token && refreshTok) {
+    const r = await fetch(SERVER + '/api/auth/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: refreshTok }) });
+    const j = await r.json().catch(() => null);
+    if (j?.ok && j.token) { token = j.token; refreshTok = j.refreshToken; res = await go(token); }
+  }
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
@@ -111,7 +121,8 @@ if (!methods.body?.setupRequired) { console.error('This needs a fresh dev server
 const setup = await http('POST', '/api/auth/setup', { method: 'password', password: PASSWORD });
 check('the server takes a password', setup.body?.ok && setup.body.totpSecret, setup.body);
 const SECRET = setup.body.totpSecret;
-const token = setup.body.token;
+let token = setup.body.token;
+refreshTok = setup.body.refreshToken || '';
 
 // No bot behind the sign-in either (an empty .env, no TELEGRAM_BOT_TOKEN).
 const status = await http('GET', '/api/status', null, token);
@@ -141,7 +152,7 @@ const MIC_WAV = join(OUT, 'mic.wav');
 }
 function launch(tag) {
   const log = openSync(join(OUT, `native2-${tag}.log`), 'w');
-  return spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank', CRUNDI_TEST_MIC_WAV: MIC_WAV }, stdio: ['ignore', log, log] });
+  return spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank', CRUNDI_TEST_MIC_WAV: MIC_WAV, CRUNDI_TEST_UPLOAD_KBPS: '256' }, stdio: ['ignore', log, log] });
 }
 
 function driver() {
@@ -199,6 +210,18 @@ await parkPointer();
 let app = launch('run1');
 // Never leave the app behind (it would hold the driver's port for the next run).
 process.on('exit', () => { try { app.kill(); } catch {} });
+// Every temporary folder the run makes goes when it ends, failed or not
+// (the attachments' files piled up to gigabytes in /tmp otherwise). A
+// timeout's SIGTERM or a Ctrl+C ends through process.exit, so they go too.
+// A run killed from outside (timeout, SIGKILL) skips the exit hook below:
+// folders of earlier runs older than an hour go first (F54).
+for (const f of readdirSync(tmpdir()).filter((x) => /^crundi-attach-/.test(x))) {
+  try { const p = join(tmpdir(), f); const st = (await import('node:fs')).statSync(p); if (Date.now() - st.mtimeMs > 3600e3) rmSync(p, { recursive: true, force: true }); } catch { /* not ours, or gone */ }
+}
+const tmpDirs = [];
+const tmpDir = (prefix) => { const t = mkdtempSync(join(tmpdir(), prefix)); tmpDirs.push(t); return t; };
+process.on('exit', () => { for (const t of tmpDirs) { try { rmSync(t, { recursive: true, force: true }); } catch {} } });
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(1));
 process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 d = await driver();
 
@@ -697,13 +720,26 @@ p = await until('a pinned pane is refused', (q) => q.toast === 'This pane is pin
 check('dropping a pinned pane is refused with the toast', p && pane(p, four[0]).x === b.x && pane(p, four[0]).y === b.y);
 await ui('pane-pin', b.id);
 await until('unpinned', (q) => !pane(q, four[0]).pinned);
+// The empty pane's centred column (3.1): the message, the chip rows (24 high,
+// 6 apart; a chip is 1+10+icon 14+6+label+10+1), then Split ▸ / Split ▾ / ×.
+// One row of chips puts the first chip 6.5 above the centre and × 31.5 below
+// it; each more row moves the chips up 15 and × down 15. The Terminal chip
+// leads the first row: its icon is 18 from the row's left.
+const chipRows = (e) => (e.chips && e.chips.length) ? e.chips : [[{ id: 'terminal', label: 'Terminal' }]];
+const chipLabelW = (l) => l.length * 6.6;
+const terminalChipAt = (e) => {
+  const rows = chipRows(e), first = rows[0];
+  const rowW = first.reduce((a, c) => a + 42 + chipLabelW(c.label), 0) + 6 * (first.length - 1);
+  return [WB.x + e.x + e.w / 2 - rowW / 2 + 18, WB.y + e.y + e.h / 2 - 6.5 - 15 * (rows.length - 1)];
+};
+const emptyCloseAt = (e) => [WB.x + e.x + e.w / 2 + 78, WB.y + e.y + e.h / 2 + 31.5 + 15 * (chipRows(e).length - 1)];
 // The empty pane: split right, then its Terminal chip puts a launcher in that pane; × removes a pane.
 b = pane(await props(), four[1]);
 await ui('split', b.id, 'false');
 p = await until('an empty pane', (q) => q.panes.some((x) => x.kind === 'empty'));
 empty = p.panes.find((x) => x.kind === 'empty');
 await snap('2.3-empty');
-await mouse('click', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2 - 6.5);   // the chip: the column is centred
+await mouse('click', ...terminalChipAt(empty));   // the Terminal chip
 p = await until('the chip starts a launcher in that pane', (q) => q.panes.find((x) => x.id === empty.id)?.kind === 'launcher');
 if (p) check('the Terminal chip puts a launcher in the clicked pane', true);
 await ui('close-pane', empty.id);
@@ -711,7 +747,7 @@ p = await until('the launcher closes', (q) => !q.panes.some((x) => x.kind === 'l
 await ui('split', b.id, 'true');
 p = await until('another empty pane', (q) => q.panes.some((x) => x.kind === 'empty'));
 empty = p.panes.find((x) => x.kind === 'empty');
-await mouse('click', WB.x + empty.x + empty.w / 2 + 78, WB.y + empty.y + empty.h / 2 + 31.5);   // its ×
+await mouse('click', ...emptyCloseAt(empty));   // its ×
 p = await until('× removes the empty pane', (q) => !q.panes.some((x) => x.kind === 'empty'));
 if (p) check('the empty pane\'s × removes it', true);
 // The hover split controls again: split right on pane 2 (by the mouse). A new
@@ -730,7 +766,7 @@ check('a split right shares that row evenly (340 + 7 + 340 at least)', p && Math
 check('a click on Split right leaves the focus alone', p && pane(p, four[1]).focused && !pane(p, four[2]).focused);
 // The empty pane's Terminal chip (by the mouse) puts a launcher in that very
 // pane, and the chat the launcher starts (UI Mode) takes the same leaf.
-await mouse('click', WB.x + empty.x + empty.w / 2, WB.y + empty.y + empty.h / 2 - 6.5);
+await mouse('click', ...terminalChipAt(empty));
 p = await until('the chip: a launcher in the clicked pane', (q) => q.panes.find((x) => x.id === empty.id)?.kind === 'launcher');
 if (p) check('the Terminal chip starts a launcher in that pane', true);
 const sessionsBefore = (await http('GET', '/api/ui-sessions', null, token)).body?.sessions?.map((s) => s.id) || [];
@@ -1090,7 +1126,14 @@ if (p) {
 await snap('2.6-open-bypass');
 await ui('mode-choose', 'acceptEdits');
 { const q = await props(); check('choosing closes the picker and the button changes at once', q.modePicker === null && pane(q, liveM).mode === 'Accept edits' && pane(q, liveM).modeKey === 'acceptEdits', pane(q, liveM)); }
-await until('the server has the new mode', async () => (await serverChat(liveM))?.permissionMode === 'acceptEdits', 10000) && check('…and the server has it; the turn carries on', pane(await props(), liveM).state === 'working');
+// The turn carries on: the pane still works, unless the server says Claude
+// itself ended the turn meanwhile (a real turn's timing; F85/F92). A turn the
+// switch cut short would read working on neither side.
+if (await until('the server has the new mode', async () => (await serverChat(liveM))?.permissionMode === 'acceptEdits', 10000)) {
+  const sc = await serverChat(liveM), st = pane(await props(), liveM).state;
+  // (Under acceptEdits Claude's next command may ask: needs-input is the turn going on too.)
+  check('…and the server has it; the turn carries on', st === 'working' || st === 'needs-input' || (sc?.agentState !== 'working' && sc?.status === 'running'), { pane: st, server: sc?.agentState });
+}
 await ui('mode-open');
 await until('the picker opens again', (q) => q.modePicker?.current === 'acceptEdits', 5000);
 await ui('mode-choose', 'plan');
@@ -1183,11 +1226,14 @@ for (const id of [liveM, liveN]) await http('POST', `/api/ui-sessions/${id}/clos
 const demoPath = process.env.CRUNDI_TEST_PROJECT || join(tmpdir(), 'crundi-native-demo2');
 const attDir = join(demoPath, 'crundi_attachments');
 const attCount = () => (existsSync(attDir) ? readdirSync(attDir).length : 0);
-const tmpA = mkdtempSync(join(tmpdir(), 'crundi-attach-'));
+const tmpA = tmpDir('crundi-attach-');
 const notes = join(tmpA, 'notes.txt'); writeFileSync(notes, 'hello notes\n');
 const otherF = join(tmpA, 'other file.md'); writeFileSync(otherF, '# other\n');
 const emptyF = join(tmpA, 'empty.txt'); writeFileSync(emptyF, '');
-const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(40 * 1024 * 1024, 7));
+// Big enough that the upload is still under way when the test looks (the bar, attach busy).
+// Small (it leaves no mark: F54); the app uploads at 256 KB/s under the test
+// (CRUNDI_TEST_UPLOAD_KBPS, given at launch), so it is under way for ~10 s (F64).
+const big = join(tmpA, 'big.bin'); writeFileSync(big, Buffer.alloc(2 * 1024 * 1024, 7));
 const pic = join(tmpA, 'shot.png'); writeFileSync(pic, Buffer.from((await d.send({ cmd: 'snapshot' })).data, 'base64'));
 const liveA = await make('demo', 'Attach', false);
 const liveB2 = await make('demo', 'Attach two', false);
@@ -1230,7 +1276,7 @@ if (p) check('a big file uploads and its path goes in', true);
 // keeps about two thirds of the bar's room.
 {
   const longF = join(tmpA, 'quarterly-report-final-version-with-all-the-appendices-and-the-notes-included.bin');
-  writeFileSync(longF, Buffer.alloc(60 * 1024 * 1024, 7));
+  writeFileSync(longF, Buffer.alloc(2 * 1024 * 1024, 7));   // 2 MB like big.bin: at the test's 256 KB/s upload it finishes in ~10 s (F76)
   await clearBox();
   await ui('attach', longF);
   p = await until('the long-named upload shows its bar', (q) => pane(q, liveA)?.upOn && pane(q, liveA)?.upBusy, 10000);
@@ -1393,10 +1439,14 @@ const drawerAt = async (id, rgb) => {
   const q = await qp(id), img = await shot();
   // (Clear of the window's resize border at its right edge.)
   const x = Math.min(img.w - 30, Math.round(WB.x + q.x + q.w - 24));
+  // The lowest run of that fill at least 20 px tall: the drawers sit at the
+  // pane's bottom, above the box. (Not the tallest: a user bubble higher up
+  // has nearly the same fill, and in a narrow pane its wrapped text makes it
+  // the taller one, as the GPUI client's 378 px panes do.)
   let best = [0, 0], run = [0, 0];
   for (let y = Math.round(WB.y + q.y); y < Math.min(img.h, WB.y + q.y + q.h); y++) {
     const c = img.at(x, y);
-    if (rgb.every((v, i) => Math.abs(c[i] - v) <= 4)) { run = run[1] ? [run[0], run[1] + 1] : [y, 1]; if (run[1] > best[1]) best = run; } else run = [0, 0];
+    if (rgb.every((v, i) => Math.abs(c[i] - v) <= 4)) { run = run[1] ? [run[0], run[1] + 1] : [y, 1]; if (run[1] >= 20) best = run; } else run = [0, 0];
   }
   return best[1] >= 20 ? { x, y: best[0] + best[1] / 2 } : null;
 };
@@ -1833,7 +1883,9 @@ if (p) {
 }
 await snap('2.12-granted');
 await ui('sec-revoke', 'E2E_TOKEN');
-p = await until('revoked', (q) => q.secretsDialog?.grants?.length === 0 && pane(q, liveSec)?.secretsN === 0, 10000);
+// (The toast comes with the revoke's answer, which may land after the
+// server's grants event: wait for both; F92.)
+p = await until('revoked', (q) => q.secretsDialog?.grants?.length === 0 && pane(q, liveSec)?.secretsN === 0 && q.toast === 'Revoked E2E_TOKEN', 10000);
 if (p) check('Revoke: gone from the server and the lock; the toast', (await grantsOf()).length === 0 && p.toast === 'Revoked E2E_TOKEN', p.toast);
 // F74: Tab and Shift+Tab move between the ticked secrets' fields, and what
 // is typed lands in the field Tab went to.
@@ -2337,7 +2389,7 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
 // injected as the call's done tool entry (as a real turn would produce it).
 {
   const { execFileSync } = await import('node:child_process');
-  const med = mkdtempSync(join(tmpdir(), 'crundi-media-'));
+  const med = tmpDir('crundi-media-');
   const have = (bin) => { try { execFileSync('which', [bin]); return true; } catch { return false; } };
   if (!have('convert')) { console.log('skipping 2.16m: no ImageMagick'); } else {
     execFileSync('convert', ['-size', '1200x700', 'gradient:steelblue-navy', join(med, 'a.png')]);
@@ -2675,6 +2727,9 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     check('the card: "Closed · just now", what Resume does, Peek (it has a conversation), not heavy', c?.pk.why === 'Closed · just now' && c.pk.what === 'Resume picks up this conversation.' && c.pk.session && !c.pk.heavy, c?.pk);
     check('its header: exited, the title, no chat tools', c?.state === 'exited' && !c.narrow && !c.menu, c && { state: c.state, title: c.title });
     p = await until('its stored conversation behind the card', (q) => pane(q, lightChat)?.entries > 0, 8000);
+    // (A clean picture: the last step's toast gone first; F73.)
+    for (let i = 0; i < 20 && (await props()).toast; i++) await sleep(250);
+    await sleep(2500);
     await snap('2.23-parked');
     // Peek, then Esc (native) and Parked view back.
     await ui('peek', 'live:' + lightChat, 'on');
@@ -2700,6 +2755,9 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     pk = await http('POST', `/api/panes/${heavyChat}/park`, {}, token);
     p = await until('a heavy parked chat', (q) => pane(q, heavyChat)?.pk?.heavy);
     check('…its warning\'s tokens: 138.2k tokens', p && pane(p, heavyChat).pk.tokens === '138.2k tokens' && pane(p, heavyChat).pk.session, p && pane(p, heavyChat).pk);
+    // (A clean picture: the last step's toast gone first; F73.)
+    for (let i = 0; i < 20 && (await props()).toast; i++) await sleep(250);
+    await sleep(2500);
     await snap('2.23-heavy');
     // Short panes: the card gets tighter (no What, the warning a pill), then
     // one row (no Why, a smaller Resume, the tokens only).

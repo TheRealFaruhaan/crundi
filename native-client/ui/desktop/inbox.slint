@@ -1,0 +1,254 @@
+// The Inbox (src/webapp-html.js #inbox-panel, ibxRender): a full page with
+// no tab of its own (the sidebar's Inbox opens it). The head (title, the
+// unread line, Mark all read), the threads on the left, the open
+// conversation on the right: oldest first, no reply box (Open chat).
+
+import { Theme, Icons, Icon, Spinner } from "../kit.slint";
+import { Tip } from "../chat.slint";
+import { DesktopInbox, DesktopThread, DesktopItem, DesktopMedia } from "api.slint";
+import { DesktopIcons } from "icons.slint";
+
+global InboxLook {
+    // The thread's glyph and colour (IBX_THREAD_IC), a message kind's glyph (IBX_KIND).
+    public pure function thread-icon(k: string) -> image {
+        return k == "project" ? Icons.folder : k == "cru" ? Icons.mic : k == "system" ? Icons.info : Icons.message-square;
+    }
+    public pure function thread-tint(k: string) -> color {
+        return k == "project" ? Theme.sky : k == "cru" ? Theme.green : k == "system" ? Theme.amber : Theme.accent-hover;
+    }
+    public pure function kind-icon(k: string) -> image {
+        return k == "photo" ? Icons.image : k == "file" ? Icons.file : k == "alert" ? Icons.bell : k == "question" ? Icons.help-circle
+            : k == "permission" ? Icons.shield-alert : k == "report" ? Icons.mic : k == "schedule" ? Icons.clock : k == "system" ? Icons.info : Icons.message-square;
+    }
+    public pure function kind-tint(k: string) -> color {
+        return k == "alert" || k == "permission" ? Theme.amber : k == "question" ? Theme.sky : Theme.text-secondary;
+    }
+}
+
+/// A small bordered button with an icon (.ibx-btn).
+component IbxBtn inherits Rectangle {
+    in property <image> icon;
+    in property <string> text;
+    in property <bool> danger;
+    callback clicked();
+    height: Theme.control-sm;
+    width: lay.preferred-width;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: ta.has-hover ? (root.danger ? Theme.red : Theme.accent) : Theme.border;
+    background: ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-10; padding-right: Theme.sp-10; spacing: Theme.sp-6;
+        VerticalLayout { alignment: center; Icon { source: root.icon; width: Theme.icon-sm; height: Theme.icon-sm; tint: ta.has-hover && root.danger ? Theme.red : Theme.text-secondary; } }
+        Text { text: root.text; vertical-alignment: center; font-size: Theme.text-12; color: ta.has-hover && root.danger ? Theme.red : Theme.text-primary; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// A thread row (ibxThreadRow): round icon, title, subtitle, last line, when, count.
+component ThreadRow inherits Rectangle {
+    in property <DesktopThread> t;
+    height: lay.preferred-height;
+    background: root.t.selected ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : transparent;
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+    lay := HorizontalLayout {
+        padding-top: Theme.sp-12; padding-bottom: Theme.sp-12; padding-left: Theme.sp-16 - Theme.sp-2; padding-right: Theme.sp-16 - Theme.sp-2;
+        spacing: Theme.sp-10;
+        VerticalLayout {
+            alignment: start;
+            Rectangle {
+                width: Theme.control; height: self.width; border-radius: self.width / 2;
+                background: InboxLook.thread-tint(root.t.kind).with-alpha(Theme.o-faint);
+                Icon { source: InboxLook.thread-icon(root.t.kind); width: Theme.icon-md; height: Theme.icon-md; tint: InboxLook.thread-tint(root.t.kind); }
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: Theme.sp-2;
+            Text { text: root.t.title; font-size: Theme.text-14; font-weight: root.t.unread > 0 ? Theme.w-bold : Theme.w-medium; color: Theme.text-primary; overflow: elide; }
+            if root.t.sub != "": Text { text: root.t.sub; font-size: Theme.text-11; color: Theme.text-muted; overflow: elide; }
+            Text { text: root.t.last; font-size: Theme.text-12; color: root.t.unread > 0 ? Theme.text-secondary : Theme.text-muted; overflow: elide; }
+        }
+        VerticalLayout {
+            alignment: start; spacing: Theme.sp-4;
+            Text { text: root.t.age; font-size: Theme.text-11; color: Theme.text-muted; horizontal-alignment: right; }
+            if root.t.unread > 0: HorizontalLayout {
+                alignment: end;
+                Rectangle {
+                    height: Theme.sp-16 + Theme.sp-2;
+                    width: max(self.height, ct.preferred-width + Theme.sp-10);
+                    border-radius: self.height / 2; background: Theme.accent;
+                    ct := Text { text: root.t.badge; color: Theme.white; font-size: Theme.text-11; font-weight: Theme.w-bold; }
+                }
+            }
+        }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { DesktopInbox.open(root.t.key); } }
+}
+
+/// A message card (ibxMsgHtml): glyph, title, time, ×; the text; pictures and files.
+component MsgCard inherits Rectangle {
+    in property <DesktopItem> it;
+    height: lay.preferred-height;
+    max-width: Theme.inbox-msg-w;
+    border-radius: Theme.r-card;
+    background: Theme.bg-card;
+    border-width: 1px; border-color: Theme.border-subtle;
+    if root.it.fresh: Rectangle { x: 0; width: Theme.sp-2 + 1px; height: parent.height; background: Theme.accent; border-top-left-radius: Theme.r-card; border-bottom-left-radius: Theme.r-card; }
+    lay := VerticalLayout {
+        padding-top: Theme.sp-10; padding-bottom: Theme.sp-12; padding-left: Theme.sp-16 - Theme.sp-2; padding-right: Theme.sp-16 - Theme.sp-2;
+        spacing: Theme.sp-6;
+        HorizontalLayout {
+            spacing: Theme.sp-8;
+            VerticalLayout {
+                alignment: center;
+                kic := Icon { source: InboxLook.kind-icon(root.it.kind); width: Theme.icon-sm; height: Theme.icon-sm; tint: InboxLook.kind-tint(root.it.kind); }
+            }
+            Text { text: root.it.title; font-weight: Theme.w-semibold; font-size: Theme.text-13; color: Theme.text-primary; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+            Text { text: root.it.age; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+            Rectangle {
+                width: Theme.sp-20 + Theme.sp-2; height: self.width; border-radius: self.width / 2;
+                opacity: xa.has-hover ? 1 : Theme.o-soft;
+                background: xa.has-hover ? Theme.red-dim : transparent;
+                Icon { source: Icons.x; width: Theme.icon-sm; height: Theme.icon-sm; tint: xa.has-hover ? Theme.red : Theme.text-secondary; }
+                xa := TouchArea { mouse-cursor: pointer; clicked => { DesktopInbox.delete-item(root.it.id); } }
+                Tip { on: xa.has-hover; text: "Delete this message"; }
+            }
+        }
+        if root.it.text != "": Text { text: root.it.text; wrap: word-wrap; font-size: Theme.text-14; color: Theme.text-primary; }
+        for m in root.it.media: Rectangle {
+            height: m.is-pic && m.kept ? (m.loaded ? Theme.inbox-pic-h : Theme.sp-48) : Theme.control-sm + Theme.sp-4;
+            if m.is-pic && m.kept: Image {
+                x: 0; height: parent.height;
+                width: m.loaded ? min(parent.width, self.height * (self.source.width / max(1, self.source.height))) : Theme.sp-48;
+                source: m.pic; image-fit: contain;
+                horizontal-alignment: left;
+                TouchArea { mouse-cursor: pointer; clicked => { DesktopInbox.media(m.url, true); } }
+            }
+            if m.is-pic && m.kept && !m.loaded: Spinner { x: Theme.sp-16; width: Theme.sp-16; height: Theme.sp-16; }
+            if !m.is-pic || !m.kept: Rectangle {
+                x: 0; width: chip.preferred-width; height: Theme.control-sm + Theme.sp-4;
+                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
+                background: m.kept && fa.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+                chip := HorizontalLayout {
+                    padding-left: Theme.sp-10; padding-right: Theme.sp-10; spacing: Theme.sp-8;
+                    VerticalLayout { alignment: center; Icon { source: Icons.file; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-secondary; } }
+                    Text { text: m.name; vertical-alignment: center; font-size: Theme.text-12; color: m.kept ? Theme.text-primary : Theme.text-muted; }
+                    Text { text: m.kept ? m.size : "not kept"; vertical-alignment: center; font-size: Theme.text-11; color: Theme.text-muted; }
+                    if m.kept: VerticalLayout { alignment: center; Icon { source: Icons.download; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-secondary; } }
+                }
+                fa := TouchArea { enabled: m.kept; mouse-cursor: pointer; clicked => { DesktopInbox.media(m.url, false); } }
+            }
+        }
+    }
+}
+
+export component InboxPage inherits Rectangle {
+    background: Theme.bg-primary;
+    VerticalLayout {
+        // The head (.ibx-head).
+        Rectangle {
+            height: Theme.control-lg + Theme.sp-12;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: Theme.sp-16; padding-right: Theme.sp-16; spacing: Theme.sp-10;
+                VerticalLayout { alignment: center; Icon { source: Icons.mail; width: Theme.icon-md; height: Theme.icon-md; tint: Theme.text-primary; } }
+                Text { text: "Inbox"; vertical-alignment: center; font-size: Theme.text-16; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+                Text { text: DesktopInbox.sub; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                Rectangle { horizontal-stretch: 1; }
+                VerticalLayout { alignment: center; IbxBtn { icon: Icons.check; text: "Mark all read"; clicked => { DesktopInbox.mark-all(); } } }
+            }
+        }
+        HorizontalLayout {
+            vertical-stretch: 1;
+            // The threads (.ibx-list).
+            Rectangle {
+                width: Theme.inbox-list-w;
+                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+                if DesktopInbox.list-state == "loading" && DesktopInbox.threads.length == 0: HorizontalLayout { alignment: center; Spinner { width: Theme.sp-20; height: Theme.sp-20; y: Theme.sp-24; } }
+                if DesktopInbox.list-state == "error": VerticalLayout {
+                    width: parent.width; height: parent.height;
+                    alignment: center; spacing: Theme.sp-8; padding: Theme.sp-24;
+                    Text { text: "Could not load the inbox."; color: Theme.text-muted; font-size: Theme.text-13; horizontal-alignment: center; }
+                    HorizontalLayout { alignment: center; IbxBtn { icon: Icons.refresh; text: "Try again"; clicked => { DesktopInbox.retry(); } } }
+                }
+                if DesktopInbox.list-state == "ok" && DesktopInbox.threads.length == 0: VerticalLayout {
+                    width: parent.width; height: parent.height;
+                    alignment: center; spacing: Theme.sp-12; padding: Theme.sp-24;
+                    HorizontalLayout { alignment: center; Icon { source: Icons.mail; width: Theme.control; height: Theme.control; tint: Theme.text-muted; opacity: Theme.o-soft; } }
+                    Text { text: "Nothing here yet. Messages, pictures and files from your chats land here, with questions, alerts and reports."; wrap: word-wrap; horizontal-alignment: center; color: Theme.text-muted; font-size: Theme.text-13; }
+                }
+                Flickable {
+                    width: parent.width - 1px;
+                    height: parent.height;
+                    content-height: tl.preferred-height;
+                    tl := VerticalLayout {
+                        for t in DesktopInbox.threads: ThreadRow { t: t; }
+                    }
+                }
+            }
+            // The conversation (.ibx-detail).
+            Rectangle {
+                horizontal-stretch: 1;
+                if DesktopInbox.open-key == "": VerticalLayout {
+                    width: parent.width; height: parent.height;
+                    alignment: center; spacing: Theme.sp-12;
+                    HorizontalLayout { alignment: center; Icon { source: Icons.mail; width: Theme.control; height: Theme.control; tint: Theme.text-muted; opacity: Theme.o-soft; } }
+                    Text { text: DesktopInbox.threads.length == 0 ? "Nothing here yet." : "Choose a conversation to read it."; horizontal-alignment: center; color: Theme.text-muted; font-size: Theme.text-13; }
+                }
+                if DesktopInbox.open-key != "": VerticalLayout {
+                    width: parent.width; height: parent.height;
+                    // Its head (.ibx-chead).
+                    Rectangle {
+                        height: hd.preferred-height;
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                        hd := HorizontalLayout {
+                            padding: Theme.sp-12; padding-left: Theme.sp-16; padding-right: Theme.sp-16; spacing: Theme.sp-10;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: Theme.control; height: self.width; border-radius: self.width / 2;
+                                    background: InboxLook.thread-tint(DesktopInbox.open-kind).with-alpha(Theme.o-faint);
+                                    Icon { source: InboxLook.thread-icon(DesktopInbox.open-kind); width: Theme.icon-md; height: Theme.icon-md; tint: InboxLook.thread-tint(DesktopInbox.open-kind); }
+                                }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1; alignment: center;
+                                Text { text: DesktopInbox.open-title; font-weight: Theme.w-semibold; font-size: Theme.text-14; color: Theme.text-primary; overflow: elide; }
+                                if DesktopInbox.open-sub != "": Text { text: DesktopInbox.open-sub; font-size: Theme.text-12; color: Theme.text-muted; overflow: elide; }
+                            }
+                            if DesktopInbox.open-chat: VerticalLayout { alignment: center; IbxBtn { icon: Icons.message-square; text: "Open chat"; clicked => { DesktopInbox.open-chat-clicked(); } } }
+                            VerticalLayout { alignment: center; IbxBtn { icon: Icons.check; text: "Mark read"; clicked => { DesktopInbox.mark-read(); } } }
+                            VerticalLayout { alignment: center; IbxBtn { icon: Icons.trash; text: "Delete thread"; danger: true; clicked => { DesktopInbox.delete-thread(); } } }
+                        }
+                    }
+                    // The messages, oldest first, pinned to the bottom.
+                    Rectangle {
+                        vertical-stretch: 1;
+                        conv := Flickable {
+                            width: parent.width; height: parent.height;
+                            content-width: self.width;
+                            content-height: ml.preferred-height;
+                            property <int> gen: DesktopInbox.pin-gen;
+                            changed gen => { self.content-y = min(0px, self.height - ml.preferred-height); }
+                            changed content-height => { self.content-y = min(0px, self.height - self.content-height); }
+                            changed height => { self.content-y = min(0px, self.height - self.content-height); }
+                            ml := VerticalLayout {
+                                width: conv.width;
+                                padding: Theme.sp-16; spacing: Theme.sp-10;
+                                if DesktopInbox.more: HorizontalLayout {
+                                    alignment: center;
+                                    Text {
+                                        text: "Show older"; color: Theme.accent-hover; font-size: Theme.text-12;
+                                        TouchArea { mouse-cursor: pointer; clicked => { DesktopInbox.older(); } }
+                                    }
+                                }
+                                for it in DesktopInbox.items: MsgCard { it: it; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

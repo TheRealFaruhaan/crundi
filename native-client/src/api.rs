@@ -275,7 +275,12 @@ impl Api {
                 let auth = format!("Bearer {token}");
                 match (method, body) {
                     ("GET", _) => self.0.agent.get(&url).header("Authorization", &auth).call(),
-                    ("DELETE", _) => self.0.agent.delete(&url).header("Authorization", &auth).call(),
+                    ("DELETE", None) => self.0.agent.delete(&url).header("Authorization", &auth).call(),
+                    ("DELETE", Some(b)) => self.0.agent.delete(&url).header("Authorization", &auth).header("Content-Type", "application/json").force_send_body().send(b.to_string()),
+                    ("PUT", Some(b)) => self.0.agent.put(&url).header("Authorization", &auth).header("Content-Type", "application/json").send(b.to_string()),
+                    ("PUT", None) => self.0.agent.put(&url).header("Authorization", &auth).send_empty(),
+                    ("PATCH", Some(b)) => self.0.agent.patch(&url).header("Authorization", &auth).header("Content-Type", "application/json").send(b.to_string()),
+                    ("PATCH", None) => self.0.agent.patch(&url).header("Authorization", &auth).send_empty(),
                     (_, Some(b)) => self.0.agent.post(&url).header("Authorization", &auth).header("Content-Type", "application/json").send(b.to_string()),
                     (_, None) => self.0.agent.post(&url).header("Authorization", &auth).send_empty(),
                 }
@@ -302,6 +307,22 @@ impl Api {
 
     pub fn post(&self, path: &str, body: &Value) -> ApiResult {
         self.call("POST", path, Some(body))
+    }
+
+    #[allow(dead_code)]
+    pub fn put(&self, path: &str, body: &Value) -> ApiResult {
+        self.call("PUT", path, Some(body))
+    }
+
+    #[allow(dead_code)]
+    pub fn patch(&self, path: &str, body: &Value) -> ApiResult {
+        self.call("PATCH", path, Some(body))
+    }
+
+    /// Any method, with or without a JSON body (DELETE with a body, say).
+    #[allow(dead_code)]
+    pub fn request(&self, method: &str, path: &str, body: Option<&Value>) -> ApiResult {
+        self.call(method, path, body)
     }
 
     /// POST a JSON body, telling `progress(sent, total)` as it goes out (the

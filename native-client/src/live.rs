@@ -42,6 +42,12 @@ impl Live {
         let _ = self.out.send(json!({ "type": "unsubscribe-ui", "id": id }).to_string());
     }
 
+    /// Send any message on /ws (an area's subscribe-style messages; they are
+    /// not sent again after a reconnect: listen for Event::Connected(true)).
+    pub fn send(&self, msg: &Value) {
+        let _ = self.out.send(msg.to_string());
+    }
+
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
@@ -62,6 +68,10 @@ pub enum Event {
     /// The secret requests waiting on the owner: {requests} (2.12b).
     SecretRequests(Value),
     SignedOut,
+    /// Any other /api/events event (its name, its data) and any other /ws
+    /// message (its type, the whole message): the areas' (src/areas.rs).
+    Server(String, Value),
+    Ws(String, Value),
 }
 
 pub fn start(api: Api, on_event: fn(Event)) -> Live {
@@ -115,11 +125,13 @@ fn socket_loop(api: Api, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>
         set_timeout(&mut ws);
         // Messages queued while away are stale (subscriptions are redone below).
         while rx.try_recv().is_ok() {}
-        // The server's browser control: only when asked (CRUNDI_NATIVE_HOST=1),
-        // since it takes over from an Electron client on the same server.
-        if std::env::var_os("CRUNDI_NATIVE_HOST").is_some() {
-            let reg = json!({ "type": "register-native-host", "capabilities": ["browser-mouse"], "deviceId": device_id() });
+        // The server's browser control, as the PC client (desktop area,
+        // src/server.rs): register as its native host; binary frames are
+        // the drawer's net tunnel.
+        let (bin_tx, bin_rx) = mpsc::channel::<Vec<u8>>();
+        if let Some(reg) = crate::server::registration() {
             let _ = ws.send(Message::text(reg.to_string()));
+            crate::server::set_binary_out(Some(bin_tx));
         }
         for id in subs.lock().unwrap().clone() {
             let _ = ws.send(Message::text(json!({ "type": "subscribe-ui", "id": id }).to_string()));
@@ -131,15 +143,17 @@ fn socket_loop(api: Api, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>
             while let Ok(reply) = host_rx.try_recv() {
                 let _ = ws.send(Message::text(json!({ "type": "native-host-result", "payload": reply }).to_string()));
             }
+            while let Ok(b) = bin_rx.try_recv() { let _ = ws.send(Message::binary(b)); }
             match ws.read() {
                 Ok(Message::Text(t)) => {
                     let Ok(v) = serde_json::from_str::<Value>(t.as_str()) else { continue };
                     match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
                         "ui-history" | "ui-event" => to_ui(Event::Chat(v)),
                         "native-host" | "native-host-ready" => crate::server::on_message(t.as_str(), host_tx.clone(), "the server"),
-                        _ => {}
+                        other => { let other = other.to_string(); to_ui(Event::Ws(other, v)) }
                     }
                 }
+                Ok(Message::Binary(b)) => crate::server::on_binary(b.to_vec()),
                 Ok(Message::Close(_)) => break,
                 Ok(_) => {}
                 Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
@@ -147,6 +161,7 @@ fn socket_loop(api: Api, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>
             }
         }
         let _ = ws.close(None);
+        crate::server::set_binary_out(None);
         if !stop.load(Ordering::Relaxed) {
             to_ui(Event::Connected(false));
             thread::sleep(Duration::from_secs(2));
@@ -165,7 +180,7 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, to_ui: impl Fn(Event)) {
                 "inbox" => to_ui(Event::Inbox(v)),
                 "chat-secrets" => to_ui(Event::ChatSecrets(v)),
                 "secret-requests" => to_ui(Event::SecretRequests(v)),
-                _ => {}
+                other => to_ui(Event::Server(other.to_string(), v)),
             }
         });
         match r {
@@ -178,6 +193,7 @@ fn events_loop(api: Api, stop: Arc<AtomicBool>, to_ui: impl Fn(Event)) {
 }
 
 /// This computer, for the server's list of native hosts.
+#[allow(dead_code)]
 fn device_id() -> String {
     format!("native-{}", gethostname::gethostname().to_string_lossy())
 }

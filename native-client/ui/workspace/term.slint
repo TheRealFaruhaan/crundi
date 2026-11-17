@@ -1,0 +1,270 @@
+// A Claude terminal panel (Empty Shell, or Claude in Terminal mode): the
+// terminal (the web's xterm.js: its cells, the cursor, the wheel, the keys
+// typed into it, the jump to the bottom) and, at its bottom, its own input
+// (owner's decision, AREAS.md "Workspace": the web's shared #term-input-bar
+// and its key tools, per panel): the tools toggle, the text box, attach,
+// the upload strip and Send.
+
+import { Theme, Icons, Icon, Tip, SendBtn, UploadStrip } from "parts.slint";
+import { WorkspaceUi, WorkspaceTerm } from "api.slint";
+
+/// A key of the tools (.term-tool-btn): mono, semibold, bordered.
+component KeyBtn inherits Rectangle {
+    in property <string> text;
+    in property <string> key;
+    in property <string> tip;
+    in property <string> pane;
+    height: Theme.control;
+    min-width: Theme.sp-40;
+    preferred-width: max(Theme.sp-40, t.preferred-width + Theme.sp-20);
+    border-radius: Theme.r-control; border-width: 1px;
+    border-color: ta.pressed ? Theme.accent : Theme.border;
+    background: ta.pressed ? Theme.accent : ta.has-hover ? Theme.bg-hover : Theme.bg-primary;
+    t := Text { text: root.text; font-family: Theme.mono; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: ta.pressed ? Theme.white : Theme.text-primary; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { WorkspaceUi.term-tool(root.pane, root.key); } }
+    Tip { on: ta.has-hover && root.tip != ""; text: root.tip; }
+}
+
+/// The key tools (.term-tool-panel): Esc / Tab / ⇧Tab; the Ctrl keys and
+/// Space; Home End and the arrows round Enter.
+component Tools inherits Rectangle {
+    in property <string> pane;
+    height: lay.preferred-height + 2 * Theme.sp-10;
+    border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+    background: Theme.bg-secondary;
+    lay := HorizontalLayout {
+        x: Theme.sp-10; y: Theme.sp-10; width: parent.width - Theme.sp-20; height: self.preferred-height;
+        spacing: Theme.sp-16;
+        VerticalLayout {
+            spacing: Theme.sp-4; alignment: start;
+            KeyBtn { pane: root.pane; text: "Esc"; key: "Escape"; }
+            KeyBtn { pane: root.pane; text: "Tab"; key: "Tab"; }
+            KeyBtn { pane: root.pane; text: "⇧Tab"; key: "shift+tab"; tip: "Shift+Tab"; }
+        }
+        VerticalLayout {
+            spacing: Theme.sp-4; alignment: start;
+            HorizontalLayout { spacing: Theme.sp-4; KeyBtn { pane: root.pane; text: "Ctrl+C"; key: "ctrl+c"; } KeyBtn { pane: root.pane; text: "Ctrl+Z"; key: "ctrl+z"; } }
+            HorizontalLayout { spacing: Theme.sp-4; KeyBtn { pane: root.pane; text: "Ctrl+A"; key: "ctrl+a"; } KeyBtn { pane: root.pane; text: "Ctrl+E"; key: "ctrl+e"; } }
+            HorizontalLayout { spacing: Theme.sp-4; KeyBtn { pane: root.pane; text: "Ctrl+D"; key: "ctrl+d"; } KeyBtn { pane: root.pane; text: "Ctrl+L"; key: "ctrl+l"; } }
+            KeyBtn { pane: root.pane; text: "Space"; key: "Space"; }
+        }
+        Rectangle { horizontal-stretch: 1; }
+        // The d-pad: Home End over ▲, ◀ Enter ▶, ▼.
+        VerticalLayout {
+            spacing: Theme.sp-4; alignment: start;
+            HorizontalLayout { spacing: Theme.sp-4; KeyBtn { pane: root.pane; text: "Home"; key: "Home"; horizontal-stretch: 2; } KeyBtn { pane: root.pane; text: "End"; key: "End"; horizontal-stretch: 1; } }
+            HorizontalLayout { spacing: Theme.sp-4; Rectangle { min-width: Theme.sp-40; horizontal-stretch: 1; } KeyBtn { pane: root.pane; text: "▲"; key: "ArrowUp"; horizontal-stretch: 1; } Rectangle { min-width: Theme.sp-40; horizontal-stretch: 1; } }
+            HorizontalLayout { spacing: Theme.sp-4; KeyBtn { pane: root.pane; text: "◀"; key: "ArrowLeft"; horizontal-stretch: 1; } KeyBtn { pane: root.pane; text: "Enter"; key: "Enter"; horizontal-stretch: 1; } KeyBtn { pane: root.pane; text: "▶"; key: "ArrowRight"; horizontal-stretch: 1; } }
+            HorizontalLayout { spacing: Theme.sp-4; Rectangle { min-width: Theme.sp-40; horizontal-stretch: 1; } KeyBtn { pane: root.pane; text: "▼"; key: "ArrowDown"; horizontal-stretch: 1; } Rectangle { min-width: Theme.sp-40; horizontal-stretch: 1; } }
+        }
+    }
+}
+
+/// A square button of the input bar (.term-tool-toggle, .term-attach-btn).
+component BarSq inherits Rectangle {
+    in property <image> icon;
+    in property <string> tip;
+    in property <bool> lit;
+    in property <bool> busy;
+    in property <bool> tertiary;
+    callback clicked();
+    width: Theme.control; height: Theme.control;
+    border-radius: Theme.r-control; border-width: 1px;
+    border-color: root.lit || ta.has-hover ? Theme.accent : Theme.border;
+    background: root.lit ? Theme.accent : root.tertiary ? Theme.bg-tertiary : Theme.bg-primary;
+    opacity: root.busy ? Theme.o-soft : 1;
+    Icon { source: root.icon; width: Theme.icon-lg; height: Theme.icon-lg; tint: root.lit ? Theme.white : ta.has-hover ? Theme.accent-hover : Theme.text-secondary; }
+    ta := TouchArea { enabled: !root.busy; mouse-cursor: pointer; clicked => { root.clicked(); } }
+    Tip { on: ta.has-hover; text: root.tip; }
+}
+
+component TermBody inherits Rectangle {
+    in property <WorkspaceTerm> t;
+    in property <float> fs;
+    in property <bool> focused;
+    probe := Text { visible: false; text: Theme.ws-term-probe; font-family: Theme.mono; font-size: Theme.text-13 * root.fs; }
+    property <length> cw: probe.preferred-width / Theme.ws-term-probe-n;
+    property <length> ch: probe.preferred-height;
+    property <length> pad: Theme.sp-4;
+    property <string> text;
+    // The selection (cells), in order: top-left to bottom-right of the drag.
+    property <bool> sel-on;
+    property <int> sel-c0; property <int> sel-r0; property <int> sel-c1; property <int> sel-r1;
+    property <bool> sel-fwd: root.sel-r1 > root.sel-r0 || (root.sel-r1 == root.sel-r0 && root.sel-c1 >= root.sel-c0);
+    property <int> sel-top: root.sel-fwd ? root.sel-r0 : root.sel-r1;
+    property <int> sel-bottom: root.sel-fwd ? root.sel-r1 : root.sel-r0;
+    property <int> sel-left: root.sel-fwd ? root.sel-c0 : root.sel-c1;
+    property <int> sel-right: root.sel-fwd ? root.sel-c1 : root.sel-c0;
+    pure function col-at(x: length) -> int { return max(0, floor((x - root.pad) / max(1px, root.cw))); }
+    pure function row-at(y: length) -> int { return max(0, floor((y - root.pad) / max(1px, root.ch))); }
+    property <int> tg: root.t.text-gen;
+    changed tg => { ti.text = root.t.text; root.text = root.t.text; }
+    VerticalLayout {
+        // The terminal.
+        screen := Rectangle {
+            vertical-stretch: 1;
+            background: Theme.bg-primary;
+            clip: true;
+            property <int> cols: max(2, floor((self.width - 2 * root.pad) / max(1px, root.cw)));
+            property <int> rows: max(1, floor((self.height - 2 * root.pad) / max(1px, root.ch)));
+            changed cols => { WorkspaceUi.term-size(root.t.key, self.cols, self.rows); }
+            changed rows => { WorkspaceUi.term-size(root.t.key, self.cols, self.rows); }
+            init => { WorkspaceUi.term-size(root.t.key, self.cols, self.rows); }
+            fs := FocusScope {
+                key-pressed(ev) => {
+                    if WorkspaceUi.term-key(root.t.key, ev.text, ev.modifiers.control, ev.modifiers.alt, ev.modifiers.shift) { return accept; }
+                    return reject;
+                }
+                ta := TouchArea {
+                    mouse-cursor: MouseCursor.text;
+                    clicked => { fs.focus(); }
+                    // A drag selects (by cells); its release copies.
+                    pointer-event(ev) => {
+                        if ev.button != PointerEventButton.left { return; }
+                        if ev.kind == PointerEventKind.down {
+                            root.sel-on = false;
+                            root.sel-c0 = root.col-at(self.mouse-x); root.sel-r0 = root.row-at(self.mouse-y);
+                            root.sel-c1 = root.sel-c0; root.sel-r1 = root.sel-r0;
+                        }
+                        if ev.kind == PointerEventKind.up && root.sel-on {
+                            WorkspaceUi.term-select(root.t.key, root.sel-c0, root.sel-r0, root.sel-c1, root.sel-r1);
+                        }
+                    }
+                    moved => {
+                        if self.pressed {
+                            root.sel-c1 = root.col-at(self.mouse-x); root.sel-r1 = root.row-at(self.mouse-y);
+                            if root.sel-c1 != root.sel-c0 || root.sel-r1 != root.sel-r0 { root.sel-on = true; }
+                        }
+                    }
+                    scroll-event(ev) => {
+                        WorkspaceUi.term-scroll(root.t.key, ev.delta-y > 0 ? 3 : ev.delta-y < 0 ? -3 : 0);
+                        return accept;
+                    }
+                }
+            }
+            for line[r] in root.t.lines: Rectangle {
+                x: root.pad; y: root.pad + r * root.ch; height: root.ch; width: parent.width - 2 * root.pad;
+                for run in line.runs: Rectangle {
+                    x: run.col * root.cw; width: run.n * root.cw; height: root.ch;
+                    background: run.has-bg ? run.bg : transparent;
+                    Text {
+                        x: 0; text: run.text; color: run.fg;
+                        font-family: Theme.mono; font-size: Theme.text-13 * root.fs;
+                        font-weight: run.bold ? Theme.w-bold : Theme.w-regular;
+                        font-italic: run.italic;
+                        vertical-alignment: center; height: parent.height;
+                    }
+                    if run.underline: Rectangle { y: parent.height - 1px; height: 1px; background: run.fg; }
+                }
+            }
+            // The selection: whole cells, row by row.
+            if root.sel-on: Rectangle {
+                for i in (root.sel-bottom - root.sel-top + 1): Rectangle {
+                    property <int> srow: root.sel-top + i;
+                    property <int> sfrom: self.srow == root.sel-top ? root.sel-left : 0;
+                    property <int> sto: self.srow == root.sel-bottom ? root.sel-right : screen.cols - 1;
+                    x: root.pad + self.sfrom * root.cw; y: root.pad + self.srow * root.ch;
+                    width: max(0, self.sto - self.sfrom + 1) * root.cw; height: root.ch;
+                    background: Theme.ws-term-sel;
+                }
+            }
+            // The cursor: a block while the terminal has the keys, a frame when not.
+            if root.t.cursor-on && !root.t.back && !root.t.exited: Rectangle {
+                x: root.pad + root.t.cursor-col * root.cw; y: root.pad + root.t.cursor-row * root.ch;
+                width: root.cw; height: root.ch;
+                background: fs.has-focus && blink.on ? Theme.accent : transparent;
+                border-width: fs.has-focus ? 0 : 1px; border-color: Theme.accent;
+                opacity: fs.has-focus ? Theme.o-usage : 1;
+            }
+            blink := Timer {
+                property <bool> on: true;
+                interval: Theme.blink / 2; running: fs.has-focus;
+                triggered => { self.on = !self.on; }
+            }
+            // Scrolled up: the jump to the bottom (.term-scroll-bottom).
+            if root.t.back: Rectangle {
+                x: parent.width - self.width - Theme.sp-12; y: parent.height - self.height - Theme.sp-12;
+                width: Theme.sp-32; height: Theme.sp-32; border-radius: Theme.r-pill;
+                background: jb.has-hover ? Theme.bg-tertiary : Theme.bg-secondary;
+                border-width: 1px; border-color: Theme.border;
+                Text { text: "↓"; font-size: Theme.text-14; color: jb.has-hover ? Theme.text-primary : Theme.text-secondary; }
+                jb := TouchArea { mouse-cursor: pointer; clicked => { WorkspaceUi.term-bottom(root.t.key); } }
+                Tip { on: jb.has-hover; text: "Scroll to bottom"; }
+            }
+        }
+        // The key tools, over the input.
+        if root.t.tools: Rectangle {
+            height: tl.height + Theme.sp-8;
+            background: Theme.bg-secondary;
+            tl := Tools { x: Theme.sp-8; y: Theme.sp-4; width: parent.width - Theme.sp-16; pane: root.t.key; }
+        }
+        // The input bar (.term-input-bar).
+        Rectangle {
+            height: bar.preferred-height;
+            background: Theme.bg-secondary;
+            Rectangle { y: 0; height: 1px; background: Theme.border; }
+            bar := VerticalLayout {
+                padding-left: Theme.sp-8; padding-right: Theme.sp-8; padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+                if root.t.up-on: UploadStrip { name: root.t.up-name; frac: root.t.up-frac; label: root.t.up-label; }
+                HorizontalLayout {
+                    spacing: Theme.sp-6;
+                    alignment: stretch;
+                    VerticalLayout { alignment: end; BarSq { icon: Icons.settings; tip: "Keyboard tools"; lit: root.t.tools; clicked => { WorkspaceUi.term-tools(root.t.key); } } }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        height: min(Theme.ws-term-input-max, max(Theme.control, ti.preferred-height + Theme.sp-16));
+                        border-radius: Theme.r-control; border-width: 1px;
+                        border-color: ti.has-focus ? Theme.accent : Theme.border;
+                        background: Theme.bg-primary;
+                        ifl := Flickable {
+                            x: Theme.sp-10; y: Theme.sp-8; width: parent.width - Theme.sp-20; height: parent.height - Theme.sp-16;
+                            content-height: max(self.height, ti.preferred-height);
+                            ti := TextInput {
+                                width: parent.width;
+                                single-line: false; wrap: word-wrap;
+                                font-family: Theme.mono; font-size: Theme.text-13; color: Theme.text-primary;
+                                selection-background-color: Theme.selection;
+                                edited => { root.text = self.text; WorkspaceUi.term-text(root.t.key, self.text); }
+                                key-pressed(ev) => {
+                                    if ev.text == Key.Return && (ev.modifiers.control || ev.modifiers.meta) { WorkspaceUi.term-send(root.t.key, self.text); return accept; }
+                                    return reject;
+                                }
+                                cursor-position-changed(p) => {
+                                    if p.y + ifl.content-y < 0 { ifl.content-y = -p.y; }
+                                    if p.y + root.ch + ifl.content-y > ifl.height { ifl.content-y = ifl.height - p.y - root.ch; }
+                                }
+                            }
+                        }
+                        if root.text == "": Text { x: Theme.sp-10; y: Theme.sp-8; text: "Type here... (Ctrl+Enter or Send button)"; font-family: Theme.mono; font-size: Theme.text-13; color: Theme.placeholder; }
+                    }
+                    VerticalLayout { alignment: end; BarSq { icon: Icons.paperclip; tertiary: true; busy: root.t.up-busy; tip: "Attach a file (uploads to crundi_attachments)"; clicked => { WorkspaceUi.term-attach(root.t.key); } } }
+                    VerticalLayout {
+                        alignment: end;
+                        SendBtn {
+                            width: Theme.control; height: Theme.control;
+                            clicked => { WorkspaceUi.term-send(root.t.key, ti.text); }
+                            Icon { source: Icons.send; width: Theme.icon-lg; height: Theme.icon-lg; tint: Theme.white; }
+                            Tip { on: false; text: "Send to terminal"; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    public function focus-term() { fs.focus(); }
+}
+
+/// The panel: the state with its key drawn.
+export component TermPane inherits Rectangle {
+    in property <string> key;
+    in property <float> fs: 1;
+    in property <bool> focused;
+    // This panel's state: the entry with its key.
+    background: Theme.bg-primary;
+    for x in WorkspaceUi.terms: Rectangle {
+        visible: x.key == root.key;
+        width: x.key == root.key ? root.width : 0; height: x.key == root.key ? root.height : 0;
+        if x.key == root.key: TermBody { width: root.width; height: root.height; t: x; fs: root.fs; focused: root.focused; }
+    }
+}
+

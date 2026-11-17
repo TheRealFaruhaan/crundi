@@ -26,8 +26,18 @@ import { SreqDock, SreqCard, SreqProbe } from "sreq.slint";
 import { Viewer, DlTray } from "viewer.slint";
 import { ResumePicker, ResumeRow, ResumeProbe } from "resume.slint";
 import { ParkAct } from "parked.slint";
+// The areas (AREAS.md): the shell's hooks, the tab host, the shared dialogs.
+import { Shell } from "hooks.slint";
+import { AreaView, AreaOverlays, Areas } from "areas.slint";
+import { DialogLayer, MenuLayer, DialogUi, MenuUi, MenuEntry } from "dialogs.slint";
+import { TableCol, TableRow, Tones } from "kit.slint";
+import { KitGallery, Gallery } from "gallery.slint";
+// Every global and struct an area exports (ui/<area>/api.slint) reaches
+// Rust from here: Slint allows one `export *` per file, so the areas' api
+// files chain on (workspace → planning → ops → desktop: the last line of each).
+export * from "workspace/api.slint";
 
-export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe, ResumeRow, ResumeProbe, ParkAct, FrameUi, VoiceUi, BubbleProbe, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn}
+export { PanelData, EntryView, ToolView, ProjectItem, PaneView, GutterView, Theme, Pointer, Composer, ModeOption, PickerProbe, TipState, SchedItem, SlashItem, QAct, QOpt, QView, ToolAct, DiffLine, TodoItem, SecGrant, SecPick, SecProbe, SreqCard, SreqProbe , LogProbe, MediaItem, DlRow, AnsBlock, SheetProbe, ResumeRow, ResumeProbe, ParkAct, Icons, Gallery, Shell, Areas, DialogUi, MenuUi, MenuEntry, TableCol, TableRow, Tones, FrameUi, VoiceUi, BubbleProbe, ShotItem, FrAct, FrView, FrFile, FrFu, FrBtn}
 
 export component MainWindow inherits Window {
     title: "Crundi";
@@ -89,6 +99,9 @@ export component MainWindow inherits Window {
     in property <string> project-name;
     in-out property <string> current-tab: "workbench";
     callback select-project(string);
+    // A tab came on show (src/areas.rs tells its area).
+    callback tab-shown(string);
+    changed current-tab => { Shell.tab = self.current-tab; root.tab-shown(self.current-tab); }
     property <[TabItem]> tabs: [
         { id: "workbench", label: "Workbench", icon: Icons.terminal },
         { id: "git", label: "Git", icon: Icons.git-branch },
@@ -103,6 +116,7 @@ export component MainWindow inherits Window {
         { id: "services", label: "Services", icon: Icons.server },
         { id: "docker", label: "Docker", icon: Icons.docker },
         { id: "homepool", label: "Homepool", icon: Icons.network },
+        { id: "browsers", label: "Browsers", icon: Icons.globe },
         { id: "info", label: "Info", icon: Icons.info },
         { id: "secrets", label: "Secrets", icon: Icons.lock },
         { id: "settings", label: "Settings", icon: Icons.settings },
@@ -225,7 +239,8 @@ export component MainWindow inherits Window {
     callback resume-cancel();
     // Any modal dialog open (every later one joins this): the pointer is the
     // scrim's (Pointer.modal).
-    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open || root.resume-open);
+    property <bool> modal-open: root.signed-in && (root.mode-picker-open || root.sec-open || root.viewer-open || root.resume-open
+        || Shell.modal-workspace || Shell.modal-planning || Shell.modal-ops || Shell.modal-desktop || DialogUi.open || MenuUi.open);
     changed modal-open => { Pointer.modal = self.modal-open; }
     // The window's height for what is sized by it (Win: the full diff, 2.20).
     property <length> win-h: self.height;
@@ -322,7 +337,7 @@ export component MainWindow inherits Window {
                     drawer-has-tabs: root.panels.length > 0;
                     select(t) => { root.current-tab = t; root.add-menu-open = false; }
                     add-menu => { root.add-menu-open = !root.add-menu-open; }
-                    toggle-browser => { root.drawer-open = true; }
+                    toggle-browser => { if Shell.browser-hooked { Shell.toggle-browser(); } else { root.drawer-open = true; } }
                 }
                 Rectangle {
                     vertical-stretch: 1;
@@ -363,21 +378,10 @@ export component MainWindow inherits Window {
                         scroll-home: root.wb-scroll-home;
                         draft-changed(k, t) => { root.draft-changed(k, t); }
                     }
-                    if root.current-tab != "workbench": VerticalLayout {
-                        alignment: center;
-                        spacing: Theme.sp-12;
-                        Text { text: "This tab comes in a later phase of the native client"; color: Theme.text-muted; font-size: Theme.text-13; horizontal-alignment: center; }
-                        // Settings: signing out lives here, as in the PC client.
-                        if root.current-tab == "settings": HorizontalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: so.preferred-width + Theme.sp-24; height: Theme.control;
-                                border-radius: Theme.r-control; border-width: 1px; border-color: Theme.border;
-                                background: sh.has-hover ? Theme.red-dim : Theme.bg-tertiary;
-                                so := Text { text: "Sign out of " + root.server; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: sh.has-hover ? Theme.red : Theme.text-primary; }
-                                sh := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.sign-out(); } }
-                            }
-                        }
+                    // Every other tab: its area's page (ui/areas.slint).
+                    if root.current-tab != "workbench": AreaView {
+                        width: parent.width; height: parent.height;
+                        kind: root.current-tab;
                     }
                 }
             }
@@ -518,6 +522,14 @@ export component MainWindow inherits Window {
         step(by) => { root.viewer-step(by); }
         close => { root.viewer-close(); }
     }
+
+    // The areas' own layers (their dialogs), then the shared confirm /
+    // prompt and the context menu (src/kit.rs), under the tooltip and toast.
+    if root.signed-in: AreaOverlays { width: root.width; height: root.height; }
+    if root.signed-in && DialogUi.open: DialogLayer { width: root.width; height: root.height; }
+    if root.signed-in && MenuUi.open: MenuLayer { width: root.width; height: root.height; }
+    // The kit's gallery (ui/gallery.slint), for the driver only.
+    if Gallery.open: KitGallery { width: root.width; height: root.height; }
 
     // The tooltip (chat.slint Tip): under the pointer, shifted left at the
     // right edge and flipped above it at the bottom, so it stays inside the

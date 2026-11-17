@@ -1,0 +1,32 @@
+[package]
+name = "crundi-app"
+description = "The native PC client: starts CEF and the window, registers every part, the test driver (thin)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "crundi-gpui"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+serde_json.workspace = true
+base64.workspace = true
+env_logger.workspace = true
+raw-window-handle = "0.6"
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-webview.workspace = true
+crundi-shell.workspace = true
+crundi-workbench.workspace = true
+crundi-chats.workspace = true
+crundi-workspace.workspace = true
+crundi-planning.workspace = true
+crundi-operations.workspace = true
+crundi-desktop.workspace = true

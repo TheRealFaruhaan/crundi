@@ -1,5 +1,6 @@
 #!/bin/bash
-# Lists the numbers typed in the screens (ui/*.slint but the theme and the
+# Lists the numbers typed in the screens (ui/*.slint and the areas'
+# ui/<area>/*.slint, but the theme and the
 # generated icons), and exits non-zero if there are any (DESIGN.md, rule 2:
 # every size and colour is a token from ui/theme.slint). It flags:
 #   - a number with a unit (px phx rem % ms s deg turn rad), but 0 and ±1px
@@ -17,7 +18,7 @@
 #
 #   native-client/tools/tokens.sh
 cd "$(dirname "$0")/../ui"
-python3 - *.slint <<'PY'
+python3 - *.slint */*.slint <<'PY'
 import re, sys
 UNITS = r'(?:px|phx|rem|%|ms|s|deg|turn|rad)'
 unit = re.compile(r'(?<![\w.])(-?)(\d*\.\d+|\d+)(' + UNITS + r')(?![\w])')

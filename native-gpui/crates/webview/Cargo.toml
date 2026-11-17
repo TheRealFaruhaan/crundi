@@ -1,0 +1,22 @@
+[package]
+name = "crundi-webview"
+description = "The CEF bridge: off-screen browsers drawn as GPUI images (Desktop's)"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+serde_json.workspace = true
+crundi-theme.workspace = true
+
+cef.workspace = true
+image.workspace = true
+base64.workspace = true
+png.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"

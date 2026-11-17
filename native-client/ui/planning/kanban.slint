@@ -1,0 +1,514 @@
+// Kanban (4.1): the web's #kanban-panel (loadKanban / renderKanban,
+// src/webapp-html.js). The toolbar (+ Add task; Board, Trash (n), History,
+// Media), the board's columns with their cards, and the Trash and History
+// views. Driven by src/planning/kanban.rs through PlanningKanban.
+
+import { Theme, Icons, Icon, ScrollThumb, EmptyState, LoadingState, DashedBox } from "../kit.slint";
+import { PlanningKanban, PlanningCard, PlanningColumn, PlanningTodo, PlanningRow } from "api.slint";
+import { KBtn, KCheck, CardBtn } from "parts.slint";
+
+/// The line under the toolbar's text inputs: a bare one-line input (the
+/// blank card, the new subtask row). Enter commits and stays open, Escape
+/// drops, leaving it commits and closes.
+component BareInput inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <length> font-size: Theme.text-13;
+    in property <int> font-weight: Theme.w-regular;
+    in property <int> focus-gen;
+    callback commit(string, bool);
+    callback cancel();
+    height: input.preferred-height;
+    property <bool> done;
+    input := TextInput {
+        width: 100%;
+        text <=> root.text;
+        font-size: root.font-size;
+        font-weight: root.font-weight;
+        color: Theme.text-primary;
+        selection-background-color: Theme.selection;
+        single-line: true;
+        init => { self.focus(); self.set-selection-offsets(self.text.character-count, self.text.character-count); }
+        accepted => {
+            if self.text.is-empty { return; }
+            root.commit(self.text, true);
+        }
+        key-pressed(ev) => {
+            if ev.text == Key.Escape { root.done = true; root.cancel(); return accept; }
+            return reject;
+        }
+        changed has-focus => {
+            if !self.has-focus && !root.done { root.done = true; root.commit(self.text, false); }
+        }
+    }
+    property <int> fg: root.focus-gen;
+    changed fg => { root.done = false; input.focus(); }
+    if root.text == "": Text {
+        text: root.placeholder; color: Theme.text-muted;
+        font-size: root.font-size; font-weight: Theme.w-medium;
+        vertical-alignment: center;
+    }
+}
+
+/// One subtask row (.kanban-todo): checkbox, text, media count, "…".
+component TodoRow inherits Rectangle {
+    in property <string> task;
+    in property <PlanningTodo> todo;
+    border-radius: Theme.r-control;
+    background: ta.has-hover ? Theme.bg-hover : transparent;
+    height: lay.preferred-height;
+    ta := TouchArea { }
+    lay := HorizontalLayout {
+        padding-left: Theme.sp-6; padding-right: Theme.sp-4;
+        padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+        spacing: Theme.sp-8;
+        VerticalLayout {
+            alignment: start;
+            padding-top: Theme.sp-2;
+            KCheck { checked: root.todo.done; toggled(v) => { PlanningKanban.toggle-todo(root.task, root.todo.id, v); } }
+        }
+        Text {
+            horizontal-stretch: 1;
+            text: root.todo.text;
+            wrap: word-wrap;
+            font-size: Theme.text-13;
+            color: root.todo.done ? Theme.text-muted : Theme.text-primary;
+            vertical-alignment: center;
+        }
+        if root.todo.media > 0: VerticalLayout {
+            alignment: start;
+            Rectangle {
+                height: Theme.sp-20;
+                width: ml.preferred-width;
+                border-radius: Theme.r-control;
+                background: mta.has-hover ? Theme.bg-tertiary : transparent;
+                ml := HorizontalLayout {
+                    padding-left: Theme.sp-4; padding-right: Theme.sp-4; spacing: Theme.sp-2;
+                    VerticalLayout { alignment: center; Icon { source: Icons.paperclip; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.text-secondary; } }
+                    Text { text: root.todo.media; font-size: Theme.text-11; font-weight: Theme.w-semibold; color: Theme.text-secondary; vertical-alignment: center; }
+                }
+                mta := TouchArea { mouse-cursor: pointer; clicked => { PlanningKanban.todo-media(root.task, root.todo.id); } }
+            }
+        }
+        VerticalLayout {
+            alignment: start;
+            more := Rectangle {
+                width: Theme.sp-24; height: Theme.sp-20 + Theme.sp-2;
+                border-radius: Theme.r-control;
+                background: mo.has-hover ? Theme.bg-tertiary : transparent;
+                opacity: ta.has-hover || mo.has-hover ? 1 : Theme.o-caret;
+                Icon { source: Icons.more; width: Theme.icon-lg; height: Theme.icon-lg; tint: mo.has-hover ? Theme.text-primary : Theme.text-muted; }
+                mo := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { PlanningKanban.todo-menu(root.task, root.todo.id, more.absolute-position.x + more.width, more.absolute-position.y + more.height + Theme.sp-4); }
+                }
+            }
+        }
+    }
+}
+
+/// A card (.kanban-card).
+component Card inherits Rectangle {
+    in property <PlanningCard> card;
+    in property <string> status;
+    property <bool> fold: self.width < (root.card.compact ? Theme.kanban-card-fold-compact : Theme.kanban-card-fold);
+    property <bool> dragged: PlanningKanban.drag-id == root.card.id;
+    border-radius: Theme.r-card;
+    border-width: 1px;
+    background: Theme.bg-card;
+    border-color: root.card.flash ? Theme.accent : grab.has-hover ? Theme.slate-edge : Theme.border;
+    opacity: root.dragged ? Theme.o-dim : 1;
+    height: col.preferred-height;
+    // Its box, when a drag starts (the drop index is worked out from them).
+    property <int> mg: PlanningKanban.measure-gen;
+    changed mg => { PlanningKanban.card-box(root.status, root.card.id, self.absolute-position.x, self.absolute-position.y, self.width, self.height); }
+    // A press anywhere but a control arms a drag; past a few px it moves.
+    grab := TouchArea {
+        mouse-cursor: root.dragged ? MouseCursor.grabbing : MouseCursor.grab;
+        property <bool> moving;
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left { self.moving = false; }
+            if ev.kind == PointerEventKind.up && ev.button == PointerEventButton.left {
+                if self.moving { self.moving = false; PlanningKanban.drag-end(true); }
+            }
+        }
+        moved => {
+            if !self.pressed { return; }
+            if !self.moving && (abs(self.mouse-x - self.pressed-x) > Theme.sp-6 || abs(self.mouse-y - self.pressed-y) > Theme.sp-6) {
+                self.moving = true;
+                PlanningKanban.grab-x = self.pressed-x;
+                PlanningKanban.grab-y = self.pressed-y;
+                PlanningKanban.drag-w = root.width;
+                PlanningKanban.drag-h = root.height;
+                PlanningKanban.drag-title = root.card.title;
+                PlanningKanban.drag-start(root.card.id);
+            }
+            if self.moving { PlanningKanban.drag-move(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+        }
+    }
+    col := VerticalLayout {
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        padding-top: Theme.sp-12; padding-bottom: Theme.sp-10;
+        // The title row: title, the mindmap count, the paperclip, and the
+        // menu when the card is compact.
+        HorizontalLayout {
+            spacing: Theme.sp-8;
+            Text {
+                horizontal-stretch: 1;
+                text: root.card.title;
+                wrap: word-wrap;
+                font-size: Theme.text-14; font-weight: Theme.w-semibold;
+                color: Theme.text-primary;
+            }
+            if root.card.mm > 0: VerticalLayout {
+                alignment: start;
+                padding-top: Theme.sp-2;
+                Rectangle {
+                    height: Theme.sp-16 + Theme.sp-2;
+                    width: mml.preferred-width;
+                    border-radius: Theme.r-pill;
+                    background: Theme.accent-dim;
+                    mml := HorizontalLayout {
+                        padding-left: Theme.sp-4; padding-right: Theme.sp-6; spacing: Theme.sp-2;
+                        VerticalLayout { alignment: center; Icon { source: Icons.mindmap; width: Theme.icon-sm; height: Theme.icon-sm; tint: Theme.accent-hover; } }
+                        Text { text: root.card.mm; font-size: Theme.text-11; font-weight: Theme.w-semibold; color: Theme.accent-hover; vertical-alignment: center; }
+                    }
+                    TouchArea { mouse-cursor: pointer; clicked => { PlanningKanban.act("goto-mindmap", root.card.id, ""); } }
+                }
+            }
+            VerticalLayout {
+                alignment: start;
+                clip := Rectangle {
+                    property <bool> open: PlanningKanban.clip-task == root.card.id;
+                    height: Theme.sp-20 + Theme.sp-2;
+                    width: max(Theme.sp-24, cl.preferred-width);
+                    border-radius: Theme.r-control;
+                    border-width: 1px;
+                    border-color: self.open || cta.has-hover ? Theme.border : transparent;
+                    background: self.open || cta.has-hover ? Theme.bg-tertiary : transparent;
+                    cl := HorizontalLayout {
+                        padding-left: Theme.sp-4; padding-right: Theme.sp-4; spacing: Theme.sp-2;
+                        alignment: center;
+                        VerticalLayout { alignment: center; Icon { source: Icons.paperclip; width: Theme.icon-md; height: Theme.icon-md; tint: clip.open || cta.has-hover ? Theme.text-primary : root.card.media > 0 ? Theme.text-secondary : Theme.text-muted; } }
+                        if root.card.media > 0: Text { text: root.card.media; font-size: Theme.text-11; font-weight: Theme.w-semibold; color: Theme.text-secondary; vertical-alignment: center; }
+                    }
+                    cta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { PlanningKanban.clip(root.card.id, clip.absolute-position.x + clip.width, clip.absolute-position.y + clip.height + Theme.sp-4, root.width); }
+                    }
+                }
+            }
+            if root.card.compact: VerticalLayout {
+                alignment: start;
+                Rectangle {
+                    width: Theme.sp-24; height: Theme.sp-20 + Theme.sp-2;
+                    border-radius: Theme.r-control;
+                    border-width: 1px;
+                    border-color: root.card.menu-open ? Theme.accent : tma.has-hover ? Theme.border : transparent;
+                    background: root.card.menu-open ? Theme.accent-dim : tma.has-hover ? Theme.bg-tertiary : transparent;
+                    Icon { source: Icons.menu; width: Theme.icon-md; height: Theme.icon-md; tint: root.card.menu-open ? Theme.accent-hover : tma.has-hover ? Theme.text-primary : Theme.text-muted; }
+                    tma := TouchArea { mouse-cursor: pointer; clicked => { PlanningKanban.act("card-menu", root.card.id, ""); } }
+                }
+            }
+        }
+        if root.card.desc != "": Text {
+            text: root.card.desc;
+            wrap: word-wrap;
+            font-size: Theme.text-12;
+            color: Theme.text-secondary;
+        }
+        // Subtasks, the new-subtask row, and the progress line.
+        if root.card.total > 0 || root.card.adding: VerticalLayout {
+            padding-top: Theme.sp-8;
+            spacing: 1px;
+            for td in root.card.todos: TodoRow { task: root.card.id; todo: td; }
+            if root.card.adding: Rectangle {
+                border-radius: Theme.r-control;
+                background: Theme.bg-tertiary;
+                border-width: 1px;
+                border-color: Theme.accent-edge;
+                height: al.preferred-height;
+                al := HorizontalLayout {
+                    padding-left: Theme.sp-6; padding-right: Theme.sp-4;
+                    padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+                    spacing: Theme.sp-8;
+                    VerticalLayout { alignment: center; KCheck { ghost: true; } }
+                    BareInput {
+                        horizontal-stretch: 1;
+                        text <=> PlanningKanban.todo-draft;
+                        placeholder: "New subtask, Enter to add";
+                        focus-gen: PlanningKanban.focus-gen;
+                        commit(t, keep) => { PlanningKanban.todo-commit(root.card.id, t, keep); }
+                        cancel => { PlanningKanban.todo-cancel(); }
+                    }
+                }
+            }
+        }
+        if root.card.total > 0: HorizontalLayout {
+            padding-top: Theme.sp-8;
+            spacing: Theme.sp-8;
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                Rectangle {
+                    height: Theme.sp-2 + 1px;
+                    border-radius: Theme.r-pill;
+                    background: Theme.bg-tertiary;
+                    clip: true;
+                    Rectangle {
+                        x: 0; width: parent.width * root.card.done / max(1, root.card.total);
+                        border-radius: Theme.r-pill;
+                        background: root.card.done == root.card.total ? Theme.green : Theme.accent;
+                    }
+                }
+            }
+            Text { text: root.card.done + " of " + root.card.total; font-size: Theme.text-11; color: Theme.text-muted; }
+        }
+        // The footer: the menu, then + Subtask (not on a compact card).
+        if !root.card.compact: HorizontalLayout {
+            padding-top: Theme.sp-10;
+            spacing: Theme.sp-6;
+            alignment: start;
+            CardBtn { square: true; icon: Icons.menu; tip: "Task actions"; on: root.card.menu-open; clicked => { PlanningKanban.act("card-menu", root.card.id, ""); } }
+            CardBtn { icon: Icons.plus; text: "Subtask"; tip: "Add a subtask"; clicked => { PlanningKanban.act("add-subtask", root.card.id, ""); } }
+        }
+        // The card's actions, under its menu.
+        if root.card.menu-open: VerticalLayout {
+            padding-top: Theme.sp-8;
+            spacing: Theme.sp-8;
+            Rectangle { height: 1px; background: Theme.border-subtle; }
+            HorizontalLayout {
+                spacing: Theme.sp-6;
+                if root.card.compact: CardBtn { icon: Icons.plus; text: "Subtask"; tip: "Add a subtask"; clicked => { PlanningKanban.act("add-subtask", root.card.id, ""); } }
+                CardBtn { square: true; icon: Icons.mindmap; tip: "Brainstorm this task in the Mindmap"; clicked => { PlanningKanban.act("brainstorm", root.card.id, ""); } }
+                CardBtn { square: root.fold; icon: Icons.pencil; text: "Edit"; tip: "Edit task"; clicked => { PlanningKanban.act("edit-task", root.card.id, ""); } }
+                Rectangle { horizontal-stretch: 1; }
+                CardBtn { square: root.fold; danger: true; icon: Icons.trash; text: "Delete"; tip: "Delete task"; clicked => { PlanningKanban.act("del-task", root.card.id, ""); } }
+            }
+        }
+    }
+}
+
+/// The end of a column: "+ Add task", or the blank card it opens.
+component AddTask inherits Rectangle {
+    in property <string> status;
+    in property <bool> adding;
+    height: root.adding ? nc.preferred-height : Theme.control;
+    if !root.adding: Rectangle {
+        border-radius: Theme.r-card;
+        border-width: ata.has-hover ? 1px : 0;
+        border-color: Theme.slate-edge;
+        background: ata.has-hover ? Theme.bg-card : transparent;
+        // Dashed until hovered (.kc-add-task).
+        if !ata.has-hover: DashedBox { width: parent.width; height: parent.height; corner: Theme.r-card; }
+        HorizontalLayout {
+            padding-left: Theme.sp-10; spacing: Theme.sp-6;
+            VerticalLayout { alignment: center; Icon { source: Icons.plus; width: Theme.icon-md; height: Theme.icon-md; tint: ata.has-hover ? Theme.text-primary : Theme.text-muted; } }
+            Text { text: "Add task"; vertical-alignment: center; font-size: Theme.text-13; font-weight: Theme.w-medium; color: ata.has-hover ? Theme.text-primary : Theme.text-muted; horizontal-stretch: 1; }
+        }
+        ata := TouchArea { mouse-cursor: pointer; clicked => { PlanningKanban.act("add-task-inline", "", root.status); } }
+    }
+    nc := Rectangle {
+        visible: root.adding;
+        height: ncl.preferred-height;
+        border-radius: Theme.r-card;
+        border-width: 1px;
+        border-color: Theme.accent-edge;
+        background: Theme.bg-card;
+        ncl := VerticalLayout {
+            padding: Theme.sp-12;
+            if root.adding: BareInput {
+                text <=> PlanningKanban.task-draft;
+                placeholder: "Task title, Enter to add";
+                font-size: Theme.text-14;
+                font-weight: Theme.w-semibold;
+                focus-gen: PlanningKanban.focus-gen;
+                commit(t, keep) => { PlanningKanban.task-commit(root.status, t, keep); }
+                cancel => { PlanningKanban.task-cancel(); }
+            }
+        }
+    }
+}
+
+/// A column (.kanban-col): head (label, count) and its scrolling body.
+component Column inherits Rectangle {
+    in property <PlanningColumn> column;
+    in property <bool> stacked;
+    in property <length> max-h;
+    property <bool> drop-here: PlanningKanban.drag-id != "" && PlanningKanban.drop-status == root.column.status && !root.column.other;
+    border-radius: Theme.r-card;
+    border-width: 1px;
+    background: Theme.bg-secondary;
+    border-color: root.drop-here ? Theme.accent : root.column.other ? Theme.yellow : Theme.border;
+    property <length> body-h: body.preferred-height;
+    height: root.stacked ? head.height + 1px + root.body-h : min(head.height + 1px + root.body-h, root.max-h);
+    property <int> mg: PlanningKanban.measure-gen;
+    changed mg => { if !root.column.other { PlanningKanban.col-box(root.column.status, self.absolute-position.x, self.absolute-position.y, self.width, self.height); } }
+    head := Rectangle {
+        y: 0; height: hl.preferred-height;
+        hl := HorizontalLayout {
+            padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+            padding-top: Theme.sp-10; padding-bottom: Theme.sp-8;
+            spacing: Theme.sp-8;
+            Text { text: root.column.label; horizontal-stretch: 1; vertical-alignment: center; font-size: Theme.text-13; font-weight: Theme.w-semibold; color: root.column.other ? Theme.yellow : Theme.text-primary; }
+            Rectangle {
+                height: Theme.sp-16 + Theme.sp-2;
+                width: max(Theme.sp-20 + Theme.sp-2, cnt.preferred-width + Theme.sp-12);
+                border-radius: Theme.r-pill;
+                background: Theme.bg-tertiary;
+                cnt := Text { text: root.column.cards.length; font-size: Theme.text-11; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+            }
+        }
+    }
+    Rectangle { y: head.height; height: 1px; background: Theme.border-subtle; }
+    fl := Flickable {
+        y: head.height + 1px;
+        height: root.height - head.height - 1px;
+        content-height: body.preferred-height;
+        body := VerticalLayout {
+            width: fl.width;
+            padding: Theme.sp-8;
+            spacing: Theme.sp-8;
+            for c in root.column.cards: VerticalLayout {
+                // The drop line before this card (index among the others).
+                if root.drop-here && PlanningKanban.drop-before == c.id: Rectangle { height: Theme.sp-2; border-radius: Theme.r-pill; background: Theme.accent; }
+                Card { card: c; status: root.column.status; }
+            }
+            if root.drop-here && PlanningKanban.drop-before == "": Rectangle { height: Theme.sp-2; border-radius: Theme.r-pill; background: Theme.accent; }
+            if !root.column.other: AddTask { status: root.column.status; adding: root.column.adding; }
+        }
+    }
+}
+
+/// A section title in the Trash view (.secrets-section-title).
+component SectionTitle inherits Text {
+    font-size: Theme.text-12; font-weight: Theme.w-semibold;
+    letter-spacing: Theme.track-wide;
+    color: Theme.text-secondary;
+}
+
+/// The muted centred line (.kanban-empty).
+component KEmpty inherits Rectangle {
+    in property <string> text;
+    height: t.preferred-height + 2 * Theme.sp-24;
+    t := Text { text: root.text; wrap: word-wrap; horizontal-alignment: center; font-size: Theme.text-13; color: Theme.text-muted; width: parent.width - 2 * Theme.sp-24; }
+}
+
+/// A History or Trash line (.hist-row): its time (mono, muted) or its
+/// task, and maybe a Restore button.
+component HistRow inherits Rectangle {
+    in property <string> ts;
+    in property <string> text;
+    in property <string> sub;
+    in property <bool> restore;
+    callback restored();
+    height: hl.preferred-height + 1px;
+    hl := HorizontalLayout {
+        padding-top: Theme.sp-4; padding-bottom: Theme.sp-4;
+        spacing: Theme.sp-8;
+        if root.ts != "": Text { text: root.ts; font-family: Theme.mono; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+        Text { text: root.text; wrap: word-wrap; font-size: Theme.text-12; color: Theme.text-secondary; vertical-alignment: center; horizontal-stretch: root.sub == "" && !root.restore ? 1 : 0; }
+        if root.sub != "": Text { text: root.sub; font-size: Theme.text-11; color: Theme.text-muted; vertical-alignment: center; }
+        if root.restore: KBtn { text: "Restore"; clicked => { root.restored(); } }
+        if root.sub != "" || root.restore: Rectangle { horizontal-stretch: 1; }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border-subtle; }
+}
+
+/// The Kanban tab, or the panel in a workbench pane.
+export component KanbanView inherits Rectangle {
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    property <bool> fold: self.width < Theme.kanban-fold;
+    property <bool> stacked: self.width < Theme.kanban-stack;
+    if PlanningKanban.state == "none": KEmpty { y: 0; text: "Select a project to use its Kanban board."; }
+    if PlanningKanban.state == "loading": LoadingState { y: Theme.sp-24; height: Theme.control; x: (parent.width - self.preferred-width) / 2; }
+    if PlanningKanban.state == "error": KEmpty { y: 0; text: PlanningKanban.error; }
+    if PlanningKanban.state == "ok": VerticalLayout {
+        // The toolbar.
+        Rectangle {
+            height: tb.preferred-height;
+            tb := HorizontalLayout {
+                padding-left: root.fold ? Theme.sp-8 : Theme.sp-12; padding-right: root.fold ? Theme.sp-8 : Theme.sp-12;
+                padding-top: root.fold ? Theme.sp-6 : Theme.sp-10; padding-bottom: root.fold ? Theme.sp-6 : Theme.sp-10;
+                spacing: root.fold ? Theme.sp-4 : Theme.sp-8;
+                KBtn { primary: true; fold: root.fold; text: "+ Add task"; clicked => { PlanningKanban.act("add-task", "", ""); } }
+                Rectangle { horizontal-stretch: 1; }
+                KBtn { fold: root.fold; text: "Board"; toggled: PlanningKanban.view == "board"; clicked => { PlanningKanban.act("view-board", "", ""); } }
+                KBtn { fold: root.fold; text: "Trash (" + PlanningKanban.trash-count + ")"; toggled: PlanningKanban.view == "trash"; clicked => { PlanningKanban.act("view-trash", "", ""); } }
+                KBtn { fold: root.fold; text: "History"; toggled: PlanningKanban.view == "history"; clicked => { PlanningKanban.act("view-history", "", ""); } }
+                KBtn { fold: root.fold; has-icon: true; icon: Icons.images; text: "Media"; clicked => { PlanningKanban.act("media", "", ""); } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            // The board: columns side by side, or stacked when narrow.
+            if PlanningKanban.view == "board" && !root.stacked: board := Flickable {
+                property <int> n: PlanningKanban.columns.length;
+                property <length> col-w: max(Theme.kanban-col-min, min(Theme.kanban-col-max, (self.width - 2 * Theme.sp-12 - max(0, self.n - 1) * Theme.sp-12) / max(1, self.n)));
+                content-width: max(self.width, 2 * Theme.sp-12 + self.n * self.col-w + max(0, self.n - 1) * Theme.sp-12);
+                content-height: self.height;
+                HorizontalLayout {
+                    padding: Theme.sp-12;
+                    spacing: Theme.sp-12;
+                    alignment: start;
+                    for c in PlanningKanban.columns: VerticalLayout {
+                        width: board.col-w;
+                        alignment: start;
+                        Column { column: c; max-h: board.height - 2 * Theme.sp-12; }
+                    }
+                }
+            }
+            if PlanningKanban.view == "board" && root.stacked: sfl := Flickable {
+                content-height: sl.preferred-height;
+                sl := VerticalLayout {
+                    width: sfl.width;
+                    padding: Theme.sp-12;
+                    spacing: Theme.sp-10;
+                    for c in PlanningKanban.columns: Column { column: c; stacked: true; }
+                }
+            }
+            if PlanningKanban.view == "trash": tfl := Flickable {
+                content-height: tl.preferred-height;
+                tl := VerticalLayout {
+                    width: tfl.width;
+                    padding: Theme.sp-12;
+                    spacing: Theme.sp-8;
+                    alignment: start;
+                    SectionTitle { text: "DELETED TASKS"; }
+                    if PlanningKanban.deleted-tasks.length == 0: KEmpty { text: "No deleted tasks."; }
+                    for t in PlanningKanban.deleted-tasks: Rectangle {
+                        height: dl.preferred-height;
+                        border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+                        background: Theme.bg-card;
+                        opacity: Theme.o-soft;
+                        dl := VerticalLayout {
+                            padding-left: Theme.sp-12; padding-right: Theme.sp-12; padding-top: Theme.sp-12; padding-bottom: Theme.sp-10;
+                            spacing: Theme.sp-8;
+                            Text { text: t.text; wrap: word-wrap; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.text-primary; }
+                            HorizontalLayout { alignment: start; CardBtn { icon: Icons.rotate-ccw; text: "Restore"; clicked => { PlanningKanban.act("restore-task", t.task, ""); } } }
+                        }
+                    }
+                    Rectangle { height: Theme.sp-8; }
+                    SectionTitle { text: "DELETED TODOS"; }
+                    if PlanningKanban.deleted-todos.length == 0: KEmpty { text: "No deleted todos."; }
+                    for t in PlanningKanban.deleted-todos: HistRow {
+                        text: t.text; sub: "in " + t.sub; restore: true;
+                        restored => { PlanningKanban.act("restore-todo", t.task, t.todo); }
+                    }
+                }
+            }
+            if PlanningKanban.view == "history": hfl := Flickable {
+                content-height: hl.preferred-height;
+                hl := VerticalLayout {
+                    width: hfl.width;
+                    padding: Theme.sp-12;
+                    alignment: start;
+                    if PlanningKanban.history.length == 0: KEmpty { text: "No history yet."; }
+                    for h in PlanningKanban.history: HistRow { ts: h.sub; text: h.text; }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,470 @@
+// Schedules and webhooks (4.5, 4.6): the web's #schedule-panel
+// (renderSchedules: the toolbar, the list of .sched-item, the empty line)
+// and #sched-modal (renderSchedModal: the add/edit dialog with When,
+// the webhook's "When called", Action, Extra conditions). Driven by
+// src/planning/schedule.rs through PlanningSchedule.
+
+import { Theme, Icons, Icon, IconButton, SoftShadow, ScrollThumb, EmptyState, ErrorState, LoadingState, FormLabel, TextField, TextArea, Seg, Select } from "../kit.slint";
+import { Tip } from "../chat.slint";
+import { PlanningSchedule, PlanningSched, PlanningSchedCond } from "schedule-api.slint";
+import { KBtn } from "parts.slint";
+import { Label, Note } from "schedule-parts.slint";
+import { WebhookSection } from "schedule-webhook.slint";
+
+/// The enable switch (.sched-power): a small pill, accent-dim with an
+/// accent knob when on.
+component Power inherits Rectangle {
+    in property <bool> on;
+    callback toggled();
+    width: Theme.sp-24 + Theme.sp-6;
+    height: Theme.sp-16 + Theme.sp-2;
+    border-radius: self.height / 2;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.accent-dim : Theme.bg-tertiary;
+    animate background { duration: Theme.motion-fast; }
+    accessible-role: switch;
+    accessible-checked: root.on;
+    Rectangle {
+        y: Theme.sp-2;
+        x: root.on ? Theme.sp-2 + Theme.sp-12 : Theme.sp-2;
+        width: Theme.sp-12 + Theme.sp-2; height: self.width;
+        border-radius: self.height / 2;
+        background: root.on ? Theme.accent : Theme.text-muted;
+        animate x { duration: Theme.motion-fast; }
+    }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggled(); } }
+    Tip { on: ta.has-hover; text: root.on ? "Enabled — click to disable" : "Disabled — click to enable"; }
+}
+
+/// A chip under a schedule (.sched-cond): the when, then each extra condition.
+component Chip inherits Rectangle {
+    in property <string> text;
+    height: ct.preferred-height + Theme.sp-2 * 2;
+    min-width: Theme.sp-24;
+    preferred-width: ct.preferred-width + Theme.sp-8 * 2;
+    horizontal-stretch: 0;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.bg-tertiary;
+    ct := Text {
+        x: Theme.sp-8; width: parent.width - Theme.sp-16;
+        text: root.text; font-size: Theme.text-11; color: Theme.text-secondary;
+        vertical-alignment: center; overflow: elide;
+    }
+}
+
+/// One schedule (.sched-item): the switch, the body (a click edits), Edit and Delete.
+component Item inherits Rectangle {
+    in property <PlanningSched> s;
+    in property <bool> all;
+    height: hl.preferred-height;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: Theme.border;
+    background: Theme.bg-card;
+    opacity: root.s.enabled ? 1 : Theme.o-caret;
+    hl := HorizontalLayout {
+        padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+        padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+        spacing: Theme.sp-10;
+        VerticalLayout {
+            alignment: start;
+            padding-top: Theme.sp-2;
+            Power { on: root.s.enabled; toggled => { PlanningSchedule.act("enable", root.s.id); } }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            bl := VerticalLayout {
+                spacing: Theme.sp-2;
+                HorizontalLayout {
+                    spacing: Theme.sp-6;
+                    Text { text: root.s.name; wrap: word-wrap; font-size: Theme.text-14; font-weight: Theme.w-semibold; color: Theme.text-primary; horizontal-stretch: 0; }
+                    // The project chip (.sched-proj) when all projects show.
+                    if root.all: VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            height: pt.preferred-height + Theme.sp-2;
+                            width: pt.preferred-width + Theme.sp-12;
+                            border-radius: Theme.r-field;
+                            background: Theme.accent-dim;
+                            pt := Text { text: root.s.project; font-size: Theme.text-10; font-weight: Theme.w-semibold; color: Theme.accent-hover; }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+                if root.s.summary != "": Text { text: root.s.summary; wrap: word-wrap; font-size: Theme.text-13; color: Theme.text-secondary; }
+                // Slint has no wrapping row: the chips share one line and elide when narrow.
+                HorizontalLayout {
+                    padding-top: Theme.sp-4;
+                    spacing: Theme.sp-4;
+                    alignment: start;
+                    Chip { text: root.s.when; }
+                    for c in root.s.conds: Chip { text: c; }
+                }
+                if root.s.last != "": VerticalLayout {
+                    padding-top: Theme.sp-4;
+                    Text { text: root.s.last; font-size: Theme.text-10; color: Theme.text-muted; }
+                }
+            }
+            TouchArea { mouse-cursor: pointer; clicked => { PlanningSchedule.act("edit", root.s.id); } }
+        }
+        VerticalLayout {
+            alignment: start;
+            HorizontalLayout {
+                spacing: Theme.sp-2;
+                IconButton { size: Theme.sp-24 + Theme.sp-4; icon: Icons.pencil; tooltip: "Edit"; clicked => { PlanningSchedule.act("edit", root.s.id); } }
+                IconButton { size: Theme.sp-24 + Theme.sp-4; icon: Icons.trash; tooltip: "Delete"; clicked => { PlanningSchedule.act("delete", root.s.id); } }
+            }
+        }
+    }
+}
+
+/// The Schedules tab.
+export component ScheduleView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    background: Theme.bg-primary;
+    if PlanningSchedule.state == "loading": LoadingState { y: Theme.sp-24; height: Theme.control; x: (parent.width - self.preferred-width) / 2; }
+    if PlanningSchedule.state == "error": ErrorState { y: 0; height: self.preferred-height; width: parent.width; retry: false; text: PlanningSchedule.error; }
+    if PlanningSchedule.state == "ok": VerticalLayout {
+        // The toolbar (.kanban-toolbar): + Add schedule; the filter when a project is open.
+        Rectangle {
+            height: tb.preferred-height;
+            tb := HorizontalLayout {
+                padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+                padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                spacing: Theme.sp-8;
+                KBtn { primary: true; text: "+ Add schedule"; clicked => { PlanningSchedule.act("add", ""); } }
+                Rectangle { horizontal-stretch: 1; }
+                if PlanningSchedule.has-project: KBtn {
+                    toggled: PlanningSchedule.filter;
+                    text: PlanningSchedule.filter ? "This project" : "All projects";
+                    clicked => { PlanningSchedule.act("filter", ""); }
+                }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            if PlanningSchedule.items.length == 0: EmptyState { y: 0; height: self.preferred-height; width: parent.width; icon: Icons.clock; title: PlanningSchedule.empty-text; }
+            if PlanningSchedule.items.length > 0: fl := Flickable {
+                content-height: ll.preferred-height;
+                ll := VerticalLayout {
+                    width: fl.width;
+                    padding-left: Theme.sp-12; padding-right: Theme.sp-12;
+                    padding-top: Theme.sp-10; padding-bottom: Theme.sp-10;
+                    spacing: Theme.sp-8;
+                    alignment: start;
+                    for s in PlanningSchedule.items: Item { s: s; all: !PlanningSchedule.filter || !PlanningSchedule.has-project; }
+                }
+            }
+        }
+    }
+}
+
+// ─── The dialog ───
+
+/// A day of the week (.sm-day).
+component DayBtn inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    callback clicked();
+    width: Theme.sp-32 + Theme.sp-2;
+    height: Theme.sp-32;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.accent-dim : ta.has-hover ? Theme.bg-hover : Theme.bg-tertiary;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-checked: root.on;
+    Text { text: root.text; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: root.on ? Theme.accent-hover : Theme.text-secondary; }
+    ta := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+/// An extra condition (.sm-cond): its label, its fields, × to remove.
+component CondRow inherits Rectangle {
+    in property <PlanningSchedCond> c;
+    in property <int> i;
+    height: hl.preferred-height;
+    border-radius: Theme.r-control;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+    background: Theme.bg-tertiary;
+    hl := HorizontalLayout {
+        padding-left: Theme.sp-8; padding-right: Theme.sp-8;
+        padding-top: Theme.sp-6; padding-bottom: Theme.sp-6;
+        spacing: Theme.sp-6;
+        Text { text: root.c.title; vertical-alignment: center; font-size: Theme.text-12; font-weight: Theme.w-semibold; color: Theme.text-secondary; }
+        if root.c.kind != "kanban": Select {
+            // Select has a min-width of its own: a preferred width, not a width.
+            preferred-width: Theme.sp-48 + Theme.sp-48;
+            horizontal-stretch: 0;
+            options: ["below", "above", "equal"];
+            selected: root.c.op;
+            picked(k) => { PlanningSchedule.cond-pick(root.i, "op", k); }
+        }
+        if root.c.kind != "kanban": TextField {
+            width: Theme.sp-32 + Theme.sp-32;
+            text: root.c.value;
+            edited(t) => { PlanningSchedule.cond-value(root.i, t); }
+        }
+        if root.c.kind == "usage": Text { text: "%"; vertical-alignment: center; font-size: Theme.text-13; color: Theme.text-secondary; }
+        if root.c.kind == "kanban": Select {
+            horizontal-stretch: 1;
+            options: PlanningSchedule.task-opts;
+            selected: root.c.task;
+            picked(k) => { PlanningSchedule.cond-pick(root.i, "task", k); }
+        }
+        if root.c.kind == "kanban": Select {
+            horizontal-stretch: 1;
+            options: root.c.todo-opts;
+            selected: root.c.todo;
+            picked(k) => { PlanningSchedule.cond-pick(root.i, "todo", k); }
+        }
+        if root.c.kind == "kanban": Select {
+            horizontal-stretch: 1;
+            options: root.c.status-opts;
+            selected: root.c.status;
+            picked(k) => { PlanningSchedule.cond-pick(root.i, "status", k); }
+        }
+        if root.c.kind != "kanban": Rectangle { horizontal-stretch: 1; }
+        x := Rectangle {
+            width: Theme.sp-20;
+            Text { text: "×"; font-size: Theme.text-16; color: xa.has-hover ? Theme.red : Theme.text-muted; }
+            xa := TouchArea { mouse-cursor: pointer; clicked => { PlanningSchedule.remove-cond(root.i); } }
+            Tip { on: xa.has-hover; text: "Remove"; }
+        }
+    }
+}
+
+/// The model and effort drop-downs, side by side (.sm-row2).
+component ModelEffort inherits HorizontalLayout {
+    spacing: Theme.sp-10;
+    VerticalLayout {
+        horizontal-stretch: 1;
+        Label { text: "MODEL"; }
+        Select { options: PlanningSchedule.model-opts; selected: PlanningSchedule.model; picked(i) => { PlanningSchedule.pick("model", i); } }
+    }
+    VerticalLayout {
+        horizontal-stretch: 1;
+        Label { text: "EFFORT"; }
+        Select { options: PlanningSchedule.effort-opts; selected: PlanningSchedule.effort; picked(i) => { PlanningSchedule.pick("effort", i); } }
+    }
+}
+
+component ModeSeg inherits VerticalLayout {
+    Label { text: "MODE"; }
+    Seg {
+        options: ["Normal", "Skip permissions"];
+        selected: PlanningSchedule.mode == "skip" ? 1 : 0;
+        picked(i) => { PlanningSchedule.seg("mode", i == 1 ? "skip" : "normal"); }
+    }
+}
+
+/// The add/edit dialog (#sched-modal, .sched-modal-card): its head, the
+/// body that scrolls, Cancel and Save.
+component SchedDialog inherits Rectangle {
+    property <bool> hook: PlanningSchedule.when-mode == "webhook";
+    background: Theme.scrim;
+    TouchArea { clicked => { PlanningSchedule.close(); } }
+    // Esc anywhere in the dialog closes it (the fields pass it up).
+    keys := FocusScope {
+        init => { self.focus(); }
+        key-pressed(ev) => { if ev.text == Key.Escape { PlanningSchedule.close(); return accept; } return reject; }
+        card := Rectangle {
+            property <length> head-h: Theme.sp-48;
+            property <length> foot-h: foot.preferred-height;
+            width: min(Theme.dialog-w-xl, root.width - 2 * Theme.sp-24);
+            height: min(self.head-h + body.preferred-height + self.foot-h, root.height - 2 * Theme.sp-48);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            SoftShadow { width: parent.width; height: parent.height; radius: Theme.r-card; shadow: Theme.shadow-card; }
+            Rectangle { background: Theme.bg-secondary; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border; }
+            TouchArea { }
+            // The head (.sm-head).
+            Rectangle {
+                y: 0; height: card.head-h;
+                HorizontalLayout {
+                    padding-left: Theme.sp-16; padding-right: Theme.sp-8;
+                    Text { horizontal-stretch: 1; text: PlanningSchedule.editing ? "Edit schedule" : "New schedule"; vertical-alignment: center; font-size: Theme.text-16; font-weight: Theme.w-semibold; color: Theme.text-primary; overflow: elide; }
+                    IconButton { y: (parent.height - self.height) / 2; icon: Icons.x; tooltip: "Close"; clicked => { PlanningSchedule.close(); } }
+                }
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            }
+            // The body (.sm-bodyscroll).
+            fl := Flickable {
+                y: card.head-h;
+                height: card.height - card.head-h - card.foot-h;
+                content-height: body.preferred-height;
+                body := VerticalLayout {
+                    width: fl.width;
+                    padding: Theme.sp-16;
+                    alignment: start;
+                    Label { text: "NAME"; first: true; }
+                    TextField {
+                        text <=> PlanningSchedule.name;
+                        placeholder: "My scheduled task";
+                        init => { self.focus-input(); }
+                    }
+                    Label { text: "PROJECT"; }
+                    Select { options: PlanningSchedule.project-opts; selected: PlanningSchedule.project; picked(i) => { PlanningSchedule.pick("project", i); } }
+
+                    // When: one-time, recurring, or when called (a webhook).
+                    Label { text: "WHEN"; }
+                    Seg {
+                        options: ["One-time", "Recurring", "When called"];
+                        selected: PlanningSchedule.when-mode == "once" ? 0 : PlanningSchedule.when-mode == "webhook" ? 2 : 1;
+                        picked(i) => { PlanningSchedule.seg("whenmode", i == 0 ? "once" : i == 2 ? "webhook" : "recurring"); }
+                    }
+                    if root.hook: WebhookSection { }
+                    if !root.hook: HorizontalLayout {
+                        padding-top: Theme.sp-6;
+                        spacing: Theme.sp-10;
+                        alignment: start;
+                        // The web's date and time inputs: typed here (YYYY-MM-DD, HH:MM), checked on Save.
+                        if PlanningSchedule.when-mode == "once": TextField { width: Theme.sp-48 * 2 + Theme.sp-32; text <=> PlanningSchedule.date; placeholder: "YYYY-MM-DD"; mono: true; }
+                        if PlanningSchedule.when-mode != "once": HorizontalLayout {
+                            spacing: Theme.sp-4;
+                            for d[i] in ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]: DayBtn {
+                                text: d;
+                                on: PlanningSchedule.days[i];
+                                clicked => { PlanningSchedule.day(i); }
+                            }
+                        }
+                        TextField { width: Theme.sp-48 + Theme.sp-40; text <=> PlanningSchedule.time; placeholder: "HH:MM"; mono: true; }
+                    }
+
+                    // Action: what it runs.
+                    Label { text: "ACTION"; }
+                    Seg {
+                        options: ["Agent", "Background chat", "CLI command", "Service"];
+                        selected: PlanningSchedule.kind == "chat" ? 1 : PlanningSchedule.kind == "command" ? 2 : PlanningSchedule.kind == "service" ? 3 : 0;
+                        picked(i) => { PlanningSchedule.seg("kind", i == 1 ? "chat" : i == 2 ? "command" : i == 3 ? "service" : "agent"); }
+                    }
+                    if PlanningSchedule.kind == "agent": VerticalLayout {
+                        Label { text: "AGENT"; }
+                        Seg { options: ["Claude"]; selected: 0; picked(i) => { PlanningSchedule.seg("agent", "claude"); } }
+                        ModelEffort { }
+                        ModeSeg { }
+                        Label { text: "SESSION"; }
+                        Seg {
+                            options: ["New", "Continue last", "Resume id"];
+                            selected: PlanningSchedule.session == "continue" ? 1 : PlanningSchedule.session == "resume" ? 2 : 0;
+                            picked(i) => { PlanningSchedule.seg("session", i == 1 ? "continue" : i == 2 ? "resume" : "new"); }
+                        }
+                        if PlanningSchedule.session == "resume": VerticalLayout {
+                            padding-top: Theme.sp-6;
+                            TextField { text <=> PlanningSchedule.session-id; placeholder: "session id e.g. 8441d374-fd1a-..."; mono: true; }
+                        }
+                        Label { text: "PROMPT"; }
+                        TextArea { text <=> PlanningSchedule.prompt; rows: 3; mono: true; placeholder: "What should the agent do?"; }
+                        Note { text: "Tip: you can include slash commands like /frontend-design or /loop right in the prompt — they run just like typing them in the terminal."; }
+                    }
+                    if PlanningSchedule.kind == "chat": VerticalLayout {
+                        Note { text: "Opens a chat, runs the prompt, and closes itself when the work finishes. It stays open if it needs you or hits an error, and it will not close while it is waiting on a background command."; }
+                        ModelEffort { }
+                        ModeSeg { }
+                        Label { text: "FOLDER"; hint: "(blank = the project root)"; }
+                        TextField { text <=> PlanningSchedule.cwd; placeholder: PlanningSchedule.cwd-hint; }
+                        Label { text: "CONVERSATION"; }
+                        Seg {
+                            options: ["Fresh each run", "One ongoing chat"];
+                            selected: PlanningSchedule.session == "resume" ? 1 : 0;
+                            picked(i) => { PlanningSchedule.seg("session", i == 1 ? "resume" : "new"); }
+                        }
+                        // The conversation a resuming job comes back to.
+                        if PlanningSchedule.session == "resume" && PlanningSchedule.session-id != "": HorizontalLayout {
+                            padding-top: Theme.sp-6;
+                            spacing: Theme.sp-6;
+                            alignment: start;
+                            Text { text: "Resuming"; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    height: sid.preferred-height + Theme.sp-2;
+                                    width: sid.preferred-width + Theme.sp-10;
+                                    border-radius: Theme.r-chip;
+                                    border-width: 1px; border-color: Theme.border-subtle;
+                                    background: Theme.bg-tertiary;
+                                    sid := Text { text: PlanningSchedule.session-short; font-family: Theme.mono; font-size: Theme.text-12; color: Theme.accent-hover; }
+                                }
+                            }
+                            Text { text: "…"; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                            KBtn { text: PlanningSchedule.provisioning ? "Creating…" : "Start a new one"; enabled: !PlanningSchedule.provisioning; clicked => { PlanningSchedule.provision(); } }
+                        }
+                        if PlanningSchedule.session == "resume" && PlanningSchedule.session-id == "" && PlanningSchedule.editing: HorizontalLayout {
+                            padding-top: Theme.sp-6;
+                            spacing: Theme.sp-6;
+                            Text { text: "No conversation yet."; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                            KBtn { primary: true; text: PlanningSchedule.provisioning ? "Creating…" : "Create it now"; enabled: !PlanningSchedule.provisioning; clicked => { PlanningSchedule.provision(); } }
+                            Text { horizontal-stretch: 1; text: "— this opens a chat, says hello, and keeps its id."; wrap: word-wrap; vertical-alignment: center; font-size: Theme.text-12; color: Theme.text-muted; }
+                        }
+                        if PlanningSchedule.session == "resume" && PlanningSchedule.session-id == "" && !PlanningSchedule.editing: Note { text: "Save the schedule first, then create the conversation."; }
+                        Label { text: "PROMPT"; }
+                        TextArea { text <=> PlanningSchedule.prompt; rows: 3; mono: true; placeholder: root.hook ? "Look into this alert: {{payload.message}}" : "What should it do each time?"; }
+                        if root.hook: Note { text: "Read the call with {{payload.some.field}} (arrays by index: {{payload.alerts.0.labels.alertname}}), {{headers.name}}, {{date}}. Anything a call does not have comes out empty and never stops it, and the chat always gets the full request as well."; }
+                        Note { text: "The job can rewrite this prompt for its next run with the schedule_update tool, so it can leave notes for itself."; }
+                    }
+                    if PlanningSchedule.kind == "command": VerticalLayout {
+                        Label { text: "COMMAND"; }
+                        TextField { text <=> PlanningSchedule.command; placeholder: "e.g. npm run build"; }
+                    }
+                    if PlanningSchedule.kind == "service": VerticalLayout {
+                        Label { text: "SERVICE"; }
+                        Select { options: PlanningSchedule.service-opts; selected: PlanningSchedule.service; enabled: PlanningSchedule.has-services; picked(i) => { PlanningSchedule.pick("service", i); } }
+                        Label { text: "OPERATION"; }
+                        Seg {
+                            options: ["Start if stopped", "Stop if running", "Toggle"];
+                            selected: PlanningSchedule.op == "stop" ? 1 : PlanningSchedule.op == "toggle" ? 2 : 0;
+                            picked(i) => { PlanningSchedule.seg("op", i == 1 ? "stop" : i == 2 ? "toggle" : "start"); }
+                        }
+                    }
+
+                    // Extra conditions (all must also be true).
+                    Label { text: "EXTRA CONDITIONS"; hint: "(optional — all must be true)"; }
+                    VerticalLayout {
+                        spacing: Theme.sp-6;
+                        for c[i] in PlanningSchedule.conds: CondRow { c: c; i: i; }
+                    }
+                    HorizontalLayout {
+                        padding-top: PlanningSchedule.conds.length > 0 ? Theme.sp-6 : Theme.sp-4;
+                        spacing: Theme.sp-6;
+                        alignment: start;
+                        KBtn { text: "+ 5h usage"; clicked => { PlanningSchedule.add-cond("usage"); } }
+                        KBtn { text: "+ Weekly usage"; clicked => { PlanningSchedule.add-cond("usage-week"); } }
+                        KBtn { text: "+ Open terminals"; clicked => { PlanningSchedule.add-cond("terminals"); } }
+                        KBtn { text: "+ Kanban status"; clicked => { PlanningSchedule.add-cond("kanban"); } }
+                    }
+                }
+            }
+            ScrollThumb {
+                y: card.head-h;
+                width: card.width; height: fl.height;
+                view-h: fl.height; content-h: fl.content-height; offset: -fl.content-y;
+            }
+            // The foot (.sm-foot): Cancel, Save.
+            Rectangle {
+                y: card.height - card.foot-h;
+                height: card.foot-h;
+                Rectangle { y: 0; height: 1px; background: Theme.border; }
+                foot := HorizontalLayout {
+                    padding-left: Theme.sp-16; padding-right: Theme.sp-16;
+                    padding-top: Theme.sp-12; padding-bottom: Theme.sp-12;
+                    spacing: Theme.sp-8;
+                    alignment: end;
+                    KBtn { text: "Cancel"; clicked => { PlanningSchedule.close(); } }
+                    KBtn { primary: true; text: "Save"; clicked => { PlanningSchedule.save(); } }
+                }
+            }
+        }
+    }
+}
+
+/// This screen's dialogs over the window; no input where it draws nothing.
+export component ScheduleOverlay inherits Rectangle {
+    if PlanningSchedule.open: SchedDialog { width: root.width; height: root.height; }
+}

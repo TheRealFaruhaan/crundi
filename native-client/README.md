@@ -510,6 +510,17 @@ whole window, and close. The pictures go to `DRIVE_OUT` (default: the temp dir).
   - `widgets.slint`: shared parts;
   - `theme.slint` and `icons.slint`: the look.
 
+## Areas (phases 3 to 6)
+
+From phase 3 on, the client is built in four areas side by side
+(workspace, planning, ops, desktop). `AREAS.md` says where each area's files
+go (`ui/<area>/`, `src/<area>/`), how a tab or a workbench panel reaches its
+area (`ui/areas.slint`, `src/areas.rs`), the shell's hooks
+(`ui/hooks.slint`), the shared kit (`ui/kit.slint`, `ui/dialogs.slint`,
+`src/kit.rs`), the test driver's `<area>:<name>` actions, the harness
+(`test/lib.mjs`), the ports and the one build folder
+(`tools/area-build.sh`).
+
 ## Adding a screen
 
 **Read `DESIGN.md` first.** Every screen keeps the PC client's layout and

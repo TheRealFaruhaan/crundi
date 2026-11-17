@@ -1,0 +1,41 @@
+// The tab host (AREAS.md): which area draws which tab or workbench panel,
+// and the areas' window-wide layers. Only the Lead changes this file; an
+// area adds a kind by handling it in its own ui/<area>/index.slint and
+// telling the Lead if the kind is new (the mapping below).
+
+import { WorkspaceView, WorkspaceOverlay } from "workspace/index.slint";
+import { PlanningView, PlanningOverlay } from "planning/index.slint";
+import { OpsView, OpsOverlay } from "ops/index.slint";
+import { DesktopView, DesktopOverlay } from "desktop/index.slint";
+
+export global Areas {
+    /// The area of a tab id or a panel kind ("" for none: the workbench).
+    public pure function of(kind: string) -> string {
+        return kind == "git" || kind == "files" || kind == "media" ? "workspace"
+            : kind == "kanban" || kind == "notes" || kind == "mindmap" || kind == "factories" || kind == "factory" || kind == "schedule" ? "planning"
+            : kind == "services" || kind == "docker" || kind == "homepool" || kind == "info" || kind == "secrets" || kind == "settings" || kind == "panels" || kind == "widget" ? "ops"
+            : kind == "browsers" || kind == "inbox" ? "desktop"  // inbox: the sidebar's Inbox (desktop, a page with no tab button)
+            : "";
+    }
+}
+
+/// A tab's page, or a panel inside a workbench pane (embedded, with the
+/// pane's key).
+export component AreaView inherits Rectangle {
+    in property <string> kind;
+    in property <string> key;
+    in property <bool> embedded;
+    property <string> area: Areas.of(root.kind);
+    if root.area == "workspace": WorkspaceView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.area == "planning": PlanningView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.area == "ops": OpsView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+    if root.area == "desktop": DesktopView { width: parent.width; height: parent.height; kind: root.kind; key: root.key; embedded: root.embedded; }
+}
+
+/// The areas' layers over the whole window, under the shared dialogs.
+export component AreaOverlays inherits Rectangle {
+    WorkspaceOverlay { width: parent.width; height: parent.height; }
+    PlanningOverlay { width: parent.width; height: parent.height; }
+    OpsOverlay { width: parent.width; height: parent.height; }
+    DesktopOverlay { width: parent.width; height: parent.height; }
+}

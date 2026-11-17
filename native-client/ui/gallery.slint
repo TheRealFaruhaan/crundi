@@ -1,0 +1,120 @@
+// The shared kit, every part in its states, on one page: a reference for
+// the areas and the foundation's own check (test/areas.mjs snaps it). The
+// driver shows it with {"cmd":"ui","name":"kit-gallery","args":["true"]}.
+
+import { Theme, Icons, PanelPage, Toolbar, AddButton, Card, CardHead, MetaLine, SmallBtn, StatusTag, StateDot,
+    CountBadge, EmptyState, ErrorState, LoadingState, ListRow, Table, TableCol, TableRow, FormLabel, TextField,
+    TextArea, Seg, Toggle, CheckRow, Select, SendBtn, UploadStrip } from "kit.slint";
+
+export global Gallery {
+    in-out property <bool> open;
+}
+
+export component KitGallery inherits Rectangle {
+    background: Theme.bg-primary;
+    property <int> seg: 1;
+    property <bool> on: true;
+    property <bool> ticked: true;
+    property <int> pick: 0;
+    PanelPage {
+        Toolbar {
+            title: "Kit gallery";
+            SmallBtn { text: "Close"; clicked => { Gallery.open = false; } }
+            AddButton { text: "Register service"; }
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-12;
+            Card {
+                horizontal-stretch: 1;
+                CardHead { name: "web-dev"; tone: "running"; tag: "running"; }
+                MetaLine { text: "node server.js · :4390 · up 2h"; }
+                HorizontalLayout {
+                    spacing: Theme.sp-6; alignment: start;
+                    SmallBtn { text: "Logs"; has-icon: true; icon: Icons.file-text; }
+                    SmallBtn { text: "Restart"; has-icon: true; icon: Icons.refresh; }
+                    SmallBtn { text: "Tunnel on"; kind: "on"; }
+                    SmallBtn { text: "Delete"; kind: "danger"; confirm-text: "Sure?"; }
+                    SmallBtn { text: "Delete (armed)"; kind: "danger"; confirm-text: "Sure?"; armed: true; }
+                    SmallBtn { text: "Start"; kind: "primary"; }
+                    SmallBtn { text: "Disabled"; enabled: false; }
+                }
+            }
+            Card {
+                horizontal-stretch: 1;
+                selected: true;
+                CardHead { name: "worker"; tone: "error"; tag: "error"; }
+                MetaLine { text: "exited with code 1"; }
+                HorizontalLayout {
+                    spacing: Theme.sp-8; alignment: start;
+                    StatusTag { text: "stopped"; tone: ""; }
+                    StatusTag { text: "warn"; tone: "warn"; }
+                    StatusTag { text: "accent"; tone: "accent"; }
+                    StateDot { tone: "running"; }
+                    StateDot { tone: "warn"; }
+                    StateDot { tone: ""; }
+                    CountBadge { text: "3"; }
+                    CountBadge { text: "99+"; }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-12;
+            height: 2 * (Theme.sp-48 + Theme.sp-48);
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+                VerticalLayout {
+                    padding: Theme.sp-4;
+                    ListRow { icon: Icons.folder; icon-tint: Theme.yellow; title: "src"; meta: ""; }
+                    ListRow { icon: Icons.file; title: "README.md"; meta: "4.2 KB"; selected: true; }
+                    ListRow { icon: Icons.file-text; title: "notes.txt"; sub: "edited 5m ago"; meta: "120 B"; }
+                    Rectangle { }
+                }
+            }
+            Table {
+                horizontal-stretch: 2;
+                cols: [{ title: "NAME", share: 2 }, { title: "IMAGE", share: 2, mono: true }, { title: "CPU", share: 0, width: Theme.sp-48 + Theme.sp-16, right: true, mono: true }];
+                rows: [{ key: "a", cells: ["postgres", "postgres:16", "1.2%"], tone: "running" },
+                       { key: "b", cells: ["redis", "redis:7", "0.3%"], tone: "running", selected: true },
+                       { key: "c", cells: ["old-job", "alpine", "—"], tone: "" }];
+            }
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-16;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: Theme.sp-6;
+                FormLabel { text: "NAME"; }
+                TextField { placeholder: "my-service"; }
+                FormLabel { text: "COMMAND"; }
+                TextField { text: "npm run dev"; mono: true; }
+                FormLabel { text: "INVALID"; }
+                TextField { text: "bad value"; invalid: true; }
+                FormLabel { text: "NOTES"; }
+                TextArea { rows: 3; placeholder: "Anything to remember…"; }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: Theme.sp-10;
+                FormLabel { text: "REPEAT"; }
+                Seg { options: ["Once", "Daily", "Weekly", "Cron"]; selected: root.seg; picked(i) => { root.seg = i; } }
+                HorizontalLayout { spacing: Theme.sp-8; alignment: start; Toggle { on: root.on; toggled(v) => { root.on = v; } } Toggle { on: false; } Toggle { on: true; enabled: false; } }
+                CheckRow { text: "Expose on a subdomain"; checked: root.ticked; toggled(v) => { root.ticked = v; } }
+                CheckRow { text: "Not ticked"; checked: false; }
+                Select { options: ["demo", "crundi", "other"]; selected: root.pick; picked(i) => { root.pick = i; } }
+                HorizontalLayout { spacing: Theme.sp-8; alignment: start; SendBtn { label: "Send"; width: self.text-w + 2 * Theme.sp-12; height: Theme.control; } }
+                UploadStrip { name: "photo.png"; frac: 1; label: "saving"; }
+            }
+        }
+        HorizontalLayout {
+            spacing: Theme.sp-12;
+            height: 2 * Theme.sp-48 + Theme.sp-48;
+            Rectangle { horizontal-stretch: 1; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+                EmptyState { icon: Icons.server; title: "No services yet"; hint: "Register one to run it here."; } }
+            Rectangle { horizontal-stretch: 1; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+                ErrorState { text: "Failed to load services: Not supported by this server"; } }
+            Rectangle { horizontal-stretch: 1; border-radius: Theme.r-card; border-width: 1px; border-color: Theme.border;
+                LoadingState { } }
+        }
+    }
+}
