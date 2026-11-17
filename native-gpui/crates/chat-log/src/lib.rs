@@ -72,7 +72,18 @@ pub struct LogView {
     /// Tool cards and groups the reader opened, by row id (2.14).
     pub open: HashSet<String>,
     pub st: St,
-    pub scroll: ScrollHandle,
+    /// The log, virtualised: only the rows in view (and a margin) are
+    /// built and laid out each frame. Scrolling a long chat rebuilt every
+    /// message, its markdown included, on every frame (the owner's 18 Nov
+    /// "laggy scrolling"; a profile: layout and styles of all rows).
+    pub list: ListState,
+    /// The rows the list was last told about (compared each render: only
+    /// the range that changed is measured again).
+    rows_prev: Vec<rows::Row>,
+    /// The list's viewport as of this render, for what is drawn inside its
+    /// rows (a browser view's visible part): reading the list from inside
+    /// its own layout panicked ('RefCell already mutably borrowed').
+    pub viewport: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
     /// Scroll to the end after the next layouts (new entries, the first history).
     pub stick: u8,
     _sub: Subscription,
@@ -90,7 +101,7 @@ impl LogView {
         let me = cx.entity().downgrade();
         if !cx.has_global::<Views>() { cx.set_global(Views::default()); }
         cx.global_mut::<Views>().0.insert(id, me);
-        LogView { model, open: HashSet::new(), st: St::default(), scroll: ScrollHandle::new(), stick: 3, _sub: sub }
+        LogView { model, open: HashSet::new(), st: St::default(), list: ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW), rows_prev: Vec::new(), viewport: Default::default(), stick: 3, _sub: sub }
     }
 
     /// The chat's id.
@@ -118,6 +129,37 @@ impl LogView {
         if self.shown(cx).iter().any(|e| e.id == id && e.kind == "thinking") { self.st.thinking.think.toggle(id); }
         else if !self.open.remove(id) { self.open.insert(id.to_string()); }
         cx.notify();
+    }
+
+    /// The list follows the rows: only the range that changed since the
+    /// last render is measured again (a streamed reply: its last rows).
+    fn sync_rows(&mut self, cx: &App) {
+        let rows = self.rows(cx);
+        let (old, new) = (self.rows_prev.len(), rows.len());
+        if old == 0 && new == 0 && self.list.item_count() == 1 { return; }
+        let head = self.rows_prev.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+        let tail = self.rows_prev[head..].iter().rev().zip(rows[head..].iter().rev()).take_while(|(a, b)| a == b).count();
+        if self.list.item_count() != old + 1 {
+            // First time (or out of step): every row, and the pad.
+            self.list.reset(new + 1);
+        } else if head != old || head != new || tail != 0 {
+            self.list.splice(head..old - tail, new - head - tail);
+        }
+        self.rows_prev = rows;
+    }
+
+    /// List item `ix`: a row, or after the last the floating dock's room.
+    fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let n = self.rows_prev.len();
+        let body = if ix < n {
+            let r = self.rows_prev[ix].clone();
+            self.row(ix, &r, window, cx)
+        } else {
+            Some(agents::pad(self).into_any_element())
+        };
+        // The old column's padding (12) and gap (10), per item.
+        div().px(T::SP_12).pt(if ix == 0 { T::SP_12 } else { px(0.) }).pb(if ix + 1 >= n { T::SP_12 } else { T::SP_10 })
+            .children(body).into_any_element()
     }
 
     fn row(&mut self, i: usize, r: &Row, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -181,18 +223,18 @@ impl Render for LogView {
         prose::keep(self);
         if self.stick > 0 {
             self.stick -= 1;
-            self.scroll.scroll_to_bottom();
+            self.list.scroll_to_end();
             let me = cx.entity().downgrade();
             window.on_next_frame(move |_, cx| { let _ = me.update(cx, |_, cx| cx.notify()); });
         }
         let zoom = self.model.read(cx).zoom;
-        let rows = self.rows(cx);
-        let els: Vec<AnyElement> = rows.iter().enumerate().filter_map(|(i, r)| self.row(i, r, window, cx)).collect();
-        // The floating dock's room at the end (2.17/2.18: the newest line scrolls clear of it).
-        let log = div().id("log").flex_1().min_w_0().min_h_0().overflow_y_scroll().track_scroll(&self.scroll)
+        self.viewport.set(self.list.viewport_bounds());
+        self.sync_rows(cx);
+        // The rows, then the floating dock's room at the end (2.17/2.18: the
+        // newest line scrolls clear of it), as list items.
+        let log = div().id("log").flex().flex_col().flex_1().min_w_0().min_h_0()
             .on_scroll_wheel(cx.listener(|this, e: &ScrollEvent, window, _| prose::wheel(this, e, window)))
-            .child(div().flex().flex_col().gap(T::SP_10).p(T::SP_12).children(els)
-                .child(agents::pad(self)));
+            .child(list(self.list.clone(), cx.processor(|this, ix: usize, window, cx| this.item(ix, window, cx))).flex_1().min_h_0().size_full());
         // A parked chat (2.23): its card over what it was (or Peek), nothing else.
         let log = match parked::wrap(self, log.into_any_element(), window, cx) {
             Ok(p) => return with_fallbacks(div()).flex().flex_col().flex_1().min_w_0().min_h_0().text_size(T::TEXT_13 + px(zoom as f32)).child(p).into_any_element(),

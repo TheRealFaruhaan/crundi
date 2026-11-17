@@ -72,8 +72,8 @@ pub fn near() -> f32 { f32::from(T::SP_48 + T::SP_12) }
 
 /// How far the log is from its bottom, and past it (pixels).
 pub fn dist(v: &LogView) -> (f32, f32) {
-    let max = f32::from(v.scroll.max_offset().y);
-    let off = -f32::from(v.scroll.offset().y);
+    let max = f32::from(v.list.max_offset_for_scrollbar().y);
+    let off = -f32::from(v.list.scroll_px_offset_for_scrollbar().y);
     ((max - off).max(0.), (off - max).max(0.))
 }
 
@@ -92,7 +92,7 @@ pub fn arrived(v: &mut LogView, entry: bool) {
 /// following at once; down, back within near() of the end follows again.
 pub fn wheel(v: &mut LogView, e: &ScrollEvent, window: &Window) {
     let dy = f32::from(e.delta.pixel_delta(window.line_height()).y);
-    let max = f32::from(v.scroll.max_offset().y);
+    let max = f32::from(v.list.max_offset_for_scrollbar().y);
     let to = (dist(v).0 + dy).clamp(0., max.max(0.));
     if let Some(away) = after_wheel(v.st.prose.away, dy, to) { v.st.prose.away = away; }
     if v.st.prose.away { v.stick = 0; } else { v.st.prose.jump_new = false; }
@@ -113,7 +113,7 @@ pub fn keep(v: &mut LogView) {
 /// The jump button (.cc-jump), over the log's bottom centre: "Go to the
 /// newest message"; its dot when something arrived below.
 pub fn jump(v: &mut LogView, cx: &mut Context<LogView>) -> Option<AnyElement> {
-    let b = v.scroll.bounds();
+    let b = v.list.viewport_bounds();
     if !jump_shown(dist(v).0, f32::from(b.size.height)) { return None; }
     let new = v.st.prose.jump_new;
     let btn = w::icon_button("log-jump", IconName::ArrowDown, "Go to the newest message")
@@ -134,7 +134,7 @@ pub fn watch_props(cx: &mut App, o: &mut Map<String, Value>) {
     let Some(v) = key.strip_prefix("live:").and_then(|id| crate::view_of(cx, id)) else { return };
     let v = v.read(cx);
     let (d, over) = dist(v);
-    let b = v.scroll.bounds();
+    let b = v.list.viewport_bounds();
     let h = f32::from(b.size.height);
     o.insert("dist".into(), json!(d));
     o.insert("over".into(), json!(over));

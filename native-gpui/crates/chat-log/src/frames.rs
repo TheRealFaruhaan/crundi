@@ -76,7 +76,9 @@ fn ticker(cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         let mut last = 0u64;
         loop {
-            cx.background_executor().timer(Duration::from_millis(33)).await;
+            // Every 16 ms (the views paint at up to 60): at 33 a 60 fps page lost
+            // frames and a 30 one judders against the timer.
+            cx.background_executor().timer(Duration::from_millis(16)).await;
             let go = cx.update(|cx| {
                 let now = crundi_webview::frames::generation();
                 let chats: Vec<String> = g(cx).boxes.values().filter(|s| s.live).map(|s| s.chat.clone()).collect();
@@ -252,9 +254,9 @@ pub fn release_chat(chat: &str, cx: &mut App) {
 pub fn view(v: &mut LogView, key: &str, chat: &str, i: &media::Item, window: &mut Window, cx: &mut Context<LogView>) -> AnyElement {
     use crundi_webview::frames as web;
     let target = key.split_once('|').map(|x| x.1.to_string()).unwrap_or_default();
-    let scroll = v.scroll.clone();
+    let scroll = v.viewport.clone();
     let (k, c) = (key.to_string(), chat.to_string());
-    let report = canvas(move |b, window, cx| { seen(&k, &c, &target, b, scroll.bounds(), window.scale_factor(), cx); }, |_, _, _, _| {})
+    let report = canvas(move |b, window, cx| { seen(&k, &c, &target, b, scroll.get(), window.scale_factor(), cx); }, |_, _, _, _| {})
         .absolute().inset_0().size_full();
     if !crundi_webview::started() {
         let (c2, name, url) = (chat.to_string(), i.name.clone(), i.url.clone());
