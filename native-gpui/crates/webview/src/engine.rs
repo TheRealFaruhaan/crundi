@@ -345,7 +345,13 @@ pub fn sync_hidden() {
         p.hidden_sent = Some(want);
         Some((id, want))
     }).collect());
-    for (id, on) in todo { client::send_to(id, Cmd::Hidden { id, on }); }
+    for (id, on) in todo {
+        // Logged: a page hidden in the host gets no frames but still its
+        // title and address, the owner's 18 Nov "blank page, the tab named
+        // right" (not reproduced here): this says whether that was why.
+        eprintln!("[browser] view {id} {}", if on { "hidden (no frames until shown)" } else { "shown" });
+        client::send_to(id, Cmd::Hidden { id, on });
+    }
 }
 
 /// What is waiting on the page gets its answer now: a failure.

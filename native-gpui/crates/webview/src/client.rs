@@ -268,6 +268,7 @@ pub fn pump() {
                 None => {}
             },
             In::Ev(_, Ev::Stats { sent, unchanged, hidden, copied, gpu, mode, error }) => {
+                if !error.is_empty() && with(|c| c.stats.get("error").and_then(|e| e.as_str()) != Some(error.as_str())) { eprintln!("[browser] frames: {error}"); }
                 with(|c| c.stats = json!({ "sent": sent, "unchanged": unchanged, "hidden": hidden, "copied": copied, "gpu": gpu, "mode": mode, "error": error }));
             }
             In::Ev(_, Ev::Ready { pid }) => { with(|c| { if c.state == State::Starting { c.state = State::Up; } c.failures = 0; }); eprintln!("[browser] browser host {pid} is up"); }

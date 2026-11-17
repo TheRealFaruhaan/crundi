@@ -678,31 +678,63 @@ thread_local! {
     static UNSEEN: RefCell<HashMap<String, std::time::Instant>> = RefCell::new(HashMap::new());
 }
 
-/// Every second: a tab whose page is not visible (and not used by a chat)
-/// for the unload grace (crundi_webview::unload_grace, CRUNDI_BROWSER_UNLOAD_SECS)
-/// lets its page go: it stays listed and loads again when shown or used.
-/// (It was hidden in the host, with no frames, as soon as it stopped being
-/// shown.)
+/// How long a tab not shown and not used stays awake, then how long it
+/// stays asleep before its page is freed: the PC client's (app/main.js,
+/// app/browser-drawer.js: frozen after 5 minutes, unloaded after an hour
+/// asleep). The owner, 18 Nov: tabs went to sleep while he wasn't touching
+/// them, their project open. CRUNDI_DRAWER_SLEEP_SECS and
+/// CRUNDI_DRAWER_UNLOAD_SECS set them; CRUNDI_BROWSER_UNLOAD_SECS (the
+/// tests' short grace) frees a tab that long after it was last seen, as before.
+fn drawer_graces() -> (std::time::Duration, std::time::Duration) {
+    let secs = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).map(|s| std::time::Duration::from_secs_f64(s.max(0.0)));
+    if std::env::var_os("CRUNDI_BROWSER_UNLOAD_SECS").is_some() {
+        let g = crundi_webview::unload_grace();
+        return (secs("CRUNDI_DRAWER_SLEEP_SECS").unwrap_or(g), std::time::Duration::ZERO);
+    }
+    (secs("CRUNDI_DRAWER_SLEEP_SECS").unwrap_or(std::time::Duration::from_secs(300)),
+     secs("CRUNDI_DRAWER_UNLOAD_SECS").unwrap_or(std::time::Duration::from_secs(3600)))
+}
+
+thread_local! {
+    /// Since when each tab has been asleep.
+    static ASLEEP: RefCell<HashMap<String, std::time::Instant>> = RefCell::new(HashMap::new());
+}
+
+/// Every second: a tab whose page is not shown (and not used by a chat)
+/// falls asleep after the sleep grace (its page frozen, the tab marked
+/// asleep; it wakes as it was when shown or used), and its page is freed
+/// after the unload grace asleep (it stays listed and loads again when
+/// shown or used). (It was hidden in the host, with no frames, as soon as
+/// it stopped being shown.)
 pub fn unload_tick() {
-    let now_i = std::time::Instant::now();
     let t = now();
-    let grace = crundi_webview::unload_grace();
+    let (sleep_after, unload_after) = drawer_graces();
     let shown = with(|d| d.open).then(active_tab).flatten().map(|a| a.id);
     let tabs: Vec<Tab> = with(|d| d.projects.values().flat_map(|ps| ps.tabs.clone()).collect());
-    let mut freed = false;
+    let mut changed = false;
     for x in tabs {
-        let Some(i) = x.panel else { UNSEEN.with(|u| u.borrow_mut().remove(&x.id)); continue };
-        if Some(&x.id) == shown.as_ref() { UNSEEN.with(|u| u.borrow_mut().remove(&x.id)); continue; }
-        let since = UNSEEN.with(|u| *u.borrow_mut().entry(x.id.clone()).or_insert(now_i));
+        let forget = |id: &str| { UNSEEN.with(|u| u.borrow_mut().remove(id)); ASLEEP.with(|u| u.borrow_mut().remove(id)); };
+        let Some(i) = x.panel else { forget(&x.id); continue };
+        if Some(&x.id) == shown.as_ref() { forget(&x.id); continue; }
+        let since = UNSEEN.with(|u| *u.borrow_mut().entry(x.id.clone()).or_insert_with(std::time::Instant::now));
         let used = std::time::Duration::from_millis(t.saturating_sub(x.used));
-        if since.elapsed() >= grace && used >= grace {
+        if since.elapsed() < sleep_after || used < sleep_after { continue; }
+        if !x.sleeping && !unload_after.is_zero() {
+            browser::cdp(i, "Page.setWebLifecycleState", json!({ "state": "frozen" }), Box::new(|_, _| {}));
+            tab_mut(&x.id, |y| y.sleeping = true);
+            ASLEEP.with(|u| { u.borrow_mut().insert(x.id.clone(), std::time::Instant::now()); });
+            changed = true;
+            continue;
+        }
+        let asleep = ASLEEP.with(|u| u.borrow().get(&x.id).map(|a| a.elapsed())).unwrap_or_default();
+        if unload_after.is_zero() || asleep >= unload_after {
             browser::close_panel(i);
             tab_mut(&x.id, |y| { y.panel = None; y.unloaded = true; y.sleeping = false; });
-            UNSEEN.with(|u| u.borrow_mut().remove(&x.id));
-            freed = true;
+            forget(&x.id);
+            changed = true;
         }
     }
-    if freed { render(); }
+    if changed { render(); }
 }
 
 /// A tab is used (shown, or by a chat): awake.
