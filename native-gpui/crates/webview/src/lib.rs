@@ -2,10 +2,12 @@
 //! (CEF), one per page, whose frames are drawn as GPUI images, with the
 //! mouse, wheel and keys passed back, and the marks drawn over the page.
 //!
-//! Chromium runs in a process of its own, the browser host: this same
-//! binary started with `--browser-host` (host/), lazily, when a page is
-//! first needed, and stopped when no page has been open for a while
-//! (client.rs). The app keeps the same API as when CEF ran inside it:
+//! Chromium runs in a process of its own, the browser host: its own
+//! executable, `crundi-browser-host` (crates/browser-host), next to the
+//! app's, started lazily when a page is first needed and stopped when no
+//! page has been open for a while (client.rs). Only the host links libcef:
+//! the app never maps it. The app keeps the same API as when CEF ran inside
+//! it:
 //!
 //! - `engine`: the panels (drawer tabs, hidden browsers, widget panels):
 //!   their state, devices, input, marks, console, network log, CDP;
@@ -13,73 +15,54 @@
 //! - `view`: `PageView`, a GPUI view of one panel;
 //! - `net`: the drawer's networks (the server's, through the host's socket);
 //! - `shot`: a page's picture with its marks, and clearing browsing data;
-//! - `client`, `ipc`, `shm`, `proc`: the host process, its link, the frame
-//!   segments, and keeping it tied to the app's life.
+//! - `client`: the host process and its link; `ipc`, `shm`, `proc`,
+//!   `common` come from crates/browser-link (shared with the host).
 //!
 //! The host's events are handed out from GPUI's main thread (`pump`, every
 //! 8 ms from the app). `later` runs a call on that thread after a while.
-//!
-//! `cef::*` and `gpui::*` both have Window, Point and KeyEvent: CEF's code
-//! lives in its own modules (`host`, `cef_app`, `mac`).
 
 mod client;
-pub mod common;
 pub mod engine;
 pub mod frames;
-mod host;
-pub mod ipc;
 pub mod net;
-pub mod proc;
-pub mod shm;
 pub mod shot;
 mod view;
+pub use crundi_browser_link::{common, gpu, ipc, proc, shm};
 
 pub use engine::{Ann, Device, Hooks, DEVICES};
 pub use view::PageView;
-pub use client::{idle_grace, set_keep_alive};
+pub use client::{idle_grace, set_keep_alive, unload_grace};
 
 use std::{cell::RefCell, time::{Duration, Instant}};
 
-mod cef_app {
-    use cef::*;
-    wrap_app! {
-        pub struct NativeApp;
-        impl App {
-            fn on_before_command_line_processing(&self, process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
-                if process_type.map(|t| !t.to_string().is_empty()).unwrap_or(false) { return; }
-                let Some(cl) = command_line else { return };
-                // The CPU path, as the Slint client's default: software
-                // compositing, frames to on_paint as buffers.
-                for s in ["disable-gpu", "disable-gpu-compositing", "enable-begin-frame-scheduling"] {
-                    cl.append_switch(Some(&CefString::from(s)));
-                }
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-mod mac;
-
-/// First thing in main, before GPUI. CEF's helper processes (this binary
-/// again, `--type=…`) run and exit here; the browser host
-/// (`--browser-host`) runs here and never returns. The app itself goes on,
-/// without CEF loaded or started.
+/// First thing in main, before GPUI. The app is never CEF: when it is
+/// started as the browser host (`--browser-host`, as before the host had an
+/// executable of its own) or as a CEF helper (`--type=…`), it becomes
+/// `crundi-browser-host` with the same arguments (exec: the same PID on
+/// Linux and macOS) and never returns. Otherwise nothing happens.
 pub fn init_process() {
-    let host = std::env::args().any(|a| a == proc::FLAG);
-    let helper = std::env::args().any(|a| a.starts_with("--type="));
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let host = args.iter().any(|a| a == proc::FLAG);
+    let helper = args.iter().any(|a| a.to_string_lossy().starts_with("--type="));
     if !host && !helper { return; }
-    #[cfg(target_os = "macos")]
+    let exe = match proc::host_exe() {
+        Ok(e) => e,
+        Err(e) => { eprintln!("[browser] {e}"); std::process::exit(1) }
+    };
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.args(&args);
+    #[cfg(unix)]
     {
-        let loader = mac::load_framework(helper);
-        std::mem::forget(loader);
+        use std::os::unix::process::CommandExt;
+        let e = cmd.exec();
+        eprintln!("[browser] {} did not start: {e}", exe.display());
+        std::process::exit(1)
     }
-    let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
-    let args = cef::args::Args::new();
-    let mut app = cef_app::NativeApp::new();
-    let code = cef::execute_process(Some(args.as_main_args()), Some(&mut app), std::ptr::null_mut());
-    if code >= 0 { std::process::exit(code); }
-    if host { host::run(); }
+    #[cfg(not(unix))]
+    {
+        let code = cmd.status().map(|s| s.code().unwrap_or(1)).unwrap_or(1);
+        std::process::exit(code)
+    }
 }
 
 /// At the app's start (once GPUI's app exists): a browser host a crashed
@@ -120,6 +103,7 @@ pub fn pump() {
     });
     for f in due { f(); }
     client::pump();
+    engine::sync_hidden();
 }
 
 /// The browser host's state for the test driver (props "browserHost").

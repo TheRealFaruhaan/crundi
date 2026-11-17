@@ -10,7 +10,7 @@
 //! apart from the auth and resource handlers (CEF's IO thread), which hold
 //! what they need or read a lock.
 
-use super::{emit, emit_fd};
+use crate::host::{emit, emit_fd};
 use crate::ipc::{Cmd, Ev, Proxy};
 use crate::shm::Segment;
 use cef::*;
@@ -30,8 +30,20 @@ struct HView {
     epoch: u32,
     busy: bool,
     dirty: bool,
+    /// The segment no longer holds the page's last frame (new, resized, a
+    /// frame was let go): the next one is copied whole, not by its dirty
+    /// rects.
+    full: bool,
+    /// The size of the frame in the segment.
+    seg_wh: (u32, u32),
+    /// Not on screen (`Cmd::Hidden`): no frames sent.
+    hidden: bool,
     _obs: Option<Registration>,
 }
+
+/// The host's frame counters (`Ev::Stats`).
+#[derive(Default, Clone, PartialEq)]
+struct Stats { sent: u64, unchanged: u64, hidden: u64, copied: u64, gpu: u64, error: String }
 
 thread_local! {
     static VIEWS: RefCell<HashMap<u64, HView>> = RefCell::new(HashMap::new());
@@ -41,6 +53,23 @@ thread_local! {
     static CONTEXTS: RefCell<HashMap<String, RequestContext>> = RefCell::new(HashMap::new());
     /// Browsers made and not yet gone (on_before_close).
     static LIVE: Cell<usize> = const { Cell::new(0) };
+    static STATS: RefCell<(Stats, Stats)> = RefCell::new(Default::default());
+    /// The app takes GPU textures (`Hello`).
+    static TEXTURES: Cell<bool> = const { Cell::new(false) };
+    #[cfg(any(windows, target_os = "macos"))]
+    static READER: RefCell<crate::gpu::Reader> = RefCell::new(crate::gpu::Reader::new());
+}
+
+fn count(f: impl FnOnce(&mut Stats)) { STATS.with(|s| f(&mut s.borrow_mut().0)); }
+
+pub fn set_textures(on: bool) { TEXTURES.with(|t| t.set(on)); }
+
+/// The counters to the app when they moved.
+pub fn send_stats() {
+    let now = STATS.with(|s| { let mut s = s.borrow_mut(); if s.0 == s.1 { None } else { s.1 = s.0.clone(); Some(s.0.clone()) } });
+    if let Some(s) = now {
+        emit(&Ev::Stats { sent: s.sent, unchanged: s.unchanged, hidden: s.hidden, copied: s.copied, gpu: s.gpu, mode: crate::gpu::name(crate::gpu::mode()).into(), error: s.error });
+    }
 }
 
 /// The app's network proxies' sign-ins, by port (CEF asks on its IO thread).
@@ -69,13 +98,13 @@ fn close(id: u64) {
 /// One command from the app. False: leave.
 pub fn handle(c: Cmd) -> bool {
     match c {
-        Cmd::Hello => {}
+        Cmd::Hello { .. } => {}
         Cmd::Quit => return false,
         Cmd::Open { id, url, frame, network, proxy, origin, w, h, dpr } => open(id, &url, frame, &network, proxy, &origin, w, h, dpr),
         Cmd::Close { id } => close(id),
         Cmd::Size { id, w, h, dpr, screen } => {
             let known = with(|v| v.get_mut(&id).map(|x| { x.w = w.max(1); x.h = h.max(1); x.dpr = dpr.max(0.5); }).is_some());
-            if known { if let Some(hh) = host_of(id) { if screen { hh.notify_screen_info_changed(); } hh.was_resized(); } }
+            if known { with(|v| if let Some(x) = v.get_mut(&id) { x.full = true; }); if let Some(hh) = host_of(id) { if screen { hh.notify_screen_info_changed(); } hh.was_resized(); } }
         }
         Cmd::Navigate { id, url } => if let Some(f) = browser_of(id).and_then(|b| b.main_frame()) { f.load_url(Some(&CefString::from(url.as_str()))); },
         Cmd::History { id, h } => if let Some(b) = browser_of(id) { match h { -1 => b.go_back(), 1 => b.go_forward(), _ => b.reload() } },
@@ -96,7 +125,17 @@ pub fn handle(c: Cmd) -> bool {
         },
         Cmd::Ime { id, text } => if let Some(hh) = host_of(id) { hh.ime_commit_text(Some(&CefString::from(text.as_str())), None, 0); },
         Cmd::Focus { id, on } => if let Some(hh) = host_of(id) { hh.set_focus(on as i32); },
-        Cmd::Hidden { id, on } => if let Some(hh) = host_of(id) { hh.was_hidden(on as i32); },
+        Cmd::Hidden { id, on } => {
+            let ch = with(|v| v.get_mut(&id).map(|x| { let ch = x.hidden != on; x.hidden = on; if on { x.full = true; } ch }).unwrap_or(false));
+            if let (true, Some(hh)) = (ch, host_of(id)) {
+                // Hidden: Chromium stops drawing (and throttles the page as a
+                // background tab); the frame rate down besides. Shown: the
+                // rate back and a whole frame at once.
+                hh.was_hidden(on as i32);
+                hh.set_windowless_frame_rate(if on { 1 } else { FPS });
+                if !on { hh.invalidate(PaintElementType::VIEW); }
+            }
+        }
         Cmd::Cdp { id, call, method, params } => match host_of(id) {
             Some(hh) => { let m = json!({ "id": call, "method": method, "params": params }).to_string(); hh.send_dev_tools_message(Some(m.as_bytes())); }
             None => emit(&Ev::CdpResult { id, call, ok: false, result: json!({ "message": "no browser in this panel yet" }) }),
@@ -117,15 +156,17 @@ pub fn handle(c: Cmd) -> bool {
 #[allow(clippy::too_many_arguments)]
 fn open(id: u64, url: &str, frame: bool, network: &str, proxy: Option<Proxy>, origin: &str, w: i32, h: i32, dpr: f32) {
     if with(|v| v.contains_key(&id)) { return; }
-    with(|v| v.insert(id, HView { browser: None, frame, w: w.max(1), h: h.max(1), dpr: dpr.max(0.5), seg: None, epoch: 0, busy: false, dirty: false, _obs: None }));
+    with(|v| v.insert(id, HView { browser: None, frame, w: w.max(1), h: h.max(1), dpr: dpr.max(0.5), seg: None, epoch: 0, busy: false, dirty: false, full: true, seg_wh: (0, 0), hidden: false, _obs: None }));
     let referrer = if frame && !origin.is_empty() { origin.to_string() } else { String::new() };
     let mut client = ViewClient::new(
         ViewRender::new(id), ViewLife::new(id), ViewLoad::new(id), ViewDisplay::new(id),
         ViewDialogs::new(frame), ViewMenu::new(frame), ViewRequests::new(id, frame, ViewResource::new(url.to_string(), referrer)),
     );
-    let window_info = WindowInfo::default().set_as_windowless(Default::default());
+    let mut window_info = WindowInfo::default().set_as_windowless(Default::default());
+    // The GPU path (gpu.rs): frames as shared textures.
+    window_info.shared_texture_enabled = (crate::gpu::mode() != crate::gpu::Mode::Off) as i32;
     // A frame is transparent: a page without a background shows its box's colour.
-    let settings = BrowserSettings { windowless_frame_rate: 30, background_color: if frame { 0x0000_0000 } else { 0xffff_ffff }, ..Default::default() };
+    let settings = BrowserSettings { windowless_frame_rate: FPS, background_color: if frame { 0x0000_0000 } else { 0xffff_ffff }, ..Default::default() };
     let mut ctx = if frame { None } else { context_for(network, proxy.as_ref()) };
     match browser_host_create_browser_sync(Some(&window_info), Some(&mut client), Some(&CefString::from(url)), Some(&settings), None, ctx.as_mut()) {
         Some(b) => {
@@ -197,27 +238,108 @@ fn clear_cookies(site: Option<&str>) {
     }
 }
 
-/// A frame from CEF: into the view's segment, then `Paint`; or, while the
-/// app has not taken the last one, noted and drawn again on its Ack.
-fn paint(id: u64, buffer: *const u8, width: i32, height: i32) {
+/// A view's frame rate while shown (1 while hidden).
+const FPS: i32 = 30;
+
+/// A frame from CEF (the CPU path): into the view's segment, then `Paint`;
+/// or, while the app has not taken the last one, noted and drawn again on
+/// its Ack. Only the dirty rects are copied when the segment holds the
+/// page's last frame, and a frame whose dirty rects hold the same pixels
+/// as before is not sent at all. A hidden view's frames are not sent.
+fn paint(id: u64, buffer: *const u8, width: i32, height: i32, dirty: &[Rect]) {
     if buffer.is_null() || width <= 0 || height <= 0 { return; }
     let (w, h) = (width as u32, height as u32);
     let need = (w as usize) * (h as usize) * 4;
     with(|v| {
         let Some(x) = v.get_mut(&id) else { return };
-        if x.busy { x.dirty = true; return; }
-        if x.seg.as_ref().is_none_or(|s| s.cap() < need) {
-            x.epoch += 1;
-            match Segment::create(need, id, x.epoch) {
-                Ok((s, fd, name)) => { x.seg = Some(s); emit_fd(&Ev::Shm { id, cap: need, name }, fd); }
-                Err(e) => { eprintln!("[browser host] view {id}: no frame segment: {e}"); x.seg = None; return; }
-            }
-        }
+        if x.hidden { x.full = true; count(|s| s.hidden += 1); return; }
+        if x.busy { x.dirty = true; x.full = true; return; }
+        if !segment_for(id, x, need) { return; }
+        if x.seg_wh != (w, h) { x.full = true; }
         let Some(seg) = x.seg.as_mut() else { return };
         let src = unsafe { std::slice::from_raw_parts(buffer, need) };
-        seg.bytes_mut()[..need].copy_from_slice(src);
+        let dst = &mut seg.bytes_mut()[..need];
+        let row = w as usize * 4;
+        let mut copied = 0usize;
+        let changed = if x.full || dirty.is_empty() {
+            dst.copy_from_slice(src);
+            copied = need;
+            true
+        } else {
+            let mut changed = false;
+            for r in dirty {
+                let (x0, y0) = (r.x.clamp(0, width) as usize, r.y.clamp(0, height) as usize);
+                let (x1, y1) = ((r.x + r.width).clamp(0, width) as usize, (r.y + r.height).clamp(0, height) as usize);
+                if x1 <= x0 || y1 <= y0 { continue; }
+                for y in y0..y1 {
+                    let (a, b) = (y * row + x0 * 4, y * row + x1 * 4);
+                    if dst[a..b] != src[a..b] { dst[a..b].copy_from_slice(&src[a..b]); copied += b - a; changed = true; }
+                }
+            }
+            changed
+        };
+        x.full = false;
+        x.seg_wh = (w, h);
+        count(|s| s.copied += copied as u64);
+        if !changed { count(|s| s.unchanged += 1); return; }
         x.busy = true;
+        count(|s| s.sent += 1);
         emit(&Ev::Paint { id, w, h });
+    });
+}
+
+/// The view's segment holds `need` bytes (a new one made and sent when it doesn't).
+fn segment_for(id: u64, x: &mut HView, need: usize) -> bool {
+    if x.seg.as_ref().is_some_and(|s| s.cap() >= need) { return true; }
+    x.epoch += 1;
+    x.full = true;
+    match Segment::create(need, id, x.epoch) {
+        Ok((s, fd, name)) => { x.seg = Some(s); emit_fd(&Ev::Shm { id, cap: need, name }, fd); true }
+        Err(e) => { eprintln!("[browser host] view {id}: no frame segment: {e}"); x.seg = None; false }
+    }
+}
+
+/// A frame from CEF's GPU (gpu.rs): read back into the view's segment
+/// inside this callback (the texture is CEF's only until it returns), then
+/// `Paint`, as a CPU frame; with `Mode::Texture` the texture goes to the
+/// app as well.
+#[cfg(any(windows, target_os = "macos"))]
+fn paint_gpu(id: u64, tex: *mut std::ffi::c_void) {
+    if tex.is_null() { return; }
+    with(|v| {
+        let Some(x) = v.get_mut(&id) else { return };
+        if x.hidden { count(|s| s.hidden += 1); return; }
+        if x.busy { x.dirty = true; return; }
+        let mut placed = false;
+        let r = READER.with(|r| unsafe {
+            r.borrow_mut().read(tex, &mut |w, h| {
+                let need = (w as usize) * (h as usize) * 4;
+                if !segment_for(id, x, need) { return None; }
+                placed = true;
+                x.seg.as_mut().map(|s| &mut s.bytes_mut()[..need] as *mut [u8])
+            })
+        });
+        match r {
+            Ok((w, h)) if placed => {
+                x.busy = true;
+                x.seg_wh = (w, h);
+                count(|s| { s.sent += 1; s.gpu += 1; s.copied += (w as u64) * (h as u64) * 4; });
+                emit(&Ev::Paint { id, w, h });
+                #[cfg(windows)]
+                if TEXTURES.with(|t| t.get()) {
+                    let parent: u32 = std::env::var("CRUNDI_HOST_PARENT").ok().and_then(|p| p.parse().ok()).unwrap_or(0);
+                    match unsafe { crate::gpu::duplicate_into(parent, tex) } {
+                        Ok(handle) => emit(&Ev::Texture { id, handle, w, h }),
+                        Err(e) => count(|s| s.error = e),
+                    }
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if STATS.with(|s| s.borrow().0.error != e) { eprintln!("[browser host] view {id}: a GPU frame was not read: {e}"); }
+                count(|s| s.error = e);
+            }
+        }
     });
 }
 
@@ -277,9 +399,17 @@ wrap_render_handler! {
         fn on_scroll_offset_changed(&self, _browser: Option<&mut Browser>, _x: f64, _y: f64) {
             if is_frame(self.id) { emit(&Ev::Scrolled { id: self.id }); }
         }
-        fn on_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, _dirty: Option<&[Rect]>, buffer: *const u8, width: ::std::os::raw::c_int, height: ::std::os::raw::c_int) {
+        fn on_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, dirty: Option<&[Rect]>, buffer: *const u8, width: ::std::os::raw::c_int, height: ::std::os::raw::c_int) {
             if type_ != PaintElementType::VIEW { return; }
-            paint(self.id, buffer, width, height);
+            paint(self.id, buffer, width, height, dirty.unwrap_or(&[]));
+        }
+        fn on_accelerated_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, _dirty: Option<&[Rect]>, info: Option<&AcceleratedPaintInfo>) {
+            if type_ != PaintElementType::VIEW { return; }
+            let Some(_info) = info else { return };
+            #[cfg(windows)]
+            paint_gpu(self.id, _info.shared_texture_handle as *mut std::ffi::c_void);
+            #[cfg(target_os = "macos")]
+            paint_gpu(self.id, _info.shared_texture_io_surface);
         }
     }
 }

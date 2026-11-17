@@ -33,10 +33,12 @@ struct Fv {
     w: i32,
     h: i32,
     scale: f32,
-    /// The newest frame (BGRA) and how many so far; the image made from it.
-    raw: Option<std::rc::Rc<(Vec<u8>, u32, u32)>>,
+    /// The newest frame (BGRA, made straight from the segment) and how
+    /// many so far.
     frames: u64,
-    image: Option<(u64, Arc<RenderImage>)>,
+    image: Option<Arc<RenderImage>>,
+    /// Off screen (`hidden`): the host sends no frames.
+    hidden: bool,
     painted: bool,
     cursor: i32,
     title: String,
@@ -85,7 +87,7 @@ pub fn open(key: &str, target: &str, w: f32, h: f32, scale: f32) -> bool {
     if with(|s| s.frames.contains_key(key)) { resize(key, w, h, scale); return true; }
     let referrer = if target.starts_with("https://") || loopback(target) { with(|s| s.origin.clone()) } else { String::new() };
     let (w, h, scale) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32, scale.max(1.0));
-    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, crashed: false, w, h, scale, raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, url: target.to_string(), failed: false, referrer }));
+    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, crashed: false, w, h, scale, frames: 0, image: None, hidden: false, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, url: target.to_string(), failed: false, referrer }));
     if !make(key) { with(|s| s.frames.remove(key)); return false; }
     changed();
     true
@@ -96,7 +98,8 @@ fn make(key: &str) -> bool {
     let Some((url, w, h, scale, referrer)) = with(|s| s.frames.get(key).map(|f| (f.url.clone(), f.w, f.h, f.scale, f.referrer.clone()))) else { return false };
     let id = client::open_view(Owner::Frame(key.to_string()), move |id| Cmd::Open { id, url, frame: true, network: String::new(), proxy: None, origin: referrer, w, h, dpr: scale });
     let Some(id) = id else { eprintln!("[gpui] frame {key}: no browser (the browser host can't start)"); return false };
-    with(|s| if let Some(f) = s.frames.get_mut(key) { f.browser = Some(id); f.crashed = false; });
+    let hidden = with(|s| s.frames.get_mut(key).map(|f| { f.browser = Some(id); f.crashed = false; f.hidden }).unwrap_or(false));
+    if hidden { client::send_to(id, Cmd::Hidden { id, on: true }); }
     true
 }
 
@@ -104,7 +107,7 @@ fn make(key: &str) -> bool {
 pub fn close(key: &str) {
     let f = with(|s| s.frames.remove(key));
     let Some(f) = f else { return };
-    if let Some((_, img)) = f.image { with(|s| s.old.push(img)); }
+    if let Some(img) = f.image { with(|s| s.old.push(img)); }
     if let Some(id) = f.browser { client::close_view(id); }
     changed();
 }
@@ -118,21 +121,21 @@ pub fn resize(key: &str, w: f32, h: f32, scale: f32) {
     if ch { send(key, |id| Cmd::Size { id, w, h, dpr: scale, screen: true }); }
 }
 
-/// Hidden views stop painting (and use less).
-pub fn hidden(key: &str, on: bool) { send(key, |id| Cmd::Hidden { id, on }); }
-
-/// The view's newest picture (made once per frame).
-pub fn image(key: &str) -> Option<Arc<RenderImage>> {
-    with(|s| {
-        let f = s.frames.get_mut(key)?;
-        if let Some((n, img)) = &f.image { if *n == f.frames { return Some(img.clone()); } }
-        let raw = f.raw.clone()?;
-        let buf = image::RgbaImage::from_raw(raw.1, raw.2, raw.0.clone())?;
-        let img = Arc::new(RenderImage::new([image::Frame::new(buf)]));
-        if let Some((_, old)) = f.image.replace((f.frames, img.clone())) { s.old.push(old); }
-        Some(img)
-    })
+/// A view off screen (scrolled away, its card closed): Chromium stops
+/// drawing it and the host sends no frames; on screen again, a frame at once.
+pub fn hidden(key: &str, on: bool) {
+    let ch = with(|s| s.frames.get_mut(key).map(|f| { let ch = f.hidden != on; f.hidden = on; ch }).unwrap_or(false));
+    if ch { send(key, |id| Cmd::Hidden { id, on }); }
 }
+
+/// Is the view hidden (the test driver)?
+pub fn is_hidden(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.hidden)) }
+
+/// Frames the view has had (the test driver).
+pub fn frame_count(key: &str) -> u64 { with(|s| s.frames.get(key).map(|f| f.frames).unwrap_or(0)) }
+
+/// The view's newest picture.
+pub fn image(key: &str) -> Option<Arc<RenderImage>> { with(|s| s.frames.get(key).and_then(|f| f.image.clone())) }
 
 /// Free the pictures newer frames replaced (the window's pump).
 pub fn drop_old(window: &mut gpui::Window) {
@@ -157,7 +160,7 @@ pub fn opened() -> String { with(|s| s.opened.clone()) }
 /// the view made again, starting the host.
 pub fn reload(key: &str) {
     let Some(alive) = with(|s| s.frames.get(key).map(|f| f.browser.is_some())) else { return };
-    with(|s| if let Some(f) = s.frames.get_mut(key) { f.crashed = false; f.failed = false; f.painted = false; f.raw = None; });
+    with(|s| if let Some(f) = s.frames.get_mut(key) { f.crashed = false; f.failed = false; f.painted = false; });
     if alive { send(key, |id| Cmd::History { id, h: 0 }); } else { make(key); }
     changed();
 }
@@ -283,9 +286,15 @@ pub fn key(key: &str, ks: &Keystroke) {
 
 // ─── What the host tells a frame ───
 
-pub(crate) fn on_frame(key: &str, id: u64, data: Vec<u8>, w: u32, h: u32) {
-    let raw = std::rc::Rc::new((data, w, h));
-    let took = with(|s| s.frames.get_mut(key).filter(|f| f.browser == Some(id)).map(|f| { f.raw = Some(raw); f.frames += 1; f.painted = true; }).is_some());
+pub(crate) fn on_frame(key: &str, id: u64, img: Arc<RenderImage>) {
+    let took = with(|s| {
+        let f = s.frames.get_mut(key).filter(|f| f.browser == Some(id))?;
+        let old = f.image.replace(img);
+        f.frames += 1;
+        f.painted = true;
+        if let Some(o) = old { s.old.push(o); }
+        Some(())
+    }).is_some();
     if took { changed(); }
 }
 
@@ -330,8 +339,8 @@ pub(crate) fn on_event(key: &str, id: u64, ev: Ev) {
 
 /// The browser host went away: the view shows that it crashed.
 pub(crate) fn host_gone(key: &str) {
-    let img = with(|s| s.frames.get_mut(key).map(|f| { f.browser = None; f.crashed = true; f.raw = None; f.focused = false; f.held = None; f.image.take() }));
-    if let Some(Some((_, img))) = img { with(|s| s.old.push(img)); }
+    let img = with(|s| s.frames.get_mut(key).map(|f| { f.browser = None; f.crashed = true; f.focused = false; f.held = None; f.image.take() }));
+    if let Some(Some(img)) = img { with(|s| s.old.push(img)); }
     changed();
 }
 

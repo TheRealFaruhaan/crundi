@@ -9,7 +9,9 @@
 //   NATIVE_BIN=$BIN xvfb-run -a -s "-screen 0 1440x900x24" node native-client/test/desktop.mjs
 //
 // (CRUNDI_TEST_SERVER=http://localhost:<port> CRUNDI_TEST_PORT=<port> for
-// other ports.) ONLY=drawer,host,inbox,cru,cruscreen,kid,wake,passwords,bubble,tray,node,hostproc runs some parts.
+// other ports.) ONLY=drawer,host,inbox,cru,cruscreen,kid,wake,passwords,bubble,tray,node,unload,hostproc runs some parts.
+// (unload: the one rule of every web view, not visible: hidden at once, freed
+// after the unload grace, loaded again when visible; then the host's idle stop.)
 // (hostproc: the browser host process: lazy start, relaunch, crash, idle
 // stop, stale host, the app killed; it ends the run, killing the app.)
 
@@ -29,6 +31,10 @@ const page = http.createServer((req, res) => {
   if (req.url.startsWith('/login')) return res.end(`<!doctype html><title>login</title><body style="font:16px sans-serif;margin:20px">
 <form action="/welcome" method="post"><input id=u name=u type=text placeholder=Email><input id=p name=p type=password placeholder=Password><button id=go type=submit>Sign in</button></form>`);
   if (req.url.startsWith('/welcome')) return res.end('<!doctype html><title>welcome</title><body style="font:16px sans-serif;margin:20px">Welcome back.');
+  // A page that never stops drawing (a counter on every animation frame): a
+  // view that is shown sends frames all the time, a hidden one none.
+  if (req.url.startsWith('/anim')) return res.end(`<!doctype html><title>anim</title><body style="font:40px sans-serif;margin:20px"><div id=n>0</div>
+<script>let n=0;(function f(){document.getElementById('n').textContent=++n;requestAnimationFrame(f)})()</script>`);
   res.end(`<!doctype html><meta name=viewport content="width=device-width"><title>page ${req.url}</title>
 <body style="font:16px sans-serif;margin:20px">
 <button id=b style="position:absolute;left:40px;top:80px;width:160px;height:50px" onclick="this.textContent='clicked '+(++window.n)">Click me</button>
@@ -608,6 +614,76 @@ if (part('node')) {
   t.check('the node is off, with this PC\'s id', r.ok && r.status.state === 'off' && /^pc-/.test(r.status.deviceId), r);
 }
 
+if (part('unload')) {
+  // ─── Not visible: hidden at once, freed after the unload grace, loaded again when visible ───
+  // (Short graces: CRUNDI_BROWSER_UNLOAD_SECS 3, CRUNDI_BROWSER_IDLE_SECS 4.)
+  await T.act('drawer', 'false');
+  await T.relaunch({ CRUNDI_BROWSER_IDLE_SECS: '4', CRUNDI_BROWSER_UNLOAD_SECS: '3' });
+  const BH = (p) => D(p).browserHost;
+  // A chat embed: an animating page on the log.
+  const fc = (await T.api.http('POST', '/api/ui-sessions/create', { project: 'demo', title: 'Unload' })).body?.id;
+  const paneOf = (p) => (p.panes || []).find((x) => x.key === 'live:' + fc);
+  let p = await T.until('a chat pane for the embed', (p) => paneOf(p), 30000);
+  await T.ui('focus-pane', paneOf(p).id);
+  const src = `${PAGE}/anim`;
+  const fkey = `${fc}|${src}`;
+  const fr = (p) => (p.frames || []).find((x) => x.key === fkey);
+  await T.ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'un1', kind: 'tool', name: 'mcp__crundi__show_embed', toolUseId: 'tun1', input: {}, status: 'done', isError: false, result: JSON.stringify({ ok: true, items: [{ kind: 'embed', src, title: 'Anim' }] }) } }));
+  p = await T.until('the embed on the log: a live view, painting', (p) => fr(p)?.live && fr(p)?.painted && fr(p)?.frames > 3 && !fr(p)?.paused, 30000);
+  // One reply at a time, until the embed leaves the view: the time it did.
+  for (let i = 0; i < 20 && fr(await T.props())?.onScreen; i++) await T.ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: `away${i}`, kind: 'assistant-text', text: Array(12).fill('A long reply line to push the frame off the log.').join('\n\n') } }));
+  const off = Date.now();
+  p = await T.until('scrolled out of the log\'s view: hidden at once (the view kept)', (p) => fr(p) && !fr(p).onScreen && fr(p).live && fr(p).paused, 2000);
+  t.check('…within a second', Date.now() - off < 1500 || !p, { ms: Date.now() - off });
+  if (p) {
+    const f0 = fr(p).frames;
+    await t.sleep(1000);
+    const q = await T.props();
+    t.check('…and no frames while hidden', fr(q).frames === f0 || !fr(q).live, { before: f0, after: fr(q).frames });
+  }
+  p = await T.until('…freed after the unload grace', (p) => fr(p) && !fr(p).live, 10000);
+  t.check('…not before it', Date.now() - off >= 2500, { ms: Date.now() - off });
+  t.check('…the host still up (the drawer and other views aside)', BH(p).state === 'up' || BH(p).state === 'stopping');
+  // Back into view (the wheel over the log): made again, with the loading state, then painting.
+  const pn = paneOf(await T.props());
+  let back = false;
+  for (let i = 0; i < 120 && !back; i++) {
+    await T.mouse('wheel', pn.x + pn.w / 2, pn.y + pn.h / 2, { dy: 300 });
+    await t.sleep(60);
+    back = !!fr(await T.props())?.onScreen;
+  }
+  t.check('scrolled back into view', back);
+  p = await T.until('…a new view, loaded again (painting)', (p) => fr(p)?.live && fr(p)?.painted && !fr(p)?.paused, 20000);
+  // Nothing visible anywhere: the embed scrolled off again and freed; then the host stops after the idle grace.
+  // (Scrolled up by hand, the log no longer follows the bottom: the wheel takes it down again.)
+  for (let i = 0; i < 120 && fr(await T.props())?.onScreen; i++) { await T.mouse('wheel', pn.x + pn.w / 2, pn.y + pn.h / 2, { dy: -300 }); await t.sleep(60); }
+  await T.until('…out of view again: freed after the grace', (p) => fr(p) && !fr(p).live, 12000);
+  p = await T.until('nothing visible anywhere: the host stops after the idle grace', (p) => BH(p).state === 'off' && BH(p).views === 0, 15000);
+  await T.api.http('POST', `/api/ui-sessions/${fc}/close`, {});
+
+  // ─── A background drawer tab: the same rule ───
+  await T.act('drawer', 'true');
+  const t1 = (await T.act('new-tab', `${PAGE}/anim`)).id;
+  const tabOf = (p, id) => dr(p).tabs.find((x) => x.id === id);
+  p = await T.until('a drawer tab, shown, painting', (p) => tabOf(p, t1)?.panel != null && tabOf(p, t1).frames > 3 && !tabOf(p, t1).paused, 30000);
+  const t2 = (await T.act('new-tab', `${PAGE}/two`)).id;
+  const hid = Date.now();
+  p = await T.until('behind another tab: hidden at once (the page kept)', (p) => tabOf(p, t1)?.paused && tabOf(p, t1).panel != null, 2000);
+  p = await T.until('…freed after the unload grace, still listed', (p) => tabOf(p, t1) && tabOf(p, t1).panel == null && tabOf(p, t1).unloaded, 10000);
+  t.check('…not before it', Date.now() - hid >= 2500, { ms: Date.now() - hid });
+  await T.act('activate', t1);
+  p = await T.until('…clicked: it loads again', (p) => tabOf(p, t1)?.panel != null && tabOf(p, t1).frames > 0 && !tabOf(p, t1).paused, 30000);
+  t.check('…and the tab that went behind is hidden now', tabOf(p, t2)?.paused === true || tabOf(p, t2)?.panel == null, tabOf(p, t2));
+  await T.act('drawer', 'false');
+  p = await T.until('the drawer closed: every tab freed after the grace, listed', (p) => dr(p).tabs.every((x) => x.panel == null) && tabOf(p, t1) && tabOf(p, t2), 12000);
+  p = await T.until('…then the host stops after the idle grace', (p) => BH(p).state === 'off' && BH(p).views === 0, 15000);
+  await T.act('drawer', 'true');
+  p = await T.until('the drawer opened again: only the active tab loads', (p) => tabOf(p, t1)?.panel != null && tabOf(p, t2)?.panel == null && BH(p).state === 'up', 30000);
+  await T.act('close-tab', t1);
+  await T.act('close-tab', t2);
+  await T.act('drawer', 'false');
+}
+
 if (part('hostproc')) {
   // ─── The browser host: Chromium in a process of its own (webview's host/, client.rs) ───
   // The processes under a PID (Linux /proc), live ones only (not zombies).
@@ -649,9 +725,12 @@ if (part('hostproc')) {
   await T.until('the drawer closed, the first tab active', (p) => !dr(p).open && dr(p).active === ta);
 
   // A relaunch: no host, the tabs listed but not loaded.
-  await T.relaunch({ CRUNDI_BROWSER_IDLE_SECS: '4' });
+  await T.relaunch({ CRUNDI_BROWSER_IDLE_SECS: '4', CRUNDI_BROWSER_UNLOAD_SECS: '8' });
   p = await T.props();
   t.check('no browser host process at launch', BH(p).state === 'off' && hostsUnder(T.app.pid).length === 0, { host: BH(p), under: tree(T.app.pid).map(cmd) });
+  // Only the browser host links CEF: the app never maps libcef.
+  const libcef = (pid) => { try { return readFileSync(`/proc/${pid}/maps`, 'utf8').split('\n').some((l) => /libcef/.test(l)); } catch { return null; } };
+  t.check('the idle app has no libcef mapped (/proc/<pid>/maps)', libcef(T.app.pid) === false && BH(p).libcef === false, { maps: libcef(T.app.pid), props: BH(p).libcef });
   t.check('after a relaunch the tabs are listed, none loaded, the drawer closed', !dr(p).open && dr(p).tabs.length >= 2 && dr(p).tabs.every((x) => x.panel == null), dr(p).tabs);
   await t.sleep(1500);
   t.check('…and the host still does not start by itself', hostsUnder(T.app.pid).length === 0 && BH(await T.props()).state === 'off');
@@ -666,6 +745,47 @@ if (part('hostproc')) {
   await T.act('activate', tb);
   await T.until('a click on the other tab loads it', (p) => tab(p, tb)?.panel != null && /page \//.test(tab(p, tb)?.title || ''), 30000);
   await T.act('activate', ta);
+  t.check('…the host has libcef, the app still does not', libcef(host1) === true && libcef(T.app.pid) === false, { host: libcef(host1), app: libcef(T.app.pid) });
+
+  // No frames for what is not on screen: a tab behind another, the drawer closed.
+  const anim = (await T.act('new-tab', `${PAGE}/anim`)).id;
+  const fr = (p) => tab(p, anim)?.frames || 0;
+  await T.until('an animating tab loads', (p) => tab(p, anim)?.panel != null && fr(p) > 0, 30000);
+  {
+    const a = fr(await T.props());
+    await t.sleep(1500);
+    const b = await T.props();
+    t.check('…shown, it sends frames all the time', fr(b) > a + 5 && !tab(b, anim)?.paused, { before: a, after: fr(b) });
+  }
+  await T.act('activate', ta);
+  p = await T.until('…behind another tab it is hidden in the host', (p) => tab(p, anim)?.paused, 5000);
+  await t.sleep(600);
+  let f0 = fr(await T.props());
+  const sent0 = BH(await T.props()).frames;
+  await t.sleep(2500);
+  p = await T.props();
+  t.check('…and sends no frames while hidden', fr(p) === f0, { before: f0, after: fr(p) });
+  t.check('…(the active tab, a still page, sends none either: nothing at all comes)', BH(p).frames === sent0, { before: sent0, after: BH(p).frames });
+  await T.act('activate', anim);
+  p = await T.until('…shown again, it draws again at once', (p) => !tab(p, anim)?.paused && fr(p) > f0 + 3, 10000);
+  p = await T.until('…the host reports what it sent (frames, bytes copied into segments)', (p) => BH(p).host?.sent > 0 && BH(p).host?.copied > 0, 6000);
+  await T.act('drawer', 'false');
+  p = await T.until('the drawer closed: its pages are hidden', (p) => !dr(p).open && tab(p, anim)?.paused, 5000);
+  await t.sleep(300);
+  f0 = fr(await T.props());
+  await t.sleep(2000);
+  p = await T.props();
+  // (Within the idle grace, 4 s here: after it the pages are let go, which is no frames as well.)
+  t.check('…and send no frames', fr(p) === f0 || tab(p, anim)?.panel == null, { before: f0, after: fr(p), tab: tab(p, anim) });
+  await T.act('drawer', 'true');
+  p = await T.until('the drawer again: the animating tab draws again', (p) => dr(p).open && !tab(p, anim)?.paused && fr(p) > 3, 30000);
+  await T.act('close-tab', anim);
+  await T.until('…its tab closed', (p) => !tab(p, anim));
+  // Both tabs loaded again (the drawer closed past the grace let them go).
+  await T.act('activate', tb);
+  await T.until('…the second tab loaded again', (p) => tab(p, tb)?.panel != null && /page \//.test(tab(p, tb)?.title || ''), 30000);
+  await T.act('activate', ta);
+  await T.until('…and the first', (p) => tab(p, ta)?.panel != null && /page \//.test(tab(p, ta)?.title || ''), 30000);
 
   // kill -9 the host: the pages show the crash, the app stays, Reload restarts it.
   process.kill(host1, 'SIGKILL');
@@ -680,7 +800,7 @@ if (part('hostproc')) {
   // The drawer closed: its pages go after the grace, then the host stops.
   await T.act('drawer', 'false');
   const host2 = BH(p)?.pid;
-  p = await T.until('the drawer closed: its pages go after the grace', (p) => dr(p).tabs.every((x) => x.panel == null), 20000);
+  p = await T.until('the drawer closed: its pages go after the unload grace', (p) => dr(p).tabs.every((x) => x.panel == null), 20000);
   p = await T.until('…and the host stops after the idle grace with no views', (p) => BH(p).state === 'off' && BH(p).views === 0, 20000);
   await T.until('…its process gone (and its helpers)', () => !live(host2) && hostsUnder(T.app.pid).length === 0 && tree(T.app.pid).every((c) => !cmd(c).some((a) => a.startsWith('--type='))), 10000);
   t.check('…the tabs still listed', dr(p).tabs.length >= 2);
@@ -695,7 +815,7 @@ if (part('hostproc')) {
   try { rmSync(lock, { force: true }); } catch { /* none */ }
   symlinkSync('no-such-host-4194300', lock);
   t.check('a stale host is running before the relaunch', !staleGone && live(stale.pid));
-  await T.relaunch({ CRUNDI_BROWSER_IDLE_SECS: '4' });
+  await T.relaunch({ CRUNDI_BROWSER_IDLE_SECS: '4', CRUNDI_BROWSER_UNLOAD_SECS: '8' });
   p = await T.props();
   for (let i = 0; i < 40 && !staleGone; i++) await t.sleep(100);
   t.check('a stale host from a previous run is reaped at start', staleGone && BH(p).reaped === stale.pid, { gone: staleGone, host: BH(p) });

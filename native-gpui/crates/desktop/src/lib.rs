@@ -356,7 +356,7 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
 /// What the test driver sees of the area (the Slint client's names).
 fn props() -> Value {
     let active = drawer::active_tab().and_then(|t| t.panel).map(|i| i as i64).unwrap_or(-1);
-    let hidden: Vec<Value> = web::engine::with(|st| st.panels.iter().enumerate().filter(|(_, p)| !p.closed && p.key.is_some()).map(|(i, p)| json!({ "key": p.key, "panel": i, "url": p.url })).collect());
+    let hidden: Vec<Value> = web::engine::with(|st| st.panels.iter().enumerate().filter(|(_, p)| !p.closed && p.key.is_some()).map(|(i, p)| json!({ "key": p.key, "panel": i, "url": p.url, "frames": p.frames, "paused": p.hidden_sent == Some(true) })).collect());
     json!({
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),

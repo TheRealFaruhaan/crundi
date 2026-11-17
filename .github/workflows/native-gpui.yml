@@ -68,10 +68,13 @@ jobs:
         working-directory: native-gpui
         run: cargo build --release --workspace
 
-      - name: Stage CEF next to the binary
+      # The app (crundi-gpui, no CEF) and its browser host (crundi-browser-host,
+      # the only binary that links CEF) side by side, CEF's files with them; on
+      # macOS the host in the bundle's Contents/MacOS and CEF's helpers copies of it.
+      - name: Stage CEF next to the binaries
         working-directory: native-gpui
         run: |
-          BIN=$(STAGE_NAME=crundi-gpui node ../native-client/scripts/stage-cef.mjs target/release)
+          BIN=$(STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node ../native-client/scripts/stage-cef.mjs target/release)
           echo "GPUI_BIN=$BIN" >> "$GITHUB_ENV"
 
       - name: Unit tests

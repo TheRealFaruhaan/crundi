@@ -10,8 +10,17 @@
 //! events come in through the pump (client.rs `pump` → `on_event`,
 //! `on_frame`).
 //!
-//! Frames: the host's BGRA frame, copied out of the view's shared segment,
-//! kept as it is: GPUI's images take BGRA.
+//! Frames: the host's BGRA frame, copied out of the view's shared segment
+//! straight into a GPUI image (GPUI's images take BGRA), which the panel
+//! keeps as its newest frame and its view draws.
+//!
+//! Hidden panels: a panel no view shows (a tab behind another, the drawer
+//! closed, a widget panel not drawn) is hidden in the host at once
+//! (`set_shown`, `sync_hidden`; one never shown, as a hidden browser, after
+//! HIDE_AFTER): Chromium stops drawing it and no frames come. Shown, it is
+//! told at once. Its owner frees it after `unload_grace` (the drawer, the
+//! panels). A screenshot (Page.captureScreenshot) wakes a hidden
+//! panel for as long as it takes.
 
 use crate::client::{self, Owner};
 use crate::ipc::Cmd;
@@ -73,8 +82,8 @@ pub struct Panel {
     pub device: usize,
     /// A size set by the server (browserResize), instead of a named device.
     pub custom: Option<(i32, i32)>,
-    /// The newest frame: BGRA, its width and height in device px.
-    pub frame: Option<std::rc::Rc<(Vec<u8>, u32, u32)>>,
+    /// The newest frame (BGRA, device px), as the image a view draws.
+    pub frame: Option<std::sync::Arc<gpui::RenderImage>>,
     /// Frames so far (a view picks up a new one when this moves).
     pub frames: u64,
     pub title: String,
@@ -121,6 +130,17 @@ pub struct Panel {
     sent: (i32, i32, f32),
     /// The page's mouse cursor (common::cursor's kinds).
     pub cursor: i32,
+    /// A view shows this panel (PageView `set_panel`).
+    pub shown: bool,
+    /// Since when no view shows it.
+    unshown_at: Option<std::time::Instant>,
+    /// What the host was last told (None: nothing yet, so shown).
+    pub hidden_sent: Option<bool>,
+    /// Screenshots under way: the panel is woken for them.
+    waking: u32,
+    /// Hidden by its owner although a view holds it (a widget panel whose
+    /// box is not drawn).
+    pub parked: bool,
 }
 
 impl Panel {
@@ -276,10 +296,56 @@ pub(crate) fn on_event(i: usize, id: u64, ev: crate::ipc::Ev) {
 }
 
 /// A frame for panel [i] from its view [id].
-pub(crate) fn on_frame(i: usize, id: u64, data: Vec<u8>, w: u32, h: u32) {
+pub(crate) fn on_frame(i: usize, id: u64, img: std::sync::Arc<gpui::RenderImage>) {
     if view_of(i) != Some(id) { return; }
-    with(|st| { let p = &mut st.panels[i]; p.frame = Some(std::rc::Rc::new((data, w, h))); p.frames += 1; });
+    with(|st| { let p = &mut st.panels[i]; p.frame = Some(img); p.frames += 1; });
     sync(i);
+}
+
+/// How long a panel never shown stays shown in the host (made before its
+/// view picks it up).
+const HIDE_AFTER: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A view shows panel [i] (or stopped showing it). Either way the host
+/// hears at once: a panel no longer shown is hidden now (a panel never
+/// shown, made for a view that has not picked it up yet or for the server,
+/// waits HIDE_AFTER first).
+pub fn set_shown(i: usize, on: bool) {
+    let ch = with(|st| st.panels.get_mut(i).map(|p| {
+        let ch = p.shown != on;
+        p.shown = on;
+        p.unshown_at = if on { None } else { std::time::Instant::now().checked_sub(HIDE_AFTER) };
+        ch
+    }).unwrap_or(false));
+    if ch { sync_hidden(); }
+}
+
+/// Hidden (or not) by its owner whatever its view: a widget panel whose box
+/// is not drawn. At once.
+pub fn set_parked(i: usize, on: bool) {
+    let ch = with(|st| st.panels.get_mut(i).map(|p| { let ch = p.parked != on; p.parked = on; ch }).unwrap_or(false));
+    if ch { sync_hidden(); }
+}
+
+/// Is panel [i] shown by a view?
+pub fn is_shown(i: usize) -> bool { with(|st| st.panels.get(i).is_some_and(|p| p.shown)) }
+
+/// Is panel [i] hidden in the host now?
+pub fn is_hidden(i: usize) -> bool { with(|st| st.panels.get(i).is_some_and(|p| p.hidden_sent == Some(true))) }
+
+/// Tell the host which panels are hidden (the pump, and at once on a show).
+pub fn sync_hidden() {
+    let now = std::time::Instant::now();
+    let todo: Vec<(u64, bool)> = with(|st| st.panels.iter_mut().filter_map(|p| {
+        let id = p.browser?;
+        if p.closed { return None; }
+        let want = p.waking == 0 && (p.parked || (!p.shown && p.unshown_at.get_or_insert(now).elapsed() >= HIDE_AFTER));
+        // Never told: the host shows a new view, so only a hide is news.
+        if p.hidden_sent == Some(want) || (p.hidden_sent.is_none() && !want) { return None; }
+        p.hidden_sent = Some(want);
+        Some((id, want))
+    }).collect());
+    for (id, on) in todo { client::send_to(id, Cmd::Hidden { id, on }); }
 }
 
 /// What is waiting on the page gets its answer now: a failure.
@@ -299,7 +365,7 @@ pub(crate) fn host_gone(i: usize) {
     let had = with(|st| {
         let Some(p) = st.panels.get_mut(i) else { return false };
         if p.closed { return false; }
-        p.browser = None; p.crashed = true; p.frame = None; p.loading = false; p.can_back = false; p.can_fwd = false;
+        p.browser = None; p.crashed = true; p.frame = None; p.hidden_sent = None; p.loading = false; p.can_back = false; p.can_fwd = false;
         p.hover = None; p.hover_busy = false; p.mouse_held = None; p.sent = (0, 0, 0.0); p.last_ua.clear();
         true
     });
@@ -342,7 +408,7 @@ pub fn create_on(index: usize, url: &str, network: &str) {
     let proxy = crate::net::proxy_for(network);
     let (u, n) = (url.to_string(), network.to_string());
     let id = client::open_view(Owner::Panel(index), move |id| Cmd::Open { id, url: u, frame: false, network: n, proxy, origin: String::new(), w, h, dpr });
-    with(|st| { let p = &mut st.panels[index]; p.browser = id; p.sent = (w, h, dpr); p.crashed = false; });
+    with(|st| { let p = &mut st.panels[index]; p.browser = id; p.sent = (w, h, dpr); p.crashed = false; p.hidden_sent = None; });
     if id.is_none() { eprintln!("[native] panel {index}: no browser (the browser host can't start)"); }
 }
 
@@ -414,16 +480,28 @@ pub fn run_deferred() {
 
 /// Send a CDP command to panel [i]'s browser; [reply] gets (ok, result).
 pub fn cdp(i: usize, method: &str, params: Value, reply: CdpReply) {
+    // A screenshot of a hidden panel: shown in the host until it is taken
+    // (a hidden page draws nothing to capture).
+    let wake = method == "Page.captureScreenshot";
+    let reply: CdpReply = if wake {
+        Box::new(move |ok, v| { with(|st| if let Some(p) = st.panels.get_mut(i) { p.waking = p.waking.saturating_sub(1); p.unshown_at = Some(std::time::Instant::now()); }); reply(ok, v) })
+    } else { reply };
     let sent = with(|st| {
         let Some(p) = st.panels.get_mut(i) else { return Err(reply) };
         let Some(id) = p.browser else { return Err(reply) };
         p.cdp_next += 1;
         let call = p.cdp_next;
         p.cdp_waiters.insert(call, reply);
-        Ok((id, call))
+        let unhide = wake && p.hidden_sent == Some(true);
+        if wake { p.waking += 1; }
+        if unhide { p.hidden_sent = Some(false); }
+        Ok((id, call, unhide))
     });
     match sent {
-        Ok((id, call)) => client::send_to(id, Cmd::Cdp { id, call, method: method.to_string(), params }),
+        Ok((id, call, unhide)) => {
+            if unhide { client::send_to(id, Cmd::Hidden { id, on: false }); }
+            client::send_to(id, Cmd::Cdp { id, call, method: method.to_string(), params })
+        }
         Err(reply) => reply(false, json!({ "message": "no browser in this panel yet" })),
     }
 }
@@ -708,7 +786,8 @@ pub fn navigate(i: usize, url: &str, done: Box<dyn FnOnce()>) {
 /// The panel's current frame as a PNG (what the person sees, at device pixels), base64.
 pub fn screenshot(i: usize) -> Option<String> {
     let f = with(|st| st.panels.get(i).and_then(|p| p.frame.clone()))?;
-    png_base64(&f.0, f.1, f.2)
+    let sz = f.size(0);
+    png_base64(f.as_bytes(0)?, sz.width.0 as u32, sz.height.0 as u32)
 }
 
 /// The whole screen the window is on, as a base64 PNG (X11's xwd: Xvfb in

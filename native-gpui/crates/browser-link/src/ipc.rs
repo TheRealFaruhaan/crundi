@@ -24,8 +24,9 @@ pub struct Proxy { pub port: u16, pub user: String, pub pass: String }
 #[serde(tag = "c")]
 pub enum Cmd {
     /// The first command: the host may start CEF (on Windows only once it
-    /// is in the app's job object).
-    Hello,
+    /// is in the app's job object). `textures`: the app takes GPU textures
+    /// too (gpu.rs `Mode::Texture`: `Ev::Texture`).
+    Hello { #[serde(default)] textures: bool },
     /// A view at `url`, `w` x `h` CSS px at `dpr`. `frame`: a chat's or a
     /// panel's live frame (transparent, no menus or dialogs, new windows to
     /// the system's browser, the referrer `origin` on its first request);
@@ -45,6 +46,10 @@ pub enum Cmd {
     /// Text an input method committed.
     Ime { id: u64, text: String },
     Focus { id: u64, on: bool },
+    /// The view is not on screen (a tab behind another, the drawer closed,
+    /// an embed scrolled away, a hidden browser): Chromium's WasHidden, its
+    /// frame rate down to 1, and no frames sent until it is shown again
+    /// (then one at once).
     Hidden { id: u64, on: bool },
     /// A DevTools protocol call; the answer is `CdpResult` with this `call`.
     Cdp { id: u64, call: i32, method: String, params: Value },
@@ -92,6 +97,14 @@ pub enum Ev {
     Gone { id: u64, status: i32 },
     /// The view is closed and its segment let go.
     Closed { id: u64 },
+    /// A GPU frame's texture (gpu.rs `Mode::Texture`, Windows): CEF's NT
+    /// handle duplicated into the app's process, `w` x `h`. The app closes it.
+    Texture { id: u64, handle: u64, w: u32, h: u32 },
+    /// The host's frame counters (every 2 s while they move): frames sent,
+    /// frames not sent because nothing in them changed, frames of hidden
+    /// views not sent, bytes copied into segments, GPU frames read back,
+    /// and the GPU path's mode and last error.
+    Stats { sent: u64, unchanged: u64, hidden: u64, copied: u64, gpu: u64, mode: String, error: String },
 }
 
 /// Most a message may be (a CDP answer with a PDF or a screenshot in it).

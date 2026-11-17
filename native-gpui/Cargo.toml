@@ -4,7 +4,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
-default-members = ["crates/app"]
+# The app and its browser host (its own executable: only it links libcef).
+default-members = ["crates/app", "crates/browser-host"]
 
 [workspace.package]
 version = "0.1.0"
@@ -46,6 +47,7 @@ crundi-core = { path = "crates/core" }
 crundi-theme = { path = "crates/theme" }
 crundi-widgets = { path = "crates/widgets" }
 crundi-webview = { path = "crates/webview" }
+crundi-browser-link = { path = "crates/browser-link" }
 crundi-shell = { path = "crates/shell" }
 crundi-workbench = { path = "crates/workbench" }
 crundi-chats = { path = "crates/chats" }

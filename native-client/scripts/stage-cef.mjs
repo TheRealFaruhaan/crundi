@@ -6,7 +6,10 @@
 //   macOS     an app bundle: crundi-native.app, with the framework in
 //             Contents/Frameworks and the five helper apps CEF starts its
 //             processes from (the same binary: it loads the framework from
-//             three levels deeper when it sees --type=), signed ad hoc
+//             three levels deeper when it sees --type=), signed ad hoc.
+//             With STAGE_HOST (the GPUI client's crundi-browser-host, the
+//             only binary there that links CEF): it goes in Contents/MacOS
+//             beside the app, and the helpers are copies of it
 //
 //   node scripts/stage-cef.mjs [targetDir]     (default target/debug)
 //   CEF_PATH   the CEF from scripts/fetch-cef.mjs (default: ~/.local/share/cef/cef_<os>_<arch>)
@@ -27,6 +30,8 @@ const cef = process.env.CEF_PATH || join(homedir(), '.local', 'share', 'cef', `c
 // The binary's name: the Slint client's by default, STAGE_NAME for another
 // (the GPUI client: crundi-gpui).
 const NAME = process.env.STAGE_NAME || 'crundi-native';
+// The executable that runs CEF, when it is not the app's own (the GPUI client's browser host).
+const HOST = process.env.STAGE_HOST || '';
 if (!existsSync(cef)) throw new Error(`No CEF at ${cef}: run scripts/fetch-cef.mjs first`);
 
 if (process.platform === 'darwin') {
@@ -53,10 +58,15 @@ ${helper ? '<key>LSUIElement</key><string>1</string>' : ''}
     mkdirSync(join(dir, 'Contents', 'MacOS'), { recursive: true });
     mkdirSync(join(dir, 'Contents', 'Resources'), { recursive: true });
     writeFileSync(join(dir, 'Contents', 'Info.plist'), plist(exe, id, helper));
-    copyFileSync(join(target, NAME), join(dir, 'Contents', 'MacOS', exe));
+    const from = helper && HOST ? HOST : NAME;
+    copyFileSync(join(target, from), join(dir, 'Contents', 'MacOS', exe));
     chmodSync(join(dir, 'Contents', 'MacOS', exe), 0o755);
   };
   makeApp(app, NAME, 'com.faruhaan.crundi.native', false);
+  if (HOST) {
+    copyFileSync(join(target, HOST), join(app, 'Contents', 'MacOS', HOST));
+    chmodSync(join(app, 'Contents', 'MacOS', HOST), 0o755);
+  }
   const frameworks = join(app, 'Contents', 'Frameworks');
   mkdirSync(frameworks, { recursive: true });
   cpSync(join(cef, 'Chromium Embedded Framework.framework'), join(frameworks, 'Chromium Embedded Framework.framework'), { recursive: true, verbatimSymlinks: true });

@@ -98,22 +98,74 @@ reaped at start), and the unit tests of `ipc`, `shm`, `proc`.
 - [x] the host process, its link, frames in shared memory (Linux, macOS,
   Windows), lazy start, idle stop, kill-on-close per OS, the PID file and
   reaping, crash state and Reload
-- [ ] next stage: fewer frame copies (CEF to segment, segment to the app's
-  buffer, buffer to a GPUI image) and GPU shared textures
+- [x] stage 2 (17 Nov 2026): libcef only in the host (its own executable,
+  `crundi-browser-host`; the app maps no CEF), two CPU copies per frame
+  (dirty rects only into the segment, unchanged frames not sent, the
+  segment straight into the GPUI image), no frames for hidden views (a tab
+  behind another, the drawer closed, hidden browsers, embeds off screen),
+  the GPU path's host side behind `CRUNDI_BROWSER_GPU` (README, "GPU
+  textures"). Tests: `hostproc` adds the app's maps without libcef (idle
+  and with the host up), an animating tab's frames stopping behind
+  another tab and with the drawer closed and coming back when shown, the
+  host's counters; `gpu.rs`'s unit tests.
+
+- [x] the one rule of every web view (17 Nov 2026, the owner's): not
+  visible, hidden at once with no frames; not visible for
+  `CRUNDI_BROWSER_UNLOAD_SECS` (30 s), freed; visible again, loaded again
+  with the loading state; chat embeds no longer kept within 4500 px (CAP
+  stays the ceiling); drawer tabs the same (listed, the active one loads on
+  open, the others when clicked); no views: the host stops after
+  `CRUNDI_BROWSER_IDLE_SECS`. Tests: `desktop.mjs` part `unload` (an embed
+  scrolled out and back, a background drawer tab, the drawer closed, the
+  host's idle stop after each), phase2 2.16f's scroll-away check now "hidden
+  at once, released after the unload grace" (3 s in phase2) where it was
+  "released beyond one screen of the log" (the old keep-alive).
+
+Memory (17 Nov 2026; `tools/pss.mjs`, release build; this server: no GPU,
+Xvfb, lavapipe; PSS summed over the app's tree, which holds the host's;
+signed in on a seeded test server, project demo; each step settled 40 s:
+idle, the drawer on google.com, a tab more on wikipedia.org, a tab more on
+github.com). Electron 41's PC client (app/ run from a copy, remote mode on
+the same server, the drawer driven over its DevTools port), the same steps.
+
+| | GPUI run 1 | GPUI run 2 | GPUI, tabs kept (unload grace 3600 s) | Electron run 1 | Electron runs 2-3 |
+|---|---|---|---|---|---|
+| idle | 202 MB | 201 MB | 202 MB | 432 MB | 535-539 MB |
+| 1 tab (google.com) | 594 MB | 594 MB | 590 MB | 483 MB | 584-586 MB |
+| 2 tabs (+ wikipedia.org) | 541 MB | 542 MB | 636 MB | 513 MB | 608-612 MB |
+| 3 tabs (+ github.com) | 731 MB | 687 MB | 782 MB | 688 MB | 777-787 MB |
+
+Per process, GPUI with one tab (run 2): the app 218 MB (no libcef; 201 MB
+idle), the host 118, the page 128, the network service 41, the other
+helpers 89. Electron with one tab (run 3): main 124, the web UI's renderer
+239, the page 80, a helper 83, the network service 32, two zygotes 26.
+Electron's web UI renderer was 166 MB in run 1 and 262-267 MB in runs 2-3
+(the same steps; run 1 had the web UI signed in on its first load), so its
+idle reading moves by about 100 MB. With the unload rule (the default),
+GPUI's tabs behind the active one are freed after 30 s: two and three tabs
+cost what the active one costs. Kept, each further tab adds about
+45-145 MB (its renderer, and its last frame in the app). The browser host's
+own process (about 118 MB) is the fixed price of running Chromium apart.
 
 Gaps:
 - **Windows and macOS are compile-only** (CI, and the platform modules
-  cross-checked here): the job object, named mappings, `shm_open` and the
-  macOS host's NSApp (an accessory app) have not run on those systems.
-- **libcef is still linked into the app** (Linux, Windows): mapped, never
-  initialised. Loading it only in the host would need the binary split or
-  CEF loaded at run time.
-- **Three copies per frame** (above); the app keeps the last frame of each
-  view, as before.
+  cross-checked here): the job object, named mappings, `shm_open`, the
+  macOS host's NSApp (an accessory app), the host as its own executable in
+  the bundle (helpers copied from it, `browser_subprocess_path`) and the
+  GPU path have not run on those systems. `crundi-browser-link` (where the
+  D3D11 and IOSurface code is) is checked here for both targets; the host's
+  own calls into it only on CI.
+- **GPU textures are not drawn as textures**: GPUI 0.3.12 has no way to
+  draw an outside texture (README, "GPU textures"); the GPU path reads
+  them back into shared memory. Off by default.
+- **GPUI's images**: one new image (and atlas tile) per frame, uploaded
+  whole: no buffer reuse, no partial update without a fork.
 - **IME**: the protocol carries committed text (`Ime`), but the views have
   no input-method handler yet (as before the host).
 - **DevTools** opens as a window of the host process.
 - A hidden browser's in-memory profile lives until the host stops.
+- A hidden view's page runs as a background tab (timers throttled,
+  `visibilityState` hidden), as Electron's hidden windows and tabs do.
 - macOS: a frame segment's name can outlive both processes only if both
   die between the host making it and the app opening it.
 - If the host dies before CEF is up three times in a row, the browser is
@@ -127,8 +179,8 @@ Gaps:
   that terminal), the keyboard-tools toggle with its key grid, attach
   (uploads to `crundi_attachments`, with its progress strip) and Send.
 - **Nothing loads by itself** (17 Nov 2026): the drawer starts closed after
-  a relaunch (its tabs listed, not loaded), and a drawer closed for the
-  browser host's idle grace lets its pages go (they load again when shown),
+  a relaunch (its tabs listed, not loaded), and any web view not visible
+  for the unload grace (30 s) lets its page go (it loads again when shown),
   so the host can stop. The PC client restored the drawer and kept pages.
 - **The browser is a drawer** beside the whole project area, below the top
   bar, with a draggable divider; hidden, the project bar's Browser button
@@ -144,7 +196,7 @@ Gaps:
   client still draws its own top bar and window buttons.
 - **CPU on this server** is not representative: no GPU, so wgpu draws with
   Mesa's llvmpipe (lavapipe).
-- **macOS** loads CEF's framework and makes NSApp CEF's (`webview/src/mac.rs`,
+- **macOS** loads CEF's framework and makes NSApp CEF's (`browser-host/src/mac.rs`,
   from the Slint client), not yet tried by a person on a Mac; CI's macOS job builds it, runs the
   unit tests and starts it (green since 17 Nov, F83).
 - **Cru on the PC** (`crates/desktop/src/cru*.rs`, `wake/`): the voice

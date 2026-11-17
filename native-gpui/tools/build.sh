@@ -51,5 +51,5 @@ cargo "$CMD" -j4 "$@"
 # The marker after the build: this build's own outputs are older than it.
 echo "$HERE" > "$LAST"
 PROFILE=debug; for a in "$@"; do [ "$a" = "--release" ] && PROFILE=release; done
-[ -f "$CARGO_TARGET_DIR/$PROFILE/crundi-gpui" ] && STAGE_NAME=crundi-gpui node ../native-client/scripts/stage-cef.mjs "$CARGO_TARGET_DIR/$PROFILE" >/dev/null 2>&1 || true
+[ -f "$CARGO_TARGET_DIR/$PROFILE/crundi-gpui" ] && STAGE_NAME=crundi-gpui STAGE_HOST=crundi-browser-host node ../native-client/scripts/stage-cef.mjs "$CARGO_TARGET_DIR/$PROFILE" >/dev/null 2>&1 || true
 echo "build took $(( $(date +%s) - S )) s; top rustc peaks:"; sleep 1.2; head -5 "$PEAKS" 2>/dev/null || true

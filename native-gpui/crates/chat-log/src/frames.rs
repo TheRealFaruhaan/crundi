@@ -3,11 +3,16 @@
 //! src/frames.rs and LiveFrame (ui/chat.slint).
 //!
 //! The log's side is here: every frame box reports where it is each frame
-//! (its place in the window, on the log's view or not, how far from it),
-//! and the rules decide which boxes hold a live view: made within reach,
-//! released beyond RELEASE_PX or when its box stops being drawn (scrolled
-//! off, the pane closed, parked or hidden), at most CAP across the window
-//! (the live one farthest from its log's view goes, never one on screen).
+//! (its place in the window, on the log's view or not), and the rules
+//! decide which boxes hold a live view (the one rule of every web view,
+//! crundi_webview::unload_grace): made when its box is on the log's view;
+//! hidden in the browser host at once (no frames) when it is not (scrolled
+//! off, its box no longer drawn: the pane parked, hidden or in another
+//! tab); freed after the unload grace not visible
+//! (CRUNDI_BROWSER_UNLOAD_SECS, 30 s); made again, with the loading state,
+//! when visible again. At most CAP across the window: a new visible box
+//! takes the place of the live view longest out of sight, never one on
+//! screen.
 //!
 //! The views themselves are the CEF bridge's (crundi_webview::frames,
 //! Desktop's): one off-screen view per live box, drawn as its picture in
@@ -30,8 +35,6 @@ pub struct State {}
 
 /// Live views at most, across the window (the web has no cap: PLAN.md).
 pub const CAP: usize = 6;
-/// A box further than this from its log's view releases its view.
-pub const RELEASE_PX: f32 = 4500.0;
 /// A box that has not reported for this long is off the log (not drawn).
 const STALE: Duration = Duration::from_millis(900);
 
@@ -50,6 +53,8 @@ pub struct Seen {
     pub dist: f32,
     pub live: bool,
     at: Instant,
+    /// Since when it has not been visible (None: visible).
+    off: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -136,69 +141,67 @@ mod backend {
     pub fn opened() -> String { web::opened() }
 }
 
-/// Which boxes should hold a view now, from what each reported (pure: the
-/// rules). `want`: (key, on screen, distance, live now). Returns (make,
-/// release): a box within RELEASE_PX without a view is made while there is
-/// room under `cap`, the live one farthest from its view (never on screen)
-/// making room; a box beyond RELEASE_PX is released.
+/// Which boxes should hold a view now (pure: the rules). `want`: (key,
+/// visible, seconds not visible, live now). Returns (make, release): a
+/// visible box without a view is made while there is room under `cap`, the
+/// live view longest out of sight (never a visible one) making room; a live
+/// view out of sight for `grace` seconds is released.
 #[cfg_attr(not(test), allow(dead_code))]
-pub fn plan(want: &[(String, bool, f32, bool)], cap: usize) -> (Vec<String>, Vec<String>) {
-    let mut release: Vec<String> = want.iter().filter(|w| w.3 && w.2 > RELEASE_PX).map(|w| w.0.clone()).collect();
-    let mut live: Vec<(String, bool, f32)> = want.iter().filter(|w| w.3 && w.2 <= RELEASE_PX).map(|w| (w.0.clone(), w.1, w.2)).collect();
+pub fn plan(want: &[(String, bool, f32, bool)], cap: usize, grace: f32) -> (Vec<String>, Vec<String>) {
+    let mut release: Vec<String> = want.iter().filter(|w| w.3 && !w.1 && w.2 >= grace).map(|w| w.0.clone()).collect();
+    let mut live: Vec<(String, bool, f32)> = want.iter().filter(|w| w.3 && !release.contains(&w.0)).map(|w| (w.0.clone(), w.1, w.2)).collect();
     let mut make = vec![];
-    // Nearest first: on screen, then by distance.
-    let mut wait: Vec<&(String, bool, f32, bool)> = want.iter().filter(|w| !w.3 && w.2 <= RELEASE_PX).collect();
-    wait.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.total_cmp(&b.2)));
-    for w in wait {
+    for w in want.iter().filter(|w| !w.3 && w.1) {
         if live.len() >= cap {
-            let victim = live.iter().enumerate().filter(|(_, l)| !l.1 && l.2 > w.2).max_by(|a, b| a.1 .2.total_cmp(&b.1 .2)).map(|(i, _)| i);
+            let victim = live.iter().enumerate().filter(|(_, l)| !l.1).max_by(|a, b| a.1 .2.total_cmp(&b.1 .2)).map(|(i, _)| i);
             match victim { Some(i) => release.push(live.remove(i).0), None => continue }
         }
-        live.push((w.0.clone(), w.1, w.2));
+        live.push((w.0.clone(), true, 0.0));
         make.push(w.0.clone());
     }
     (make, release)
 }
 
 /// A box reports itself (each frame it is drawn): where, on the log's view
-/// or not, how far from it; then the rules run.
+/// or not; then the rules run.
 fn seen(key: &str, chat: &str, target: &str, b: Bounds<Pixels>, view: Bounds<Pixels>, scale: f32, cx: &mut App) {
     let (top, bot) = (f32::from(b.origin.y), f32::from(b.origin.y + b.size.height));
     let (vt, vb) = (f32::from(view.origin.y), f32::from(view.origin.y + view.size.height));
     let on_screen = view.size.height > px(0.) && bot > vt && top < vb;
     let dist = if on_screen { 0.0 } else if bot <= vt { vt - bot } else { top - vb };
     let f = g(cx);
-    let s = f.boxes.entry(key.to_string()).or_insert_with(|| Seen { chat: chat.into(), target: target.into(), x: 0., y: 0., w: 0., h: 0., on_screen, dist, live: false, at: Instant::now() });
+    let s = f.boxes.entry(key.to_string()).or_insert_with(|| Seen { chat: chat.into(), target: target.into(), x: 0., y: 0., w: 0., h: 0., on_screen, dist, live: false, at: Instant::now(), off: None });
     // (The bounds are inside the box's 1px edge already.)
     s.x = f32::from(b.origin.x);
     s.y = top;
     s.w = f32::from(b.size.width).max(1.0);
     s.h = f32::from(b.size.height).max(1.0);
-    let was_on = s.on_screen;
     s.on_screen = on_screen;
     s.dist = dist;
     s.at = Instant::now();
     s.target = target.into();
+    if on_screen { s.off = None; } else if s.off.is_none() { s.off = Some(Instant::now()); }
     if s.live { crundi_webview::frames::resize(key, s.w, s.h, scale); }
-    // Within reach: one screen of the log either side (the GPUI log draws
-    // every row, where the Slint client's list dropped rows off its view).
-    let reach = f32::from(view.size.height).max(600.0);
-    let (live, on) = (s.live, on_screen);
-    if live && dist > reach { drop_view(key, cx); }
-    else if live && was_on != on { crundi_webview::frames::hidden(key, !on); }
-    else if dist <= reach && make_room(key, cx) {
+    let live = s.live;
+    if live {
+        // Hidden at once off the view, shown at once on it; freed by the sweep.
+        crundi_webview::frames::hidden(key, !on_screen);
+    } else if on_screen && make_room(key, cx) {
         let Some(s) = g(cx).boxes.get(key).cloned() else { return };
-        if backend::open(cx, &s.chat, key, &s.target, s.w, s.h, scale) { if let Some(s) = g(cx).boxes.get_mut(key) { s.live = true; } ticker(cx); }
+        if backend::open(cx, &s.chat, key, &s.target, s.w, s.h, scale) {
+            if let Some(s) = g(cx).boxes.get_mut(key) { s.live = true; }
+            ticker(cx);
+        }
     }
     sweep_soon(cx);
 }
 
-/// Room for one more view: under CAP, or the live view farthest from its
-/// log's view released (never one on screen); as the Slint client's.
+/// Room for one more view: under CAP, or the live view longest out of
+/// sight released (never one on screen); as the Slint client's.
 fn make_room(key: &str, cx: &mut App) -> bool {
-    let live: Vec<(String, bool, f32)> = g(cx).boxes.iter().filter(|(k, s)| s.live && k.as_str() != key).map(|(k, s)| (k.clone(), s.on_screen, s.dist)).collect();
+    let live: Vec<(String, bool, Option<Instant>)> = g(cx).boxes.iter().filter(|(k, s)| s.live && k.as_str() != key).map(|(k, s)| (k.clone(), s.on_screen && s.off.is_none(), s.off)).collect();
     if live.len() < CAP { return true; }
-    match live.iter().filter(|l| !l.1).max_by(|a, b| a.2.total_cmp(&b.2)) { Some(v) => { let k = v.0.clone(); drop_view(&k, cx); true } None => false }
+    match live.iter().filter(|l| !l.1).min_by_key(|l| l.2) { Some(v) => { let k = v.0.clone(); drop_view(&k, cx); true } None => false }
 }
 
 fn drop_view(key: &str, cx: &mut App) {
@@ -208,16 +211,30 @@ fn drop_view(key: &str, cx: &mut App) {
     f.keys.remove(key);
 }
 
-/// Every view whose box stopped reporting (scrolled off, the pane closed,
-/// parked or hidden) is released; boxes are forgotten after a minute.
+/// A live view whose box stopped reporting (the pane parked, hidden, in
+/// another tab) is not visible: hidden at once. A live view not visible for
+/// the unload grace is freed. Boxes are forgotten a minute after their last
+/// report (once their view is gone).
 fn sweep_soon(cx: &mut App) {
     if std::mem::replace(&mut g(cx).sweeping, true) { return; }
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor().timer(Duration::from_millis(300)).await;
         cx.update(|cx| {
-            let stale: Vec<String> = g(cx).boxes.iter().filter(|(_, s)| s.live && s.at.elapsed() > STALE).map(|(k, _)| k.clone()).collect();
-            for k in stale { drop_view(&k, cx); }
-            g(cx).boxes.retain(|_, s| s.at.elapsed() < Duration::from_secs(60));
+            let grace = crundi_webview::unload_grace();
+            let now = Instant::now();
+            let mut hide = vec![];
+            let mut free = vec![];
+            // A box on a still screen is not drawn again by itself: its log
+            // draws once, so a box still there reports before it counts as gone.
+            let probe: Vec<String> = g(cx).boxes.values().filter(|s| s.live && s.at.elapsed() > Duration::from_millis(400)).map(|s| s.chat.clone()).collect();
+            for c in probe { if let Some(v) = crate::view_of(cx, &c) { v.update(cx, |_, cx| cx.notify()); } }
+            for (k, s) in g(cx).boxes.iter_mut().filter(|(_, s)| s.live) {
+                if s.at.elapsed() > STALE { s.on_screen = false; if s.off.is_none() { s.off = Some(now); } hide.push(k.clone()); }
+                if s.off.is_some_and(|t| t.elapsed() >= grace) { free.push(k.clone()); }
+            }
+            for k in hide { crundi_webview::frames::hidden(&k, true); }
+            for k in free { drop_view(&k, cx); }
+            g(cx).boxes.retain(|_, s| s.live || s.at.elapsed() < Duration::from_secs(60));
         });
     }).detach();
 }
@@ -290,7 +307,7 @@ pub fn props(_v: &LogView, _cx: &App, _o: &mut Map<String, Value>) {}
 pub fn global_props(cx: &mut App, top: &mut Map<String, Value>) {
     let f = g(cx);
     let list: Vec<Value> = f.boxes.iter().map(|(k, s)| json!({
-        "key": k, "live": s.live, "painted": s.live && backend::painted(k), "title": backend::title(k), "focused": crundi_webview::frames::focused().as_deref() == Some(k.as_str()),
+        "key": k, "live": s.live, "painted": s.live && backend::painted(k), "paused": s.live && crundi_webview::frames::is_hidden(k), "frames": crundi_webview::frames::frame_count(k), "title": backend::title(k), "focused": crundi_webview::frames::focused().as_deref() == Some(k.as_str()),
         "onScreen": s.on_screen, "hidden": !s.on_screen, "w": s.w.round(), "h": s.h.round(), "x": s.x, "y": s.y, "target": s.target,
         "scroll": crundi_webview::frames::scroll(k).map(|x| json!([x.0, x.1, x.2, x.3])).unwrap_or(Value::Null),
     })).collect();
@@ -312,8 +329,10 @@ mod tests {
     fn w(k: &str, on: bool, d: f32, live: bool) -> (String, bool, f32, bool) { (k.into(), on, d, live) }
 
     #[::core::prelude::v1::test]
-    fn made_within_reach_released_beyond() {
-        let (make, rel) = plan(&[w("a", true, 0.0, false), w("b", false, 5000.0, true), w("c", false, 5000.0, false)], CAP);
+    fn made_when_visible_freed_after_the_grace() {
+        // a: visible, no view: made. b: out of sight 31 s: freed. c: out of
+        // sight 5 s: kept (hidden). d: out of sight, no view: not made.
+        let (make, rel) = plan(&[w("a", true, 0.0, false), w("b", false, 31.0, true), w("c", false, 5.0, true), w("d", false, 1.0, false)], CAP, 30.0);
         assert_eq!(make, ["a"]);
         assert_eq!(rel, ["b"]);
     }
@@ -322,13 +341,13 @@ mod tests {
     fn the_cap() {
         // Eight boxes on screen: six views, never one on screen released.
         let all: Vec<_> = (0..8).map(|i| w(&format!("f{i}"), true, 0.0, false)).collect();
-        let (make, rel) = plan(&all, CAP);
+        let (make, rel) = plan(&all, CAP, 30.0);
         assert_eq!((make.len(), rel.len()), (6, 0));
-        // Six live (one far off screen), a new one on screen: the far one goes.
+        // Six live (one out of sight a while), a new one on screen: the hidden one goes.
         let mut six: Vec<_> = (0..5).map(|i| w(&format!("l{i}"), true, 0.0, true)).collect();
-        six.push(w("far", false, 3000.0, true));
+        six.push(w("away", false, 3.0, true));
         six.push(w("new", true, 0.0, false));
-        let (make, rel) = plan(&six, CAP);
-        assert_eq!((make, rel), (vec!["new".to_string()], vec!["far".to_string()]));
+        let (make, rel) = plan(&six, CAP, 30.0);
+        assert_eq!((make, rel), (vec!["new".to_string()], vec!["away".to_string()]));
     }
 }

@@ -152,7 +152,7 @@ const MIC_WAV = join(OUT, 'mic.wav');
 }
 function launch(tag) {
   const log = openSync(join(OUT, `native2-${tag}.log`), 'w');
-  return spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank', CRUNDI_TEST_MIC_WAV: MIC_WAV, CRUNDI_TEST_UPLOAD_KBPS: '256' }, stdio: ['ignore', log, log] });
+  return spawn(BIN, [], { env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank', CRUNDI_TEST_MIC_WAV: MIC_WAV, CRUNDI_TEST_UPLOAD_KBPS: '256', CRUNDI_BROWSER_UNLOAD_SECS: process.env.CRUNDI_BROWSER_UNLOAD_SECS || '3' }, stdio: ['ignore', log, log] });
 }
 
 function driver() {
@@ -1352,10 +1352,13 @@ await clearBox();
 await keys('a draft to keep');
 await ui('focus-pane', pane(await props(), liveB2).id); await ui('composer-focus');
 await keys('the second one');
-await sleep(800);
 {
-  const sd = saved().drafts?.[SERVER] || {};
-  check('drafts are saved per server and chat', sd['chat:' + liveA]?.v === 'a draft to keep' && sd['chat:' + liveB2]?.v === 'the second one', sd);
+  // (Written at most every 350 ms: polled, not a fixed wait, so a busy
+  // machine's late write is not a failure.)
+  const ok = (sd) => sd['chat:' + liveA]?.v === 'a draft to keep' && sd['chat:' + liveB2]?.v === 'the second one';
+  let sd = {};
+  for (let i = 0; i < 25; i++) { await sleep(200); sd = saved().drafts?.[SERVER] || {}; if (ok(sd)) break; }
+  check('drafts are saved per server and chat', ok(sd), sd);
 }
 // Switching away and back brings each back.
 await ui('select-project', 'other');
@@ -3335,10 +3338,14 @@ if (!process.env.CRUNDI_TEST_DEEPGRAM) {
   await mouse('dblclick', f.x + 60, f.y + 175);
   p = await until('double', async () => /^double 2$/.test((await fr())?.title || ''), 5000);
   if (p) check('a double click reaches the page (dblclick, detail 2)', true);
-  // Scrolled away (replies under it): released; back: a fresh page.
+  // Scrolled away (replies under it): hidden at once, released after the
+  // unload grace (CRUNDI_BROWSER_UNLOAD_SECS, 3 s here; once a 4500 px
+  // keep-alive); back: a fresh page.
   for (let i = 0; i < 14; i++) await ui('chat-event', JSON.stringify({ type: 'entry', entry: { id: 'long' + i, kind: 'assistant-text', text: Array(12).fill('A long reply line to push the frame off the log.').join('\n\n') } }));
+  p = await until('hidden', async () => { const x = await fr(); return x && !x.onScreen && (x.paused || !x.live); }, 3000);
+  if (p) check('the frame scrolled off the log: hidden at once', true);
   p = await until('released', async () => !(await fr())?.live, 10000);
-  if (p) check('the frame scrolled off the log: its view released', (await props()).framesLive === 0);
+  if (p) check('…its view released after the unload grace', (await props()).framesLive === 0);
   // (Real X wheel notches over the log, as 2.16's F96 check: xdotool.)
   {
     const { execFileSync } = await import('node:child_process');

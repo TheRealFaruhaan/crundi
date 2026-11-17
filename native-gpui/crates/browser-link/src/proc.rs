@@ -2,6 +2,11 @@
 //! on every OS, the host's own guard against an app that went away, the
 //! host's PID on disk, and reaping what a crashed run left behind.
 //!
+//! The host is its own executable, `crundi-browser-host` (crates/browser-host),
+//! next to the app's (on macOS in the bundle's Contents/MacOS): only it links
+//! libcef, so the app never maps CEF. It is started with `--browser-host`;
+//! CEF starts it again for its helpers (`--type=…`).
+//!
 //! - Linux: the host gets PR_SET_PDEATHSIG (SIGKILL) before it runs, and
 //!   leads a process group of its own (CEF's helpers are in it).
 //! - Windows: the app's job object, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; the
@@ -15,17 +20,26 @@
 use crate::ipc::{RecvFn, SendFn};
 use std::{io, path::{Path, PathBuf}, process::{Child, Command, Stdio}};
 
-/// The flag the app starts its own binary with to make it the host.
+/// The flag the app starts the host with (also what marks a host process).
 pub const FLAG: &str = "--browser-host";
+/// The host's executable, next to the app's.
+pub const HOST_EXE: &str = if cfg!(windows) { "crundi-browser-host.exe" } else { "crundi-browser-host" };
+
+/// Where the host's executable is: next to this one's.
+pub fn host_exe() -> io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    let dir = exe.parent().ok_or_else(|| io::Error::other("no folder for the app's binary"))?;
+    let host = dir.join(HOST_EXE);
+    if host.exists() { Ok(host) } else { Err(io::Error::new(io::ErrorKind::NotFound, format!("{} is not next to the app (tools/build.sh builds it)", host.display()))) }
+}
 /// The host's PID file, in the client's config folder.
 pub const PID_FILE: &str = "browser-host.pid";
 
 pub struct Spawned { pub child: Child, pub send: SendFn, pub recv: RecvFn }
 
-/// Start the host (this binary with `--browser-host`), its link made.
+/// Start the host (`crundi-browser-host --browser-host`), its link made.
 pub fn spawn_host() -> io::Result<Spawned> {
-    let exe = std::env::current_exe()?;
-    let mut cmd = Command::new(exe);
+    let mut cmd = Command::new(host_exe()?);
     cmd.arg(FLAG).env("CRUNDI_HOST_PARENT", std::process::id().to_string()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
     spawn_os(cmd)
 }
@@ -154,22 +168,23 @@ pub fn alive(pid: u32) -> bool {
     }
 }
 
-/// Is `pid` a browser host of this binary (not some other process that
-/// took the number since)?
+/// Is `pid` a browser host (the host's executable, or an older app's
+/// binary started as one; not some other process that took the number since)?
 pub fn is_host(pid: u32) -> bool {
     if !alive(pid) { return false; }
-    let exe_name = std::env::current_exe().ok().and_then(|e| e.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_default();
+    let app_name = std::env::current_exe().ok().and_then(|e| e.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_default();
+    let names = [HOST_EXE.to_string(), app_name];
     #[cfg(target_os = "linux")]
     {
         let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else { return false };
         let args: Vec<String> = raw.split(|b| *b == 0).map(|a| String::from_utf8_lossy(a).to_string()).collect();
         let first = args.first().map(|a| Path::new(a).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).unwrap_or_default();
-        args.iter().any(|a| a == FLAG) && first == exe_name
+        args.iter().any(|a| a == FLAG) && names.contains(&first)
     }
     #[cfg(target_os = "macos")]
     {
         let out = Command::new("ps").args(["-p", &pid.to_string(), "-o", "command="]).output();
-        out.map(|o| { let s = String::from_utf8_lossy(&o.stdout); s.contains(FLAG) && s.contains(&exe_name) }).unwrap_or(false)
+        out.map(|o| { let s = String::from_utf8_lossy(&o.stdout); s.contains(FLAG) && names.iter().any(|n| s.contains(n.as_str())) }).unwrap_or(false)
     }
     #[cfg(windows)]
     unsafe {
@@ -180,7 +195,8 @@ pub fn is_host(pid: u32) -> bool {
         let mut n = buf.len() as u32;
         let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut n);
         CloseHandle(h);
-        ok != 0 && String::from_utf16_lossy(&buf[..n as usize]).to_lowercase().ends_with(&exe_name.to_lowercase())
+        let path = String::from_utf16_lossy(&buf[..n as usize]).to_lowercase();
+        ok != 0 && names.iter().any(|x| !x.is_empty() && path.ends_with(&x.to_lowercase()))
     }
 }
 

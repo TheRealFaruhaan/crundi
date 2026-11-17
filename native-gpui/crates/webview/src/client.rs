@@ -14,18 +14,21 @@
 //!   reaped at the next start (proc.rs `reap_stale`).
 //!
 //! Threads: the reader maps each view's frame segment, copies a painted
-//! frame out, answers `Ack` at once, and queues the frame and every other
-//! event; the app's pump (main thread) hands them to their views.
+//! frame straight out of it into a new GPUI image (the one copy on the
+//! app's side: the image owns its pixels, GPUI uploads them from there),
+//! answers `Ack` at once, and queues the image and every other event; the
+//! app's pump (main thread) hands them to their views.
 
 use crate::ipc::{self, Cmd, Ev, Fd};
 use crate::shm::Segment;
+use gpui::RenderImage;
 use serde_json::{json, Value};
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, VecDeque},
     path::PathBuf,
     process::Child,
-    sync::{mpsc, Mutex},
+    sync::{atomic::{AtomicU64, Ordering}, mpsc, Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -37,9 +40,22 @@ pub enum Owner { Panel(usize), Frame(String) }
 pub enum State { Off, Starting, Up, Stopping }
 
 /// What the reader hands the main thread, with the link's generation.
-enum In { Ev(u32, Ev), Frame(u32, u64, Vec<u8>, u32, u32), Gone(u32) }
+enum In { Ev(u32, Ev), Frame(u32, u64, Arc<RenderImage>), Gone(u32) }
 
 static INBOX: Mutex<Vec<In>> = Mutex::new(Vec::new());
+/// Frames the app took from the host (every view, every host this run).
+static FRAMES: AtomicU64 = AtomicU64::new(0);
+/// GPU textures the host handed over and the app opened (gpu.rs `Mode::Texture`), and the last error.
+static TEXTURES: AtomicU64 = AtomicU64::new(0);
+static TEXTURE_ERROR: Mutex<String> = Mutex::new(String::new());
+
+/// A frame of `w` x `h` BGRA from a segment: the image that owns it.
+pub(crate) fn image_from(bytes: &[u8], w: u32, h: u32) -> Option<Arc<RenderImage>> {
+    let n = (w as usize) * (h as usize) * 4;
+    if bytes.len() < n || n == 0 { return None; }
+    let buf = image::RgbaImage::from_raw(w, h, bytes[..n].to_vec())?;
+    Some(Arc::new(RenderImage::new([image::Frame::new(buf)])))
+}
 
 struct Client {
     state: State,
@@ -60,13 +76,15 @@ struct Client {
     config_dir: PathBuf,
     reaped: Option<u32>,
     last_error: String,
+    /// The host's last counters (`Ev::Stats`).
+    stats: Value,
 }
 
 thread_local! {
     static C: RefCell<Client> = RefCell::new(Client {
         state: State::Off, epoch: 0, child: None, pid: 0, out: None, owners: HashMap::new(), next: 1,
         idle_since: None, stop_at: None, starts: 0, crashes: 0, failures: 0, available: true,
-        config_dir: PathBuf::new(), reaped: None, last_error: String::new(),
+        config_dir: PathBuf::new(), reaped: None, last_error: String::new(), stats: Value::Null,
     });
     static KEEP_ALIVE: Cell<fn() -> bool> = const { Cell::new(|| false) };
 }
@@ -93,6 +111,16 @@ pub fn set_keep_alive(f: fn() -> bool) { KEEP_ALIVE.with(|k| k.set(f)); }
 /// How long the host stays with no view.
 pub fn idle_grace() -> Duration {
     let s = std::env::var("CRUNDI_BROWSER_IDLE_SECS").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(60.0);
+    Duration::from_secs_f64(s.max(0.0))
+}
+
+/// How long a web view that is not visible keeps its page before it is
+/// freed (CRUNDI_BROWSER_UNLOAD_SECS, default 30): the one rule for every
+/// view (drawer tabs, chat embeds, widget panels). Hidden at once (no
+/// frames), freed after this, loaded again (with the loading state) when
+/// visible again.
+pub fn unload_grace() -> Duration {
+    let s = std::env::var("CRUNDI_BROWSER_UNLOAD_SECS").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(30.0);
     Duration::from_secs_f64(s.max(0.0))
 }
 
@@ -164,11 +192,11 @@ fn spawn() -> bool {
     std::thread::Builder::new().name("browser-host-in".into()).spawn(move || reader(epoch, &mut recv, ack)).ok();
     let dir = with(|c| {
         c.state = State::Starting; c.child = Some(sp.child); c.pid = pid; c.out = Some(otx);
-        c.starts += 1; c.idle_since = None; c.stop_at = None;
+        c.starts += 1; c.idle_since = None; c.stop_at = None; c.stats = Value::Null;
         c.config_dir.clone()
     });
     if !dir.as_os_str().is_empty() { crate::proc::write_pid(&dir, pid); }
-    send(Cmd::Hello);
+    send(Cmd::Hello { textures: crate::gpu::mode() == crate::gpu::Mode::Texture });
     eprintln!("[browser] browser host started (pid {pid})");
     true
 }
@@ -180,6 +208,8 @@ fn reader(epoch: u32, recv: &mut ipc::RecvFn, out: mpsc::Sender<Vec<u8>>) {
     let mut buf = vec![0u8; 64 * 1024];
     let mut fds: VecDeque<Fd> = VecDeque::new();
     let mut maps: HashMap<u64, Segment> = HashMap::new();
+    #[cfg(windows)]
+    let mut textures = crate::gpu::AppTextures::default();
     let push = |m: In| INBOX.lock().unwrap().push(m);
     'read: loop {
         let n = match recv(&mut buf, &mut fds) { Ok(0) | Err(_) => break, Ok(n) => n };
@@ -198,10 +228,20 @@ fn reader(epoch: u32, recv: &mut ipc::RecvFn, out: mpsc::Sender<Vec<u8>>) {
                     }
                 }
                 Ev::Paint { id, w, h } => {
-                    let n = (w as usize) * (h as usize) * 4;
-                    let data = maps.get(&id).filter(|s| s.cap() >= n).map(|s| s.bytes()[..n].to_vec());
+                    let img = maps.get(&id).and_then(|s| image_from(s.bytes(), w, h));
                     let _ = out.send(ipc::encode(&Cmd::Ack { id }));
-                    if let Some(data) = data { push(In::Frame(epoch, id, data, w, h)); }
+                    if let Some(img) = img { FRAMES.fetch_add(1, Ordering::Relaxed); push(In::Frame(epoch, id, img)); }
+                }
+                #[allow(unused_variables)]
+                Ev::Texture { id, handle, w, h } => {
+                    #[cfg(windows)]
+                    {
+                        let r = unsafe { textures.open(handle) };
+                        match r {
+                            Ok(_) => { TEXTURES.fetch_add(1, Ordering::Relaxed); }
+                            Err(e) => *TEXTURE_ERROR.lock().unwrap() = e,
+                        }
+                    }
                 }
                 Ev::Closed { id } => { maps.remove(&id); push(In::Ev(epoch, Ev::Closed { id })); }
                 e => push(In::Ev(epoch, e)),
@@ -222,11 +262,14 @@ pub fn pump() {
         let cur = with(|c| c.epoch);
         match m {
             In::Ev(g, _) | In::Frame(g, ..) | In::Gone(g) if g != cur => {}
-            In::Frame(_, id, data, w, h) => match owner(id) {
-                Some(Owner::Panel(i)) => crate::engine::on_frame(i, id, data, w, h),
-                Some(Owner::Frame(k)) => crate::frames::on_frame(&k, id, data, w, h),
+            In::Frame(_, id, img) => match owner(id) {
+                Some(Owner::Panel(i)) => crate::engine::on_frame(i, id, img),
+                Some(Owner::Frame(k)) => crate::frames::on_frame(&k, id, img),
                 None => {}
             },
+            In::Ev(_, Ev::Stats { sent, unchanged, hidden, copied, gpu, mode, error }) => {
+                with(|c| c.stats = json!({ "sent": sent, "unchanged": unchanged, "hidden": hidden, "copied": copied, "gpu": gpu, "mode": mode, "error": error }));
+            }
             In::Ev(_, Ev::Ready { pid }) => { with(|c| { if c.state == State::Starting { c.state = State::Up; } c.failures = 0; }); eprintln!("[browser] browser host {pid} is up"); }
             In::Ev(_, Ev::Failed { why }) => { eprintln!("[browser] {why}"); with(|c| { c.last_error = why; c.available = false; }); }
             In::Ev(_, ev) => {
@@ -249,8 +292,8 @@ fn ev_id(e: &Ev) -> Option<u64> {
     Some(match e {
         Ev::Shm { id, .. } | Ev::Paint { id, .. } | Ev::Loading { id, .. } | Ev::LoadError { id, .. } | Ev::LoadEnd { id, .. }
         | Ev::Title { id, .. } | Ev::Address { id, .. } | Ev::Cursor { id, .. } | Ev::Console { id, .. } | Ev::Popup { id, .. }
-        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } => *id,
-        Ev::Ready { .. } | Ev::Failed { .. } => return None,
+        | Ev::Scrolled { id } | Ev::Net { id, .. } | Ev::CdpResult { id, .. } | Ev::Gone { id, .. } | Ev::Closed { id } | Ev::Texture { id, .. } => *id,
+        Ev::Ready { .. } | Ev::Failed { .. } | Ev::Stats { .. } => return None,
     })
 }
 
@@ -341,6 +384,22 @@ pub fn props() -> Value {
         "state": match c.state { State::Off => "off", State::Starting => "starting", State::Up => "up", State::Stopping => "stopping" },
         "pid": if c.state == State::Off { Value::Null } else { json!(c.pid) },
         "views": c.owners.len(), "starts": c.starts, "crashes": c.crashes, "available": c.available,
-        "reaped": c.reaped, "idleSecs": idle_grace().as_secs_f64(), "error": c.last_error,
+        "reaped": c.reaped, "idleSecs": idle_grace().as_secs_f64(), "unloadSecs": unload_grace().as_secs_f64(), "error": c.last_error,
+        // Frames: taken by the app (all hosts this run), and the running
+        // host's counters (sent, not sent as unchanged or hidden, bytes
+        // copied into segments, GPU frames); the GPU path's mode.
+        "frames": FRAMES.load(Ordering::Relaxed),
+        "host": c.stats,
+        "gpu": { "asked": crate::gpu::name(crate::gpu::asked()), "mode": crate::gpu::name(crate::gpu::mode()), "textures": TEXTURES.load(Ordering::Relaxed), "textureError": TEXTURE_ERROR.lock().unwrap().clone() },
+        "libcef": libcef_mapped(),
     }))
+}
+
+/// Is libcef mapped into this (the app's) process? It never should be
+/// (only the host links it). Linux reads /proc/self/maps; elsewhere null.
+pub fn libcef_mapped() -> Value {
+    #[cfg(target_os = "linux")]
+    { json!(std::fs::read_to_string("/proc/self/maps").map(|m| m.lines().any(|l| l.contains("libcef"))).unwrap_or(false)) }
+    #[cfg(not(target_os = "linux"))]
+    { Value::Null }
 }

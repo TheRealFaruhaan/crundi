@@ -254,6 +254,8 @@ pub(crate) struct View {
     store_call: Option<Instant>,
     size: (f32, f32),
     seen: Option<Instant>,
+    /// Not drawn: its page hidden in the browser host (no frames) until drawn again.
+    hidden: bool,
     handed: Option<Instant>,
     reload_at: Option<Instant>,
     msgs: u64,
@@ -593,6 +595,8 @@ pub(crate) fn seen_box(key: &str, b: Bounds<Pixels>, cx: &mut App) {
         let Some(v) = st.views.get_mut(key) else { return false };
         v.seen = Some(Instant::now());
         v.size = (w0, h0);
+        // Drawn again: shown in the host at once.
+        if std::mem::take(&mut v.hidden) { if let Some(i) = v.panel { engine::set_parked(i, false); } }
         v.state == "ready" && !v.loading && v.panel.is_none() && v.reload_at.is_none() && v.handed.is_none_or(|t| t.elapsed() > Duration::from_millis(1500))
     });
     if again { with(|st| if let Some(v) = st.views.get_mut(key) { v.reload_at = Some(Instant::now()); }); let _ = cx; }
@@ -701,7 +705,7 @@ fn show_html(key: &str, html: &str, cx: &mut App) {
 
 /// A view gives its browser back (not drawn for a while, or signed out).
 fn release(key: &str, cx: &mut App) {
-    let (panel, page) = with(|st| st.views.get_mut(key).map(|v| { v.handed = None; (v.panel.take(), v.page.clone()) }).unwrap_or((None, None)));
+    let (panel, page) = with(|st| st.views.get_mut(key).map(|v| { v.handed = None; v.hidden = false; (v.panel.take(), v.page.clone()) }).unwrap_or((None, None)));
     if let Some(i) = panel { engine::close_panel(i); }
     if let Some(p) = page { p.update(cx, |p, cx| p.set_panel(None, cx)); }
 }
@@ -930,8 +934,15 @@ fn tick(cx: &mut App) {
         let now = Instant::now();
         let due: Vec<String> = st.views.iter().filter(|(_, v)| v.reload_at.is_some_and(|t| t <= now) && !v.loading).map(|(k, _)| k.clone()).collect();
         let old = |v: &View, secs: u64| v.seen.is_none_or(|t| t.elapsed() > Duration::from_secs(secs));
-        let unseen: Vec<String> = st.views.iter().filter(|(_, v)| v.panel.is_some() && old(v, 3)).map(|(k, _)| k.clone()).collect();
-        let gone: Vec<String> = st.views.iter().filter(|(_, v)| old(v, 30)).map(|(k, _)| k.clone()).collect();
+        // The one rule of every web view: not drawn (after a probe), hidden
+        // at once; not drawn for the unload grace, its page freed (drawn
+        // again: loaded again).
+        let grace = crundi_webview::unload_grace();
+        let unseen: Vec<String> = st.views.iter().filter(|(_, v)| v.panel.is_some() && v.seen.is_none_or(|t| t.elapsed() > grace.max(Duration::from_secs(2)))).map(|(k, _)| k.clone()).collect();
+        let hide: Vec<usize> = st.views.values_mut().filter(|v| v.panel.is_some() && !v.hidden && old(v, 2)).filter_map(|v| { v.hidden = true; v.panel }).collect();
+        for i in hide { engine::set_parked(i, true); }
+        let keep = grace.as_secs().max(30) + 5;
+        let gone: Vec<String> = st.views.iter().filter(|(_, v)| old(v, keep)).map(|(k, _)| k.clone()).collect();
         let probe = st.views.values().any(|v| v.panel.is_some() && old(v, 1));
         (due, unseen, gone, probe, st.ticks % 100 == 0)
     });

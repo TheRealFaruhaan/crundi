@@ -21,15 +21,12 @@ use crate::{ctx as kit, rules};
 use crundi_theme::IconName;
 use crundi_webview::{engine as browser, later};
 use serde_json::{json, Value};
-use std::{cell::RefCell, collections::BTreeMap, time::Duration};
+use std::{cell::RefCell, collections::{BTreeMap, HashMap}, time::Duration};
 
 pub const START: &str = "https://www.google.com";
 pub const MAX_TABS: usize = 12;
 pub const DEFAULT_W: f32 = 560.0;
 pub const MIN_W: f32 = 320.0;
-/// A tab not shown and not used for this long sleeps; asleep this long, it unloads.
-pub const SLEEP_MS: u64 = 5 * 60 * 1000;
-pub const UNLOAD_MS: u64 = 60 * 60 * 1000;
 
 #[derive(Clone, Debug, Default)]
 pub struct Tab {
@@ -290,8 +287,9 @@ pub fn close() {
     persist();
     shell_drawer(false);
     render();
-    // Still closed after the grace: the pages go (listed, loaded again when shown).
-    later(crundi_webview::idle_grace(), move || if with(|d| !d.open && d.closed_seq == seq) { unload_all(); });
+    let _ = seq;
+    // Its pages are hidden now (their view no longer shows them) and go
+    // after the unload grace (`unload_tick`), listed, loaded again when shown.
 }
 
 /// Every tab's page goes; the tabs stay, as after a relaunch.
@@ -672,27 +670,39 @@ pub fn clear_run() {
     }
 }
 
-// ─── Sleep ───
+// ─── Not visible: freed after the unload grace ───
 
-/// Every minute: a tab not shown nor used for 5 minutes sleeps (frozen), an
-/// hour asleep unloads (its page goes; it loads again when shown or used).
-pub fn sleep_tick() {
+thread_local! {
+    /// Since when each loaded tab has not been visible (the drawer closed,
+    /// another tab active, another project).
+    static UNSEEN: RefCell<HashMap<String, std::time::Instant>> = RefCell::new(HashMap::new());
+}
+
+/// Every second: a tab whose page is not visible (and not used by a chat)
+/// for the unload grace (crundi_webview::unload_grace, CRUNDI_BROWSER_UNLOAD_SECS)
+/// lets its page go: it stays listed and loads again when shown or used.
+/// (It was hidden in the host, with no frames, as soon as it stopped being
+/// shown.)
+pub fn unload_tick() {
+    let now_i = std::time::Instant::now();
     let t = now();
+    let grace = crundi_webview::unload_grace();
     let shown = with(|d| d.open).then(active_tab).flatten().map(|a| a.id);
     let tabs: Vec<Tab> = with(|d| d.projects.values().flat_map(|ps| ps.tabs.clone()).collect());
+    let mut freed = false;
     for x in tabs {
-        let Some(i) = x.panel else { continue };
-        if Some(&x.id) == shown.as_ref() { continue; }
-        let idle = t.saturating_sub(x.used);
-        if !x.sleeping && idle > SLEEP_MS {
-            browser::cdp(i, "Page.setWebLifecycleState", json!({ "state": "frozen" }), Box::new(|_, _| {}));
-            tab_mut(&x.id, |y| y.sleeping = true);
-        } else if x.sleeping && idle > SLEEP_MS + UNLOAD_MS {
+        let Some(i) = x.panel else { UNSEEN.with(|u| u.borrow_mut().remove(&x.id)); continue };
+        if Some(&x.id) == shown.as_ref() { UNSEEN.with(|u| u.borrow_mut().remove(&x.id)); continue; }
+        let since = UNSEEN.with(|u| *u.borrow_mut().entry(x.id.clone()).or_insert(now_i));
+        let used = std::time::Duration::from_millis(t.saturating_sub(x.used));
+        if since.elapsed() >= grace && used >= grace {
             browser::close_panel(i);
-            tab_mut(&x.id, |y| { y.panel = None; y.unloaded = true; });
+            tab_mut(&x.id, |y| { y.panel = None; y.unloaded = true; y.sleeping = false; });
+            UNSEEN.with(|u| u.borrow_mut().remove(&x.id));
+            freed = true;
         }
     }
-    render();
+    if freed { render(); }
 }
 
 /// A tab is used (shown, or by a chat): awake.
@@ -723,7 +733,7 @@ pub fn tab_views() -> Vec<TabView> {
         let hp_bad = hp && !crate::hp_exit_up(&t.network);
         let title = if !t.title.is_empty() { t.title.clone() } else if !t.url.is_empty() { t.url.clone() } else { "New tab".into() };
         let mut tip = format!("{}\n{}\nNetwork: {}", if t.title.is_empty() { &t.url } else { &t.title }, t.url, label(&t.network));
-        if t.unloaded { tip.push_str("\nUnloaded after an hour asleep: loads again when shown or used"); } else if t.sleeping { tip.push_str("\nAsleep: wakes, as it was, when shown or used"); }
+        if t.unloaded { tip.push_str("\nUnloaded while not shown: loads again when shown or used"); } else if t.sleeping { tip.push_str("\nAsleep: wakes, as it was, when shown or used"); }
         TabView {
             id: t.id.clone(), title, tip,
             badge: if t.network == "server" { "SRV" } else if hp { "HP" } else { "" },
@@ -787,8 +797,8 @@ pub fn note_at() -> Option<(f32, f32)> {
 
 pub fn init() {
     load();
-    fn tick() { sleep_tick(); later(Duration::from_secs(60), tick); }
-    later(Duration::from_secs(60), tick);
+    fn tick() { unload_tick(); later(Duration::from_secs(1), tick); }
+    later(Duration::from_secs(1), tick);
     render();
 }
 
@@ -806,6 +816,9 @@ pub fn props() -> Value {
             "id": t.id, "url": t.url, "title": t.title, "network": t.network, "panel": t.panel,
             "device": t.device, "custom": t.custom.map(|(w, h)| json!([w, h])), "sleeping": t.sleeping, "unloaded": t.unloaded,
             "crashed": t.panel.is_some_and(browser::crashed),
+            // Frames its page has sent, and whether the host has it hidden (no frames).
+            "frames": t.panel.map(|i| browser::with(|st| st.panels.get(i).map(|p| p.frames).unwrap_or(0))).unwrap_or(0),
+            "paused": t.panel.is_some_and(browser::is_hidden),
         })).collect::<Vec<_>>()).unwrap_or_default(),
         "projects": d.projects.iter().map(|(k, p)| (k.clone(), json!(p.tabs.len()))).collect::<serde_json::Map<_, _>>(),
     }))

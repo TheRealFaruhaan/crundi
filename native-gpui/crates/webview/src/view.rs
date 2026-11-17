@@ -32,6 +32,10 @@ impl PageView {
     /// Show another panel (or none).
     pub fn set_panel(&mut self, panel: Option<usize>, cx: &mut Context<Self>) {
         if self.panel == panel { return; }
+        // The panel no longer shown is hidden in the host (no frames), the
+        // new one shown.
+        if let Some(old) = self.panel { engine::set_shown(old, false); }
+        if let Some(new) = panel { engine::set_shown(new, true); }
         self.panel = panel;
         self.shown = None;
         if let Some(i) = panel { if self.stage.0 > 0. { engine::resized(i, self.stage.0, self.stage.1); } }
@@ -46,11 +50,15 @@ impl PageView {
             if let Some(old) = self.image.take() { let _ = window.drop_image(old); cx.notify(); }
             return;
         };
-        let (n, frame) = engine::with(|st| st.panels.get(i).map(|p| (p.frames, p.frame.clone())).unwrap_or((0, None)));
+        // The panel's slot made again under this view (closed and reused:
+        // a network switch): it is shown, as it is drawn here.
+        if !engine::is_shown(i) { engine::set_shown(i, true); }
+        let (n, img) = engine::with(|st| st.panels.get(i).map(|p| (p.frames, p.frame.clone())).unwrap_or((0, None)));
         if self.shown == Some((i, n)) { return; }
         self.shown = Some((i, n));
-        let img = frame.and_then(|f| image::RgbaImage::from_raw(f.1, f.2, f.0.clone())).map(|b| Arc::new(RenderImage::new([image::Frame::new(b)])));
-        if let Some(old) = std::mem::replace(&mut self.image, img) { let _ = window.drop_image(old); }
+        // The panel's image itself (made from the segment by the link's
+        // reader): the one before it leaves GPUI's atlas.
+        if let Some(old) = std::mem::replace(&mut self.image, img) { if self.image.as_ref().is_none_or(|n| n.id != old.id) { let _ = window.drop_image(old); } }
         cx.notify();
     }
 

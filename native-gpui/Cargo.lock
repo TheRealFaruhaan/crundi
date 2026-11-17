@@ -1705,6 +1705,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "crundi-browser-host"
+version = "0.1.0"
+dependencies = [
+ "cef",
+ "crundi-browser-link",
+ "libc",
+ "objc2 0.6.5",
+ "serde_json",
+]
+
+[[package]]
+name = "crundi-browser-link"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "windows 0.62.2",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "crundi-chat-composer"
 version = "0.1.0"
 dependencies = [
@@ -1894,7 +1916,7 @@ name = "crundi-webview"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "cef",
+ "crundi-browser-link",
  "crundi-theme",
  "crundi-widgets",
  "gpui-component",
@@ -1902,11 +1924,9 @@ dependencies = [
  "gpui-pre",
  "image",
  "libc",
- "objc2 0.6.5",
  "png 0.17.16",
  "serde",
  "serde_json",
- "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -1,5 +1,5 @@
-//! The browser host: the app's own binary started with `--browser-host`
-//! (proc.rs). It runs CEF and every web view, and nothing else: no window,
+//! The browser host's loop: `crundi-browser-host --browser-host`, started by
+//! the app (browser-link's proc.rs). It runs CEF and every web view, and nothing else: no window,
 //! no GPUI. The app talks to it over its link (ipc.rs); frames go through
 //! shared memory (shm.rs).
 //!
@@ -10,8 +10,7 @@
 //! helpers follow it). On Linux it also dies with the app (PDEATHSIG); on
 //! macOS a watchdog leaves when the app is gone (proc.rs `guard_parent`).
 
-mod views;
-
+use crate::views;
 use crate::ipc::{self, Cmd, Ev, Fd};
 use std::{collections::VecDeque, sync::{mpsc, Mutex, OnceLock}, time::{Duration, Instant}};
 
@@ -58,7 +57,7 @@ pub fn run() -> ! {
         std::process::exit(0);
     });
     match crx.recv_timeout(Duration::from_secs(30)) {
-        Ok(Cmd::Hello) => {}
+        Ok(Cmd::Hello { textures }) => views::set_textures(textures),
         _ => std::process::exit(0),
     }
     if let Err(why) = start_cef() {
@@ -67,7 +66,11 @@ pub fn run() -> ! {
         std::process::exit(1);
     }
     emit(&Ev::Ready { pid: std::process::id() });
+    let mode = crate::gpu::mode();
+    if crate::gpu::asked() != mode { eprintln!("[browser host] CRUNDI_BROWSER_GPU={}: not on this OS, the CPU path instead", crate::gpu::name(crate::gpu::asked())); }
+    let mut stats_at = Instant::now();
     loop {
+        if stats_at.elapsed() >= Duration::from_secs(2) { stats_at = Instant::now(); views::send_stats(); }
         match crx.recv_timeout(Duration::from_millis(4)) {
             Ok(c) => {
                 if !views::handle(c) { quit(); }
@@ -111,10 +114,28 @@ fn start_cef() -> Result<(), String> {
         log_severity: cef::LogSeverity::WARNING,
         ..Default::default()
     };
+    // macOS: the host is not the bundle's main executable, so CEF is told
+    // where its helper is (the bundle's "<app> Helper.app", a copy of this
+    // executable: stage-cef.mjs STAGE_HOST); it finds the GPU, Renderer…
+    // variants beside it.
+    #[cfg(target_os = "macos")]
+    if let Some(helper) = mac_helper(&exe_dir) { settings.browser_subprocess_path = cef::CefString::from(helper.to_string_lossy().as_ref()); }
     // On macOS the framework finds its own resources; elsewhere they sit next to the binary.
     if !cfg!(target_os = "macos") {
         settings.resources_dir_path = cef::CefString::from(exe_dir.to_string_lossy().as_ref());
         settings.locales_dir_path = cef::CefString::from(exe_dir.join("locales").to_string_lossy().as_ref());
     }
     if cef::initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) == 1 { Ok(()) } else { Err("CEF did not start".into()) }
+}
+
+/// The bundle's base helper executable: Contents/Frameworks/<name> Helper.app/Contents/MacOS/<name> Helper.
+#[cfg(target_os = "macos")]
+fn mac_helper(exe_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let fw = exe_dir.parent()?.join("Frameworks");
+    std::fs::read_dir(&fw).ok()?.flatten().find_map(|e| {
+        let n = e.file_name().to_string_lossy().to_string();
+        let stem = n.strip_suffix(" Helper.app")?.to_string();
+        let exe = e.path().join("Contents").join("MacOS").join(format!("{stem} Helper"));
+        exe.exists().then_some(exe)
+    })
 }
