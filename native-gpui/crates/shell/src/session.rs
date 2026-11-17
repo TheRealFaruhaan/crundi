@@ -330,8 +330,14 @@ pub fn select_project(cx: &mut App, alias: &str) {
     with(cx, |s| s.project = alias.to_string());
     store::update(|s| s.project = alias.to_string());
     let a = alias.to_string();
-    registry::each(cx, move |ar, cx| if let Some(f) = &ar.on_project { f(&a, cx) });
-    cx.refresh_windows();
+    // The areas hear it once the current update is over: this is called from
+    // the Shell's own click handlers (the sidebar), and an area that reads the
+    // Shell while it is being updated panics ("cannot read Shell while it is
+    // already being updated", the owner's crash on switching project).
+    cx.defer(move |cx| {
+        registry::each(cx, move |ar, cx| if let Some(f) = &ar.on_project { f(&a, cx) });
+        cx.refresh_windows();
+    });
 }
 
 /// The open project's name ("" for none).

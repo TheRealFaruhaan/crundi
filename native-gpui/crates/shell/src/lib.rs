@@ -24,6 +24,11 @@ pub struct Shell {
     pub drawer_open: bool,
     pub drawer_w: Pixels,
     dragging: bool,
+    /// Where the left button went down on a window bar: the window moves
+    /// only once the mouse moves from there, so a click on a bar's button
+    /// (minimise, maximise, close) is a click the first time (on X11 the
+    /// move takes the pointer until release, eating the click).
+    bar_press: Option<Point<Pixels>>,
     /// The project tab bar's sideways scroll (its overflow cue reads it).
     tab_scroll: ScrollHandle,
     /// Ctrl+Space is held (Cru's push to talk).
@@ -80,7 +85,7 @@ impl Shell {
             let to = window.focus_lost_restore_target(cx).unwrap_or_else(|| this.root_focus.clone());
             window.focus(&to, cx);
         });
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, bar_press: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -155,6 +160,18 @@ impl Shell {
             }))
     }
 
+    /// A window bar dragged: the window moves once the mouse has gone a few
+    /// pixels with the left button held (see `bar_press`).
+    fn bar_drag(&mut self, e: &MouseMoveEvent, window: &mut Window, _: &mut Context<Self>) {
+        let Some(from) = self.bar_press else { return };
+        if e.pressed_button != Some(MouseButton::Left) { self.bar_press = None; return; }
+        let d = e.position - from;
+        if f32::from(d.x).abs() + f32::from(d.y).abs() >= 4. {
+            self.bar_press = None;
+            window.start_window_move();
+        }
+    }
+
     fn top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let s = session::get(cx);
         let (name, online, server) = (session::project_name(cx), s.online, s.server.clone());
@@ -201,7 +218,9 @@ impl Shell {
         div()
             .id("topbar").relative().flex().flex_none().h(T::TOPBAR_H)
             .bg(T::bg_secondary()).border_b_1().border_color(T::border())
-            .on_mouse_down(MouseButton::Left, |e, window, _| if e.click_count == 1 { window.start_window_move(); })
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, _| this.bar_press = (e.click_count == 1).then_some(e.position)))
+            .on_mouse_move(cx.listener(Self::bar_drag))
+            .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.bar_press = None))
             .on_click(|e, window, _| if e.click_count() == 2 { window.zoom_window(); })
             .child(rows)
             .child(div().relative().flex().flex_1().items_center().gap(T::SP_12).pl(T::SP_16).pr(T::SP_4)
@@ -349,7 +368,9 @@ impl Shell {
         let _ = window;
         div().flex().flex_col().size_full().bg(T::bg())
             .child(div().id("signin-bar").flex().flex_none().items_center().h(T::TOPBAR_H).px(T::SP_4).justify_end()
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+                .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, _| this.bar_press = Some(e.position)))
+                .on_mouse_move(cx.listener(Self::bar_drag))
+                .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.bar_press = None))
                 .child(w::icon_button("win-min", IconName::Minus, "Minimize").on_click(|_, window, _| window.minimize_window()))
                 .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit())))
             .child(div().flex().flex_1().items_center().justify_center()
