@@ -6,6 +6,7 @@ import { MANAGER_ID } from '../../../src/factory-model.js';
 import { toFlow } from './convert.js';
 import { nodeTypes, edgeTypes } from './nodes.jsx';
 import { Icon } from './icons.jsx';
+import { Toggle } from './fields.jsx';
 
 const NO_ISSUES = { ok: true, errors: [], warnings: [] };
 const POLL_MS = 4000;
@@ -85,7 +86,7 @@ function LimitsEditor({ limits, busy, onSave }) {
   const [open, setOpen] = useState(false);
   useEffect(() => { if (!open) setL(limits); }, [limits, open]);
   const num = (k, lo, hi) => <input className="ff-input" type="number" min={lo} max={hi} value={l[k]} onChange={e => setL({ ...l, [k]: Number(e.target.value) })} />;
-  const sum = `Pause at ${limits.pauseAt5h}% / ${limits.pauseAtWeek}% · ${limits.maxParallel ? 'at most ' + limits.maxParallel + ' at once' : 'no limit on people'}${limits.oneAtATimeAbove ? ' · one at a time above ' + limits.oneAtATimeAbove + '%' : ''}`;
+  const sum = `Pause at ${limits.pauseAt5h}% / ${limits.pauseAtWeek}% · ${limits.maxParallel ? 'at most ' + limits.maxParallel + ' at once' : 'no limit on people'}${limits.oneAtATimeAbove ? ' · one at a time above ' + limits.oneAtATimeAbove + '%' : ''}${limits.paceOnly ? ' · only when ahead of pace, always at ' + (limits.paceCeiling ?? 100) + '%' + (limits.paceResumeBehind ? ', resumes ' + limits.paceResumeBehind + ' behind' : '') : ''}`;
   return (
     <details className="ff-more" open={open} onToggle={e => setOpen(e.currentTarget.open)}>
       <summary>Usage limits: {sum}</summary>
@@ -95,6 +96,8 @@ function LimitsEditor({ limits, busy, onSave }) {
         <label className="ff-field"><span className="ff-field-label">People at once (0: any)</span>{num('maxParallel', 0, 20)}</label>
         <label className="ff-field"><span className="ff-field-label">One at a time above %</span>{num('oneAtATimeAbove', 0, 100)}</label>
       </div>
+      <Toggle checked={l.paceOnly} label="Pause only when ahead of pace" onChange={v => setL({ ...l, paceOnly: v })} />
+      {l.paceOnly ? <div className="ff-grid2"><label className="ff-field"><span className="ff-field-label">Always pause at %</span><input className="ff-input" type="number" min={50} max={100} value={l.paceCeiling ?? 100} onChange={e => setL({ ...l, paceCeiling: Number(e.target.value) })} /></label><label className="ff-field"><span className="ff-field-label">Resume when behind pace by (0: at reset)</span>{num('paceResumeBehind', 0, 50)}</label></div> : null}
       <div className="ff-btnrow"><button className="ff-btn primary" disabled={!!busy} onClick={() => { onSave(l); setOpen(false); }}>Apply to this run</button></div>
     </details>
   );

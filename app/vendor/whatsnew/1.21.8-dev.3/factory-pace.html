@@ -1,0 +1,25 @@
+<div class="wna a-fp">
+  <div class="card">
+    <div class="row"><span class="lbl">Used</span><div class="bar"><div class="line"></div><div class="use"></div></div></div>
+    <div class="row"><span class="lbl">Time</span><div class="bar"><div class="time"></div></div></div>
+    <div class="state"><span class="go">Keeps going: behind pace</span><span class="stop">Paused: ahead of pace</span></div>
+  </div>
+  <style>
+    .a-fp{position:absolute;inset:0;font-family:system-ui,sans-serif;font-size:14px;color:var(--text-primary)}
+    .a-fp .card{position:absolute;left:61px;top:128px;width:460px;padding:26px 28px;border-radius:12px;background:var(--bg-card);border:1px solid var(--border)}
+    .a-fp .row{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+    .a-fp .lbl{width:44px;color:var(--text-secondary)}
+    .a-fp .bar{position:relative;flex:1;height:14px;border-radius:7px;background:var(--bg-secondary);overflow:hidden}
+    .a-fp .line{position:absolute;left:80%;top:-2px;bottom:-2px;width:2px;background:var(--yellow);z-index:2}
+    .a-fp .use{height:100%;width:40%;background:var(--accent);animation:afpU 10s ease-in-out infinite}
+    .a-fp .time{height:100%;width:50%;background:var(--text-muted);animation:afpT 10s ease-in-out infinite}
+    .a-fp .state{position:relative;height:22px;margin-top:6px}
+    .a-fp .state span{position:absolute;left:0;top:0;padding:2px 10px;border-radius:999px;opacity:0}
+    .a-fp .go{background:var(--accent-dim);color:var(--green);animation:afpG 10s infinite}
+    .a-fp .stop{background:var(--yellow-dim);color:var(--yellow);animation:afpS 10s infinite}
+    @keyframes afpU{0%{width:40%}30%{width:84%}45%{width:84%}50%{width:10%}70%{width:84%}100%{width:84%}}
+    @keyframes afpT{0%{width:60%}30%{width:92%}45%{width:94%}50%{width:5%}70%{width:40%}100%{width:40%}}
+    @keyframes afpG{0%,24%{opacity:0}30%,45%{opacity:1}50%,100%{opacity:0}}
+    @keyframes afpS{0%,64%{opacity:0}70%,96%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

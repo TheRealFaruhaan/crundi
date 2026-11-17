@@ -47,7 +47,7 @@ import { randomBytes, timingSafeEqual } from 'crypto';
 import { fileURLToPath } from 'url';
 import * as Engine from './factory-engine.js';
 import * as Git from './factory-git.js';
-import { validateFactory, normalizeFactory, normalizeLimits, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
+import { validateFactory, normalizeFactory, normalizeLimits, usageOver, usageResumable, windowTimePct, MANAGER_ID, flowGraph, reachable } from './factory-model.js';
 import { reduce, replay, asksOf, timeLeft, isHeld, UNFINISHED as UNFINISHED_SET, JOURNAL_VERSION } from './factory-journal.js';
 import { systemPromptFor, stepMessage, nudgeMessage, cancelMessage, recoveryOverview } from './factory-prompts.js';
 import { hardDeny, ruleMatches, checkRule, batchMessage, denyMessage, DENY_RULES, ALLOW_RULES, GATEKEEPER_ID, gatekeeperPrompt, startRules, scopedRules, rulesFor } from './factory-permissions.js';
@@ -1420,7 +1420,7 @@ export function createFactoryRunner({
     }
     if (!u || u.ok === false) return { windows: [], resetsAt: '' };
     const L = limitsOf(entry);
-    const full = [['fiveHour', u.fiveHour, L.pauseAt5h], ['week', u.week, L.pauseAtWeek]].filter(([, w, at]) => w && w.utilization >= at);
+    const full = [['fiveHour', u.fiveHour], ['week', u.week]].filter(([k, w]) => usageOver(w, k, L));
     if (!full.length) return { windows: [], resetsAt: u.fiveHour?.resetsAt || '' };
     return { windows: full.map(([k]) => k), resetsAt: full.map(([, w]) => w.resetsAt).filter(Boolean).sort().pop() || '' };
   }
@@ -1586,7 +1586,7 @@ export function createFactoryRunner({
       for (const e of relevant) {
         // Each run's own thresholds: the person may keep headroom for themselves.
         const L = limitsOf(e);
-        const full = [[u.fiveHour, L.pauseAt5h], [u.week, L.pauseAtWeek]].filter(([w, at]) => w && w.utilization >= at).map(([w]) => w);
+        const full = [['fiveHour', u.fiveHour], ['week', u.week]].filter(([k, w]) => usageOver(w, k, L)).map(([, w]) => w);
         const resetsAt = full.map(w => w.resetsAt).filter(Boolean).sort().pop() || '';
         if (!full.length) await locked(e, () => releaseSeats(e));   // the one-at-a-time rule may have lifted
         // Paused to wait for the reset with no usage reading at the time (no
@@ -1605,12 +1605,17 @@ export function createFactoryRunner({
         if (full.length && !rr(e).paused && ['running', 'waiting'].includes(st(e).status)) {
           await pause(st(e).id, { by: 'usage', resetsAt });
         } else if (!full.length && waitsForReset(e)) {
-          // Past the reset recorded when it paused, and nothing over the line.
+          // Past the reset recorded when it paused, and nothing over the line;
+          // or, paused by the limit with a resume condition, far enough behind
+          // pace (usageResumable) to carry on before the reset.
           const at = Date.parse(rr(e).paused.resetsAt || '');
-          if (Number.isFinite(at) && Date.now() < at) continue;
           const byUsage = rr(e).paused.by === 'usage';
-          const res = await resume(st(e).id);
-          if (res.ok) notify('resumed', summary(e), `Factory "${st(e).snapshot.name}" carries on: the usage ${byUsage ? 'limit' : 'window'} has reset.`);
+          const early = Number.isFinite(at) && Date.now() < at;
+          if (early && !(byUsage && usageResumable(u, L))) continue;
+          const res = early
+            ? await resume(st(e).id, { reason: `usage is back ${L.paceResumeBehind} points behind pace, the condition the person set for carrying on before the reset` })
+            : await resume(st(e).id);
+          if (res.ok) notify('resumed', summary(e), early ? `Factory "${st(e).snapshot.name}" carries on: usage is ${L.paceResumeBehind} points behind pace.` : `Factory "${st(e).snapshot.name}" carries on: the usage ${byUsage ? 'limit' : 'window'} has reset.`);
         }
       }
     };
@@ -2152,7 +2157,8 @@ export function createFactoryRunner({
     const Tk = tickOf(entry);
     lines.push(`Your ticker: every ${Tk.minutes} min${Tk.fixed ? ' (set by the person)' : Tk.chosen ? '' : ' (default; set it with factory_tick)'}, only when you are idle.`);
     const Lm = limitsOf(entry);
-    lines.push(`Usage limits the person set: pause at ${Lm.pauseAt5h}% of the 5-hour window and ${Lm.pauseAtWeek}% of the week${usageNow?.fiveHour ? ` (now ${Math.round(usageNow.fiveHour.utilization)}% and ${Math.round(usageNow.week?.utilization || 0)}%)` : ''}; ${Lm.maxParallel ? `at most ${Lm.maxParallel} at once` : 'no limit on people at once'}${Lm.oneAtATimeAbove ? `, one at a time above ${Lm.oneAtATimeAbove}%` : ''}.${entry.live.seats.length ? ` Waiting for a seat: ${entry.live.seats.length}.` : ''}`);
+    const pace = (w, k) => { const t = windowTimePct(w, k); return t === null ? '' : ` with ${Math.round(t)}% of its time passed`; };
+    lines.push(`Usage limits the person set: pause at ${Lm.pauseAt5h}% of the 5-hour window and ${Lm.pauseAtWeek}% of the week${Lm.paceOnly ? ` only when ahead of pace (used % above the % of the window's time passed), and always at ${Lm.paceCeiling}%${Lm.paceResumeBehind ? `; paused for that, it carries on once ${Lm.paceResumeBehind} points behind pace` : ''}` : ''}${usageNow?.fiveHour ? ` (now ${Math.round(usageNow.fiveHour.utilization)}%${Lm.paceOnly ? pace(usageNow.fiveHour, 'fiveHour') : ''} and ${Math.round(usageNow.week?.utilization || 0)}%${Lm.paceOnly ? pace(usageNow.week, 'week') : ''})` : ''}; ${Lm.maxParallel ? `at most ${Lm.maxParallel} at once` : 'no limit on people at once'}${Lm.oneAtATimeAbove ? `, one at a time above ${Lm.oneAtATimeAbove}%` : ''}.${entry.live.seats.length ? ` Waiting for a seat: ${entry.live.seats.length}.` : ''}`);
     return { ok: true, content: [{ type: 'text', text: lines.join('\n') }] };
   }
 

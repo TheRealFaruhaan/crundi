@@ -269,6 +269,14 @@ export function FactorySettings({ f, mutate, skills, secretList = null }) {
         <Field label="5-hour, pause at %"><Num value={s.limits.pauseAt5h} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, pauseAt5h: v || 100 }; }, 'lim1')} /></Field>
         <Field label="Weekly, pause at %"><Num value={s.limits.pauseAtWeek} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, pauseAtWeek: v || 100 }; }, 'lim2')} /></Field>
       </div>
+      <Toggle checked={!!s.limits.paceOnly} label="Pause only when ahead of pace" onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, paceOnly: v }; }, 'lim5')} />
+      {s.limits.paceOnly ? (
+        <div className="ff-grid2">
+          <Field label="Always pause at %" hint="The hard ceiling, whatever the pace"><Num value={s.limits.paceCeiling ?? 100} min={50} max={100} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, paceCeiling: v || 100 }; }, 'lim6')} /></Field>
+          <Field label="Resume when behind pace by" hint="Points. 0: wait for the reset"><Num value={s.limits.paceResumeBehind || 0} min={0} max={50} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, paceResumeBehind: v || 0 }; }, 'lim7')} /></Field>
+        </div>
+      ) : null}
+      {s.limits.paceOnly ? <p className="ff-hint">Past the line above, it keeps going while the window's use is behind the time passed in it (say 85% used with 90% of the 5 hours gone), and pauses once it gets ahead. Paused that way, it carries on at the reset, or sooner once it is as many points behind pace as you set.</p> : null}
       <p className="ff-hint">{s.limits.pauseAt5h < 100 || s.limits.pauseAtWeek < 100 ? 'It pauses there and carries on by itself after the window resets, leaving the rest for you.' : 'At 100% it pauses only when a window is full, and carries on by itself after the reset.'}</p>
       <div className="ff-grid2">
         <Field label="People at once" hint="0: no limit"><Num value={s.limits.maxParallel} min={0} max={20} onChange={v => set(d => { d.settings.limits = { ...d.settings.limits, maxParallel: v || 0 }; }, 'lim3')} /></Field>

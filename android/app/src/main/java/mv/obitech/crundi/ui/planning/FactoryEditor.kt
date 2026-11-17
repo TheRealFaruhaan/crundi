@@ -73,6 +73,7 @@ import mv.obitech.crundi.ui.components.TopBar
 import mv.obitech.crundi.ui.components.errorText
 import mv.obitech.crundi.ui.icons.CrundiIcon
 import mv.obitech.crundi.ui.nav.LocalNavigator
+import mv.obitech.crundi.ui.operations.CheckRow
 import mv.obitech.crundi.ui.shell.LocalAppServices
 import mv.obitech.crundi.ui.theme.CrundiColors
 import mv.obitech.crundi.ui.theme.CrundiType
@@ -159,6 +160,8 @@ class FactoryEditorState(
 
     /** Fields of the settings an older server does not have are hidden. */
     fun has(setting: String): Boolean = (raw?.get("settings") as? JsonObject)?.containsKey(setting) ?: true
+    /** A usage limit an older server does not have (it drops it): hidden. */
+    fun hasLimit(key: String): Boolean = (((raw?.get("settings") as? JsonObject)?.get("limits")) as? JsonObject)?.containsKey(key) ?: true
     /** Per-person presets (newer servers). */
     val hasMemberPresets: Boolean get() = (raw?.get("roster") as? kotlinx.serialization.json.JsonArray)?.firstOrNull()?.let { (it as? JsonObject)?.containsKey("presets") } ?: true
 
@@ -769,6 +772,14 @@ private fun ColumnScope.SettingsPanel(st: FactoryEditorState) {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Field("5-hour, pause at %", modifier = Modifier.weight(1f)) { NumField("lim1", l.pauseAt5h, 50, 100) { v -> set("lim1") { it.copy(limits = it.limits.copy(pauseAt5h = if (v == 0) 100 else v)) } } }
             Field("Weekly, pause at %", modifier = Modifier.weight(1f)) { NumField("lim2", l.pauseAtWeek, 50, 100) { v -> set("lim2") { it.copy(limits = it.limits.copy(pauseAtWeek = if (v == 0) 100 else v)) } } }
+        }
+        if (st.hasLimit("paceOnly")) CheckRow("Pause only when ahead of pace", l.paceOnly) { v -> set("lim5") { it.copy(limits = it.limits.copy(paceOnly = v)) } }
+        if (l.paceOnly && st.hasLimit("paceOnly")) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Field("Always pause at %", "The hard ceiling, whatever the pace", modifier = Modifier.weight(1f)) { NumField("lim6", l.paceCeiling, 50, 100) { v -> set("lim6") { it.copy(limits = it.limits.copy(paceCeiling = if (v == 0) 100 else v)) } } }
+                Field("Resume when behind pace by", "Points. 0: wait for the reset", modifier = Modifier.weight(1f)) { NumField("lim7", l.paceResumeBehind, 0, 50) { v -> set("lim7") { it.copy(limits = it.limits.copy(paceResumeBehind = v)) } } }
+            }
+            Hint("Past the line above, it keeps going while the window's use is behind the time passed in it (say 85% used with 90% of the 5 hours gone), and pauses once it gets ahead. Paused that way, it carries on at the reset, or sooner once it is as many points behind pace as you set.")
         }
         Hint(if (l.pauseAt5h < 100 || l.pauseAtWeek < 100) "It pauses there and carries on by itself after the window resets, leaving the rest for you." else "At 100% it pauses only when a window is full, and carries on by itself after the reset.")
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

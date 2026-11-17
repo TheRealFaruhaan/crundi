@@ -1,0 +1,16 @@
+{
+  "steps": [
+    {
+      "id": "factory-pace-limit",
+      "tag": "Factories",
+      "title": "Pause only when ahead of pace",
+      "body": "A factory's usage limit can now look at the clock. Turn on \"Pause only when ahead of pace\" and a run that reaches your line keeps going while its use of the window is behind the time passed in it, and pauses once it gets ahead. It always pauses at the ceiling you set, 100% unless you choose lower. Paused that way, it carries on after the reset, or sooner once it is as many points behind pace as you choose.",
+      "keys": [
+        { "keys": ["Factory settings"], "text": "Usage: the switch, and the ceiling" },
+        { "keys": ["Running run"], "text": "Details: change it on that run only" }
+      ],
+      "art": "factory-pace.html",
+      "artTitle": "Factory usage"
+    }
+  ]
+}

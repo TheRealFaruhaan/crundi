@@ -324,6 +324,13 @@ function normalizeChoices(list) {
  *   pauseAt5h, pauseAtWeek  pause when the 5-hour / weekly window reaches this % (50-100)
  *   maxParallel             at most this many people working at once (0: no limit)
  *   oneAtATimeAbove         above this % of the 5-hour window, one at a time (0: off)
+ *   paceOnly                reaching pauseAt pauses only when ahead of pace: the
+ *                           window's used % above the % of its time passed (off:
+ *                           today's behaviour, pause as soon as it is reached)
+ *   paceCeiling             with paceOnly, always pause at this % (50-100, default 100)
+ *   paceResumeBehind        with paceOnly, a run paused for being ahead resumes before
+ *                           the reset once every window is this many points behind
+ *                           pace (1-50); 0 (default): it waits for the reset
  */
 export function normalizeLimits(l) {
   const x = l && typeof l === 'object' ? l : {};
@@ -334,7 +341,62 @@ export function normalizeLimits(l) {
     pauseAtWeek: pct(x.pauseAtWeek, 50, 100),
     maxParallel: Number.isFinite(n) && n > 0 ? Math.min(20, n) : 0,
     oneAtATimeAbove: pct(x.oneAtATimeAbove, 10, 0),
+    paceOnly: x.paceOnly === true,
+    paceCeiling: pct(x.paceCeiling, 50, 100),
+    paceResumeBehind: (() => { const r = Math.round(Number(x.paceResumeBehind)); return Number.isFinite(r) && r > 0 ? Math.min(50, r) : 0; })(),
   };
+}
+
+/** How long each usage window is, in ms. */
+export const USAGE_WINDOW_MS = { fiveHour: 5 * 3600e3, week: 7 * 86400e3 };
+
+/**
+ * The % of a usage window's time that has passed, from when it resets
+ * (null when that is not known).
+ */
+export function windowTimePct(w, kind, now = Date.now()) {
+  const len = USAGE_WINDOW_MS[kind];
+  const at = Date.parse(w?.resetsAt || '');
+  if (!len || !Number.isFinite(at)) return null;
+  return Math.min(100, Math.max(0, (1 - (at - now) / len) * 100));
+}
+
+/**
+ * Whether a usage window is over a run's line. Without paceOnly: at or past
+ * the pause line. With it: past the line and ahead of pace (used % above the
+ * % of time passed), or at the ceiling whatever the pace; past the line with
+ * no reset time to judge pace by, it pauses as before.
+ */
+export function usageOver(w, kind, limits, now = Date.now()) {
+  if (!w || !Number.isFinite(Number(w.utilization))) return false;
+  const L = normalizeLimits(limits);
+  const at = kind === 'week' ? L.pauseAtWeek : L.pauseAt5h;
+  const used = Number(w.utilization);
+  if (used < at) return false;
+  if (!L.paceOnly) return true;
+  if (used >= Math.max(at, L.paceCeiling)) return true;
+  const t = windowTimePct(w, kind, now);
+  return t === null ? true : used > t;
+}
+
+/**
+ * May a run paused by the usage limit resume before the reset? Only with
+ * paceOnly and paceResumeBehind set, and only when every window is either
+ * under its line or, below the ceiling, at least paceResumeBehind points
+ * behind pace. The gap between pausing (ahead of pace) and resuming (that far
+ * behind) is what keeps it from pausing and resuming on every reading.
+ */
+export function usageResumable(u, limits, now = Date.now()) {
+  const L = normalizeLimits(limits);
+  if (!L.paceOnly || !L.paceResumeBehind || !u) return false;
+  return [['fiveHour', u.fiveHour, L.pauseAt5h], ['week', u.week, L.pauseAtWeek]].every(([kind, w, at]) => {
+    if (!w || !Number.isFinite(Number(w.utilization))) return true;
+    const used = Number(w.utilization);
+    if (used < at) return true;
+    if (used >= Math.max(at, L.paceCeiling)) return false;
+    const t = windowTimePct(w, kind, now);
+    return t !== null && used <= t - L.paceResumeBehind;
+  });
 }
 
 export function skeletonFactory(name = 'New factory') {

@@ -10,7 +10,8 @@
  * with a reason, and nobody else; a pause that stops the turns in progress
  * (mode 'now') and carries them on at resume; someone woken by a background
  * build while paused or held by the Manager told to hold, never nudged; a
- * pause that resumes by itself once the usage window resets (resumeOnReset).
+ * pause that resumes by itself once the usage window resets (resumeOnReset);
+ * pausing only when ahead of pace (paceOnly), always at its ceiling.
  *
  * Run: node scripts/test-factory-limits.mjs
  */
@@ -37,6 +38,37 @@ ok(d.pauseAt5h === 100 && d.pauseAtWeek === 100 && d.maxParallel === 0 && d.oneA
 const c = M.normalizeLimits({ pauseAt5h: 20, pauseAtWeek: 140, maxParallel: -3, oneAtATimeAbove: 5 });
 ok(c.pauseAt5h === 50 && c.pauseAtWeek === 100 && c.maxParallel === 0 && c.oneAtATimeAbove === 10, 'cleaned: thresholds kept between 50 and 100, nonsense dropped');
 ok(M.normalizeFactory(standard()).settings.limits.pauseAt5h === 100, 'model: every factory has limits');
+ok(d.paceOnly === false && d.paceCeiling === 100 && d.paceResumeBehind === 0, 'pacing defaults: off, ceiling 100%, resume at the reset');
+ok(M.normalizeLimits({ paceResumeBehind: 80 }).paceResumeBehind === 50 && M.normalizeLimits({ paceResumeBehind: -2 }).paceResumeBehind === 0, 'resume condition cleaned: 0 to 50 points');
+const pc = M.normalizeLimits({ paceOnly: 'yes', paceCeiling: 20 });
+ok(pc.paceOnly === false && pc.paceCeiling === 50, 'pacing cleaned: only true turns it on; the ceiling kept between 50 and 100');
+
+// ─── Pace, worked out ───
+{
+  const now = Date.parse('2026-11-18T12:00:00Z');
+  const inMs = (ms) => new Date(now + ms).toISOString();
+  const L = { pauseAt5h: 80, pauseAtWeek: 80, paceOnly: true };
+  ok(Math.round(M.windowTimePct({ resetsAt: inMs(3600e3) }, 'fiveHour', now)) === 80, 'time passed: one hour left of five is 80%');
+  ok(Math.round(M.windowTimePct({ resetsAt: inMs(3.5 * 86400e3) }, 'week', now)) === 50, 'time passed: half the week');
+  ok(M.windowTimePct({}, 'fiveHour', now) === null, 'time passed: unknown without a reset time');
+  ok(M.usageOver({ utilization: 85, resetsAt: inMs(3 * 3600e3) }, 'fiveHour', { pauseAt5h: 80 }, now), 'pacing off: at the line it is over, as today');
+  ok(!M.usageOver({ utilization: 85, resetsAt: inMs(0.5 * 3600e3) }, 'fiveHour', L, now), 'pacing: 85% used with 90% of the time gone is under pace');
+  ok(M.usageOver({ utilization: 85, resetsAt: inMs(3 * 3600e3) }, 'fiveHour', L, now), 'pacing: 85% used with 40% of the time gone is ahead');
+  ok(!M.usageOver({ utilization: 70, resetsAt: inMs(4 * 3600e3) }, 'fiveHour', L, now), 'pacing: under the line it is never over');
+  ok(M.usageOver({ utilization: 100, resetsAt: inMs(60e3) }, 'fiveHour', L, now), 'pacing: the 100% ceiling always pauses');
+  ok(M.usageOver({ utilization: 92, resetsAt: inMs(60e3) }, 'fiveHour', { ...L, paceCeiling: 90 }, now), 'pacing: a ceiling the person set always pauses');
+  ok(M.usageOver({ utilization: 85 }, 'fiveHour', L, now), 'pacing: no reset time to judge by, it pauses as before');
+  const R = { ...L, paceResumeBehind: 5 };
+  const u = (five, week) => ({ fiveHour: five, week });
+  ok(!M.usageResumable(u({ utilization: 85, resetsAt: inMs(0.1 * 3600e3) }), L, now), 'resume condition off: never before the reset');
+  ok(!M.usageResumable(u({ utilization: 85, resetsAt: inMs(0.7 * 3600e3) }), R, now), 'resume condition: 3 points behind is not enough for 5');
+  ok(M.usageResumable(u({ utilization: 85, resetsAt: inMs(0.4 * 3600e3) }), R, now), 'resume condition: 7 points behind carries on');
+  ok(!M.usageResumable(u({ utilization: 100, resetsAt: inMs(60e3) }), R, now), 'resume condition: never at the ceiling');
+  ok(!M.usageResumable(u({ utilization: 85, resetsAt: inMs(0.4 * 3600e3) }, { utilization: 90, resetsAt: inMs(5 * 86400e3) }), R, now), 'resume condition: every window, the week ahead holds it');
+  ok(M.usageResumable(u({ utilization: 60, resetsAt: inMs(4 * 3600e3) }, { utilization: 10 }), R, now), 'resume condition: under the line counts as fine');
+  ok(!M.usageResumable(u({ utilization: 85 }), R, now), 'resume condition: no reset time, no early resume');
+  ok(!M.usageOver({ utilization: 85, resetsAt: inMs(0.5 * 86400e3) }, 'week', L, now) && M.usageOver({ utilization: 85, resetsAt: inMs(5 * 86400e3) }, 'week', L, now), 'pacing: the weekly window by its own seven days');
+}
 
 function repo(name) {
   const dir = join(base, 'projects', name); mkdirSync(dir, { recursive: true });
@@ -101,6 +133,74 @@ function setup(name, limits, usage = { value: null }, extra = {}) {
   await w.tick();
   await until(() => !r.getRun(st.run.id).paused && r.getRun(st.run.id).waitingForSeat.length === 0);
   ok(!r.getRun(st.run.id).paused && r.getRun(st.run.id).waitingForSeat.length === 0, 'after the reset: it resumes, and the waiting developer starts');
+  w.stop(); await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── Pause only when ahead of pace ───
+{
+  const at = (ms) => new Date(Date.now() + ms).toISOString();
+  const usage = { fiveHour: { utilization: 85, resetsAt: at(0.5 * 3600e3) }, week: { utilization: 10, resetsAt: at(5 * 86400e3) } };
+  const { team, r } = setup('l3p', { pauseAt5h: 80, paceOnly: true, paceCeiling: 95 });
+  const w = r.watchUsage(async () => usage, { tickMs: 3600e3 });
+  const st = await r.startRun({ project: 'l3p', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0] || team.of('be')[0]);
+  await w.tick();
+  ok(!r.getRun(st.run.id).paused && ['running', 'waiting'].includes(r.getRun(st.run.id).status), 'pace: past the line but under pace (85% used, 90% of the time gone), the run keeps going');
+  usage.fiveHour = { utilization: 85, resetsAt: at(3 * 3600e3) };
+  await w.tick();
+  ok(r.getRun(st.run.id).paused?.by === 'usage' && r.getRun(st.run.id).paused.resetsAt === usage.fiveHour.resetsAt, 'pace: ahead of pace (85% used, 40% of the time gone), it pauses until the reset');
+  const sum = await r.statusFor(team.of('manager')[0].id);
+  ok(sum?.ok && /only when ahead of pace/.test(sum.content[0].text) && /always at 95%/.test(sum.content[0].text), 'pace: the Manager\'s status says so');
+  // No flapping: time moves on and the same use is now behind pace (85% used,
+  // 93% of the time gone). That does not resume it: a usage pause waits for
+  // the reset recorded when it paused, so it cannot pause, resume, get ahead
+  // and pause again within one window.
+  const recorded = r.getRun(st.run.id).paused.resetsAt;
+  for (const left of [0.5, 0.35, 0.2]) {
+    usage.fiveHour = { utilization: 85, resetsAt: at(left * 3600e3) };
+    await w.tick();
+  }
+  usage.week = { utilization: 85, resetsAt: at(0.3 * 86400e3) };   // the week behind pace too
+  await w.tick();
+  ok(r.getRun(st.run.id).paused?.by === 'usage' && r.getRun(st.run.id).paused.resetsAt === recorded, 'pace: no flapping, falling back under pace mid-window does not resume it before the reset');
+  usage.week = { utilization: 10, resetsAt: at(5 * 86400e3) };
+  await r.resume(st.run.id);
+  usage.fiveHour = { utilization: 96, resetsAt: at(400) };
+  await w.tick();
+  ok(r.getRun(st.run.id).paused?.by === 'usage', 'pace: at the ceiling (95%) it pauses even with the window nearly over');
+  usage.fiveHour = { utilization: 96, resetsAt: usage.fiveHour.resetsAt };
+  await w.tick();
+  ok(r.getRun(st.run.id).paused?.by === 'usage', 'pace: before the recorded reset it stays paused');
+  await sleep(500);
+  usage.fiveHour = { utilization: 4, resetsAt: at(5 * 3600e3) };
+  await w.tick();
+  await until(() => !r.getRun(st.run.id).paused);
+  ok(!r.getRun(st.run.id).paused, 'pace: after the reset it resumes by itself, as before');
+  const l = await r.controlFromManager(team.of('manager')[0].id, { action: 'limits', limits: { paceOnly: false } });
+  ok(l.ok && r.getRun(st.run.id).limits.paceOnly === false && r.getRun(st.run.id).limits.paceCeiling === 95, 'pace: the Manager turns it off on the run, the rest kept');
+  w.stop(); await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── Resume condition: so many points behind pace ───
+{
+  const at = (ms) => new Date(Date.now() + ms).toISOString();
+  const usage = { fiveHour: { utilization: 85, resetsAt: at(3 * 3600e3) }, week: { utilization: 10, resetsAt: at(5 * 86400e3) } };
+  const { team, r } = setup('l3q', { pauseAt5h: 80, paceOnly: true, paceResumeBehind: 5 });
+  const w = r.watchUsage(async () => usage, { tickMs: 3600e3 });
+  const st = await r.startRun({ project: 'l3q', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0] || team.of('be')[0]);
+  await w.tick();
+  ok(r.getRun(st.run.id).paused?.by === 'usage', 'resume condition: ahead of pace it pauses');
+  usage.fiveHour = { utilization: 85, resetsAt: at(0.8 * 3600e3) };   // 84% of the time gone: 1 point behind
+  await w.tick();
+  ok(r.getRun(st.run.id).paused?.by === 'usage', 'resume condition: just behind pace (1 point, 5 asked) it stays paused');
+  usage.fiveHour = { utilization: 85, resetsAt: at(0.4 * 3600e3) };   // 92% gone: 7 points behind
+  await w.tick();
+  await until(() => !r.getRun(st.run.id).paused);
+  ok(!r.getRun(st.run.id).paused && r.runEvents(st.run.id).events.some(e => e.type === 'resume'), 'resume condition: 7 points behind, it carries on before the reset');
+  usage.fiveHour = { utilization: 86, resetsAt: at(0.4 * 3600e3) };   // 92% gone, 86 used: still behind
+  await w.tick();
+  ok(!r.getRun(st.run.id).paused, 'resume condition: no flapping, a little more use while still behind pace keeps it going');
   w.stop(); await r.stopRun(st.run.id); r.dispose();
 }
 
