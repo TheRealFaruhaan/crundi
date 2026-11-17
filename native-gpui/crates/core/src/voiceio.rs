@@ -125,7 +125,7 @@ fn socket(url: String, rx: mpsc::Receiver<Ctl>, audio: mpsc::Receiver<(u32, Vec<
         if kept.len() > voice::BUFFER_FRAMES { kept.drain(..kept.len() - voice::BUFFER_FRAMES); }
         match rx_conn.recv_timeout(Duration::from_millis(20)) {
             Ok(Ok((ws, _))) => break ws,
-            Ok(Err(_)) => { if !stop.load(Ordering::Relaxed) { on(Ev::Closed); } return; }
+            Ok(Err(e)) => { eprintln!("[native] voice: cannot connect: {e}"); if !stop.load(Ordering::Relaxed) { on(Ev::Closed); } return; }
             Err(mpsc::RecvTimeoutError::Timeout) => continue,
             Err(_) => return,
         }
@@ -154,10 +154,10 @@ fn socket(url: String, rx: mpsc::Receiver<Ctl>, audio: mpsc::Receiver<(u32, Vec<
         for f in out.drain(..) { if !paused { let _ = ws.send(Message::binary(f)); } }
         match ws.read() {
             Ok(Message::Text(t)) => { let m = voice::parse(t.as_str()); if m != Msg::Other { on(Ev::Msg(m)); } }
-            Ok(Message::Close(_)) => { if !stop.load(Ordering::Relaxed) { on(Ev::Closed); } return; }
+            Ok(Message::Close(f)) => { eprintln!("[native] voice: the server closed the socket: {f:?}"); if !stop.load(Ordering::Relaxed) { on(Ev::Closed); } return; }
             Ok(_) => {}
             Err(tungstenite::Error::Io(e)) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
-            Err(_) => { if !stop.load(Ordering::Relaxed) { on(Ev::Closed); } return; }
+            Err(e) => { eprintln!("[native] voice: the socket failed: {e}"); if !stop.load(Ordering::Relaxed) { on(Ev::Closed); } return; }
         }
     }
 }

@@ -156,7 +156,13 @@ pub fn pump(window: &mut Window, cx: &mut App) {
 fn refresh(_window: &mut Window, cx: &mut App) {
     let s = crundi_shell::session::get(cx);
     let mut c = ctx::Ctx {
-        signed_in: s.api.is_some(), base: s.server.clone(), project: s.project.clone(),
+        signed_in: s.api.is_some(),
+        // The API's own base: normalised, with its scheme (https://…). The
+        // session's `server` is the address as entered or stored, which can
+        // be empty or a bare host; Cru's sockets built on it were not URLs
+        // ("HTTP format error: invalid format"), so Cru stayed offline.
+        base: s.api.as_ref().map(|a| a.base().to_string()).unwrap_or_else(|| s.server.clone()),
+        project: s.project.clone(),
         projects: s.projects.clone(), terminals: s.terminals.clone(), tab: crundi_shell::current_tab(cx), api: s.api.clone(), ..Default::default()
     };
     c.panes = crundi_workbench::workbench(cx).map(|wb| wb.update(cx, |wb, cx| wb.panes(cx))).unwrap_or_default()
