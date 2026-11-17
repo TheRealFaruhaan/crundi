@@ -912,7 +912,7 @@ fn start(cx: &mut App) {
     cx.spawn(async move |cx: &mut AsyncApp| {
         let mut k: u64 = 0;
         loop {
-            cx.background_executor().timer(Duration::from_millis(33)).await;
+            cx.background_executor().timer(Duration::from_millis(16)).await;
             k += 1;
             cx.update(|cx| { pump(cx); if k % 8 == 0 { tick(cx); } });
         }

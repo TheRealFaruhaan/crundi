@@ -239,7 +239,10 @@ fn clear_cookies(site: Option<&str>) {
 }
 
 /// A view's frame rate while shown (1 while hidden).
-const FPS: i32 = 30;
+// 60, as Electron's: an animating page ran at 30 (the owner, 18 Nov: embeds
+// laggy, low fps). Chromium paints only what changes, so a still page costs
+// nothing more; a hidden view drops to 1 (above).
+const FPS: i32 = 60;
 
 /// A frame from CEF (the CPU path): into the view's segment, then `Paint`;
 /// or, while the app has not taken the last one, noted and drawn again on
