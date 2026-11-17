@@ -30,6 +30,9 @@ pub struct Shell {
     /// (minimise, maximise, close) is a click the first time (on X11 the
     /// move takes the pointer until release, eating the click).
     bar_press: Option<Point<Pixels>>,
+    /// The sidebar folding or unfolding: its width eases (the web's 220 ms):
+    /// from, and since when.
+    fold_from: Option<(Pixels, std::time::Instant)>,
     /// The project tab bar's sideways scroll (its overflow cue reads it).
     tab_scroll: ScrollHandle,
     /// Ctrl+Space is held (Cru's push to talk).
@@ -86,7 +89,7 @@ impl Shell {
             let to = window.focus_lost_restore_target(cx).unwrap_or_else(|| this.root_focus.clone());
             window.focus(&to, cx);
         });
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, bar_press: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, bar_press: None, fold_from: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -244,7 +247,20 @@ impl Shell {
     /// The projects sidebar, as the Slint client's (its geometry is what the
     /// phase tests read): the header (PROJECTS and the fold button) the top
     /// bar's height; rows 32 high, 2 apart; folded, a rail of avatars 48 apart.
-    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The sidebar's width now, and whether it is still easing.
+    fn sidebar_width(&self, window: &mut Window) -> (Pixels, bool) {
+        let to = if self.sidebar { T::SIDEBAR_W } else { T::SIDEBAR_FOLDED };
+        let Some((from, at)) = self.fold_from else { return (to, false) };
+        let t = (at.elapsed().as_secs_f32() / T::LAYOUT_EASE.as_secs_f32()).min(1.0);
+        if t >= 1.0 { return (to, false); }
+        let e = 1.0 - (1.0 - t).powi(3);
+        let _ = window;
+        (from + (to - from) * e, true)
+    }
+
+    fn sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (width, easing) = self.sidebar_width(window);
+        if easing { window.request_animation_frame(); }
         let urls: Vec<String> = session::get(cx).projects.iter().map(|p| p.get("icon").and_then(|u| u.as_str()).unwrap_or("").to_string()).collect();
         let icons: Vec<_> = urls.iter().map(|u| project_icon::icon(cx, u)).collect();
         let s = session::get(cx);
@@ -265,7 +281,13 @@ impl Shell {
                 .on_click(cx.listener(move |_, _, _, cx| session::select_project(cx, &alias))));
         }
         let fold = w::icon_button("fold", if folded { IconName::ChevronsRight } else { IconName::ChevronsLeft }, if folded { "Show the projects" } else { "Fold the projects" })
-            .on_click(cx.listener(|this, _, _, cx| { this.sidebar = !this.sidebar; cx.notify(); }));
+            .on_click(cx.listener(|this, _, window, cx| {
+                // From the width drawn now (a fold mid-way eases on from there).
+                let from = this.sidebar_width(window).0;
+                this.sidebar = !this.sidebar;
+                this.fold_from = Some((from, std::time::Instant::now()));
+                cx.notify();
+            }));
         let head = div().flex().flex_none().items_center().h(T::TOPBAR_H).border_b_1().border_color(T::border_subtle());
         let head = if folded { head.justify_center().child(fold) } else {
             head.pl(T::SP_16).pr(T::SP_12)
@@ -273,7 +295,7 @@ impl Shell {
                 .child(fold)
         };
         div()
-            .flex().flex_col().flex_none().w(if folded { T::SIDEBAR_FOLDED } else { T::SIDEBAR_W }).h_full().bg(T::bg_secondary()).border_r_1().border_color(T::border())
+            .flex().flex_col().flex_none().w(width).overflow_hidden().h_full().bg(T::bg_secondary()).border_r_1().border_color(T::border())
             .child(head)
             .child(list)
             .child(div().flex().flex_col().gap(T::SP_8).py(T::SP_10).px(if folded { T::SP_6 } else { T::SP_8 }).border_t_1().border_color(T::border_subtle())
@@ -412,7 +434,7 @@ impl Render for Shell {
                 cx.notify();
             }));
         let dview = drawer.map(|dr| div().flex_none().w(self.drawer_w).h_full().min_h_0().child(dr.view));
-        let main = div().flex().flex_1().min_h_0().child(self.sidebar(cx));
+        let main = div().flex().flex_1().min_h_0().child(self.sidebar(window, cx));
         let main = match dview {
             Some(v) if left => main.child(v).child(split).child(project),
             Some(v) => main.child(project).child(split).child(v),

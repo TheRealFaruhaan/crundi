@@ -449,6 +449,8 @@ impl T {
     /// Crundi's mark (widgets::brand_mark): the head in the top bar (the web's 24),
     /// larger on the sign-in screen; the name 15/24 of the head's height, 8/24 apart.
     pub const BRAND_HEAD: Pixels = px(24.);
+    /// Layout movement (panes moving or resizing, the sidebar folding): the web's 220 ms.
+    pub const LAYOUT_EASE: std::time::Duration = std::time::Duration::from_millis(220);
     /// A project's icon in the sidebar row and the top bar (the web's 18).
     pub const PROJECT_ICON: Pixels = px(18.);
     /// A chat log's list builds this much beyond its view, above and below

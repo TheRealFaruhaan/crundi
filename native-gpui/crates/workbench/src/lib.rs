@@ -197,6 +197,12 @@ pub struct Workbench {
     pub(crate) sbar: Option<(f32, f32)>,
     /// Each leaf's focus handle (tracked by its container), to know which pane holds the keys.
     pub(crate) leaf_focus: HashMap<u32, FocusHandle>,
+    /// Panes ease to a new place and size (a split, a close, a move, the
+    /// window resized) as the web's .mosaic-easing: each leaf's rect as last
+    /// drawn, and its running tween (from, to, start). The owner, 18 Nov:
+    /// panels and their movement were not animated.
+    pub(crate) shown: HashMap<u32, [f32; 4]>,
+    pub(crate) tweens: HashMap<u32, ([f32; 4], [f32; 4], std::time::Instant)>,
 }
 
 pub struct WorkbenchHandle(pub Entity<Workbench>);
@@ -211,7 +217,7 @@ impl Workbench {
             font: saved.font.clone(), font_default: saved.font_default_chat.unwrap_or(rules::FONT_BASE),
             titles: HashMap::new(), pending: 0, protect: HashMap::new(), closed: HashSet::new(),
             hover: 0, press: None, drag: None, gutter: None, add_menu: false, layouts_open: false,
-            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), last_create: Value::Null, window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(),
+            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), last_create: Value::Null, window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(), shown: HashMap::new(), tweens: HashMap::new(),
         }
     }
 

@@ -100,13 +100,52 @@ impl Workbench {
     }
 }
 
+impl Workbench {
+    /// Each pane drawn where its tween is now (true: still moving). A new
+    /// target eases from where the pane is drawn now; a gutter being dragged,
+    /// or a pane just made, goes there at once.
+    fn ease(&mut self, infos: &mut [Info]) -> bool {
+        let now = std::time::Instant::now();
+        let dur = T::LAYOUT_EASE.as_secs_f32();
+        let dragging = self.gutter.is_some();
+        let mut moving = false;
+        let ids: std::collections::HashSet<u32> = infos.iter().map(|i| i.l.id).collect();
+        self.shown.retain(|k, _| ids.contains(k));
+        self.tweens.retain(|k, _| ids.contains(k));
+        for i in infos.iter_mut() {
+            let to = [i.l.x, i.l.y, i.l.w, i.l.h];
+            let at = |from: [f32; 4], to: [f32; 4], t: f32| { let e = 1.0 - (1.0 - t).powi(3); [0, 1, 2, 3].map(|k| from[k] + (to[k] - from[k]) * e) };
+            let cur = match (self.tweens.get(&i.l.id), self.shown.get(&i.l.id)) {
+                (Some((f, t, s)), _) => at(*f, *t, (now.duration_since(*s).as_secs_f32() / dur).min(1.0)),
+                (None, Some(r)) => *r,
+                (None, None) => to,
+            };
+            if dragging || cur == to { self.tweens.remove(&i.l.id); self.shown.insert(i.l.id, to); continue; }
+            let tween = match self.tweens.get(&i.l.id) {
+                Some((f, t, s)) if *t == to => (*f, *t, *s),
+                _ => (cur, to, now),
+            };
+            let t = (now.duration_since(tween.2).as_secs_f32() / dur).min(1.0);
+            let r = at(tween.0, tween.1, t);
+            if t >= 1.0 { self.tweens.remove(&i.l.id); self.shown.insert(i.l.id, to); continue; }
+            self.tweens.insert(i.l.id, tween);
+            self.shown.insert(i.l.id, r);
+            i.l.x = r[0]; i.l.y = r[1]; i.l.w = r[2]; i.l.h = r[3];
+            moving = true;
+        }
+        moving
+    }
+
+}
+
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.window.is_none() { self.window = Some(window.window_handle()); }
         let vs = window.viewport_size();
         self.win_size = (f32::from(vs.width), f32::from(vs.height));
         let me = cx.entity().downgrade();
-        let infos = self.infos(cx);
+        let mut infos = self.infos(cx);
+        if self.ease(&mut infos) { window.request_animation_frame(); }
         let (gw, gh) = self.grid_size();
         let gutters = self.mosaic().layout(gw, gh).1;
         let full = self.full.clone();
