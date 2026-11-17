@@ -365,10 +365,10 @@ An in-process fake worker on a loopback websocket:
    when the work needs to be on GitHub; a build or a command needs none.
 4. **Installs:** the owner asked what they are; answered in section 5.
 5. **Never collaborators.**
+6. **Order:** commands before whole chats, as planned.
 7. **A bare copy over the worker link** as well as GitHub (owner, 18 Nov),
    for a PC without git or a task that does not want it: `source: 'copy'`,
    sections 2-4.
-6. **Order:** commands before whole chats, as planned.
 
 ## Still open
 
