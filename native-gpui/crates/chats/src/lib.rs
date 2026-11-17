@@ -134,7 +134,19 @@ pub fn sync(cx: &mut App) {
         for id in &ids { let key = format!("live:{id}"); if w.mosaic().leaf_of(&key).is_none() { w.place(&key, cx); } }
     });
     for id in &ids { let _ = model::model(cx, id); }
+    // A chat that was parked and runs again (resumed here, from another
+    // device or the web) needs subscribing again: the server ignored the
+    // subscription made while it was parked.
+    let parked: std::collections::HashSet<String> = ids.iter().filter(|i| crundi_chat_log::parked::is_parked(cx, i)).cloned().collect();
+    let before = cx.try_global::<WasParked>().map(|w| w.0.clone()).unwrap_or_default();
+    for id in ids.iter().filter(|i| before.contains(*i) && !parked.contains(*i)) { crundi_shell::subscribe(cx, id); }
+    cx.set_global(WasParked(parked));
 }
+
+/// The chats that were parked at the last sync.
+#[derive(Default)]
+struct WasParked(std::collections::HashSet<String>);
+impl Global for WasParked {}
 
 /// The chat in the focused pane (else the first), for the driver's "send".
 pub fn focused_chat(cx: &mut App) -> String {

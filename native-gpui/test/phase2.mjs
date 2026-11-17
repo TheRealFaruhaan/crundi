@@ -2799,6 +2799,16 @@ await http('POST', `/api/ui-sessions/${liveSec}/close`, {}, token);
     let lSess2 = '';
     for (let i = 0; i < 20 && lSess && lSess2 !== lSess; i++) { lSess2 = (await serverChat(lightChat))?.sessionId || ''; if (lSess2 !== lSess) await sleep(500); }
     check('…on the same conversation', !lSess || lSess2 === lSess, { before: lSess, after: lSess2 });
+    // After Resume the chat must show what comes next (the owner's 18 Nov
+    // report: a resumed chat stayed "working" and showed only the old
+    // transcript, its live events never subscribed again).
+    await ui('focus-pane', lLeaf);
+    await ui('send', 'Reply with exactly: back from the park');
+    const shown = await until('…and a new message after Resume gets its reply shown', async () => {
+      const e = (await d.send({ cmd: 'state' })).state?.entries || [];
+      return e.some((x) => /assistant/.test(x.kind || '') && /back from the park/i.test(x.text || ''));
+    }, 90000);
+    check('…and a new message after Resume gets its reply shown', !!shown);
 
     // Resume on the card: the same id, live, in the same leaf.
     await ui('park-resume', 'live:' + heavyChat, 'compact');

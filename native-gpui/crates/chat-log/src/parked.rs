@@ -100,6 +100,7 @@ pub fn resume_chat(v: &mut LogView, mode: &str, then: Option<Box<dyn FnOnce(&mut
     v.st.parked.busy = mode.to_string();
     cx.notify();
     let id = v.chat(cx);
+    let id2 = id.clone();
     let path = format!("/api/panes/{id}/resume");
     let body = json!({ "mode": mode });
     let stub = crundi_core::driver::take_stub("park-resume");
@@ -117,7 +118,14 @@ pub fn resume_chat(v: &mut LogView, mode: &str, then: Option<Box<dyn FnOnce(&mut
         });
         match err {
             Some(e) => toast(cx, &e),
-            None => if let Some(f) = then { f(cx); },
+            None => {
+                // The chat runs again under the same id. The subscription made
+                // while it was parked was ignored by the server (no live session
+                // then), so ask again: its history and events come from here on.
+                // Without this a resumed chat stayed "working" and showed nothing new.
+                crundi_shell::subscribe(cx, &id2);
+                if let Some(f) = then { f(cx); }
+            }
         }
     });
 }
