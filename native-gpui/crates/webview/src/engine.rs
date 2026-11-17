@@ -1,20 +1,25 @@
-//! The pages: off-screen (windowless) CEF browsers, one per panel (a drawer
-//! tab's page or a hidden browser), with input, device emulation, CDP, the
-//! marks on a page, the console and the network log. Ported from the Slint
-//! client's src/browser.rs; what it told the Slint side now goes to the
-//! desktop area's hooks (`set_hooks`) and a changed flag the views read.
+//! The pages: off-screen browsers, one per panel (a drawer tab's page, a
+//! hidden browser, a widget panel), with input, device emulation, CDP, the
+//! marks on a page, the console and the network log. The browsers
+//! themselves live in the browser host (host/, its own process); this is
+//! the app's side of each, with the same API the areas used when CEF ran
+//! in the app: the state (`with`), what it tells the desktop area
+//! (`set_hooks`), and the calls, now commands to the host (client.rs).
 //!
-//! Threading: CEF's message loop is pumped from GPUI's main thread (lib.rs
-//! `pump`), so every CEF callback below runs there. Panel state lives in a
-//! thread-local and nothing needs a lock.
+//! Threading: everything here runs on the app's main thread; the host's
+//! events come in through the pump (client.rs `pump` → `on_event`,
+//! `on_frame`).
 //!
-//! Frames: `on_paint` gives a BGRA buffer of the view (CPU, software
-//! compositing), kept as it is: GPUI's images take BGRA.
+//! Frames: the host's BGRA frame, copied out of the view's shared segment,
+//! kept as it is: GPUI's images take BGRA.
 
+use crate::client::{self, Owner};
+use crate::ipc::Cmd;
 use base64::Engine;
-use cef::*;
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::HashMap};
+
+pub use crate::common::{cef_root, now_ms, profile_dir, Device, DEVICES};
 
 /// What the pages tell the desktop area (it sets them at start).
 #[derive(Clone, Copy)]
@@ -35,11 +40,14 @@ pub struct Hooks {
     /// page script reports this way); taken lines are not kept, so a
     /// chat's browser_console never reads them.
     pub console: fn(usize, &str) -> bool,
+    /// Reload a page whose browser host went away: true when the area made
+    /// it again itself (a drawer tab); else the page is made again in place.
+    pub reload: fn(usize) -> bool,
 }
 
 impl Default for Hooks {
     fn default() -> Self {
-        Hooks { changed: |_| {}, visited: |_, _| {}, popup: |_, _| false, load_failed: |_| {}, annotating: || false, ask_note: |_, _| {}, console: |_, _| false }
+        Hooks { changed: |_| {}, visited: |_, _| {}, popup: |_, _| false, load_failed: |_| {}, annotating: || false, ask_note: |_, _| {}, console: |_, _| false, reload: |_| false }
     }
 }
 
@@ -49,51 +57,16 @@ thread_local! { static HOOKS: RefCell<Hooks> = RefCell::new(Hooks::default()); }
 pub fn set_hooks(h: Hooks) { HOOKS.with(|x| *x.borrow_mut() = h); }
 fn hooks() -> Hooks { HOOKS.with(|x| *x.borrow()) }
 
-/// A device the panel can emulate. Index 0 is "Responsive" (no emulation: the
-/// page is the panel's own size).
-pub struct Device {
-    pub name: &'static str,
-    pub w: i32,
-    pub h: i32,
-    pub dpr: f32,
-    pub mobile: bool,
-    pub ua: &'static str,
-}
-
-/// The drawer's devices (app/vendor/crundi-browser-drawer.js DEVICES), in its order.
-pub const DEVICES: &[Device] = &[
-    Device { name: "Responsive", w: 0, h: 0, dpr: 1.0, mobile: false, ua: "" },
-    Device { name: "iPhone SE", w: 375, h: 667, dpr: 2.0, mobile: true, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPhone 12 Pro", w: 390, h: 844, dpr: 3.0, mobile: true, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPhone 15 Pro", w: 393, h: 852, dpr: 3.0, mobile: true, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPhone 16 Pro", w: 393, h: 852, dpr: 3.0, mobile: true, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPhone 16 Pro Max", w: 430, h: 932, dpr: 3.0, mobile: true, ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPad Mini", w: 768, h: 1024, dpr: 2.0, mobile: true, ua: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPad Air", w: 820, h: 1180, dpr: 2.0, mobile: true, ua: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "iPad Pro", w: 1024, h: 1366, dpr: 2.0, mobile: true, ua: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" },
-    Device { name: "Pixel 5", w: 393, h: 851, dpr: 2.75, mobile: true, ua: "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36" },
-    Device { name: "Pixel 7", w: 412, h: 915, dpr: 2.625, mobile: true, ua: "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" },
-    Device { name: "Pixel 8 Pro", w: 430, h: 932, dpr: 2.625, mobile: true, ua: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" },
-    Device { name: "Galaxy S22", w: 360, h: 800, dpr: 3.0, mobile: true, ua: "Mozilla/5.0 (Linux; Android 13; SM-S901B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" },
-    Device { name: "Galaxy S24 Ultra", w: 412, h: 915, dpr: 2.625, mobile: true, ua: "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36" },
-    Device { name: "Galaxy Z Fold 5", w: 344, h: 882, dpr: 2.8, mobile: true, ua: "Mozilla/5.0 (Linux; Android 13; SM-F946B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36" },
-    Device { name: "Galaxy Z Flip 5", w: 264, h: 844, dpr: 2.8, mobile: true, ua: "Mozilla/5.0 (Linux; Android 13; SM-F731B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36" },
-    Device { name: "Surface Pro 9", w: 1200, h: 1800, dpr: 2.0, mobile: true, ua: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
-    Device { name: "Desktop 1280", w: 1280, h: 800, dpr: 1.0, mobile: false, ua: "" },
-    Device { name: "Full HD 1920", w: 1920, h: 1080, dpr: 1.0, mobile: false, ua: "" },
-];
-
-impl Device {
-    /// The menu's label: "Responsive", or "iPhone SE  375x667".
-    pub fn label(&self) -> String { if self.w == 0 { self.name.to_string() } else { format!("{}  {}x{}", self.name, self.w, self.h) } }
-}
-
 type CdpReply = Box<dyn FnOnce(bool, Value)>;
 
 #[derive(Default)]
 pub struct Panel {
-    pub browser: Option<Browser>,
-    observer: Option<Registration>,
+    /// The panel's view in the browser host (None: not made, closed, or
+    /// lost when the host went away).
+    pub browser: Option<u64>,
+    /// The page crashed (its page process, or the whole host): the view
+    /// shows "This page crashed" and Reload.
+    pub crashed: bool,
     /// The panel's stage, in logical px (the view's size).
     pub stage_w: f32,
     pub stage_h: f32,
@@ -139,12 +112,14 @@ pub struct Panel {
     pub mouse_at: Option<(f32, f32)>,
     pub mouse_down: Option<String>,
     pub touch_on: bool,
-    mouse_held: Option<MouseButtonType>,
+    mouse_held: Option<i32>,
     cdp_next: i32,
     cdp_waiters: HashMap<i32, CdpReply>,
     load_waiters: Vec<Box<dyn FnOnce()>>,
     last_ua: String,
-    /// The page's mouse cursor (cursor_index's kinds).
+    /// The size last told the host.
+    sent: (i32, i32, f32),
+    /// The page's mouse cursor (common::cursor's kinds).
     pub cursor: i32,
 }
 
@@ -177,7 +152,6 @@ impl Panel {
         let (s, ox, oy) = self.fit();
         (x * s + ox, y * s + oy)
     }
-    pub fn host(&self) -> Option<BrowserHost> { self.browser.as_ref().and_then(|b| b.host()) }
     /// The page's scale and offset in the stage (for what is drawn over it).
     pub fn fit_scale(&self) -> (f32, f32, f32) { self.fit() }
 }
@@ -230,7 +204,6 @@ pub fn sync(i: usize) {
     if with(|st| { if i >= st.panels.len() { return false; } st.changed.insert(i); true }) { (hooks().changed)(i); }
 }
 
-/// The panels changed since the last call (the views' pump).
 /// A drawer page's size before the drawer was ever shown: the drawer's
 /// default width, the window's height under the bars.
 fn default_stage() -> (f32, f32) {
@@ -238,229 +211,123 @@ fn default_stage() -> (f32, f32) {
     (f32::from(T::DRAWER_W), f32::from(T::WINDOW_H - T::TOPBAR_H - T::TABBAR_H - T::DRAWER_BARS_H))
 }
 
+/// The panels changed since the last call (the views' pump).
 pub fn take_changed() -> Vec<usize> { with(|st| std::mem::take(&mut st.changed).into_iter().collect()) }
 
 pub fn status(text: &str) { with(|st| st.status = text.to_string()); }
 
-// ─── CEF handlers ───
+/// The panel's view in the host, when it has one.
+fn view_of(i: usize) -> Option<u64> { with(|st| st.panels.get(i).and_then(|p| p.browser)) }
 
-wrap_render_handler! {
-    pub struct PanelRender {
-        index: usize,
-    }
-    impl RenderHandler {
-        fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
-            if let Some(r) = rect {
-                let (w, h, ..) = with(|st| st.panels[self.index].view());
-                *r = Rect { x: 0, y: 0, width: w.max(1), height: h.max(1) };
-            }
-        }
-        fn screen_info(&self, _browser: Option<&mut Browser>, info: Option<&mut ScreenInfo>) -> ::std::os::raw::c_int {
-            match info {
-                Some(s) => {
-                    let (w, h, dpr, ..) = with(|st| st.panels[self.index].view());
-                    s.device_scale_factor = dpr;
-                    s.rect = Rect { x: 0, y: 0, width: w.max(1), height: h.max(1) };
-                    s.available_rect = s.rect.clone();
-                    1
-                }
-                None => 0,
-            }
-        }
-        fn on_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, _dirty: Option<&[Rect]>, buffer: *const u8, width: ::std::os::raw::c_int, height: ::std::os::raw::c_int) {
-            if type_ != PaintElementType::VIEW || buffer.is_null() || width <= 0 || height <= 0 { return; }
-            let (w, h) = (width as u32, height as u32);
-            let src = unsafe { std::slice::from_raw_parts(buffer, (w * h * 4) as usize) };
-            let frame = std::rc::Rc::new((src.to_vec(), w, h));
-            with(|st| { let p = &mut st.panels[self.index]; p.frame = Some(frame); p.frames += 1; });
-            sync(self.index);
-        }
-    }
-}
+/// A command for panel [i]'s view (dropped when it has none).
+fn to_view(i: usize, cmd: impl FnOnce(u64) -> Cmd) { if let Some(id) = view_of(i) { client::send_to(id, cmd(id)); } }
 
-wrap_life_span_handler! {
-    pub struct PanelLife {
-        index: usize,
-    }
-    impl LifeSpanHandler {
-        fn on_after_created(&self, browser: Option<&mut Browser>) {
-            let Some(b) = browser else { return };
-            let b = b.clone();
-            let mut obs = PanelDevTools::new(self.index);
-            let reg = b.host().and_then(|h| h.add_dev_tools_message_observer(Some(&mut obs)));
-            with(|st| { let p = &mut st.panels[self.index]; p.browser = Some(b); p.observer = reg; });
-        }
-        // Links that open a window load in the same panel (no popup windows in OSR).
-        fn on_before_popup(&self, browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: ::std::os::raw::c_int, target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, _target_disposition: WindowOpenDisposition, _user_gesture: ::std::os::raw::c_int, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>, _client: Option<&mut Option<Client>>, _settings: Option<&mut BrowserSettings>, _extra_info: Option<&mut Option<DictionaryValue>>, _no_javascript_access: Option<&mut ::std::os::raw::c_int>) -> ::std::os::raw::c_int {
-            if let (Some(b), Some(u)) = (browser, target_url) {
-                let url = u.to_string();
-                let i = self.index;
-                if !(hooks().popup)(i, &url) {
-                    if let Some(f) = b.main_frame() { f.load_url(Some(u)); }
-                }
-            }
-            1
-        }
-    }
-}
+// ─── What the host tells a panel ───
 
-wrap_load_handler! {
-    pub struct PanelLoad {
-        index: usize,
-    }
-    impl LoadHandler {
-        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
-            if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
-            let code = *error_code.as_ref() as i32;
-            if code == -3 { return; } // ERR_ABORTED: a navigation replaced it
-            let text = error_text.map(|t| t.to_string()).unwrap_or_default();
-            with(|st| st.panels[self.index].load_error = Some(format!("Load failed ({code}): {text}")));
-            (hooks().load_failed)(self.index);
-        }
-        fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: ::std::os::raw::c_int, back: ::std::os::raw::c_int, fwd: ::std::os::raw::c_int) {
-            with(|st| { let p = &mut st.panels[self.index]; p.loading = is_loading != 0; p.can_back = back != 0; p.can_fwd = fwd != 0; });
-            sync(self.index);
-            if is_loading != 0 { with(|st| st.panels[self.index].load_error = None); }
-            if is_loading == 0 {
-                let waiters = with(|st| std::mem::take(&mut st.panels[self.index].load_waiters));
+/// An event for panel [i] from its view [id] (an older view's is dropped).
+pub(crate) fn on_event(i: usize, id: u64, ev: crate::ipc::Ev) {
+    use crate::ipc::Ev;
+    if view_of(i) != Some(id) { return; }
+    match ev {
+        Ev::Loading { loading, back, fwd, .. } => {
+            with(|st| { let p = &mut st.panels[i]; p.loading = loading; p.can_back = back; p.can_fwd = fwd; if loading { p.crashed = false; } });
+            sync(i);
+            if loading { with(|st| st.panels[i].load_error = None); }
+            else {
+                let waiters = with(|st| std::mem::take(&mut st.panels[i].load_waiters));
                 for w in waiters { w(); }
             }
         }
-    }
-}
-
-#[cfg(target_os = "macos")]
-type PageCursor = *mut u8;
-#[cfg(not(target_os = "macos"))]
-type PageCursor = CursorHandle;
-
-
-/// CEF's cursor kinds, folded into the ones a view shows.
-pub(crate) fn cursor_kind(t: CursorType) -> i32 { cursor_index(t) }
-
-fn cursor_index(t: CursorType) -> i32 {
-    match t {
-        CursorType::HAND => 1,
-        CursorType::IBEAM | CursorType::VERTICALTEXT => 2,
-        CursorType::CROSS | CursorType::CELL => 3,
-        CursorType::MOVE => 4,
-        CursorType::WAIT | CursorType::PROGRESS => 5,
-        CursorType::NOTALLOWED | CursorType::NODROP => 6,
-        CursorType::EASTRESIZE | CursorType::WESTRESIZE | CursorType::EASTWESTRESIZE | CursorType::COLUMNRESIZE => 7,
-        CursorType::NORTHRESIZE | CursorType::SOUTHRESIZE | CursorType::NORTHSOUTHRESIZE | CursorType::ROWRESIZE => 8,
-        CursorType::NORTHEASTRESIZE | CursorType::SOUTHWESTRESIZE | CursorType::NORTHEASTSOUTHWESTRESIZE => 9,
-        CursorType::NORTHWESTRESIZE | CursorType::SOUTHEASTRESIZE | CursorType::NORTHWESTSOUTHEASTRESIZE => 10,
-        CursorType::GRAB => 11,
-        CursorType::GRABBING => 12,
-        CursorType::HELP => 13,
-        CursorType::NONE => 14,
-        _ => 0,
-    }
-}
-
-wrap_display_handler! {
-    pub struct PanelDisplay {
-        index: usize,
-    }
-    impl DisplayHandler {
-        fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            let t = title.map(|t| t.to_string()).unwrap_or_default();
-            with(|st| st.panels[self.index].title = t);
-            sync(self.index);
+        Ev::LoadError { code, text, .. } => {
+            with(|st| st.panels[i].load_error = Some(format!("Load failed ({code}): {text}")));
+            (hooks().load_failed)(i);
         }
-        fn on_cursor_change(&self, _browser: Option<&mut Browser>, _cursor: PageCursor, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> ::std::os::raw::c_int {
-            let c = cursor_index(type_);
-            let changed = with(|st| { let p = &mut st.panels[self.index]; let ch = p.cursor != c; p.cursor = c; ch });
-            if changed { sync(self.index); }
-            1
+        Ev::Title { title, .. } => { with(|st| st.panels[i].title = title); sync(i); }
+        Ev::Cursor { kind, .. } => {
+            let changed = with(|st| { let p = &mut st.panels[i]; let ch = p.cursor != kind; p.cursor = kind; ch });
+            if changed { sync(i); }
         }
-        fn on_console_message(&self, _browser: Option<&mut Browser>, level: LogSeverity, message: Option<&CefString>, source: Option<&CefString>, line: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
-            if let Some(m) = message { if (hooks().console)(self.index, &m.to_string()) { return 1; } }
-            let lv = match level { LogSeverity::ERROR | LogSeverity::FATAL => "error", LogSeverity::WARNING => "warning", LogSeverity::VERBOSE => "debug", _ => "log" };
-            let m = json!({ "type": lv, "text": message.map(|m| m.to_string()).unwrap_or_default(), "url": source.map(|m| m.to_string()).unwrap_or_default(), "line": line, "time": now_ms() });
-            with(|st| { let c = &mut st.panels[self.index].console; c.push_back(m); while c.len() > MAX_CONSOLE { c.pop_front(); } });
-            0
+        Ev::Console { level, text, source, line, .. } => {
+            if (hooks().console)(i, &text) { return; }
+            let m = json!({ "type": level, "text": text, "url": source, "line": line, "time": now_ms() });
+            with(|st| { let c = &mut st.panels[i].console; c.push_back(m); while c.len() > MAX_CONSOLE { c.pop_front(); } });
         }
-        fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
-            if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
-            let u = url.map(|u| u.to_string()).unwrap_or_default();
+        Ev::Address { url, .. } => {
             let base = |x: &str| x.split('#').next().unwrap_or("").to_string();
-            with(|st| { let p = &mut st.panels[self.index]; if base(&p.url) != base(&u) { p.ann.clear(); p.hover = None; } p.url = u.clone(); });
-            sync(self.index);
-            (hooks().visited)(self.index, &u);
+            with(|st| { let p = &mut st.panels[i]; if base(&p.url) != base(&url) { p.ann.clear(); p.hover = None; } p.url = url.clone(); });
+            sync(i);
+            (hooks().visited)(i, &url);
         }
+        // Links that open a window: the area's (a new tab), else the same panel.
+        Ev::Popup { url, .. } => if !(hooks().popup)(i, &url) { client::send_to(id, Cmd::Navigate { id, url }); },
+        Ev::Net { method, params, .. } => net_event(i, &method, &params),
+        Ev::CdpResult { call, ok, result, .. } => {
+            let w = with(|st| st.panels[i].cdp_waiters.remove(&call));
+            if let Some(w) = w { w(ok, result); }
+        }
+        Ev::Gone { status, .. } => {
+            eprintln!("[browser] panel {i}: its page process ended ({status})");
+            with(|st| { let p = &mut st.panels[i]; p.crashed = true; p.loading = false; });
+            fail_waiters(i, "This page crashed");
+            sync(i);
+        }
+        _ => {}
     }
 }
 
-wrap_dev_tools_message_observer! {
-    pub struct PanelDevTools {
-        index: usize,
-    }
-    impl DevToolsMessageObserver {
-        fn on_dev_tools_event(&self, _browser: Option<&mut Browser>, method: Option<&CefString>, params: Option<&[u8]>) {
-            let m = method.map(|m| m.to_string()).unwrap_or_default();
-            if !m.starts_with("Network.") { return; }
-            let v: Value = params.and_then(|r| serde_json::from_slice(r).ok()).unwrap_or(Value::Null);
-            net_event(self.index, &m, &v);
-        }
-        fn on_dev_tools_method_result(&self, _browser: Option<&mut Browser>, message_id: ::std::os::raw::c_int, success: ::std::os::raw::c_int, result: Option<&[u8]>) {
-            let v: Value = result.and_then(|r| serde_json::from_slice(r).ok()).unwrap_or(Value::Null);
-            let w = with(|st| st.panels[self.index].cdp_waiters.remove(&message_id));
-            if let Some(w) = w { w(success != 0, v); }
-        }
-    }
+/// A frame for panel [i] from its view [id].
+pub(crate) fn on_frame(i: usize, id: u64, data: Vec<u8>, w: u32, h: u32) {
+    if view_of(i) != Some(id) { return; }
+    with(|st| { let p = &mut st.panels[i]; p.frame = Some(std::rc::Rc::new((data, w, h))); p.frames += 1; });
+    sync(i);
 }
 
-// No page dialogs (a chat drives these pages): alert dismissed, confirm
-// yes, prompt nothing, leaving a page always allowed (main.js's
-// window.alert/confirm/prompt overrides and will-prevent-unload).
-wrap_jsdialog_handler! {
-    pub struct PanelDialogs {}
-    impl JsdialogHandler {
-        fn on_jsdialog(&self, _browser: Option<&mut Browser>, _origin_url: Option<&CefString>, dialog_type: JsdialogType, _message_text: Option<&CefString>, _default_prompt_text: Option<&CefString>, callback: Option<&mut JsdialogCallback>, suppress_message: Option<&mut ::std::os::raw::c_int>) -> ::std::os::raw::c_int {
-            if dialog_type == JsdialogType::ALERT { if let Some(s) = suppress_message { *s = 1; } return 0; }
-            if let Some(cb) = callback { cb.cont(if dialog_type == JsdialogType::CONFIRM { 1 } else { 0 }, None); }
-            1
-        }
-        fn on_before_unload_dialog(&self, _browser: Option<&mut Browser>, _message_text: Option<&CefString>, _is_reload: ::std::os::raw::c_int, callback: Option<&mut JsdialogCallback>) -> ::std::os::raw::c_int {
-            if let Some(cb) = callback { cb.cont(1, None); }
-            1
-        }
-    }
+/// What is waiting on the page gets its answer now: a failure.
+fn fail_waiters(i: usize, why: &str) {
+    let (cdp, loads) = with(|st| {
+        let p = &mut st.panels[i];
+        p.load_error = Some(why.to_string());
+        (std::mem::take(&mut p.cdp_waiters), std::mem::take(&mut p.load_waiters))
+    });
+    for (_, w) in cdp { w(false, json!({ "message": why })); }
+    for w in loads { w(); }
 }
 
-// The drawer's network proxies ask for their sign-in (src/desktop/net.rs).
-wrap_request_handler! {
-    pub struct PanelRequests {}
-    impl RequestHandler {
-        fn auth_credentials(&self, _browser: Option<&mut Browser>, _origin_url: Option<&CefString>, is_proxy: ::std::os::raw::c_int, host: Option<&CefString>, port: ::std::os::raw::c_int, _realm: Option<&CefString>, _scheme: Option<&CefString>, callback: Option<&mut AuthCallback>) -> ::std::os::raw::c_int {
-            if is_proxy == 0 { return 0; }
-            let h = host.map(|h| h.to_string()).unwrap_or_default();
-            match (crate::net::credentials(&h, port as u16), callback) {
-                (Some((u, p)), Some(cb)) => { cb.cont(Some(&CefString::from(u.as_str())), Some(&CefString::from(p.as_str()))); 1 }
-                _ => 0,
-            }
-        }
-    }
+/// The browser host went away (crashed, or was killed): the page shows
+/// that it crashed, and Reload makes it again (`reload`).
+pub(crate) fn host_gone(i: usize) {
+    let had = with(|st| {
+        let Some(p) = st.panels.get_mut(i) else { return false };
+        if p.closed { return false; }
+        p.browser = None; p.crashed = true; p.frame = None; p.loading = false; p.can_back = false; p.can_fwd = false;
+        p.hover = None; p.hover_busy = false; p.mouse_held = None; p.sent = (0, 0, 0.0); p.last_ua.clear();
+        true
+    });
+    if !had { return; }
+    fail_waiters(i, "The browser stopped");
+    sync(i);
 }
 
-wrap_client! {
-    pub struct PanelClient {
-        render: RenderHandler,
-        life: LifeSpanHandler,
-        load: LoadHandler,
-        display: DisplayHandler,
-        dialogs: JsdialogHandler,
-        requests: RequestHandler,
+/// Has panel [i]'s page crashed?
+pub fn crashed(i: usize) -> bool { with(|st| st.panels.get(i).is_some_and(|p| p.crashed && !p.closed)) }
+
+/// Reload a crashed page: its page process again (the host is up), or,
+/// when the host went away, the page made again (a drawer tab by the
+/// desktop area, else in place), starting the host.
+pub fn reload(i: usize) {
+    let Some((alive, url, network, sized)) = with(|st| st.panels.get(i).filter(|p| !p.closed).map(|p| (p.browser.is_some(), p.url.clone(), p.network.clone(), p.device != 0 || p.custom.is_some()))) else { return };
+    if alive {
+        with(|st| { let p = &mut st.panels[i]; p.crashed = false; p.load_error = None; });
+        to_view(i, |id| Cmd::History { id, h: 0 });
+        sync(i);
+        return;
     }
-    impl Client {
-        fn request_handler(&self) -> Option<RequestHandler> { Some(self.requests.clone()) }
-        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(self.dialogs.clone()) }
-        fn render_handler(&self) -> Option<RenderHandler> { Some(self.render.clone()) }
-        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(self.life.clone()) }
-        fn load_handler(&self) -> Option<LoadHandler> { Some(self.load.clone()) }
-        fn display_handler(&self) -> Option<DisplayHandler> { Some(self.display.clone()) }
-    }
+    if (hooks().reload)(i) { return; }
+    let url = if url.is_empty() { "about:blank".to_string() } else { url };
+    with(|st| { let p = &mut st.panels[i]; p.crashed = false; p.load_error = None; p.frames = 0; });
+    create_on(i, &url, &network);
+    if sized { crate::later(std::time::Duration::from_millis(300), move || apply_device(i)); }
+    sync(i);
 }
 
 /// Make panel [index]'s browser, off-screen, at [url] (this PC's network).
@@ -468,66 +335,15 @@ pub fn create(index: usize, url: &str) {
     create_on(index, url, "client");
 }
 
-thread_local! {
-    /// One profile per network, as the drawer's partitions (BD PARTITIONS):
-    /// "client" is CEF's own; "server" and each homepool network their own.
-    static CONTEXTS: RefCell<HashMap<String, RequestContext>> = RefCell::new(HashMap::new());
-}
-
-/// The CEF profile folder of a network ("" for this PC's: CEF's global one).
-pub fn profile_dir(network: &str) -> String {
-    match network {
-        "client" | "" => String::new(),
-        "server" => "drawer-srv".into(),
-        n if n.starts_with("mem:") => String::new(),
-        n => format!("drawer-hp-{}", n.trim_start_matches("hp:")),
-    }
-}
-
-fn context_for(network: &str) -> Option<RequestContext> {
-    // A hidden browser: a profile of its own, in memory (main.js "mcp-browser-<key>").
-    if network.starts_with("mem:") {
-        let settings = RequestContextSettings::default();
-        let ctx = request_context_create_context(Some(&settings), None)?;
-        CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx.clone()));
-        return Some(ctx);
-    }
-    let dir = profile_dir(network);
-    if dir.is_empty() { return None; }
-    if let Some(c) = CONTEXTS.with(|c| c.borrow().get(network).cloned()) { return Some(c); }
-    let path = cef_root().join(&dir);
-    let settings = RequestContextSettings { cache_path: CefString::from(path.to_string_lossy().as_ref()), persist_session_cookies: 1, ..Default::default() };
-    let ctx = request_context_create_context(Some(&settings), None)?;
-    CONTEXTS.with(|c| c.borrow_mut().insert(network.to_string(), ctx.clone()));
-    crate::net::context_made(network, &ctx);
-    Some(ctx)
-}
-
-/// CEF's root cache folder, as main.rs sets it (a network's profile must be inside it).
-pub fn cef_root() -> std::path::PathBuf {
-    if let Some(c) = std::env::var_os("CRUNDI_CEF_CACHE") { return c.into(); }
-    let cache: std::path::PathBuf = std::env::var_os("XDG_CACHE_HOME").map(Into::into)
-        .or_else(|| std::env::var_os("LOCALAPPDATA").map(Into::into))
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir);
-    cache.join("crundi-gpui")
-}
-
-/// Every profile made so far, with its network (clearing reaches them all).
-pub fn contexts() -> Vec<(String, RequestContext)> {
-    let mut v: Vec<(String, RequestContext)> = CONTEXTS.with(|c| c.borrow().iter().map(|(k, v)| (k.clone(), v.clone())).collect());
-    if let Some(g) = request_context_get_global_context() { v.push(("client".into(), g)); }
-    v
-}
-
-/// Make panel [index]'s browser on [network]'s profile.
+/// Make panel [index]'s browser on [network]'s profile (in the host,
+/// started if it isn't).
 pub fn create_on(index: usize, url: &str, network: &str) {
-    let mut client = PanelClient::new(PanelRender::new(index), PanelLife::new(index), PanelLoad::new(index), PanelDisplay::new(index), PanelDialogs::new(), PanelRequests::new());
-    let window_info = WindowInfo::default().set_as_windowless(Default::default());
-    let settings = BrowserSettings { windowless_frame_rate: 30, background_color: 0xffff_ffff, ..Default::default() };
-    let mut ctx = context_for(network);
-    let b = browser_host_create_browser_sync(Some(&window_info), Some(&mut client), Some(&CefString::from(url)), Some(&settings), None, ctx.as_mut());
-    if b.is_none() { eprintln!("[native] panel {index}: CEF did not create the browser"); }
+    let (w, h, dpr) = with(|st| { let (w, h, dpr, ..) = st.panels[index].view(); (w, h, dpr) });
+    let proxy = crate::net::proxy_for(network);
+    let (u, n) = (url.to_string(), network.to_string());
+    let id = client::open_view(Owner::Panel(index), move |id| Cmd::Open { id, url: u, frame: false, network: n, proxy, origin: String::new(), w, h, dpr });
+    with(|st| { let p = &mut st.panels[index]; p.browser = id; p.sent = (w, h, dpr); p.crashed = false; });
+    if id.is_none() { eprintln!("[native] panel {index}: no browser (the browser host can't start)"); }
 }
 
 /// A new panel (a drawer tab's page or a hidden browser) at [url] on
@@ -551,22 +367,22 @@ pub fn open_panel(url: &str, network: &str) -> usize {
     i
 }
 
-/// Close panel [i]'s browser; its slot is free for the next one.
+/// Close panel [i]'s browser; its slot is free for the next one (and its
+/// view and frame segment go in the host).
 pub fn close_panel(i: usize) {
     let b = with(|st| {
         let p = st.panels.get_mut(i)?;
         if p.closed { return None; }
-        p.closed = true; p.tab = None; p.key = None; p.ann.clear(); p.frame = None; p.title.clear(); p.url.clear();
+        p.closed = true; p.tab = None; p.key = None; p.ann.clear(); p.frame = None; p.title.clear(); p.url.clear(); p.crashed = false;
         let w: Vec<_> = std::mem::take(&mut p.load_waiters);
-        let b = p.browser.take();
-        p.observer = None;
-        Some((b, w))
+        let c: Vec<_> = std::mem::take(&mut p.cdp_waiters).into_values().collect();
+        Some((p.browser.take(), w, c))
     });
-    let Some((b, waiters)) = b else { return };
+    let Some((b, waiters, cdp)) = b else { return };
     for w in waiters { w(); }
-    if let Some(h) = b.and_then(|b| b.host()) { h.close_browser(1); }
-    let net = with(|st| std::mem::take(&mut st.panels[i].network));
-    if net.starts_with("mem:") { CONTEXTS.with(|c| c.borrow_mut().remove(&net)); }
+    for w in cdp { w(false, json!({ "message": "The page was closed" })); }
+    if let Some(id) = b { client::close_view(id); }
+    with(|st| st.panels[i].network.clear());
     sync(i);
 }
 
@@ -574,9 +390,9 @@ thread_local! {
     static DEFERRED: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::new(Vec::new());
 }
 
-/// Run a call into CEF that comes from a GPUI handler. On macOS and Windows
-/// it waits for the next pump, outside the window's event handling, which
-/// CEF must not re-enter; on Linux it runs now.
+/// Run a call that comes from a GPUI handler. On macOS and Windows it waits
+/// for the next pump, outside the window's event handling (as when CEF ran
+/// in the app, which it must not re-enter); on Linux it runs now.
 pub fn defer(f: impl FnOnce() + 'static) {
     if cfg!(any(target_os = "macos", target_os = "windows")) {
         DEFERRED.with(|d| d.borrow_mut().push(Box::new(f)));
@@ -585,7 +401,7 @@ pub fn defer(f: impl FnOnce() + 'static) {
     }
 }
 
-/// The deferred calls, in order (the pump, before CEF's own work).
+/// The deferred calls, in order (the pump, before the host's events).
 pub fn run_deferred() {
     loop {
         let batch = DEFERRED.with(|d| std::mem::take(&mut *d.borrow_mut()));
@@ -594,21 +410,22 @@ pub fn run_deferred() {
     }
 }
 
-// ─── CDP, in-process (no debugging port) ───
+// ─── CDP (in the host, no debugging port) ───
 
 /// Send a CDP command to panel [i]'s browser; [reply] gets (ok, result).
 pub fn cdp(i: usize, method: &str, params: Value, reply: CdpReply) {
     let sent = with(|st| {
-        let p = &mut st.panels[i];
-        let Some(h) = p.host() else { return Err(reply) };
+        let Some(p) = st.panels.get_mut(i) else { return Err(reply) };
+        let Some(id) = p.browser else { return Err(reply) };
         p.cdp_next += 1;
-        let id = p.cdp_next;
-        let msg = json!({ "id": id, "method": method, "params": params }).to_string();
-        p.cdp_waiters.insert(id, reply);
-        h.send_dev_tools_message(Some(msg.as_bytes()));
-        Ok(())
+        let call = p.cdp_next;
+        p.cdp_waiters.insert(call, reply);
+        Ok((id, call))
     });
-    if let Err(reply) = sent { reply(false, json!({ "message": "no browser in this panel yet" })); }
+    match sent {
+        Ok((id, call)) => client::send_to(id, Cmd::Cdp { id, call, method: method.to_string(), params }),
+        Err(reply) => reply(false, json!({ "message": "no browser in this panel yet" })),
+    }
 }
 
 pub fn eval(i: usize, code: &str, reply: Box<dyn FnOnce(Result<Value, String>)>) {
@@ -624,18 +441,30 @@ pub fn eval(i: usize, code: &str, reply: Box<dyn FnOnce(Result<Value, String>)>)
 
 // ─── Device emulation ───
 
-/// Apply panel [i]'s device: the view size and scale factor come from the
-/// render handler (view_rect, screen_info); CDP adds mobile, touch and the
-/// user agent. A changed user agent reloads the page, as a phone would get it.
+/// Tell the host the panel's page size, when it changed (or `screen`: its
+/// scale may have, always).
+fn push_size(i: usize, screen: bool) {
+    let (id, w, h, dpr, changed) = with(|st| {
+        let p = &mut st.panels[i];
+        let (w, h, dpr, ..) = p.view();
+        let ch = p.sent != (w, h, dpr);
+        p.sent = (w, h, dpr);
+        (p.browser, w, h, dpr, ch)
+    });
+    if let Some(id) = id { if changed || screen { client::send_to(id, Cmd::Size { id, w, h, dpr, screen }); } }
+}
+
+/// Apply panel [i]'s device: the view size and scale factor go to the host
+/// (its render handler's view_rect, screen_info); CDP adds mobile, touch and
+/// the user agent. A changed user agent reloads the page, as a phone would get it.
 pub fn apply_device(i: usize) {
-    let (w, h, dpr, mobile, ua, host, responsive) = with(|st| {
+    let (w, h, dpr, mobile, ua, alive, responsive) = with(|st| {
         let p = &st.panels[i];
         let (w, h, dpr, mobile, ua) = p.view();
-        (w, h, dpr, mobile, ua, p.host(), p.device == 0 && p.custom.is_none())
+        (w, h, dpr, mobile, ua, p.browser.is_some(), p.device == 0 && p.custom.is_none())
     });
-    let Some(host) = host else { return };
-    host.notify_screen_info_changed();
-    host.was_resized();
+    if !alive { return; }
+    push_size(i, true);
     if responsive {
         cdp(i, "Emulation.clearDeviceMetricsOverride", json!({}), Box::new(|_, _| {}));
     } else {
@@ -646,9 +475,7 @@ pub fn apply_device(i: usize) {
     // Reload once the overrides are in (CDP answers in order): a new UA and
     // touch support only show in a document created after them.
     cdp(i, "Emulation.setUserAgentOverride", json!({ "userAgent": ua }), Box::new(move |_, _| {
-        if changed {
-            if let Some(b) = with(|st| st.panels[i].browser.clone()) { b.reload(); }
-        }
+        if changed { to_view(i, |id| Cmd::History { id, h: 0 }); }
     }));
     sync(i);
 }
@@ -674,17 +501,13 @@ fn resized_as(i: usize, w: f32, h: f32, drawer: bool) {
         p.stage_w = w; p.stage_h = h;
         changed && p.device == 0 && p.custom.is_none()
     });
-    if follow { if let Some(h) = with(|st| st.panels[i].host()) { h.was_resized(); } }
+    if follow { push_size(i, false); }
     sync(i);
 }
 
 // ─── Input from the views ───
 
 const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
-
-fn button(b: i32) -> MouseButtonType {
-    match b { 1 => MouseButtonType::MIDDLE, 2 => MouseButtonType::RIGHT, _ => MouseButtonType::LEFT }
-}
 
 thread_local! {
     /// The annotation tool: "pick", "pin", "box", "pen" (the drawer's bar).
@@ -694,10 +517,6 @@ thread_local! {
 fn uid() -> String {
     let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     format!("{:x}{:04x}", n / 1_000_000, (n % 65536) as u32)
-}
-
-pub fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 /// The elements at page points: { selector, tag, text, html, rect } or null
@@ -804,22 +623,26 @@ pub fn pointer(i: usize, kind: i32, x: f32, y: f32, b: i32, annotating: bool) {
         }
         return;
     }
-    let (host, vx, vy, held) = with(|st| { let p = &st.panels[i]; let (vx, vy) = p.to_view(x, y); (p.host(), vx, vy, p.mouse_held) });
-    let Some(host) = host else { return };
-    let ev = MouseEvent { x: vx.round() as i32, y: vy.round() as i32, modifiers: if held.is_some() { EVENTFLAG_LEFT_MOUSE_BUTTON } else { 0 } };
+    let (id, vx, vy, held) = with(|st| { let p = &st.panels[i]; let (vx, vy) = p.to_view(x, y); (p.browser, vx, vy, p.mouse_held) });
+    let Some(id) = id else { return };
+    let (vx, vy) = (vx.round() as i32, vy.round() as i32);
+    let modifiers = if held.is_some() { EVENTFLAG_LEFT_MOUSE_BUTTON } else { 0 };
+    let m = |kind: i32, button: i32| Cmd::Mouse { id, kind, x: vx, y: vy, button, clicks: 1, modifiers };
     match kind {
-        0 => host.send_mouse_move_event(Some(&ev), 0),
-        1 => { host.set_focus(1); host.send_mouse_click_event(Some(&ev), button(b), 0, 1); with(|st| st.panels[i].mouse_held = Some(button(b))); }
-        2 => { host.send_mouse_click_event(Some(&ev), held.unwrap_or(button(b)), 1, 1); with(|st| st.panels[i].mouse_held = None); }
-        _ => host.send_mouse_move_event(Some(&ev), 1),
+        0 => client::send_to(id, m(0, 0)),
+        1 => {
+            client::send_to(id, Cmd::Focus { id, on: true });
+            client::send_to(id, m(1, b));
+            with(|st| st.panels[i].mouse_held = Some(b));
+        }
+        2 => { client::send_to(id, m(2, held.unwrap_or(b))); with(|st| st.panels[i].mouse_held = None); }
+        _ => client::send_to(id, m(3, 0)),
     }
 }
 
 pub fn wheel(i: usize, x: f32, y: f32, dx: f32, dy: f32) {
-    let (host, vx, vy) = with(|st| { let p = &st.panels[i]; let (vx, vy) = p.to_view(x, y); (p.host(), vx, vy) });
-    if let Some(h) = host {
-        h.send_mouse_wheel_event(Some(&MouseEvent { x: vx as i32, y: vy as i32, modifiers: 0 }), dx as i32, dy as i32);
-    }
+    let (vx, vy) = with(|st| st.panels[i].to_view(x, y));
+    to_view(i, |id| Cmd::Wheel { id, x: vx as i32, y: vy as i32, dx: dx as i32, dy: dy as i32 });
 }
 
 /// Named keys as text (private-use characters, as the Slint client's) to Windows key codes.
@@ -834,23 +657,25 @@ fn named_key(c: char) -> Option<i32> {
 
 pub fn key(i: usize, text: &str, down: bool, ctrl: bool, shift: bool) {
     if std::env::var_os("CRUNDI_DEBUG_KEYS").is_some() { eprintln!("[native] key panel {i} {:?} down={down}", text); }
-    let Some(host) = with(|st| st.panels[i].host()) else { return };
+    let Some(id) = view_of(i) else { return };
     let Some(c) = text.chars().next() else { return };
     let modifiers = (if shift { 1 << 1 } else { 0 }) | (if ctrl { 1 << 2 } else { 0 });
     let code = named_key(c).unwrap_or_else(|| c.to_ascii_uppercase() as i32);
-    let ev = |t: KeyEventType, ch: u16| KeyEvent { type_: t, modifiers, windows_key_code: code, character: ch, unmodified_character: ch, ..Default::default() };
     if down {
-        host.send_key_event(Some(&ev(KeyEventType::RAWKEYDOWN, 0)));
+        client::send_to(id, Cmd::Key { id, kind: 0, modifiers, code, ch: 0 });
         // Printable (and Enter): the character itself.
         if named_key(c).is_none() || c == '\n' || c == '\r' {
             let ch = if c == '\n' { '\r' } else { c };
             let mut buf = [0u16; 2];
-            host.send_key_event(Some(&ev(KeyEventType::CHAR, ch.encode_utf16(&mut buf)[0])));
+            client::send_to(id, Cmd::Key { id, kind: 3, modifiers, code, ch: ch.encode_utf16(&mut buf)[0] });
         }
     } else {
-        host.send_key_event(Some(&ev(KeyEventType::KEYUP, 0)));
+        client::send_to(id, Cmd::Key { id, kind: 2, modifiers, code, ch: 0 });
     }
 }
+
+/// Text an input method committed, into the page.
+pub fn ime_commit(i: usize, text: &str) { let t = text.to_string(); to_view(i, move |id| Cmd::Ime { id, text: t }); }
 
 /// Clear: the person's marks only (VD "Remove your marks").
 pub fn clear_marks(i: usize) {
@@ -873,9 +698,9 @@ pub fn set_note(i: usize, n: usize, text: &str) {
 // ─── What the server asks (server.rs) ───
 
 pub fn navigate(i: usize, url: &str, done: Box<dyn FnOnce()>) {
-    let b = with(|st| { let p = &mut st.panels[i]; p.load_waiters.push(done); p.browser.clone() });
-    match b.and_then(|b| b.main_frame()) {
-        Some(f) => f.load_url(Some(&CefString::from(url))),
+    let b = with(|st| { let p = &mut st.panels[i]; p.load_waiters.push(done); p.browser });
+    match b {
+        Some(id) => client::send_to(id, Cmd::Navigate { id, url: url.to_string() }),
         None => { let w = with(|st| std::mem::take(&mut st.panels[i].load_waiters)); for w in w { w(); } }
     }
 }
@@ -910,28 +735,17 @@ pub fn png_base64(bgra: &[u8], w: u32, h: u32) -> Option<String> {
 }
 
 /// The address bar's back (-1), forward (1) and reload (0).
-pub fn history(i: usize, h: i32) {
-    let Some(b) = with(|st| st.panels[i].browser.clone()) else { return };
-    match h {
-        -1 => b.go_back(),
-        1 => b.go_forward(),
-        _ => b.reload(),
-    }
-}
+pub fn history(i: usize, h: i32) { to_view(i, |id| Cmd::History { id, h }); }
 
 /// Real mouse input at page (CSS px) coordinates, as browser_mouse does.
 pub fn mouse(i: usize, x: f32, y: f32, action: &str) -> Result<(), String> {
-    let host = with(|st| st.panels[i].host()).ok_or("no browser in this panel yet")?;
-    let ev = MouseEvent { x: x.round() as i32, y: y.round() as i32, modifiers: 0 };
+    let id = view_of(i).ok_or("no browser in this panel yet")?;
+    let m = |kind: i32| Cmd::Mouse { id, kind, x: x.round() as i32, y: y.round() as i32, button: 0, clicks: 1, modifiers: 0 };
     match action {
-        "move" => host.send_mouse_move_event(Some(&ev), 0),
-        "down" => host.send_mouse_click_event(Some(&ev), MouseButtonType::LEFT, 0, 1),
-        "up" => host.send_mouse_click_event(Some(&ev), MouseButtonType::LEFT, 1, 1),
-        "click" | "" => {
-            host.send_mouse_move_event(Some(&ev), 0);
-            host.send_mouse_click_event(Some(&ev), MouseButtonType::LEFT, 0, 1);
-            host.send_mouse_click_event(Some(&ev), MouseButtonType::LEFT, 1, 1);
-        }
+        "move" => client::send_to(id, m(0)),
+        "down" => client::send_to(id, m(1)),
+        "up" => client::send_to(id, m(2)),
+        "click" | "" => { client::send_to(id, m(0)); client::send_to(id, m(1)); client::send_to(id, m(2)); }
         a => return Err(format!("mouse action {a} is not in this prototype")),
     }
     Ok(())
@@ -975,15 +789,9 @@ pub fn marks(i: usize) -> Value {
     json!({ "viewport": { "width": w, "height": h }, "annotations": anns, "pin": pin })
 }
 
-/// DevTools for panel [i], in a window of its own (BD devtools: detached),
-/// or closed when open.
-pub fn devtools(i: usize) {
-    let Some(h) = with(|st| st.panels.get(i).and_then(|p| p.host())) else { return };
-    if h.has_dev_tools() != 0 { h.close_dev_tools(); return; }
-    let wi = WindowInfo::default();
-    let settings = BrowserSettings::default();
-    h.show_dev_tools(Some(&wi), None, Some(&settings), None);
-}
+/// DevTools for panel [i], in a window of its own (BD devtools: detached;
+/// the host's window), or closed when open.
+pub fn devtools(i: usize) { to_view(i, |id| Cmd::DevTools { id }); }
 
 pub const MAX_NET: usize = 1000;
 

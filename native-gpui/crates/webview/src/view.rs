@@ -4,6 +4,8 @@
 //! picked elements, pen strokes, arrows, pins, each numbered with its note),
 //! the picker's hover box and the chat's cursor. The mouse, wheel and keys
 //! go to the page, or to the marks while annotating (engine::pointer).
+//! Until the page's first frame (the browser host may be starting) a quiet
+//! spinner; a page that crashed shows so, with Reload.
 
 use crate::engine::{self, Ann};
 use crundi_theme::T;
@@ -198,6 +200,16 @@ impl Render for PageView {
             d = d.child(div().absolute().left(p.x).top(p.y).flex().flex_col().gap(T::SP_2)
                 .child(svg().path(crundi_theme::IconName::MousePointer2.path()).size(T::PAGE_CURSOR).text_color(T::accent()))
                 .child(div().px(T::SP_4).rounded(T::R_CHIP).bg(T::accent()).text_color(T::white()).text_size(T::TEXT_10).font_weight(T::W_BOLD).child("Claude")));
+        }
+        // The browser host starting, or the page not drawn yet: a quiet
+        // spinner; its page process or the whole host gone: the crash, Reload.
+        if let Some(i) = self.panel {
+            let (crashed, waiting) = engine::with(|st| st.panels.get(i).filter(|p| !p.closed).map(|p| (p.crashed, p.browser.is_some() && p.frames == 0)).unwrap_or_default());
+            if crashed {
+                d = d.child(crundi_widgets::page_crashed("page-reload", move |_, _, _| engine::defer(move || engine::reload(i))));
+            } else if waiting {
+                d = d.child(crundi_widgets::page_loading());
+            }
         }
         d.on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| { window.focus(&this.focus, cx); this.pointer(1, e.position, e.button) }))
             .on_mouse_down(MouseButton::Right, cx.listener(|this, e: &MouseDownEvent, _, _| this.pointer(1, e.position, e.button)))

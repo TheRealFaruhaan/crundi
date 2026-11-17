@@ -146,22 +146,32 @@ export async function begin(area, { project = true } = {}) {
 
   const configDir = mkdtempSync(join(tmpdir(), `crundi-native-config-${area}-`));
   const cefDir = join(tmpdir(), `crundi-native-cef-${area}`);
-  const log = openSync(join(OUT, `native-${area}.log`), 'w');
-  const app = spawn(BIN, [], {
-    env: {
-      ...process.env,
-      CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_CEF_CACHE: cefDir,
-      CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank',
-      SLINT_BACKEND: process.env.SLINT_BACKEND || 'winit-software',
-    },
-    stdio: ['ignore', log, log],
-  });
+  const log = openSync(join(OUT, `native-${area}.log`), 'a');
+  // (Started again by T.relaunch with the same config and CEF profile.)
   let exited = false;
-  app.on('exit', () => { exited = true; });
-  const d = await driver(PORT);
+  const launch = (extra = {}) => {
+    const a = spawn(BIN, [], {
+      env: {
+        ...process.env,
+        CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_CEF_CACHE: cefDir,
+        CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), CRUNDI_URL_A: 'about:blank', CRUNDI_URL_B: 'about:blank',
+        SLINT_BACKEND: process.env.SLINT_BACKEND || 'winit-software',
+        ...extra,
+      },
+      stdio: ['ignore', log, log],
+    });
+    exited = false;
+    a.on('exit', () => { if (a === app) exited = true; });
+    return a;
+  };
+  let app = launch();
+  let d = await driver(PORT);
 
   const T = {
-    area, SERVER, api, d, app, password, secret, projDir, OUT, configDir,
+    area, SERVER, api, password, secret, projDir, OUT, configDir, cefDir,
+    get d() { return d; },
+    get app() { return app; },
+    get exited() { return exited; },
     send: (cmd) => d.send(cmd),
     /** A window action ({"cmd":"ui"}). */
     ui: (name, ...args) => d.send({ cmd: 'ui', name, args }),
@@ -203,6 +213,22 @@ export async function begin(area, { project = true } = {}) {
     /** Answer the shared confirm / prompt, or pick a context-menu item. */
     dialog: (ok, value = '') => d.send({ cmd: 'ui', name: 'dialog-answer', args: [ok ? 'true' : 'false', value] }),
     menuPick: (id) => d.send({ cmd: 'ui', name: 'menu-pick', args: [id] }),
+    /**
+     * Stop the app (`signal`, SIGTERM by default) and start it again with
+     * the same config and CEF profile, plus `env`; it signs in from its
+     * saved login, then the project is opened again.
+     */
+    async relaunch(env = {}, signal = 'SIGTERM') {
+      try { d.close(); } catch { /* gone */ }
+      if (!exited) { const gone = new Promise((r) => app.once('exit', r)); app.kill(signal); await gone; }
+      app = launch(env);
+      d = await driver(PORT);
+      await T.until('signed in again from the saved login', (p) => p.signedIn, 30000);
+      if (project) {
+        await T.ui('select-project', 'demo');
+        await T.until('the project is open again', (p) => p.currentProject === 'demo');
+      }
+    },
     async end() {
       try { d.close(); } catch { /* gone */ }
       if (!exited) app.kill();

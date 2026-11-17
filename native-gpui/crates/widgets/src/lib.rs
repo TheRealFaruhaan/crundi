@@ -460,6 +460,22 @@ pub fn loading(text: impl Into<SharedString>) -> Div {
         .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child(text.into()))
 }
 
+/// A web page whose browser stopped (its page process, or the whole
+/// browser host, crashed): the words and Reload, over the page's place.
+pub fn page_crashed(id: impl Into<ElementId>, reload: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Div {
+    div().absolute().inset_0().flex().flex_col().items_center().justify_center().gap(T::SP_12).p(T::SP_24).bg(T::bg())
+        .child(div().text_color(T::text_muted()).child(icon(IconName::TriangleAlert, T::ICON_LG)))
+        .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("This page crashed"))
+        .child(icon_label_button(id, IconName::RotateCcw, "Reload").on_click(reload))
+}
+
+/// A web page on its way (the browser starting, the first frame not in
+/// yet): a quiet spinner over the page's place.
+pub fn page_loading() -> Div {
+    div().absolute().inset_0().flex().items_center().justify_center()
+        .child(spinner(T::SPINNER))
+}
+
 // ─── Lists ───
 
 /// A list row (.file-item): icon, title, an optional second line, meta on

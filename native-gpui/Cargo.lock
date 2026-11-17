@@ -1896,13 +1896,17 @@ dependencies = [
  "base64 0.22.1",
  "cef",
  "crundi-theme",
+ "crundi-widgets",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
  "image",
+ "libc",
  "objc2 0.6.5",
  "png 0.17.16",
+ "serde",
  "serde_json",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

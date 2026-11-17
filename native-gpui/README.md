@@ -58,9 +58,70 @@ are). The web and Android tours show the step too, so word it for everyone
   and `wayland` (without them GPUI runs headless with no error);
 - `gpui-component =0.10.0` and `gpui-kit-assets =0.10.0` (Lucide's icons,
   registered as the app's assets);
-- `cef =156.4.0`: off-screen, BGRA frames shown as GPUI images, pumped from
-  the main thread; CEF's code stays in its own module (`cef::*` and
-  `gpui::*` clash).
+- `cef =156.4.0`: off-screen, BGRA frames shown as GPUI images, in a
+  process of its own (the browser host, below); CEF's code stays in its own
+  modules (`cef::*` and `gpui::*` clash).
+
+## The browser host (Chromium in its own process)
+
+Every web view (the drawer's tabs, hidden browsers the server opens, widget
+panels, a chat's live frames, Cru's screen, What's new's step pages) lives
+in the **browser host**: the app's own binary started with `--browser-host`
+(`crates/webview`). The app never loads or starts CEF itself.
+
+- **Process model.** `main` calls `crundi_webview::init_process()` first:
+  CEF's helpers (`--type=…`) run and leave there, and the host runs there
+  and never returns. The app keeps a thin client with the same API the
+  crates used before (`engine`, `PageView`, `frames`); `client.rs` starts the
+  host, `host/` is the host's side (CEF, its handlers, its loop).
+- **The link** (`ipc.rs`): length-prefixed JSON, commands (`Cmd`: open,
+  close, size, navigate, history, mouse, wheel, keys, IME text, focus,
+  hidden, CDP, script, DevTools, cookies, quit) and events (`Ev`: ready,
+  frame segment, paint, loading, load error and end, title, address,
+  cursor, console, popup, scroll, network, CDP answers, page process gone).
+  Linux and macOS: a Unix socket pair, the host's end as its stdin (moved
+  off fd 0, close-on-exec). Windows: the host's stdin and stdout.
+- **Frames** (`shm.rs`): one shared-memory segment per view, BGRA. The host
+  copies CEF's frame in and sends `Paint`; the app's reader thread copies
+  it out and answers `Ack`; a frame that comes before the `Ack` is drawn
+  again after it (`invalidate`). Linux: a memfd passed over the socket
+  (SCM_RIGHTS; never in /dev/shm). macOS: `shm_open`, the name unlinked by
+  the app once mapped. Windows: a named file mapping. A bigger frame makes
+  a new segment.
+- **Lifecycle.** No host at launch. The first view starts it (the drawer
+  opened, an embed scrolled into view, a widget panel shown, a What's new
+  step); the page shows a quiet spinner until its first frame. With no view
+  for `CRUNDI_BROWSER_IDLE_SECS` (default 60) and the drawer closed, the app
+  sends `Quit` (killed after 3 s) and all its memory is returned; the next
+  view starts a new one. The drawer starts closed after a relaunch, its
+  tabs listed (title, address, network, device) and nothing loaded;
+  opening it loads the active tab, the others load when shown. Closed for
+  the grace, the drawer lets its pages go. Embeds and panels hold a view
+  only while visible.
+- **Dying with the app.** Linux: `PR_SET_PDEATHSIG` (SIGKILL) set before
+  exec, and a process group of its own. Windows: the app's job object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, the host put in it before `Hello`
+  (so before any helper). macOS and everywhere: the host leaves on EOF of
+  its link, plus a watchdog on its parent. CEF's helpers leave with the
+  host. The host's PID is in `browser-host.pid` in the config folder; at
+  start the app kills a host a crashed run left (with its group) and
+  clears stale CEF locks (`SingletonLock`, `-Socket`, `-Cookie`,
+  `lockfile`) in the cache folder and each network's profile.
+- **Crashes.** The host gone without being asked: every view shows "This
+  page crashed" with Reload (`w::page_crashed`); the app stays up, and
+  Reload (or a server tool using a drawer tab) starts a new host. A single
+  page process ending (`Gone`) affects only its view.
+
+**Debugging it.** The app logs `[browser] …` (started, up, stopped, went
+away) and the host `[browser host] …`, both to the app's stderr. The test
+driver shows `browserHost` in the desktop area's props (state, pid, views,
+starts, crashes, reaped, idleSecs); `desktop:browser-host-stop` stops it,
+`desktop:reload <tab>` is a tab's Reload. `ps --ppid <app pid>` shows the
+host, `ps -g <host pid>` it and its helpers. `CRUNDI_BROWSER_IDLE_SECS=5`
+makes the idle stop quick; `CRUNDI_NO_BROWSER=1` runs with no browser.
+`crundi-gpui --browser-host` by hand waits for `Hello` on stdin (30 s).
+`native-client/test/desktop.mjs` part `hostproc` (`ONLY=hostproc`) checks
+all of the above.
 
 ## Build and run (this server)
 

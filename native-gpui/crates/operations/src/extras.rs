@@ -638,7 +638,10 @@ impl Render for WhatsNew {
             let no_page = !crundi_webview::started() || s(&step, "page").is_empty();
             let failed = no_page || page.as_ref().is_some_and(|k| web::failed(k));
             let image = page.as_ref().filter(|k| !failed && web::painted(k)).and_then(|k| web::image(k));
-            let inner: AnyElement = if failed {
+            let crashed = page.as_ref().is_some_and(|k| web::crashed(k));
+            let inner: AnyElement = if let Some(k) = page.as_ref().filter(|_| crashed) {
+                web::crash_overlay(k)
+            } else if failed {
                 w::empty(s(&step, "title")).size_full().into_any_element()
             } else if let Some(img) = image {
                 gpui::img(ImageSource::Render(img)).absolute().inset_0().size_full().into_any_element()

@@ -43,6 +43,8 @@ impl Render for CruFrame {
                     }
                 });
             }, |_, _, _, _| {}).absolute().inset_0().size_full())
+            // Until its first frame a quiet spinner; crashed: the words and Reload.
+            .children(frames::overlay(FRAME))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| { window.focus(&this.focus, cx); let (x, y) = this.at(e.position); frames::pointer(FRAME, 1, x, y, e.button, e.click_count); }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, e: &MouseUpEvent, _, _| { let (x, y) = this.at(e.position); frames::pointer(FRAME, 2, x, y, e.button, e.click_count); }))
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, _| { let (x, y) = this.at(e.position); frames::pointer(FRAME, 0, x, y, e.pressed_button.unwrap_or(MouseButton::Left), 1); }))

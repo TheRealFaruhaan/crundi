@@ -62,7 +62,10 @@ pub fn init(window: &mut Window, cx: &mut App) {
         annotating: || drawer::with(|d| d.annotating),
         ask_note: |i, n| drawer::ask_note(i, n),
         console: passwords::console,
+        reload: drawer::reload_panel,
     });
+    // The browser host stays while the drawer is open, even with no page.
+    web::set_keep_alive(|| drawer::with(|d| d.open));
     web::net::set_link(host::send_binary, || host::features().iter().any(|f| f == "net-tunnel"));
     crundi_core::host::set(Box::new(host::Host));
     passwords::init();
@@ -265,6 +268,11 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
             let r = web::engine::mouse(i, a(1).parse().unwrap_or(0.0), a(2).parse().unwrap_or(0.0), "click");
             Some(json!({ "ok": r.is_ok() }))
         }
+        // The browser host: its state; stopped now (the idle stop's path).
+        "browser-host" => Some(json!({ "ok": true, "host": web::host_props() })),
+        "browser-host-stop" => { web::stop_host(); ok() }
+        // A drawer tab's Reload (its page crashed).
+        "reload" => match drawer::find(&a(0)).and_then(|(_, t)| t.panel) { Some(i) => { web::engine::reload(i); ok() } None => Some(json!({ "ok": false, "error": "no page" })) },
         "inbox" => { inbox::open_page(); ok() }
         "inbox-open" => { inbox::open_thread(&a(0)); ok() }
         "inbox-mark-all" => { inbox::mark_all(); ok() }
@@ -354,5 +362,6 @@ fn props() -> Value {
         "browsers": browsers::props(),
         "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "wake": wake::status(), "homepool": homepool::status(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
+        "browserHost": web::host_props(),
     })
 }

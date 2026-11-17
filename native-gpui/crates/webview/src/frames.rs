@@ -1,8 +1,9 @@
-//! Live frames in the chat log (2.16f, specs/log-rest.md "Live frames in
-//! detail"): a show_embed item's page in its box, as an off-screen CEF view
-//! of its own (one per frame). Ported from the Slint client's
-//! src/frames.rs, CEF side only: the log (crates/chat-log/src/frames.rs)
-//! decides when a view is made and released and the cap, and calls these.
+//! Live frames (2.16f, specs/log-rest.md "Live frames in detail"): a
+//! show_embed item's page in its box, Cru's live screen, What's new's step
+//! pages: each an off-screen view of its own in the browser host (host/;
+//! `frame: true`). Ported from the Slint client's src/frames.rs, the app's
+//! side only: the users decide when a view is made and released (the log
+//! its cap), and call these.
 //!
 //! A view: transparent, 30 frames a second, no JS dialogs, no context menu;
 //! new windows go to the system browser (recorded in `opened`, not opened
@@ -10,12 +11,15 @@
 //! carries the server's origin as referrer (`set_origin`). The wheel goes
 //! to the page only while its root can still scroll that way (F134).
 //!
-//! Every CEF callback runs on the main thread (lib.rs pumps CEF): the state
-//! is a thread-local. Images replaced by newer frames wait in `drop_old`
-//! for the window to free them.
+//! The host's events come in on the main thread (client.rs's pump): the
+//! state is a thread-local. Images replaced by newer frames wait in
+//! `drop_old` for the window to free them. A view whose host went away (or
+//! whose page process crashed) is `crashed`: `overlay` draws "This page
+//! crashed" and Reload over it.
 
-use cef::*;
-use gpui::{CursorStyle, Keystroke, MouseButton, RenderImage};
+use crate::client::{self, Owner};
+use crate::ipc::{Cmd, Ev};
+use gpui::{CursorStyle, IntoElement, Keystroke, MouseButton, RenderImage};
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 struct Fv {
@@ -23,7 +27,9 @@ struct Fv {
     messages: Vec<serde_json::Value>,
     /// Loads finished (the host sends what a page wants on load).
     loads: u64,
-    browser: Option<Browser>,
+    /// The view in the host (None: lost when the host went away).
+    browser: Option<u64>,
+    crashed: bool,
     w: i32,
     h: i32,
     scale: f32,
@@ -35,15 +41,16 @@ struct Fv {
     cursor: i32,
     title: String,
     focused: bool,
-    held: Option<MouseButtonType>,
+    held: Option<i32>,
     /// The page's root scroller: (top, most top, left, most left); None until read.
     scroll: Option<(f64, f64, f64, f64)>,
     cdp_next: i32,
-    _observer: Option<Registration>,
     /// The page asked for, and whether its main load failed (a network
     /// error, or an HTTP status of 400 or more).
     url: String,
     failed: bool,
+    /// The referrer its first request carries ("" for none).
+    referrer: String,
 }
 
 #[derive(Default)]
@@ -71,44 +78,48 @@ pub fn loopback(u: &str) -> bool {
 
 /// Make the view for `key` at `target` ("data:text/html;base64,…", an
 /// https or loopback page), `w` x `h` logical px at `scale`; a view that is
-/// there already is resized. False: no browser (CEF did not start, or
-/// Chromium refused).
+/// there already is resized. The browser host starts if it isn't running.
+/// False: no browser this run.
 pub fn open(key: &str, target: &str, w: f32, h: f32, scale: f32) -> bool {
     if !crate::started() { return false; }
     if with(|s| s.frames.contains_key(key)) { resize(key, w, h, scale); return true; }
-    let referrer = target.starts_with("https://") || loopback(target);
-    let origin = if referrer { with(|s| s.origin.clone()) } else { String::new() };
-    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, w: w.round().max(1.0) as i32, h: h.round().max(1.0) as i32, scale: scale.max(1.0), raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, _observer: None, url: target.to_string(), failed: false }));
-    let mut client = FrameClient::new(FrameRender::new(key.to_string()), FrameLife::new(key.to_string()), FrameDisplay::new(key.to_string()), FrameDialogs::new(), FrameMenu::new(), FrameLoad::new(key.to_string()), FrameRequests::new(FrameResource::new(target.to_string(), origin)));
-    let window_info = WindowInfo::default().set_as_windowless(Default::default());
-    // Transparent: a page without a background shows the box's colour.
-    let settings = BrowserSettings { windowless_frame_rate: 30, background_color: 0x0000_0000, ..Default::default() };
-    let b = browser_host_create_browser_sync(Some(&window_info), Some(&mut client), Some(&CefString::from(target)), Some(&settings), None, None);
-    let Some(b) = b else { with(|s| s.frames.remove(key)); eprintln!("[gpui] frame {key}: CEF did not create the view"); return false };
-    let mut obs = FrameDevTools::new(key.to_string());
-    let reg = b.host().and_then(|h| h.add_dev_tools_message_observer(Some(&mut obs)));
-    with(|s| if let Some(f) = s.frames.get_mut(key) { f.browser = Some(b); f._observer = reg; });
+    let referrer = if target.starts_with("https://") || loopback(target) { with(|s| s.origin.clone()) } else { String::new() };
+    let (w, h, scale) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32, scale.max(1.0));
+    with(|s| s.frames.insert(key.to_string(), Fv { messages: vec![], loads: 0, browser: None, crashed: false, w, h, scale, raw: None, frames: 0, image: None, painted: false, cursor: 0, title: String::new(), focused: false, held: None, scroll: None, cdp_next: 0, url: target.to_string(), failed: false, referrer }));
+    if !make(key) { with(|s| s.frames.remove(key)); return false; }
     changed();
     true
 }
 
-/// Release the view.
+/// The view in the host for an entry that has none.
+fn make(key: &str) -> bool {
+    let Some((url, w, h, scale, referrer)) = with(|s| s.frames.get(key).map(|f| (f.url.clone(), f.w, f.h, f.scale, f.referrer.clone()))) else { return false };
+    let id = client::open_view(Owner::Frame(key.to_string()), move |id| Cmd::Open { id, url, frame: true, network: String::new(), proxy: None, origin: referrer, w, h, dpr: scale });
+    let Some(id) = id else { eprintln!("[gpui] frame {key}: no browser (the browser host can't start)"); return false };
+    with(|s| if let Some(f) = s.frames.get_mut(key) { f.browser = Some(id); f.crashed = false; });
+    true
+}
+
+/// Release the view (its segment goes on both sides).
 pub fn close(key: &str) {
     let f = with(|s| s.frames.remove(key));
     let Some(f) = f else { return };
     if let Some((_, img)) = f.image { with(|s| s.old.push(img)); }
-    if let Some(h) = f.browser.and_then(|b| b.host()) { h.close_browser(1); }
+    if let Some(id) = f.browser { client::close_view(id); }
     changed();
 }
+
+fn view(key: &str) -> Option<u64> { with(|s| s.frames.get(key).and_then(|f| f.browser)) }
+fn send(key: &str, cmd: impl FnOnce(u64) -> Cmd) { if let Some(id) = view(key) { client::send_to(id, cmd(id)); } }
 
 pub fn resize(key: &str, w: f32, h: f32, scale: f32) {
     let (w, h, scale) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32, scale.max(1.0));
     let ch = with(|s| s.frames.get_mut(key).map(|f| { let c = f.w != w || f.h != h || (f.scale - scale).abs() > 0.01; f.w = w; f.h = h; f.scale = scale; c }).unwrap_or(false));
-    if ch { if let Some(hh) = host(key) { hh.notify_screen_info_changed(); hh.was_resized(); } }
+    if ch { send(key, |id| Cmd::Size { id, w, h, dpr: scale, screen: true }); }
 }
 
 /// Hidden views stop painting (and use less).
-pub fn hidden(key: &str, on: bool) { if let Some(h) = host(key) { h.was_hidden(on as i32); } }
+pub fn hidden(key: &str, on: bool) { send(key, |id| Cmd::Hidden { id, on }); }
 
 /// The view's newest picture (made once per frame).
 pub fn image(key: &str) -> Option<Arc<RenderImage>> {
@@ -135,10 +146,35 @@ pub fn painted(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f
 pub fn url(key: &str) -> String { with(|s| s.frames.get(key).map(|f| f.url.clone()).unwrap_or_default()) }
 /// The main load failed: a network error, or an HTTP status of 400 or more.
 pub fn failed(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.failed)) }
+/// The view's page crashed (its page process, or the browser host).
+pub fn crashed(key: &str) -> bool { with(|s| s.frames.get(key).is_some_and(|f| f.crashed)) }
 pub fn title(key: &str) -> String { with(|s| s.frames.get(key).map(|f| f.title.clone()).unwrap_or_default()) }
 pub fn cursor(key: &str) -> CursorStyle { crate::view::cursor_style(with(|s| s.frames.get(key).map(|f| f.cursor).unwrap_or(0))) }
 /// The last page a frame asked to open in a new window.
 pub fn opened() -> String { with(|s| s.opened.clone()) }
+
+/// Reload a crashed view: its page process again, or (the host went away)
+/// the view made again, starting the host.
+pub fn reload(key: &str) {
+    let Some(alive) = with(|s| s.frames.get(key).map(|f| f.browser.is_some())) else { return };
+    with(|s| if let Some(f) = s.frames.get_mut(key) { f.crashed = false; f.failed = false; f.painted = false; f.raw = None; });
+    if alive { send(key, |id| Cmd::History { id, h: 0 }); } else { make(key); }
+    changed();
+}
+
+/// What goes over the view's picture: "This page crashed" with Reload, or,
+/// until its first frame, a quiet spinner (None: nothing).
+pub fn overlay(key: &str) -> Option<gpui::AnyElement> {
+    let (crashed, waiting) = with(|s| s.frames.get(key).map(|f| (f.crashed, f.browser.is_some() && !f.painted && !f.failed)))?;
+    if crashed { return Some(crash_overlay(key)); }
+    waiting.then(|| crundi_widgets::page_loading().into_any_element())
+}
+
+/// "This page crashed" with Reload, for the view (when it has crashed).
+pub fn crash_overlay(key: &str) -> gpui::AnyElement {
+    let k = key.to_string();
+    crundi_widgets::page_crashed(gpui::SharedString::from(format!("frame-reload-{key}")), move |_, _, _| reload(&k)).into_any_element()
+}
 
 /// The message bridge (a page's window.postMessage to its host, and back).
 /// A top-level page's `parent` is itself: what it posts to "parent" reaches
@@ -156,11 +192,8 @@ pub fn bridge_js(cru: &[&str], types: &[&str]) -> String {
 
 /// Post a message into the frame's page (window.postMessage(m, '*')).
 pub fn post(key: &str, m: &serde_json::Value) {
-    let Some(b) = with(|s| s.frames.get(key).and_then(|f| f.browser.clone())) else { return };
-    if let Some(f) = b.main_frame() {
-        let code = format!("window.postMessage({}, '*')", m);
-        f.execute_java_script(Some(&CefString::from(code.as_str())), None, 0);
-    }
+    let code = format!("window.postMessage({}, '*')", m);
+    send(key, |id| Cmd::Js { id, code });
 }
 
 /// The page's messages since the last call.
@@ -174,19 +207,14 @@ pub fn exists(key: &str) -> bool { with(|s| s.frames.contains_key(key)) }
 /// The views live now.
 pub fn live() -> usize { with(|s| s.frames.values().filter(|f| f.browser.is_some()).count()) }
 
-fn host(key: &str) -> Option<BrowserHost> { with(|s| s.frames.get(key).and_then(|f| f.browser.as_ref()).and_then(|b| b.host())) }
-
 /// Ask the page where its root scroller is (after a load, a scroll).
 fn ask_scroll(key: &str) {
-    let msg = with(|s| {
-        let f = s.frames.get_mut(key)?;
-        f.cdp_next += 1;
-        Some((f.browser.as_ref().and_then(|b| b.host())?, serde_json::json!({
-            "id": f.cdp_next, "method": "Runtime.evaluate",
-            "params": { "returnByValue": true, "expression": "(()=>{const e=document.scrollingElement||document.documentElement;return [e.scrollTop,e.scrollHeight-innerHeight,e.scrollLeft,e.scrollWidth-innerWidth]})()" }
-        }).to_string()))
-    });
-    if let Some((h, m)) = msg { h.send_dev_tools_message(Some(m.as_bytes())); }
+    let call = with(|s| s.frames.get_mut(key).map(|f| { f.cdp_next += 1; f.cdp_next }));
+    let Some(call) = call else { return };
+    send(key, |id| Cmd::Cdp { id, call, method: "Runtime.evaluate".into(), params: serde_json::json!({
+        "returnByValue": true,
+        "expression": "(()=>{const e=document.scrollingElement||document.documentElement;return [e.scrollTop,e.scrollHeight-innerHeight,e.scrollLeft,e.scrollWidth-innerWidth]})()"
+    }) });
 }
 
 const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
@@ -194,16 +222,17 @@ const EVENTFLAG_LEFT_MOUSE_BUTTON: u32 = 1 << 4;
 /// The pointer in the view (x, y in its logical px): 0 move, 1 down, 2 up,
 /// 3 leave; `clicks`: 2 a double click, 3 a triple.
 pub fn pointer(key: &str, kind: i32, x: f32, y: f32, button: MouseButton, clicks: usize) {
-    let Some(h) = host(key) else { return };
+    let Some(id) = view(key) else { return };
     let held = with(|s| s.frames.get(key).and_then(|f| f.held));
-    let btn = match button { MouseButton::Middle => MouseButtonType::MIDDLE, MouseButton::Right => MouseButtonType::RIGHT, _ => MouseButtonType::LEFT };
-    let ev = MouseEvent { x: x.round() as i32, y: y.round() as i32, modifiers: if held.is_some() { EVENTFLAG_LEFT_MOUSE_BUTTON } else { 0 } };
+    let btn = match button { MouseButton::Middle => 1, MouseButton::Right => 2, _ => 0 };
+    let modifiers = if held.is_some() { EVENTFLAG_LEFT_MOUSE_BUTTON } else { 0 };
     let n = clicks.clamp(1, 3) as i32;
+    let m = |kind: i32, button: i32| Cmd::Mouse { id, kind, x: x.round() as i32, y: y.round() as i32, button, clicks: n, modifiers };
     match kind {
-        0 => h.send_mouse_move_event(Some(&ev), 0),
-        1 => { focus(key, true); with(|s| if let Some(f) = s.frames.get_mut(key) { f.held = Some(btn); }); h.send_mouse_click_event(Some(&ev), btn, 0, n); }
-        2 => { with(|s| if let Some(f) = s.frames.get_mut(key) { f.held = None; }); h.send_mouse_click_event(Some(&ev), held.unwrap_or(btn), 1, n); }
-        _ => h.send_mouse_move_event(Some(&ev), 1),
+        0 => client::send_to(id, m(0, 0)),
+        1 => { focus(key, true); with(|s| if let Some(f) = s.frames.get_mut(key) { f.held = Some(btn); }); client::send_to(id, m(1, btn)); }
+        2 => { with(|s| if let Some(f) = s.frames.get_mut(key) { f.held = None; }); client::send_to(id, m(2, held.unwrap_or(btn))); }
+        _ => client::send_to(id, m(3, 0)),
     }
 }
 
@@ -218,7 +247,7 @@ pub fn wheel(key: &str, x: f32, y: f32, dx: f32, dy: f32) -> bool {
         let hz = if dx > 0.0 { left > 0.5 } else if dx < 0.0 { left < max_left - 0.5 } else { false };
         v || hz
     });
-    if takes { if let Some(h) = host(key) { h.send_mouse_wheel_event(Some(&MouseEvent { x: x as i32, y: y as i32, modifiers: 0 }), dx as i32, dy as i32); } }
+    if takes { send(key, |id| Cmd::Wheel { id, x: x as i32, y: y as i32, dx: dx as i32, dy: dy as i32 }); }
     takes
 }
 
@@ -227,7 +256,7 @@ pub fn focus(key: &str, on: bool) {
     let others: Vec<String> = if on { with(|s| s.frames.iter().filter(|(k, f)| *k != key && f.focused).map(|(k, _)| k.clone()).collect()) } else { vec![] };
     for k in others { focus(&k, false); }
     let ch = with(|s| s.frames.get_mut(key).map(|f| { let c = f.focused != on; f.focused = on; c }).unwrap_or(false));
-    if let Some(h) = host(key) { h.set_focus(on as i32); }
+    send(key, |id| Cmd::Focus { id, on });
     if ch { changed(); }
 }
 
@@ -235,7 +264,7 @@ pub fn focused() -> Option<String> { with(|s| s.frames.iter().find(|(_, f)| f.fo
 
 /// A key for the frame: pressed and released.
 pub fn key(key: &str, ks: &Keystroke) {
-    let Some(h) = host(key) else { return };
+    let Some(id) = view(key) else { return };
     let named = match ks.key.as_str() {
         "enter" => Some(13), "backspace" => Some(8), "tab" => Some(9), "escape" => Some(27), "delete" => Some(46),
         "up" => Some(38), "down" => Some(40), "left" => Some(37), "right" => Some(39),
@@ -246,212 +275,64 @@ pub fn key(key: &str, ks: &Keystroke) {
     let modifiers = (if m.shift { 1 << 1 } else { 0 }) | (if m.control { 1 << 2 } else { 0 }) | (if m.alt { 1 << 3 } else { 0 }) | (if m.platform { 1 << 7 } else { 0 });
     let ch = ks.key_char.as_ref().and_then(|c| c.chars().next()).or_else(|| if ks.key.chars().count() == 1 { ks.key.chars().next() } else { None });
     let code = named.or_else(|| ch.map(|c| c.to_ascii_uppercase() as i32)).unwrap_or(0);
-    let ev = |t: KeyEventType, c: u16| KeyEvent { type_: t, modifiers, windows_key_code: code, character: c, unmodified_character: c, ..Default::default() };
-    h.send_key_event(Some(&ev(KeyEventType::RAWKEYDOWN, 0)));
+    client::send_to(id, Cmd::Key { id, kind: 0, modifiers, code, ch: 0 });
     let typed = if named == Some(13) { Some('\r') } else if named.is_none() && !m.control && !m.platform { ch } else { None };
-    if let Some(c) = typed { let mut buf = [0u16; 2]; h.send_key_event(Some(&ev(KeyEventType::CHAR, c.encode_utf16(&mut buf)[0]))); }
-    h.send_key_event(Some(&ev(KeyEventType::KEYUP, 0)));
+    if let Some(c) = typed { let mut buf = [0u16; 2]; client::send_to(id, Cmd::Key { id, kind: 3, modifiers, code, ch: c.encode_utf16(&mut buf)[0] }); }
+    client::send_to(id, Cmd::Key { id, kind: 2, modifiers, code, ch: 0 });
 }
 
-// ─── CEF handlers ───
+// ─── What the host tells a frame ───
 
-wrap_render_handler! {
-    pub struct FrameRender {
-        key: String,
-    }
-    impl RenderHandler {
-        fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
-            if let Some(r) = rect {
-                let (w, h) = with(|s| s.frames.get(&self.key).map(|f| (f.w, f.h)).unwrap_or((1, 1)));
-                *r = Rect { x: 0, y: 0, width: w.max(1), height: h.max(1) };
-            }
-        }
-        fn screen_info(&self, _browser: Option<&mut Browser>, info: Option<&mut ScreenInfo>) -> ::std::os::raw::c_int {
-            match info {
-                Some(i) => {
-                    let (w, h, k) = with(|s| s.frames.get(&self.key).map(|f| (f.w, f.h, f.scale)).unwrap_or((1, 1, 1.0)));
-                    i.device_scale_factor = k;
-                    i.rect = Rect { x: 0, y: 0, width: w.max(1), height: h.max(1) };
-                    i.available_rect = i.rect.clone();
-                    1
-                }
-                None => 0,
-            }
-        }
-        fn on_scroll_offset_changed(&self, _browser: Option<&mut Browser>, _x: f64, _y: f64) {
-            ask_scroll(&self.key);
-        }
-        fn on_paint(&self, _browser: Option<&mut Browser>, type_: PaintElementType, _dirty: Option<&[Rect]>, buffer: *const u8, width: ::std::os::raw::c_int, height: ::std::os::raw::c_int) {
-            if type_ != PaintElementType::VIEW || buffer.is_null() || width <= 0 || height <= 0 { return; }
-            let (w, h) = (width as u32, height as u32);
-            let src = unsafe { std::slice::from_raw_parts(buffer, (w * h * 4) as usize) };
-            // BGRA as GPUI's images take it.
-            let raw = std::rc::Rc::new((src.to_vec(), w, h));
-            with(|s| if let Some(f) = s.frames.get_mut(&self.key) { if f.browser.is_some() { f.raw = Some(raw); f.frames += 1; f.painted = true; } });
-            changed();
-        }
-    }
+pub(crate) fn on_frame(key: &str, id: u64, data: Vec<u8>, w: u32, h: u32) {
+    let raw = std::rc::Rc::new((data, w, h));
+    let took = with(|s| s.frames.get_mut(key).filter(|f| f.browser == Some(id)).map(|f| { f.raw = Some(raw); f.frames += 1; f.painted = true; }).is_some());
+    if took { changed(); }
 }
 
-wrap_life_span_handler! {
-    pub struct FrameLife {
-        key: String,
-    }
-    impl LifeSpanHandler {
-        // New windows (window.open, target=_blank): the system browser.
-        fn on_before_popup(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: ::std::os::raw::c_int, target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, _target_disposition: WindowOpenDisposition, _user_gesture: ::std::os::raw::c_int, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>, _client: Option<&mut Option<Client>>, _settings: Option<&mut BrowserSettings>, _extra_info: Option<&mut Option<DictionaryValue>>, _no_javascript_access: Option<&mut ::std::os::raw::c_int>) -> ::std::os::raw::c_int {
-            let u = target_url.map(|u| u.to_string()).unwrap_or_default();
-            if u.starts_with("http://") || u.starts_with("https://") {
-                with(|s| s.opened = u.clone());
-                if std::env::var_os("CRUNDI_TEST_PORT").is_none() { open_system(&u); }
-            }
-            let _ = &self.key;
-            1
+pub(crate) fn on_event(key: &str, id: u64, ev: Ev) {
+    if view(key) != Some(id) { return; }
+    let set = |f: &mut dyn FnMut(&mut Fv)| with(|s| if let Some(x) = s.frames.get_mut(key) { f(x); });
+    match ev {
+        Ev::Console { text, .. } => {
+            if std::env::var_os("CRUNDI_DEBUG_FRAMES").is_some() { eprintln!("[frame console] {text:?}"); }
+            let Some(rest) = text.strip_prefix(MSG_PREFIX) else { return };
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) { set(&mut |f| f.messages.push(v.clone())); changed(); }
         }
-    }
-}
-
-wrap_display_handler! {
-    pub struct FrameDisplay {
-        key: String,
-    }
-    impl DisplayHandler {
-        fn on_console_message(&self, _browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
-            let m = message.map(|m| m.to_string()).unwrap_or_default();
-            if std::env::var_os("CRUNDI_DEBUG_FRAMES").is_some() { eprintln!("[frame console] {m:?}"); }
-            let Some(rest) = m.strip_prefix(MSG_PREFIX) else { return 0 };
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(rest) { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.messages.push(v); }); changed(); }
-            1
-        }
-        fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            let t = title.map(|t| t.to_string()).unwrap_or_default();
-            with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.title = t; });
-        }
-        fn on_cursor_change(&self, _browser: Option<&mut Browser>, _cursor: PageCursor, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> ::std::os::raw::c_int {
-            let c = crate::engine::cursor_kind(type_);
-            let ch = with(|s| s.frames.get_mut(&self.key).map(|f| { let ch = f.cursor != c; f.cursor = c; ch }).unwrap_or(false));
+        Ev::Title { title, .. } => set(&mut |f| f.title = title.clone()),
+        Ev::Cursor { kind, .. } => {
+            let ch = with(|s| s.frames.get_mut(key).map(|f| { let ch = f.cursor != kind; f.cursor = kind; ch }).unwrap_or(false));
             if ch { changed(); }
-            1
         }
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub type PageCursor = *mut u8;
-#[cfg(not(target_os = "macos"))]
-pub type PageCursor = CursorHandle;
-
-wrap_jsdialog_handler! {
-    pub struct FrameDialogs {}
-    impl JsdialogHandler {
-        // alert / confirm / prompt: a windowless view shows none (PLAN.md).
-        fn on_jsdialog(&self, _browser: Option<&mut Browser>, _origin_url: Option<&CefString>, _dialog_type: JsdialogType, _message_text: Option<&CefString>, _default_prompt_text: Option<&CefString>, _callback: Option<&mut JsdialogCallback>, suppress_message: Option<&mut ::std::os::raw::c_int>) -> ::std::os::raw::c_int {
-            if let Some(s) = suppress_message { *s = 1; }
-            0
+        Ev::Loading { loading, .. } => if !loading { set(&mut |f| f.loads += 1); changed(); ask_scroll(key); },
+        Ev::LoadEnd { status, .. } => if status >= 400 { set(&mut |f| f.failed = true); changed(); },
+        Ev::LoadError { .. } => { set(&mut |f| f.failed = true); changed(); }
+        Ev::Scrolled { .. } => ask_scroll(key),
+        Ev::CdpResult { ok, result, .. } => {
+            if !ok { return; }
+            let Some(a) = result.pointer("/result/value").and_then(|x| x.as_array()) else { return };
+            let n = |i: usize| a.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0);
+            let sc = (n(0), n(1).max(0.0), n(2), n(3).max(0.0));
+            set(&mut |f| f.scroll = Some(sc));
         }
-    }
-}
-
-wrap_context_menu_handler! {
-    pub struct FrameMenu {}
-    impl ContextMenuHandler {
-        // Right-click: no menu (Electron shows none in a frame).
-        fn on_before_context_menu(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _params: Option<&mut ContextMenuParams>, model: Option<&mut MenuModel>) {
-            if let Some(m) = model { m.clear(); }
-        }
-    }
-}
-
-wrap_load_handler! {
-    pub struct FrameLoad {
-        key: String,
-    }
-    impl LoadHandler {
-        fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: ::std::os::raw::c_int, _back: ::std::os::raw::c_int, _fwd: ::std::os::raw::c_int) {
-            if is_loading == 0 { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.loads += 1; }); changed(); ask_scroll(&self.key); }
-        }
-        fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: ::std::os::raw::c_int) {
-            if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
-            if http_status_code >= 400 { with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.failed = true; }); changed(); }
-        }
-        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode, _error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
-            if frame.map(|f| f.is_main() == 0).unwrap_or(false) { return; }
-            if *error_code.as_ref() as i32 == -3 { return; } // ERR_ABORTED: a navigation replaced it
-            with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.failed = true; });
+        // New windows (window.open, target=_blank): the system browser.
+        Ev::Popup { url, .. } => if url.starts_with("http://") || url.starts_with("https://") {
+            with(|s| s.opened = url.clone());
+            if std::env::var_os("CRUNDI_TEST_PORT").is_none() { open_system(&url); }
+        },
+        Ev::Gone { status, .. } => {
+            eprintln!("[gpui] frame {key}: its page process ended ({status})");
+            set(&mut |f| f.crashed = true);
             changed();
         }
+        _ => {}
     }
 }
 
-wrap_dev_tools_message_observer! {
-    pub struct FrameDevTools {
-        key: String,
-    }
-    impl DevToolsMessageObserver {
-        fn on_dev_tools_method_result(&self, _browser: Option<&mut Browser>, _message_id: ::std::os::raw::c_int, success: ::std::os::raw::c_int, result: Option<&[u8]>) {
-            if success == 0 { return; }
-            let v: serde_json::Value = result.and_then(|r| serde_json::from_slice(r).ok()).unwrap_or(serde_json::Value::Null);
-            let Some(a) = v.pointer("/result/value").and_then(|x| x.as_array()) else { return };
-            let n = |i: usize| a.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0);
-            with(|s| if let Some(f) = s.frames.get_mut(&self.key) { f.scroll = Some((n(0), n(1).max(0.0), n(2), n(3).max(0.0))); });
-        }
-    }
-}
-
-// The first request of an https page carries the server's origin as its
-// referrer (strict-origin-when-cross-origin), as the web's iframe sends it:
-// YouTube's player refuses a load without one. On CEF's IO thread: the
-// handler holds what it needs (no thread-local state).
-wrap_resource_request_handler! {
-    pub struct FrameResource {
-        url: String,
-        origin: String,
-    }
-    impl ResourceRequestHandler {
-        fn on_before_resource_load(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, request: Option<&mut Request>, _callback: Option<&mut Callback>) -> ReturnValue {
-            if let (Some(fr), Some(req)) = (frame, request) {
-                let main = fr.is_main() != 0;
-                let url = CefString::from(&req.url()).to_string();
-                let has = !CefString::from(&req.referrer_url()).to_string().is_empty();
-                if main && !self.origin.is_empty() && !has && url == self.url {
-                    req.set_referrer(Some(&CefString::from(format!("{}/", self.origin).as_str())), ReferrerPolicy::REDUCE_REFERRER_GRANULARITY_ON_TRANSITION_CROSS_ORIGIN);
-                }
-            }
-            ReturnValue::CONTINUE
-        }
-    }
-}
-
-wrap_request_handler! {
-    pub struct FrameRequests {
-        resource: ResourceRequestHandler,
-    }
-    impl RequestHandler {
-        fn resource_request_handler(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _request: Option<&mut Request>, _is_navigation: ::std::os::raw::c_int, _is_download: ::std::os::raw::c_int, _request_initiator: Option<&CefString>, _disable_default_handling: Option<&mut ::std::os::raw::c_int>) -> Option<ResourceRequestHandler> {
-            Some(self.resource.clone())
-        }
-    }
-}
-
-wrap_client! {
-    pub struct FrameClient {
-        render: RenderHandler,
-        life: LifeSpanHandler,
-        display: DisplayHandler,
-        dialogs: JsdialogHandler,
-        menu: ContextMenuHandler,
-        load: LoadHandler,
-        requests: RequestHandler,
-    }
-    impl Client {
-        fn render_handler(&self) -> Option<RenderHandler> { Some(self.render.clone()) }
-        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(self.life.clone()) }
-        fn display_handler(&self) -> Option<DisplayHandler> { Some(self.display.clone()) }
-        fn jsdialog_handler(&self) -> Option<JsdialogHandler> { Some(self.dialogs.clone()) }
-        fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(self.menu.clone()) }
-        fn load_handler(&self) -> Option<LoadHandler> { Some(self.load.clone()) }
-        fn request_handler(&self) -> Option<RequestHandler> { Some(self.requests.clone()) }
-    }
+/// The browser host went away: the view shows that it crashed.
+pub(crate) fn host_gone(key: &str) {
+    let img = with(|s| s.frames.get_mut(key).map(|f| { f.browser = None; f.crashed = true; f.raw = None; f.focused = false; f.held = None; f.image.take() }));
+    if let Some(Some((_, img))) = img { with(|s| s.old.push(img)); }
+    changed();
 }
 
 /// A page in the system's browser.

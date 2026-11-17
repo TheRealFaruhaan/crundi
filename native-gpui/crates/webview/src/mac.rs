@@ -61,6 +61,18 @@ pub fn adopt_cef_app_protocol() {
     }
 }
 
+/// The browser host (no GPUI there): NSApp made here, an accessory app (no
+/// Dock icon of its own), conforming to CEF's protocol, before CEF starts.
+pub fn host_app() {
+    unsafe {
+        let cls = AnyClass::get(c"NSApplication").expect("NSApplication");
+        let app: *mut AnyObject = msg_send![cls, sharedApplication];
+        // NSApplicationActivationPolicyAccessory
+        let _: Bool = msg_send![app, setActivationPolicy: 1isize];
+    }
+    adopt_cef_app_protocol();
+}
+
 // ─── CEF's message loop on macOS ───
 //
 // The app pumps CEF from a GPUI timer (lib.rs `pump`). Should that ever run

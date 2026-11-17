@@ -24,12 +24,12 @@ Don't delete or change it, apart from its shared tools when a test needs it.
 | `crates/chats` | A chat pane: log over composer, its pane kind (`live:`), keeping panes in step with the project's chats, the chat's driver actions | Lead (Planning and Operations ask) |
 | `crates/chat-composer` | A chat's composer side | Planning |
 | `crates/chat-log` | A chat's log side | Operations |
-| `crates/webview` | The CEF bridge: start, pump, off-screen pages drawn as GPUI images, input, device sizes, annotation strokes | Desktop |
+| `crates/webview` | The browser bridge: Chromium in its own process (the browser host: `--browser-host`, started lazily, README), the app's client (pump, off-screen pages drawn as GPUI images, input, device sizes, annotation strokes) | Desktop |
 | `crates/desktop` | The browser drawer, the Browsers tab, the native host (port `native-client/src/server.rs` onto `crundi_core::host`), later tray, Inbox, bubble, saved passwords, the homepool node, Cru | Desktop |
 | `crates/workspace` | Git, Files, Media (phase 3) | Workspace |
 | `crates/planning` | Kanban, Mind map, Notes, Schedules, webhooks, Factories (phase 4) | Planning |
 | `crates/operations` | Services, Docker, Secrets, Skills, Usage, Settings, Homepool, Info, Panels, What's new (phase 5) | Operations |
-| `crates/app` | The binary (`crundi-gpui`): starts CEF and the window, registers every part, pumps, the test driver's commands | Lead |
+| `crates/app` | The binary (`crundi-gpui`, also the browser host and CEF's helpers): starts the window, registers every part, pumps, the test driver's commands | Lead |
 
 A crate's owner is its only editor. Inside a crate, one file per screen or
 feature. A part that needs something from another part's crate asks its

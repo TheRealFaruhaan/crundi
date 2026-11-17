@@ -1,14 +1,17 @@
-//! Crundi's native PC client on GPUI (AREAS.md): starts CEF and the window,
-//! registers every part, and pumps CEF and the live link from the main
-//! thread. Thin: everything else is in the crates.
+//! Crundi's native PC client on GPUI (AREAS.md): starts the window,
+//! registers every part, and pumps the browser host's events and the live
+//! link from the main thread. Thin: everything else is in the crates.
 //!
 //!   CRUNDI_CONFIG_DIR=<dir>   where the login is saved (crundi_core::store)
 //!   CRUNDI_CEF_CACHE=<dir>    CEF's profile (one per client running at once)
 //!   CRUNDI_TEST_PORT=<port>   the test driver (driver.rs; the Slint client's protocol)
 //!   CRUNDI_URL=<url>          what the browser drawer opens first
+//!   CRUNDI_BROWSER_IDLE_SECS=<s>  how long the browser host stays with no page (60)
 //!
-//! CEF starts this same binary again for its helper processes (--type=…):
-//! crundi_webview::init() handles those first and they leave.
+//! Chromium runs in a process of its own, this same binary started with
+//! --browser-host, when a page is first needed (crundi_webview); CEF starts
+//! it again for its helper processes (--type=…). crundi_webview::init_process()
+//! runs those first, and they never reach the window.
 
 mod driver;
 
@@ -22,7 +25,7 @@ fn main() {
     crundi_webview::init_process();
 
     gpui_platform::application().with_assets(crundi_theme::AllAssets).run(move |cx: &mut App| {
-        let cef = crundi_webview::start();
+        let cef = crundi_webview::start(&crundi_core::store::config_dir());
         gpui_component::init(cx);
         crundi_theme::init(cx);
         // The parts, before the session starts (they hear sign-in).

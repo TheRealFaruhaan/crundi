@@ -13,8 +13,10 @@
 //! Desktop's): one off-screen view per live box, drawn as its picture in
 //! the box; the pointer, the wheel and the keys go to it (a click gives it
 //! the keyboard, a press outside takes it back). A stored page is fetched
-//! once (/api/chat-media) and opened as a data: page. Without CEF (it did
-//! not start), a box draws the spec's fallback: "Open" centred inside.
+//! once (/api/chat-media) and opened as a data: page. Without a browser
+//! (its host can't start), a box draws the spec's fallback: "Open" centred
+//! inside. The views live in the browser host, started with the first one;
+//! a view whose page crashed shows so, with Reload (`web::overlay`).
 use crate::LogView;
 use crundi_core::media;
 use crundi_widgets as w;
@@ -256,6 +258,8 @@ pub fn view(v: &mut LogView, key: &str, chat: &str, i: &media::Item, window: &mu
         .cursor(web::cursor(key))
         .child(report)
         .children(web::image(key).map(|img| gpui::img(ImageSource::Render(img)).absolute().inset_0().size_full()))
+        // Until its first frame a quiet spinner; crashed: the words and Reload.
+        .children(web::overlay(key))
         .on_mouse_down(MouseButton::Left, move |ev, window, cx| {
             window.focus(&fh2, cx);
             let (x, y) = at(ev.position, origin(cx, &k1));

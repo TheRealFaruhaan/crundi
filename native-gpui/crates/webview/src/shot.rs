@@ -138,16 +138,8 @@ pub fn clear_data(site: Option<&str>, cookies: bool, cache: bool) {
                 browser::cdp(i, "Storage.clearDataForOrigin", json!({ "origin": o, "storageTypes": "all" }), Box::new(|_, _| {}));
             },
         }
-        for (_, ctx) in browser::contexts() {
-            use cef::ImplRequestContext;
-            if let Some(cm) = ctx.cookie_manager(None) {
-                use cef::ImplCookieManager;
-                match site {
-                    None => { cm.delete_cookies(None, None, None); }
-                    Some(s) => for o in [format!("https://{s}"), format!("http://{s}")] { cm.delete_cookies(Some(&cef::CefString::from(o.as_str())), None, None); },
-                }
-            }
-        }
+        // Cookies in every profile: the browser host's cookie managers.
+        crate::client::send_running(crate::ipc::Cmd::ClearCookies { site: site.map(str::to_string) });
     }
     if cache {
         // Every page's network cache (CDP: per browser, the profile's).

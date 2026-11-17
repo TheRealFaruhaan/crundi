@@ -7,6 +7,12 @@
 //! client's config folder: { open, width, side, projects: { alias: { active,
 //! tabs: [{ id, url, title, device, custom, network }] } } }.
 //!
+//! Nothing loads by itself (the browser host starts with the first page):
+//! after a relaunch the drawer starts closed, its tabs listed but not
+//! loaded; opening it loads the active tab only, the others as they are
+//! shown or used. Closed for the browser host's idle grace, the drawer's
+//! pages are let go (as a relaunch leaves them), so the host can stop.
+//!
 //! Ported from the Slint client's src/desktop/drawer.rs: the logic is the
 //! same; what it set on the Slint globals is state here, which the drawer's
 //! view (ui.rs) reads (`ctx::dirty` asks it to draw again).
@@ -75,6 +81,8 @@ pub struct Drawer {
     pub hist_q: String,
     /// The Clear browsing data panel's choices.
     pub clr: Clear,
+    /// Counts closings: the last one lets the pages go after the grace.
+    pub closed_seq: u64,
 }
 
 /// The Clear browsing data panel (VD clear): one site or all, and what.
@@ -103,7 +111,8 @@ fn load() {
         .iter().filter_map(|h| Some(rules::Visit { url: h.get("url")?.as_str()?.to_string(), title: kit::s(h, "title"), at: kit::n(h, "at") as u64, visits: kit::n(h, "visits") as u64 })).collect();
     with(|d| {
         d.history = h;
-        d.open = v.get("open").and_then(|x| x.as_bool()).unwrap_or(false);
+        // Closed at start, whatever it was: nothing loads until it is opened.
+        d.open = false;
         d.width = v.get("width").and_then(|x| x.as_f64()).map(|w| w as f32).unwrap_or(DEFAULT_W).max(MIN_W);
         d.side = if kit::s(&v, "side") == "left" { "left".into() } else { "right".into() };
         if let Some(ps) = v.get("projects").and_then(|p| p.as_object()) {
@@ -207,7 +216,11 @@ fn rand() -> u64 {
 /// ensure): returns its panel.
 pub fn ensure(id: &str) -> Option<usize> {
     let t = find(id)?.1;
-    if let Some(i) = t.panel { wake(id); return Some(i); }
+    // A page the browser host lost (it crashed) is made again on use.
+    if let Some(i) = t.panel.filter(|i| browser::with(|st| st.panels.get(*i).is_some_and(|p| p.browser.is_none() && p.crashed))) {
+        browser::close_panel(i);
+        tab_mut(id, |x| x.panel = None);
+    } else if let Some(i) = t.panel { wake(id); return Some(i); }
     let url = if t.url.is_empty() { "about:blank".to_string() } else { t.url.clone() };
     let i = browser::open_panel(&url, &t.network);
     browser::with(|st| { let p = &mut st.panels[i]; p.tab = Some(id.to_string()); p.device = t.device.unwrap_or(0); p.custom = if t.device.is_none() { t.custom } else { None }; p.title = t.title.clone(); });
@@ -273,10 +286,33 @@ pub fn open() {
 }
 
 pub fn close() {
-    with(|d| { d.open = false; d.annotating = false; d.pop.clear(); d.note = None; });
+    let seq = with(|d| { d.open = false; d.annotating = false; d.pop.clear(); d.note = None; d.closed_seq += 1; d.closed_seq });
     persist();
     shell_drawer(false);
     render();
+    // Still closed after the grace: the pages go (listed, loaded again when shown).
+    later(crundi_webview::idle_grace(), move || if with(|d| !d.open && d.closed_seq == seq) { unload_all(); });
+}
+
+/// Every tab's page goes; the tabs stay, as after a relaunch.
+pub fn unload_all() {
+    let tabs: Vec<(String, usize)> = with(|d| d.projects.values().flat_map(|ps| ps.tabs.iter().filter_map(|t| t.panel.map(|i| (t.id.clone(), i)))).collect::<Vec<_>>());
+    for (id, i) in tabs {
+        browser::close_panel(i);
+        tab_mut(&id, |x| { x.panel = None; x.sleeping = false; });
+    }
+    render();
+}
+
+/// Reload a tab's page that the browser host lost: made again, as a tab
+/// is (its device, its passwords script). False: not a drawer tab's page.
+pub fn reload_panel(i: usize) -> bool {
+    let Some(t) = tab_of_panel(i) else { return false };
+    browser::close_panel(i);
+    tab_mut(&t.id, |x| x.panel = None);
+    ensure(&t.id);
+    render();
+    true
 }
 
 /// Close every tab of this project, then hide (VD closeAll).
@@ -769,6 +805,7 @@ pub fn props() -> Value {
         "tabs": d.projects.get(&key(&d.project)).map(|ps| ps.tabs.iter().map(|t| json!({
             "id": t.id, "url": t.url, "title": t.title, "network": t.network, "panel": t.panel,
             "device": t.device, "custom": t.custom.map(|(w, h)| json!([w, h])), "sleeping": t.sleeping, "unloaded": t.unloaded,
+            "crashed": t.panel.is_some_and(browser::crashed),
         })).collect::<Vec<_>>()).unwrap_or_default(),
         "projects": d.projects.iter().map(|(k, p)| (k.clone(), json!(p.tabs.len()))).collect::<serde_json::Map<_, _>>(),
     }))

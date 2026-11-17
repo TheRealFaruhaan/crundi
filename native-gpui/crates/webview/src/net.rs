@@ -9,12 +9,12 @@
 //! Frames: [type u8][id u32 BE][payload]; OPEN 1, DATA 2, CLOSE 3, OPENED 4,
 //! ERROR 5. A proxy owns the ids whose top byte is its base (server 0,
 //! homepool networks 1, 2, …). The proxy listens on 127.0.0.1 only and asks
-//! for a password made at start (CEF answers it: engine.rs's auth handler).
+//! for a password made at start (the browser host's CEF answers it: the
+//! app gives it with the view, `proxy_for`; host/views.rs's auth handler).
 //!
 //! The host's socket is the desktop area's: it sets `set_link` (send a
 //! frame, the server has the tunnel) and `set_local` (the server is this PC).
 
-use cef::{ImplDictionaryValue, ImplPreferenceManager, ImplValue, RequestContext};
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -248,25 +248,14 @@ pub fn dropped() {
     for s in all { let _ = s.send(Ev::Error("Not connected to the server".into())); }
 }
 
-/// A network's profile was made: its proxy when the server is elsewhere
-/// (none when it is this PC: its localhost is ours).
-pub fn context_made(network: &str, ctx: &RequestContext) {
-    if network == "client" || network.starts_with("mem:") { return; }
-    if LOCAL.load(std::sync::atomic::Ordering::Relaxed) { return; }
-    let Some(port) = proxy_port(network) else { return };
-    let Some(dict) = cef::dictionary_value_create() else { return };
-    let s = |x: &str| cef::CefString::from(x);
-    dict.set_string(Some(&s("mode")), Some(&s("fixed_servers")));
-    dict.set_string(Some(&s("server")), Some(&s(&format!("http://127.0.0.1:{port}"))));
-    dict.set_string(Some(&s("bypass_list")), Some(&s("<-loopback>")));
-    let Some(v) = cef::value_create() else { return };
-    let mut d = dict;
-    v.set_dictionary(Some(&mut d));
-    let mut v = v;
-    let mut err = cef::CefString::default();
-    if ctx.set_preference(Some(&s("proxy")), Some(&mut v), Some(&mut err)) == 0 {
-        eprintln!("[gpui] drawer: the {network} network's proxy was not set: {err}");
-    }
+/// The proxy a view on `network` goes out through, with its sign-in, for
+/// the browser host (none for this PC's network, a hidden browser's, or
+/// when the server is this PC: its localhost is ours).
+pub fn proxy_for(network: &str) -> Option<crate::ipc::Proxy> {
+    if network == "client" || network.is_empty() || network.starts_with("mem:") { return None; }
+    if LOCAL.load(std::sync::atomic::Ordering::Relaxed) { return None; }
+    let port = proxy_port(network)?;
+    Some(crate::ipc::Proxy { port, user: USER.to_string(), pass: pass() })
 }
 
 #[cfg(test)]

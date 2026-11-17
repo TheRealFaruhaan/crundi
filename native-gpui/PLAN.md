@@ -83,6 +83,42 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
 7. **Ship** (not this run): installers and auto-update, signing, the release
    workflow, moving PC users off Electron.
 
+## The browser host (17 Nov 2026, the owner's card)
+
+Chromium runs in a process of its own, started lazily, cleaned up on any
+crash or close, with no tabs loaded on relaunch (README, "The browser
+host"). Every web view goes through it: the drawer and its tabs, hidden
+browsers, widget panels, a chat's live frames, Cru's screen, What's new.
+Tests: `test/desktop.mjs` part `hostproc` (no host at launch; it starts with
+the drawer; tabs listed but not loaded after a relaunch, the active one
+loads on open; the idle stop; the host killed: "This page crashed", the app
+up, Reload; the app killed: no host, helper or segment left; a stale host
+reaped at start), and the unit tests of `ipc`, `shm`, `proc`.
+
+- [x] the host process, its link, frames in shared memory (Linux, macOS,
+  Windows), lazy start, idle stop, kill-on-close per OS, the PID file and
+  reaping, crash state and Reload
+- [ ] next stage: fewer frame copies (CEF to segment, segment to the app's
+  buffer, buffer to a GPUI image) and GPU shared textures
+
+Gaps:
+- **Windows and macOS are compile-only** (CI, and the platform modules
+  cross-checked here): the job object, named mappings, `shm_open` and the
+  macOS host's NSApp (an accessory app) have not run on those systems.
+- **libcef is still linked into the app** (Linux, Windows): mapped, never
+  initialised. Loading it only in the host would need the binary split or
+  CEF loaded at run time.
+- **Three copies per frame** (above); the app keeps the last frame of each
+  view, as before.
+- **IME**: the protocol carries committed text (`Ime`), but the views have
+  no input-method handler yet (as before the host).
+- **DevTools** opens as a window of the host process.
+- A hidden browser's in-memory profile lives until the host stops.
+- macOS: a frame segment's name can outlive both processes only if both
+  die between the host making it and the app opening it.
+- If the host dies before CEF is up three times in a row, the browser is
+  off until the app restarts (as when CEF did not start).
+
 ## Deliberate differences decided by the owner
 
 - **The terminal input is inside each terminal panel** (15 Nov 2026): no
@@ -90,6 +126,10 @@ widgets crate (`DESIGN.md`). Who builds what: `AREAS.md`.
   a chat panel has its composer: the text box (Ctrl+Enter or Send sends to
   that terminal), the keyboard-tools toggle with its key grid, attach
   (uploads to `crundi_attachments`, with its progress strip) and Send.
+- **Nothing loads by itself** (17 Nov 2026): the drawer starts closed after
+  a relaunch (its tabs listed, not loaded), and a drawer closed for the
+  browser host's idle grace lets its pages go (they load again when shown),
+  so the host can stop. The PC client restored the drawer and kept pages.
 - **The browser is a drawer** beside the whole project area, below the top
   bar, with a draggable divider; hidden, the project bar's Browser button
   returns with a dot.

@@ -1,28 +1,42 @@
-//! The CEF bridge (Desktop's, AREAS.md): off-screen (windowless) Chromium
-//! browsers, one per panel, whose frames are drawn as GPUI images, with the
+//! The browser bridge (Desktop's, AREAS.md): off-screen Chromium browsers
+//! (CEF), one per page, whose frames are drawn as GPUI images, with the
 //! mouse, wheel and keys passed back, and the marks drawn over the page.
 //!
-//! - `engine`: the panels (ported from the Slint client's src/browser.rs):
-//!   CEF's handlers, CDP, devices, input, marks, console, network log.
-//! - `view`: `PageView`, a GPUI view of one panel.
-//! - `net`: the drawer's networks (the server's, through the host's socket).
-//! - `shot`: a page's picture with its marks, and clearing browsing data.
+//! Chromium runs in a process of its own, the browser host: this same
+//! binary started with `--browser-host` (host/), lazily, when a page is
+//! first needed, and stopped when no page has been open for a while
+//! (client.rs). The app keeps the same API as when CEF ran inside it:
 //!
-//! CEF's message loop is pumped from GPUI's main thread (`pump`, every 8 ms
-//! from the app), so every CEF callback runs on that thread too. `later`
-//! runs a call on that thread after a while (the pump's timers).
+//! - `engine`: the panels (drawer tabs, hidden browsers, widget panels):
+//!   their state, devices, input, marks, console, network log, CDP;
+//! - `frames`: live frames (a chat's embeds, Cru's screen, What's new);
+//! - `view`: `PageView`, a GPUI view of one panel;
+//! - `net`: the drawer's networks (the server's, through the host's socket);
+//! - `shot`: a page's picture with its marks, and clearing browsing data;
+//! - `client`, `ipc`, `shm`, `proc`: the host process, its link, the frame
+//!   segments, and keeping it tied to the app's life.
 //!
-//! `cef::*` and `gpui::*` both have Window, Point and KeyEvent: the CEF side
-//! lives in its own modules (`engine`, `net`, `shot`, `cef_app`).
+//! The host's events are handed out from GPUI's main thread (`pump`, every
+//! 8 ms from the app). `later` runs a call on that thread after a while.
+//!
+//! `cef::*` and `gpui::*` both have Window, Point and KeyEvent: CEF's code
+//! lives in its own modules (`host`, `cef_app`, `mac`).
 
+mod client;
+pub mod common;
 pub mod engine;
 pub mod frames;
+mod host;
+pub mod ipc;
 pub mod net;
+pub mod proc;
+pub mod shm;
 pub mod shot;
 mod view;
 
 pub use engine::{Ann, Device, Hooks, DEVICES};
 pub use view::PageView;
+pub use client::{idle_grace, set_keep_alive};
 
 use std::{cell::RefCell, time::{Duration, Instant}};
 
@@ -47,13 +61,17 @@ mod cef_app {
 #[cfg(target_os = "macos")]
 mod mac;
 
-/// CEF's helper processes: CEF runs this same binary again for them
-/// (--type=…); for those this never returns (they run and exit). Call first
-/// thing in main, before GPUI. On macOS it also loads CEF's framework.
+/// First thing in main, before GPUI. CEF's helper processes (this binary
+/// again, `--type=…`) run and exit here; the browser host
+/// (`--browser-host`) runs here and never returns. The app itself goes on,
+/// without CEF loaded or started.
 pub fn init_process() {
+    let host = std::env::args().any(|a| a == proc::FLAG);
+    let helper = std::env::args().any(|a| a.starts_with("--type="));
+    if !host && !helper { return; }
     #[cfg(target_os = "macos")]
     {
-        let loader = mac::load_framework(std::env::args().any(|a| a.starts_with("--type=")));
+        let loader = mac::load_framework(helper);
         std::mem::forget(loader);
     }
     let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
@@ -61,37 +79,15 @@ pub fn init_process() {
     let mut app = cef_app::NativeApp::new();
     let code = cef::execute_process(Some(args.as_main_args()), Some(&mut app), std::ptr::null_mut());
     if code >= 0 { std::process::exit(code); }
+    if host { host::run(); }
 }
 
-/// Start CEF, once GPUI's app exists (on macOS NSApp must be GPUI's, and
-/// conform to CEF's protocol, before CEF starts). False: CEF did not start
-/// (the client runs without a browser).
-pub fn start() -> bool {
-    #[cfg(target_os = "macos")]
-    mac::adopt_cef_app_protocol();
-    let args = cef::args::Args::new();
-    let mut app = cef_app::NativeApp::new();
-    // CEF's files sit next to the binary (native-client/scripts/stage-cef.mjs);
-    // CRUNDI_CEF_CACHE gives each client running at once a profile of its own.
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_default();
-    let cache = engine::cef_root();
-    let _ = std::fs::create_dir_all(&cache);
-    let mut settings = cef::Settings {
-        no_sandbox: 1,
-        windowless_rendering_enabled: 1,
-        multi_threaded_message_loop: 0,
-        external_message_pump: 0,
-        root_cache_path: cef::CefString::from(cache.to_string_lossy().as_ref()),
-        log_severity: cef::LogSeverity::WARNING,
-        ..Default::default()
-    };
-    // On macOS the framework finds its own resources; elsewhere they sit next to the binary.
-    if !cfg!(target_os = "macos") {
-        settings.resources_dir_path = cef::CefString::from(exe_dir.to_string_lossy().as_ref());
-        settings.locales_dir_path = cef::CefString::from(exe_dir.join("locales").to_string_lossy().as_ref());
-    }
-    let ok = cef::initialize(Some(args.as_main_args()), Some(&settings), Some(&mut app), std::ptr::null_mut()) == 1;
-    if !ok { eprintln!("[gpui] CEF did not start"); }
+/// At the app's start (once GPUI's app exists): a browser host a crashed
+/// run left is reaped, and stale CEF locks go. The host is not started (it
+/// starts with the first page). `config_dir`: where its PID is kept. False:
+/// no browser this run (CRUNDI_NO_BROWSER).
+pub fn start(config_dir: &std::path::Path) -> bool {
+    let ok = client::start(config_dir.to_path_buf());
     STARTED.with(|s| *s.borrow_mut() = ok);
     ok
 }
@@ -101,8 +97,9 @@ thread_local! {
     static TIMERS: RefCell<Vec<(Instant, Box<dyn FnOnce()>)>> = RefCell::new(Vec::new());
 }
 
-/// CEF has started (the browser is there).
-pub fn started() -> bool { STARTED.with(|s| *s.borrow()) }
+/// The browser is there to use (its host may not be running yet: it starts
+/// on the first page). False when it can't start this run.
+pub fn started() -> bool { STARTED.with(|s| *s.borrow()) && client::available() }
 
 /// Run `f` on the main thread after `after` (at the pump after it is due).
 pub fn later(after: Duration, f: impl FnOnce() + 'static) {
@@ -110,7 +107,7 @@ pub fn later(after: Duration, f: impl FnOnce() + 'static) {
 }
 
 /// The pump (every few ms, main thread): the calls deferred from the
-/// window's handlers, the timers that are due, then CEF's own work.
+/// window's handlers, the timers that are due, then the host's events.
 pub fn pump() {
     engine::run_deferred();
     let now = Instant::now();
@@ -122,8 +119,14 @@ pub fn pump() {
         due
     });
     for f in due { f(); }
-    if started() { cef::do_message_loop_work(); }
+    client::pump();
 }
 
-/// Stop CEF (after the window's loop ends).
-pub fn shutdown() { if started() { cef::shutdown(); } }
+/// The browser host's state for the test driver (props "browserHost").
+pub fn host_props() -> serde_json::Value { client::props() }
+
+/// Stop the browser host now (the test driver; the idle stop does this by itself).
+pub fn stop_host() { client::stop() }
+
+/// Stop the browser host (after the window's loop ends).
+pub fn shutdown() { client::shutdown(); }

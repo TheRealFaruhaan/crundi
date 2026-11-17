@@ -1,6 +1,6 @@
 [package]
 name = "crundi-webview"
-description = "The CEF bridge: off-screen browsers drawn as GPUI images (Desktop's)"
+description = "The browser bridge: off-screen Chromium in its own process (the browser host), pages drawn as GPUI images (Desktop's)"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
@@ -10,13 +10,21 @@ license.workspace = true
 gpui.workspace = true
 gpui-component.workspace = true
 gpui-kit-assets.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 crundi-theme.workspace = true
+crundi-widgets.workspace = true
 
 cef.workspace = true
 image.workspace = true
 base64.workspace = true
 png.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Memory", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
