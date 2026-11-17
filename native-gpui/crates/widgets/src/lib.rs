@@ -395,7 +395,8 @@ pub fn nav_tab(icon: IconName, label: impl Into<SharedString>, on: bool) -> Div 
 /// dot (with a soft ring while it needs input, works or waits; green for
 /// the open project with nothing running) and its name; the open one
 /// accent-dim with the accent bar at its left.
-pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool) -> Div {
+/// `icon`: the project's icon (18, rounded, after the dot), as the web's .proj-ico.
+pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool, icon: Option<std::sync::Arc<Image>>) -> Div {
     let color = if state.is_empty() && on { T::green() } else { project_dot_color(state) };
     let ring = match state { "needs-input" => Some(T::accent_dim()), "working" => Some(T::yellow_dim()), "waiting" => Some(T::sky_dim()), _ => None };
     let dot = div().flex_none().size(T::SP_12).flex().items_center().justify_center()
@@ -403,6 +404,7 @@ pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool) -> Div
         .child(div().size(T::DOT).rounded(T::R_PILL).bg(color));
     let d = div().relative().flex().items_center().gap(T::SP_10).h(T::SP_32).pl(T::SP_10).pr(T::SP_8).rounded(T::R_CONTROL)
         .child(dot)
+        .children(icon.map(project_icon))
         .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).child(name.into()));
     if on {
         d.bg(T::accent_dim()).text_color(T::accent_hover())
@@ -413,7 +415,8 @@ pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool) -> Div
 /// A project in the folded rail (the Slint client's avatar): its initials
 /// in a round badge, the border in the state's colour (running green,
 /// working yellow, needs input accent); the open one filled with the accent.
-pub fn rail_avatar(initials: impl Into<SharedString>, state: &str, on: bool) -> Div {
+/// With an `icon`, the icon fills the badge instead of the letters (the web's .proj-initials.has-ico).
+pub fn rail_avatar(initials: impl Into<SharedString>, state: &str, on: bool, icon: Option<std::sync::Arc<Image>>) -> Div {
     let st = if state == "waiting" { "" } else { state };
     let border = match st { "running" => T::green(), "working" => T::yellow(), "needs-input" => T::accent(), _ if on => T::accent(), _ => T::border() };
     let fg = match st { "running" | "working" => T::text(), "needs-input" => T::white(), _ if on => T::white(), _ => T::text_secondary() };
@@ -423,7 +426,16 @@ pub fn rail_avatar(initials: impl Into<SharedString>, state: &str, on: bool) -> 
         .when(ringed, |d| d.border_2()).when(!ringed, |d| d.border_1()).border_color(border)
         .bg(if on { T::accent() } else { T::bg_tertiary() })
         .text_color(fg).font_family(T::MONO).text_size(T::TEXT_12).font_weight(T::W_BOLD)
-        .child(initials.into())
+        .overflow_hidden()
+        .map(|d| match icon {
+            Some(i) => d.bg(T::bg()).child(img(i).size_full().rounded(T::R_PILL).object_fit(ObjectFit::Cover)),
+            None => d.child(initials.into()),
+        })
+}
+
+/// A project's icon, as the web's .proj-ico and #current-project-ico: 18, rounded, cover.
+pub fn project_icon(i: std::sync::Arc<Image>) -> Img {
+    img(i).flex_none().size(T::PROJECT_ICON).rounded(T::R_CHIP).object_fit(ObjectFit::Cover)
 }
 
 /// A full-width button with a dashed border (+ Add project).

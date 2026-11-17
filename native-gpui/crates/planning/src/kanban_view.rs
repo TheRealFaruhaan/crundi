@@ -133,13 +133,16 @@ fn column(i: usize, c: board::Col, stacked: bool, col_w: Pixels, card_w: Pixels,
     let other = c.other;
     div().id(("kanban-col", i)).relative().flex().flex_col().min_h_0()
         .when(!stacked, |d| d.flex_none().w(col_w).max_h_full())
-        .when(stacked, |d| d.w_full())
+        // Stacked (a narrow panel), each column keeps its height in the
+        // scrolling stack: shrunk to fit, its cards spilled out below and an
+        // empty column all but vanished (the owner, 18 Nov).
+        .when(stacked, |d| d.w_full().flex_none())
         .rounded(T::R_CARD).border_1().bg(T::bg_secondary())
         .border_color(if drop_here { T::accent() } else if other { T::yellow() } else { T::border() })
         .when(!other, |d| d.child(measure(move |b, k| k.col_boxes.push((status, b)))))
         .child(head)
         .child(w::rule())
-        .child(div().id(("kanban-col-body", i)).flex_1().min_h_0().when(!stacked, |d| d.overflow_y_scroll()).child(body))
+        .child(div().id(("kanban-col-body", i)).when(!stacked, |d| d.flex_1().min_h_0().overflow_y_scroll()).child(body))
         .into_any_element()
 }
 

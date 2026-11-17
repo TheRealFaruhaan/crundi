@@ -136,8 +136,11 @@ pub fn check_server(cx: &mut App, input: &str) {
                 let on = |k: &str| m.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
                 with(cx, |s| {
                     s.app_login = app_login;
-                    // Telegram signs in through its web widget: only through the browser.
-                    s.offer_telegram = app_login && on("telegram");
+                    // Telegram signs in through its web widget, so only through the
+                    // browser handshake (app-login). Offered whenever the server has
+                    // Telegram: a server without the handshake says so on the click
+                    // (the owner, 18 Nov: no Telegram button at all).
+                    s.offer_telegram = on("telegram");
                     s.signin_server = host_of(&base);
                     s.offer_password = on("password");
                     s.offer_google = on("google");
@@ -173,6 +176,9 @@ pub fn sign_in_pair(cx: &mut App, link: &str) {
 /// (the Slint client's sign_in_oauth).
 pub fn sign_in_oauth(cx: &mut App, server: &str, provider: &str) {
     let base = api::normalize_base(server);
+    if provider == "telegram" && !get(cx).app_login {
+        return busy(cx, false, "This server can't sign this app in with Telegram yet: it needs a newer Crundi (one with app sign-in). Sign in with a password, Google or GitHub, or pair this app from the web.");
+    }
     if get(cx).app_login || provider == "telegram" { return sign_in_browser(cx, base); }
     busy(cx, true, "");
     let cancel = new_cancel(cx);

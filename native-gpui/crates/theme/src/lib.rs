@@ -449,6 +449,11 @@ impl T {
     /// Crundi's mark (widgets::brand_mark): the head in the top bar (the web's 24),
     /// larger on the sign-in screen; the name 15/24 of the head's height, 8/24 apart.
     pub const BRAND_HEAD: Pixels = px(24.);
+    /// A project's icon in the sidebar row and the top bar (the web's 18).
+    pub const PROJECT_ICON: Pixels = px(18.);
+    /// A chat log's list builds this much beyond its view, above and below
+    /// (no rows popping in while scrolling).
+    pub const LOG_OVERDRAW: Pixels = px(800.);
     pub const BRAND_HEAD_LG: Pixels = px(40.);
     pub const BRAND_WORD_OF_HEAD: f32 = 15.0 / 24.0;
     pub const BRAND_GAP_OF_HEAD: f32 = 8.0 / 24.0;

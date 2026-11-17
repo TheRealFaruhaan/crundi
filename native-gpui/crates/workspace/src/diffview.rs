@@ -100,14 +100,19 @@ impl Render for DiffWin {
                 .child(Self::half(&r.new_ln, &r.new, r.new_kind, &r.new_words)));
         }
         let col = |t: &'static str| div().flex_1().px(T::SP_8).text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_muted()).child(t);
-        div().flex().flex_col().w(T::WS_DIFF_W).h(T::WS_DIFF_H)
-            .child(w::modal_head("diff-head", self.file.clone(), false, |_, window, cx| w::close_dialog(window, cx)))
-            .child(div().flex().items_center().gap(T::SP_8).px(T::SP_10).h(T::CONTROL_SM).border_b_1().border_color(T::border())
+        // No taller than the modal's box (the dialog cap, inside its padding):
+        // taller, the modal scrolled the whole diff and its head went with
+        // the rows (the owner, 18 Nov). Only the rows scroll.
+        let vp = window.viewport_size();
+        let room = (vp.height - T::SP_16 * 2.).min(T::DIALOG_MAX_H) - T::SP_6 * 2. - px(2.);
+        div().flex().flex_col().w(T::WS_DIFF_W).h(T::WS_DIFF_H.min(room).max(px(0.)))
+            .child(div().flex_none().child(w::modal_head("diff-head", self.file.clone(), false, |_, window, cx| w::close_dialog(window, cx))))
+            .child(div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_10).h(T::CONTROL_SM).border_b_1().border_color(T::border())
                 .child(div().flex_1().text_size(T::TEXT_12).font_family(T::MONO).text_color(T::text()).child(self.file.clone()))
                 .child(w::icon_button("diff-prev", IconName::ArrowUp, "Previous chunk").on_click(cx.listener(|w, _, _, cx| w.step(-1, cx))))
                 .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(self.counter()))
                 .child(w::icon_button("diff-next", IconName::ArrowDown, "Next chunk").on_click(cx.listener(|w, _, _, cx| w.step(1, cx)))))
-            .child(div().flex().h(T::SP_20).items_center().bg(T::bg_secondary()).child(col("ORIGINAL")).child(col("MODIFIED")))
+            .child(div().flex().flex_none().h(T::SP_20).items_center().bg(T::bg_secondary()).child(col("ORIGINAL")).child(col("MODIFIED")))
             .child(list)
             .when(self.chunks.is_empty(), |d| d.child(w::empty("No changes")))
     }

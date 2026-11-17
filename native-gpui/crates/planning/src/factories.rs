@@ -555,7 +555,8 @@ fn template_card(i: usize, t: &Tpl) -> AnyElement {
 
 /// A run row (.fx-run): name (and project), status chip, task, meta; a trigger row too.
 pub(crate) fn run_row_view(id: impl Into<ElementId>, r: &RunRow, with_project: bool, on: impl Fn(&mut App) + 'static) -> AnyElement {
-    w::card().id(id).min_w_0().overflow_hidden().px(T::SP_12).py(T::SP_10).gap(T::SP_6).cursor_pointer().hover(|d| d.border_color(T::accent()))
+    // flex_none: in the scrolling column a row keeps its height (shrunk to fit, its text was clipped).
+    w::card().id(id).flex_none().min_w_0().overflow_hidden().px(T::SP_12).py(T::SP_10).gap(T::SP_6).cursor_pointer().hover(|d| d.border_color(T::accent()))
         .when(r.off, |d| d.opacity(T::FACTORIES_O_SOFT))
         .child(div().flex().items_center().gap(T::SP_8)
             .child(div().flex().flex_1().min_w_0().items_center().gap(T::SP_4)

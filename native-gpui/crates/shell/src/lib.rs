@@ -5,6 +5,7 @@
 //! registers the drawer's view); and sign-in while signed out.
 
 pub mod registry;
+pub mod project_icon;
 pub mod session;
 pub mod usage;
 pub mod ptt;
@@ -173,6 +174,8 @@ impl Shell {
     }
 
     fn top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let open_alias = session::get(cx).project.clone();
+        let picon = project_icon::of_project(cx, &open_alias);
         let s = session::get(cx);
         let (name, online, server) = (session::project_name(cx), s.online, s.server.clone());
         let now = crundi_core::time::now_secs();
@@ -225,7 +228,7 @@ impl Shell {
             .child(rows)
             .child(div().relative().flex().flex_1().items_center().gap(T::SP_12).pl(T::SP_16).pr(T::SP_4)
                 .child(w::brand_mark(T::BRAND_HEAD))
-                .when(!name.is_empty(), |d| d.child(div().text_color(T::text_muted()).child("/")).child(div().text_color(T::text_secondary()).child(name)))
+                .when(!name.is_empty(), |d| d.child(div().text_color(T::text_muted()).child("/")).children(picon.map(w::project_icon)).child(div().text_color(T::text_secondary()).child(name)))
                 .child(div().flex_1())
                 .children(badge)
                 .child(self.cru_button(window, cx))
@@ -242,6 +245,8 @@ impl Shell {
     /// phase tests read): the header (PROJECTS and the fold button) the top
     /// bar's height; rows 32 high, 2 apart; folded, a rail of avatars 48 apart.
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let urls: Vec<String> = session::get(cx).projects.iter().map(|p| p.get("icon").and_then(|u| u.as_str()).unwrap_or("").to_string()).collect();
+        let icons: Vec<_> = urls.iter().map(|u| project_icon::icon(cx, u)).collect();
         let s = session::get(cx);
         let folded = !self.sidebar;
         let mut list = div().id("projects").flex().flex_col().flex_1().pt(T::SP_4).pb(T::SP_4).px(if folded { T::SP_6 } else { T::SP_8 }).gap(T::SP_2).overflow_y_scroll();
@@ -250,11 +255,12 @@ impl Shell {
             let name = p.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).unwrap_or(&alias).to_string();
             let on = alias == s.project;
             let dot = crundi_core::head::project_dot(&s.terminals, &alias);
+            let icon = icons.get(i).cloned().flatten();
             let row = if folded {
                 div().flex().items_center().justify_center().h(T::SP_48)
-                    .child(w::tip(w::rail_avatar(crundi_core::head::project_initials(&name), dot, on).id(("avatar", i)).cursor_pointer(), name.clone()))
+                    .child(w::tip(w::rail_avatar(crundi_core::head::project_initials(&name), dot, on, icon).id(("avatar", i)).cursor_pointer(), name.clone()))
                     .into_any_element()
-            } else { w::sidebar_item(name, dot, on).into_any_element() };
+            } else { w::sidebar_item(name, dot, on, icon).into_any_element() };
             list = list.child(div().id(("project", i)).cursor_pointer().child(row)
                 .on_click(cx.listener(move |_, _, _, cx| session::select_project(cx, &alias))));
         }
