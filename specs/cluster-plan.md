@@ -1,8 +1,9 @@
 # Crundi cluster: chats and commands on connected PCs (design plan)
 
-Card 6ab8d6b963784ecf. **A plan for the owner to approve; nothing here is
-built yet.** It is grounded in the code as it is on dev (1.21.8-dev.3); file
-references are where each part would hook in.
+Card 6ab8d6b963784ecf. **Nothing here is built yet.** It is grounded in the
+code as it is on dev (1.21.8-dev.3); file references are where each part
+would hook in. Revision 2 (18 Nov) takes in the owner's decisions; see the
+last section for them and for what is still open.
 
 ## Goal
 
@@ -44,34 +45,42 @@ saves the server's CPU and RAM, not usage.
 
 ## Design
 
-### 1. The worker: a headless program that joins with a token
+### 1. The worker: a compiled tray app that joins with a token
 
-- **What it is:** `crundi-worker`, one Node program, `app/cluster-worker.js`,
-  in the style of `app/homepool-node.js`.
-  - The server serves it (`/api/cluster/worker.mjs`), so a PC always runs
-    the server's version.
-  - The desktop app can run it inside itself, the way it runs its homepool
-    node (`ELECTRON_RUN_AS_NODE`, a Settings switch). A PC with the app
-    needs nothing else.
+- **What it is:** `crundi-worker`, a compiled Rust program. One crate, two
+  ways to run it:
+  - **Tray app** (Windows, macOS, Linux desktops): a tray icon showing
+    status (connected, jobs running, chats), Pause, Open work folder, and
+    Quit. It starts at login: a Run key on Windows, a login item on macOS,
+    an XDG autostart entry on Linux. It can be quit at any time; work in
+    progress on it is then treated as "PC offline" (sections 2-4).
+  - **Headless** (`crundi-worker --headless`) for Linux servers: no tray,
+    runs as a systemd unit, logs to the journal.
+  - **Built into the Crundi PC client:** the same crate is linked into the
+    native PC client, with an on/off switch in the client's settings, so a
+    PC with the client needs no separate install. The tray app and the
+    client never both run as a worker on one PC: the second one says so and
+    stays off.
+- **Building it:** with the native client's build rules (CARGO_BUILD_JOBS=2,
+  one build at a time), in its own crate, so the tray app does not pull in
+  GPUI. The PC client's build links it later, coordinated with whoever owns
+  the native client at that point.
 - **Joining:**
   1. Settings, Cluster, Add a PC makes a one-time join code (5 minutes,
      like pairing).
-  2. On the PC, the worker trades the code for a long-lived worker key,
-     `cw_<id>.<secret>`. The server stores only its hash, like a homepool
-     node key.
-  3. The worker connects to `wss://<server>/api/cluster/worker` with that
-     key.
-  4. The owner can rename a worker, pause it, or revoke its key. Revoking
-     closes the socket at once.
-- **Installing as a service** (from a one-liner the Add a PC dialog shows):
-  - Linux: a systemd user unit, `loginctl enable-linger` for boot.
-  - macOS: a launchd agent.
-  - Windows: a Scheduled Task at logon, running as the user. A real Windows
-    service runs as SYSTEM, has no access to the user's `claude` login, and
-    so is wrong for chats.
-  - The script needs Node 20+. If it is missing, the installer fetches a
-    portable Node into the worker's own folder and touches nothing
-    system-wide.
+  2. The worker trades it for a long-lived worker key, `cw_<id>.<secret>`.
+     The server keeps only its hash, like a homepool node key.
+  3. The worker connects to `wss://<server>/api/cluster/worker` with it.
+  4. The owner can rename, pause or revoke a worker. Revoking closes the
+     socket at once.
+  - In the PC client the key comes from the client's own sign-in: the
+    switch is enough.
+  - The tray app's first run asks for the server address and the join
+    code; the headless one takes them as arguments.
+- **A blank terminal on the PC:** like the server's own terminal, a shell on
+  the PC opened from Crundi (in the Cluster screen and in a project), carried
+  over the worker link. It is how the owner signs in to GitHub on that PC
+  (`gh auth login`), installs a tool, or looks around. Owner only.
 - **What it reports** in `info` every 30 s and on change:
   - OS, architecture, CPU model and cores, RAM total and free, GPU (from
     nvidia-smi or the OS);
@@ -106,16 +115,25 @@ saves the server's CPU and RAM, not usage.
     code, the tail of the output and where the artifacts landed.
   - `worker_job` (status, logs, cancel) for `background: true` jobs, which
     are kept server-side like services' logs.
-- **`sync`**, so the PC builds exactly what the server has:
-  - **`git` (the default):** the PC's copy is a clone. The server sends the
-    commit, and the working tree's uncommitted diff with binary files. The
-    PC checks out that commit and applies the diff in a clean tree.
-    - The clone comes from the server: a read-only git smart-HTTP endpoint
-      for the project, reached over the worker socket, so the PC needs no
-      GitHub credentials.
-  - **`copy`:** a tar of `git ls-files` plus untracked files that are not
-    ignored, for projects without git.
-  - **`none`:** run in whatever is there.
+- **Where the code comes from:** GitHub, per the owner.
+  - Each worker has a **PC remote folder** (its work folder, chosen at
+    setup). The first job for a project clones the project's GitHub remote
+    into `<work folder>/<project>`, with the PC's own GitHub access. If it
+    has none, the job says so and points at the PC's terminal to run
+    `gh auth login`.
+  - The server sends **the branch** to work from (`branch`, default the
+    project's current branch) and the commit it expects. The PC fetches and
+    **creates its own local branch from it** (`pc/<job or chat>`). Nothing
+    is created or pushed on GitHub for this, so no empty branches appear
+    there.
+  - If the server has commits GitHub does not have yet (local, unpushed),
+    the PC fetches those from the server's worktree over the worker link
+    (`git fetch` through a git endpoint the server serves to workers only).
+    The build is then of the exact commit the server has, without making
+    the owner push first. Uncommitted server changes are not sent; the job
+    says so when there are any.
+- **For a build or a plain command** that is all: check out, run, return
+  the output and artifacts. Nothing goes back to git.
 - **`artifacts`:** globs whose matches come back as a tar stream into
   `<project>/.crundi/artifacts/<job>/` (or a path given). The chat can then
   `show_file` or `show_video` them.
@@ -154,14 +172,15 @@ saves the server's CPU and RAM, not usage.
   - Tools that act on "this machine" say which machine they mean. For
     example `register_service` stays server-side; a dev server on the PC is
     reachable through a net-tunnel forward, which comes in a later phase.
-- **Where the code lives:** a chat on a PC works in the PC's copy, on a
-  branch `pc/<worker>/<chat>` checked out in a worktree there.
-  - At each turn end, the worker sends a `git bundle` of new commits plus a
-    diff of uncommitted work.
-  - The server applies it to a matching worktree on the server, so the
-    owner sees the changes, diffs and git history as usual.
-  - Merging into dev stays the owner's step, as with factory runs. Nothing
-    writes into the server's main checkout behind his back.
+- **Where the code lives:** the chat works in the PC's clone, on a local
+  branch the PC creates from the branch the server sent (as in section 2).
+  - **Changes come back by pulling from the PC's worktree:** the server
+    `git fetch`es the PC's branch over the worker link into a matching
+    worktree on the server, at each turn end and on demand. The owner sees
+    the changes, diffs and history as usual, and merges into dev as with
+    factory runs. Nothing writes into the server's main checkout.
+  - Pushing that branch to GitHub is optional: the chat can do it from the
+    PC when the work should be there, with the PC's GitHub access.
 - **Transcripts and resume:**
   - The JSONL lives on the PC. Resume is `--resume` on the same PC.
   - Server features that read `~/.claude/projects` (history after a restart,
@@ -184,11 +203,13 @@ saves the server's CPU and RAM, not usage.
 - **Runner:** `ensureSession` passes `runsOn` to `agents.spawn`. The
   `claudeUiAgents` adapter creates the chat with `where`, so the step lives
   on that PC.
-  - The step's work happens in the PC's copy of the run's worktree.
-  - At the step's start the PC syncs to the run branch's head.
-  - At handoff the runner applies the PC's bundle to the server worktree
-    **before** it accepts the handoff. A join therefore never passes
-    part-built work.
+  - The step's work happens in the PC's clone, on a local branch made from
+    the run's branch (sent with the step, as in section 2).
+  - At the step's start the PC brings that branch up to the run branch's
+    head (from GitHub, plus the server's worktree for unpushed commits).
+  - At handoff the runner pulls the PC's branch into the run's worktree on
+    the server **before** it accepts the handoff. A join therefore never
+    passes part-built work.
 - **The PC disconnects:**
   - New event `worker-offline { worker, steps }`. Steps on that PC are held
     (`emp.workerHeld`, the same mechanism as `pauseHeld`). Their seats are
@@ -207,29 +228,24 @@ saves the server's CPU and RAM, not usage.
 
 ### 5. PC setup done by Crundi
 
-- **Work folder:** chosen when the worker is installed; the default is
-  `~/crundi-work`. Every project is at `<work>/<project>`, and every chat or
-  run worktree is under it.
+- **Work folder (the PC remote folder):** chosen when the worker is set up
+  (in the tray app's first run, the client's switch, or `--work-dir`); the
+  default is `~/crundi-work`. Every project is cloned to
+  `<work>/<project>`, and every job, chat or run branch lives in it.
 - **Prepare a project:** done on the first job, or with "Prepare on <PC>"
-  in the project menu. The worker clones from the server's git endpoint
-  (section 2) and runs the project's setup command if it has one (the same
-  one factory runs use).
-- **Tools:** a small recipe table per tool and OS:
-  - Windows: winget;
-  - macOS: Homebrew;
-  - Linux: apt or dnf;
-  - each tool's own installer where that is the norm: rustup, nvm, the
-    Claude Code installer.
-- **The flow:**
-  1. A job or chat that needs a tool the PC lacks gets a setup plan: "install
-     rustup and the stable toolchain".
-  2. The owner approves it on that PC. With the desktop app, it shows a
-     dialog. With a headless worker, it waits for approval in the server's
-     Cluster settings, and only if the worker allows installs. A step that
-     needs admin rights (apt, a system-wide winget) says so, and is never run
-     silently.
-  3. Each tool is checked by running it after install, and the result is
-     reported in `info`.
+  in the project menu: clone from GitHub (section 2), then the project's
+  setup command if it has one (the same one factory runs use).
+- **Tools (what "installs" means):** the things a job needs that the PC
+  may lack: git, Node/npm, Rust (rustup, cargo), Python, ffmpeg, Docker,
+  platform SDKs (Android SDK and a JDK, Visual Studio build tools on
+  Windows), and the Claude Code CLI for whole chats.
+  - The worker reports which it has, with versions.
+  - A job that needs a missing one stops before it starts and says what is
+    missing, with the install command for that OS (winget, Homebrew,
+    apt/dnf, rustup, the Claude Code installer).
+  - Installing is done in the PC's terminal (section 1): by the owner, or
+    by a chat after the owner says yes. Crundi never installs anything on a
+    PC by itself. (Proposed; see "Still open".)
 - **Memory rule:** the `-j2` / one-build-at-a-time limits are a server rule.
   A worker uses its own per-worker job limit instead.
 
@@ -246,8 +262,9 @@ saves the server's CPU and RAM, not usage.
   and the Android one.
 - **Android:** the same Cluster screen, the picker, and the factory field,
   in the same release.
-- **Desktop app:** the "Use this PC as a worker" switch, which runs the
-  bundled worker.
+- **PC client:** the "Use this PC as a worker" switch in its settings,
+  running the built-in worker.
+- **Tray app:** status, Pause, Open work folder, Quit; first-run setup.
 - **What's new:** one step per phase that ships something visible.
 - **Compatibility:**
   - Everything is new endpoints and optional fields: `/api/cluster/*`,
@@ -264,44 +281,59 @@ An in-process fake worker on a loopback websocket:
   and enforces the timeout;
 - `git` sync builds the server's exact tree, uncommitted changes included;
 - a cwd outside the work folder is refused on the worker;
+- the PC makes its local branch from the branch sent, fetching unpushed
+  commits from the server, and nothing is pushed to GitHub;
+- the server pulls a PC branch into its worktree;
 - a chat on the worker:
   - stream-json goes through the launcher;
   - MCP calls carry the chat key, never the API key;
-  - the turn-end bundle lands on the server worktree;
+  - the PC branch is pulled into the server worktree at turn end;
 - a factory with a step on the worker:
   - the step is held when the worker drops, and the others carry on;
   - the Manager on the worker pauses the run;
   - reconnect resumes the step;
-  - handoff is refused until the bundle is applied.
+  - handoff is refused until the PC branch is pulled in.
+- The Rust worker has its own tests (cargo test, -j2) for the protocol,
+  the work-folder guard and git steps, against a fake server.
 
 ## Phases (each shippable on dev, in this order)
 
-1. **Workers:** the program, joining, info, Cluster settings, desktop-app
-   bundling. Nothing runs yet.
-2. **Commands on a PC:** `worker_run`, sync, artifacts, jobs. This is most
-   of the resource win: builds and renders off the server.
-3. **PC setup:** prepare a project, tool recipes, approvals.
-4. **Whole chats on a PC:** the launcher seam, MCP forwarding, branch and
-   bundle, reconnect.
-5. **Factory steps on a PC:** `runsOn`, hold and resume on disconnect, the
-   handoff bundle.
+1. **Workers:** the Rust worker (tray and headless), joining, info, the
+   PC terminal, Cluster settings. Linking it into the PC client follows
+   when that client is ready for it. Nothing runs jobs yet.
+2. **Commands on a PC:** `worker_run`, clone and branch, artifacts, jobs.
+   This is most of the resource win: builds and renders off the server.
+3. **PC setup:** prepare a project, tool detection and install commands.
+4. **Whole chats on a PC:** the launcher seam, MCP forwarding, pulling the
+   PC branch, reconnect.
+5. **Factory steps on a PC:** `runsOn`, hold and resume on disconnect,
+   pulling the PC branch before handoff.
 
-## Decisions for the owner
+## Decisions (the owner, 18 Nov)
 
-1. **Worker runtime.** The plan: a Node script, with portable Node fetched if
-   missing, and the desktop app runs it in-process. Alternative: ship a
-   single binary (bigger work, no Node needed).
-2. **Changes made on a PC.** The plan: a branch per PC chat, brought back as
-   git bundles to a server worktree, and the owner merges. Alternative: sync
-   straight into the server's project folder (simpler, but two machines
-   writing one tree).
-3. **Where the PC's code comes from.** The plan: cloned from the server over
-   the worker link (no credentials on the PC). Alternative: the PC's own
-   GitHub access.
-4. **Installs on a headless worker.** The plan: approved in the server UI,
-   only if the PC allowed installs when it joined. Alternative: always on the
-   PC itself.
-5. **Who can use workers.** The plan: the owner's chats and factories only,
-   never collaborators.
-6. **Order.** The plan: commands (phase 2) before whole chats (phase 4),
-   because commands give the resource win soonest.
+1. **Worker:** a compiled tray app that starts at login and can be quit; a
+   headless mode for Linux servers; and built into the PC client with an
+   on/off switch in its settings, so no separate install there.
+2. **Changes made on a PC** come back by the server pulling from the PC's
+   worktree.
+3. **Code comes from GitHub.** The PC clones into its PC remote folder and
+   creates a local branch from whatever branch it was sent; Crundi does not
+   create or push a branch for it. GitHub sign-in on the PC is done by the
+   owner in a blank terminal on that PC, as on the server. Pushing is only
+   when the work needs to be on GitHub; a build or a command needs none.
+4. **Installs:** the owner asked what they are; answered in section 5.
+5. **Never collaborators.**
+6. **Order:** commands before whole chats, as planned.
+
+## Still open
+
+- **Installs** (section 5): proposed that Crundi only detects and suggests
+  the install command, and installing happens in the PC's terminal by the
+  owner or by a chat once he says yes. Never automatic.
+- **Unpushed server commits** (section 2): proposed that the PC fetches
+  them from the server's worktree over the worker link, so a build does
+  not need a push first. The alternative is to require a push and refuse
+  otherwise.
+- **The PC client the worker is built into:** proposed the native PC
+  client, once its build allows (the Electron client could run the tray
+  app's binary meanwhile if wanted).
