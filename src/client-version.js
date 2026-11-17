@@ -120,6 +120,11 @@ export const CAPABILITIES = Object.freeze([
   // "desktop:<device>" and browser_drawer_open device pick one. An older
   // server keeps one host, the last to register.
   'browser-hosts',
+  // Workers (src/workers.js, specs/workers-protocol.md): GET/POST /api/workers
+  // (list, join codes, rename, allow switches, pause, labels, revoke, remove,
+  // history), the {type:"workers"} push, and worker-term-* terminal messages
+  // on the UI websocket. Owner only.
+  'workers',
   // Urgent alerts carry alertId; the phone reports what happened to one
   // (POST /api/alerts/answer: ringing with ringMs, attended, dismissed,
   // snoozed with minutes) and alert_user waits for it. An older server sends

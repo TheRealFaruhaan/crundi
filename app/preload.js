@@ -55,6 +55,17 @@ contextBridge.exposeInMainWorld('api', {
     forget: () => ipcRenderer.invoke('homepool:forget'),
   },
 
+  // This PC as a worker (Settings): the page joins it to its server and hands
+  // the worker key here; the main process runs the bundled crundi-worker.
+  worker: {
+    status: () => ipcRenderer.invoke('worker:status'),
+    enable: (cfg) => ipcRenderer.invoke('worker:enable', cfg),
+    disable: () => ipcRenderer.invoke('worker:disable'),
+    setDir: (dir) => ipcRenderer.invoke('worker:setDir', String(dir || '')),
+    start: () => ipcRenderer.invoke('worker:start'),
+    onStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('worker:status', h); return () => ipcRenderer.removeListener('worker:status', h); },
+  },
+
   // Diagnostic: let the shell renderer append to crundi.log.
   shellLog: (m) => ipcRenderer.send('shell:log', String(m)),
 

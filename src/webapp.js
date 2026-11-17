@@ -135,6 +135,7 @@ import { isLocalDesktopRequest, fileManagerName, runShell } from './local-shell.
 import { transfer as transferFiles, listableDir } from './file-transfer.js';
 import { createTunnelEndpoint } from './net-tunnel.js';
 import { createHomepoolService, HOMEPOOL_MCP_TOOLS } from './homepool-service.js';
+import { createWorkersService } from './workers.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1021,6 +1022,20 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
     send: (b) => browserMod.sendParentTunnel(b),
     connectVia: (spec) => homepool.browserConnect({ ...spec, deviceId: process.env.CRUNDI_DEVICE_ID || '' }),
   }));
+  // ─── Workers: PCs that join as workers (src/workers.js, specs/workers-protocol.md) ───
+  // Owner only. Every change is pushed to the owner's pages (SSE "workers",
+  // and {type:"workers"} on their websockets) so they refetch.
+  const ownerSockets = new Set();
+  const workers = createWorkersService({
+    dataDir: config.dataDir,
+    serverVersion: APP_VERSION,
+    log: (m) => console.log(m),
+    onChange: () => {
+      try { broadcastOwnerSSE('workers', {}); } catch { /* not up yet */ }
+      for (const s of ownerSockets) { try { if (s.readyState === 1) s.send('{"type":"workers"}'); } catch { /* closing */ } }
+    },
+  });
+
   let homepoolStarted = false;
   function startHomepool() {
     if (homepoolStarted || process.env.HOMEPOOL_DISABLE === '1') return;
@@ -4648,6 +4663,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // The standalone homepool node's code: public, it is code and no data.
     if (homepool.handlePublic(req, res, path)) return;
+    // A PC joining as a worker with a one-time code (the code is the credential).
+    if (await workers.handlePublic(req, res, path)) return;
 
     // All other API routes require auth
     if (!path.startsWith('/api/')) return json(res, { error: 'Not found' }, 404);
@@ -4697,6 +4714,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
     // ─── Homepool (owner only; src/homepool-service.js) ───
     if (path.startsWith('/api/homepool') && await homepool.handleApi(req, res, path, {
+      principal, readBody, json,
+      isOwner: (p) => !!p && p.role === ROLE_OWNER && !isConfined(p),
+    })) return;
+
+    // ─── Workers (owner only; src/workers.js) ───
+    if (path === '/api/workers' && await workers.handleApi(req, res, path, {
       principal, readBody, json,
       isOwner: (p) => !!p && p.role === ROLE_OWNER && !isConfined(p),
     })) return;
@@ -8217,6 +8240,12 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body.tool) return json(res, { ok: false, error: 'Missing tool name' }, 400);
       const a = body.args = (body.args || {});
 
+      // Workers: the owner's chats only, never a collaborator's.
+      if (body.tool === 'worker_list') {
+        if (mcpCollabKey) return json(res, { ok: false, error: 'Workers are not available to collaborator chats.' }, 403);
+        return json(res, workers.mcpList());
+      }
+
       // Homepool: the owner's chats only, each within the key the owner gave
       // it (or approved). Which chat is asking is proven by its chat token.
       if (HOMEPOOL_MCP_TOOLS.includes(body.tool)) {
@@ -8988,6 +9017,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
 
       // A homepool node (signed in with its node key, not a Crundi login).
       if (homepool.handleUpgrade(req, socket, head)) return;
+      // A worker's link (signed in with its worker key).
+      if (workers.handleUpgrade(req, socket, head)) return;
 
       const url = new URL(req.url, 'http://localhost');
       // Live speech to text (voice/stream.js): the owner only.
@@ -9063,6 +9094,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // whole server log.
       const principal = req ? validateToken(req) : null;
       const confined = isConfined(principal);
+      // The owner's pages hear about workers changing, and may open a
+      // terminal on one of his PCs (relayed by src/workers.js).
+      const workerTerms = confined ? null : workers.uiTerminals((m) => { if (ws.readyState === 1) ws.send(JSON.stringify(m)); });
+      if (!confined) { ownerSockets.add(ws); ws.on('close', () => { ownerSockets.delete(ws); workerTerms.closeAll(); }); }
       // The owner's PC app: its connection is always open, so Cru can speak there unasked.
       if (!confined && req && clientVersion.identifyClient(req).kind === 'desktop') {
         desktopSockets.add(ws);
@@ -9250,6 +9285,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         // ─── Docker: live logs and a shell inside a container ───
         // Owner-only, like the routes: the daemon is shared and a shell in a
         // container is root on whatever it mounts.
+        // ─── A terminal on one of the owner's worker PCs ───
+        if (typeof msg.type === 'string' && msg.type.startsWith('worker-term-')) {
+          if (!workerTerms) return;
+          const op = msg.type.slice('worker-term-'.length);
+          if (['open', 'input', 'resize', 'close'].includes(op)) workerTerms[op](msg);
+          return;
+        }
+
         if (typeof msg.type === 'string' && msg.type.startsWith('docker-')) {
           if (confined) return;
           handleDockerMessage(msg);
@@ -9514,6 +9557,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       sseClients.clear();
       if (wss) { wss.close(); wss = null; }
       if (homepoolStarted) { try { homepool.stop(); } catch { /* shutting down anyway */ } homepoolStarted = false; }
+      try { workers.dispose(); } catch { /* shutting down anyway */ }
       stopTunnel(TUNNEL_KEY);
       if (server) { server.close(); server = null; }
       if (localServer) { try { localServer.close(); } catch { /* ignore */ } localServer = null; }

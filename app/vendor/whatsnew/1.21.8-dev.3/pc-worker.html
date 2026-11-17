@@ -1,0 +1,25 @@
+<div class="wna a-pcw">
+  <div class="card">
+    <div class="h">This PC as a worker</div>
+    <div class="row"><span class="tg"><span class="kn"></span></span><span>Use this PC as a worker</span><span class="st">Online</span></div>
+    <div class="dir"><span>Work folder</span><b>~/crundi-work</b></div>
+  </div>
+  <div class="pill"><span class="dot"></span>Laptop joined Workers</div>
+  <style>
+    .a-pcw{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-pcw .card{position:absolute;left:67px;top:100px;width:460px;padding:20px 22px;border:1px solid var(--border);border-radius:12px;background:var(--bg-card)}
+    .a-pcw .h{font-weight:600;font-size:15px;margin-bottom:16px}
+    .a-pcw .row{display:flex;align-items:center;gap:12px}
+    .a-pcw .tg{position:relative;width:38px;height:22px;border-radius:11px;background:var(--bg-secondary);border:1px solid var(--border);animation:apcwT 9s infinite}
+    .a-pcw .kn{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--text-secondary);animation:apcwK 9s infinite}
+    .a-pcw .st{margin-left:auto;color:var(--green);font-size:12px;opacity:0;animation:apcwS 9s infinite}
+    .a-pcw .dir{display:flex;gap:10px;margin-top:16px;color:var(--text-secondary);font-size:12px}
+    .a-pcw .dir b{font-family:var(--mono);font-weight:400;color:var(--text-primary)}
+    .a-pcw .pill{position:absolute;left:50%;top:270px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;background:var(--accent-dim);color:var(--accent);opacity:0;animation:apcwP 9s infinite}
+    .a-pcw .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--green)}
+    @keyframes apcwT{0%,20%{background:var(--bg-secondary)}26%,92%{background:var(--accent)}100%{background:var(--bg-secondary)}}
+    @keyframes apcwK{0%,20%{left:2px;background:var(--text-secondary)}26%,92%{left:18px;background:#fff}100%{left:2px}}
+    @keyframes apcwS{0%,36%{opacity:0}42%,92%{opacity:1}100%{opacity:0}}
+    @keyframes apcwP{0%,48%{opacity:0;top:280px}56%,92%{opacity:1;top:270px}100%{opacity:0}}
+  </style>
+</div>

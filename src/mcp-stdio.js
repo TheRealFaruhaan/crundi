@@ -97,6 +97,13 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
   },
 
+  // Workers: PCs joined to this server (src/workers.js)
+  {
+    name: 'worker_list',
+    description: 'The PCs (and Linux servers) joined to this Crundi server as workers: name, online or not, paused, labels (os:, arch:, ram:, cores:, gpu:, tool:, and the owner\'s own), CPU, RAM, GPUs, free disk, tools found with versions, and whether chats and commands may run on each. Running commands or chats on a worker comes in a later version; for now this says what is there.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+
   // Homepool: leaving through a network the owner granted (docs/homepool.md)
   {
     name: 'homepool_status',

@@ -139,6 +139,11 @@ win:
   target:
     - nsis
   icon: assets/icon.ico
+  # The worker (worker/, Rust), built by the release job into build/worker:
+  # "Use this PC as a worker" in Settings runs it (app/main.js).
+  extraResources:
+    - from: build/worker
+      to: crundi-worker
 
 nsis:
   oneClick: true
@@ -164,6 +169,9 @@ linux:
   executableName: crundi-client
   synopsis: Desktop app for a Crundi server running elsewhere
   artifactName: Crundi-Client-${version}-linux-x64.${ext}
+  extraResources:
+    - from: build/worker
+      to: crundi-worker
 
 deb:
   packageName: crundi-client

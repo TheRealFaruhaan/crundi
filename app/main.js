@@ -1626,6 +1626,130 @@ ipcMain.handle('homepool:forget', () => { hpStop(); const c = hpRead(); hpWrite(
 app.whenReady().then(() => { if (hpRead().enabled) hpStart(); }).catch(() => {});
 app.on('before-quit', () => hpStop());
 
+// ─── This PC as a worker (worker/, specs/workers-protocol.md) ───
+//
+// Off until the owner switches it on in Settings. The page joins this PC to
+// its server (POST /api/workers join-self, with its own sign-in) and hands
+// the worker key here; the main process keeps it and runs the bundled
+// crundi-worker binary in embedded mode (no tray of its own: this app is the
+// tray). Its stdout is JSON status lines; closing its stdin ends it.
+const WORKER_FILE = () => join(app.getPath('userData'), 'worker.json');
+let wkProc = null;
+let wkState = { state: 'off', online: false, detail: '', since: 0 };
+let wkLog = [];
+let wkRetry = null;
+let wkBackoff = 2000;
+let wkStopping = false;
+function wkRead() { try { return JSON.parse(readFileSync(WORKER_FILE(), 'utf8')) || {}; } catch { return {}; } }
+function wkWrite(cfg) { try { writeFileSync(WORKER_FILE(), JSON.stringify(cfg, null, 2), { mode: 0o600 }); } catch (err) { appendLog(`[worker] could not save: ${err.message}`); } }
+function wkAddLog(line) { wkLog.push(`${new Date().toTimeString().slice(0, 8)}  ${line}`); if (wkLog.length > 60) wkLog = wkLog.slice(-60); }
+/** The worker binary: inside the package, else a local build (development). */
+function wkBinary() {
+  const exe = process.platform === 'win32' ? 'crundi-worker.exe' : 'crundi-worker';
+  const here = dirname(fileURLToPath(import.meta.url));
+  const cands = [
+    process.resourcesPath ? join(process.resourcesPath, 'crundi-worker', exe) : '',
+    join(here, '..', 'build', 'worker', exe),
+    join(here, '..', 'worker', 'target', 'release', exe),
+    join(here, '..', 'worker', 'target', 'debug', exe),
+    join(homedir(), '.cache', 'crundi-native-target', 'release', exe),
+    join(homedir(), '.cache', 'crundi-native-target', 'debug', exe),
+  ].filter(Boolean);
+  return cands.find(p => { try { return statSync(p).isFile(); } catch { return false; } }) || '';
+}
+function wkDefaultDir() { return join(homedir(), 'crundi-work'); }
+function wkSetState(next) { wkState = { ...wkState, ...next }; for (const w of BrowserWindow.getAllWindows()) { try { w.webContents.send('worker:status', wkStatus()); } catch { /* closing */ } } }
+function wkStart() {
+  const cfg = wkRead();
+  if (!cfg.server || !cfg.key || wkProc) return;
+  const bin = wkBinary();
+  if (!bin) { wkSetState({ state: 'missing', online: false, detail: 'This build of the app has no worker program in it.' }); return; }
+  wkStopping = false;
+  const args = ['--embedded', '--server', cfg.server, '--key', cfg.key, '--work-dir', cfg.workDir || wkDefaultDir(), '--name', (() => { try { return osHostname(); } catch { return 'PC'; } })()];
+  let child;
+  try { child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
+  catch (err) { wkSetState({ state: 'error', detail: err.message }); return; }
+  wkProc = child;
+  wkSetState({ state: 'starting', online: false, detail: '' });
+  let buf = '';
+  child.stdout.on('data', (d) => {
+    buf += d.toString();
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line) continue;
+      let ev; try { ev = JSON.parse(line); } catch { wkAddLog(line.slice(0, 300)); continue; }
+      if (ev.event === 'status') {
+        wkSetState({ state: ev.online ? 'online' : (ev.state || 'connecting'), online: !!ev.online, detail: String(ev.detail || ''), since: ev.online ? Date.now() : wkState.since });
+        if (ev.online) wkBackoff = 2000;
+      } else if (ev.event === 'log') wkAddLog(String(ev.text || ''));
+      else wkAddLog(line.slice(0, 300));
+    }
+  });
+  child.stderr.on('data', (d) => { for (const l of d.toString().split('\n')) if (l.trim()) { wkAddLog(l.trim().slice(0, 300)); appendLog(`[worker] ${l.trim()}`); } });
+  child.on('error', (err) => { wkAddLog(`could not start: ${err.message}`); });
+  child.on('exit', (code) => {
+    if (wkProc === child) wkProc = null;
+    if (wkStopping) { wkSetState({ state: 'off', online: false }); return; }
+    // 3: the server refused the key (revoked or removed). Switch off and forget it.
+    if (code === 3) {
+      const c = wkRead(); delete c.key; c.enabled = false; wkWrite(c);
+      wkSetState({ state: 'refused', online: false, detail: 'The server no longer accepts this PC. Switch it on again to rejoin.' });
+      return;
+    }
+    // 4: another copy of this worker connected and replaced this one. Not
+    // restarted, or the two would keep taking over from each other.
+    if (code === 4) {
+      wkSetState({ state: 'replaced', online: false, detail: 'Another copy of this worker connected in its place. Switch it off and on to take over again.' });
+      return;
+    }
+    wkSetState({ state: 'restarting', online: false, detail: `stopped (exit ${code}); starting again` });
+    clearTimeout(wkRetry);
+    wkRetry = setTimeout(() => { if (wkRead().enabled) wkStart(); }, wkBackoff);
+    wkBackoff = Math.min(60000, wkBackoff * 2);
+  });
+}
+function wkStop() {
+  clearTimeout(wkRetry); wkRetry = null;
+  const p = wkProc; wkProc = null;
+  if (!p) { wkSetState({ state: 'off', online: false }); return; }
+  wkStopping = true;
+  try { p.stdin.end(); } catch { /* gone */ }
+  setTimeout(() => { try { p.kill(); } catch { /* gone */ } }, 3000).unref?.();
+}
+function wkStatus() {
+  const cfg = wkRead();
+  return {
+    supported: true, available: !!wkBinary(), enabled: !!cfg.enabled, configured: !!(cfg.server && cfg.key),
+    server: cfg.server || '', id: cfg.id || '', workDir: cfg.workDir || wkDefaultDir(),
+    deviceId: hpDeviceId(), name: (() => { try { return osHostname(); } catch { return 'PC'; } })(),
+    os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux',
+    version: app.getVersion(), ...wkState, log: wkLog.slice(-25),
+  };
+}
+ipcMain.handle('worker:status', () => wkStatus());
+ipcMain.handle('worker:enable', (_e, c) => {
+  const server = String(c?.server || '').replace(/\/+$/, '');
+  const key = String(c?.key || '');
+  if (!/^https?:\/\//.test(server) || !/^cw_w[0-9a-f]{10}\./.test(key)) return { ok: false, error: 'Bad worker settings.' };
+  wkStop();
+  const workDir = typeof c?.workDir === 'string' && c.workDir.trim() ? c.workDir.trim() : (wkRead().workDir || '');
+  wkWrite({ ...wkRead(), server, key, id: String(c?.id || ''), enabled: true, ...(workDir ? { workDir } : {}) });
+  setTimeout(wkStart, 300);
+  return { ok: true, status: wkStatus() };
+});
+ipcMain.handle('worker:setDir', (_e, dir) => {
+  const v = String(dir || '').trim();
+  if (!v) return { ok: false, error: 'A folder is needed.' };
+  const c = wkRead(); c.workDir = v; wkWrite(c);
+  if (wkProc) { wkStop(); setTimeout(() => { if (wkRead().enabled) wkStart(); }, 3500); }
+  return { ok: true, status: wkStatus() };
+});
+ipcMain.handle('worker:disable', () => { const c = wkRead(); c.enabled = false; wkWrite(c); wkStop(); return { ok: true, status: wkStatus() }; });
+ipcMain.handle('worker:start', () => { const c = wkRead(); if (!c.key) return { ok: false, error: 'Not set up.' }; c.enabled = true; wkWrite(c); wkStart(); return { ok: true, status: wkStatus() }; });
+app.whenReady().then(() => { if (wkRead().enabled) wkStart(); }).catch(() => {});
+app.on('before-quit', () => wkStop());
+
 // ─── Client / native-host IPC ───
 
 ipcMain.handle('client:getConfig', () => nativeHostStatus());

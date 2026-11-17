@@ -1,0 +1,56 @@
+{
+  "workers": [
+    {
+      "id": "w3f9a01b2c4",
+      "name": "Studio PC",
+      "kind": "tray",
+      "version": "0.1.0",
+      "online": true,
+      "connectedSince": 1795430000000,
+      "lastSeenAt": 1795436000000,
+      "info": {
+        "os": "windows", "osVersion": "11 23H2", "arch": "x86_64", "hostname": "STUDIO",
+        "cpu": { "model": "AMD Ryzen 9 7950X", "cores": 16, "threads": 32 },
+        "ramMb": 65536, "ramFreeMb": 40210, "load": null,
+        "gpus": [{ "vendor": "nvidia", "name": "NVIDIA GeForce RTX 4090", "vramMb": 24564 }],
+        "disk": { "path": "D:\\crundi-work", "freeMb": 812000, "totalMb": 1907000 },
+        "workDir": "D:\\crundi-work", "onBattery": null, "idleSec": 42,
+        "tools": { "git": "2.43.0", "node": "20.11.1", "cargo": "1.83.0", "ffmpeg": "7.0", "claude": "2.1.3", "claudeLoggedIn": true },
+        "allow": { "chats": true, "commands": false },
+        "paused": false,
+        "somethingNew": { "x": 1 }
+      },
+      "labels": ["os:windows", "arch:x86_64", "ram:64g", "cores:32", "gpu:nvidia", "tool:git", "tool:node", "tool:cargo", "tool:ffmpeg", "tool:claude", "render"],
+      "customLabels": ["render"],
+      "allowChats": true,
+      "allowCommands": false,
+      "paused": false,
+      "pausedBy": null,
+      "createdAt": 1795000000000,
+      "deviceId": "dev-7f2c",
+      "logs": [
+        { "at": 1795430001000, "level": "info", "text": "linked to the server" },
+        { "at": 1795430002000, "level": "warn", "text": "ffmpeg found twice on PATH" }
+      ]
+    },
+    {
+      "id": "w00aa11bb22",
+      "name": "build-box",
+      "kind": "headless",
+      "version": "0.1.0",
+      "online": false,
+      "connectedSince": null,
+      "lastSeenAt": "2026-11-17T09:30:00.000Z",
+      "info": null,
+      "labels": [],
+      "customLabels": [],
+      "allowChats": false,
+      "allowCommands": true,
+      "paused": true,
+      "pausedBy": "pc",
+      "createdAt": 1794000000000,
+      "logs": []
+    }
+  ],
+  "codes": [{ "code": "K7MPQ2XZ", "expiresAt": 1795436600000 }]
+}

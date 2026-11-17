@@ -6,11 +6,61 @@
       "title": "Pause only when ahead of pace",
       "body": "A factory's usage limit can now look at the clock. Turn on \"Pause only when ahead of pace\" and a run that reaches your line keeps going while its use of the window is behind the time passed in it, and pauses once it gets ahead. It always pauses at the ceiling you set, 100% unless you choose lower. Paused that way, it carries on after the reset, or sooner once it is as many points behind pace as you choose.",
       "keys": [
-        { "keys": ["Factory settings"], "text": "Usage: the switch, and the ceiling" },
-        { "keys": ["Running run"], "text": "Details: change it on that run only" }
+        {
+          "keys": [
+            "Factory settings"
+          ],
+          "text": "Usage: the switch, and the ceiling"
+        },
+        {
+          "keys": [
+            "Running run"
+          ],
+          "text": "Details: change it on that run only"
+        }
       ],
       "art": "factory-pace.html",
       "artTitle": "Factory usage"
+    },
+    {
+      "id": "workers-tab",
+      "tag": "Workers",
+      "title": "Your PCs, joined as workers",
+      "body": "The new Workers tab lists PCs and Linux servers joined to this server: what each has (CPU, memory, GPU, disk, the tools it found), whether it is online, and labels for choosing one by what it can do. Add one with a one-time code, pause it, or open a terminal on it to sign in to GitHub or install a tool. Running builds and chats on them comes next.",
+      "keys": [
+        {
+          "keys": [
+            "Workers",
+            "Add a PC"
+          ],
+          "text": "a code for the crundi-worker program"
+        },
+        {
+          "keys": [
+            "A PC",
+            "Open a terminal"
+          ],
+          "text": "a shell on that PC"
+        }
+      ],
+      "art": "workers-tab.html",
+      "artTitle": "Workers"
+    },
+    {
+      "id": "pc-worker-switch",
+      "tag": "PC app",
+      "title": "This PC as a worker",
+      "body": "In the Crundi PC app, Settings has a new switch: Use this PC as a worker. Turn it on and the PC joins your server by itself, no code needed, and shows in the Workers tab. Turn it off whenever you like.",
+      "keys": [
+        {
+          "keys": [
+            "Settings"
+          ],
+          "text": "This PC as a worker"
+        }
+      ],
+      "art": "pc-worker.html",
+      "artTitle": "Settings"
     }
   ]
 }

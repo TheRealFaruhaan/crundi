@@ -70,6 +70,16 @@ jobs:
       - name: Check syntax (server + embedded browser JS)
         run: npm run check
 
+      # The worker (worker/, Rust) goes inside the PC app too: its "Use this PC
+      # as a worker" switch runs it (app/main.js). Tray build on Windows.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the worker
+        shell: bash
+        run: |
+          cargo build --release --manifest-path worker/Cargo.toml
+          mkdir -p build/worker
+          cp worker/target/release/crundi-worker.exe build/worker/
+
       - name: Build & publish (unsigned — no cert on the runner)
         run: npx electron-builder --win --publish always
         env:

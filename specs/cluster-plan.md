@@ -403,7 +403,7 @@ An in-process fake worker on a loopback websocket:
     allowlists, no folder fence; joining, per-PC switches, never
     collaborators and the job history stay.
 
-## Proposed for revision 3 (awaiting the owner)
+## Revision 3: approved by the owner (18 Nov), all ten
 
 From the "not gimmicky, professional" review, 18 Nov:
 1. Warm build caches per worker (cargo target, node_modules by lockfile),
@@ -428,6 +428,7 @@ From the "not gimmicky, professional" review, 18 Nov:
 9. Name it "Workers" (or "Compute") rather than "Cluster".
 10. Ship commands first and use them for a while before whole chats.
 
-## Still open
+## Status
 
-- Revision 3 above.
+- Phase 1 is being built: worker/ (Rust), src/workers.js, the Workers
+  tab, the PC client switch, Android. Contract: specs/workers-protocol.md.
