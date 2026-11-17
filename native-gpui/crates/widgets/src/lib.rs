@@ -39,6 +39,7 @@ pub mod tip; pub use tip::{tip, tooltip};
 mod icon; pub use icon::icon;
 pub mod cru_mark; pub use cru_mark::cru_mark;
 pub mod brand_mark; pub use brand_mark::{brand_head, brand_mark};
+pub mod ref_drag; pub use ref_drag::{drag_ref, ref_target, ref_text, RefDrag};
 pub mod textarea; pub use textarea::{code_editor, code_state, message_box, textarea, Editor, EditorState, Textarea, TextareaState};
 pub mod square; pub use square::{square_button, SquareLook};
 pub mod dropdown; pub use dropdown::{dropdown, dropdown_of};

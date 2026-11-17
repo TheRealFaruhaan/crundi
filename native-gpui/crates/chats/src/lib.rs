@@ -12,6 +12,7 @@ use crundi_chat_model::{self as model, ChatModel};
 use crundi_shell::{Area, AreaEvent};
 use crundi_theme::T;
 use crundi_workbench::{self as wb, PaneKind};
+use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 use std::{collections::HashMap, rc::Rc};
@@ -28,7 +29,13 @@ impl Render for ChatPane {
         // only while peeking (a send then resumes it first).
         let id = self.model.read(cx).id().to_string();
         let card = crundi_chat_log::parked::is_parked(cx, &id) && !crundi_chat_log::parked::peeking(cx, &id);
-        div().flex().flex_col().size_full().min_h_0().bg(T::bg()).child(self.log.clone()).when(!card, |d| d.child(self.composer.clone()))
+        // Files dragged from the system onto any part of the chat attach to it
+        // (the dashed outline while over it), not only onto its box (the
+        // owner, 18 Nov: dropping files didn't work).
+        let chat = id.clone();
+        let pane = w::ref_target(div().id(SharedString::from(format!("chat-pane-{id}"))), move |text, _, cx| crundi_chat_composer::attach::insert_text(cx, &chat, text));
+        crundi_chat_composer::attach::drop_target(pane, &id)
+            .flex().flex_col().size_full().min_h_0().bg(T::bg()).child(self.log.clone()).when(!card, |d| d.child(self.composer.clone()))
     }
 }
 

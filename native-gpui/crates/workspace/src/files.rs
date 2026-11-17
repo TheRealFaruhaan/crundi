@@ -327,12 +327,36 @@ impl FilesView {
     /// Upload: the system's picker, each file into the folder on show
     /// (/api/files/upload, base64), a toast each, then the list again.
     pub fn upload(&mut self, cx: &mut Context<Self>) {
-        let (project, dir) = (crundi_shell::project(cx), self.path.clone());
+        let dir = self.path.clone();
+        self.upload_into(dir, None, cx);
+    }
+
+    /// A row's path from the project's root (the web's absProjectPath).
+    fn abs_path(&self, p: &str, cx: &App) -> String {
+        if p.starts_with('/') || p.contains(":\\") { return p.to_string(); }
+        let project = crundi_shell::project(cx);
+        let root = crundi_shell::session::get(cx).projects.iter().find(|x| x.get("alias").and_then(|a| a.as_str()) == Some(project.as_str()))
+            .and_then(|x| x.get("path").and_then(|v| v.as_str())).unwrap_or("").trim_end_matches('/').to_string();
+        if root.is_empty() { p.to_string() } else if p.is_empty() { root } else { format!("{root}/{}", p.trim_start_matches('/')) }
+    }
+
+    /// Files dropped from the system: into `dir` (the folder on show, or the
+    /// folder row they were dropped on), as Upload does (the owner, 18 Nov:
+    /// no drag and drop in Files).
+    pub fn drop_into(&mut self, dir: String, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
+        let files: Vec<_> = paths.into_iter().filter(|p| p.is_file()).collect();
+        if files.is_empty() { return toast(cx, "Only files can be dropped here (not folders).".into(), w::Toast::Error); }
+        self.upload_into(dir, Some(files), cx);
+    }
+
+    /// Upload `given` (else the system's picker) into `dir`.
+    fn upload_into(&mut self, dir: String, given: Option<Vec<std::path::PathBuf>>, cx: &mut Context<Self>) {
+        let project = crundi_shell::project(cx);
         if project.is_empty() { return; }
         let Some(api) = crundi_shell::api(cx) else { return };
         let me = cx.entity().downgrade();
         crundi_shell::run(cx, move || {
-            let paths = crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default();
+            let paths = given.unwrap_or_else(|| crundi_core::driver::take_pick().map(|p| vec![p]).or_else(|| rfd::FileDialog::new().pick_files()).unwrap_or_default());
             paths.into_iter().map(|p| {
                 use base64::Engine;
                 let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
@@ -369,7 +393,17 @@ impl FilesView {
             (Some(icon), true) => div().text_color(if r.is_dir { T::amber() } else { T::text_secondary() }).child(w::icon(icon.clone(), T::ICON_MD)).into_any_element(),
             _ => div().text_size(T::TEXT_10).font_weight(T::W_BOLD).font_family(T::MONO).text_color(T::accent_hover()).child(r.mark.clone()).into_any_element(),
         };
-        div().id(("file", i)).group("file-row").flex().items_center().gap(T::SP_8).h(T::CONTROL_SM).px(T::SP_10).cursor_pointer()
+        let abs = self.abs_path(&r.path, cx);
+        let (drop_dir, is_folder) = (r.path.clone(), r.is_dir && !r.up);
+        let row = div().id(("file", i)).group("file-row").flex().items_center().gap(T::SP_8).h(T::CONTROL_SM).px(T::SP_10).cursor_pointer();
+        // Dragged into a chat or a terminal: its path, as the web's [File Path: …].
+        let row = if r.up { row } else { w::drag_ref(row, if r.is_dir { "folder" } else { "file" }, &abs, r.name.clone()) };
+        // A folder takes files dropped from the system: into it.
+        let row = if is_folder {
+            row.drag_over::<ExternalPaths>(|s, _, _, _| s.bg(T::accent_dim()))
+                .on_drop(cx.listener(move |f, p: &ExternalPaths, _, cx| { cx.stop_propagation(); f.drop_into(drop_dir.clone(), p.paths().to_vec(), cx); }))
+        } else { row };
+        row
             .when(r.selected, |d| d.bg(T::bg_tertiary())).hover(|s| s.bg(T::bg_hover()))
             .when(r.cut, |d| d.opacity(T::WS_O_CUT))
             .on_click(cx.listener(move |f, e: &ClickEvent, _, cx| { if e.click_count() >= 2 { f.open(&p1, cx) } else { f.selected = p1.clone(); cx.notify(); } }))
@@ -442,7 +476,11 @@ impl Render for FilesView {
                 list.into_any_element()
             }
         };
-        div().flex().flex_col().size_full().bg(T::bg())
+        let here = self.path.clone();
+        div().id("files-view").flex().flex_col().size_full().bg(T::bg())
+            // Files from the system, dropped anywhere here: into the folder on show.
+            .drag_over::<ExternalPaths>(|s, _, _, _| s.border_2().border_dashed().border_color(T::accent()))
+            .on_drop(cx.listener(move |f, p: &ExternalPaths, _, cx| f.drop_into(here.clone(), p.paths().to_vec(), cx)))
             .child(div().p(T::SP_8).border_b_1().border_color(T::border()).child(w::input(&self.search)))
             .child(bar)
             .child(body)

@@ -409,6 +409,19 @@ impl TermView {
         ((x / cw) as usize, (y / ch) as usize)
     }
 
+    /// Put a dragged reference into the input, spaced from what is there.
+    fn insert_ref(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let input = self.ensure_input(window, cx);
+        input.update(cx, |st, cx| {
+            let old = st.value().to_string();
+            let new = if old.is_empty() || old.ends_with(' ') { format!("{old}{text} ") } else { format!("{old} {text} ") };
+            let n = new.len();
+            st.set_value(new, window, cx);
+            st.set_selected_range(n..n, cx);
+            st.focus(window, cx);
+        });
+    }
+
     fn ensure_input(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<w::TextareaState> {
         if let Some(i) = &self.input { return i.clone(); }
         let st = cx.new(|cx| w::TextareaState::new(window, cx).auto_grow(1, 5).placeholder("Type here... (Ctrl+Enter or Send button)"));
@@ -583,7 +596,12 @@ impl Render for TermView {
                     .when(!self.up.busy, |d| d.on_click(cx.listener(|this, _, _, cx| this.attach(cx)))))
                 .child(w::send_button(SharedString::from(format!("term-send-{id}")), "Send", 1.0).tooltip("Send to terminal")
                     .on_click(cx.listener(|this, _, _, cx| { let t = this.input.as_ref().map(|i| i.read(cx).value().to_string()).unwrap_or_default(); this.send_text(&t, cx); }))));
-        div().size_full().flex().flex_col().bg(T::bg())
+        let me = cx.entity().downgrade();
+        // A dragged reference (a Files row): into this terminal's input.
+        w::ref_target(div().id(SharedString::from(format!("term-drop-{id}"))), move |text, window, cx| {
+            let _ = me.update(cx, |t, cx| t.insert_ref(text, window, cx));
+        })
+            .size_full().flex().flex_col().bg(T::bg())
             .child(screen)
             .when(self.tools, |d| d.child(self.tools_view(cx)))
             .child(bar)
