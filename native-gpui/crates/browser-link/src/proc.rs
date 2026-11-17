@@ -196,7 +196,15 @@ pub fn is_host(pid: u32) -> bool {
         let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut n);
         CloseHandle(h);
         let path = String::from_utf16_lossy(&buf[..n as usize]).to_lowercase();
-        ok != 0 && names.iter().any(|x| !x.is_empty() && path.ends_with(&x.to_lowercase()))
+        // Windows can't read another process's command line here, so the
+        // --browser-host flag can't be checked: only the host's own
+        // executable counts. The app's name would also match another
+        // running app window (or this test binary), and reaping it by a
+        // reused PID would kill it. The host is its own executable on
+        // Windows since it was split out, so no older app binary runs as one.
+        let _ = &names;
+        let host = format!("{}.exe", HOST_EXE.trim_end_matches(".exe")).to_lowercase();
+        ok != 0 && (path.ends_with(&format!("\\{host}")) || path == host)
     }
 }
 
