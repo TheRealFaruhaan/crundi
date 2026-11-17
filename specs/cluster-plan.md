@@ -109,13 +109,20 @@ saves the server's CPU and RAM, not usage.
 
 - **New MCP tools**, owner chats only:
   - `worker_list`: the workers with their info and status.
-  - `worker_run { worker, command, cwd?, sync?, artifacts?, timeout?, background? }`
+  - `worker_run { worker, command, source?, cwd?, paths?, artifacts?, timeout?, background? }`
     runs `command` in the project's copy on that PC and streams output into
     the chat as a card, live, like a long tool result. It returns the exit
     code, the tail of the output and where the artifacts landed.
   - `worker_job` (status, logs, cancel) for `background: true` jobs, which
     are kept server-side like services' logs.
-- **Where the code comes from:** GitHub, per the owner.
+- **Where the code comes from:** one of two sources, `source: 'git' | 'copy'`,
+  picked per job (and per chat or factory step):
+  - **`git`** (described next): a GitHub clone and a local branch.
+  - **`copy`** (further down): a bare copy sent over the worker link, for a
+    PC without git, or a task that does not want it.
+  - Default: `git` when the project has a GitHub remote and the PC has git;
+    otherwise `copy`. A job that names one gets that one or a clear error.
+- **`git`: GitHub, per the owner.**
   - Each worker has a **PC remote folder** (its work folder, chosen at
     setup). The first job for a project clones the project's GitHub remote
     into `<work folder>/<project>`, with the PC's own GitHub access. If it
@@ -132,8 +139,25 @@ saves the server's CPU and RAM, not usage.
     The build is then of the exact commit the server has, without making
     the owner push first. Uncommitted server changes are not sent; the job
     says so when there are any.
-- **For a build or a plain command** that is all: check out, run, return
-  the output and artifacts. Nothing goes back to git.
+- **`copy`: a bare copy over the worker link.** No git needed on the PC,
+  and no GitHub access.
+  - The server sends the project's files as they are on the server, working
+    changes included, into `<work folder>/<project>@copy` on the PC (or a
+    folder per job when two jobs must not share).
+  - **What is sent:** with git on the server, the tracked files plus
+    untracked files that are not ignored; without it, everything except the
+    usual heavy and generated folders (`node_modules`, `target`, `dist`,
+    `build`, `.git`) and whatever a `.crundiignore` in the project lists.
+    `paths` narrows it to some folders or files for a task that needs only
+    those.
+  - **Only what changed:** the PC answers with a manifest (path, size,
+    hash) of the copy it already has; the server sends only new and changed
+    files and a list of removed ones, as one tar stream. A second build of a
+    large app sends little.
+  - Not a git repository on the PC, so a chat or step in copy mode cannot
+    commit or push from there; its changes come back as files (section 3).
+- **For a build or a plain command** that is all: check out (or copy),
+  run, return the output and artifacts. Nothing goes back to git.
 - **`artifacts`:** globs whose matches come back as a tar stream into
   `<project>/.crundi/artifacts/<job>/` (or a path given). The chat can then
   `show_file` or `show_video` them.
@@ -172,8 +196,9 @@ saves the server's CPU and RAM, not usage.
   - Tools that act on "this machine" say which machine they mean. For
     example `register_service` stays server-side; a dev server on the PC is
     reachable through a net-tunnel forward, which comes in a later phase.
-- **Where the code lives:** the chat works in the PC's clone, on a local
-  branch the PC creates from the branch the server sent (as in section 2).
+- **Where the code lives:** with `git`, the chat works in the PC's clone,
+  on a local branch the PC creates from the branch the server sent (as in
+  section 2). With `copy`, it works in its own bare copy (see below).
   - **Changes come back by pulling from the PC's worktree:** the server
     `git fetch`es the PC's branch over the worker link into a matching
     worktree on the server, at each turn end and on demand. The owner sees
@@ -181,6 +206,13 @@ saves the server's CPU and RAM, not usage.
     factory runs. Nothing writes into the server's main checkout.
   - Pushing that branch to GitHub is optional: the chat can do it from the
     PC when the work should be there, with the PC's GitHub access.
+  - **In copy mode** changes come back as files: at each turn end the PC
+    sends a manifest, and the server takes the changed, new and removed
+    files (relative to what it sent) into a worktree of its own made for
+    that chat, then commits them there on a branch `pc/<worker>/<chat>`.
+    The owner reviews and merges it like any other. If the server project
+    has no git, they land in `<project>/.crundi/pc-changes/<chat>/` with a
+    list of removed files, for the owner to apply.
 - **Transcripts and resume:**
   - The JSONL lives on the PC. Resume is `--resume` on the same PC.
   - Server features that read `~/.claude/projects` (history after a restart,
@@ -210,6 +242,10 @@ saves the server's CPU and RAM, not usage.
   - At handoff the runner pulls the PC's branch into the run's worktree on
     the server **before** it accepts the handoff. A join therefore never
     passes part-built work.
+  - A step in copy mode: the run's worktree is sent as a copy at the step's
+    start (only what changed since its last copy), and the step's changed
+    files are taken back into the run's worktree before the handoff is
+    accepted, the same guarantee.
 - **The PC disconnects:**
   - New event `worker-offline { worker, steps }`. Steps on that PC are held
     (`emp.workerHeld`, the same mechanism as `pauseHeld`). Their seats are
@@ -239,7 +275,8 @@ saves the server's CPU and RAM, not usage.
   may lack: git, Node/npm, Rust (rustup, cargo), Python, ffmpeg, Docker,
   platform SDKs (Android SDK and a JDK, Visual Studio build tools on
   Windows), and the Claude Code CLI for whole chats.
-  - The worker reports which it has, with versions.
+  - The worker reports which it has, with versions. git is needed only for
+    the `git` source; copy mode works without it.
   - A job that needs a missing one stops before it starts and says what is
     missing, with the install command for that OS (winget, Homebrew,
     apt/dnf, rustup, the Claude Code installer).
@@ -284,6 +321,10 @@ An in-process fake worker on a loopback websocket:
 - the PC makes its local branch from the branch sent, fetching unpushed
   commits from the server, and nothing is pushed to GitHub;
 - the server pulls a PC branch into its worktree;
+- copy mode: the first copy sends the project (ignores respected,
+  `paths` narrowing it), a second sends only what changed, removed files
+  are removed; a chat's changed files come back into a server worktree and
+  are committed on its branch; a step's come back before its handoff;
 - a chat on the worker:
   - stream-json goes through the launcher;
   - MCP calls carry the chat key, never the API key;
@@ -301,7 +342,8 @@ An in-process fake worker on a loopback websocket:
 1. **Workers:** the Rust worker (tray and headless), joining, info, the
    PC terminal, Cluster settings. Linking it into the PC client follows
    when that client is ready for it. Nothing runs jobs yet.
-2. **Commands on a PC:** `worker_run`, clone and branch, artifacts, jobs.
+2. **Commands on a PC:** `worker_run`, both sources (clone and branch, and
+   the bare copy), artifacts, jobs.
    This is most of the resource win: builds and renders off the server.
 3. **PC setup:** prepare a project, tool detection and install commands.
 4. **Whole chats on a PC:** the launcher seam, MCP forwarding, pulling the
@@ -323,6 +365,9 @@ An in-process fake worker on a loopback websocket:
    when the work needs to be on GitHub; a build or a command needs none.
 4. **Installs:** the owner asked what they are; answered in section 5.
 5. **Never collaborators.**
+7. **A bare copy over the worker link** as well as GitHub (owner, 18 Nov),
+   for a PC without git or a task that does not want it: `source: 'copy'`,
+   sections 2-4.
 6. **Order:** commands before whole chats, as planned.
 
 ## Still open
