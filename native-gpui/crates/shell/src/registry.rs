@@ -160,6 +160,9 @@ pub fn register_action(cx: &mut App, name: &'static str, f: impl Fn(&mut App) + 
     cx.global_mut::<Actions>().0.insert(name, Rc::new(f));
 }
 
+/// A part provides the named action.
+pub fn has_action(cx: &App, name: &str) -> bool { cx.try_global::<Actions>().is_some_and(|a| a.0.contains_key(name)) }
+
 /// Run a named action (nothing when no part provides it yet).
 pub fn run_action(cx: &mut App, name: &str) {
     if let Some(f) = cx.try_global::<Actions>().and_then(|a| a.0.get(name).cloned()) { f(cx); }

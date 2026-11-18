@@ -86,6 +86,8 @@ pub fn init(window: &mut Window, cx: &mut App) {
         left: Rc::new(|_| drawer::with(|d| d.side == "left")),
     });
     // The top bar's Cru button (the shell's hook).
+    // The project bar's Browser button: the drawer's own open (page and host).
+    crundi_shell::register_action(cx, "drawer-open", |_| { if ctx::project().is_empty() { ctx::toast_error("Select a project first") } else { drawer::open() } });
     crundi_shell::register_action(cx, "cru", |_| cru::click());
     crundi_shell::register_action(cx, "cru-hover", |cx| cru::hover(crundi_chat_composer::voice::any_recording(cx)));
     crundi_shell::register_action(cx, "cru-leave", |_| cru::leave());
@@ -247,7 +249,8 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
     let ok = || Some(json!({ "ok": true }));
     match name {
         "ping" => Some(json!({ "ok": true, "area": "desktop" })),
-        "browser" => { drawer::toggle(); ok() }
+        // Opening goes through the shell's Browser button, as a click does.
+        "browser" => { if drawer::with(|d| d.open) { drawer::close() } else { ctx::on_app(|_, cx| crundi_shell::browser_button(cx)) }; ok() }
         "drawer" => { if a(0) == "true" { drawer::open() } else { drawer::close() }; ok() }
         "new-tab" => match drawer::new_tab(&ctx::project(), &Some(a(0)).filter(|u| !u.is_empty()).unwrap_or_else(|| drawer::START.into()), &Some(a(1)).filter(|u| !u.is_empty()).unwrap_or_else(|| "client".into()), true, true) {
             Ok(id) => { drawer::show_active(); Some(json!({ "ok": true, "id": id })) }

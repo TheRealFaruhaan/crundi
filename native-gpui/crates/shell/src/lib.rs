@@ -342,7 +342,7 @@ impl Shell {
             let pages = registry::drawer(cx).is_some_and(|d| (d.has_pages)(cx));
             bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false).id("browser").flex_none().cursor_pointer()
                 .when(pages, |d| d.child(w::dot(T::accent())))
-                .on_click(cx.listener(|this, _, _, cx| this.set_drawer(true, cx))));
+.on_click(|_, _, cx| cx.defer(browser_button)));
         }
         bar
     }
@@ -483,6 +483,14 @@ pub fn shell(cx: &App) -> Option<Entity<Shell>> {
 }
 
 /// Hide or show the drawer (the drawer's own hide and close buttons).
+/// The project bar's Browser button: the drawer's own open, which loads the
+/// active tab's page and starts the browser host. (Showing the drawer's view
+/// alone left the page blank and the host never started.) Without a drawer
+/// part, the view is just shown.
+pub fn browser_button(cx: &mut App) {
+    if registry::has_action(cx, "drawer-open") { registry::run_action(cx, "drawer-open"); } else { set_drawer(cx, true); }
+}
+
 pub fn set_drawer(cx: &mut App, open: bool) {
     if let Some(s) = shell(cx) { s.update(cx, |s, cx| s.set_drawer(open, cx)); }
 }
