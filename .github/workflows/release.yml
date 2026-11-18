@@ -72,8 +72,12 @@ jobs:
 
       # The worker (worker/, Rust) goes inside the PC app too: its "Use this PC
       # as a worker" switch runs it (app/main.js). Tray build on Windows.
+      # Never stops the installer: without it the switch says the build has no
+      # worker program, and the standalone worker job still publishes it.
       - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
       - name: Build the worker
+        continue-on-error: true
         shell: bash
         run: |
           cargo build --release --manifest-path worker/Cargo.toml

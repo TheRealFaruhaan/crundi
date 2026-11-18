@@ -61,8 +61,12 @@ jobs:
 
       # The worker (worker/, Rust) goes inside the client: its "Use this PC
       # as a worker" switch runs it (app/main.js). Tray build on Windows.
+      # Never stops the installer: without it the switch says the build has no
+      # worker program, and the standalone worker job still publishes it.
       - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
       - name: Build the worker
+        continue-on-error: true
         shell: bash
         run: |
           cargo build --release --manifest-path worker/Cargo.toml
@@ -295,8 +299,12 @@ jobs:
       # The worker (worker/, Rust) goes inside both packages: the PC client's
       # "Use this PC as a worker" switch runs it (app/main.js). The tray build
       # needs GTK and an app-indicator library.
+      # Never stops the installer: without it the switch says the build has no
+      # worker program, and the standalone worker job still publishes it.
       - uses: dtolnay/rust-toolchain@stable
+        continue-on-error: true
       - name: Build the worker
+        continue-on-error: true
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
@@ -496,10 +504,26 @@ jobs:
           name: worker-${{ matrix.label }}
           path: out/*
           if-no-files-found: error
+      # Attached by this job itself, so a worker build that fails cannot hold
+      # back the installers the attach job uploads.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF_NAME}"
+          for attempt in $(seq 1 60); do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && break
+            [ "$attempt" -eq 60 ] && { echo "The release $TAG never appeared."; exit 1; }
+            sleep 10
+          done
+          node scripts/release-upload.mjs --tag "$TAG" --repo "$GITHUB_REPOSITORY" --upload out/*
 
   attach:
     name: Attach to the release
-    needs: [client, server-windows, server-linux, desktop-linux, worker]
+    needs: [client, server-windows, server-linux, desktop-linux]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
     # A job that hangs should die in minutes, not burn six hours of the
@@ -533,10 +557,6 @@ jobs:
         with:
           name: linux-desktop
           path: artifacts/linux-desktop
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: worker-*
-          path: artifacts/worker
 
       # Added to the release the main workflow created, rather than creating
       # one — so the installer it publishes stays the primary asset.
