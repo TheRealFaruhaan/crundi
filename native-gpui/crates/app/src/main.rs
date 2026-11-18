@@ -54,6 +54,12 @@ fn main() {
             ..Default::default()
         };
         let handle = cx.open_window(opts, |window, cx| {
+            // The frame meter (built with --features frame-stats): GPUI's own
+            // overlay, the draw time of each frame and their pacing.
+            #[cfg(feature = "frame-stats")]
+            if let Ok(v) = std::env::var("CRUNDI_FRAME_STATS") {
+                window.set_debug_frame_overlay_mode(if v == "full" { gpui::DebugFrameOverlayMode::Full } else { gpui::DebugFrameOverlayMode::Minimal });
+            }
             let shell = cx.new(|cx| crundi_shell::Shell::new(window, cx));
             if cef { crundi_desktop::init(window, cx); }
             cx.new(|cx| Root::new(shell, window, cx))
