@@ -369,6 +369,21 @@ impl Workbench {
     fn font_px(&self, id: &str) -> i32 { *self.font.get(id).unwrap_or(&self.font_default) }
 
     /// Every pane, laid out, as drawn and listed.
+    /// The open panes' keys, cheaply (no titles, no JSON): what the other
+    /// parts poll every tick.
+    pub fn pane_keys(&mut self) -> Vec<String> {
+        let (gw, gh) = self.grid_size();
+        self.mosaic().layout(gw, gh).0.into_iter().filter_map(|l| l.key).collect()
+    }
+
+    /// The chat in the focused pane, else the first chat pane, cheaply.
+    pub fn focused_chat(&mut self) -> String {
+        let (gw, gh) = self.grid_size();
+        let leaves = self.mosaic().layout(gw, gh).0;
+        let chat = |k: &Option<String>| k.as_deref().and_then(|k| k.strip_prefix("live:")).map(String::from);
+        leaves.iter().find(|l| l.id == self.focused).and_then(|l| chat(&l.key)).or_else(|| leaves.iter().find_map(|l| chat(&l.key))).unwrap_or_default()
+    }
+
     pub(crate) fn infos(&mut self, cx: &App) -> Vec<Info> {
         let (gw, gh) = self.grid_size();
         let leaves = self.mosaic().layout(gw, gh).0;
@@ -436,6 +451,11 @@ impl Workbench {
             "gutterViews": gutters.iter().map(|g| json!({ "split": g.split, "index": g.index, "row": g.dir == Dir::Row, "x": g.x, "y": g.y, "w": g.w, "h": g.h, "locked": g.locked })).collect::<Vec<_>>(),
         });
         v["toast"] = json!(self.toast);
+        // The sideways scroll: how far, and the grid against the room.
+        v["scrollX"] = json!(-f32::from(self.scroll.offset().x));
+        v["gridW"] = json!(gw);
+        v["areaW"] = json!(self.area.0);
+        v["origin"] = json!([self.origin.0, self.origin.1]);
         v
     }
 

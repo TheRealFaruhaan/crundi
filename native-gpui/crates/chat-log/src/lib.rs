@@ -275,9 +275,7 @@ pub fn view_of(cx: &App, chat: &str) -> Option<Entity<LogView>> {
 
 /// The chat in the focused workbench pane (else the first chat pane).
 pub fn focused_chat(cx: &mut App) -> String {
-    let panes = crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default();
-    let chat = |p: &Value| p.get("key").and_then(|k| k.as_str()).and_then(|k| k.strip_prefix("live:")).map(String::from);
-    panes.iter().find(|p| p.get("focused") == Some(&json!(true))).and_then(chat).or_else(|| panes.iter().find_map(chat)).unwrap_or_default()
+    crundi_workbench::workbench(cx).map(|w| w.update(cx, |w, _| w.focused_chat())).unwrap_or_default()
 }
 
 /// A chat pane's log fields (question, tools, agentDock, goal, fr, pk…), for

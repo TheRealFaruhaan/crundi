@@ -406,11 +406,22 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        draw_stats::count(&draw_stats::RENDERS);
+        let t0 = draw_stats::on().then(std::time::Instant::now);
+        let out = self.render_inner(window, cx);
+        if let Some(t0) = t0 { draw_stats::rendered(t0.elapsed()); }
+        out
+    }
+}
+
+impl Shell {
+    fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         // Nothing focused (the window just opened): the window's root has the keys.
         if window.focused(cx).is_none() { window.focus(&self.root_focus, cx); }
         // The root key context; its focus on an empty node (a click never moves the focus to it).
         let root = div().key_context("CrundiWindow").flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font())
-            .child(div().absolute().size_0().track_focus(&self.root_focus));
+            .child(div().absolute().size_0().track_focus(&self.root_focus))
+            .child(canvas(|_, _, _| {}, |_, _, _, _| draw_stats::count(&draw_stats::PAINTS)).absolute().size_0());
         if !session::signed_in(cx) {
             return root.child(self.sign_in(window, cx)).into_any_element();
         }
@@ -507,4 +518,44 @@ pub fn init(cx: &mut App) {
         let aliases: Vec<Value> = s.projects.iter().filter_map(|p| p.get("alias").cloned()).collect();
         json!({ "projects": aliases, "project": s.project, "signedIn": s.api.is_some() })
     }));
+}
+
+/// CRUNDI_DRAW_STATS=1: once a second, on stderr, the frames the window
+/// painted, the slowest gap between two of them, and how often the shell
+/// was rendered (and the slowest render). An idle window shows nothing;
+/// a smooth scroll shows ~60 frames with gaps near 16 ms.
+mod draw_stats {
+    use std::cell::Cell;
+    use std::time::{Duration, Instant};
+    #[derive(Clone, Copy)]
+    pub enum K { Render, Paint }
+    pub use K::{Paint as PAINTS, Render as RENDERS};
+    thread_local! {
+        static ON: bool = std::env::var_os("CRUNDI_DRAW_STATS").is_some();
+        static S: Cell<(Option<Instant>, u32, u32, Duration, Option<Instant>, Duration)> = const { Cell::new((None, 0, 0, Duration::ZERO, None, Duration::ZERO)) };
+    }
+    /// Count one; [Render] also returns a guard timing the render.
+    pub fn count(k: &K) {
+        if !ON.with(|o| *o) { return; }
+        let now = Instant::now();
+        S.with(|s| {
+            let (mut start, mut paints, mut renders, mut gap, mut last, slow) = s.get();
+            let start_at = *start.get_or_insert(now);
+            match k {
+                K::Paint => { paints += 1; if let Some(l) = last { gap = gap.max(now - l); } last = Some(now); }
+                K::Render => renders += 1,
+            }
+            if now - start_at >= Duration::from_secs(1) {
+                eprintln!("[draw] {paints} frames/s, slowest gap {} ms, {renders} shell renders (slowest {} ms)", gap.as_millis(), slow.as_millis());
+                start = Some(now); paints = 0; renders = 0; gap = Duration::ZERO;
+                s.set((start, paints, renders, gap, last, Duration::ZERO));
+            } else { s.set((start, paints, renders, gap, last, slow)); }
+        });
+    }
+    /// The shell's render took [d].
+    pub fn rendered(d: Duration) {
+        if !ON.with(|o| *o) { return; }
+        S.with(|s| { let mut v = s.get(); v.5 = v.5.max(d); s.set(v); });
+    }
+    pub fn on() -> bool { ON.with(|o| *o) }
 }

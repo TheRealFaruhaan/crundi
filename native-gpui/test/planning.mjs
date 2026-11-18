@@ -11,7 +11,7 @@
 
 import * as t from './lib.mjs';
 
-const SCREENS = ['kanban', 'mindmap', 'notes', 'schedule', 'factories'];
+const SCREENS = ['kanban', 'mindmap', 'notes', 'schedule', 'factories', 'wbscroll'];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 
 const T = await t.begin('planning');

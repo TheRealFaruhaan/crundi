@@ -20,7 +20,15 @@ impl Workbench {
         };
         let head = self.head(i, full, cx);
         // The body clipped to its box (a long log never draws over the header).
-        let body = div().relative().size_full().overflow_hidden().child(body);
+        // A wheel or touchpad scroll inside a pane stays in it: GPUI gives the
+        // event to every scroller under the pointer, so the workbench's own
+        // sideways scroll moved with the mind map, a log, a list (the owner,
+        // 19 Nov). This runs after the pane's own scrollers (a parent's
+        // listener comes after its children's), then stops the event; the
+        // workbench still scrolls from the heads, the gutters and its bar.
+        let body = div().relative().size_full().overflow_hidden()
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(body);
         w::panel(head, body).when(i.focused && !full, |d| d.border_color(T::accent())).into_any_element()
     }
 

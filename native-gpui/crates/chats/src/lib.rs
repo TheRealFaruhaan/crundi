@@ -157,9 +157,7 @@ impl Global for WasParked {}
 
 /// The chat in the focused pane (else the first), for the driver's "send".
 pub fn focused_chat(cx: &mut App) -> String {
-    let panes = wb::workbench(cx).map(|w| w.update(cx, |w, cx| w.panes(cx))).unwrap_or_default();
-    let chat = |p: &Value| p.get("key").and_then(|k| k.as_str()).and_then(|k| k.strip_prefix("live:")).map(String::from);
-    panes.iter().find(|p| p.get("focused") == Some(&json!(true))).and_then(chat).or_else(|| panes.iter().find_map(chat)).unwrap_or_default()
+    wb::workbench(cx).map(|w| w.update(cx, |w, _| w.focused_chat())).unwrap_or_default()
 }
 
 pub fn init(cx: &mut App) {

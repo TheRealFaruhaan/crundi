@@ -114,8 +114,9 @@ fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
         "leave" => { window.dispatch_event(PlatformInput::MouseExited(MouseExitEvent { position: p, pressed_button: None, modifiers: m }), cx); }
         "wheel" => {
             mv(window, cx, None);
-            let dy = r.num("dy") as f32;
-            window.dispatch_event(PlatformInput::Scroll(ScrollEvent { position: p, delta: ScrollDelta::Pixels(point(px(0.), px(dy))), modifiers: m, touch_phase: TouchPhase::Moved, source: ScrollSource::Pointer }), cx);
+            // dx: sideways (a touchpad's swipe), pixels as a touchpad sends.
+            let (dx, dy) = (r.num("dx") as f32, r.num("dy") as f32);
+            window.dispatch_event(PlatformInput::Scroll(ScrollEvent { position: p, delta: ScrollDelta::Pixels(point(px(dx), px(dy))), modifiers: m, touch_phase: TouchPhase::Moved, source: ScrollSource::Pointer }), cx);
         }
         _ => mv(window, cx, None),
     }

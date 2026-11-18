@@ -168,9 +168,10 @@ fn refresh(_window: &mut Window, cx: &mut App) {
         project: s.project.clone(),
         projects: s.projects.clone(), terminals: s.terminals.clone(), tab: crundi_shell::current_tab(cx), api: s.api.clone(), ..Default::default()
     };
-    c.panes = crundi_workbench::workbench(cx).map(|wb| wb.update(cx, |wb, cx| wb.panes(cx))).unwrap_or_default()
-        .iter().filter_map(|p| p.get("key").and_then(|k| k.as_str()).map(str::to_string)).collect();
-    c.focused = crundi_chats::focused_chat(cx);
+    // Every tick: the cheap reads (the pane JSON cost ~all of an idle tick).
+    let (panes, focused) = crundi_workbench::workbench(cx).map(|wb| wb.update(cx, |wb, _| (wb.pane_keys(), wb.focused_chat()))).unwrap_or_default();
+    c.panes = panes;
+    c.focused = focused;
     if c.project != ctx::project() { let p = c.project.clone(); ctx::set(c); drawer::set_project(&p); } else { ctx::set(c); }
 }
 
