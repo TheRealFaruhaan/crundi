@@ -263,3 +263,127 @@ a PC's jobs with their live log.
   command's alone. Windows runs `cmd /d /s /c`, at BELOW_NORMAL priority; the
   whole process tree is killed on cancel or timeout (taskkill /T /F).
 - A job waits at most 10 minutes for a bundle or the files; then it fails.
+
+# Phase 4: whole chats on a PC (and phase 5: factory steps on a PC)
+
+Caps: worker adds `"chats"` to hello caps; server adds `"chats"` to welcome.
+
+## How a chat runs on a PC
+
+The server's chat machinery (src/claude-ui.js) is unchanged above the
+process: it spawns through a launcher, `launch({ bin, args, cwd, env }) ->
+{ stdin, stdout, stderr, kill(), on('exit', code) }`. The local launcher is
+today's child_process.spawn. The worker launcher (src/workers-chats.js) sends
+`chat.spawn` and maps the three pipes onto link messages. stream-json parsing,
+cards, permissions and the factory adapter stay as they are.
+
+- The PC runs ITS OWN `claude` (installed and signed in there: the owner's
+  own subscription; no Agent SDK). Missing: the chat is refused with
+  "Install Claude Code on <PC>: curl -fsSL https://claude.ai/install.sh | bash
+  (Windows: irm https://claude.ai/install.ps1 | iex), then run claude once to
+  sign in" and the worker reports `tools.claude`.
+- MCP: the PC has no Node (often). The worker binary is the chat's MCP
+  server: claude is given `--mcp-config <file>` naming
+  `{"mcpServers":{"crundi":{"command":"<worker exe>","args":["mcp","--chat","<chat>","--port","<p>","--token","<t>"]}}}`.
+  `crundi-worker mcp` speaks MCP (JSON-RPC 2.0 over stdio, protocol
+  2024-11-05: initialize, tools/list, tools/call, ping, notifications) and
+  relays tools/list and tools/call over loopback TCP (127.0.0.1:<p>, one-time
+  token <t>) to the running worker, which sends them over the link:
+  `mcp.list {chat, req}` -> `mcp.tools {req, tools}` and
+  `mcp.call {chat, req, tool, args}` -> `mcp.result {req, result}` (result is
+  the server's JSON answer; the stdio side wraps it as MCP content, images
+  as image content like mcp-stdio.js does). The server runs every tool as it
+  does today, as that chat (its session id, project, chat token; never the
+  internal API key on the PC).
+- Permission prompts: as today, through stream-json (`--permission-prompt-tool stdio`).
+
+## Messages
+
+Server -> worker:
+- `chat.spawn { chat, project, args:[...claude args...], source, git?, cwd?, env, resumeSessionId? }`
+  The worker prepares the folder like a job (git: local branch `pc/<chat>`
+  from git.commit, created once and kept for the chat's life; copy:
+  `<project>@copy`), writes the MCP config, and starts `claude <args>` in it
+  with stdin/stdout/stderr piped, NOT at low priority. Answers
+  `chat.started { chat, pid }` or `chat.refused { chat, error }`.
+- `chat.in { chat, b64 }` bytes for claude's stdin.
+- `chat.kill { chat, signal? }` (interrupt = SIGINT; close = SIGTERM then kill).
+- `chat.attach { chat, from }` after a reconnect: resend stdout from byte `from`.
+- `chat.pull { chat, req, base }` -> the PC answers with the work since
+  `base` (the commit the chat started from): `chat.bundle { chat, req, seq, b64, last, head }`
+  (a git bundle of `pc/<chat>` with `^base`, empty when head == base) then
+  `chat.patch { chat, req, b64 }` (`git diff --binary HEAD`, uncommitted
+  work, may be empty). Copy source: `chat.files { chat, req, seq, b64, last, removed:[] }`
+  (a tar of files changed since the copy, by the copy manifest) instead.
+- `mcp.tools { req, tools }`, `mcp.result { req, result }`.
+
+Worker -> server:
+- `chat.started`, `chat.refused`.
+- `chat.out { chat, stream:"stdout"|"stderr", off, b64 }` (stdout offsets
+  count stdout bytes only; spooled to `<workDir>/.crundi-chats/<chat>.out`).
+- `chat.exit { chat, code, signal? }`.
+- `mcp.list`, `mcp.call` (above).
+- `chat.bundle`, `chat.patch`, `chat.files` (answers to chat.pull).
+- In hello: `chats: [{ chat, running:bool, outBytes }]`.
+
+A chat keeps running on the PC when the link drops; stdin sent meanwhile is
+queued on the server and delivered on reconnect; the server shows the chat
+as "PC offline". A chat whose PC stays away 30 minutes is shown as ended.
+
+## Changes coming back
+
+At each turn end (and on "Bring changes back"), the server sends `chat.pull`
+and applies the answer in a worktree of the server's project:
+`<data>/workers/worktrees/<project>/<chat>` on branch `pc/<worker>/<chat>`,
+created from `base`: git bundle fetched and the branch reset to its head,
+then the patch applied (uncommitted work stays uncommitted there). Copy
+source: the files written into that worktree (or, project without git,
+`<project>/.crundi/pc-changes/<chat>/` plus `removed.txt`). The owner merges
+as with factory runs. Nothing writes into the server's main checkout.
+
+## Settled while building phase 4 (server side)
+
+- Preparing a chat's folder: `chat.need {chat, kind:"bundle", have}` is
+  answered with `chat.bundle {chat, seq, b64, last}` and `chat.manifest
+  {chat, files}` with `chat.files {chat, seq, b64, last, removed}`, both
+  WITHOUT `req` (pull answers carry `req`; direction tells them apart), served
+  exactly as for a job (bundle exclusions, the copies.json rule). Asked in job
+  words (`job.need` / `job.manifest`, job = the chat id), answered in job words.
+- `chat.in` is held until `chat.started` (and while the PC is away), then
+  sent in order. `chat.attach` is sent for every chat listed in hello that is
+  still open here; a listed chat this server is not running gets
+  `chat.kill {signal:"SIGTERM"}`; an open chat missing from hello has ended.
+- `chat.refused` and `chat.exit {error}` show their text in the chat.
+- `mcp.list` / `mcp.call` are answered only for a chat open here on that
+  same PC. The list is an owner chat's (a factory run's chat: the run tools)
+  without `syntax_check` (the files are on the PC); a call runs as
+  /api/mcp/call with the chat's own project, session id and chat token.
+- A pull that fails on the PC says so with `error` on `chat.patch` (git) or
+  the last `chat.files` (copy); no answer: it times out after 10 minutes.
+- `mcp.list` / `mcp.call` resent with the same `req` (after a reconnect) are
+  answered again from the first answer; a tool never runs twice.
+- `chat.exit {unknown:true}` (the PC did not know the chat at `chat.attach`)
+  ends it here; closing claude's stdin is `chat.in {chat, eof:true}`. Branch: `pc/<worker-name-slug>/<first 8 of chat>`.
+- Owner HTTP: `POST /api/workers` `chat-places` (PCs a new chat may run on:
+  online, chats allowed, claude found), `chat-pull {chat}` (Bring changes
+  back: `{ok, head, branch, worktree}`), `chat-info {chat}`. Chat creation
+  (`/api/ui-sessions/create`) takes `where: "worker:<id>"`; a session lists
+  `where` and `pc: {name, online, branch, worktree}`.
+
+## Phase 5: factory steps on a PC
+
+- factory-model: `runsOn` ('' = server, or a worker id or name) on a roster
+  member, and on a step node as an override; validation warns (not fails) on
+  an unknown worker.
+- The runner spawns that person's chat with `where: 'worker:<id>'` in a PC
+  copy of the run's worktree (git: the run's branch, commits from the server's
+  worktree via the bundle path; base = the run's head at step start).
+- PC goes offline: event `worker-offline {worker, employees}`; those steps
+  are held (like pauseHeld), their seats released; the Manager on that PC
+  pauses the whole run (`by:'worker'`). A chat that ended because its PC went
+  away is held, not escalated. `worker-online` resumes them (recovery prompt,
+  `--resume` on the PC).
+- At handoff the runner pulls the PC's work into the run's worktree BEFORE
+  accepting the handoff (chat.pull; git: fetch the bundle onto the run
+  branch, apply the patch, commit it as the step's work).
+- factory_status shows where each person runs and which PCs are offline.

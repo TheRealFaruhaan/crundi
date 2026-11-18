@@ -72,7 +72,24 @@ pub fn link_url(server: &str) -> Result<String> {
 
 /// Find a program on PATH (with PATHEXT on Windows).
 pub fn find_program(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+    find_in_path(name, &std::env::var_os("PATH")?)
+}
+
+/// Is `p` a file we could run (unix: an exec bit)?
+pub fn is_executable(p: &std::path::Path) -> bool {
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    }
+    #[cfg(windows)]
+    {
+        p.is_file()
+    }
+}
+
+/// Find a program in the folders of a PATH-style list.
+pub fn find_in_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
     #[cfg(windows)]
     let exts: Vec<String> = std::env::var("PATHEXT")
         .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into())
@@ -80,7 +97,7 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
         .filter(|e| !e.is_empty())
         .map(|e| e.to_ascii_lowercase())
         .collect();
-    for dir in std::env::split_paths(&path) {
+    for dir in std::env::split_paths(path) {
         #[cfg(windows)]
         {
             for ext in &exts {
@@ -92,12 +109,9 @@ pub fn find_program(name: &str) -> Option<PathBuf> {
         }
         #[cfg(not(windows))]
         {
-            use std::os::unix::fs::PermissionsExt;
             let p = dir.join(name);
-            if let Ok(m) = std::fs::metadata(&p) {
-                if m.is_file() && m.permissions().mode() & 0o111 != 0 {
-                    return Some(p);
-                }
+            if is_executable(&p) {
+                return Some(p);
             }
         }
     }

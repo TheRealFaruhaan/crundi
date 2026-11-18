@@ -1682,6 +1682,16 @@ function wkStart() {
       if (ev.event === 'status') {
         wkSetState({ state: ev.online ? 'online' : (ev.state || 'connecting'), online: !!ev.online, detail: String(ev.detail || ''), since: ev.online ? Date.now() : wkState.since });
         if (ev.online) wkBackoff = 2000;
+      } else if (ev.event === 'job' || ev.event === 'chat') {
+        // Work arriving on this PC is never silent: a notification when a
+        // job or a chat starts and ends, and the current one in Settings.
+        const what = ev.event === 'job' ? String(ev.command || '').slice(0, 120) : `a chat in ${ev.project || 'a project'}`;
+        const started = ev.state === 'started';
+        if (ev.event === 'job') wkSetState({ job: started ? { id: ev.job, command: what, project: ev.project || '', since: Date.now() } : null });
+        const title = started ? (ev.event === 'job' ? 'Crundi is running a job on this PC' : 'A Crundi chat started on this PC')
+          : (ev.event === 'job' ? (ev.exitCode === 0 ? 'Job finished on this PC' : `Job ended on this PC${ev.exitCode != null ? ` (exit ${ev.exitCode})` : ''}`) : 'A Crundi chat on this PC ended');
+        wkAddLog(`${title}: ${what}`);
+        try { if (Notification.isSupported()) new Notification({ title, body: `${what}${ev.project && ev.event === 'job' ? ` (${ev.project})` : ''}`, silent: !started && ev.exitCode === 0 }).show(); } catch { /* no notifications here */ }
       } else if (ev.event === 'log') wkAddLog(String(ev.text || ''));
       else wkAddLog(line.slice(0, 300));
     }

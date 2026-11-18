@@ -301,6 +301,29 @@ pub fn pack_artifacts(dir: &Path, globs: &[String], out: &Path) -> Result<(u64, 
     Ok((count, bytes, notes))
 }
 
+/// An uncompressed tar of `files` (relative paths under `dir`; symlinks kept
+/// as links) at `out`. Paths that are gone or unsafe are skipped.
+pub fn pack_tar(dir: &Path, files: &[String], out: &Path) -> Result<u64> {
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let f = std::fs::File::create(out)?;
+    let mut tb = tar::Builder::new(f);
+    tb.follow_symlinks(false);
+    let mut n = 0;
+    for rel in files {
+        let Some(r) = safe_rel(rel) else { continue };
+        let full = dir.join(r);
+        if std::fs::symlink_metadata(&full).is_err() {
+            continue;
+        }
+        tb.append_path_with_name(&full, rel).with_context(|| format!("packing {rel}"))?;
+        n += 1;
+    }
+    tb.into_inner()?.sync_all()?;
+    Ok(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

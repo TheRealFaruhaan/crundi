@@ -24,6 +24,8 @@ Usage:
   crundi-worker install-service         Linux: systemd user unit (headless), enabled now
   crundi-worker uninstall-service
   crundi-worker autostart on|off        start the tray app at login
+  crundi-worker mcp --chat C --port P --token T
+                                        a chat's MCP server on stdio (claude starts it)
 
 Options:
   --config <path>   config file (default: <config dir>/crundi-worker/config.json)
@@ -43,6 +45,9 @@ struct Args {
     work_dir: Option<PathBuf>,
     name: Option<String>,
     kind: Option<String>,
+    chat: Option<String>,
+    port: Option<u16>,
+    token: Option<String>,
     positional: Vec<String>,
 }
 
@@ -70,6 +75,9 @@ fn parse() -> Result<Args, String> {
             "--work-dir" => a.work_dir = Some(PathBuf::from(take("--work-dir")?)),
             "--name" => a.name = Some(take("--name")?),
             "--kind" => a.kind = Some(take("--kind")?),
+            "--chat" => a.chat = Some(take("--chat")?),
+            "--port" => a.port = Some(take("--port")?.parse().map_err(|_| "--port needs a number".to_string())?),
+            "--token" => a.token = Some(take("--token")?),
             "-h" | "--help" | "help" => {
                 print!("{USAGE}");
                 std::process::exit(0);
@@ -111,6 +119,18 @@ fn attach_console() {
 }
 
 fn main() {
+    // The chat MCP server: stdio belongs to claude; nothing else may print.
+    if std::env::args().nth(1).as_deref() == Some("mcp") {
+        let a = parse().unwrap_or_else(|e| fail(e, 64));
+        let (Some(chat), Some(port), Some(token)) = (a.chat, a.port, a.token) else {
+            fail("usage: crundi-worker mcp --chat <chat> --port <port> --token <token>", 64)
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap_or_else(|e| fail(format!("could not start: {e}"), 1));
+        std::process::exit(rt.block_on(crundi_worker::mcp::serve(&chat, port, &token)));
+    }
     #[cfg(windows)]
     attach_console();
     crundi_worker::util::install_crypto();

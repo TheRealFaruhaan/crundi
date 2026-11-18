@@ -41,7 +41,7 @@ function newNode(kind, position) {
   return base;
 }
 
-function Inner({ apiFetch, factoryId, onClose, initial }) {
+function Inner({ apiFetch, factoryId, onClose, initial, workers = null }) {
   const rf = useReactFlow();
   const phone = usePhone();
   const [f, setF] = useState(initial.factory);
@@ -78,7 +78,7 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
   }, []);
   const globalSkills = useMemo(() => new Set(skills.filter(s => s.scope === 'global' || s.scope === 'synced').map(s => s.name)), [skills]);
   const uniqueSkills = useMemo(() => { const m = new Map(); for (const s of skills) if (!m.has(s.name)) m.set(s.name, s); return [...m.values()]; }, [skills]);
-  const validation = useMemo(() => validateFactory(f, { skills: skills.length ? globalSkills : null }), [f, globalSkills, skills.length]);
+  const validation = useMemo(() => validateFactory(f, { skills: skills.length ? globalSkills : null, knownWorkers: workers }), [f, globalSkills, skills.length, workers]);
 
   // ─── Changes, undo, redo ───
   const mutate = useCallback((fn, key = '') => {
@@ -280,10 +280,10 @@ function Inner({ apiFetch, factoryId, onClose, initial }) {
   const selEdge = selection?.kind === 'edge' ? f.edges.find(e => e.id === selection.id) : null;
   const panel = () => {
     if (tab === 'add') return <Palette f={f} onAdd={(k) => { addAt(k); }} />;
-    if (tab === 'team') return <RosterPane f={f} mutate={mutate} selected={rosterSel} setSelected={(id) => { setRosterSel(id); if (!id) setRosterAddTo(null); }} skills={uniqueSkills} issuesByEmployee={flow.issues.employees} onRemove={removeEmployee} onAddTo={rosterAddTo} />;
+    if (tab === 'team') return <RosterPane f={f} mutate={mutate} selected={rosterSel} setSelected={(id) => { setRosterSel(id); if (!id) setRosterAddTo(null); }} skills={uniqueSkills} issuesByEmployee={flow.issues.employees} onRemove={removeEmployee} onAddTo={rosterAddTo} workers={workers} />;
     if (tab === 'issues') return <IssuesPane validation={validation} onPick={pickIssue} />;
     if (tab === 'dry') return <DryRun f={normalizeFactory(f)} run={run} setRun={setRun} valid={validation.ok} />;
-    if (selNode) return <NodeInspector f={f} node={selNode} issues={flow.issues.nodes.get(selNode.id) || []} skills={uniqueSkills} mutate={mutate}
+    if (selNode) return <NodeInspector f={f} node={selNode} issues={flow.issues.nodes.get(selNode.id) || []} skills={uniqueSkills} mutate={mutate} workers={workers}
       remove={() => onNodesChange([{ type: 'remove', id: selNode.id }])} openRoster={(id, nodeId) => { if (id === 'new') { setRosterAddTo(nodeId); setRosterSel(null); } else setRosterSel(id); setTab('team'); }} />;
     if (selEdge) return <EdgeInspector f={f} edge={selEdge} issues={flow.issues.edges.get(selEdge.id) || []} mutate={mutate} remove={() => onEdgesChange([{ type: 'remove', id: selEdge.id }])} />;
     return <FactorySettings f={f} mutate={mutate} skills={uniqueSkills} secretList={secretList} />;

@@ -1,8 +1,9 @@
 # crundi-worker
 
 Lets a Crundi server use this PC. Phase 1: join with a one-time code, keep a
-websocket link to the server, report info (OS, CPU, RAM, GPUs, disk, tools),
-pause and resume, and give the owner a terminal on the PC. The contract is
+websocket link to the server, report info (OS, CPU, RAM, GPUs, disk, tools,
+idle time, battery), pause and resume, and give the owner a terminal on the
+PC. Phase 2: run commands (jobs). Phase 4: run whole chats. The contract is
 [`specs/workers-protocol.md`](../specs/workers-protocol.md).
 
 One crate (`crundi-worker`, lib + bin). With the `tray` feature (default) it
@@ -72,6 +73,39 @@ their own process group so cancel and timeout stop the whole tree. Output is
 spooled to `<work>/.crundi-jobs/<job>.log`, so a job keeps running when the
 link drops and its output is resent from where the server left off.
 Artifacts (globs relative to the project folder) come back as a .tar.gz.
+When a commit is not on origin the server sends a bundle; the PC offers as
+`have` the newer of `origin/<branch>` and what an earlier bundle brought
+(`refs/crundi-bundle/heads/<branch>`), so only new commits come.
+
+## Chats (phase 4)
+
+The server can run a whole chat on the PC with the PC's own `claude`
+(installed and signed in there; found on PATH or in `~/.local/bin`,
+`~/.claude/local`, `%USERPROFILE%\.local\bin`, the npm global folder).
+Refused while paused, when chats are not allowed, or when claude is missing
+(with the install line). The folder:
+
+- `git`: the project's clone (as for jobs), plus a worktree
+  `<work>/<project>@<chat>` on branch `pc/<chat>`, made once from the
+  chat's commit and kept, so a resumed chat finds its work as it left it
+  (and a job's checkout never touches it).
+- `copy`: `<work>/<project>@copy`, synced once when the chat starts (a
+  manifest of it is kept as the chat's baseline).
+- `none`: `<work>/<project>` or the work folder.
+
+claude runs with its three pipes (not at low priority) and
+`--mcp-config <work>/.crundi-chats/<chat>.mcp.json`, which names this same
+executable as the chat's MCP server (`crundi-worker mcp ...`). That talks
+to a loopback relay the worker opens for the chat (127.0.0.1, random port,
+a token); tool calls go to the server over the link and wait up to 10
+minutes, across reconnects. stdout is spooled to
+`<work>/.crundi-chats/<chat>.out`, so a chat keeps running when the link
+drops and its output is resent from where the server left off.
+
+`chat.pull` sends the chat's work back: git, a bundle of `pc/<chat>` since
+the base commit plus `git diff --binary HEAD` (new files included; the
+PC's index is left as it was); copy, a tar of files changed since the
+baseline plus the removed paths.
 
 ## Use
 
@@ -101,6 +135,8 @@ crundi-worker status                   print the config and whether joined
 crundi-worker install-service          Linux: systemd user unit, enabled and started
 crundi-worker uninstall-service
 crundi-worker autostart on|off         Windows Run key, macOS LaunchAgent, Linux XDG autostart
+crundi-worker mcp --chat C --port P --token T
+                                       a chat's MCP server on stdio (claude starts it)
 --config <path>                        use another config file
 --kind <tray|headless|electron|native> override the kind reported to the server
 ```
@@ -116,8 +152,16 @@ stdout gets one JSON object per line:
 ```
 {"event":"status","state":"online","online":true,"server":"https://...","id":"w...","name":"...",
  "paused":false,"allowChats":true,"allowCommands":true,"terminals":0,"line":"desk: online"}
+{"event":"job","state":"started","job":"j...","command":"cargo test","project":"app"}
+{"event":"job","state":"ended","job":"j...","command":"cargo test","project":"app","exitCode":0}
+{"event":"chat","state":"started","chat":"...","project":"app"}
+{"event":"chat","state":"ended","chat":"...","project":"app"}
 {"event":"exit","code":0,"outcome":"Quit"}
 ```
+
+The job and chat lines are for the client to notify. The tray shows the same
+as desktop notifications (Windows and macOS through notify-rust; Linux runs
+`notify-send` when it is there).
 
 `state` is one of `notJoined`, `connecting`, `online`, `offline` (with
 `error` and `retryInSec`), `unauthorized`, `removed`, `replaced`, `stopped`.

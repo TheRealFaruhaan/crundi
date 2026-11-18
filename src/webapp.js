@@ -1026,15 +1026,46 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   // Owner only. Every change is pushed to the owner's pages (SSE "workers",
   // and {type:"workers"} on their websockets) so they refetch.
   const ownerSockets = new Set();
+  // A job a chat started (worker_run) shows as a live card in that chat:
+  // job id -> { chatId, entryId, last, timer }. Updated at most once a second;
+  // its end at once.
+  const jobCards = new Map();
+  function jobCardView(id) {
+    const v = workers && workers.jobs.view(id, 4096);
+    return v ? { ...v, kind: 'worker-job' } : null;
+  }
+  function onJobUpdate(id, final) {
+    const c = jobCards.get(id);
+    if (!c || !claudeUi) return;
+    const put = () => {
+      c.timer = null; c.last = Date.now();
+      const v = jobCardView(id);
+      if (v) { const { kind, ...patch } = v; claudeUi.patchCard(c.chatId, c.entryId, patch); }
+      if (final) jobCards.delete(id);
+    };
+    if (final) { clearTimeout(c.timer); put(); return; }
+    if (c.timer) return;
+    c.timer = setTimeout(put, Math.max(0, 1000 - (Date.now() - (c.last || 0))));
+    c.timer.unref?.();
+  }
   const workers = createWorkersService({
     dataDir: config.dataDir,
     serverVersion: APP_VERSION,
     log: (m) => console.log(m),
+    onJob: (id, final) => onJobUpdate(id, final),
+    // A chat on a PC calls its tools here, as that chat (src/workers-chats.js).
+    mcpApi: () => ({ url: (claudeUi && claudeUi.apiUrl) || '', key: internalApiKey }),
     onChange: () => {
       try { broadcastOwnerSSE('workers', {}); } catch { /* not up yet */ }
       for (const s of ownerSockets) { try { if (s.readyState === 1) s.send('{"type":"workers"}'); } catch { /* closing */ } }
+      // A chat on a PC shows when its PC comes and goes ("PC offline").
+      try { if (claudeUi?.remoteChanged?.()) broadcastState(); } catch { /* best effort */ }
     },
   });
+  // Chats on a PC (where: 'worker:<id>'): claude-ui starts them through the
+  // worker launcher, and their work comes back at each turn end.
+  claudeUi?.setRemote?.({ launch: (where, o) => workers.chats.launch(where, o), status: (where, id) => workers.chats.status(where, id) });
+  claudeUi?.onTurnEnd?.((id) => workers.chats.onTurnEnd(id));
 
   let homepoolStarted = false;
   function startHomepool() {
@@ -1115,6 +1146,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   const factoryRunner = claudeUi ? createFactoryRunner({
     dataDir: config.dataDir,
     agents: claudeUiAgents(claudeUi, { dataDir: config.dataDir }),
+    // Steps on a PC (phase 5): pull a chat's work, find a PC, hear it come and go.
+    workersApi: workers.workersApi,
     getProject: (alias) => getProjectUnscoped(alias),
     getFactory: (id) => factoryStore.getFactory(id),
     // The factory's secrets: a PIN typed at the start is checked here and its
@@ -5067,7 +5100,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       // With the skills every project can see, so the editor can flag the rest.
       let known = null;
       try { known = new Set((skills.list().skills || []).filter(x => x.scope === 'global' || x.scope === 'synced').map(x => x.name)); } catch { known = null; }
-      return json(res, { ok: true, factory: r.factory, validation: validateFactory(r.factory, { skills: known }) });
+      // And the worker PCs, so a "Runs on" naming none of them is flagged.
+      let knownWorkers = null;
+      try { knownWorkers = workers.list().workers.map(w => ({ id: w.id, name: w.name })); } catch { knownWorkers = null; }
+      return json(res, { ok: true, factory: r.factory, validation: validateFactory(r.factory, { skills: known, knownWorkers }) });
     }
     if (path === '/api/factories/export' && req.method === 'GET') {
       return json(res, factoryStore.exportFactory(url.searchParams.get('id')));
@@ -8247,7 +8283,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         if (body.tool === 'worker_job') return json(res, await workers.mcpJob(a));
         const proj = a.alias ? getProjectUnscoped(String(a.alias)) : null;
         if (!proj || !proj.path) return json(res, { ok: false, error: 'worker_run needs a chat in a project.' });
-        try { return json(res, await workers.mcpRun(a, { projectPath: proj.path, chatId: String(a.sessionId || '') })); }
+        const chatId = String(a.sessionId || '');
+        // The card goes in as soon as the job has an id, before worker_run waits.
+        const onStarted = (jobId) => {
+          if (!chatId || !claudeUi || !claudeUi.has || !claudeUi.has(chatId)) return;
+          const v = jobCardView(jobId);
+          const r = v && claudeUi.addCard(chatId, v);
+          if (r && r.ok) jobCards.set(jobId, { chatId, entryId: r.entryId, last: 0, timer: null });
+        };
+        try { return json(res, await workers.mcpRun(a, { projectPath: proj.path, chatId, onStarted })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
@@ -8511,7 +8555,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
             }
             case 'factory_validate': {
               if (!a.definition || typeof a.definition !== 'object') return json(res, { ok: false, error: 'Give the definition (see factory_guide).' });
-              const v = validateFactory(a.definition);
+              let knownWorkers = null;
+              try { knownWorkers = workers.list().workers.map(w => ({ id: w.id, name: w.name })); } catch { knownWorkers = null; }
+              const v = validateFactory(a.definition, { knownWorkers });
               return json(res, { ok: true, runnable: v.ok, errors: v.errors, warnings: v.warnings });
             }
             case 'factory_save': {

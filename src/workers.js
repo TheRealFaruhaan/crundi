@@ -18,11 +18,12 @@ import { join } from 'node:path';
 import { randomBytes, createHash, timingSafeEqual, randomInt } from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { createJobs } from './workers-jobs.js';
+import { createChats } from './workers-chats.js';
 
 export const LINK_PATH = '/api/workers/link';
 export const JOIN_PATH = '/api/workers/join';
 export const PROTO = 1;
-export const SERVER_CAPS = Object.freeze(['terminal', 'pause', 'rename', 'jobs']);
+export const SERVER_CAPS = Object.freeze(['terminal', 'pause', 'rename', 'jobs', 'chats']);
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -111,7 +112,7 @@ export function cleanLabels(v) {
   return out;
 }
 
-export function createWorkersService({ dataDir, file, now = () => Date.now(), serverVersion = '', onChange = () => {}, log = () => {} } = {}) {
+export function createWorkersService({ dataDir, file, now = () => Date.now(), serverVersion = '', onChange = () => {}, log = () => {}, onJob = () => {}, mcpApi = () => ({ url: '', key: '' }) } = {}) {
   const FILE = file || join(dataDir, 'workers.json');
   let d = { version: 1, workers: [] };
   try { const raw = JSON.parse(readFileSync(FILE, 'utf8')); if (Array.isArray(raw.workers)) d = { version: 1, workers: raw.workers }; } catch { /* first run */ }
@@ -259,12 +260,32 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
 
   // ── Jobs (phase 2: commands on a PC; src/workers-jobs.js) ──
   const jobs = createJobs({
-    dataDir: dataDir || join(FILE, '..'), now, log, changed,
+    dataDir: dataDir || join(FILE, '..'), now, log, changed, onJob: (id, final) => onJob(id, final),
     sendTo, bufferedOf: (id) => links.get(id)?.ws.bufferedAmount || 0,
     candidates: () => d.workers.filter(w => !w.revoked).map(w => {
       const l = links.get(w.id);
-      return { id: w.id, name: w.name, online: !!(l && l.hello), jobs: !!(l && l.caps.includes('jobs')), allowCommands: w.allowCommands !== false, paused: !!w.paused, labels: labelsOf(w.info, w.customLabels), lastSeenAt: w.lastSeenAt };
+      // Be a good guest: "only when I'm away" (idle at least that long) and
+      // "not on battery", when the PC can tell (idleSec / onBattery not null).
+      const idle = w.info && typeof w.info.idleSec === 'number' ? w.info.idleSec : null;
+      const away = !(w.onlyWhenAwayMin > 0) || idle === null || idle >= w.onlyWhenAwayMin * 60;
+      const battery = !!(w.notOnBattery && w.info && w.info.onBattery === true);
+      return { id: w.id, name: w.name, online: !!(l && l.hello), jobs: !!(l && l.caps.includes('jobs')), allowCommands: w.allowCommands !== false, paused: !!w.paused, labels: labelsOf(w.info, w.customLabels), lastSeenAt: w.lastSeenAt, inUse: !away, onBattery: battery };
     }),
+  });
+
+  // ── Chats (phase 4: whole chats on a PC; src/workers-chats.js) ──
+  const presence = new Set();   // listeners: (workerId, online)
+  function told(id, online) { for (const cb of presence) { try { cb(id, online); } catch { /* a listener */ } } }
+  const chats = createChats({
+    dataDir: dataDir || join(FILE, '..'), now, log, changed, sendTo, api: mcpApi,
+    serveSource: (...a) => jobs.serveSource(...a),
+    bufferedOf: (id) => links.get(id)?.ws.bufferedAmount || 0,
+    worker: (id) => {
+      const w = byId(String(id || ''));
+      if (!w || w.revoked) return null;
+      const l = links.get(w.id);
+      return { id: w.id, name: w.name, online: !!(l && l.hello), caps: l ? l.caps : [], allowChats: w.allowChats !== false, paused: !!w.paused, info: w.info };
+    },
   });
 
   function attach(ws, w) {
@@ -292,7 +313,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     if (links.get(id) === link) links.delete(id);
     const w = byId(id);
     if (w) { w.lastSeenAt = new Date(now()).toISOString(); if (link.hello && why !== 'replaced') event(w, 'disconnected'); save(); }
-    if (link.hello) jobs.onDrop(id);
+    if (link.hello) { jobs.onDrop(id); chats.onDrop(id); if (why !== 'replaced') told(id, false); }
     for (const [ref, t] of terms) {
       if (t.workerId !== id) continue;
       terms.delete(ref);
@@ -317,6 +338,8 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
           caps: [...SERVER_CAPS], settings: { allowChats: w.allowChats, allowCommands: w.allowCommands, paused: w.paused },
         });
         if (link.caps.includes('jobs')) jobs.onHello(w, m.jobs);
+        if (link.caps.includes('chats')) chats.onHello(w, m.chats);
+        told(w.id, true);
         changed();
         return;
       }
@@ -345,7 +368,10 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
         return;
       }
       default:
+        // A chat's folder may be prepared in job words, with the chat's id.
+        if (m.type.startsWith('job.') && link.caps.includes('chats') && chats.isChatId(m.job)) { chats.onMessage(w, m); return; }
         if (m.type.startsWith('job.')) { jobs.onMessage(w, m); return; }
+        if ((m.type.startsWith('chat.') || m.type === 'mcp.list' || m.type === 'mcp.call') && link.caps.includes('chats')) { chats.onMessage(w, m); return; }
         return;   // newer worker, older server
     }
   }
@@ -366,7 +392,8 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
       lastSeenAt: w.lastSeenAt, createdAt: w.createdAt, revoked: !!w.revoked,
       info: w.info, labels: labelsOf(w.info, w.customLabels), customLabels: w.customLabels || [],
       allowChats: w.allowChats !== false, allowCommands: w.allowCommands !== false,
-      paused: !!w.paused, pausedBy: w.pausedBy || '', canRunJobs: !!(l && l.caps.includes('jobs')), busy: jobs.busyWorkers().has(w.id), terminals: [...terms.values()].filter(t => t.workerId === w.id).length,
+      onlyWhenAwayMin: w.onlyWhenAwayMin || 0, notOnBattery: !!w.notOnBattery,
+      paused: !!w.paused, pausedBy: w.pausedBy || '', canRunJobs: !!(l && l.caps.includes('jobs')), canRunChats: !!(l && l.caps.includes('chats')), hasClaude: !!(w.info && w.info.tools && w.info.tools.claude), busy: jobs.busyWorkers().has(w.id), terminals: [...terms.values()].filter(t => t.workerId === w.id).length,
       logs: l ? l.logs.slice(-50) : [],
     };
   }
@@ -383,6 +410,10 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     if (a === 'code') return { ok: true, ...newCode() };
     if (a === 'job-log') { const v = jobs.view(String(body.job || ''), Math.min(1024 * 1024, Number(body.tailBytes) || 65536)); return v ? { ok: true, job: v } : { ok: false, status: 404, error: 'No such job.' }; }
     if (a === 'job-cancel') return jobs.cancel(String(body.job || ''));
+    // A chat on a PC: bring its work back now ("Bring changes back"), and where it is.
+    if (a === 'chat-pull') return chats.pull(String(body.chat || ''));
+    if (a === 'chat-info') { const v = chats.view(String(body.chat || '')); return v ? { ok: true, chat: v } : { ok: false, status: 404, error: 'That chat does not run on a PC.' }; }
+    if (a === 'chat-places') return { ok: true, places: chats.offer(d.workers.filter(w => !w.revoked).map(w => { const l = links.get(w.id); return { id: w.id, name: w.name, online: !!(l && l.hello), caps: l ? l.caps : [], allowChats: w.allowChats !== false, info: w.info }; })) };
     if (a === 'join-self') {
       const r = enroll({ name: body.name, deviceId: body.deviceId, kind: KINDS.includes(body.kind) ? body.kind : 'electron', version: body.version, os: body.os });
       return { ok: true, ...r };
@@ -402,6 +433,8 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
         const s = {};
         if (typeof body.allowChats === 'boolean') { w.allowChats = body.allowChats; s.allowChats = body.allowChats; }
         if (typeof body.allowCommands === 'boolean') { w.allowCommands = body.allowCommands; s.allowCommands = body.allowCommands; }
+        if (body.onlyWhenAwayMin !== undefined) { const n = Math.round(Number(body.onlyWhenAwayMin)); w.onlyWhenAwayMin = Number.isFinite(n) && n > 0 ? Math.min(240, n) : 0; }
+        if (typeof body.notOnBattery === 'boolean') w.notOnBattery = body.notOnBattery;
         if (typeof body.paused === 'boolean' && body.paused !== !!w.paused) {
           w.paused = body.paused; w.pausedBy = body.paused ? 'owner' : ''; s.paused = body.paused;
           event(w, body.paused ? 'paused' : 'resumed', { by: 'owner' });
@@ -445,7 +478,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     let body = {};
     try { body = JSON.parse(await readBody(req) || '{}'); } catch { json(res, { ok: false, error: 'Bad JSON' }, 400); return true; }
     let r;
-    try { r = act(body); } catch (err) { r = { ok: false, error: err.message }; }
+    try { r = await act(body); } catch (err) { r = { ok: false, error: err.message }; }
     json(res, r, r.ok ? 200 : (r.status || 400));
     return true;
   }
@@ -503,12 +536,13 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
           tools: i.tools || {}, lastSeenAt: v.online ? null : v.lastSeenAt,
         };
       }),
-      note: 'Run a command on one with worker_run (whole chats on a PC come later).',
+      note: 'Run a command on one with worker_run. A whole chat can run on a PC too (the person picks it in New chat, Runs on).',
     };
   }
 
   function dispose() {
     jobs.dispose();
+    chats.dispose();
     for (const [, l] of links) { try { l.ws.close(1001, 'server stopping'); } catch { /* gone */ } }
     links.clear();
     if (saveTimer) save(true);
@@ -516,9 +550,10 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   }
 
   /** worker_run / worker_job for a chat (owner chats only; the caller checks). */
-  async function mcpRun(a, { projectPath, chatId } = {}) {
+  async function mcpRun(a, { projectPath, chatId, onStarted } = {}) {
     const r = await jobs.run({ ...a, alias: a.alias, projectPath, chatId });
     if (!r.ok) return r;
+    try { if (onStarted) onStarted(r.job); } catch { /* the card is extra */ }
     if (a.wait === false) return { ...r, running: true, note: 'Started. Follow it with worker_job (status, log, wait, cancel).' };
     await jobs.wait(r.job, Math.max(1, Math.min(30, Number(a.waitMinutes) || 10)) * 60_000);
     const v = jobs.view(r.job, 4096);
@@ -533,5 +568,23 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     return { ok: true, ...jobs.view(id, act2 === 'log' ? Math.min(1024 * 1024, Number(a.tailBytes) || 65536) : 4096) };
   }
 
-  return { handlePublic, handleUpgrade, handleApi, act, list, uiTerminals, mcpList, mcpRun, mcpJob, jobs, dispose, isOnline: (id) => !!links.get(id)?.hello };
+  const isOnline = (id) => !!links.get(id)?.hello;
+  /** A PC by id or name (case-insensitive), or null. */
+  function resolve(nameOrId) {
+    const want = String(nameOrId || '').trim().toLowerCase();
+    if (!want) return null;
+    const w = d.workers.find(x => !x.revoked && x.id.toLowerCase() === want) || d.workers.find(x => !x.revoked && String(x.name || '').toLowerCase() === want);
+    return w ? { id: w.id, name: w.name, online: isOnline(w.id) } : null;
+  }
+  /** Told when a PC connects or goes away: cb(workerId, online). Returns a function that stops it. */
+  function onPresence(cb) { if (typeof cb !== 'function') return () => {}; presence.add(cb); return () => presence.delete(cb); }
+  // What a factory run uses (phase 5): bring a chat's work into its worktree,
+  // find a PC, and hear it come and go. Chats on a PC are started with
+  // claudeUi.create(..., { where: 'worker:<id>' }).
+  const workersApi = Object.freeze({
+    chats: Object.freeze({ pullChat: (chatId, opts) => chats.pullChat(chatId, opts) }),
+    resolve, isOnline, onChange: onPresence,
+  });
+
+  return { handlePublic, handleUpgrade, handleApi, act, list, uiTerminals, mcpList, mcpRun, mcpJob, jobs, chats, workersApi, dispose, isOnline, resolve };
 }

@@ -182,7 +182,7 @@ r = relay(allSent);
 await mp.send('', { tag: 'clear', silent: true, clear: [], chats: ['abc123'] }, { fetchImpl: r.fetchImpl });
 ok(p1.open(r.seen[0].body.messages[0].payload).chats[0] === 'abc123', 'when a chat\'s own request is answered, phones are told which chat');
 ok(/notifyEvent\('secretRequest', [^;]+, about\);/.test(srv) && /sessionId: String\(a\.sessionId \|\| ''\),/.test(srv), 'a secret request carries the chat that asked, so its notification is that chat\'s');
-const bridgeSrc = readFileSync(join(root, 'src', 'mcp-stdio.js'), 'utf8');
+const bridgeSrc = readFileSync(join(root, 'src', 'mcp-stdio.js'), 'utf8') + readFileSync(join(root, 'src', 'mcp-tools.js'), 'utf8');
 ok(/if \(name === 'secret_get' \|\| name === 'secret_run'\) \{\s+delete args\.sessionId;/.test(bridgeSrc), 'which chat is asking is the tool process\'s own, never something Claude can say');
 
 // A permission request the phone can answer.

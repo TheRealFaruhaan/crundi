@@ -267,6 +267,12 @@ data class FactoryNode(
     val ask: FactoryAsk? = null,
     val wait: FactoryWait? = null,
     val join: FactoryJoin? = null,
+    /**
+     * Employee and Manager steps: the worker PC this step runs on, overriding
+     * its person's [FactoryMember.runsOn] ('' = as the person). Null when the
+     * server never sent it (an older server): a save then leaves it out.
+     */
+    val runsOn: String? = null,
 )
 
 /** [kind] flow or note (a note edge feeds a node's "notein"). [maxRounds] 0 = no limit. */
@@ -284,6 +290,12 @@ data class FactoryMember(
     val skills: List<String> = emptyList(),
     /** Permission presets for this person only (the factory's apply to everyone). */
     val presets: List<String> = emptyList(),
+    /**
+     * Where their chats run: '' = this server, or a worker PC's name or id
+     * (workers-protocol.md, phase 5). Null when the server never sent it (an
+     * older server): a save then leaves it out.
+     */
+    val runsOn: String? = null,
 )
 
 /** Claude Code tool rules for one person: always allowed, never allowed. */

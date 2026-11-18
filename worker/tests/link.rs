@@ -123,7 +123,8 @@ async fn hello_welcome_and_settings_persist() {
     assert_eq!(hello["name"], "test-pc");
     assert_eq!(hello["deviceId"], "dev1");
     assert_eq!(hello["version"], crundi_worker::util::VERSION);
-    assert_eq!(hello["caps"], json!(["info", "terminal", "pause", "jobs"]));
+    assert_eq!(hello["caps"], json!(["info", "terminal", "pause", "jobs", "chats"]));
+    assert_eq!(hello["chats"], json!([]));
     assert_eq!(hello["jobs"], json!([]));
     for k in ["os", "arch", "cpu", "ramMb", "disk", "tools", "allow", "paused", "workDir"] {
         assert!(hello["info"].get(k).is_some(), "info lacks {k}");

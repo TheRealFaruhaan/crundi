@@ -163,4 +163,24 @@ class WorkersApiTest {
         assertTrue(ov.workers[0].canRunJobs && ov.workers[0].busy)
         assertFalse(ov.workers[1].canRunJobs || ov.workers[1].busy)
     }
+
+    @Test fun jobConditionsAreReadAndSet() = runBlocking {
+        val ov = CrundiClient(FakeTransport().on("GET /api/workers", """{"workers":[{"id":"w1","notOnBattery":true,"onlyWhenAwayMin":15},{"id":"w2"}]}""")).workers.list()
+        assertEquals(true, ov.workers[0].notOnBattery)
+        assertEquals(15, ov.workers[0].onlyWhenAwayMin)
+        // An older server: absent, so the settings stay hidden.
+        assertNull(ov.workers[1].notOnBattery)
+        assertNull(ov.workers[1].onlyWhenAwayMin)
+
+        val t = FakeTransport().on("POST /api/workers", """{"ok":true}""")
+        val api = CrundiClient(t).workers
+        api.set("w1", notOnBattery = false)
+        val a = t.requests.last().json!!.jsonObject
+        assertEquals("false", a["notOnBattery"]!!.jsonPrimitive.content)
+        assertFalse("onlyWhenAwayMin" in a)
+        api.set("w1", onlyWhenAwayMin = 30)
+        val b = t.requests.last().json!!.jsonObject
+        assertEquals("30", b["onlyWhenAwayMin"]!!.jsonPrimitive.content)
+        assertFalse("notOnBattery" in b)
+    }
 }

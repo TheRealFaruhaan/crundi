@@ -1236,6 +1236,18 @@ export function getWebappHtml(botUsername, appVersion = '') {
       max-width: 110px; overflow: hidden; text-overflow: ellipsis;
       color: var(--sky); border: 1px solid var(--sky); border-radius: 99px; padding: 1px 7px; margin-right: 4px;
     }
+    /* A chat whose claude runs on a worker PC: its name, "PC offline" when it is away; a click brings its changes back. */
+    .term-pc-tag {
+      flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 0.62rem; font-weight: 700; white-space: nowrap;
+      max-width: 170px; overflow: hidden; text-overflow: ellipsis; cursor: pointer; background: transparent;
+      color: var(--green); border: 1px solid var(--green); border-radius: 99px; padding: 1px 7px; margin-right: 4px;
+    }
+    .term-pc-tag .ic { width: 11px; height: 11px; flex: none; }
+    .term-pc-tag.off { color: var(--text-muted); border-color: var(--border); }
+    .term-pc-tag.busy { opacity: 0.6; cursor: progress; }
+    .term-launch .tl-where { display: flex; align-items: center; gap: 8px; width: 300px; max-width: 100%; font-size: 12px; color: var(--text-secondary); }
+    .term-launch .tl-where[hidden] { display: none; }
+    .term-launch .tl-where select { flex: 1; min-width: 0; padding: 5px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-primary); font-size: 12px; }
     .appr-acts button {
       flex: 1; border-radius: var(--radius-sm); border: 1px solid var(--border);
       background: var(--bg-primary); color: var(--text-secondary); cursor: pointer;
@@ -5793,7 +5805,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
       box.disabled = !s.available && !s.enabled;
       if (dir && document.activeElement !== dir) dir.value = s.workDir || '';
       const words = { off: s.enabled ? 'Starting' : 'Off', starting: 'Starting', connecting: 'Connecting', online: 'Online', offline: 'Offline, retrying', paused: 'Paused', restarting: 'Restarting', refused: 'Removed by the server', replaced: 'Replaced by another copy', missing: 'Not in this build', error: 'Could not start' };
-      if (st) st.textContent = !s.available ? 'This build of the app has no worker program in it yet.' : (words[s.state] || s.state || '') + (s.detail ? ': ' + s.detail : '');
+      if (st) st.textContent = !s.available ? 'This build of the app has no worker program in it yet.' : (words[s.state] || s.state || '') + (s.detail ? ': ' + s.detail : '') + (s.job ? ' · running: ' + s.job.command : '');
     }
     async function showPcWorker() {
       if (!window.api || !window.api.worker) return;
@@ -7607,6 +7619,56 @@ export function getWebappHtml(botUsername, appVersion = '') {
       };
     }
 
+    // ─── Runs on: a new chat on this server, or on one of the owner's PCs ───
+    // The PCs offered are the ones online, with chats allowed and claude
+    // installed (POST /api/workers chat-places). Owner only; an older server
+    // answers without places, and the choice simply never shows.
+    let chatPlaces = [];
+    let chatPlacesAt = 0;
+    let chatPlacesLoading = null;
+    const chatWhereByLid = {};
+    function loadChatPlaces(force) {
+      if (userRole === 'collaborator') return Promise.resolve([]);
+      if (!force && Date.now() - chatPlacesAt < 30000) return Promise.resolve(chatPlaces);
+      if (chatPlacesLoading) return chatPlacesLoading;
+      chatPlacesLoading = apiFetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'chat-places' }) })
+        .then(r => r.json()).then(d => { chatPlaces = (d && d.ok && Array.isArray(d.places)) ? d.places : []; })
+        .catch(() => { chatPlaces = []; })
+        .then(() => { chatPlacesAt = Date.now(); chatPlacesLoading = null; document.querySelectorAll('.term-launch').forEach(fillRunsOnNow); return chatPlaces; });
+      return chatPlacesLoading;
+    }
+    function fillRunsOnNow(scope) {
+      const box = scope && scope.querySelector('.tl-where');
+      if (!box) return;
+      const lid = box.dataset.lid || '';
+      if (!chatPlaces.length) { box.hidden = true; box.innerHTML = ''; delete chatWhereByLid[lid]; return; }
+      const want = chatWhereByLid[lid] || '';
+      if (want && !chatPlaces.some(p => p.where === want)) delete chatWhereByLid[lid];
+      box.innerHTML = '<span>Runs on</span><select class="tl-where-sel" data-lid="' + escHtml(lid) + '" title="Where this chat\\u2019s Claude runs">'
+        + '<option value="">This server</option>'
+        + chatPlaces.map(p => '<option value="' + escHtml(p.where) + '"' + (chatWhereByLid[lid] === p.where ? ' selected' : '') + '>' + escHtml(p.name) + '</option>').join('')
+        + '</select>';
+      box.hidden = false;
+      const sel = box.querySelector('select');
+      sel.addEventListener('change', () => { chatWhereByLid[lid] = sel.value; });
+      sel.addEventListener('click', (e) => e.stopPropagation());
+    }
+    function fillRunsOn(scope) {
+      fillRunsOnNow(scope);
+      loadChatPlaces(false).then(() => fillRunsOnNow(scope));
+    }
+    /** Bring a PC chat's changes back to the server now; says where the branch is. */
+    async function pullPcChat(tid, btn) {
+      if (btn) { if (btn.classList.contains('busy')) return; btn.classList.add('busy'); }
+      try {
+        const r = await apiFetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'chat-pull', chat: tid }) });
+        const d = await r.json();
+        if (!d.ok) { toast(d.error || 'Could not bring the changes back', 'error'); return; }
+        toast('Changes brought back' + (d.branch ? ' on branch ' + d.branch : '') + (d.worktree ? ' (' + d.worktree + ')' : ''), 'success');
+      } catch (err) { toast('Could not bring the changes back: ' + err.message, 'error'); }
+      finally { if (btn) btn.classList.remove('busy'); }
+    }
+
     async function launchTerminal(mode, localId, resumeId, sessionMode, release) {
       const done = release || (() => {});
       if (!currentProject) { done(); return; }
@@ -7623,6 +7685,9 @@ export function getWebappHtml(botUsername, appVersion = '') {
         // permissions.defaultMode rather than forcing 'default' over it.
         const chatBody = { project: currentProject };
         if (chatSkip) { chatBody.skipPermissions = true; chatBody.title = 'Chat (skip perms)'; }
+        // Runs on a PC, when one was picked in this cell's launcher.
+        const where = isChat && localId ? (chatWhereByLid[localId] || '') : '';
+        if (where && chatPlaces.some(p => p.where === where)) chatBody.where = where;
         // Resuming replays a prior transcript into a fresh CLI process
         // (claude --resume <id>), so it must be decided at spawn time.
         if (isChat && sessionMode) {
@@ -8267,6 +8332,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + ' title="UI Mode \\u2014 Skip Permissions" aria-label="UI Mode \\u2014 Skip Permissions">'
           + ic('shield-alert') + '<span class="tl-txt">Skip Permissions</span></button>'
           + '</div>'
+          // Runs on: this server, or a PC that takes chats (filled in by fillRunsOn; hidden when there is none).
+          + '<div class="tl-where" data-lid="' + d.localId + '" hidden></div>'
           + '<div class="tl-row" data-tl-row="2">'
           + '<button class="btn-normal tl-main' + lastCls('normal') + '" data-action="launch-terminal" data-mode="normal" data-lid="' + d.localId + '">'
           + ic('terminal') + '<span class="tl-txt">Terminal</span></button>'
@@ -8277,6 +8344,7 @@ export function getWebappHtml(botUsername, appVersion = '') {
           + '</div>'
           + '</div>';
         peekShields(body);
+        fillRunsOn(body);
       } else if (d.type === 'parked') {
         el.dataset.tid = d.t.id;
         el.classList.add('parked-cell');
@@ -9090,6 +9158,20 @@ export function getWebappHtml(botUsername, appVersion = '') {
           if (!ctag) { ctag = document.createElement('span'); ctag.className = 'term-collab-tag'; kindTag.before(ctag); }
           ctag.textContent = whose;
           ctag.title = whose + '\\u2019s chat (outside collaborator). You can type here; it runs in their sandbox and counts toward their tokens.';
+        }
+        // A chat on one of the owner's PCs: its name, "PC offline" while it is
+        // away, and a click brings its changes back (the title says where).
+        let pctag = el.querySelector('.term-pc-tag');
+        const pc = t.pc && t.where ? t.pc : null;
+        if (!pc) { if (pctag) pctag.remove(); }
+        else if (kindTag) {
+          if (!pctag) { pctag = document.createElement('button'); pctag.dataset.action = 'chat-pc-pull'; kindTag.before(pctag); }
+          pctag.dataset.tid = t.id;
+          pctag.className = 'term-pc-tag' + (pc.online ? '' : ' off') + (pctag.classList.contains('busy') ? ' busy' : '');
+          const label = (pc.name || 'PC') + (pc.online ? '' : ' \\u00b7 PC offline');
+          if (pctag.dataset.label !== label) { pctag.dataset.label = label; pctag.innerHTML = ic('hard-drive') + '<span>' + escHtml(label) + '</span>'; }
+          pctag.title = 'Runs on ' + (pc.name || 'a PC') + (pc.online ? '' : ' (offline: what you send waits for it)')
+            + '. Click: bring changes back' + (pc.branch ? ' (branch ' + pc.branch + (pc.worktree ? ' in ' + pc.worktree : '') + ')' : '') + '.';
         }
         // A factory's Manager: this chat is the run's control point, and it
         // cannot be closed while the run is going.
@@ -10470,6 +10552,8 @@ export function getWebappHtml(botUsername, appVersion = '') {
         if ((msg.type === 'workers' || (typeof msg.type === 'string' && msg.type.indexOf('worker-term-') === 0)) && window.CrundiWorkers) {
           window.CrundiWorkers.handleMessage(msg);
         }
+        // A PC came, went or changed its switches: the "Runs on" choice follows.
+        if (msg.type === 'workers') loadChatPlaces(true);
       };
 
       ws.onclose = () => {
@@ -16523,6 +16607,11 @@ export function getWebappHtml(botUsername, appVersion = '') {
           e.stopPropagation();
           const view = chatViews.get(d.tid);
           if (view && view.togglePlan) view.togglePlan();
+          break;
+        }
+        case 'chat-pc-pull': {
+          e.stopPropagation();
+          if (d.tid) pullPcChat(d.tid, e.target.closest('.term-pc-tag'));
           break;
         }
         case 'term-font': if (d.tid) setTermFont(d.tid, parseInt(d.dir, 10) || 1); break;

@@ -1,0 +1,24 @@
+<div class="wna a-cop">
+  <div class="menu"><div class="h">Runs on</div><div class="o">This server</div><div class="o sel">farhan-RP-15</div></div>
+  <div class="chat"><div class="hd">Chat <span class="pc">on farhan-RP-15</span></div><div class="m m1">Fix the drawer bug</div><div class="m m2 a">Editing src/drawer.rs on the PC</div><div class="m m3 a">Changes are on pc/farhan-rp-15/chat</div></div>
+  <style>
+    .a-cop{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-cop .menu{position:absolute;left:40px;top:110px;width:170px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:8px;animation:acopM 10s infinite}
+    .a-cop .h{font-size:11px;color:var(--text-muted);margin:2px 6px 6px}
+    .a-cop .o{padding:6px 8px;border-radius:6px}
+    .a-cop .o.sel{animation:acopS 10s infinite}
+    .a-cop .chat{position:absolute;left:240px;top:80px;width:360px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:12px;opacity:0;animation:acopC 10s infinite}
+    .a-cop .hd{font-weight:600;margin-bottom:10px}
+    .a-cop .pc{font-weight:400;font-size:11px;padding:1px 8px;border-radius:999px;background:var(--accent-dim);color:var(--accent);margin-left:6px}
+    .a-cop .m{padding:7px 10px;border-radius:10px;margin-bottom:6px;width:max-content;max-width:300px;opacity:0}
+    .a-cop .m1{margin-left:auto;background:var(--accent);color:#fff;animation:acopA 10s infinite .2s}
+    .a-cop .a{background:var(--bg-secondary)}
+    .a-cop .m2{animation:acopB 10s infinite}.a-cop .m3{animation:acopD 10s infinite}
+    @keyframes acopM{0%,20%{opacity:1}28%,100%{opacity:.35}}
+    @keyframes acopS{0%,10%{background:transparent}14%,100%{background:var(--accent-dim)}}
+    @keyframes acopC{0%,22%{opacity:0}30%,94%{opacity:1}100%{opacity:0}}
+    @keyframes acopA{0%,32%{opacity:0}38%,94%{opacity:1}100%{opacity:0}}
+    @keyframes acopB{0%,48%{opacity:0}54%,94%{opacity:1}100%{opacity:0}}
+    @keyframes acopD{0%,66%{opacity:0}72%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

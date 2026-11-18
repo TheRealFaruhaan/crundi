@@ -304,6 +304,55 @@ async fn git_source_with_bundle() {
     t.quit().await;
 }
 
+#[tokio::test]
+async fn bundle_have_is_the_newest_of_origin_and_an_earlier_bundle() {
+    let mut t = start("have").await;
+    let bare = t.dir.join("origin.git");
+    let srv = t.dir.join("srv");
+    std::fs::create_dir_all(&bare).unwrap();
+    std::fs::create_dir_all(&srv).unwrap();
+    git(&bare, &["init", "--bare", "-q"]);
+    git(&srv, &["init", "-q", "-b", "main"]);
+    let commit = |name: &str| {
+        std::fs::write(srv.join(name), name).unwrap();
+        git(&srv, &["add", "."]);
+        git(&srv, &["commit", "-q", "-m", name]);
+        git(&srv, &["rev-parse", "HEAD"])
+    };
+    let c1 = commit("c1");
+    git(&srv, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&srv, &["push", "-q", "origin", "main"]);
+    let c2 = commit("c2");
+    let url = format!("file://{}", bare.display());
+    let (mut ws, _) = t.connect(ok_settings()).await;
+
+    let with_bundle = async |ws: &mut Ws, id: &str, commit: &str, expect_have: &str| {
+        send(ws, job(id, "git rev-parse HEAD", json!({"source": "git", "git": {"url": url, "branch": "main", "commit": commit}}))).await;
+        recv_type(ws, "job.accepted").await;
+        let need = recv_type(ws, "job.need").await;
+        assert_eq!(need["have"], expect_have, "{need}");
+        let bundle = t.dir.join(format!("{id}.bundle"));
+        git(&srv, &["bundle", "create", "-q", bundle.to_str().unwrap(), "main", &format!("^{expect_have}")]);
+        let bytes = std::fs::read(&bundle).unwrap();
+        send(ws, json!({"type": "job.bundle", "job": id, "seq": 0, "b64": B64.encode(&bytes), "last": true})).await;
+        let d = until_done(ws, id, Done::default()).await;
+        assert_eq!(d.exit["code"], 0, "{}", d.text());
+        assert!(d.text().contains(commit), "{}", d.text());
+    };
+    // First: only origin's c1 is known.
+    with_bundle(&mut ws, "j70", &c2, &c1).await;
+    // Then: the bundle brought c2 (refs/crundi-bundle/heads/main), newer than origin/main.
+    let c3 = commit("c3");
+    with_bundle(&mut ws, "j71", &c3, &c2).await;
+    // origin catches up past the bundle: origin/main is the newer one again.
+    let c4 = commit("c4");
+    git(&srv, &["push", "-q", "origin", "main"]);
+    let c5 = commit("c5");
+    let _ = c4;
+    with_bundle(&mut ws, "j72", &c5, &git(&srv, &["rev-parse", "HEAD~1"])).await;
+    t.quit().await;
+}
+
 fn tar_of(files: &[(&str, &[u8], u32)], links: &[(&str, &str)]) -> Vec<u8> {
     let mut b = tar::Builder::new(Vec::new());
     for (p, data, mode) in files {

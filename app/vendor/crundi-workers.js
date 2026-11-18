@@ -215,6 +215,8 @@
         + toggle('allowCommands', w.allowCommands, 'Allow commands', 'Builds, renders and other commands from chats and factories.')
         + toggle('allowChats', w.allowChats, 'Allow chats', 'Whole chats running on this PC.')
         + toggle('paused', w.paused, 'Paused', 'Nothing new starts here. The terminal still works.')
+        + toggle('notOnBattery', w.notOnBattery, 'Not on battery', 'Jobs wait while this PC runs on battery.')
+        + '<div style="display:flex;gap:6px;align-items:center;margin-top:6px"><span class="wk-hint" style="flex:1">Only when I am away: start jobs only after this PC has been idle for (minutes, 0 for any time)' + (w.info && w.info.idleSec == null ? '. This PC cannot tell when it is idle, so this has no effect on it.' : '') + '</span><input class="wk-input" data-r="away" type="number" min="0" max="240" style="width:80px" value="' + esc(w.onlyWhenAwayMin || 0) + '"><button class="wk-btn" data-a="away">' + icon('check') + 'Save</button></div>'
         + '<div class="wk-hint" style="margin-top:8px">Your labels (as well as the ones made from what the PC has), for picking PCs by what they can do:</div>'
         + '<div style="display:flex;gap:6px;margin-top:4px"><input class="wk-input" data-r="labels" value="' + esc((w.customLabels || []).join(', ')) + '" placeholder="fast, studio"><button class="wk-btn" data-a="labels">' + icon('check') + 'Save</button></div>'
         + '</div></div>';
@@ -333,6 +335,7 @@
         case 'term-close': closeTerm(); drawDetail(); break;
         case 'rename': run(function () { return api('POST', { action: 'rename', id: id, name: body.querySelector('[data-r="name"]').value }); }, 'Renamed'); break;
         case 'labels': run(function () { return api('POST', { action: 'set', id: id, labels: body.querySelector('[data-r="labels"]').value }); }, 'Labels saved'); break;
+        case 'away': run(function () { return api('POST', { action: 'set', id: id, onlyWhenAwayMin: Number(body.querySelector('[data-r="away"]').value) || 0 }); }, 'Saved'); break;
         case 'history': run(async function () { st.detail.history = (await api('POST', { action: 'history', id: id })).history; }); break;
         case 'revoke': if (arm(t, 'revoke')) run(function () { closeTerm(); return api('POST', { action: 'revoke', id: id }); }, 'Revoked'); break;
         case 'reissue': run(async function () { st.detail.rejoin = (await api('POST', { action: 'reissue', id: id })).code; }); break;

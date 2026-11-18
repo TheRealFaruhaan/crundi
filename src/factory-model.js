@@ -13,8 +13,8 @@
  *
  *   { id, name, description, version, createdAt, updatedAt,
  *     settings: { managerMode, mergeMode, setupCommand, secrets:[secretId], caps:{ maxHandoffs, maxMinutes, tokenBudget } },
- *     roster:   [ { id, name, persona, model, effort, memory, tools:{ allow, deny }, skills } ],
- *     nodes:    [ { id, type, label, position:{x,y}, employeeId?, decision?, ask?, join? } ],
+ *     roster:   [ { id, name, persona, model, effort, memory, tools:{ allow, deny }, skills, runsOn } ],
+ *     nodes:    [ { id, type, label, position:{x,y}, employeeId?, runsOn?, decision?, ask?, join? } ],
  *     edges:    [ { id, kind, source, sourceHandle, target, requireNote, noteLabel, maxRounds } ] }
  *
  * Node types and their outputs (sourceHandle of the edges leaving them):
@@ -227,6 +227,9 @@ export function normalizeFactory(input) {
       skills: strList(r.skills, 50, 100),
       // Permission presets for this person only (the factory's apply to everyone).
       presets: Array.isArray(r.presets) ? r.presets.filter(k => Object.prototype.hasOwnProperty.call(PERMISSION_PRESETS, k)) : [],
+      // Where this person's chats run: '' = this server, or a worker PC's id
+      // or name (workers-protocol.md, phase 5).
+      runsOn: str(r.runsOn, 80).trim(),
     });
   }
 
@@ -244,6 +247,8 @@ export function normalizeFactory(input) {
       position: { x: Number.isFinite(+pos.x) ? +pos.x : 0, y: Number.isFinite(+pos.y) ? +pos.y : 0 },
     };
     if (node.type === 'employee') node.employeeId = typeof n.employeeId === 'string' ? n.employeeId : '';
+    // A step's own PC, overriding its person's runsOn ('' = the person's).
+    if (node.type === 'employee' || node.type === 'manager') node.runsOn = str(n.runsOn, 80).trim();
     if (node.type === 'decision') {
       const d = n.decision && typeof n.decision === 'object' ? n.decision : {};
       node.decision = {
@@ -538,8 +543,11 @@ export function forkRegion(f, graph, forkNode, joinId) {
  * Pass { skills: Set<string> } (the names known on this machine) to be warned
  * about mentioned skills that are not among them. Only a warning: factories
  * are global and a project may bring the skill itself.
+ * Pass { knownWorkers: [{ id, name }] | string[] } (the PCs this server knows)
+ * to be warned about a runsOn naming none of them. A warning, not an error:
+ * a PC may be away while the factory is edited.
  */
-export function validateFactory(input, { skills = null } = {}) {
+export function validateFactory(input, { skills = null, knownWorkers = null } = {}) {
   const f = normalizeFactory(input);
   const errors = [], warnings = [];
   const err = (code, message, fix, at = {}) => errors.push({ code, message, fix, ...at });
@@ -772,6 +780,21 @@ export function validateFactory(input, { skills = null } = {}) {
     const origins = answerOrigins(g, nodes, n.id);
     if (origins.has('?')) {
       err('decision-needs-answerer', `"${label(n)}" does not follow an employee, so nobody is there to answer it.`, 'Choose who answers this decision.', { nodeId: n.id });
+    }
+  }
+
+  if (knownWorkers) {
+    const known = new Set();
+    for (const w of knownWorkers) {
+      if (typeof w === 'string') known.add(w.toLowerCase());
+      else if (w && typeof w === 'object') { if (w.id) known.add(String(w.id).toLowerCase()); if (w.name) known.add(String(w.name).toLowerCase()); }
+    }
+    const unknownPc = v => v && !known.has(v.toLowerCase());
+    for (const r of f.roster) {
+      if (unknownPc(r.runsOn)) warn('worker-unknown', `"${r.name || 'An employee'}" runs on "${r.runsOn}", a PC this server does not know.`, 'Join that PC as a worker, fix the name, or clear "Runs on" to run on this server.', { employeeId: r.id, worker: r.runsOn });
+    }
+    for (const n of f.nodes) {
+      if (unknownPc(n.runsOn)) warn('worker-unknown', `"${label(n)}" runs on "${n.runsOn}", a PC this server does not know.`, 'Join that PC as a worker, fix the name, or clear "Runs on" to use the person\'s own setting.', { nodeId: n.id, worker: n.runsOn });
     }
   }
 

@@ -156,6 +156,49 @@ class WorkbenchController(
         store.layout = layout
     }
 
+    // ─── Runs on: a new chat on this server, or on one of the owner's PCs ───
+
+    /**
+     * The PCs a new chat may run on now (POST /api/workers chat-places: online,
+     * chats allowed, claude there). Empty hides the launcher's "Runs on"
+     * choice: none can take a chat, a collaborator, or an older server.
+     */
+    var chatPlaces by mutableStateOf<List<mv.obitech.crundi.api.model.ChatPlace>>(emptyList()); private set
+    private var placesAt = 0L
+    private var placesLoading = false
+    /** Each launcher's pick: "" this server, else "worker:<id>". */
+    val chatWhere = mutableStateMapOf<String, String>()
+
+    /** Ask for the PCs again, at most every 30 s unless [force] (a PC came, went or changed its switches). */
+    fun loadChatPlaces(force: Boolean = false) {
+        val a = api ?: return
+        if (placesLoading || (!force && System.currentTimeMillis() - placesAt < 30_000)) return
+        placesLoading = true
+        scope.launch {
+            val got = try { a.workers.chatPlaces() } catch (e: Exception) { chatPlaces }
+            chatPlaces = got
+            // A PC that went away is no longer a pick.
+            for ((k, w) in chatWhere.toMap()) if (w.isNotEmpty() && got.none { it.where == w }) chatWhere.remove(k)
+            placesAt = System.currentTimeMillis()
+            placesLoading = false
+        }
+    }
+
+    /** While a launcher shows: the list now, and again whenever the workers change. */
+    suspend fun watchChatPlaces() {
+        val a = api ?: return
+        loadChatPlaces()
+        runCatching { a.workerChanges().collect { loadChatPlaces(force = true) } }
+    }
+
+    /** The launcher's "Runs on" pick: "" for this server. */
+    fun chooseWhere(pendingKey: String, where: String) {
+        if (where.isEmpty()) chatWhere.remove(pendingKey) else chatWhere[pendingKey] = where
+    }
+
+    /** What a launcher's chat is sent with: a PC still on offer, else null (this server). */
+    fun whereFor(pendingKey: String): String? = chatWhere[pendingKey]?.takeIf { w -> w.isNotEmpty() && chatPlaces.any { it.where == w } }
+
     /** A Claude launch asking which conversation (the route shows the dialog). */
     var chooser by mutableStateOf<SessionChooser?>(null); private set
 
@@ -221,7 +264,7 @@ class WorkbenchController(
         scope.launch {
             try {
                 val created = when (mode) {
-                    LaunchMode.Chat, LaunchMode.ChatSkip -> a.chats.create(chatLaunch(p, mode, sessionMode, resumeId))
+                    LaunchMode.Chat, LaunchMode.ChatSkip -> a.chats.create(chatLaunch(p, mode, sessionMode, resumeId).copy(where = whereFor(pendingKey)))
                     LaunchMode.Shell -> a.terminals.create(p, shell = true)
                     // A shell runs no Claude, so only Claude terminals carry a conversation.
                     LaunchMode.Terminal, LaunchMode.TerminalSkip -> a.terminals.create(
@@ -232,6 +275,7 @@ class WorkbenchController(
                 val newKey = "t:" + created.id
                 grace[newKey] = System.currentTimeMillis()
                 pending = pending.filter { it.key != pendingKey }
+                chatWhere.remove(pendingKey)
                 tree = tree.leafOf(pendingKey)?.let { l -> tree.assign(l.id, newKey) } ?: tree.addKey(newKey)
                 save()
                 focused = newKey
@@ -284,7 +328,7 @@ class WorkbenchController(
             PaneKind.Chat -> act("Could not close the chat") { api?.chats?.close(v.paneId!!) }
             PaneKind.Terminal -> act("Could not close the terminal") { api?.terminals?.close(v.paneId!!) }
             PaneKind.Parked -> act("Could not close it") { api?.terminals?.discard(v.paneId!!) }
-            PaneKind.Pending -> { pending = pending.filter { it.key != v.key }; tree = tree.removeKey(v.key); save() }
+            PaneKind.Pending -> { pending = pending.filter { it.key != v.key }; chatWhere.remove(v.key); tree = tree.removeKey(v.key); save() }
             else -> {
                 // A server panel's pane: closing it closes the panel (it stays in the Panels tab).
                 v.cell?.data?.get("widgetId")?.takeIf { v.key.startsWith("w:widget-") }?.let { wid ->

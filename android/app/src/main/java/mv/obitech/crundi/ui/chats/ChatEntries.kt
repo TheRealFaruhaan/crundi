@@ -165,6 +165,8 @@ interface EntryActions {
     fun keepAnswer(e: ChatEntry, picks: List<ChatDrafts.Pick>) {}
     fun factory(e: ChatEntry, choice: String, note: String? = null) {}
     fun factoryDiff(e: ChatEntry) {}
+    /** A worker-job card's Cancel: POST /api/workers job-cancel. */
+    fun cancelWorkerJob(e: ChatEntry) {}
     fun openAgent(toolUseId: String) {}
     fun media(m: ChatMedia) {}
 }
@@ -197,6 +199,7 @@ fun ChatEntryView(
         "permission" -> PermissionCard(e, actions, busy = e.id in busy)
         "question" -> QuestionCard(e, actions, busy = e.id in busy)
         "factory-result" -> FactoryResultCard(e, actions, busy = e.id in busy, diff = factoryDiffs[e.id])
+        "worker-job" -> WorkerJobCard(e, actions, busy = e.id in busy)
         "result" -> ResultLine(e)
         "goal-verdict" -> GoalVerdict(e)
         "notice" -> Text(e.text, style = ChatType.Small.copy(color = CrundiColors.TextMuted, fontStyle = FontStyle.Italic), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())

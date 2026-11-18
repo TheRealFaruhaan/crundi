@@ -165,6 +165,16 @@
   function runEvent(d) { listeners.slice().forEach(function (fn) { try { fn(d || {}); } catch (e) { /* a view's problem */ } }); }
   function onEvent(fn) { listeners.push(fn); return function () { listeners = listeners.filter(function (x) { return x !== fn; }); }; }
 
+  // The owner's worker PCs, offered in the editor's "Runs on" fields.
+  // null when there are none to offer: not the owner (403), an older server
+  // (404), or no answer.
+  function fetchWorkers(ctx) {
+    return ctx.apiFetch('/api/workers').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || !j.ok || !Array.isArray(j.workers)) return null;
+      return j.workers.map(function (w) { return { id: w.id, name: w.name || w.id, online: !!w.online }; });
+    }).catch(function () { return null; });
+  }
+
   // ─── factory-flow.js, loaded on first use ───
   var flowLoading = null;
   function loadFlow(ctx) {
@@ -996,7 +1006,10 @@
         var F = await loadFlow(ctx);
         full.innerHTML = '';
         var host = el('div', ''); host.style.height = '100%'; host.style.minHeight = '0'; host.style.flex = '1'; full.appendChild(host);
-        if (kind === 'editor') sub = F.mountEditor(host, { apiFetch: ctx.apiFetch, factoryId: id, onClose: function () { closeSub(); show('library'); } });
+        if (kind === 'editor') {
+          var pcs = await fetchWorkers(ctx);
+          sub = F.mountEditor(host, { apiFetch: ctx.apiFetch, factoryId: id, workers: pcs, onClose: function () { closeSub(); show('library'); } });
+        }
         else sub = F.mountViewer(host, { apiFetch: ctx.apiFetch, runId: id, subscribe: onEvent, openChat: function (chatId, name) { openChat(ctx, chatId, name); }, onClose: function () { closeSub(); show(current); } });
       } catch (e) {
         full.innerHTML = '';

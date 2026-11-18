@@ -41,7 +41,13 @@ fun PaneBody(v: PaneView, wb: WorkbenchController) {
                     else -> mv.obitech.crundi.ui.workspace.terminal.TerminalPreview(id)                          // ui.workspace
                 }
             }) // Lead
-            PaneKind.Pending -> TerminalLauncher({ wb.pick(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key]) // Lead
+            PaneKind.Pending -> {
+                androidx.compose.runtime.LaunchedEffect(v.key) { wb.watchChatPlaces() }
+                TerminalLauncher(
+                    { wb.pick(v.key, it) }, busy = wb.launching[v.key] == true, error = wb.launchErrors[v.key],
+                    places = wb.chatPlaces, where = wb.chatWhere[v.key].orEmpty(), onWhere = { wb.chooseWhere(v.key, it) },
+                )
+            } // Lead
             PaneKind.Files -> FilesRoute()                                                  // ui.workspace
             PaneKind.Git -> GitRoute()                                                      // ui.workspace
             PaneKind.Media -> MediaRoute()                                                  // ui.workspace

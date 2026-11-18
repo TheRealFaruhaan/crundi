@@ -441,6 +441,13 @@ function readTranscriptTitle(file) {
   return fallback.replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
+/** What a chat on a PC is told about where it is. */
+function remotePromptLayer() {
+  return 'Where this chat runs: on one of the owner\'s own PCs, a Crundi worker, not on the Crundi server. Your files, shell and commands are that PC\'s, in its copy of the project. '
+    + 'The Crundi tools still work (they are run by the server for you). What you change here is brought back to the server at the end of each turn, '
+    + 'into a branch of its own that the owner merges; the server\'s own checkout is never touched.';
+}
+
 /** 16-char hex id, matching claude-terminals.js's scheme. */
 function genId() {
   let s = '';
@@ -457,10 +464,23 @@ const nextSeq = () => ++_seq;
  * Sessions are keyed by id and carry the same {alias,title,order} shape as
  * terminals, so webapp.js can merge both lists into one workbench grid.
  */
-export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey } = {}) {
+export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey, launchRemote: initLaunchRemote = null, remoteStatus: initRemoteStatus = null } = {}) {
   const sessions = new Map();
   let apiUrl = initApiUrl;
   let apiKey = initApiKey;
+  // Chats on a worker PC (where: 'worker:<id>', src/workers-chats.js): the
+  // launcher starts claude THERE and hands back a ChildProcess-like object
+  // (stdin, stdout, stderr, pid, kill, 'exit' / 'error'), so everything above
+  // the process is the same as for a chat here. remoteStatus(where) says
+  // what the UI shows: { name, online, branch? }.
+  let launchRemote = typeof initLaunchRemote === 'function' ? initLaunchRemote : null;
+  let remoteStatus = typeof initRemoteStatus === 'function' ? initRemoteStatus : null;
+  function whereOf(s) {
+    if (!s.where) return null;
+    let st = null;
+    try { st = remoteStatus ? remoteStatus(s.where, s.id) : null; } catch { st = null; }
+    return { where: s.where, name: (st && st.name) || s.where.slice(7), online: !!(st && st.online), branch: (st && st.branch) || '', worktree: (st && st.worktree) || '' };
+  }
   // Notified on every session's agent-state transition, so webapp.js can drive
   // the shared status dots / Telegram pings without polling.
   let stateChangeCb = null;
@@ -495,6 +515,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           ? { id: s.collaborator.id, name: s.collaborator.name || '', key: s.collaborator.key || '' }
           : null,
         factory: s.factory || null,
+        // Runs on a worker PC: '' here, else 'worker:<id>'; pc carries its
+        // name and whether it is connected ("PC offline" in the header).
+        where: s.where || '',
+        pc: whereOf(s),
       });
     }
     out.sort((a, b) => a.project === b.project ? (a.order - b.order) : a.project.localeCompare(b.project));
@@ -547,6 +571,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
    * sessions now get a file of their own.
    */
   function historyKeyFor(s) {
+    // A chat on a PC keeps its own copy: its conversation lives in the PC's
+    // transcripts, which this server cannot read.
+    if (s.where) return `${s.alias}@${s.where}`;
     return s.collaborator ? `${s.alias}@collab-${s.collaborator.id}` : s.alias;
   }
 
@@ -653,7 +680,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // complete, so use it unless the stored copy genuinely has more; the stored
     // copy still wins when it does, since it also carries question cards and
     // subagent bubbles.
-    const fromTranscript = readTranscriptHistory(s.cwd, uuid, { maxMessages: PERSIST_MAX_MESSAGES, maxBytes: PERSIST_MAX_BYTES, genId });
+    const fromTranscript = s.where ? null : readTranscriptHistory(s.cwd, uuid, { maxMessages: PERSIST_MAX_MESSAGES, maxBytes: PERSIST_MAX_BYTES, genId });
     const talk = (x) => (x && x.messages ? x.messages.filter(m => m.kind === 'user' || m.kind === 'assistant-text' || m.kind === 'tool').length : 0);
     if (fromTranscript && talk(fromTranscript) > talk(d)) { d = fromTranscript; source = 'transcript'; }
     if (!d || !d.messages.length) return;
@@ -1129,6 +1156,9 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     userLayers = true, systemPromptExtra = '', persistSession = true,
     collaborator = null,
     factory = null, addDirs = [], extraEnv = {}, allowedTools = [], disallowedTools = [], mcpConfigFile = '',
+    // 'worker:<id>' runs this chat's claude on that PC (src/workers-chats.js);
+    // '' (or 'server') here.
+    where = '',
     // A parked pane coming back: same id and order, so it keeps its place in
     // the workbench layout (which is keyed by id). Ignored if already taken.
     id: wantId = '', order: wantOrder = null,
@@ -1142,15 +1172,22 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // .mcp.json giving it the Crundi tools has to be in the SAME folder or the
     // session comes up with none of them.
     const workdir = String(cwd || '').trim() || project.path;
+    // On a PC: its own claude, its own folder (a copy of this one, made by the
+    // worker), its own tool bridge. Owner chats only.
+    const whereStr = String(where || '').trim();
+    const remote = /^worker:[A-Za-z0-9_-]{1,40}$/.test(whereStr) ? whereStr : '';
+    if (whereStr && whereStr !== 'server' && !remote) return { ok: false, error: `Unknown place to run a chat: "${whereStr}"` };
+    if (remote && collaborator) return { ok: false, error: 'Chats on a PC are the owner\'s only.' };
+    if (remote && !launchRemote) return { ok: false, error: 'This server cannot run chats on a PC.' };
     // Refuse before spawning: the CLI exits 1 on this and the user would get a
     // chat cell that dies on arrival with no explanation.
-    if (skipPermissions) {
+    if (skipPermissions && !remote) {
       const blocked = skipPermissionsBlocker();
       if (blocked) return { ok: false, error: blocked };
     }
     if (!existsSync(workdir)) return { ok: false, error: `Folder does not exist: ${workdir}` };
 
-    const bin = resolveClaudeBin();
+    const bin = remote ? 'claude' : resolveClaudeBin();
     if (!bin) return { ok: false, error: 'Could not find the `claude` executable. Install Claude Code and make sure it is on your PATH.' };
 
     const args = [
@@ -1287,13 +1324,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // reachable, and the roster's tool rules apply. Never for a collaborator,
     // whose tool set is an exact allowlist decided above.
     if (!collaborator) {
-      for (const d of (Array.isArray(addDirs) ? addDirs : [])) if (d && existsSync(d)) args.push('--add-dir', String(d));
+      // These are this server's folders; a PC has none of them.
+      if (!remote) for (const d of (Array.isArray(addDirs) ? addDirs : [])) if (d && existsSync(d)) args.push('--add-dir', String(d));
       const allow = (Array.isArray(allowedTools) ? allowedTools : []).filter(Boolean).map(String);
       const deny = (Array.isArray(disallowedTools) ? disallowedTools : []).filter(Boolean).map(String);
       if (allow.length) args.push('--allowedTools', allow.join(','));
       if (deny.length) args.push('--disallowedTools', deny.join(','));
       // Commits and PRs say they were made with Crundi (see attribution.js).
-      args.push(...attributionArgs(workdir, config.dataDir));
+      // On a PC the settings go inline: the file is on this server.
+      if (remote) { const at = attributionFor(workdir); if (at) args.push('--settings', JSON.stringify({ attribution: at })); }
+      else args.push(...attributionArgs(workdir, config.dataDir));
     }
     // What this Claude is told about the machine it woke up on. Unattended runs
     // get Crundi's layer only — see system-prompt.js.
@@ -1308,7 +1348,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
           name: collaborator.name, project: collaborator.project,
           branch: collaborator.branch, root: workdir,
         })
-        : systemPromptExtra,
+        : [systemPromptExtra, remote ? remotePromptLayer(remote) : ''].filter(Boolean).join('\n\n'),
     }));
     // Same resume policy as terminal mode: only pass --continue when a prior
     // transcript exists, or the CLI exits immediately with "No conversation found".
@@ -1326,7 +1366,10 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // of them. The internal key reaches secret_get; theirs does not.
     // Collaborators get their config via --mcp-config above; nothing is written
     // into their worktree, so no key sits where their Claude or git can reach it.
-    if (!collaborator && mcpConfigFile && existsSync(mcpConfigFile)) {
+    // A chat on a PC gets its tools from the worker (its --mcp-config names the
+    // worker program, which relays them here): nothing is written for it.
+    if (remote) { /* see chat.spawn */ }
+    else if (!collaborator && mcpConfigFile && existsSync(mcpConfigFile)) {
       args.push('--mcp-config', String(mcpConfigFile));
     } else if (!collaborator) {
       try { writeMcpConfig(workdir, apiUrl, apiKey, key); } catch { /* non-fatal */ }
@@ -1347,7 +1390,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // does not replay and so has no continueUuid of its own.
     let attachedTo = '';
     let forking = false;
-    if ((sessionMode === 'resume' || compacting) && resumeId) {
+    // A chat on a PC cannot look at its transcripts: it continues only the
+    // conversation this server last kept for that PC and project, and only
+    // when asked to.
+    const remoteLast = remote && (sessionMode === 'continue' || compacting) && !resumeId ? loadPersisted(`${key}@${remote}`) : null;
+    if (remoteLast && remoteLast.uuid) {
+      args.push('--resume', String(remoteLast.uuid));
+      continueUuid = attachedTo = String(remoteLast.uuid);
+      if (isSessionClaimed(continueUuid)) forking = true;
+    } else if (remote && !((sessionMode === 'resume' || compacting) && resumeId)) { /* a new conversation */ }
+    else if ((sessionMode === 'resume' || compacting) && resumeId) {
       // Every chat launch now goes through the session chooser, so picking a
       // conversation IS how you continue one. It is replayed like --continue
       // was: from Crundi's stored copy when that is this conversation, else
@@ -1394,7 +1446,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // a throwaway dev session, and never what production does.
     let devMcpFile = null;
     // A factory chat brings its own config, already pointed at this instance.
-    if (!collaborator && !mcpConfigFile && process.env.CRUNDI_DEV === '1' && apiUrl) {
+    if (!collaborator && !remote && !mcpConfigFile && process.env.CRUNDI_DEV === '1' && apiUrl) {
       try {
         const devDir = join(config.dataDir, 'dev-mcp');
         mkdirSync(devDir, { recursive: true });
@@ -1413,7 +1465,27 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     }
 
     let proc;
-    try {
+    if (remote) {
+      // The PC's process: its environment has the chat's id (its bridge says
+      // which chat it is) and never this server's API key or chat token; the
+      // worker's link carries the tool calls and the server adds them.
+      const resumeArg = args.indexOf('--resume');
+      try {
+        proc = await launchRemote(remote, {
+          args, cwd: workdir, chatId: id, project: key,
+          resumeSessionId: resumeArg >= 0 ? args[resumeArg + 1] : '',
+          factory: factory && typeof factory === 'object' ? { ...factory } : null,
+          env: {
+            CRUNDI_UI_SESSION: '1', ...SUMMARY_ENV, CRUNDI_CHAT_ID: id, CRUNDI_PROJECT: key,
+            ...(extraEnv && typeof extraEnv === 'object' ? extraEnv : {}),
+          },
+        });
+      } catch (err) {
+        return { ok: false, error: err && err.message ? err.message : String(err) };
+      }
+      if (!proc || !proc.stdout || !proc.stdin) return { ok: false, error: 'The PC could not start the chat.' };
+    }
+    else try {
       // A collaborator's Claude starts without Crundi's inherited capability
       // to bind low ports: bubblewrap refuses to run with capabilities it did
       // not get from setuid, and the sandbox would never start.
@@ -1495,6 +1567,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       onStateChange: stateChangeCb,
       totalCostUsd: 0,
       collabMcpFile: collabMcpFileForChat || devMcpFile || '',   // deleted when the chat closes
+      where: remote,   // 'worker:<id>' when claude runs on a PC
     };
     s.emitter.setMaxListeners(50);
     sessions.set(id, s);
@@ -1631,7 +1704,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     // Fired as the first turn once the CLI reports ready (see handleControlResponse).
     if (compacting) s.pendingFirstMessage = '/compact';
 
-    console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${workdir}`);
+    console.log(`[claude-ui] Started chat "${s.title}" for "${key}" (${id}) in ${workdir}${remote ? ` on ${remote}` : ''}`);
     return { ok: true, id, project: key, title: s.title, order: s.order, kind: 'ui' };
   }
 
@@ -2178,7 +2251,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   const TX_OVERLAP_BYTES = 512;
   const TASK_DONE_RE = /<task-notification>[\s\S]{0,40}?<task-id>([a-z0-9]+)<\/task-id>/g;
   function finishedTasks(s) {
-    if (!s.sessionId || !s.cwd) return null;
+    if (!s.sessionId || !s.cwd || s.where) return null;   // a PC's transcript is not here
     const file = join(transcriptDir(s.cwd), s.sessionId + '.jsonl');
     let fd;
     try {
@@ -3159,7 +3232,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
       sessionId: s.sessionId || '', model: s.model || '', effort: s.effort || '',
       permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
       background: !!s.background, collaborator: !!s.collaborator, cwd: s.cwd || '', titleByUser: !!s.titleByUser, longTitle: s.longTitle || '',
-      factory: s.factory || null,
+      factory: s.factory || null, where: s.where || '', pc: whereOf(s),
       running: !!s.proc, state: s.state, busyTasks,
       pendingInjections: (s.pendingInjections || []).length,
       lastSendAt: s.lastSendAt || 0,
@@ -3170,7 +3243,7 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
   function snapshot(s) {
     return {
       id: s.id, project: s.alias, title: s.title, kind: 'ui',
-      factory: s.factory || null,
+      factory: s.factory || null, where: s.where || '', pc: whereOf(s),
       status: s.proc ? 'running' : 'exited',
       state: s.state, sessionId: s.sessionId, model: s.model,
       permissionMode: s.permissionMode, skipPermissions: !!s.skipPermissions,
@@ -3308,6 +3381,19 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey 
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },
+    /** Chats on a worker PC: the launcher and the status the UI shows (src/workers-chats.js). */
+    setRemote({ launch, status } = {}) { if (typeof launch === 'function') launchRemote = launch; if (typeof status === 'function') remoteStatus = status; },
+    /** Tell the open chats on a PC that it came or went (the header's "PC offline"). */
+    remoteChanged(where) {
+      let n = 0;
+      for (const s of sessions.values()) {
+        if (!s.where || (where && s.where !== where)) continue;
+        const pc = whereOf(s); const k = JSON.stringify(pc);
+        if (k !== s.lastPc) { s.lastPc = k; n++; s.emitter.emit('event', { type: 'meta', pc }); }
+      }
+      return n;   // how many chats changed (the caller re-sends the chat list then)
+    },
+    sessionInfo(id) { const s = sessions.get(id); return s ? { id: s.id, project: s.alias, where: s.where || '', factory: s.factory || null, collaborator: !!s.collaborator, sessionId: s.sessionId || '', cwd: s.cwd, running: !!s.proc } : null; },
     get apiKey() { return apiKey; },
   };
 }

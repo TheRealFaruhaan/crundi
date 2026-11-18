@@ -286,7 +286,7 @@ addRepo('solo/one-skill', { files: { 'SKILL.md': MD('solo-helper'), 'more/x.md':
 // ─── Wiring ───
 {
   const web = readFileSync(new URL('../src/webapp.js', import.meta.url), 'utf8');
-  const mcp = readFileSync(new URL('../src/mcp-stdio.js', import.meta.url), 'utf8');
+  const mcp = readFileSync(new URL('../src/mcp-stdio.js', import.meta.url), 'utf8') + readFileSync(new URL('../src/mcp-tools.js', import.meta.url), 'utf8');
   const html = readFileSync(new URL('../src/webapp-html.js', import.meta.url), 'utf8');
   ok(CAPABILITIES.includes('skills-install-link'), 'the server lists the skills-install-link capability');
   ok(MIN_CLIENT.web === '1.20.0-dev.1' && MIN_CLIENT.android === '1.0.0-dev.10', 'and no minimum client was raised');

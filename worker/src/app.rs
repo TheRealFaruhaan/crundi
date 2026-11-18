@@ -47,6 +47,14 @@ pub async fn headless(cfg: Config, opts: LinkOptions) -> i32 {
         cfg.display_name(),
         cfg.work_dir.display()
     );
+    let mut opts = opts;
+    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    opts.events = Some(ev_tx);
+    tokio::spawn(async move {
+        while let Some(v) = ev_rx.recv().await {
+            eprintln!("crundi-worker: {}", event_line(&v));
+        }
+    });
     let mut h = link::spawn(cfg, opts);
     let mut status = h.status.clone();
     tokio::spawn(async move {
@@ -106,6 +114,15 @@ pub async fn embedded(cfg: Config, opts: LinkOptions) -> i32 {
         let _ = writeln!(out, "{v}");
         let _ = out.flush();
     };
+    // Jobs and chats starting and ending, so the client can notify.
+    let mut opts = opts;
+    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+    opts.events = Some(ev_tx);
+    tokio::spawn(async move {
+        while let Some(v) = ev_rx.recv().await {
+            emit(v);
+        }
+    });
     let mut h = link::spawn(cfg, opts);
     let mut status = h.status.clone();
     {
@@ -153,6 +170,23 @@ pub async fn embedded(cfg: Config, opts: LinkOptions) -> i32 {
     };
     emit(json!({"event": "log", "text": text, "exitCode": code}));
     code
+}
+
+/// A job or chat event as one line of text (headless log, notifications).
+pub fn event_line(v: &serde_json::Value) -> String {
+    let g = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let project = g("project");
+    let in_project = if project.is_empty() { String::new() } else { format!(" in {project}") };
+    match (g("event").as_str(), g("state").as_str()) {
+        ("job", "started") => format!("job {} started{in_project}: {}", g("job"), g("command")),
+        ("job", _) => match v.get("exitCode").and_then(|c| c.as_i64()) {
+            Some(c) => format!("job {} ended{in_project} (exit {c})", g("job")),
+            None => format!("job {} ended{in_project}", g("job")),
+        },
+        ("chat", "started") => format!("chat {} started on this PC{in_project}", g("chat")),
+        ("chat", _) => format!("chat {} ended{in_project}", g("chat")),
+        _ => v.to_string(),
+    }
 }
 
 fn status_event(s: &Status) -> serde_json::Value {

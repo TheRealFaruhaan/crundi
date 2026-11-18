@@ -212,10 +212,16 @@ export function reduce(prev, ev) {
     case 'notice-clear':
       delete r.notices[ev.tokenId];
       break;
-    case 'session':
+    case 'session': {
       delete r.retired[ev.employeeId];
-      r.sessions[ev.employeeId] = { sessionUuid: ev.sessionUuid || r.sessions[ev.employeeId]?.sessionUuid || '', chatId: ev.chatId || r.sessions[ev.employeeId]?.chatId || '' };
+      // where: the worker PC the chat runs on ('' = this server); a session
+      // is only resumed on the machine that has it.
+      const prev = r.sessions[ev.employeeId] || {};
+      const where = ev.where !== undefined ? String(ev.where || '') : (prev.where || '');
+      const moved = where !== (prev.where || '');
+      r.sessions[ev.employeeId] = { sessionUuid: ev.sessionUuid || (moved ? '' : prev.sessionUuid) || '', chatId: ev.chatId || prev.chatId || '', where };
       break;
+    }
     case 'retire':
       r.retired[ev.employeeId] = true;
       if (ev.sessionUuid) r.sessions[ev.employeeId] = { ...(r.sessions[ev.employeeId] || {}), sessionUuid: ev.sessionUuid };
@@ -273,6 +279,12 @@ export function reduce(prev, ev) {
     case 'hold':
       // Someone's chat woke by itself while paused or held, and was told to hold.
       break;
+    case 'worker-offline':
+    case 'worker-online':
+      // A worker PC that people of the run work on lost its link, or came
+      // back: their steps were held, or resumed (the runner's live state).
+      history(rec, { type: ev.type, worker: ev.worker || '', name: ev.name || '', employees: Array.isArray(ev.employees) ? ev.employees.slice() : [] });
+      break;
     case 'tick':
       // The Manager set its check-in ticker (when the factory leaves it open).
       r.tickMinutes = ev.minutes || 0;
@@ -287,6 +299,8 @@ export function reduce(prev, ev) {
       // full (windows, resetsAt) has reset, like a pause by the usage limit.
       r.paused = {
         by: ev.by || 'person', at, ...(ev.resetsAt ? { resetsAt: ev.resetsAt } : {}), ...(ev.reason ? { reason: ev.reason } : {}),
+        // by 'worker': the PC the Manager runs on went offline.
+        ...(ev.worker ? { worker: ev.worker } : {}),
         ...(ev.mode === 'now' ? { mode: 'now', stopped: Array.isArray(ev.stopped) ? ev.stopped : [] } : {}),
         ...(ev.resumeOnReset ? { resumeOnReset: true, windows: Array.isArray(ev.windows) ? ev.windows : [] } : {}),
       };

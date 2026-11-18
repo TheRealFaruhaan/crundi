@@ -92,10 +92,52 @@ impl JobCell {
     }
 }
 
+/// Where job (and chat) messages go: the current link's bounded channel,
+/// or nowhere while the link is down.
+#[derive(Clone, Default)]
+pub(crate) struct Outbox(Arc<Mutex<Option<mpsc::Sender<String>>>>);
+
+impl Outbox {
+    pub fn set(&self, tx: Option<mpsc::Sender<String>>) {
+        *self.0.lock().unwrap() = tx;
+    }
+
+    pub fn connected(&self) -> bool {
+        self.0.lock().unwrap().as_ref().is_some_and(|t| !t.is_closed())
+    }
+
+    /// Send on the current link; false when there is none (the message is dropped).
+    pub async fn send(&self, v: Value) -> bool {
+        let tx = self.0.lock().unwrap().clone();
+        match tx {
+            Some(tx) => tx.send(v.to_string()).await.is_ok(),
+            None => false,
+        }
+    }
+
+    pub fn send_now(&self, v: Value) {
+        let o = self.clone();
+        tokio::spawn(async move {
+            o.send(v).await;
+        });
+    }
+}
+
+/// Things the embedding app is told (`{"event":"job"|"chat",...}` lines in
+/// embedded mode, desktop notifications in the tray).
+pub type Events = Option<mpsc::UnboundedSender<Value>>;
+
+pub(crate) fn emit(events: &Events, v: Value) {
+    if let Some(e) = events {
+        let _ = e.send(v);
+    }
+}
+
 struct Inner {
     work_dir: PathBuf,
     jobs: Mutex<HashMap<String, Arc<JobCell>>>,
-    outbox: Mutex<Option<mpsc::Sender<String>>>,
+    outbox: Outbox,
+    events: Events,
 }
 
 #[derive(Clone)]
@@ -103,7 +145,7 @@ pub struct Jobs {
     inner: Arc<Inner>,
 }
 
-fn valid_name(s: &str) -> bool {
+pub(crate) fn valid_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 100
         && !s.starts_with('.')
@@ -111,8 +153,8 @@ fn valid_name(s: &str) -> bool {
 }
 
 impl Jobs {
-    pub fn new(work_dir: PathBuf) -> Jobs {
-        Jobs { inner: Arc::new(Inner { work_dir, jobs: Default::default(), outbox: Mutex::new(None) }) }
+    pub fn new(work_dir: PathBuf, events: Events) -> Jobs {
+        Jobs { inner: Arc::new(Inner { work_dir, jobs: Default::default(), outbox: Outbox::default(), events }) }
     }
 
     pub fn jobs_dir(&self) -> PathBuf {
@@ -121,12 +163,12 @@ impl Jobs {
 
     /// A link that lists "jobs" was welcomed: job messages go to `tx`.
     pub fn connect(&self, tx: mpsc::Sender<String>) {
-        *self.inner.outbox.lock().unwrap() = Some(tx);
+        self.inner.outbox.set(Some(tx));
     }
 
     /// The link ended: stop streaming until the next job.attach.
     pub fn disconnect(&self) {
-        *self.inner.outbox.lock().unwrap() = None;
+        self.inner.outbox.set(None);
         for cell in self.inner.jobs.lock().unwrap().values() {
             let mut st = cell.st.lock().unwrap();
             st.attached = false;
@@ -184,18 +226,11 @@ impl Jobs {
     }
 
     async fn send(inner: &Inner, v: Value) -> bool {
-        let tx = inner.outbox.lock().unwrap().clone();
-        match tx {
-            Some(tx) => tx.send(v.to_string()).await.is_ok(),
-            None => false,
-        }
+        inner.outbox.send(v).await
     }
 
     fn send_now(&self, v: Value) {
-        let inner = self.inner.clone();
-        tokio::spawn(async move {
-            Jobs::send(&inner, v).await;
-        });
+        self.inner.outbox.send_now(v);
     }
 
     /// Route a job message from the server.
@@ -294,6 +329,9 @@ impl Jobs {
         tokio::spawn(async move {
             // Accepted first, then output can follow.
             Jobs::send(&inner, json!({"type": "job.accepted", "job": cell.id})).await;
+            emit(&inner.events, json!({"event": "job", "state": "started", "job": cell.id,
+                "command": spec.get("command").cloned().unwrap_or(Value::Null),
+                "project": spec.get("project").cloned().unwrap_or(Value::Null)}));
             tokio::spawn(stream(inner.clone(), cell.clone()));
             run_job(inner, cell, spec, inbox_rx).await;
         });
@@ -328,7 +366,7 @@ async fn send_if(inner: &Inner, cell: &JobCell, gen: u64, v: Value) -> bool {
     false
 }
 
-fn read_at(path: &Path, off: u64, len: usize) -> std::io::Result<Vec<u8>> {
+pub(crate) fn read_at(path: &Path, off: u64, len: usize) -> std::io::Result<Vec<u8>> {
     let mut f = std::fs::File::open(path)?;
     f.seek(SeekFrom::Start(off))?;
     let mut buf = vec![0u8; len];
@@ -526,6 +564,13 @@ async fn run_job(inner: Arc<Inner>, cell: Arc<JobCell>, spec: Value, mut inbox: 
             Finished { exit, artifact, count, bytes }
         }
     };
+    let mut ended = json!({"event": "job", "state": "ended", "job": cell.id,
+        "command": spec.get("command").cloned().unwrap_or(Value::Null),
+        "project": spec.get("project").cloned().unwrap_or(Value::Null)});
+    if let Some(c) = finished.exit.get("code") {
+        ended["exitCode"] = c.clone();
+    }
+    emit(&inner.events, ended);
     // Close the spool, then mark finished; the streamer sends the rest.
     *cell.log.lock().unwrap() = None;
     {
@@ -537,7 +582,7 @@ async fn run_job(inner: Arc<Inner>, cell: Arc<JobCell>, spec: Value, mut inbox: 
 }
 
 /// `cwd` from the job, which must stay inside the project folder.
-fn resolve_cwd(dir: &Path, spec: &Value) -> Result<PathBuf> {
+pub(crate) fn resolve_cwd(dir: &Path, spec: &Value) -> Result<PathBuf> {
     let rel = spec.get("cwd").and_then(Value::as_str).unwrap_or("").trim();
     if rel.is_empty() || rel == "." {
         return Ok(dir.to_path_buf());
@@ -565,13 +610,19 @@ async fn prepare(
 ) -> Result<PathBuf> {
     let wd = &inner.work_dir;
     std::fs::create_dir_all(wd)?;
+    let log = |b: &[u8]| cell.append(b);
+    let p = Prep { log: &log, out: &inner.outbox, kind: "job", id: &cell.id, tmp_dir: wd.join(".crundi-jobs") };
     match source {
         "git" => {
             if project.is_empty() {
                 bail!("a git job needs a project");
             }
             let dir = wd.join(project);
-            prepare_git(inner, cell, spec, &dir, inbox).await?;
+            let commit = ensure_commit(&p, spec, &dir, inbox).await?;
+            let (ok, _) = git(&p, &dir, &["-c", "advice.detachedHead=false", "checkout", "-q", "--force", "-B", "crundi/job", &commit], false).await?;
+            if !ok {
+                bail!("git checkout {commit} failed");
+            }
             Ok(dir)
         }
         "copy" => {
@@ -579,7 +630,7 @@ async fn prepare(
                 bail!("a copy job needs a project");
             }
             let dir = wd.join(format!("{project}@copy"));
-            prepare_copy(inner, cell, &dir, inbox).await?;
+            prepare_copy(&p, &dir, inbox).await?;
             Ok(dir)
         }
         "none" | "" => {
@@ -590,12 +641,34 @@ async fn prepare(
     }
 }
 
-/// Run git in `dir`, its output going to the job log. Returns (ok, stdout).
-async fn git(cell: &JobCell, dir: &Path, args: &[&str], quiet: bool) -> Result<(bool, String)> {
-    let git = find_program("git").ok_or_else(|| anyhow!("git is not installed on this PC"))?;
-    if !quiet {
-        cell.append(format!("$ git {}\n", args.join(" ")).as_bytes());
+/// What preparing a folder needs from its owner (a job or a chat): where
+/// its log goes, the link, and how its messages are named
+/// (`<kind>.need`, `<kind>.manifest` out; `<kind>.bundle`, `<kind>.files` in).
+pub(crate) struct Prep<'a> {
+    pub log: &'a (dyn Fn(&[u8]) + Send + Sync),
+    pub out: &'a Outbox,
+    /// "job" | "chat": the message prefix and the id field's name.
+    pub kind: &'static str,
+    pub id: &'a str,
+    /// Where the bundle / tar being received is written.
+    pub tmp_dir: PathBuf,
+}
+
+impl Prep<'_> {
+    fn note(&self, text: &str) {
+        (self.log)(format!("[crundi-worker] {text}\n").as_bytes());
     }
+
+    fn msg(&self, suffix: &str) -> Value {
+        let mut m = json!({"type": format!("{}.{suffix}", self.kind)});
+        m[self.kind] = json!(self.id);
+        m
+    }
+}
+
+/// Run git in `dir` (no prompts). Returns (ok, stdout, stderr).
+pub(crate) async fn git_raw(dir: &Path, args: &[&str]) -> Result<(bool, Vec<u8>, Vec<u8>)> {
+    let git = find_program("git").ok_or_else(|| anyhow!("git is not installed on this PC"))?;
     let mut c = crate::util::tokio_command(&git);
     c.args(args)
         .current_dir(dir)
@@ -606,22 +679,78 @@ async fn git(cell: &JobCell, dir: &Path, args: &[&str], quiet: bool) -> Result<(
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
     let out = c.output().await.context("running git")?;
-    if !quiet {
-        cell.append(&out.stdout);
-        cell.append(&out.stderr);
-    }
-    Ok((out.status.success(), String::from_utf8_lossy(&out.stdout).trim().to_string()))
+    Ok((out.status.success(), out.stdout, out.stderr))
 }
 
-async fn has_commit(cell: &JobCell, dir: &Path, commit: &str) -> bool {
-    git(cell, dir, &["cat-file", "-e", &format!("{commit}^{{commit}}")], true)
+/// Run git in `dir`, its output going to the log. Returns (ok, stdout).
+pub(crate) async fn git(p: &Prep<'_>, dir: &Path, args: &[&str], quiet: bool) -> Result<(bool, String)> {
+    if !quiet {
+        (p.log)(format!("$ git {}\n", args.join(" ")).as_bytes());
+    }
+    let (ok, stdout, stderr) = git_raw(dir, args).await?;
+    if !quiet {
+        (p.log)(&stdout);
+        (p.log)(&stderr);
+    }
+    Ok((ok, String::from_utf8_lossy(&stdout).trim().to_string()))
+}
+
+async fn has_commit(p: &Prep<'_>, dir: &Path, commit: &str) -> bool {
+    git(p, dir, &["cat-file", "-e", &format!("{commit}^{{commit}}")], true)
         .await
         .map(|(ok, _)| ok)
         .unwrap_or(false)
 }
 
-/// Receive `job.bundle` / `job.files` chunks into `path`; returns the last message.
+async fn rev(p: &Prep<'_>, dir: &Path, r: &str) -> Option<String> {
+    git(p, dir, &["rev-parse", "--verify", "-q", &format!("{r}^{{commit}}")], true)
+        .await
+        .ok()
+        .filter(|(ok, s)| *ok && !s.is_empty())
+        .map(|(_, s)| s)
+}
+
+/// What to offer the server as `have` for a bundle: the newer of
+/// `origin/<branch>` and `refs/crundi-bundle/heads/<branch>` (what an earlier
+/// bundle brought), so the server sends only commits the PC lacks.
+async fn newest_have(p: &Prep<'_>, dir: &Path, branch: &str) -> String {
+    if branch.is_empty() {
+        return String::new();
+    }
+    let a = rev(p, dir, &format!("refs/remotes/origin/{branch}")).await;
+    let b = rev(p, dir, &format!("refs/crundi-bundle/heads/{branch}")).await;
+    match (a, b) {
+        (None, None) => String::new(),
+        (Some(x), None) | (None, Some(x)) => x,
+        (Some(a), Some(b)) if a == b => a,
+        (Some(a), Some(b)) => {
+            let anc = |x: &str, y: &str| {
+                let (x, y) = (x.to_string(), y.to_string());
+                async move { git(p, dir, &["merge-base", "--is-ancestor", &x, &y], true).await.map(|r| r.0).unwrap_or(false) }
+            };
+            if anc(&a, &b).await {
+                b
+            } else if anc(&b, &a).await {
+                a
+            } else {
+                // Unrelated lines: the one committed later.
+                let t = |x: String| async move {
+                    let r = git(p, dir, &["log", "-1", "--format=%ct", &x], true).await.ok();
+                    (r.and_then(|(_, s)| s.parse::<u64>().ok()).unwrap_or(0), x)
+                };
+                let (ta, a) = t(a).await;
+                let (tb, b) = t(b).await;
+                if tb > ta { b } else { a }
+            }
+        }
+    }
+}
+
+/// Receive `<kind>.bundle` / `<kind>.files` chunks into `path`; returns the last message.
 async fn receive(inbox: &mut mpsc::UnboundedReceiver<Value>, kind: &str, path: &Path) -> Result<Value> {
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d)?;
+    }
     let mut f = std::fs::File::create(path)?;
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut expect = 0u64;
@@ -629,7 +758,7 @@ async fn receive(inbox: &mut mpsc::UnboundedReceiver<Value>, kind: &str, path: &
         let m = tokio::time::timeout(WAIT_INBOUND, inbox.recv())
             .await
             .map_err(|_| anyhow!("no {kind} from the server for 10 minutes"))?
-            .ok_or_else(|| anyhow!("the job ended"))?;
+            .ok_or_else(|| anyhow!("ended while waiting for {kind}"))?;
         if m.get("type").and_then(Value::as_str) != Some(kind) {
             continue;
         }
@@ -647,13 +776,15 @@ async fn receive(inbox: &mut mpsc::UnboundedReceiver<Value>, kind: &str, path: &
     }
 }
 
-async fn prepare_git(
-    inner: &Inner,
-    cell: &JobCell,
+/// The git source up to the commit: clone once into `dir`, fetch the
+/// branch, and when the commit is still missing ask the server for a bundle.
+/// Returns the commit to check out.
+pub(crate) async fn ensure_commit(
+    p: &Prep<'_>,
     spec: &Value,
     dir: &Path,
     inbox: &mut mpsc::UnboundedReceiver<Value>,
-) -> Result<()> {
+) -> Result<String> {
     let g = spec.get("git").cloned().unwrap_or(Value::Null);
     let url = g.get("url").and_then(Value::as_str).unwrap_or("");
     let branch = g.get("branch").and_then(Value::as_str).unwrap_or("");
@@ -669,52 +800,45 @@ async fn prepare_git(
             bail!("{} exists and is not a git clone", dir.display());
         }
         let parent = dir.parent().unwrap();
+        std::fs::create_dir_all(parent)?;
         let name = dir.file_name().unwrap().to_string_lossy().into_owned();
-        let (ok, _) = git(cell, parent, &["clone", "--no-checkout", url, &name], false).await?;
+        let (ok, _) = git(p, parent, &["clone", "--no-checkout", url, &name], false).await?;
         if !ok {
             bail!("git clone failed");
         }
     }
     if !branch.is_empty() {
         let refspec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
-        let (ok, _) = git(cell, dir, &["fetch", "origin", &refspec], false).await?;
+        let (ok, _) = git(p, dir, &["fetch", "origin", &refspec], false).await?;
         if !ok {
-            cell.note(&format!("could not fetch {branch} from origin; asking the server"));
+            p.note(&format!("could not fetch {branch} from origin; asking the server"));
         }
     }
     if commit.is_empty() {
         if branch.is_empty() {
             bail!("no branch or commit to check out");
         }
-        let (ok, sha) = git(cell, dir, &["rev-parse", "--verify", "-q", &format!("origin/{branch}^{{commit}}")], true).await?;
-        if !ok {
-            bail!("branch {branch} not found");
-        }
-        commit = sha;
+        commit = rev(p, dir, &format!("refs/remotes/origin/{branch}"))
+            .await
+            .ok_or_else(|| anyhow!("branch {branch} not found"))?;
     }
-    if !has_commit(cell, dir, &commit).await {
-        let have = if branch.is_empty() {
-            String::new()
-        } else {
-            git(cell, dir, &["rev-parse", "--verify", "-q", &format!("origin/{branch}^{{commit}}")], true)
-                .await
-                .ok()
-                .filter(|(ok, _)| *ok)
-                .map(|(_, s)| s)
-                .unwrap_or_default()
-        };
-        cell.note(&format!("commit {commit} is not on origin; asking the server for a bundle"));
-        Jobs::send(inner, json!({"type": "job.need", "job": cell.id, "kind": "bundle", "have": have})).await;
-        let path = inner.work_dir.join(".crundi-jobs").join(format!("{}.bundle", cell.id));
-        let got = receive(inbox, "job.bundle", &path).await;
+    if !has_commit(p, dir, &commit).await {
+        let have = newest_have(p, dir, branch).await;
+        p.note(&format!("commit {commit} is not on origin; asking the server for a bundle"));
+        let mut need = p.msg("need");
+        need["kind"] = json!("bundle");
+        need["have"] = json!(have);
+        p.out.send(need).await;
+        let path = p.tmp_dir.join(format!("{}.bundle", p.id));
+        let got = receive(inbox, &format!("{}.bundle", p.kind), &path).await;
         let res = async {
             got?;
-            let p = path.to_string_lossy().into_owned();
-            let (ok, _) = git(cell, dir, &["fetch", "-q", &p, "+refs/*:refs/crundi-bundle/*"], false).await?;
-            if !ok || !has_commit(cell, dir, &commit).await {
-                let _ = git(cell, dir, &["fetch", "-q", &p, &commit], false).await;
+            let bp = path.to_string_lossy().into_owned();
+            let (ok, _) = git(p, dir, &["fetch", "-q", &bp, "+refs/*:refs/crundi-bundle/*"], false).await?;
+            if !ok || !has_commit(p, dir, &commit).await {
+                let _ = git(p, dir, &["fetch", "-q", &bp, &commit], false).await;
             }
-            if !has_commit(cell, dir, &commit).await {
+            if !has_commit(p, dir, &commit).await {
                 bail!("the bundle did not hold commit {commit}");
             }
             Ok(())
@@ -723,22 +847,21 @@ async fn prepare_git(
         let _ = std::fs::remove_file(&path);
         res?;
     }
-    let (ok, _) = git(cell, dir, &["-c", "advice.detachedHead=false", "checkout", "-q", "--force", "-B", "crundi/job", &commit], false).await?;
-    if !ok {
-        bail!("git checkout {commit} failed");
-    }
-    Ok(())
+    Ok(commit)
 }
 
-async fn prepare_copy(inner: &Inner, cell: &JobCell, dir: &Path, inbox: &mut mpsc::UnboundedReceiver<Value>) -> Result<()> {
+/// The copy source: send the manifest, receive the tar of changes and the removals.
+pub(crate) async fn prepare_copy(p: &Prep<'_>, dir: &Path, inbox: &mut mpsc::UnboundedReceiver<Value>) -> Result<()> {
     let d = dir.to_path_buf();
     let files = tokio::task::spawn_blocking(move || jobfiles::manifest(&d)).await??;
-    cell.note(&format!("the copy has {} files; sending the manifest", files.len()));
+    p.note(&format!("the copy has {} files; sending the manifest", files.len()));
     let map: serde_json::Map<String, Value> =
         files.into_iter().map(|(k, (size, sha))| (k, json!([size, sha]))).collect();
-    Jobs::send(inner, json!({"type": "job.manifest", "job": cell.id, "files": map})).await;
-    let path = inner.work_dir.join(".crundi-jobs").join(format!("{}.tar", cell.id));
-    let got = receive(inbox, "job.files", &path).await;
+    let mut m = p.msg("manifest");
+    m["files"] = Value::Object(map);
+    p.out.send(m).await;
+    let path = p.tmp_dir.join(format!("{}.tar", p.id));
+    let got = receive(inbox, &format!("{}.files", p.kind), &path).await;
     let res = async {
         let last = got?;
         let removed: Vec<String> = last
@@ -746,15 +869,15 @@ async fn prepare_copy(inner: &Inner, cell: &JobCell, dir: &Path, inbox: &mut mps
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
-        let (d, p) = (dir.to_path_buf(), path.clone());
+        let (d, tp) = (dir.to_path_buf(), path.clone());
         let (written, gone) = tokio::task::spawn_blocking(move || -> Result<(u64, u64)> {
-            let size = std::fs::metadata(&p)?.len();
-            let w = if size > 0 { jobfiles::extract_tar(&p, &d)? } else { 0 };
+            let size = std::fs::metadata(&tp)?.len();
+            let w = if size > 0 { jobfiles::extract_tar(&tp, &d)? } else { 0 };
             let g = jobfiles::remove_paths(&d, &removed)?;
             Ok((w, g))
         })
         .await??;
-        cell.note(&format!("copy updated: {written} files written, {gone} removed"));
+        p.note(&format!("copy updated: {written} files written, {gone} removed"));
         Ok::<(), anyhow::Error>(())
     }
     .await;
@@ -763,7 +886,7 @@ async fn prepare_copy(inner: &Inner, cell: &JobCell, dir: &Path, inbox: &mut mps
 }
 
 /// Kill the whole process tree of the job.
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(unix)]
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);

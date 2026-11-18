@@ -2,6 +2,7 @@ import { genId, MANAGER_ID, PERMISSION_PRESETS } from '../../../src/factory-mode
 import { Field, Text, Select, Toggle, SkillText } from './fields.jsx';
 import { Icon } from './icons.jsx';
 import { PERSONAS } from './personas.js';
+import { RunsOnField } from './Inspector.jsx';
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
@@ -13,7 +14,7 @@ export function newEmployee(template, f, skills = null) {
   return { id: genId('emp_'), name, persona: t ? t.persona : '', model: '', effort: '', memory: t ? t.memory : 'keep', tools: { allow: [], deny: t ? [...t.deny] : [] }, skills: t ? t.skills.filter(k => !skills || skills.some(x => x.name === k)) : [], presets: t && t.presets ? [...t.presets] : [] };
 }
 
-export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByEmployee, onRemove, onAddTo }) {
+export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByEmployee, onRemove, onAddTo, workers = null }) {
   const r = f.roster.find(x => x.id === selected);
   const set = (fn, key) => mutate(d => { const e = d.roster.find(x => x.id === selected); if (e) fn(e); }, key);
   const used = (id) => f.nodes.filter(n => n.type === 'employee' && n.employeeId === id).length;
@@ -36,7 +37,7 @@ export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByE
               <button key={x.id} className="ff-person" onClick={() => setSelected(x.id)}>
                 <Icon name={x.id === MANAGER_ID ? 'crown' : 'user'} size={15} />
                 <span className="ff-person-name">{x.name || 'Unnamed'}</span>
-                <span className="ff-person-meta">{x.id === MANAGER_ID ? 'Manager' : `${used(x.id)} step${used(x.id) === 1 ? '' : 's'}`}{iss.length ? ' · ' + iss.length + ' to check' : ''}</span>
+                <span className="ff-person-meta">{x.id === MANAGER_ID ? 'Manager' : `${used(x.id)} step${used(x.id) === 1 ? '' : 's'}`}{x.runsOn ? ' · on ' + x.runsOn : ''}{iss.length ? ' · ' + iss.length + ' to check' : ''}</span>
               </button>
             );
           })}
@@ -81,6 +82,9 @@ export function RosterPane({ f, mutate, selected, setSelected, skills, issuesByE
           e.tools.deny = v ? e.tools.deny.filter(t => !EDIT_TOOLS.includes(t)) : [...new Set([...e.tools.deny, ...EDIT_TOOLS])];
         })} />
       )}
+      <RunsOnField value={r.runsOn || ''} workers={workers} listId={'ff-pcs-' + r.id}
+        hint={isManager ? 'Empty: this server. On a PC, the run pauses while that PC is offline.' : 'Empty: this server. On a PC, their steps wait while it is offline; a step can name its own.'}
+        onChange={v => set(e => { e.runsOn = v.slice(0, 80); }, 'ro:' + r.id)} />
       <Field label="Pinned skills" hint="Comma separated. Same as naming them in the persona.">
         <Text value={(r.skills || []).join(', ')} placeholder="frontend-design, run"
           onChange={v => set(e => { e.skills = v.split(',').map(x => x.trim().replace(/^\//, '')).filter(Boolean); }, 'rs:' + r.id)} />

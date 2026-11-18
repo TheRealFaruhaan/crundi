@@ -106,6 +106,10 @@ data class Worker(
     val canRunJobs: Boolean = false,
     /** Running a job now. */
     val busy: Boolean = false,
+    /** Jobs wait while the PC runs on battery. Null on older servers (the setting is hidden then). */
+    val notOnBattery: Boolean? = null,
+    /** Jobs start only after the PC has been idle this many minutes (0: any time). Null on older servers. */
+    val onlyWhenAwayMin: Int? = null,
 ) {
     val title: String get() = name.ifEmpty { id }
     val connectedMs: Long get() = timeMs(connectedSince)
@@ -195,3 +199,16 @@ fun parseWorkerLabels(text: String): Pair<List<String>?, String?> {
 }
 
 private val WORKER_LABEL = Regex("^[a-z0-9:._-]{1,40}$")
+
+/** A PC a new chat may run on now (POST /api/workers chat-places): online, chats allowed, claude there. */
+@Serializable data class ChatPlace(val id: String = "", val name: String = "", val where: String = "") {
+    val title: String get() = name.ifEmpty { id }
+}
+
+@Serializable data class ChatPlaces(val places: List<ChatPlace> = emptyList())
+
+/** POST /api/workers chat-pull: where a PC chat's changes landed ([branch] empty for a folder that is not a git repo). */
+@Serializable data class ChatPull(val branch: String = "", val worktree: String = "", val head: String = "") {
+    /** What the chat says once they are back (the web's toast). */
+    val words: String get() = "Changes brought back" + (if (branch.isNotEmpty()) " on branch $branch" else "") + (if (worktree.isNotEmpty()) " ($worktree)" else "")
+}

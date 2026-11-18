@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -455,6 +456,8 @@ fun WorkerRoute(id: String) {
             onAllowChats = { on -> change(if (on) "Chats allowed" else "Chats not allowed") { api.workers.set(id, allowChats = on) } },
             onAllowCommands = { on -> change(if (on) "Commands allowed" else "Commands not allowed") { api.workers.set(id, allowCommands = on) } },
             onPaused = { on -> change(if (on) "Paused" else "Resumed") { api.workers.set(id, paused = on) } },
+            onNotOnBattery = { on -> change(if (on) "Jobs wait on battery" else "Jobs run on battery too") { api.workers.set(id, notOnBattery = on) } },
+            onOnlyWhenAway = { min -> change("Saved") { api.workers.set(id, onlyWhenAwayMin = min) } },
             onLabels = { l -> change("Labels saved") { api.workers.set(id, labels = l) } },
             onHistory = ::loadHistory,
             onTerminal = { nav.to(WorkerRoutes.terminal(id)) },
@@ -485,6 +488,8 @@ class WorkerEvents(
     val onAllowChats: (Boolean) -> Unit = {},
     val onAllowCommands: (Boolean) -> Unit = {},
     val onPaused: (Boolean) -> Unit = {},
+    val onNotOnBattery: (Boolean) -> Unit = {},
+    val onOnlyWhenAway: (Int) -> Unit = {},
     val onLabels: (List<String>) -> Unit = {},
     val onHistory: () -> Unit = {},
     val onTerminal: () -> Unit = {},
@@ -573,6 +578,9 @@ fun WorkerScreen(
                 CrundiSwitchRow("Allow chats", w.allowChats, events.onAllowChats, detail = "Chats may run on this PC", enabled = !busy)
                 CrundiSwitchRow("Allow commands", w.allowCommands, events.onAllowCommands, detail = "Chats may run commands on this PC", enabled = !busy)
                 CrundiSwitchRow("Paused", w.paused, events.onPaused, detail = "Holds new work; your own terminal still opens", enabled = !busy)
+                // Absent on older servers: hidden then.
+                w.notOnBattery?.let { on -> CrundiSwitchRow("Not on battery", on, events.onNotOnBattery, detail = "Jobs wait while this PC runs on battery.", enabled = !busy) }
+                w.onlyWhenAwayMin?.let { min -> OnlyWhenAwayEditor(min, idleKnown = w.info?.idleSec != null, busy = busy, onSave = events.onOnlyWhenAway) }
             }
             WorkerJobsGroup(w, jobs, now, events)
             Group("Labels", detail = "Jobs ask for labels. Grey ones come from the PC itself; add your own, separated by commas.") {
@@ -698,6 +706,30 @@ private fun logColor(level: String): Color = when (level) {
     "error" -> CrundiColors.Red
     "warn" -> CrundiColors.Yellow
     else -> CrundiColors.TextSecondary
+}
+
+/** "Only when I am away": minutes the PC must be idle before a job starts, 0..240 (0: any time). */
+@Composable
+private fun OnlyWhenAwayEditor(current: Int, idleKnown: Boolean, busy: Boolean, onSave: (Int) -> Unit) {
+    var text by remember(current) { mutableStateOf(current.toString()) }
+    val value = text.toIntOrNull()?.coerceIn(0, 240) ?: 0
+    Column(Modifier.padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Only when I am away", style = CrundiType.Body)
+        Text(
+            "Start jobs only after this PC has been idle for this many minutes. 0: any time." +
+                if (!idleKnown) " This PC cannot tell when it is idle, so this has no effect on it." else "",
+            style = CrundiType.Small,
+        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CrundiTextField(
+                text, { text = it.filter(Char::isDigit).take(3) }, Modifier.width(96.dp), placeholder = "0", mono = true,
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                enabled = !busy,
+            )
+            Text("min", style = CrundiType.Small)
+            CrundiButton("Save", { text = value.toString(); onSave(value) }, icon = "check", enabled = !busy && value != current)
+        }
+    }
 }
 
 @Composable

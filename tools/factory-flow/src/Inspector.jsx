@@ -4,6 +4,28 @@ import { Icon } from './icons.jsx';
 import { handleLabel } from './convert.js';
 import { CrTemplateEditor } from './CrTemplate.jsx';
 
+/**
+ * Where someone's chat runs: '' = this server, or a worker PC by name (or
+ * id). workers: [{ id, name, online }] offered as suggestions, null when the
+ * editor was given none (not the owner, or an older server).
+ */
+export function RunsOnField({ value, onChange, workers, hint, placeholder = 'This server', listId }) {
+  const known = (workers || []).find(w => value && (w.id === value || w.name.toLowerCase() === String(value).toLowerCase()));
+  const note = value && workers && !known ? 'No PC of yours is called that; it runs on this server until one is.'
+    : known && !known.online ? `${known.name} is offline now; its steps wait for it.` : '';
+  return (
+    <Field label="Runs on" hint={[hint, note].filter(Boolean).join(' ')}>
+      <input className="ff-input" list={workers ? listId : undefined} value={value || ''} placeholder={placeholder} maxLength={80}
+        onChange={e => onChange(e.target.value)} />
+      {workers && (
+        <datalist id={listId}>
+          {workers.map(w => <option key={w.id} value={w.name}>{w.online ? 'online' : 'offline'}</option>)}
+        </datalist>
+      )}
+    </Field>
+  );
+}
+
 const KIND_LABEL = { start: 'Start', manager: 'Manager', employee: 'Employee', decision: 'Decision', join: 'Join', ask: 'Ask me', wait: 'Wait', end: 'End' };
 
 function IssueList({ issues, onPick }) {
@@ -20,7 +42,7 @@ function IssueList({ issues, onPick }) {
   );
 }
 
-export function NodeInspector({ f, node, issues, skills, mutate, remove, openRoster }) {
+export function NodeInspector({ f, node, issues, skills, mutate, remove, openRoster, workers = null }) {
   const set = (fn, key) => mutate(d => { const n = d.nodes.find(x => x.id === node.id); if (n) fn(n, d); }, key);
   const employees = f.roster.filter(r => r.id !== MANAGER_ID);
   const forks = f.nodes.filter(n => n.type === 'decision' && n.decision.kind === 'many');
@@ -41,6 +63,15 @@ export function NodeInspector({ f, node, issues, skills, mutate, remove, openRos
             options={[{ value: '', label: 'Choose someone…' }, ...employees.map(r => ({ value: r.id, label: r.name || 'Unnamed' })), { value: '__new', label: '+ Add someone to the team…' }]} />
         </Field>
       )}
+      {(node.type === 'employee' || node.type === 'manager') && (() => {
+        const who = f.roster.find(r => r.id === (node.type === 'manager' ? MANAGER_ID : node.employeeId));
+        return (
+          <RunsOnField value={node.runsOn || ''} workers={workers} listId={'ff-pcs-' + node.id}
+            placeholder={who && who.runsOn ? `As the person: ${who.runsOn}` : 'As the person: this server'}
+            hint="Leave empty to run where the person runs (their Team setting). A worker PC's name runs this step there."
+            onChange={v => set(n => { n.runsOn = v.slice(0, 80); }, 'ro:' + node.id)} />
+        );
+      })()}
       {node.type === 'employee' && node.employeeId && <button className="ff-btn ghost" onClick={() => openRoster(node.employeeId)}><Icon name="user" size={14} />Edit their persona</button>}
       {node.type === 'manager' && <button className="ff-btn ghost" onClick={() => openRoster(MANAGER_ID)}><Icon name="crown" size={14} />Edit the Manager's persona</button>}
 

@@ -1,0 +1,46 @@
+{
+  "steps": [
+    {
+      "id": "chat-on-pc",
+      "tag": "Workers",
+      "title": "Chats that run on your PC",
+      "body": "A new chat can run on one of your worker PCs instead of the server: Claude Code runs there, with that PC's own sign-in, and the chat shows here like any other, with every Crundi tool. Its changes come back to a branch on the server for you to merge. If the PC drops off, the chat waits and carries on when it is back.",
+      "keys": [
+        { "keys": ["New chat", "Runs on"], "text": "this server, or a PC" },
+        { "keys": ["Chat header", "on <PC>"], "text": "bring its changes back" }
+      ],
+      "art": "chat-on-pc.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "job-card-live",
+      "tag": "Workers",
+      "title": "Watch a build on your PC",
+      "body": "When a chat runs a command on one of your PCs, a card in the chat shows it live: which PC, the output as it streams, Cancel, and the files that came back. The PC itself tells you when a job or a chat starts and ends.",
+      "art": "job-card.html",
+      "artTitle": "Chat"
+    },
+    {
+      "id": "factory-on-pc",
+      "tag": "Factories",
+      "title": "Factory steps on a PC",
+      "body": "A person in a factory's team, or a single step, can run on one of your PCs: set Runs on in the Team panel or the step. If that PC goes offline, its steps wait (and a Manager on it pauses the run) and carry on when it is back; its work comes back before the step hands off.",
+      "keys": [
+        { "keys": ["Team", "Runs on"], "text": "a PC for that person" }
+      ],
+      "art": "factory-on-pc.html",
+      "artTitle": "Factory"
+    },
+    {
+      "id": "worker-good-guest",
+      "tag": "Workers",
+      "title": "Only when you are away",
+      "body": "Each PC in the Workers tab has two more settings: start jobs only after the PC has been idle for a while, and not while it runs on battery. Jobs already run at low priority, so the PC stays yours.",
+      "keys": [
+        { "keys": ["Workers", "A PC"], "text": "Not on battery, Only when I am away" }
+      ],
+      "art": "good-guest.html",
+      "artTitle": "Workers"
+    }
+  ]
+}

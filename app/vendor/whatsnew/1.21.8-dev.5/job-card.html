@@ -1,0 +1,23 @@
+<div class="wna a-jc">
+  <div class="card"><div class="t">On farhan-RP-15 <span class="st"></span></div><div class="cmd">cargo build --release</div><div class="log"><div class="l l1">Compiling gpui v0.3.12</div><div class="l l2">Compiling crundi-native v1</div><div class="l l3">Finished release in 6m 41s</div></div><div class="f">1 file back (48 MB)</div></div>
+  <div class="note"><b>Crundi is running a job on this PC</b><span>cargo build --release</span></div>
+  <style>
+    .a-jc{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-jc .card{position:absolute;left:40px;top:80px;width:330px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:12px}
+    .a-jc .t{font-weight:600;display:flex;align-items:center;gap:8px}
+    .a-jc .st{width:56px;height:16px;border-radius:999px;background:var(--yellow-dim);animation:ajcS 10s infinite}
+    .a-jc .cmd{font-family:var(--mono);font-size:11px;margin:6px 0}
+    .a-jc .log{background:var(--bg-primary);border-radius:6px;padding:8px;font-family:var(--mono);font-size:11px;height:64px}
+    .a-jc .l{white-space:nowrap;overflow:hidden;width:0}
+    .a-jc .l1{animation:ajcL1 10s steps(24) infinite}.a-jc .l2{animation:ajcL2 10s steps(24) infinite}.a-jc .l3{color:var(--green);animation:ajcL3 10s steps(24) infinite}
+    .a-jc .f{margin-top:8px;font-size:12px;color:var(--accent);opacity:0;animation:ajcF 10s infinite}
+    .a-jc .note{position:absolute;left:400px;top:90px;width:200px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:10px 12px;display:flex;flex-direction:column;gap:4px;font-size:12px;opacity:0;animation:ajcN 10s infinite}
+    .a-jc .note span{color:var(--text-secondary);font-family:var(--mono);font-size:11px}
+    @keyframes ajcS{0%,70%{background:var(--yellow-dim)}74%,100%{background:var(--green)}}
+    @keyframes ajcL1{0%,12%{width:0}26%,100%{width:290px}}
+    @keyframes ajcL2{0%,30%{width:0}46%,100%{width:290px}}
+    @keyframes ajcL3{0%,62%{width:0}72%,100%{width:290px}}
+    @keyframes ajcF{0%,76%{opacity:0}80%,94%{opacity:1}100%{opacity:0}}
+    @keyframes ajcN{0%,6%{opacity:0;transform:translateY(-6px)}12%,40%{opacity:1;transform:none}46%,100%{opacity:0}}
+  </style>
+</div>

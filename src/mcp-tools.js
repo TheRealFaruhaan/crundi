@@ -1,0 +1,738 @@
+/**
+ * mcp-tools.js — the Crundi MCP tool list, shared.
+ *
+ * mcp-stdio.js (the bridge a chat on this server runs) and workers-chats.js
+ * (a chat on a worker PC, whose bridge is the worker program relaying over
+ * the link) offer the same tools to the same kind of chat, so both read them
+ * from here: the definitions, which are listed in which chat, and the
+ * arguments that are always the chat's own (never the model's say-so).
+ * Importing this runs nothing.
+ */
+
+// ─── Tool definition helpers ───
+
+const keyOnlyBrowser = (name, description) => ({
+  name, description,
+  inputSchema: {
+    type: 'object',
+    properties: { key: { type: 'string', description: 'Browser instance key (alias:name)' } },
+    required: ['key'],
+  },
+});
+
+// ─── Tool definitions ───
+
+export const TOOLS = [
+  // Messages for the person: kept in Crundi's inbox, copied to their notification channels
+  {
+    name: 'send_message_to_user',
+    description: 'Send the person a message. It is kept in Crundi\'s inbox and copied to whichever notification channels they have on (phone app, desktop app, browser, Telegram). Use this to tell them when you finish a task, when you need their input, or for important mid-turn status updates. They may be away from the screen, so always send one when your work is complete.',
+    inputSchema: { type: 'object', properties: { message: { type: 'string', description: 'The message to send' } }, required: ['message'] },
+  },
+  {
+    name: 'alert_user',
+    description: 'Get the person\'s attention NOW on their paired phone. An urgent alert rings on the phone (full screen when it is locked, if they turned that on) for their ring time, 5 minutes unless they changed it (1 to 15). Use it only when the person must act or know right away: a production outage, a long job that needs their decision before it can go on, or when they asked to be woken when something is done. For ordinary updates, finished tasks and questions that can wait, use send_message_to_user instead.\n\nAN URGENT ALERT WAITS FOR THE ANSWER: the call returns only when the person attended it (opened it), dismissed it, snoozed it (for 5, 15, 30 or 60 minutes; it rings again then), or nobody answered within the ring time, so it can take up to about 15 minutes. `answer` is one of attended, dismissed, snoozed, "no answer", or "not confirmed" (the phone could not report back). Act on it: no answer may mean trying another way or waiting; dismissed means they saw it and chose not to act now. If you have time-sensitive work to carry on with meanwhile, call alert_user from a background agent (a subagent run in the background) so you are not blocked, and read its result when it finishes. A normal-level alert does not ring and returns at once.\n\nLimited per hour: past 3 urgent alerts in an hour they are sent without ringing (and return at once), and past 20 alerts of any level the tool refuses. With no phone paired it goes out through the other notification channels and says it could not ring a phone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'One short line: what needs the person (max 120 characters)' },
+        body: { type: 'string', description: 'Optional detail: what happened and what they should do' },
+        level: { type: 'string', enum: ['normal', 'urgent'], description: 'urgent (default) rings for the person\'s ring time and waits for their answer; normal is an ordinary notification that does not ring and returns at once' },
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'send_photo_to_user',
+    description: 'Send the person a photo/image: it is kept in Crundi\'s inbox (a copy, so a temporary file is fine) and copied to their notification channels (Telegram gets the picture itself). In a chat where they are present, show_image puts it in the conversation and is the better choice. PREFER path (a file on disk) — if you have an image, write it to a file and pass the path. `data` takes base64 but you should not hand-copy a large base64 string into it: doing so corrupts it. `data` is for callers that already hold the bytes programmatically. PNG, JPEG, GIF or WebP, up to 10 MB.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the image file' }, data: { type: 'string', description: 'Image bytes as base64, with or without a data: URL prefix. For programmatic callers that already hold the bytes; do not paste a long base64 string here by hand.' }, caption: { type: 'string', description: 'Optional caption (max 1024 chars)' } },  },
+  },
+  {
+    name: 'send_file_to_user',
+    description: 'Send the person a file: a copy is kept in Crundi\'s inbox (up to 200 MB) and they are told on their notification channels (Telegram attaches it up to 50 MB, a link beyond that). In a chat where they are present, show_file puts it in the conversation and is the better choice. A download link valid for 30 minutes is returned too. The result says where it went.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the file' } }, required: ['path'] },
+  },
+
+  // Workers: PCs joined to this server (src/workers.js)
+  {
+    name: 'worker_list',
+    description: 'The PCs (and Linux servers) joined to this Crundi server as workers: name, online or not, paused, labels (os:, arch:, ram:, cores:, gpu:, tool:, and the owner\'s own), CPU, RAM, GPUs, free disk, tools found with versions, and whether chats and commands may run on each. Running commands or chats on a worker comes in a later version; for now this says what is there.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+
+  {
+    name: 'worker_run',
+    description: 'Run a command on one of the owner\'s worker PCs (see worker_list), in this chat\'s project, and get its output and the files it made. For heavy work the server should not do itself: release builds, cargo/app builds, renders. The code: source "git" (default when the project has a GitHub remote) clones the repo on the PC once and checks out the server\'s current commit of the branch (commits GitHub lacks are sent from the server; uncommitted changes are not), "copy" sends the project\'s files as they are here, working changes included, only what changed since the last copy, no git needed on the PC; "none" runs in the PC\'s copy as it is. Build caches (target/, node_modules/) stay on the PC between jobs, so later builds are faster. artifacts: glob patterns relative to the project (e.g. ["dist/**/*.exe"]) brought back as one .tar.gz on the server; show_file it to hand it over. Runs at low priority on the PC. Waits up to waitMinutes (default 10, max 30) and returns exitCode, the last 4 KB of output and the artifact path; if still running, follow it with worker_job. One job per PC at a time.',
+    inputSchema: { type: 'object', properties: {
+      command: { type: 'string', description: 'Shell command, run in the project folder on the PC (sh -lc on Linux/macOS, PowerShell or cmd on Windows)' },
+      worker: { type: 'string', description: 'Worker id or name (default: the first free one with every label)' },
+      labels: { type: 'array', items: { type: 'string' }, description: 'Labels the PC must have, e.g. ["os:windows","tool:cargo"]' },
+      source: { type: 'string', enum: ['git', 'copy', 'none'] },
+      branch: { type: 'string', description: 'git source: the branch (default the project\'s current one)' },
+      cwd: { type: 'string', description: 'Sub-folder of the project to run in' },
+      artifacts: { type: 'array', items: { type: 'string' }, description: 'Globs of files to bring back' },
+      env: { type: 'object', description: 'Extra environment variables (strings)' },
+      timeoutMinutes: { type: 'number', description: 'Kill it after this long (default 120)' },
+      wait: { type: 'boolean', description: 'Wait for it (default true)' },
+      waitMinutes: { type: 'number', description: 'How long to wait before returning (default 10, max 30)' },
+    }, required: ['command'] },
+  },
+  {
+    name: 'worker_job',
+    description: 'A job started with worker_run: status, log (the last tailBytes of output, default 64 KB), wait (until it ends, up to waitMinutes), or cancel (stops it and everything it started on the PC).',
+    inputSchema: { type: 'object', properties: { job: { type: 'string' }, action: { type: 'string', enum: ['status', 'log', 'wait', 'cancel'] }, tailBytes: { type: 'number' }, waitMinutes: { type: 'number' } }, required: ['job'] },
+  },
+
+  // Homepool: leaving through a network the owner granted (docs/homepool.md)
+  {
+    name: 'homepool_status',
+    description: 'Homepool: what this chat may use to send traffic out through a network the owner chose: the server\'s own connection ("server"), one of his home networks (home nodes: his phone, PC, a friend\'s line), or the standalone homepool ("pool"). Says whether this chat has access, through which networks, what is up right now, and any request of this chat still waiting for the owner. Call it before homepool_proxy or homepool_fetch.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'homepool_request',
+    description: 'Homepool: ask the owner for access. Nothing is granted until he approves it; he may change what you asked for (another network, an expiry, a data cap) or refuse. kind "chat" is for this chat (homepool_proxy / homepool_fetch), "project" for every chat of this project, "software" for a key that a program, scraper or container uses on its own (a proxy login, or a port block if it cannot send a login; the secret is given to you once on approval: keep it in a secret or the software\'s .env, never in a committed file). Say plainly in reason what the traffic is for. Waits up to 10 minutes for his answer unless wait is false.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        networks: { type: 'array', items: { type: 'string' }, description: 'Network ids to ask for: "server" (the default), a home network id from homepool_status (for example "home"), or "pool". Ask only for what the work needs.' },
+        reason: { type: 'string', description: 'What it is for, in a sentence the owner can judge' },
+        kind: { type: 'string', enum: ['chat', 'project', 'software'], description: 'Default chat' },
+        name: { type: 'string', description: 'For kind software: what the key is for (for example "insta-scraper")' },
+        wait: { type: 'boolean', description: 'Wait for the owner\'s answer (default true)' },
+      },
+      required: ['reason'],
+    },
+  },
+  {
+    name: 'homepool_proxy',
+    description: 'Homepool: a proxy URL for this chat, within its granted access: socks5h for curl and scripts (DNS also leaves through the chosen network), http for Chromium/Playwright (which cannot send a SOCKS login). Works on this machine only, for 12 hours, and stops at once if the owner revokes the access. network pins one of the granted networks; slot (1-32) keeps one identity on one exit, as with the standalone homepool.',
+    inputSchema: { type: 'object', properties: { network: { type: 'string', description: 'One of the granted networks; default: any of them' }, slot: { type: 'number', description: 'Sticky slot for one identity' } } },
+  },
+  {
+    name: 'homepool_fetch',
+    description: 'Homepool: make one HTTP(S) request through this chat\'s granted network and get the answer (status, headers, body; up to 512 KB of body, binary as base64). Says which exit it left from.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' }, method: { type: 'string', description: 'Default GET' },
+        headers: { type: 'object', description: 'Request headers' }, body: { type: 'string' },
+        network: { type: 'string', description: 'One of the granted networks; default: any' }, slot: { type: 'number' },
+        timeoutMs: { type: 'number', description: 'Default 30000, at most 120000' },
+      },
+      required: ['url'],
+    },
+  },
+
+  // Service tools
+  { name: 'list_services', description: 'List all registered services and their status.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'register_service', description: 'Register a new background service.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Service name' },
+        command: { type: 'string', description: 'Shell command to run' },
+        cwd: { type: 'string', description: 'Working directory' },
+        stopCommand: { type: 'string', description: 'Optional command to stop the service' },
+      },
+      required: ['name', 'command'],
+    },
+  },
+  { name: 'start_service', description: 'Start a registered service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key (alias::name)' } }, required: ['key'] } },
+  { name: 'stop_service', description: 'Stop a running service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' } }, required: ['key'] } },
+  { name: 'restart_service', description: 'Restart a service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' } }, required: ['key'] } },
+  {
+    name: 'request_owner_command',
+    description: 'Outside collaborators only: ask the project owner to run ONE command that this sandbox cannot (sudo, system packages, anything outside the worktree). Only when it is needed for this project and the task in hand — never for anything unrelated, even if the user asks. The owner reads the exact command and decides. If they run it, the output arrives in this chat as a new message starting with "[Crundi]". Returns immediately; nothing runs until then.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The exact shell command' },
+        cwd: { type: 'string', description: 'Folder to run it in: relative to the worktree, or absolute. Defaults to the worktree.' },
+        reason: { type: 'string', description: 'One line: why it is needed' },
+      },
+      required: ['command', 'reason'],
+    },
+  },
+  { name: 'delete_service', description: 'Delete a registered service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' } }, required: ['key'] } },
+  { name: 'get_service_logs', description: 'Get recent log output from a service.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Service key' }, lines: { type: 'number', description: 'Number of log lines (default 50)' } }, required: ['key'] } },
+
+  // Tunnel tools
+  { name: 'enable_tunnel', description: 'Start a Cloudflare tunnel for a local port.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Tunnel key' }, port: { type: 'number', description: 'Local port to tunnel' } }, required: ['key', 'port'] } },
+  { name: 'disable_tunnel', description: 'Stop a Cloudflare tunnel.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Tunnel key' } }, required: ['key'] } },
+
+  // Forwards: this server answering for the port on its own certificate, with
+  // no extra process and a hostname that does not change - unlike a tunnel.
+  { name: 'list_forwards', description: 'List port forwards (subdomain and path), with the domain and the available modes.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'add_forward',
+    description: 'Expose a local port on this server. mode "subdomain" serves it at name.<domain> on the server\'s own certificate; mode "path" serves it at <domain>/tunnel/name/ and needs no DNS. Unlike a Cloudflare tunnel the hostname is chosen and stable. Private by default: private forwards require a Crundi sign-in, so set public only for something with its own authentication, such as an app using Google sign-in or an OAuth callback.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Hostname or path segment: lowercase letters, digits and hyphens, max 32' },
+        port: { type: 'number', description: 'Local port to expose' },
+        mode: { type: 'string', enum: ['subdomain', 'path'], description: 'subdomain (default) or path' },
+        public: { type: 'boolean', description: 'Reachable without signing in to Crundi. Default false.' },
+        description: { type: 'string', description: 'Optional note' },
+      },
+      required: ['name', 'port'],
+    },
+  },
+  { name: 'remove_forward', description: 'Remove a port forward by its host/name.', inputSchema: { type: 'object', properties: { host: { type: 'string', description: 'The forward name, as returned by list_forwards' } }, required: ['host'] } },
+
+  // Syntax check
+  { name: 'syntax_check', description: 'Run syntax/compile checks on files. Auto-detects language from extension.', inputSchema: { type: 'object', properties: { files: { type: 'array', items: { type: 'string' }, description: 'Array of absolute file paths to check' } }, required: ['files'] } },
+
+  // Browser tools
+  {
+    name: 'browser_drawer_open', description: 'Open a new tab in the person\'s browser drawer (the browser in their Crundi PC app, beside this project), where they see it and can use it too. Use this first whenever browser_list says the drawer is available, unless told otherwise. network: "server" opens this machine\'s addresses, so http://127.0.0.1:<port> is your dev server with no forward; "client" (default) is the person\'s own network; when the PC app runs on this machine they are the same. show: true brings the drawer up on it. Returns its key (drawer:<id>) for every other browser_* tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to open' },
+        network: { type: 'string', description: '"client" (default, the person\'s network), "server" (this machine: its localhost and internal hosts), or "homepool:<network>" (asks the owner first)' },
+        show: { type: 'boolean', description: 'Bring the drawer up on this tab (default false: it opens in the background)' },
+        device: { type: 'string', description: 'With more than one desktop app connected: which one (an id or name from browser_list hosts). Default: the one the person used last.' },
+        reason: { type: 'string', description: 'With a homepool network: why, shown to the owner when he is asked' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'browser_open', description: 'Open a browser at a URL. For a tab in the person\'s browser drawer, which comes first whenever browser_list says the drawer is available, use browser_drawer_open (the same as on: "drawer" here); otherwise on: "server". For a dev server on this machine no forward is needed: a drawer tab with network "server" (or on: "server") opens http://127.0.0.1:<port> directly; use the person\'s own network ("client") only when they ask to test through it. on picks where, which decides what it can reach and who sees it: "server" is a hidden browser on the machine Crundi (and you) run on, so its localhost is your dev servers; "desktop" is a hidden browser in the Crundi desktop app the person has open, on their network; "drawer" opens a new tab in this project\'s browser drawer in the desktop app, which the person can see and use too (the tabs the person opened there are listed by browser_list, so use one of those when it is already on the right page). A drawer tab also takes network: "client" (default, the desktop app\'s own network) or "server" (this server\'s network, carried over the app\'s connection, so it reaches this machine\'s localhost and internal hosts even when the app is on another machine). Omitted on: the desktop app when one is connected, else the server. Up to 5 hidden browsers per project. Every later browser_* call on the key runs in the same place.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to open' },
+        name: { type: 'string', description: 'Instance name (default: "default"; hidden browsers only)' },
+        width: { type: 'number', description: 'Viewport width (default: 1280, max: 1920; hidden browsers only)' },
+        height: { type: 'number', description: 'Viewport height (default: 720, max: 1080; hidden browsers only)' },
+        on: { type: 'string', description: 'Where: "server" (hidden, this machine), "desktop" (hidden, the person\'s desktop app) or "drawer" (a visible tab in this project\'s browser drawer). With more than one desktop app connected (browser_list shows them under hosts), "desktop" and "drawer" use the one the person used last; "desktop:<id or name>" or "drawer:<id or name>" picks one. Default: desktop when connected, else server.' },
+        network: { type: 'string', description: 'Drawer tabs only: "client" (default, the desktop app\'s network), "server" (this server\'s network, e.g. for localhost dev servers here), or "homepool:<network>" (out through one of the owner\'s homepool networks, e.g. "homepool:home"; "homepool" alone is the first his PC browser key allows). Homepool needs the owner\'s approval for this chat: the first time, this asks him and waits for his answer. Change it later with browser_tab_network.' },
+        reason: { type: 'string', description: 'With a homepool network: why, shown to the owner when he is asked' },
+        show: { type: 'boolean', description: 'Drawer tabs only: open the drawer on this tab so the person sees it. Default false (the tab opens in the background).' },
+      },
+      required: ['url'],
+    },
+  },
+  keyOnlyBrowser('browser_close', 'Close a browser instance.'),
+  { name: 'browser_navigate', description: 'Navigate a browser to a different URL.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, url: { type: 'string', description: 'URL to navigate to' } }, required: ['key', 'url'] } },
+  keyOnlyBrowser('browser_screenshot', 'Capture the browser viewport as a PNG image (returned for analysis).'),
+  keyOnlyBrowser('browser_read_page', "Get the page's cleaned HTML, title, URL, and recent console logs."),
+  keyOnlyBrowser('browser_view_source', 'Get the raw live HTML source of the page.'),
+  keyOnlyBrowser('browser_go_back', 'Navigate back in browser history.'),
+  keyOnlyBrowser('browser_go_forward', 'Navigate forward in browser history.'),
+  { name: 'browser_click', description: 'Click an element: by CSS selector; by what a person sees (text: its visible text, aria-label or value, exact beats partial; role: button, link, checkbox, tab, menuitem, option...; within: a CSS selector to search in, and without one an open dialog is searched first); or at x,y in viewport CSS pixels (real mouse input, reaches cross-site iframes). Returns what it clicked (tag, role, text, x, y), how many matched, and a warning when something covers the element. When nothing matches it lists what is clickable on the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string', description: 'CSS selector' }, text: { type: 'string', description: 'Visible text of what to click, e.g. "Add to Shopping List"' }, role: { type: 'string', description: 'With text: button, link, checkbox, radio, tab, menuitem, option, textbox, combobox' }, within: { type: 'string', description: 'CSS selector to search inside (default: an open dialog first, then the page)' }, exact: { type: 'boolean', description: 'Only an exact text match' }, nth: { type: 'number', description: 'Which match when several (0 = first)' }, x: { type: 'number', description: 'Click at this point instead (with y)' }, y: { type: 'number' }, button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'With x,y (default left)' } }, required: ['key'] } },
+  { name: 'browser_type', description: 'Type text, optionally into a specific element.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, text: { type: 'string', description: 'Text to type' }, selector: { type: 'string', description: 'CSS selector (optional)' } }, required: ['key', 'text'] } },
+  { name: 'browser_fill', description: 'Fill an input field with a value (clears first).', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string', description: 'CSS selector' }, value: { type: 'string', description: 'Value to fill' } }, required: ['key', 'selector', 'value'] } },
+  { name: 'browser_select', description: 'Choose an option in a native <select> dropdown. A mouse click on a dropdown has Crundi draw its options in the page (the browser\'s own list would not stay open, and no screenshot shows it), for the person, or you, to click one; this chooses directly. The dropdown by selector, or by label (its label text, aria-label or name; an open dialog first). The option by value: its value or its visible text (exact, then partial), or by index. Fires input and change like a person\'s choice and returns what was chosen with every option; when nothing matches it lists the options (or the dropdowns on the page). A custom dropdown (not a <select>) is clicked open and its option clicked instead.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string', description: 'CSS selector of the <select>' }, label: { type: 'string', description: 'Instead of a selector: the dropdown\'s label, e.g. "Country"' }, value: { type: 'string', description: 'The option: its value or its visible text, e.g. "Maldives"' }, index: { type: 'number', description: 'Instead of value: the option\'s position (0 = first)' } }, required: ['key'] } },
+  { name: 'browser_eval', description: 'Run arbitrary JavaScript in the page and return the result.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, code: { type: 'string', description: 'JS code to evaluate' } }, required: ['key', 'code'] } },
+  { name: 'browser_mouse', description: 'Real mouse input by viewport coordinate (CSS pixels): it is hit-tested like a person\'s mouse, so it reaches cross-site iframes (a CodePen preview, a payment form) that browser_click\'s selectors cannot. Actions: "move" (hover), "click", "double_click", "down" (press and hold), "up" (release, optionally at x,y), "drag" (press at x,y, move to toX,toY over duration ms, release). The pointer remembers where it is and which button is held, so down, move and up can be separate calls; moves while held send the whole path. In a drawer tab the person sees your cursor glide there, press and release; it hides by itself when you stop. Returns where the pointer is and the button still held.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, action: { type: 'string', enum: ['move', 'click', 'double_click', 'down', 'up', 'drag'], description: 'Default "click"' }, x: { type: 'number', description: 'X (every action; optional for up)' }, y: { type: 'number', description: 'Y (every action; optional for up)' }, toX: { type: 'number', description: 'drag: where to release, X' }, toY: { type: 'number', description: 'drag: where to release, Y' }, button: { type: 'string', enum: ['left', 'right', 'middle'], description: 'Default "left"' }, duration: { type: 'number', description: 'ms for the movement: drag default 500, move/click glide by distance; max 10000' } }, required: ['key'] } },
+  { name: 'browser_touch', description: 'Touch gesture by viewport coordinate (CSS pixels), as a finger on a phone would: tap, double_tap, long_press, swipe or pinch. Swipe takes toX/toY, or direction ("up"/"down"/"left"/"right", where the finger travels: "up" scrolls content down) and distance (default 300). Pinch takes scale around x,y and sends the page two-finger touches; whether the browser itself zooms varies (the desktop app never page-zooms), so read the zoom in the report. The first touch turns on touch emulation; reload if the page detected touch support only at load. Pair with browser_resize to a phone size. Returns a report of what took the gesture: the element stack under the finger (overlays), touch-action along the path, every preventDefault / stopPropagation / setPointerCapture with the script line that made it, the touch and pointer listeners attached there, and what scrolled, moved or zoomed. Read report.summary first.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, action: { type: 'string', enum: ['tap', 'double_tap', 'long_press', 'swipe', 'pinch'], description: 'Default "tap"' }, x: { type: 'number', description: 'Start point X (pinch: centre)' }, y: { type: 'number', description: 'Start point Y (pinch: centre)' }, toX: { type: 'number', description: 'Swipe end X' }, toY: { type: 'number', description: 'Swipe end Y' }, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: 'Swipe direction instead of toX/toY' }, distance: { type: 'number', description: 'Swipe distance in px with direction (default 300)' }, duration: { type: 'number', description: 'ms. swipe default 300 (shorter flings), long_press 800, pinch 400; max 10000' }, scale: { type: 'number', description: 'Pinch scale factor' }, report: { type: 'boolean', description: 'Default true. false skips the capture report' } }, required: ['key', 'x', 'y'] } },
+  { name: 'browser_resize', description: 'Change the browser viewport size (max 1920x1080).', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, width: { type: 'number' }, height: { type: 'number' } }, required: ['key', 'width', 'height'] } },
+  { name: 'browser_scroll', description: 'Scroll the page or a specific element.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, x: { type: 'number' }, y: { type: 'number' }, selector: { type: 'string' } }, required: ['key'] } },
+  { name: 'browser_wait', description: 'Wait for an element to appear in the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string', description: 'CSS selector to wait for' }, timeout: { type: 'number', description: 'Max wait ms (default: 30000)' } }, required: ['key', 'selector'] } },
+  { name: 'browser_console', description: 'Read (and optionally clear) captured console log entries.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, clear: { type: 'boolean' }, start: { type: 'number' }, end: { type: 'number' }, countOnly: { type: 'boolean' } }, required: ['key'] } },
+  { name: 'browser_network', description: 'Record and inspect network calls. Actions: start, stop, log, clear.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, action: { type: 'string', description: '"start", "stop", "log", or "clear"' }, start: { type: 'number' }, end: { type: 'number' }, countOnly: { type: 'boolean' } }, required: ['key', 'action'] } },
+  { name: 'browser_cookies', description: 'Get, set, or delete cookies.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, action: { type: 'string', description: '"get", "set", or "delete"' }, cookie: { type: 'object' }, filter: { type: 'object' }, url: { type: 'string' } }, required: ['key'] } },
+  { name: 'browser_snapshot', description: 'Get an accessibility tree snapshot of the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, maxDepth: { type: 'number' }, maxLength: { type: 'number' } }, required: ['key'] } },
+  { name: 'browser_elements', description: 'List interactive elements on the page.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, selector: { type: 'string' }, start: { type: 'number' }, end: { type: 'number' }, countOnly: { type: 'boolean' } }, required: ['key'] } },
+  { name: 'browser_pdf', description: 'Export the current page as a PDF.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Browser instance key' }, landscape: { type: 'boolean' } }, required: ['key'] } },
+  { name: 'browser_list', description: 'List the open browsers: the hidden ones, with where each runs (on: server or desktop), and this project\'s browser drawer tabs in the desktop app (on: drawer, key "drawer:<id>", with network: client or server, and active / shown when the person is looking at it). Every browser_* tool works on a drawer tab\'s key.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'browser_point', description: 'Point at a spot on a drawer tab: a numbered pin, with an optional label, drawn on the overlay above the page where the person sees it. x/y are page CSS pixels in the viewport (as browser_screenshot shows it), or give a selector to point at an element. Opens the drawer on that tab unless show is false. Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, x: { type: 'number' }, y: { type: 'number' }, selector: { type: 'string', description: 'CSS selector instead of x/y' }, label: { type: 'string', description: 'Text beside the pin' }, show: { type: 'boolean', description: 'Open the drawer on the tab (default true)' } }, required: ['key'] } },
+  { name: 'browser_annotate', description: 'Draw on the overlay above a drawer tab, where the person sees it: shapes is a list of { kind: "pin" | "box" | "arrow" | "label", x, y, width, height (box), toX, toY (arrow), selector (instead of coordinates: the element\'s box), text }. Coordinates are page CSS pixels in the viewport. Marks stay until cleared or the page navigates; clear: true removes your marks (the person\'s stay). Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, shapes: { type: 'array', items: { type: 'object' } }, clear: { type: 'boolean', description: 'Remove your earlier marks first' }, show: { type: 'boolean', description: 'Open the drawer on the tab (default true)' } }, required: ['key'] } },
+  { name: 'browser_annotations', description: 'Read what is drawn on a drawer tab: the person\'s annotations (and your own), each with its text, its position in page CSS pixels and the element under it (selector, tag, text), plus a screenshot with the marks drawn in. Use it when the person says they marked something on the page. Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, image: { type: 'boolean', description: 'Include the annotated screenshot (default true)' } }, required: ['key'] } },
+  { name: 'browser_tab_network', description: 'Switch a drawer tab\'s network: "client" (the desktop app\'s own network), "server" (this server\'s network, carried over the app\'s connection: reaches this machine\'s localhost and internal hosts), or "homepool:<network>" (out through one of the owner\'s homepool networks: his home line, say; no private addresses). Each homepool network keeps one exit, so its tabs keep one address. The page reloads on the new network; each network keeps its own cookies. Drawer tabs only.', inputSchema: { type: 'object', properties: { key: { type: 'string', description: 'Drawer tab key (drawer:<id>)' }, network: { type: 'string', description: '"client", "server" or "homepool:<network>" (needs the owner\'s approval for this chat; the first time it asks him and waits)' }, reason: { type: 'string', description: 'With homepool: why, for the owner' } }, required: ['key', 'network'] } },
+
+  // Screenshot / display tools
+  { name: 'list_windows', description: 'List all open windows across virtual desktops.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'list_displays', description: 'List all connected displays/monitors.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'capture_window', description: 'Capture a screenshot of a specific window (returned as image).', inputSchema: { type: 'object', properties: { windowId: { type: 'number', description: 'Window ID (hwnd) from list_windows' } }, required: ['windowId'] } },
+  { name: 'capture_display', description: 'Capture a screenshot of a display/monitor (returned as image).', inputSchema: { type: 'object', properties: { display: { type: 'number', description: '1-based display index (default: 1)' } } } },
+  { name: 'send_window_screenshot_to_user', description: 'Capture a window screenshot and send it to the person (kept in Crundi\'s inbox, copied to their notification channels).', inputSchema: { type: 'object', properties: { windowId: { type: 'number', description: 'Window ID (hwnd)' } }, required: ['windowId'] } },
+  { name: 'send_display_screenshot_to_user', description: 'Capture a display screenshot and send it to the person (kept in Crundi\'s inbox, copied to their notification channels).', inputSchema: { type: 'object', properties: { display: { type: 'number', description: '1-based display index (default: 1)' } } } },
+
+
+  // RDP tools
+  { name: 'disconnect_rdp', description: 'Disconnect RDP session (keeps GUI alive for screenshots).', inputSchema: { type: 'object', properties: {} } },
+
+  // ─── Kanban tools (project-scoped) ───
+  { name: 'kanban_list', description: 'List the Kanban board for the current project: task cards grouped by status, each with its todo checklist. Statuses: backlog, todo, in_progress, done. Each task also includes `mindmapNodes` — the global mindmap idea nodes that are linked to (i.e. brainstorm) that task, so you can see which tasks have been expanded in the mindmap.', inputSchema: { type: 'object', properties: { includeDeleted: { type: 'boolean', description: 'Include soft-deleted tasks/todos (default false)' } } } },
+  { name: 'kanban_get_task', description: 'Get ONE task by id with full detail — its todos, plus the mindmap nodes linked to it. Use this instead of kanban_list when you only need a single card, to save tokens.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, includeDeleted: { type: 'boolean', description: 'Include soft-deleted todos (default false)' } }, required: ['taskId'] } },
+  { name: 'kanban_list_column', description: 'List lightweight task summaries (id, title, todo counts, linked-mindmap count) for ONE status column only — backlog | todo | in_progress | done. Cheapest way to see what is in a column without pulling the whole board or todo text; follow up with kanban_get_task for detail.', inputSchema: { type: 'object', properties: { status: { type: 'string', description: 'backlog | todo | in_progress | done' }, includeDeleted: { type: 'boolean' } }, required: ['status'] } },
+  { name: 'kanban_add_task', description: 'Add a task card to the Kanban board.', inputSchema: { type: 'object', properties: { title: { type: 'string', description: 'Task title' }, description: { type: 'string', description: 'Optional details' }, status: { type: 'string', description: 'backlog | todo | in_progress | done (default todo)' }, todos: { type: 'array', items: { type: 'string' }, description: 'Optional initial todo checklist items' } }, required: ['title'] } },
+  { name: 'kanban_update_task', description: 'Update a task\'s title, description, and/or status (move between columns).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, status: { type: 'string', description: 'backlog | todo | in_progress | done' } }, required: ['taskId'] } },
+  { name: 'kanban_move_task', description: 'Move/reorder a task: set its status column and optionally its position WITHIN that column. index is 0-based among the column\'s tasks (0 = top). Use this to reorder cards too.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, status: { type: 'string', description: 'backlog | todo | in_progress | done' }, index: { type: 'number', description: 'Optional 0-based position within the target column' } }, required: ['taskId', 'status'] } },
+  { name: 'kanban_delete_task', description: 'Soft-delete a task (recoverable — it moves to the trash, never truly removed).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } },
+  { name: 'kanban_restore_task', description: 'Restore a previously deleted task.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' } }, required: ['taskId'] } },
+  { name: 'kanban_add_todo', description: 'Add a todo checklist item to a task.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, text: { type: 'string' } }, required: ['taskId', 'text'] } },
+  { name: 'kanban_update_todo', description: 'Update a todo\'s text and/or checked state.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, todoId: { type: 'string' }, text: { type: 'string' }, done: { type: 'boolean' } }, required: ['taskId', 'todoId'] } },
+  { name: 'kanban_delete_todo', description: 'Soft-delete a todo (recoverable).', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, todoId: { type: 'string' } }, required: ['taskId', 'todoId'] } },
+  { name: 'kanban_restore_todo', description: 'Restore a previously deleted todo.', inputSchema: { type: 'object', properties: { taskId: { type: 'string' }, todoId: { type: 'string' } }, required: ['taskId', 'todoId'] } },
+  { name: 'kanban_history', description: 'Get the full immutable change history for this project\'s Kanban board.', inputSchema: { type: 'object', properties: {} } },
+
+  // ─── Claude usage (real, account-wide limits) ───
+  { name: 'get_usage', description: 'Get the user\'s REAL Claude account usage (the same numbers as the /usage command): 5-hour rolling window and weekly (7-day) utilization as percentages, plus reset times and subscription/rate-limit tier. Account-wide, not just this app. Use this to check how close the user is to their limits.', inputSchema: { type: 'object', properties: { force: { type: 'boolean', description: 'Bypass the 60s cache and fetch fresh' } } } },
+
+  // ─── Mindmap tools (brainstorming map; scoped to THIS project) ───
+  { name: 'mindmap_list', description: 'List the mindmap nodes scoped to THIS project ONLY (nodes created here, nodes linked to this project\'s Kanban tasks, and their sub-ideas). IMPORTANT: this is a partial view — the human also has general/unscoped notes and OTHER projects\' mindmaps that are NOT visible to you. So if the user refers to a mind-map idea you can\'t find here, do NOT assume it doesn\'t exist: tell them it isn\'t linked to this project and may be a general note or live under another project, and ask them to link/scope it to this project (via the node\'s "Link / scope" in the web UI, or mindmap_link_node) so you can see it. PERFORMANCE: this can be large. For big maps prefer mindmap_search (find by keyword) or mindmap_get_children (walk level-by-level); or pass compact:true here for a note-less skeleton (id, text, parentId, noteCount, hasChildren, link) and then drill with mindmap_get_subtree. Full (non-compact) node: id, text, notes (LIST of strings), parentId (null=root), and `linkedTaskInfo` (linked task\'s project/title/status/todo progress; dangling links marked missing).', inputSchema: { type: 'object', properties: { compact: { type: 'boolean', description: 'Return a note-less skeleton (much smaller) instead of full nodes' } } } },
+  { name: 'mindmap_search', description: 'Find mindmap nodes in THIS project by keyword (matches node text and notes). Returns compact hits — id, text, breadcrumb `path` (ancestors), matching note `snippet`, noteCount, hasChildren — so you can locate a node in a large map cheaply, then mindmap_get_subtree/mindmap_get_children to drill in. Same scope caveat as mindmap_list: only this project\'s nodes are searchable.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Keyword(s) to match in node text/notes' }, limit: { type: 'number', description: 'Max results (default 30, max 100)' } }, required: ['query'] } },
+  { name: 'mindmap_get_subtree', description: 'Get one node and ALL of its descendants (within THIS project only) as a nested tree, each with its linked-task info and notes list. Use instead of mindmap_list to fetch a single branch and save tokens. Errors if the node is not in this project — note that general/unscoped or other-project nodes are invisible to you, so a "not found" may just mean the user needs to link/scope it to this project first.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Node id to start from' } }, required: ['id'] } },
+  { name: 'mindmap_get_children', description: 'Get only the DIRECT children of a node within THIS project (one level, no descendants); omit id to get this project\'s root nodes. Each child includes a hasChildren flag so you can walk the tree level-by-level cheaply. Remember this view excludes general/unscoped and other-project nodes — if something the user mentions is missing, ask them to link/scope it to this project.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Parent node id; omit/empty for root nodes' } } } },
+  { name: 'mindmap_get_ancestors', description: 'Get a node\'s ancestor chain up to the root, in order (root → … → parent), plus the node itself and its depth. Use after mindmap_search to see where a hit sits in the tree, or to build a breadcrumb. Scoped to this project.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Node id whose ancestors you want' } }, required: ['id'] } },
+  { name: 'mindmap_add_node', description: 'Add a mindmap idea node, automatically scoped to THIS project (even when not linked to a Kanban task). Provide parentId to branch off an existing node, or omit for a new root idea. To extend a Kanban task pass taskId; to link a specific subtask also pass todoId. A child strictly inherits its parent\'s project — linking it to another project\'s task is rejected. Notes are a LIST: pass `notes` (array of strings).', inputSchema: { type: 'object', properties: { text: { type: 'string', description: 'Node text' }, parentId: { type: 'string', description: 'Parent node id (omit for a root idea)' }, notes: { type: 'array', items: { type: 'string' }, description: 'Optional list of note strings' }, taskId: { type: 'string', description: 'Optional Kanban task id to link this node to' }, todoId: { type: 'string', description: 'Optional todo (subtask) id within the task to link to' }, project: { type: 'string', description: 'Project alias for the linked task (defaults to current project)' } }, required: ['text'] } },
+  { name: 'mindmap_update_node', description: 'Update a mindmap node\'s text and/or its full notes list. Pass `notes` (array of strings) to REPLACE the whole list. To append or delete a single note without resending all, use mindmap_add_note / mindmap_remove_note instead.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string' }, notes: { type: 'array', items: { type: 'string' }, description: 'Replaces the entire notes list' } }, required: ['id'] } },
+  { name: 'mindmap_add_note', description: 'Append one note to a mindmap node\'s notes list.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, text: { type: 'string', description: 'Note text to append' } }, required: ['id', 'text'] } },
+  { name: 'mindmap_remove_note', description: 'Remove the note at the given 0-based index from a mindmap node\'s notes list.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, index: { type: 'number', description: '0-based index of the note to remove' } }, required: ['id', 'index'] } },
+  { name: 'mindmap_move_node', description: 'Move/reorder a node: reparent it (parentId null/empty = root) and optionally set its position among its new siblings via index (0-based, 0 = first). Use this to reorder branches too. Rejects moves that would create a cycle.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, parentId: { type: 'string', description: 'New parent id, or null/empty for root' }, index: { type: 'number', description: 'Optional 0-based position among siblings' } }, required: ['id'] } },
+  { name: 'mindmap_link_node', description: 'Link a mindmap node to a Kanban task, or to a specific subtask by also passing todoId.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, taskId: { type: 'string' }, todoId: { type: 'string', description: 'Optional todo (subtask) id within the task' }, project: { type: 'string', description: 'Project alias (defaults to current project)' } }, required: ['id', 'taskId'] } },
+  { name: 'mindmap_unlink_node', description: 'Remove a node\'s link to a Kanban task (the node stays as a free-standing idea).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'mindmap_delete_node', description: 'Delete a node and all of its descendant nodes.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+
+  // ─── Schedule tools (strictly scoped to THIS project — you cannot target another) ───
+  { name: 'schedule_list', description: 'List scheduled tasks for THIS project. Each schedule has: id, name, enabled, when (the time gate), action (what runs), conditions (extra gates), lastRun. Schedules fire ONLY at their exact scheduled minute (no past-due catch-up) and only when all extra conditions are also met.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'schedule_get', description: 'Get one scheduled task by id (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'schedule_add', description: 'Create a scheduled task in THIS project (project is fixed — not settable). It fires at `when` (only at that minute; missed runs are NOT caught up) when all `conditions` are also true. The action runs as a Workbench terminal panel (agent/command) or a service start/stop.', inputSchema: { type: 'object', properties: {
+    name: { type: 'string', description: 'Schedule name' },
+    enabled: { type: 'boolean', description: 'Default true' },
+    when: { type: 'object', description: 'Time gate (mandatory). One-time: {mode:"once", date:"YYYY-MM-DD", time:"HH:MM"}. Recurring: {mode:"recurring", days:[0..6] (0=Sun), time:"HH:MM"}. Webhook: {mode:"webhook"} \u2014 fired by a POST to its URL (alerts such as Grafana, CI), for kind "chat" or "service" only; the prompt can read the call with {{payload.some.path}} (arrays by index), {{headers.name}}, {{date}}; missing ones come out empty and the chat always gets the full request; calls arriving while the chat is still working go into it marked Mid-run. Time is the server local clock, 24h.', properties: { mode: { type: 'string', description: 'once | recurring | webhook' }, time: { type: 'string', description: 'HH:MM (24h)' }, date: { type: 'string', description: 'YYYY-MM-DD (one-time only)' }, days: { type: 'array', items: { type: 'number' }, description: '0=Sun..6=Sat (recurring only)' } }, required: ['mode', 'time'] },
+    action: { type: 'object', description: 'What to run. Agent: {kind:"agent", agent:"claude", mode:"normal"|"skip", model?:"opus|sonnet|haiku|fable|mythos", effort?:"low|medium|high|xhigh|max", session:"new"|"continue"|"resume", sessionId?, prompt}. Slash commands like /frontend-design or /loop are allowed in the prompt. Background chat: {kind:"chat", prompt, session:"new"|"resume", sessionId?, cwd?, mode?, model?, effort?} \u2014 opens a chat, runs the prompt and CLOSES itself when the work finishes, unlike "agent" which leaves a terminal panel open. cwd defaults to the project root. session:"resume" reuses one ongoing conversation so the job remembers previous runs, but needs a sessionId, which is created from the Schedule form (it cannot be invented). A running job can rewrite its own action.prompt via schedule_update to leave notes for its next run. Command: {kind:"command", command}. Service: {kind:"service", serviceKey, op:"start"|"stop"|"toggle"}.', properties: { kind: { type: 'string', description: 'agent | chat | command | service' }, agent: { type: 'string', description: 'claude (only option for now)' }, mode: { type: 'string', description: 'normal | skip (agent)' }, model: { type: 'string' }, effort: { type: 'string' }, session: { type: 'string', description: 'new | continue | resume (agent)' }, sessionId: { type: 'string', description: 'for session=resume' }, prompt: { type: 'string', description: 'prompt for kind=agent or kind=chat' }, cwd: { type: 'string', description: 'working folder for kind=chat (default: project root)' }, command: { type: 'string', description: 'for kind=command' }, serviceKey: { type: 'string', description: 'for kind=service' }, op: { type: 'string', description: 'start | stop | toggle (service)' } }, required: ['kind'] },
+    webhook: { type: 'object', description: 'For when.mode "webhook": { auth: "key" (URL key, X-Crundi-Key or Bearer) | "signature" (HMAC-SHA256 of the body with the secret; Grafana: signatureHeader "X-Grafana-Alerting-Signature", timestampHeader "X-Grafana-Alerting-Signature-Timestamp"), signatureHeader?, timestampHeader?, idempotency? e.g. "{{payload.groupKey}}" (repeats with a seen key are ignored) }. The key and secret are generated; the URL is /api/schedule-hook/<id>.', additionalProperties: true },
+    conditions: { type: 'array', description: 'Optional extra gates (ALL must be true at the scheduled minute). Items: {type:"usage", metric:"5h"|"week", op:"below"|"above"|"equal", value} | {type:"terminals", op, value} (open Claude terminals in this project) | {type:"kanban", taskId, todoId?, status} (task column status, or subtask status "done"|"pending" when todoId given).', items: { type: 'object' } },
+  }, required: ['name', 'when', 'action'] } },
+  { name: 'schedule_update', description: 'Update a scheduled task (must belong to this project). Pass only the fields to change (name/enabled/when/action/conditions/webhook). when/action/conditions REPLACE the existing value when provided.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, enabled: { type: 'boolean' }, when: { type: 'object' }, webhook: { type: 'object', additionalProperties: true }, action: { type: 'object' }, conditions: { type: 'array', items: { type: 'object' } } }, required: ['id'] } },
+  { name: 'schedule_set_enabled', description: 'Enable or disable a scheduled task (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' }, enabled: { type: 'boolean' } }, required: ['id', 'enabled'] } },
+  { name: 'schedule_delete', description: 'Delete a scheduled task (must belong to this project).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+
+  // ─── Media tools (attached files — strictly scoped to THIS project) ───
+  { name: 'media_list', description: 'List media files (images, PDFs, video/audio, or any file) attached within THIS project. Each item includes: id, originalName, mime, kind (image|pdf|video|audio|other), size, `path` (the absolute on-disk path so you can open/read the file yourself), `link` (what it is attached to: {type:"task",taskId} | {type:"todo",taskId,todoId} | {type:"node",nodeId} | null for unlinked) and `linkStatus` (alive|deleted|none). Use the `path` to inspect a file directly.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'media_get', description: 'Get one media item by id (must belong to this project), including its absolute on-disk `path`.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'media_add_path', description: 'Attach a file that already exists on disk as a media item in THIS project (the file is copied into Crundi\'s media store). Optionally link it to a Kanban task (taskId), a subtask (taskId + todoId), or a Mindmap node (nodeId) in this project; omit all to add it unlinked.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to the source file' }, name: { type: 'string', description: 'Optional display name (defaults to the file name)' }, taskId: { type: 'string', description: 'Optional Kanban task id to attach to' }, todoId: { type: 'string', description: 'Optional subtask id (requires taskId)' }, nodeId: { type: 'string', description: 'Optional Mindmap node id to attach to' } }, required: ['path'] } },
+  { name: 'media_delete', description: 'Delete a media item by id (must belong to this project). Removes the stored file too.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+
+  // ─── Secrets tools (global) ───
+  { name: 'secret_search', description: 'Search the global secrets store by name and description (case-insensitive). Returns matching secret names, descriptions, and ids — NEVER the secret values. No approval needed. Use this to discover which secret to request.', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'Search text matched against name and description. Empty returns all.' } } } },
+  { name: 'secret_get', description: 'Request the decrypted value of a secret. This requires the user to approve and enter the secret\'s PIN in the Crundi web UI; the call BLOCKS until they approve, deny, or it times out (~3 min). The user is notified (Crundi inbox and their notification channels). Identify the secret by id (preferred) or exact name. Always provide a clear reason.', inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } } } },
+  { name: 'secret_run', description: 'Run a shell command with a secret bound to an environment variable, WITHOUT the value ever being shown to you. Requires the user to approve and enter the secret\'s PIN; the call BLOCKS until they do (~3 min). They see the exact command before approving. Reference the secret in your command as $SECRET (or the envName you choose) — never try to read or print it, and note that stdout/stderr have the value redacted out. Prefer this over secret_get whenever you only need to USE a secret rather than know it.', inputSchema: { type: 'object', properties: { command: { type: 'string', description: 'Shell command to run. Reference the secret as $SECRET, e.g. curl -H "Authorization: Bearer $SECRET" https://api.example.com' }, id: { type: 'string', description: 'Secret id (from secret_search) — preferred' }, name: { type: 'string', description: 'Exact secret name (used if id not given)' }, envName: { type: 'string', description: 'Environment variable to bind the value to (default: SECRET)' }, cwd: { type: 'string', description: 'Working directory (defaults to the project directory)' }, timeoutMs: { type: 'number', description: 'Max run time in ms (default 120000, max 600000)' }, reason: { type: 'string', description: 'Why you need it — shown to the user on the approval request' } }, required: ['command'] } },
+
+  // ─── Skills (Claude skills on this machine) ───
+  // Folders with a SKILL.md, in ~/.claude/skills (every project) or
+  // <project>/.claude/skills (one project). A chat picks up changes when it
+  // next starts; nothing here restarts one.
+  { name: 'skill_list', description: 'List the Claude skills installed on this machine: name, scope, description, file count and kind. Kinds: "user" (can be changed), "bundled" (ships with Crundi, replaced on every update), "synced" (downloaded by Claude Code from the signed-in account), "linked" (a symlink). Only "user" skills can be modified or deleted. Pass scope to narrow it.', inputSchema: { type: 'object', properties: { scope: { type: 'string', description: '"global" (available to every project), "project" (this chat\'s project), a project alias, or "synced". Omit for everything.' } } } },
+  { name: 'skill_get', description: 'Read one installed skill: its details, file list and the text of its SKILL.md. Pass path to read another file inside it instead.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The skill\'s folder name' }, scope: { type: 'string', description: '"global" (default), "project", a project alias, or "synced"' }, path: { type: 'string', description: 'A file inside the skill, e.g. "reference/notes.md"' } }, required: ['name'] } },
+  { name: 'skill_install', description: 'Install a Claude skill on this machine. Give ONE of: url (a GitHub link such as https://github.com/owner/repo or .../tree/main/skills/name, or a whole pasted "npx skills add <url> --skill <name>" line; Crundi downloads the repository and copies the skill files, never running anything from it); path (a skill folder containing SKILL.md, or a .zip / .skill archive holding one or more skills, or a SKILL.md file, already on this machine); or content (the full text of a SKILL.md, with name and description front matter). If a url holds several skills and none is chosen the call fails with choose:true and the list: repeat it with skill set to one name, or all:true. A skill installed from a url remembers where it came from (source in skill_list / skill_get); update:"<name>" installs it again from there. If a skill of that name exists the call fails with conflict:true; only then repeat it with overwrite:true, and only if the user wants it replaced. Skills that ship with Crundi cannot be replaced. Running chats keep the skills they started with.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path to a skill folder, .zip, .skill or SKILL.md' }, content: { type: 'string', description: 'The text of a SKILL.md, instead of path' }, name: { type: 'string', description: 'Name to install it under (lowercase letters, digits, hyphens). Defaults to the name in its front matter.' }, scope: { type: 'string', description: '"global" (default: every project), "project" (this chat\'s project only), or a project alias' }, overwrite: { type: 'boolean', description: 'Replace an existing skill of the same name. Default false.' }, url: { type: 'string', description: 'A GitHub link to a repository or a folder in it, or a pasted "npx skills add …" line, instead of path' }, skill: { type: 'string', description: 'With url: which skill in the repository to install (overrides --skill in a pasted line)' }, all: { type: 'boolean', description: 'With url: install every skill in the repository' }, update: { type: 'string', description: 'The name of a skill installed from a url, to install again from its source (replacing it). Use instead of url / path / content.' } } } },
+  { name: 'skill_delete', description: 'Delete an installed skill and all its files. Cannot be undone. Only "user" skills can be deleted.', inputSchema: { type: 'object', properties: { name: { type: 'string', description: 'The skill\'s folder name' }, scope: { type: 'string', description: '"global" (default), "project", or a project alias' } }, required: ['name'] } },
+
+  // ─── Showing things in the chat (chat UI mode only) ───
+  // When the person is in a Crundi chat, these are how something reaches them:
+  // it appears in the conversation, where they are looking. The send_*_to_user
+  // tools go to the inbox and the notification channels, for when they are NOT looking.
+  {
+    name: 'show_image',
+    description: 'Show one or more images to the person, right here in the chat, drawn under this call. Use it whenever a picture answers better than words: a screenshot of the page you just changed, a before and after, a chart or diagram you generated, a photo they asked you to find. An image you only looked at yourself (browser_screenshot, a capture) is NOT visible to them until you save it and show it. path for one, paths for several (up to 8); PNG, JPEG, GIF or WebP, 10 MB each; the files are copied, so a temporary file is fine. Prefer this over send_photo_to_user whenever the person is in the chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'speak',
+    description: 'Say something aloud to the person in this chat, in Crundi\'s voice (the voice assistant\'s). Only for a message that starts with "voice input:" (they spoke it in the chat\'s voice mode and are listening): a short spoken version of your answer, one to three sentences of plain speech, no markdown, code, paths or links. The written answer still goes in the chat as usual.',
+    inputSchema: {
+      type: 'object',
+      properties: { text: { type: 'string', description: 'What to say: plain speech, one to three sentences' } },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'show_video',
+    description: 'Show one or more videos to the person, in the chat, as players drawn under this call. Use it for a screen recording of what you built, a rendered clip or reel, an animation, anything that has to be watched. path for one, paths for several (up to 8); MP4, MOV or WebM, 250 MB each; the files are copied, so a file in a temp or render folder is fine. Prefer this over send_file_to_user whenever the person is in the chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_audio',
+    description: 'Play one or more audio files to the person, in the chat, as players drawn under this call: a generated voice-over, a soundtrack, a sound effect, a recording. path for one, paths for several (up to 8); MP3, WAV, OGG, M4A, FLAC or WebM, 60 MB each; the files are copied. Prefer this over send_file_to_user whenever the person is in the chat.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_file',
+    description: 'Offer one or more files to the person as downloads, in the chat: a card with the file\'s icon, name and size and a Download button, drawn under this call. Use it for anything they should take away: an export, a report, an archive, a build, a document, a spreadsheet. path for one, paths for several (up to 8). The file is NOT copied; it is downloaded as it is when they press the button, so leave it where it is. Prefer this over send_file_to_user whenever the person is in the chat; use that one to reach them when they are away (it lands in their Crundi inbox).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of one file' },
+        paths: { type: 'array', description: 'Several: absolute paths, or { path, caption } objects', items: {} },
+        caption: { type: 'string', description: 'Optional short caption (for one item, or for the set)' },
+      },
+    },
+  },
+  {
+    name: 'show_embed',
+    description: 'Embed something live in the chat, in a frame drawn under this call. Two ways. (1) url: an https address. Paste the ordinary link, not an embed link: YouTube (videos, shorts, playlists), Vimeo, Dailymotion, Loom, X/Twitter posts, Instagram posts and reels, TikTok, Facebook posts and videos, Reddit posts, Spotify, SoundCloud, CodePen, GitHub gists and Google Maps embed links are turned into their proper embeds. Any other https page is framed as it is, which only works if that site allows framing (many do not; the person always gets an Open link). (2) html: your own HTML with its CSS and JavaScript, for a working demo, an animation, a chart, an interactive example, a rendered snippet. A fragment is enough (it gets a dark page around it); it may load libraries from a CDN. It runs sandboxed: it cannot read files, call Crundi, or see the page around it, so put any data it needs inside it. Use show_embed for a one-off thing to look at or play with; build a panel (widget_*) instead when it should stay open, update live, or read data from this machine. For a video or audio FILE on this machine use show_video / show_audio.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'An https address to embed (the normal link to the video, post, track or page)' },
+        html: { type: 'string', description: 'Your own HTML, with <style> and <script> as needed (max 512 KB). Give url or html, not both.' },
+        title: { type: 'string', description: 'Optional short title shown under the frame' },
+        caption: { type: 'string', description: 'Optional short caption' },
+        height: { type: 'number', description: 'Height of the frame in pixels (80 to 1200). Default: the right shape for a known site, 360 for html, 480 for other pages. Set it for html so the content fits without scrolling.' },
+      },
+    },
+  },
+
+  // ─── Building factories (any chat or terminal) ───
+  {
+    name: 'factory_guide',
+    description: 'How to write a Crundi factory (a reusable AI team for large pieces of work: a Manager, employees with personas, a flow of steps, decisions, joins, waits): the JSON format, the rules the validator enforces, and shapes that work. Read it before writing or changing a factory.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_list',
+    description: 'List the Crundi factories (id, name, description, team size, whether it can run, problems to fix) and their CR templates.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_get',
+    description: 'One Crundi factory\'s full definition (roster, nodes, edges, settings) with its validation, to read or change it.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+  },
+  {
+    name: 'factory_validate',
+    description: 'Check a factory definition without saving it: errors (must fix before it can run) and warnings, each with a fix. Use it until there are no errors.',
+    inputSchema: { type: 'object', properties: { definition: { type: 'object', description: 'The factory, as in factory_guide', additionalProperties: true } }, required: ['definition'] },
+  },
+  {
+    name: 'factory_save',
+    description: 'Save a factory: a new one (no id), or over an existing one (id, and baseVersion from factory_get to avoid overwriting someone else\'s edits). Saved even with errors, as a draft. Node positions are laid out automatically when left out. Returns the id and validation.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, definition: { type: 'object', additionalProperties: true }, baseVersion: { type: 'number' } }, required: ['definition'] },
+  },
+  {
+    name: 'factory_start',
+    description: 'Start a factory run in a project (only when the person asks). Give a change request: title, and sections keyed by the factory\'s CR template ids (default: goal, current, expected, done (one check per line), scope, notes). One run per project at a time.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        factoryId: { type: 'string' },
+        project: { type: 'string', description: 'Project alias; defaults to this chat\'s project' },
+        title: { type: 'string' },
+        sections: { type: 'object', additionalProperties: { type: 'string' } },
+        mergeMode: { type: 'string', enum: ['ask', 'auto'] },
+      },
+      required: ['factoryId', 'title'],
+    },
+  },
+  {
+    name: 'factory_triggers',
+    description: 'List, save or delete triggers that start a factory by themselves: schedule (at HH:MM on weekdays 0-6), kanban (a card enters a column: backlog, todo, in_progress, done), webhook (a public URL, e.g. for Grafana alerts or CI). The CR may use placeholders: {{date}}, {{time}}, {{card.title}}, {{card.description}}, {{card.todos}}; for webhooks {{payload.some.path}} (arrays by index: alerts.0.labels.alertname), {{payload}}, {{headers.name}}, {{query.name}}. Missing placeholders come out empty and never stop it; the Manager always gets the full request too. Webhook security: auth "key" (key in the URL, X-Crundi-Key or Bearer) or "signature" (HMAC-SHA256 of the body with the trigger\'s secret in signatureHeader; with timestampHeader, of "<ts>:<body>", which is Grafana\'s form). webhook.idempotency names the key that makes repeats ignored, e.g. "{{payload.groupKey}}". ifBusy: "manager" (default for webhooks: a call arriving during a run of the same factory goes to its Manager as a mid-run message), "queue" or "skip". needsCards: a column (e.g. "todo") that must hold a card for it to start a run; when it is empty the firing, or a queued one coming up, is skipped (use it for "next card" chains so they stop when To do runs out). Saving a webhook returns its URL and secret.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'save', 'delete'] },
+        id: { type: 'string', description: 'For delete' },
+        project: { type: 'string', description: 'For list; defaults to this chat\'s project' },
+        trigger: { type: 'object', description: 'For save: { id?, name, enabled, project, factoryId, kind, schedule: { at, days }, kanban: { status }, cr: { title, sections }, mergeMode, ifBusy: "queue"|"skip"|"manager", needsCards: ""|"backlog"|"todo"|"in_progress"|"done", webhook: { auth: "key"|"signature", signatureHeader, timestampHeader, idempotency } }', additionalProperties: true },
+      },
+      required: ['action'],
+    },
+  },
+
+  {
+    name: 'factory_handoff',
+    description: 'End your step in a Crundi factory run and hand the work on. Call it exactly once when your step is done, then stop. Give a summary, your answers to the decisions your step message lists (answers keyed by decision id), any notes it lists (notes keyed by the id it gives), finish: true if you are the Manager and the whole task is done, or escalate with a reason instead of everything else if you cannot do the step. If something is missing or wrong the call fails and says what; fix it and call again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        summary: { type: 'string', description: 'What you did or decided, in a few sentences' },
+        answers: { type: 'object', description: 'Decision id -> answer: "yes"/"no", an option id, or a list of option ids for a pick-many ([] for none)', additionalProperties: true },
+        notes: { type: 'object', description: 'Note id (as listed in your step) -> text', additionalProperties: { type: 'string' } },
+        finish: { type: 'boolean', description: 'Manager only: the whole task is done' },
+        escalate: { type: 'string', description: 'Instead of everything else: why you cannot do this step. The Manager picks it up.' },
+        findings: { type: 'array', description: 'Review findings: problems to fix. blocking: must change before approval; otherwise a nit, kept as a follow-up. After your first review a new blocking finding needs a reason.', items: { type: 'object', properties: { text: { type: 'string' }, where: { type: 'string' }, blocking: { type: 'boolean' }, reason: { type: 'string' } }, required: ['text'] } },
+        done: { type: 'array', items: { type: 'string' }, description: 'Ids of findings you fixed, e.g. ["F1"]' },
+        verified: { type: 'array', items: { type: 'string' }, description: 'Ids of findings whose fix you checked' },
+        reopen: { type: 'array', items: { type: 'string' }, description: 'Ids of findings that are not really fixed' },
+        dismiss: { type: 'array', items: { type: 'string' }, description: 'Manager only: findings to drop' },
+      },
+    },
+  },
+  {
+    name: 'factory_status',
+    description: 'Where your Crundi factory run stands, in one block: the change request, who is doing what, loops used, open review findings, waiting permission requests, what changed since the run started, recent handoffs and what has been spent. Use it to re-orient after a long conversation instead of scrolling back.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'factory_control',
+    description: 'Manager of a Crundi factory run only: pause or resume the run (pause: nobody new starts a step, whoever is mid-turn finishes; mode "now" stops the turns in progress too, and they carry on at resume; resumeOnReset: true resumes it by itself once the usage window that is full now has reset), or change its usage limits: pauseAt5h and pauseAtWeek (pause when the 5-hour or weekly usage window reaches this %), maxParallel (at most this many people working at once, 0 for no limit), oneAtATimeAbove (one at a time above this % of the 5-hour window, 0 for off), paceOnly (true: reaching pauseAt pauses only when ahead of pace, the window\'s used % above the % of its time passed) paceCeiling (with paceOnly, always pause at this %, default 100) and paceResumeBehind (with paceOnly, a run paused for being ahead carries on before the reset once this many points behind pace; 0 waits for the reset). Do it when the person asks; give a reason, it is shown to them.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['pause', 'resume', 'limits'] }, reason: { type: 'string' }, mode: { type: 'string', enum: ['finish', 'now'], description: 'pause only: "finish" (default) lets current steps finish their turn; "now" stops them now.' }, resumeOnReset: { type: 'boolean', description: 'pause only: carry on by itself when the usage window resets.' }, limits: { type: 'object', properties: { pauseAt5h: { type: 'number' }, pauseAtWeek: { type: 'number' }, maxParallel: { type: 'number' }, oneAtATimeAbove: { type: 'number' }, paceOnly: { type: 'boolean' }, paceCeiling: { type: 'number' }, paceResumeBehind: { type: 'number' } } } }, required: ['action'] },
+  },
+  {
+    name: 'factory_message',
+    description: 'Manager of a Crundi factory run only: send a message into the chat of someone on your team who is working on a step right now (a correction, a heads-up, "stop and wait"), delivered as if typed into their chat. It does not end their step. interrupt: stop their current turn first so they read it now; hold: tell them to stop and wait until your next message. Only works while they hold a step; otherwise hand them a job with factory_delegate when it is your turn.',
+    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, text: { type: 'string' }, interrupt: { type: 'boolean', description: 'Stop their current turn first (like the Stop button), so they read it now' }, hold: { type: 'boolean', description: 'Tell them to stop and wait until your next message; their idle step is not treated as stalled' } }, required: ['employee', 'text'] },
+  },
+  {
+    name: 'factory_tick',
+    description: 'Manager of a Crundi factory run only: how often, in minutes (5 to 1440), you want a wake-up message while you are idle, so you can check on the run. Ticks are skipped when you are busy or the run is paused: a wake-up, not a guaranteed timer. Set it once at the start (longer for long, steady work); the person may have fixed it in the factory.',
+    inputSchema: { type: 'object', properties: { minutes: { type: 'number' } }, required: ['minutes'] },
+  },
+  {
+    name: 'factory_delegate',
+    description: 'Manager of a Crundi factory run only: hand someone on your team a one-off job outside the drawn flow (resolve a merge conflict, check something, make a small fix). Your own step waits; their result comes back to you as a message and then it is your turn again. Stop after calling it.',
+    inputSchema: { type: 'object', properties: { employee: { type: 'string', description: 'Their name (or roster id)' }, task: { type: 'string', description: 'The job: what to do and what done looks like' } }, required: ['employee', 'task'] },
+  },
+  {
+    name: 'factory_result',
+    description: 'Manager of a Crundi factory run only: when the run is finished and the person tells you in the chat what to do with the result, do it: merge (one squash commit onto the parent branch), keep (keep the branch, merge nothing), discard, changes (reopen the run with their note), or undo (take back a merge). Only on the person\'s word.',
+    inputSchema: { type: 'object', properties: { action: { type: 'string', enum: ['merge', 'keep', 'discard', 'changes', 'undo'] }, note: { type: 'string', description: 'For changes: what they asked to change' } }, required: ['action'] },
+  },
+
+  {
+    name: 'factory_permission',
+    description: 'For the Manager (or the Gatekeeper) of a Crundi factory run: answer the team\'s permission requests (they arrive as "[Factory] Permission request" messages with ids like p3). One decision per request. With an allow, rule (e.g. "Bash(npm test:*)") lets that person do the same again without asking; ruleFor: "everyone" grants it to the whole team. The Manager may also grant rules up front (rules) and set the policy the Gatekeeper follows (policy). The Gatekeeper may pass a request to the Manager with escalate: true. This is not a handoff: carry on afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        decisions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'The request id, e.g. p3' },
+              allow: { type: 'boolean' },
+              reason: { type: 'string', description: 'Why; the employee is told when you deny' },
+              rule: { type: 'string', description: 'Optional, with allow: a standing rule such as Bash(npm test:*), for this person' },
+              ruleFor: { type: 'string', description: 'Optional: "everyone", or a name, for whom the rule is (default: the person who asked)' },
+              escalate: { type: 'boolean', description: 'Gatekeeper only: pass this request to the Manager' },
+            },
+            required: ['id'],
+          },
+        },
+        rules: { type: 'array', description: 'Manager only: rules granted up front, before anyone asks', items: { type: 'object', properties: { rule: { type: 'string' }, employee: { type: 'string', description: 'A name, or leave out for everyone' } }, required: ['rule'] } },
+        policy: { type: 'string', description: 'Manager only: what the Gatekeeper should allow, refuse and pass to you' },
+      },
+    },
+  },
+
+  // ─── Widgets: UI you author and place inside Crundi ───
+  {
+    name: 'widget_guide',
+    description: 'How to build a Crundi widget: the file layout, the `crundi` API inside the frame, the design tokens and kit classes, data source kinds, slots, and when a widget is worth opening at all. Read this once before your first widget in a session.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'widget_open',
+    description: 'Create, update or re-open a widget: a small live UI you design, shown inside Crundi next to this chat. Use it when something is better seen than read: progress on a long task, a table from a database, a build or test board, a log tail, anything the person will glance at repeatedly. You decide whether one is worth it; do not open one for a quick answer. Source lives in <project>/.crundi/widgets/<id>/ (index.html, widget.json, fixtures/) and hot-reloads when you edit it with your normal file tools. Passing html/manifest here writes those files for you. Returns the source folder and any problems. Always widget_render before telling the person it is done.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Lowercase id, e.g. "task-progress". Reusing an id updates that widget.' },
+        title: { type: 'string', description: 'Short title shown in the widget header' },
+        slot: { type: 'string', enum: ['dock', 'cell', 'tab', 'inline', 'chip'], description: 'Where it sits. dock: attached to this chat (best for live task progress). cell: its own workbench pane (best for something used alongside several chats). tab: full-size in the Panels tab (dense dashboards, wide tables). inline: a card in this chat at the point you call it (a one-off result). chip: a one-line status in the top bar that opens the widget when tapped; it shows a label and value, or your own live face (numbers, a sparkline, a meter, an icon) if you mark one top-level element with data-chip. The person can move it; their choice wins.' },
+        beside: { type: 'string', enum: ['right', 'below'], description: 'For slot "cell": split this chat\'s pane and place the widget on that side.' },
+        lifecycle: { type: 'string', enum: ['task', 'pinned'], description: 'task (default): belongs to the work in hand; close it when done. pinned: meant to stay, e.g. a dashboard bound to a database.' },
+        html: { type: 'string', description: 'Optional: contents for index.html (a body fragment with markup, <style>, <script>). Omit to write the file yourself.' },
+        manifest: { type: 'object', description: 'Optional: contents for widget.json, e.g. { "sources": { "orders": { "kind": "sqlite", "path": "data/app.db", "query": "select ..." } } }. See widget_guide.' },
+        fixtures: { type: 'object', description: 'Optional: { stateName: { sourceName: value } } written to fixtures/, for rendering empty/error/full states with widget_render.' },
+        data: { type: 'object', description: 'Optional: initial pushed values, { sourceName: value }.' },
+        chip: { type: 'object', description: 'For slot "chip": { source, path, label } naming the value to show, e.g. { "source": "task", "path": "summary" }.' },
+        icon: { type: 'string', description: 'Optional icon name from the kit (e.g. activity, chart, database, list, terminal).' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'widget_set_data',
+    description: 'Push a value to a widget; it redraws at once. This is how a live task dashboard is driven: call it as you finish each step. Give exactly one of value (replace), merge (deep-merge into an object; null deletes a key) or append (add to an array, keeping the last `max`). Sources bound to a file, database, command or the chat session update themselves and need no pushing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Widget id' },
+        source: { type: 'string', description: 'Source name the widget reads as crundi.data[source]. Default "data".' },
+        value: { description: 'Replace the whole value' },
+        merge: { type: 'object', description: 'Deep-merge into the current object' },
+        append: { description: 'Item, or array of items, to append' },
+        max: { type: 'number', description: 'With append: keep at most this many items (default 500)' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'widget_render',
+    description: 'Render a widget inside Crundi\'s real chrome in a headless browser and return screenshots plus a report: script errors, sideways overflow, clipped or tiny text, tap targets too small for a finger, low contrast, hard-coded colours, failed sources. This is how you check your own work: call it after building or changing a widget, read the report, LOOK at every screenshot, fix, and render again. Defaults to the widget\'s own slot on desktop and on a phone.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Widget id' },
+        frames: { type: 'array', items: { type: 'string', enum: ['cell', 'dock', 'dock-wide', 'tab', 'inline', 'chip', 'mobile', 'mobile-dock', 'mobile-tab', 'mobile-chip'] }, description: 'Which layouts to render. Default: the widget\'s slot on desktop, and on a phone.' },
+        states: { type: 'array', items: { type: 'string' }, description: 'Fixture names to render in place of live data (e.g. ["empty","error","full"]). "live" is the current data.' },
+        allStates: { type: 'boolean', description: 'Render live data and every fixture (capped at 8 screenshots in total)' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'widget_get',
+    description: 'A widget\'s status: where it actually sits (the person may have moved, collapsed or closed it), each source\'s state and errors, script faults reported from the live page, whether it is waiting for the owner\'s approval, and anything the person did in it since you last looked (events from crundi.emit and "event" actions; reading them clears them).',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' } }, required: ['id'] },
+  },
+  { name: 'widget_list', description: 'List this project\'s widgets, open and closed.', inputSchema: { type: 'object', properties: {} } },
+  {
+    name: 'widget_close',
+    description: 'Close a widget when its job is done (a task dashboard after the task). Closed is not deleted: widget_open brings it back. remove:true deletes it and its source files.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, remove: { type: 'boolean', description: 'Delete it for good, source files included' } }, required: ['id'] },
+  },
+  {
+    name: 'widget_scope',
+    description: 'Make a widget global, or put a global one back in its project. A global widget shows in every project, not only the one it was built in, and is pinned; with slot "chip" it stays in the top bar across projects and chats. Only the widget\'s own folder goes with it: it is copied into Crundi\'s store (new sourceDir in the result, covered by the backup) along with any data kept inside it, and the original folder is left in the project, unread. Project data its sources read is NOT copied and is still read in place. Read the note in the result: anything that writes the widget\'s own data must be repointed to the new sourceDir. Do this when the person asks for a panel to be available everywhere.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, global: { type: 'boolean', description: 'true (default) to make it global, false to return it to its project' } }, required: ['id'] },
+  },
+  {
+    name: 'widget_rollback',
+    description: 'Put a widget\'s source back to an earlier version (widget_get lists them). The current source is kept as a version first.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'Widget id' }, version: { type: 'number', description: 'Version number to restore' } }, required: ['id', 'version'] },
+  },
+];
+
+// ─── Arguments and listing ───
+
+export const ALIAS_TOOLS = new Set(['worker_run', 'browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'factory_start', 'factory_triggers',
+  'kanban_list', 'kanban_get_task', 'kanban_list_column', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
+  'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
+  'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',
+  'schedule_list', 'schedule_get', 'schedule_add', 'schedule_update', 'schedule_set_enabled', 'schedule_delete',
+  'media_list', 'media_get', 'media_add_path', 'media_delete',
+  'secret_get',
+  'secret_run',
+  'skill_list', 'skill_get', 'skill_install', 'skill_delete',
+  'widget_open', 'widget_set_data', 'widget_render', 'widget_get', 'widget_list', 'widget_close', 'widget_rollback', 'widget_scope']);
+export const SEND_TO_USER_TOOLS = new Set(['send_message_to_user', 'send_photo_to_user', 'send_file_to_user', 'send_window_screenshot_to_user', 'send_display_screenshot_to_user']);
+export const IMAGE_TOOLS = new Set(['browser_screenshot', 'capture_window', 'capture_display']);
+
+// A collaborator's session is told only about the tools it may call. The
+// server refuses the rest regardless (COLLABORATOR_MCP_TOOLS is checked on
+// every call); this is so their Claude does not see secret_get and
+// owner-only tools listed, try them, and report a wall of 403s as "blockers".
+// Tools that only mean anything in an outside collaborator's chat.
+export const COLLABORATOR_ONLY_TOOLS = new Set(['request_owner_command']);
+// Tools that only mean anything inside a Crundi chat (UI mode): a terminal
+// session has no transcript for Crundi to draw into, so it is not told about them.
+export const CHAT_ONLY_TOOLS = new Set(['show_image', 'show_video', 'show_audio', 'show_file', 'show_embed', 'speak']);
+// Homepool is granted per chat, so it exists only inside one (docs/homepool.md).
+export const HOMEPOOL_TOOLS = new Set(['homepool_status', 'homepool_request', 'homepool_proxy', 'homepool_fetch']);
+// Only a factory run's chats are offered factory_handoff.
+export const FACTORY_RUN_TOOLS = new Set(['factory_handoff', 'factory_permission', 'factory_delegate', 'factory_result', 'factory_status', 'factory_control', 'factory_message', 'factory_tick']);
+export const FACTORY_LIBRARY_TOOLS = new Set(['factory_guide', 'factory_list', 'factory_get', 'factory_validate', 'factory_save', 'factory_start', 'factory_triggers']);
+
+/**
+ * The tools a chat is told about.
+ * @param {object} o
+ * @param {string}  o.scope      'collaborator' for an outside collaborator's chat, else ''
+ * @param {boolean} o.inChat     a Crundi chat (UI mode), not a terminal session
+ * @param {boolean} o.inFactory  one of a factory run's chats
+ * @param {Set<string>} o.collaboratorTools  what a collaborator may call (access-policy.js)
+ */
+export function listedTools({ scope: TOOL_SCOPE = '', inChat: IN_CHAT = false, inFactory: IN_FACTORY = false, collaboratorTools: COLLABORATOR_MCP_TOOLS = new Set() } = {}) {
+  return (TOOL_SCOPE === 'collaborator'
+    ? TOOLS.filter(t => COLLABORATOR_MCP_TOOLS.has(t.name))
+    : TOOLS.filter(t => !COLLABORATOR_ONLY_TOOLS.has(t.name))
+  ).filter(t => IN_CHAT || !CHAT_ONLY_TOOLS.has(t.name))
+    .filter(t => IN_CHAT || !HOMEPOOL_TOOLS.has(t.name))
+    // A factory run's chats get the run tools; every other chat gets the tools
+    // that build factories.
+    .filter(t => IN_FACTORY ? !FACTORY_LIBRARY_TOOLS.has(t.name) : !FACTORY_RUN_TOOLS.has(t.name));
+}
+
+/**
+ * Put in the arguments that are the chat's own (its project, its id, the
+ * token proving it), replacing whatever the model sent for them. Changes
+ * `args` and returns it.
+ * @param {string} name
+ * @param {object} args
+ * @param {{CRUNDI_PROJECT?:string, CRUNDI_CHAT_ID?:string, CRUNDI_CHAT_TOKEN?:string}} env
+ *        the bridge's environment (mcp-stdio.js: its own process.env; a chat on
+ *        a PC: the same three, from the server's record of that chat)
+ */
+export function prepareToolArgs(name, args, env = {}) {
+  const PROJECT = env.CRUNDI_PROJECT || '';
+  if (ALIAS_TOOLS.has(name) && !args.alias) args.alias = PROJECT;
+  // A drawer tab belongs to one project: every browser call says which, from
+  // this process's own project, never from the arguments.
+  if (name.startsWith('browser_') && PROJECT) args.alias = PROJECT;
+  // And which chat: a drawer tab on a homepool network needs the owner's
+  // approval for this chat, proven with the token Crundi gave it.
+  if (name.startsWith('browser_')) {
+    delete args.sessionId; delete args.chatToken;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+    if (env.CRUNDI_CHAT_TOKEN) args.chatToken = env.CRUNDI_CHAT_TOKEN;
+  }
+  // Which chat is asking, so an owner-run command's output goes back to it.
+  if ((name === 'request_owner_command' || name === 'register_service') && env.CRUNDI_CHAT_ID) {
+    args.sessionId = env.CRUNDI_CHAT_ID;
+  }
+
+  // An alert is filed under the chat that sent it, which is this process's
+  // own, never an argument.
+  if (name === 'alert_user') {
+    delete args.sessionId;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+  }
+  // So is a message, picture or file for the person: its inbox item links
+  // back to the chat that sent it.
+  if (SEND_TO_USER_TOOLS.has(name)) {
+    delete args.sessionId;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+  }
+
+  // Which chat is asking for a secret is this process's own, never an
+  // argument. The server uses it to put the request where the person will
+  // see it: in that chat, and on that chat's notification and bubble.
+  if (name === 'secret_get' || name === 'secret_run') {
+    delete args.sessionId;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+  }
+
+  // A widget remembers which chat made it: that is the chat it docks beside,
+  // and the one whose activity a "session" source reports.
+  if (name === 'widget_open' && env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+  // Which chat something is shown in is this process's own, never an argument.
+  if (CHAT_ONLY_TOOLS.has(name)) {
+    delete args.sessionId;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+  }
+  // Homepool access is per chat and project: both are this process's own,
+  // with the token Crundi gave the chat to prove it (src/chat-token.js).
+  if (name.startsWith('homepool_')) {
+    delete args.sessionId;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+    args.project = PROJECT;
+    args.chatToken = env.CRUNDI_CHAT_TOKEN || '';
+  }
+  // Which chat is handing off is this process's own, never an argument.
+  if (FACTORY_RUN_TOOLS.has(name)) {
+    delete args.sessionId;
+    if (env.CRUNDI_CHAT_ID) args.sessionId = env.CRUNDI_CHAT_ID;
+  }
+  return args;
+}

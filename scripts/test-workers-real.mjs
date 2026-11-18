@@ -10,12 +10,14 @@
  * Covers: join with a code; headless: online with real info and labels; a
  * terminal running a command; the owner's pause reaching it; revoke ending it
  * with exit 3; embedded mode (the PC client's): JSON status lines, online,
- * and exit when stdin closes.
+ * and exit when stdin closes; a whole chat on the PC (phase 4): a fake
+ * `claude` on PATH, driven by claude-ui through the worker, calling a Crundi
+ * tool through `crundi-worker mcp`, its work coming back as a branch.
  *
  * Run: node scripts/test-workers-real.mjs
  */
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,15 +37,82 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function until(fn, ms = 20000) { const end = Date.now() + ms; while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(50); } return null; }
 
 const dir = mkdtempSync(join(tmpdir(), 'workers-real-'));
-const svc = createWorkersService({ dataDir: dir, serverVersion: 'test' });
+
+// A fake `claude` on PATH (before any worker starts: it probes for claude once).
+// It answers --version, the initialize request, and for each message: calls a
+// Crundi tool through the MCP server in its --mcp-config, commits a file,
+// leaves one change uncommitted, and says what it saw.
+const fakeBin = join(dir, 'fake-bin');
+mkdirSync(fakeBin, { recursive: true });
+if (process.platform !== 'win32') {
+  writeFileSync(join(fakeBin, 'claude'), `#!/usr/bin/env node
+const fs = require('fs'), cp = require('child_process'), rl = require('readline');
+const args = process.argv.slice(2);
+if (args.includes('--version')) { console.log('2.1.999 (Claude Code)'); process.exit(0); }
+const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
+const cfg = JSON.parse(fs.readFileSync(args[args.indexOf('--mcp-config') + 1], 'utf8')).mcpServers.crundi;
+function mcp() {
+  return new Promise((resolve) => {
+    const p = cp.spawn(cfg.command, cfg.args, { stdio: ['pipe', 'pipe', 'inherit'] });
+    const got = {}; let buf = '';
+    p.stdout.on('data', (d) => { buf += d; let i; while ((i = buf.indexOf('\\n')) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); try { const m = JSON.parse(l); if (m.id) got[m.id] = m; } catch {} }
+      if (got[2] && got[3]) { p.kill(); resolve(got); } });
+    const w = (o) => p.stdin.write(JSON.stringify(o) + '\\n');
+    w({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'fake', version: '1' } } });
+    w({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    w({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    w({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'kanban_list', arguments: {} } });
+    setTimeout(() => resolve(got), 20000);
+  });
+}
+rl.createInterface({ input: process.stdin }).on('line', async (line) => {
+  let m; try { m = JSON.parse(line); } catch { return; }
+  if (m.type === 'control_request' && m.request && m.request.subtype === 'initialize') { out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response: { commands: [] } } }); return; }
+  if (m.type !== 'user') return;
+  out({ type: 'system', subtype: 'init', session_id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', tools: [] });
+  const r = await mcp();
+  const tools = ((r[2] || {}).result || {}).tools || [];
+  const text = (((r[3] || {}).result || {}).content || [])[0];
+  fs.writeFileSync('from-claude.txt', 'made by the PC claude\\n');
+  const g = (...a) => cp.execFileSync('git', ['-c', 'user.name=pc', '-c', 'user.email=pc@pc', ...a]);
+  let gitErr = '';
+  try { g('add', 'from-claude.txt'); g('commit', '-qm', 'from the PC'); } catch (err) { gitErr = ' gitErr=' + String(err.message).split('\\n')[0] + ' ls=' + fs.readdirSync('.').join(','); }
+  fs.appendFileSync('hello.txt', 'uncommitted on the PC\\n');
+  out({ type: 'assistant', message: { id: 'a1', role: 'assistant', content: [{ type: 'text', text: 'tools=' + tools.length + ' cwd=' + process.cwd() + ' kanban=' + (text ? text.text : 'none').replace(/\\s+/g, ' ') + gitErr }] }, parent_tool_use_id: null });
+  out({ type: 'result', subtype: 'success', num_turns: 1, total_cost_usd: 0 });
+});
+`, { mode: 0o755 });
+  process.env.PATH = fakeBin + ':' + process.env.PATH;
+}
+// The PC "clones from GitHub": that URL is this test's own repository.
+const fakeGh = 'https://github.com/someone/real-proj.git';
+const projectsDir = join(dir, 'projects');
+const realProj = join(projectsDir, 'proj');
+const gitCfg = join(dir, 'gitconfig');
+writeFileSync(gitCfg, `[url "file://${realProj}"]\n\tinsteadOf = ${fakeGh}\n[user]\n\tname = t\n\temail = t@t\n`);
+process.env.GIT_CONFIG_GLOBAL = gitCfg;
+process.env.DATA_DIR = join(dir, 'data');
+process.env.PROJECTS_DIR = projectsDir;
+
+const mcpCalls = [];
+let url = '';
+const svc = createWorkersService({ dataDir: dir, serverVersion: 'test', mcpApi: () => ({ url, key: 'k-test' }) });
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
+  if (path === '/api/mcp/call' && req.method === 'POST') {
+    const parts = []; for await (const c of req) parts.push(c);
+    const body = JSON.parse(Buffer.concat(parts).toString('utf8'));
+    mcpCalls.push({ key: req.headers['x-api-key'], ...body });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, board: 'stub', alias: body.args && body.args.alias }));
+    return;
+  }
   if (await svc.handlePublic(req, res, path)) return;
   res.writeHead(404); res.end();
 });
 server.on('upgrade', (req, socket, head) => { if (!svc.handleUpgrade(req, socket, head)) socket.destroy(); });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
-const url = `http://127.0.0.1:${server.address().port}`;
+url = `http://127.0.0.1:${server.address().port}`;
 const cfg = join(dir, 'config.json');
 const work = join(dir, 'work');
 console.log(`      binary: ${bin}`);
@@ -130,6 +199,50 @@ try {
     await svc.mcpJob({ job: r3.job, action: 'cancel' });
     await until(() => svc.jobs.FINISHED.has(svc.jobs.get(r3.job)?.state), 15000);
     ok(svc.jobs.get(r3.job).state === 'cancelled', 'cancel stops a running job on the PC', svc.jobs.get(r3.job).state);
+  }
+
+  // ── A whole chat on the PC (phase 4), through claude-ui ──
+  if (process.platform !== 'win32') {
+    mkdirSync(realProj, { recursive: true });
+    const g = (...a) => execFileSync('git', a, { cwd: realProj, encoding: 'utf8' }).trim();
+    g('init', '-q', '-b', 'main');
+    writeFileSync(join(realProj, 'hello.txt'), 'hello\n');
+    g('add', '.'); g('commit', '-qm', 'first');
+    g('remote', 'add', 'origin', fakeGh);
+    const head = g('rev-parse', 'HEAD');
+    const { createClaudeUiSessions } = await import('../src/claude-ui.js');
+    const ui = createClaudeUiSessions({ apiUrl: url, apiKey: 'k-test' });
+    ui.setRemote({ launch: (wh, o) => svc.chats.launch(wh, o), status: (wh, id) => svc.chats.status(wh, id) });
+    ui.onTurnEnd((id) => svc.chats.onTurnEnd(id));
+    const pc = await until(() => { const x = svc.list().workers.find(v => v.id === s.id); return x && x.canRunChats && x.hasClaude ? x : null; }, 20000);
+    ok(!!pc, 'chats: the real worker offers chats and finds the fake claude on PATH', JSON.stringify(svc.list().workers.find(v => v.id === s.id)?.info?.tools));
+    const c = await ui.create('proj', { where: `worker:${s.id}`, sessionMode: 'new' });
+    ok(c.ok, 'chats: a chat starts on the real worker', JSON.stringify(c));
+    if (c.ok) {
+      await until(() => ui.meta(c.id)?.running && ui.history(c.id).messages.some(m => m.kind === 'notice' && !/Starting/.test(m.text)) || svc.chats.view(c.id)?.state === 'running', 30000);
+      ui.sendMessage(c.id, 'do the thing');
+      const said = await until(() => (ui.history(c.id)?.messages || []).find(m => m.kind === 'assistant-text' && /tools=/.test(m.text)), 60000);
+      ok(!!said, 'chats: the PC\'s claude answers through the link', JSON.stringify((ui.history(c.id)?.messages || []).slice(-4)) + e.err.slice(-500));
+      if (said) {
+        const n = Number((/tools=(\d+)/.exec(said.text) || [])[1]);
+        ok(n > 50, 'chats: its MCP server (crundi-worker mcp) lists the Crundi tools', said.text);
+        ok(/board/.test(said.text) && mcpCalls.some(x => x.tool === 'kanban_list' && x.key === 'k-test' && x.args.alias === 'proj'), 'chats: a tool call reaches the server as that chat (project alias, internal key on the server only)', said.text);
+        ok(new RegExp(`proj@${c.id}`).test(said.text), 'chats: a git chat runs in its own worktree on the PC (<project>@<chat>)', said.text);
+      }
+      const wt = join(dir, 'workers', 'worktrees', 'proj', c.id);
+      const back = await until(() => svc.chats.view(c.id)?.lastPull, 60000);
+      ok(back && back.ok && back.head && existsSync(join(wt, 'from-claude.txt')), 'chats: at the turn end the PC\'s commit comes back into a worktree', JSON.stringify(back));
+      if (back && back.ok) {
+        const st = execFileSync('git', ['status', '--porcelain'], { cwd: wt, encoding: 'utf8' }).trim();
+        ok(st === 'M hello.txt' && readFileSync(join(wt, 'hello.txt'), 'utf8').includes('uncommitted on the PC'), 'chats: and its uncommitted work, uncommitted', st);
+        ok(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: wt, encoding: 'utf8' }).trim() === `pc/client-pc/${c.id.slice(0, 8)}`, 'chats: on branch pc/<pc>/<chat>');
+        ok(g('rev-parse', 'HEAD') === head && g('status', '--porcelain') === '', 'chats: the server\'s checkout is untouched');
+      }
+      const exited = new Promise((r) => ui.on(c.id, (ev) => { if (ev.type === 'exit') r(true); }));
+      ui.close(c.id);
+      ok(await Promise.race([exited, sleep(15000).then(() => false)]) || svc.chats.view(c.id)?.state === 'ended', 'chats: closing it ends claude on the PC', JSON.stringify(svc.chats.view(c.id)));
+    }
+    ui.closeAll();
   }
 
   e.stdin.end();

@@ -104,6 +104,32 @@ fn open_folder(path: &std::path::Path) {
     let _ = std::process::Command::new(prog).arg(path).spawn();
 }
 
+/// A desktop notification for a job or chat starting or ending. tray-icon
+/// has none: Windows and macOS use notify-rust; Linux runs `notify-send`
+/// when it is installed (libnotify), else nothing is shown.
+fn notify(v: &serde_json::Value) {
+    let what = v.get("event").and_then(|e| e.as_str()).unwrap_or("");
+    let state = v.get("state").and_then(|e| e.as_str()).unwrap_or("");
+    let title = match (what, state) {
+        ("job", "started") => "Crundi: a job started on this PC",
+        ("job", _) => "Crundi: a job finished",
+        ("chat", "started") => "Crundi: a chat is running on this PC",
+        ("chat", _) => "Crundi: a chat ended",
+        _ => return,
+    };
+    let body = crate::app::event_line(v);
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        let _ = notify_rust::Notification::new().summary(title).body(&body).show();
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        if let Some(p) = crate::util::find_program("notify-send") {
+            let _ = std::process::Command::new(p).args(["-a", "Crundi worker", title, &body]).status();
+        }
+    }
+}
+
 struct App {
     rt: tokio::runtime::Runtime,
     proxy: EventLoopProxy<UserEvent>,
@@ -130,7 +156,14 @@ impl App {
         if !self.joined {
             return;
         }
-        let opts = LinkOptions::new(&self.kind, Some(self.config_path.clone()));
+        let mut opts = LinkOptions::new(&self.kind, Some(self.config_path.clone()));
+        let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+        opts.events = Some(ev_tx);
+        self.rt.spawn(async move {
+            while let Some(v) = ev_rx.recv().await {
+                tokio::task::spawn_blocking(move || notify(&v));
+            }
+        });
         let _guard = self.rt.enter();
         let h = link::spawn(cfg, opts);
         let mut rx = h.status.clone();

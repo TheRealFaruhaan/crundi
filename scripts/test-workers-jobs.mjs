@@ -19,7 +19,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, statSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
 import { createWorkersService } from '../src/workers.js';
@@ -31,7 +31,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 async function until(fn, ms = 5000) { const end = Date.now() + ms; while (Date.now() < end) { const v = await fn(); if (v) return v; await sleep(10); } return null; }
 
 const dir = mkdtempSync(join(tmpdir(), 'workers-jobs-'));
-let svc = createWorkersService({ dataDir: join(dir, 'data'), serverVersion: 't' });
+const jobEvents = [];
+let svc = createWorkersService({ dataDir: join(dir, 'data'), serverVersion: 't', onJob: (id, final) => jobEvents.push([id, final]) });
 const server = createServer(async (req, res) => { if (!(await svc.handlePublic(req, res, new URL(req.url, 'http://x').pathname))) { res.writeHead(404); res.end(); } });
 server.on('upgrade', (req, socket, head) => { if (!svc.handleUpgrade(req, socket, head)) socket.destroy(); });
 await new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -103,7 +104,10 @@ const J = start.job;
 big.send({ type: 'job.accepted', job: J });
 big.send({ type: 'job.status', job: J, phase: 'preparing', detail: 'fetching' });
 // The PC lacks the commit: it asks for a bundle on top of what it has.
-big.send({ type: 'job.need', job: J, kind: 'bundle', have: firstSha });
+// It reports nothing it has; the server knows GitHub has the first commit
+// (refs/remotes/origin/dev), so that is left out of the bundle anyway.
+g('update-ref', 'refs/remotes/origin/dev', firstSha);
+big.send({ type: 'job.need', job: J, kind: 'bundle', have: '' });
 const bundleLast = await until(() => big.of('job.bundle').find(m => m.job === J && m.last), 10000);
 ok(!!bundleLast, 'job.need: the server sends a git bundle');
 {
@@ -117,6 +121,8 @@ ok(!!bundleLast, 'job.need: the server sends a git bundle');
   try { execFileSync('git', ['bundle', 'verify', bfile], { cwd: clone, stdio: 'pipe' }); } catch { verified = false; }
   execFileSync('git', ['fetch', '-q', bfile, '+refs/heads/*:refs/crundi-bundle/*'], { cwd: clone });
   const has = execFileSync('git', ['cat-file', '-t', headSha], { cwd: clone, encoding: 'utf8' }).trim();
+  const req = spawnSync('git', ['bundle', 'verify', bfile], { cwd: clone, encoding: 'utf8' });
+  ok(new RegExp(firstSha).test(req.stdout + req.stderr), 'the bundle leaves out what is on GitHub already (it requires the first commit instead of carrying it)', req.stdout + req.stderr);
   ok(verified && has === 'commit', 'the bundle verifies on a clone that has the first commit, and brings the server\'s commit');
 }
 big.send({ type: 'job.status', job: J, phase: 'running' });
@@ -139,6 +145,7 @@ big.send({ type: 'job.artifact', job: J, seq: 1, b64: art.subarray(5).toString('
 big.send({ type: 'job.done', job: J });
 const res = await started;
 ok(res.ok && res.state === 'done' && res.exitCode === 0 && res.durationMs === 61234, 'worker_run: done, exit code and duration', JSON.stringify(res));
+ok(jobEvents.filter(([id, f]) => id === J && !f).length >= 3 && jobEvents.some(([id, f]) => id === J && f), 'the chat\'s job card hears every update and the end', JSON.stringify(jobEvents.filter(([id]) => id === J).length));
 ok(res.tail === 'Compiling crundi v1\nFinished release\n', 'the log has every line once, across the reconnect', JSON.stringify(res.tail));
 ok(res.artifacts && existsSync(res.artifacts.path) && readFileSync(res.artifacts.path).equals(art) && res.artifacts.count === 1, 'the artifact is a file on the server', JSON.stringify(res.artifacts));
 ok(res.notes.some(n => /uncommitted/.test(n)) && res.notes.some(n => /sent from the server/.test(n)), 'notes: uncommitted changes are not in it; missing commits came from the server', JSON.stringify(res.notes));
@@ -162,6 +169,16 @@ g('checkout', '-q', '--', 'a.txt');
   const r3 = await run({ command: 'echo', worker: 'Big PC', wait: false });
   ok(!r3.ok && /paused/.test(r3.error), 'a paused PC is not given jobs');
   svc.act({ action: 'set', id: k1.id, paused: false });
+  // A good guest: only when its owner is away, and not on battery.
+  big.send({ type: 'info', info: { os: 'linux', ramMb: 65536, cpu: { threads: 32 }, tools: { cargo: '1.83', git: '2.4' }, idleSec: 30, onBattery: true } });
+  await until(() => svc.list().workers.find(w => w.id === k1.id).info?.idleSec === 30);
+  svc.act({ action: 'set', id: k1.id, onlyWhenAwayMin: 5 });
+  const ra = await run({ command: 'echo', worker: 'Big PC', wait: false });
+  ok(!ra.ok && /in use/.test(ra.error), 'only when away: someone used the PC 30 s ago, so no job', ra.error);
+  svc.act({ action: 'set', id: k1.id, onlyWhenAwayMin: 0, notOnBattery: true });
+  const rb = await run({ command: 'echo', labels: ['tool:cargo'], wait: false });
+  ok(!rb.ok && /on battery/.test(rb.error), 'not on battery: a PC on battery is not picked, and the reason says so', rb.error);
+  svc.act({ action: 'set', id: k1.id, notOnBattery: false });
   // The PC itself refuses (its own switch, say).
   const r4 = run({ command: 'echo refused', worker: 'Big PC', wait: false });
   const st4 = await until(() => big.of('job.start').find(m => m.command === 'echo refused'));

@@ -110,7 +110,9 @@ pub fn parse_version(text: &str) -> Option<String> {
 
 async fn probe_tool(programs: &'static [&'static str], args: &'static [&'static str]) -> Option<String> {
     for prog in programs {
-        let Some(path) = find_program(prog) else { continue };
+        // claude is looked for where it installs, not only on PATH.
+        let found = if *prog == "claude" { crate::chats::find_claude() } else { find_program(prog) };
+        let Some(path) = found else { continue };
         if let Some((_ok, out, err)) = run_with_timeout(&path, args, PROBE_TIMEOUT).await {
             if let Some(v) = parse_version(&out).or_else(|| parse_version(&err)) {
                 return Some(v);
@@ -417,12 +419,174 @@ fn round2(x: f64) -> f64 {
     (x * 100.0).round() / 100.0
 }
 
-/// Full info: system now, tools and GPUs from the 10-minute cache.
+/// Full info: system now, tools and GPUs from the 10-minute cache, idle
+/// time and (Windows, macOS) the battery.
 pub async fn gather(inp: InfoInputs) -> Info {
     let (tools, gpus) = slow_probes(false).await;
-    tokio::task::spawn_blocking(move || gather_fast(&inp, tools, gpus))
+    let mut info = tokio::task::spawn_blocking(move || gather_fast(&inp, tools, gpus))
         .await
-        .expect("info thread")
+        .expect("info thread");
+    let (idle, batt) = tokio::join!(idle_sec(), battery_slow());
+    info.idle_sec = idle;
+    if info.on_battery.is_none() {
+        info.on_battery = batt;
+    }
+    info
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// `gdbus call ... GetIdletime` prints `(uint64 12345,)` (milliseconds).
+pub fn parse_gdbus_idle(text: &str) -> Option<u64> {
+    let t = text.trim().trim_start_matches('(').trim_end_matches(')').trim_end_matches(',');
+    let n = t.split_whitespace().last()?;
+    n.parse::<u64>().ok().map(|ms| ms / 1000)
+}
+
+/// `ioreg -c IOHIDSystem` has `"HIDIdleTime" = 123456789` (nanoseconds).
+pub fn parse_ioreg_idle(text: &str) -> Option<u64> {
+    let line = text.lines().find(|l| l.contains("\"HIDIdleTime\""))?;
+    let n = line.split('=').nth(1)?.trim();
+    n.parse::<u64>().ok().map(|ns| ns / 1_000_000_000)
+}
+
+/// `pmset -g batt`: "Now drawing from 'Battery Power'" or "'AC Power'".
+pub fn parse_pmset_batt(text: &str) -> Option<bool> {
+    if text.contains("'Battery Power'") {
+        Some(true)
+    } else if text.contains("'AC Power'") || text.contains("'UPS Power'") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Seconds since the person last touched the keyboard or mouse; best effort.
+pub async fn idle_sec() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland");
+        if !wayland && std::env::var_os("DISPLAY").is_some() {
+            if let Some(p) = find_program("xprintidle") {
+                if let Some((true, out, _)) = run_with_timeout(&p, &[], IDLE_TIMEOUT).await {
+                    if let Ok(ms) = out.trim().parse::<u64>() {
+                        return Some(ms / 1000);
+                    }
+                }
+            }
+        }
+        let bus = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
+            || std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|d| Path::new(&d).join("bus").exists());
+        if bus {
+            if let Some(p) = find_program("gdbus") {
+                let args = [
+                    "call", "--session", "--dest", "org.gnome.Mutter.IdleMonitor",
+                    "--object-path", "/org/gnome/Mutter/IdleMonitor/Core",
+                    "--method", "org.gnome.Mutter.IdleMonitor.GetIdletime",
+                ];
+                if let Some((true, out, _)) = run_with_timeout(&p, &args, IDLE_TIMEOUT).await {
+                    return parse_gdbus_idle(&out);
+                }
+            }
+        }
+        None
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let p = find_program("ioreg").unwrap_or_else(|| PathBuf::from("/usr/sbin/ioreg"));
+        let (_, out, _) = run_with_timeout(&p, &["-c", "IOHIDSystem"], IDLE_TIMEOUT).await?;
+        parse_ioreg_idle(&out)
+    }
+    #[cfg(windows)]
+    {
+        win::idle_sec()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        None
+    }
+}
+
+/// The battery where it takes a call or a subprocess (Linux reads /sys in gather_fast).
+async fn battery_slow() -> Option<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        let p = find_program("pmset").unwrap_or_else(|| PathBuf::from("/usr/bin/pmset"));
+        let (_, out, _) = run_with_timeout(&p, &["-g", "batt"], IDLE_TIMEOUT).await?;
+        parse_pmset_batt(&out)
+    }
+    #[cfg(windows)]
+    {
+        win::on_battery()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        None
+    }
+}
+
+#[cfg(windows)]
+mod win {
+    #[repr(C)]
+    struct LastInputInfo {
+        cb_size: u32,
+        dw_time: u32,
+    }
+
+    #[repr(C)]
+    struct SystemPowerStatus {
+        ac_line_status: u8,
+        battery_flag: u8,
+        battery_life_percent: u8,
+        system_status_flag: u8,
+        battery_life_time: u32,
+        battery_full_life_time: u32,
+    }
+
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetLastInputInfo(plii: *mut LastInputInfo) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetTickCount() -> u32;
+        fn GetSystemPowerStatus(status: *mut SystemPowerStatus) -> i32;
+    }
+
+    /// Only meaningful in the person's session (not for a service).
+    pub fn idle_sec() -> Option<u64> {
+        let mut lii = LastInputInfo { cb_size: std::mem::size_of::<LastInputInfo>() as u32, dw_time: 0 };
+        if unsafe { GetLastInputInfo(&mut lii) } == 0 {
+            return None;
+        }
+        let now = unsafe { GetTickCount() };
+        Some((now.wrapping_sub(lii.dw_time) / 1000) as u64)
+    }
+
+    pub fn on_battery() -> Option<bool> {
+        let mut st = SystemPowerStatus {
+            ac_line_status: 255,
+            battery_flag: 255,
+            battery_life_percent: 255,
+            system_status_flag: 0,
+            battery_life_time: 0,
+            battery_full_life_time: 0,
+        };
+        if unsafe { GetSystemPowerStatus(&mut st) } == 0 {
+            return None;
+        }
+        if st.battery_flag == 128 {
+            return Some(false); // no battery
+        }
+        match st.ac_line_status {
+            0 => Some(true),
+            1 => Some(false),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -435,6 +599,17 @@ mod tests {
         assert_eq!(super::plain_path(Path::new(r"\\?\C:\Users\me\crundi-work")), Path::new(r"C:\Users\me\crundi-work"));
         assert_eq!(super::plain_path(Path::new(r"\\?\UNC\host\share\w")), Path::new(r"\\host\share\w"));
         assert_eq!(super::plain_path(Path::new("/home/me/w")), Path::new("/home/me/w"));
+    }
+
+    #[test]
+    fn idle_and_battery_parsers() {
+        assert_eq!(parse_gdbus_idle("(uint64 125000,)\n"), Some(125));
+        assert_eq!(parse_gdbus_idle("garbage"), None);
+        let ioreg = "    | |   \"HIDIdleTime\" = 7000000000\n    | |   \"Other\" = 1";
+        assert_eq!(parse_ioreg_idle(ioreg), Some(7));
+        assert_eq!(parse_pmset_batt("Now drawing from 'Battery Power'\n -InternalBattery-0"), Some(true));
+        assert_eq!(parse_pmset_batt("Now drawing from 'AC Power'"), Some(false));
+        assert_eq!(parse_pmset_batt(""), None);
     }
 
     #[test]

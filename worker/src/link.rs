@@ -1,5 +1,6 @@
 //! The link: one websocket to `{server}/api/workers/link` (spec: "The link").
 
+use crate::chats::{ChatGate, Chats};
 use crate::config::Config;
 use crate::info::{self, InfoInputs};
 use crate::jobs::{Gate, Jobs};
@@ -15,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, http::HeaderValue, Message};
 
-pub const CAPS: &[&str] = &["info", "terminal", "pause", "jobs"];
+pub const CAPS: &[&str] = &["info", "terminal", "pause", "jobs", "chats"];
 
 #[derive(Debug, Clone)]
 pub struct LinkOptions {
@@ -31,6 +32,10 @@ pub struct LinkOptions {
     pub dead_after: Duration,
     /// Shell command for terminals; None = the platform default.
     pub shell: Option<Vec<String>>,
+    /// Job and chat events for the embedding app (embedded stdout, tray notifications).
+    pub events: Option<mpsc::UnboundedSender<Value>>,
+    /// Use exactly this program as `claude` (tests); None = find it.
+    pub claude: Option<PathBuf>,
 }
 
 impl LinkOptions {
@@ -43,6 +48,8 @@ impl LinkOptions {
             info_every: Duration::from_secs(30),
             dead_after: Duration::from_secs(90),
             shell: None,
+            events: None,
+            claude: None,
         }
     }
 }
@@ -153,6 +160,8 @@ struct Link {
     pause_unsent: bool,
     /// Phase 2 jobs; they outlive a session (the link dropping).
     jobs: Jobs,
+    /// Phase 4 chats; they outlive a session too.
+    chats: Chats,
 }
 
 /// Run the link until quit, 401, or bye. Reconnects with backoff.
@@ -164,15 +173,17 @@ pub async fn run(
 ) -> Outcome {
     crate::util::install_crypto();
     let _ = cfg.ensure_work_dir();
-    let jobs = Jobs::new(cfg.work_dir.clone());
-    let mut link = Link { cfg, opts, status, pause_unsent: false, jobs };
+    let jobs = Jobs::new(cfg.work_dir.clone(), opts.events.clone());
+    let chats = Chats::new(cfg.work_dir.clone(), cfg.display_name(), opts.claude.clone(), opts.events.clone());
+    let mut link = Link { cfg, opts, status, pause_unsent: false, jobs, chats };
     if !link.cfg.joined() {
         link.set_state(State::NotJoined, None, None);
         return Outcome::NotJoined;
     }
     let outcome = run_loop(&mut link, &mut ctrl).await;
-    // Quitting or removed: running jobs are stopped.
+    // Quitting or removed: running jobs and chats are stopped.
     link.jobs.kill_all();
+    link.chats.kill_all();
     outcome
 }
 
@@ -348,6 +359,8 @@ impl Link {
         }
         // Jobs still running (or finished, not yet collected), so the server can job.attach.
         hello["jobs"] = json!(self.jobs.summary());
+        // Chats still running (or ended, exit not yet sent), so the server can chat.attach.
+        hello["chats"] = json!(self.chats.summary());
         if let Err(e) = ws.send(Message::Text(hello.to_string().into())).await {
             return (SessionEnd::Dropped(e.to_string()), false);
         }
@@ -396,6 +409,7 @@ impl Link {
                 }
                 _ = info_tick.tick() => {
                     self.jobs.prune();
+                    self.chats.prune();
                     self.send_info(&out_tx);
                 }
                 c = ctrl.recv() => match c {
@@ -426,6 +440,7 @@ impl Link {
         terms.close_all();
         // Jobs keep running; their output waits in the spool for job.attach.
         self.jobs.disconnect();
+        self.chats.disconnect();
         (end, welcomed)
     }
 
@@ -497,12 +512,14 @@ impl Link {
                     let _ = out.send(json!({"type": "paused", "paused": local_pause, "by": "pc"}).to_string());
                 }
                 self.save();
-                let server_jobs = v
-                    .get("caps")
-                    .and_then(Value::as_array)
-                    .is_some_and(|c| c.iter().any(|x| x == "jobs"));
-                if server_jobs {
+                let server_has = |cap: &str| {
+                    v.get("caps").and_then(Value::as_array).is_some_and(|c| c.iter().any(|x| x == cap))
+                };
+                if server_has("jobs") {
                     self.jobs.connect(job_tx.clone());
+                }
+                if server_has("chats") {
+                    self.chats.connect(job_tx.clone());
                 }
                 self.set_state(State::Online, None, None);
                 self.send_info(out);
@@ -536,6 +553,10 @@ impl Link {
             t if t.starts_with("job.") => {
                 let gate = Gate { paused: self.cfg.paused, allow_commands: self.cfg.allow_commands };
                 self.jobs.handle(v, gate);
+            }
+            t if t.starts_with("chat.") || t.starts_with("mcp.") => {
+                let gate = ChatGate { paused: self.cfg.paused, allow_chats: self.cfg.allow_chats };
+                self.chats.handle(v, gate);
             }
             "bye" => return Some(SessionEnd::Bye(s("reason").unwrap_or("").to_string())),
             _ => {} // unknown types are ignored (newer server)

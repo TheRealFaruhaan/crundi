@@ -214,7 +214,7 @@ check('--strict-mcp-config is never passed without --mcp-config',
 check('the collaborator key is not written into their worktree',
   /if \(!collaborator\) \{\s*\n\s*try \{ writeMcpConfig\(workdir/.test(ui));
 check('the bridge lists only the collaborator tools for a collaborator',
-  /TOOL_SCOPE === 'collaborator'[\s\S]{0,80}?COLLABORATOR_MCP_TOOLS\.has\(t\.name\)/.test(read('src', 'mcp-stdio.js')));
+  /TOOL_SCOPE === 'collaborator'[\s\S]{0,80}?COLLABORATOR_MCP_TOOLS\.has\(t\.name\)/.test(read('src', 'mcp-stdio.js') + read('src', 'mcp-tools.js')));
 check('service keys are checked against the caller\u2019s projects',
   /if \(aliasDenied\(serviceAlias\(key\)\)\)/.test(webapp));
 check('a collaborator registering a service goes to the owner, over HTTP and MCP',

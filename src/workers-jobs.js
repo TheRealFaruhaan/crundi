@@ -28,7 +28,7 @@ const FINISHED = new Set(['done', 'failed', 'cancelled', 'refused', 'lost', 'err
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
 
-function git(args, cwd, { maxBuffer = 64 * 1024 * 1024, encoding = 'utf8' } = {}) {
+export function git(args, cwd, { maxBuffer = 64 * 1024 * 1024, encoding = 'utf8' } = {}) {
   return new Promise((resolve) => {
     execFile('git', args, { cwd, maxBuffer, encoding, timeout: 120_000, windowsHide: true }, (err, stdout, stderr) => {
       resolve({ ok: !err, out: stdout, err: String(stderr || (err && err.message) || '') });
@@ -63,7 +63,7 @@ function ignoreOf(root) {
 }
 
 /** The project's files for a copy: git's view when it is a repository, else a walk. */
-async function projectFiles(root) {
+export async function projectFiles(root) {
   const ign = ignoreOf(root);
   const g = await git(['ls-files', '-co', '--exclude-standard', '-z'], root);
   let list;
@@ -86,7 +86,7 @@ async function projectFiles(root) {
   return list.map(p => p.split(sep).join('/')).filter(p => !ign(p) && !p.startsWith('../'));
 }
 
-export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf = () => 0, workerOf, candidates, changed = () => {}, log = () => {} }) {
+export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf = () => 0, workerOf, candidates, changed = () => {}, log = () => {}, onJob = () => {} }) {
   const DIR = join(dataDir, 'workers');
   const LOGS = join(DIR, 'jobs');
   const ARTS = join(DIR, 'artifacts');
@@ -144,6 +144,7 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
     if (l && l.artFd != null) { try { closeSync(l.artFd); } catch { /* closed */ } }
     live.delete(j.id);
     save(); changed();
+    try { onJob(j.id, true); } catch { /* a listener */ }
   }
   function finish(j, state, extra = {}) {
     if (FINISHED.has(j.state)) return;
@@ -163,16 +164,18 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
       if (!w.jobs) return { error: `${w.name} runs an older worker without commands. Update it on that PC.` };
       if (!w.allowCommands) return { error: `${w.name} does not allow commands (its switch in the Workers tab).` };
       if (w.paused) return { error: `${w.name} is paused.` };
+      if (w.inUse) return { error: `${w.name} is in use: it takes jobs only when its owner is away (its setting in the Workers tab).` };
+      if (w.onBattery) return { error: `${w.name} is on battery: it takes jobs only when plugged in (its setting in the Workers tab).` };
       if (busy.has(w.id)) return { error: `${w.name} is running another job. Wait for it (worker_job) or pick another PC.` };
       return { w };
     }
     const need = (labels || []).map(l => String(l).toLowerCase());
     const fit = list.filter(x => need.every(l => x.labels.includes(l)));
-    const ok = fit.find(x => x.online && x.jobs && x.allowCommands && !x.paused && !busy.has(x.id));
+    const ok = fit.find(x => x.online && x.jobs && x.allowCommands && !x.paused && !x.inUse && !x.onBattery && !busy.has(x.id));
     if (ok) return { w: ok };
     if (!list.length) return { error: 'No PCs are joined as workers. Add one in the Workers tab.' };
     if (!fit.length) return { error: `No worker has every label ${need.join(', ')}.` };
-    const why = fit.map(x => `${x.name}: ${!x.online ? 'offline' : !x.jobs ? 'older worker' : !x.allowCommands ? 'commands off' : x.paused ? 'paused' : 'busy'}`).join('; ');
+    const why = fit.map(x => `${x.name}: ${!x.online ? 'offline' : !x.jobs ? 'older worker' : !x.allowCommands ? 'commands off' : x.paused ? 'paused' : x.inUse ? 'in use (only when away)' : x.onBattery ? 'on battery' : 'busy'}`).join('; ');
     return { error: `No worker is free right now (${why}).` };
   }
 
@@ -194,7 +197,9 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
       if (url && /^https?:\/\//.test(url) && /^[0-9a-f]{40}$/.test(commit)) {
         gitInfo = { url, branch: br, commit };
         src = 'git';
-        const dirty = (await git(['status', '--porcelain', '--untracked-files=no'], projectPath)).out.trim();
+        // Uncommitted changes matter only when they are on the branch being built.
+        const current = (await git(['rev-parse', '--abbrev-ref', 'HEAD'], projectPath)).out.trim();
+        const dirty = current === br ? (await git(['status', '--porcelain', '--untracked-files=no'], projectPath)).out.trim() : '';
         if (dirty) notes.push('The project has uncommitted changes on the server; they are not in a git job (commit them, or use source "copy").');
       } else if (src === 'git') return { ok: false, error: url ? `Branch "${br}" was not found.` : 'The project has no https/GitHub remote; use source "copy".' };
     }
@@ -229,12 +234,14 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
   }
 
   // ── Streaming to the PC ──
-  async function sendChunks(workerId, type, job, produce, extraLast = {}) {
+  // idKey: 'job' for a job; 'chat' when a chat's folder is being prepared
+  // (src/workers-chats.js uses serveSource below).
+  async function sendChunks(workerId, type, job, produce, extraLast = {}, idKey = 'job') {
     let buf = [], size = 0, seq = 0;
     const flush = async (last) => {
       while (bufferedOf(workerId) > HIGH_WATER) await sleep(20);
       const data = Buffer.concat(buf); buf = []; size = 0;
-      if (!sendTo(workerId, { type, job, seq: seq++, b64: data.toString('base64'), last, ...(last ? extraLast : {}) })) throw new Error('The PC disconnected.');
+      if (!sendTo(workerId, { type, [idKey]: job, seq: seq++, b64: data.toString('base64'), last, ...(last ? extraLast : {}) })) throw new Error('The PC disconnected.');
     };
     await produce(async (b) => {
       buf.push(b); size += b.length;
@@ -242,27 +249,34 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
         const all = Buffer.concat(buf);
         buf = [all.subarray(CHUNK)]; size = all.length - CHUNK;
         while (bufferedOf(workerId) > HIGH_WATER) await sleep(20);
-        if (!sendTo(workerId, { type, job, seq: seq++, b64: all.subarray(0, CHUNK).toString('base64'), last: false })) throw new Error('The PC disconnected.');
+        if (!sendTo(workerId, { type, [idKey]: job, seq: seq++, b64: all.subarray(0, CHUNK).toString('base64'), last: false })) throw new Error('The PC disconnected.');
       }
     });
     await flush(true);
   }
 
-  async function serveBundle(j, have) {
-    const root = live.get(j.id)?.projectPath;
+  // `as` (a chat's folder, not a job): { root, type, idKey } and no job to fail.
+  async function serveBundle(j, have, as = null) {
+    const root = as ? as.root : live.get(j.id)?.projectPath;
     if (!root) return;
-    const tmp = join(tmpdir(), `crundi-bundle-${j.id}.bundle`);
-    const ref = `refs/heads/${j.git.branch}`;
+    const tmp = join(tmpdir(), `crundi-bundle-${j.id}-${randomBytes(3).toString('hex')}.bundle`);
+    const ref = j.git.branch ? `refs/heads/${j.git.branch}` : 'HEAD';
+    // Only what the PC cannot have: not what it said it has, and not what is
+    // on GitHub already (it cloned from there). An empty result (everything
+    // is on GitHub after all) falls back to the branch on its own.
     let args = ['bundle', 'create', tmp, ref];
     if (/^[0-9a-f]{40}$/.test(String(have || '')) && (await git(['cat-file', '-e', `${have}^{commit}`], root)).ok) args.push(`^${have}`);
-    let r = await git(args, root);
+    const hasRemotes = (await git(['for-each-ref', '--count=1', 'refs/remotes/origin/'], root)).out.trim();
+    let r = await git(hasRemotes ? [...args, '--not', '--remotes=origin'] : args, root);
+    if (!r.ok && hasRemotes) r = await git(args, root);
     if (!r.ok && args.length > 4) r = await git(['bundle', 'create', tmp, ref], root);
+    if (!r.ok && as) { log(`[workers] no bundle for chat ${j.id}: ${r.err.slice(0, 300)}`); return; }
     if (!r.ok) { sendTo(j.workerId, { type: 'job.cancel', job: j.id }); finish(j, 'error', { error: `Could not make a git bundle: ${r.err.slice(0, 300)}` }); return; }
     try {
-      await sendChunks(j.workerId, 'job.bundle', j.id, async (out) => {
+      await sendChunks(j.workerId, as ? as.type : 'job.bundle', j.id, async (out) => {
         for await (const b of createReadStream(tmp, { highWaterMark: 256 * 1024 })) await out(b);
-      });
-      j.notes.push('Commits GitHub does not have yet were sent from the server.');
+      }, {}, as ? as.idKey : 'job');
+      if (j.notes) j.notes.push('Commits GitHub does not have yet were sent from the server.');
     } catch (err) { log(`[workers] bundle for ${j.id}: ${err.message}`); }
     finally { try { unlinkSync(tmp); } catch { /* gone */ } }
   }
@@ -281,8 +295,8 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
     return hash;
   }
 
-  async function serveCopy(j, theirs) {
-    const root = live.get(j.id)?.projectPath;
+  async function serveCopy(j, theirs, as = null) {
+    const root = as ? as.root : live.get(j.id)?.projectPath;
     if (!root) return;
     const files = await projectFiles(root);
     const mine = new Set(files);
@@ -300,10 +314,21 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
     const removed = Object.keys(theirs || {}).filter(p => !mine.has(p) && before.has(p)).slice(0, 100_000);
     j.copy = { files: files.length, sent: send.length, bytes, removed: removed.length };
     try {
-      await sendChunks(j.workerId, 'job.files', j.id, (out) => writeTar(root, send, out), { removed });
+      await sendChunks(j.workerId, as ? as.type : 'job.files', j.id, (out) => writeTar(root, send, out), { removed }, as ? as.idKey : 'job');
       copies[ck] = files; saveCopies();
     } catch (err) { log(`[workers] copy for ${j.id}: ${err.message}`); }
-    save(); changed();
+    if (!as) { save(); changed(); }
+  }
+
+  /**
+   * A chat's folder on a PC, prepared like a job's (src/workers-chats.js):
+   * `kind` 'bundle' (have) or 'copy' (theirs, the PC's manifest). `c` is
+   * { id, workerId, project, git, root }; answered with `type` chunks keyed by `idKey`.
+   */
+  function serveSource(kind, c, arg, { type, idKey = 'chat' } = {}) {
+    const j = { id: c.id, workerId: c.workerId, project: c.project, git: c.git || { branch: '' } };
+    const as = { root: c.root, type, idKey };
+    return kind === 'bundle' ? serveBundle(j, arg, as) : serveCopy(j, arg || {}, as);
   }
 
   function appendLog(j, off, data) {
@@ -346,6 +371,10 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
   function onMessage(w, m) {
     const j = byId.get(String(m.job || ''));
     if (!j || j.workerId !== w.id) return;
+    handle(j, m);
+    if (!FINISHED.has(j.state)) { try { onJob(j.id, false); } catch { /* a listener */ } }
+  }
+  function handle(j, m) {
     switch (m.type) {
       case 'job.accepted': if (j.state === 'starting') { j.state = 'preparing'; j.startedAt = iso(); save(); changed(); } return;
       case 'job.refused': finish(j, 'refused', { error: str(m.error, 400) || 'The PC refused the job.' }); return;
@@ -458,5 +487,5 @@ export function createJobs({ dataDir, now = () => Date.now(), sendTo, bufferedOf
 
   function dispose() { clearInterval(sweepTimer); for (const l of live.values()) if (l.lostTimer) clearTimeout(l.lostTimer); if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; try { writeFileSync(FILE, JSON.stringify({ jobs }, null, 1)); } catch { /* fine */ } } }
 
-  return { run, onMessage, onHello, onDrop, view: (id, t) => view(byId.get(id), t), wait, cancel, list, tail, busyWorkers, dispose, get: (id) => byId.get(id) || null, FINISHED };
+  return { run, serveSource, onMessage, onHello, onDrop, view: (id, t) => view(byId.get(id), t), wait, cancel, list, tail, busyWorkers, dispose, get: (id) => byId.get(id) || null, FINISHED };
 }

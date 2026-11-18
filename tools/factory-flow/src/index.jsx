@@ -7,7 +7,8 @@ import './styles.css';
 import { Editor } from './Editor.jsx';
 import { Viewer } from './Viewer.jsx';
 
-function mountEditor(el, { apiFetch, factoryId, onClose }) {
+// workers: the owner's PCs [{ id, name, online }] for the "Runs on" fields (null: none offered).
+function mountEditor(el, { apiFetch, factoryId, onClose, workers = null }) {
   const root = createRoot(el);
   el.classList.add('ff-host');
   let destroyed = false;
@@ -15,7 +16,7 @@ function mountEditor(el, { apiFetch, factoryId, onClose }) {
   apiFetch('/api/factories/get?id=' + encodeURIComponent(factoryId)).then(r => r.json()).then(j => {
     if (destroyed) return;
     if (!j.ok) { root.render(<div className="ff-loading">{j.error || 'Could not open this factory.'}</div>); return; }
-    root.render(<Editor apiFetch={apiFetch} factoryId={factoryId} onClose={onClose} initial={j} />);
+    root.render(<Editor apiFetch={apiFetch} factoryId={factoryId} onClose={onClose} initial={j} workers={Array.isArray(workers) ? workers : null} />);
   }).catch(err => { if (!destroyed) root.render(<div className="ff-loading">Could not open this factory: {String(err.message || err)}</div>); });
   return { destroy() { destroyed = true; root.unmount(); el.classList.remove('ff-host'); } };
 }

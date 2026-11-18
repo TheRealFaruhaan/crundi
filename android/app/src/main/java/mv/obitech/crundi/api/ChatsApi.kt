@@ -28,6 +28,8 @@ class ChatsApi internal constructor(private val rpc: Rpc) {
         "project" to o.project, "title" to o.title, "model" to o.model, "effort" to o.effort,
         "permissionMode" to o.permissionMode, "skipPermissions" to o.skipPermissions,
         "sessionMode" to o.sessionMode, "resumeId" to o.resumeId,
+        // Only when a PC was picked: an older server never sees the field.
+        "where" to o.where?.takeIf { it.isNotEmpty() },
     )), null)
 
     /** Is the conversation a new chat would continue heavy (big or old)? Offer "start fresh" if so. */

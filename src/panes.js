@@ -106,6 +106,8 @@ export function createPanes(o) {
           model: m.model || '', effort: m.effort || '', skipPermissions: !!m.skipPermissions,
           // bypassPermissions only comes from the launch flag, which skipPermissions carries.
           permissionMode: m.permissionMode && m.permissionMode !== 'bypassPermissions' ? m.permissionMode : '',
+          // A chat on a PC comes back on the same PC.
+          ...(m.where ? { where: m.where } : {}),
         },
         status: 'live',
       };
@@ -181,6 +183,7 @@ export function createPanes(o) {
         model: r.opts.model || '', effort: r.opts.effort || '',
         permissionMode: r.opts.permissionMode || '', skipPermissions: !!r.opts.skipPermissions,
         sessionMode: !r.sessionId || mode === 'new' ? 'new' : mode, resumeId: mode === 'new' ? '' : (r.sessionId || ''),
+        ...(r.opts.where ? { where: r.opts.where } : {}),
       });
     }
     if (!result || !result.ok) return result || { ok: false, error: 'Could not resume' };
