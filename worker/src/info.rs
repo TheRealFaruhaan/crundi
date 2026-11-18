@@ -291,12 +291,12 @@ pub struct InfoInputs {
 
 /// Disk free/total of the file system holding `path`.
 fn disk_of(path: &Path) -> Disk {
-    let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let canon = plain_path(&std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()));
     let mut best: Option<(usize, u64, u64)> = None;
     if let Ok(disks) = sysinfo::Disks::new_with_refreshed_list() {
         for d in disks.iter() {
             let mp = d.mount_point();
-            if canon.starts_with(mp) {
+            if under_mount(&canon, mp) {
                 let depth = mp.components().count();
                 if best.map_or(true, |(b, _, _)| depth > b) {
                     best = Some((depth, d.available_space(), d.total_space()));
@@ -309,6 +309,33 @@ fn disk_of(path: &Path) -> Disk {
         path: path.display().to_string(),
         free_mb: free / 1_048_576,
         total_mb: total / 1_048_576,
+    }
+}
+
+/// A canonical path without Windows' verbatim prefix (`\\?\C:\x` -> `C:\x`,
+/// `\\?\UNC\h\s` -> `\\h\s`), which otherwise never matches a drive's mount
+/// point (a short path such as RUNNER~1 is expanded by canonicalize first).
+pub fn plain_path(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    p.to_path_buf()
+}
+
+/// Is `path` on the file system mounted at `mount`? Case-insensitive on
+/// Windows, where drive letters and folders are.
+pub fn under_mount(path: &Path, mount: &Path) -> bool {
+    if cfg!(windows) {
+        let a = path.to_string_lossy().replace('/', "\\").to_lowercase();
+        let mut b = mount.to_string_lossy().replace('/', "\\").to_lowercase();
+        if !b.ends_with('\\') { b.push('\\'); }
+        a.starts_with(&b) || format!("{a}\\") == b
+    } else {
+        path.starts_with(mount)
     }
 }
 
@@ -401,6 +428,14 @@ pub async fn gather(inp: InfoInputs) -> Info {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_path_drops_the_verbatim_prefix() {
+        use std::path::Path;
+        assert_eq!(super::plain_path(Path::new(r"\\?\C:\Users\me\crundi-work")), Path::new(r"C:\Users\me\crundi-work"));
+        assert_eq!(super::plain_path(Path::new(r"\\?\UNC\host\share\w")), Path::new(r"\\host\share\w"));
+        assert_eq!(super::plain_path(Path::new("/home/me/w")), Path::new("/home/me/w"));
+    }
 
     #[test]
     fn versions() {
