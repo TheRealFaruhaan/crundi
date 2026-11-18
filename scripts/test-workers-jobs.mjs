@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync, statSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
 import { createWorkersService } from '../src/workers.js';
 import { httpsRemote } from '../src/workers-jobs.js';
@@ -41,6 +42,8 @@ const proj = join(dir, 'proj');
 mkdirSync(join(proj, 'src'), { recursive: true });
 const g = (...a) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...a], { cwd: proj, encoding: 'utf8' }).trim();
 g('init', '-q', '-b', 'dev');
+// Windows runners check files out with CRLF unless told not to: the files here are byte-exact.
+g('config', 'core.autocrlf', 'false');
 writeFileSync(join(proj, 'a.txt'), 'one\n');
 writeFileSync(join(proj, 'src', 'b.txt'), 'two\n');
 writeFileSync(join(proj, '.gitignore'), 'ignored.txt\n');
@@ -173,7 +176,7 @@ g('checkout', '-q', '--', 'a.txt');
   writeFileSync(join(proj, 'ignored.txt'), 'never sent\n');
   mkdirSync(join(proj, 'node_modules', 'x'), { recursive: true });
   writeFileSync(join(proj, 'node_modules', 'x', 'i.js'), 'never sent\n');
-  const sha = (s) => execFileSync('sha256sum', { input: s, encoding: 'utf8' }).split(' ')[0];
+  const sha = (s) => createHash('sha256').update(s).digest('hex');
   // The PC has src/b.txt as it is, an old a.txt, gone.txt (which an earlier copy
   // sent and the server no longer has) and out/built.bin (which a build made there).
   writeFileSync(join(dir, 'data', 'workers', 'copies.json'), JSON.stringify({ [`${k1.id}:proj`]: ['a.txt', 'src/b.txt', 'gone.txt'] }));
@@ -189,7 +192,7 @@ g('checkout', '-q', '--', 'a.txt');
   ok(last && last.removed.join() === 'gone.txt', 'copy: a file an earlier copy sent and the server no longer has is removed; what a build made on the PC is not', JSON.stringify(last && last.removed));
   const tarFile = join(dir, 'files.tar');
   writeFileSync(tarFile, Buffer.concat(big.of('job.files').filter(m => m.job === st.job).sort((a, b) => a.seq - b.seq).map(m => Buffer.from(m.b64, 'base64'))));
-  const names = execFileSync('tar', ['-tf', tarFile], { encoding: 'utf8' }).split('\n').filter(Boolean).sort();
+  const names = execFileSync('tar', ['-tf', tarFile], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean).sort();
   ok(names.join() === '.gitignore,a.txt,new.txt', 'copy: only new and changed files are sent; unchanged, ignored and node_modules are not', names.join());
   const x = join(dir, 'x'); mkdirSync(x);
   execFileSync('tar', ['-xf', tarFile, '-C', x]);

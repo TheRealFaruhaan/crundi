@@ -120,7 +120,7 @@ try {
     const r = await svc.mcpRun({ alias: 'proj', command: 'cat hello.txt && mkdir -p out && printf abc > out/r.bin && echo "niceness=$(nice)" && echo "job=$CRUNDI_JOB"', artifacts: ['out/*.bin'], waitMinutes: 2 }, { projectPath: proj });
     ok(r.ok && r.state === 'done' && r.exitCode === 0 && r.source === 'copy', 'a real job: a copy of the project, run on the PC, exit 0', JSON.stringify(r).slice(0, 400));
     ok(/hello from the server/.test(r.tail || '') && /niceness=10/.test(r.tail || '') && new RegExp('job=' + r.job).test(r.tail || ''), 'its output: the copied file, low priority (nice 10), CRUNDI_JOB set', r.tail);
-    const names = r.artifacts ? execFileSync('tar', ['-tzf', r.artifacts.path], { encoding: 'utf8' }) : '';
+    const names = r.artifacts ? execFileSync('tar', ['-tzf', r.artifacts.path], { encoding: 'utf8' }).replace(/\r/g, '') : '';
     ok(r.artifacts && r.artifacts.count === 1 && /out\/r\.bin/.test(names), 'the file it made came back as a .tar.gz', names);
     writeFileSync(join(proj, 'hello.txt'), 'changed\n');
     const r2 = await svc.mcpRun({ alias: 'proj', command: 'cat hello.txt; ls out', waitMinutes: 2 }, { projectPath: proj });
