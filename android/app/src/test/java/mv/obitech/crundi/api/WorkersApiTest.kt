@@ -7,6 +7,9 @@ import kotlinx.serialization.json.jsonPrimitive
 import mv.obitech.crundi.api.model.parseWorkerLabels
 import mv.obitech.crundi.ui.components.BadgeKind
 import mv.obitech.crundi.ui.operations.countdown
+import mv.obitech.crundi.ui.operations.jobChip
+import mv.obitech.crundi.ui.operations.jobDuration
+import mv.obitech.crundi.ui.operations.jobMeta
 import mv.obitech.crundi.ui.operations.workerEventWords
 import mv.obitech.crundi.ui.operations.workerMachine
 import mv.obitech.crundi.ui.operations.workerState
@@ -93,5 +96,71 @@ class WorkersApiTest {
         assertNull(parseWorkerLabels("bad label!").first)
         assertNull(parseWorkerLabels((1..21).joinToString(",") { "l$it" }).first)
         assertEquals(emptyList<String>(), parseWorkerLabels("").first)
+    }
+
+    private val jobsJson = """{"ok":true,"jobs":[
+      {"job":"j2","worker":"Studio PC","workerId":"w1","project":"crundi","command":"cargo build --release","source":"git","branch":"main","commit":"1a2b3c4d5e6f","cwd":"crundi",
+       "state":"running","running":true,"phase":"running","detail":null,"offline":true,"exitCode":null,"durationMs":null,"timedOut":false,"cancelled":false,
+       "createdAt":"2026-11-18T10:00:00.000Z","startedAt":"2026-11-18T10:00:02.000Z","endedAt":null,"logBytes":2048,"log":"/x/j2.log","artifacts":null,"copy":null,"notes":[],"error":"","future":{"a":1}},
+      {"job":"j1","worker":"Studio PC","workerId":"w1","project":"site","command":"npm run build","source":"files","branch":null,"commit":null,
+       "state":"failed","running":false,"phase":"done","offline":false,"exitCode":2,"durationMs":185000,
+       "createdAt":"2026-11-18T09:00:00.000Z","endedAt":"2026-11-18T09:03:05.000Z","logBytes":100,
+       "artifacts":{"path":"/a/j1","bytes":8493465,"count":2,"expired":false},"copy":{"files":40,"sent":3,"bytes":1200,"removed":1},
+       "notes":["dist/ was empty"],"error":"Exit code 2."},
+      {"job":"j0","command":"ls","state":"done"}
+    ]}"""
+
+    @Test fun jobsAreRead() = runBlocking {
+        val t = FakeTransport().on("POST /api/workers", jobsJson)
+        val jobs = CrundiClient(t).workers.jobs("w1")!!
+        val sent = t.requests.last().json!!.jsonObject
+        assertEquals("jobs", sent["action"]!!.jsonPrimitive.content)
+        assertEquals("w1", sent["id"]!!.jsonPrimitive.content)
+        assertEquals(listOf("j2", "j1", "j0"), jobs.map { it.job })
+
+        val run = jobs[0]
+        assertTrue(run.running)
+        assertNull(run.exitCode)
+        assertNull(run.artifacts)
+        assertEquals(java.time.Instant.parse("2026-11-18T10:00:00Z").toEpochMilli(), run.createdMs)
+        assertEquals("PC away" to BadgeKind.Warn, jobChip(run))
+        assertEquals("crundi · main 1a2b3c4 · just now", jobMeta(run, run.createdMs + 30_000))
+
+        val failed = jobs[1]
+        assertEquals("failed (exit 2)" to BadgeKind.Bad, jobChip(failed))
+        assertEquals(2, failed.artifacts!!.count)
+        assertEquals(3, failed.copy!!.sent)
+        assertEquals(listOf("dist/ was empty"), failed.notes)
+        assertEquals("3 min 5 s", jobDuration(185_000))
+        assertEquals("site · files · 3 min 5 s · 1h ago · 2 files back (8.1 MB)", jobMeta(failed, failed.createdMs + 3_600_000))
+
+        val bare = jobs[2]
+        assertEquals("done" to BadgeKind.Good, jobChip(bare))
+        assertEquals("", bare.error)
+        assertEquals(0L, bare.createdMs)
+    }
+
+    @Test fun aPhaseOneServerHasNoJobs() = runBlocking {
+        val api = CrundiClient(FakeTransport().on("POST /api/workers", """{"ok":false,"error":"Unknown action."}""")).workers
+        assertNull(api.jobs("w1"))
+    }
+
+    @Test fun aJobsLogAndCancel() = runBlocking {
+        val t = FakeTransport().on("POST /api/workers", """{"ok":true,"job":{"job":"j2","command":"make","state":"cancelled","running":false,"tail":"line 1\nline 2\n"}}""")
+        val api = CrundiClient(t).workers
+        val v = api.jobLog("j2")!!
+        val sent = t.requests.last().json!!.jsonObject
+        assertEquals("job-log", sent["action"]!!.jsonPrimitive.content)
+        assertEquals("j2", sent["job"]!!.jsonPrimitive.content)
+        assertEquals("65536", sent["tailBytes"]!!.jsonPrimitive.content)
+        assertEquals("line 1\nline 2\n", v.tail)
+        assertEquals("cancelled", api.cancelJob("j2")!!.state)
+        assertEquals("job-cancel", t.requests.last().json!!.jsonObject["action"]!!.jsonPrimitive.content)
+    }
+
+    @Test fun theListCarriesJobFlags() = runBlocking {
+        val ov = CrundiClient(FakeTransport().on("GET /api/workers", """{"workers":[{"id":"w1","online":true,"canRunJobs":true,"busy":true},{"id":"w2"}]}""")).workers.list()
+        assertTrue(ov.workers[0].canRunJobs && ov.workers[0].busy)
+        assertFalse(ov.workers[1].canRunJobs || ov.workers[1].busy)
     }
 }

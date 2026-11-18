@@ -17,11 +17,12 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes, createHash, timingSafeEqual, randomInt } from 'node:crypto';
 import { WebSocketServer } from 'ws';
+import { createJobs } from './workers-jobs.js';
 
 export const LINK_PATH = '/api/workers/link';
 export const JOIN_PATH = '/api/workers/join';
 export const PROTO = 1;
-export const SERVER_CAPS = Object.freeze(['terminal', 'pause', 'rename']);
+export const SERVER_CAPS = Object.freeze(['terminal', 'pause', 'rename', 'jobs']);
 
 const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const CODE_TTL_MS = 10 * 60 * 1000;
@@ -256,6 +257,16 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     try { l.ws.send(JSON.stringify(msg)); return true; } catch { return false; }
   }
 
+  // ── Jobs (phase 2: commands on a PC; src/workers-jobs.js) ──
+  const jobs = createJobs({
+    dataDir: dataDir || join(FILE, '..'), now, log, changed,
+    sendTo, bufferedOf: (id) => links.get(id)?.ws.bufferedAmount || 0,
+    candidates: () => d.workers.filter(w => !w.revoked).map(w => {
+      const l = links.get(w.id);
+      return { id: w.id, name: w.name, online: !!(l && l.hello), jobs: !!(l && l.caps.includes('jobs')), allowCommands: w.allowCommands !== false, paused: !!w.paused, labels: labelsOf(w.info, w.customLabels), lastSeenAt: w.lastSeenAt };
+    }),
+  });
+
   function attach(ws, w) {
     const prev = links.get(w.id);
     if (prev) { try { prev.ws.send(JSON.stringify({ type: 'bye', reason: 'replaced' })); prev.ws.close(4001, 'replaced'); } catch { /* gone */ } drop(w.id, prev, 'replaced'); }
@@ -281,6 +292,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
     if (links.get(id) === link) links.delete(id);
     const w = byId(id);
     if (w) { w.lastSeenAt = new Date(now()).toISOString(); if (link.hello && why !== 'replaced') event(w, 'disconnected'); save(); }
+    if (link.hello) jobs.onDrop(id);
     for (const [ref, t] of terms) {
       if (t.workerId !== id) continue;
       terms.delete(ref);
@@ -304,6 +316,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
           type: 'welcome', proto: PROTO, id: w.id, name: w.name, server: { version: serverVersion },
           caps: [...SERVER_CAPS], settings: { allowChats: w.allowChats, allowCommands: w.allowCommands, paused: w.paused },
         });
+        if (link.caps.includes('jobs')) jobs.onHello(w, m.jobs);
         changed();
         return;
       }
@@ -331,7 +344,9 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
         }
         return;
       }
-      default: return;   // newer worker, older server
+      default:
+        if (m.type.startsWith('job.')) { jobs.onMessage(w, m); return; }
+        return;   // newer worker, older server
     }
   }
 
@@ -351,7 +366,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
       lastSeenAt: w.lastSeenAt, createdAt: w.createdAt, revoked: !!w.revoked,
       info: w.info, labels: labelsOf(w.info, w.customLabels), customLabels: w.customLabels || [],
       allowChats: w.allowChats !== false, allowCommands: w.allowCommands !== false,
-      paused: !!w.paused, pausedBy: w.pausedBy || '', terminals: [...terms.values()].filter(t => t.workerId === w.id).length,
+      paused: !!w.paused, pausedBy: w.pausedBy || '', canRunJobs: !!(l && l.caps.includes('jobs')), busy: jobs.busyWorkers().has(w.id), terminals: [...terms.values()].filter(t => t.workerId === w.id).length,
       logs: l ? l.logs.slice(-50) : [],
     };
   }
@@ -366,6 +381,8 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   function act(body = {}) {
     const a = String(body.action || '');
     if (a === 'code') return { ok: true, ...newCode() };
+    if (a === 'job-log') { const v = jobs.view(String(body.job || ''), Math.min(1024 * 1024, Number(body.tailBytes) || 65536)); return v ? { ok: true, job: v } : { ok: false, status: 404, error: 'No such job.' }; }
+    if (a === 'job-cancel') return jobs.cancel(String(body.job || ''));
     if (a === 'join-self') {
       const r = enroll({ name: body.name, deviceId: body.deviceId, kind: KINDS.includes(body.kind) ? body.kind : 'electron', version: body.version, os: body.os });
       return { ok: true, ...r };
@@ -412,6 +429,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
         return { ok: true };
       }
       case 'history': return { ok: true, history: (w.history || []).slice().reverse() };
+      case 'jobs': return { ok: true, jobs: jobs.list({ workerId: w.id, limit: 50 }) };
       default: return { ok: false, error: 'Unknown action.' };
     }
     save(true); changed();
@@ -485,16 +503,35 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
           tools: i.tools || {}, lastSeenAt: v.online ? null : v.lastSeenAt,
         };
       }),
-      note: 'Running commands or chats on a PC comes in a later Crundi version; this lists them.',
+      note: 'Run a command on one with worker_run (whole chats on a PC come later).',
     };
   }
 
   function dispose() {
+    jobs.dispose();
     for (const [, l] of links) { try { l.ws.close(1001, 'server stopping'); } catch { /* gone */ } }
     links.clear();
     if (saveTimer) save(true);
     try { wss.close(); } catch { /* fine */ }
   }
 
-  return { handlePublic, handleUpgrade, handleApi, act, list, uiTerminals, mcpList, dispose, isOnline: (id) => !!links.get(id)?.hello };
+  /** worker_run / worker_job for a chat (owner chats only; the caller checks). */
+  async function mcpRun(a, { projectPath, chatId } = {}) {
+    const r = await jobs.run({ ...a, alias: a.alias, projectPath, chatId });
+    if (!r.ok) return r;
+    if (a.wait === false) return { ...r, running: true, note: 'Started. Follow it with worker_job (status, log, wait, cancel).' };
+    await jobs.wait(r.job, Math.max(1, Math.min(30, Number(a.waitMinutes) || 10)) * 60_000);
+    const v = jobs.view(r.job, 4096);
+    return { ok: true, ...v, ...(v.running ? { note: 'Still running. worker_job { action: "wait" } waits again; "log" shows more.' } : {}) };
+  }
+  async function mcpJob(a) {
+    const id = String(a.job || '');
+    if (!jobs.get(id)) return { ok: false, error: 'No such job.' };
+    const act2 = String(a.action || 'status');
+    if (act2 === 'cancel') return jobs.cancel(id);
+    if (act2 === 'wait') await jobs.wait(id, Math.max(1, Math.min(30, Number(a.waitMinutes) || 10)) * 60_000);
+    return { ok: true, ...jobs.view(id, act2 === 'log' ? Math.min(1024 * 1024, Number(a.tailBytes) || 65536) : 4096) };
+  }
+
+  return { handlePublic, handleUpgrade, handleApi, act, list, uiTerminals, mcpList, mcpRun, mcpJob, jobs, dispose, isOnline: (id) => !!links.get(id)?.hello };
 }

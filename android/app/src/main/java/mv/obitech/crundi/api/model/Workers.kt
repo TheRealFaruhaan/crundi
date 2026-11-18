@@ -102,6 +102,10 @@ data class Worker(
     val logs: List<JsonElement> = emptyList(),
     /** Its key was revoked: the worker is kept but cannot link until it joins again. */
     val revoked: Boolean = false,
+    /** Its link offers jobs (a phase-2 worker): it can run commands from chats. */
+    val canRunJobs: Boolean = false,
+    /** Running a job now. */
+    val busy: Boolean = false,
 ) {
     val title: String get() = name.ifEmpty { id }
     val connectedMs: Long get() = timeMs(connectedSince)
@@ -111,6 +115,58 @@ data class Worker(
     val derivedLabels: List<String> get() = labels.filter { it !in customLabels }
     val logLines: List<WorkerLogLine> get() = logs.mapNotNull(::workerLogLine)
 }
+
+/** The files a job sent back to the server. */
+@Serializable data class WorkerJobArtifacts(val path: String = "", val bytes: Long = 0, val count: Int = 0, val expired: Boolean = false)
+
+/** What was copied to the PC before a job ran. */
+@Serializable data class WorkerJobCopy(val files: Int = 0, val sent: Int = 0, val bytes: Long = 0, val removed: Int = 0)
+
+/**
+ * A job: a command a chat ran on a worker (worker_run). As the server's
+ * src/workers-jobs.js view(); [tail] only from action "job-log".
+ */
+@Serializable
+data class WorkerJob(
+    val job: String = "",
+    val worker: String? = null,
+    val workerId: String? = null,
+    val project: String? = null,
+    val command: String = "",
+    val source: String? = null,
+    val branch: String? = null,
+    val commit: String? = null,
+    val cwd: String = "",
+    /** starting, preparing, running, collecting, done, failed, cancelled, refused, lost or error. */
+    val state: String = "",
+    val running: Boolean = false,
+    val phase: String? = null,
+    val detail: String? = null,
+    /** The PC went away while it ran. */
+    val offline: Boolean = false,
+    val exitCode: Int? = null,
+    val durationMs: Long? = null,
+    val timedOut: Boolean? = null,
+    val cancelled: Boolean? = null,
+    val createdAt: JsonElement? = null,
+    val startedAt: JsonElement? = null,
+    val endedAt: JsonElement? = null,
+    val logBytes: Long = 0,
+    val log: String? = null,
+    val artifacts: WorkerJobArtifacts? = null,
+    val copy: WorkerJobCopy? = null,
+    val notes: List<String> = emptyList(),
+    val error: String = "",
+    val tail: String? = null,
+) {
+    val createdMs: Long get() = timeMs(createdAt)
+    val startedMs: Long get() = timeMs(startedAt)
+    val endedMs: Long get() = timeMs(endedAt)
+}
+
+@Serializable data class WorkerJobs(val jobs: List<WorkerJob> = emptyList())
+
+@Serializable data class WorkerJobAnswer(val job: WorkerJob? = null)
 
 /** A join code: 8 characters, single use, 10 minutes. */
 @Serializable

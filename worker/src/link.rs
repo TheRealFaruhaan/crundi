@@ -2,6 +2,7 @@
 
 use crate::config::Config;
 use crate::info::{self, InfoInputs};
+use crate::jobs::{Gate, Jobs};
 use crate::term::Terminals;
 use crate::util::{PROTO, VERSION};
 use futures_util::{SinkExt, StreamExt};
@@ -14,7 +15,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, http::HeaderValue, Message};
 
-pub const CAPS: &[&str] = &["info", "terminal", "pause"];
+pub const CAPS: &[&str] = &["info", "terminal", "pause", "jobs"];
 
 #[derive(Debug, Clone)]
 pub struct LinkOptions {
@@ -150,6 +151,8 @@ struct Link {
     status: watch::Sender<Status>,
     /// The person paused/resumed while offline: tell the server after welcome.
     pause_unsent: bool,
+    /// Phase 2 jobs; they outlive a session (the link dropping).
+    jobs: Jobs,
 }
 
 /// Run the link until quit, 401, or bye. Reconnects with backoff.
@@ -161,16 +164,24 @@ pub async fn run(
 ) -> Outcome {
     crate::util::install_crypto();
     let _ = cfg.ensure_work_dir();
-    let mut link = Link { cfg, opts, status, pause_unsent: false };
+    let jobs = Jobs::new(cfg.work_dir.clone());
+    let mut link = Link { cfg, opts, status, pause_unsent: false, jobs };
     if !link.cfg.joined() {
         link.set_state(State::NotJoined, None, None);
         return Outcome::NotJoined;
     }
+    let outcome = run_loop(&mut link, &mut ctrl).await;
+    // Quitting or removed: running jobs are stopped.
+    link.jobs.kill_all();
+    outcome
+}
+
+async fn run_loop(link: &mut Link, ctrl: &mut mpsc::UnboundedReceiver<Control>) -> Outcome {
     let mut attempt: u32 = 0;
     loop {
         link.set_state(State::Connecting, None, None);
         let err = match link.connect().await {
-            Ok(ws) => match link.session(ws, &mut ctrl).await {
+            Ok(ws) => match link.session(ws, ctrl).await {
                 (SessionEnd::Quit, _) => {
                     link.set_state(State::Stopped, None, None);
                     return Outcome::Quit;
@@ -335,11 +346,15 @@ impl Link {
         if let Some(d) = &self.cfg.device_id {
             hello["deviceId"] = json!(d);
         }
+        // Jobs still running (or finished, not yet collected), so the server can job.attach.
+        hello["jobs"] = json!(self.jobs.summary());
         if let Err(e) = ws.send(Message::Text(hello.to_string().into())).await {
             return (SessionEnd::Dropped(e.to_string()), false);
         }
 
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<String>();
+        // Job messages: bounded, so artifact chunks are paced by the socket.
+        let (job_tx, mut job_rx) = mpsc::channel::<String>(16);
         let terms = Terminals::new(out_tx.clone(), self.opts.shell.clone(), self.cfg.work_dir.clone());
         let mut welcomed = false;
         let mut info_tick = tokio::time::interval_at(Instant::now() + self.opts.info_every, self.opts.info_every);
@@ -357,7 +372,7 @@ impl Link {
                         Some(Ok(Message::Close(_))) => break SessionEnd::Dropped("the server closed the link".into()),
                         Some(Ok(Message::Text(t))) => {
                             let Ok(v) = serde_json::from_str::<Value>(t.as_str()) else { continue };
-                            if let Some(end) = self.handle(&v, &terms, &out_tx, &mut welcomed) {
+                            if let Some(end) = self.handle(&v, &terms, &out_tx, &job_tx, &mut welcomed) {
                                 break end;
                             }
                             self.set_terminals(terms.count());
@@ -373,7 +388,16 @@ impl Link {
                     }
                     self.set_terminals(terms.count());
                 }
-                _ = info_tick.tick() => self.send_info(&out_tx),
+                s = job_rx.recv() => {
+                    let Some(s) = s else { continue };
+                    if let Err(e) = ws.send(Message::Text(s.into())).await {
+                        break SessionEnd::Dropped(e.to_string());
+                    }
+                }
+                _ = info_tick.tick() => {
+                    self.jobs.prune();
+                    self.send_info(&out_tx);
+                }
                 c = ctrl.recv() => match c {
                     None | Some(Control::Quit) => {
                         let _ = tokio::time::timeout(Duration::from_secs(2), ws.close(None)).await;
@@ -400,6 +424,8 @@ impl Link {
         };
         // The server forgets this link's terminals when it ends; so do we.
         terms.close_all();
+        // Jobs keep running; their output waits in the spool for job.attach.
+        self.jobs.disconnect();
         (end, welcomed)
     }
 
@@ -446,6 +472,7 @@ impl Link {
         v: &Value,
         terms: &Terminals,
         out: &mpsc::UnboundedSender<String>,
+        job_tx: &mpsc::Sender<String>,
         welcomed: &mut bool,
     ) -> Option<SessionEnd> {
         let s = |k: &str| v.get(k).and_then(Value::as_str);
@@ -470,6 +497,13 @@ impl Link {
                     let _ = out.send(json!({"type": "paused", "paused": local_pause, "by": "pc"}).to_string());
                 }
                 self.save();
+                let server_jobs = v
+                    .get("caps")
+                    .and_then(Value::as_array)
+                    .is_some_and(|c| c.iter().any(|x| x == "jobs"));
+                if server_jobs {
+                    self.jobs.connect(job_tx.clone());
+                }
                 self.set_state(State::Online, None, None);
                 self.send_info(out);
             }
@@ -498,6 +532,10 @@ impl Link {
                 if let Some(r) = s("ref") {
                     terms.close(r);
                 }
+            }
+            t if t.starts_with("job.") => {
+                let gate = Gate { paused: self.cfg.paused, allow_commands: self.cfg.allow_commands };
+                self.jobs.handle(v, gate);
             }
             "bye" => return Some(SessionEnd::Bye(s("reason").unwrap_or("").to_string())),
             _ => {} // unknown types are ignored (newer server)

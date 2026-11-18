@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -56,6 +57,7 @@ import mv.obitech.crundi.api.WorkersApi
 import mv.obitech.crundi.api.model.Worker
 import mv.obitech.crundi.api.model.WorkerCode
 import mv.obitech.crundi.api.model.WorkerEvent
+import mv.obitech.crundi.api.model.WorkerJob
 import mv.obitech.crundi.api.model.WorkersOverview
 import mv.obitech.crundi.api.model.parseWorkerLabels
 import mv.obitech.crundi.ui.components.BadgeKind
@@ -102,31 +104,61 @@ fun NavGraphBuilder.workerRoutes() {
     composable(WorkerRoutes.TERMINAL) { e -> WorkerTerminalRoute(e.arguments?.getString("id").orEmpty()) }
 }
 
-/** The workers list as the screen holds it, fetched again on push and on resume. */
-class WorkersHolder(private val api: CrundiClient, private val scope: CoroutineScope) {
+/**
+ * The workers list as the screen holds it, fetched again on push and on
+ * resume. With [jobsOf] (a PC's page) also that PC's jobs and, when one is
+ * open, its log tail.
+ */
+class WorkersHolder(private val api: CrundiClient, private val scope: CoroutineScope, private val jobsOf: String? = null) {
     var list by mutableStateOf<Load<WorkersOverview>>(Load.Loading)
+    /** Null: not loaded yet, or the server has no jobs (a phase-1 server); the page then shows no Jobs. */
+    var jobs by mutableStateOf<List<WorkerJob>?>(null)
+    /** The job unfolded, and its view with the log tail (null while it loads). */
+    var openJob by mutableStateOf<String?>(null)
+    var jobView by mutableStateOf<WorkerJob?>(null)
+    /** When the last fetch began, for the once-a-second limit on pushes. */
+    var lastFetch = 0L
 
     suspend fun fetch() {
+        lastFetch = System.currentTimeMillis()
         list = try { Load.Ready(api.workers.list()) } catch (e: ApiException) {
             if (list is Load.Ready) list else Load.Failed(errorOrUnsupported(e))
         }
+        val id = jobsOf ?: return
+        // A failed ask keeps what was there (none yet: no section, never an error banner).
+        try { jobs = api.workers.jobs(id) } catch (_: ApiException) { }
+        val open = openJob ?: return
+        try { api.workers.jobLog(open)?.let { if (openJob == open) jobView = it } } catch (_: ApiException) { /* gone */ }
+    }
+
+    /** Fold or unfold a job; unfolding loads its log. */
+    fun toggleJob(job: String) {
+        openJob = if (openJob == job) null else job
+        jobView = null
+        refresh()
     }
 
     fun refresh() { scope.launch { fetch() } }
 }
 
 @Composable
-fun rememberWorkers(supported: Boolean): WorkersHolder {
+fun rememberWorkers(supported: Boolean, jobsOf: String? = null): WorkersHolder {
     val api = LocalAppServices.current.api
     val scope = rememberCoroutineScope()
-    val h = remember(api) { WorkersHolder(api, scope) }
+    val h = remember(api, jobsOf) { WorkersHolder(api, scope, jobsOf) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(supported, lifecycle) {
         if (!supported) return@LaunchedEffect
         // Each time the screen is in front: once now, then on every push.
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             h.fetch()
-            api.workerChanges().conflate().collect { h.fetch() }
+            // A running job's output pushes "workers" many times a second:
+            // at most one refresh a second, the pushes in between folded in.
+            api.workerChanges().conflate().collect {
+                val wait = 1_000 - (System.currentTimeMillis() - h.lastFetch)
+                if (wait > 0) delay(wait)
+                h.fetch()
+            }
         }
     }
     return h
@@ -170,6 +202,41 @@ fun countdown(expiresMs: Long, now: Long): String {
     val s = (expiresMs - now) / 1000
     return if (s <= 0) "expired" else "%d:%02d left".format(s / 60, s % 60)
 }
+
+/** "42 s", "3 min 5 s", "1 h 12 min": a job's duration, as the web. */
+fun jobDuration(ms: Long): String {
+    val s = Math.round(ms / 1000.0)
+    return when {
+        s < 60 -> "$s s"
+        s < 3600 -> "${s / 60} min ${s % 60} s"
+        else -> "${s / 3600} h ${(s % 3600) / 60} min"
+    }
+}
+
+/** A job's state as its chip: done green; failed, lost, error, refused red; running yellow ("PC away" when the PC went offline). */
+fun jobChip(j: WorkerJob): Pair<String, BadgeKind> {
+    val kind = when {
+        j.state == "done" -> BadgeKind.Good
+        j.state in setOf("failed", "lost", "error", "refused") -> BadgeKind.Bad
+        j.running -> BadgeKind.Warn
+        else -> BadgeKind.Neutral
+    }
+    val word = when {
+        j.running -> if (j.offline) "PC away" else j.phase?.ifEmpty { null } ?: j.state
+        j.state == "failed" -> "failed (exit ${j.exitCode ?: "?"})"
+        else -> j.state
+    }
+    return word to kind
+}
+
+/** "crundi · main 1a2b3c4 · 42 s · 5m ago · 2 files back (8.1 MB)", the line under a job's command. */
+fun jobMeta(j: WorkerJob, now: Long): String = listOfNotNull(
+    j.project?.ifEmpty { null },
+    if (!j.branch.isNullOrEmpty()) j.branch + (j.commit?.takeIf { it.isNotEmpty() }?.let { " " + it.take(7) } ?: "") else j.source?.ifEmpty { null },
+    j.durationMs?.let { jobDuration(it) },
+    Fmt.ago(j.createdMs, now),
+    j.artifacts?.takeIf { it.count > 0 }?.let { a -> "${a.count} file${if (a.count == 1) "" else "s"} back (${Fmt.bytes(a.bytes)})" },
+).joinToString(" · ")
 
 /** A history event in words: "terminal-opened" -> "Terminal opened", with what it carries. */
 fun workerEventWords(e: WorkerEvent): String {
@@ -287,6 +354,7 @@ private fun WorkerCard(w: Worker, now: Long, onOpen: () -> Unit) {
             OnlineDot(w.online)
             Text(w.title, style = CrundiType.Heading, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (w.paused) StatusBadge("paused", BadgeKind.Warn)
+            else if (w.busy && !w.revoked) StatusBadge("running a job", BadgeKind.Good)
             if (w.revoked) StatusBadge("revoked", BadgeKind.Bad)
             if (w.kind.isNotEmpty()) StatusBadge(w.kind, BadgeKind.Accent)
             CrundiIcon("chevron-right", size = Dimens.IconSm, tint = CrundiColors.TextMuted)
@@ -366,7 +434,7 @@ fun WorkerRoute(id: String) {
     val shell by app.shell.state.collectAsStateWithLifecycle()
     val supported = WorkersApi.supported(shell.capabilities)
     val actions = rememberActions()
-    val workers = rememberWorkers(supported)
+    val workers = rememberWorkers(supported, jobsOf = id)
     var history by remember { mutableStateOf<Load<List<WorkerEvent>>?>(null) }
     var shown by remember { mutableStateOf<WorkerCode?>(null) }
     val now = rememberNow(shown != null)
@@ -381,6 +449,7 @@ fun WorkerRoute(id: String) {
     }
     WorkerScreen(
         id, w, workers.list, now, actions.busy == id, actions.note, history,
+        WorkerJobsView(workers.jobs, workers.openJob, workers.jobView, actions.busy?.startsWith("job:") == true),
         WorkerEvents(
             onRename = { n -> change("Renamed to $n") { api.workers.rename(id, n) } },
             onAllowChats = { on -> change(if (on) "Chats allowed" else "Chats not allowed") { api.workers.set(id, allowChats = on) } },
@@ -392,6 +461,8 @@ fun WorkerRoute(id: String) {
             onRevoke = { change("Revoked") { api.workers.revoke(id) } },
             onReissue = { change(null) { api.workers.reissue(id)?.let { shown = it } } },
             onRemove = { change("Removed", after = { nav.back() }) { api.workers.remove(id) } },
+            onJob = workers::toggleJob,
+            onCancelJob = { job -> actions.run("job:$job", "Cancelling", after = { workers.refresh() }) { api.workers.cancelJob(job) } },
             onRetry = { workers.list = Load.Loading; workers.refresh() },
             onCloseNote = actions::clear,
             onBack = { nav.back() },
@@ -399,6 +470,15 @@ fun WorkerRoute(id: String) {
     )
     shown?.let { c -> JoinCodeDialog(c, now, serverUrl(api), onCopy = { label, text -> clip.setText(AnnotatedString(text)); actions.note = Actions.Note("$label copied", false) }) { shown = null } }
 }
+
+/** The Jobs of a PC's page: [jobs] null shows no section (not loaded, or a server without jobs). */
+data class WorkerJobsView(
+    val jobs: List<WorkerJob>? = null,
+    val open: String? = null,
+    /** The open job with its log tail; null while it loads. */
+    val view: WorkerJob? = null,
+    val cancelling: Boolean = false,
+)
 
 class WorkerEvents(
     val onRename: (String) -> Unit = {},
@@ -411,6 +491,8 @@ class WorkerEvents(
     val onRevoke: () -> Unit = {},
     val onReissue: () -> Unit = {},
     val onRemove: () -> Unit = {},
+    val onJob: (String) -> Unit = {},
+    val onCancelJob: (String) -> Unit = {},
     val onRetry: () -> Unit = {},
     val onCloseNote: () -> Unit = {},
     val onBack: () -> Unit = {},
@@ -425,6 +507,7 @@ fun WorkerScreen(
     busy: Boolean = false,
     note: Actions.Note? = null,
     history: Load<List<WorkerEvent>>? = null,
+    jobs: WorkerJobsView = WorkerJobsView(),
     events: WorkerEvents = WorkerEvents(),
 ) {
     var rename by remember { mutableStateOf(false) }
@@ -491,6 +574,7 @@ fun WorkerScreen(
                 CrundiSwitchRow("Allow commands", w.allowCommands, events.onAllowCommands, detail = "Chats may run commands on this PC", enabled = !busy)
                 CrundiSwitchRow("Paused", w.paused, events.onPaused, detail = "Holds new work; your own terminal still opens", enabled = !busy)
             }
+            WorkerJobsGroup(w, jobs, now, events)
             Group("Labels", detail = "Jobs ask for labels. Grey ones come from the PC itself; add your own, separated by commas.") {
                 WorkerLabels(w)
                 LabelsEditor(w, busy, events.onLabels)
@@ -560,6 +644,53 @@ fun WorkerScreen(
             message = "Its key stops working and it is forgotten here, with its history. To use the PC again, it joins with a new code.",
             confirm = "Remove", danger = true, onConfirm = { remove = false; events.onRemove() },
         )
+    }
+}
+
+@Composable
+private fun WorkerJobsGroup(w: Worker, jobs: WorkerJobsView, now: Long, events: WorkerEvents) {
+    val list = jobs.jobs ?: return
+    val hint = if (w.canRunJobs) "Commands chats ran here (worker_run)" else if (w.online) "This worker is too old to run commands. Update it on the PC." else null
+    Group("Jobs", detail = hint) {
+        if (list.isEmpty()) Text("None yet. A chat runs one with worker_run, e.g. a release build.", style = CrundiType.Small)
+        for ((n, j) in list.take(15).withIndex()) {
+            if (n > 0) CrundiDivider()
+            val open = jobs.open == j.job
+            Column(
+                Modifier.fillMaxWidth().clip(Dimens.ShapeSm).clickable(onClickLabel = if (open) "Fold the job" else "Show the job's output") { events.onJob(j.job) }.padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(j.command.ifEmpty { j.job }, style = CrundiType.Code.copy(fontSize = 13.sp, lineHeight = 18.sp, color = CrundiColors.TextPrimary), maxLines = if (open) 6 else 2, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val (word, kind) = jobChip(j)
+                    StatusBadge(word, kind)
+                    Text(jobMeta(j, now), style = CrundiType.Meta, modifier = Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (open) JobDetail(j, jobs, events)
+        }
+    }
+}
+
+@Composable
+private fun JobDetail(j: WorkerJob, jobs: WorkerJobsView, events: WorkerEvents) {
+    val v = jobs.view
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (j.running) Row { CrundiButton("Cancel", { events.onCancelJob(j.job) }, kind = ButtonKind.Danger, icon = "stop", enabled = !jobs.cancelling) }
+        if (v != null && v.error.isNotEmpty()) Text(v.error, style = CrundiType.Small.copy(color = CrundiColors.Red))
+        if (v != null && v.notes.isNotEmpty()) Text(v.notes.joinToString("\n"), style = CrundiType.Small)
+        val scroll = rememberScrollState()
+        val text = if (v == null) "Loading…" else v.tail?.ifEmpty { null } ?: "(no output yet)"
+        // Kept at the end as the output grows, as the web's log box.
+        LaunchedEffect(text, scroll.maxValue) { scroll.scrollTo(scroll.maxValue) }
+        SelectionContainer {
+            Box(
+                Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(Dimens.ShapeSm).background(CrundiColors.BgPrimary)
+                    .border(Dimens.Hairline, CrundiColors.BorderSubtle, Dimens.ShapeSm).verticalScroll(scroll).padding(8.dp),
+            ) {
+                Text(text, style = CrundiType.Code.copy(fontSize = 11.sp, lineHeight = 15.sp, color = CrundiColors.TextSecondary), modifier = Modifier.horizontalScroll(rememberScrollState()))
+            }
+        }
     }
 }
 

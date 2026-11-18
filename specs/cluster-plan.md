@@ -430,5 +430,10 @@ From the "not gimmicky, professional" review, 18 Nov:
 
 ## Status
 
-- Phase 1 is being built: worker/ (Rust), src/workers.js, the Workers
-  tab, the PC client switch, Android. Contract: specs/workers-protocol.md.
+- Phase 1 shipped in 1.21.8-dev.3 (joining, info, labels, pause, terminal).
+- Phase 2, commands on a PC (worker_run / worker_job, git and copy sources,
+  artifacts, logs that survive the link dropping, low priority, caches kept),
+  is in 1.21.8-dev.4. Contract: specs/workers-protocol.md.
+- Still to come: be-a-good-guest beyond low priority (only when away, on
+  battery), whole chats on a PC (phase 4), factory steps on a PC (phase 5),
+  signed worker updates.

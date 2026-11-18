@@ -71,6 +71,10 @@
     '.wk-term-wrap{border:1px solid var(--border);border-radius:var(--radius-sm,8px);overflow:hidden;background:#0d1117}',
     '.wk-termbar{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:.74rem;color:var(--text-muted);background:var(--bg-secondary);border-bottom:1px solid var(--border)}',
     '.wk-term{height:360px;padding:4px}',
+    '.wk-job{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border-subtle,var(--border));cursor:pointer}',
+    '.wk-job:last-child{border-bottom:none}',
+    '.wk-job .cmd{font-family:var(--mono);font-size:.76rem;word-break:break-all}',
+    '.wk-joblog{font-family:var(--mono);font-size:.72rem;line-height:1.45;background:#0d1117;color:#d6deeb;border-radius:6px;padding:8px;max-height:360px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:8px}',
     '@media (max-width:640px){.wk-term{height:300px}.wk-code{font-size:1.3rem}}',
   ].join('\n');
 
@@ -106,7 +110,18 @@
     }
     async function load() {
       try { st.data = await api('GET'); } catch (e) { if (!st.data) body.innerHTML = '<div class="wk-quiet">' + esc(e.message) + '</div>'; return; }
+      if (st.detail) {
+        try { st.detail.jobs = (await api('POST', { action: 'jobs', id: st.detail.id })).jobs; } catch (e) { st.detail.jobs = st.detail.jobs || []; }
+        if (st.detail.openJob) { try { st.detail.jobView = (await api('POST', { action: 'job-log', job: st.detail.openJob, tailBytes: 65536 })).job; } catch (e) { /* gone */ } }
+      }
       draw();
+    }
+    // A running job's output pushes "workers" often: refresh at most once a second.
+    var lastLoad = 0, soonTimer = null;
+    function soon() {
+      if (soonTimer) return;
+      var wait = Math.max(0, 1000 - (Date.now() - lastLoad));
+      soonTimer = setTimeout(function () { soonTimer = null; lastLoad = Date.now(); load(); }, wait);
     }
     function worker(id) { return st.data && st.data.workers.filter(function (w) { return w.id === id; })[0]; }
 
@@ -142,6 +157,7 @@
     function stateChip(w) {
       if (w.revoked) return '<span class="wk-chip bad">revoked</span>';
       if (w.paused) return '<span class="wk-chip warn">paused' + (w.pausedBy === 'pc' ? ' on the PC' : '') + '</span>';
+      if (w.busy) return '<span class="wk-chip ok">running a job</span>';
       return '';
     }
     function dotOf(w) { return w.revoked ? 'bad' : !w.online ? '' : w.paused ? 'paused' : 'up'; }
@@ -191,6 +207,8 @@
       h += '<div class="wk-card"><div class="hd"><span class="t">Terminal</span><span class="wk-spacer"></span>'
         + (w.online ? '<button class="wk-btn" data-a="term">' + icon('terminal') + (st.term ? 'New terminal' : 'Open a terminal') + '</button>' + (st.term ? '<button class="wk-btn" data-a="term-close">' + icon('x') + 'Close</button>' : '') : '<span class="wk-hint">When the PC is online</span>')
         + '</div><div class="bd" data-r="termhost">' + (st.term ? '' : '<div class="wk-hint">A shell on the PC, in its work folder: sign in to GitHub there (gh auth login), install a tool, look around.</div>') + '</div></div>';
+      // Jobs: commands chats ran here (worker_run)
+      h += jobsCard(w);
       // Settings
       h += '<div class="wk-card"><div class="hd"><span class="t">Settings</span></div><div class="bd">'
         + '<div style="display:flex;gap:6px;margin-bottom:8px"><input class="wk-input" data-r="name" value="' + esc(w.name) + '" maxlength="60"><button class="wk-btn" data-a="rename">' + icon('check') + 'Rename</button></div>'
@@ -210,8 +228,36 @@
         + (st.detail.rejoin ? '<div class="wk-hint" style="margin-top:8px">On the PC: <span style="font-family:var(--mono)">crundi-worker join ' + esc((opts.serverUrl && opts.serverUrl()) || location.origin) + ' ' + esc(st.detail.rejoin) + '</span> (works once, 10 minutes)</div>' : '')
         + '<div class="wk-hint" style="margin-top:8px">Revoke cuts it off at once and keeps its record; Remove forgets it.</div></div></div>';
       var keepTerm = st.term && st.term.host;
+      var keepScroll = body.scrollTop;
       body.innerHTML = h;
+      body.scrollTop = keepScroll;
+      var jl = body.querySelector('.wk-joblog'); if (jl) jl.scrollTop = jl.scrollHeight;
       if (keepTerm) body.querySelector('[data-r="termhost"]').appendChild(keepTerm);
+    }
+    function dur(ms) { if (ms == null) return ''; var s2 = Math.round(ms / 1000); return s2 < 60 ? s2 + ' s' : s2 < 3600 ? Math.floor(s2 / 60) + ' min ' + (s2 % 60) + ' s' : Math.floor(s2 / 3600) + ' h ' + Math.floor((s2 % 3600) / 60) + ' min'; }
+    function jobChip(j) {
+      var cls = j.state === 'done' ? 'ok' : (j.state === 'failed' || j.state === 'lost' || j.state === 'error' || j.state === 'refused') ? 'bad' : j.running ? 'warn' : '';
+      var word = j.running ? (j.offline ? 'PC away' : (j.phase || j.state)) : j.state === 'failed' ? 'failed (exit ' + j.exitCode + ')' : j.state;
+      return '<span class="wk-chip ' + cls + '">' + esc(word) + '</span>';
+    }
+    function jobsCard(w) {
+      var list = st.detail.jobs;
+      var h2 = '<div class="wk-card"><div class="hd"><span class="t">Jobs</span><span class="wk-hint">' + (w.canRunJobs ? 'Commands chats ran here (worker_run)' : (w.online ? 'This worker is too old to run commands. Update it on the PC.' : '')) + '</span></div><div class="bd">';
+      if (!list) h2 += '<div class="wk-hint">Loading…</div>';
+      else if (!list.length) h2 += '<div class="wk-hint">None yet. A chat runs one with worker_run, e.g. a release build.</div>';
+      else list.slice(0, 15).forEach(function (j) {
+        h2 += '<div class="wk-job" data-a="job" data-job="' + esc(j.job) + '"><div style="flex:1;min-width:0"><div class="cmd">' + esc(j.command) + '</div>'
+          + '<div class="wk-meta">' + jobChip(j) + ' ' + esc(j.project || '') + (j.branch ? ' · ' + esc(j.branch) + (j.commit ? ' ' + esc(j.commit.slice(0, 7)) : '') : ' · ' + esc(j.source)) + (j.durationMs != null ? ' · ' + esc(dur(j.durationMs)) : '') + ' · ' + esc(ago(j.createdAt)) + (j.artifacts ? ' · ' + j.artifacts.count + ' file' + (j.artifacts.count === 1 ? '' : 's') + ' back (' + esc(gb(j.artifacts.bytes / 1048576)) + ')' : '') + '</div>';
+        if (st.detail.openJob === j.job) {
+          var v = st.detail.jobView;
+          h2 += (j.running ? '<div class="wk-btns" style="margin-top:6px"><button class="wk-btn danger" data-a="job-cancel" data-job="' + esc(j.job) + '">' + icon('stop') + 'Cancel</button></div>' : '')
+            + (v && v.error ? '<div class="wk-hint" style="color:var(--red)">' + esc(v.error) + '</div>' : '')
+            + (v && v.notes && v.notes.length ? '<div class="wk-hint">' + v.notes.map(esc).join('<br>') + '</div>' : '')
+            + '<div class="wk-joblog">' + (v ? esc(v.tail || '(no output yet)') : 'Loading…') + '</div>';
+        }
+        h2 += '</div></div>';
+      });
+      return h2 + '</div></div>';
     }
     function toggle(key, on, label, hint) {
       return '<label class="wk-toggle"><input type="checkbox" data-a="set" data-k="' + key + '"' + (on ? ' checked' : '') + '><span>' + esc(label) + '<div class="wk-hint">' + esc(hint) + '</div></span></label>';
@@ -248,7 +294,7 @@
       st.term = null;
     }
     function onMessage(msg) {
-      if (msg.type === 'workers') { if (st.visible) load(); return; }
+      if (msg.type === 'workers') { if (st.visible) soon(); return; }
       if (!st.term || msg.ref !== st.term.ref) return;
       if (msg.type === 'worker-term-data') st.term.term.write(msg.data);
       else if (msg.type === 'worker-term-exit') termStatus(msg.error || ('The shell ended' + (msg.code != null ? ' (exit ' + msg.code + ')' : '') + '.'));
@@ -279,7 +325,9 @@
         case 'copy':
           try { navigator.clipboard.writeText(t.getAttribute('data-text')); opts.toast('Copied', 'success'); } catch (e) { opts.toast('Could not copy', 'error'); }
           break;
-        case 'open': st.detail = { id: t.getAttribute('data-id') }; st.adding = null; draw(); break;
+        case 'open': st.detail = { id: t.getAttribute('data-id') }; st.adding = null; draw(); load(); break;
+        case 'job': st.detail.openJob = st.detail.openJob === t.getAttribute('data-job') ? null : t.getAttribute('data-job'); st.detail.jobView = null; load(); break;
+        case 'job-cancel': run(function () { return api('POST', { action: 'job-cancel', job: t.getAttribute('data-job') }); }, 'Cancelling'); break;
         case 'back': closeTerm(); st.detail = null; draw(); break;
         case 'term': openTerm(id); break;
         case 'term-close': closeTerm(); drawDetail(); break;

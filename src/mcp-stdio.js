@@ -104,6 +104,29 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {} },
   },
 
+  {
+    name: 'worker_run',
+    description: 'Run a command on one of the owner\'s worker PCs (see worker_list), in this chat\'s project, and get its output and the files it made. For heavy work the server should not do itself: release builds, cargo/app builds, renders. The code: source "git" (default when the project has a GitHub remote) clones the repo on the PC once and checks out the server\'s current commit of the branch (commits GitHub lacks are sent from the server; uncommitted changes are not), "copy" sends the project\'s files as they are here, working changes included, only what changed since the last copy, no git needed on the PC; "none" runs in the PC\'s copy as it is. Build caches (target/, node_modules/) stay on the PC between jobs, so later builds are faster. artifacts: glob patterns relative to the project (e.g. ["dist/**/*.exe"]) brought back as one .tar.gz on the server; show_file it to hand it over. Runs at low priority on the PC. Waits up to waitMinutes (default 10, max 30) and returns exitCode, the last 4 KB of output and the artifact path; if still running, follow it with worker_job. One job per PC at a time.',
+    inputSchema: { type: 'object', properties: {
+      command: { type: 'string', description: 'Shell command, run in the project folder on the PC (sh -lc on Linux/macOS, PowerShell or cmd on Windows)' },
+      worker: { type: 'string', description: 'Worker id or name (default: the first free one with every label)' },
+      labels: { type: 'array', items: { type: 'string' }, description: 'Labels the PC must have, e.g. ["os:windows","tool:cargo"]' },
+      source: { type: 'string', enum: ['git', 'copy', 'none'] },
+      branch: { type: 'string', description: 'git source: the branch (default the project\'s current one)' },
+      cwd: { type: 'string', description: 'Sub-folder of the project to run in' },
+      artifacts: { type: 'array', items: { type: 'string' }, description: 'Globs of files to bring back' },
+      env: { type: 'object', description: 'Extra environment variables (strings)' },
+      timeoutMinutes: { type: 'number', description: 'Kill it after this long (default 120)' },
+      wait: { type: 'boolean', description: 'Wait for it (default true)' },
+      waitMinutes: { type: 'number', description: 'How long to wait before returning (default 10, max 30)' },
+    }, required: ['command'] },
+  },
+  {
+    name: 'worker_job',
+    description: 'A job started with worker_run: status, log (the last tailBytes of output, default 64 KB), wait (until it ends, up to waitMinutes), or cancel (stops it and everything it started on the PC).',
+    inputSchema: { type: 'object', properties: { job: { type: 'string' }, action: { type: 'string', enum: ['status', 'log', 'wait', 'cancel'] }, tailBytes: { type: 'number' }, waitMinutes: { type: 'number' } }, required: ['job'] },
+  },
+
   // Homepool: leaving through a network the owner granted (docs/homepool.md)
   {
     name: 'homepool_status',
@@ -638,7 +661,7 @@ const TOOLS = [
 
 // ─── Tool handler ───
 
-const ALIAS_TOOLS = new Set(['browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'factory_start', 'factory_triggers',
+const ALIAS_TOOLS = new Set(['worker_run', 'browser_open', 'browser_list', 'register_service', 'add_forward', 'request_owner_command', 'factory_start', 'factory_triggers',
   'kanban_list', 'kanban_get_task', 'kanban_list_column', 'kanban_add_task', 'kanban_update_task', 'kanban_move_task', 'kanban_delete_task', 'kanban_restore_task',
   'kanban_add_todo', 'kanban_update_todo', 'kanban_delete_todo', 'kanban_restore_todo', 'kanban_history',
   'mindmap_list', 'mindmap_search', 'mindmap_get_subtree', 'mindmap_get_children', 'mindmap_get_ancestors', 'mindmap_add_node', 'mindmap_link_node',

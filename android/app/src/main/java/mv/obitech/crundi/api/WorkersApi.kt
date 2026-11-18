@@ -4,6 +4,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import mv.obitech.crundi.api.model.WorkerCode
 import mv.obitech.crundi.api.model.WorkerEvent
+import mv.obitech.crundi.api.model.WorkerJob
+import mv.obitech.crundi.api.model.WorkerJobAnswer
+import mv.obitech.crundi.api.model.WorkerJobs
 import mv.obitech.crundi.api.model.WorkersOverview
 import mv.obitech.crundi.api.model.workerHistory
 
@@ -38,7 +41,23 @@ class WorkersApi internal constructor(private val rpc: Rpc) {
     /** The worker's event log, newest first. */
     suspend fun history(id: String): List<WorkerEvent> = workerHistory(act("history", "id" to id))
 
+    /**
+     * The worker's jobs (commands chats ran on it), newest first. Null when
+     * the server has no jobs yet (a phase-1 server answers "Unknown action.").
+     */
+    suspend fun jobs(id: String): List<WorkerJob>? = try {
+        rpc.read<WorkerJobs>(act("jobs", "id" to id), null).jobs
+    } catch (e: ApiException) {
+        if (e.message.startsWith("Unknown action", ignoreCase = true)) null else throw e
+    }
+    /** One job with the last [tailBytes] of its output in [WorkerJob.tail]. */
+    suspend fun jobLog(job: String, tailBytes: Int = JOB_TAIL): WorkerJob? =
+        rpc.read<WorkerJobAnswer>(act("job-log", "job" to job, "tailBytes" to tailBytes), null).job
+    suspend fun cancelJob(job: String): WorkerJob? = rpc.read<WorkerJobAnswer>(act("job-cancel", "job" to job), null).job
+
     companion object {
+        /** How much of a job's output the page shows: 64 KB, as the web. */
+        const val JOB_TAIL = 65536
         const val PATH = "/api/workers"
         const val CAPABILITY = "workers"
         fun supported(capabilities: Set<String>): Boolean = CAPABILITY in capabilities

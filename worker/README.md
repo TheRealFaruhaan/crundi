@@ -54,6 +54,25 @@ cargo test --no-default-features
 The tests run a join against a small in-test HTTP server and the link against
 an in-test websocket server, all on 127.0.0.1 with random ports.
 
+## Jobs (phase 2)
+
+The server can run a command on the PC (one job at a time; refused while
+paused or when commands are not allowed). The code comes from:
+
+- `git`: cloned once into `<work>/<project>` with the PC's own git, then
+  fetched and checked out as branch `crundi/job` (a commit the remote does
+  not have comes from the server as a bundle). Nothing is cleaned, so build
+  caches (`target/`, `node_modules/`, ...) persist between jobs.
+- `copy`: `<work>/<project>@copy`, kept in step with the server by a manifest
+  (cached hashes in `.crundi-manifest.json`) and a tar of changed files.
+- `none`: `<work>/<project>` (or the work folder) as it is.
+
+Commands run through `sh -lc` (Windows: `cmd /d /s /c`) at low priority, in
+their own process group so cancel and timeout stop the whole tree. Output is
+spooled to `<work>/.crundi-jobs/<job>.log`, so a job keeps running when the
+link drops and its output is resent from where the server left off.
+Artifacts (globs relative to the project folder) come back as a .tar.gz.
+
 ## Use
 
 1. On the server: Workers, Add a PC. You get an 8-character join code (works

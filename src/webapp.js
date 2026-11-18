@@ -8241,9 +8241,14 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       const a = body.args = (body.args || {});
 
       // Workers: the owner's chats only, never a collaborator's.
-      if (body.tool === 'worker_list') {
+      if (body.tool === 'worker_list' || body.tool === 'worker_run' || body.tool === 'worker_job') {
         if (mcpCollabKey) return json(res, { ok: false, error: 'Workers are not available to collaborator chats.' }, 403);
-        return json(res, workers.mcpList());
+        if (body.tool === 'worker_list') return json(res, workers.mcpList());
+        if (body.tool === 'worker_job') return json(res, await workers.mcpJob(a));
+        const proj = a.alias ? getProjectUnscoped(String(a.alias)) : null;
+        if (!proj || !proj.path) return json(res, { ok: false, error: 'worker_run needs a chat in a project.' });
+        try { return json(res, await workers.mcpRun(a, { projectPath: proj.path, chatId: String(a.sessionId || '') })); }
+        catch (err) { return json(res, { ok: false, error: err.message }); }
       }
 
       // Homepool: the owner's chats only, each within the key the owner gave

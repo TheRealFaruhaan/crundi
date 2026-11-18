@@ -148,3 +148,118 @@ summary and allow switches. Phase 2 adds `worker_run` / `worker_job`.
 - Embedded mode (Electron client): stdout lines are JSON status events for
   the client (`{"event":"status","online":true,...}`), stdin closing means
   exit.
+
+# Phase 2: commands on a PC
+
+A chat (the owner's, never a collaborator's) runs a command on a worker and
+gets its output and files back. Caps: the worker adds `"jobs"` to hello caps;
+the server adds `"jobs"` to welcome caps. Neither side sends job messages to
+a peer that does not list it.
+
+## Where the code comes from (`source`)
+
+- `git` (default when the project has a GitHub/https remote): the PC clones
+  `git.url` into `<workDir>/<project>` the first time (its own git and
+  credentials; GitHub SSH URLs are sent as https), then for each job:
+  `git fetch origin <branch>`; if `git.commit` is still not there it asks the
+  server for a bundle (`job.need`), fetches the bundle, then
+  `git checkout --force -B crundi/job <commit>` and `git clean -fdq -e <cache dirs>`
+  is NOT run (build caches stay: target/, node_modules/, dist/ and the like
+  persist between jobs, which is the point). Nothing is pushed or created on
+  GitHub. Uncommitted server changes are not sent (the result says so).
+- `copy`: a bare copy over the link, no git needed on the PC, into
+  `<workDir>/<project>@copy`. The PC sends a manifest of what it has
+  (`job.manifest`: path -> [size, sha256]); the server sends only new and
+  changed files as a tar stream plus a list of removed paths (`job.files`).
+  Excluded: `.git`, `node_modules`, `target`, `dist`, `build`, `.next`,
+  `__pycache__`, plus `.crundiignore` lines; with git on the server, only
+  tracked + untracked-not-ignored files (`git ls-files -co --exclude-standard`).
+  The kept copy is the cache: unchanged files are not sent again, and build
+  folders in it persist.
+- `none`: run in `<workDir>/<project>` (or the work folder) as it is.
+
+## Messages (server -> worker)
+
+- `job.start`:
+  ```
+  { type:"job.start", job:"j<hex>", project:"<alias>", command:"...",
+    source:"git"|"copy"|"none",
+    git?: { url, branch, commit },
+    cwd?: "relative/sub/dir",            // inside the project folder
+    env?: { NAME: "value" },
+    timeoutSec: 7200, artifacts: ["glob", ...], lowPriority: true }
+  ```
+  The worker answers `job.accepted` or `job.refused {job, error}` (paused,
+  commands not allowed, already running one: one job at a time in phase 2).
+- `job.bundle`: `{ type:"job.bundle", job, seq, b64, last:bool }` chunks of a
+  git bundle (answer to `job.need`).
+- `job.files`: `{ type:"job.files", job, seq, b64, last:bool, removed?:[paths] }`
+  chunks of a tar (uncompressed) of new/changed files; `removed` on the last.
+- `job.cancel`: `{ type:"job.cancel", job }` -> kill the process tree.
+- `job.attach`: `{ type:"job.attach", job, from }` after a reconnect: resend
+  output from byte offset `from`, then carry on live.
+
+## Messages (worker -> server)
+
+- `job.accepted` / `job.refused`.
+- `job.need`: `{ type:"job.need", job, kind:"bundle", have:"<sha or ''>" }` or
+  `{ type:"job.manifest", job, files:{ "path": [size, "sha256hex"] } }` (copy).
+- `job.status`: `{ type:"job.status", job, phase:"preparing"|"running"|"collecting", detail }`.
+- `job.out`: `{ type:"job.out", job, off, b64 }` output (stdout and stderr
+  together, in order) from byte offset `off` of the job's log. The worker
+  spools the whole log to `<workDir>/.crundi-jobs/<job>.log` so it can be
+  resent.
+- `job.exit`: `{ type:"job.exit", job, code, signal?, durationMs, timedOut?:bool, cancelled?:bool }`.
+- `job.artifact`: `{ type:"job.artifact", job, seq, b64, last:bool, count, bytes }`
+  chunks of a .tar.gz of the files matching `artifacts` (relative to the
+  project folder; at most 2 GB; `count` 0 when nothing matched), sent after
+  job.exit and before `job.done`.
+- `job.done`: `{ type:"job.done", job }` nothing more is coming.
+- In `hello`, `jobs: [{ job, state:"running"|"finished", logBytes }]` for jobs
+  it still knows (running, or finished within the last hour and not yet
+  done-acknowledged), so the server can `job.attach`.
+
+Chunks are at most 512 KB of data before base64. The process runs in the
+project folder (or `cwd` under it) with the user's login environment plus
+`env`, through the platform shell (`sh -lc` / `cmd /c` or PowerShell), at low
+priority when `lowPriority` (unix: nice 10; Windows:
+BELOW_NORMAL_PRIORITY_CLASS). Timeout kills the process tree.
+
+## The link dropping
+
+A job keeps running on the PC when the link drops. On reconnect the worker
+lists it in hello; the server sends `job.attach {from: bytes it has}`. A job
+whose PC stays away longer than 30 minutes is marked lost on the server
+(the PC still finishes it; its result is dropped).
+
+## MCP (owner chats only)
+
+- `worker_run { command, worker?, labels?, source?, branch?, cwd?, artifacts?, env?, timeoutMinutes?, wait? }`
+  picks the worker (by id/name, else the first online, unpaused, commands
+  allowed, idle one matching every label), starts the job in this chat's
+  project and, with `wait` (default true), waits up to 10 minutes for it to
+  end. Returns `{ ok, job, worker, exitCode, durationMs, tail (last 4 KB),
+  log (server path), artifacts: { path, bytes, count } | null, notes:[...] }`
+  or, still running, `{ ok, job, running:true, ... }`.
+- `worker_job { job, action: "status"|"log"|"cancel"|"wait", tailBytes? }`.
+
+The server keeps jobs in `<data>/workers/jobs.json` (last 200) with logs in
+`<data>/workers/jobs/<job>.log` and artifacts in
+`<data>/workers/artifacts/<job>.tar.gz` (kept 7 days). The Workers tab shows
+a PC's jobs with their live log.
+
+## Settled while building phase 2
+
+- Copy removals: the server lists in `removed` only paths an earlier copy to
+  that PC and project had (kept in `<data>/workers/copies.json`) and the
+  server no longer has. Anything else in the PC's folder (what a build made)
+  is the PC's and is never removed. Unknown history: nothing is removed.
+- A job that fails before its command runs (clone, copy, bad cwd, cancelled
+  while preparing): `job.exit` has `code: -1`, `durationMs: 0` and `error`.
+- Killed by a signal (unix): `code` 128 + signal, `signal` set.
+- `job.attach` for a job the PC no longer has: `job.done {unknown:true}`; the
+  server marks it lost.
+- Commands get `CRUNDI_JOB=<job>` in their environment. `durationMs` is the
+  command's alone. Windows runs `cmd /d /s /c`, at BELOW_NORMAL priority; the
+  whole process tree is killed on cancel or timeout (taskkill /T /F).
+- A job waits at most 10 minutes for a bundle or the files; then it fails.

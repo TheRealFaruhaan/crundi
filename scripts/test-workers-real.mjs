@@ -15,7 +15,7 @@
  * Run: node scripts/test-workers-real.mjs
  */
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, statSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,6 +110,28 @@ try {
   const online = await until(() => e.out.split('\n').some(l => { try { const j2 = JSON.parse(l); return j2.event === 'status' && j2.online === true; } catch { return false; } }), 30000);
   ok(!!online, 'embedded: JSON status lines on stdout, online', e.out.slice(-300) + e.err.slice(-300));
   ok(!!(await until(() => svc.list().workers.find(x => x.id === s.id && x.online))), 'embedded: listed online on the server');
+
+  // ── Real jobs through the PC client's way (embedded) ──
+  if (process.platform !== 'win32') {
+    const proj = join(dir, 'proj');
+    mkdirSync(join(proj, 'src'), { recursive: true });
+    writeFileSync(join(proj, 'hello.txt'), 'hello from the server\n');
+    writeFileSync(join(proj, 'src', 'keep.txt'), 'unchanged\n');
+    const r = await svc.mcpRun({ alias: 'proj', command: 'cat hello.txt && mkdir -p out && printf abc > out/r.bin && echo "niceness=$(nice)" && echo "job=$CRUNDI_JOB"', artifacts: ['out/*.bin'], waitMinutes: 2 }, { projectPath: proj });
+    ok(r.ok && r.state === 'done' && r.exitCode === 0 && r.source === 'copy', 'a real job: a copy of the project, run on the PC, exit 0', JSON.stringify(r).slice(0, 400));
+    ok(/hello from the server/.test(r.tail || '') && /niceness=10/.test(r.tail || '') && new RegExp('job=' + r.job).test(r.tail || ''), 'its output: the copied file, low priority (nice 10), CRUNDI_JOB set', r.tail);
+    const names = r.artifacts ? execFileSync('tar', ['-tzf', r.artifacts.path], { encoding: 'utf8' }) : '';
+    ok(r.artifacts && r.artifacts.count === 1 && /out\/r\.bin/.test(names), 'the file it made came back as a .tar.gz', names);
+    writeFileSync(join(proj, 'hello.txt'), 'changed\n');
+    const r2 = await svc.mcpRun({ alias: 'proj', command: 'cat hello.txt; ls out', waitMinutes: 2 }, { projectPath: proj });
+    ok(r2.ok && r2.exitCode === 0 && /changed/.test(r2.tail) && r2.copy && r2.copy.sent === 1 && /r\.bin/.test(r2.tail), 'the second copy sends only the changed file, and what the last job built is still there (the cache)', JSON.stringify(r2.copy) + ' ' + r2.tail);
+    const r3 = await svc.mcpRun({ alias: 'proj', command: 'sleep 30', wait: false }, { projectPath: proj });
+    await until(() => svc.jobs.get(r3.job)?.state === 'running', 15000);
+    await svc.mcpJob({ job: r3.job, action: 'cancel' });
+    await until(() => svc.jobs.FINISHED.has(svc.jobs.get(r3.job)?.state), 15000);
+    ok(svc.jobs.get(r3.job).state === 'cancelled', 'cancel stops a running job on the PC', svc.jobs.get(r3.job).state);
+  }
+
   e.stdin.end();
   await until(() => e.code !== undefined, 15000);
   ok(e.code === 0, 'embedded: stdin closing ends it (exit 0)', `code ${e.code}`);

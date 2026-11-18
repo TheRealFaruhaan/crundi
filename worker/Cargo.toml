@@ -33,9 +33,16 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time",
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 webbrowser = { version = "1", optional = true }
+tar = "0.4"
+flate2 = "1"
+globset = { version = "0.4", default-features = false }
+sha2 = "0.10"
 
 tray-icon = { version = "0.26", optional = true }
 tao = { version = "0.37", default-features = false, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 opt-level = "z"
