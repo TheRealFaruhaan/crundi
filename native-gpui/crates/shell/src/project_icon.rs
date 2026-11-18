@@ -54,7 +54,9 @@ fn sniff(b: &[u8]) -> Option<ImageFormat> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // (Not `super::*`: gpui's `test` macro would shadow the standard one.)
+    use super::sniff;
+    use gpui::ImageFormat;
     #[test]
     fn sniffs_the_formats() {
         assert!(matches!(sniff(&[0x89, b'P', b'N', b'G', 0, 0]), Some(ImageFormat::Png)));
