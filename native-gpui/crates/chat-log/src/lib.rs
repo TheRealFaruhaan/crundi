@@ -104,6 +104,9 @@ impl LogView {
         // Any change to the chat (each one notifies) makes the shared rows again.
         let obs = cx.observe(&model, |this, _, _| this.rev.set(this.rev.get() + 1));
         let sub = cx.subscribe(&model, |this, _, ev: &ChatEvent, cx| {
+            // The event comes before the observer above: what follows reads
+            // the entries as they are now, not the shared ones from before.
+            this.rev.set(this.rev.get() + 1);
             // Following the bottom, or the jump button's dot (2.16, prose.rs).
             prose::arrived(this, matches!(ev, ChatEvent::NewEntry));
             this.changed(cx);
