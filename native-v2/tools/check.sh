@@ -12,3 +12,18 @@ if [ -n "$HITS" ]; then
   exit 1
 fi
 echo "check: no window refresh in native-v2"
+
+# No merge-conflict markers in native-v2/ or .github/ (F33: a sync once
+# committed them into 5 files unnoticed). A file is flagged when a line starts
+# with "<<<<<<< " or ">>>>>>> " (or is exactly the marker); a lone "======="
+# counts only in a file that also has one of those, since markdown uses a row
+# of = to underline a heading. Binary files are skipped.
+ROOTS=(.)
+[ -d ../.github ] && ROOTS+=(../.github)
+CONFLICT=$(grep -rlIE '^(<<<<<<<|>>>>>>>)( |$)' "${ROOTS[@]}" --exclude-dir=.git || true)
+if [ -n "$CONFLICT" ]; then
+  echo "merge-conflict markers (resolve them before building):" >&2
+  while IFS= read -r f; do grep -nE '^(<<<<<<<|=======|>>>>>>>)( |$)' "$f" | sed "s|^|$f:|" >&2; done <<< "$CONFLICT"
+  exit 1
+fi
+echo "check: no merge-conflict markers in native-v2 or .github"
