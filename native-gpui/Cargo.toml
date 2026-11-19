@@ -14,18 +14,15 @@ publish = false
 license = "MIT"
 
 [workspace.dependencies]
-# GPUI Fast (Longbridge's GPUI with retained mode: unchanged views, layout
-# and text are kept between frames, and scrolling reuses drawn tiles), as
-# gpui-component's "gpui-fast" feature pins it; named gpui in the code. It
-# replaced the gpui-pre 0.3.12 snapshot on 19 Nov (the owner's PC: whole
-# panes laid out again every frame). X11 and Wayland must be asked for:
-# without them GPUI quietly runs headless.
-gpui = { package = "gpui-fast", version = "=0.1.16" }
-gpui_platform = { package = "gpui-fast-platform", version = "=0.1.16", features = ["x11", "wayland"] }
+# GPUI as gpui-component pins it: gpui-pre is a snapshot of Zed's gpui
+# (named gpui in the code), gpui-pre-platform each OS's window and renderer.
+# X11 and Wayland must be asked for: without them GPUI quietly runs headless.
+gpui = { package = "gpui-pre", version = "=0.3.12" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.12", features = ["x11", "wayland"] }
 # syntect: the editor's highlighting (F87), pure Rust, lighter than tree-sitter.
-gpui-component = { version = "=0.10.0", features = ["syntect", "gpui-fast"] }
+gpui-component = { version = "=0.10.0", features = ["syntect"] }
 # The icons (Lucide, the PC client's flat icon family) as the app's assets.
-gpui-kit-assets = { version = "=0.10.0", features = ["gpui-fast"] }
+gpui-kit-assets = "=0.10.0"
 # The browser (off-screen), the same CEF as the Slint client.
 cef = "=156.4.0"
 serde = { version = "1", features = ["derive"] }
