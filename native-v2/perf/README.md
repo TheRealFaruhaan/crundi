@@ -61,7 +61,15 @@ Summarise the samples (busy vs idle, stage, inside or outside the log's list)
 with `python3 -I native-v2/perf/gdb-summary.py /tmp/v2-profile/samples.txt`.
 
 A test server on the PC must **not** run the owner's Claude CLI (the seeded
+<<<<<<< ours
 chats would spend the owner's turns). For a chat scene without any server,
+=======
+chats would spend the owner's turns): use `native-v2/tools/stub-server.sh
+<port>` there. It is a bare test server whose `claude` is
+tools/claude-stub.mjs (stream-json, a fast streamed reply, titles), with
+its own HOME, so nothing of the owner's ~/.claude is reachable from it.
+Results: perf/pc-2026-11-20c.md. For a chat scene without any server,
+>>>>>>> theirs
 use the floor's `chatlog` and `chatlog5` modes (below): their histories are
 seeded in the client.
 

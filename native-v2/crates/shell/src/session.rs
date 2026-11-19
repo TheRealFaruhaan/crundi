@@ -311,7 +311,7 @@ pub fn host_of(base: &str) -> String { base.split("://").nth(1).unwrap_or(base).
 
 /// Open the browser at a page; tests (no desktop browser) get the address
 /// in CRUNDI_OPEN_URL_FILE instead.
-fn open_url(url: &str) -> Result<(), String> {
+pub fn open_url(url: &str) -> Result<(), String> {
     match std::env::var_os("CRUNDI_OPEN_URL_FILE") {
         Some(f) => std::fs::write(f, url).map_err(|e| e.to_string()),
         None => open::that(url).map_err(|e| e.to_string()),

@@ -229,6 +229,7 @@ Root (gpui-component)
   unclosed fence; a list's place in it is carried over), so a batch splices
   the new blocks and the last one or two before them; earlier rows are
   kept as they are.
+<<<<<<< ours
 - **What a scroll frame costs, and why rows are kept small** (F31): GPUI
   0.3.12 has no scroll that skips the view. `gpui::list` and
   `uniform_list` move their offset in their own state and then notify the
@@ -249,6 +250,49 @@ Root (gpui-component)
   the one that changed. `perf/floor-*.md` measures it (`crundi-v2-floor`,
   tools/measure-floor.mjs): fewer primitives per screen (no invisible
   boxes, no backgrounds a parent already draws) are the only lever there.
+=======
+- **What a scroll frame costs, and why a block is one element** (F31):
+  GPUI 0.3.12 has no scroll that skips the view. `gpui::list` and
+  `uniform_list` move their offset and then notify the view that drew them
+  (list.rs `StateInner::scroll`: `cx.notify(current_view)`; Zed's lists do
+  the same), and a cached view is reused only at the same bounds, so every
+  visible row is built, laid out and painted again on each frame that
+  scrolls. So the work per row is what has to be small. As Zed's editor
+  draws its lines, **each of Claude's blocks is one element**:
+  `chat::log::BlockEl` (a paragraph, a heading, a quote, a list item, a
+  rule) and `chat::log::TableEl` (a table). Each is a single measured
+  taffy leaf, with no subtree. Its text is shaped once per block, width,
+  text size and selection, kept in the LogView (`laid`, `tables`, by the
+  block's `Rc`), and only painted while the log scrolls. A streamed batch
+  reshapes only the blocks it spliced. A code block keeps its box (it
+  scrolls sideways), and a user bubble, a tool card and the rest stay
+  divs. Hit-testing reads the same cached lines (`HitLayout::Lines`), so
+  selection, double- and triple-click, shift-click, links and copy work
+  as before (test/log-element.mjs).
+- **The same pixels**: these elements reproduce what the divs drew,
+  pixel for pixel (checked against the div version at several widths and
+  scroll positions): lengths snap to device pixels as GPUI snaps authored
+  lengths, measured heights round up as GPUI rounds a measured leaf, a
+  table's columns are flex shares (each cell's padding and border its base,
+  the rest shared equally) with edges rounded where they fall in the
+  window, and a border quad's background is its own colour at no alpha,
+  as a div paints it.
+- **One paint layer per log** (`chat::log::Layer` around the list): each
+  clean cached view's last paint is replayed every frame, primitive by
+  primitive (scene.rs `replay`). Outside a layer, each glyph and quad is
+  inserted again into the scene's bounds tree. Inside one, it takes the
+  layer's order, so a log costs one insert. For the same reason a line is
+  painted straight into that layer (`paint_glyphs`, GPUI's `paint_line`
+  without its per-line layer). A line with a background (a code span, the
+  selection) keeps GPUI's two passes, so its glyphs stay above its
+  backgrounds. Inside a layer, overlapping quads draw in an order set by
+  their kind, not by when they were painted. So nothing in a log row may
+  paint a quad over glyphs.
+- **What every frame still costs**: replaying the panes that did not
+  change grows with what is on screen. `perf/floor-*.md` measures GPUI's
+  own floor and the client's chat panes (`crundi-v2-floor`,
+  tools/measure-floor.mjs).
+>>>>>>> theirs
 - **Where the parse runs**: on the UI thread only within `INLINE_PARSE` (4 KB
   per update, well under 1 ms; a streamed tail is far less); anything more
   (a history's long replies) is parsed on the background executor, one job

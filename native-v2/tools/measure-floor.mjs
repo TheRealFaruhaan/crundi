@@ -32,7 +32,11 @@ import { sweep } from './sweep.mjs';
 const BIN = process.env.FLOOR_BIN || join(homedir(), '.cache/crundi-native-target/release/crundi-v2-floor');
 const OUT = process.env.FLOOR_OUT || '/tmp/crundi-v2-floor';
 const PORT = Number(process.env.CRUNDI_TEST_PORT || 4882);
+<<<<<<< ours
 const ALL = ['empty', 'list', 'uniform', 'workbench', 'chatlog', 'chatlog5'];
+=======
+const ALL = ['empty', 'list', 'uniform', 'workbench', 'chatlog', 'chatlog5', 'stream5'];
+>>>>>>> theirs
 const modes = process.argv.slice(2).length ? process.argv.slice(2) : ALL;
 mkdirSync(OUT, { recursive: true });
 const report = { bin: BIN, when: new Date().toISOString(), modes: {} };

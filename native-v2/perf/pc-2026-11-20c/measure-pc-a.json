@@ -1,0 +1,122 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:fe32fa1cff034d04",
+   "live:c87357e35c977f23",
+   "live:c0e2d843e38bb2c9",
+   "live:fa2ac1568c22708c"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "fa2ac1568c22708c",
+  "focusedRows": 98,
+  "streamChat": "b09f1f2425892db9",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 582,
+  "p50": 5.23,
+  "p95": 6.09,
+  "max": 10.86,
+  "share7": 0.99,
+  "over7": 4,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 843,
+  "renders": {
+   "workbench": 582,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "head": 4,
+   "log": 583,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 586,
+  "p50": 4.34,
+  "p95": 5.83,
+  "max": 12.29,
+  "share7": 0.99,
+  "over7": 3,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 586,
+   "log": 586
+  }
+ },
+ "stream+scroll": {
+  "frames": 567,
+  "p50": 5.54,
+  "p95": 6.63,
+  "max": 8.04,
+  "share7": 0.99,
+  "over7": 7,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 809
+ },
+ "stream": {
+  "frames": 86,
+  "p50": 5.42,
+  "p95": 6.17,
+  "max": 7.83,
+  "share7": 0.98,
+  "over7": 2,
+  "over16": 0,
+  "seconds": 3.4,
+  "renders": {
+   "workbench": 654,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "head": 1,
+   "log": 826,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Chat (new)",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Chat (new)",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "allFrames": 1847,
+ "ranSeconds": 74
+}

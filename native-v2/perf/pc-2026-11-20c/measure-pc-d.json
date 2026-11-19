@@ -1,0 +1,122 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:c5163b2a3ad206d9",
+   "live:9988085e048c6919",
+   "live:5a5d5c3139049015",
+   "live:5e26b81b5fac0767"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "5e26b81b5fac0767",
+  "focusedRows": 98,
+  "streamChat": "a5302e03972f71c0",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 580,
+  "p50": 5.09,
+  "p95": 6.1,
+  "max": 14.5,
+  "share7": 0.99,
+  "over7": 6,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 856,
+  "renders": {
+   "workbench": 580,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "head": 4,
+   "log": 584,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 582,
+  "p50": 5.09,
+  "p95": 6.03,
+  "max": 6.78,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 582,
+   "log": 582
+  }
+ },
+ "stream+scroll": {
+  "frames": 579,
+  "p50": 4.63,
+  "p95": 6.59,
+  "max": 7.99,
+  "share7": 0.99,
+  "over7": 7,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 856
+ },
+ "stream": {
+  "frames": 86,
+  "p50": 5.09,
+  "p95": 5.78,
+  "max": 6.01,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 3.4,
+  "renders": {
+   "workbench": 665,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "head": 1,
+   "log": 840,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Chat (new)",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Chat (new)",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "allFrames": 1848,
+ "ranSeconds": 74
+}

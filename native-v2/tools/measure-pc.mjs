@@ -5,7 +5,9 @@
 // owner's sign-in or their server: a used or rotated refresh token can get
 // their login revoked (the owner's rule; F13).
 //
-//   On the Crundi server: native-gpui/tools/test-server.sh 4884 --bare
+//   A test server whose chats never run the real Claude: native-v2/tools/stub-server.sh 4884
+//   (on the PC itself, or on the Crundi server through a forward). Or a bare
+//   one there: native-gpui/tools/test-server.sh 4884 --bare (its chats run Claude)
 //   (reached from the PC through a forward, e.g. localhost:4884 on the PC)
 //   On the PC:
 //     export CRUNDI_CONFIG_DIR=$(mktemp -d /tmp/crundi-v2-measure-config-XXXXXX)
