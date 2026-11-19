@@ -52,15 +52,21 @@ const { unsafeTar } = await import('../src/workers-chats.js');
   writeFileSync(join(t, 'in', 'sub', 'b.txt'), 'b');
   const sh = (...a) => execFileSync('tar', a, { cwd: t });
   sh('-cf', 'good.tar', '-C', 'in', 'ok.txt', 'sub');
-  execFileSync('ln', ['-s', '../../etc/passwd', join(t, 'in', 'evil')]);
-  sh('-cf', 'link.tar', '-C', 'in', 'ok.txt', 'evil');
-  execFileSync('ln', ['-s', 'sub/b.txt', join(t, 'in', 'inside')]);
-  sh('-cf', 'inlink.tar', '-C', 'in', 'inside', 'sub');
+  // Symlinks need ln, which a Windows runner lacks: those two cases run elsewhere.
+  const links = process.platform !== 'win32';
+  if (links) {
+    execFileSync('ln', ['-s', '../../etc/passwd', join(t, 'in', 'evil')]);
+    sh('-cf', 'link.tar', '-C', 'in', 'ok.txt', 'evil');
+    execFileSync('ln', ['-s', 'sub/b.txt', join(t, 'in', 'inside')]);
+    sh('-cf', 'inlink.tar', '-C', 'in', 'inside', 'sub');
+  }
   // GNU tar strips "../" when it writes; ours keeps the name as given.
   { const { writeTar } = await import('../src/tar-lite.js'); const parts = []; await writeTar(join(t, 'in', 'sub'), ['../ok.txt'], (b) => { parts.push(Buffer.from(b)); }); writeFileSync(join(t, 'dots.tar'), Buffer.concat(parts)); }
   ok(await unsafeTar(join(t, 'good.tar')) === '', 'a PC\'s tar with plain files: unpacked');
-  ok(/link that points outside/.test(await unsafeTar(join(t, 'link.tar'))), 'a symlink pointing outside the folder: refused');
-  ok(await unsafeTar(join(t, 'inlink.tar')) === '', 'a symlink inside the folder: fine');
+  if (links) {
+    ok(/link that points outside/.test(await unsafeTar(join(t, 'link.tar'))), 'a symlink pointing outside the folder: refused');
+    ok(await unsafeTar(join(t, 'inlink.tar')) === '', 'a symlink inside the folder: fine');
+  }
   const d = await unsafeTar(join(t, 'dots.tar'));
   ok(/leaves the folder/.test(d), 'a "../" path: refused', d);
 }

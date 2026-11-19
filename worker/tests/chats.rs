@@ -425,7 +425,10 @@ async fn git_chat_pull_gives_a_bundle_and_a_patch() {
     let mut out = Vec::new();
     stdout_until(&mut ws, "g1", &mut out, "proj@g1\n").await;
     let wt = t.dir.join("work/proj@g1");
-    assert!(String::from_utf8_lossy(&out).contains(&format!("cwd: {}", wt.display())), "{}", String::from_utf8_lossy(&out));
+    // macOS reports the temp folder as /private/var/... : compare real paths.
+    let canon = std::fs::canonicalize(&wt).unwrap_or_else(|_| wt.clone());
+    let said = String::from_utf8_lossy(&out).to_string();
+    assert!(said.contains(&format!("cwd: {}", wt.display())) || said.contains(&format!("cwd: {}", canon.display())), "{said}");
     assert_eq!(git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]), "pc/g1");
 
     // Claude's work: a commit, a changed tracked file, a new untracked file (binary).
