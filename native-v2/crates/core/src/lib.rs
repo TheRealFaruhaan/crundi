@@ -15,6 +15,7 @@ pub mod head;
 pub mod host;
 pub mod live;
 pub mod md;
+pub mod mdblocks;
 pub mod media;
 pub mod mosaic;
 pub mod questions;

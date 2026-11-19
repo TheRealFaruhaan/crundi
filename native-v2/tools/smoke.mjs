@@ -19,7 +19,10 @@ if (!bin || !out) { console.error('usage: smoke.mjs <binary> <out dir>'); proces
 mkdirSync(out, { recursive: true });
 const port = Number(process.env.CRUNDI_TEST_PORT || 7622);
 const log = createWriteStream(join(out, 'client.log'));
-const app = spawn(bin, [], { env: { ...process.env, ZED_MEASUREMENTS: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+// (Never on a Wayland session the shell carries: Linux runs it under xvfb-run.)
+const env = { ...process.env, ZED_MEASUREMENTS: '1' };
+if (process.platform === 'linux') delete env.WAYLAND_DISPLAY;
+const app = spawn(bin, [], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 app.stdout.pipe(log);
 const frames = new FrameMeter(app.stderr, (l) => log.write(l));
 let exited = null;

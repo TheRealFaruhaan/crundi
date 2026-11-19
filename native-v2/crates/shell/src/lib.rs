@@ -103,6 +103,12 @@ pub fn init(cx: &mut App) -> Stores {
                 move |r, cx| if let Ok(u) = r { s.usage.update(cx, |x, cx| x.set_usage(u, cx)); }
             });
             load_status(s.clone(), cx);
+            // The Docker tab only where Docker is installed (the web's
+            // checkDockerPresence: one call per sign-in; shown until it answers).
+            call(cx, |api| api.get("/api/docker/status"), {
+                let s = s.clone();
+                move |r, cx| if let Ok(v) = r { let on = v.get("installed").and_then(|i| i.as_bool()).unwrap_or(false); s.nav.update(cx, |n, cx| n.set_docker(on, cx)); }
+            });
         }
         SessionEvent::SignedOut => {
             cx.set_global(Hub(None));
@@ -110,6 +116,13 @@ pub fn init(cx: &mut App) -> Stores {
             s.usage.update(cx, |u, cx| u.clear(cx));
             for a in registry::list(cx) { if let Some(f) = &a.on_signed_out { f(&s, cx); } }
         }
+    }).detach();
+    // The tab bar's scope follows whether a project is open.
+    let s = stores.clone();
+    let mut was: Option<bool> = None;
+    cx.observe(&stores.projects, move |p, cx| {
+        let open = !p.read(cx).open.is_empty();
+        if was != Some(open) { let closed = was == Some(true); was = Some(open); s.nav.update(cx, |n, cx| n.sync_scope(open, closed, cx)); }
     }).detach();
     let s = stores.clone();
     cx.subscribe(&stores.projects, move |_, e: &ProjectPicked, cx| {
@@ -134,6 +147,8 @@ pub fn load_projects(stores: &Stores, cx: &mut App) {
             let pick = p.list.iter().find(|x| x.alias == want).or_else(|| p.list.first()).map(|x| x.alias.clone());
             if let Some(a) = pick { p.pick(&a, cx); }
         });
+        // No project to open: the tab bar's global scope, on Info.
+        if s.projects.read(cx).open.is_empty() { s.nav.update(cx, |n, cx| n.sync_scope(false, true, cx)); }
     });
 }
 

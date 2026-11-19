@@ -37,6 +37,8 @@ await T.snap('chat', 'reply-arrived');
 // (Under Xvfb a frame takes ~65 ms, so a fast reply coalesces into fewer
 // batches: two or more shows it streamed rather than landing in one go.)
 t.check('the reply came in several live batches', (s2?.batches ?? 0) - b0 >= 2, { b0, b: s2?.batches });
+// The reply is one log row per markdown block (F10): forty list items.
+t.check('the reply is a row per markdown block', (s2?.rows ?? 0) >= (s2?.entries?.length ?? 0) + 30, s2 && { rows: s2.rows, entries: s2.entries.length });
 t.check('rows were spliced, not rebuilt per event', (s2?.spliced ?? 0) < 10 * (s2?.batches ?? 1), s2 && { spliced: s2.spliced, batches: s2.batches });
 await T.until('the chat is idle again', (s) => s.chatState === 'idle', 120000);
 // The head follows: out of WORKING, and the server's title (its list's, live
@@ -63,10 +65,19 @@ t.check('the log scrolls (frames drawn)', scroll.frames > 0, scroll);
 // (no driver redraw), and the picture changes.
 const before3 = join(T.OUT, 'wheel-before.png'), after3 = join(T.OUT, 'wheel-after.png');
 await T.d.send({ cmd: 'snapshot', path: before3 });
+await T.mouse('move', 800, 400); await t.sleep(300);
+const r0 = (await T.state()).renders || {};
 const wheelFrom = T.frames.mark();
 for (let i = 0; i < 30; i++) { await T.mouse('wheel', 800, 400, { dy: 40 }); await t.sleep(16); }
 await t.sleep(400);
 const wheel = T.frames.since(wheelFrom);
+// Only the log redraws (and its layout parents): never the heads, the
+// composers, the top bar or the sidebar (F11).
+const r1 = (await T.state()).renders || {};
+const drew = Object.fromEntries(Object.keys(r1).map((k) => [k, r1[k] - (r0[k] || 0)]));
+console.log('views rendered while wheel-scrolling:', JSON.stringify(drew));
+t.check('a wheel over the log redraws the log', drew.log > 0, drew);
+t.check('a wheel over the log redraws no head, composer, top bar or sidebar', !drew.head && (drew.composer || 0) <= 1 && !drew['top-bar'] && !drew.sidebar, drew);
 console.log('frames while wheel-scrolling:', JSON.stringify(wheel));
 await T.d.send({ cmd: 'snapshot', path: after3 });
 await T.snap('chat', 'log-wheel-scrolled');

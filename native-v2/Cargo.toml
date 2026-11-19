@@ -40,6 +40,8 @@ rodio = { version = "0.20", default-features = false }
 tts = "0.26"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4"
+# Markdown blocks (core::mdblocks), the parser gpui-component uses, at its version.
+markdown = "=1.0.0"
 # The areas.
 crundi-core = { path = "crates/core" }
 crundi-theme = { path = "crates/theme" }

@@ -184,6 +184,7 @@ impl TopBar {
 
 impl Render for TopBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("top-bar");
         let p = self.stores.projects.read(cx);
         let (name, picon) = (p.open_name(), p.icon_of(&p.open));
         let s = self.stores.session.read(cx);
@@ -274,6 +275,7 @@ impl Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("sidebar");
         let folded = self.folded.unwrap_or(false);
         let p = self.stores.projects.read(cx);
         let mut list = div().id("projects").flex().flex_col().flex_1().pt(T::SP_4).pb(T::SP_4).px(if folded { T::SP_6 } else { T::SP_8 }).gap(T::SP_2).overflow_y_scroll();
@@ -319,6 +321,7 @@ pub struct ProjectBar { stores: Stores, scroll: ScrollHandle, _subs: Vec<Subscri
 
 impl ProjectBar {
     fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
+        // (The nav store also notifies when a project opens or none is: sync_scope.)
         let subs = vec![cx.observe(&stores.nav, |_, _, cx| cx.notify())];
         ProjectBar { stores, scroll: ScrollHandle::new(), _subs: subs }
     }
@@ -326,10 +329,14 @@ impl ProjectBar {
 
 impl Render for ProjectBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("project-bar");
         let nav = self.stores.nav.read(cx);
-        let (on_tab, drawer_open) = (nav.tab.clone(), nav.drawer_open);
+        let (on_tab, drawer_open, docker) = (nav.tab.clone(), nav.drawer_open, nav.docker);
+        let project_open = !self.stores.projects.read(cx).open.is_empty();
         let mut tabs = div().id("tabbar").flex().flex_1().min_w_0().h_full().items_center().overflow_x_scroll().track_scroll(&self.scroll);
         for (i, (id, label, icon, _)) in TABS.iter().enumerate() {
+            // With no project, only the global tabs (and no "+"); Docker only where installed.
+            if !crate::nav::tab_shown(id, project_open, docker) { continue; }
             let (id, nav) = (id.to_string(), self.stores.nav.clone());
             tabs = tabs.child(w::nav_tab(icon.clone(), *label, on_tab == id).id(("tab", i)).flex_none().cursor_pointer().on_click(move |_, _, cx| nav.update(cx, |n, cx| n.show_tab(&id, cx))));
             if i == 0 {

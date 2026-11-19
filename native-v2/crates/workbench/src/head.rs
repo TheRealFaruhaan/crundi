@@ -1,8 +1,10 @@
 //! The pane header (specs/pane-header-wide.md and -narrow.md, native-gpui's
 //! head.rs): the drag grip, the state dot, the title, the state badge; then
 //! A- ↺ A+, pin, full screen and the two-click ×. A cached leaf view of its
-//! own: it observes what its title reads (the chat's store, through the
-//! kind's `watch`) and the workbench (its frame: armed, pinned, narrow).
+//! own, redrawn only when what it shows changes: its info (the kind's
+//! `watch` observes what the title reads and calls `refresh`, which
+//! notifies only on a change) and its frame (armed, pinned, narrow, focused:
+//! the workbench notifies the head whose frame changed, F11).
 
 use crate::Workbench;
 use crundi_core::head as rules;
@@ -24,13 +26,22 @@ pub struct PaneHead {
     chat: bool,
     info: Rc<dyn Fn(&App) -> HeadInfo>,
     wb: WeakEntity<Workbench>,
+    /// The info as last drawn (`refresh` compares with it).
+    last: Option<HeadInfo>,
     _subs: Vec<Subscription>,
 }
 
 impl PaneHead {
-    pub(crate) fn new(key: String, chat: bool, info: Rc<dyn Fn(&App) -> HeadInfo>, wb: WeakEntity<Workbench>, wbe: &Entity<Workbench>, watch: Box<dyn FnOnce(&mut Context<PaneHead>) -> Vec<Subscription>>, cx: &mut Context<Self>) -> Self {
-        let mut subs = watch(cx); subs.push(cx.observe(wbe, |_, _, cx| cx.notify()));
-        PaneHead { key, chat, info, wb, _subs: subs }
+    pub(crate) fn new(key: String, chat: bool, info: Rc<dyn Fn(&App) -> HeadInfo>, wb: WeakEntity<Workbench>, watch: Box<dyn FnOnce(&mut Context<PaneHead>) -> Vec<Subscription>>, cx: &mut Context<Self>) -> Self {
+        let subs = watch(cx);
+        PaneHead { key, chat, info, wb, last: None, _subs: subs }
+    }
+
+    /// What the title reads may have changed (the kind's `watch`): redraw
+    /// only if the info did.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let i = (self.info)(cx);
+        if self.last.as_ref() != Some(&i) { self.last = Some(i); cx.notify(); }
     }
 
     fn act(&self, cx: &mut App, f: impl FnOnce(&mut Workbench, &mut Context<Workbench>) + 'static) {
@@ -47,7 +58,9 @@ pub(crate) fn state_color(state: &str) -> Hsla {
 impl Render for PaneHead {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let f = self.wb.upgrade().and_then(|wb| wb.read(cx).frame_of(&self.key)).unwrap_or_default();
+        crundi_core::driver::rendered("head");
         let info = (self.info)(cx);
+        self.last = Some(info.clone());
         let id = f.leaf;
         let _ = window;
         let (title, cap) = rules::title_shown(&info.title, &info.long, f.w);

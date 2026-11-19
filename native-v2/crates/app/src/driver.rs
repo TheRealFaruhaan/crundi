@@ -42,6 +42,7 @@ fn state(stores: &Stores, window: &mut Window, cx: &mut App) -> Map<String, Valu
     m.insert("tab".into(), json!(stores.nav.read(cx).tab));
     m.insert("dialog".into(), crundi_widgets::ask_props(cx));
     m.insert("toast".into(), json!(crundi_widgets::toast_text(cx).to_string()));
+    m.insert("renders".into(), crundi_core::driver::renders());
     for a in registry::list(cx) {
         if let Some(f) = &a.state { if let Value::Object(o) = f(stores, window, cx) { m.extend(o); } }
     }

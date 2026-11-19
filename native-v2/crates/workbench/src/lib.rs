@@ -17,7 +17,7 @@ pub use head::{HeadInfo, PaneHead};
 use crundi_core::{mosaic::{Dir, Mosaic}, store};
 use crundi_shell::Stores;
 use crundi_theme::{IconName, T};
-use crundi_widgets::{self as w, HeadContent as C, HeadLook as L};
+use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use std::{collections::HashMap, rc::Rc, time::Duration};
 
@@ -222,8 +222,7 @@ impl Workbench {
             let parts = (kind.make)(key, &self.stores, window, cx);
             let me = cx.entity().downgrade();
             let k = key.to_string();
-            let wb = cx.entity();
-            let head = cx.new(|cx| PaneHead::new(k, kind.chat, parts.info, me, &wb, parts.watch, cx));
+            let head = cx.new(|cx| PaneHead::new(k, kind.chat, parts.info, me, parts.watch, cx));
             self.panes.insert(key.to_string(), Pane { head, body: parts.body });
         }
         self.panes.get(key).map(|p| (p.head.clone(), p.body.clone()))
@@ -249,31 +248,26 @@ impl Workbench {
 
     /// An empty leaf (.mosaic-empty): a dashed edge, the message, the chips,
     /// then Split right / Split down / remove.
-    fn empty_leaf(&self, id: u32, width: f32, open: &[String], cx: &mut Context<Self>) -> Div {
-        let btn = |key: &'static str, icon: IconName, tip: &'static str| w::head_button((key, id), C::IconText(icon, "Split".into()), L::Rest, T::SP_48 + T::SP_24, T::CONTROL_SM, tip);
-        let mut rows = div().flex().flex_col().gap(T::SP_6).mb(T::SP_2);
-        for row in empty_chips(open, width) {
-            let mut r = div().h(T::SP_24).flex().items_center().justify_center().gap(T::SP_6);
-            for (k, label) in row {
-                let icon = match k { "terminal" => IconName::Terminal, "files" => IconName::Folder, "git" => IconName::GitBranch, "kanban" => IconName::Kanban, "notes" => IconName::FileText, "mindmap" => IconName::Network, "media" => IconName::Images, "factory" => IconName::Factory, _ => IconName::PanelsTopLeft };
-                let s = self.stores.clone();
-                r = r.child(div().id(SharedString::from(format!("chip-{k}-{id}"))).flex_none().cursor_pointer()
-                    .on_click(move |_, window, cx| { crundi_shell::run_action(&s, &format!("wb-chip:{k}"), window, cx); })
-                    .child(w::chip(icon, label, false)));
-            }
-            rows = rows.child(r);
+    fn empty_leaf(&self, id: u32, open: &[String], cx: &mut Context<Self>) -> Div {
+        // The chips wrap in a row at most 300 wide, centred (.me-chips).
+        let mut chips = div().flex().flex_wrap().justify_center().gap(T::SP_6).max_w(T::LEAF_CHIPS_W).mb(T::SP_2);
+        for (k, label) in empty_chips(open) {
+            let icon = match k { "terminal" => IconName::Terminal, "files" => IconName::Folder, "git" => IconName::GitBranch, "kanban" => IconName::Kanban, "notes" => IconName::FileText, "mindmap" => IconName::Network, "media" => IconName::Images, "factory" => IconName::Factory, _ => IconName::PanelsTopLeft };
+            let s = self.stores.clone();
+            chips = chips.child(w::leaf_chip(SharedString::from(format!("chip-{k}-{id}")), icon, label, format!("Add {label}"))
+                .on_click(move |_, window, cx| { crundi_shell::run_action(&s, &format!("wb-chip:{k}"), window, cx); }));
         }
-        div().size_full().p(T::SP_4).child(
-            div().size_full().rounded(T::R_CARD).border_1().border_dashed().border_color(T::border()).overflow_hidden()
-                .flex().flex_col().items_center().justify_center()
-                .child(div().h(T::SP_16).flex().items_center().text_size(T::TEXT_13).text_color(T::text_muted()).child("Drop a panel here or launch a new one"))
-                .child(div().h(T::SP_10))
-                .child(rows)
-                .child(div().h(T::SP_10))
+        // The web's .mosaic-empty: 3px in, a 2px dashed border, the message,
+        // the chips and the actions 10 apart, centred.
+        div().size_full().p(T::LEAF_INSET).child(
+            div().size_full().rounded(T::R_CARD).border_2().border_dashed().border_color(T::border()).overflow_hidden()
+                .flex().flex_col().gap(T::SP_10).items_center().justify_center().text_size(T::TEXT_13).text_color(T::text_muted())
+                .child("Drop a panel here or launch a new one")
+                .child(chips)
                 .child(div().flex().items_center().gap(T::SP_6)
-                    .child(btn("e-right", IconName::Columns2, "Split right").on_click(cx.listener(move |this, _, _, cx| this.split(id, false, cx))))
-                    .child(btn("e-down", IconName::Rows2, "Split down").on_click(cx.listener(move |this, _, _, cx| this.split(id, true, cx))))
-                    .child(w::head_button(("e-x", id), C::Icon(IconName::X), L::Close, T::CONTROL_SM, T::CONTROL_SM, "Remove this pane")
+                    .child(w::leaf_act(("e-right", id), IconName::Plus, Some("Split \u{25b8}"), "Split right").on_click(cx.listener(move |this, _, _, cx| this.split(id, false, cx))))
+                    .child(w::leaf_act(("e-down", id), IconName::Plus, Some("Split \u{25be}"), "Split down").on_click(cx.listener(move |this, _, _, cx| this.split(id, true, cx))))
+                    .child(w::leaf_act(("e-x", id), IconName::X, None, "Remove pane")
                         .on_click(cx.listener(move |this, _, _, cx| { this.mosaic().close(id); this.changed(cx); })))))
     }
 
@@ -282,10 +276,13 @@ impl Workbench {
         let Some((head, body)) = self.pane(key, window, cx) else {
             return w::empty("Not built yet in the v2 client.").into_any_element();
         };
-        // The head's frame (armed, pinned, narrow) is the workbench's: the
-        // head reads it (it observes the workbench, which notifies only on
-        // layout and focus changes; a resize changes its bounds).
-        self.frames.insert(key.to_string(), f);
+        // The head's frame (armed, pinned, narrow, focused) is the
+        // workbench's: the head reads it, and is notified here only when its
+        // own frame changed (F11: a focus change redraws two heads, not all).
+        // A notify while the window draws marks the head dirty for this
+        // draw, before its cached element is laid out, without asking for
+        // another frame.
+        if self.frames.insert(key.to_string(), f) != Some(f) { head.update(cx, |_, cx| cx.notify()); }
         let hh = if f.narrow { T::PANE_HEAD_NARROW } else { T::PANE_HEAD };
         // A wheel inside a pane stays in it (the workbench's sideways scroll
         // would otherwise move with a log: native-gpui's 19 Nov fix).
@@ -301,31 +298,20 @@ impl Workbench {
 }
 
 /// An empty pane's chips (the web's emptyLeafHtml): Terminal, the panels not
-/// in the workbench yet (Notes always), Panel; in rows that fit the pane.
-fn empty_chips(open: &[String], width: f32) -> Vec<Vec<(&'static str, &'static str)>> {
+/// in the workbench yet (Notes always), Panel (the web's widgetsOn: always
+/// for the owner; v2 has no collaborator sign-in yet).
+fn empty_chips(open: &[String]) -> Vec<(&'static str, &'static str)> {
     let mut items: Vec<(&'static str, &'static str)> = vec![("terminal", "Terminal")];
     for (k, l) in [("files", "Files"), ("git", "Git"), ("kanban", "Kanban"), ("notes", "Notes"), ("mindmap", "Mindmap"), ("media", "Media"), ("factory", "Factory")] {
         if k == "notes" || !open.iter().any(|o| o == k) { items.push((k, l)); }
     }
     items.push(("widget", "Panel"));
-    let room = (width - 40.0).max(120.0);
-    let mut rows: Vec<Vec<(&'static str, &'static str)>> = vec![vec![]];
-    let mut used = 0.0;
-    for (id, label) in items {
-        let w = chip_w(label);
-        if used > 0.0 && used + 6.0 + w > room { rows.push(vec![]); used = 0.0; }
-        used += if used > 0.0 { 6.0 + w } else { w };
-        rows.last_mut().unwrap().push((id, label));
-    }
-    rows
+    items
 }
-
-/// A chip's width for the rows' wrap (the chip itself takes its text's
-/// width): its icon and padding plus at most about 7.5px a character.
-fn chip_w(label: &str) -> f32 { 34.0 + 7.5 * label.chars().count() as f32 }
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("workbench");
         let (aw, ah) = self.area;
         let gw = self.mosaic().content_width(aw);
         let (leaves, gutters) = self.mosaic().layout(gw, ah);
@@ -357,7 +343,7 @@ impl Render for Workbench {
             let id = l.id;
             let inner = match &l.key {
                 Some(k) => { let f = self.head_state(id, l.pinned, l.w, false); self.frame(k, f, window, cx) }
-                None => self.empty_leaf(id, l.w, &open, cx).into_any_element(),
+                None => self.empty_leaf(id, &open, cx).into_any_element(),
             };
             grid = grid.child(div().id(("leaf", id)).absolute().left(px(l.x)).top(px(l.y)).w(px(l.w)).h(px(l.h))
                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.focus_pane(id, cx)))
@@ -409,10 +395,11 @@ pub fn init(cx: &mut App) {
 mod tests {
     use super::empty_chips;
     #[test]
-    fn chips_fold_into_rows() {
-        let rows = empty_chips(&["git".into()], 300.);
-        assert!(rows.len() > 1);
-        assert!(!rows.iter().flatten().any(|(k, _)| *k == "git"));
-        assert_eq!(rows.iter().flatten().last().unwrap().1, "Panel");
+    fn chips_leave_out_what_is_open() {
+        let chips = empty_chips(&["git".into(), "notes".into()]);
+        assert!(!chips.iter().any(|(k, _)| *k == "git"));
+        assert!(chips.iter().any(|(k, _)| *k == "notes"));
+        assert_eq!(chips.first().unwrap().1, "Terminal");
+        assert_eq!(chips.last().unwrap().1, "Panel");
     }
 }

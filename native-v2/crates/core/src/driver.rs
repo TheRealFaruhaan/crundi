@@ -14,6 +14,10 @@
 //!   {"cmd":"key","text":"Escape"|"Return"|"a…","mods":["ctrl"]}
 //!       ("phase":"down" holds the key, "up" lets it go; neither: both)
 //!   {"cmd":"resize","w":1400,"h":860}
+//!
+//! "state" also holds "renders": how many times each counted view (head,
+//! composer, log, chat-pane, workbench, top-bar, sidebar, project-bar) has
+//! rendered.
 
 use serde_json::{json, Value};
 use std::{
@@ -60,17 +64,40 @@ pub fn start(port: u16, to_ui: impl Fn(Request) + Send + Sync + Clone + 'static)
         for conn in listener.incoming().flatten() {
             let to_ui = to_ui.clone();
             thread::spawn(move || {
+                let _ = conn.set_nodelay(true);
                 let Ok(mut out) = conn.try_clone() else { return };
                 for line in BufReader::new(conn).lines().map_while(Result::ok) {
                     let Ok(cmd) = serde_json::from_str::<Value>(&line) else { continue };
                     let (tx, rx) = mpsc::channel();
                     to_ui(Request { cmd, reply: tx });
                     let answer = rx.recv_timeout(Duration::from_secs(20)).unwrap_or(json!({ "ok": false, "error": "timeout" }));
-                    if writeln!(out, "{answer}").is_err() { break; }
+                    // One write, sent at once (F12: `writeln!` wrote the line
+                    // and its newline apart, and Nagle held the newline back
+                    // until the harness's delayed ACK, ~40 ms a command).
+                    let mut line = answer.to_string();
+                    line.push('\n');
+                    if out.write_all(line.as_bytes()).is_err() { break; }
                 }
             });
         }
     });
+}
+
+/// How many times each counted view has rendered (the driver's "renders":
+/// a suite checks that a change redraws only the views that show it).
+static RENDERS: Mutex<Vec<(&'static str, u64)>> = Mutex::new(Vec::new());
+
+/// A counted view rendered (call at the top of its `render`; cheap).
+pub fn rendered(view: &'static str) {
+    if let Ok(mut r) = RENDERS.lock() {
+        match r.iter_mut().find(|(k, _)| *k == view) { Some(e) => e.1 += 1, None => r.push((view, 1)) }
+    }
+}
+
+/// Every counted view's renders so far, as {"head": 12, …}.
+pub fn renders() -> Value {
+    let r = RENDERS.lock().map(|r| r.clone()).unwrap_or_default();
+    Value::Object(r.into_iter().map(|(k, n)| (k.to_string(), json!(n))).collect())
 }
 
 /// The port from CRUNDI_TEST_PORT, if set.

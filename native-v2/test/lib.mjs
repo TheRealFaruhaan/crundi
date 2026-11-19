@@ -73,6 +73,7 @@ export function driver(port, alive) {
           let i;
           while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i); buf = buf.slice(i + 1); waiting.shift()?.(JSON.parse(line)); }
         });
+        sock.setNoDelay(true);
         resolve({ send: (cmd) => new Promise((r) => { waiting.push(r); sock.write(JSON.stringify(cmd) + '\n'); }), close: () => sock.end() });
       });
       sock.once('error', () => (left > 0 && alive() ? setTimeout(() => tryConnect(left - 1), 500) : reject(new Error('no test driver'))));
@@ -133,8 +134,13 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   const configDir = mkdtempSync(join(tmpdir(), `crundi-v2-config-${name}-`));
   const log = createWriteStream(join(OUT, `native-${name}.log`), { flags: 'a' });
   let exited = false;
+  // Only ever on the virtual display xvfb-run gives: never a Wayland
+  // session the shell happens to carry (it would open on a person's screen).
+  const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
+  delete env.WAYLAND_DISPLAY;
+  if (!env.DISPLAY || env.DISPLAY === ':0') { console.error('Run under xvfb-run (DISPLAY is not a virtual display).'); process.exit(2); }
   const app = spawn(BIN, [], {
-    env: { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   app.stdout.pipe(log);

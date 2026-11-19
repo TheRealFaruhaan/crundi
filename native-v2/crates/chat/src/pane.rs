@@ -28,6 +28,7 @@ impl ChatPane {
 
 impl Render for ChatPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("chat-pane");
         // The composer is cached at the height it measured itself (it grows
         // with its text: a change of height notifies it, and so this).
         let h = self.composer.read(cx).height;
@@ -72,15 +73,44 @@ impl LogView {
         cx.notify();
     }
 
-    fn item(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let fs = scale(self.zoom.unwrap_or(0));
         let me = cx.entity().downgrade();
         let store = self.store.read(cx);
         let Some(r) = store.rows.get(ix) else { return div().into_any_element() };
         let open = self.open.contains(&r.id);
         let el = row(r, open, fs, &me);
-        div().w_full().px(T::SP_16).pt(if ix == 0 { T::SP_12 } else { px(0.) }).pb(T::SP_10).child(el).into_any_element()
+        let top = if ix == 0 { T::SP_12 } else { px(0.) };
+        // An assistant text's block: the room the whole document would have
+        // around it (block_room); the entry's last block, the log's gap.
+        let (above, below) = match r.block {
+            Some(b) => { let (a, g) = block_room(b.lead, T::TEXT_13 * fs, window.rem_size()); (a, if b.last { T::SP_10 } else if b.gap { g } else { px(0.) }) }
+            None => (px(0.), T::SP_10),
+        };
+        div().w_full().px(T::SP_16).pt(top + above).pb(below).child(el).into_any_element()
     }
+}
+
+/// The room above a block row (by its lead) and the paragraph gap, as
+/// gpui-component 0.10's TextView leaves them between the blocks of one
+/// document (text/node.rs: `block_gap`, a list item's `pt(body * 0.25)`, a
+/// heading's `heading_metrics` section gap and a rule's `rule_space`, each
+/// less the paragraph gap the block before leaves below itself). `body` is
+/// the text size the log sets; the paragraph gap is the default style's
+/// 0.75 rem. (The version is pinned; a test in this crate holds these.)
+pub(crate) fn block_room(lead: crundi_core::mdblocks::Lead, body: Pixels, rem: Pixels) -> (Pixels, Pixels) {
+    use crundi_core::mdblocks::Lead;
+    let gap = rem * 0.75;
+    let above = match lead {
+        Lead::None => px(0.),
+        Lead::ListItem => body * 0.25,
+        Lead::Heading(level) => {
+            let (scale, section) = match level { 1 => (1.8, 1.1), 2 => (4. / 3., 1.6), 3 => (17. / 15., 1.4), 4 => (1., 1.4), 5 => (14. / 15., 1.4), _ => (13. / 15., 1.4) };
+            (body * scale * section - gap).max(px(0.))
+        }
+        Lead::Rule => (body * 1.6 - gap).max(px(0.)),
+    };
+    (above, gap)
 }
 
 /// A red box (an error, a failed turn's end).
@@ -178,6 +208,7 @@ fn row(r: &Row, open: bool, fs: f32, me: &WeakEntity<LogView>) -> AnyElement {
 
 impl Render for LogView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("log");
         div().id("log").size_full().min_h_0().bg(T::bg())
             .child(list(self.list.clone(), cx.processor(|this, ix: usize, window, cx| this.item(ix, window, cx))).size_full())
     }
@@ -253,6 +284,7 @@ fn state_label(st: &str) -> (&'static str, Hsla) {
 
 impl Render for Composer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("composer");
         let m = &self.meta;
         let fs = scale(m.zoom);
         let st = crundi_core::head::composer_state(&m.state, m.sending);
@@ -275,5 +307,79 @@ impl Render for Composer {
                 .when(!m.model.is_empty(), |d| d.child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(m.model.clone())))
                 .when(m.cost > 0.0, |d| d.child(format!("${:.4}", m.cost))))
             .child(measure)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! F10: a reply drawn as one row per block, with `block_room` around each,
+    //! stands exactly as tall as the same reply drawn by one TextView (the
+    //! look does not change), headless.
+    use super::block_room;
+    use crundi_core::mdblocks;
+    use gpui::{canvas, div, px, prelude::*, Context, Entity, IntoElement, Render, TestAppContext, Window};
+    use gpui_component::text::{TextView, TextViewState};
+    use std::{cell::Cell, rc::Rc};
+
+    struct Both { whole: Entity<TextViewState>, blocks: Vec<(mdblocks::Block, Entity<TextViewState>)>, h: Rc<Cell<(f32, f32)>> }
+
+    fn measure(slot: Rc<Cell<(f32, f32)>>, first: bool) -> impl IntoElement {
+        canvas(move |b, _, _| { let mut v = slot.get(); if first { v.0 = f32::from(b.size.height) } else { v.1 = f32::from(b.size.height) }; slot.set(v); }, |_, _, _, _| {}).absolute().size_full()
+    }
+
+    impl Render for Both {
+        fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let body = px(13.);
+            let n = self.blocks.len();
+            let rows = self.blocks.iter().enumerate().map(|(j, (b, st))| {
+                let (above, gap) = block_room(b.lead, body, window.rem_size());
+                div().w_full().pt(above).pb(if j + 1 == n { px(0.) } else if b.gap { gap } else { px(0.) }).child(TextView::new(st))
+            }).collect::<Vec<_>>();
+            div().flex().flex_row().items_start().w(px(900.)).text_size(body)
+                .child(div().relative().w(px(400.)).flex_none().child(TextView::new(&self.whole)).child(measure(self.h.clone(), true)))
+                .child(div().relative().w(px(400.)).flex_none().flex().flex_col().children(rows).child(measure(self.h.clone(), false)))
+        }
+    }
+
+    fn heights(text: &str, cx: &mut TestAppContext) -> (f32, f32, usize) {
+        cx.update(gpui_component::init);
+        let h = Rc::new(Cell::new((0., 0.)));
+        let t = text.to_string();
+        let h2 = h.clone();
+        let (_root, cx) = cx.add_window_view(move |_, cx| {
+            let blocks = mdblocks::split(&t).into_iter().map(|b| { let src = t[b.range.clone()].to_string(); (b, cx.new(|cx| TextViewState::markdown(&src, cx))) }).collect();
+            Both { whole: cx.new(|cx| TextViewState::markdown(&t, cx)), blocks, h: h2 }
+        });
+        for _ in 0..3 { cx.run_until_parked(); cx.update(|w, cx| { let _ = w.draw(cx); }); }
+        let (a, b) = h.get();
+        (a, b, mdblocks::split(text).len())
+    }
+
+    fn same(text: &str, cx: &mut TestAppContext) {
+        let (whole, blocks, n) = heights(text, cx);
+        assert!(n > 1, "the text should be cut: {text:?}");
+        assert!(whole > 0., "measured");
+        assert!((whole - blocks).abs() < 0.5, "one TextView {whole} vs {n} block rows {blocks}: {text:?}");
+    }
+
+    #[gpui::test]
+    fn prose_and_code(cx: &mut TestAppContext) {
+        same("Hello there, a first paragraph that is long enough to wrap in four hundred pixels of width, surely.\n\nSecond.\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n\n> a quote\n> on two lines\n\nAfter.", cx);
+    }
+
+    #[gpui::test]
+    fn lists(cx: &mut TestAppContext) {
+        let t: String = (1..=40).map(|i| format!("{i}. item number {i}\n")).collect();
+        same(&format!("Intro.\n\n{t}\n- a\n- b\n  - nested\n- c\n\nEnd."), cx);
+    }
+
+    #[gpui::test]
+    fn headings_and_rules(cx: &mut TestAppContext) {
+        same("Intro.\n\n# One\n\nText.\n\n## Two\n\nText.\n\n### Three\n\n- x\n- y\n\n#### Four\n\nText.\n\n---\n\nEnd.\n\n###### Six\n\nLast.", cx);
+    }
+
+    #[gpui::test]
+    fn tables(cx: &mut TestAppContext) {
+        same("Before.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nAfter.", cx);
     }
 }

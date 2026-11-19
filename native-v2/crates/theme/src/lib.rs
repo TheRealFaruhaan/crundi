@@ -130,6 +130,16 @@ impl T {
     pub const PANE_MIN: Pixels = px(340.);
     pub const PANE_FOLD: Pixels = px(560.);
     pub const GUTTER: Pixels = px(7.);
+    /// An empty pane (the web's .mosaic-empty): its inset, its chips' row
+    /// width, a chip's padding (5 / 10) and 11.5px text, an action's
+    /// sideways padding (9), and both their 13px icons.
+    pub const LEAF_INSET: Pixels = px(3.);
+    pub const LEAF_CHIPS_W: Pixels = px(300.);
+    pub const LEAF_CHIP_PY: Pixels = px(5.);
+    pub const LEAF_CHIP_GAP: Pixels = px(5.);
+    pub const LEAF_CHIP_TEXT: Pixels = px(11.5);
+    pub const LEAF_ACT_PX: Pixels = px(9.);
+    pub const LEAF_ICON: Pixels = px(13.);
     pub const TITLE_CAP: Pixels = px(160.);
     pub const COMPOSER_STACK: Pixels = px(520.);
     pub const COMPOSER_MAX: Pixels = px(180.);

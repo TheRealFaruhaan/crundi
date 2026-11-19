@@ -160,6 +160,10 @@ Root (gpui-component)
    └─ layers             layout   the ask layer (confirm, prompt, menus), the modal layer
 ```
 
+- A head redraws only when what it shows changed: the kind's `watch`
+  calls `PaneHead::refresh`, which compares the info; the Workbench, as it
+  lays the panes out, notifies only the heads whose frame (armed, pinned,
+  narrow, focused) changed. A head never observes a whole store (F11).
 - A streaming chat notifies its LogView: the LogView, its ChatPane, the
   Workbench and the Shell are dirty. The three layout views re-render
   (cheap: no text), the LogView re-renders its visible rows, and every
@@ -176,9 +180,28 @@ Root (gpui-component)
   (stays at the end while following; the person scrolling up stops it,
   "Go to the newest message" brings it back), overdraw `T::LOG_OVERDRAW`.
   Rows are the store's: `ChatStore.rows: Vec<Row>` where a row is a typed
-  record (user bubble, a markdown block holding its `Entity<TextViewState>`,
-  a tool card, thinking, result, error, notice). `render_item` reads a row
-  and lays it out; it never parses.
+  record (user bubble, tool card, thinking, result, error, notice) or **one
+  markdown block of an assistant text** holding its own
+  `Entity<TextViewState>`. `render_item` reads a row and lays it out; it
+  never parses.
+- **A reply is one row per markdown block** (F10; Zed's agent panel keeps a
+  long message cheap the same way: only what is on screen is laid out and
+  painted). `core::mdblocks` cuts the text where the whole document drawn
+  by one TextView would only have a paragraph gap, a list item's 0.25 body
+  size, or a heading's or rule's room (gpui-component 0.10's flow rules,
+  version pinned); the row adds that room around its block
+  (`chat::pane::block_room`), so the look is the same (a headless test
+  compares the heights). Never cut: around HTML, math and front matter, and
+  not at all with link or footnote references. While a reply streams, only
+  the text from the block before the last is cut again (`mdblocks::update`),
+  so a batch splices the new blocks and the one that was last; earlier rows
+  and their TextViewStates are untouched.
+- **Where the cut runs**: on the UI thread only within `INLINE_PARSE` (4 KB
+  of markdown per update, about 2 ms; a streamed tail is far less);
+  anything more (a history's long replies, a long tail) is cut on the
+  background executor, one job per entry at a time, the rows refreshed
+  when it lands. Until then a known reply keeps its last cut with its last
+  block running to the end; a reply never cut draws nothing yet.
 - **Kanban, mind map, file trees, long lists** (the areas'): the same; the
   mind map draws only nodes intersecting the viewport (a spatial index in
   its store) on a canvas.
@@ -206,10 +229,11 @@ Root (gpui-component)
 
 ## Background parsing
 
-- Markdown: one `TextViewState` per assistant text block, made when the
-  row first appears, `set_text` on every change (an extension is appended
-  incrementally); gpui-component parses on the background executor and
-  notifies its own state, which redraws only that text.
+- Markdown: one `TextViewState` per markdown block of an assistant text
+  (above), made when the block first appears, `set_text` when its source
+  changes (an extension is appended incrementally); gpui-component parses
+  on the background executor and notifies its own state, which redraws
+  only that block. The cut into blocks follows the same budget.
 - ANSI (terminals), JSON tool bodies, diffs and the git log are parsed by
   the store when data arrives; anything over a few KB on
   `cx.background_spawn`, the result applied in one update.
@@ -248,7 +272,11 @@ JSON command per line, one answer per line). Its requests arrive on a
 channel the app awaits (no polling timer). It reads state through the
 stores' handles and acts through the same methods the views call. It
 **never** refreshes the window: an action that changes something notifies
-the store it changed, as a click would.
+the store it changed, as a click would. It answers as soon as the command
+has run (one write, `TCP_NODELAY`: well under a millisecond, so a harness
+can send input at a 144 Hz wheel's rate), and its `state` holds `renders`,
+each counted view's renders (`core::driver::rendered`), so a suite can
+check that a change redraws only the views that show it.
 
 ## Building
 

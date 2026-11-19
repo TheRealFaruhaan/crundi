@@ -49,6 +49,28 @@ are the owner's PC, release build; "—" not yet.
 - [x] frame numbers on the owner's PC (release, `tools/measure-pc.mjs`,
   perf/pc-2026-11-19.md): idle 0 frames; streaming and a long reply on
   screen over budget (one markdown row per message)
+- [x] round 2 (the Manager's F10-F13, F8, F9):
+  - F10: a reply is one log row per markdown block (`core::mdblocks`; the
+    row adds the room the whole document would have, `block_room`); a
+    stream re-cuts only its tail and splices only the new blocks and the
+    one that was last; long cuts run on the background executor. Unit
+    tests: the cut (and its streaming agreeing with a whole cut), the
+    store's splices while a 300-item list streams, a long history cut off
+    the UI thread, and block rows standing exactly as tall as one TextView
+  - F11: heads redraw only when their own info or frame changed
+    (`PaneHead::refresh`, the workbench notifying the head whose frame
+    changed); the driver counts renders (`renders`), the slice checks a
+    wheel over the log redraws no head, composer, top bar or sidebar
+  - F12: the driver answers in one write with `TCP_NODELAY` (~1 ms a
+    command, was ~50 ms: Nagle and the delayed ACK)
+  - F13: `tools/measure-pc.mjs` runs with its own fresh config folder and
+    a fresh test server's own account, seeded there; it refuses otherwise
+  - F8: Docker's tab only where Docker is installed; with no project, the
+    global tabs only (and no "+"), on Info
+  - F9: the empty pane's chips and actions as the web's (`leaf_chip`,
+    `leaf_act`: pills, Split ▸ / Split ▾)
+- [ ] the slice's suite again on the server, then the owner's PC measured
+  again with the new harness (**to run**: Tester / Manager)
 
 ## The areas and their screens
 
@@ -65,7 +87,7 @@ are the owner's PC, release build; "—" not yet.
 | Workbench | 2.4 live state (dots, badges) | workbench | slice | — |
 | Workbench | Launcher, Claude terminal panes (their input inside each panel) | workbench, workspace | to do | — |
 | Chat (chat) | The pane: log over composer, its kind `live:`, panes kept in step with the project's chats | chats | slice | — |
-| Chat: log | 2.13 questions, 2.14 tool cards (groups, bodies), 2.15 thinking, 2.16 prose / code blocks / bubble / results / errors / notices, 2.16m media, 2.16f live frames, 2.17 suggestions and recaps, 2.18 agent dock, 2.19 goal and plan, 2.20 cards, 2.21 side questions, 2.22 resume picker, 2.23 parked panes, "Go to the newest message" | chat-log | slice: bubble, markdown, tool card (bash / JSON), thinking, result, error, notice; the rest to do | streaming: — |
+| Chat: log | (F10) a reply drawn one row per markdown block; 2.13 questions, 2.14 tool cards (groups, bodies), 2.15 thinking, 2.16 prose / code blocks / bubble / results / errors / notices, 2.16m media, 2.16f live frames, 2.17 suggestions and recaps, 2.18 agent dock, 2.19 goal and plan, 2.20 cards, 2.21 side questions, 2.22 resume picker, 2.23 parked panes, "Go to the newest message" | chat-log | slice: bubble, markdown, tool card (bash / JSON), thinking, result, error, notice; the rest to do | streaming: — |
 | Chat: composer | 2.5 composer and Stop, 2.6 mode picker, 2.7 attachments, 2.8 drafts, 2.9 queued, 2.10 scheduled, 2.11 slash menu, 2.12 secrets dialog, 2.12b secret requests, 2.24 voice input, the Enter switch, session id | chat-composer | slice: box, Send / Queue, Stop (Sure?), state, model, cost; the rest to do | — |
 | Workspace (workspace) | Git, Files (tree, editor), Media | workspace | to do | — |
 | Planning (planning) | Kanban (and the card dialog), Mind map, Notes, Schedules, webhooks, Factories (editor, live run graph, factory panel) | planning | to do | kanban / mind map scroll: — |

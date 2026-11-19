@@ -109,7 +109,7 @@ modal layer, drawn once by the shell), `overlay_modal`, `modal_head`,
 `primary_icon`, `liquid_mic`, `meter`, `spark`, `kbd`, `key_row`, `link`,
 `disclosure`, `filter_chip`, `seg_tabs`, `segmented_icons`, `icon_tag`,
 `page_item`, `round_button`, `arm_button`, `choice_row`, `choice_mark`,
-`label_icon_button`, `drag_ref` / `ref_target` (dragging a file reference, dropping one).
+`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `drag_ref` / `ref_target` (dragging a file reference, dropping one).
 
 - Every control's dimensions are the theme's (`T::BTN_H`, `ICON_BTN`,
   `INPUT_H`…); an area never sizes a control (no `.h`, `.px`,
@@ -130,8 +130,10 @@ actions: `check-server`, `sign-in-password`, `sign-in-pair`, `sign-out`,
 (unprefixed: each in turn; `<area>:<name>`: that area). The state holds
 `signedIn`, `online`, `live` (`connects`, `silentDrops`, `streams`),
 `projects`, `project`, `tab`, and every area's own (`panes`,
-`focusedPane`, `chat`, `entries`, `chatState`, `batches`, `spliced`…).
-The driver never redraws the window.
+`focusedPane`, `chat`, `entries`, `rows`, `chatState`, `batches`,
+`spliced`…), and `renders` (each counted view's renders: a view that
+should redraw only on its own changes calls `crundi_core::driver::rendered`
+at the top of its `render`). The driver never redraws the window.
 
 ## Building and testing
 

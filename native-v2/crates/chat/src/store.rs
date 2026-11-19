@@ -9,21 +9,34 @@
 //! log alone.
 
 use crundi_core::chat::{Conversation, Shown};
+use crundi_core::mdblocks::{self, Block, Lead};
 use crundi_theme::T;
 use gpui::*;
 use gpui_component::text::TextViewState;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::rc::Rc;
 
-/// One row of the log, ready to lay out (render never parses).
+/// One row of the log, ready to lay out (render never parses). An assistant
+/// text is one row per markdown block (core::mdblocks), so the log lays out
+/// and paints only the blocks on screen, and a streamed delta changes only
+/// the last block's row.
 pub struct Row {
     pub id: String,
-    pub shown: Shown,
-    /// Claude's text (and thinking), parsed off the UI thread.
+    pub shown: Rc<Shown>,
+    /// Claude's text: this block's, parsed off the UI thread.
     pub md: Option<Entity<TextViewState>>,
-    /// The user's bubble and other plain text, shared (no copy per frame).
+    /// The block's source; the user's bubble and other plain text (shared,
+    /// no copy per frame).
     pub text: SharedString,
+    /// An assistant text's block: where it stands among its siblings.
+    pub block: Option<BlockRow>,
 }
+
+/// A block row's look: the room above it and below it that the whole
+/// document drawn as one would have there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockRow { pub ix: usize, pub lead: Lead, pub gap: bool, pub last: bool }
 
 #[derive(Clone, Default, PartialEq)]
 pub struct Meta {
@@ -41,15 +54,28 @@ pub struct Meta {
 
 pub struct ChatMeta(pub Meta);
 
+/// An assistant text's last cut into blocks (the base the next one extends).
+#[derive(Clone)]
+struct Cut { text: String, blocks: Vec<Block> }
+
+/// Parsing done on the UI thread in one update, at most (bytes of markdown
+/// cut): about 2 ms. Anything more is cut on the background executor.
+const INLINE_PARSE: usize = 4096;
+
 pub struct ChatStore {
     pub id: String,
     pub conv: Conversation,
     pub rows: Vec<Row>,
-    /// The row of each entry id.
-    row_of: HashMap<String, usize>,
+    /// The rows of each entry id: (first row, how many).
+    span: HashMap<String, (usize, usize)>,
+    /// Each assistant text's blocks, and the background cuts under way.
+    cuts: HashMap<String, Cut>,
+    jobs: HashMap<String, Task<()>>,
+    /// What is left of this update's INLINE_PARSE.
+    budget: usize,
     pub list: ListState,
     pub meta: Entity<ChatMeta>,
-    /// Batches applied (the driver's count) and the last one's row splices.
+    /// Batches applied (the driver's count) and the rows spliced.
     pub batches: u64,
     pub spliced: u64,
 }
@@ -61,7 +87,7 @@ impl ChatStore {
         let list = ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW);
         list.set_follow_mode(FollowMode::Tail);
         let meta = cx.new(|_| ChatMeta(Meta::default()));
-        ChatStore { id: id.to_string(), conv, rows: vec![], row_of: HashMap::new(), list, meta, batches: 0, spliced: 0 }
+        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, meta, batches: 0, spliced: 0 }
     }
 
     /// This frame's messages for this chat (ui-history, ui-event), applied in
@@ -77,75 +103,190 @@ impl ChatStore {
         }
         if !any { return; }
         self.batches += 1;
+        self.budget = INLINE_PARSE;
         let (reloaded, changed) = self.conv.take_changes();
         if reloaded { self.rebuild(cx); } else { self.update_rows(&changed, cx); }
         self.sync_meta(cx);
         cx.notify();
     }
 
-    fn row(e: &Value, old_md: Option<Entity<TextViewState>>, cx: &mut Context<Self>) -> Option<Row> {
-        let shown = Shown::of(e)?;
-        let md = matches!(shown.kind, "assistant" | "thinking").then(|| match old_md {
-            Some(st) => { let t = shown.text.clone(); st.update(cx, |s, cx| s.set_text(&t, cx)); st }
-            None => { let t = shown.text.clone(); cx.new(|cx| TextViewState::markdown(&t, cx).selectable(true)) }
-        });
-        let text = SharedString::from(shown.text.clone());
-        Some(Row { id: shown.id.clone(), shown, md, text })
+    /// The blocks of an assistant text: the last cut when the text is the
+    /// same; extended from it when only its tail needs cutting again (a
+    /// streamed delta); cut here when small; otherwise cut on the background
+    /// executor (one job per entry at a time, the rows refreshed when it is
+    /// done) and, until then, the last cut with its last block running to
+    /// the end (or nothing yet, for a text never cut).
+    fn blocks_for(&mut self, id: &str, text: &str, cx: &mut Context<Self>) -> Vec<Block> {
+        let base = self.cuts.get(id);
+        if let Some(c) = base { if c.text == text { return c.blocks.clone(); } }
+        // From where an update would cut again (core::mdblocks::update).
+        let tail_from = base.and_then(|c| (c.blocks.len() >= 3).then(|| c.blocks[c.blocks.len() - 2].range.start))
+            .filter(|&f| text.len() >= f && c_prefix(base, text, f));
+        let work = match tail_from { Some(f) => text.len() - f, None => text.len() };
+        if work <= self.budget {
+            self.budget -= work;
+            let blocks = match base { Some(c) if tail_from.is_some() => mdblocks::update(&c.blocks, &c.text, text), _ => mdblocks::split(text) };
+            self.cuts.insert(id.to_string(), Cut { text: text.to_string(), blocks: blocks.clone() });
+            return blocks;
+        }
+        let provisional = match base {
+            Some(c) => match c.blocks.last() {
+                Some(l) if text.len() >= l.range.start && c_prefix(base, text, l.range.start) => {
+                    let mut b = c.blocks.clone();
+                    let last = b.last_mut().unwrap();
+                    last.range.end = text.len();
+                    b
+                }
+                _ => vec![],
+            },
+            None => vec![],
+        };
+        if !self.jobs.contains_key(id) {
+            let (key, text, base) = (id.to_string(), text.to_string(), base.cloned());
+            let task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let t = text.clone();
+                let blocks = cx.background_spawn(async move {
+                    match &base { Some(c) => mdblocks::update(&c.blocks, &c.text, &t), None => mdblocks::split(&t) }
+                }).await;
+                let _ = this.update(cx, |s, cx| s.cut_done(key, text, blocks, cx));
+            });
+            self.jobs.insert(id.to_string(), task);
+        }
+        provisional
     }
 
-    /// A new history: every row again (the TextViewStates of entries that
-    /// are still there are kept, so their parse is incremental).
+    fn cut_done(&mut self, id: String, text: String, blocks: Vec<Block>, cx: &mut Context<Self>) {
+        self.jobs.remove(&id);
+        self.cuts.insert(id.clone(), Cut { text, blocks });
+        self.budget = INLINE_PARSE;
+        self.update_rows(&[id], cx);
+        cx.notify();
+    }
+
+    /// An entry's rows, reusing what `old` (its rows as they were) already
+    /// has: a row whose block and look did not change is kept as it is (not
+    /// spliced); a changed block's TextViewState gets the new text (an
+    /// extension is appended, the parse runs on the background executor).
+    /// Returns the rows and the first one that changed; None: not shown.
+    fn entry_rows(&mut self, e: &Value, old: Vec<Row>, cx: &mut Context<Self>) -> Option<(Vec<Row>, usize)> {
+        let shown = Rc::new(Shown::of(e)?);
+        if shown.kind != "assistant" {
+            let text = SharedString::from(shown.text.clone());
+            return Some((vec![Row { id: shown.id.clone(), shown, md: None, text, block: None }], 0));
+        }
+        let blocks = self.blocks_for(&shown.id, &shown.text, cx);
+        let n = blocks.len();
+        let mut old = old.into_iter().map(Some).collect::<Vec<_>>();
+        let mut rows = Vec::with_capacity(n);
+        let mut first_changed = n;
+        for (j, b) in blocks.iter().enumerate() {
+            let src = shown.text.get(b.range.clone()).unwrap_or("");
+            let look = BlockRow { ix: j, lead: b.lead, gap: b.gap, last: j + 1 == n };
+            let prev = old.get_mut(j).and_then(|o| o.take());
+            match prev {
+                Some(mut r) if r.block == Some(look) && r.text.as_ref() == src => { r.shown = shown.clone(); rows.push(r); }
+                prev => {
+                    first_changed = first_changed.min(j);
+                    let md = match prev.and_then(|r| r.md) {
+                        Some(st) => { st.update(cx, |s, cx| s.set_text(src, cx)); st }
+                        None => cx.new(|cx| TextViewState::markdown(src, cx).selectable(true)),
+                    };
+                    rows.push(Row { id: shown.id.clone(), shown: shown.clone(), md: Some(md), text: SharedString::from(src.to_string()), block: Some(look) });
+                }
+            }
+        }
+        if old.len() > n { first_changed = first_changed.min(n); }
+        Some((rows, first_changed))
+    }
+
+    /// A new history: every row again (the rows and TextViewStates of
+    /// entries that are still there are kept, so their parse is incremental).
     fn rebuild(&mut self, cx: &mut Context<Self>) {
-        let mut old: HashMap<String, Entity<TextViewState>> = self.rows.drain(..).filter_map(|r| r.md.map(|m| (r.id, m))).collect();
-        let entries = std::mem::take(&mut self.conv.entries);
-        let rows: Vec<Row> = entries.iter().filter_map(|e| { let id = e.get("id").and_then(|i| i.as_str()).unwrap_or(""); let md = old.remove(id); Self::row(e, md, cx) }).collect();
-        self.conv.entries = entries;
         // Where the reader was (the web's applyHistory): following the end,
-        // it stays there; else on the same entry, at the same offset (a
-        // reset alone would put the log back at its top).
-        let first = self.row_of.is_empty();
+        // it stays there; else on the same block of the same entry, at the
+        // same offset (a reset alone would put the log back at its top).
+        let first = self.span.is_empty();
         let top = self.list.logical_scroll_top();
-        let top_id = self.row_of.iter().find(|(_, i)| **i == top.item_ix).map(|(id, _)| id.clone());
+        let top_at = self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.map_or(0, |b| b.ix)));
         let following = first || self.list.is_following_tail();
+        let mut old: HashMap<String, Vec<Row>> = HashMap::new();
+        for r in self.rows.drain(..) { old.entry(r.id.clone()).or_default().push(r); }
+        let entries = std::mem::take(&mut self.conv.entries);
+        let mut rows = vec![];
+        let mut span = HashMap::new();
+        for e in &entries {
+            let id = e.get("id").and_then(|i| i.as_str()).unwrap_or("");
+            let prev = old.remove(id).unwrap_or_default();
+            if let Some((r, _)) = self.entry_rows(e, prev, cx) { span.insert(id.to_string(), (rows.len(), r.len())); rows.extend(r); }
+        }
+        self.conv.entries = entries;
+        self.cuts.retain(|id, _| span.contains_key(id));
         self.rows = rows;
-        self.row_of = self.rows.iter().enumerate().map(|(i, r)| (r.id.clone(), i)).collect();
+        self.span = span;
         self.list.reset(self.rows.len());
         if following {
             self.list.set_follow_mode(FollowMode::Tail);
-        } else if let Some(ix) = top_id.and_then(|id| self.row_of.get(&id).copied()) {
-            self.list.scroll_to(ListOffset { item_ix: ix, offset_in_item: top.offset_in_item });
+        } else if let Some((s, n)) = top_at.and_then(|(id, b)| self.span.get(&id).map(|&(s, n)| (s + b.min(n.saturating_sub(1)), n))) {
+            if n > 0 { self.list.scroll_to(ListOffset { item_ix: s, offset_in_item: top.offset_in_item }); }
         }
         self.spliced += self.rows.len() as u64;
     }
 
-    /// The entries a batch touched: their rows replaced (or added at the end).
+    /// The entries a batch touched: their changed rows replaced (or added at
+    /// the end).
     fn update_rows(&mut self, changed: &[String], cx: &mut Context<Self>) {
         for id in changed {
             let Some(pos) = self.conv.position(id) else { continue };
             let e = self.conv.entries[pos].clone();
-            match self.row_of.get(id).copied() {
-                Some(i) => {
-                    let md = self.rows[i].md.take();
-                    match Self::row(&e, md, cx) {
-                        Some(r) => { self.rows[i] = r; self.list.splice(i..i + 1, 1); self.spliced += 1; }
+            match self.span.get(id).copied() {
+                Some((start, len)) => {
+                    let old: Vec<Row> = self.rows.drain(start..start + len).collect();
+                    let Some((new, j0)) = self.entry_rows(&e, old, cx) else {
                         // Not drawn any more (rare): everything again.
-                        None => return self.rebuild(cx),
+                        self.span.remove(id);
+                        return self.rebuild(cx);
+                    };
+                    let n = new.len();
+                    self.rows.splice(start..start, new);
+                    if n != len {
+                        self.span.insert(id.clone(), (start, n));
+                        self.respan();
+                    }
+                    if j0 < n.max(len) {
+                        self.list.splice(start + j0..start + len.max(j0), n.saturating_sub(j0));
+                        self.spliced += n.saturating_sub(j0).max(1) as u64;
                     }
                 }
                 None => {
-                    let Some(r) = Self::row(&e, None, cx) else { continue };
                     // A new entry is the last one shown; anything else (an
                     // entry shown late, out of order) rebuilds.
-                    let later = self.conv.entries[pos + 1..].iter().any(|x| x.get("id").and_then(|i| i.as_str()).is_some_and(|i| self.row_of.contains_key(i)));
+                    let later = self.conv.entries[pos + 1..].iter().any(|x| x.get("id").and_then(|i| i.as_str()).is_some_and(|i| self.span.contains_key(i)));
                     if later { return self.rebuild(cx); }
-                    let i = self.rows.len();
-                    self.row_of.insert(id.clone(), i);
-                    self.rows.push(r);
-                    self.list.splice(i..i, 1);
-                    self.spliced += 1;
+                    let Some((new, _)) = self.entry_rows(&e, vec![], cx) else { continue };
+                    let (i, n) = (self.rows.len(), new.len());
+                    self.span.insert(id.clone(), (i, n));
+                    self.rows.extend(new);
+                    self.list.splice(i..i, n);
+                    self.spliced += n as u64;
                 }
             }
         }
+    }
+
+    /// Every entry's first row again, in the conversation's order (after an
+    /// entry's row count changed).
+    fn respan(&mut self) {
+        let mut at = 0;
+        for e in &self.conv.entries {
+            let Some(id) = e.get("id").and_then(|i| i.as_str()) else { continue };
+            if let Some(v) = self.span.get_mut(id) { v.0 = at; at += v.1; }
+        }
+    }
+
+    /// One row per entry (the driver's "entries": an assistant text's first
+    /// block stands for it, with its whole text).
+    pub fn entry_rows_shown(&self) -> impl Iterator<Item = &Row> {
+        self.rows.iter().filter(|r| r.block.is_none_or(|b| b.ix == 0))
     }
 
     fn sync_meta(&mut self, cx: &mut Context<Self>) {
@@ -202,6 +343,11 @@ impl ChatStore {
     }
 }
 
+/// Whether `text` starts with the cut's text up to `at`.
+fn c_prefix(base: Option<&Cut>, text: &str, at: usize) -> bool {
+    base.is_some_and(|c| c.text.get(..at).is_some_and(|p| text.get(..at) == Some(p)))
+}
+
 /// The text scale of a zoom step (the web's 13px base, 1px a step).
 pub fn scale(zoom: i32) -> f32 { (13.0 + zoom as f32) / 13.0 }
 
@@ -226,7 +372,7 @@ mod tests {
         // Many deltas in one frame: one batch, one row spliced.
         let deltas: Vec<_> = ["l", "l", "o", "!"].iter().map(|t| json!({ "type": "ui-event", "id": "c1", "event": { "type": "delta", "id": "a1", "text": t } })).collect();
         store.update(cx, |s, cx| s.apply_batch(&deltas, cx));
-        store.read_with(cx, |s, _| { assert_eq!(s.batches, 2); assert_eq!(s.spliced, 4); assert_eq!(s.rows[1].shown.text, "Hello!"); });
+        store.read_with(cx, |s, _| { assert_eq!(s.batches, 2); assert_eq!(s.spliced, 4); assert_eq!(s.rows[1].shown.text, "Hello!"); assert_eq!(s.rows[1].text.as_ref(), "Hello!"); });
         // A new entry goes at the end; the meta follows the state.
         let more = vec![
             json!({ "type": "ui-event", "id": "c1", "event": { "type": "entry", "entry": { "id": "r1", "kind": "result", "durationMs": 1200 } } }),
@@ -259,5 +405,76 @@ mod tests {
             let top = s.list.logical_scroll_top();
             assert_eq!((top.item_ix, top.offset_in_item), (2, gpui::px(7.)));
         });
+    }
+
+    /// F10: a long reply is one row per markdown block. Streamed, each batch
+    /// splices only its new blocks and the one that was last (the earlier rows and their
+    /// TextViewStates are kept as they are); the rows are always the blocks
+    /// a whole cut of the text gives.
+    #[gpui::test]
+    fn a_streamed_reply_splices_only_its_last_blocks(cx: &mut TestAppContext) {
+        let store = cx.new(|cx| ChatStore::new("c1", cx));
+        let history = json!({ "type": "ui-history", "id": "c1", "session": { "id": "c1", "state": "working", "messages": [
+            { "id": "u1", "kind": "user", "text": "count" },
+            { "id": "a1", "kind": "assistant-text", "text": "", "streaming": true },
+        ] } });
+        store.update(cx, |s, cx| s.apply_batch(&[history], cx));
+        let full: String = std::iter::once("Here they are:\n\n".to_string()).chain((1..=300).map(|i| format!("{i}. number {i}\n"))).chain(std::iter::once("\nDone.".to_string())).collect();
+        let mut sent = 0;
+        let mut kept: Option<(gpui::EntityId, gpui::EntityId)> = None;
+        while sent < full.len() {
+            let end = (sent + 23).min(full.len());
+            let deltas: Vec<_> = [&full[sent..end]].iter().map(|t| json!({ "type": "ui-event", "id": "c1", "event": { "type": "delta", "id": "a1", "text": t } })).collect();
+            let (before, rows_before) = store.read_with(cx, |s, _| (s.spliced, s.rows.len()));
+            store.update(cx, |s, cx| s.apply_batch(&deltas, cx));
+            sent = end;
+            store.read_with(cx, |s, _| {
+                let text = &full[..sent];
+                let want = crundi_core::mdblocks::split(text);
+                let got: Vec<&str> = s.rows[1..].iter().map(|r| r.text.as_ref()).collect();
+                assert_eq!(got, crundi_core::mdblocks::texts(text, &want), "at {sent}");
+                assert_eq!(s.list.item_count(), s.rows.len());
+                // The new blocks, and the one that was last before them.
+                let added = (s.rows.len() - rows_before) as u64;
+                assert!(s.spliced - before <= added + 1, "a batch spliced {} rows, {added} new, at {sent}", s.spliced - before);
+                // The first blocks' states are the same entities all along.
+                if s.rows.len() > 3 {
+                    let ids = (s.rows[1].md.as_ref().unwrap().entity_id(), s.rows[2].md.as_ref().unwrap().entity_id());
+                    if let Some(k) = kept { assert_eq!(k, ids); } else { kept = Some(ids); }
+                }
+            });
+        }
+        store.read_with(cx, |s, _| {
+            assert_eq!(s.rows.len(), 1 + 302);
+            let looks: Vec<_> = s.rows[1..].iter().map(|r| r.block.unwrap()).collect();
+            assert!(looks[..301].iter().all(|b| !b.last) && looks[301].last);
+            assert_eq!(s.entry_rows_shown().count(), 2);
+        });
+    }
+
+    /// A long reply in a history is cut on the background executor: until it
+    /// is, the entry draws nothing; then its blocks are its rows.
+    #[gpui::test]
+    fn a_long_history_reply_is_cut_off_the_ui_thread(cx: &mut TestAppContext) {
+        let text: String = (1..=400).map(|i| format!("{i}. number {i}\n")).collect();
+        assert!(text.len() > super::INLINE_PARSE);
+        let store = cx.new(|cx| ChatStore::new("c1", cx));
+        let history = json!({ "type": "ui-history", "id": "c1", "session": { "id": "c1", "state": "idle", "messages": [
+            { "id": "u1", "kind": "user", "text": "count" },
+            { "id": "a1", "kind": "assistant-text", "text": text },
+            { "id": "u2", "kind": "user", "text": "thanks" },
+        ] } });
+        store.update(cx, |s, cx| s.apply_batch(&[history.clone()], cx));
+        store.read_with(cx, |s, _| { assert_eq!(s.rows.len(), 2); assert_eq!(s.jobs.len(), 1); });
+        cx.run_until_parked();
+        store.read_with(cx, |s, _| {
+            assert_eq!(s.rows.len(), 402);
+            assert_eq!(s.list.item_count(), 402);
+            assert_eq!(s.rows[401].text.as_ref(), "thanks");
+            assert!(s.jobs.is_empty());
+        });
+        // The same history again (a reconnect): nothing is cut again.
+        store.update(cx, |s, cx| s.apply_batch(&[history], cx));
+        store.read_with(cx, |s, _| { assert_eq!(s.rows.len(), 402); assert!(s.jobs.is_empty()); });
     }
 }

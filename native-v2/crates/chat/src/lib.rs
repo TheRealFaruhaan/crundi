@@ -10,7 +10,7 @@ pub mod store;
 
 use crundi_core::live::Event;
 use crundi_shell::{Area, Stores};
-use crundi_workbench::{self as wb, HeadInfo, PaneKind, PaneParts};
+use crundi_workbench::{self as wb, HeadInfo, PaneHead, PaneKind, PaneParts};
 use gpui::*;
 use pane::ChatPane;
 use serde_json::{json, Value};
@@ -139,7 +139,8 @@ pub fn init(cx: &mut App) {
                 }),
                 // The head redraws on the chat's meta and on the projects
                 // store (an exited chat), never on its streamed text.
-                watch: Box::new(move |cx| vec![cx.observe(&meta, |_, _, cx| cx.notify()), cx.observe(&projects, |_, _, cx| cx.notify())]),
+                // (`refresh` redraws it only when its title or state changed.)
+                watch: Box::new(move |cx| vec![cx.observe(&meta, |h: &mut PaneHead, _, cx| h.refresh(cx)), cx.observe(&projects, |h: &mut PaneHead, _, cx| h.refresh(cx))]),
             }
         }),
         close: Some(Rc::new(|key, cx, done| {
@@ -208,10 +209,11 @@ pub fn init(cx: &mut App) {
         })
         .state(|stores, _, cx| {
             let id = focused_chat(cx);
+            let rows = find(cx, &id).map_or(0, |s| s.read(cx).rows.len());
             let (entries, st, batches, spliced) = match find(cx, &id) {
                 Some(s) => {
                     let s = s.read(cx);
-                    let e: Vec<Value> = s.rows.iter().map(|r| json!({ "id": r.id, "kind": r.shown.kind, "text": r.shown.text, "title": r.shown.title, "status": r.shown.status, "error": r.shown.error })).collect();
+                    let e: Vec<Value> = s.entry_rows_shown().map(|r| json!({ "id": r.id, "kind": r.shown.kind, "text": r.shown.text, "title": r.shown.title, "status": r.shown.status, "error": r.shown.error })).collect();
                     (e, s.conv.state.clone(), s.batches, s.spliced)
                 }
                 None => (vec![], String::new(), 0, 0),
@@ -222,6 +224,6 @@ pub fn init(cx: &mut App) {
                 Some(s) => { let s = s.read(cx); let h = head_info(stores, &id, &s.meta.read(cx).0, cx); (json!({ "title": h.title, "long": h.long, "state": h.state }), s.list.is_following_tail()) }
                 None => (Value::Null, false),
             };
-            json!({ "chat": id, "entries": entries, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
+            json!({ "chat": id, "entries": entries, "rows": rows, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
         }));
 }
