@@ -10,7 +10,7 @@ use std::collections::HashMap;
 /// How long a finished block stays open.
 pub const LINGER_MS: u64 = 5000;
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Think {
     /// The reader's choice, by entry id.
     user: HashMap<String, bool>,

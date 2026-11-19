@@ -100,7 +100,7 @@ fn blocks(summary: &str) -> Vec<(&'static str, String, String)> {
     }).collect()
 }
 
-fn fr_entries(v: &LogView, cx: &App) -> Vec<Shown> { v.shown(cx).into_iter().filter(|e| e.kind == "factory-result").collect() }
+fn fr_entries(v: &LogView, cx: &App) -> Vec<Shown> { v.shown(cx).iter().filter(|e| e.kind == "factory-result").cloned().collect() }
 
 fn note_text(f: &Fr, cx: &App) -> String { f.note.as_ref().map(|n| n.read(cx).value().to_string()).unwrap_or_default() }
 

@@ -47,7 +47,7 @@ use crundi_theme::T;
 use gpui::*;
 use rows::Row;
 use serde_json::{json, Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::{cell::{Cell, RefCell}, collections::{HashMap, HashSet}, rc::Rc};
 
 /// Every feature's state for one chat (one field per module, its own type).
 #[derive(Default)]
@@ -79,7 +79,7 @@ pub struct LogView {
     pub list: ListState,
     /// The rows the list was last told about (compared each render: only
     /// the range that changed is measured again).
-    rows_prev: Vec<rows::Row>,
+    rows_prev: Rc<Vec<rows::Row>>,
     /// The list's viewport as of this render, for what is drawn inside its
     /// rows (a browser view's visible part): reading the list from inside
     /// its own layout panicked ('RefCell already mutably borrowed').
@@ -87,10 +87,22 @@ pub struct LogView {
     /// Scroll to the end after the next layouts (new entries, the first history).
     pub stick: u8,
     _sub: Subscription,
+    _obs: Subscription,
+    /// Bumped on each change of the chat model: the caches' key.
+    rev: Cell<u64>,
+    shown_cache: RefCell<Option<((u64, usize, usize), Rc<Vec<Shown>>)>>,
+    rows_cache: RefCell<Option<(RowsKey, Rc<Vec<Row>>)>>,
 }
+
+/// What the rows depend on: the chat (its revision and sizes) and the log's
+/// own state (what is open, the thinking blocks, the asides).
+#[derive(PartialEq)]
+struct RowsKey { rev: u64, entries: usize, agents: usize, open: HashSet<String>, think: crundi_core::think::Think, asides: Vec<rows::Aside> }
 
 impl LogView {
     pub fn new(model: Entity<ChatModel>, cx: &mut Context<Self>) -> Self {
+        // Any change to the chat (each one notifies) makes the shared rows again.
+        let obs = cx.observe(&model, |this, _, _| this.rev.set(this.rev.get() + 1));
         let sub = cx.subscribe(&model, |this, _, ev: &ChatEvent, cx| {
             // Following the bottom, or the jump button's dot (2.16, prose.rs).
             prose::arrived(this, matches!(ev, ChatEvent::NewEntry));
@@ -101,19 +113,36 @@ impl LogView {
         let me = cx.entity().downgrade();
         if !cx.has_global::<Views>() { cx.set_global(Views::default()); }
         cx.global_mut::<Views>().0.insert(id, me);
-        LogView { model, open: HashSet::new(), st: St::default(), list: ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW), rows_prev: Vec::new(), viewport: Default::default(), stick: 3, _sub: sub }
+        LogView { model, open: HashSet::new(), st: St::default(), list: ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW), rows_prev: Rc::new(Vec::new()), viewport: Default::default(), stick: 3, _sub: sub, _obs: obs, rev: Cell::new(0), shown_cache: RefCell::new(None), rows_cache: RefCell::new(None) }
     }
 
     /// The chat's id.
     pub fn chat(&self, cx: &App) -> String { self.model.read(cx).id().to_string() }
 
-    /// The entries as the log shows them (crundi_core::chat).
-    pub fn shown(&self, cx: &App) -> Vec<Shown> { self.model.read(cx).conv.view() }
-
-    /// The log's rows now.
-    pub fn rows(&self, cx: &App) -> Vec<Row> {
+    /// The entries as the log shows them (crundi_core::chat), made once per
+    /// change of the chat and shared: building them walks every entry (its
+    /// text, a tool's output through strip_ansi), and the log asked for
+    /// them several times a frame in every chat pane (the owner's PC: about
+    /// 70 ms a frame while scrolling, 19 Nov).
+    pub fn shown(&self, cx: &App) -> Rc<Vec<Shown>> {
         let m = self.model.read(cx);
-        rows::rows_of(&m.conv.view(), &m.conv.agents, &self.open, &self.st.thinking.think, &self.st.aside.list)
+        let key = (self.rev.get(), m.conv.entries.len(), m.conv.agents.len());
+        if let Some((k, v)) = self.shown_cache.borrow().as_ref() { if *k == key { return v.clone(); } }
+        let v = Rc::new(m.conv.view());
+        *self.shown_cache.borrow_mut() = Some((key, v.clone()));
+        v
+    }
+
+    /// The log's rows now (each entry's markdown split into rows), made once
+    /// per change of the chat or of what the log has open, and shared.
+    pub fn rows(&self, cx: &App) -> Rc<Vec<Row>> {
+        let shown = self.shown(cx);
+        let m = self.model.read(cx);
+        let key = RowsKey { rev: self.rev.get(), entries: m.conv.entries.len(), agents: m.conv.agents.len(), open: self.open.clone(), think: self.st.thinking.think.clone(), asides: self.st.aside.list.clone() };
+        if let Some((k, v)) = self.rows_cache.borrow().as_ref() { if *k == key { return v.clone(); } }
+        let v = Rc::new(rows::rows_of(&shown, &m.conv.agents, &self.open, &self.st.thinking.think, &self.st.aside.list));
+        *self.rows_cache.borrow_mut() = Some((key, v.clone()));
+        v
     }
 
     /// The conversation changed (a live event, the history): each feature
@@ -135,9 +164,11 @@ impl LogView {
     /// last render is measured again (a streamed reply: its last rows).
     fn sync_rows(&mut self, cx: &App) {
         let rows = self.rows(cx);
+        // Nothing changed since the last render: the very same rows.
+        if Rc::ptr_eq(&rows, &self.rows_prev) && self.list.item_count() == rows.len() + 1 { return; }
         let (old, new) = (self.rows_prev.len(), rows.len());
         if old == 0 && new == 0 && self.list.item_count() == 1 { return; }
-        let head = self.rows_prev.iter().zip(&rows).take_while(|(a, b)| a == b).count();
+        let head = self.rows_prev.iter().zip(rows.iter()).take_while(|(a, b)| a == b).count();
         let tail = self.rows_prev[head..].iter().rev().zip(rows[head..].iter().rev()).take_while(|(a, b)| a == b).count();
         if self.list.item_count() != old + 1 {
             // First time (or out of step): every row, and the pad.
