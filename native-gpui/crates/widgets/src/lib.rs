@@ -470,7 +470,7 @@ pub fn error_state(id: impl Into<ElementId>, text: impl Into<SharedString>, retr
 /// Loading: the spinner and a muted line.
 pub fn loading(text: impl Into<SharedString>) -> Div {
     div().flex().items_center().justify_center().gap(T::SP_8).p(T::SP_24)
-        .child(gpui_component::spinner::Spinner::new().with_size(gpui_component::Size::Size(T::SPINNER)))
+        .child(spinner::spinner(T::SPINNER))
         .child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child(text.into()))
 }
 

@@ -187,6 +187,11 @@ impl T {
     pub const CHECK_TEXT: Pixels = Self::TEXT_13;
     /// The loading spinner (F69).
     pub const SPINNER: Pixels = Self::ICON_LG;
+    /// The most frames a second a decorative animation (a spinner, a live
+    /// label's pulse) asks for. Each of its frames draws its pane again; at
+    /// the display's rate a running tool's spinner kept the window busy
+    /// (the owner's PC, 19 Nov: ~13 fps while any chat worked).
+    pub const ANIM_FPS: f32 = 24.0;
 
     // ─── Type ───
     pub const UI_FONT: &'static str = "DejaVu Sans";
@@ -654,6 +659,10 @@ pub fn init(cx: &mut App) {
     // The code editor's highlighting for a dark ground (the config has no
     // highlight of its own, so it kept the light one: dark blue on dark).
     gpui_component::Theme::global_mut(cx).highlight_theme = gpui_component::highlighter::HighlightTheme::default_dark();
+    // The caret blinks, then rests after a while without typing (as editors
+    // do): each blink draws the window again, twice a second for as long as
+    // a box had the keys, the window in the background included.
+    gpui_component::Theme::global_mut(cx).cursor_blink = gpui_component::input::CursorBlink::blinking(std::time::Duration::from_millis(500)).with_idle_timeout(std::time::Duration::from_secs(10));
     // The toast where the web puts it: under the top bar, at the right edge
     // (top: the bar's height and sp-10; right sp-16), at most a dialog's width wide.
     let n = &mut gpui_component::Theme::global_mut(cx).notification;

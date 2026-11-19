@@ -429,7 +429,13 @@ impl Shell {
         let tab = self.tab.clone();
         // In a cached view of its own (TabHost): the drawer's frames, the
         // top bar, Cru's mark don't lay out and paint the whole tab again.
-        let body = if registry::has_tab(&tab, cx) {
+        // The workbench tab is not cached itself: its panes are (PaneHost),
+        // and a cached view inside a cached one gets nothing (a miss renders
+        // the whole subtree again, gpui view.rs). As Zed: the panes are the
+        // top cached views, so one pane's change leaves the others' frames.
+        let body = if tab == "workbench" {
+            registry::render_tab(&tab, window, cx).unwrap_or_else(|| div().into_any_element())
+        } else if registry::has_tab(&tab, cx) {
             let host = self.tab_hosts.entry(tab.clone()).or_insert_with(|| { let t = tab.clone(); cx.new(|_| TabHost { tab: t }) }).clone();
             host.cached(StyleRefinement::default().size_full()).into_any_element()
         } else {

@@ -280,7 +280,7 @@ impl CruScreen {
         if phase == "think" {
             any = true;
             let dot = |i: usize| div().size(T::SP_8).rounded_full().bg(T::text_secondary())
-                .with_animation(("cru-dot", i), Animation::new(std::time::Duration::from_millis(1200)).repeat(), move |d, p| { let q = (p - i as f32 * 0.17).rem_euclid(1.); let k = if q < 0.3 { q / 0.3 } else if q < 0.6 { 1. - (q - 0.3) / 0.3 } else { 0. }; d.opacity(0.35 + 0.65 * k) });
+                .with_animation(("cru-dot", i), Animation::new(std::time::Duration::from_millis(1200)).repeat().with_max_fps(T::ANIM_FPS), move |d, p| { let q = (p - i as f32 * 0.17).rem_euclid(1.); let k = if q < 0.3 { q / 0.3 } else if q < 0.6 { 1. - (q - 0.3) / 0.3 } else { 0. }; d.opacity(0.35 + 0.65 * k) });
             list = list.child(div().flex().w_full().child(div().id("cru-typing").flex().gap(T::SP_6).items_center().px(T::SP_16).py(T::SP_12)
                 .rounded(T::CRU_BUBBLE_R).rounded_bl(T::CRU_BUBBLE_TAIL).bg(T::bg_secondary()).border_1().border_color(T::border())
                 .child(dot(0)).child(dot(1)).child(dot(2))));

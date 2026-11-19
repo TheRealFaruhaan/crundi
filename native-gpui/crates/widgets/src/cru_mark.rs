@@ -62,7 +62,7 @@ pub fn cru_mark(live: bool) -> AnyElement {
     if !live { return div().flex_none().child(pic(0)).into_any_element(); }
     // Each step of the animation draws the box afresh with that step's picture.
     div().flex_none()
-        .with_animation("cru-live", Animation::new(CYCLE).repeat(), |_, t| div().flex_none().child(pic((t * FRAMES as f32) as usize)))
+        .with_animation("cru-live", Animation::new(CYCLE).repeat().with_max_fps(T::ANIM_FPS), |_, t| div().flex_none().child(pic((t * FRAMES as f32) as usize)))
         .into_any_element()
 }
 
