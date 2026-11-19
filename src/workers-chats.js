@@ -560,6 +560,40 @@ export function createChats({
     return p;
   }
 
+  // ── Bringing a live chat's folder on the PC up to a new commit, in place ──
+  // A chat keeps its folder (and its build caches) for its whole life; a
+  // factory step that reuses it must first see what others committed since.
+  // The caller brings the chat's own work back first (pullChat): the PC may
+  // then reset its folder to the new commit (keeping a stash as a backup).
+  const syncs = new Map();     // req -> { chat, workerId, resolve, timer }
+  async function syncChat(chatId, { cwd = '' } = {}) {
+    const c = chats.get(String(chatId || ''));
+    if (!c) return { ok: false, error: 'That chat does not run on a PC.' };
+    if (c.source !== 'git') return { ok: false, unsupported: true, error: 'Only a git chat can be brought up to a new commit.' };
+    const w = worker(c.workerId);
+    if (!w || !w.online || c.offline) return { ok: false, offline: true, error: `${c.workerName} is offline.` };
+    if (!(w.caps || []).includes('chat-sync')) return { ok: false, unsupported: true, error: `${c.workerName} runs an older worker that cannot bring a chat's folder up to date. Update the PC app.` };
+    const src = await sourceOf(cwd || c.cwd);
+    if (src.source !== 'git' || !src.git) return { ok: false, unsupported: true, error: 'The server folder is not a git checkout with a remote.' };
+    c.git = src.git;   // what chat.need serves while the PC catches up
+    return new Promise((resolve) => {
+      const req = 's' + randomBytes(6).toString('hex');
+      const timer = setTimeout(() => { syncs.delete(req); resolve({ ok: false, error: `${c.workerName} did not bring the chat's folder up to date in time.` }); }, PULL_TIMEOUT_MS);
+      timer.unref?.();
+      syncs.set(req, { chat: c.chat, workerId: c.workerId, timer, resolve: (r) => {
+        if (r.ok) { c.base = src.base; save(); changed(); }
+        resolve(r);
+      } });
+      if (!sendTo(c.workerId, { type: 'chat.sync', chat: c.chat, req, git: src.git })) { clearTimeout(timer); syncs.delete(req); resolve({ ok: false, error: `Could not reach ${c.workerName}.` }); }
+    });
+  }
+  function onSynced(w, m) {
+    const x = syncs.get(String(m.req || ''));
+    if (!x || x.workerId !== w.id || x.chat !== m.chat) return;
+    syncs.delete(m.req); clearTimeout(x.timer);
+    x.resolve(m.ok ? { ok: true, head: str(m.head, 64), ffwd: !!m.ffwd, stashed: !!m.stashed } : { ok: false, error: str(m.error, 600) || 'The PC could not bring the folder up to date.' });
+  }
+
   /** claude-ui's onTurnEnd: a chat on a PC brings its work back (never a factory chat: the run pulls). */
   function onTurnEnd(chatId) {
     const c = chats.get(String(chatId || ''));
@@ -593,6 +627,7 @@ export function createChats({
       return;
     }
     if (m.type === 'chat.bundle' || m.type === 'chat.patch' || m.type === 'chat.files' || m.type === 'chat.pullError') { if (m.req) onPullPiece(w, m); return; }
+    if (m.type === 'chat.synced') { onSynced(w, m); return; }
     const c = chats.get(String(m.chat || m.job || ''));
     if (!c || c.workerId !== w.id) return;
     switch (m.type) {
@@ -666,6 +701,7 @@ export function createChats({
       l.lostTimer.unref?.();
     }
     for (const p of [...pulls.values()]) if (p.workerId === workerId) done(p, { ok: false, error: 'The PC disconnected.' });
+    for (const [req, x] of [...syncs]) if (x.workerId === workerId) { syncs.delete(req); clearTimeout(x.timer); x.resolve({ ok: false, offline: true, error: 'The PC disconnected.' }); }
     changed();
   }
 
@@ -737,7 +773,7 @@ export function createChats({
 
   return {
     launch, launchPty, offer, refusal, onMessage, onHello, onDrop, onTurnEnd, isChatId,
-    pull, pullChat: (chatId, opts = {}) => pull(chatId, opts || {}),
+    pull, pullChat: (chatId, opts = {}) => pull(chatId, opts || {}), syncChat,
     status, view, list, dispose, live: (id) => live.has(id),
   };
 }

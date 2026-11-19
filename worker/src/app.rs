@@ -270,6 +270,7 @@ pub fn event_line(v: &serde_json::Value) -> String {
                 format!("{what} {} ended{in_project}", g("chat"))
             }
         }
+        ("log", _) => g("text"),
         _ => v.to_string(),
     }
 }

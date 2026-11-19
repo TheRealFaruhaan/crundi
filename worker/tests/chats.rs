@@ -369,7 +369,7 @@ fn claude_is_found_on_path_or_where_it_installs() {
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main"])
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "init.defaultBranch=main", "-c", "core.autocrlf=false"])
         .args(args)
         .current_dir(dir)
         .output()
@@ -884,5 +884,224 @@ async fn resume_without_a_transcript_starts_fresh_and_says_so() {
     assert!(text.contains("args: -p --resume sess-1 --verbose --mcp-config"), "{text}");
     send(&mut ws, json!({"type": "chat.kill", "chat": "r2"})).await;
     exit_of(&mut ws, "r2").await;
+    t.quit().await;
+}
+
+// ---- chat.sync: a live chat's folder brought up to a new commit in place ----
+
+struct Origin {
+    srv: PathBuf,
+    url: String,
+    c1: String,
+}
+
+/// A bare origin and the "server's" repo pushing to it (c1: a.txt, a .gitignore).
+fn origin(t: &T) -> Origin {
+    let bare = t.dir.join("origin.git");
+    let srv = t.dir.join("srv");
+    std::fs::create_dir_all(&bare).unwrap();
+    std::fs::create_dir_all(&srv).unwrap();
+    git(&bare, &["init", "--bare", "-q"]);
+    git(&srv, &["init", "-q", "-b", "main"]);
+    git(&srv, &["config", "core.autocrlf", "false"]);
+    std::fs::write(srv.join("a.txt"), "one\n").unwrap();
+    std::fs::write(srv.join(".gitignore"), "target/\n*.log\n").unwrap();
+    git(&srv, &["add", "."]);
+    git(&srv, &["commit", "-q", "-m", "c1"]);
+    let c1 = git(&srv, &["rev-parse", "HEAD"]);
+    git(&srv, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    git(&srv, &["push", "-q", "origin", "main"]);
+    Origin { srv, url: format!("file://{}", bare.display()), c1 }
+}
+
+impl Origin {
+    /// A new commit on the server's main; pushed to origin when `push`.
+    fn commit(&self, file: &str, text: &str, push: bool) -> String {
+        std::fs::write(self.srv.join(file), text).unwrap();
+        git(&self.srv, &["add", "."]);
+        git(&self.srv, &["commit", "-q", "-m", file]);
+        if push {
+            git(&self.srv, &["push", "-q", "origin", "main"]);
+        }
+        git(&self.srv, &["rev-parse", "HEAD"])
+    }
+
+    fn git(&self, commit: &str) -> Value {
+        json!({"url": self.url, "branch": "main", "commit": commit})
+    }
+}
+
+/// Start git chat `chat` at c1 and wait for its claude to be up; returns its folder.
+async fn git_chat(t: &T, ws: &mut Ws, o: &Origin, chat: &str) -> PathBuf {
+    send(ws, spawn_msg(chat, json!({"source": "git", "git": o.git(&o.c1)}))).await;
+    recv_type(ws, "chat.started").await;
+    let mut out = Vec::new();
+    stdout_until(ws, chat, &mut out, &format!("proj@{chat}\n")).await;
+    let wt = t.dir.join(format!("work/proj@{chat}"));
+    git(&wt, &["config", "core.autocrlf", "false"]);
+    wt
+}
+
+async fn synced(ws: &mut Ws, chat: &str, req: &str) -> Value {
+    loop {
+        let v = recv_type(ws, "chat.synced").await;
+        if v["req"] == req {
+            assert_eq!(v["chat"], chat, "{v}");
+            return v;
+        }
+    }
+}
+
+async fn sync(ws: &mut Ws, chat: &str, req: &str, gitv: Value) -> Value {
+    send(ws, json!({"type": "chat.sync", "chat": chat, "req": req, "git": gitv})).await;
+    synced(ws, chat, req).await
+}
+
+/// claude still answers on its stdin.
+async fn still_running(ws: &mut Ws, chat: &str, word: &str) {
+    send(ws, chat_in(chat, &format!("{word}\n"))).await;
+    let mut out = Vec::new();
+    let line = format!("got: {word}\n");
+    assert!(stdout_until(ws, chat, &mut out, &line).await.is_none(), "claude ended");
+}
+
+#[tokio::test]
+async fn sync_fast_forwards_keeps_caches_and_fetches_a_bundle() {
+    let mut t = start("syncff", Some(FAKE_CLAUDE)).await;
+    let (mut ws, hello) = t.connect(ok_settings()).await;
+    assert!(hello["caps"].as_array().unwrap().iter().any(|c| c == "chat-sync"), "{hello}");
+    let o = origin(&t);
+    let wt = git_chat(&t, &mut ws, &o, "y1").await;
+    // Build caches: ignored, untracked.
+    std::fs::create_dir_all(wt.join("target/debug")).unwrap();
+    std::fs::write(wt.join("target/debug/cache.bin"), [1u8, 2, 3]).unwrap();
+    std::fs::write(wt.join("build.log"), "log\n").unwrap();
+
+    // A new commit on origin; the chat is clean: a fast-forward.
+    let c2 = o.commit("b.txt", "two\n", true);
+    let r = sync(&mut ws, "y1", "s1", o.git(&c2)).await;
+    assert_eq!(r, json!({"type": "chat.synced", "chat": "y1", "req": "s1", "ok": true, "head": c2, "ffwd": true, "stashed": false}));
+    assert_eq!(git(&wt, &["rev-parse", "HEAD"]), c2);
+    assert_eq!(git(&wt, &["rev-parse", "refs/heads/pc/y1"]), c2);
+    assert_eq!(git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]), "pc/y1");
+    assert_eq!(std::fs::read_to_string(wt.join("b.txt")).unwrap(), "two\n");
+    assert_eq!(std::fs::read(wt.join("target/debug/cache.bin")).unwrap(), [1u8, 2, 3]);
+    assert_eq!(std::fs::read_to_string(wt.join("build.log")).unwrap(), "log\n");
+    loop {
+        let ev = tokio::time::timeout(Duration::from_secs(10), t.events.recv()).await.unwrap().unwrap();
+        if ev["event"] == "log" {
+            assert_eq!(ev["text"], format!("synced y1 to {}", &c2[..7]));
+            break;
+        }
+    }
+    still_running(&mut ws, "y1", "after-ff").await;
+
+    // Already there: nothing.
+    let r = sync(&mut ws, "y1", "s2", o.git(&c2)).await;
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(r["ffwd"], false);
+    assert_eq!(r["head"], c2);
+
+    // Only the server has the commit: chat.need, then a bundle (no req).
+    let c3 = o.commit("c.txt", "three\n", false);
+    send(&mut ws, json!({"type": "chat.sync", "chat": "y1", "req": "s3", "git": o.git(&c3)})).await;
+    let need = recv_type(&mut ws, "chat.need").await;
+    assert_eq!(need["chat"], "y1");
+    assert_eq!(need["kind"], "bundle");
+    assert_eq!(need["have"], c2);
+    let bundle = t.dir.join("s3.bundle");
+    git(&o.srv, &["bundle", "create", "-q", bundle.to_str().unwrap(), "main", &format!("^{c2}")]);
+    let data = std::fs::read(&bundle).unwrap();
+    let half = data.len() / 2;
+    send(&mut ws, json!({"type": "chat.bundle", "chat": "y1", "seq": 0, "b64": B64.encode(&data[..half]), "last": false})).await;
+    send(&mut ws, json!({"type": "chat.bundle", "chat": "y1", "seq": 1, "b64": B64.encode(&data[half..]), "last": true})).await;
+    let r = synced(&mut ws, "y1", "s3").await;
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(r["ffwd"], true);
+    assert_eq!(r["head"], c3);
+    assert_eq!(std::fs::read_to_string(wt.join("c.txt")).unwrap(), "three\n");
+    assert!(wt.join("target/debug/cache.bin").exists());
+    still_running(&mut ws, "y1", "after-bundle").await;
+
+    send(&mut ws, json!({"type": "chat.kill", "chat": "y1"})).await;
+    exit_of(&mut ws, "y1").await;
+    t.quit().await;
+}
+
+#[tokio::test]
+async fn sync_stashes_dirty_work_and_resets_a_diverged_branch() {
+    let mut t = start("syncreset", Some(FAKE_CLAUDE)).await;
+    let (mut ws, _) = t.connect(ok_settings()).await;
+    let o = origin(&t);
+    let wt = git_chat(&t, &mut ws, &o, "y2").await;
+    std::fs::create_dir_all(wt.join("target")).unwrap();
+    std::fs::write(wt.join("target/out.o"), "obj").unwrap();
+
+    // Uncommitted work (a change and a new file): stashed, then reset.
+    std::fs::write(wt.join("a.txt"), "one\nwip\n").unwrap();
+    std::fs::write(wt.join("new.txt"), "new work\n").unwrap();
+    let c2 = o.commit("b.txt", "two\n", true);
+    let r = sync(&mut ws, "y2", "d1", o.git(&c2)).await;
+    assert_eq!(r, json!({"type": "chat.synced", "chat": "y2", "req": "d1", "ok": true, "head": c2, "ffwd": false, "stashed": true}));
+    assert_eq!(git(&wt, &["rev-parse", "HEAD"]), c2);
+    assert_eq!(git(&wt, &["rev-parse", "refs/heads/pc/y2"]), c2);
+    assert_eq!(std::fs::read_to_string(wt.join("a.txt")).unwrap(), "one\n");
+    assert!(!wt.join("new.txt").exists());
+    assert_eq!(git(&wt, &["status", "--porcelain"]), "");
+    assert_eq!(std::fs::read_to_string(wt.join("target/out.o")).unwrap(), "obj");
+    let list = git(&wt, &["stash", "list"]);
+    assert!(list.contains("crundi-sync d1"), "{list}");
+    let diff = git(&wt, &["stash", "show", "-p", "stash@{0}"]);
+    assert!(diff.contains("+wip"), "{diff}");
+    let untracked = git(&wt, &["show", "stash@{0}^3:new.txt"]);
+    assert_eq!(untracked, "new work");
+    still_running(&mut ws, "y2", "after-stash").await;
+
+    // A PC commit the new commit does not hold, tree clean: reset onto it.
+    std::fs::write(wt.join("pc.txt"), "pc\n").unwrap();
+    git(&wt, &["add", "pc.txt"]);
+    git(&wt, &["commit", "-q", "-m", "pc work"]);
+    let c3 = o.commit("c.txt", "three\n", true);
+    let r = sync(&mut ws, "y2", "d2", o.git(&c3)).await;
+    assert_eq!(r, json!({"type": "chat.synced", "chat": "y2", "req": "d2", "ok": true, "head": c3, "ffwd": false, "stashed": false}));
+    assert_eq!(git(&wt, &["rev-parse", "refs/heads/pc/y2"]), c3);
+    assert!(!wt.join("pc.txt").exists());
+    assert!(wt.join("target/out.o").exists());
+    still_running(&mut ws, "y2", "after-reset").await;
+
+    // A commit nobody has: the bundle does not hold it; the chat is untouched.
+    send(&mut ws, json!({"type": "chat.sync", "chat": "y2", "req": "d3", "git": o.git(&"0".repeat(40))})).await;
+    recv_type(&mut ws, "chat.need").await;
+    send(&mut ws, json!({"type": "chat.bundle", "chat": "y2", "seq": 0, "b64": "", "last": true})).await;
+    let r = synced(&mut ws, "y2", "d3").await;
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(r["error"].as_str().unwrap().contains("did not hold"), "{r}");
+    assert_eq!(r["head"], c3);
+    still_running(&mut ws, "y2", "after-failure").await;
+
+    send(&mut ws, json!({"type": "chat.kill", "chat": "y2"})).await;
+    exit_of(&mut ws, "y2").await;
+    t.quit().await;
+}
+
+#[tokio::test]
+async fn sync_of_an_unknown_or_copy_chat_says_so() {
+    let mut t = start("syncerr", Some(FAKE_CLAUDE)).await;
+    let (mut ws, _) = t.connect(ok_settings()).await;
+    let g = json!({"url": "file:///nowhere", "branch": "main", "commit": "abc"});
+    let r = sync(&mut ws, "nope", "e1", g.clone()).await;
+    assert_eq!(r["ok"], false, "{r}");
+    assert!(r["error"].as_str().unwrap().contains("does not know"), "{r}");
+
+    send(&mut ws, spawn_msg("k2", json!({"source": "copy"}))).await;
+    recv_type(&mut ws, "chat.manifest").await;
+    let tar = tar_of(&[("a.txt", b"A\n")]);
+    send(&mut ws, json!({"type": "chat.files", "chat": "k2", "seq": 0, "b64": B64.encode(&tar), "last": true, "removed": []})).await;
+    recv_type(&mut ws, "chat.started").await;
+    let r = sync(&mut ws, "k2", "e2", g).await;
+    assert_eq!(r, json!({"type": "chat.synced", "chat": "k2", "req": "e2", "ok": false, "head": "", "ffwd": false, "stashed": false, "error": "not a git chat"}));
+    still_running(&mut ws, "k2", "after-refusal").await;
+    send(&mut ws, json!({"type": "chat.kill", "chat": "k2"})).await;
+    exit_of(&mut ws, "k2").await;
     t.quit().await;
 }

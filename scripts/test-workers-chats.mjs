@@ -340,9 +340,38 @@ function answerPull(w, chat, { patchText } = {}) {
   ok(!bad.ok && bad.error, 'pullChat for a chat not on a PC: an error, not a throw');
   ok(svc.workersApi.resolve('big pc')?.id === k1.id && svc.workersApi.resolve(k1.id)?.name === 'Big PC' && svc.workersApi.resolve('nobody') === null && svc.workersApi.isOnline(k1.id) === true, 'workersApi.resolve and isOnline');
   // The factory runner calls workersApi.pullChat (top level); chats.pullChat is the same, kept.
-  ok(Object.keys(svc.workersApi).sort().join() === 'chats,isOnline,onChange,pullChat,resolve' && svc.workersApi.pullChat === svc.workersApi.chats.pullChat, 'workersApi has pullChat (as the runner calls it), chats.pullChat, resolve, isOnline, onChange');
+  ok(['pullChat', 'syncChat', 'resolve', 'isOnline', 'onChange'].every(k => typeof svc.workersApi[k] === 'function') && svc.workersApi.pullChat === svc.workersApi.chats.pullChat, 'workersApi has pullChat and syncChat (as the runner calls them), chats.pullChat, resolve, isOnline, onChange');
   const bad2 = await svc.workersApi.pullChat('0000000000000000', {});
   ok(!bad2.ok && bad2.error, 'workersApi.pullChat at the top level: an error for a chat not on a PC, not a throw');
+
+  // ── syncChat: the live chat's folder on the PC brought up to a new commit, in place ──
+  const older = await svc.workersApi.syncChat(C, { cwd: runWt });
+  ok(!older.ok && older.unsupported && /older worker/.test(older.error), 'syncChat with a worker without chat-sync: unsupported (the runner then starts a fresh chat)', JSON.stringify(older));
+  const ob = svc.chats.view(C)?.outBytes || 0;
+  big.ws.close();
+  await until(() => big.closed);
+  big = fakeWorker(k1.key, { caps: ['info', 'terminal', 'pause', 'jobs', 'chats', 'chat-sync'], chats: [{ chat: C, running: true, outBytes: ob }] });
+  await big.ready;
+  await until(() => big.of('welcome')[0]);
+  writeFileSync(join(runWt, 'later.txt'), 'committed on the server after the chat started\n');
+  gitIn(runWt, 'add', '.'); gitIn(runWt, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'later on the server');
+  const runHead = gitIn(runWt, 'rev-parse', 'HEAD');
+  const syncing = svc.workersApi.syncChat(C, { cwd: runWt });
+  const sm = await until(() => big.of('chat.sync', C)[0], 10000);
+  ok(sm && sm.req && sm.git && sm.git.commit === runHead && sm.git.branch === 'factory/run-1' && /^https:/.test(sm.git.url), 'chat.sync carries the run\'s head, its branch and the https remote', JSON.stringify(sm));
+  // The PC lacks the commit (GitHub has not got it): it asks for a bundle, as at spawn.
+  big.send({ type: 'chat.need', chat: C, kind: 'bundle', have: '' });
+  const bl = await until(() => big.of('chat.bundle', C).find(m => m.last && !m.req), 15000);
+  ok(!!bl, 'while it syncs, the PC\'s chat.need is answered with a bundle (no req)');
+  big.send({ type: 'chat.synced', chat: C, req: sm.req, ok: true, head: runHead, ffwd: true, stashed: false });
+  const sr = await syncing;
+  ok(sr.ok && sr.head === runHead && sr.ffwd === true, 'chat.synced answers syncChat', JSON.stringify(sr));
+  ok(svc.chats.view(C)?.base === runHead, 'the chat\'s base is now the run\'s head (its next pull is from there)', JSON.stringify(svc.chats.view(C)?.base));
+  const failing = svc.workersApi.syncChat(C, { cwd: runWt });
+  const sm2 = await until(() => big.of('chat.sync', C)[1], 10000);
+  big.send({ type: 'chat.synced', chat: C, req: sm2.req, ok: false, error: 'fetch failed' });
+  const fr = await failing;
+  ok(!fr.ok && !fr.unsupported && fr.error === 'fetch failed', 'a failed sync says why (the runner then starts a fresh chat)', JSON.stringify(fr));
 }
 
 // ── A pull that fails on the PC ──

@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, http::HeaderValue, Message};
 
-pub const CAPS: &[&str] = &["info", "terminal", "pause", "jobs", "chats"];
+pub const CAPS: &[&str] = &["info", "terminal", "pause", "jobs", "chats", "chat-sync"];
 
 #[derive(Debug, Clone)]
 pub struct LinkOptions {

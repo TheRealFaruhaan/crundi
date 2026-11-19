@@ -20,6 +20,12 @@
 //! Resuming (`resumeSessionId`) a conversation this PC has no transcript of
 //! starts fresh instead (`--resume`/`--continue` dropped) and says so with
 //! `chat.notice`.
+//!
+//! `chat.sync {chat, req, git}` (cap "chat-sync") brings a live git chat's
+//! folder up to a new commit in place, claude still running: fetch (else a
+//! bundle via `chat.need`), then fast-forward when clean and behind, or stash
+//! (kept) and `reset --hard`. Never a clean or a new worktree: build caches
+//! stay. Answers `chat.synced {chat, req, ok, head, ffwd, stashed, error?}`.
 
 use crate::jobfiles;
 use crate::jobs::{self, emit, ensure_commit, git_raw, prepare_copy, valid_name, Events, Outbox, Prep, CHUNK};
@@ -189,6 +195,8 @@ struct Inner {
     chats: Mutex<HashMap<String, Arc<ChatCell>>>,
     out: Outbox,
     pending: Mutex<HashMap<String, Pending>>,
+    /// A `chat.sync` running, by chat: where its `chat.bundle` (no `req`) goes.
+    syncs: Mutex<HashMap<String, mpsc::UnboundedSender<Value>>>,
 }
 
 #[derive(Clone)]
@@ -217,6 +225,7 @@ impl Chats {
                 chats: Default::default(),
                 out: Outbox::default(),
                 pending: Default::default(),
+                syncs: Default::default(),
             }),
         }
     }
@@ -348,6 +357,14 @@ impl Chats {
                 }
             }
             "chat.bundle" | "chat.files" => {
+                // A bundle the server sends for a chat.sync (asked with chat.need).
+                if s(v, "type") == "chat.bundle" && v.get("req").is_none() {
+                    let tx = self.inner.syncs.lock().unwrap().get(&chat).cloned();
+                    if let Some(tx) = tx {
+                        let _ = tx.send(v.clone());
+                        return;
+                    }
+                }
                 if let Some(c) = cell() {
                     let _ = c.inbox.send(v.clone());
                 }
@@ -356,6 +373,11 @@ impl Chats {
                 let inner = self.inner.clone();
                 let v = v.clone();
                 tokio::spawn(async move { pull(&inner, &v).await });
+            }
+            "chat.sync" => {
+                let inner = self.inner.clone();
+                let v = v.clone();
+                tokio::spawn(async move { sync(&inner, &v).await });
             }
             "mcp.tools" | "mcp.result" => {
                 let req = s(v, "req");
@@ -1417,4 +1439,141 @@ async fn pull_copy(inner: &Inner, chat: &str, req: &Value, dir: &Path) -> Result
     let r = send_chunks(inner, path, json!({"type": "chat.files", "chat": chat, "req": req}), json!({"removed": removed})).await;
     let _ = std::fs::remove_file(&tmp);
     r
+}
+
+// ---- chat.sync ----
+
+/// Drops a chat.sync's inbox from `Inner::syncs` when the sync ends.
+struct SyncGuard<'a> {
+    inner: &'a Inner,
+    chat: String,
+}
+
+impl Drop for SyncGuard<'_> {
+    fn drop(&mut self) {
+        self.inner.syncs.lock().unwrap().remove(&self.chat);
+    }
+}
+
+/// `chat.sync {chat, req, git}`: bring a git chat's folder up to `git.commit`
+/// in place (claude may keep running in it). Answers `chat.synced`.
+async fn sync(inner: &Inner, v: &Value) {
+    let chat = s(v, "chat").to_string();
+    let req = v.get("req").cloned().unwrap_or(Value::Null);
+    let mut stashed = false;
+    let res = sync_git(inner, &chat, &req, v, &mut stashed).await;
+    let msg = match res {
+        Ok((head, ffwd)) => {
+            let short: String = head.chars().take(7).collect();
+            emit(&inner.events, json!({"event": "log", "text": format!("synced {chat} to {short}")}));
+            json!({"type": "chat.synced", "chat": chat, "req": req, "ok": true, "head": head, "ffwd": ffwd, "stashed": stashed})
+        }
+        Err((head, e)) => json!({"type": "chat.synced", "chat": chat, "req": req, "ok": false, "head": head,
+            "ffwd": false, "stashed": stashed, "error": format!("{e:#}")}),
+    };
+    inner.out.send(msg).await;
+}
+
+async fn head_of(dir: &Path) -> String {
+    match git_ok(dir, &["rev-parse", "HEAD"]).await {
+        Ok(o) => String::from_utf8_lossy(&o).trim().to_string(),
+        Err(_) => String::new(),
+    }
+}
+
+/// Ok((head, ffwd)); Err((head as it is, why)).
+async fn sync_git(inner: &Inner, chat: &str, req: &Value, v: &Value, stashed: &mut bool) -> Result<(String, bool), (String, anyhow::Error)> {
+    let fail = |e: anyhow::Error| (String::new(), e);
+    let meta: Option<Value> = valid_name(chat)
+        .then(|| std::fs::read(meta_path(inner, chat)).ok())
+        .flatten()
+        .and_then(|b| serde_json::from_slice(&b).ok());
+    let Some(meta) = meta else {
+        return Err(fail(anyhow!("this PC does not know chat {chat}")));
+    };
+    if s(&meta, "source") != "git" {
+        return Err(fail(anyhow!("not a git chat")));
+    }
+    let dir = PathBuf::from(s(&meta, "dir"));
+    let project = s(&meta, "project").to_string();
+    if project.is_empty() || !valid_name(&project) || !dir.join(".git").exists() {
+        return Err(fail(anyhow!("the folder of chat {chat} is gone")));
+    }
+    let clone = inner.work_dir.join(&project);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    {
+        let mut syncs = inner.syncs.lock().unwrap();
+        if syncs.contains_key(chat) {
+            return Err(fail(anyhow!("a sync of chat {chat} is already running")));
+        }
+        syncs.insert(chat.to_string(), tx);
+    }
+    let _guard = SyncGuard { inner, chat: chat.to_string() };
+    let log_buf = Mutex::new(Vec::<u8>::new());
+    let log = |b: &[u8]| {
+        let mut l = log_buf.lock().unwrap();
+        l.extend_from_slice(b);
+        if l.len() > 16 * 1024 {
+            let cut = l.len() - 16 * 1024;
+            l.drain(..cut);
+        }
+    };
+    let p = Prep { log: &log, out: &inner.out, kind: "chat", id: chat, tmp_dir: inner.work_dir.join(".crundi-chats") };
+    // The commit into the shared clone (the worktree sees its objects).
+    let commit = match ensure_commit(&p, v, &clone, &mut rx).await {
+        Ok(c) => c,
+        Err(e) => return Err((head_of(&dir).await, e)),
+    };
+    let r = sync_to(&dir, chat, req, &commit, stashed).await;
+    let head = head_of(&dir).await;
+    match r {
+        Ok(ffwd) => {
+            if let Ok(mut m) = serde_json::from_value::<serde_json::Map<String, Value>>(meta) {
+                m.insert("base".into(), json!(commit));
+                let _ = write_meta(inner, chat, Value::Object(m));
+            }
+            Ok((head, ffwd))
+        }
+        Err(e) => Err((head, e)),
+    }
+}
+
+/// Move the worktree (and its branch `pc/<chat>`) to `commit`: a fast-forward
+/// when clean and behind; else stash any work (kept, a backup) and reset.
+/// Ignored files (build outputs) are never touched. Returns ffwd.
+async fn sync_to(dir: &Path, chat: &str, req: &Value, commit: &str, stashed: &mut bool) -> Result<bool> {
+    let branch = format!("pc/{chat}");
+    let on_branch = git_raw(dir, &["symbolic-ref", "-q", "HEAD"])
+        .await
+        .is_ok_and(|(ok, out, _)| ok && String::from_utf8_lossy(&out).trim() == format!("refs/heads/{branch}"));
+    let head = head_of(dir).await;
+    let dirty = !git_ok(dir, &["status", "--porcelain"]).await?.is_empty();
+    if on_branch && head == commit {
+        return Ok(false);
+    }
+    if on_branch && !dirty && !head.is_empty() {
+        let ancestor = git_raw(dir, &["merge-base", "--is-ancestor", &head, commit]).await.is_ok_and(|r| r.0);
+        if ancestor {
+            git_ok(dir, &["merge", "--ff-only", "-q", commit]).await?;
+            return Ok(true);
+        }
+    }
+    if dirty {
+        let label = format!("crundi-sync {}", req.as_str().map(str::to_string).unwrap_or_else(|| req.to_string()));
+        // A stash is a commit: name someone when this PC's git has nobody set.
+        let named = git_raw(dir, &["config", "user.email"]).await.is_ok_and(|(ok, out, _)| ok && !out.trim_ascii().is_empty());
+        let mut args: Vec<&str> = Vec::new();
+        if !named {
+            args.extend(["-c", "user.name=Crundi worker", "-c", "user.email=worker@crundi.invalid"]);
+        }
+        args.extend(["stash", "push", "--include-untracked", "-m", &label]);
+        git_ok(dir, &args).await?;
+        *stashed = true;
+    }
+    if on_branch {
+        git_ok(dir, &["reset", "-q", "--hard", commit]).await?;
+    } else {
+        git_ok(dir, &["checkout", "-q", "-B", &branch, commit]).await?;
+    }
+    Ok(false)
 }

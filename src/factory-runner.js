@@ -1107,17 +1107,34 @@ export function createFactoryRunner({
     }
     const r = st(entry).snapshot.roster.find(x => x.id === ef.employeeId);
     const fresh = !!(r && r.memory === 'fresh' && ef.employeeId !== MANAGER_ID && emp.chatId);
-    // A new step on a PC gets a new chat there, so the PC's branch starts
-    // from the run's head now (the conversation carries on with --resume).
-    let relaunch = !!(pc && ef.employeeId !== MANAGER_ID && emp.chatId && emp.pcStep !== ef.tokenId);
-    // The Manager on a PC keeps one chat across its steps, so its copy there
-    // falls behind as the team hands off. Before each of its steps: its work
-    // comes back, and if the run's branch has moved on from its copy, its PC
-    // chat starts again from the run's head (the conversation carries on with
-    // --resume), so the next pull fast-forwards.
-    let newChat = false;
-    if (pc && ef.employeeId === MANAGER_ID && emp.chatId && emp.where === pc.id && agents.isAlive(emp.chatId) && agents.state(emp.chatId) === 'idle') {
-      if (await managerBehind(entry, emp, ef, pc)) { relaunch = true; newChat = true; }
+    // Anyone on a PC whose chat lives on there (the Manager always; anyone a
+    // run hands steps to on one token) keeps its copy of the run's branch on
+    // the PC, which falls behind as others hand off. Before each step: their
+    // work comes back and is committed here, and if the run's branch has moved
+    // on from their copy, their folder on the PC is brought up to the run's
+    // head in place (build caches kept). An older worker that cannot do that:
+    // a fresh chat from the run's head (the conversation carries on with
+    // --resume). A chat that is not alive any more: a fresh one on a new step.
+    let relaunch = false, newChat = false, synced = null;
+    const livePc = !!(pc && emp.chatId && emp.where === pc.id && agents.isAlive(emp.chatId));
+    if (livePc && agents.state(emp.chatId) === 'idle') {
+      const behind = await pcBehind(entry, emp, ef, pc);
+      if (behind) {
+        const sy = typeof workersApi.syncChat === 'function'
+          ? await workersApi.syncChat(emp.chatId, { cwd: wsPath(entry, ef.ws) })
+          : { ok: false, unsupported: true, error: 'no syncChat' };
+        if (sy.ok) {
+          emp.pcBase = behind.head;
+          synced = { head: behind.head, stashed: !!sy.stashed };
+          commit(entry, { type: 'worker-resync', worker: pc.id, name: pc.name, employees: [nameOf(entry, ef.employeeId)], head: behind.head, inPlace: true });
+        } else {
+          if (!sy.unsupported) entry.live.error = `Could not bring ${nameOf(entry, ef.employeeId)}'s folder on ${pc.name} up to date (${sy.error}); starting a fresh chat there from the run's head.`;
+          relaunch = true; newChat = true;
+          commit(entry, { type: 'worker-resync', worker: pc.id, name: pc.name, employees: [nameOf(entry, ef.employeeId)], head: behind.head, inPlace: false });
+        }
+      }
+    } else if (pc && ef.employeeId !== MANAGER_ID && emp.chatId && emp.pcStep !== ef.tokenId) {
+      relaunch = true;
     }
     const s = await ensureSession(entry, ef.employeeId, { fresh, pc, cwd: wsPath(entry, ef.ws), step: ef.tokenId, relaunch, newChat });
     if (!s.ok && s.offline && pc) { holdForPc(entry, emp, ef, pc, recovery); return; }
@@ -1136,7 +1153,8 @@ export function createFactoryRunner({
       context: await runContextFor(entry, ef),
       cr: crFor(entry, ef, !!recovery),
     });
-    const onPc = pc ? `\n\n[Factory] You run on the PC "${pc.name}", in a copy of the run's branch there: your current folder is your workspace, and paths above under ${wsPath(entry, ef.ws)} mean your current folder. The run's notes and shared folders are on the server and not reachable from this PC. Leave your work in your folder (committed or not); it is brought back to the server when you hand off.` : '';
+    const syncedNote = synced ? ` Your folder there was just brought up to the run's head ${String(synced.head).slice(0, 12)}, so what the others committed since your last step is in it${synced.stashed ? ' (your uncommitted work had already been brought back here first; a backup is in git stash there)' : ''}.` : '';
+    const onPc = pc ? `\n\n[Factory] You run on the PC "${pc.name}", in a copy of the run's branch there: your current folder is your workspace, and paths above under ${wsPath(entry, ef.ws)} mean your current folder. The run's notes and shared folders are on the server and not reachable from this PC. Leave your work in your folder (committed or not); it is brought back to the server when you hand off.${syncedNote}` : '';
     const sent = sendTo(s.chatId, msg + onPc);
     if (sent && sent.ok === false) entry.live.error = `Could not message ${r?.name || ef.employeeId}: ${sent.error}`;
     else if (notice) commit(entry, { type: 'notice-clear', tokenId: ef.tokenId });
@@ -1147,16 +1165,16 @@ export function createFactoryRunner({
    * True when the run's head is no longer what its PC copy is at (someone
    * handed off meanwhile, or its uncommitted work was committed here).
    */
-  async function managerBehind(entry, emp, ef, pc) {
+  async function pcBehind(entry, emp, ef, pc) {
     const ws = wsPath(entry, ef.ws);
+    const who = nameOf(entry, ef.employeeId);
     const got = await bringBack(entry, emp.chatId, ef.ws, emp.pcBase);
-    if (!got.ok) { entry.live.error = `Could not bring back the Manager's work from ${pc.name}: ${got.error}`; return false; }
-    try { await git.commitAll(ws, `factory: the Manager's work brought back from ${pc.name}`, excl(entry)); } catch { /* nothing to commit */ }
+    if (!got.ok) { entry.live.error = `Could not bring back ${who}'s work from ${pc.name}: ${got.error}`; return null; }
+    try { await git.commitAll(ws, `factory: ${who}'s work brought back from ${pc.name}`, excl(entry)); } catch { /* nothing to commit */ }
     const head = await headOf(ws);
     const pcHead = got.head || emp.pcBase || '';
-    if (!head || head === pcHead) return false;
-    commit(entry, { type: 'worker-resync', worker: pc.id, name: pc.name, employees: [nameOf(entry, MANAGER_ID)] });
-    return true;
+    if (!head || head === pcHead) return null;
+    return { head };
   }
 
   // ─── Usage limits (the person's choice, per factory, changeable per run) ───

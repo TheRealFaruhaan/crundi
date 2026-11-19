@@ -58,13 +58,16 @@ function repo(name) {
   return dir;
 }
 
-function fakeWorkers(list) {
+function fakeWorkers(list, { sync = null } = {}) {
   const online = new Map(list.map(w => [w.id, w.online !== false]));
   const cbs = new Set();
   const pulls = [];
+  const syncs = [];
   let pull = null;
   return {
+    syncs,
     api: {
+      ...(sync ? { syncChat: async (chatId, o) => { syncs.push({ chatId, ...o }); return sync(chatId, o); } } : {}),
       resolve: (q) => { const k = String(q).toLowerCase(); const w = list.find(x => x.id.toLowerCase() === k || x.name.toLowerCase() === k); return w ? { id: w.id, name: w.name, online: !!online.get(w.id) } : null; },
       isOnline: (id) => !!online.get(id),
       onChange: (cb) => { cbs.add(cb); return () => cbs.delete(cb); },
@@ -309,6 +312,34 @@ const alive = (team, emp) => team.of(emp).filter(s => s.alive).pop();
   ok(!!p && /^[0-9a-f]{40}$/.test(p.base), 'before the Manager\'s step its PC work is pulled into the run\'s worktree', JSON.stringify(W.pulls));
   ok(m2 && m2.where === 'worker:w1' && m2.id !== m1.id && m2.resumeId === 'uuid-' + m1.id && !m1.alive, 'the run\'s branch moved on: the Manager\'s PC chat starts again from the run\'s head, a new chat, the conversation resumed', JSON.stringify(m2 && { where: m2.where, id: m2.id, resumeId: m2.resumeId }));
   ok(hist(r, st.run.id, 'worker-resync').length === 1 && r.getRun(st.run.id).managerChatId === m2.id, 'event worker-resync; the run\'s Manager chat is the new one');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── A chat that lives on its PC is brought up to the run's head in place before its next step ───
+// (The bug: a person whose chat lived on on the PC, on one token, kept its
+// first commit for good and never saw what the others committed since.)
+for (const variant of ['in place', 'fails']) {
+  const W = fakeWorkers([{ id: 'w1', name: 'Desk' }], { sync: async () => variant === 'in place' ? { ok: true, head: 'x', ffwd: true } : { ok: false, error: 'fetch failed' } });
+  const { team, r } = setup('w9' + variant.replace(' ', ''), { mgr: 'Desk', workers: W });
+  const st = await r.startRun({ project: 'w9' + variant.replace(' ', ''), factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
+  const m1 = team.of('manager')[0];
+  { const rn = r.getRun(st.run.id); const tk = rn.tokens.find(t => t.employeeId === 'fe' && t.status === 'work'); const wsDir = readdirSync(dirname(rn.worktree)).find(d => d === tk.ws || d.endsWith('-' + tk.ws)); writeFileSync(join(dirname(rn.worktree), wsDir, 'fe-work.txt'), 'made by the frontend dev'); }
+  ok((await r.handoff(team.of('fe')[0].id, { summary: 'UI done' })).ok, `${variant}: the team hands off on the server`);
+  const syncsBefore = W.syncs.length;
+  ok((await r.handoff(team.of('be')[0].id, { summary: 'API done' })).ok, `${variant}: the Manager is due a step`);
+  if (variant === 'in place') {
+    const msg = await until(() => /brought up to the run's head [0-9a-f]{12}/.test(last(m1)) && last(m1));
+    const sy = W.syncs.slice(syncsBefore).find(x => x.chatId === m1.id);
+    ok(!!sy && typeof sy.cwd === 'string' && sy.cwd.length > 0, 'in place: the PC chat is asked to come up to the run\'s head, for the step\'s folder', JSON.stringify(W.syncs));
+    ok(!!msg && m1.alive && team.of('manager').length === 1, 'in place: the same chat carries on (build caches kept), told its folder now has what the others committed', last(m1).slice(-300));
+    const rs = hist(r, st.run.id, 'worker-resync');
+    ok(rs.length === 1 && rs[0].inPlace === true && /^[0-9a-f]{40}$/.test(rs[0].head), 'in place: event worker-resync, in place, with the head', JSON.stringify(rs));
+  } else {
+    const m2 = await until(() => team.of('manager').find(x => x.alive && x !== m1 && x.msgs.length));
+    ok(m2 && m2.id !== m1.id && m2.resumeId === 'uuid-' + m1.id, 'it fails: a fresh chat from the run\'s head instead, the conversation resumed (never a stale folder)');
+    ok(hist(r, st.run.id, 'worker-resync').some(e => e.inPlace === false), 'it fails: event worker-resync, not in place');
+  }
   await r.stopRun(st.run.id); r.dispose();
 }
 

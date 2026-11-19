@@ -475,3 +475,24 @@ and exit only.
   worktree; if the run's branch moved on since the Manager's PC copy was
   made, its PC chat is restarted from the run's head (`--resume` keeps the
   conversation), so later pulls fast-forward.
+
+# Keeping a live chat's folder up to date (chat.sync)
+
+A chat on a PC keeps its folder (`<project>@<chat>`, branch `pc/<chat>`) and
+its build caches for its whole life. A factory step that reuses a live chat
+(the Manager always; anyone a run hands steps to on one token) must first
+see what others committed on the server since. Before each such step the
+runner brings the person's work back (pullChat, committed into the run),
+and if the run's head moved past their copy, the server sends:
+
+- `chat.sync { chat, req, git: { url, branch, commit } }` (caps: worker
+  `chat-sync`). The PC gets `commit` (origin, else `chat.need` -> `chat.bundle`
+  without req, as at spawn), then: HEAD == commit: nothing; clean and HEAD
+  is an ancestor: `git merge --ff-only`; otherwise `git stash push -u`
+  (a backup; the work is already on the server) and `git reset --hard`.
+  Never `git clean` (build caches stay). claude keeps running.
+- `chat.synced { chat, req, ok, head, ffwd, stashed, error? }`.
+
+A worker without `chat-sync`, or a failed sync: the runner starts a fresh
+chat from the run's head (the conversation carries on with --resume), so a
+step never runs on a stale folder. Journal: `worker-resync {head, inPlace}`.

@@ -283,10 +283,15 @@ export function reduce(prev, ev) {
     case 'worker-online':
     case 'worker-away':     // away past workerOfflineMinutes: the person was told
     case 'worker-moved':    // the person moved the steps it held to this server
-    case 'worker-resync':   // the Manager's PC copy started again from the run's head
+    case 'worker-resync':   // someone's PC copy brought up to (inPlace) or started again from the run's head
       // A worker PC that people of the run work on lost its link, or came
       // back: their steps were held, or resumed (the runner's live state).
-      history(rec, { type: ev.type, worker: ev.worker || '', name: ev.name || '', employees: Array.isArray(ev.employees) ? ev.employees.slice() : [] });
+      history(rec, {
+        type: ev.type, worker: ev.worker || '', name: ev.name || '', employees: Array.isArray(ev.employees) ? ev.employees.slice() : [],
+        // worker-resync: the commit they were brought to, and whether in place.
+        ...(ev.type === 'worker-resync' && ev.head ? { head: String(ev.head) } : {}),
+        ...(ev.type === 'worker-resync' && typeof ev.inPlace === 'boolean' ? { inPlace: ev.inPlace } : {}),
+      });
       break;
     case 'tick':
       // The Manager set its check-in ticker (when the factory leaves it open).

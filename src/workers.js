@@ -616,8 +616,10 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   // The runner calls workersApi.pullChat(...) (factory-runner.js); chats.pullChat
   // is the same function, kept for anything that used that shape.
   const pullChat = (chatId, opts) => chats.pullChat(chatId, opts);
+  // Bring a live chat's folder on the PC up to the server folder's head (in place).
+  const syncChat = (chatId, opts) => chats.syncChat(chatId, opts);
   const workersApi = Object.freeze({
-    pullChat,
+    pullChat, syncChat,
     chats: Object.freeze({ pullChat }),
     resolve, isOnline, onChange: onPresence,
   });

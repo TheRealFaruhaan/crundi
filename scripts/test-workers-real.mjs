@@ -19,7 +19,7 @@
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, statSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve as resolvePathAbs } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, execFileSync } from 'node:child_process';
 import { createWorkersService } from '../src/workers.js';
@@ -237,6 +237,25 @@ try {
         ok(st === 'M hello.txt' && readFileSync(join(wt, 'hello.txt'), 'utf8').includes('uncommitted on the PC'), 'chats: and its uncommitted work, uncommitted', st);
         ok(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: wt, encoding: 'utf8' }).trim() === `pc/client-pc/${c.id.slice(0, 8)}`, 'chats: on branch pc/<pc>/<chat>');
         ok(g('rev-parse', 'HEAD') === head && g('status', '--porcelain') === '', 'chats: the server\'s checkout is untouched');
+      }
+      // ── chat.sync: the live chat's folder on the PC brought up to a newer server commit, in place ──
+      {
+        const pcDir = join(work, `proj@${c.id}`);
+        // A build cache in the PC's folder (ignored there, as target/ is in real projects).
+        const common = execFileSync('git', ['rev-parse', '--git-common-dir'], { cwd: pcDir, encoding: 'utf8' }).trim();
+        writeFileSync(join(resolvePathAbs(pcDir, common), 'info', 'exclude'), 'target/\n', { flag: 'a' });
+        mkdirSync(join(pcDir, 'target'), { recursive: true });
+        writeFileSync(join(pcDir, 'target', 'cache.bin'), 'warm build cache');
+        // Bring the PC's own work back first (as the runner does), then commit more on the server.
+        execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'stash', '-q', '--include-untracked'], { cwd: pcDir });
+        writeFileSync(join(realProj, 'later.txt'), 'the Architect\'s fix\n');
+        g('add', '.'); g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'later on the server');
+        const runHead = g('rev-parse', 'HEAD');
+        const sy = await svc.workersApi.syncChat(c.id, { cwd: realProj });
+        ok(sy.ok && sy.head === runHead, 'sync (real worker): the live chat\'s folder is now at the server\'s newer commit', JSON.stringify(sy) + e.err.slice(-400));
+        ok(existsSync(join(pcDir, 'later.txt')) && execFileSync('git', ['rev-parse', 'HEAD'], { cwd: pcDir, encoding: 'utf8' }).trim() === runHead, 'sync (real worker): the commit GitHub never had came over (bundle) and is checked out', existsSync(join(pcDir, 'later.txt')) ? 'file there' : 'no later.txt');
+        ok(existsSync(join(pcDir, 'target', 'cache.bin')), 'sync (real worker): the build cache survives (no clean, no new folder)');
+        ok(svc.chats.view(c.id)?.state === 'running', 'sync (real worker): its claude keeps running', svc.chats.view(c.id)?.state);
       }
       const exited = new Promise((r) => ui.on(c.id, (ev) => { if (ev.type === 'exit') r(true); }));
       ui.close(c.id);
