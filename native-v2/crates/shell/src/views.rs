@@ -158,6 +158,14 @@ impl Render for NotBuilt {
 
 // ─── The top bar ───
 
+/// A usage label at `at` (0-1) of its row: just after the fill's end, or
+/// past 85% just inside it; on the row's top (usage) or bottom (time) edge.
+fn usage_label(at: f32, top: bool) -> Div {
+    let d = div().absolute().whitespace_nowrap().text_size(T::TEXT_9);
+    let d = if at > 0.85 { d.right(relative(1.0 - at)).pr(T::SP_6) } else { d.left(relative(at)).pl(T::SP_6) };
+    if top { d.top(px(1.)) } else { d.bottom(px(1.)) }
+}
+
 /// The logo and project; for the owner the weekly and 5-hour usage bars and
 /// their "updated … ago" badge (a click opens Usage); Cru's mark; Telegram's
 /// status; the connection badge; the window buttons.
@@ -193,13 +201,13 @@ impl Render for TopBar {
                     .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(time)).bg(T::usage_time()))
                     .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(used)).bg(T::usage_used()))
                     .when(row.over > 0.0, |d| d.child(div().absolute().top(px(0.)).bottom(px(0.)).left(relative(time)).w(relative(row.over / 100.0)).bg(over_c)))
-                    .child({
-                        let lab = div().absolute().left(relative(used.min(0.85))).pl(T::SP_6).flex().items_center().gap(T::SP_8).text_size(T::TEXT_10)
-                            .child(div().font_weight(T::W_BOLD).text_color(T::text()).opacity(0.9).child(format!("{} {}%", row.tag, row.used.round())))
-                            .when(row.time.is_some(), |d| d.child(div().flex().items_center().gap(T::SP_2).text_color(T::text_secondary()).opacity(0.7)
-                                .child(w::icon(IconName::Clock, T::TEXT_10)).child(row.left.clone())));
-                        if i == 0 { lab.top(px(0.)) } else { lab.bottom(px(0.)) }
-                    }));
+                    // Each row's labels as the web's (.ublabel, placeUsageLabel):
+                    // its usage on the row's top edge where the usage fill
+                    // ends, its countdown on the row's bottom edge where the
+                    // time fill ends; past 85% inside the end, reading leftward.
+                    .child(usage_label(used, true).font_weight(T::W_BOLD).text_color(T::text()).opacity(0.9).child(format!("{} {}%", row.tag, row.used.round())))
+                    .when(row.time.is_some(), |d| d.child(usage_label(time, false).flex().items_center().gap(T::SP_2).text_color(T::text_secondary()).opacity(0.7)
+                        .child(w::icon(IconName::Clock, T::TEXT_9)).child(row.left.clone()))));
             }
         }
         let stores = self.stores.clone();
@@ -304,8 +312,8 @@ impl Render for Sidebar {
 
 // ─── The project bar ───
 
-/// The tabs (scrolling sideways when they don't fit, a fade at an edge with
-/// tabs past it), the workbench's "+" after the first, and the Browser
+/// The tabs (scrolling sideways when they don't fit, cut at the edge as the
+/// web's .tab-bar), the workbench's "+" after the first, and the Browser
 /// button at the right while the drawer is closed.
 pub struct ProjectBar { stores: Stores, scroll: ScrollHandle, _subs: Vec<Subscription> }
 
@@ -339,15 +347,9 @@ impl Render for ProjectBar {
             cx.stop_propagation();
             cx.notify();
         }));
-        let (off, max) = (self.scroll.offset().x, self.scroll.max_offset().x);
-        let fade = |right: bool| {
-            let (a, b) = (T::bg_secondary().opacity(0.), T::bg_secondary());
-            div().absolute().top(px(0.)).bottom(px(0.)).w(T::SP_32)
-                .map(|d| if right { d.right(px(0.)).bg(linear_gradient(90., linear_color_stop(a, 0.), linear_color_stop(b, 1.))) } else { d.left(px(0.)).bg(linear_gradient(90., linear_color_stop(b, 0.), linear_color_stop(a, 1.))) })
-        };
-        let scroller = div().relative().flex().flex_1().min_w_0().h_full().child(tabs)
-            .when(off < px(-1.), |d| d.child(fade(false)))
-            .when(max > px(1.) && off > -max + px(1.), |d| d.child(fade(true)));
+        // The web's strip: tabs past the edge are cut there (no fade) and
+        // scroll in sideways; the Browser button stays at the right over it.
+        let scroller = div().relative().flex().flex_1().min_w_0().h_full().child(tabs);
         let mut bar = div().flex().size_full().items_center().px(T::SP_12).bg(T::bg_secondary()).border_b_1().border_color(T::border())
             .child(scroller);
         if !drawer_open {

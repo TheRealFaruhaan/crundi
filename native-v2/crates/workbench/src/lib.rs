@@ -257,7 +257,7 @@ impl Workbench {
             for (k, label) in row {
                 let icon = match k { "terminal" => IconName::Terminal, "files" => IconName::Folder, "git" => IconName::GitBranch, "kanban" => IconName::Kanban, "notes" => IconName::FileText, "mindmap" => IconName::Network, "media" => IconName::Images, "factory" => IconName::Factory, _ => IconName::PanelsTopLeft };
                 let s = self.stores.clone();
-                r = r.child(div().id(SharedString::from(format!("chip-{k}-{id}"))).flex_none().w(px(chip_w(label))).cursor_pointer()
+                r = r.child(div().id(SharedString::from(format!("chip-{k}-{id}"))).flex_none().cursor_pointer()
                     .on_click(move |_, window, cx| { crundi_shell::run_action(&s, &format!("wb-chip:{k}"), window, cx); })
                     .child(w::chip(icon, label, false)));
             }
@@ -320,8 +320,9 @@ fn empty_chips(open: &[String], width: f32) -> Vec<Vec<(&'static str, &'static s
     rows
 }
 
-/// A chip's width: its icon and padding plus about 6.6px a character.
-fn chip_w(label: &str) -> f32 { 34.0 + 6.6 * label.chars().count() as f32 }
+/// A chip's width for the rows' wrap (the chip itself takes its text's
+/// width): its icon and padding plus at most about 7.5px a character.
+fn chip_w(label: &str) -> f32 { 34.0 + 7.5 * label.chars().count() as f32 }
 
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

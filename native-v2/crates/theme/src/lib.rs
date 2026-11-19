@@ -89,6 +89,8 @@ impl T {
     pub const R_PILL: Pixels = px(999.);
 
     // ─── Font sizes: 10 11 12 13 14 15 16 20 26 ───
+    /// The top bar's usage labels only (the web's .ublabel, 0.56rem).
+    pub const TEXT_9: Pixels = px(9.);
     pub const TEXT_10: Pixels = px(10.);
     pub const TEXT_11: Pixels = px(11.);
     pub const TEXT_12: Pixels = px(12.);

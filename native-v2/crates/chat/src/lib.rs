@@ -103,13 +103,21 @@ pub fn focused_chat(cx: &mut App) -> String {
     wb::workbench(cx).and_then(|w| w.update(cx, |w, _| w.focused_key())).and_then(|k| k.strip_prefix("live:").map(String::from)).unwrap_or_default()
 }
 
-/// The chat's state for its head: exited from the event stream's list, else its own.
-fn head_state(stores: &Stores, id: &str, meta: &store::Meta, cx: &App) -> String {
-    let listed = stores.projects.read(cx).terminals.iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some(id)).cloned();
-    match listed {
-        Some(t) if crundi_core::head::chat_state(&t) == "exited" => "exited".into(),
+/// The chat's head: its title and long title from the event stream's list
+/// (a rename reaches every client there, live, as native-gpui's title_of);
+/// its state exited from that list, else its own (the chat's events).
+fn head_info(stores: &Stores, id: &str, meta: &store::Meta, cx: &App) -> HeadInfo {
+    let p = stores.projects.read(cx);
+    let listed = p.terminals.iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some(id));
+    let field = |k: &str| listed.and_then(|t| t.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let mut title = field("title");
+    if title.is_empty() { title = meta.title.clone(); }
+    if title.is_empty() { title = "Chat".into(); }
+    let state = match listed {
+        Some(t) if crundi_core::head::chat_state(t) == "exited" => "exited".into(),
         _ => crundi_core::head::composer_state(&meta.state, meta.sending),
-    }
+    };
+    HeadInfo { title, long: field("longTitle"), state }
 }
 
 pub fn init(cx: &mut App) {
@@ -127,7 +135,7 @@ pub fn init(cx: &mut App) {
                 body: view.into(),
                 info: Rc::new(move |cx| {
                     let m = m2.read(cx).0.clone();
-                    HeadInfo { title: if m.title.is_empty() { "Chat".into() } else { m.title.clone() }, long: String::new(), state: head_state(&stores2, &id2, &m, cx) }
+                    head_info(&stores2, &id2, &m, cx)
                 }),
                 // The head redraws on the chat's meta and on the projects
                 // store (an exited chat), never on its streamed text.
@@ -187,7 +195,13 @@ pub fn init(cx: &mut App) {
             "log-scroll" => {
                 let id = focused_chat(cx);
                 let dy: f32 = args.first().and_then(|a| a.parse().ok()).unwrap_or(0.);
-                if let Some(s) = find(cx, &id) { let l = s.read(cx).list.clone(); l.scroll_by(px(dy)); }
+                if id.is_empty() { return Some(json!({ "ok": false, "error": "no chat" })); }
+                // The pane's log draws the list: it alone is notified (a
+                // wheel does the same through the list's own handler).
+                let log = pane_view(cx, &id, window).read(cx).log.clone();
+                let l = store(cx, &id).read(cx).list.clone();
+                l.scroll_by(px(dy));
+                log.update(cx, |_, cx| cx.notify());
                 Some(json!({ "ok": true }))
             }
             _ => None,
@@ -203,6 +217,11 @@ pub fn init(cx: &mut App) {
                 None => (vec![], String::new(), 0, 0),
             };
             let chats: Vec<Value> = live_chats(stores, cx).iter().map(|c| json!({ "id": c.get("id"), "title": c.get("title"), "state": c.get("state") })).collect();
-            json!({ "chat": id, "entries": entries, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced })
+            // The focused chat's head as drawn, and whether its log follows the end.
+            let (head, following) = match find(cx, &id) {
+                Some(s) => { let s = s.read(cx); let h = head_info(stores, &id, &s.meta.read(cx).0, cx); (json!({ "title": h.title, "long": h.long, "state": h.state }), s.list.is_following_tail()) }
+                None => (Value::Null, false),
+            };
+            json!({ "chat": id, "entries": entries, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
         }));
 }

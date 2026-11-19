@@ -100,9 +100,21 @@ impl ChatStore {
         let entries = std::mem::take(&mut self.conv.entries);
         let rows: Vec<Row> = entries.iter().filter_map(|e| { let id = e.get("id").and_then(|i| i.as_str()).unwrap_or(""); let md = old.remove(id); Self::row(e, md, cx) }).collect();
         self.conv.entries = entries;
+        // Where the reader was (the web's applyHistory): following the end,
+        // it stays there; else on the same entry, at the same offset (a
+        // reset alone would put the log back at its top).
+        let first = self.row_of.is_empty();
+        let top = self.list.logical_scroll_top();
+        let top_id = self.row_of.iter().find(|(_, i)| **i == top.item_ix).map(|(id, _)| id.clone());
+        let following = first || self.list.is_following_tail();
         self.rows = rows;
         self.row_of = self.rows.iter().enumerate().map(|(i, r)| (r.id.clone(), i)).collect();
         self.list.reset(self.rows.len());
+        if following {
+            self.list.set_follow_mode(FollowMode::Tail);
+        } else if let Some(ix) = top_id.and_then(|id| self.row_of.get(&id).copied()) {
+            self.list.scroll_to(ListOffset { item_ix: ix, offset_in_item: top.offset_in_item });
+        }
         self.spliced += self.rows.len() as u64;
     }
 
@@ -225,5 +237,27 @@ mod tests {
         // Nothing this chat shows: no update at all.
         store.update(cx, |s, cx| s.apply_batch(&[json!({ "type": "ui-event", "id": "c1", "event": { "type": "delta", "id": "nope", "text": "x" } })], cx));
         store.read_with(cx, |s, _| assert_eq!(s.batches, 3));
+    }
+
+    /// A history again (a reconnect): following the end, the log stays
+    /// there; scrolled up, it stays on the entry the reader was at (the
+    /// web's applyHistory), never back at its top.
+    #[gpui::test]
+    fn a_new_history_keeps_the_readers_place(cx: &mut TestAppContext) {
+        let hist = |ids: &[&str]| json!({ "type": "ui-history", "id": "c1", "session": { "id": "c1", "state": "idle",
+            "messages": ids.iter().map(|i| json!({ "id": i, "kind": "user", "text": i })).collect::<Vec<_>>() } });
+        let store = cx.new(|cx| ChatStore::new("c1", cx));
+        store.update(cx, |s, cx| s.apply_batch(&[hist(&["a", "b", "c"])], cx));
+        store.read_with(cx, |s, _| assert!(s.list.is_following_tail()));
+        store.update(cx, |s, cx| s.apply_batch(&[hist(&["a", "b", "c", "d"])], cx));
+        store.read_with(cx, |s, _| { assert!(s.list.is_following_tail()); assert_eq!(s.list.item_count(), 4); });
+        // Scrolled up to "b" (a person's wheel): following stops.
+        store.read_with(cx, |s, _| s.list.scroll_to(gpui::ListOffset { item_ix: 1, offset_in_item: gpui::px(7.) }));
+        store.update(cx, |s, cx| s.apply_batch(&[hist(&["z", "a", "b", "c", "d", "e"])], cx));
+        store.read_with(cx, |s, _| {
+            assert!(!s.list.is_following_tail());
+            let top = s.list.logical_scroll_top();
+            assert_eq!((top.item_ix, top.offset_in_item), (2, gpui::px(7.)));
+        });
     }
 }

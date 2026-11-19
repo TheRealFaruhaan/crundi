@@ -34,9 +34,18 @@ await T.snap('chat', 'user-message-sent');
 // The reply arrives by itself, as Claude streams it.
 const s2 = await T.until("Claude's reply streams in", (s) => s.entries?.some((e) => e.kind === 'assistant' && /forty/i.test(e.text)), 180000);
 await T.snap('chat', 'reply-arrived');
-t.check('the reply came in several live batches', (s2?.batches ?? 0) - b0 >= 3, { b0, b: s2?.batches });
+// (Under Xvfb a frame takes ~65 ms, so a fast reply coalesces into fewer
+// batches: two or more shows it streamed rather than landing in one go.)
+t.check('the reply came in several live batches', (s2?.batches ?? 0) - b0 >= 2, { b0, b: s2?.batches });
 t.check('rows were spliced, not rebuilt per event', (s2?.spliced ?? 0) < 10 * (s2?.batches ?? 1), s2 && { spliced: s2.spliced, batches: s2.batches });
 await T.until('the chat is idle again', (s) => s.chatState === 'idle', 120000);
+// The head follows: out of WORKING, and the server's title (its list's, live
+// from the event stream, no refetch) once the server has named the chat.
+await T.until('the head leaves WORKING when the reply ends', (s) => s.head && s.head.state !== 'working', 15000);
+await T.until("the head shows the server's title, live", (s) => {
+  const listed = (s.chats || []).find((c) => c.id === chat);
+  return listed && listed.title && listed.title !== 'Chat' && s.head?.title === listed.title;
+}, 60000);
 const streaming = T.frames.since(streamFrom);
 await T.snap('chat', 'reply-done-idle');
 console.log('frames while streaming:', JSON.stringify(streaming));
@@ -63,6 +72,9 @@ await T.d.send({ cmd: 'snapshot', path: after3 });
 await T.snap('chat', 'log-wheel-scrolled');
 t.check('a mouse wheel over the log draws frames by itself', wheel.frames > 0, wheel);
 t.check('a mouse wheel over the log moves its content', T.diff(before3, after3, '1100x600+260+120') > 500, { px: T.diff(before3, after3, '1100x600+260+120') });
+// Back down to the end: the log follows it again (as the web's stickBottom).
+for (let i = 0; i < 60; i++) { await T.mouse('wheel', 800, 400, { dy: -80 }); await t.sleep(16); }
+await T.until('back at the end, the log follows it again', (s) => s.logFollowing, 5000);
 
 // 3c. Hover follows the pointer: over "+ Add project", then away.
 const away = join(T.OUT, 'hover-away.png'), over = join(T.OUT, 'hover-over.png');
@@ -105,6 +117,9 @@ t.check('a new event stream with it', (s3?.live?.streams ?? 0) > (before.streams
 const sent = await T.api.http('POST', `/api/ui-sessions/${chat}/send`, { text: 'Reply with the single word: zebra' });
 t.check('a message sent from elsewhere is taken', sent.status < 300, sent.body);
 await T.until('its reply shows after the reconnect, with no other action', (s) => s.entries?.some((e) => e.kind === 'assistant' && /zebra/i.test(e.text)), 180000);
+await T.until('the chat is idle after that reply', (s) => s.chatState === 'idle' && s.head && s.head.state !== 'working', 120000);
+const s4 = await T.state();
+t.check('after the reconnect the log still follows the end (not back at its top)', s4.logFollowing === true, { logFollowing: s4.logFollowing });
 
 await T.snap('chat', 'after-reconnect-reply');
 await T.end();
