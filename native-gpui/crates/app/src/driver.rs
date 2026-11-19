@@ -31,7 +31,11 @@ pub fn handle(r: Request, window: &mut Window, cx: &mut App) {
         "ui" => ui(&r, window, cx),
         other => json!({ "ok": false, "error": format!("unknown cmd {other}") }),
     };
-    window.refresh();
+    // Everything else draws again; a wheel or a move doesn't, as a real
+    // pointer doesn't (a refresh redraws every cached view, so scrolling
+    // measured here would be the whole window again, not the real cost).
+    let pointer = r.str("cmd") == "mouse" && matches!(r.str("kind").as_str(), "wheel" | "move");
+    if !pointer { window.refresh(); }
     r.answer(answer);
 }
 

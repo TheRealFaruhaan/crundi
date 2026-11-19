@@ -23,6 +23,8 @@ pub struct Shell {
     pub tab: String,
     pub sidebar: bool,
     pub drawer_open: bool,
+    /// Each tab's body view (TabHost), cached by GPUI.
+    tab_hosts: std::collections::HashMap<String, Entity<TabHost>>,
     pub drawer_w: Pixels,
     dragging: bool,
     /// Where the left button went down on a window bar: the window moves
@@ -89,7 +91,7 @@ impl Shell {
             let to = window.focus_lost_restore_target(cx).unwrap_or_else(|| this.root_focus.clone());
             window.focus(&to, cx);
         });
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, drawer_w: T::DRAWER_W, dragging: false, bar_press: None, fold_from: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, tab_hosts: Default::default(), drawer_w: T::DRAWER_W, dragging: false, bar_press: None, fold_from: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -407,10 +409,8 @@ impl Shell {
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         draw_stats::count(&draw_stats::RENDERS);
-        let t0 = draw_stats::on().then(std::time::Instant::now);
-        let out = self.render_inner(window, cx);
-        if let Some(t0) = t0 { draw_stats::rendered(t0.elapsed()); }
-        out
+        draw_stats::frame_start();
+        self.render_inner(window, cx)
     }
 }
 
@@ -427,8 +427,14 @@ impl Shell {
         }
         // The tab host: the part that registered the tab draws it.
         let tab = self.tab.clone();
-        let body = registry::render_tab(&tab, window, cx)
-            .unwrap_or_else(|| w::empty(format!("{} is not built yet in the GPUI client.", registry::tab_label(&tab))).into_any_element());
+        // In a cached view of its own (TabHost): the drawer's frames, the
+        // top bar, Cru's mark don't lay out and paint the whole tab again.
+        let body = if registry::has_tab(&tab, cx) {
+            let host = self.tab_hosts.entry(tab.clone()).or_insert_with(|| { let t = tab.clone(); cx.new(|_| TabHost { tab: t }) }).clone();
+            host.cached(StyleRefinement::default().size_full()).into_any_element()
+        } else {
+            w::empty(format!("{} is not built yet in the GPUI client.", registry::tab_label(&tab))).into_any_element()
+        };
         let project = div().flex().flex_col().flex_1().min_w_0().min_h_0()
             .child(self.project_bar(cx))
             .child(div().flex().flex_col().flex_1().min_h_0().child(body));
@@ -444,7 +450,8 @@ impl Shell {
                 if e.click_count >= 2 { this.drawer_w = T::DRAWER_W; this.dragging = false; } else { this.dragging = true; }
                 cx.notify();
             }));
-        let dview = drawer.map(|dr| div().flex_none().w(self.drawer_w).h_full().min_h_0().child(dr.view));
+        // The drawer cached too: a page's frames redraw the drawer, not the project.
+        let dview = drawer.map(|dr| div().flex_none().w(self.drawer_w).h_full().min_h_0().child(dr.view.cached(StyleRefinement::default().size_full())));
         let main = div().flex().flex_1().min_h_0().child(self.sidebar(window, cx));
         let main = match dview {
             Some(v) if left => main.child(v).child(split).child(project),
@@ -484,6 +491,8 @@ impl Shell {
             .children(w::render_modal(window, cx))
             // The ask layer (the one confirm / prompt and context menu), once, over the window.
             .child(w::ask_layer(cx))
+            // Last painted: the frame's work so far (CRUNDI_DRAW_STATS).
+            .child(canvas(|_, _, _| {}, |_, _, _, _| draw_stats::frame_done()).absolute().size_0())
             .into_any_element()
     }
 }
@@ -521,8 +530,9 @@ pub fn init(cx: &mut App) {
 }
 
 /// CRUNDI_DRAW_STATS=1: once a second, on stderr, the frames the window
-/// painted, the slowest gap between two of them, and how often the shell
-/// was rendered (and the slowest render). An idle window shows nothing;
+/// painted, the slowest gap between two of them, how often the shell was
+/// rendered, and the slowest frame (the shell's render to the last element
+/// painted: every view's render, the layout, the paint). An idle window shows nothing;
 /// a smooth scroll shows ~60 frames with gaps near 16 ms.
 mod draw_stats {
     use std::cell::Cell;
@@ -546,16 +556,31 @@ mod draw_stats {
                 K::Render => renders += 1,
             }
             if now - start_at >= Duration::from_secs(1) {
-                eprintln!("[draw] {paints} frames/s, slowest gap {} ms, {renders} shell renders (slowest {} ms)", gap.as_millis(), slow.as_millis());
+                eprintln!("[draw] {paints} frames/s, slowest gap {} ms, {renders} shell renders, slowest frame {} ms (layout and paint of the whole window)", gap.as_millis(), slow.as_millis());
                 start = Some(now); paints = 0; renders = 0; gap = Duration::ZERO;
                 s.set((start, paints, renders, gap, last, Duration::ZERO));
             } else { s.set((start, paints, renders, gap, last, slow)); }
         });
     }
-    /// The shell's render took [d].
-    pub fn rendered(d: Duration) {
+    thread_local! { static RENDER_AT: Cell<Option<Instant>> = const { Cell::new(None) }; }
+    /// The shell's render starts a frame.
+    pub fn frame_start() { if ON.with(|o| *o) { RENDER_AT.with(|r| r.set(Some(Instant::now()))); } }
+    /// The last element painted: the frame's CPU time, render to paint.
+    pub fn frame_done() {
         if !ON.with(|o| *o) { return; }
+        let Some(t0) = RENDER_AT.with(|r| r.take()) else { return };
+        let d = t0.elapsed();
         S.with(|s| { let mut v = s.get(); v.5 = v.5.max(d); s.set(v); });
     }
     pub fn on() -> bool { ON.with(|o| *o) }
+}
+
+/// A project-bar tab's body (the part's render) in a view of its own, so
+/// GPUI can cache it (Shell::render).
+pub struct TabHost { tab: String }
+
+impl Render for TabHost {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        registry::render_tab(&self.tab, window, cx).unwrap_or_else(|| div().into_any_element())
+    }
 }

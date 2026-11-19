@@ -213,6 +213,9 @@ pub(crate) fn drawer(cx: &App) -> Option<Drawer> {
 }
 
 /// The part that draws a tab.
+/// A part draws this tab.
+pub(crate) fn has_tab(tab: &str, cx: &App) -> bool { list(cx).into_iter().any(|a| a.tabs.contains(&tab) && a.render.is_some()) }
+
 pub(crate) fn render_tab(tab: &str, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let a = list(cx).into_iter().find(|a| a.tabs.contains(&tab))?;
     Some((a.render.as_ref()?)(tab, window, cx))

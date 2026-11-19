@@ -12,9 +12,17 @@ use crundi_widgets::{self as w, HeadContent as C, HeadLook as L};
 use gpui::{prelude::FluentBuilder as _, *};
 
 impl Workbench {
-    fn pane_frame(&self, i: &Info, full: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn pane_frame(&mut self, i: &Info, full: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let body: AnyElement = match kind_of(cx, &i.key) {
-            Some(k) => (k.render)(&i.key, window, cx),
+            // Its own view, cached: a pane redraws when something in it
+            // changes (its scroll, a hover, its own notify) or the whole
+            // window is refreshed, not on every frame of another pane, the
+            // drawer or the shell (the owner's 13 frames a second, 19 Nov).
+            Some(_) => {
+                let key = i.key.clone();
+                let host = self.hosts.entry(key.clone()).or_insert_with(|| cx.new(|_| PaneHost { key })).clone();
+                host.cached(StyleRefinement::default().size_full()).into_any_element()
+            }
             None if i.kind == "launcher" => self.launcher(i, cx).into_any_element(),
             None => w::empty("Not built yet in the GPUI client.").into_any_element(),
         };
@@ -175,6 +183,7 @@ impl Render for Workbench {
         let mut grid = div().relative().w(px(gw)).h(px(gh)).flex_none();
         for i in &infos { if !self.leaf_focus.contains_key(&i.l.id) { let h = cx.focus_handle(); self.leaf_focus.insert(i.l.id, h); } }
         self.leaf_focus.retain(|l, _| infos.iter().any(|i| i.l.id == *l));
+        self.hosts.retain(|k, _| infos.iter().any(|i| &i.key == k));
         for i in &infos {
             if full.as_deref() == Some(i.key.as_str()) { continue; }
             grid = grid.child(self.leaf(i, window, cx));
@@ -240,5 +249,19 @@ impl Render for Workbench {
         }
         if self.add_menu { root = root.child(self.add_menu_view(cx)); }
         root
+    }
+}
+
+/// A pane body's view: the kind's render, in a view of its own so GPUI can
+/// cache it (Workbench::pane_frame). Its scrollers and hovers notify it, not
+/// the workbench.
+pub struct PaneHost { key: String }
+
+impl Render for PaneHost {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        match kind_of(cx, &self.key) {
+            Some(k) => (k.render)(&self.key, window, cx),
+            None => div().into_any_element(),
+        }
     }
 }
