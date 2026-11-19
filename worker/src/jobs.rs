@@ -655,7 +655,7 @@ pub(crate) struct Prep<'a> {
 }
 
 impl Prep<'_> {
-    fn note(&self, text: &str) {
+    pub(crate) fn note(&self, text: &str) {
         (self.log)(format!("[crundi-worker] {text}\n").as_bytes());
     }
 

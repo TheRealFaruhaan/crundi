@@ -81,6 +81,11 @@ struct T {
 
 /// `claude`: the fake script's body, or None for "not installed".
 async fn start(name: &str, claude: Option<&str>) -> T {
+    start_with(name, claude, None).await
+}
+
+/// `shell`: the program for `command: "shell"` chats.
+async fn start_with(name: &str, claude: Option<&str>, shell: Option<Vec<String>>) -> T {
     let dir = tmp(name);
     let (url, links) = server().await;
     let cfg = Config {
@@ -94,6 +99,7 @@ async fn start(name: &str, claude: Option<&str>) -> T {
     let mut o = LinkOptions::new("headless", Some(dir.join("config.json")));
     o.backoff_base = Duration::from_millis(50);
     o.backoff_max = Duration::from_millis(200);
+    o.shell = shell;
     o.claude = Some(match claude {
         Some(body) => script(&dir, "claude", body),
         None => dir.join("bin/no-claude-here"),
@@ -508,8 +514,10 @@ async fn copy_chat_pull_sends_changed_files_and_removals() {
     let tar = tar_of(&[("a.txt", b"A\n"), ("b.txt", b"B\n"), ("keep.txt", b"K\n")]);
     send(&mut ws, json!({"type": "chat.files", "chat": "k1", "seq": 0, "b64": B64.encode(&tar), "last": true, "removed": []})).await;
     recv_type(&mut ws, "chat.started").await;
-    let copy = t.dir.join("work/proj@copy");
+    // Each copy chat has its own folder.
+    let copy = t.dir.join("work/proj@copy-k1");
     assert_eq!(std::fs::read_to_string(copy.join("a.txt")).unwrap(), "A\n");
+    assert!(!t.dir.join("work/proj@copy").exists());
 
     std::fs::write(copy.join("a.txt"), "A2\n").unwrap();
     std::fs::remove_file(copy.join("b.txt")).unwrap();
@@ -711,5 +719,170 @@ async fn mcp_relay_end_to_end_survives_a_reconnect() {
     send(&mut ws, json!({"type": "chat.attach", "chat": "m1", "from": 0})).await;
     send(&mut ws, json!({"type": "chat.kill", "chat": "m1"})).await;
     exit_of(&mut ws, "m1").await;
+    t.quit().await;
+}
+
+// ---- copy chats get their own folder, seeded from the jobs' copy ----
+
+#[tokio::test]
+async fn a_copy_chat_is_seeded_from_the_shared_copy() {
+    let mut t = start("seed", Some(FAKE_CLAUDE)).await;
+    let shared = t.dir.join("work/proj@copy");
+    std::fs::create_dir_all(shared.join("src")).unwrap();
+    std::fs::write(shared.join("src/lib.txt"), "shared\n").unwrap();
+    std::fs::create_dir_all(shared.join("node_modules")).unwrap();
+    std::fs::write(shared.join("node_modules/big.js"), "x").unwrap();
+    let (mut ws, _) = t.connect(ok_settings()).await;
+    send(&mut ws, spawn_msg("s1", json!({"source": "copy"}))).await;
+    let m = recv_type(&mut ws, "chat.manifest").await;
+    // What the shared copy had is already there: the server sends only changes.
+    let files = m["files"].as_object().unwrap();
+    assert_eq!(files.keys().collect::<Vec<_>>(), ["src/lib.txt"], "{m}");
+    let tar = tar_of(&[("new.txt", b"N\n")]);
+    send(&mut ws, json!({"type": "chat.files", "chat": "s1", "seq": 0, "b64": B64.encode(&tar), "last": true, "removed": []})).await;
+    recv_type(&mut ws, "chat.started").await;
+    let own = t.dir.join("work/proj@copy-s1");
+    assert_eq!(std::fs::read_to_string(own.join("src/lib.txt")).unwrap(), "shared\n");
+    assert_eq!(std::fs::read_to_string(own.join("new.txt")).unwrap(), "N\n");
+    assert!(!own.join("node_modules").exists(), "build folders are not seeded");
+    assert!(!shared.join("new.txt").exists(), "the shared copy is untouched");
+    let mut out = Vec::new();
+    stdout_until(&mut ws, "s1", &mut out, "proj@copy-s1").await;
+    send(&mut ws, json!({"type": "chat.kill", "chat": "s1"})).await;
+    exit_of(&mut ws, "s1").await;
+    t.quit().await;
+}
+
+// ---- terminal mode ----
+
+/// Reports the terminal's size; echoes lines with the size at that moment.
+const TTY_CLAUDE: &str = r#"#!/bin/sh
+echo "args: $*"
+echo "size: $(stty size)"
+echo "term: $TERM greeting: $GREETING"
+while IFS= read -r line; do
+  echo "got: $line size: $(stty size)"
+done
+"#;
+
+#[tokio::test]
+async fn terminal_mode_runs_claude_in_a_pty() {
+    let mut t = start("pty", Some(TTY_CLAUDE)).await;
+    let (mut ws, _) = t.connect(ok_settings()).await;
+    send(&mut ws, spawn_msg("p1", json!({"pty": {"cols": 100, "rows": 30}}))).await;
+    let started = recv_type(&mut ws, "chat.started").await;
+    assert_eq!(started["terminal"], true);
+    let ev = t.events.recv().await.unwrap();
+    assert_eq!(ev, json!({"event": "chat", "state": "started", "chat": "p1", "project": "proj", "mode": "terminal"}));
+    let mut out = Vec::new();
+    assert!(stdout_until(&mut ws, "p1", &mut out, "greeting: hi").await.is_none());
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(text.contains("size: 30 100"), "{text}");
+    assert!(text.contains("term: xterm-256color"), "{text}");
+    assert!(text.contains("--mcp-config"), "the MCP config is given: {text}");
+    assert!(t.dir.join("work/.crundi-chats/p1.mcp.json").exists());
+
+    send(&mut ws, json!({"type": "chat.resize", "chat": "p1", "cols": 120, "rows": 40})).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    send(&mut ws, chat_in("p1", "again\r")).await;
+    assert!(stdout_until(&mut ws, "p1", &mut out, "got: again size: 40 120").await.is_none());
+
+    // The hello after a reconnect lists it as a terminal.
+    drop(ws);
+    let (mut ws, hello) = t.connect(ok_settings()).await;
+    assert_eq!(hello["chats"][0]["terminal"], true, "{hello}");
+    send(&mut ws, json!({"type": "chat.attach", "chat": "p1", "from": 0})).await;
+    send(&mut ws, json!({"type": "chat.kill", "chat": "p1"})).await;
+    let exit = exit_of(&mut ws, "p1").await;
+    assert_eq!(exit["signal"], "SIGTERM", "{exit}");
+    assert_eq!(exit["code"], 143);
+    let ev = t.events.recv().await.unwrap();
+    assert_eq!(ev["state"], "ended");
+    assert_eq!(ev["mode"], "terminal");
+    t.quit().await;
+}
+
+#[tokio::test]
+async fn shell_command_runs_the_shell_in_the_project_folder() {
+    let mut t = start_with("shell", None, Some(vec!["/bin/sh".into()])).await;
+    let (mut ws, _) = t.connect(ok_settings()).await;
+    std::fs::create_dir_all(t.dir.join("work/proj")).unwrap();
+    // No claude on this PC: a shell needs none.
+    send(&mut ws, spawn_msg("sh1", json!({"command": "shell", "pty": {"cols": 80, "rows": 24}}))).await;
+    let started = recv_type(&mut ws, "chat.started").await;
+    assert_eq!(started["shell"], true);
+    let ev = t.events.recv().await.unwrap();
+    assert_eq!(ev["mode"], "shell");
+    assert!(!t.dir.join("work/.crundi-chats/sh1.mcp.json").exists(), "no MCP config for a shell");
+    let mut out = Vec::new();
+    send(&mut ws, chat_in("sh1", "echo sum-$((1+2)) $GREETING; pwd\r")).await;
+    assert!(stdout_until(&mut ws, "sh1", &mut out, "sum-3 hi").await.is_none());
+    let wd = t.dir.join("work/proj");
+    let canon = std::fs::canonicalize(&wd).unwrap();
+    assert!(stdout_until(&mut ws, "sh1", &mut out, "/work/proj").await.is_none());
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(text.contains(&wd.display().to_string()) || text.contains(&canon.display().to_string()), "{text}");
+    send(&mut ws, chat_in("sh1", "exit 7\r")).await;
+    let exit = exit_of(&mut ws, "sh1").await;
+    assert_eq!(exit["code"], 7, "{exit}");
+    t.quit().await;
+}
+
+// ---- resuming a conversation the PC does not have ----
+
+#[test]
+fn claude_folder_names() {
+    use crundi_worker::chats::{claude_project_dir_name, drop_resume};
+    assert_eq!(claude_project_dir_name(Path::new("/home/a/my proj.x")), "-home-a-my-proj-x");
+    assert_eq!(claude_project_dir_name(Path::new("C:\\Users\\a_b\\w@c")), "C--Users-a-b-w-c");
+    let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert_eq!(drop_resume(a(&["-p", "--resume", "abc", "--fork-session", "-c", "--model", "x"])), a(&["-p", "--model", "x"]));
+    assert_eq!(drop_resume(a(&["--resume=abc", "-r", "--verbose"])), a(&["--verbose"]));
+}
+
+#[tokio::test]
+async fn resume_without_a_transcript_starts_fresh_and_says_so() {
+    let mut t = start("resume", Some(FAKE_CLAUDE)).await;
+    let home = t.dir.join("claude-home");
+    let (mut ws, _) = t.connect(ok_settings()).await;
+    let spec = |chat: &str| {
+        let mut v = spawn_msg(chat, json!({"resumeSessionId": "sess-1"}));
+        v["args"] = json!(["-p", "--resume", "sess-1", "--verbose"]);
+        v["env"]["CLAUDE_CONFIG_DIR"] = json!(home.to_string_lossy());
+        v
+    };
+    send(&mut ws, spec("r1")).await;
+    let n = recv_type(&mut ws, "chat.notice").await;
+    assert_eq!(n["chat"], "r1");
+    assert!(n["text"].as_str().unwrap().contains("sess-1"), "{n}");
+    recv_type(&mut ws, "chat.started").await;
+    let mut out = Vec::new();
+    stdout_until(&mut ws, "r1", &mut out, "cwd: ").await;
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(text.contains("args: -p --verbose --mcp-config"), "{text}");
+    send(&mut ws, json!({"type": "chat.kill", "chat": "r1"})).await;
+    exit_of(&mut ws, "r1").await;
+
+    // With the transcript where Claude keeps it: resumed as asked.
+    let wd = t.dir.join("work");
+    let proj = home.join("projects").join(crundi_worker::chats::claude_project_dir_name(&wd));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("sess-1.jsonl"), "{}\n").unwrap();
+    send(&mut ws, spec("r2")).await;
+    let mut out = Vec::new();
+    loop {
+        let v = recv(&mut ws).await;
+        assert_ne!(v["type"], "chat.notice", "{v}");
+        if v["type"] == "chat.out" && v["stream"] == "stdout" && v["chat"] == "r2" {
+            out.extend(B64.decode(v["b64"].as_str().unwrap()).unwrap());
+            if String::from_utf8_lossy(&out).contains("cwd: ") {
+                break;
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(&out).into_owned();
+    assert!(text.contains("args: -p --resume sess-1 --verbose --mcp-config"), "{text}");
+    send(&mut ws, json!({"type": "chat.kill", "chat": "r2"})).await;
+    exit_of(&mut ws, "r2").await;
     t.quit().await;
 }

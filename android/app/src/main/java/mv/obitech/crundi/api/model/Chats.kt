@@ -82,6 +82,8 @@ data class Pane(
     val where: String = "",
     /** The PC it runs on (name, online, branch); null here or on an older server. */
     val pc: ChatPc? = null,
+    /** A terminal on a PC: the last notice the PC sent ("The PC did not have that conversation; starting fresh"). */
+    val notice: String = "",
     // Parked panes only
     val paneKind: String = "",
     val shellOnly: Boolean = false,

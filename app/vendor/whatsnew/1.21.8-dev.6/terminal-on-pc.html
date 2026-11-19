@@ -1,0 +1,32 @@
+<div class="wna a-top">
+  <div class="pane">
+    <div class="h">Runs on</div>
+    <div class="seg"><span class="s">This server</span><span class="s pc"><i></i>farhan-RP-15</span></div>
+    <div class="b sh">Empty Shell</div><div class="b ui">UI Mode</div><div class="b tm">Terminal</div>
+  </div>
+  <div class="term"><div class="hd">Terminal <span class="tag">farhan-RP-15</span></div><div class="ln l1">$ claude</div><div class="ln l2">Working in ~/crundi-work/crundi</div><div class="ln l3">Editing src/drawer.rs</div></div>
+  <style>
+    .a-top{position:absolute;inset:0;font-family:system-ui,sans-serif;color:var(--text-primary);font-size:13px}
+    .a-top .pane{position:absolute;left:36px;top:70px;width:220px;border:1px solid var(--border);border-radius:10px;background:var(--bg-card);padding:12px;animation:atopP 10s infinite}
+    .a-top .h{font-size:11px;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
+    .a-top .seg{display:flex;gap:4px;padding:3px;border:1px solid var(--border);border-radius:8px;background:var(--bg-secondary);margin-bottom:10px}
+    .a-top .s{flex:1;text-align:center;padding:5px 4px;border-radius:6px;font-size:11.5px;border:1px solid transparent}
+    .a-top .s.pc{animation:atopS 10s infinite}
+    .a-top .s i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--green);margin-right:5px}
+    .a-top .b{padding:8px;border:1px solid var(--border);border-radius:8px;text-align:center;margin-bottom:6px}
+    .a-top .b.ui{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .a-top .b.tm{animation:atopB 10s infinite}
+    .a-top .term{position:absolute;left:290px;top:60px;width:320px;border:1px solid var(--border);border-radius:10px;background:var(--bg-primary);padding:12px;opacity:0;animation:atopT 10s infinite;font-family:var(--mono,monospace);font-size:12px}
+    .a-top .hd{font-family:system-ui,sans-serif;font-weight:600;margin-bottom:10px}
+    .a-top .tag{font-weight:600;font-size:10.5px;padding:1px 8px;border-radius:999px;border:1px solid var(--green);color:var(--green);margin-left:6px}
+    .a-top .ln{opacity:0;margin-bottom:5px;color:var(--text-secondary)}
+    .a-top .l1{animation:atopL1 10s infinite}.a-top .l2{animation:atopL2 10s infinite}.a-top .l3{animation:atopL3 10s infinite}
+    @keyframes atopS{0%,12%{background:transparent;border-color:transparent}16%,100%{background:var(--accent-dim);border-color:var(--accent)}}
+    @keyframes atopB{0%,24%{background:transparent}28%,34%{background:var(--accent-dim)}38%,100%{background:transparent}}
+    @keyframes atopP{0%,34%{opacity:1}42%,100%{opacity:.35}}
+    @keyframes atopT{0%,36%{opacity:0}42%,94%{opacity:1}100%{opacity:0}}
+    @keyframes atopL1{0%,44%{opacity:0}48%,94%{opacity:1}100%{opacity:0}}
+    @keyframes atopL2{0%,56%{opacity:0}60%,94%{opacity:1}100%{opacity:0}}
+    @keyframes atopL3{0%,68%{opacity:0}72%,94%{opacity:1}100%{opacity:0}}
+  </style>
+</div>

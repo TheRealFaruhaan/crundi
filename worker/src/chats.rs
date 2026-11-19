@@ -9,6 +9,17 @@
 //! sent as it comes. Each chat has a loopback relay (127.0.0.1:0, a token)
 //! the `mcp` subcommand talks to; its requests go over the link as
 //! `mcp.list` / `mcp.call` and wait up to 10 minutes for the server.
+//!
+//! Terminal mode (`chat.spawn {pty: {cols, rows}}`): the same, but claude
+//! runs in a pseudo-terminal; its bytes are the chat's stdout, `chat.in` is
+//! keystrokes, `chat.resize` resizes it.
+//!
+//! A copy-source chat has its own folder `<project>@copy-<chat>`, seeded
+//! from the jobs' `<project>@copy` when there is one.
+//!
+//! Resuming (`resumeSessionId`) a conversation this PC has no transcript of
+//! starts fresh instead (`--resume`/`--continue` dropped) and says so with
+//! `chat.notice`.
 
 use crate::jobfiles;
 use crate::jobs::{self, emit, ensure_commit, git_raw, prepare_copy, valid_name, Events, Outbox, Prep, CHUNK};
@@ -17,11 +28,12 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -129,6 +141,12 @@ struct ChatCell {
     relay: Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// What preparing printed (kept for a refusal's error).
     prep_log: Mutex<Vec<u8>>,
+    /// Terminal mode: claude runs in a pseudo-terminal.
+    terminal: bool,
+    /// `command: "shell"`: the login shell instead of claude (always a terminal).
+    shell: bool,
+    /// The pty's master side while it runs (resize; dropped after exit).
+    pty: Mutex<Option<Box<dyn MasterPty + Send>>>,
 }
 
 impl ChatCell {
@@ -165,6 +183,8 @@ struct Inner {
     pc_name: String,
     /// Tests: use exactly this program as claude (missing file = not installed).
     claude: Option<PathBuf>,
+    /// The login shell for `command: "shell"` (program and args).
+    shell: Vec<String>,
     events: Events,
     chats: Mutex<HashMap<String, Arc<ChatCell>>>,
     out: Outbox,
@@ -182,11 +202,17 @@ fn s<'a>(v: &'a Value, k: &str) -> &'a str {
 
 impl Chats {
     pub fn new(work_dir: PathBuf, pc_name: String, claude: Option<PathBuf>, events: Events) -> Chats {
+        Chats::with_shell(work_dir, pc_name, claude, None, events)
+    }
+
+    /// `shell`: the program (and args) for `command: "shell"`; None = the login shell.
+    pub fn with_shell(work_dir: PathBuf, pc_name: String, claude: Option<PathBuf>, shell: Option<Vec<String>>, events: Events) -> Chats {
         Chats {
             inner: Arc::new(Inner {
                 work_dir,
                 pc_name,
                 claude,
+                shell: shell.filter(|s| !s.is_empty()).unwrap_or_else(crate::term::default_shell),
                 events,
                 chats: Default::default(),
                 out: Outbox::default(),
@@ -231,7 +257,11 @@ impl Chats {
             .values()
             .map(|c| {
                 let st = c.st.lock().unwrap();
-                json!({"chat": c.id, "running": st.exit.is_none(), "outBytes": st.out_bytes})
+                let mut v = json!({"chat": c.id, "running": st.exit.is_none(), "outBytes": st.out_bytes});
+                if c.terminal {
+                    v["terminal"] = json!(true);
+                }
+                v
             })
             .collect();
         v.sort_by(|a, b| a["chat"].as_str().cmp(&b["chat"].as_str()));
@@ -250,6 +280,11 @@ impl Chats {
         for c in gone {
             forget(&self.inner, &c);
         }
+    }
+
+    /// How many chats (and PC terminals of claude) are running.
+    pub fn running(&self) -> usize {
+        self.inner.chats.lock().unwrap().values().filter(|c| c.running()).count()
     }
 
     /// The worker is quitting: stop every chat's claude.
@@ -274,8 +309,17 @@ impl Chats {
                             let _ = c.stdin.send(Some(b));
                         }
                     }
-                    if v.get("eof").and_then(Value::as_bool) == Some(true) {
+                    // A terminal has no stdin to close (None stops its writer).
+                    if v.get("eof").and_then(Value::as_bool) == Some(true) && !c.terminal {
                         let _ = c.stdin.send(None);
+                    }
+                }
+            }
+            "chat.resize" => {
+                if let Some(c) = cell() {
+                    let n = |k: &str, d: u16| v.get(k).and_then(Value::as_u64).map(|x| x.min(1000) as u16).unwrap_or(d);
+                    if let Some(m) = c.pty.lock().unwrap().as_ref() {
+                        let _ = m.resize(pty_size(n("cols", 80), n("rows", 24)));
                     }
                 }
             }
@@ -365,8 +409,15 @@ impl Chats {
             old.bump();
             self.inner.chats.lock().unwrap().remove(&chat);
         }
-        let Some(claude) = self.find_claude() else {
-            return refuse(&install_text(&self.inner.pc_name));
+        // `command: "shell"`: the login shell in a terminal, not claude.
+        let shell = s(v, "command") == "shell";
+        let program: Vec<String> = if shell {
+            self.inner.shell.clone()
+        } else {
+            let Some(claude) = self.find_claude() else {
+                return refuse(&install_text(&self.inner.pc_name));
+            };
+            vec![claude.to_string_lossy().into_owned()]
         };
         let dir = self.chats_dir();
         if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -395,11 +446,14 @@ impl Chats {
             stderr_off: AtomicU64::new(0),
             relay: Mutex::new(None),
             prep_log: Mutex::new(Vec::new()),
+            terminal: shell || v.get("pty").is_some_and(Value::is_object),
+            shell,
+            pty: Mutex::new(None),
         });
         self.inner.chats.lock().unwrap().insert(chat, cell.clone());
         let inner = self.inner.clone();
         let spec = v.clone();
-        tokio::spawn(run_chat(inner, cell, spec, claude, inbox_rx, stdin_rx, kill_rx));
+        tokio::spawn(run_chat(inner, cell, spec, program, inbox_rx, stdin_rx, kill_rx));
     }
 }
 
@@ -614,9 +668,19 @@ async fn prepare_chat(inner: &Inner, cell: &ChatCell, spec: &Value, inbox: &mut 
             if project.is_empty() {
                 bail!("a copy chat needs a project");
             }
-            let dir = wd.join(format!("{project}@copy"));
+            // Its own folder, so jobs and other chats never touch its work.
+            let dir = wd.join(format!("{project}@copy-{chat}"));
             let base = base_manifest_path(inner, chat);
             if !base.exists() {
+                let shared = wd.join(format!("{project}@copy"));
+                if !dir.exists() && shared.is_dir() {
+                    // Start from the jobs' copy: only what changed since comes over.
+                    let (from, to) = (shared.clone(), dir.clone());
+                    match tokio::task::spawn_blocking(move || jobfiles::seed_copy(&from, &to)).await? {
+                        Ok(n) => p.note(&format!("seeded {n} files from {}", shared.display())),
+                        Err(e) => p.note(&format!("could not seed from {}: {e:#}", shared.display())),
+                    }
+                }
                 prepare_copy(&p, &dir, inbox).await?;
                 // What the copy held when the chat began: pulls send what changed since.
                 let d = dir.clone();
@@ -671,9 +735,9 @@ async fn run_chat(
     inner: Arc<Inner>,
     cell: Arc<ChatCell>,
     spec: Value,
-    claude: PathBuf,
+    program: Vec<String>,
     mut inbox: mpsc::UnboundedReceiver<Value>,
-    mut stdin_rx: mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+    stdin_rx: mpsc::UnboundedReceiver<Option<Vec<u8>>>,
     mut kill_rx: mpsc::UnboundedReceiver<Kill>,
 ) {
     let refuse = |error: String| {
@@ -702,47 +766,167 @@ async fn run_chat(
         }
     };
 
-    // The MCP relay for this chat, then the config naming it.
-    let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
-        Ok(l) => l,
-        Err(e) => return refuse(format!("cannot open the MCP relay: {e}")).await,
-    };
-    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-    let token = random_hex(16);
-    *cell.relay.lock().unwrap() = Some(tokio::spawn(relay(inner.clone(), cell.id.clone(), token.clone(), listener)));
-    let cfg = mcp_config(&cell.id, port, &token);
-    if let Err(e) = std::fs::write(&cell.mcp_path, cfg.to_string()) {
-        return refuse(format!("cannot write the MCP config: {e}")).await;
+    let claude = PathBuf::from(&program[0]);
+    let mut args: Vec<String> = program[1..].to_vec();
+    if !cell.shell {
+        // The MCP relay for this chat, then the config naming it.
+        let listener = match tokio::net::TcpListener::bind(("127.0.0.1", 0)).await {
+            Ok(l) => l,
+            Err(e) => return refuse(format!("cannot open the MCP relay: {e}")).await,
+        };
+        let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
+        let token = random_hex(16);
+        *cell.relay.lock().unwrap() = Some(tokio::spawn(relay(inner.clone(), cell.id.clone(), token.clone(), listener)));
+        let cfg = mcp_config(&cell.id, port, &token);
+        if let Err(e) = std::fs::write(&cell.mcp_path, cfg.to_string()) {
+            return refuse(format!("cannot write the MCP config: {e}")).await;
+        }
+
+        // Resuming a conversation this PC never had: start fresh, and say so.
+        args = claude_args(&spec, &cell.mcp_path);
+        let resume = s(&spec, "resumeSessionId");
+        if !resume.is_empty() {
+            let home = claude_home(&spec);
+            if !home.as_deref().is_some_and(|h| has_transcript(h, &dir, resume)) {
+                args = drop_resume(args);
+                inner
+                    .out
+                    .send(json!({"type": "chat.notice", "chat": cell.id, "text": format!(
+                        "{} has no transcript of conversation {resume}, so Claude starts a new conversation there \
+                         (earlier messages are not in its context).",
+                        inner.pc_name
+                    )}))
+                    .await;
+            }
+        }
     }
 
-    let mut c = crate::util::tokio_command(&claude);
-    c.args(claude_args(&spec, &cell.mcp_path))
-        .current_dir(&dir)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+    let ran = if cell.terminal {
+        let pty = spec.get("pty").cloned().unwrap_or(Value::Null);
+        let n = |k: &str, d: u16| pty.get(k).and_then(Value::as_u64).map(|x| x.min(1000) as u16).unwrap_or(d);
+        run_in_pty(&inner, &cell, &spec, &claude, args, &dir, pty_size(n("cols", 80), n("rows", 24)), stdin_rx, kill_rx).await
+    } else {
+        run_in_pipes(&inner, &cell, &spec, &claude, args, &dir, stdin_rx, kill_rx).await
+    };
+    let exit = match ran {
+        Ok(exit) => exit,
+        Err(e) => return refuse(e).await,
+    };
+    *cell.spool.lock().unwrap() = None;
+    // Dropping the master closes the pty (ends its reader on Windows).
+    cell.pty.lock().unwrap().take();
+    let _ = cell.stdin.send(None);
+    if let Some(h) = cell.relay.lock().unwrap().take() {
+        h.abort();
+    }
+    {
+        let mut st = cell.st.lock().unwrap();
+        st.exit = Some(exit);
+        st.exited_at = Some(Instant::now());
+    }
+    emit(&inner.events, chat_event(&cell, "ended"));
+    cell.bump();
+}
+
+/// `{"event":"chat","state":..,"chat","project"}`, plus `"mode":"terminal"` for a terminal.
+fn chat_event(cell: &ChatCell, state: &str) -> Value {
+    let mut v = json!({"event": "chat", "state": state, "chat": cell.id, "project": cell.project});
+    if cell.terminal {
+        v["mode"] = json!(if cell.shell { "shell" } else { "terminal" });
+    }
+    v
+}
+
+/// claude has started: tell the server and the app, start streaming.
+async fn started(inner: &Arc<Inner>, cell: &Arc<ChatCell>, pid: u32) {
+    cell.pid.store(pid, Ordering::SeqCst);
+    let mut m = json!({"type": "chat.started", "chat": cell.id, "pid": pid});
+    if cell.terminal {
+        m["terminal"] = json!(true);
+    }
+    if cell.shell {
+        m["shell"] = json!(true);
+    }
+    inner.out.send(m).await;
+    emit(&inner.events, chat_event(cell, "started"));
+    tokio::spawn(stream(inner.clone(), cell.clone()));
+}
+
+fn apply_env(spec: &Value, mut set: impl FnMut(&str, &str)) {
     if let Some(env) = spec.get("env").and_then(Value::as_object) {
         for (k, v) in env {
             if let Some(v) = v.as_str() {
                 if !k.is_empty() && !k.contains('=') {
-                    c.env(k, v);
+                    set(k, v);
                 }
             }
         }
     }
+}
+
+/// Wait for claude to end, acting on `chat.kill` meanwhile; a terminate is
+/// followed by a kill after KILL_GRACE. `interrupt` handles an interrupt.
+async fn wait_killing<T>(
+    pid: u32,
+    kill_rx: &mut mpsc::UnboundedReceiver<Kill>,
+    wait: impl std::future::Future<Output = T>,
+    interrupt: impl Fn(),
+    hard_kill: impl Fn(),
+) -> T {
+    tokio::pin!(wait);
+    let mut kill_at: Option<tokio::time::Instant> = None;
+    loop {
+        let deadline = kill_at;
+        tokio::select! {
+            st = &mut wait => return st,
+            k = kill_rx.recv() => {
+                let Some(k) = k else { continue };
+                match k {
+                    Kill::Interrupt => interrupt(),
+                    Kill::Kill => { signal(pid, k); hard_kill(); }
+                    Kill::Terminate => signal(pid, k),
+                }
+                if k == Kill::Terminate && kill_at.is_none() {
+                    kill_at = Some(tokio::time::Instant::now() + KILL_GRACE);
+                }
+            }
+            _ = async { tokio::time::sleep_until(deadline.unwrap()).await }, if deadline.is_some() => {
+                signal(pid, Kill::Kill);
+                hard_kill();
+                kill_at = None;
+            }
+        }
+    }
+}
+
+/// claude with its three pipes. Err = it could not start (a refusal).
+#[allow(clippy::too_many_arguments)]
+async fn run_in_pipes(
+    inner: &Arc<Inner>,
+    cell: &Arc<ChatCell>,
+    spec: &Value,
+    claude: &Path,
+    args: Vec<String>,
+    dir: &Path,
+    mut stdin_rx: mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+    mut kill_rx: mpsc::UnboundedReceiver<Kill>,
+) -> Result<Value, String> {
+    let mut c = crate::util::tokio_command(claude);
+    c.args(args)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    apply_env(spec, |k, v| {
+        c.env(k, v);
+    });
     #[cfg(unix)]
     c.process_group(0);
     #[cfg(windows)]
     c.creation_flags(0x0800_0000 | 0x0000_0200); // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    let mut child = match c.spawn() {
-        Ok(ch) => ch,
-        Err(e) => return refuse(format!("could not start {}: {e}", claude.display())).await,
-    };
+    let mut child = c.spawn().map_err(|e| format!("could not start {}: {e}", claude.display()))?;
     let pid = child.id().unwrap_or(0);
-    cell.pid.store(pid, Ordering::SeqCst);
-    inner.out.send(json!({"type": "chat.started", "chat": cell.id, "pid": pid})).await;
-    emit(&inner.events, json!({"event": "chat", "state": "started", "chat": cell.id, "project": cell.project}));
-    tokio::spawn(stream(inner.clone(), cell.clone()));
+    started(inner, cell, pid).await;
 
     // stdout -> spool
     let mut stdout = child.stdout.take().unwrap();
@@ -787,24 +971,7 @@ async fn run_chat(
         }
     });
 
-    let mut kill_at: Option<tokio::time::Instant> = None;
-    let status = loop {
-        let deadline = kill_at;
-        tokio::select! {
-            st = child.wait() => break st,
-            k = kill_rx.recv() => {
-                let Some(k) = k else { continue };
-                signal(pid, k);
-                if k == Kill::Terminate && kill_at.is_none() {
-                    kill_at = Some(tokio::time::Instant::now() + KILL_GRACE);
-                }
-            }
-            _ = async { tokio::time::sleep_until(deadline.unwrap()).await }, if deadline.is_some() => {
-                signal(pid, Kill::Kill);
-                kill_at = None;
-            }
-        }
-    };
+    let status = wait_killing(pid, &mut kill_rx, child.wait(), || signal(pid, Kill::Interrupt), || {}).await;
     let _ = tokio::time::timeout(DRAIN_AFTER_EXIT, eof_rx).await;
     let mut exit = json!({"type": "chat.exit", "chat": cell.id});
     match status {
@@ -828,17 +995,211 @@ async fn run_chat(
             exit["error"] = json!(e.to_string());
         }
     }
-    *cell.spool.lock().unwrap() = None;
-    if let Some(h) = cell.relay.lock().unwrap().take() {
-        h.abort();
+    Ok(exit)
+}
+
+pub(crate) fn pty_size(cols: u16, rows: u16) -> PtySize {
+    PtySize { rows: rows.clamp(2, 1000), cols: cols.clamp(2, 1000), pixel_width: 0, pixel_height: 0 }
+}
+
+/// A pty command for a found program (Windows: `.cmd`/`.bat` through cmd /C).
+fn pty_command(program: &Path) -> CommandBuilder {
+    let ext = program.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    if cfg!(windows) && (ext == "cmd" || ext == "bat") {
+        let mut c = CommandBuilder::new("cmd.exe");
+        c.arg("/C");
+        c.arg(program);
+        c
+    } else {
+        CommandBuilder::new(program)
     }
-    {
-        let mut st = cell.st.lock().unwrap();
-        st.exit = Some(exit);
-        st.exited_at = Some(Instant::now());
+}
+
+/// A signal number from portable-pty's description of it (strsignal text,
+/// "Terminated" on Linux, "Terminated: 15" on macOS).
+fn signal_number(desc: &str) -> Option<i32> {
+    if let Some(n) = desc.rsplit(|c: char| !c.is_ascii_digit()).next().and_then(|d| d.parse().ok()) {
+        return Some(n);
     }
-    emit(&inner.events, json!({"event": "chat", "state": "ended", "chat": cell.id, "project": cell.project}));
-    cell.bump();
+    let d = desc.to_ascii_lowercase();
+    [("hangup", 1), ("interrupt", 2), ("quit", 3), ("abort", 6), ("killed", 9), ("segmentation", 11), ("broken pipe", 13), ("terminated", 15)]
+        .iter()
+        .find(|(name, _)| d.starts_with(name))
+        .map(|(_, n)| *n)
+}
+
+/// Terminal mode: claude in a pseudo-terminal. Err = it could not start.
+#[allow(clippy::too_many_arguments)]
+async fn run_in_pty(
+    inner: &Arc<Inner>,
+    cell: &Arc<ChatCell>,
+    spec: &Value,
+    claude: &Path,
+    args: Vec<String>,
+    dir: &Path,
+    size: PtySize,
+    mut stdin_rx: mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+    mut kill_rx: mpsc::UnboundedReceiver<Kill>,
+) -> Result<Value, String> {
+    let fail = |e: &dyn std::fmt::Display| format!("could not start {} in a terminal: {e}", claude.display());
+    let pair = native_pty_system().openpty(size).map_err(|e| fail(&e))?;
+    let mut cmd = pty_command(claude);
+    cmd.args(&args);
+    cmd.cwd(dir);
+    if !cfg!(windows) {
+        cmd.env("TERM", "xterm-256color");
+    }
+    apply_env(spec, |k, v| cmd.env(k, v));
+    let mut child = pair.slave.spawn_command(cmd).map_err(|e| fail(&e))?;
+    drop(pair.slave);
+    let pid = child.process_id().unwrap_or(0);
+    let killer = Mutex::new(child.clone_killer());
+    let mut reader = pair.master.try_clone_reader().map_err(|e| fail(&e))?;
+    let mut writer = pair.master.take_writer().map_err(|e| fail(&e))?;
+    *cell.pty.lock().unwrap() = Some(pair.master);
+
+    // Keystrokes: a thread owns the writer, so a full pty never blocks the link.
+    std::thread::spawn(move || {
+        while let Some(Some(b)) = stdin_rx.blocking_recv() {
+            if writer.write_all(&b).and_then(|_| writer.flush()).is_err() {
+                break;
+            }
+        }
+    });
+    // The terminal's bytes -> spool.
+    let (eof_tx, eof_rx) = oneshot::channel::<()>();
+    let ocell = cell.clone();
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => ocell.append(&buf[..n]),
+            }
+        }
+        let _ = eof_tx.send(());
+    });
+    let (exit_tx, exit_rx) = oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = exit_tx.send(child.wait());
+    });
+    started(inner, cell, pid).await;
+
+    let icell = cell.clone();
+    let status = wait_killing(
+        pid,
+        &mut kill_rx,
+        exit_rx,
+        // Interrupt in a terminal is Ctrl-C, as a person would press it.
+        move || {
+            let _ = icell.stdin.send(Some(vec![3]));
+        },
+        || {
+            let _ = killer.lock().unwrap().kill();
+        },
+    )
+    .await;
+    let _ = tokio::time::timeout(DRAIN_AFTER_EXIT, eof_rx).await;
+    let mut exit = json!({"type": "chat.exit", "chat": cell.id});
+    match status {
+        Ok(Ok(st)) => {
+            let sig = st.signal().map(|d| (d.to_string(), signal_number(d)));
+            match &sig {
+                Some((_, Some(n))) => {
+                    exit["code"] = json!(128 + *n as i64);
+                    exit["signal"] = json!(signal_name(*n));
+                }
+                Some((d, None)) => {
+                    exit["code"] = json!(st.exit_code() as i64);
+                    exit["signal"] = json!(d);
+                }
+                None => exit["code"] = json!(st.exit_code() as i32 as i64),
+            }
+        }
+        Ok(Err(e)) => {
+            exit["code"] = json!(-1);
+            exit["error"] = json!(e.to_string());
+        }
+        Err(_) => {
+            exit["code"] = json!(-1);
+            exit["error"] = json!("lost track of the process");
+        }
+    }
+    Ok(exit)
+}
+
+// ---- resuming a conversation ----
+
+/// The folder name Claude Code keeps a project's transcripts under
+/// (`~/.claude/projects/<name>`): every character that is not an ASCII
+/// letter or digit becomes '-'.
+pub fn claude_project_dir_name(path: &Path) -> String {
+    path.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+}
+
+/// Claude Code's home: CLAUDE_CONFIG_DIR (the chat's env, else ours), else ~/.claude.
+fn claude_home(spec: &Value) -> Option<PathBuf> {
+    let from_spec = spec.get("env").and_then(|e| e.get("CLAUDE_CONFIG_DIR")).and_then(Value::as_str).filter(|s| !s.is_empty());
+    if let Some(d) = from_spec {
+        return Some(PathBuf::from(d));
+    }
+    if let Some(d) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(d));
+    }
+    dirs::home_dir().map(|h| h.join(".claude"))
+}
+
+/// Does Claude Code under `home` have the transcript of `session` for a
+/// conversation run in `cwd`? (The folder as given and its real path, since
+/// Claude names it after the real one on macOS.)
+pub fn has_transcript(home: &Path, cwd: &Path, session: &str) -> bool {
+    if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return false;
+    }
+    let projects = home.join("projects");
+    let file = format!("{session}.jsonl");
+    let mut names = vec![claude_project_dir_name(cwd)];
+    if let Ok(real) = std::fs::canonicalize(cwd) {
+        let r = real.to_string_lossy().into_owned();
+        let r = r.strip_prefix(r"\\?\").unwrap_or(&r).to_string();
+        names.push(claude_project_dir_name(Path::new(&r)));
+    }
+    for name in &names {
+        if projects.join(name).join(&file).is_file() {
+            return true;
+        }
+        // Long paths: Claude cuts the name and adds a hash.
+        if name.len() > 200 {
+            let prefix = &name[..200];
+            if let Ok(rd) = std::fs::read_dir(&projects) {
+                for e in rd.flatten() {
+                    if e.file_name().to_string_lossy().starts_with(prefix) && e.path().join(&file).is_file() {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// claude's args without `--resume [id]`, `-r [id]`, `--continue`, `-c`, `--fork-session`.
+pub fn drop_resume(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut it = args.into_iter().peekable();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--resume" | "-r" => {
+                if it.peek().is_some_and(|n| !n.starts_with('-')) {
+                    it.next();
+                }
+            }
+            "--continue" | "-c" | "--fork-session" => {}
+            x if x.starts_with("--resume=") => {}
+            _ => out.push(a),
+        }
+    }
+    out
 }
 
 // ---- the MCP relay (worker side) ----

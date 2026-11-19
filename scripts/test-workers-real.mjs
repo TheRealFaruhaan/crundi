@@ -243,6 +243,28 @@ try {
       ok(await Promise.race([exited, sleep(15000).then(() => false)]) || svc.chats.view(c.id)?.state === 'ended', 'chats: closing it ends claude on the PC', JSON.stringify(svc.chats.view(c.id)));
     }
     ui.closeAll();
+
+    // ── An Empty Shell on the PC (terminal mode), in a real pseudo-terminal ──
+    const tid = 'f' + Date.now().toString(16).padStart(15, '0');
+    let t = null, tErr = '';
+    try { t = await svc.chats.launchPty(`worker:${s.id}`, { chatId: tid, project: 'proj', cwd: realProj, command: 'shell', cols: 100, rows: 30 }); } catch (err) { tErr = err.message; }
+    ok(!!t, 'shell on the PC: a terminal opens on the real worker', tErr);
+    if (t) {
+      let screen = ''; let exited = null;
+      t.onData((d) => { screen += d; });
+      t.onExit((x) => { exited = x; });
+      await sleep(800);
+      t.write('echo cols=$(tput cols 2>/dev/null || stty size | cut -d" " -f2) pwd=$(pwd) tty=$(test -t 0 && echo yes)\r');
+      const seen = await until(() => /cols=100 pwd=\S*proj@/.test(screen) && /tty=yes/.test(screen), 15000);
+      ok(!!seen, 'shell on the PC: a real tty, 100 columns, in the project\'s folder there', screen.slice(-400));
+      t.resize(120, 40);
+      await sleep(400);
+      t.write('echo resized=$(tput cols 2>/dev/null || stty size | cut -d" " -f2)\r');
+      ok(!!(await until(() => /resized=120/.test(screen), 15000)), 'shell on the PC: resize reaches it', screen.slice(-300));
+      t.write('exit 4\r');
+      await until(() => exited, 15000);
+      ok(exited && exited.exitCode === 4, 'shell on the PC: its exit code comes back', JSON.stringify(exited));
+    }
   }
 
   e.stdin.end();

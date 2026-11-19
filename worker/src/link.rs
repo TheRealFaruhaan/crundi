@@ -36,6 +36,13 @@ pub struct LinkOptions {
     pub events: Option<mpsc::UnboundedSender<Value>>,
     /// Use exactly this program as `claude` (tests); None = find it.
     pub claude: Option<PathBuf>,
+    /// Apply `welcome.update` (replace this executable and restart). Off in
+    /// embedded mode: the PC client updates the worker it bundles.
+    pub self_update: bool,
+    /// The key update signatures are checked with (tests); None = the release key.
+    pub update_key: Option<[u8; 32]>,
+    /// Where the one-worker-per-PC lock lives (the config folder); None = no lock (tests).
+    pub lock_dir: Option<PathBuf>,
 }
 
 impl LinkOptions {
@@ -50,6 +57,9 @@ impl LinkOptions {
             shell: None,
             events: None,
             claude: None,
+            self_update: true,
+            update_key: None,
+            lock_dir: None,
         }
     }
 }
@@ -77,6 +87,10 @@ pub enum State {
     /// bye replaced: another link for this worker took over.
     Replaced,
     Stopped,
+    /// Updated; restarting with the new version.
+    Updating,
+    /// Another worker already runs on this PC (the lock is taken); not connected.
+    Conflict,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -129,6 +143,11 @@ impl Status {
             State::Unauthorized | State::Removed => "This PC was removed from the server".into(),
             State::Replaced => "Another program took over this worker".into(),
             State::Stopped => "Stopped".into(),
+            State::Updating => "Updated; restarting...".into(),
+            State::Conflict => match &self.error {
+                Some(e) => format!("Not connected: {e}"),
+                None => "Not connected: another Crundi worker runs on this PC".into(),
+            },
         }
     }
 }
@@ -144,10 +163,14 @@ pub enum Outcome {
     Removed(String),
     /// bye replaced.
     Replaced,
+    /// The executable was replaced by a signed update: restart it.
+    Updated(String),
 }
 
 enum SessionEnd {
     Quit,
+    /// A verified update replaced the executable.
+    Updated(String),
     Dropped(String),
     Bye(String),
 }
@@ -162,6 +185,12 @@ struct Link {
     jobs: Jobs,
     /// Phase 4 chats; they outlive a session too.
     chats: Chats,
+    /// An update the server offered, waiting for the PC to be idle.
+    offer: Option<crate::update::Offer>,
+    /// The verified file for `offer`, once downloaded.
+    ready: Option<(String, Vec<u8>)>,
+    /// A download is under way.
+    fetching: bool,
 }
 
 /// Run the link until quit, 401, or bye. Reconnects with backoff.
@@ -174,8 +203,8 @@ pub async fn run(
     crate::util::install_crypto();
     let _ = cfg.ensure_work_dir();
     let jobs = Jobs::new(cfg.work_dir.clone(), opts.events.clone());
-    let chats = Chats::new(cfg.work_dir.clone(), cfg.display_name(), opts.claude.clone(), opts.events.clone());
-    let mut link = Link { cfg, opts, status, pause_unsent: false, jobs, chats };
+    let chats = Chats::with_shell(cfg.work_dir.clone(), cfg.display_name(), opts.claude.clone(), opts.shell.clone(), opts.events.clone());
+    let mut link = Link { cfg, opts, status, pause_unsent: false, jobs, chats, offer: None, ready: None, fetching: false };
     if !link.cfg.joined() {
         link.set_state(State::NotJoined, None, None);
         return Outcome::NotJoined;
@@ -196,6 +225,10 @@ async fn run_loop(link: &mut Link, ctrl: &mut mpsc::UnboundedReceiver<Control>) 
                 (SessionEnd::Quit, _) => {
                     link.set_state(State::Stopped, None, None);
                     return Outcome::Quit;
+                }
+                (SessionEnd::Updated(v), _) => {
+                    link.set_state(State::Updating, None, None);
+                    return Outcome::Updated(v);
                 }
                 (SessionEnd::Bye(reason), _) if reason == "replaced" => {
                     link.set_state(State::Replaced, None, None);
@@ -373,6 +406,11 @@ impl Link {
         let mut info_tick = tokio::time::interval_at(Instant::now() + self.opts.info_every, self.opts.info_every);
         info_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut last_rx = Instant::now();
+        // Downloaded-and-verified updates (or why not) come back here.
+        self.fetching = false;
+        let (upd_tx, mut upd_rx) = mpsc::unbounded_channel::<Result<(String, Vec<u8>), String>>();
+        let mut idle_tick = tokio::time::interval(Duration::from_secs(5));
+        idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         let end = loop {
             let dead_at = last_rx + self.opts.dead_after;
@@ -405,6 +443,27 @@ impl Link {
                     let Some(s) = s else { continue };
                     if let Err(e) = ws.send(Message::Text(s.into())).await {
                         break SessionEnd::Dropped(e.to_string());
+                    }
+                }
+                r = upd_rx.recv() => {
+                    self.fetching = false;
+                    match r {
+                        Some(Ok(ready)) => self.ready = Some(ready),
+                        Some(Err(e)) => {
+                            // Refused (bad signature) or failed: logged, not retried this session.
+                            eprintln!("crundi-worker: update: {e}");
+                            let _ = out_tx.send(json!({"type": "log", "level": "error", "text": format!("update: {e}")}).to_string());
+                            self.offer = None;
+                        }
+                        None => {}
+                    }
+                    if let Some(end) = self.try_update(&upd_tx, &out_tx) {
+                        break end;
+                    }
+                }
+                _ = idle_tick.tick(), if self.offer.is_some() => {
+                    if let Some(end) = self.try_update(&upd_tx, &out_tx) {
+                        break end;
                     }
                 }
                 _ = info_tick.tick() => {
@@ -442,6 +501,64 @@ impl Link {
         self.jobs.disconnect();
         self.chats.disconnect();
         (end, welcomed)
+    }
+
+    /// Idle (no job, no chat running)?
+    fn idle(&self) -> bool {
+        self.jobs.running().is_none() && self.chats.running() == 0
+    }
+
+    /// Move an offered update along: when idle, download and verify it (in
+    /// the background); when it is verified and still idle, put it in place
+    /// and end the session so the worker restarts.
+    fn try_update(
+        &mut self,
+        tx: &mpsc::UnboundedSender<Result<(String, Vec<u8>), String>>,
+        out: &mpsc::UnboundedSender<String>,
+    ) -> Option<SessionEnd> {
+        let offer = self.offer.clone()?;
+        if !self.idle() {
+            return None;
+        }
+        match self.ready.take() {
+            Some((version, data)) if version == offer.version => {
+                let exe = match std::env::current_exe() {
+                    Ok(e) => e,
+                    Err(e) => {
+                        self.offer = None;
+                        let _ = out.send(json!({"type": "log", "level": "error", "text": format!("update: no executable path: {e}")}).to_string());
+                        return None;
+                    }
+                };
+                match crate::update::replace_exe(&exe, &data) {
+                    Ok(()) => {
+                        let _ = out.send(json!({"type": "log", "level": "info", "text": format!("updated to {version}; restarting")}).to_string());
+                        eprintln!("crundi-worker: updated to {version}; restarting");
+                        Some(SessionEnd::Updated(version))
+                    }
+                    Err(e) => {
+                        self.offer = None;
+                        let _ = out.send(json!({"type": "log", "level": "error", "text": format!("update: {e:#}")}).to_string());
+                        eprintln!("crundi-worker: update: {e:#}");
+                        None
+                    }
+                }
+            }
+            _ => {
+                if !self.fetching {
+                    self.fetching = true;
+                    let key = self.opts.update_key.unwrap_or_else(crate::update::release_key);
+                    let tx = tx.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let r = crate::update::fetch_verified(&offer.url, &offer.sig_url, &key)
+                            .map(|d| (offer.version.clone(), d))
+                            .map_err(|e| format!("{e:#}"));
+                        let _ = tx.send(r);
+                    });
+                }
+                None
+            }
+        }
     }
 
     fn send_info(&self, out: &mpsc::UnboundedSender<String>) {
@@ -520,6 +637,12 @@ impl Link {
                 }
                 if server_has("chats") {
                     self.chats.connect(job_tx.clone());
+                }
+                if self.opts.self_update {
+                    self.offer = crate::update::Offer::from_welcome(v, VERSION);
+                    if self.ready.as_ref().is_some_and(|(ver, _)| self.offer.as_ref().is_none_or(|o| &o.version != ver)) {
+                        self.ready = None;
+                    }
                 }
                 self.set_state(State::Online, None, None);
                 self.send_info(out);

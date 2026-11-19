@@ -85,6 +85,8 @@ data class Worker(
     /** tray, headless, electron or native. */
     val kind: String = "",
     val version: String = "",
+    /** How it updates: "self" (updates itself), "app" (with the PC app), or "" (not said; older servers). */
+    val updates: String = "",
     val online: Boolean = false,
     val connectedSince: JsonElement? = null,
     val lastSeenAt: JsonElement? = null,
@@ -199,6 +201,9 @@ fun parseWorkerLabels(text: String): Pair<List<String>?, String?> {
 }
 
 private val WORKER_LABEL = Regex("^[a-z0-9:._-]{1,40}$")
+
+/** How a worker updates, in words ("updates itself", "updates with the PC app"); "" when not said. */
+fun workerUpdatesWords(updates: String): String = when (updates) { "self" -> "updates itself"; "app" -> "updates with the PC app"; else -> "" }
 
 /** A PC a new chat may run on now (POST /api/workers chat-places): online, chats allowed, claude there. */
 @Serializable data class ChatPlace(val id: String = "", val name: String = "", val where: String = "") {

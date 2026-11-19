@@ -13,6 +13,20 @@ pub const EXIT_NOT_JOINED: i32 = 2;
 pub const EXIT_REMOVED: i32 = 3;
 /// Another link for this worker took over.
 pub const EXIT_REPLACED: i32 = 4;
+/// Another worker already runs on this PC (the lock is taken).
+pub const EXIT_CONFLICT: i32 = 5;
+
+/// Take the one-worker-per-PC lock (waiting a little after an update's restart).
+pub async fn take_lock(opts: &LinkOptions) -> Result<Option<crate::lock::WorkerLock>, String> {
+    let Some(dir) = opts.lock_dir.clone() else { return Ok(None) };
+    let kind = opts.kind.clone();
+    let wait = crate::lock::start_wait();
+    tokio::task::spawn_blocking(move || crate::lock::acquire_waiting(&dir, &kind, wait))
+        .await
+        .map_err(|e| e.to_string())?
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
 
 pub fn exit_code(o: &Outcome) -> i32 {
     match o {
@@ -20,6 +34,7 @@ pub fn exit_code(o: &Outcome) -> i32 {
         Outcome::NotJoined => EXIT_NOT_JOINED,
         Outcome::Unauthorized | Outcome::Removed(_) => EXIT_REMOVED,
         Outcome::Replaced => EXIT_REPLACED,
+        Outcome::Updated(_) => EXIT_OK,
     }
 }
 
@@ -47,6 +62,13 @@ pub async fn headless(cfg: Config, opts: LinkOptions) -> i32 {
         cfg.display_name(),
         cfg.work_dir.display()
     );
+    let _lock = match take_lock(&opts).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("crundi-worker: not starting: {e}");
+            return EXIT_CONFLICT;
+        }
+    };
     let mut opts = opts;
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
     opts.events = Some(ev_tx);
@@ -80,6 +102,10 @@ pub async fn headless(cfg: Config, opts: LinkOptions) -> i32 {
             eprintln!("crundi-worker: this PC was removed from the server; join again with a new code")
         }
         Outcome::Replaced => eprintln!("crundi-worker: another program took over this worker"),
+        Outcome::Updated(v) => {
+            eprintln!("crundi-worker: restarting as {v}");
+            crate::update::restart();
+        }
         _ => {}
     }
     exit_code(&outcome)
@@ -123,6 +149,74 @@ pub async fn embedded(cfg: Config, opts: LinkOptions) -> i32 {
             emit(v);
         }
     });
+    // One worker per PC: while another holds the lock, say so and wait for
+    // it (or for the client to tell us to quit).
+    let (quit_tx, mut quit_rx) = tokio::sync::watch::channel(false);
+    let (ctrl_fwd_tx, mut ctrl_fwd_rx) = tokio::sync::mpsc::unbounded_channel::<Control>();
+    {
+        let tx = ctrl_fwd_tx.clone();
+        tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(l)) => {
+                        let Ok(v) = serde_json::from_str::<serde_json::Value>(&l) else { continue };
+                        match v.get("type").and_then(|t| t.as_str()) {
+                            Some("pause") => {
+                                let p = v.get("paused").and_then(|p| p.as_bool()).unwrap_or(true);
+                                let _ = tx.send(Control::Pause(p));
+                            }
+                            Some("quit") => {
+                                let _ = quit_tx.send(true);
+                                let _ = tx.send(Control::Quit);
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {
+                        let _ = quit_tx.send(true);
+                        let _ = tx.send(Control::Quit);
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    let mut paused_while_waiting: Option<bool> = None;
+    let _lock = loop {
+        match take_lock(&opts).await {
+            Ok(l) => break l,
+            Err(e) => {
+                let mut s = Status::from_config(&cfg, State::Conflict);
+                s.error = Some(e.clone());
+                let mut v = status_event(&s);
+                v["state"] = json!("conflict");
+                v["detail"] = json!(e);
+                emit(v);
+                let wait = tokio::time::sleep(std::time::Duration::from_secs(10));
+                tokio::pin!(wait);
+                loop {
+                    tokio::select! {
+                        _ = &mut wait => break,
+                        _ = quit_rx.changed() => {
+                            emit(json!({"event": "log", "text": "worker stopped (another worker runs on this PC)", "exitCode": EXIT_CONFLICT}));
+                            return EXIT_CONFLICT;
+                        }
+                        c = ctrl_fwd_rx.recv() => {
+                            if let Some(Control::Pause(p)) = c {
+                                paused_while_waiting = Some(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    let mut cfg = cfg;
+    if let Some(p) = paused_while_waiting {
+        cfg.paused = p;
+    }
     let mut h = link::spawn(cfg, opts);
     let mut status = h.status.clone();
     {
@@ -136,29 +230,10 @@ pub async fn embedded(cfg: Config, opts: LinkOptions) -> i32 {
         }
     });
     let ctrl = h.ctrl.clone();
+    drop(ctrl_fwd_tx);
     tokio::spawn(async move {
-        let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
-        loop {
-            match lines.next_line().await {
-                Ok(Some(l)) => {
-                    let Ok(v) = serde_json::from_str::<serde_json::Value>(&l) else { continue };
-                    match v.get("type").and_then(|t| t.as_str()) {
-                        Some("pause") => {
-                            let p = v.get("paused").and_then(|p| p.as_bool()).unwrap_or(true);
-                            let _ = ctrl.send(Control::Pause(p));
-                        }
-                        Some("quit") => {
-                            let _ = ctrl.send(Control::Quit);
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {
-                    let _ = ctrl.send(Control::Quit);
-                    break;
-                }
-            }
+        while let Some(c) = ctrl_fwd_rx.recv().await {
+            let _ = ctrl.send(c);
         }
     });
     let outcome = (&mut h.task).await.unwrap_or(Outcome::Quit);
@@ -183,8 +258,18 @@ pub fn event_line(v: &serde_json::Value) -> String {
             Some(c) => format!("job {} ended{in_project} (exit {c})", g("job")),
             None => format!("job {} ended{in_project}", g("job")),
         },
-        ("chat", "started") => format!("chat {} started on this PC{in_project}", g("chat")),
-        ("chat", _) => format!("chat {} ended{in_project}", g("chat")),
+        ("chat", st) => {
+            let what = match g("mode").as_str() {
+                "terminal" => "Claude terminal",
+                "shell" => "shell",
+                _ => "chat",
+            };
+            if st == "started" {
+                format!("{what} {} started on this PC{in_project}", g("chat"))
+            } else {
+                format!("{what} {} ended{in_project}", g("chat"))
+            }
+        }
         _ => v.to_string(),
     }
 }

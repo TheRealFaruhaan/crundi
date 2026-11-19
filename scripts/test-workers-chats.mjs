@@ -431,6 +431,116 @@ function answerPull(w, chat, { patchText } = {}) {
   ui.close(r.id);
 }
 
+// ── A notice from the PC in a chat: a line, never an error ──
+{
+  const r = await ui.create('proj', { where: `worker:${k1.id}`, sessionMode: 'resume', resumeId: '99999999-0000-0000-0000-000000000000' });
+  ok(r.ok, 'a chat on the PC resuming a conversation the PC may not have', JSON.stringify(r));
+  const sp = await until(() => big.of('chat.spawn', r.id)[0]);
+  ok(sp && sp.resumeSessionId === '99999999-0000-0000-0000-000000000000', 'chat.spawn names the conversation to resume');
+  big.send({ type: 'chat.started', chat: r.id, pid: 7 });
+  big.send({ type: 'chat.notice', chat: r.id, text: 'This PC did not have that conversation; starting a new one.' });
+  const n = await until(() => (ui.history(r.id)?.messages || []).find(m => m.kind === 'notice' && /did not have that conversation/.test(m.text)));
+  ok(!!n && /Big PC/.test(n.text), 'chat.notice: shown in the chat as a notice line, with the PC\'s name', n && n.text);
+  const init = await until(() => { const t = stdinOf(big, r.id); return t.includes('"subtype":"initialize"') ? t : null; });
+  let o = 0;
+  o = out(big, r.id, o, { type: 'control_response', response: { subtype: 'success', request_id: JSON.parse(init.split('\n')[0]).request_id, response: { commands: [], models: [] } } });
+  o = out(big, r.id, o, { type: 'system', subtype: 'init', session_id: 'abcdefab-1111-2222-3333-444444444444', model: 'opus', tools: [] });
+  await until(() => ui.history(r.id).sessionId === 'abcdefab-1111-2222-3333-444444444444');
+  ok(ui.history(r.id).sessionId === 'abcdefab-1111-2222-3333-444444444444' && !ui.history(r.id).messages.some(m => m.kind === 'error'), 'starting fresh there is not an error: the new conversation\'s id is taken');
+  ok(svc.chats.view(r.id).notice && ui.list().find(x => x.id === r.id).status === 'running', 'the chat carries on (and its record keeps the notice)');
+  ui.close(r.id);
+  await until(() => big.of('chat.kill', r.id).length);
+}
+
+// ── Terminal mode on a PC: claude-terminals.js through the pty adapter ──
+{
+  const { createClaudeTerminals } = await import('../src/claude-terminals.js');
+  const terms = createClaudeTerminals({ apiUrl: base, apiKey: INTERNAL });
+  const refusedFirst = await terms.create('proj', { where: `worker:${k1.id}` });
+  ok(!refusedFirst.ok && /cannot run terminals on a PC/.test(refusedFirst.error), 'no launcher: a terminal on a PC is refused', refusedFirst.error);
+  terms.setRemote({ launch: (w, o) => svc.chats.launchPty(w, o), status: (w, id) => svc.chats.status(w, id) });
+  const states = []; terms.onRemoteState((id, st) => states.push(st));
+  const metas = []; terms.onMeta((id) => metas.push(id));
+  const bad = await terms.create('proj', { where: 'elsewhere' });
+  ok(!bad.ok && /Unknown place/.test(bad.error), 'an unknown place is refused');
+  const t = await terms.create('proj', { where: `worker:${k1.id}`, cols: 100, rows: 40, sessionMode: 'resume', resumeId: 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee', skipPermissions: true });
+  ok(t.ok, 'Claude in a terminal on the PC is created', JSON.stringify(t));
+  const T = t.id;
+  const sp = await until(() => big.of('chat.spawn', T)[0]);
+  ok(sp && sp.pty && sp.pty.cols === 100 && sp.pty.rows === 40 && !sp.command, 'chat.spawn with pty {cols, rows}: claude in a pseudo-terminal there', JSON.stringify(sp && sp.pty));
+  ok(sp && sp.args[0] === '--resume' && sp.args.includes('aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee') && sp.resumeSessionId === 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee' && sp.args.includes('--dangerously-skip-permissions') && !sp.args.includes('--output-format') && !sp.args.includes('claude'), 'its args are claude\'s own (interactive, resume named), no shell, no stream-json', JSON.stringify(sp && sp.args).slice(0, 300));
+  ok(sp && sp.source === 'git' && sp.git.commit === headSha, 'the same code preparation as a chat (git source, the server\'s commit)');
+  ok(sp && sp.env.CRUNDI_CHAT_ID === T && !sp.env.CRUNDI_API_KEY && !sp.env.CRUNDI_TERMINAL_ID && !sp.env.CRUNDI_API_URL, 'env: the terminal\'s id as its chat id, no API key, no hook id', JSON.stringify(sp && sp.env));
+  ok(!existsSync(join(proj, '.mcp.json')) && !existsSync(join(proj, '.claude', 'settings.local.json')), 'no .mcp.json or hooks config written into the server\'s checkout');
+  let l = terms.list().find(x => x.id === T);
+  ok(l && l.where === `worker:${k1.id}` && l.pc && l.pc.name === 'Big PC' && l.pc.online && l.status === 'running', 'the terminal list says where it runs', JSON.stringify(l));
+  ok(terms.meta(T).where === `worker:${k1.id}`, 'its meta keeps where (a parked pane comes back there)');
+  terms.write(T, 'early');
+  await sleep(80);
+  ok(big.of('chat.in', T).length === 0, 'keystrokes wait for chat.started');
+  big.send({ type: 'chat.started', chat: T, pid: 99 });
+  const typed = await until(() => { const x = stdinOf(big, T); return x.includes('early') ? x : null; });
+  ok(!!typed, 'then they reach the PC (chat.in)');
+  ok(await until(() => big.of('chat.resize', T).length === 0 ? true : null), 'no resize sent while the size is what it started with');
+  terms.resize(T, 132, 50);
+  const rz = await until(() => big.of('chat.resize', T)[0]);
+  ok(rz && rz.cols === 132 && rz.rows === 50, 'resize: chat.resize {cols, rows}', JSON.stringify(rz));
+  const seen = [];
+  terms.on(T, (d) => seen.push(d));
+  await sleep(700);   // past the echo window after the typing
+  // A multi-byte character split across two chat.out messages.
+  const bytes = Buffer.from('héllo \x1b[1mworld\x1b[0m\r\n', 'utf8');
+  let toff = 0;
+  for (const piece of [bytes.subarray(0, 2), bytes.subarray(2)]) { big.send({ type: 'chat.out', chat: T, stream: 'stdout', off: toff, b64: piece.toString('base64') }); toff += piece.length; }
+  const got = await until(() => { const x = seen.join(''); return x.includes('héllo') ? x : null; });
+  ok(!!got && !got.includes('�'), 'output: the terminal\'s bytes, a character split across messages kept whole', JSON.stringify(seen));
+  ok(terms.getScrollback(T).includes('héllo'), 'and kept in the scrollback');
+  ok(states.includes('working'), 'output flowing: working (its state comes from its output)', JSON.stringify(states));
+  big.send({ type: 'chat.notice', chat: T, text: 'This PC did not have that conversation; starting a new one.' });
+  await until(() => terms.list().find(x => x.id === T)?.notice);
+  l = terms.list().find(x => x.id === T);
+  ok(/did not have that conversation/.test(l.notice) && metas.includes(T) && /\[Crundi\] Big PC: This PC did not have/.test(seen.join('')), 'chat.notice: in the pane\'s bar (list notice) and as a line on its screen', JSON.stringify(l.notice));
+  // The PC goes away and comes back: output picks up from the byte it stopped at.
+  big.ws.close();
+  await until(() => !svc.isOnline(k1.id));
+  ok(terms.remoteChanged() >= 1 && terms.list().find(x => x.id === T).pc.online === false, 'the PC goes away: the pane shows it offline');
+  terms.write(T, 'while-away');
+  big = fakeWorker(k1.key, { chats: [{ chat: T, running: true, outBytes: toff + 5 }] });
+  await big.ready;
+  const at = await until(() => big.of('chat.attach', T)[0]);
+  ok(at && at.from === toff, 'back: chat.attach from the byte the server has', JSON.stringify(at));
+  const rz2 = await until(() => big.of('chat.resize', T)[0]);
+  ok(rz2 && rz2.cols === 132 && rz2.rows === 50, 'back: its size is sent again (a resize may have been missed)');
+  ok(!!(await until(() => stdinOf(big, T).includes('while-away'))), 'keystrokes typed while it was away are delivered');
+  big.send({ type: 'chat.out', chat: T, stream: 'stdout', off: toff, b64: Buffer.from('again\r\n').toString('base64') });
+  await until(() => seen.join('').includes('again'));
+  ok(seen.join('').split('héllo').length === 2, 'nothing doubled after the attach');
+  ok(terms.list().find(x => x.id === T).pc.online === true, 'and online again');
+  await sleep(4300);
+  ok(states[states.length - 1] === 'idle', 'quiet for a while: idle', JSON.stringify(states));
+  // Bring changes back works for a terminal as for a chat.
+  const pulling = svc.chats.pull(T);
+  const pr = await until(() => big.of('chat.pull', T)[0]);
+  big.send({ type: 'chat.patch', chat: T, req: pr.req, b64: '' });
+  const pres = await pulling;
+  ok(pres.ok && pres.branch === pullBranch('Big PC', T), 'Bring changes back: a terminal\'s work comes back like a chat\'s', JSON.stringify(pres));
+  big.send({ type: 'chat.exit', chat: T, code: 0 });
+  await until(() => terms.list().find(x => x.id === T)?.status === 'exited');
+  ok(terms.list().find(x => x.id === T).status === 'exited' && /Process exited with code 0/.test(seen.join('')) && states[states.length - 1] === 'idle', 'chat.exit: the terminal ends');
+  terms.close(T);
+  // Empty Shell on a PC: the PC's login shell, the same way.
+  const sh = await terms.create('proj', { where: `worker:${k1.id}`, shell: true, cols: 90, rows: 30 });
+  ok(sh.ok, 'an Empty Shell on the PC', JSON.stringify(sh));
+  const ssp = await until(() => big.of('chat.spawn', sh.id)[0]);
+  ok(ssp && ssp.command === 'shell' && ssp.args.length === 0 && ssp.pty && ssp.pty.cols === 90 && ssp.source === 'git', 'chat.spawn command "shell": a shell there, no claude args, the same folder preparation', JSON.stringify(ssp && { command: ssp.command, args: ssp.args, pty: ssp.pty }));
+  big.send({ type: 'chat.started', chat: sh.id, pid: 5 });
+  await sleep(50);
+  terms.close(sh.id);
+  ok(!!(await until(() => big.of('chat.kill', sh.id)[0])), 'closing the pane ends it on the PC (chat.kill)');
+  const ex = await terms.create('proj', { where: `worker:${k1.id}`, command: 'ls' });
+  ok(!ex.ok, 'a raw command is not a terminal on a PC (worker_run is)');
+}
+
 // ── Offline: refused, and a chat whose PC is away is closed here and stopped there later ──
 {
   big.ws.close();

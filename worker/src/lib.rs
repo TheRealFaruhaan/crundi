@@ -10,10 +10,12 @@ pub mod jobfiles;
 pub mod jobs;
 pub mod join;
 pub mod link;
+pub mod lock;
 pub mod mcp;
 pub mod service;
 pub mod setup;
 pub mod term;
+pub mod update;
 pub mod util;
 
 #[cfg(feature = "tray")]

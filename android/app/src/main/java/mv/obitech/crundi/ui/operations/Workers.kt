@@ -361,7 +361,7 @@ private fun WorkerCard(w: Worker, now: Long, onOpen: () -> Unit) {
             CrundiIcon("chevron-right", size = Dimens.IconSm, tint = CrundiColors.TextMuted)
         }
         val machine = workerMachine(w)
-        Text(listOfNotNull(w.version.ifEmpty { null }?.let { "v$it" }, machine.ifEmpty { null }).joinToString(" · ").ifEmpty { "No details yet" }, style = CrundiType.Meta)
+        Text(listOfNotNull(w.version.ifEmpty { null }?.let { "v$it" }, mv.obitech.crundi.api.model.workerUpdatesWords(w.updates).ifEmpty { null }, machine.ifEmpty { null }).joinToString(" · ").ifEmpty { "No details yet" }, style = CrundiType.Meta)
         if (i != null && i.gpus.isNotEmpty()) Text("GPU: " + i.gpus.joinToString(", ") { it.name.ifEmpty { it.vendor } }, style = CrundiType.Small, maxLines = 2, overflow = TextOverflow.Ellipsis)
         i?.disk?.takeIf { it.totalMb > 0 || it.freeMb > 0 }?.let { d -> Text("${mb(d.freeMb)} free" + if (d.totalMb > 0) " of ${mb(d.totalMb)}" else "", style = CrundiType.Small) }
         Text(
@@ -521,7 +521,7 @@ fun WorkerScreen(
     Column(Modifier.fillMaxSize()) {
         TopBar(
             w?.title ?: "Worker", onBack = events.onBack,
-            subtitle = w?.let { listOf(workerState(it).first, it.kind, it.version.ifEmpty { null }?.let { v -> "v$v" }).filter { s -> !s.isNullOrEmpty() }.joinToString(" · ") },
+            subtitle = w?.let { listOf(workerState(it).first, it.kind, it.version.ifEmpty { null }?.let { v -> "v$v" }, mv.obitech.crundi.api.model.workerUpdatesWords(it.updates)).filter { s -> !s.isNullOrEmpty() }.joinToString(" · ") },
             actions = {
                 if (w != null) {
                     CrundiIconButton("pencil", { rename = true }, contentDescription = "Rename", enabled = !busy)
@@ -558,6 +558,7 @@ fun WorkerScreen(
                 Column {
                     if (w.kind.isNotEmpty()) KeyValue("Kind", w.kind)
                     if (w.version.isNotEmpty()) KeyValue("Version", w.version)
+                    mv.obitech.crundi.api.model.workerUpdatesWords(w.updates).takeIf { it.isNotEmpty() }?.let { KeyValue("Updates", it) }
                     if (i != null) {
                         val os = listOf(i.os, i.osVersion, i.arch).filter { it.isNotEmpty() }.joinToString(" ")
                         if (os.isNotEmpty()) KeyValue("System", os)

@@ -190,6 +190,9 @@ export function normalizeFactory(input) {
       // The Manager's check-in ticker, in minutes (5 to 1440). 0: the Manager
       // chooses it at the start of each run (factory_tick).
       tickMinutes: (() => { const n = Math.round(Number(s.tickMinutes)); return Number.isFinite(n) && n > 0 ? Math.min(1440, Math.max(5, n)) : 0; })(),
+      // A worker PC holding steps offline this long (minutes): the person is
+      // told and may move those steps to this server. 0: wait however long.
+      workerOfflineMinutes: s.workerOfflineMinutes == null || s.workerOfflineMinutes === '' ? 30 : intIn(s.workerOfflineMinutes, 0, 1440, 30),
       // Secrets the run may use without the person typing a PIN at each use
       // (factory-secrets.js): ids only, never a value or a PIN. The PINs are
       // asked when a run starts and kept in memory for that run.

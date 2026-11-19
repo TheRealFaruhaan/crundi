@@ -782,6 +782,16 @@ private fun ColumnScope.SettingsPanel(st: FactoryEditorState) {
     ) {
         NumField("tick", s.tickMinutes, 0, 1440, placeholder = "The Manager chooses", blankZero = true) { v -> set("tick") { it.copy(tickMinutes = if (v > 0) v.coerceIn(5, 1440) else 0) } }
     }
+    if (st.has("workerOfflineMinutes")) {
+        val off = s.workerOfflineMinutes ?: 30
+        Field(
+            "PC offline, move to server after (minutes)",
+            if (off == 0) "0: wait for the PC however long it takes."
+            else "When a PC holding steps has been offline this long, you are told and can move its steps to this server.",
+        ) {
+            NumField("pcoff", off, 0, 1440) { v -> set("pcoff") { it.copy(workerOfflineMinutes = v.coerceIn(0, 1440)) } }
+        }
+    }
     if (st.has("limits")) {
         Subtitle("Usage")
         Hint("Your Claude usage is shared with your own chats. These keep a run inside what you choose; each can also be changed on a running run.")

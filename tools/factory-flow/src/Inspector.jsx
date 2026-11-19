@@ -294,6 +294,9 @@ export function FactorySettings({ f, mutate, skills, secretList = null }) {
       <Field label="Manager check-in every (minutes)" hint={s.tickMinutes ? `A wake-up every ${s.tickMinutes} minutes, only while the Manager is idle; skipped otherwise. Each one is a short Manager turn.` : 'Blank: the Manager chooses at the start of each run (5 minutes to 24 hours). A wake-up only while it is idle, so it can check on things.'}>
         <Num value={s.tickMinutes || ''} min={0} max={1440} placeholder="The Manager chooses" onChange={v => set(d => { d.settings.tickMinutes = v ? Math.min(1440, Math.max(5, v)) : 0; }, 'tick')} />
       </Field>
+      <Field label="PC offline: offer to move to this server after (minutes)" hint={(s.workerOfflineMinutes ?? 30) === 0 ? '0: steps on a PC that goes offline wait for it however long it takes.' : `When a PC holding steps has been offline ${s.workerOfflineMinutes ?? 30} minutes, you are told and can move its steps to this server (the run's Details). Only matters for people who run on a PC.`}>
+        <Num value={s.workerOfflineMinutes ?? 30} min={0} max={1440} onChange={v => set(d => { d.settings.workerOfflineMinutes = Math.min(1440, Math.max(0, v || 0)); }, 'pcAway')} />
+      </Field>
       <div className="ff-subtitle">Usage</div>
       <p className="ff-hint">Your Claude usage is shared with your own chats. These keep a run inside what you choose; each can also be changed on a running run.</p>
       <div className="ff-grid2">

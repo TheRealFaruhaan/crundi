@@ -26,6 +26,7 @@ import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import http from 'node:http';
 import https from 'node:https';
 import { git, httpsRemote } from './workers-jobs.js';
@@ -182,7 +183,7 @@ export function createChats({
    * it; else returns the process-like object at once, and the PC's
    * chat.started / chat.refused arrive on it later.
    */
-  async function launch(where, { args = [], env = {}, cwd = '', chatId, project = '', resumeSessionId = '', factory = null } = {}) {
+  async function launch(where, { args = [], env = {}, cwd = '', chatId, project = '', resumeSessionId = '', factory = null, pty = null, command = '' } = {}) {
     const workerId = String(where || '').replace(/^worker:/, '');
     const w = worker(workerId);
     const why = refusal(w);
@@ -194,20 +195,25 @@ export function createChats({
     const c = {
       chat: chatId, workerId: w.id, workerName: w.name, project: str(project, 120), cwd,
       source: src.source, git: src.git, base: prev && prev.base && prev.workerId === w.id ? prev.base : src.base,
-      repoRoot: src.repoRoot, relCwd: src.relCwd, factory: !!factory,
+      repoRoot: src.repoRoot, relCwd: src.relCwd, factory: !!factory, pty: !!pty, notice: '',
       state: 'starting', createdAt: (prev && prev.createdAt) || iso(), startedAt: null, endedAt: null,
       pid: null, outBytes: 0, exitCode: null, error: '', offline: false,
       branch: (prev && prev.branch) || '', worktree: (prev && prev.worktree) || '', lastPull: (prev && prev.lastPull) || null,
     };
     chats.set(chatId, c);
     const proc = makeProc(c);
-    live.set(chatId, { proc, queue: [], queued: 0, lostTimer: null, killAfter: '' });
+    const size = pty ? { cols: clampCols(pty.cols), rows: clampRows(pty.rows) } : null;
+    live.set(chatId, { proc, queue: [], queued: 0, lostTimer: null, killAfter: '', size, sentSize: size ? `${size.cols}x${size.rows}` : '' });
     const cleanEnv = {};
     for (const [k, v] of Object.entries(env || {})) if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && typeof v === 'string') cleanEnv[k] = v;
     const sent = sendTo(w.id, {
       type: 'chat.spawn', chat: chatId, project: c.project || 'project', args: args.map(String),
       source: c.source, ...(c.git ? { git: c.git } : {}), ...(c.relCwd ? { cwd: c.relCwd } : {}),
       env: cleanEnv, ...(resumeSessionId ? { resumeSessionId: String(resumeSessionId) } : {}),
+      // Terminal mode: claude in a pseudo-terminal there, its bytes as stdout.
+      ...(size ? { pty: size } : {}),
+      // A plain shell there instead of claude (an Empty Shell pane on a PC).
+      ...(size && command === 'shell' ? { command: 'shell' } : {}),
     });
     if (!sent) { live.delete(chatId); c.state = 'ended'; c.error = 'Could not reach the PC.'; save(); throw new Error(`Could not reach ${w.name}.`); }
     save(); changed();
@@ -263,6 +269,24 @@ export function createChats({
     // Away: it ends here now, and the PC is told when it is back.
     if (signal !== 'SIGINT') ended(c, null, null, 'Closed while the PC was away.');
     return true;
+  }
+
+  const clampCols = (n) => Math.max(10, Math.min(500, Number(n) | 0 || 120));
+  const clampRows = (n) => Math.max(4, Math.min(300, Number(n) | 0 || 30));
+  /** A terminal on a PC changed size: told now, or when the PC is there again. */
+  function resize(c, cols, rows) {
+    const l = live.get(c.chat);
+    if (!l || !l.size || c.state === 'ended') return false;
+    l.size = { cols: clampCols(cols), rows: clampRows(rows) };
+    sendSize(c);
+    return true;
+  }
+  function sendSize(c) {
+    const l = live.get(c.chat);
+    if (!l || !l.size || c.state !== 'running' || c.offline) return;
+    const k = `${l.size.cols}x${l.size.rows}`;
+    if (k === l.sentSize) return;
+    if (sendTo(c.workerId, { type: 'chat.resize', chat: c.chat, cols: l.size.cols, rows: l.size.rows })) l.sentSize = k;
   }
 
   /** The chat ended (its exit, a refusal, or the PC staying away). */
@@ -577,10 +601,21 @@ export function createChats({
         c.state = 'running'; c.startedAt = c.startedAt || iso();
         c.pid = typeof m.pid === 'number' ? m.pid : null;
         const l = live.get(c.chat); if (l) l.proc.pid = c.pid ?? undefined;
-        flush(c); save(); changed();
+        flush(c); sendSize(c); save(); changed();
         return;
       }
       case 'chat.refused': ended(c, -1, null, str(m.error, 600) || 'The PC refused the chat.'); return;
+      // Something the PC says about the chat that is not an error ("the PC did
+      // not have that conversation; starting fresh"): shown, nothing else.
+      case 'chat.notice': {
+        const text = str(m.text, 600).trim();
+        if (!text) return;
+        c.notice = text;
+        const l = live.get(c.chat);
+        if (l) { try { l.proc.emit('notice', text); } catch { /* a listener */ } }
+        save(); changed();
+        return;
+      }
       case 'chat.out': onOut(c, m); return;
       case 'chat.exit': ended(c, typeof m.code === 'number' ? m.code : null, str(m.signal, 20) || null, m.unknown ? `${c.workerName} no longer had this chat.` : m.error ? str(m.error, 600) : ''); return;
       case 'chat.need': case 'job.need': if (m.kind === 'bundle' && c.git) serve(c, 'bundle', m.have, m.type.startsWith('job') ? 'job' : 'chat'); return;
@@ -610,6 +645,8 @@ export function createChats({
       if (c.state === 'starting') { c.state = 'running'; c.startedAt = c.startedAt || iso(); }
       sendTo(w.id, { type: 'chat.attach', chat: id, from: c.outBytes });
       flush(c);
+      l.sentSize = '';   // the PC may have missed a resize while it was away
+      sendSize(c);
     }
     for (const c of chats.values()) {
       if (c.workerId !== w.id || !live.has(c.chat) || there.has(c.chat)) continue;
@@ -642,6 +679,7 @@ export function createChats({
       online: !!(w && w.online) && !(c && c.offline),
       branch: (c && c.branch) || '', worktree: (c && c.worktree) || '',
       lastPull: (c && c.lastPull) || null, source: (c && c.source) || '',
+      notice: (c && c.notice) || '',
     };
   }
 
@@ -650,11 +688,43 @@ export function createChats({
     if (!c) return null;
     return {
       chat: c.chat, worker: c.workerName, workerId: c.workerId, project: c.project, source: c.source, base: c.base,
-      state: c.state, running: live.has(c.chat), offline: !!c.offline, factory: !!c.factory,
+      state: c.state, running: live.has(c.chat), offline: !!c.offline, factory: !!c.factory, terminal: !!c.pty, notice: c.notice || '',
       branch: c.branch || '', worktree: c.worktree || '', lastPull: c.lastPull || null, error: c.error || '',
     };
   }
   const list = ({ workerId } = {}) => [...chats.values()].filter(c => !workerId || c.workerId === workerId).slice(-50).reverse().map(c => view(c.chat));
+
+  /**
+   * Claude in Terminal mode on a PC (claude-terminals.js): the same chat
+   * underneath (folder, MCP through the worker, attach after a drop, pull
+   * back), in a pseudo-terminal there. Returns what node-pty returns, as far
+   * as claude-terminals uses it: onData, onExit, write, resize, kill, pid.
+   */
+  async function launchPty(where, { args = [], env = {}, cwd = '', chatId, project = '', resumeSessionId = '', cols = 120, rows = 30, command = '' } = {}) {
+    const proc = await launch(where, { args, env, cwd, chatId, project, resumeSessionId, pty: { cols, rows }, command: command === 'shell' ? 'shell' : '' });
+    const c = chats.get(chatId);
+    const dataCbs = [], exitCbs = [], noticeCbs = [];
+    const dec = new StringDecoder('utf8');
+    const out = (text) => { if (text) for (const cb of dataCbs) { try { cb(text); } catch { /* a listener */ } } };
+    proc.stdout.on('data', (b) => out(dec.write(Buffer.isBuffer(b) ? b : Buffer.from(String(b)))));
+    // The server's own lines (why it ended, a dropped message) on the screen too.
+    proc.stderr.on('data', (b) => out(String(b).replace(/\r?\n/g, '\r\n')));
+    proc.on('notice', (text) => { for (const cb of noticeCbs) { try { cb(text); } catch { /* a listener */ } } });
+    proc.on('exit', (code, signal) => {
+      out(dec.end());
+      for (const cb of exitCbs) { try { cb({ exitCode: code ?? (signal ? 1 : 0), signal: signal || undefined }); } catch { /* a listener */ } }
+    });
+    return {
+      get pid() { return proc.pid; },
+      onData: (cb) => { if (typeof cb === 'function') dataCbs.push(cb); },
+      onExit: (cb) => { if (typeof cb === 'function') exitCbs.push(cb); },
+      onNotice: (cb) => { if (typeof cb === 'function') noticeCbs.push(cb); },
+      write: (data) => { if (data != null && data !== '') input(c, Buffer.from(String(data), 'utf8')); },
+      resize: (cols2, rows2) => { resize(c, cols2, rows2); },
+      kill: (sig) => { kill(c, sig || 'SIGTERM'); },
+      remote: true,
+    };
+  }
 
   function dispose() {
     for (const l of live.values()) if (l.lostTimer) clearTimeout(l.lostTimer);
@@ -666,7 +736,7 @@ export function createChats({
   }
 
   return {
-    launch, offer, refusal, onMessage, onHello, onDrop, onTurnEnd, isChatId,
+    launch, launchPty, offer, refusal, onMessage, onHello, onDrop, onTurnEnd, isChatId,
     pull, pullChat: (chatId, opts = {}) => pull(chatId, opts || {}),
     status, view, list, dispose, live: (id) => live.has(id),
   };

@@ -17,7 +17,7 @@ import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import { getProject } from './project-store.js';
 import { systemPromptArgs } from './system-prompt.js';
-import { attributionArgs } from './attribution.js';
+import { attributionArgs, attributionFor } from './attribution.js';
 import { config } from './config.js';
 import { claimSession, releaseSession, isSessionClaimed } from './claude-sessions.js';
 import { titlesFromChat } from './chat-autotitle.js';
@@ -329,6 +329,16 @@ export function skipPermissionsBlocker() {
     + 'Run Crundi as a normal user, or set IS_SANDBOX=1 if this really is a container.';
 }
 
+/** What Claude in a terminal on a PC is told about where it is. */
+function remoteTerminalLayer() {
+  return 'Where this terminal runs: on one of the owner\'s own PCs, a Crundi worker, not on the Crundi server. Your files, shell and commands are that PC\'s, in its copy of the project. '
+    + 'The Crundi tools still work (they are run by the server for you). What you change here is brought back to the server when the owner asks for it ("Bring changes back"), '
+    + 'into a branch of its own that the owner merges; the server\'s own checkout is never touched.';
+}
+
+/** How long a PC terminal's output may stop before it counts as idle (no hooks reach from a PC). */
+const REMOTE_QUIET_MS = 4000;
+
 /** 16-char hex id for a terminal (project-independent). */
 function genTermId() {
   let s = '';
@@ -346,11 +356,29 @@ function genTermId() {
  * @param {{ apiUrl?: string, apiKey?: string }} opts
  *   apiUrl/apiKey are passed to MCP stdio servers via .mcp.json env vars.
  */
-export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey } = {}) {
+export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey, launchRemote: initLaunchRemote = null, remoteStatus: initRemoteStatus = null } = {}) {
   // id → { id, alias, title, order, proc, scrollback, emitter, cols, rows }
   const terminals = new Map();
   let apiUrl = initApiUrl;
   let apiKey = initApiKey;
+  // Claude in a terminal on a worker PC (where: 'worker:<id>', the same seam
+  // as claude-ui's chats): launchRemote(where, opts) starts it there and
+  // returns a node-pty-like object (onData, onExit, write, resize, kill, pid;
+  // src/workers-chats.js launchPty). remoteStatus(where, id) is what the pane
+  // shows: { name, online, branch, worktree, notice }.
+  let launchRemote = typeof initLaunchRemote === 'function' ? initLaunchRemote : null;
+  let remoteStatus = typeof initRemoteStatus === 'function' ? initRemoteStatus : null;
+  function pcOf(t) {
+    if (!t.where) return null;
+    let st = null;
+    try { st = remoteStatus ? remoteStatus(t.where, t.id) : null; } catch { st = null; }
+    return { where: t.where, name: (st && st.name) || t.where.slice(7), online: !!(st && st.online), branch: (st && st.branch) || '', worktree: (st && st.worktree) || '' };
+  }
+  // A PC terminal's state, from its output alone (the hooks cannot reach this
+  // server from a PC): output flowing is 'working', quiet a while is 'idle'.
+  let remoteStateCb = null;
+  // Told when a PC terminal's pane changes (a notice, its PC coming or going).
+  let metaCb = null;
 
   /**
    * List all terminals, sorted by project then display order.
@@ -366,6 +394,8 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         longTitle: t.longTitle || '',
         order: t.order,
         status: t.proc ? 'running' : 'exited',
+        // On a PC: where, and what the pane's bar shows (as a chat's pc).
+        ...(t.where ? { where: t.where, pc: pcOf(t), notice: t.notice || '' } : {}),
       });
     }
     result.sort((a, b) => a.project === b.project ? (a.order - b.order) : a.project.localeCompare(b.project));
@@ -395,9 +425,17 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     userLayers = true,                 // false for unattended runs: Crundi's layer only
     id: wantId = '',                   // a parked pane coming back keeps its id...
     order: wantOrder = null,           // ...and its order, so its layout slot holds
+    // 'worker:<id>' runs Claude on that PC (owner only; the route checks);
+    // '' (or 'server') here.
+    where = '',
   } = {}) {
-    if (!pty) return { ok: false, error: 'node-pty is not available. Install it with: npm install node-pty' };
-    if (skipPermissions && !shellOnly) {
+    const whereStr = String(where || '').trim();
+    const remote = /^worker:[A-Za-z0-9_-]{1,40}$/.test(whereStr) ? whereStr : '';
+    if (whereStr && whereStr !== 'server' && !remote) return { ok: false, error: `Unknown place to run a terminal: "${whereStr}"` };
+    if (remote && rawCommand) return { ok: false, error: 'A command runs on a PC with worker_run, not in a terminal.' };
+    if (remote && !launchRemote) return { ok: false, error: 'This server cannot run terminals on a PC.' };
+    if (!pty && !remote) return { ok: false, error: 'node-pty is not available. Install it with: npm install node-pty' };
+    if (skipPermissions && !shellOnly && !remote) {
       const blocked = skipPermissionsBlocker();
       if (blocked) return { ok: false, error: blocked };
     }
@@ -409,7 +447,9 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
 
     // Write .mcp.json so Claude Code picks up the Crundi MCP server, and the
     // lifecycle hooks so the server can track this terminal's agent state.
-    if (apiUrl && apiKey) {
+    // Not for a PC: its tools come through the worker (the worker program is
+    // its MCP server), and the hooks cannot reach this server from there.
+    if (apiUrl && apiKey && !remote) {
       try { writeMcpConfig(project.path, apiUrl, apiKey, key); } catch { /* non-fatal */ }
       try { writeHooksConfig(project.path); } catch { /* non-fatal */ }
     }
@@ -430,7 +470,14 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     // Which conversation this terminal is about to attach to, so it can claim
     // it — and so it can fork rather than fight if someone already has it.
     let attachedTo = '';
-    if (sessionMode === 'resume' && resumeId) { flagList.push('--resume', resumeId); attachedTo = String(resumeId); }
+    // On a PC the transcripts are the PC's: resume a named conversation (the
+    // PC starts fresh, and says so, when it does not have it), --continue its
+    // newest when asked; the interactive default is a new one.
+    if (remote) {
+      if (sessionMode === 'resume' && resumeId) flagList.push('--resume', String(resumeId));
+      else if (sessionMode === 'continue') flagList.push('--continue');
+    }
+    else if (sessionMode === 'resume' && resumeId) { flagList.push('--resume', resumeId); attachedTo = String(resumeId); }
     else if (sessionMode === 'continue') { flagList.push('--continue'); attachedTo = newestTranscriptId(project.path); }
     else if (sessionMode === 'new') { /* explicit fresh session — no --continue */ }
     // Interactive default: resume a prior conversation only when one exists AND
@@ -448,9 +495,11 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     // What this Claude is told about the machine it woke up on. See
     // system-prompt.js. This is the one flag here whose value contains spaces,
     // which is why the bash path below has to quote at all.
-    flagList.push(...systemPromptArgs({ project: key, userLayers }));
+    flagList.push(...systemPromptArgs({ project: key, userLayers, ...(remote ? { extra: remoteTerminalLayer() } : {}) }));
     // Commits and PRs say they were made with Crundi (see attribution.js).
-    flagList.push(...attributionArgs(project.path, config.dataDir));
+    // On a PC the settings go inline: the file is on this server.
+    if (remote) { const at = attributionFor(project.path); if (at) flagList.push('--settings', JSON.stringify({ attribution: at })); }
+    else flagList.push(...attributionArgs(project.path, config.dataDir));
     const cleanPrompt = prompt ? String(prompt).replace(/[\r\n]+/g, ' ').trim() : '';
 
     const shell = isWin ? 'cmd.exe' : '/bin/bash';
@@ -495,12 +544,27 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
       },
     };
 
+    // On a PC: claude itself (no shell between), its argv as is; its
+    // environment has the terminal's id as its chat id (the worker's tool
+    // bridge says which one a call is from) and never this server's key.
+    // Empty Shell on a PC: the PC's own login shell in the project's folder
+    // there (chat.spawn command "shell"), prepared, resumable and pulled back
+    // the same way.
+    const spawnRemote = (flags) => launchRemote(remote, {
+      ...(shellOnly ? { command: 'shell', args: [] } : { args: [...flags, ...(cleanPrompt ? [cleanPrompt] : [])] }),
+      cwd: project.path, chatId: id, project: key,
+      resumeSessionId: !shellOnly && flags.includes('--resume') ? String(flags[flags.indexOf('--resume') + 1] || '') : '',
+      cols, rows,
+      env: { FORCE_COLOR: '1', CRUNDI_TERMINAL: '1', CRUNDI_CHAT_ID: id, CRUNDI_PROJECT: key },
+    });
+
     let proc;
     try {
-      proc = pty.spawn(shell, shellArgs, spawnOpts);
+      proc = remote ? await spawnRemote(flagList) : pty.spawn(shell, shellArgs, spawnOpts);
     } catch (err) {
-      return { ok: false, error: `Failed to spawn ${shellOnly ? 'shell' : 'terminal'}: ${err.message}` };
+      return { ok: false, error: remote ? (err && err.message ? err.message : String(err)) : `Failed to spawn ${shellOnly ? 'shell' : 'terminal'}: ${err.message}` };
     }
+    if (!proc) return { ok: false, error: 'The PC could not start the terminal.' };
 
     const emitter = new EventEmitter();
     emitter.setMaxListeners(50);
@@ -519,8 +583,11 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
       // How it was launched, so a parked pane can be started the same way.
       // Scheduler runs (a command or a one-shot prompt) are not panes to restore.
       opts: { shellOnly: !!shellOnly, skipPermissions: !!skipPermissions, model: model || '', effort: effort || '',
-        restorable: !rawCommand && !cleanPrompt },
+        restorable: !rawCommand && !cleanPrompt, ...(remote ? { where: remote } : {}) },
       createdAt: Date.now(),
+      where: remote,       // 'worker:<id>' when Claude runs on a PC
+      notice: '',          // the last thing its PC said about it (chat.notice)
+      quietTimer: null, lastInput: 0, remoteState: '',
     };
     terminals.set(id, entry);
 
@@ -548,9 +615,33 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
       }
     };
 
+    // A PC terminal: output after a pause in typing is Claude at work; the
+    // screen going quiet is a turn over. (Keystrokes echo, so output within a
+    // moment of input does not count.)
+    const remoteState = (state) => {
+      if (!remote || entry.remoteState === state) return;
+      entry.remoteState = state;
+      if (remoteStateCb) { try { remoteStateCb(id, state); } catch { /* the listener's problem */ } }
+    };
+    const remoteActivity = () => {
+      if (!remote || Date.now() - entry.lastInput < 600) return;
+      remoteState('working');
+      clearTimeout(entry.quietTimer);
+      entry.quietTimer = setTimeout(() => remoteState('idle'), REMOTE_QUIET_MS);
+      entry.quietTimer.unref?.();
+    };
+
     const wire = (p) => {
+      if (remote && typeof p.onNotice === 'function') {
+        p.onNotice((text) => {
+          entry.notice = String(text || '').slice(0, 600);
+          emitter.emit('data', `\r\n\x1b[2m[Crundi] ${pcOf(entry)?.name || 'The PC'}: ${entry.notice}\x1b[0m\r\n`);
+          if (metaCb) { try { metaCb(id); } catch { /* the listener's problem */ } }
+        });
+      }
       p.onData((data) => {
         takeTitle(data);
+        remoteActivity();
         // Append to scrollback (trim if too long)
         entry.scrollback += data;
         if (entry.scrollback.length > MAX_SCROLLBACK) {
@@ -570,6 +661,17 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
           const fresh = flagList.filter(f => f !== '--continue' && f !== '--fork-session');
           console.log(`[claude-terminals] "${key}" (${id}) had nothing to continue - starting a fresh session`);
           let next;
+          if (remote) {
+            entry.proc = null;
+            spawnRemote(fresh).then((n) => {
+              if (!terminals.has(id)) { try { n.kill(); } catch { /* gone */ } return; }
+              entry.scrollback = '';
+              entry.proc = n;
+              emitter.emit('data', `\x1b[2J\x1b[3J\x1b[H`);
+              wire(n);
+            }, (err) => { emitter.emit('data', `\r\n[Could not start a fresh session: ${err.message}]\r\n`); });
+            return;
+          }
           try {
             next = pty.spawn(shell, buildShellArgs(fresh), spawnOpts);
           } catch (err) {
@@ -587,6 +689,8 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
         }
         console.log(`[claude-terminals] "${key}" (${id}) exited (code ${exitCode})`);
         entry.proc = null;
+        clearTimeout(entry.quietTimer);
+        remoteState('idle');
         releaseSession('term:' + id);
         emitter.emit('data', `\r\n[Process exited with code ${exitCode}]\r\n`);
       });
@@ -597,7 +701,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     // nothing — which is correct: it is not attached to the original either.
     if (!forking && attachedTo) { entry.sessionId = attachedTo; claimSession('term:' + id, attachedTo); }
 
-    console.log(`[claude-terminals] Spawned claude "${entry.title}" for "${key}" (${id}) in ${project.path} (${cols}x${rows})`);
+    console.log(`[claude-terminals] Spawned claude "${entry.title}" for "${key}" (${id}) in ${project.path} (${cols}x${rows})${remote ? ` on ${remote}` : ''}`);
     return { ok: true, id, project: key, title: entry.title, order: entry.order, forked: forking };
   }
 
@@ -612,6 +716,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
       try { entry.proc.kill(); } catch { /* ignore */ }
     }
     entry.emitter.removeAllListeners();
+    clearTimeout(entry.quietTimer);
     releaseSession('term:' + id);
     terminals.delete(id);
     console.log(`[claude-terminals] Closed "${entry.alias}" (${id})`);
@@ -634,6 +739,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
   function write(id, data) {
     const entry = terminals.get(id);
     if (!entry?.proc) return;
+    entry.lastInput = Date.now();
     entry.proc.write(data);
   }
 
@@ -743,7 +849,7 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
     if (!e) return null;
     return {
       id: e.id, alias: e.alias, title: e.title, order: e.order,
-      sessionId: e.sessionId || '', running: !!e.proc, createdAt: e.createdAt || 0,
+      sessionId: e.sessionId || '', running: !!e.proc, createdAt: e.createdAt || 0, where: e.where || '',
       ...(e.opts || { shellOnly: false, skipPermissions: false, model: '', effort: '', restorable: false }),
     };
   }
@@ -752,9 +858,26 @@ export function createClaudeTerminals({ apiUrl: initApiUrl, apiKey: initApiKey }
   let autoTitleCb = null;
   function onAutoTitle(cb) { autoTitleCb = cb; }
 
+  /** Tell the open PC terminals that their PC came or went: how many panes changed. */
+  function remoteChanged(where) {
+    let n = 0;
+    for (const t of terminals.values()) {
+      if (!t.where || (where && t.where !== where)) continue;
+      const k = JSON.stringify(pcOf(t));
+      if (k !== t.lastPc) { t.lastPc = k; n++; }
+    }
+    return n;
+  }
+
   const self = {
     list, create, close, closeProject, write, resize, rename, setOrder, getScrollback, on, off, closeAll, info,
-    setSessionId, meta, onAutoTitle,
+    setSessionId, meta, onAutoTitle, remoteChanged,
+    /** Terminals on a worker PC: the launcher and the status the pane shows (src/workers-chats.js). */
+    setRemote({ launch, status } = {}) { if (typeof launch === 'function') launchRemote = launch; if (typeof status === 'function') remoteStatus = status; },
+    /** A PC terminal's state from its output: cb(id, 'working'|'idle'). */
+    onRemoteState(cb) { remoteStateCb = typeof cb === 'function' ? cb : null; },
+    /** A PC terminal's pane changed (a notice from its PC): cb(id). */
+    onMeta(cb) { metaCb = typeof cb === 'function' ? cb : null; },
     set apiUrl(v) { apiUrl = v; },
     get apiUrl() { return apiUrl; },
     set apiKey(v) { apiKey = v; },

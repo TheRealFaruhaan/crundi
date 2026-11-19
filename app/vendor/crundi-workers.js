@@ -160,12 +160,14 @@
       if (w.busy) return '<span class="wk-chip ok">running a job</span>';
       return '';
     }
+    // How it is kept up to date: by itself (tray, headless), or with the PC app.
+    function updWord(w) { return w.updates === 'self' ? 'updates itself' : w.updates === 'app' ? 'updates with the PC app' : ''; }
     function dotOf(w) { return w.revoked ? 'bad' : !w.online ? '' : w.paused ? 'paused' : 'up'; }
     function row(w) {
       var labels = (w.labels || []).slice(0, 14).map(function (l) { return '<span class="wk-chip' + ((w.customLabels || []).indexOf(l) >= 0 ? ' own' : '') + '">' + esc(l) + '</span>'; }).join('');
       return '<div class="wk-row" data-a="open" data-id="' + esc(w.id) + '"><span class="wk-dot ' + dotOf(w) + '"></span><div class="main">'
         + '<div class="nm">' + esc(w.name) + ' ' + stateChip(w) + '<span class="wk-chip">' + esc(KIND[w.kind] || w.kind || '') + '</span></div>'
-        + '<div class="wk-meta">' + (w.online ? 'Online' : 'Offline, last seen ' + esc(ago(w.lastSeenAt))) + (summary(w) ? ' · ' + esc(summary(w)) : '') + '</div>'
+        + '<div class="wk-meta">' + (w.online ? 'Online' : 'Offline, last seen ' + esc(ago(w.lastSeenAt))) + (w.version ? ' · v' + esc(w.version) + (updWord(w) ? ', ' + updWord(w) : '') : '') + (summary(w) ? ' · ' + esc(summary(w)) : '') + '</div>'
         + (labels ? '<div class="wk-chips">' + labels + '</div>' : '') + '</div></div>';
     }
 
@@ -190,6 +192,7 @@
       nav.innerHTML = '<button class="wk-btn" data-a="back">' + icon('chevron-left') + 'Workers</button><span class="wk-dot ' + dotOf(w) + '" style="margin-top:0"></span><span class="t">' + esc(w.name) + '</span>' + stateChip(w) + '<span class="s">' + (w.online ? 'online since ' + esc(ago(w.connectedSince)) : 'offline, last seen ' + esc(ago(w.lastSeenAt))) + '</span>';
       var stats = [
         ['Runs as', (KIND[w.kind] || w.kind || '') + (w.version ? ' ' + w.version : '')],
+        ['Updates', updWord(w) ? updWord(w).charAt(0).toUpperCase() + updWord(w).slice(1) : ''],
         ['System', i.os ? (OS[i.os] || i.os) + ' ' + (i.osVersion || '') + ' ' + (i.arch || '') : ''],
         ['CPU', i.cpu ? (i.cpu.model || '') + (i.cpu.threads ? ' (' + i.cpu.threads + ' threads)' : '') : ''],
         ['Memory', i.ramMb ? gb(i.ramMb) + (i.ramFreeMb != null ? ', ' + gb(i.ramFreeMb) + ' free' : '') : ''],

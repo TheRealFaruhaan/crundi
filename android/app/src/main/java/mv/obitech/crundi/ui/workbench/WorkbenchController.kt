@@ -265,11 +265,12 @@ class WorkbenchController(
             try {
                 val created = when (mode) {
                     LaunchMode.Chat, LaunchMode.ChatSkip -> a.chats.create(chatLaunch(p, mode, sessionMode, resumeId).copy(where = whereFor(pendingKey)))
-                    LaunchMode.Shell -> a.terminals.create(p, shell = true)
+                    LaunchMode.Shell -> a.terminals.create(p, shell = true, where = whereFor(pendingKey))
                     // A shell runs no Claude, so only Claude terminals carry a conversation.
                     LaunchMode.Terminal, LaunchMode.TerminalSkip -> a.terminals.create(
                         p, skipPermissions = (mode == LaunchMode.TerminalSkip).takeIf { it },
                         sessionMode = sessionMode, resumeId = if (sessionMode != null) resumeId.orEmpty() else null,
+                        where = whereFor(pendingKey),
                     )
                 }
                 val newKey = "t:" + created.id

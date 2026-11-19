@@ -100,6 +100,25 @@ let w1 = fakeWorker(j1.key);
 await w1.ready;
 const welcome = await until(() => w1.of('welcome')[0]);
 ok(welcome && welcome.id === j1.id && welcome.name === 'Desk PC' && welcome.caps.includes('terminal') && welcome.settings.allowCommands === true && welcome.server.version === '9.9.9', 'hello -> welcome with its id, name, the server\'s caps and settings', JSON.stringify(welcome));
+// Updates: a worker that updates itself on another version is told where this server's is.
+{
+  const U = 'https://github.com/TheRealFaruhaan/crundi/releases/download/v9.9.9/crundi-worker-9.9.9-';
+  ok(welcome.update && welcome.update.version === '9.9.9' && welcome.update.url === U + 'linux-x64-headless' && welcome.update.sigUrl === U + 'linux-x64-headless.sig', 'welcome: a headless worker on an older version gets update {version, url, sigUrl}', JSON.stringify(welcome.update));
+  const { updateFor, updatesOf } = await import('../src/workers.js');
+  const env = {};
+  const lin = { os: 'linux', arch: 'x86_64' };
+  ok(updateFor({ version: '0.1.0', kind: 'electron', info: lin }, '9.9.9', env) === null && updateFor({ version: '0.1.0', kind: 'native', info: lin }, '9.9.9', env) === null, 'not for the PC app\'s own worker (electron, native): it updates with the app');
+  ok(updateFor({ version: '9.9.9', kind: 'headless', info: lin }, '9.9.9', env) === null, 'not when the versions match');
+  ok(updateFor({ version: '0.1.0', kind: 'tray', info: lin }, '9.9.9', env).url === U + 'linux-x64', 'a tray worker on Linux: linux-x64');
+  ok(updateFor({ version: '0.1.0', kind: 'tray', info: { os: 'windows', arch: 'x86_64' } }, '9.9.9', env).url === U + 'windows-x64.exe', 'Windows: windows-x64.exe');
+  ok(updateFor({ version: '0.1.0', kind: 'tray', info: { os: 'macos', arch: 'aarch64' } }, '9.9.9', env).url === U + 'macos-arm64', 'a Mac: macos-arm64');
+  ok(updateFor({ version: '0.1.0', kind: 'tray', info: { os: 'macos', arch: 'x86_64' } }, '9.9.9', env) === null, 'no build for that PC: nothing');
+  ok(updateFor({ version: '1.0.0', kind: 'headless', info: lin }, '1.21.8-dev.5', env).url.endsWith('/v1.21.8-dev.5/crundi-worker-1.21.8-dev.5-linux-x64-headless'), 'a dev release: its prerelease');
+  ok(updateFor({ version: '1.0.0', kind: 'headless', info: lin }, '1.21.8-local', env) === null && updateFor({ version: '1.0.0', kind: 'headless', info: lin }, '0', env) === null, 'a server built from source (no such release): nothing');
+  ok(updateFor({ version: '1.0.0', kind: 'headless', info: lin }, '9.9.9', { CRUNDI_NO_WORKER_UPDATE: '1' }) === null, 'CRUNDI_NO_WORKER_UPDATE: nothing');
+  ok(updatesOf('headless') === 'self' && updatesOf('tray') === 'self' && updatesOf('electron') === 'app' && updatesOf('native') === 'app', 'updates: itself, or with the PC app');
+  ok(svc.list().workers.find(x => x.id === j1.id).updates === 'self', 'the Workers list says how each one updates');
+}
 let L = await until(async () => { const l = await getList(); const w = l.workers[0]; return w && w.online ? w : null; });
 ok(L && L.online && L.kind === 'headless' && L.info.cpu.threads === 16 && L.labels.includes('gpu:nvidia') && L.labels.includes('tool:ffmpeg') && L.labels.includes('ram:32g'), 'online, with its info and labels', JSON.stringify(L));
 w1.send({ type: 'info', info: { os: 'linux', tools: { git: '2.43.0' }, ramMb: 32768 } });

@@ -89,8 +89,9 @@ Refused while paused, when chats are not allowed, or when claude is missing
   `<work>/<project>@<chat>` on branch `pc/<chat>`, made once from the
   chat's commit and kept, so a resumed chat finds its work as it left it
   (and a job's checkout never touches it).
-- `copy`: `<work>/<project>@copy`, synced once when the chat starts (a
-  manifest of it is kept as the chat's baseline).
+- `copy`: its own `<work>/<project>@copy-<chat>` (seeded from the jobs'
+  `<project>@copy` when there is one, so little comes over), synced once
+  when the chat starts (a manifest of it is kept as the chat's baseline).
 - `none`: `<work>/<project>` or the work folder.
 
 claude runs with its three pipes (not at low priority) and
@@ -101,6 +102,17 @@ a token); tool calls go to the server over the link and wait up to 10
 minutes, across reconnects. stdout is spooled to
 `<work>/.crundi-chats/<chat>.out`, so a chat keeps running when the link
 drops and its output is resent from where the server left off.
+
+Terminal mode: `chat.spawn {pty: {cols, rows}}` runs claude in a
+pseudo-terminal instead (same folder, MCP config, env, spool, attach, kill,
+pull); `chat.in` is keystrokes, `chat.resize` resizes it, an interrupt is
+Ctrl-C. `command: "shell"` runs the login shell there instead of claude (no
+MCP config).
+
+Resuming (`resumeSessionId`) a conversation with no transcript on this PC
+(`~/.claude/projects/<folder with every non-alphanumeric char as '-'>/<id>.jsonl`,
+or under `CLAUDE_CONFIG_DIR`) drops `--resume`/`--continue` and starts fresh;
+`chat.notice {chat, text}` tells the server.
 
 `chat.pull` sends the chat's work back: git, a bundle of `pc/<chat>` since
 the base commit plus `git diff --binary HEAD` (new files included; the
@@ -137,13 +149,35 @@ crundi-worker uninstall-service
 crundi-worker autostart on|off         Windows Run key, macOS LaunchAgent, Linux XDG autostart
 crundi-worker mcp --chat C --port P --token T
                                        a chat's MCP server on stdio (claude starts it)
+crundi-worker update <url> <sig-url>   download, check the signature, install over this exe
 --config <path>                        use another config file
 --kind <tray|headless|electron|native> override the kind reported to the server
 ```
 
 Exit codes: 0 quit, 2 not joined, 3 the server refused the key (401) or
 revoked/removed this PC (the key is forgotten; join again), 4 another link
-for this worker took over (`bye replaced`), 64 bad arguments.
+for this worker took over (`bye replaced`), 5 another worker already runs on
+this PC, 64 bad arguments.
+
+### One worker per PC
+
+A lock (`worker.lock` in the config folder, held while running) keeps the
+tray/headless worker and the PC client's embedded one from both connecting.
+The second one does not start its link: headless exits 5, the tray shows
+"Not connected: ..." and retries every 15 s, embedded sends
+`{"event":"status","state":"conflict","detail":"..."}` and retries every 10 s.
+
+### Self-update
+
+The version (`hello.version`) is `CRUNDI_WORKER_VERSION` at build time (CI
+sets the Crundi release, e.g. `1.21.8-dev.6`), else the crate version.
+`welcome.update {version, url, sigUrl}` with another version: when no job or
+chat is running, the worker downloads both (https, at most 100 MB), checks the
+ed25519 signature (64 raw bytes or base64) over the whole file with the
+built-in release key, replaces its executable (Unix: rename over it; Windows:
+the running one becomes `.old`, deleted at the next start) and restarts with
+the same arguments. A bad signature is refused and logged. Not in embedded
+mode: the PC client updates the worker it bundles.
 
 ### Embedded mode (for the PC client)
 
@@ -156,6 +190,7 @@ stdout gets one JSON object per line:
 {"event":"job","state":"ended","job":"j...","command":"cargo test","project":"app","exitCode":0}
 {"event":"chat","state":"started","chat":"...","project":"app"}
 {"event":"chat","state":"ended","chat":"...","project":"app"}
+{"event":"chat","state":"started","chat":"...","project":"app","mode":"terminal"}   (or "shell")
 {"event":"exit","code":0,"outcome":"Quit"}
 ```
 
@@ -164,7 +199,8 @@ as desktop notifications (Windows and macOS through notify-rust; Linux runs
 `notify-send` when it is there).
 
 `state` is one of `notJoined`, `connecting`, `online`, `offline` (with
-`error` and `retryInSec`), `unauthorized`, `removed`, `replaced`, `stopped`.
+`error` and `retryInSec`), `unauthorized`, `removed`, `replaced`, `stopped`,
+`conflict` (another worker runs on this PC; `detail` says which).
 stdin takes `{"type":"pause","paused":true}` and `{"type":"quit"}` lines;
 stdin closing means exit.
 

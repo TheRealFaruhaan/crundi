@@ -46,6 +46,34 @@ const sameHash = (a, b) => {
 const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : '');
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+export const RELEASES_URL = 'https://github.com/TheRealFaruhaan/crundi/releases/download';
+
+/**
+ * What a worker should update to, or null: only a worker that updates itself
+ * (kind tray or headless; electron and native update with their app), on a
+ * version other than this server's, when this server is a published release
+ * (X.Y.Z or X.Y.Z-dev.N; a build from source has no such release) and
+ * CRUNDI_NO_WORKER_UPDATE is not set. { version, url, sigUrl }.
+ */
+export function updateFor({ version = '', kind = '', info = null } = {}, serverVersion = '', env = process.env) {
+  const v = String(serverVersion || '');
+  if (!/^\d+\.\d+\.\d+(-dev\.\d+)?$/.test(v) || (env && env.CRUNDI_NO_WORKER_UPDATE)) return null;
+  if (kind !== 'tray' && kind !== 'headless') return null;
+  if (!version || String(version) === v) return null;
+  const os = info && info.os, arch = String((info && info.arch) || '').toLowerCase();
+  const x64 = /^(x86_64|x64|amd64)$/.test(arch), arm = /^(aarch64|arm64)$/.test(arch);
+  let label = '';
+  if (os === 'windows' && x64) label = 'windows-x64';
+  else if (os === 'linux' && x64) label = kind === 'headless' ? 'linux-x64-headless' : 'linux-x64';
+  else if (os === 'macos' && arm) label = 'macos-arm64';
+  if (!label) return null;   // no build for that PC
+  const url = `${RELEASES_URL}/v${v}/crundi-worker-${v}-${label}${os === 'windows' ? '.exe' : ''}`;
+  return { version: v, url, sigUrl: `${url}.sig` };
+}
+
+/** How a worker of this kind is updated: by itself, or with the PC app. */
+export const updatesOf = (kind) => (kind === 'electron' || kind === 'native' ? 'app' : 'self');
+
 /** A join code: 8 characters nobody misreads. */
 export function makeCode() {
   let s = '';
@@ -333,10 +361,14 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
         if (m.info) applyInfo(w, m.info);
         event(w, 'connected', { version: w.version });
         save();
+        // A worker that updates itself is told where this server's version is.
+        const update = updateFor({ version: str(m.version, 40), kind: m.kind, info: w.info }, serverVersion);
         sendTo(w.id, {
           type: 'welcome', proto: PROTO, id: w.id, name: w.name, server: { version: serverVersion },
           caps: [...SERVER_CAPS], settings: { allowChats: w.allowChats, allowCommands: w.allowCommands, paused: w.paused },
+          ...(update ? { update } : {}),
         });
+        if (update) event(w, 'update-offered', { version: update.version });
         if (link.caps.includes('jobs')) jobs.onHello(w, m.jobs);
         if (link.caps.includes('chats')) chats.onHello(w, m.chats);
         told(w.id, true);
@@ -387,7 +419,7 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   function view(w) {
     const l = links.get(w.id);
     return {
-      id: w.id, name: w.name, kind: w.kind, version: w.version, deviceId: w.deviceId || '',
+      id: w.id, name: w.name, kind: w.kind, version: w.version, deviceId: w.deviceId || '', updates: updatesOf(w.kind),
       online: !!(l && l.hello), connectedSince: l ? new Date(l.connectedAt).toISOString() : null,
       lastSeenAt: w.lastSeenAt, createdAt: w.createdAt, revoked: !!w.revoked,
       info: w.info, labels: labelsOf(w.info, w.customLabels), customLabels: w.customLabels || [],

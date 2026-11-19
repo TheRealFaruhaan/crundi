@@ -320,6 +320,13 @@ data class FactorySettings(
     val limits: FactoryLimits = FactoryLimits(),
     /** The Manager's check-in, minutes (5 to 1440); 0: the Manager chooses. */
     val tickMinutes: Int = 0,
+    /**
+     * Minutes a PC holding steps may be offline before the owner is told and
+     * can move them to the server (0..1440, 0 waits forever; the server's
+     * default is 30). Null when the server's copy has none (an older server):
+     * a save then leaves it out.
+     */
+    val workerOfflineMinutes: Int? = null,
     val gatekeeper: FactoryGatekeeper = FactoryGatekeeper(),
     val caps: FactoryCaps = FactoryCaps(),
     /** Secrets a run may use without a PIN at each use (ids only; 'factory-secrets'). Their PINs are asked at the start. */
@@ -386,6 +393,22 @@ data class FactoryDetail(val factory: Factory, val validation: FactoryValidation
 /** Someone with work waiting for a free seat (the run's limit on people at once). */
 @Serializable data class RunSeat(val tokenId: String = "", val employeeId: String = "", val employee: String = "")
 
+/**
+ * A PC holding a run's steps that is offline ([FactoryRun.pcsAway]): since
+ * when, for how many minutes, whether past the factory's workerOfflineMinutes
+ * ([overdue]), and who is waiting on it.
+ */
+@Serializable data class RunPcAway(
+    val workerId: String = "",
+    val worker: String = "",
+    val since: JsonElement? = null,
+    val minutes: Int = 0,
+    val overdue: Boolean = false,
+    val employees: List<String> = emptyList(),
+) {
+    val sinceMs get() = timeMs(since)
+}
+
 /** A review finding. status: open, claimed, closed, dismissed. */
 @Serializable data class RunFinding(val id: String, val text: String = "", val where: String = "", val blocking: Boolean = false, val status: String = "open", val by: String = "", val reopened: Int = 0)
 
@@ -440,6 +463,8 @@ data class FactoryRun(
     val error: String = "",
     val timeLeftMs: Long? = null,
     val waitingForSeat: List<RunSeat> = emptyList(),
+    /** PCs holding steps that are offline now (newer servers); each can be moved to this server. */
+    val pcsAway: List<RunPcAway> = emptyList(),
     // Only from /get:
     val history: List<RunHistoryItem> = emptyList(),
     /** The factory as it was when the run started: the graph to draw. */

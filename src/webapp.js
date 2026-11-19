@@ -1060,12 +1060,17 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       for (const s of ownerSockets) { try { if (s.readyState === 1) s.send('{"type":"workers"}'); } catch { /* closing */ } }
       // A chat on a PC shows when its PC comes and goes ("PC offline").
       try { if (claudeUi?.remoteChanged?.()) broadcastState(); } catch { /* best effort */ }
+      // And a terminal on a PC, the same way.
+      try { if (claudeTerminals?.remoteChanged?.()) broadcastState(); } catch { /* best effort */ }
     },
   });
   // Chats on a PC (where: 'worker:<id>'): claude-ui starts them through the
   // worker launcher, and their work comes back at each turn end.
   claudeUi?.setRemote?.({ launch: (where, o) => workers.chats.launch(where, o), status: (where, id) => workers.chats.status(where, id) });
   claudeUi?.onTurnEnd?.((id) => workers.chats.onTurnEnd(id));
+  // Terminal mode on a PC (and an Empty Shell there): the same chats underneath,
+  // in a pseudo-terminal; brought back on demand only (chat-pull).
+  claudeTerminals?.setRemote?.({ launch: (where, o) => workers.chats.launchPty(where, o), status: (where, id) => workers.chats.status(where, id) });
 
   let homepoolStarted = false;
   function startHomepool() {
@@ -1174,6 +1179,9 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         const id = run && run.managerChatId;
         const meta = id ? { url: `/chat/${id}`, title: `Factory: ${run.factoryName}`, chat: { id, title: `Factory: ${run.factoryName}`, project: run.project || '', mark: markOf(run.project || '', run.factoryName) } } : {};
         notifyEvent('factory', text, meta);
+        // A PC away too long holding a run's steps needs the owner's choice
+        // (move them here, or wait): in the inbox even with factory pings off.
+        if (kind === 'worker-away' && notifyPrefs.factory === 'never') ownerMsg.post({ kind: 'system', text, channelText: text, project: (run && run.project) || '', meta: { tag: 'factory-worker-away', ...(id ? { url: `/chat/${id}` } : {}) } });
       } catch { /* best effort */ }
       // A run started from a kanban card: the card follows the work.
       try {
@@ -2209,6 +2217,10 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
   });
   // A Claude terminal pane takes the title Claude Code shows for its session.
   if (claudeTerminals && claudeTerminals.onAutoTitle) claudeTerminals.onAutoTitle(() => { broadcastState(); retitleLiveCards(); });
+  // A terminal on a PC: no hooks reach from there, so its state comes from its
+  // output (claude-terminals.js), and a notice from its PC shows in its bar.
+  if (claudeTerminals && claudeTerminals.onRemoteState) claudeTerminals.onRemoteState((id, state) => handleAgentState(id, state, Date.now()));
+  if (claudeTerminals && claudeTerminals.onMeta) claudeTerminals.onMeta(() => broadcastState());
   // Titles follow the work, mid-chat. At the end of a turn, in the
   // background (nothing waits for it), the chat is titled again from the
   // person's latest requests, and renamed only when its Claude Code judges
@@ -5216,6 +5228,8 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
         case 'recover': result = await factoryRunner.recover(body.id, { note: body.note || '' }); break;
         case 'ask': result = await factoryRunner.askReply(body.id, body.tokenId, body.replyId, body.note || ''); break;
         case 'limits': result = await factoryRunner.setLimits(body.id, body.limits || {}); break;
+        // A PC holding steps stayed away: run them here instead (the run's Details).
+        case 'moveToServer': result = await factoryRunner.moveToServer(body.id, { worker: String(body.worker || '') }); break;
         case 'endWait': result = await factoryRunner.endWait(body.id, body.tokenId, { outcome: body.outcome, note: body.note || '' }); break;
         case 'managerMode': result = await factoryRunner.setManagerMode(body.id, body.mode); break;
         case 'teamMode': result = await factoryRunner.setTeamMode(body.id, body.mode); break;
@@ -6302,12 +6316,15 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       if (!body.project) return json(res, { ok: false, error: 'project is required' }, 400);
       // Only a parked pane coming back picks its own id and slot (panes.js).
       delete body.id; delete body.order;
+      // On a PC: the owner's only (as a chat there).
+      if (body.where && body.where !== 'server' && isConfined(principal)) return json(res, { ok: false, error: 'Terminals on a PC are the owner\'s only.' }, 403);
       const result = await claudeTerminals.create(body.project, body);
       // A terminal continues the same conversation somewhere we can't observe,
       // so the transcript we stored for UI replay is about to become a stale
       // prefix. Drop it — a later UI message rewrites it. Shell-only terminals
       // don't run Claude, so they leave it alone.
-      if (result?.ok && !body.shell && claudeUi?.clearHistory) claudeUi.clearHistory(body.project);
+      // (Not one on a PC: its conversation is the PC's, not this server's.)
+      if (result?.ok && !body.shell && !(body.where && body.where !== 'server') && claudeUi?.clearHistory) claudeUi.clearHistory(body.project);
       broadcastState();
       return json(res, result);
     }
@@ -8523,7 +8540,7 @@ export function createWebApp({ config, claudeTerminals, claudeUi, bot, mcpDispat
       }
       if (body.tool === 'factory_control') {
         if (!factoryRunner) return json(res, { ok: false, error: 'Factories are not available on this server.' });
-        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset })); }
+        try { return json(res, await factoryRunner.controlFromManager(String(a.sessionId || ''), { action: a.action, reason: a.reason || '', limits: a.limits || null, mode: a.mode === 'now' ? 'now' : '', resumeOnReset: !!a.resumeOnReset, worker: String(a.worker || '') })); }
         catch (err) { return json(res, { ok: false, error: err.message }); }
       }
       if (body.tool === 'factory_status') {

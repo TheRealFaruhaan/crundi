@@ -177,6 +177,50 @@ pub fn manifest(dir: &Path) -> Result<BTreeMap<String, (u64, String)>> {
     Ok(out)
 }
 
+/// Seed a new copy folder `to` from an existing one `from`: the files a
+/// manifest would list (build folders and ignored paths are left out), with
+/// their modification times, plus the manifest cache, so the first manifest
+/// of `to` hashes nothing again and the server sends only what changed.
+/// Returns the files copied. Symlinks are recreated on Unix, skipped elsewhere.
+pub fn seed_copy(from: &Path, to: &Path) -> Result<u64> {
+    std::fs::create_dir_all(to)?;
+    let ignore = load_ignore(from);
+    let mut n = 0;
+    walk(from, &|rel| ignored(rel, &ignore), &mut |rel, full, md| {
+        if ignored(rel, &ignore) {
+            return Ok(());
+        }
+        let Some(r) = safe_rel(rel) else { return Ok(()) };
+        let dest = to.join(r);
+        if let Some(p) = dest.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        if md.file_type().is_symlink() {
+            #[cfg(unix)]
+            {
+                let target = std::fs::read_link(full)?;
+                let _ = std::fs::remove_file(&dest);
+                std::os::unix::fs::symlink(target, &dest)?;
+                n += 1;
+            }
+            return Ok(());
+        }
+        std::fs::copy(full, &dest).with_context(|| format!("copying {rel}"))?;
+        if let Ok(t) = md.modified() {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dest) {
+                let _ = f.set_modified(t);
+            }
+        }
+        n += 1;
+        Ok(())
+    })?;
+    let cache = from.join(MANIFEST_CACHE);
+    if cache.is_file() {
+        let _ = std::fs::copy(&cache, to.join(MANIFEST_CACHE));
+    }
+    Ok(n)
+}
+
 /// Extract an (uncompressed) tar into `dir`, keeping exec bits and symlinks.
 /// Entries that would land outside `dir` are refused. Returns files written.
 pub fn extract_tar(tar_path: &Path, dir: &Path) -> Result<u64> {

@@ -37,6 +37,7 @@ tar = "0.4"
 flate2 = "1"
 globset = { version = "0.4", default-features = false }
 sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 
 tray-icon = { version = "0.26", optional = true }
 tao = { version = "0.37", default-features = false, optional = true }

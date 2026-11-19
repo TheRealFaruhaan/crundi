@@ -387,3 +387,91 @@ as with factory runs. Nothing writes into the server's main checkout.
   accepting the handoff (chat.pull; git: fetch the bundle onto the run
   branch, apply the patch, commit it as the step's work).
 - factory_status shows where each person runs and which PCs are offline.
+
+# Terminal mode on a PC
+
+Claude in Terminal mode (a real terminal, claude-terminals.js) can run on a
+PC too, through the chat messages:
+- `chat.spawn { ..., pty: { cols, rows } }`: start `claude <args>` in a
+  pseudo-terminal (portable-pty) instead of pipes, same folder preparation,
+  same MCP config (the worker is the MCP server), same env. Its output is
+  `chat.out { stream:"stdout", off, b64 }` (the terminal's bytes), spooled
+  and resumable with `chat.attach` like a chat; `chat.in` is keystrokes.
+- `chat.resize { chat, cols, rows }` resizes it.
+- `chat.kill` ends it; `chat.exit` when claude exits.
+- Pull-back of its changes as for chats (chat.pull).
+The server's lifecycle hooks (CRUNDI_TERMINAL_ID posting to the loopback
+API) do not reach from a PC; a PC terminal's status comes from its output
+and exit only.
+
+## Settled while building terminal mode (server side)
+
+- `chat.spawn { ..., pty, command: "shell" }` (optional, only with `pty`):
+  the user's login shell instead of claude (Windows: pwsh, else powershell,
+  else cmd; macOS/Linux: $SHELL as a login shell, else /bin/sh), in the same
+  prepared folder, with the same env; `args` is empty. It is an Empty Shell
+  pane on that PC: resumable with `chat.attach`, pulled back with `chat.pull`.
+  A worker that does not know `command` must refuse it (`chat.refused`),
+  never start claude instead.
+- As built on the worker (worker/src/chats.rs, update.rs, lock.rs):
+  `chat.spawn` with `pty` -> `chat.started` carries `terminal:true`;
+  `command:"shell"` runs the login shell (no claude, no MCP config, no resume
+  handling) and is a pty even without `pty` (80x24); its `chat.started`
+  carries `shell:true, terminal:true`. `hello.chats` entries for running
+  terminals carry `terminal:true`. In terminal mode `chat.in` bytes are
+  keystrokes, `chat.in {eof:true}` is ignored, `chat.kill {signal:"SIGINT"}`
+  sends Ctrl-C; `chat.exit` after a signal is code 128+n with `signal`.
+- Copy-source chats run in `<project>@copy-<chat>`, seeded from
+  `<project>@copy`; the first `chat.manifest` already lists the seeded files,
+  and the server serves the copy diff against it as usual.
+- `chat.notice` comes BEFORE `chat.started` when `resumeSessionId` has no
+  transcript on the PC (the worker then dropped `--resume/-r <id>`,
+  `--continue/-c` and `--fork-session`).
+- Embedded status may be `{"event":"status","state":"conflict","detail":"..."}`
+  (another worker on this PC holds the lock); the PC client's Settings says
+  "Another worker on this PC is connected".
+- `chat.notice { chat, text }` (worker -> server): something about the chat
+  that is not an error, e.g. "This PC did not have that conversation;
+  starting a new one" when `--resume` names a session the PC lacks (the
+  worker drops `--resume <id>` and starts fresh). Shown as a notice line in a
+  chat and in a PC terminal's bar (and as a dim line in its screen); nothing
+  else changes.
+- Server side, a terminal on a PC is created with
+  `POST /api/terminals/create { project, where:"worker:<id>", shell?, ... }`
+  (owner only). Its list entry has `where`, `pc: {where, name, online, branch,
+  worktree}` and `notice`. No .mcp.json or hooks are written for it; its
+  working/idle state comes from its output (quiet 4 s = idle) and its exit.
+  Bring changes back: `POST /api/workers {action:"chat-pull", chat:<terminal id>}`.
+
+## Worker updates
+
+- `welcome` may carry `update: { version, url, sigUrl }` when the worker's
+  `hello.version` differs from the server's version and its kind is `tray`
+  or `headless` (`electron` / `native` update with their app). `url` is
+  `https://github.com/TheRealFaruhaan/crundi/releases/download/v<V>/crundi-worker-<V>-<label>[.exe]`
+  with label `windows-x64` (.exe) | `linux-x64` | `linux-x64-headless` (kind
+  headless on linux) | `macos-arm64`, from `info.os` / `info.arch`;
+  `sigUrl` = url + `.sig`. Sent only for a published release version
+  (`X.Y.Z` or `X.Y.Z-dev.N`) and not when the server has
+  `CRUNDI_NO_WORKER_UPDATE` set. The worker applies it when the version
+  differs from its own and the PC is idle (checked every 5 s): https only, at
+  most 100 MB, the signature raw 64 bytes or base64. Failure: `log
+  {level:"error", text:"update: ..."}`, not retried that session; success
+  logs "updated to X; restarting" and it reconnects as the new version.
+  Embedded workers ignore it.
+- The Workers list gives each worker `updates: "self" | "app"`.
+
+## Factory steps: a PC away too long
+
+- Factory setting `workerOfflineMinutes` (default 30, 0 = wait forever).
+  When a PC holding a run's steps has been offline that long, the owner is
+  notified once, and the run lists it in `pcsAway: [{ workerId, worker,
+  since, minutes, overdue, employees }]`. `POST /api/factory-runs
+  {action:"moveToServer", id, worker?}` (or factory_control action
+  `move-to-server` from the Manager on the person's word) re-runs those steps
+  on the server from the run's worktree with a recovery prompt; the people
+  moved stay on the server for the rest of the run.
+- Before each Manager step on a PC the runner pulls its work into the run's
+  worktree; if the run's branch moved on since the Manager's PC copy was
+  made, its PC chat is restarted from the run's head (`--resume` keeps the
+  conversation), so later pulls fast-forward.

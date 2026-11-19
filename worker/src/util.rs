@@ -4,7 +4,12 @@ use anyhow::{bail, Result};
 use rand::Rng;
 use std::path::PathBuf;
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The worker's version: the Crundi release CI built it for
+/// (`CRUNDI_WORKER_VERSION`, e.g. "1.21.8-dev.6"), else the crate's own.
+pub const VERSION: &str = match option_env!("CRUNDI_WORKER_VERSION") {
+    Some(v) if !v.is_empty() => v,
+    _ => env!("CARGO_PKG_VERSION"),
+};
 pub const PROTO: u32 = 1;
 
 /// "windows" | "macos" | "linux" (or whatever Rust calls another OS).

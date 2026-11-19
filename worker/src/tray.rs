@@ -26,6 +26,8 @@ enum UserEvent {
     Menu(MenuEvent),
     Status(Status),
     Joined(Box<Config>),
+    /// Another worker held the lock: try again.
+    RetryLock,
 }
 
 struct Items {
@@ -64,8 +66,8 @@ pub fn make_icon_rgba(state: State, paused: bool) -> Vec<u8> {
         State::Online if paused => (0xE0, 0xA0, 0x30),
         State::Online => (0x2E, 0xB8, 0x6A),
         State::Connecting | State::Offline => (0x8A, 0x8F, 0x98),
-        State::Unauthorized | State::Removed | State::Replaced => (0xD0, 0x44, 0x44),
-        State::NotJoined | State::Stopped => (0x5B, 0x7C, 0xF0),
+        State::Unauthorized | State::Removed | State::Replaced | State::Conflict => (0xD0, 0x44, 0x44),
+        State::NotJoined | State::Stopped | State::Updating => (0x5B, 0x7C, 0xF0),
     };
     const N: usize = 32;
     let mut px = vec![0u8; N * N * 4];
@@ -113,7 +115,9 @@ fn notify(v: &serde_json::Value) {
     let title = match (what, state) {
         ("job", "started") => "Crundi: a job started on this PC",
         ("job", _) => "Crundi: a job finished",
+        ("chat", "started") if v.get("mode").is_some() => "Crundi: a terminal is running on this PC",
         ("chat", "started") => "Crundi: a chat is running on this PC",
+        ("chat", _) if v.get("mode").is_some() => "Crundi: a terminal ended",
         ("chat", _) => "Crundi: a chat ended",
         _ => return,
     };
@@ -142,6 +146,10 @@ struct App {
     link: Option<LinkHandle>,
     status: Status,
     setup: Option<crate::setup::SetupServer>,
+    /// One worker per PC: held while the link runs.
+    lock: Option<crate::lock::WorkerLock>,
+    /// A retry of the lock is scheduled.
+    retry_pending: bool,
 }
 
 impl App {
@@ -155,6 +163,26 @@ impl App {
         self.status = Status::from_config(&cfg, if self.joined { State::Connecting } else { State::NotJoined });
         if !self.joined {
             return;
+        }
+        if self.lock.is_none() {
+            let dir = crate::lock::lock_dir(&self.config_path);
+            match crate::lock::acquire_waiting(&dir, &self.kind, crate::lock::start_wait()) {
+                Ok(l) => self.lock = Some(l),
+                Err(e) => {
+                    // Another worker (the PC app's) runs here: show it, try again later.
+                    self.status = Status::from_config(&cfg, State::Conflict);
+                    self.status.error = Some(e.to_string());
+                    if !self.retry_pending {
+                        self.retry_pending = true;
+                        let proxy = self.proxy.clone();
+                        self.rt.spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                            let _ = proxy.send_event(UserEvent::RetryLock);
+                        });
+                    }
+                    return;
+                }
+            }
         }
         let mut opts = LinkOptions::new(&self.kind, Some(self.config_path.clone()));
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
@@ -214,6 +242,12 @@ impl App {
     }
 
     fn on_status(&mut self, s: Status) {
+        if s.state == State::Updating {
+            // A signed update replaced the executable: start the new one.
+            self.tray = None;
+            self.lock = None;
+            crate::update::restart();
+        }
         let joined_now = !matches!(s.state, State::Unauthorized | State::Removed | State::NotJoined);
         self.status = s;
         if joined_now != self.joined {
@@ -304,6 +338,8 @@ pub fn run(config_path: PathBuf, custom_config: bool, kind: String) -> Result<i3
         link: None,
         status: Status::from_config(&Config::default(), State::NotJoined),
         setup: None,
+        lock: None,
+        retry_pending: false,
     };
 
     event_loop.run(move |event, _, flow| {
@@ -344,6 +380,14 @@ pub fn run(config_path: PathBuf, custom_config: bool, kind: String) -> Result<i3
             }
             Event::UserEvent(UserEvent::Menu(e)) => app.on_menu(e, flow),
             Event::UserEvent(UserEvent::Status(s)) => app.on_status(s),
+            Event::UserEvent(UserEvent::RetryLock) => {
+                app.retry_pending = false;
+                if app.link.is_none() {
+                    let cfg = app.config();
+                    app.start_link(cfg);
+                    app.refresh();
+                }
+            }
             Event::UserEvent(UserEvent::Joined(cfg)) => {
                 app.setup = None;
                 app.start_link(*cfg);

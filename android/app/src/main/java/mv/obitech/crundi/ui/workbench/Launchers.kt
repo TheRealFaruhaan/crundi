@@ -146,8 +146,9 @@ fun RoundLauncher(k: PaneKind, onClick: () -> Unit) {
  * A new terminal pane (the web's term-launch): Empty Shell, then Claude in UI
  * Mode or as a Terminal, each with its Skip Permissions shield beside it.
  * UI Mode is the hero (the indigo gradient), the rest are flat.
- * With a PC that can take chats ([places]), "Runs on" under UI Mode picks
- * where the chat's Claude runs: this server, or that PC ([where] "worker:<id>").
+ * With a PC that can take chats ([places]), "Runs on" at the very top picks
+ * where all three run (Empty Shell, UI Mode, Terminal): this server, or that
+ * PC ([where] "worker:<id>").
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -158,22 +159,27 @@ fun TerminalLauncher(
     Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.widthIn(max = 300.dp).fillMaxWidth()) {
             CrundiIcon("terminal", size = 40.dp, tint = CrundiColors.TextMuted.copy(alpha = 0.6f))
-            LaunchButton("Empty Shell", null, Modifier.fillMaxWidth(), style = LaunchStyle.Shell, enabled = !busy) { onPick(LaunchMode.Shell) }
-            Text("Claude", style = CrundiType.Section, modifier = Modifier.padding(top = 6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                LaunchButton("UI Mode", null, Modifier.weight(1f), style = LaunchStyle.Hero, enabled = !busy) { onPick(LaunchMode.Chat) }
-                LaunchButton(null, "shield-alert", Modifier.width(52.dp), style = LaunchStyle.Skip, enabled = !busy, description = "UI Mode, Skip Permissions") { onPick(LaunchMode.ChatSkip) }
-            }
             if (places.isNotEmpty()) {
-                // Only for UI Mode, as the web's tl-where: a terminal always runs here.
+                // For all three, as the web's tl-where.
                 val picked = where.takeIf { w -> places.any { it.where == w } }.orEmpty()
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Runs on", style = CrundiType.Meta.copy(color = CrundiColors.TextSecondary))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         mv.obitech.crundi.ui.components.CrundiChip("This server", picked.isEmpty(), { onWhere("") }, icon = "server")
-                        for (p in places) mv.obitech.crundi.ui.components.CrundiChip(p.title, picked == p.where, { onWhere(p.where) }, icon = "hard-drive")
+                        // Places are the PCs online now: each with a green dot.
+                        for (p in places) mv.obitech.crundi.ui.components.CrundiChip(p.title, picked == p.where, { onWhere(p.where) }, icon = "hard-drive", dot = CrundiColors.Green)
+                    }
+                    places.firstOrNull { it.where == picked && picked.isNotEmpty() }?.let { pc ->
+                        Text("Runs on ${pc.title}: its own Claude, the project cloned there; changes come back to a branch here",
+                            style = CrundiType.Small.copy(color = CrundiColors.TextMuted))
                     }
                 }
+            }
+            LaunchButton("Empty Shell", null, Modifier.fillMaxWidth(), style = LaunchStyle.Shell, enabled = !busy) { onPick(LaunchMode.Shell) }
+            Text("Claude", style = CrundiType.Section, modifier = Modifier.padding(top = 6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                LaunchButton("UI Mode", null, Modifier.weight(1f), style = LaunchStyle.Hero, enabled = !busy) { onPick(LaunchMode.Chat) }
+                LaunchButton(null, "shield-alert", Modifier.width(52.dp), style = LaunchStyle.Skip, enabled = !busy, description = "UI Mode, Skip Permissions") { onPick(LaunchMode.ChatSkip) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 LaunchButton("Terminal", "terminal", Modifier.weight(1f), style = LaunchStyle.Normal, enabled = !busy) { onPick(LaunchMode.Terminal) }

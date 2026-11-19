@@ -26,6 +26,11 @@ Usage:
   crundi-worker autostart on|off        start the tray app at login
   crundi-worker mcp --chat C --port P --token T
                                         a chat's MCP server on stdio (claude starts it)
+  crundi-worker update <url> <sig-url>  download a release, check its signature and
+                                        install it over this executable
+
+Exit codes: 0 quit, 2 not joined, 3 removed, 4 replaced, 5 another worker runs
+on this PC, 64 bad arguments.
 
 Options:
   --config <path>   config file (default: <config dir>/crundi-worker/config.json)
@@ -134,6 +139,9 @@ fn main() {
     #[cfg(windows)]
     attach_console();
     crundi_worker::util::install_crypto();
+    if let Ok(exe) = std::env::current_exe() {
+        crundi_worker::update::cleanup_old(&exe);
+    }
     let a = parse().unwrap_or_else(|e| fail(format!("{e}\n\n{USAGE}"), 64));
     let config_path = a.config.clone().map(|p| absolute(&p)).unwrap_or_else(default_config_path);
     let custom_config = a.config.as_ref().map(|_| config_path.as_path());
@@ -195,6 +203,15 @@ fn main() {
                 Err(e) => fail(format!("{e:#}"), 1),
             }
         }
+        Some("update") => {
+            let (Some(url), Some(sig)) = (a.positional.get(1), a.positional.get(2)) else {
+                fail("usage: crundi-worker update <url> <sig-url>", 64)
+            };
+            match crundi_worker::update::install(url, sig) {
+                Ok(exe) => println!("Installed the update over {}. Restart the worker to run it.", exe.display()),
+                Err(e) => fail(format!("{e:#}"), 1),
+            }
+        }
         Some(other) => fail(format!("unknown command {other}\n\n{USAGE}"), 64),
         None => std::process::exit(run(a, config_path)),
     }
@@ -234,7 +251,10 @@ fn run(a: Args, config_path: PathBuf) -> i32 {
             ..Config::default()
         };
         let kind = a.kind.clone().unwrap_or_else(|| if a.embedded { "electron".into() } else { "headless".into() });
-        let opts = LinkOptions::new(&kind, None);
+        let mut opts = LinkOptions::new(&kind, None);
+        opts.lock_dir = Some(crundi_worker::lock::lock_dir(&config_path));
+        // The PC client updates the worker it bundles.
+        opts.self_update = !a.embedded;
         let rt = runtime();
         return if a.embedded {
             rt.block_on(app::embedded(cfg, opts))
@@ -259,6 +279,7 @@ fn run(a: Args, config_path: PathBuf) -> i32 {
     }
 
     let kind = a.kind.clone().unwrap_or_else(|| "headless".into());
-    let opts = LinkOptions::new(&kind, Some(config_path));
+    let mut opts = LinkOptions::new(&kind, Some(config_path.clone()));
+    opts.lock_dir = Some(crundi_worker::lock::lock_dir(&config_path));
     runtime().block_on(app::headless(cfg, opts))
 }

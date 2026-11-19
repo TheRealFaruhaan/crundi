@@ -203,3 +203,29 @@ fn join_refused_reports_the_error() {
     assert!(!Config::load(&path).unwrap().joined());
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn a_second_worker_on_the_pc_exits_with_5() {
+    let d = tmp("lock");
+    let cfg = crundi_worker::config::Config {
+        server: Some("http://127.0.0.1:9".into()),
+        id: Some("w0123456789".into()),
+        key: Some("cw_w0123456789.c2VjcmV0".into()),
+        work_dir: d.join("work"),
+        ..Default::default()
+    };
+    let path = d.join("config.json");
+    cfg.save(&path).unwrap();
+    let held = crundi_worker::lock::acquire(&d, "electron").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_crundi-worker"))
+        .args(["--headless", "--config"])
+        .arg(&path)
+        .env_remove("CRUNDI_WORKER_RESTARTED")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(5), "{}", String::from_utf8_lossy(&out.stderr));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("PC app's worker") && err.contains("only one worker per PC"), "{err}");
+    drop(held);
+    std::fs::remove_dir_all(&d).ok();
+}

@@ -1617,6 +1617,16 @@ export function createClaudeUiSessions({ apiUrl: initApiUrl, apiKey: initApiKey,
     proc.on('error', (err) => {
       emitEntry(s, { id: genId(), kind: 'error', text: `Process error: ${err.message}` });
     });
+    // A chat on a PC: what the PC says that is not an error (chat.notice), e.g.
+    // "the PC did not have that conversation; starting fresh". A line in the
+    // chat, nothing more: the new conversation's own id arrives with init, and
+    // the chat carries on with it.
+    if (remote) proc.on('notice', (text) => {
+      // Started fresh there: init's new id is expected, not a sign the replay
+      // went to the wrong conversation (which would redo it and drop the copy).
+      s.continueUuid = '';
+      emitEntry(s, { id: genId(), kind: 'notice', text: `${whereOf(s)?.name || 'The PC'}: ${String(text || '').slice(0, 600)}` });
+    });
 
     // Handshake. systemPrompt:[""] mirrors what the SDK sends for the default
     // preset. The response carries the slash commands, model list and effective

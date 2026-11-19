@@ -179,7 +179,7 @@ fun StatusBadge(text: String, kind: BadgeKind = BadgeKind.Neutral, modifier: Mod
  * accent-hover text; otherwise tertiary with a border.
  */
 @Composable
-fun CrundiChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, icon: String? = null) {
+fun CrundiChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, icon: String? = null, dot: Color? = null) {
     val shape = RoundedCornerShape(14.dp)
     Row(
         modifier
@@ -194,6 +194,8 @@ fun CrundiChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: M
         val c = if (selected) CrundiColors.AccentHover else CrundiColors.TextSecondary
         if (icon != null) CrundiIcon(icon, size = 14.dp, tint = c)
         Text(text, style = CrundiType.Small.copy(color = c))
+        // A small status dot after the words (a PC that is online), when given.
+        if (dot != null) Box(Modifier.size(6.dp).clip(CircleShape).background(dot))
     }
 }
 

@@ -15,9 +15,9 @@
  *
  * Run: node scripts/test-factory-workers.mjs
  */
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const base = mkdtempSync(join(tmpdir(), 'factory-workers-'));
@@ -77,15 +77,15 @@ function fakeWorkers(list) {
   };
 }
 
-function setup(name, { fe = '', mgr = '', limits = {}, workers = null } = {}) {
-  const f = standard(); f.settings = { presets: [], limits };
+function setup(name, { fe = '', mgr = '', limits = {}, workers = null, settings = {}, opts = {} } = {}) {
+  const f = standard(); f.settings = { presets: [], limits, ...settings };
   if (fe) f.roster.find(r => r.id === 'fe').runsOn = fe;
   if (mgr) f.roster.find(r => r.id === 'manager').runsOn = mgr;
   const team = fakeTeam({
     manager: async (msg) => msg.includes('answers.dPlan') ? { payload: { summary: 'go', answers: { dPlan: 'no', dWho: ['ui', 'backend'] } } } : null,
     fe: async () => null, be: async () => null,
   });
-  const r = createFactoryRunner({ dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo(name) }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30, ...(workers ? { workersApi: workers.api } : {}) });
+  const r = createFactoryRunner({ dataDir: process.env.DATA_DIR, agents: team.agents, getProject: () => ({ path: repo(name) }), getFactory: () => ({ factory: f }), settleMs: 10_000, permissionBatchMs: 30, ...(workers ? { workersApi: workers.api } : {}), ...opts });
   team.setRunner(r);
   return { team, r };
 }
@@ -243,6 +243,72 @@ const alive = (team, emp) => team.of(emp).filter(s => s.alive).pop();
   await until(() => !r.getRun(st.run.id).paused);
   run = r.getRun(st.run.id);
   ok(!run.paused && run.status === 'running' && hist(r, st.run.id, 'worker-online').length === 1, 'Manager\'s PC back: the run resumes');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── A PC away longer than workerOfflineMinutes: the person is told, and may move its steps here ───
+{
+  const n = M.normalizeFactory(standard());
+  ok(n.settings.workerOfflineMinutes === 30 && M.normalizeFactory({ ...standard(), settings: { workerOfflineMinutes: 0 } }).settings.workerOfflineMinutes === 0 && M.normalizeFactory({ ...standard(), settings: { workerOfflineMinutes: 99999 } }).settings.workerOfflineMinutes === 1440, 'model: workerOfflineMinutes, default 30, 0 kept (wait forever), at most 1440');
+  const said = [];
+  const W = fakeWorkers([{ id: 'w1', name: 'Laptop' }]);
+  const { team, r } = setup('w6', { fe: 'Laptop', workers: W, settings: { workerOfflineMinutes: 2 }, opts: { minuteMs: 40, notify: (kind, run, text) => said.push({ kind, run, text }) } });
+  const st = await r.startRun({ project: 'w6', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length);
+  const fe = team.of('fe')[0];
+  await W.set('w1', false);
+  let run = r.getRun(st.run.id);
+  ok(run.pcsAway.length === 1 && run.pcsAway[0].worker === 'Laptop' && !run.pcsAway[0].overdue && run.pcsAway[0].employees.includes('Frontend dev'), 'offline: the run lists the PC it waits for (not yet overdue)', JSON.stringify(run.pcsAway));
+  ok(!said.some(x => x.kind === 'worker-away'), 'not told before the minutes are up');
+  const told = await until(() => said.find(x => x.kind === 'worker-away'), 3000);
+  ok(!!told && /Laptop has been offline for 2 minutes/.test(told.text) && /Frontend dev waits/.test(told.text) && /Move that step to this server/.test(told.text), 'offline that long: the owner is notified, with what to do', told && told.text);
+  run = r.getRun(st.run.id);
+  ok(run.pcsAway[0].overdue && hist(r, st.run.id, 'worker-away').length === 1, 'the run marks it overdue (event worker-away)');
+  await sleep(150);
+  ok(said.filter(x => x.kind === 'worker-away').length === 1, 'told once, not again and again');
+  const mv = await r.moveToServer(st.run.id, { worker: 'Laptop' });
+  ok(mv.ok, 'Move to this server', JSON.stringify(mv));
+  const here = await until(() => team.of('fe').find(x => x.alive && x !== fe && x.msgs.length));
+  ok(here && !here.where && here.addDirs.length > 0 && /stayed offline, so your step moved to the Crundi server/.test(last(here)) && !fe.alive, 'the step starts again on the server, from the run\'s worktree, with a recovery prompt; its PC chat is given up', here && last(here).slice(0, 200));
+  run = r.getRun(st.run.id);
+  ok(run.pcsAway.length === 0 && !run.employees.fe.waitingForPc && hist(r, st.run.id, 'worker-moved').length === 1, 'nothing waits for the PC now (event worker-moved)');
+  await W.set('w1', true);
+  ok(!hist(r, st.run.id, 'worker-online').length && team.of('fe').filter(x => x.alive).length === 1, 'the PC coming back changes nothing for the moved step');
+  const again = await r.moveToServer(st.run.id, { worker: 'Laptop' });
+  ok(!again.ok && /Nothing in this run waits/.test(again.error), 'moving again: nothing to move');
+  await r.stopRun(st.run.id); r.dispose();
+}
+{
+  // 0: wait however long.
+  const said = [];
+  const W = fakeWorkers([{ id: 'w1', name: 'Laptop' }]);
+  const { team, r } = setup('w7', { fe: 'Laptop', workers: W, settings: { workerOfflineMinutes: 0 }, opts: { minuteMs: 20, notify: (kind, run, text) => said.push({ kind, text }) } });
+  const st = await r.startRun({ project: 'w7', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length);
+  await W.set('w1', false);
+  await sleep(200);
+  ok(!said.some(x => x.kind === 'worker-away') && r.getRun(st.run.id).pcsAway.length === 1 && !r.getRun(st.run.id).pcsAway[0].overdue, 'workerOfflineMinutes 0: waits for the PC however long, nobody is pinged');
+  await r.stopRun(st.run.id); r.dispose();
+}
+
+// ─── The Manager on a PC: before its step, its work comes back, and a copy left behind starts again from the run's head ───
+{
+  const W = fakeWorkers([{ id: 'w1', name: 'Desk' }]);
+  const { team, r } = setup('w8', { mgr: 'Desk', workers: W });
+  const st = await r.startRun({ project: 'w8', factoryId: 'x', task: 'Do it' });
+  await until(() => team.of('fe')[0]?.msgs.length && team.of('be')[0]?.msgs.length);
+  const m1 = team.of('manager')[0];
+  ok(m1.where === 'worker:w1' && team.of('manager').length === 1, 'the Manager runs on its PC (its first step did not restart it)');
+  const fe = team.of('fe')[0];
+  { const rn = r.getRun(st.run.id); const tk = rn.tokens.find(t => t.employeeId === 'fe' && t.status === 'work'); const wsDir = readdirSync(dirname(rn.worktree)).find(d => d === tk.ws || d.endsWith('-' + tk.ws)); writeFileSync(join(dirname(rn.worktree), wsDir, 'fe-work.txt'), 'made by the frontend dev'); }
+  const fh = await r.handoff(fe.id, { summary: 'UI done' }); if (!fh.ok) console.log(JSON.stringify(fh)); ok(fh.ok, 'the team hands off on the server', JSON.stringify(fh));
+  const pullsBefore = W.pulls.length;
+  ok((await r.handoff(team.of('be')[0].id, { summary: 'API done' })).ok, 'and again: the Manager is due a step');
+  const m2 = await until(() => team.of('manager').find(x => x.alive && x !== m1 && x.msgs.length));
+  const p = W.pulls.slice(pullsBefore).find(x => x.chatId === m1.id);
+  ok(!!p && /^[0-9a-f]{40}$/.test(p.base), 'before the Manager\'s step its PC work is pulled into the run\'s worktree', JSON.stringify(W.pulls));
+  ok(m2 && m2.where === 'worker:w1' && m2.id !== m1.id && m2.resumeId === 'uuid-' + m1.id && !m1.alive, 'the run\'s branch moved on: the Manager\'s PC chat starts again from the run\'s head, a new chat, the conversation resumed', JSON.stringify(m2 && { where: m2.where, id: m2.id, resumeId: m2.resumeId }));
+  ok(hist(r, st.run.id, 'worker-resync').length === 1 && r.getRun(st.run.id).managerChatId === m2.id, 'event worker-resync; the run\'s Manager chat is the new one');
   await r.stopRun(st.run.id); r.dispose();
 }
 
