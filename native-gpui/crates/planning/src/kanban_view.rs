@@ -54,7 +54,7 @@ pub fn view(embedded: bool, window: &mut Window, cx: &mut App) -> AnyElement {
             let w = f32::from(b.size.width);
             let wd = cx.global_mut::<Widths>();
             let old = if embedded { std::mem::replace(&mut wd.pane, w) } else { std::mem::replace(&mut wd.tab, w) };
-            if (old - w).abs() > 0.5 { cx.refresh_windows(); }
+            if (old - w).abs() > 0.5 { super::refresh(cx); }
         }, move |_, _, window, _| {
             // While a card is held, the pointer anywhere on the window moves it (and lets go of it).
             if !held { return; }

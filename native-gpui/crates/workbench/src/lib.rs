@@ -950,6 +950,11 @@ fn num(a: &[String], i: usize) -> u32 { a.get(i).and_then(|s| s.parse().ok()).un
 /// Make the workbench and register its tab (once, at start). Its panes'
 /// kinds are registered by the parts that draw them (`register_kind`).
 pub fn init(cx: &mut App) {
+    // A state from the server (shell::session::pump): the workbench (its
+    // heads) and the panes that draw the chats' state, nothing else.
+    crundi_shell::register_action(cx, "state-redraw", |cx| if let Some(wb) = workbench(cx) {
+        wb.update(cx, |w, cx| { cx.notify(); for p in ["live:", "pend:", "term:", "panel:factor"] { w.redraw_kind(p, cx); } });
+    });
     let wb = cx.new(Workbench::new);
     cx.set_global(WorkbenchHandle(wb.clone()));
     // The project bar's "+" by Workbench opens the add menu (F21).

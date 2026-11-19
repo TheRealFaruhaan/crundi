@@ -416,7 +416,7 @@ impl Render for ComposerView {
                 set_ctrl_enter(cx, *i == 1);
                 let _ = me2.update(cx, |c, cx| c.input.update(cx, |st, cx| st.focus(window, cx)));
             }))
-            .child(div().text_color(T::text_secondary()).hover(|d| d.text_color(T::text())).child("sends")),
+            .child(div().id("enter-sends-label").text_color(T::text_secondary()).hover(|d| d.text_color(T::text())).child("sends")),
             if ctrl { "Enter makes a newline, Ctrl+Enter sends — click to swap" } else { "Enter sends, Shift+Enter makes a newline — click to swap" });
         let sid_el = (!narrow && !sid.is_empty()).then(|| {
             let full = sid.clone();

@@ -434,11 +434,11 @@ fn help_sheet(s: &M, window: &mut Window) -> Option<AnyElement> {
                 let row = div().id(("mmh-row", i)).flex().flex_col().border_b_1().border_color(T::border_subtle())
                     .child(div().flex().items_center().gap(T::SP_10).py(T::SP_8).px(T::SP_2)
                         .child(kc)
-                        .child(div().flex_1().min_w_0().text_size(T::TEXT_13).text_color(T::text_secondary()).when(has, |d| d.hover(|d| d.text_color(T::text()))).child(text))
+                        .child(div().id(("mmd-text", i)).flex_1().min_w_0().text_size(T::TEXT_13).text_color(T::text_secondary()).when(has, |d| d.hover(|d| d.text_color(T::text()))).child(text))
                         .when(has, |d| d.child(div().text_color(if open { T::accent_hover() } else { T::text_muted() })
                             .child(w::icon(if open { IconName::ChevronDown } else { IconName::ChevronRight }, T::ICON_MD)))))
                     .when_some(dia.filter(|_| open), |d, dg| d.child(diagram(&dg)))
-                    .when(has, |d| d.cursor_pointer().on_click(move |_, window, cx| { super::h_toggle(i, cx); window.refresh(); }));
+                    .when(has, |d| d.cursor_pointer().on_click(move |_, window, cx| { super::h_toggle(i, cx); super::redraw(cx); }));
                 body = body.child(row);
             }
         }

@@ -296,7 +296,7 @@ fn ensure(window: &mut Window, cx: &mut App) {
             let g_ = with(cx, |s| s.edit_gen);
             after(cx, 0, move |window, cx| if with(cx, |s| s.edit.is_some() && s.edit_gen == g_) && !edit_focused(window, cx) { finish_edit(true, window, cx); });
         }),
-        cx.subscribe(&l_search, |_, e: &w::InputEvent, cx| if matches!(e, w::InputEvent::Change) { link_list(cx); cx.refresh_windows(); }),
+        cx.subscribe(&l_search, |_, e: &w::InputEvent, cx| if matches!(e, w::InputEvent::Change) { link_list(cx); redraw(cx); }),
     ];
     let ui = Ui {
         draft, edit, search, d_text, d_notes: vec![], l_search,
@@ -394,7 +394,7 @@ fn load_from(path: &str, cx: &mut App) {
         match r {
             Err(e) => {
                 with(cx, |s| { s.loaded = false; s.error = format!("Failed to load mindmap: {e}"); s.state = "error".into(); });
-                cx.refresh_windows();
+                redraw(cx);
             }
             Ok(v) => {
                 let nodes = if truthy(&v["ok"]) { tree::parse(&v) } else { vec![] };
@@ -528,7 +528,7 @@ fn render(window: &mut Window, cx: &mut App) {
     });
     if open_now { focus_draft(window, cx); }
     if closed && with(cx, |s| s.edit.is_none()) { focus_canvas(window, cx); }
-    window.refresh();
+    redraw(cx);
 }
 
 /// The ring on the idea the keyboard is on.
@@ -609,7 +609,7 @@ fn select(id: &str, follow: bool, window: &mut Window, cx: &mut App) {
     });
     if canvas { focus_canvas(window, cx); }
     if follow { scroll_to(id, cx); }
-    window.refresh();
+    redraw(cx);
 }
 
 fn scroll_now(cx: &App) -> (f32, f32) {
@@ -662,8 +662,8 @@ fn delete_key(window: &mut Window, cx: &mut App) {
         let under = gone.len() - 1;
         let msg = format!("Press Delete again to delete{}", if under > 0 { format!(" it and the {under}{} under it", if under == 1 { " idea" } else { " ideas" }) } else { String::new() });
         let g_ = with(cx, |s| { s.del_armed = id.clone(); s.del_gen += 1; s.ring_msg = msg; s.ring_warn = true; s.del_gen });
-        after(cx, 3000, move |window, cx| { if with(cx, |s| s.del_gen == g_) { disarm_now(cx); window.refresh(); } });
-        window.refresh();
+        after(cx, 3000, move |window, cx| { if with(cx, |s| s.del_gen == g_) { disarm_now(cx); redraw(cx); } });
+        redraw(cx);
         return;
     }
     disarm_now(cx);
@@ -726,8 +726,8 @@ fn map_key(k: &Key, window: &mut Window, cx: &mut App) -> bool {
     if k.ctrl && k.shift && !k.alt { if let Some(d) = k.dir() { mm_step(d, window, cx); return true; } }
     let (edit, draft, sel) = with(cx, |s| (s.edit.is_some(), s.draft.is_some(), s.sel.clone()));
     if k.del() && !k.alt && !k.ctrl && !edit && !draft && !sel.is_empty() { delete_key(window, cx); return true; }
-    if with(cx, |s| !s.del_armed.is_empty()) { disarm_now(cx); window.refresh(); }
-    if k.esc() && !edit && !draft && !sel.is_empty() { clear_sel(cx); window.refresh(); return true; }
+    if with(cx, |s| !s.del_armed.is_empty()) { disarm_now(cx); redraw(cx); }
+    if k.esc() && !edit && !draft && !sel.is_empty() { clear_sel(cx); redraw(cx); return true; }
     if k.ctrl && !k.alt && (k.plus() || k.minus()) { zoom_step(k.plus(), window, cx); return true; }
     if edit || draft || sel.is_empty() || k.alt { return false; }
     let Some(n) = with(cx, |s| s.nodes.iter().find(|x| x.id == sel).cloned()) else { return false };
@@ -915,7 +915,7 @@ fn start_edit(id: &str, window: &mut Window, cx: &mut App) {
     render(window, cx);
     with(cx, |s| s.edit_on = true);
     focus_edit_end(window, cx);
-    window.refresh();
+    redraw(cx);
 }
 
 /// Save (or not) the idea being edited; Escape puts the old words back.
@@ -949,7 +949,7 @@ fn canvas_press(window: &mut Window, cx: &mut App) {
     if with(cx, |s| s.draft.is_some()) { end_draft(window, cx); }
     if with(cx, |s| s.edit.is_some()) { finish_edit(true, window, cx); }
     clear_sel(cx);
-    window.refresh();
+    redraw(cx);
 }
 
 /// A press on an idea (window coordinates): a click or the start of a drag.
@@ -1026,7 +1026,7 @@ fn pointer_move(x: f32, y: f32, window: &mut Window, cx: &mut App) {
         drag_start(&p.id, window, cx);
     }
     drag_move(ux, uy, cx);
-    window.refresh();
+    redraw(cx);
 }
 
 /// The press let go off an idea: the end of a drag, if one.
@@ -1060,7 +1060,7 @@ fn set_zoom(z: f32, cx_: f32, cy_: f32, window: &mut Window, cx: &mut App) {
     let r = z / prev;
     with(cx, |s| { s.zoom = z; s.zoom_init = true; });
     set_scroll(ox * r - cx_, oy * r - cy_, cx);
-    window.refresh();
+    redraw(cx);
 }
 
 // ─── Drag to rearrange ───
@@ -1146,7 +1146,7 @@ fn open_detail(id: &str, window: &mut Window, cx: &mut App) {
     if let Some(f) = f { f.focus(window, cx); }
     refresh_detail(cx);
     load_detail_media(cx);
-    window.refresh();
+    redraw(cx);
 }
 
 /// The dialog's view of its idea, from the latest map.
@@ -1199,7 +1199,7 @@ fn fill_thumbs(cx: &mut App) {
             Thumb { image: s.pics.get(&id).cloned().flatten(), name: s_of(it, "originalName"), kind: s_of(it, "kind"), id }
         }).collect();
     });
-    cx.refresh_windows();
+    redraw(cx);
     // Pictures load once each, then the strip is drawn again.
     for it in items {
         let id = s_of(&it, "id");
@@ -1220,7 +1220,7 @@ fn open_media(id: &str, window: &mut Window, cx: &mut App) {
 fn close_detail(window: &mut Window, cx: &mut App) {
     with(cx, |s| { s.detail = None; s.d_open = false; s.d_editing = false; });
     focus_canvas(window, cx);
-    window.refresh();
+    redraw(cx);
 }
 
 /// A note's box in the dialog's editing (its words go to d_notes).
@@ -1241,7 +1241,7 @@ fn d_note_del(i: usize, window: &mut Window, cx: &mut App) {
         if i < s.d_notes.len() { s.d_notes.remove(i); }
         if let Some(u) = s.ui.as_mut() { if i < u.d_notes.len() { u.d_notes.remove(i); } }
     });
-    window.refresh();
+    redraw(cx);
 }
 
 fn d_act(a: &str, window: &mut Window, cx: &mut App) {
@@ -1261,13 +1261,13 @@ fn d_act(a: &str, window: &mut Window, cx: &mut App) {
             with(cx, |s| if let Some(u) = s.ui.as_mut() { u.subs.extend(boxes.into_iter().map(|b| b.1)); });
             set_area(e.clone(), &n.text, window, cx);
             if let Some(e) = e { e.update(cx, |st, cx| st.focus(window, cx)); }
-            window.refresh();
+            redraw(cx);
         }
         "add-note" => {
             let (e, sub) = note_box("", window, cx);
             with(cx, |s| { s.d_notes.push(String::new()); if let Some(u) = s.ui.as_mut() { u.d_notes.push(e.clone()); u.subs.push(sub); } });
             e.update(cx, |st, cx| st.focus(window, cx));
-            window.refresh();
+            redraw(cx);
         }
         "save" => {
             let text = with(cx, |s| s.ui.as_ref().map(|u| u.d_text.clone())).map(|e| e.read(cx).value().to_string()).unwrap_or_default().trim().to_string();
@@ -1326,7 +1326,7 @@ fn open_link(id: &str, window: &mut Window, cx: &mut App) {
     set_line(e.clone(), "", window, cx);
     if let Some(e) = e { e.update(cx, |st, cx| st.focus(window, cx)); }
     load_link_board(cx);
-    window.refresh();
+    redraw(cx);
 }
 
 fn l_project(cx: &mut App) -> String { with(cx, |s| s.l_keys.get(s.l_sel).cloned()).unwrap_or_default() }
@@ -1341,7 +1341,7 @@ fn load_link_board(cx: &mut App) {
         let b = r.ok().filter(|v| truthy(&v["ok"])).map(|v| v["board"].clone()).unwrap_or(json!({ "tasks": [] }));
         with(cx, |s| { s.l_board = b; s.l_loading = false; });
         link_list(cx);
-        cx.refresh_windows();
+        redraw(cx);
     });
 }
 
@@ -1367,14 +1367,14 @@ fn link_list(cx: &mut App) {
 fn close_link(window: &mut Window, cx: &mut App) {
     with(cx, |s| s.l_open = false);
     focus_canvas(window, cx);
-    window.refresh();
+    redraw(cx);
 }
 
 fn l_act(a: &str, x: &str, y: &str, window: &mut Window, cx: &mut App) {
     let id = with(cx, |s| s.link_id.clone());
     match a {
-        "project" => { with(cx, |s| s.l_sel = x.parse().unwrap_or(0)); load_link_board(cx); window.refresh(); }
-        "search" => { link_list(cx); window.refresh(); }
+        "project" => { with(cx, |s| s.l_sel = x.parse().unwrap_or(0)); load_link_board(cx); redraw(cx); }
+        "search" => { link_list(cx); redraw(cx); }
         "scope" => {
             let proj = l_project(cx);
             if proj.is_empty() { return; }
@@ -1395,7 +1395,7 @@ fn open_help(window: &mut Window, cx: &mut App) {
     let n = help::rows().len();
     let f = with(cx, |s| { if s.h_open.len() != n { s.h_open = vec![false; n]; } s.h_shown = true; s.ui.as_ref().map(|u| u.h_focus.clone()) });
     if let Some(f) = f { f.focus(window, cx); }
-    window.refresh();
+    redraw(cx);
 }
 
 fn h_toggle(i: usize, cx: &mut App) { with(cx, |s| if let Some(o) = s.h_open.get_mut(i) { *o = !*o; }); }
@@ -1413,7 +1413,7 @@ fn h_act(a: &str, window: &mut Window, cx: &mut App) {
         with(cx, |s| s.h_shown = false);
         focus_canvas(window, cx);
     }
-    window.refresh();
+    redraw(cx);
 }
 
 // ─── Jumping to an idea (the web's flashMindmapNode) ───

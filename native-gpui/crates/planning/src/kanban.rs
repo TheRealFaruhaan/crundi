@@ -56,7 +56,12 @@ impl Global for K {}
 
 pub(crate) fn st(cx: &App) -> &K { cx.global::<K>() }
 pub(crate) fn with<R>(cx: &mut App, f: impl FnOnce(&mut K) -> R) -> R { f(cx.global_mut::<K>()) }
-pub(crate) fn refresh(cx: &mut App) { cx.refresh_windows(); }
+/// Draw the board again where it shows (its tab, its pane), not the window
+/// (a refresh drew every pane again).
+pub(crate) fn refresh(cx: &mut App) {
+    crundi_shell::redraw_tab(cx, "kanban");
+    if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| w.redraw_kind("panel:kanban", cx)); }
+}
 
 fn s(v: &Value, k: &str) -> String { v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string() }
 fn truthy(v: &Value) -> bool { v.as_bool().unwrap_or(false) }

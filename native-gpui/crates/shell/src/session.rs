@@ -390,7 +390,12 @@ pub fn pump(cx: &mut App) {
     // each event it made the whole window, every pane, be laid out and
     // painted again (the owner's PC, 19 Nov: ~65 ms frames, ~15 fps, on any
     // tab while a chat worked). Other events still refresh, for now.
-    let refresh = evs.iter().any(|e| !matches!(e, Event::Chat(_)));
+    // The chats' state (each one's working / idle, the projects' dots) comes
+    // often while chats work: it draws the shell, the workbench and the
+    // panes that show it (chats, terminals, factories), and the tab on show,
+    // not the whole window. Other events still refresh, for now.
+    let state = evs.iter().any(|e| matches!(e, Event::State(_)));
+    let refresh = evs.iter().any(|e| !matches!(e, Event::Chat(_) | Event::State(_)));
     for e in evs {
         match &e {
             Event::SignedOut => { sign_out(cx, "Your sign-in ended. Sign in again."); return; }
@@ -407,6 +412,14 @@ pub fn pump(cx: &mut App) {
         }
     }
     if refresh { cx.refresh_windows(); }
+    else if state {
+        if let Some(sh) = crate::shell(cx) {
+            let tab = sh.read(cx).tab.clone();
+            sh.update(cx, |_, cx| cx.notify());
+            crate::redraw_tab(cx, &tab);
+        }
+        registry::run_action(cx, "state-redraw");
+    }
 }
 
 /// The Telegram bot's status for the top bar (GET /api/status), then again

@@ -397,16 +397,20 @@ pub fn nav_tab(icon: IconName, label: impl Into<SharedString>, on: bool) -> Div 
 /// the open project with nothing running) and its name; the open one
 /// accent-dim with the accent bar at its left.
 /// `icon`: the project's icon (18, rounded, after the dot), as the web's .proj-ico.
-pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool, icon: Option<std::sync::Arc<Image>>) -> Div {
+pub fn sidebar_item(name: impl Into<SharedString>, state: &str, on: bool, icon: Option<std::sync::Arc<Image>>) -> Stateful<Div> {
+    let name: SharedString = name.into();
     let color = if state.is_empty() && on { T::green() } else { project_dot_color(state) };
     let ring = match state { "needs-input" => Some(T::accent_dim()), "working" => Some(T::yellow_dim()), "waiting" => Some(T::sky_dim()), _ => None };
     let dot = div().flex_none().size(T::SP_12).flex().items_center().justify_center()
         .when_some(ring, |d, r| d.rounded(T::R_PILL).bg(r))
         .child(div().size(T::DOT).rounded(T::R_PILL).bg(color));
-    let d = div().relative().flex().items_center().gap(T::SP_10).h(T::SP_32).pl(T::SP_10).pr(T::SP_8).rounded(T::R_CONTROL)
+    // An id: GPUI follows the pointer's hover (and draws the row again when
+    // it comes or goes) only on an element with one. Without it the
+    // highlight stayed on a row the pointer had left (the owner, 19 Nov).
+    let d = div().id(SharedString::from(format!("sidebar-item:{name}"))).relative().flex().items_center().gap(T::SP_10).h(T::SP_32).pl(T::SP_10).pr(T::SP_8).rounded(T::R_CONTROL)
         .child(dot)
         .children(icon.map(project_icon))
-        .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).child(name.into()));
+        .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).child(name));
     if on {
         d.bg(T::accent_dim()).text_color(T::accent_hover())
             .child(div().absolute().left(px(0.)).top(T::SP_8).bottom(T::SP_4).w(T::SP_4).rounded_r(T::R_CHIP).bg(T::accent()))
