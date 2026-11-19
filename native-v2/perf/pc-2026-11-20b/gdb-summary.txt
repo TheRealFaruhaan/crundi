@@ -1,0 +1,89 @@
+samples 1000: busy 129, idle 871
+
+stage:
+    45 other
+    37 render
+    28 layout
+    19 paint
+
+owner x stage:
+    38 crundi_v2::main::  [other]
+    25 crundi_v2::main::  [render]
+    18 crundi_chat::log::LogView  [layout]
+     9 crundi_v2::main::  [layout]
+     9 crundi_chat::log::LogView  [paint]
+     8 crundi_v2::main::  [paint]
+     5 crundi_chat::log::LogView  [render]
+     2 crundi_chat::log::Hit  [render]
+     2 crundi_core::webmd::Inline  [render]
+     2 crundi_chat::store::ChatStore  [other]
+     1 crundi_chat::store::Row  [other]
+     1 crundi_core::webmd::Tk  [other]
+     1 crundi_shell::live_hub::run::  [other]
+     1 crundi_chat::pane::Composer  [paint]
+     1 crundi_chat::log::LogView  [other]
+     1 crundi_workbench::Workbench  [render]
+     1 crundi_widgets::modal::ModalLayer  [paint]
+     1 crundi_shell::views::ProjectBar  [render]
+     1 crundi_widgets::modal::ModalLayer  [layout]
+     1 crundi_workbench::head::PaneHead  [other]
+     1 crundi_shell::views::Shell  [render]
+
+leaf function:
+    51 ?
+     6 ??
+     5 _int_free_create_chunk
+     2 __rustc::__rust_dealloc
+     2 __GI___libc_malloc
+     2 refine
+     2 _int_free_merge_chunk
+     2 copy_nonoverlapping<gpui::scene::SubpixelSprite>
+     2 is_hovered
+     2 __memcpy_avx_unaligned_erms
+     2 unlink_chunk
+     2 {closure#0}<core::option::Option<gpui::window::Hitbox>,
+     1 as_attrs
+     1 core::fmt::Formatter::pad
+     1 wl_display_read_events
+
+functions on the stack (inclusive):
+   129 crundi_v2::main::
+   111 gpui::app::
+   102 gpui::window::
+   102 gpui::platform::RequestFrameOptions
+    99 gpui::app::async_context::AsyncApp
+    61 gpui::elements::div::Stateful
+    59 gpui::elements::div::Div
+    59 gpui::view::ViewElement
+    55 gpui::view::AnyView
+    52 gpui_component::window_border::WindowBorder
+    51 gpui::elements::div::
+    51 gpui::elements::div::InteractiveElementState
+    43 gpui::window::ElementId
+    41 gpui::element::AnyElement
+    39 gpui::app::entity_map::Entity
+    35 gpui::view::ViewElementState
+    29 gpui::elements::list::List
+    28 gpui::window::Hitbox
+    28 gpui::window::FocusHandle
+    23 gpui::elements::list::LayoutItemsResponse
+    20 gpui::taffy::LayoutId
+    19 gpui::taffy::NodeContext
+    13 taffy::tree::taffy_tree::TaffyView
+    13 gpui::view::paint_view::
+    12 gpui::element::Drawable
+    12 gpui::arena::ArenaElement
+     8 gpui::geometry::Size
+     8 crundi_chat::log::LogView
+     7 gpui::elements::div::Interactivity
+     7 gpui::elements::list::
+     6 gpui::style::StyleRefinement
+     6 gpui::window::DispatchPhase
+     5 crundi_shell::live_hub::run::
+     5 gpui::taffy::
+     5 taffy::compute::flexbox::determine_hypothetical_cross_size::
+     5 gpui::interactive::MouseMoveEvent
+     5 gpui::geometry::ScaledPixels
+     5 gpui::elements::text::StyledText
+     4 crundi_chat::store::ChatStore
+     4 gpui::scene::SubpixelSprite

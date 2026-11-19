@@ -1,0 +1,127 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:a6b045fcb3db04bc",
+   "live:f711e65525fc7b66",
+   "live:34fce0901e625b87",
+   "live:ee30addac7c33b0e"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "ee30addac7c33b0e",
+  "focusedRows": 122,
+  "streamChat": "080384f677aeb206",
+  "panesWhileStreaming": 5,
+  "batches": 354,
+  "spliced": 677,
+  "rows": 303,
+  "replyChars": 6088
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 550,
+  "p50": 5.76,
+  "p95": 9.27,
+  "max": 14.59,
+  "share7": 0.82,
+  "over7": 101,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 746,
+  "renders": {
+   "workbench": 550,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "head": 4,
+   "log": 552,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 539,
+  "p50": 5.56,
+  "p95": 8.56,
+  "max": 11.53,
+  "share7": 0.7,
+  "over7": 163,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 539,
+   "log": 539
+  }
+ },
+ "stream+scroll": {
+  "frames": 520,
+  "p50": 6.55,
+  "p95": 10.54,
+  "max": 12.96,
+  "share7": 0.62,
+  "over7": 200,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 722
+ },
+ "stream": {
+  "frames": 185,
+  "p50": 7.87,
+  "p95": 9.91,
+  "max": 13.58,
+  "share7": 0.47,
+  "over7": 98,
+  "over16": 0,
+  "seconds": 9.3,
+  "renders": {
+   "workbench": 705,
+   "top-bar": 3,
+   "sidebar": 2,
+   "project-bar": 0,
+   "head": 1,
+   "log": 840,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 2,
+  "p50": 4.36,
+  "p95": 4.87,
+  "max": 4.87,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {
+   "workbench": 2,
+   "top-bar": 2,
+   "sidebar": 1,
+   "head": 1
+  },
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Chat (new)",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Numbers one to three",
+    "long": "Numbers one to three hundred",
+    "state": "idle"
+   }
+  }
+ },
+ "allFrames": 1825,
+ "ranSeconds": 140
+}
