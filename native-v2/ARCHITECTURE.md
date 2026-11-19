@@ -58,10 +58,10 @@ its own.
    replaced (a new history).
 5. **Work happens once per change, off the render path, and where it can
    off the UI thread.** Markdown, ANSI, JSON and diffs are turned into
-   view state when the data changes, not when it is drawn: chat text into a
-   `TextViewState` (gpui-component parses markdown on the background
-   executor and appends streamed text incrementally), server JSON into
-   typed rows by the store. `render` only lays out what is ready. Streams
+   view state when the data changes, not when it is drawn: chat text into
+   blocks of styled runs (`core::webmd`, the web's own markdown rules; a
+   long reply on the background executor, a streamed one only from its
+   last open block), server JSON into typed rows by the store. `render` only lays out what is ready. Streams
    (a chat's events, logs, the event stream) are **batched to at most one
    update per frame**, as Zed's terminal and agent panel do (below).
 6. **Animations are capped and run only while visible.** Every
@@ -98,7 +98,7 @@ software Vulkan under Xvfb give the *idle* check and relative numbers.
                ├─ core::live (threads) ┤  Projects     (shell)    the projects, the open one, the chats' states (dots)
  server ─SSE───┘   │ one channel       ├─ Usage        (shell)    the top bar's bars
                    ▼                   ├─ Chats        (chat)     id -> Entity<ChatStore>
-           LiveHub (shell, UI thread)  │   ChatStore   (chat)     one chat: Conversation + its rows + their TextViewStates
+           LiveHub (shell, UI thread)  │   ChatStore   (chat)     one chat: Conversation + its rows (parsed blocks)
            batch per frame, route ─────┤  Workbench    (workbench) the mosaic, focus, pane hosts
                                        └─ area stores (planning, workspace, operations, desktop: their own)
 ```
@@ -133,9 +133,9 @@ software Vulkan under Xvfb give the *idle* check and relative numbers.
    (`FRAME`, 1/144 s rounded up to 8 ms) before taking the next batch:
    at most one update per frame, however fast the server streams.
 3. A store derives its rows only for what the batch touched
-   (`Conversation` reports which entries changed), updates their
-   `TextViewState`s (`set_text` appends a streamed delta; the parse runs on
-   the background executor), splices its `ListState` for those rows, and
+   (`Conversation` reports which entries changed), parses again only the
+   tail of a streamed reply (`webmd::update`; a long one on the background
+   executor), splices its `ListState` for the rows that changed, and
    notifies once.
 4. The views that show the store were observing it: only they re-render.
    A streaming chat redraws its log's visible rows and its pane's head
@@ -153,9 +153,10 @@ Root (gpui-component)
    ├─ <tab's root>       layout   one per tab, made when first shown; the workbench tab's is the Workbench
    │  └─ Workbench       layout   the mosaic's rectangles, gutters, empty panes
    │     ├─ PaneHead     cached   one per pane: grip, dot, title, badge, tools, ×
-   │     └─ ChatPane     layout   (a pane kind's body) log over composer
-   │        ├─ LogView   cached   the virtualised log (list): only visible rows
-   │        └─ Composer  cached   the box, Send / Stop
+   │     ├─ ChatPane     layout   (a pane kind's body) log over composer
+   │     │  ├─ LogView   cached   the virtualised log (list): only visible rows
+   │     │  └─ Composer  cached   the box, Send / Stop
+   │     └─ Launcher     cached   ("pend:" panes) New terminal: Empty Shell, UI Mode, Terminal
    ├─ Drawer             cached   the browser drawer (Desktop)
    └─ layers             layout   the ask layer (confirm, prompt, menus), the modal layer
 ```
@@ -169,6 +170,18 @@ Root (gpui-component)
   (cheap: no text), the LogView re-renders its visible rows, and every
   other cached leaf (the top bar, the sidebar, the other panes' heads,
   logs and composers, the drawer) is reused from its cache.
+- A wheel tick over a log is the same: the list notifies the LogView, and
+  GPUI marks every ancestor view dirty with it (`Window::mark_view_dirty`
+  walks the view path up; Zed's workspace does the same), so the ChatPane
+  and the Workbench re-run their `render` once per frame that scrolls
+  (F21). That is why the layout views hold no text and do no work: the
+  Workbench's render is the mosaic's few rectangles and the cached pane
+  views placed in them; nothing under them that is not dirty is rebuilt.
+- An empty workbench is never blank (F18): with no panes it puts in a
+  "New terminal" launcher pane (the web's placeholder cell), the first
+  screen of a fresh project and after the last pane closes; the next pane
+  placed (a chat at sign-in) takes the launcher's place. The empty leaf
+  ("Drop a panel here…") appears only for a split, as in the web.
 - The SignIn view replaces the signed-in tree while signed out (one cached
   view; its fields are its own `InputState`s).
 - Any view that changes per frame during an animation (the sidebar's fold)
@@ -181,27 +194,60 @@ Root (gpui-component)
   "Go to the newest message" brings it back), overdraw `T::LOG_OVERDRAW`.
   Rows are the store's: `ChatStore.rows: Vec<Row>` where a row is a typed
   record (user bubble, tool card, thinking, result, error, notice) or **one
-  markdown block of an assistant text** holding its own
-  `Entity<TextViewState>`. `render_item` reads a row and lays it out; it
-  never parses.
-- **A reply is one row per markdown block** (F10; Zed's agent panel keeps a
-  long message cheap the same way: only what is on screen is laid out and
-  painted). `core::mdblocks` cuts the text where the whole document drawn
-  by one TextView would only have a paragraph gap, a list item's 0.25 body
-  size, or a heading's or rule's room (gpui-component 0.10's flow rules,
-  version pinned); the row adds that room around its block
-  (`chat::pane::block_room`), so the look is the same (a headless test
-  compares the heights). Never cut: around HTML, math and front matter, and
-  not at all with link or footnote references. While a reply streams, only
-  the text from the block before the last is cut again (`mdblocks::update`),
-  so a batch splices the new blocks and the one that was last; earlier rows
-  and their TextViewStates are untouched.
-- **Where the cut runs**: on the UI thread only within `INLINE_PARSE` (4 KB
-  of markdown per update, about 2 ms; a streamed tail is far less);
-  anything more (a history's long replies, a long tail) is cut on the
-  background executor, one job per entry at a time, the rows refreshed
-  when it lands. Until then a known reply keeps its last cut with its last
-  block running to the end; a reply never cut draws nothing yet.
+  markdown block of an assistant text** (`Rc<webmd::Block>`: its kind and
+  its text as styled runs, parsed once). `render_item` reads a row and lays
+  it out; it never parses.
+- **Claude's text is drawn as the web draws it** (F19/F24): `core::webmd`
+  is a port of app/vendor/claude-chat.js's `md()`, `inline()` and
+  `linkify()` (headings `#` 14 px bold, `##` bold at body size, `###`+ the
+  browser's h5/h6; a nested list item flat, as the web; the rule the
+  browser's `hr`; code spans, links, bare URLs and paths), and the log
+  gives each block the margins the web's `.cc-assistant` CSS gives it,
+  collapsed with its neighbour's as CSS collapses them
+  (`chat::log::margins`). Two things differ from the web by the owner's
+  call (19 Nov): a GFM table is drawn as a table, and a code block's text
+  is coloured by its language (`core::syntax`: syntect with bat's syntaxes,
+  the crates gpui-component builds; colours from the theme's `syn_*`
+  tokens, readable on the dark background), with no language label.
+- **A reply is one row per block** (F10; Zed's agent panel keeps a long
+  message cheap the same way: only what is on screen is laid out and
+  painted): a paragraph, a heading, a list item, a quote line, a code
+  block, a table, a rule. While a reply streams, `webmd::update` parses
+  again only from the last line where nothing was open (no paragraph, no
+  unclosed fence; a list's place in it is carried over), so a batch splices
+  the new blocks and the last one or two before them; earlier rows are
+  kept as they are.
+- **Where the parse runs**: on the UI thread only within `INLINE_PARSE` (4 KB
+  per update, well under 1 ms; a streamed tail is far less); anything more
+  (a history's long replies) is parsed on the background executor, one job
+  per entry at a time, the rows refreshed when it lands. Until then a known
+  reply keeps its last cut; a reply never cut draws nothing yet. The syntax
+  set loads on a background thread at start (`syntax::warm`).
+
+## Text and selection
+
+- **One selection across the whole log** (F15), as in the web: a drag
+  selects from block to block and message to message; a double-click
+  selects a word, a triple-click a block; shift-click extends; a drag past
+  the log's top or bottom (within 56 px of it, the web's `SEL_EDGE`)
+  scrolls it, a 16 ms timer that runs only while the pointer is held there;
+  Ctrl+C (Cmd+C) copies, a block's pieces by lines (a table's cells by
+  tabs), list items by lines, other blocks and messages by a blank line.
+  A click (no drag) on a link opens it (a path: the "open-path" action).
+- **How**: every selectable text is a `StyledText` whose runs carry the
+  span styles and the selection's background; a `canvas` after it reports
+  its `TextLayout` to the log once it is laid out (only texts that were
+  actually prepainted, so the layouts are valid). The pointer is mapped
+  onto those layouts (`index_for_position`), the nearest one when it is
+  between texts (Zed's markdown element does the same within one
+  document; here the document is the log). The selection is kept as
+  places in the text (entry, block, piece, byte), never as pixels, so it
+  stays right while the log scrolls or streams, and rows scrolled away keep
+  it. The pointer's moves and release while a press is held are taken
+  window-wide (registered in the log's paint), so a drag may leave the log.
+- No `InteractiveText`: it calls `window.refresh()` on every press
+  (gpui's text.rs), which rule 2 forbids; the log handles its own links.
+
 - **Kanban, mind map, file trees, long lists** (the areas'): the same; the
   mind map draws only nodes intersecting the viewport (a spatial index in
   its store) on a canvas.
@@ -229,11 +275,9 @@ Root (gpui-component)
 
 ## Background parsing
 
-- Markdown: one `TextViewState` per markdown block of an assistant text
-  (above), made when the block first appears, `set_text` when its source
-  changes (an extension is appended incrementally); gpui-component parses
-  on the background executor and notifies its own state, which redraws
-  only that block. The cut into blocks follows the same budget.
+- Markdown: an assistant text's blocks (above), parsed when its text
+  changes, never when drawn; within the budget on the UI thread, else on
+  the background executor; a code block's colours with it.
 - ANSI (terminals), JSON tool bodies, diffs and the git log are parsed by
   the store when data arrives; anything over a few KB on
   `cx.background_spawn`, the result applied in one update.

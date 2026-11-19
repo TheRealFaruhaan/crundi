@@ -40,6 +40,11 @@ pub struct Stores {
 struct StoresHandle(Stores);
 impl Global for StoresHandle {}
 
+/// A path clicked in a chat, for the "open-path" action (the Files area
+/// opens it in the file viewer, as the web's openPathFromChat).
+pub struct OpenPath(pub String);
+impl Global for OpenPath {}
+
 /// The stores (after `init`).
 pub fn stores(cx: &App) -> Stores { cx.global::<StoresHandle>().0.clone() }
 

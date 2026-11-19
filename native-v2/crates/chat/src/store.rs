@@ -1,42 +1,46 @@
 //! One chat's store (ARCHITECTURE.md, "How server data becomes view
 //! state"): the conversation (core::chat::Conversation, the server's
-//! entries), its rows as the log draws them, each assistant text's
-//! TextViewState (parsed on the background executor, streamed deltas
-//! appended), and the log's ListState, spliced only for the rows a batch
-//! touched. The small part the head and the composer show (title, state,
+//! entries), its rows as the log draws them (each assistant text cut into
+//! the web's markdown blocks, core::webmd: a long one on the background
+//! executor, a streamed one only from its last open block), and the log's
+//! ListState, spliced only for the rows a batch touched. The small part the head and the composer show (title, state,
 //! model, cost, the last error, the text size) is a separate entity,
 //! `ChatMeta`, notified only when it changes: a streamed delta redraws the
 //! log alone.
 
 use crundi_core::chat::{Conversation, Shown};
-use crundi_core::mdblocks::{self, Block, Lead};
+use crundi_core::webmd::{self, Block, Inline, Kind};
 use crundi_theme::T;
 use gpui::*;
-use gpui_component::text::TextViewState;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 /// One row of the log, ready to lay out (render never parses). An assistant
-/// text is one row per markdown block (core::mdblocks), so the log lays out
+/// text is one row per markdown block (core::webmd), so the log lays out
 /// and paints only the blocks on screen, and a streamed delta changes only
-/// the last block's row.
+/// the last blocks' rows.
 pub struct Row {
     pub id: String,
     pub shown: Rc<Shown>,
-    /// Claude's text: this block's, parsed off the UI thread.
-    pub md: Option<Entity<TextViewState>>,
-    /// The block's source; the user's bubble and other plain text (shared,
-    /// no copy per frame).
+    /// Claude's text: this block, parsed (off the UI thread when long).
+    pub blk: Option<Rc<Block>>,
+    /// The user's bubble (its text with its links, the web's linkify), a
+    /// notice's and an error's text.
+    pub plain: Option<Rc<Inline>>,
+    /// The texts the log draws and selects in, each piece once (shared).
+    pub parts: Vec<SharedString>,
+    /// What the row copies as: the block's text; the user's bubble and other
+    /// plain text (shared, no copy per frame).
     pub text: SharedString,
     /// An assistant text's block: where it stands among its siblings.
     pub block: Option<BlockRow>,
 }
 
-/// A block row's look: the room above it and below it that the whole
-/// document drawn as one would have there.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BlockRow { pub ix: usize, pub lead: Lead, pub gap: bool, pub last: bool }
+/// A block row's place: its kind and the one before it (the margins the
+/// web's CSS gives them collapse between the two), and whether it is last.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockRow { pub ix: usize, pub prev: Option<Kind>, pub kind: Kind, pub last: bool }
 
 #[derive(Clone, Default, PartialEq)]
 pub struct Meta {
@@ -56,7 +60,7 @@ pub struct ChatMeta(pub Meta);
 
 /// An assistant text's last cut into blocks (the base the next one extends).
 #[derive(Clone)]
-struct Cut { text: String, blocks: Vec<Block> }
+struct Cut { text: String, cut: webmd::Cut }
 
 /// Parsing done on the UI thread in one update, at most (bytes of markdown
 /// cut): about 2 ms. Anything more is cut on the background executor.
@@ -111,87 +115,78 @@ impl ChatStore {
     }
 
     /// The blocks of an assistant text: the last cut when the text is the
-    /// same; extended from it when only its tail needs cutting again (a
-    /// streamed delta); cut here when small; otherwise cut on the background
-    /// executor (one job per entry at a time, the rows refreshed when it is
-    /// done) and, until then, the last cut with its last block running to
-    /// the end (or nothing yet, for a text never cut).
+    /// same; extended from it when only its tail needs parsing again (a
+    /// streamed delta, core::webmd::update); parsed here when small;
+    /// otherwise parsed on the background executor (one job per entry at a
+    /// time, the rows refreshed when it is done) and, until then, the last
+    /// cut as it was (or nothing yet, for a text never cut).
     fn blocks_for(&mut self, id: &str, text: &str, cx: &mut Context<Self>) -> Vec<Block> {
         let base = self.cuts.get(id);
-        if let Some(c) = base { if c.text == text { return c.blocks.clone(); } }
-        // From where an update would cut again (core::mdblocks::update).
-        let tail_from = base.and_then(|c| (c.blocks.len() >= 3).then(|| c.blocks[c.blocks.len() - 2].range.start))
-            .filter(|&f| text.len() >= f && c_prefix(base, text, f));
-        let work = match tail_from { Some(f) => text.len() - f, None => text.len() };
+        if let Some(c) = base { if c.text == text { return c.cut.blocks.clone(); } }
+        let from = base.map(|c| c.cut.resume).filter(|&r| text.get(..r).is_some() && text.get(..r) == c_text(base).get(..r)).unwrap_or(0);
+        let work = text.len() - from;
         if work <= self.budget {
             self.budget -= work;
-            let blocks = match base { Some(c) if tail_from.is_some() => mdblocks::update(&c.blocks, &c.text, text), _ => mdblocks::split(text) };
-            self.cuts.insert(id.to_string(), Cut { text: text.to_string(), blocks: blocks.clone() });
+            let cut = match base { Some(c) => webmd::update(&c.cut, &c.text, text), None => webmd::split(text) };
+            let blocks = cut.blocks.clone();
+            self.cuts.insert(id.to_string(), Cut { text: text.to_string(), cut });
             return blocks;
         }
-        let provisional = match base {
-            Some(c) => match c.blocks.last() {
-                Some(l) if text.len() >= l.range.start && c_prefix(base, text, l.range.start) => {
-                    let mut b = c.blocks.clone();
-                    let last = b.last_mut().unwrap();
-                    last.range.end = text.len();
-                    b
-                }
-                _ => vec![],
-            },
-            None => vec![],
-        };
+        let provisional = base.map(|c| c.cut.blocks.clone()).unwrap_or_default();
         if !self.jobs.contains_key(id) {
             let (key, text, base) = (id.to_string(), text.to_string(), base.cloned());
             let task = cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 let t = text.clone();
-                let blocks = cx.background_spawn(async move {
-                    match &base { Some(c) => mdblocks::update(&c.blocks, &c.text, &t), None => mdblocks::split(&t) }
+                let cut = cx.background_spawn(async move {
+                    match &base { Some(c) => webmd::update(&c.cut, &c.text, &t), None => webmd::split(&t) }
                 }).await;
-                let _ = this.update(cx, |s, cx| s.cut_done(key, text, blocks, cx));
+                let _ = this.update(cx, |s, cx| s.cut_done(key, text, cut, cx));
             });
             self.jobs.insert(id.to_string(), task);
         }
         provisional
     }
 
-    fn cut_done(&mut self, id: String, text: String, blocks: Vec<Block>, cx: &mut Context<Self>) {
+    fn cut_done(&mut self, id: String, text: String, cut: webmd::Cut, cx: &mut Context<Self>) {
         self.jobs.remove(&id);
-        self.cuts.insert(id.clone(), Cut { text, blocks });
+        // The text moved on meanwhile: the next batch extends this cut.
+        self.cuts.insert(id.clone(), Cut { text, cut });
         self.budget = INLINE_PARSE;
         self.update_rows(&[id], cx);
         cx.notify();
     }
 
     /// An entry's rows, reusing what `old` (its rows as they were) already
-    /// has: a row whose block and look did not change is kept as it is (not
-    /// spliced); a changed block's TextViewState gets the new text (an
-    /// extension is appended, the parse runs on the background executor).
-    /// Returns the rows and the first one that changed; None: not shown.
+    /// has: a row whose block and place did not change is kept as it is (not
+    /// spliced). Returns the rows and the first one that changed; None: not
+    /// shown.
     fn entry_rows(&mut self, e: &Value, old: Vec<Row>, cx: &mut Context<Self>) -> Option<(Vec<Row>, usize)> {
         let shown = Rc::new(Shown::of(e)?);
         if shown.kind != "assistant" {
             let text = SharedString::from(shown.text.clone());
-            return Some((vec![Row { id: shown.id.clone(), shown, md: None, text, block: None }], 0));
+            let plain = match shown.kind {
+                "user" => Some(Rc::new(webmd::plain(&shown.text))),
+                "notice" | "error" => Some(Rc::new(Inline { text: shown.text.clone(), spans: vec![] })),
+                _ => None,
+            };
+            let parts = if plain.is_some() { vec![text.clone()] } else { vec![] };
+            return Some((vec![Row { id: shown.id.clone(), shown, blk: None, plain, parts, text, block: None }], 0));
         }
         let blocks = self.blocks_for(&shown.id, &shown.text, cx);
         let n = blocks.len();
         let mut old = old.into_iter().map(Some).collect::<Vec<_>>();
         let mut rows = Vec::with_capacity(n);
         let mut first_changed = n;
-        for (j, b) in blocks.iter().enumerate() {
-            let src = shown.text.get(b.range.clone()).unwrap_or("");
-            let look = BlockRow { ix: j, lead: b.lead, gap: b.gap, last: j + 1 == n };
+        for (j, b) in blocks.into_iter().enumerate() {
+            let look = BlockRow { ix: j, prev: (j > 0).then(|| rows_kind(&rows, j - 1)).flatten(), kind: b.kind.clone(), last: j + 1 == n };
             let prev = old.get_mut(j).and_then(|o| o.take());
             match prev {
-                Some(mut r) if r.block == Some(look) && r.text.as_ref() == src => { r.shown = shown.clone(); rows.push(r); }
-                prev => {
+                Some(mut r) if r.block.as_ref() == Some(&look) && r.blk.as_ref().is_some_and(|x| x.parts == b.parts) => { r.shown = shown.clone(); rows.push(r); }
+                _ => {
                     first_changed = first_changed.min(j);
-                    let md = match prev.and_then(|r| r.md) {
-                        Some(st) => { st.update(cx, |s, cx| s.set_text(src, cx)); st }
-                        None => cx.new(|cx| TextViewState::markdown(src, cx).selectable(true)),
-                    };
-                    rows.push(Row { id: shown.id.clone(), shown: shown.clone(), md: Some(md), text: SharedString::from(src.to_string()), block: Some(look) });
+                    let text = SharedString::from(webmd::copy_text(&b));
+                    let parts = b.parts.iter().map(|p| SharedString::from(p.text.clone())).collect();
+                    rows.push(Row { id: shown.id.clone(), shown: shown.clone(), blk: Some(Rc::new(b)), plain: None, parts, text, block: Some(look) });
                 }
             }
         }
@@ -199,15 +194,15 @@ impl ChatStore {
         Some((rows, first_changed))
     }
 
-    /// A new history: every row again (the rows and TextViewStates of
-    /// entries that are still there are kept, so their parse is incremental).
+    /// A new history: every row again (the rows and cuts of entries that are
+    /// still there are kept, so nothing is parsed again).
     fn rebuild(&mut self, cx: &mut Context<Self>) {
         // Where the reader was (the web's applyHistory): following the end,
         // it stays there; else on the same block of the same entry, at the
         // same offset (a reset alone would put the log back at its top).
         let first = self.span.is_empty();
         let top = self.list.logical_scroll_top();
-        let top_at = self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.map_or(0, |b| b.ix)));
+        let top_at = self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.as_ref().map_or(0, |b| b.ix)));
         let following = first || self.list.is_following_tail();
         let mut old: HashMap<String, Vec<Row>> = HashMap::new();
         for r in self.rows.drain(..) { old.entry(r.id.clone()).or_default().push(r); }
@@ -283,10 +278,15 @@ impl ChatStore {
         }
     }
 
+    /// The row of an entry's block (the log's selection is kept by entry).
+    pub fn row_index(&self, id: &str, blk: usize) -> Option<usize> {
+        self.span.get(id).filter(|(_, n)| blk < *n).map(|(s, _)| s + blk)
+    }
+
     /// One row per entry (the driver's "entries": an assistant text's first
     /// block stands for it, with its whole text).
     pub fn entry_rows_shown(&self) -> impl Iterator<Item = &Row> {
-        self.rows.iter().filter(|r| r.block.is_none_or(|b| b.ix == 0))
+        self.rows.iter().filter(|r| r.block.as_ref().is_none_or(|b| b.ix == 0))
     }
 
     fn sync_meta(&mut self, cx: &mut Context<Self>) {
@@ -343,10 +343,10 @@ impl ChatStore {
     }
 }
 
-/// Whether `text` starts with the cut's text up to `at`.
-fn c_prefix(base: Option<&Cut>, text: &str, at: usize) -> bool {
-    base.is_some_and(|c| c.text.get(..at).is_some_and(|p| text.get(..at) == Some(p)))
-}
+fn c_text(base: Option<&Cut>) -> &str { base.map_or("", |c| c.text.as_str()) }
+
+/// The kind of the block row `j` of `rows` (an entry's rows being made).
+fn rows_kind(rows: &[Row], j: usize) -> Option<Kind> { rows.get(j).and_then(|r| r.block.as_ref()).map(|b| b.kind.clone()) }
 
 /// The text scale of a zoom step (the web's 13px base, 1px a step).
 pub fn scale(zoom: i32) -> f32 { (13.0 + zoom as f32) / 13.0 }
@@ -357,6 +357,7 @@ mod tests {
     //! deltas is one update, re-deriving only the row that changed.
     use super::ChatStore;
     use gpui::{AppContext as _, TestAppContext};
+    use std::rc::Rc;
     use serde_json::json;
 
     #[gpui::test]
@@ -408,8 +409,8 @@ mod tests {
     }
 
     /// F10: a long reply is one row per markdown block. Streamed, each batch
-    /// splices only its new blocks and the one that was last (the earlier rows and their
-    /// TextViewStates are kept as they are); the rows are always the blocks
+    /// splices only its new blocks and the one that was last (the earlier
+    /// rows are kept as they are); the rows are always the blocks
     /// a whole cut of the text gives.
     #[gpui::test]
     fn a_streamed_reply_splices_only_its_last_blocks(cx: &mut TestAppContext) {
@@ -421,7 +422,7 @@ mod tests {
         store.update(cx, |s, cx| s.apply_batch(&[history], cx));
         let full: String = std::iter::once("Here they are:\n\n".to_string()).chain((1..=300).map(|i| format!("{i}. number {i}\n"))).chain(std::iter::once("\nDone.".to_string())).collect();
         let mut sent = 0;
-        let mut kept: Option<(gpui::EntityId, gpui::EntityId)> = None;
+        let mut kept: Option<(usize, usize)> = None;
         while sent < full.len() {
             let end = (sent + 23).min(full.len());
             let deltas: Vec<_> = [&full[sent..end]].iter().map(|t| json!({ "type": "ui-event", "id": "c1", "event": { "type": "delta", "id": "a1", "text": t } })).collect();
@@ -430,23 +431,25 @@ mod tests {
             sent = end;
             store.read_with(cx, |s, _| {
                 let text = &full[..sent];
-                let want = crundi_core::mdblocks::split(text);
+                let want: Vec<String> = crundi_core::webmd::split(text).blocks.iter().map(crundi_core::webmd::copy_text).collect();
                 let got: Vec<&str> = s.rows[1..].iter().map(|r| r.text.as_ref()).collect();
-                assert_eq!(got, crundi_core::mdblocks::texts(text, &want), "at {sent}");
+                assert_eq!(got, want, "at {sent}");
                 assert_eq!(s.list.item_count(), s.rows.len());
-                // The new blocks, and the one that was last before them.
+                // The new blocks, and the two that were last before them (a
+                // half-sent "2" is a paragraph that closed the list, as in
+                // the web: its item before stops being the list's last).
                 let added = (s.rows.len() - rows_before) as u64;
-                assert!(s.spliced - before <= added + 1, "a batch spliced {} rows, {added} new, at {sent}", s.spliced - before);
-                // The first blocks' states are the same entities all along.
+                assert!(s.spliced - before <= added + 2, "a batch spliced {} rows, {added} new, at {sent}", s.spliced - before);
+                // The first blocks are the same rows all along.
                 if s.rows.len() > 3 {
-                    let ids = (s.rows[1].md.as_ref().unwrap().entity_id(), s.rows[2].md.as_ref().unwrap().entity_id());
+                    let ids = (Rc::as_ptr(s.rows[1].blk.as_ref().unwrap()) as usize, Rc::as_ptr(s.rows[2].blk.as_ref().unwrap()) as usize);
                     if let Some(k) = kept { assert_eq!(k, ids); } else { kept = Some(ids); }
                 }
             });
         }
         store.read_with(cx, |s, _| {
             assert_eq!(s.rows.len(), 1 + 302);
-            let looks: Vec<_> = s.rows[1..].iter().map(|r| r.block.unwrap()).collect();
+            let looks: Vec<_> = s.rows[1..].iter().map(|r| r.block.clone().unwrap()).collect();
             assert!(looks[..301].iter().all(|b| !b.last) && looks[301].last);
             assert_eq!(s.entry_rows_shown().count(), 2);
         });

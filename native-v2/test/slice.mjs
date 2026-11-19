@@ -21,25 +21,41 @@ import { join } from 'node:path';
 const T = await t.begin('slice', { proxy: true });
 const budget = process.env.CRUNDI_FRAME_BUDGET === '1';
 
+// 1b. A fresh project's workbench: the web's "New terminal" launcher pane
+// (F18), not an empty leaf.
+const sl = await T.until('a fresh project shows the New terminal launcher', (s) => s.panes?.length === 1 && s.panes[0].startsWith('pend:'), 10000);
+await T.snap('workbench', 'launcher');
+
 // 2. A new chat, its pane, a streamed reply.
 await T.ui('new-chat');
 const s0 = await T.until('the new chat has its pane, focused', (s) => s.chat && s.panes?.includes(`live:${s.chat}`), 30000);
 const chat = s0?.chat;
+t.check('the new chat took the launcher\'s place', s0 && s0.panes.length === 1, s0?.panes);
 await T.snap('chat', 'new-chat-pane');
 const b0 = s0?.batches ?? 0;
 const streamFrom = T.frames.mark();
 await T.ui('send', 'Reply with a markdown list of the numbers one to forty, one per line, written as words. Nothing else.');
 const s1 = await T.until('the user message shows', (s) => s.entries?.some((e) => e.kind === 'user'), 15000);
 await T.snap('chat', 'user-message-sent');
-// The reply arrives by itself, as Claude streams it.
-const s2 = await T.until("Claude's reply streams in", (s) => s.entries?.some((e) => e.kind === 'assistant' && /forty/i.test(e.text)), 180000);
+const rows1 = s1?.rows ?? 0, spliced1 = s1?.spliced ?? 0, batches1 = s1?.batches ?? 0;
+// The reply arrives by itself, as Claude streams it. Watched closely: a
+// reply seen part-way (some of it, not all yet) streamed live.
+let partial = false;
+const s2 = await T.until("Claude's reply streams in", (s) => {
+  const a = s.entries?.find((e) => e.kind === 'assistant');
+  if (a && !/forty/i.test(a.text)) partial = true;
+  return a && /forty/i.test(a.text);
+}, 180000);
 await T.snap('chat', 'reply-arrived');
-// (Under Xvfb a frame takes ~65 ms, so a fast reply coalesces into fewer
-// batches: two or more shows it streamed rather than landing in one go.)
-t.check('the reply came in several live batches', (s2?.batches ?? 0) - b0 >= 2, { b0, b: s2?.batches });
+// (Under Xvfb at a high load a frame takes long, and a fast reply can land
+// in one batch: seen part-way, or two batches or more, shows it streamed.)
+t.check('the reply came live (seen part-way, or in several batches)', partial || (s2?.batches ?? 0) - b0 >= 2, { partial, b0, b: s2?.batches });
 // The reply is one log row per markdown block (F10): forty list items.
 t.check('the reply is a row per markdown block', (s2?.rows ?? 0) >= (s2?.entries?.length ?? 0) + 30, s2 && { rows: s2.rows, entries: s2.entries.length });
-t.check('rows were spliced, not rebuilt per event', (s2?.spliced ?? 0) < 10 * (s2?.batches ?? 1), s2 && { spliced: s2.spliced, batches: s2.batches });
+// F17: what a batch splices is the rows it added and the last few before
+// them (the store's own test: store.rs), never the whole log again.
+const added = (s2?.rows ?? 0) - rows1, batches = (s2?.batches ?? 0) - batches1;
+t.check('rows were spliced, not rebuilt per batch', (s2?.spliced ?? 0) - spliced1 <= added + 3 * Math.max(1, batches), s2 && { spliced: s2.spliced - spliced1, added, batches });
 await T.until('the chat is idle again', (s) => s.chatState === 'idle', 120000);
 // The head follows: out of WORKING, and the server's title (its list's, live
 // from the event stream, no refetch) once the server has named the chat.
@@ -52,6 +68,45 @@ const streaming = T.frames.since(streamFrom);
 await T.snap('chat', 'reply-done-idle');
 console.log('frames while streaming:', JSON.stringify(streaming));
 t.check('frames were drawn while it streamed', streaming.frames > 0, streaming);
+
+// 2b. One selection across a reply's blocks and across messages (F15): a
+// drag from one text to another selects everything between, Ctrl+C copies it.
+{
+  // From the top: the user's message and the reply's first blocks on screen.
+  await T.ui('log-scroll', '-100000');
+  await t.sleep(400);
+  const lt = await T.ui('log-texts');
+  const texts = (lt.texts || []).filter((x) => x.w > 4 && x.h > 4 && x.y > 120 && x.y + x.h < 820).sort((a, b) => a.row - b.row || a.part - b.part);
+  if (t.check('the log reports the texts it drew', texts.length >= 3, lt)) {
+    const a = texts[0], z = texts[texts.length - 1], mid = texts[Math.floor(texts.length / 2)];
+    await T.mouse('move', a.x + 1, a.y + a.h / 2); await t.sleep(100);
+    await T.mouse('drag', a.x + 1, a.y + a.h / 2, { toX: z.x + z.w - 1, toY: z.y + z.h / 2, steps: 12 });
+    await t.sleep(300);
+    const sel = await T.ui('log-texts');
+    t.check('a drag selects across blocks (a middle block whole, line breaks between)', sel.selection.includes(mid.text) && sel.selection.includes('\n') && sel.selection.length >= mid.text.length + 4, { sel: sel.selection.slice(0, 200), mid: mid.text });
+    await T.snap('chat', 'selection-across-blocks');
+    await T.key('c', ['ctrl']);
+    const cp = await T.ui('log-texts');
+    t.check('Ctrl+C copies the selection', cp.clipboard === sel.selection && cp.clipboard.length > 0, { clip: cp.clipboard.slice(0, 120) });
+    // Across messages: from the user's bubble into Claude's reply.
+    const user = texts.find((x) => x.text.startsWith('Reply with a markdown list'));
+    if (user) {
+      const into = texts.find((x) => x.row > user.row + 1);
+      await T.mouse('drag', user.x + 1, user.y + user.h / 2, { toX: into.x + into.w - 1, toY: into.y + into.h / 2 });
+      await t.sleep(300);
+      const s5 = await T.ui('log-texts');
+      t.check('a drag selects from a message into the next', s5.selection.startsWith('Reply with') && s5.selection.includes(into.text), { sel: s5.selection.slice(0, 200) });
+    }
+    // A double-click selects a word; a click elsewhere clears the selection.
+    await T.mouse('dblclick', mid.x + 2, mid.y + mid.h / 2);
+    await t.sleep(200);
+    const w = await T.ui('log-texts');
+    t.check('a double-click selects a word', w.selection.length > 0 && !/\s/.test(w.selection), { sel: w.selection });
+    await T.mouse('click', mid.x + 2, mid.y + mid.h / 2);
+    await t.sleep(200);
+    t.check('a click clears the selection', (await T.ui('log-texts')).selection === '');
+  }
+}
 
 // 3. Scrolling the log.
 const scrollFrom = T.frames.mark();

@@ -28,6 +28,15 @@ On the Crundi server, then on the PC:
     MEASURE_SERVER=http://localhost:4884 CRUNDI_TEST_PORT=4881 node native-v2/tools/measure-pc.mjs
     MEASURE_STREAM=0 ...                                 # without the streaming chat
 
+However the run ends (done, a failure, Ctrl+C or another signal, the
+client dying, or `MEASURE_TIMEOUT`, 2400 s by default), the harness stops
+the client by its PID, removes the config folder and writes what it has
+to `report.json`; a seeded chat's reply is waited for by its `agentState`
+(each seeded chat a new conversation, `sessionMode: "new"`). The owner's
+config folders are refused by name on each system: `~/.config/crundi-native`,
+`%APPDATA%\Crundi Native`, `~/Library/Application Support/Crundi Native`
+(and the folders holding them).
+
 The test server's chats run Claude on the Crundi server. Every run needs a
 fresh server (the harness sets it up): restart it with the same command.
 

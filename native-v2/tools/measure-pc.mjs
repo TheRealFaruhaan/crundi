@@ -25,6 +25,13 @@
 //                        /tmp/crundi-devtest-<MEASURE_SERVER_PORT>/proj, the
 //                        port defaulting to MEASURE_SERVER's)
 //   MEASURE_STREAM=0     skip the streaming scenario (no fifth chat)
+//   MEASURE_TIMEOUT=<s>  the whole run's limit (default 2400): past it, it
+//                        fails, stops the client and cleans up
+//
+// However it ends (done, a failure, Ctrl+C or a signal, the client dying,
+// the time limit), it stops the client by its PID and removes the config
+// folder (which holds the test server's refresh token); a dead client ends
+// the run at once instead of driving a port nobody answers (F16).
 //   PROFILE=<gdb script> then a stack sampler on the UI thread while the
 //                        wheel sweeps (see native-v2/perf/README.md)
 //
@@ -54,29 +61,60 @@ const SERVER = process.env.MEASURE_SERVER;
 // Its own config folder, fresh, never the owner's.
 const CONFIG = process.env.CRUNDI_CONFIG_DIR;
 if (!CONFIG) die('Set CRUNDI_CONFIG_DIR to a fresh folder of its own (mktemp -d): this harness never runs with the owner\'s config.');
-const owners = [join(homedir(), '.config/crundi-native'), join(homedir(), '.config/crundi'), join(homedir(), '.config')].map((p) => resolve(p));
+// The owner's config folders on each system (crates/core/src/store.rs), and
+// the folders that hold them (F22).
+const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
+const owners = [
+  join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'crundi-native'), join(homedir(), '.config/crundi-native'), join(homedir(), '.config/crundi'), join(homedir(), '.config'),
+  join(appData, 'Crundi Native'), appData,
+  join(homedir(), 'Library/Application Support/Crundi Native'), join(homedir(), 'Library/Application Support'),
+  homedir(),
+].map((p) => resolve(p));
 if (owners.includes(resolve(CONFIG)) || (existsSync(CONFIG) && owners.includes(realpathSync(CONFIG)))) die(`Refusing CRUNDI_CONFIG_DIR=${CONFIG}: that is the owner's config.`);
 if (existsSync(CONFIG) && readdirSync(CONFIG).length) die(`Refusing CRUNDI_CONFIG_DIR=${CONFIG}: it is not empty (a fresh folder only).`);
 if (!SERVER) die('Set MEASURE_SERVER to a fresh test server (native-gpui/tools/test-server.sh <port> --bare on the Crundi server, through a forward).');
 mkdirSync(CONFIG, { recursive: true });
 mkdirSync(OUT, { recursive: true });
-const cleanup = () => { try { rmSync(CONFIG, { recursive: true, force: true }); } catch { /* gone */ } };
+let app = null;
+let exited = false;
+const report = {};
+const t0 = Date.now();
+const cleanup = () => {
+  if (app && !exited) { try { process.kill(app.pid); } catch { /* gone */ } }
+  try { rmSync(CONFIG, { recursive: true, force: true }); } catch { /* gone */ }
+};
+/** The one way out: the client stopped, the folder removed, the report written. */
+const finish = (code, why) => {
+  if (why) { console.log('error', why); report.error = why; }
+  cleanup();
+  report.ranSeconds = Math.round((Date.now() - t0) / 1000);
+  try { writeFileSync(join(OUT, 'report.json'), JSON.stringify(report, null, 1)); } catch { /* no report */ }
+  console.log(`done in ${report.ranSeconds} s (client ${app ? 'pid ' + app.pid : 'never started'}); config folder removed`);
+  process.exit(code);
+};
+process.on('exit', cleanup);
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => finish(130, `stopped by ${sig}`));
+process.on('uncaughtException', (e) => finish(1, 'uncaught: ' + (e?.stack || e)));
+process.on('unhandledRejection', (e) => finish(1, 'unhandled: ' + (e?.stack || e)));
+const LIMIT = Number(process.env.MEASURE_TIMEOUT || 2400) * 1000;
+setTimeout(() => finish(1, `over the time limit (${LIMIT / 1000} s)`), LIMIT).unref();
 
 // The server: fresh, no bot; its own account and project, the chats seeded.
 const api = client(SERVER);
 const methods = await api.http('GET', '/api/auth/methods').catch((e) => ({ body: null, text: String(e) }));
-if (!methods.body) { cleanup(); die(`No server at ${SERVER}: ${methods.text}`); }
-if (methods.body.telegram || methods.body.telegramBotId) { cleanup(); die(`Refusing ${SERVER}: it has a Telegram bot configured.`); }
-if (!methods.body.setupRequired) { cleanup(); die(`${SERVER} must be fresh: native-gpui/tools/test-server.sh <port> --bare`); }
+if (!methods.body) finish(2, `No server at ${SERVER}: ${methods.text}`);
+if (methods.body.telegram || methods.body.telegramBotId) finish(2, `Refusing ${SERVER}: it has a Telegram bot configured.`);
+if (!methods.body.setupRequired) finish(2, `${SERVER} must be fresh: native-gpui/tools/test-server.sh <port> --bare`);
 const password = 'native-v2-measure-' + Math.random().toString(36).slice(2, 10);
 const setup = await api.http('POST', '/api/auth/setup', { method: 'password', password });
-if (!setup.body?.token) { cleanup(); die('setup failed: ' + setup.text); }
+if (!setup.body?.token) finish(2, 'setup failed: ' + setup.text);
 api.setToken(setup.body.token);
 const secret = setup.body.totpSecret;
 const sport = process.env.MEASURE_SERVER_PORT || new URL(SERVER).port;
 const projDir = process.env.MEASURE_PROJECT_DIR || `/tmp/crundi-devtest-${sport}/proj`;
 const p = await api.http('POST', '/api/projects', { alias: 'demo', name: 'Demo', path: projDir, create: true });
-if (p.status >= 300) { cleanup(); die('no project: ' + p.text); }
+if (p.status >= 300) finish(2, 'no project: ' + p.text);
+// Each chat a new conversation (the project's earlier ones are not continued).
 const SEEDS = [
   'Write the numbers from one to three hundred as words, one per line, as a markdown list. Nothing else.',
   'Explain how a hash map works, in about 1500 words of markdown: headings, paragraphs, a bulleted list, a numbered list, a table and two code blocks in Rust. Do not use any tools.',
@@ -85,29 +123,34 @@ const SEEDS = [
 ];
 const seeded = [];
 for (const [i, text] of SEEDS.entries()) {
-  const c = await api.http('POST', '/api/ui-sessions/create', { project: 'demo', title: `Measure ${i + 1}` });
-  if (!c.body?.id) { cleanup(); die('no chat: ' + c.text); }
+  const c = await api.http('POST', '/api/ui-sessions/create', { project: 'demo', title: `Measure ${i + 1}`, sessionMode: 'new' });
+  if (!c.body?.id) finish(2, 'no chat: ' + c.text);
   await api.http('POST', `/api/ui-sessions/${c.body.id}/send`, { text });
   seeded.push(c.body.id);
 }
 console.log('seeded', seeded.join(' '), '- waiting for the replies');
-for (let i = 0; i < 900; i++) {
+// Done when each is idle again (the list's agentState; status says only
+// running or exited). An exited one will not answer: the run fails.
+const sessionsOf = (b) => (Array.isArray(b) ? b : b?.sessions || []);
+for (let i = 0; ; i++) {
   const l = await api.http('GET', '/api/ui-sessions');
-  const mine = (l.body?.sessions || []).filter((s) => seeded.includes(s.id));
-  if (mine.length === seeded.length && mine.every((s) => s.state === 'idle')) break;
+  const mine = sessionsOf(l.body).filter((s) => seeded.includes(s.id));
+  if (mine.some((s) => s.status === 'exited')) finish(1, 'a seeded chat exited before its reply: ' + JSON.stringify(mine.map((s) => [s.id, s.status, s.agentState])));
+  if (mine.length === seeded.length && mine.every((s) => s.agentState === 'idle')) break;
+  if (i % 15 === 0) console.log('  replies:', mine.map((s) => s.agentState).join(' '));
   await sleep(2000);
 }
 
 const log = createWriteStream(join(OUT, 'client.log'));
-const t0 = Date.now();
 const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: CONFIG, CRUNDI_OPEN_URL_FILE: join(CONFIG, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
-const app = spawn(BIN, [], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+app = spawn(BIN, [], { env, stdio: ['ignore', 'pipe', 'pipe'] });
 console.log(`client pid ${app.pid}, config ${CONFIG}`);
 app.stdout.pipe(log);
 const fm = new FrameMeter(app.stderr, (l) => log.write(l));
-let exited = false; app.on('exit', () => { exited = true; });
+let done = false;
+// The client died: nothing more to drive.
+app.on('exit', (code, sig) => { exited = true; if (!done) finish(1, `the client exited (${sig || code}) before the run was done`); });
 
-const report = {};
 const stats = (name, from, until = Date.now()) => {
   const s = fm.since(from, until);
   const r = { ...s, seconds: Math.round((until - from) / 100) / 10 };
@@ -188,11 +231,7 @@ try {
     m = fm.mark(); await sleep(8000); stats('idle-end', m);
   }
   d.close();
-} catch (e) { console.log('error', String(e)); report.error = String(e); }
-app.kill(); // by its PID
-await sleep(500);
-cleanup();
-report.ranSeconds = Math.round((Date.now() - t0) / 1000);
+} catch (e) { done = true; report.allFrames = fm.frames.length; finish(1, String(e)); }
+done = true;
 report.allFrames = fm.frames.length;
-writeFileSync(join(OUT, 'report.json'), JSON.stringify(report, null, 1));
-console.log(`window open ${report.ranSeconds} s (pid ${app.pid}, exited: ${exited}); config folder removed`);
+finish(0);

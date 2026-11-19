@@ -23,7 +23,7 @@
 
 import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, createWriteStream } from 'node:fs';
+import { mkdtempSync, mkdirSync, createWriteStream, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
@@ -134,6 +134,10 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   const configDir = mkdtempSync(join(tmpdir(), `crundi-v2-config-${name}-`));
   const log = createWriteStream(join(OUT, `native-${name}.log`), { flags: 'a' });
   let exited = false;
+  // The config folder holds the test server's refresh token: it goes when
+  // the run ends, however it ends (F23).
+  const dropConfig = () => { try { rmSync(configDir, { recursive: true, force: true }); } catch { /* gone */ } };
+  process.on('exit', dropConfig);
   // Only ever on the virtual display xvfb-run gives: never a Wayland
   // session the shell happens to carry (it would open on a person's screen).
   const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
@@ -146,6 +150,7 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   app.stdout.pipe(log);
   const frames = new FrameMeter(app.stderr, (l) => log.write(l));
   app.on('exit', () => { exited = true; });
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { try { app.kill(); } catch { /* gone */ } dropConfig(); process.exit(130); });
   const d = await driver(PORT, () => !exited);
 
   const state = async () => (await d.send({ cmd: 'state' })).state || {};
@@ -154,7 +159,9 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
     get exited() { return exited; },
     state,
     ui: (n, ...args) => d.send({ cmd: 'ui', name: n, args }),
-    /** The pointer, as a person's (move, click, wheel with dy…), at window x,y. */
+    /** A key to the focused element (text or a named key; mods: ctrl, shift…). */
+    key: (text, mods = []) => d.send({ cmd: 'key', text, mods }),
+    /** The pointer, as a person's (move, click, wheel with dy, drag to toX/toY…), at window x,y. */
     mouse: (kind, x, y, extra = {}) => d.send({ cmd: 'mouse', kind, x, y, ...extra }),
     /** How many pixels differ between two PNGs, optionally in a crop WxH+X+Y. */
     diff(a, b, crop) {
@@ -187,6 +194,8 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
       try { app.kill(); } catch { /* gone */ }
       px?.close();
       d.close();
+      await new Promise((r) => { if (exited) r(); else { app.once('exit', r); setTimeout(r, 3000); } });
+      dropConfig();
       console.log(`\n${passed} passed, ${failed} failed`);
       process.exit(failed ? 1 : 0);
     },

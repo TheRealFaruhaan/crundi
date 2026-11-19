@@ -18,6 +18,9 @@ fn has_ext(p: &str) -> bool {
     p.rsplit_once('.').is_some_and(|(_, e)| FILE_EXT.contains(&e.to_ascii_lowercase().as_str()))
 }
 
+/// A path without its trailing ":12" or ":12:3".
+pub fn text_path_bare(p: &str) -> &str { bare(p) }
+
 /// The web's path rule for running text: an absolute path of two parts or
 /// more, or a relative one starting ./ or ../, or with a known file
 /// extension ("and/or" and "10/12" stay words); with its :line[:col].

@@ -69,8 +69,52 @@ are the owner's PC, release build; "—" not yet.
     global tabs only (and no "+"), on Info
   - F9: the empty pane's chips and actions as the web's (`leaf_chip`,
     `leaf_act`: pills, Split ▸ / Split ▾)
+- [x] round 3 (the Manager's F15-F24):
+  - F19/F24: Claude's text drawn as the web draws it: `core::webmd` (a port
+    of claude-chat.js's md / inline / linkify) replaces gpui-component's
+    TextView in the chat; `##`/`###` bold at body size, a nested item flat,
+    the rule the browser's hr, the web's margins (collapsed). **The
+    owner's call (19 Nov): tables stay drawn as tables, and code keeps its
+    colours, readable on the dark background (`core::syntax`, the theme's
+    `syn_*` tokens), with no language label.** Unit tests: the blocks, the
+    inline styles, tables, streaming agreeing with a whole parse
+  - F15: one selection across the log's blocks and messages (drag,
+    double / triple click, shift-click, edge scroll, Ctrl+C); F20: the
+    driver's `drag` (and `tripleclick`, a `move` with the button held,
+    mods on the mouse); the slice drags across blocks and from a message
+    into the next, copies, double-clicks a word
+  - F18: an empty workbench shows the "New terminal" launcher pane (the
+    web's pending cell), which the next pane replaces
+  - F16, F22: `measure-pc.mjs` reads agentState, has a time limit, cleans
+    up on signals, failures and the client's exit; the owner's config
+    folders on Linux, Windows and macOS refused by name. F23: the suites'
+    config folders removed at the end. F17: the slice's splice check is
+    against the rows added (and a few per batch); "live" is a reply seen
+    part-way or in two batches or more
+  - F21: a wheel tick re-runs the ChatPane's and the Workbench's render
+    because GPUI marks every ancestor of a notified view dirty
+    (ARCHITECTURE.md, "The view tree"); they stay layout only
 - [ ] the slice's suite again on the server, then the owner's PC measured
   again with the new harness (**to run**: Tester / Manager)
+
+### Open for the owner (via the Manager)
+
+- The launcher's UI Mode button: the web's gradient drifts (9 s, forever)
+  and its caret blinks; v2 draws both still, as an animation that never
+  ends would draw frames on an idle screen (rule 6, "idle: no frames").
+  Animate them anyway (capped, only while the launcher is on screen)?
+
+### Hooks the areas plug into (from round 3)
+
+- `crundi_workbench::launcher::set_chooser` (the chat area's resume
+  picker: which conversation, before UI Mode / Terminal start);
+  `set_terminal_launcher` (the terminal area: Empty Shell, Terminal and
+  its Skip Permissions; until then they do nothing).
+- The "open-path" action with `crundi_shell::OpenPath` (the Files area's
+  file viewer: a path clicked in a chat).
+- Still to port in the chat log: the hover copy button on code, links and
+  paths (`.cc-copyhint`), the streaming caret (`.cc-cursor`), a path's
+  hover colour; the launcher's "last used" dot.
 
 ## The areas and their screens
 
@@ -85,9 +129,9 @@ are the owner's PC, release build; "—" not yet.
 | Workbench (workbench) | 2.1 pane header wide, 2.2 narrow (the "…" menu), rename on click | workbench/head.rs | slice (no rename, no "…" menu yet) | — |
 | Workbench | 2.3 moving panes: drag, swap, split, empty pane and its chips, the "+" menu's layouts and Fit | workbench/lib.rs, view.rs, menu.rs | slice (split, gutters, empty pane; drag/swap, "+" menu to do) | — |
 | Workbench | 2.4 live state (dots, badges) | workbench | slice | — |
-| Workbench | Launcher, Claude terminal panes (their input inside each panel) | workbench, workspace | to do | — |
+| Workbench | Launcher (the "New terminal" pane: Empty Shell, UI Mode, Terminal, the Skip Permissions shields and their peek), Claude terminal panes (their input inside each panel) | workbench, workspace | slice: the launcher (UI Mode starts a chat in its place; the terminal buttons wait for the terminal area); terminal panes to do | — |
 | Chat (chat) | The pane: log over composer, its kind `live:`, panes kept in step with the project's chats | chats | slice | — |
-| Chat: log | (F10) a reply drawn one row per markdown block; 2.13 questions, 2.14 tool cards (groups, bodies), 2.15 thinking, 2.16 prose / code blocks / bubble / results / errors / notices, 2.16m media, 2.16f live frames, 2.17 suggestions and recaps, 2.18 agent dock, 2.19 goal and plan, 2.20 cards, 2.21 side questions, 2.22 resume picker, 2.23 parked panes, "Go to the newest message" | chat-log | slice: bubble, markdown, tool card (bash / JSON), thinking, result, error, notice; the rest to do | streaming: — |
+| Chat: log | (F10) a reply drawn one row per markdown block, as the web's markdown (F24; tables and code colours the owner's call); one selection across the log (F15); 2.13 questions, 2.14 tool cards (groups, bodies), 2.15 thinking, 2.16 prose / code blocks / bubble / results / errors / notices, 2.16m media, 2.16f live frames, 2.17 suggestions and recaps, 2.18 agent dock, 2.19 goal and plan, 2.20 cards, 2.21 side questions, 2.22 resume picker, 2.23 parked panes, "Go to the newest message" | chat-log | slice: bubble, markdown, tool card (bash / JSON), thinking, result, error, notice; the rest to do | streaming: — |
 | Chat: composer | 2.5 composer and Stop, 2.6 mode picker, 2.7 attachments, 2.8 drafts, 2.9 queued, 2.10 scheduled, 2.11 slash menu, 2.12 secrets dialog, 2.12b secret requests, 2.24 voice input, the Enter switch, session id | chat-composer | slice: box, Send / Queue, Stop (Sure?), state, model, cost; the rest to do | — |
 | Workspace (workspace) | Git, Files (tree, editor), Media | workspace | to do | — |
 | Planning (planning) | Kanban (and the card dialog), Mind map, Notes, Schedules, webhooks, Factories (editor, live run graph, factory panel) | planning | to do | kanban / mind map scroll: — |

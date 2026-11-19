@@ -1721,17 +1721,17 @@ dependencies = [
 name = "crundi-core"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "chrono",
  "cpal",
  "gethostname",
  "log",
- "markdown",
  "rodio",
  "serde",
  "serde_json",
+ "syntect",
  "tts",
  "tungstenite",
+ "two-face",
  "ureq",
 ]
 
@@ -1780,6 +1780,7 @@ dependencies = [
  "crundi-theme",
  "crundi-widgets",
  "gpui-pre",
+ "log",
  "serde_json",
 ]
 

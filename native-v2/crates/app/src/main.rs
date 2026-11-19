@@ -19,6 +19,8 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
     gpui_platform::application().with_assets(crundi_theme::AllAssets).run(move |cx: &mut App| {
         gpui_component::init(cx);
+        // A chat code block's colours: the syntax set loads off the UI thread.
+        crundi_core::syntax::warm();
         crundi_theme::init(cx);
         let stores = crundi_shell::init(cx);
         // The areas, before the session starts (they hear sign-in).

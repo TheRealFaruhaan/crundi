@@ -5,6 +5,7 @@
 //! workbench's panes in step with the project's running chats, and the
 //! chat's driver actions.
 
+pub mod log;
 pub mod pane;
 pub mod store;
 
@@ -150,7 +151,7 @@ pub fn init(cx: &mut App) {
             crundi_shell::run(cx, move || api.post(&path, &json!({})), move |r, cx| match crundi_core::head::close_outcome(r) {
                 crundi_core::head::Closed::Yes => { drop_chat(cx, &id); done(true, cx) }
                 crundi_core::head::Closed::SignedOut => { let s = crundi_shell::stores(cx); s.session.update(cx, |s, cx| s.sign_out("Your sign-in ended. Sign in again.", cx)); }
-                crundi_core::head::Closed::No(why) => { log::warn!("close refused: {why}"); done(false, cx) }
+                crundi_core::head::Closed::No(why) => { ::log::warn!("close refused: {why}"); done(false, cx) }
             });
         })),
         zoom: Some(Rc::new(|key, d, cx| { if let Some(s) = find(cx, key.trim_start_matches("live:")) { s.update(cx, |s, cx| s.zoom(d, cx)); } })),
@@ -179,11 +180,13 @@ pub fn init(cx: &mut App) {
                 if let Some(s) = find(cx, &id) { s.update(cx, |s, cx| s.stop(cx)); }
                 Some(json!({ "ok": true }))
             }
-            // A new chat in the project; its pane is placed and focused.
+            // A new chat in the project (a new conversation, as UI Mode's
+            // "New conversation"); its pane is placed and focused.
             "new-chat" => {
                 let project = stores.projects.read(cx).open.clone();
                 let s = stores.clone();
-                crundi_shell::call(cx, move |api| api.post("/api/ui-sessions/create", &json!({ "project": project })), move |r, cx| {
+                let body = crundi_core::resume::create_body(&project, false, "new", "");
+                crundi_shell::call(cx, move |api| api.post("/api/ui-sessions/create", &body), move |r, cx| {
                     if let Some(id) = r.ok().and_then(|v| v.get("id").and_then(|i| i.as_str()).map(String::from)) {
                         let _ = store(cx, &id);
                         if let Some(w) = wb::workbench(cx) { w.update(cx, |w, cx| { let k = format!("live:{id}"); w.place(&k, cx); w.focus_key(&k, cx); }); }
@@ -191,6 +194,17 @@ pub fn init(cx: &mut App) {
                     sync(&s, cx);
                 });
                 Some(json!({ "ok": true }))
+            }
+            // The focused chat's log: the texts on screen and where they are
+            // (to aim a drag), its selection, and the clipboard (F15).
+            "log-texts" => {
+                let id = focused_chat(cx);
+                if id.is_empty() { return Some(json!({ "ok": false, "error": "no chat" })); }
+                let log = pane_view(cx, &id, window).read(cx).log.clone();
+                let log = log.read(cx);
+                let texts: Vec<Value> = log.text_rects().into_iter().map(|(row, part, b, text)| json!({ "row": row, "part": part, "x": f32::from(b.left()), "y": f32::from(b.top()), "w": f32::from(b.size.width), "h": f32::from(b.size.height), "text": text })).collect();
+                let clip = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
+                Some(json!({ "ok": true, "texts": texts, "selection": log.selected_text(cx), "clipboard": clip }))
             }
             // Scroll the focused chat's log by dy px (the frame harness).
             "log-scroll" => {

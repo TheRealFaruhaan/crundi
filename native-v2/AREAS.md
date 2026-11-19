@@ -63,13 +63,27 @@ crundi_shell::register(cx, Area::new("planning")
 - **Shell actions** by name (`registry::run_action`): `add-menu` (the
   project bar's "+", Workbench), `browser` (the Browser button, Desktop),
   `cru` (Cru's mark, Desktop), `open-usage` (the usage badge, Operations),
-  `add-project` (Operations), `wb-chip:<kind>` (an empty pane's chips).
+  `add-project` (Operations), `wb-chip:<kind>` (an empty pane's chips),
+  `open-path` (Workspace's Files: open `crundi_shell::OpenPath`'s path in
+  the file viewer, a path clicked in a chat).
+- **The launcher's hooks** (`crundi_workbench::launcher`): `set_chooser`
+  (the chat area's resume picker, asked before UI Mode or Terminal start a
+  conversation) and `set_terminal_launcher` (the terminal area: Empty
+  Shell, Terminal and its Skip Permissions, given the launcher's pane key;
+  the started pane takes the launcher's place with `Workbench::replace`).
 - **Pane kinds** (`crundi_workbench::register_kind(cx, PaneKind { prefix,
   chat, make, close, zoom })`): `make` returns the pane's body view (a
   layout view whose parts are cached), the head's `info` (title, long
   title, state) and `watch` (the subscriptions that make the head redraw:
   observe only what the title and dot read). Keys: `live:<chat>`,
-  `term:<id>`, `panel:<kind>[:<item>]`.
+  `term:<id>`, `panel:<kind>[:<item>]`, `pend:<n>` (the workbench's own
+  "New terminal" launcher).
+- **Chat text** (`core::webmd`, drawn by `chat::log`): Claude's markdown as
+  the web draws it, one log row per block, one selection across the log.
+  By the owner's call (19 Nov) two things differ from the web: tables are
+  drawn as tables and code blocks keep syntax colours (`core::syntax`, the
+  theme's `syn_*` tokens), with no language label. Any area showing
+  Claude's text in the web's way uses `core::webmd`, not a TextView.
 - **The drawer**: Desktop gives the shell its view
   (`Shell::set_drawer_view(Some(Drawer { view, left }))`); the shell draws
   it beside the project area with the divider; `nav.set_drawer(open)`.
@@ -109,7 +123,7 @@ modal layer, drawn once by the shell), `overlay_modal`, `modal_head`,
 `primary_icon`, `liquid_mic`, `meter`, `spark`, `kbd`, `key_row`, `link`,
 `disclosure`, `filter_chip`, `seg_tabs`, `segmented_icons`, `icon_tag`,
 `page_item`, `round_button`, `arm_button`, `choice_row`, `choice_mark`,
-`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `drag_ref` / `ref_target` (dragging a file reference, dropping one).
+`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `ref_target` (dragging a file reference, dropping one).
 
 - Every control's dimensions are the theme's (`T::BTN_H`, `ICON_BTN`,
   `INPUT_H`…); an area never sizes a control (no `.h`, `.px`,
@@ -123,7 +137,11 @@ modal layer, drawn once by the shell), `overlay_modal`, `modal_head`,
 ### The test driver
 
 `CRUNDI_TEST_PORT=<port>`: `state` (and `props`, the same), `snapshot`
-(xwd under X11), `ui`, `mouse`, `key`, `resize`. The window's own `ui`
+(xwd under X11), `ui`, `mouse` (move, click, dblclick, tripleclick,
+down, up, leave, wheel, `drag` from x,y to toX,toY in `steps`; a `move`
+with `buttons: ["left"]`; `mods`), `key`, `resize`. The chat's
+`log-texts` gives the log's texts on screen with their rects, the
+selection and the clipboard. The window's own `ui`
 actions: `check-server`, `sign-in-password`, `sign-in-pair`, `sign-out`,
 `select-project`, `tab`, `drawer`, `stub`, `dialog-answer`, `menu-pick`,
 `toasts-clear`; every other name goes to the areas' `test_ui`

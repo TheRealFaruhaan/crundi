@@ -140,6 +140,23 @@ impl T {
     pub const LEAF_CHIP_TEXT: Pixels = px(11.5);
     pub const LEAF_ACT_PX: Pixels = px(9.);
     pub const LEAF_ICON: Pixels = px(13.);
+    /// A new pane's launcher (the web's .term-launch): its ">_" (2.4rem),
+    /// buttons 9 px tall padding, Empty Shell at least 190 wide, the rows
+    /// 300 wide, a shield 44 (172 open), a label 8 from its icon (UI Mode's
+    /// caret 9), the Claude box's padding 16 / 20.
+    pub const LAUNCH_MARK: Pixels = px(38.4);
+    pub const LAUNCH_PY: Pixels = px(9.);
+    pub const LAUNCH_MIN_W: Pixels = px(190.);
+    pub const LAUNCH_ROW_W: Pixels = px(300.);
+    pub const LAUNCH_SHIELD: Pixels = px(44.);
+    pub const LAUNCH_SHIELD_OPEN: Pixels = px(172.);
+    pub const LAUNCH_GAP: Pixels = px(8.);
+    pub const LAUNCH_CHAT_GAP: Pixels = px(9.);
+    pub const LAUNCH_BOX_PY: Pixels = px(16.);
+    pub const LAUNCH_BOX_PX: Pixels = px(20.);
+    pub const LAUNCH_LABEL: Pixels = px(11.52);
+    pub fn launch_chat_edge() -> Hsla { rgba(0x818cf8d9).into() }
+    pub fn launch_normal_bg() -> Hsla { rgba(0x6366f11a).into() }
     pub const TITLE_CAP: Pixels = px(160.);
     pub const COMPOSER_STACK: Pixels = px(520.);
     pub const COMPOSER_MAX: Pixels = px(180.);
@@ -473,6 +490,25 @@ impl T {
     /// A chat log's list builds this much beyond its view, above and below
     /// (no rows popping in while scrolling).
     pub const LOG_OVERDRAW: Pixels = px(800.);
+    // Chat markdown (the web's `.cc-assistant` CSS): a list's indent (ul/ol
+    // padding-left 20) and its marker's gap, a code block's padding (9 11)
+    // and line height (1.5).
+    pub const MD_LIST_INDENT: Pixels = px(20.);
+    pub const MD_MARKER_GAP: Pixels = px(5.);
+    pub const MD_CODE_PX: Pixels = px(11.);
+    pub const MD_CODE_PY: Pixels = px(9.);
+    pub const LH_CODE: f32 = 1.5;
+    /// The browser's `hr` (1 px inset border, gray): its dark top and its line.
+    pub fn md_rule_dark() -> Hsla { rgb(0x2b2b2b).into() }
+    pub fn md_rule() -> Hsla { rgb(0x808080).into() }
+    /// Code colours on the dark background (the owner's call, 19 Nov: they
+    /// stay, readable): from the palette, each at least 4.5:1 on bg_secondary.
+    pub fn syn_keyword() -> Hsla { Self::accent_hover() }
+    pub fn syn_string() -> Hsla { Self::green() }
+    pub fn syn_number() -> Hsla { Self::amber() }
+    pub fn syn_comment() -> Hsla { Self::text_secondary() }
+    pub fn syn_type() -> Hsla { Self::error_text() }
+    pub fn syn_function() -> Hsla { Self::sky() }
     pub const BRAND_HEAD_LG: Pixels = px(40.);
     pub const BRAND_WORD_OF_HEAD: f32 = 15.0 / 24.0;
     pub const BRAND_GAP_OF_HEAD: f32 = 8.0 / 24.0;

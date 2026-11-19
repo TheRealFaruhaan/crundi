@@ -11,6 +11,7 @@
 //! The layout per project is saved (session.json's `layouts`, as native-gpui).
 
 mod head;
+pub mod launcher;
 
 pub use head::{HeadInfo, PaneHead};
 
@@ -19,7 +20,7 @@ use crundi_shell::Stores;
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
-use std::{collections::HashMap, rc::Rc, time::Duration};
+use std::{collections::HashMap, rc::Rc, time::{Duration, Instant}};
 
 /// What a pane kind makes for one pane.
 pub struct PaneParts {
@@ -87,13 +88,20 @@ pub struct Workbench {
     scroll: ScrollHandle,
     /// Each pane head's frame, as last laid out.
     frames: HashMap<String, head::Frame>,
+    /// The launcher put in because there were no panes (the next pane
+    /// placed takes its place), and the launchers' numbers.
+    seeded: Option<String>,
+    pend: u32,
+    /// Panes just started here, kept for a while even if the server's list
+    /// does not have them yet.
+    protect: HashMap<String, Instant>,
 }
 
 impl Workbench {
     pub fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
         cx.set_global(Handle(cx.entity().downgrade()));
         let project = stores.projects.read(cx).open.clone();
-        Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new() }
+        Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new() }
     }
 
     /// The open project's mosaic (loaded from the saved layouts the first time).
@@ -114,22 +122,54 @@ impl Workbench {
         if self.project == alias { return; }
         self.project = alias.to_string();
         self.full = None;
+        self.seeded = None;
         cx.notify();
     }
 
-    /// Put a pane in the layout (an empty leaf, else a new one to the right).
+    /// Put a pane in the layout (the launcher put in for an empty
+    /// workbench, else an empty leaf, else a new one to the right).
     pub fn place(&mut self, key: &str, cx: &mut Context<Self>) {
         if self.mosaic().leaf_of(key).is_some() { return; }
+        if let Some(seed) = self.seeded.take().filter(|_| !key.starts_with("pend:")) {
+            if let Some(l) = self.mosaic().leaf_of(&seed) { self.mosaic().assign(l, Some(key.to_string())); self.focused = l; return self.changed(cx); }
+        }
         let leaf = self.mosaic().place(key);
         self.focused = leaf;
         self.changed(cx);
     }
 
-    /// Keep only the panes `keep` says.
+    /// A launcher's pane becomes what it launched.
+    pub fn replace(&mut self, old: &str, new: &str, cx: &mut Context<Self>) {
+        self.protect.insert(new.to_string(), Instant::now());
+        if self.seeded.as_deref() == Some(old) { self.seeded = None; }
+        let Some(l) = self.mosaic().leaf_of(old) else { return self.place(new, cx) };
+        if let Some(other) = self.mosaic().leaf_of(new) { if other != l { self.mosaic().close(other); } }
+        let l = self.mosaic().leaf_of(old).unwrap_or(l);
+        self.mosaic().assign(l, Some(new.to_string()));
+        self.focused = l;
+        self.changed(cx);
+    }
+
+    /// Keep only the panes `keep` says (and the ones just launched here).
     pub fn retain(&mut self, keep: impl Fn(&str) -> bool, cx: &mut Context<Self>) {
+        self.protect.retain(|_, at| at.elapsed() < Duration::from_secs(15));
+        let protect: Vec<String> = self.protect.keys().cloned().collect();
         let before = self.mosaic().keys();
-        self.mosaic().retain(&keep);
+        self.mosaic().retain(|k| keep(k) || k.starts_with("pend:") || protect.iter().any(|p| p == k));
         if self.mosaic().keys() != before { self.changed(cx); }
+    }
+
+    /// A workbench with no panes gets a launcher (the web's placeholder
+    /// cell). Laid out in the same frame; saved with the next change.
+    fn ensure_launcher(&mut self) {
+        let keys = self.mosaic().keys();
+        if !keys.is_empty() { if self.seeded.as_ref().is_some_and(|s| !keys.contains(s)) { self.seeded = None; } return; }
+        let n = keys.iter().filter_map(|k| k.strip_prefix("pend:")?.parse::<u32>().ok()).max().unwrap_or(0).max(self.pend) + 1;
+        self.pend = n;
+        let k = format!("pend:{n}");
+        let leaf = self.mosaic().place(&k);
+        self.focused = leaf;
+        self.seeded = Some(k);
     }
 
     pub fn keys(&mut self) -> Vec<String> { self.mosaic().keys() }
@@ -312,6 +352,7 @@ fn empty_chips(open: &[String]) -> Vec<(&'static str, &'static str)> {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("workbench");
+        if !self.project.is_empty() { self.ensure_launcher(); }
         let (aw, ah) = self.area;
         let gw = self.mosaic().content_width(aw);
         let (leaves, gutters) = self.mosaic().layout(gw, ah);
@@ -374,6 +415,21 @@ impl Render for Workbench {
 
 /// The workbench tab and its "+" (the area's registration).
 pub fn init(cx: &mut App) {
+    // A new pane's launcher (F18): the workbench's own kind.
+    register_kind(cx, PaneKind {
+        prefix: "pend:",
+        chat: false,
+        make: Rc::new(|key, _, _, cx| {
+            let k = key.to_string();
+            PaneParts {
+                body: cx.new(|cx| launcher::Launcher::new(&k, cx)).into(),
+                info: Rc::new(|_| HeadInfo { title: "New terminal".into(), long: String::new(), state: String::new() }),
+                watch: Box::new(|_| vec![]),
+            }
+        }),
+        close: None,
+        zoom: None,
+    });
     crundi_shell::register(cx, crundi_shell::Area::new("workbench")
         .tab("workbench", |stores, window, cx| {
             let w = cx.new(|cx| Workbench::new(stores.clone(), cx));

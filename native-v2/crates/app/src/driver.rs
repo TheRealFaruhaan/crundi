@@ -79,16 +79,35 @@ fn ui(r: &Request, stores: &Stores, window: &mut Window, cx: &mut App) -> Value 
 
 fn point_of(r: &Request) -> Point<Pixels> { point(px(r.num("x") as f32), px(r.num("y") as f32)) }
 
-/// The pointer, as a person's: move, click, dblclick, down, up, leave, wheel (dy).
+/// The pointer, as a person's: move, click, dblclick, tripleclick, down,
+/// up, leave, wheel (dx, dy); drag: down here, moves with the left button
+/// held to (toX, toY) in `steps` (default 8), up there (F20). mods: shift,
+/// ctrl, alt, meta (a shift-click).
 fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
     let p = point_of(r);
-    let m = Modifiers::default();
+    let mods: Vec<String> = r.cmd.get("mods").and_then(|m| m.as_array()).map(|m| m.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+    let has = |k: &[&str]| mods.iter().any(|m| k.iter().any(|x| m.eq_ignore_ascii_case(x)));
+    let m = Modifiers { control: has(&["ctrl", "control"]), shift: has(&["shift"]), alt: has(&["alt"]), platform: has(&["meta", "cmd", "super"]), ..Default::default() };
     let mv = |w: &mut Window, cx: &mut App, b: Option<MouseButton>| { w.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: p, pressed_button: b, modifiers: m }), cx); };
     let down = |w: &mut Window, cx: &mut App, n: usize| { w.dispatch_event(PlatformInput::MouseDown(MouseDownEvent { button: MouseButton::Left, position: p, modifiers: m, click_count: n, first_mouse: false }), cx); };
     let up = |w: &mut Window, cx: &mut App, n: usize| { w.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: p, modifiers: m, click_count: n }), cx); };
     match r.str("kind").as_str() {
         "click" => { mv(window, cx, None); down(window, cx, 1); up(window, cx, 1); }
         "dblclick" => { mv(window, cx, None); down(window, cx, 1); up(window, cx, 1); down(window, cx, 2); up(window, cx, 2); }
+        "tripleclick" => { mv(window, cx, None); for n in 1..=3 { down(window, cx, n); up(window, cx, n); } }
+        "drag" => {
+            mv(window, cx, None);
+            down(window, cx, 1);
+            let to = point(px(r.num("toX") as f32), px(r.num("toY") as f32));
+            let steps = (r.num("steps") as usize).clamp(1, 200);
+            let steps = if r.cmd.get("steps").is_some() { steps } else { 8 };
+            for i in 1..=steps {
+                let f = i as f32 / steps as f32;
+                let at = point(p.x + (to.x - p.x) * f, p.y + (to.y - p.y) * f);
+                window.dispatch_event(PlatformInput::MouseMove(MouseMoveEvent { position: at, pressed_button: Some(MouseButton::Left), modifiers: m }), cx);
+            }
+            window.dispatch_event(PlatformInput::MouseUp(MouseUpEvent { button: MouseButton::Left, position: to, modifiers: m, click_count: 1 }), cx);
+        }
         "down" => { mv(window, cx, None); down(window, cx, 1); }
         "up" => { mv(window, cx, Some(MouseButton::Left)); up(window, cx, 1); }
         "leave" => { window.dispatch_event(PlatformInput::MouseExited(MouseExitEvent { position: p, pressed_button: None, modifiers: m }), cx); }
@@ -98,7 +117,8 @@ fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
             let (dx, dy) = (r.num("dx") as f32, r.num("dy") as f32);
             window.dispatch_event(PlatformInput::Scroll(ScrollEvent { position: p, delta: ScrollDelta::Pixels(point(px(dx), px(dy))), modifiers: m, touch_phase: TouchPhase::Moved, source: ScrollSource::Pointer }), cx);
         }
-        _ => mv(window, cx, None),
+        // A move with buttons: ["left"] is one with the button held.
+        _ => { let held = r.cmd.get("buttons").and_then(|b| b.as_array()).is_some_and(|b| b.iter().any(|x| x.as_str() == Some("left"))); mv(window, cx, held.then_some(MouseButton::Left)) }
     }
 }
 

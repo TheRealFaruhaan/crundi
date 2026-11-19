@@ -66,7 +66,8 @@ impl Render for PaneHead {
         let (title, cap) = rules::title_shown(&info.title, &info.long, f.w);
         let mut row = div().flex().items_center().size_full().pl(T::SP_2).pr(T::SP_4).gap(T::SP_4);
         if !f.full {
-            row = row.child(div().flex_none().w(T::SP_24).h(T::SP_12).flex().items_center().justify_center().text_color(T::text_muted()).child(w::icon(IconName::GripVertical, T::ICON_SM)));
+            let pend = self.key.starts_with("pend:");
+            row = row.child(div().flex_none().w(T::SP_24).h(T::SP_12).flex().items_center().justify_center().text_color(T::text_muted()).when(pend, |d| d.opacity(0.25)).child(w::icon(IconName::GripVertical, T::ICON_SM)));
         }
         if self.chat {
             row = row.child(div().flex_none().size(T::DOT).flex().items_center().justify_center()
@@ -99,7 +100,7 @@ impl Render for PaneHead {
                 .on_click(cx.listener(move |this, _, _, cx| this.act(cx, move |w, cx| w.pane_full(id, cx)))));
         }
         if !f.full {
-            let tip = if f.armed { "Click again to close" } else if self.chat { "Close chat" } else { "Close panel" };
+            let tip = if f.armed { "Click again to close" } else if self.chat { "Close chat" } else if self.key.starts_with("pend:") { "Remove" } else { "Close panel" };
             t = t.child(if f.armed {
                 w::head_button(("x", id), C::Text("Sure?".into()), L::Armed, T::SP_40 + T::SP_4, T::SP_16, tip)
             } else {

@@ -32,7 +32,6 @@ tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 ureq = "3"
 gethostname = "1"
 open = "5"
-base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 cpal = "0.15"
@@ -40,8 +39,6 @@ rodio = { version = "0.20", default-features = false }
 tts = "0.26"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4"
-# Markdown blocks (core::mdblocks), the parser gpui-component uses, at its version.
-markdown = "=1.0.0"
 # The areas.
 crundi-core = { path = "crates/core" }
 crundi-theme = { path = "crates/theme" }
