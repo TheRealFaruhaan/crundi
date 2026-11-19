@@ -374,6 +374,13 @@ impl Workbench {
     fn font_px(&self, id: &str) -> i32 { *self.font.get(id).unwrap_or(&self.font_default) }
 
     /// Every pane, laid out, as drawn and listed.
+    /// Draw again the panes whose key starts with `prefix` ("panel:mindmap"),
+    /// and only them: for a part whose state lives outside its view, instead
+    /// of refreshing the window (which draws every pane again).
+    pub fn redraw_kind(&mut self, prefix: &str, cx: &mut Context<Self>) {
+        for (k, h) in &self.hosts { if k.starts_with(prefix) { h.update(cx, |_, cx| cx.notify()); } }
+    }
+
     /// The open panes' keys, cheaply (no titles, no JSON): what the other
     /// parts poll every tick.
     pub fn pane_keys(&mut self) -> Vec<String> {

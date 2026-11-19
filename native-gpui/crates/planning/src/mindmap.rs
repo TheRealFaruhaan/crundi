@@ -986,12 +986,23 @@ fn node_click(id: &str, clicks: usize, window: &mut Window, cx: &mut App) {
 
 /// The pointer over an idea: a long one opens up to show all of it.
 fn hover(r: &Row, on: bool, clamped: bool, cx: &mut App) {
-    with(cx, |s| {
-        if !s.drag_id.is_empty() { return; }
+    let changed = with(cx, |s| {
+        if !s.drag_id.is_empty() { return false; }
+        let before = s.hover.as_ref().map(|h| h.id.clone());
         if on { if clamped && s.edit.as_deref() != Some(r.id.as_str()) { s.hover = Some(r.clone()); } }
         else if s.hover.as_ref().is_some_and(|h| h.id == r.id) { s.hover = None; }
+        s.hover.as_ref().map(|h| h.id.clone()) != before
     });
-    cx.refresh_windows();
+    // Only the map is drawn again, and only when what is hovered changed:
+    // the pointer crosses ideas all the time while the map scrolls, and a
+    // refresh of the window drew every pane again each time (the owner, 19 Nov).
+    if changed { redraw(cx); }
+}
+
+/// Draw the map again where it shows (its tab, its pane), not the window.
+pub(crate) fn redraw(cx: &mut App) {
+    crundi_shell::redraw_tab(cx, "mindmap");
+    if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| w.redraw_kind("panel:mindmap", cx)); }
 }
 
 /// The press moving over the canvas (window coordinates): a drag once it

@@ -517,6 +517,12 @@ pub fn browser_button(cx: &mut App) {
     if registry::has_action(cx, "drawer-open") { registry::run_action(cx, "drawer-open"); } else { set_drawer(cx, true); }
 }
 
+/// Draw again `tab`'s page (its cached TabHost), and only it.
+pub fn redraw_tab(cx: &mut App, tab: &str) {
+    let host = shell(cx).and_then(|s| s.read(cx).tab_hosts.get(tab).cloned());
+    if let Some(h) = host { h.update(cx, |_, cx| cx.notify()); }
+}
+
 pub fn set_drawer(cx: &mut App, open: bool) {
     if let Some(s) = shell(cx) { s.update(cx, |s, cx| s.set_drawer(open, cx)); }
 }
