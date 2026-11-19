@@ -18,15 +18,12 @@
 //!             and Composer), its history seeded here, no server
 //!   chatlog5  five chat panes, seeded alike (two 300-item lists, three
 //!             long mixed-markdown replies): the PC measurement's scene
-<<<<<<< ours
-=======
 //!   stream5   chatlog5 while the first chat streams a reply: a ui-event
 //!             "entry" with the reply's text grown every 33 ms (as the
 //!             server sends them), a new reply when one is done
 //!
 //! The driver is the client's (driver::handle: mouse, key, state with the
 //! chat's own, the chat's `ui` actions such as log-texts, snapshot).
->>>>>>> theirs
 //!
 //! A perf tool: it never opens a session, never reads the owner's config
 //! (it refuses to run without a fresh CRUNDI_CONFIG_DIR, where the
@@ -127,13 +124,8 @@ fn seed_chat(cx: &mut App, n: usize) -> String {
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
     let mode = std::env::args().nth(1).unwrap_or_else(|| "list".into());
-<<<<<<< ours
-    if !["empty", "list", "uniform", "workbench", "chatlog", "chatlog5"].contains(&mode.as_str()) {
-        eprintln!("usage: crundi-v2-floor empty|list|uniform|workbench|chatlog|chatlog5");
-=======
     if !["empty", "list", "uniform", "workbench", "chatlog", "chatlog5", "stream5"].contains(&mode.as_str()) {
         eprintln!("usage: crundi-v2-floor empty|list|uniform|workbench|chatlog|chatlog5|stream5");
->>>>>>> theirs
         std::process::exit(2);
     }
     // The Workbench saves its layout in the config folder: a fresh one only.
@@ -195,8 +187,6 @@ fn main() {
             cx.new(|cx| Root::new(view, window, cx))
         }).expect("window");
 
-<<<<<<< ours
-=======
         if mode == "stream5" {
             // The first chat streams: its reply grows by about 40 bytes
             // every 33 ms (a fast reply), one store update per event batch.
@@ -218,31 +208,15 @@ fn main() {
                 }
             }).detach();
         }
->>>>>>> theirs
         if let Some(port) = crundi_core::driver::port() {
             let (tx, mut rx) = futures::channel::mpsc::unbounded::<crundi_core::driver::Request>();
             crundi_core::driver::start(port, move |r| { let _ = tx.unbounded_send(r); });
             let any: AnyWindowHandle = handle.into();
-<<<<<<< ours
-            cx.spawn(async move |cx: &mut AsyncApp| {
-                while let Some(r) = rx.next().await {
-                    if cx.update_window(any, move |_, window, cx| {
-                        let v = match r.name() {
-                            "mouse" => { driver::mouse(&r, window, cx); json!({ "ok": true }) }
-                            "snapshot" => driver::snapshot(window, &r.str("path")),
-                            "resize" => { window.resize(size(px(r.num("w") as f32), px(r.num("h") as f32))); json!({ "ok": true }) }
-                            "state" => json!({ "ok": true, "state": { "renders": crundi_core::driver::renders() } }),
-                            other => json!({ "ok": false, "error": format!("unknown cmd {other}") }),
-                        };
-                        r.answer(v);
-                    }).is_err() { break; }
-=======
             let s = stores.clone();
             cx.spawn(async move |cx: &mut AsyncApp| {
                 while let Some(r) = rx.next().await {
                     let s = s.clone();
                     if cx.update_window(any, move |_, window, cx| driver::handle(r, &s, window, cx)).is_err() { break; }
->>>>>>> theirs
                 }
             }).detach();
         }

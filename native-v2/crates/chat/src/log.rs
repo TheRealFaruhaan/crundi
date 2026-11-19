@@ -463,10 +463,7 @@ impl LogView {
         // element less per row); the others are wrapped in it.
         if r.shown.kind == "assistant" {
             let (above, below) = self.block_margins(ix, r, fs);
-<<<<<<< ours
-=======
             if let Some(el) = self.block_el(ix, r, fs, (above, below), window.scale_factor()) { return el; }
->>>>>>> theirs
             return self.block(ix, r, fs).w_full().px(T::SP_16).pt(above).pb(below).into_any_element();
         }
         let el = match r.shown.kind {
@@ -493,8 +490,6 @@ impl LogView {
         div().w_full().px(T::SP_16).pt(above).pb(below).child(el).into_any_element()
     }
 
-<<<<<<< ours
-=======
     /// The selection's range in one piece of text, for this render.
     fn sel_in(&self, ix: usize, part: usize, len: usize) -> Option<std::ops::Range<usize>> {
         let (s, e) = self.range?;
@@ -538,7 +533,6 @@ impl LogView {
         }.into_any_element())
     }
 
->>>>>>> theirs
     /// A row's space above and below: the log's 12 px over the first row;
     /// a block of Claude's text, the margins the web's CSS gives it,
     /// collapsed with its neighbour's (and with the entry's 10 px).
@@ -576,12 +570,6 @@ impl Element for HitText {
     }
     fn prepaint(&mut self, id: Option<&GlobalElementId>, iid: Option<&InspectorElementId>, bounds: Bounds<Pixels>, rl: &mut (), window: &mut Window, cx: &mut App) {
         self.st.prepaint(id, iid, bounds, rl, window, cx);
-<<<<<<< ours
-        self.hits.borrow_mut().push(Hit { row: self.row, part: self.part, layout: self.st.layout().clone() });
-    }
-    fn paint(&mut self, id: Option<&GlobalElementId>, iid: Option<&InspectorElementId>, bounds: Bounds<Pixels>, rl: &mut (), pp: &mut (), window: &mut Window, cx: &mut App) {
-        self.st.paint(id, iid, bounds, rl, pp, window, cx)
-=======
         self.hits.borrow_mut().push(Hit { row: self.row, part: self.part, layout: HitLayout::Text(self.st.layout().clone()) });
     }
     fn paint(&mut self, id: Option<&GlobalElementId>, iid: Option<&InspectorElementId>, bounds: Bounds<Pixels>, rl: &mut (), pp: &mut (), window: &mut Window, cx: &mut App) {
@@ -855,7 +843,6 @@ impl Element for TableEl {
             }
         });
         window.paint_quad(quad(g.table, Corners::all(T::R_CHIP), clear(T::border()), Edges::all(one), T::border(), BorderStyle::Solid));
->>>>>>> theirs
     }
 }
 
