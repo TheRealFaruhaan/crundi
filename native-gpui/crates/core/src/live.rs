@@ -95,6 +95,11 @@ pub fn start(api: Api, to_ui: impl Fn(Event) + Send + Sync + 'static) -> Live {
     Live { out, subs, stop }
 }
 
+/// How often the live link pings the server, and how long a silence (no
+/// message, no pong) means the connection is gone.
+const PING_EVERY: Duration = Duration::from_secs(15);
+const SILENT_FOR: Duration = Duration::from_secs(45);
+
 fn set_timeout(ws: &mut WebSocket<MaybeTlsStream<TcpStream>>) {
     let t = Some(Duration::from_millis(30));
     match ws.get_mut() {
@@ -141,14 +146,27 @@ fn socket_loop(api: Api, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>
             let _ = ws.send(Message::text(json!({ "type": "subscribe-ui", "id": id }).to_string()));
         }
         to_ui(Event::Connected(true));
+        // A connection that died without closing (a network change, a
+        // sleeping router) reads nothing forever: the client looked
+        // connected while a chat stayed stuck (the owner, 19 Nov). The
+        // server answers pings, so silence this long means the link is gone:
+        // connect again (the chats re-subscribe and send their history).
+        let (mut heard, mut pinged) = (std::time::Instant::now(), std::time::Instant::now());
 
         while !stop.load(Ordering::Relaxed) {
+            if pinged.elapsed() >= PING_EVERY { let _ = ws.send(Message::Ping(Default::default())); pinged = std::time::Instant::now(); }
+            if heard.elapsed() >= SILENT_FOR {
+                eprintln!("[native] live: nothing heard for {} s, connecting again", SILENT_FOR.as_secs());
+                break;
+            }
             while let Ok(text) = rx.try_recv() { let _ = ws.send(Message::text(text)); }
             while let Ok(reply) = host_rx.try_recv() {
                 let _ = ws.send(Message::text(json!({ "type": "native-host-result", "payload": reply }).to_string()));
             }
             while let Ok(b) = bin_rx.try_recv() { let _ = ws.send(Message::binary(b)); }
-            match ws.read() {
+            let read = ws.read();
+            if read.is_ok() { heard = std::time::Instant::now(); }
+            match read {
                 Ok(Message::Text(t)) => {
                     let Ok(v) = serde_json::from_str::<Value>(t.as_str()) else { continue };
                     match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
@@ -166,6 +184,7 @@ fn socket_loop(api: Api, rx: mpsc::Receiver<String>, subs: Arc<Mutex<Vec<String>
         }
         let _ = ws.close(None);
         crate::host::set_binary_out(None);
+        eprintln!("[native] live: disconnected");
         if !stop.load(Ordering::Relaxed) {
             to_ui(Event::Connected(false));
             thread::sleep(Duration::from_secs(2));
