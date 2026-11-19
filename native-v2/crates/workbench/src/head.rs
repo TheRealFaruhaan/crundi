@@ -44,6 +44,9 @@ impl PaneHead {
         if self.last.as_ref() != Some(&i) { self.last = Some(i); cx.notify(); }
     }
 
+    /// The title as last drawn (the driver's "heads").
+    pub fn drawn_title(&self) -> Option<String> { self.last.as_ref().map(|i| i.title.clone()) }
+
     fn act(&self, cx: &mut App, f: impl FnOnce(&mut Workbench, &mut Context<Workbench>) + 'static) {
         if let Some(wb) = self.wb.upgrade() { wb.update(cx, f); }
     }

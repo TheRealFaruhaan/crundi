@@ -72,8 +72,10 @@ crundi_shell::register(cx, Area::new("planning")
   Shell, Terminal and its Skip Permissions, given the launcher's pane key;
   the started pane takes the launcher's place with `Workbench::replace`).
 - **Pane kinds** (`crundi_workbench::register_kind(cx, PaneKind { prefix,
-  chat, make, close, zoom })`): `make` returns the pane's body view (a
-  layout view whose parts are cached), the head's `info` (title, long
+  chat, make, close, zoom })`): `make` returns the pane's `body` (a
+  function building its elements in the Workbench's render: layout only,
+  its views placed `.cached(…)`; one view alone is `view.cached(size_full)`;
+  never a layout view of its own, ARCHITECTURE.md rule 3), the head's `info` (title, long
   title, state) and `watch` (the subscriptions that make the head redraw:
   observe only what the title and dot read). Keys: `live:<chat>`,
   `term:<id>`, `panel:<kind>[:<item>]`, `pend:<n>` (the workbench's own

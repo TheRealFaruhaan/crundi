@@ -156,6 +156,10 @@ impl T {
     pub const LAUNCH_BOX_PX: Pixels = px(20.);
     pub const LAUNCH_LABEL: Pixels = px(11.52);
     pub fn launch_chat_edge() -> Hsla { rgba(0x818cf8d9).into() }
+    /// UI Mode's gradient (the web's .btn-chat): its edge, middle and peak
+    /// stops (#4338ca, #6366f1, #a5b4fc; the image is edge, middle, peak,
+    /// middle, edge).
+    pub fn launch_chat_stops() -> [Hsla; 3] { [rgb(0x4338ca).into(), rgb(0x6366f1).into(), rgb(0xa5b4fc).into()] }
     pub fn launch_normal_bg() -> Hsla { rgba(0x6366f11a).into() }
     pub const TITLE_CAP: Pixels = px(160.);
     pub const COMPOSER_STACK: Pixels = px(520.);
@@ -498,9 +502,10 @@ impl T {
     pub const MD_CODE_PX: Pixels = px(11.);
     pub const MD_CODE_PY: Pixels = px(9.);
     pub const LH_CODE: f32 = 1.5;
-    /// The browser's `hr` (1 px inset border, gray): its dark top and its line.
-    pub fn md_rule_dark() -> Hsla { rgb(0x2b2b2b).into() }
-    pub fn md_rule() -> Hsla { rgb(0x808080).into() }
+    /// The browser's `hr` (a 1 px inset border, gray), as Chromium draws it
+    /// on the web: its top line and its bottom line.
+    pub fn md_rule_dark() -> Hsla { rgb(0x9a9a9a).into() }
+    pub fn md_rule() -> Hsla { rgb(0xeeeeee).into() }
     /// Code colours on the dark background (the owner's call, 19 Nov: they
     /// stay, readable): from the palette, each at least 4.5:1 on bg_secondary.
     pub fn syn_keyword() -> Hsla { Self::accent_hover() }

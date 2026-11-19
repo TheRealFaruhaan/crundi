@@ -38,10 +38,18 @@ its own.
    ancestors* dirty (`Window::mark_view_dirty`), and a cached view that
    re-renders does so with `window.refreshing` set, so **every cached view
    inside it is ignored and re-rendered too**. So:
-   - a **layout view** (the Shell, a tab's root, the Workbench, a ChatPane)
-     holds child views and little else; it is **not cached** (it is an
-     ancestor of everything that changes and re-renders with any of it, so
-     it must be cheap: no text, no lists, no parsing);
+   - a **layout view** (the Shell, a tab's root, the Workbench) holds child
+     views and little else; it is **not cached** (it is an ancestor of
+     everything that changes and re-renders with any of it, so it must be
+     cheap: no text, no lists, no parsing);
+   - **between a layout view and its leaves there is no view at all** when
+     the part is layout only and holds several leaves (a chat pane's log
+     over its composer): it is a **body**, elements built in its layout
+     view's render (`workbench::PaneParts::body`, `chat::ChatPane::body`),
+     placing its leaves cached. As a view it would be in every leaf's dirty
+     path: uncached, every pane's would re-render with any one log's
+     notify (F31, 20 Nov: 2164 ChatPane renders in 541 frames); cached, it
+     would re-render its other leaves (its composer) with it;
    - a **leaf view** (TopBar, Sidebar, ProjectBar, a PaneHead, a LogView, a
      Composer, a kanban column…) is cached and holds **no cached view
      inside it**; the top cached views sit side by side;
@@ -153,7 +161,7 @@ Root (gpui-component)
    ├─ <tab's root>       layout   one per tab, made when first shown; the workbench tab's is the Workbench
    │  └─ Workbench       layout   the mosaic's rectangles, gutters, empty panes
    │     ├─ PaneHead     cached   one per pane: grip, dot, title, badge, tools, ×
-   │     ├─ ChatPane     layout   (a pane kind's body) log over composer
+   │     ├─ (chat body)  elements (a pane kind's body, no view) log over composer
    │     │  ├─ LogView   cached   the virtualised log (list): only visible rows
    │     │  └─ Composer  cached   the box, Send / Stop
    │     └─ Launcher     cached   ("pend:" panes) New terminal: Empty Shell, UI Mode, Terminal
@@ -165,18 +173,22 @@ Root (gpui-component)
   calls `PaneHead::refresh`, which compares the info; the Workbench, as it
   lays the panes out, notifies only the heads whose frame (armed, pinned,
   narrow, focused) changed. A head never observes a whole store (F11).
-- A streaming chat notifies its LogView: the LogView, its ChatPane, the
-  Workbench and the Shell are dirty. The three layout views re-render
-  (cheap: no text), the LogView re-renders its visible rows, and every
-  other cached leaf (the top bar, the sidebar, the other panes' heads,
-  logs and composers, the drawer) is reused from its cache.
+- A streaming chat notifies its LogView: the LogView, the Workbench and
+  the Shell are dirty. The two layout views re-render (cheap: no text),
+  the LogView re-renders its visible rows, and every other cached leaf
+  (the top bar, the sidebar, every head, the other logs, every composer,
+  the drawer) is reused from its cache.
 - A wheel tick over a log is the same: the list notifies the LogView, and
   GPUI marks every ancestor view dirty with it (`Window::mark_view_dirty`
-  walks the view path up; Zed's workspace does the same), so the ChatPane
-  and the Workbench re-run their `render` once per frame that scrolls
-  (F21). That is why the layout views hold no text and do no work: the
-  Workbench's render is the mosaic's few rectangles and the cached pane
-  views placed in them; nothing under them that is not dirty is rebuilt.
+  walks the view path up; Zed's workspace does the same), so the Workbench
+  and the Shell re-run their `render` once per frame that scrolls (F21).
+  That is why the layout views hold no text and do no work: the
+  Workbench's render is the mosaic's few rectangles, one div per leaf and
+  each pane's body (a few divs around cached views); nothing under them
+  that is not dirty is rebuilt. The driver's `renders` shows it: a wheel
+  over one log renders `log` once a frame and no `composer` or `head`.
+- An animation (the launcher's gradient and caret, 30 fps) re-renders its
+  view and that view's ancestors once per animated frame, and nothing else.
 - An empty workbench is never blank (F18): with no panes it puts in a
   "New terminal" launcher pane (the web's placeholder cell), the first
   screen of a fresh project and after the last pane closes; the next pane

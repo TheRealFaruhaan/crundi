@@ -1,5 +1,8 @@
 //! A chat pane (ARCHITECTURE.md, "The view tree"): ChatPane is layout only
-//! (log over composer); the LogView and the Composer are its cached leaves.
+//! (log over composer), and so not a view: its `body` is built inside the
+//! Workbench's render, the LogView and the Composer placed there as cached
+//! leaves. A log's notify then re-renders the Workbench (an ancestor) and
+//! that log, never another pane's parts nor its own composer.
 //! The LogView observes the chat's store (its rows); the Composer observes
 //! only the chat's meta (state, model, cost, error), so a streamed delta
 //! never redraws the box.
@@ -12,6 +15,7 @@ use gpui::{prelude::FluentBuilder as _, *};
 use gpui_component::input::InputEvent;
 use std::time::Duration;
 
+#[derive(Clone)]
 pub struct ChatPane {
     pub store: Entity<ChatStore>,
     pub log: Entity<LogView>,
@@ -19,22 +23,22 @@ pub struct ChatPane {
 }
 
 impl ChatPane {
-    pub fn new(store: Entity<ChatStore>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(store: Entity<ChatStore>, window: &mut Window, cx: &mut App) -> Self {
         let log = cx.new(|cx| LogView::new(store.clone(), cx));
         let composer = cx.new(|cx| Composer::new(store.clone(), window, cx));
         ChatPane { store, log, composer }
     }
-}
 
-impl Render for ChatPane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crundi_core::driver::rendered("chat-pane");
+    /// The pane's body (the workbench's PaneParts::body).
+    pub fn body(&self, cx: &App) -> AnyElement {
         // The composer is cached at the height it measured itself (it grows
-        // with its text: a change of height notifies it, and so this).
+        // with its text: a change of height notifies it, and so the
+        // Workbench, its ancestor).
         let h = self.composer.read(cx).height;
         div().flex().flex_col().size_full().min_h_0().bg(T::bg())
             .child(self.log.clone().cached(StyleRefinement::default().w_full().flex_1().min_h_0()))
             .child(self.composer.clone().cached(StyleRefinement::default().w_full().h(h).flex_none()))
+            .into_any_element()
     }
 }
 

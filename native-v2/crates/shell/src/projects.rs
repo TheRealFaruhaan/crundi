@@ -67,7 +67,13 @@ impl Projects {
     pub fn apply_state(&mut self, st: &Value, cx: &mut Context<Self>) {
         let mut changed = false;
         if let Some(p) = st.get("projects").and_then(|p| p.as_array()) { if !p.is_empty() && *p != self.raw { self.raw = p.clone(); changed = true; } }
-        if let Some(t) = st.get("terminals").and_then(|t| t.as_array()) { if *t != self.terminals { self.terminals = t.clone(); changed = true; } }
+        if let Some(t) = st.get("terminals").and_then(|t| t.as_array()) {
+            // A chat's title, long title or state is read from the terminals
+            // (the heads, through their `watch`): a change there notifies
+            // even when the derived list stays the same (F29: a rename came
+            // in and no head redrew). Observers compare what they show.
+            if *t != self.terminals { self.terminals = t.clone(); changed = true; cx.notify(); }
+        }
         if changed { self.rederive(cx); }
     }
 

@@ -1,10 +1,11 @@
 //! The workbench (ARCHITECTURE.md, "The view tree"): the pane host. The
 //! Workbench view is layout only: the mosaic's rectangles (core::mosaic, the
-//! web's), the gutters, empty panes, and each pane as two cached views side
-//! by side, its head (PaneHead) and its body (the pane kind's view). A
-//! pane's change redraws that pane; the Workbench re-renders only when the
-//! layout changes (a pane placed or closed, a gutter dragged, the area
-//! resized, focus, hover over a head's split controls).
+//! web's), the gutters, empty panes, and each pane: its head (PaneHead, a
+//! cached view) and its body (the kind's elements around its own cached
+//! views). A pane's change redraws that pane's view; the Workbench, an
+//! ancestor of every pane, re-renders with it (GPUI marks every ancestor of
+//! a notified view dirty), so its render stays small: the mosaic's
+//! rectangles and one div per leaf, nothing per row or per message.
 //!
 //! A pane kind registers once (`register_kind`): its key prefix ("live:"
 //! for a chat), how its body and head are made, what A- / A+ and × do.
@@ -24,13 +25,19 @@ use std::{collections::HashMap, rc::Rc, time::{Duration, Instant}};
 
 /// What a pane kind makes for one pane.
 pub struct PaneParts {
-    pub body: AnyView,
+    /// The pane's body as elements, built on every Workbench render: layout
+    /// only, placing the kind's views cached (a body is not a view of its
+    /// own: a view between the Workbench and the leaves would re-render with
+    /// every leaf's notify, and a cached one would re-render its cached
+    /// leaves with it; ARCHITECTURE.md, rule 3).
+    pub body: Body,
     /// The head's title and state, read by the head when it renders.
     pub info: Rc<dyn Fn(&App) -> HeadInfo>,
     /// The head observes what its info reads (the chat's store).
     pub watch: Box<dyn FnOnce(&mut Context<PaneHead>) -> Vec<Subscription>>,
 }
 
+pub type Body = Rc<dyn Fn(&mut App) -> AnyElement>;
 pub type MakePane = Rc<dyn Fn(&str, &Stores, &mut Window, &mut App) -> PaneParts>;
 /// × on a pane: done(true) when it may go (the server closed the chat), else
 /// done(false) and the pane stays (the kind said why).
@@ -60,7 +67,7 @@ fn kind_of(cx: &App, key: &str) -> Option<PaneKind> {
 
 struct Pane {
     head: Entity<PaneHead>,
-    body: AnyView,
+    body: Body,
 }
 
 struct Handle(WeakEntity<Workbench>);
@@ -256,7 +263,7 @@ impl Workbench {
 
     /// A pane's views, made the first time it is laid out (in a handler: the
     /// layout pass that found it, before its frame is drawn).
-    fn pane(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<(Entity<PaneHead>, AnyView)> {
+    fn pane(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<(Entity<PaneHead>, Body)> {
         if !self.panes.contains_key(key) {
             let kind = kind_of(cx, key)?;
             let parts = (kind.make)(key, &self.stores, window, cx);
@@ -322,14 +329,14 @@ impl Workbench {
         // A notify while the window draws marks the head dirty for this
         // draw, before its cached element is laid out, without asking for
         // another frame.
-        if self.frames.insert(key.to_string(), f) != Some(f) { head.update(cx, |_, cx| cx.notify()); }
+        if self.frames.get(key) != Some(&f) { self.frames.insert(key.to_string(), f); head.update(cx, |_, cx| cx.notify()); }
         let hh = if f.narrow { T::PANE_HEAD_NARROW } else { T::PANE_HEAD };
         // A wheel inside a pane stays in it (the workbench's sideways scroll
         // would otherwise move with a log: native-gpui's 19 Nov fix).
         let body = div().relative().flex_1().min_h_0().w_full().overflow_hidden()
             .on_scroll(|_, _, cx| cx.stop_propagation())
-            // The body is the kind's layout view (uncached: its parts are the cached leaves).
-            .child(div().size_full().child(body));
+            // The kind's body: elements around its cached views.
+            .child(body(cx));
         w::panel(head.cached(StyleRefinement::default().w_full().h(hh).flex_none()), body)
             .size_full()
             .when(f.focused && !f.full, |d| d.border_color(T::accent()))
@@ -422,7 +429,7 @@ pub fn init(cx: &mut App) {
         make: Rc::new(|key, _, _, cx| {
             let k = key.to_string();
             PaneParts {
-                body: cx.new(|cx| launcher::Launcher::new(&k, cx)).into(),
+                body: { let v = cx.new(|cx| launcher::Launcher::new(&k, cx)); Rc::new(move |_| v.clone().cached(StyleRefinement::default().size_full()).into_any_element()) },
                 info: Rc::new(|_| HeadInfo { title: "New terminal".into(), long: String::new(), state: String::new() }),
                 watch: Box::new(|_| vec![]),
             }
@@ -442,8 +449,12 @@ pub fn init(cx: &mut App) {
         .on_project(|_, alias, cx| if let Some(w) = workbench(cx) { w.update(cx, |w, cx| w.set_project(alias, cx)); })
         .state(|_, _, cx| {
             let Some(w) = workbench(cx) else { return serde_json::json!({}) };
-            let (keys, focused) = w.update(cx, |w, _| (w.keys(), w.focused_key()));
-            serde_json::json!({ "panes": keys, "focusedPane": focused })
+            let (keys, focused, heads) = w.update(cx, |w, cx| {
+                let heads: serde_json::Map<String, serde_json::Value> = w.panes.iter().filter_map(|(k, p)| p.head.read(cx).drawn_title().map(|t| (k.clone(), t.into()))).collect();
+                (w.keys(), w.focused_key(), heads)
+            });
+            // "heads": each pane head's title as it last drew it (F29).
+            serde_json::json!({ "panes": keys, "focusedPane": focused, "heads": heads })
         }));
 }
 

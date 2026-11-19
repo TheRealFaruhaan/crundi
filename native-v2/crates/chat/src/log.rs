@@ -194,7 +194,9 @@ impl LogView {
         self.edge = false;
         self.edge_task = None;
         if self.ordered(cx).is_none() {
-            self.sel = None;
+            // A click leaves the caret where it was (the selection's anchor,
+            // empty): a shift-click then selects up to its point, as the
+            // browser's selection does.
             // A click (not a drag) on a link opens it.
             if unit == Unit::Char && e.click_count <= 1 && self.hit(e.position, true).is_some_and(|at| at == from) {
                 if let Some(l) = link_at(&self.store.read(cx).rows, from) { open_link(&l, cx); }
@@ -383,18 +385,15 @@ fn heading_size(lv: u8, fs: f32) -> Pixels {
     match lv { 3 => T::TEXT_14 * fs, 4 => T::TEXT_13 * fs, 5 => T::TEXT_13 * fs * 0.83, _ => T::TEXT_13 * fs * 0.67 }
 }
 
-/// A block's top and bottom margins (px), as the web's CSS and the
-/// browser's own (h4-h6, hr) give them.
-fn margins(k: &Kind, fs: f32) -> (f32, f32) {
-    let body = 13. * fs;
+/// A block's top and bottom margins (px), as the web's CSS gives them: its
+/// reset (`* { margin: 0 }`, webapp-html.js) leaves h4-h6 and hr with none;
+/// `.cc-assistant` gives p, lists, pre, blockquote and h1-h3 theirs.
+fn margins(k: &Kind, _fs: f32) -> (f32, f32) {
     match k {
         Kind::Para | Kind::Quote | Kind::Code | Kind::Table { .. } => (0., 8.),
         Kind::Item { last, .. } => (2., if *last { 8. } else { 2. }),
         Kind::Heading(3) => (12., 6.),
-        Kind::Heading(4) => (body * 1.33, body * 1.33),
-        Kind::Heading(5) => { let m = f32::from(heading_size(5, fs)) * 1.67; (m, m) }
-        Kind::Heading(_) => { let m = f32::from(heading_size(6, fs)) * 2.33; (m, m) }
-        Kind::Rule => (body * 0.5, body * 0.5),
+        Kind::Heading(_) | Kind::Rule => (0., 0.),
     }
 }
 

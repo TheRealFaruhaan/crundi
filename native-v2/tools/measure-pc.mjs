@@ -190,13 +190,16 @@ try {
   console.log('setup', JSON.stringify(report.setup));
 
   let m = fm.mark(); await sleep(8000); stats('idle-open', m);
+  const drew = (r0, s) => Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]).filter(([, v]) => v));
   let r0 = s.renders || {};
   m = fm.mark(); const n1 = await sweep(d, 8000); await sleep(300); stats('scroll-panes', m); report['scroll-panes'].wheelEvents = n1;
   s = await state(); report['scroll-panes'].renders = Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]));
   // The focused chat's log scrolled (as the slice suite), up then down, 7 ms apart.
   const scrollChat = async (ms) => { const end = Date.now() + ms; let i = 0; while (Date.now() < end) { await d.send({ cmd: 'ui', name: 'log-scroll', args: [(i % 60) < 30 ? '-50' : '50'] }); i++; await sleep(7); } return i; };
   report.setup.focused = s.chat; report.setup.focusedRows = s.rows;
+  r0 = (await state()).renders || {};
   m = fm.mark(); await scrollChat(8000); await sleep(300); stats('scroll-chat', m);
+  s = await state(); report['scroll-chat'].renders = drew(r0, s);
   if (process.env.PROFILE) {
     // A stack sampler on the UI thread while the wheel sweeps (gdb; the
     // binary built with -C force-frame-pointers=yes; see perf/README.md).
@@ -228,7 +231,14 @@ try {
     report.setup.batches = (s.batches || 0) - b0; report.setup.spliced = s.spliced; report.setup.rows = s.rows;
     report.setup.replyChars = (s.entries || []).filter((e) => e.kind === 'assistant').map((e) => e.text.length).reduce((a, b) => a + b, 0);
     await sleep(2000);
+    // F30: a frame here should be a real change; which views drew, and
+    // whether the chat's events brought anything (its batches, its head).
+    const e0 = await state();
     m = fm.mark(); await sleep(8000); stats('idle-end', m);
+    s = await state();
+    report['idle-end'].renders = drew(e0.renders || {}, s);
+    report['idle-end'].batches = (s.batches || 0) - (e0.batches || 0);
+    report['idle-end'].head = { before: e0.head, after: s.head };
   }
   d.close();
 } catch (e) { done = true; report.allFrames = fm.frames.length; finish(1, String(e)); }

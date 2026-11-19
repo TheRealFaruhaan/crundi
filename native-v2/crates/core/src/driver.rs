@@ -16,7 +16,7 @@
 //!   {"cmd":"resize","w":1400,"h":860}
 //!
 //! "state" also holds "renders": how many times each counted view (head,
-//! composer, log, chat-pane, workbench, top-bar, sidebar, project-bar) has
+//! composer, log, launcher, workbench, top-bar, sidebar, project-bar) has
 //! rendered.
 
 use serde_json::{json, Value};

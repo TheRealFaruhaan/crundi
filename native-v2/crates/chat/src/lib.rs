@@ -24,7 +24,7 @@ use store::ChatStore;
 #[derive(Default)]
 pub struct Chats {
     stores: HashMap<String, Entity<ChatStore>>,
-    panes: HashMap<String, Entity<ChatPane>>,
+    panes: HashMap<String, ChatPane>,
 }
 impl Global for Chats {}
 
@@ -39,10 +39,10 @@ pub fn store(cx: &mut App, id: &str) -> Entity<ChatStore> {
 
 pub fn find(cx: &App, id: &str) -> Option<Entity<ChatStore>> { cx.try_global::<Chats>().and_then(|c| c.stores.get(id).cloned()) }
 
-fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> Entity<ChatPane> {
+fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> ChatPane {
     if let Some(p) = cx.default_global::<Chats>().panes.get(id) { return p.clone(); }
     let s = store(cx, id);
-    let p = cx.new(|cx| ChatPane::new(s, window, cx));
+    let p = ChatPane::new(s, window, cx);
     cx.global_mut::<Chats>().panes.insert(id.to_string(), p.clone());
     p
 }
@@ -133,7 +133,7 @@ pub fn init(cx: &mut App) {
             let (m2, stores2, id2) = (meta.clone(), stores.clone(), id.clone());
             let projects = stores.projects.clone();
             PaneParts {
-                body: view.into(),
+                body: Rc::new(move |cx| view.body(cx)),
                 info: Rc::new(move |cx| {
                     let m = m2.read(cx).0.clone();
                     head_info(&stores2, &id2, &m, cx)
@@ -170,7 +170,7 @@ pub fn init(cx: &mut App) {
                 let id = focused_chat(cx);
                 if id.is_empty() { return Some(json!({ "ok": false, "error": "no chat" })); }
                 let p = pane_view(cx, &id, window);
-                let comp = p.read(cx).composer.clone();
+                let comp = p.composer.clone();
                 let text = args.first().cloned().unwrap_or_default();
                 comp.update(cx, |c, cx| { c.set_text(&text, window, cx); c.send(window, cx); });
                 Some(json!({ "ok": true }))
@@ -200,7 +200,7 @@ pub fn init(cx: &mut App) {
             "log-texts" => {
                 let id = focused_chat(cx);
                 if id.is_empty() { return Some(json!({ "ok": false, "error": "no chat" })); }
-                let log = pane_view(cx, &id, window).read(cx).log.clone();
+                let log = pane_view(cx, &id, window).log.clone();
                 let log = log.read(cx);
                 let texts: Vec<Value> = log.text_rects().into_iter().map(|(row, part, b, text)| json!({ "row": row, "part": part, "x": f32::from(b.left()), "y": f32::from(b.top()), "w": f32::from(b.size.width), "h": f32::from(b.size.height), "text": text })).collect();
                 let clip = cx.read_from_clipboard().and_then(|c| c.text()).unwrap_or_default();
@@ -213,7 +213,7 @@ pub fn init(cx: &mut App) {
                 if id.is_empty() { return Some(json!({ "ok": false, "error": "no chat" })); }
                 // The pane's log draws the list: it alone is notified (a
                 // wheel does the same through the list's own handler).
-                let log = pane_view(cx, &id, window).read(cx).log.clone();
+                let log = pane_view(cx, &id, window).log.clone();
                 let l = store(cx, &id).read(cx).list.clone();
                 l.scroll_by(px(dy));
                 log.update(cx, |_, cx| cx.notify());

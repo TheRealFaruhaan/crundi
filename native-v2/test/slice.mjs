@@ -57,13 +57,25 @@ t.check('the reply is a row per markdown block', (s2?.rows ?? 0) >= (s2?.entries
 const added = (s2?.rows ?? 0) - rows1, batches = (s2?.batches ?? 0) - batches1;
 t.check('rows were spliced, not rebuilt per batch', (s2?.spliced ?? 0) - spliced1 <= added + 3 * Math.max(1, batches), s2 && { spliced: s2.spliced - spliced1, added, batches });
 await T.until('the chat is idle again', (s) => s.chatState === 'idle', 120000);
-// The head follows: out of WORKING, and the server's title (its list's, live
-// from the event stream, no refetch) once the server has named the chat.
+// The head follows: out of WORKING, and the server's title (F29: as GET
+// /api/ui-sessions has it, once the server has named the chat; "Chat" and
+// "Chat (new)" are its placeholders) shown live from the event stream, with
+// no refetch: within a few seconds of the server naming it.
 await T.until('the head leaves WORKING when the reply ends', (s) => s.head && s.head.state !== 'working', 15000);
-await T.until("the head shows the server's title, live", (s) => {
-  const listed = (s.chats || []).find((c) => c.id === chat);
-  return listed && listed.title && listed.title !== 'Chat' && s.head?.title === listed.title;
-}, 60000);
+{
+  const placeholder = (x) => !x || /^chat( \(new\))?$/i.test(x.trim());
+  let named = '';
+  const end = Date.now() + 90000;
+  while (Date.now() < end && !named) {
+    const r = await T.api.http('GET', '/api/ui-sessions');
+    const me = (r.body?.sessions || []).find((x) => x.id === chat);
+    if (me && !placeholder(me.title)) named = me.title; else await t.sleep(500);
+  }
+  if (t.check('the server names the chat', !!named, { named })) {
+    // As drawn: the head view's own last title, not the state's reading.
+    await T.until("the head shows the server's title, live", (s) => s.head?.title === named && s.heads?.[`live:${chat}`] === named, 5000);
+  }
+}
 const streaming = T.frames.since(streamFrom);
 await T.snap('chat', 'reply-done-idle');
 console.log('frames while streaming:', JSON.stringify(streaming));
@@ -105,6 +117,22 @@ t.check('frames were drawn while it streamed', streaming.frames > 0, streaming);
     await T.mouse('click', mid.x + 2, mid.y + mid.h / 2);
     await t.sleep(200);
     t.check('a click clears the selection', (await T.ui('log-texts')).selection === '');
+    // F25: a click places the anchor, a shift-click selects up to its point
+    // (across blocks), and a shift-click extends a drag's selection.
+    await T.mouse('click', a.x + 1, a.y + a.h / 2);
+    await t.sleep(150);
+    await T.mouse('click', mid.x + mid.w - 1, mid.y + mid.h / 2, { mods: ['shift'] });
+    await t.sleep(200);
+    const sh = await T.ui('log-texts');
+    t.check('a shift-click selects from the click to its point', sh.selection.startsWith(a.text.slice(0, 8)) && sh.selection.includes(mid.text), { sel: sh.selection.slice(0, 200), a: a.text.slice(0, 40), mid: mid.text.slice(0, 40) });
+    // (A text on screen, above the composer: the log reports its overdraw too.)
+    const z2 = [...texts].reverse().find((x) => x.row > mid.row && x.y + x.h < 680) || z;
+    await T.mouse('click', z2.x + z2.w - 1, z2.y + z2.h / 2, { mods: ['shift'] });
+    await t.sleep(200);
+    const sh2 = await T.ui('log-texts');
+    t.check('a second shift-click extends the same selection', sh2.selection.startsWith(sh.selection.slice(0, 20)) && sh2.selection.length > sh.selection.length && sh2.selection.includes(z2.text.slice(0, 20)), { first: sh.selection.length, second: sh2.selection.length, end1: sh.selection.slice(-60), end2: sh2.selection.slice(-60), z: z2.text.slice(0, 40), zrow: z2.row, midrow: mid.row });
+    await T.mouse('click', mid.x + 2, mid.y + mid.h / 2);
+    await t.sleep(200);
   }
 }
 
