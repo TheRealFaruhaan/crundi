@@ -1,0 +1,22 @@
+[package]
+name = "crundi-core"
+description = "The client's non-UI core (no GPUI): the server's API, the live link, the saved login, the chat model and its rules, voice I/O, the test driver's protocol"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tungstenite.workspace = true
+ureq.workspace = true
+gethostname.workspace = true
+base64.workspace = true
+chrono.workspace = true
+log.workspace = true
+cpal.workspace = true
+rodio.workspace = true
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+tts.workspace = true

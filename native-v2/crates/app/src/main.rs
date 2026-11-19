@@ -1,0 +1,70 @@
+//! Crundi's native PC client v2 (ARCHITECTURE.md): makes the shared stores,
+//! registers every area, opens the window and answers the test driver.
+//! Thin: everything else is in the crates. Nothing here polls: the live
+//! link and the driver each wake the UI thread through a channel it awaits.
+//!
+//!   CRUNDI_CONFIG_DIR=<dir>   where the login is saved (crundi_core::store)
+//!   CRUNDI_TEST_PORT=<port>   the test driver (driver.rs)
+//!   ZED_MEASUREMENTS=1        gpui prints each drawn frame's duration on
+//!                             stderr ("frame duration: …"): tools/frames.mjs
+
+mod driver;
+
+use crundi_theme::T;
+use futures::StreamExt as _;
+use gpui::*;
+use gpui_component::Root;
+
+fn main() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
+    gpui_platform::application().with_assets(crundi_theme::AllAssets).run(move |cx: &mut App| {
+        gpui_component::init(cx);
+        crundi_theme::init(cx);
+        let stores = crundi_shell::init(cx);
+        // The areas, before the session starts (they hear sign-in).
+        crundi_workbench::init(cx);
+        crundi_chat::init(cx);
+
+        // Centred on the display when there is one; Xvfb reports none, so a
+        // window centred on "nothing" would come out 10x10: place it instead.
+        let wsize = size(T::WINDOW_W, T::WINDOW_H);
+        let bounds = if cx.primary_display().is_some() { Bounds::centered(None, wsize, cx) } else { Bounds { origin: point(px(0.), px(0.)), size: wsize } };
+        // Frameless, as the PC client: the top bar draws the window's buttons and moves it.
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_min_size: Some(size(T::WINDOW_MIN_W, T::WINDOW_MIN_H)),
+            titlebar: None,
+            window_decorations: Some(WindowDecorations::Client),
+            app_id: Some("crundi".into()),
+            icon: app_icon(),
+            ..Default::default()
+        };
+        let s = stores.clone();
+        let handle = cx.open_window(opts, move |window, cx| {
+            let shell = cx.new(|cx| crundi_shell::Shell::new(s.clone(), window, cx));
+            cx.new(|cx| Root::new(shell, window, cx))
+        }).expect("window");
+        stores.session.update(cx, |s, cx| s.start(cx));
+
+        // The test driver: its commands arrive on a channel the UI thread
+        // awaits, and are answered in the window.
+        if let Some(port) = crundi_core::driver::port() {
+            let (tx, mut rx) = futures::channel::mpsc::unbounded::<crundi_core::driver::Request>();
+            crundi_core::driver::start(port, move |r| { let _ = tx.unbounded_send(r); });
+            let any: AnyWindowHandle = handle.into();
+            let s = stores.clone();
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                while let Some(r) = rx.next().await {
+                    let s = s.clone();
+                    if cx.update_window(any, move |_, window, cx| driver::handle(r, &s, window, cx)).is_err() { break; }
+                }
+            }).detach();
+        }
+    });
+}
+
+/// The app's icon, 256 px (assets/icon-256.png, the PC client's).
+fn app_icon() -> Option<std::sync::Arc<image::RgbaImage>> {
+    let png = include_bytes!("../assets/icon-256.png");
+    image::load_from_memory_with_format(png, image::ImageFormat::Png).ok().map(|i| std::sync::Arc::new(i.to_rgba8()))
+}
