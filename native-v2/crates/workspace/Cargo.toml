@@ -1,0 +1,24 @@
+[package]
+name = "crundi-workspace"
+description = "The workspace area: the Claude terminal panes, Git, Files (and the file windows), Media"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+serde_json.workspace = true
+log.workspace = true
+image.workspace = true
+base64.workspace = true
+rfd.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-shell.workspace = true
+crundi-workbench.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

@@ -39,6 +39,9 @@ rodio = { version = "0.20", default-features = false }
 tts = "0.26"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 log = "0.4"
+# The workspace area: file pickers and uploads (as native-gpui).
+base64 = "0.22"
+rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 # The areas.
 crundi-core = { path = "crates/core" }
 crundi-theme = { path = "crates/theme" }
@@ -47,6 +50,7 @@ crundi-browser-link = { path = "crates/browser-link" }
 crundi-shell = { path = "crates/shell" }
 crundi-workbench = { path = "crates/workbench" }
 crundi-chat = { path = "crates/chat" }
+crundi-workspace = { path = "crates/workspace" }
 
 # Line numbers only in dev builds, so the shared build folder stays small and
 # links are quick. Release builds are unaffected.

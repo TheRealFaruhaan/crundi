@@ -48,6 +48,8 @@ pub struct Shell {
     modal: Entity<w::ModalLayer>,
     ask: AnyView,
     dragging: bool,
+    /// The areas' layers over the window (`register_overlay`), read once here.
+    overlays: Vec<AnyView>,
     root_focus: FocusHandle,
     _subs: Vec<Subscription>,
 }
@@ -67,7 +69,7 @@ impl Shell {
         let modal = w::modal_layer(cx);
         let ask = w::ask_layer(cx);
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { stores, top, side, bar, sign_in, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, root_focus: cx.focus_handle(), _subs: subs }
+        Shell { stores, top, side, bar, sign_in, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), _subs: subs }
     }
 
     /// The browser drawer's view (Desktop registers it).
@@ -142,6 +144,7 @@ impl Render for Shell {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))
             .child(self.top.clone().cached(StyleRefinement::default().w_full().h(T::TOPBAR_H).flex_none()))
             .child(main)
+            .children(self.overlays.iter().map(|v| v.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full())))
             .child(self.modal.clone())
             .child(self.ask.clone())
             .into_any_element()

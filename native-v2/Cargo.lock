@@ -1669,6 +1669,7 @@ dependencies = [
  "crundi-theme",
  "crundi-widgets",
  "crundi-workbench",
+ "crundi-workspace",
  "env_logger",
  "futures",
  "gpui-component",
@@ -1781,6 +1782,24 @@ dependencies = [
  "crundi-widgets",
  "gpui-pre",
  "log",
+ "serde_json",
+]
+
+[[package]]
+name = "crundi-workspace"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "crundi-core",
+ "crundi-shell",
+ "crundi-theme",
+ "crundi-widgets",
+ "crundi-workbench",
+ "gpui-component",
+ "gpui-pre",
+ "image",
+ "log",
+ "rfd",
  "serde_json",
 ]
 
@@ -1937,6 +1956,7 @@ checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.2",
  "block2 0.6.2",
+ "libc",
  "objc2 0.6.5",
 ]
 
@@ -5795,6 +5815,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
+name = "pollster"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e9b9cf600136f5b976fbc5727d58c26e1ecab8ee23088d44ef1c7af793550ab"
+
+[[package]]
 name = "polycool"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6406,6 +6432,31 @@ dependencies = [
  "tiny-skia",
  "usvg 0.46.0",
  "zune-jpeg 0.5.15",
+]
+
+[[package]]
+name = "rfd"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4b9d4857b10297ffb0f64cae711e983a7aeaee561848d56d429d3858bd8ed93"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "libc",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "objc2-uniform-type-identifiers",
+ "percent-encoding",
+ "pollster 1.0.3",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
