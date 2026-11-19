@@ -1,0 +1,122 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:82c4233a157b6b82",
+   "live:e88cda4bf9ce9c5e",
+   "live:6704a9c703ba17b8",
+   "live:08d20b8b004319fd"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "08d20b8b004319fd",
+  "focusedRows": 98,
+  "streamChat": "8b2810727abd85c0",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 601,
+  "rows": 302,
+  "replyChars": 6880
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 566,
+  "p50": 4.83,
+  "p95": 6.04,
+  "max": 7.21,
+  "share7": 1,
+  "over7": 2,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 865,
+  "renders": {
+   "workbench": 566,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "head": 4,
+   "log": 572,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 560,
+  "p50": 5.14,
+  "p95": 6.18,
+  "max": 7.55,
+  "share7": 1,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 560,
+   "log": 560
+  }
+ },
+ "stream+scroll": {
+  "frames": 553,
+  "p50": 5.5,
+  "p95": 6.6,
+  "max": 7.84,
+  "share7": 0.99,
+  "over7": 6,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 818
+ },
+ "stream": {
+  "frames": 87,
+  "p50": 5.66,
+  "p95": 6.28,
+  "max": 6.8,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 3.6,
+  "renders": {
+   "workbench": 640,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "head": 1,
+   "log": 820,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "allFrames": 1789,
+ "ranSeconds": 74
+}
