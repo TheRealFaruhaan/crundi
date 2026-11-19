@@ -1,0 +1,59 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:f22c0f0946e4b71d",
+   "live:ac8e0447756ac73c",
+   "live:fd4d8059ad6d03ae",
+   "live:98fb6a2af08a95b0"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "98fb6a2af08a95b0",
+  "focusedRows": 135
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 555,
+  "p50": 5.41,
+  "p95": 7.68,
+  "max": 12.71,
+  "share7": 0.87,
+  "over7": 70,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 809,
+  "renders": {
+   "workbench": 555,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "chat-pane": 2220,
+   "head": 0,
+   "log": 559,
+   "composer": 0
+  }
+ },
+ "scroll-chat": {
+  "frames": 577,
+  "p50": 4.82,
+  "p95": 8.1,
+  "max": 10.36,
+  "share7": 0.89,
+  "over7": 66,
+  "over16": 0,
+  "seconds": 8.3
+ },
+ "allFrames": 1914,
+ "ranSeconds": 136
+}

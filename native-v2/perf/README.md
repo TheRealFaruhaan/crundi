@@ -56,3 +56,10 @@ PR_SET_PTRACER and then execs the binary (the PID stays the same):
 `gdb-sample.py` stops the process every ~12 ms with SIGUSR2 (not passed on to
 the client), records thread 1's full stack in `samples.txt` and goes on. The
 pauses stretch frames, so the numbers come from the unprofiled runs before it.
+
+Summarise the samples (busy vs idle, stage, inside or outside the log's list)
+with `python3 -I native-v2/perf/gdb-summary.py /tmp/v2-profile/samples.txt`.
+
+A fresh test server can also run on the PC itself (`npm ci` once in the
+worktree, then `native-gpui/tools/test-server.sh 4884 --bare` there, with
+`MEASURE_SERVER=http://localhost:4884`): its seeded chats run Claude on the PC.

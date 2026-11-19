@@ -1,0 +1,91 @@
+samples 700: busy 139, idle 561
+
+stage:
+    48 layout
+    43 render
+    25 paint
+    23 other
+
+owner x stage:
+    24 crundi_chat::log::LogView  [layout]
+    23 crundi_v2::main::  [other]
+    22 crundi_v2::main::  [layout]
+    13 crundi_v2::main::  [render]
+     8 crundi_chat::log::LogView  [paint]
+     7 crundi_workbench::Workbench  [render]
+     7 crundi_chat::log::LogView  [render]
+     5 crundi_core::webmd::Inline  [render]
+     5 crundi_shell::views::Shell  [render]
+     4 crundi_v2::main::  [paint]
+     4 crundi_chat::pane::Composer  [paint]
+     3 crundi_shell::views::TopBar  [paint]
+     2 crundi_shell::views::Sidebar  [paint]
+     2 crundi_chat::log::Hit  [render]
+     2 crundi_shell::views::ProjectBar  [paint]
+     1 crundi_chat::log::  [paint]
+     1 crundi_shell::views::TopBar  [layout]
+     1 crundi_core::mosaic::Node  [render]
+     1 crundi_chat::pane::Composer  [render]
+     1 crundi_workbench::head::PaneHead  [paint]
+     1 crundi_workbench::Pane  [render]
+     1 crundi_chat::pane::Composer  [layout]
+     1 crundi_shell::usage_rows::Row  [render]
+
+leaf function:
+    58 ?
+     5 ??
+     4 tcache_get_n
+     3 __memcpy_avx_unaligned_erms
+     3 default
+     3 try_insert_with_key<slotmap::DefaultKey,
+     2 request_layout<gpui::elements::div::Stateful<gpui::elements::div::Div>
+     2 unlink_chunk
+     2 block
+     2 drop_glue<core::option::Option<gpui::element::{impl#11}::new::{closure
+     1 insert<u32,
+     1 cmp
+     1 request_layout<gpui_base::text_selection::TextSelectionLayer>
+     1 branch<gpui::window::ElementId>
+     1 to_taffy<gpui::geometry::Length,
+
+functions on the stack (inclusive):
+   139 crundi_v2::main::
+   128 gpui::platform::RequestFrameOptions
+   125 gpui::window::
+   125 gpui::app::
+   124 gpui::app::async_context::AsyncApp
+   113 gpui::view::ViewElement
+   109 gpui::view::AnyView
+   108 gpui::elements::div::Stateful
+   106 gpui::elements::div::Div
+   104 gpui_component::window_border::WindowBorder
+   103 gpui::elements::div::
+   102 gpui::elements::div::InteractiveElementState
+    98 gpui::element::AnyElement
+    66 gpui::window::ElementId
+    59 gpui::app::entity_map::Entity
+    57 gpui::view::ViewElementState
+    52 gpui::taffy::LayoutId
+    52 gpui::window::Hitbox
+    52 gpui::window::FocusHandle
+    41 gpui::elements::list::List
+    37 gpui::elements::list::LayoutItemsResponse
+    29 gpui::taffy::NodeContext
+    21 taffy::tree::taffy_tree::TaffyView
+    13 crundi_chat::log::LogView
+    11 taffy::compute::flexbox::determine_hypothetical_cross_size::
+    10 gpui::geometry::Size
+    10 gpui::taffy::
+    10 gpui::view::paint_view::
+     9 crundi_workbench::Workbench
+     9 gpui::element::Drawable
+     8 gpui::arena::ArenaBox
+     6 gpui::elements::div::div
+     5 gpui::text_system::line_layout::CacheKey
+     5 crundi_core::webmd::Inline
+     5 gpui::style::StyleRefinement
+     5 crundi_shell::views::Shell
+     5 gpui::elements::list::
+     4 taffy::tree::taffy_tree::NodeData
+     4 gpui::elements::div::Interactivity
+     4 gpui::arena::ArenaElement
