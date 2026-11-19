@@ -24,12 +24,12 @@ export function parse(line) {
   return m ? Number(m[1]) * UNIT[m[2]] : null;
 }
 
-/** p50, p95, max and the share at most 7 ms of a list of durations (ms). */
+/** p50, p95, max, the share at most 7 ms and the frames over 7 and 16 ms of a list of durations (ms). */
 export function summary(ms) {
   const s = [...ms].sort((a, b) => a - b);
   const q = (p) => (s.length ? s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)] : 0);
   const r = (x) => Math.round(x * 100) / 100;
-  return { frames: s.length, p50: r(q(0.5)), p95: r(q(0.95)), max: r(s.at(-1) ?? 0), share7: s.length ? r(s.filter((x) => x <= 7).length / s.length) : 1 };
+  return { frames: s.length, p50: r(q(0.5)), p95: r(q(0.95)), max: r(s.at(-1) ?? 0), share7: s.length ? r(s.filter((x) => x <= 7).length / s.length) : 1, over7: s.filter((x) => x > 7).length, over16: s.filter((x) => x > 16).length };
 }
 
 export class FrameMeter {

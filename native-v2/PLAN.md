@@ -46,8 +46,9 @@ are the owner's PC, release build; "—" not yet.
   streaming and scrolling, idle 0 frames, a silent connection reconnects
   within 45 s and the next reply shows) — **written; to run on the
   server** (the owner's PC runs no window and no test server)
-- [ ] frame numbers on the owner's PC (release, `CRUNDI_FRAME_BUDGET=1`):
-  when the owner allows a window there
+- [x] frame numbers on the owner's PC (release, `tools/measure-pc.mjs`,
+  perf/pc-2026-11-19.md): idle 0 frames; streaming and a long reply on
+  screen over budget (one markdown row per message)
 
 ## The areas and their screens
 
@@ -76,7 +77,7 @@ are the owner's PC, release build; "—" not yet.
 | Run | Build | Machine | Streaming p50 / p95 / ≤7 ms | Scrolling chat | Kanban | Mind map | Idle frames |
 |---|---|---|---|---|---|---|---|
 | slice | debug | server (Xvfb, lavapipe) | — | — | n/a | n/a | — |
-| full | release | owner's PC (1920x1080, 144 Hz, Renoir), 5 panes, a chat streaming | — | — | — | — | — |
+| slice | release | owner's PC (1920x1080, 144 Hz, Renoir, Wayland), 5 panes, a chat streaming (perf/pc-2026-11-19.md) | 16.9 / 24.2 / 0% (with wheel: 9.1 / 17.1 / 29%) | 5.5 / 28.7 / 71–82% (a 300-line reply on screen; 4.2 / 6.1 / 98% without it) | not built | not built | 0 (open), 0 (after the stream) |
 
 ## Open questions for the Manager
 
