@@ -384,6 +384,13 @@ pub fn pump(cx: &mut App) {
         while let Ok(e) = rx.try_recv() { evs.push(e); }
     }
     if evs.is_empty() { return; }
+    // A chat's events (Claude's streamed output: many a second while one
+    // works) notify that chat's own model, which redraws its own pane. A
+    // refresh redraws every view in the window and bypasses every cache: on
+    // each event it made the whole window, every pane, be laid out and
+    // painted again (the owner's PC, 19 Nov: ~65 ms frames, ~15 fps, on any
+    // tab while a chat worked). Other events still refresh, for now.
+    let refresh = evs.iter().any(|e| !matches!(e, Event::Chat(_)));
     for e in evs {
         match &e {
             Event::SignedOut => { sign_out(cx, "Your sign-in ended. Sign in again."); return; }
@@ -399,7 +406,7 @@ pub fn pump(cx: &mut App) {
             for a in registry::list(cx) { if let Some(f) = &a.on_event { f(&ae, cx); } }
         }
     }
-    cx.refresh_windows();
+    if refresh { cx.refresh_windows(); }
 }
 
 /// The Telegram bot's status for the top bar (GET /api/status), then again

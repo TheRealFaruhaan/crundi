@@ -285,10 +285,13 @@ impl Workbench {
         let prot: HashSet<String> = self.protect.keys().cloned().collect();
         let before = self.mosaic().keys();
         self.mosaic().retain(|k| keep(k) || prot.contains(k));
+        let changed = self.mosaic().keys() != before;
         for k in before { if keep(&k) { self.protect.remove(&k); } }
-        if let Some(f) = self.full.clone() { if self.mosaic().leaf_of(&f).is_none() { self.full = None; } }
-        self.save();
-        cx.notify();
+        let full = self.full.clone();
+        if let Some(f) = &full { if self.mosaic().leaf_of(f).is_none() { self.full = None; } }
+        // Called on every state from the server (each chat's change): only
+        // a pane that went saves the layout and draws the workbench again.
+        if changed || self.full != full { self.save(); cx.notify(); }
     }
 
     fn rect(&mut self, leaf: u32) -> Option<LeafRect> {
