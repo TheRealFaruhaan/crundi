@@ -312,6 +312,25 @@ const alive = (team, emp) => team.of(emp).filter(s => s.alive).pop();
   await r.stopRun(st.run.id); r.dispose();
 }
 
+// ─── The real workersApi fits the runner (not just the fake above) ───
+// The fake gives pullChat at the top level; the real one once nested it under
+// chats, and every handoff from a PC failed with "pullChat is not a function".
+{
+  const { readFileSync } = await import('node:fs');
+  const { createWorkersService } = await import('../src/workers.js');
+  const src = readFileSync(new URL('../src/factory-runner.js', import.meta.url), 'utf8');
+  const used = [...new Set([...src.matchAll(/workersApi\??\.(\w+)/g)].map(m => m[1]))].sort();
+  const svc = createWorkersService({ dataDir: join(base, 'real-workers') });
+  const api = svc.workersApi;
+  const missing = used.filter(n => typeof api[n] !== 'function');
+  ok(used.length >= 4 && missing.length === 0, `the real workersApi has every method the runner calls (${used.join(', ')})${missing.length ? '; missing: ' + missing.join(', ') : ''}`);
+  let threw = '';
+  let r;
+  try { r = await api.pullChat('nochat', { base: '', intoWorktree: base, branch: 'x' }); } catch (e) { threw = e.message; }
+  ok(!threw && r && r.ok === false && typeof r.error === 'string', 'the real pullChat answers an unknown chat with an error, not a throw' + (threw ? ': ' + threw : ''));
+  svc.dispose();
+}
+
 rmSync(base, { recursive: true, force: true });
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nall passed');

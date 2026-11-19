@@ -613,8 +613,12 @@ export function createWorkersService({ dataDir, file, now = () => Date.now(), se
   // What a factory run uses (phase 5): bring a chat's work into its worktree,
   // find a PC, and hear it come and go. Chats on a PC are started with
   // claudeUi.create(..., { where: 'worker:<id>' }).
+  // The runner calls workersApi.pullChat(...) (factory-runner.js); chats.pullChat
+  // is the same function, kept for anything that used that shape.
+  const pullChat = (chatId, opts) => chats.pullChat(chatId, opts);
   const workersApi = Object.freeze({
-    chats: Object.freeze({ pullChat: (chatId, opts) => chats.pullChat(chatId, opts) }),
+    pullChat,
+    chats: Object.freeze({ pullChat }),
     resolve, isOnline, onChange: onPresence,
   });
 

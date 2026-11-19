@@ -339,7 +339,10 @@ function answerPull(w, chat, { patchText } = {}) {
   const bad = await svc.workersApi.chats.pullChat('0000000000000000', {});
   ok(!bad.ok && bad.error, 'pullChat for a chat not on a PC: an error, not a throw');
   ok(svc.workersApi.resolve('big pc')?.id === k1.id && svc.workersApi.resolve(k1.id)?.name === 'Big PC' && svc.workersApi.resolve('nobody') === null && svc.workersApi.isOnline(k1.id) === true, 'workersApi.resolve and isOnline');
-  ok(Object.keys(svc.workersApi).sort().join() === 'chats,isOnline,onChange,resolve', 'workersApi has exactly chats, resolve, isOnline, onChange');
+  // The factory runner calls workersApi.pullChat (top level); chats.pullChat is the same, kept.
+  ok(Object.keys(svc.workersApi).sort().join() === 'chats,isOnline,onChange,pullChat,resolve' && svc.workersApi.pullChat === svc.workersApi.chats.pullChat, 'workersApi has pullChat (as the runner calls it), chats.pullChat, resolve, isOnline, onChange');
+  const bad2 = await svc.workersApi.pullChat('0000000000000000', {});
+  ok(!bad2.ok && bad2.error, 'workersApi.pullChat at the top level: an error for a chat not on a PC, not a throw');
 }
 
 // ── A pull that fails on the PC ──
