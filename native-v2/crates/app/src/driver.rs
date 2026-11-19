@@ -83,7 +83,7 @@ fn point_of(r: &Request) -> Point<Pixels> { point(px(r.num("x") as f32), px(r.nu
 /// up, leave, wheel (dx, dy); drag: down here, moves with the left button
 /// held to (toX, toY) in `steps` (default 8), up there (F20). mods: shift,
 /// ctrl, alt, meta (a shift-click).
-fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
+pub fn mouse(r: &Request, window: &mut Window, cx: &mut App) {
     let p = point_of(r);
     let mods: Vec<String> = r.cmd.get("mods").and_then(|m| m.as_array()).map(|m| m.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
     let has = |k: &[&str]| mods.iter().any(|m| k.iter().any(|x| m.eq_ignore_ascii_case(x)));
@@ -161,7 +161,7 @@ fn key(r: &Request, window: &mut Window, cx: &mut App) {
 
 /// The window as drawn: xwd of its X window, as a PNG (ImageMagick's
 /// convert; under Xvfb on the server). GPUI draws with wgpu: no snapshot of its own.
-fn snapshot(window: &mut Window, path: &str) -> Value {
+pub fn snapshot(window: &mut Window, path: &str) -> Value {
     use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
     let id = match window.window_handle().map(|h| h.as_raw()) {
         Ok(RawWindowHandle::Xlib(h)) => h.window as u64,

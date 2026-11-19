@@ -229,6 +229,26 @@ Root (gpui-component)
   unclosed fence; a list's place in it is carried over), so a batch splices
   the new blocks and the last one or two before them; earlier rows are
   kept as they are.
+- **What a scroll frame costs, and why rows are kept small** (F31): GPUI
+  0.3.12 has no scroll that skips the view. `gpui::list` and
+  `uniform_list` move their offset in their own state and then notify the
+  view that drew them (list.rs `StateInner::scroll`: `cx.notify(current_view)`;
+  Zed's lists do the same), and a cached view is reused only at the same
+  bounds (view.rs: the cache key holds the bounds), so a row that moved
+  is built, laid out (`layout_as_root`), prepainted and painted again on
+  every frame that scrolls. Rows cannot be reused across a scroll: they are
+  made cheap instead. A block row is **one div** (its text style and the
+  row's padding) **around one `HitText`** (a StyledText that reports its
+  own layout for the selection: no wrapper div, no canvas); an item adds
+  its marker, a quote its bar, a code block and a table the boxes they
+  draw, nothing more. A row never nests a div that only passes a style on.
+- **What every frame costs on top**: each cached view that is not dirty
+  has its last paint replayed primitive by primitive (scene.rs `replay`:
+  each glyph and quad inserted again into the scene's bounds tree), so the
+  floor of a frame grows with what is on screen in all the panes, not only
+  the one that changed. `perf/floor-*.md` measures it (`crundi-v2-floor`,
+  tools/measure-floor.mjs): fewer primitives per screen (no invisible
+  boxes, no backgrounds a parent already draws) are the only lever there.
 - **Where the parse runs**: on the UI thread only within `INLINE_PARSE` (4 KB
   per update, well under 1 ms; a streamed tail is far less); anything more
   (a history's long replies) is parsed on the background executor, one job

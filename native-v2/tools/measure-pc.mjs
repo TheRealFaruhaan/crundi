@@ -51,6 +51,7 @@ import { homedir } from 'node:os';
 import { driver, client, sleep } from '../test/lib.mjs';
 import { totpNow } from '../../src/auth-password.js';
 import { FrameMeter } from './frames.mjs';
+import { sweep } from './sweep.mjs';
 
 const die = (m) => { console.error(m); process.exit(2); };
 const BIN = process.argv[2] || join(homedir(), '.cache/crundi-native-target/release/crundi-v2');
@@ -159,19 +160,7 @@ const stats = (name, from, until = Date.now()) => {
   return r;
 };
 const W = 1920, H = 1040;
-// The wheel over a grid of points across the workbench (every pane is under some).
-async function sweep(d, ms) {
-  const xs = [320, 620, 920, 1220, 1520, 1800], ys = [260, 520, 800];
-  const end = Date.now() + ms;
-  let i = 0;
-  while (Date.now() < end) {
-    const x = xs[Math.floor(i / 40) % xs.length], y = ys[Math.floor(i / 240) % ys.length];
-    await d.send({ cmd: 'mouse', kind: 'wheel', x, y, dy: (i % 40) < 20 ? -60 : 60 });
-    i++;
-    await sleep(7);
-  }
-  return i;
-}
+// The wheel over a grid of points across the workbench: tools/sweep.mjs.
 
 try {
   const d = await driver(PORT, () => !exited);

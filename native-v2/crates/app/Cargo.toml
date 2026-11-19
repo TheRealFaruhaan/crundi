@@ -10,6 +10,11 @@ license.workspace = true
 name = "crundi-v2"
 path = "src/main.rs"
 
+# The frame floor (perf/README.md): GPUI's own cost per frame, no server.
+[[bin]]
+name = "crundi-v2-floor"
+path = "src/floor.rs"
+
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true

@@ -60,6 +60,25 @@ pauses stretch frames, so the numbers come from the unprofiled runs before it.
 Summarise the samples (busy vs idle, stage, inside or outside the log's list)
 with `python3 -I native-v2/perf/gdb-summary.py /tmp/v2-profile/samples.txt`.
 
-A fresh test server can also run on the PC itself (`npm ci` once in the
-worktree, then `native-gpui/tools/test-server.sh 4884 --bare` there, with
-`MEASURE_SERVER=http://localhost:4884`): its seeded chats run Claude on the PC.
+A test server on the PC must **not** run the owner's Claude CLI (the seeded
+chats would spend the owner's turns). For a chat scene without any server,
+use the floor's `chatlog` and `chatlog5` modes (below): their histories are
+seeded in the client.
+
+## The floor
+
+`crundi-v2-floor` (crates/app/src/floor.rs, built with the app) opens
+one window with no server and no sign-in. Its modes go from GPUI's emptiest
+frame up to five seeded chat panes: `empty`, `list`, `uniform`, `workbench`
+(five panes of plain text), `chatlog` and `chatlog5`. `tools/measure-floor.mjs`
+sweeps each with the PC harness's wheel (tools/sweep.mjs) and reports
+idle frames, p50, p95, the share at most 7 ms and the renders:
+
+    CRUNDI_BUILD_JOBS=8 native-v2/tools/build.sh --release -p crundi-app
+    node native-v2/tools/measure-floor.mjs                 # on the PC's display (the Measure step)
+    FLOOR_HEADLESS=1 xvfb-run -a node native-v2/tools/measure-floor.mjs   # headless: idle check only
+
+Under xvfb-run, `FLOOR_HEADLESS=1` is required: without it, GPUI follows
+`WAYLAND_DISPLAY` to the desktop session and opens the window there.
+`PROFILE=native-v2/perf/gdb-sample.py SAMPLES=…` samples the UI thread
+after the sweep, as above. Results: `perf/floor-2026-11-20.md`.

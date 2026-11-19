@@ -1,0 +1,56 @@
+{
+ "bin": "/home/farhan/.cache/crundi-native-target/release/crundi-v2-floor",
+ "when": "2026-11-19T21:09:10.775Z",
+ "modes": {
+  "chatlog": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 582,
+    "p50": 4.75,
+    "p95": 5.79,
+    "max": 8.23,
+    "share7": 1,
+    "over7": 1,
+    "over16": 0,
+    "wheelEvents": 888,
+    "renders": {
+     "workbench": 582,
+     "log": 582
+    }
+   }
+  },
+  "chatlog5": {
+   "idle": {
+    "frames": 0,
+    "p50": 0,
+    "p95": 0,
+    "max": 0,
+    "share7": 1,
+    "over7": 0,
+    "over16": 0
+   },
+   "sweep": {
+    "frames": 552,
+    "p50": 5.99,
+    "p95": 9.3,
+    "max": 12.46,
+    "share7": 0.73,
+    "over7": 148,
+    "over16": 0,
+    "wheelEvents": 760,
+    "renders": {
+     "workbench": 552,
+     "log": 557
+    }
+   }
+  }
+ }
+}

@@ -222,7 +222,8 @@ impl LogView {
     // ─── Rows ───
 
     /// A piece of text that can be selected: its runs (with the selection's
-    /// background), and a canvas after it that reports its layout.
+    /// background), one element that reports its layout as it is laid out
+    /// (HitText: no wrapper, no canvas; a row's tree stays small, F31).
     fn text(&self, row: usize, part: usize, r: &Row, inl: &Inline, look: Look) -> AnyElement {
         let text = r.parts.get(part).cloned().unwrap_or_default();
         let sel = self.range.and_then(|(s, e)| {
@@ -232,42 +233,36 @@ impl LogView {
             let b = if k == (e.0, e.1) { e.2 } else { text.len() };
             (a < b).then_some(a..b.min(text.len()))
         });
-        let st = StyledText::new(text).with_runs(runs(inl, look, sel));
-        let layout = st.layout().clone();
-        let hits = self.hits.clone();
-        div().relative().min_w_0().child(st)
-            .child(canvas(move |_, _, _| hits.borrow_mut().push(Hit { row, part, layout }), |_, _, _, _| {}).absolute().size_full())
-            .into_any_element()
+        HitText { st: StyledText::new(text).with_runs(runs(inl, look, sel)), row, part, hits: self.hits.clone() }.into_any_element()
     }
 
-    fn block(&self, ix: usize, r: &Row, fs: f32) -> AnyElement {
-        let Some(b) = &r.blk else { return div().into_any_element() };
+    /// A block of Claude's text: one div (its text style, and the row's
+    /// padding `item` adds) around its text; an item, a code block and a
+    /// table only add the boxes they draw.
+    fn block(&self, ix: usize, r: &Row, fs: f32) -> Div {
+        let Some(b) = &r.blk else { return div() };
         let body = T::TEXT_13 * fs;
         let base = |c: Hsla| Look { color: c, mono: false, bold: false, link: Some(T::accent_hover()) };
         let p0 = |look: Look| b.parts.first().map(|i| self.text(ix, 0, r, i, look)).unwrap_or_else(|| div().into_any_element());
+        let lh = relative(T::LH_CHAT);
         match &b.kind {
-            Kind::Para => div().w_full().text_size(body).line_height(relative(T::LH_CHAT)).child(p0(base(T::text()))).into_any_element(),
-            Kind::Heading(lv) => div().w_full().text_size(heading_size(*lv, fs)).line_height(relative(T::LH_CHAT))
-                .child(p0(Look { bold: true, ..base(T::text()) })).into_any_element(),
-            Kind::Quote => div().w_full().pl(T::SP_10).border_l_2().border_color(T::border()).text_size(body).line_height(relative(T::LH_CHAT))
-                .child(p0(base(T::text_secondary()))).into_any_element(),
-            Kind::Item { ordered, n, .. } => div().w_full().flex().text_size(body).line_height(relative(T::LH_CHAT))
+            Kind::Para => div().text_size(body).line_height(lh).child(p0(base(T::text()))),
+            Kind::Heading(lv) => div().text_size(heading_size(*lv, fs)).line_height(lh).child(p0(Look { bold: true, ..base(T::text()) })),
+            // The quote's bar is its padding box's left border.
+            Kind::Quote => div().text_size(body).line_height(lh).child(div().pl(T::SP_10).border_l_2().border_color(T::border()).child(p0(base(T::text_secondary())))),
+            Kind::Item { ordered, n, .. } => div().flex().text_size(body).line_height(lh)
                 // The marker outside the item, in the list's 20 px (the web's ul/ol padding).
                 .child(div().flex_none().w(T::MD_LIST_INDENT).flex().justify_end().pr(T::MD_MARKER_GAP * fs).text_color(T::text())
                     .child(if *ordered { SharedString::from(format!("{n}.")) } else { SharedString::from("\u{2022}") }))
-                .child(div().flex_1().min_w_0().child(p0(base(T::text()))))
-                .into_any_element(),
-            Kind::Code => div().id(("code", ix)).w_full().flex().rounded(T::R_CONTROL).bg(T::bg_secondary()).border_1().border_color(T::border_subtle())
+                .child(div().flex_1().min_w_0().child(p0(base(T::text())))),
+            Kind::Code => div().child(div().id(("code", ix)).w_full().flex().rounded(T::R_CONTROL).bg(T::bg_secondary()).border_1().border_color(T::border_subtle())
                 .px(T::MD_CODE_PX).py(T::MD_CODE_PY).overflow_x_scroll()
                 .child(div().flex_none().text_size(T::TEXT_12 * fs).line_height(relative(T::LH_CODE)).whitespace_nowrap()
-                    .child(p0(Look { mono: true, ..base(T::text()) })))
-                .into_any_element(),
-            Kind::Rule => div().w_full().flex().flex_col()
-                .child(div().w_full().h(px(1.)).bg(T::md_rule_dark()))
-                .child(div().w_full().h(px(1.)).bg(T::md_rule()))
-                .into_any_element(),
+                    .child(p0(Look { mono: true, ..base(T::text()) })))),
+            // The rule's two lines (dark over light): one 2 px box, its top border dark.
+            Kind::Rule => div().child(div().w_full().h(px(2.)).border_t_1().border_color(T::md_rule_dark()).bg(T::md_rule())),
             Kind::Table { cols, rows } => {
-                let mut t = div().w_full().flex().flex_col().rounded(T::R_CHIP).border_1().border_color(T::border()).overflow_hidden().text_size(body).line_height(relative(T::LH_CHAT));
+                let mut t = div().w_full().flex().flex_col().rounded(T::R_CHIP).border_1().border_color(T::border()).overflow_hidden().text_size(body).line_height(lh);
                 for y in 0..*rows {
                     let mut line = div().w_full().flex().when(y > 0, |d| d.border_t_1().border_color(T::border())).when(y == 0, |d| d.bg(T::bg_secondary()));
                     for x in 0..*cols {
@@ -277,7 +272,7 @@ impl LogView {
                     }
                     t = t.child(line);
                 }
-                t.into_any_element()
+                div().child(t)
             }
         }
     }
@@ -289,8 +284,13 @@ impl LogView {
         let store = store.read(cx);
         let Some(r) = store.rows.get(ix) else { return div().into_any_element() };
         let open = self.open.contains(&r.id);
+        // Claude's text: the block's own div takes the row's padding (one
+        // element less per row); the others are wrapped in it.
+        if r.shown.kind == "assistant" {
+            let (above, below) = self.block_margins(ix, r, fs);
+            return self.block(ix, r, fs).w_full().px(T::SP_16).pt(above).pb(below).into_any_element();
+        }
         let el = match r.shown.kind {
-            "assistant" => self.block(ix, r, fs),
             "user" => {
                 let inl = r.plain.clone().unwrap_or_default();
                 div().flex().justify_end()
@@ -310,9 +310,15 @@ impl LogView {
             }
             _ => row(r, open, fs, &me),
         };
+        let (above, below) = self.block_margins(ix, r, fs);
+        div().w_full().px(T::SP_16).pt(above).pb(below).child(el).into_any_element()
+    }
+
+    /// A row's space above and below: the log's 12 px over the first row;
+    /// a block of Claude's text, the margins the web's CSS gives it,
+    /// collapsed with its neighbour's (and with the entry's 10 px).
+    fn block_margins(&self, ix: usize, r: &Row, fs: f32) -> (Pixels, Pixels) {
         let top = if ix == 0 { T::SP_12 } else { px(0.) };
-        // A block of Claude's text: the margins the web's CSS gives it,
-        // collapsed with its neighbour's (and with the entry's 10 px).
         let (above, below) = match &r.block {
             Some(b) => {
                 let (t, bt) = margins(&b.kind, fs);
@@ -322,7 +328,33 @@ impl LogView {
             }
             None => (px(0.), T::SP_10),
         };
-        div().w_full().px(T::SP_16).pt(top + above).pb(below).child(el).into_any_element()
+        (top + above, below)
+    }
+}
+
+/// A selectable text: a StyledText that, once laid out, reports where it is
+/// (the pointer is mapped onto it; Zed's markdown does the same).
+struct HitText { st: StyledText, row: usize, part: usize, hits: Rc<RefCell<Vec<Hit>>> }
+
+impl IntoElement for HitText {
+    type Element = Self;
+    fn into_element(self) -> Self { self }
+}
+
+impl Element for HitText {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+    fn id(&self) -> Option<ElementId> { None }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
+    fn request_layout(&mut self, id: Option<&GlobalElementId>, iid: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
+        self.st.request_layout(id, iid, window, cx)
+    }
+    fn prepaint(&mut self, id: Option<&GlobalElementId>, iid: Option<&InspectorElementId>, bounds: Bounds<Pixels>, rl: &mut (), window: &mut Window, cx: &mut App) {
+        self.st.prepaint(id, iid, bounds, rl, window, cx);
+        self.hits.borrow_mut().push(Hit { row: self.row, part: self.part, layout: self.st.layout().clone() });
+    }
+    fn paint(&mut self, id: Option<&GlobalElementId>, iid: Option<&InspectorElementId>, bounds: Bounds<Pixels>, rl: &mut (), pp: &mut (), window: &mut Window, cx: &mut App) {
+        self.st.paint(id, iid, bounds, rl, pp, window, cx)
     }
 }
 
