@@ -22,12 +22,15 @@
 //   kill $(cat /tmp/crundi-devtest-4880/server.pid)
 
 import net from 'node:net';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, createWriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
 import { FrameMeter } from '../tools/frames.mjs';
+import { fileURLToPath } from 'node:url';
+
+const SCREENS = process.env.SCREENS_DIR || fileURLToPath(new URL('../screens/', import.meta.url));
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -145,6 +148,23 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
     get exited() { return exited; },
     state,
     ui: (n, ...args) => d.send({ cmd: 'ui', name: n, args }),
+    /** The pointer, as a person's (move, click, wheel with dy…), at window x,y. */
+    mouse: (kind, x, y, extra = {}) => d.send({ cmd: 'mouse', kind, x, y, ...extra }),
+    /** How many pixels differ between two PNGs, optionally in a crop WxH+X+Y. */
+    diff(a, b, crop) {
+      const c = crop ? ['-crop', crop, '+repage'] : [];
+      const cut = (f) => { const o = `${f}.cut.png`; execFileSync('convert', [f, ...c, o]); return o; };
+      try { execFileSync('compare', ['-metric', 'AE', cut(a), cut(b), 'null:'], { stdio: ['ignore', 'ignore', 'pipe'] }); return 0; }
+      catch (e) { return Number(String(e.stderr).trim().split(/\s/)[0]) || -1; }
+    },
+    /** A picture of the window into native-v2/screens/<area>/<file>.png (the latest only), for the UI reviewer. */
+    async snap(area, file) {
+      const dir = join(SCREENS, area);
+      mkdirSync(dir, { recursive: true });
+      const r = await d.send({ cmd: 'snapshot', path: join(dir, `${file}.png`) });
+      if (!r?.ok) console.log(`(no snapshot ${area}/${file}: ${r?.error})`);
+      return r;
+    },
     /** Wait until test(state) holds; a failed check otherwise. */
     async until(what, test, ms = 20000) {
       const end = Date.now() + ms;
@@ -169,7 +189,10 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   // Sign in as a person would: the server step, then password and code.
   await T.ui('check-server', via);
   await T.until('the login step', (s) => s.signinStep === 'Login');
+  await T.snap('sign-in', 'login-step');
   await T.ui('sign-in-password', via, password, totpNow(secret));
   await T.until('signed in, the project open, online', (s) => s.signedIn && s.project === 'demo' && s.online, 30000);
+  await sleep(500);
+  await T.snap('shell', 'signed-in-project');
   return T;
 }
