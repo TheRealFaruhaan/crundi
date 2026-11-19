@@ -94,7 +94,7 @@ pub fn shots_of(v: &Value, project: &str, wid: &str, chat: &str) -> Option<Vec<S
 fn blocks(summary: &str) -> Vec<(&'static str, String, String)> {
     if summary.trim().is_empty() { return vec![]; }
     crate::rows::split_blocks("fr", summary).into_iter().filter_map(|r| match r {
-        crate::rows::Row::Prose(_, t, kind, marker, _) => Some((if kind.starts_with("li") { "li" } else if kind.starts_with('h') { "h" } else { "p" }, marker, t)),
+        crate::rows::Row::Prose(_, t, kind, marker, _) => Some((if kind.starts_with("li") { "li" } else if kind.starts_with('h') { "h" } else { "p" }, marker, t.to_string())),
         crate::rows::Row::Code(_, t, _) => Some(("code", String::new(), t)),
         _ => None,
     }).collect()

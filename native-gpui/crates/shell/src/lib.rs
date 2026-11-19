@@ -25,6 +25,9 @@ pub struct Shell {
     pub drawer_open: bool,
     /// Each tab's body view (TabHost), cached by GPUI.
     tab_hosts: std::collections::HashMap<String, Entity<TabHost>>,
+    /// The top bar, the projects list and the project bar as cached views
+    /// (ShellPart): made on the first render.
+    parts: Option<[Entity<ShellPart>; 3]>,
     pub drawer_w: Pixels,
     dragging: bool,
     /// Where the left button went down on a window bar: the window moves
@@ -91,7 +94,7 @@ impl Shell {
             let to = window.focus_lost_restore_target(cx).unwrap_or_else(|| this.root_focus.clone());
             window.focus(&to, cx);
         });
-        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, tab_hosts: Default::default(), drawer_w: T::DRAWER_W, dragging: false, bar_press: None, fold_from: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
+        Shell { tab: "workbench".into(), sidebar: true, drawer_open: false, tab_hosts: Default::default(), parts: None, drawer_w: T::DRAWER_W, dragging: false, bar_press: None, fold_from: None, tab_scroll: ScrollHandle::new(), ptt_held: false, cru_hover: 0, server_input, password_input, code_input, pair_input, root_focus: cx.focus_handle(), _focus_lost: focus_lost }
     }
 
     /// Show a tab (as a click on it); the parts hear it.
@@ -176,6 +179,19 @@ impl Shell {
             self.bar_press = None;
             window.start_window_move();
         }
+    }
+
+    /// The shell's [part] as a cached view: a pane's scroll (which marks the
+    /// shell as changed, its parent) no longer lays out and paints the top
+    /// bar, the projects list and the project bar again; a change of the
+    /// shell itself (it notifies) still draws them (ShellPart observes it).
+    fn part(&mut self, part: Part, cx: &mut Context<Self>) -> Entity<ShellPart> {
+        if self.parts.is_none() {
+            let me = cx.entity();
+            let mk = |part: Part, cx: &mut Context<Self>| { let me = me.clone(); cx.new(|cx| ShellPart { shell: me.downgrade(), part, _obs: cx.observe(&me, |_, _, cx| cx.notify()) }) };
+            self.parts = Some([mk(Part::Top, cx), mk(Part::Side, cx), mk(Part::Bar, cx)]);
+        }
+        self.parts.as_ref().unwrap()[part as usize].clone()
     }
 
     fn top_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -442,7 +458,7 @@ impl Shell {
             w::empty(format!("{} is not built yet in the GPUI client.", registry::tab_label(&tab))).into_any_element()
         };
         let project = div().flex().flex_col().flex_1().min_w_0().min_h_0()
-            .child(self.project_bar(cx))
+            .child(self.part(Part::Bar, cx).cached(StyleRefinement::default().w_full().h(T::TABBAR_H).flex_none()))
             .child(div().flex().flex_col().flex_1().min_h_0().child(body));
         // The drawer: beside the whole project area, below the top bar.
         // On the left (its menu's "Open on the left"), between the projects
@@ -458,7 +474,8 @@ impl Shell {
             }));
         // The drawer cached too: a page's frames redraw the drawer, not the project.
         let dview = drawer.map(|dr| div().flex_none().w(self.drawer_w).h_full().min_h_0().child(dr.view.cached(StyleRefinement::default().size_full())));
-        let main = div().flex().flex_1().min_h_0().child(self.sidebar(window, cx));
+        let sw = self.sidebar_width(window).0;
+        let main = div().flex().flex_1().min_h_0().child(self.part(Part::Side, cx).cached(StyleRefinement::default().w(sw).h_full().flex_none()));
         let main = match dview {
             Some(v) if left => main.child(v).child(split).child(project),
             Some(v) => main.child(project).child(split).child(v),
@@ -490,7 +507,7 @@ impl Shell {
             .capture_key_up(cx.listener(|this, e: &KeyUpEvent, _, cx| {
                 if this.ptt_held && ptt::releases(&ptt::get(), &e.keystroke.key) { this.ptt_held = false; registry::run_action(cx, "cru-ptt-up"); }
             }))
-            .child(self.top_bar(window, cx))
+            .child(self.part(Part::Top, cx).cached(StyleRefinement::default().w_full().h(T::TOPBAR_H).flex_none()))
             .child(main)
             // The parts' layers (not modal: Cru's screen), then a view modal (w::modal), over the window.
             .children(registry::overlays(cx))
@@ -594,5 +611,27 @@ pub struct TabHost { tab: String }
 impl Render for TabHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         registry::render_tab(&self.tab, window, cx).unwrap_or_else(|| div().into_any_element())
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Part { Top = 0, Side = 1, Bar = 2 }
+
+/// One part of the shell's frame (Shell::part), drawn by the shell's own
+/// code (its buttons still act on the shell), in a view of its own so GPUI
+/// can keep it between frames.
+pub struct ShellPart { shell: WeakEntity<Shell>, part: Part, _obs: Subscription }
+
+impl Render for ShellPart {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let part = self.part;
+        let el = self.shell.update(cx, |sh, cx| match part {
+            Part::Top => sh.top_bar(window, cx).into_any_element(),
+            Part::Side => sh.sidebar(window, cx).into_any_element(),
+            Part::Bar => sh.project_bar(cx).into_any_element(),
+        }).unwrap_or_else(|_| div().into_any_element());
+        // Laid out on its own now (a cached view): a full-size column, so a
+        // part takes the width its place gives it, as it did inline.
+        div().size_full().flex().flex_col().child(el)
     }
 }

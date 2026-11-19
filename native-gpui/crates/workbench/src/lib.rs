@@ -199,6 +199,8 @@ pub struct Workbench {
     pub(crate) leaf_focus: HashMap<u32, FocusHandle>,
     /// Each pane body's own view (view.rs PaneHost), cached by GPUI.
     pub(crate) hosts: HashMap<String, Entity<crate::view::PaneHost>>,
+    /// Each pane head's own view (view.rs HeadHost), cached by GPUI: by leaf and full screen.
+    pub(crate) head_hosts: HashMap<(u32, bool), Entity<crate::view::HeadHost>>,
     /// Panes ease to a new place and size (a split, a close, a move, the
     /// window resized) as the web's .mosaic-easing: each leaf's rect as last
     /// drawn, and its running tween (from, to, start). The owner, 18 Nov:
@@ -219,7 +221,7 @@ impl Workbench {
             font: saved.font.clone(), font_default: saved.font_default_chat.unwrap_or(rules::FONT_BASE),
             titles: HashMap::new(), pending: 0, protect: HashMap::new(), closed: HashSet::new(),
             hover: 0, press: None, drag: None, gutter: None, add_menu: false, layouts_open: false,
-            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), last_create: Value::Null, window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(), hosts: HashMap::new(), shown: HashMap::new(), tweens: HashMap::new(),
+            toast: String::new(), toast_gen: 0, secrets_cap: false, grants: HashMap::new(), launching: HashMap::new(), last_create: Value::Null, window: None, win_size: (0., 0.), seen_state: false, reveal: false, sbar: None, leaf_focus: HashMap::new(), hosts: HashMap::new(), head_hosts: HashMap::new(), shown: HashMap::new(), tweens: HashMap::new(),
         }
     }
 

@@ -30,7 +30,9 @@ pub enum Row {
     /// Claude's text in blocks: (id, markdown, kind, marker, last). Kind:
     /// "p" | "h" | "h4" | "hr" | "quote" | "li" | "lie" (a list's last item).
     /// Last: the message's last block (the gap after it is an entry's).
-    Prose(String, String, &'static str, String, bool),
+    /// (The markdown is shared: the same allocation every frame lets the
+    /// markdown view skip comparing and parsing it again.)
+    Prose(String, gpui::SharedString, &'static str, String, bool),
     /// A fenced code block: (id, code, last).
     Code(String, String, bool),
     /// One tool card (2.14): (id, the call, open?).
@@ -62,7 +64,7 @@ pub fn split_blocks(id: &str, text: &str) -> Vec<Row> {
     let flush = |para: &mut Vec<String>, out: &mut Vec<Row>| {
         if !para.is_empty() {
             let refs: Vec<&str> = para.iter().map(String::as_str).collect();
-            out.push(Row::Prose(n(out), md::paragraph(&refs), "p", String::new(), false));
+            out.push(Row::Prose(n(out), md::paragraph(&refs).into(), "p", String::new(), false));
         }
         para.clear();
     };
@@ -81,11 +83,11 @@ pub fn split_blocks(id: &str, text: &str) -> Vec<Row> {
         match l {
             Line::Fence => { flush(&mut para, &mut out); code = Some(String::new()); }
             Line::Blank => flush(&mut para, &mut out),
-            Line::Heading(top, h) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), format!("**{}**", md::linkify(h)), if top { "h" } else { "h4" }, String::new(), false)); }
-            Line::Rule => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), String::new(), "hr", String::new(), false)); }
-            Line::Quote(q) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), md::linkify(q), "quote", String::new(), false)); }
-            Line::Bullet(r) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), md::linkify(r), "li", "•".into(), false)); }
-            Line::Numbered(r) => { flush(&mut para, &mut out); num += 1; out.push(Row::Prose(n(&out), md::linkify(r), "li", format!("{num}."), false)); }
+            Line::Heading(top, h) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), format!("**{}**", md::linkify(h)).into(), if top { "h" } else { "h4" }, String::new(), false)); }
+            Line::Rule => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), gpui::SharedString::default(), "hr", String::new(), false)); }
+            Line::Quote(q) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), md::linkify(q).into(), "quote", String::new(), false)); }
+            Line::Bullet(r) => { flush(&mut para, &mut out); out.push(Row::Prose(n(&out), md::linkify(r).into(), "li", "•".into(), false)); }
+            Line::Numbered(r) => { flush(&mut para, &mut out); num += 1; out.push(Row::Prose(n(&out), md::linkify(r).into(), "li", format!("{num}."), false)); }
             Line::Text(t) => para.push(t.to_string()),
         }
     }

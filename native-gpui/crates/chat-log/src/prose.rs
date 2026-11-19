@@ -204,8 +204,8 @@ pub fn entry(v: &mut LogView, _i: usize, e: &Shown, cx: &mut Context<LogView>) -
 }
 
 /// A block's markdown, its links to open_link.
-fn md(id: &str, text: &str) -> AnyElement {
-    w::markdown(SharedString::from(format!("md-{id}")), text.to_string(), |u, _, cx| open_link(u, cx)).into_any_element()
+fn md(id: &str, text: &SharedString) -> AnyElement {
+    w::markdown(SharedString::from(format!("md-{id}")), text.clone(), |u, _, cx| open_link(u, cx)).into_any_element()
 }
 
 /// The gap below a block (Slint's EntryRow gaps): paragraphs and quotes 8,
@@ -218,7 +218,7 @@ pub fn gap(kind: &str, last: bool) -> Pixels {
 
 /// One block of Claude's text in the log: (id, markdown, kind, list
 /// marker, the message's last), at the pane's text size.
-pub fn block_in(v: &mut LogView, id: &str, text: &str, kind: &str, marker: &str, last: bool, cx: &mut Context<LogView>) -> AnyElement {
+pub fn block_in(v: &mut LogView, id: &str, text: &SharedString, kind: &str, marker: &str, last: bool, cx: &mut Context<LogView>) -> AnyElement {
     // (The log's rows are SP_10 apart: a block's own gap pulls the next one up.)
     let mb = if last { px(0.) } else { gap(kind, false) - T::SP_10 };
     draw(id, text, kind, marker, fs(v, cx), mb)
@@ -226,11 +226,11 @@ pub fn block_in(v: &mut LogView, id: &str, text: &str, kind: &str, marker: &str,
 
 /// One block of text in a card of its own (a side answer, the plan): its
 /// gap below it, at the base size.
-pub fn block(id: &str, text: &str, kind: &str, marker: &str, last: bool, _cx: &mut Context<LogView>) -> AnyElement {
+pub fn block(id: &str, text: &SharedString, kind: &str, marker: &str, last: bool, _cx: &mut Context<LogView>) -> AnyElement {
     draw(id, text, kind, marker, 1.0, gap(kind, last))
 }
 
-fn draw(id: &str, text: &str, kind: &str, marker: &str, fs: f32, mb: Pixels) -> AnyElement {
+fn draw(id: &str, text: &SharedString, kind: &str, marker: &str, fs: f32, mb: Pixels) -> AnyElement {
     let base = div().w_full().mb(mb).line_height(relative(T::LH_CHAT));
     match kind {
         // The browser's 2px rule: a dark line over a light one.

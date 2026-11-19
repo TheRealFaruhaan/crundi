@@ -26,7 +26,18 @@ impl Workbench {
             None if i.kind == "launcher" => self.launcher(i, cx).into_any_element(),
             None => w::empty("Not built yet in the GPUI client.").into_any_element(),
         };
-        let head = self.head(i, full, cx);
+        // The head in a cached view of its own: a pane's scroll (which marks
+        // the workbench as changed, its parent) no longer builds every pane's
+        // head again; the workbench's own changes still draw them (HeadHost
+        // observes it).
+        let leaf = i.l.id;
+        let me = cx.entity();
+        let host = self.head_hosts.entry((leaf, full)).or_insert_with(|| {
+            let me2 = me.clone();
+            cx.new(|cx| HeadHost { wb: me2.downgrade(), leaf, full, _obs: cx.observe(&me2, |_, _, cx| cx.notify()) })
+        }).clone();
+        let hh = if i.narrow { T::PANE_HEAD_NARROW } else { T::PANE_HEAD };
+        let head = host.cached(StyleRefinement::default().w_full().h(hh).flex_none());
         // The body clipped to its box (a long log never draws over the header).
         // A wheel or touchpad scroll inside a pane stays in it: GPUI gives the
         // event to every scroller under the pointer, so the workbench's own
@@ -184,6 +195,7 @@ impl Render for Workbench {
         for i in &infos { if !self.leaf_focus.contains_key(&i.l.id) { let h = cx.focus_handle(); self.leaf_focus.insert(i.l.id, h); } }
         self.leaf_focus.retain(|l, _| infos.iter().any(|i| i.l.id == *l));
         self.hosts.retain(|k, _| infos.iter().any(|i| &i.key == k));
+        self.head_hosts.retain(|(l, _), _| infos.iter().any(|i| i.l.id == *l));
         for i in &infos {
             if full.as_deref() == Some(i.key.as_str()) { continue; }
             grid = grid.child(self.leaf(i, window, cx));
@@ -263,5 +275,20 @@ impl Render for PaneHost {
             Some(k) => (k.render)(&self.key, window, cx),
             None => div().into_any_element(),
         }
+    }
+}
+
+/// A pane's head (Workbench::head) in a view of its own so GPUI can keep it
+/// between frames; drawn by the workbench's code, its buttons act on it.
+pub struct HeadHost { wb: WeakEntity<Workbench>, leaf: u32, full: bool, _obs: Subscription }
+
+impl Render for HeadHost {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (leaf, full) = (self.leaf, self.full);
+        let el = self.wb.update(cx, |w, cx| {
+            let infos = w.infos(cx);
+            infos.iter().find(|i| i.l.id == leaf).map(|i| w.head(i, full, cx).into_any_element())
+        }).ok().flatten().unwrap_or_else(|| div().into_any_element());
+        div().size_full().flex().flex_col().child(el)
     }
 }
