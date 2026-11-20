@@ -17,6 +17,34 @@ pub struct Project {
     pub icon: String,
     /// The sidebar's dot: needs-input | working | waiting | running | "".
     pub dot: &'static str,
+    /// Its registered services: (running, all); None when it has none (the heartbeat).
+    pub heart: Option<(usize, usize)>,
+    /// It has upcoming scheduled tasks (the clock).
+    pub sched: bool,
+    /// A factory running in it: (its name, it needs you, its status).
+    pub factory: Option<(String, bool, String)>,
+}
+
+impl Project {
+    /// The heartbeat's tooltip (renderProjects).
+    pub fn heart_tip(&self) -> String {
+        match self.heart {
+            Some((r, n)) if r > 0 => format!("{r} of {n} service(s) running"),
+            Some((_, n)) => format!("{n} service(s), all stopped"),
+            None => String::new(),
+        }
+    }
+    /// The factory mark's tooltip.
+    pub fn factory_tip(&self) -> String {
+        self.factory.as_ref().map(|(n, needs, st)| format!("Factory {n}: {}", if *needs { "needs you" } else { st })).unwrap_or_default()
+    }
+}
+
+/// A factory run needs the owner (the web's factoryNeedsYou).
+pub fn factory_needs_you(r: &Value) -> bool {
+    let st = r.get("status").and_then(|s| s.as_str()).unwrap_or("");
+    let waiting = r.get("waitingOn").is_some_and(|w| !(w.is_null() || *w == Value::Bool(false) || w.as_str() == Some("")));
+    matches!(st, "crashed" | "finishing" | "waiting") || waiting
 }
 
 /// The open project changed (the areas hear it once the update is over).
@@ -29,6 +57,14 @@ pub struct Projects {
     /// The event stream's last terminals.
     pub terminals: Vec<Value>,
     raw: Vec<Value>,
+    /// Who is signed in: "owner" or "collaborator" (the state's role).
+    pub role: String,
+    /// "multi" (projects added by hand: they can be removed) or "single"
+    /// (GET /api/projects/config).
+    pub mode: String,
+    services: Vec<Value>,
+    scheduled: Vec<String>,
+    factory_runs: Vec<Value>,
     /// The icons that have arrived, by their address.
     icons: HashMap<String, Option<Arc<Image>>>,
 }
@@ -65,7 +101,13 @@ impl Projects {
             let name = p.get("name").and_then(|n| n.as_str()).filter(|n| !n.is_empty()).unwrap_or(&alias).to_string();
             let icon = p.get("icon").and_then(|u| u.as_str()).unwrap_or("").to_string();
             let dot = head::project_dot(&self.terminals, &alias);
-            Project { alias, name, icon, dot }
+            let low = alias.to_lowercase();
+            let of = |v: &Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let svcs: Vec<&Value> = self.services.iter().filter(|s| of(s, "alias").to_lowercase() == low).collect();
+            let heart = (!svcs.is_empty()).then(|| (svcs.iter().filter(|s| of(s, "status") == "running").count(), svcs.len()));
+            let sched = self.scheduled.iter().any(|x| *x == low);
+            let factory = self.factory_runs.iter().find(|r| of(r, "project").to_lowercase() == low).map(|r| (of(r, "factoryName"), factory_needs_you(r), of(r, "status")));
+            Project { alias, name, icon, dot, heart, sched, factory }
         }).collect()
     }
 
@@ -87,6 +129,14 @@ impl Projects {
             // in and no head redrew). Observers compare what they show.
             if *t != self.terminals { self.terminals = t.clone(); changed = true; cx.notify(); }
         }
+        // The sidebar's marks: services (the heartbeat), schedules, factory runs.
+        if let Some(v) = st.get("services").and_then(|x| x.as_array()) { if *v != self.services { self.services = v.clone(); changed = true; } }
+        if let Some(v) = st.get("scheduled").and_then(|x| x.as_array()) {
+            let v: Vec<String> = v.iter().filter_map(|x| x.as_str().map(|s| s.to_lowercase())).collect();
+            if v != self.scheduled { self.scheduled = v; changed = true; }
+        }
+        if let Some(v) = st.get("factoryRuns").and_then(|x| x.as_array()) { if *v != self.factory_runs { self.factory_runs = v.clone(); changed = true; } }
+        if let Some(r) = st.get("role").and_then(|x| x.as_str()) { if r != self.role { self.role = r.to_string(); cx.notify(); } }
         if changed { self.rederive(cx); }
     }
 
@@ -102,6 +152,34 @@ impl Projects {
         self.open = alias.to_string();
         store::update(|s| s.project = alias.to_string());
         cx.emit(ProjectPicked(alias.to_string()));
+        cx.notify();
+    }
+
+    /// How many icons have arrived (a view drawing them redraws when one did).
+    pub fn icons_ready(&self) -> usize { self.icons.values().filter(|i| i.is_some()).count() }
+
+    /// Who is signed in is a collaborator (the web's userRole).
+    pub fn collaborator(&self) -> bool { self.role == "collaborator" }
+
+    /// The project mode (GET /api/projects/config).
+    pub fn set_mode(&mut self, mode: &str, cx: &mut Context<Self>) {
+        if self.mode != mode { self.mode = mode.to_string(); cx.notify(); }
+    }
+
+    /// The projects in a new order (a drag in the sidebar), at once; the
+    /// caller tells the server.
+    pub fn reorder(&mut self, order: &[String], cx: &mut Context<Self>) {
+        let pos = |v: &Value| { let a = v.get("alias").and_then(|a| a.as_str()).unwrap_or(""); order.iter().position(|x| x == a).unwrap_or(usize::MAX) };
+        self.raw.sort_by_key(pos);
+        self.rederive(cx);
+    }
+
+    /// A project removed (the server said so): gone from the list; the open
+    /// one closes ("No project").
+    pub fn removed(&mut self, alias: &str, cx: &mut Context<Self>) {
+        self.raw.retain(|p| p.get("alias").and_then(|a| a.as_str()) != Some(alias));
+        if self.open == alias { self.open.clear(); store::update(|s| s.project.clear()); cx.emit(ProjectPicked(String::new())); }
+        self.rederive(cx);
         cx.notify();
     }
 
@@ -139,4 +217,39 @@ fn sniff(b: &[u8]) -> Option<ImageFormat> {
     let head = String::from_utf8_lossy(&b[..b.len().min(512)]).to_ascii_lowercase();
     if head.contains("<svg") { return Some(ImageFormat::Svg); }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Projects;
+    use gpui::{AppContext as _, TestAppContext};
+    use serde_json::json;
+
+    #[gpui::test]
+    fn the_rows_marks_follow_the_state(cx: &mut TestAppContext) {
+        let p = cx.new(|_| Projects::default());
+        p.update(cx, |p, cx| p.apply_state(&json!({
+            "projects": [{ "alias": "demo", "name": "Demo" }, { "alias": "Other", "name": "Other" }, { "alias": "z" }],
+            "role": "collaborator",
+            "services": [{ "alias": "DEMO", "status": "running" }, { "alias": "demo", "status": "stopped" }, { "alias": "other", "status": "stopped" }],
+            "scheduled": ["other"],
+            "factoryRuns": [{ "project": "demo", "factoryName": "Ship", "status": "running" }, { "project": "other", "factoryName": "Fix", "status": "running", "waitingOn": "you" }],
+        }), cx));
+        p.read_with(cx, |p, _| {
+            let (d, o, z) = (&p.list[0], &p.list[1], &p.list[2]);
+            assert_eq!(d.heart, Some((1, 2)));
+            assert_eq!(d.heart_tip(), "1 of 2 service(s) running");
+            assert_eq!(o.heart_tip(), "1 service(s), all stopped");
+            assert_eq!(z.heart, None);
+            assert!(!d.sched && o.sched);
+            assert_eq!(d.factory_tip(), "Factory Ship: running");
+            assert_eq!(o.factory_tip(), "Factory Fix: needs you");
+            assert!(p.collaborator());
+        });
+        // A drag's new order; a removal (of a project not open: no saved login touched).
+        p.update(cx, |p, cx| p.reorder(&["z".into(), "demo".into(), "Other".into()], cx));
+        p.read_with(cx, |p, _| assert_eq!(p.list.iter().map(|x| x.alias.as_str()).collect::<Vec<_>>(), ["z", "demo", "Other"]));
+        p.update(cx, |p, cx| p.removed("demo", cx));
+        p.read_with(cx, |p, _| assert_eq!(p.list.len(), 2));
+    }
 }

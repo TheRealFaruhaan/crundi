@@ -304,34 +304,13 @@ fn add_task(status: &str, adding: bool, inp: &Inputs) -> AnyElement {
         .child(w::input(&i)).into_any_element()
 }
 
-/// A button's look at rest (gpui-component's variants, as `w::button`,
-/// `w::icon_button`, `w::icon_toggle` and `w::toggle` size and tint them).
-#[derive(Clone, Copy)]
-enum Look { Default, Ghost, Primary }
+use crundi_widgets::paint::Look;
 
-/// A card's control drawn at rest, for a card the pointer is not on: the
-/// same box, colours (the theme's own button tokens), icon and label as the
-/// control, without its focus, hover, tooltip and handlers (a scroll frame
-/// rebuilds every card on screen; only the card under the pointer, or one in
-/// use, has the live controls: `Card::live`).
-fn lite(label: Option<SharedString>, icon: Option<IconName>, look: Look, cx: &App) -> AnyElement {
-    use gpui_component::ActiveTheme as _;
-    let th = cx.theme();
-    let (bg, fg, border): (Background, Hsla, Option<Hsla>) = match look {
-        Look::Default => (th.tokens.button.into(), th.button_foreground, Some(th.input)),
-        Look::Ghost => (transparent_black().into(), th.secondary_foreground, None),
-        Look::Primary => (th.tokens.button_primary.into(), th.button_primary_foreground, None),
-    };
-    let d = div().flex().flex_none().flex_shrink_0().items_center().justify_center().rounded(T::BTN_RADIUS).line_height(relative(1.25))
-        .bg(bg).text_color(fg).when_some(border, |d, b| d.border_1().border_color(b));
-    let content = div().flex().flex_row().size_full().min_w_0().overflow_hidden().whitespace_nowrap().items_center().justify_center().text_base().gap_2();
-    match label {
-        None => d.w(T::ICON_BTN).h(T::ICON_BTN).child(content.children(icon.map(|i| w::icon_of(i, T::ICON_BTN_ICON)))).into_any_element(),
-        Some(l) => d.h(T::BTN_H).px(T::BTN_PAD_X).font_weight(T::BTN_WEIGHT)
-            .child(content.children(icon.map(|i| w::icon_of(i, T::BTN_ICON))).child(div().min_w_0().whitespace_nowrap().text_ellipsis().child(l)))
-            .into_any_element(),
-    }
-}
+/// A card's control drawn at rest, for a card the pointer is not on
+/// (`w::paint::lite_button`: the control's box, colours, icon and label
+/// without its focus, hover, tooltip and handlers; only the card under the
+/// pointer, or one in use, has the live controls: `Card::live`).
+fn lite(label: Option<SharedString>, icon: Option<IconName>, look: Look, cx: &App) -> AnyElement { crundi_widgets::paint::lite_button(label, icon, look, cx) }
 
 #[allow(clippy::too_many_arguments)]
 fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> AnyElement {

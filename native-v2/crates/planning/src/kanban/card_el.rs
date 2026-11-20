@@ -9,13 +9,9 @@ use super::board::Card;
 use crate::paint::{r, Draw, Op, Txt, PHI};
 use crundi_theme::{IconName, T};
 use gpui::*;
-use gpui_component::ActiveTheme as _;
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-/// A button's look at rest (as `w::button`, `w::icon_button`,
-/// `w::icon_toggle` and `w::toggle` tint them).
-#[derive(Clone, Copy)]
-pub enum Look { Default, Ghost, Primary }
+pub use crundi_widgets::paint::Look;
 
 /// What a card at rest is drawn from (a change of any of it lays it out again).
 #[derive(Clone, PartialEq)]
@@ -26,63 +22,15 @@ pub type Cache = Rc<RefCell<HashMap<String, (Key, Rc<Draw>)>>>;
 
 fn b(x: Pixels, y: Pixels, w: Pixels, h: Pixels) -> Bounds<Pixels> { Bounds { origin: point(x, y), size: size(w, h) } }
 
-/// A label as a button's (13 px, its weight, line height 1.25).
-fn btn_label(t: &str, window: &mut Window, cx: &App) -> Rc<Txt> {
-    Rc::new(Txt::shape(t, T::BTN_TEXT, T::BTN_WEIGHT, white(), 1.25, None, None, window, cx))
-}
-
-/// A control at rest: its width, and its ops at (x, y).
+/// A control at rest (`w::paint::button_at`): its width; its place is a hit.
 #[allow(clippy::too_many_arguments)]
 fn button(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: Look, hit: &str, window: &mut Window, cx: &App) -> Pixels {
-    let w = button_in(d, x, y, label, icon, look, window, cx);
+    let w = crundi_widgets::paint::button_at(d, x, y, label, icon, look, window, cx);
     d.hits.push((b(x, y, w, T::BTN_H.max(T::ICON_BTN)), hit.to_string()));
     w
 }
 
-fn button_in(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: Look, window: &mut Window, cx: &App) -> Pixels {
-    let th = cx.theme();
-    let (bg, fg, border): (Option<Background>, Hsla, Option<Hsla>) = match look {
-        Look::Default => (Some(th.tokens.button.background), th.button_foreground, Some(th.input)),
-        Look::Ghost => (None, th.secondary_foreground, None),
-        Look::Primary => (Some(th.tokens.button_primary.background), th.button_primary_foreground, None),
-    };
-    let bw = if border.is_some() { px(1.) } else { px(0.) };
-    match label {
-        None => {
-            let s = T::ICON_BTN;
-            if let Some(c) = bg { d.bg(b(x, y, s, s), T::BTN_RADIUS, c); }
-            let o = r((s - bw * 2. - T::ICON_BTN_ICON) / 2.);
-            d.icon(icon, b(x + bw + o, y + bw + o, T::ICON_BTN_ICON, T::ICON_BTN_ICON), fg);
-            if let Some(c) = border { d.border(b(x, y, s, s), T::BTN_RADIUS, bw, c); }
-            s
-        }
-        Some(l) => {
-            let t = Rc::new(Txt::shape(l, T::BTN_TEXT, T::BTN_WEIGHT, d.fade(fg), 1.25, None, None, window, cx));
-            let gap = r(T::BTN_TEXT * 0.5);
-            let w = bw * 2. + T::BTN_PAD_X * 2. + T::BTN_ICON + gap + t.w;
-            let h = T::BTN_H;
-            if let Some(c) = bg { d.bg(b(x, y, w, h), T::BTN_RADIUS, c); }
-            let inner = h - bw * 2.;
-            let cx0 = x + bw + T::BTN_PAD_X;
-            d.icon(icon, b(cx0, y + bw + r((inner - T::BTN_ICON) / 2.), T::BTN_ICON, T::BTN_ICON), fg);
-            let th_ = t.h;
-            d.text(t, point(cx0 + T::BTN_ICON + gap, y + bw + r((inner - th_) / 2.)));
-            if let Some(c) = border { d.border(b(x, y, w, h), T::BTN_RADIUS, bw, c); }
-            w
-        }
-    }
-}
-
-/// A control's width at rest (laid out without drawing).
-fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> Pixels {
-    match label {
-        None => T::ICON_BTN,
-        Some(l) => {
-            let bw = if matches!(look, Look::Default) { px(1.) } else { px(0.) };
-            bw * 2. + T::BTN_PAD_X * 2. + T::BTN_ICON + r(T::BTN_TEXT * 0.5) + btn_label(l, window, cx).w
-        }
-    }
-}
+fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> Pixels { crundi_widgets::paint::button_w(label, look, window, cx) }
 
 /// Lay a card out at `width` (its box's width).
 pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
@@ -148,16 +96,8 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
             let t = Rc::new(Txt::shape(&td.text, T::TEXT_13, FontWeight::NORMAL, d.fade(if td.done { T::text_muted() } else { T::text() }), PHI, Some(tw), None, window, cx));
             let inner = t.h.max(T::SP_2 + T::CHECK_BOX).max(T::ICON_BTN).max(if mw.is_some() { T::BTN_H } else { px(0.) });
             let ry = y + T::SP_4;
-            // The box (w::check's), its tick.
-            let cb = b(rx, ry + T::SP_2, T::CHECK_BOX, T::CHECK_BOX);
-            let (edge, fill) = if td.done { (T::accent(), T::accent()) } else { (T::text_muted(), T::bg()) };
-            d.bg(cb, T::R_CHIP, fill);
-            if td.done {
-                let s = T::CHECK_BOX - T::SP_2 * 2.;
-                let o = r((T::CHECK_BOX - px(2.) - s) / 2.);
-                d.icon(IconName::Check, b(rx + px(1.) + o, ry + T::SP_2 + px(1.) + o, s, s), T::white());
-            }
-            d.border(cb, T::R_CHIP, px(1.), edge);
+            // The box (w::check's at rest).
+            let cb = crundi_widgets::paint::check_at(&mut d, point(rx, ry + T::SP_2), td.done);
             d.hits.push((cb, format!("tick:{}:{}", td.id, td.done)));
             let mut cx_ = rx + T::CHECK_BOX + T::SP_8;
             let h = t.h;

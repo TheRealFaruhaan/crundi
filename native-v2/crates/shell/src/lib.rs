@@ -5,6 +5,7 @@
 //! tab's body and the drawer's place side by side as cached views, and the
 //! SignIn view while signed out.
 
+pub mod conn;
 pub mod live_hub;
 pub mod nav;
 pub mod projects;
@@ -12,6 +13,8 @@ pub mod projects;
 pub mod ptt;
 pub mod registry;
 pub mod session;
+mod signin;
+pub mod slots;
 pub mod usage;
 mod usage_rows;
 mod views;
@@ -20,8 +23,18 @@ pub use nav::Nav;
 pub use projects::{Project, ProjectPicked, Projects};
 pub use registry::{register, run_action, Area, TABS};
 pub use session::{Session, SessionEvent, Step};
+pub use slots::{register_login_restore, register_tab_badge, register_top_item};
 pub use usage::Usage;
 pub use views::{shell, Drawer, Shell};
+
+/// A toast from code that has no window at hand (a server call's answer).
+pub fn toast(cx: &mut App, text: impl Into<SharedString>, kind: crundi_widgets::Toast) {
+    let text: SharedString = text.into();
+    cx.defer(move |cx| {
+        let Some(h) = cx.active_window().or_else(|| cx.windows().first().copied()) else { return };
+        let _ = h.update(cx, move |_, window, cx| crundi_widgets::toast(window, cx, text, kind));
+    });
+}
 
 use crundi_core::api::{Api, ApiError, ApiResult};
 use gpui::*;
@@ -161,6 +174,11 @@ pub fn init(cx: &mut App) -> Stores {
             }
             for a in registry::list(cx) { if let Some(f) = &a.on_signed_in { f(&s, cx); } }
             load_projects(&s, cx);
+            // The project mode: in "single" a project cannot be removed (it is a folder).
+            call(cx, |api| api.get("/api/projects/config"), {
+                let s = s.clone();
+                move |r, cx| { let m = r.ok().and_then(|v| v.get("mode").and_then(|m| m.as_str()).map(String::from)).unwrap_or_else(|| "multi".into()); s.projects.update(cx, |p, cx| p.set_mode(&m, cx)); }
+            });
             call(cx, |api| api.get("/api/usage/latest").or_else(|_| api.get("/api/usage")), {
                 let s = s.clone();
                 move |r, cx| if let Ok(u) = r { s.usage.update(cx, |x, cx| x.set_usage(u, cx)); }
@@ -175,11 +193,38 @@ pub fn init(cx: &mut App) -> Stores {
         }
         SessionEvent::SignedOut => {
             cx.set_global(Hub(None));
+            let c = conn::conn(cx);
+            c.update(cx, |c, cx| c.reset(cx));
             s.projects.update(cx, |p, cx| p.clear(cx));
             s.usage.update(cx, |u, cx| u.clear(cx));
             for a in registry::list(cx) { if let Some(f) = &a.on_signed_out { f(&s, cx); } }
         }
     }).detach();
+    // The connection badge and line follow the live link.
+    let c = conn::conn(cx);
+    cx.observe(&stores.session, move |s, cx| { let on = s.read(cx).online; c.update(cx, |c, cx| c.link(on, cx)); }).detach();
+    // The driver's look at the shell's own parts, and its sign-in actions.
+    register(cx, Area::new("shell")
+        .state(|stores, _, cx| views::driver_state(stores, cx))
+        .test_ui(|stores, name, args, window, cx| {
+            let a = |i: usize| args.get(i).cloned().unwrap_or_default();
+            let session = stores.session.clone();
+            match name {
+                "signin-collab" => session.update(cx, |s, cx| s.show_collab(a(0) != "false", cx)),
+                "sign-in-collab" => session.update(cx, |s, cx| s.sign_in_collab(&a(0), &a(1), cx)),
+                "set-up-password" => session.update(cx, |s, cx| s.set_up_password(&a(0), cx)),
+                "finish-enrol" => session.update(cx, |s, cx| s.finish_enrol(cx)),
+                "login-restore" => match slots::restore(cx) { Some((_, open, _)) => { let b = session.read(cx).signin_base(); open(cx, &b) } None => return Some(serde_json::json!({ "ok": false, "error": "no restore registered" })) },
+                // The link as a dropped connection would leave it (the badge's timers run as for real).
+                "conn-link" => { let c = conn::conn(cx); c.update(cx, |c, cx| c.link(a(0) == "true", cx)) }
+                "remove-project" => {
+                    let n = stores.projects.read(cx).list.iter().find(|p| p.alias == a(0)).map(|p| p.name.clone()).unwrap_or_else(|| a(0));
+                    views::remove_project(stores, a(0), n, window, cx)
+                }
+                _ => return None,
+            }
+            Some(serde_json::json!({ "ok": true }))
+        }));
     // The tab bar's scope follows whether a project is open.
     let s = stores.clone();
     let mut was: Option<bool> = None;
@@ -216,7 +261,7 @@ pub fn load_projects(stores: &Stores, cx: &mut App) {
 }
 
 /// The Telegram bot's status for the top bar (GET /api/status), then again
-/// every 30 s while signed in (the web's updateTgBadge).
+/// every 15 s while signed in (the web's updateTgBadge).
 fn load_status(s: Stores, cx: &mut App) {
     call(cx, |api| api.get("/api/status"), move |r, cx| {
         if let Ok(d) = r {
@@ -225,7 +270,7 @@ fn load_status(s: Stores, cx: &mut App) {
             let name = d.get("botUsername").and_then(|v| v.as_str()).unwrap_or("").to_string();
             s.usage.update(cx, |u, cx| u.set_tg((configured, connected, name), cx));
         }
-        let t = cx.background_executor().timer(std::time::Duration::from_secs(30));
+        let t = cx.background_executor().timer(std::time::Duration::from_secs(15));
         cx.spawn(async move |cx: &mut AsyncApp| { t.await; let _ = cx.update(|cx| if s.session.read(cx).signed_in() { load_status(s, cx) }); }).detach();
     });
 }

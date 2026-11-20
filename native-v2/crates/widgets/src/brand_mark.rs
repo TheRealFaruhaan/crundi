@@ -83,3 +83,69 @@ pub fn brand_mark(size: Pixels) -> Div {
         .child(img(a).size(size).flex_none())
         .child(img(b).h(wh).w(wh * WORD_RATIO).flex_none())
 }
+
+// ─── Mini, the whole robot (src/brand.js miniSvg), still ───
+// The sign-in page's logo and the start-up screen's (additive). The web
+// moves it with CSS (.cb-intro, .cb-load); here it is the still logo, as
+// the web draws it with no stylesheet.
+
+fn mini_svg(px: f32) -> String {
+    format!(concat!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 96 96\" width=\"{s}\" height=\"{s}\">",
+        "<defs><linearGradient id=\"g\" gradientUnits=\"userSpaceOnUse\" x1=\"14\" y1=\"14\" x2=\"82\" y2=\"82\">",
+        "<stop offset=\"0\" stop-color=\"{g0}\"/><stop offset=\"1\" stop-color=\"{g1}\"/></linearGradient>",
+        "<mask id=\"e\"><rect width=\"96\" height=\"96\" fill=\"#fff\"/>",
+        "<rect x=\"36.5\" y=\"27\" width=\"7.5\" height=\"13\" rx=\"3.7\" fill=\"#000\"/>",
+        "<rect x=\"52\" y=\"27\" width=\"7.5\" height=\"13\" rx=\"3.7\" fill=\"#000\"/></mask>",
+        "<mask id=\"l\"><rect width=\"96\" height=\"96\" fill=\"#fff\"/><circle cx=\"48\" cy=\"73\" r=\"5.5\" fill=\"#000\"/></mask></defs>",
+        "<path d=\"M48 16V10\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke=\"{a}\" stroke-width=\"4\"/>",
+        "<circle cx=\"48\" cy=\"7.5\" r=\"4.5\" fill=\"{a}\"/>",
+        "<rect x=\"23\" y=\"15\" width=\"50\" height=\"38\" rx=\"15\" fill=\"url(#g)\" mask=\"url(#e)\"/>",
+        "<rect x=\"19\" y=\"60\" width=\"7\" height=\"18\" rx=\"3.5\" fill=\"{a}\"/>",
+        "<rect x=\"70\" y=\"60\" width=\"7\" height=\"18\" rx=\"3.5\" fill=\"{a}\"/>",
+        "<rect x=\"31\" y=\"58\" width=\"34\" height=\"30\" rx=\"10\" fill=\"url(#g)\" mask=\"url(#l)\"/></svg>"),
+        s = px.round(), g0 = G0, g1 = G1, a = AMBER)
+}
+
+thread_local! {
+    /// Mini and the name alone, made once per size (key: points × 10).
+    static BIG: RefCell<Vec<(u32, bool, Arc<Image>)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn big(size: Pixels, robot: bool) -> Arc<Image> {
+    let key = (f32::from(size) * 10.0) as u32;
+    BIG.with(|p| {
+        let mut p = p.borrow_mut();
+        if let Some((_, _, i)) = p.iter().find(|x| x.0 == key && x.1 == robot) { return i.clone(); }
+        let s = f32::from(size) * OVERSAMPLE;
+        let i = Arc::new(Image::from_bytes(ImageFormat::Svg, if robot { mini_svg(s) } else { word_svg(s) }.into_bytes()));
+        p.push((key, robot, i.clone()));
+        i
+    })
+}
+
+fn robot(size: Pixels) -> Img { img(big(size, true)).size(size).flex_none() }
+fn word(h: Pixels) -> Img { img(big(h, false)).h(h).w(h * WORD_RATIO).flex_none() }
+
+/// Start decoding the sign-in page's and the start-up screen's pictures (a
+/// cached view showing them first would not hear when they are ready).
+pub fn warm_marks(window: &mut Window, cx: &mut App) {
+    for (s, r) in [(T::SP_48 + T::SP_48 + T::SP_16, true), (T::SP_40 + T::SP_4, false), (T::SP_48 + T::SP_48 + T::SP_8, true), (T::SP_24 + T::SP_6, false)] {
+        let _ = big(s, r).get_render_image(window, cx);
+    }
+}
+
+/// The sign-in page's head (#login-screen): Mini 112 (its -18 margin under
+/// the page's 32 gap), the name 44 high.
+pub fn sign_in_mark() -> Div {
+    div().flex().flex_col().items_center().gap(T::SP_12 + T::SP_2)
+        .child(robot(T::SP_48 + T::SP_48 + T::SP_16))
+        .child(word(T::SP_40 + T::SP_4))
+}
+
+/// The start-up screen's mark (#boot): Mini 104, the name 30 high, 22 apart.
+pub fn boot_mark() -> Div {
+    div().flex().flex_col().items_center().gap(T::SP_20 + T::SP_2)
+        .child(robot(T::SP_48 + T::SP_48 + T::SP_8))
+        .child(word(T::SP_24 + T::SP_6))
+}

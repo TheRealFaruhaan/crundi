@@ -366,8 +366,7 @@ impl FilesView {
     }
 
     /// Files dropped from the system: into `dir` (the folder on show, or the
-    /// folder row they were dropped on), as Upload does (the owner, 18 Nov:
-    /// no drag and drop in Files).
+    /// folder row they were dropped on), as Upload does.
     pub fn drop_into(&mut self, dir: String, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
         let files: Vec<_> = paths.into_iter().filter(|p| p.is_file()).collect();
         if files.is_empty() { return toast(cx, "Only files can be dropped here (not folders).".into(), w::Toast::Error); }

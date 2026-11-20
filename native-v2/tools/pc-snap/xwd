@@ -1,0 +1,3 @@
+#!/bin/sh
+# shim: the real capture is done by the convert shim (ffmpeg x11grab of the whole display)
+exit 0

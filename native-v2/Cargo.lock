@@ -1879,14 +1879,19 @@ dependencies = [
 name = "crundi-chat"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",
  "crundi-widgets",
  "crundi-workbench",
+ "futures",
  "gpui-component",
  "gpui-pre",
+ "image",
  "log",
+ "rfd",
  "serde_json",
 ]
 
@@ -1986,6 +1991,7 @@ dependencies = [
 name = "crundi-shell"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crundi-core",
  "crundi-theme",
  "crundi-widgets",
@@ -2031,6 +2037,7 @@ dependencies = [
 name = "crundi-widgets"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "crundi-theme",
  "gpui-component",
  "gpui-kit-assets",

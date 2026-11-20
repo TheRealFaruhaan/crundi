@@ -1,7 +1,8 @@
 //! A button that asks by arming (the Slint client's SmallBtn with
 //! confirm-text; the web's two-click .dk-arm): the first click turns it red
 //! and shows its question ("Stop?", "Remove?"), a second click within three
-//! seconds does it; left alone it disarms. With no question it acts at once.
+//! seconds does it; left alone it disarms. A danger one is quiet at rest
+//! and red on hover, red at rest while armed. With no question it acts at once.
 //! Looks: "" (quiet), "primary", "danger". (Made by Operations: Docker's
 //! Stop, Kill, Down, Remove, Clean…, AREAS.md "A new control".)
 
@@ -42,7 +43,9 @@ impl RenderOnce for ArmButton {
         let armed = *state.read(cx) && !self.ask.is_empty();
         let label = if armed { self.ask.clone() } else { self.label.clone() };
         let mut b = Button::new(self.id);
-        b = if armed || self.look == "danger" { b.danger() } else if self.look == "primary" { b.primary() } else { b };
+        // Quiet at rest, red on hover; red at rest once armed (the web's
+        // `.dk-btn.danger:hover, .dk-btn.armed`).
+        b = if armed || self.look == "danger" { crate::danger_look(b, armed) } else if self.look == "primary" { b.primary() } else { b };
         b = crate::control::sized(b, (!label.is_empty()).then(|| label.clone()), self.icon.filter(|_| !armed), false, crate::control::Ctl::Normal);
         let (fire, asks) = (self.fire.clone(), !self.ask.is_empty());
         b.disabled(self.disabled).on_click(move |_, window, cx| {

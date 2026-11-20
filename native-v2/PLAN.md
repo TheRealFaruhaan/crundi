@@ -97,6 +97,37 @@ are the owner's PC, release build; "—" not yet.
 - [ ] the slice's suite again on the server, then the owner's PC measured
   again with the new harness (**to run**: Tester / Manager)
 
+- [x] round 7 (the UI review's shared findings, F74-F84, F58, F59, F64, F65; the
+  owner's answers of 20 Nov: drag and drop between panels as on the web, no
+  pairing link):
+  - widgets: the modal as the web's (a press outside closes, Esc does not,
+    the title as written, up to 90% of the window, `modal_pinned` + `dialog`
+    with the head and footer pinned: Schedule's dialog uses it); quiet danger
+    buttons (red on hover or armed); `number_input`, `date_input`,
+    `time_input`, `option_buttons`, `ReadOnly`; `paint` (moved from Planning:
+    `Draw`, `Txt`, the controls at rest: Kanban uses them); the toast our own
+    (the web's toast(): text only, the coloured edge; test/toast.mjs,
+    screens/widgets/toast-web-vs-v2.png); `ref_drag` (a row's ghost, the
+    dashed drop outline, `edge_scroll`; a terminal's screen takes a dropped
+    reference into the program, a chat's whole pane into its box)
+  - shell (F78, F79, F58, F59): the top bar as the web's (reconnecting, the
+    reconnect line, tg pill, `status_pill`, slots for approvals and chips,
+    Push / Ask to merge for collaborators), sidebar rows (heartbeat, clock,
+    factory mark, remove, drag to reorder), tab badges and tooltips, the
+    boot screen for a saved login; the sign-in page as the web's (Mini,
+    wording, collaborator sign-in, first run, restore, Enter, providers'
+    order and OR, the code box, Electron's server step, maximise); the
+    pairing link removed. test/shell.mjs. Mini in chat panes: to do
+  - workbench (F80, F77, F64, F83): drag and swap, rename, the "…" menu,
+    head tags and the secrets lock (`register_head`), full screen over the
+    window, double-click maximise, the launcher's last used, the "+" menu
+    (`add-pane`). test/workbench.mjs
+  - chat: the composer in full (F74, `composer/`: test/chat-composer.mjs),
+    the log in full (F75, `log/`: test/chat-log.mjs), the resume picker
+    (F76), the bubble's hooks (F65: a second list, `hold` / `release`,
+    `head_info`). Live frames: the hook (`log::frames::set_host`) waits for
+    Desktop's host
+
 ### Open for the owner (via the Manager)
 
 - The launcher's UI Mode button: the web's gradient drifts (9 s, forever)
@@ -170,6 +201,7 @@ are the owner's PC, release build; "—" not yet.
 | workspace (F37) | release | owner's PC (1920x1040 window, Wayland), four chats + an Empty Shell pane (six panes), stub server (perf/pc-2026-11-20-workspace.md) | terminal printing 3000 lines over 29 s: 4.47 / 6.95 / 95%; with the wheel swept over every pane: 5.18 / 8.09 / 80% (an earlier run 4.69 / 7.71 / 91%) | the same run's chats: scroll-panes 6.06 / 100%, scroll-chat 5.82 / 100%, stream+scroll 6.49 / 99% | n/a | n/a | 0 (open, end); 1 after the terminal (the top bar and the workbench's layout once: the server's state, not the terminal) |
 | planning | release | owner's PC, Kanban tab 80 cards / Mindmap tab 133 ideas / workbench with both panels beside the chats (perf/pc-2026-11-20-planning.md) | — | — | p95 8.0 (70% ≤7 ms; was 11.1) | p95 7.9 (60%; was 20.4) | 0 |
 | desktop | release | owner's PC (1920x1040 window, Wayland), the CR's five panes with a chat streaming, then the browser drawer open beside them on a static page (perf/pc-2026-11-20-desktop.md) | cr-sweep 4.59 / 5.89 / 99%; with the drawer: cr-drawer-sweep 4.64 / 6.11 / 99% | cr-scroll 5.57 / 100%; with the drawer 5.74 / 99% | (in the CR scenario) | (in the CR scenario) | 0 (open, end, planning); 1 with the drawer open (the stream's end, not the drawer) |
+| round 7 (merged) | release | owner's PC (1920x1040 window, Wayland), the CR scenario (perf/pc-2026-11-20-round7.md) | stream+scroll 6.33–6.38 | scroll-chat 5.5–5.7; cr-sweep 6.89–6.92 / 96%; **cr-scroll 7.02–7.43 / 90–95% (over: F99)** | 4.11 | 5.48 | 0 |
 | slice | release | owner's PC (1920x1080, 144 Hz, Renoir, Wayland), 5 panes, a chat streaming (perf/pc-2026-11-19.md) | 16.9 / 24.2 / 0% (with wheel: 9.1 / 17.1 / 29%) | 5.5 / 28.7 / 71–82% (a 300-line reply on screen; 4.2 / 6.1 / 98% without it) | not built | not built | 0 (open), 0 (after the stream) |
 
 ### Desktop: how it runs, and what is still open (round of 20 Nov)

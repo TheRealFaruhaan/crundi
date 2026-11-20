@@ -10,6 +10,12 @@
 //! first, as the web's openSessionChooser). Empty Shell and Terminal are
 //! the terminal area's (`set_terminal_launcher`; PLAN.md): until it is in,
 //! they do nothing.
+//!
+//! The button this project launched last carries the web's "last used"
+//! mark (tl-last: a dot, and "Last used for this project" in its tooltip).
+//! As the web's localStorage crundi_last_mode_<project>, it is kept on this
+//! computer (launch-modes.json in the config folder); Empty Shell is not
+//! recorded (it is not a Claude mode).
 
 use crate::{workbench, Workbench};
 use crundi_theme::{IconName, T};
@@ -55,7 +61,32 @@ pub struct Launcher {
     /// A row whose shield is open (hovered, or peeking): 1 or 2.
     open: u8,
     peek: u8,
+    /// The mode this project launched last ("chat", "chat-skip", "normal",
+    /// "skip" or ""), read when the launcher is made.
+    last: String,
     _peek: Option<Task<()>>,
+}
+
+/// The modes the mark knows (the web's LAUNCH_MODES).
+const LAUNCH_MODES: [&str; 4] = ["chat", "chat-skip", "normal", "skip"];
+
+fn modes_file() -> std::path::PathBuf { crundi_core::store::config_dir().join("launch-modes.json") }
+
+/// The mode this project launched last ("" for none).
+pub fn last_mode(project: &str) -> String {
+    let m = std::fs::read_to_string(modes_file()).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get(project).and_then(|m| m.as_str()).map(String::from)).unwrap_or_default();
+    if LAUNCH_MODES.contains(&m.as_str()) { m } else { String::new() }
+}
+
+/// Remember a launch's mode for this project (the web's rememberLaunchMode).
+pub fn remember_mode(project: &str, mode: &str) {
+    if project.is_empty() || !LAUNCH_MODES.contains(&mode) { return; }
+    let path = modes_file();
+    let mut v = std::fs::read_to_string(&path).ok().and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok()).filter(|v| v.is_object()).unwrap_or_else(|| serde_json::json!({}));
+    v[project] = serde_json::Value::String(mode.to_string());
+    let _ = std::fs::create_dir_all(crundi_core::store::config_dir());
+    let _ = std::fs::write(path, v.to_string());
 }
 
 impl Launcher {
@@ -72,7 +103,8 @@ impl Launcher {
         let launchers = cx.default_global::<Launchers>();
         launchers.0.retain(|_, w| w.upgrade().is_some());
         launchers.0.insert(key.to_string(), me);
-        Launcher { key: key.to_string(), busy: 0, open: 0, peek: 0, _peek: Some(peek) }
+        let last = last_mode(&crundi_shell::project(cx));
+        Launcher { key: key.to_string(), busy: 0, open: 0, peek: 0, last, _peek: Some(peek) }
     }
 
     fn chat(&mut self, skip: bool, cx: &mut Context<Self>) {
@@ -90,6 +122,7 @@ impl Launcher {
     /// POST /api/ui-sessions/create; the chat takes this pane's place.
     fn create(&mut self, skip: bool, mode: &str, resume_id: &str, cx: &mut Context<Self>) {
         let project = crundi_shell::project(cx);
+        remember_mode(&project, if skip { "chat-skip" } else { "chat" });
         self.busy = if skip { 2 } else { 1 };
         cx.notify();
         let body = crundi_core::resume::create_body(&project, skip, mode, resume_id);
@@ -114,6 +147,7 @@ impl Launcher {
     fn terminal(&mut self, mode: &'static str, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy != 0 { return; }
         let Some(f) = cx.try_global::<TermLauncher>().map(|t| t.0.clone()) else { log::info!("launcher: {mode}: no terminal area yet"); return };
+        remember_mode(&crundi_shell::project(cx), mode);
         f(&self.key, mode, window, cx);
     }
 
@@ -129,16 +163,21 @@ impl Render for Launcher {
         let (busy, off) = (self.busy, self.busy != 0);
         let open = |row: u8| self.open == row || (self.open == 0 && self.peek == row);
         let row = |main: Stateful<Div>, shield: Stateful<Div>| div().flex().gap(T::LAUNCH_GAP).w(T::LAUNCH_ROW_W).max_w_full().child(main).child(shield);
-        let ui = w::launch_button("ui-mode", L::Chat, None, "UI Mode", !open(1), busy == 1, off)
+        // The last-used mark and its words (the web's lastCls / peekShields).
+        let last = self.last.clone();
+        let mark = |b: Stateful<Div>, mode: &str, tip: &'static str| -> Stateful<Div> {
+            if last != mode { return if tip.is_empty() { b } else { b.tooltip(w::tooltip(tip)) }; }
+            let words = if tip.is_empty() { "Last used for this project".to_string() } else { format!("{tip} \u{2014} Last used for this project") };
+            b.child(w::launch_mark()).tooltip(w::tooltip(words))
+        };
+        let ui = mark(w::launch_button("ui-mode", L::Chat, None, "UI Mode", !open(1), busy == 1, off), "chat", "")
             .on_click(cx.listener(|this, _, _, cx| this.chat(false, cx)));
-        let ui_skip = w::launch_button("ui-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(1), busy == 2, off)
-            .tooltip(w::tooltip("UI Mode \u{2014} Skip Permissions"))
+        let ui_skip = mark(w::launch_button("ui-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(1), busy == 2, off), "chat-skip", "UI Mode \u{2014} Skip Permissions")
             .on_hover(cx.listener(|this, on: &bool, _, cx| this.hover_shield(1, *on, cx)))
             .on_click(cx.listener(|this, _, _, cx| this.chat(true, cx)));
-        let term = w::launch_button("term-mode", L::Normal, Some(IconName::Terminal), "Terminal", !open(2), busy == 4, off)
+        let term = mark(w::launch_button("term-mode", L::Normal, Some(IconName::Terminal), "Terminal", !open(2), busy == 4, off), "normal", "")
             .on_click(cx.listener(|this, _, window, cx| this.terminal("normal", window, cx)));
-        let term_skip = w::launch_button("term-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(2), busy == 5, off)
-            .tooltip(w::tooltip("Terminal \u{2014} Skip Permissions"))
+        let term_skip = mark(w::launch_button("term-skip", L::Shield, Some(IconName::ShieldAlert), "Skip Permissions", open(2), busy == 5, off), "skip", "Terminal \u{2014} Skip Permissions")
             .on_hover(cx.listener(|this, on: &bool, _, cx| this.hover_shield(2, *on, cx)))
             .on_click(cx.listener(|this, _, window, cx| this.terminal("skip", window, cx)));
         let shell = w::launch_button("empty-shell", L::Shell, None, "Empty Shell", true, busy == 3, off)

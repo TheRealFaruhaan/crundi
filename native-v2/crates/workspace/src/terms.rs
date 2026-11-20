@@ -823,8 +823,21 @@ impl TermParts {
     /// over the input bar, each cached (the bar at its measured height).
     pub fn body(&self, cx: &App) -> AnyElement {
         let h = self.input.read(cx).height;
+        let id = self.state.read(cx).id.clone();
+        // A dragged reference dropped on the screen goes to the program (the
+        // web's insertRefToTarget 'term': the reference and a space; several
+        // lines as one bracketed paste), and the terminal takes the keys.
+        let screen = w::ref_target_drag(div().id(SharedString::from(format!("term-screen-drop-{id}"))), {
+            let (id, focus) = (id.clone(), self.screen.read(cx).focus.clone());
+            move |d, window, cx| {
+                let r = d.text.to_string();
+                let data = if r.contains('\n') { format!("\x1b[200~{r}\x1b[201~") } else { format!("{r} ") };
+                send(cx, &id, &data);
+                focus.focus(window, cx);
+            }
+        });
         div().flex().flex_col().size_full().min_h_0().bg(T::bg())
-            .child(div().relative().w_full().flex_1().min_h_0().overflow_hidden()
+            .child(screen.relative().w_full().flex_1().min_h_0().overflow_hidden()
                 .child(self.screen.clone().cached(StyleRefinement::default().size_full()))
                 .child(self.cursor.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full())))
             .child(div().w_full().h(h).flex_none().child(self.input.clone().cached(StyleRefinement::default().w_full().h(h))))

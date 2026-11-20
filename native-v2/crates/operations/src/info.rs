@@ -592,7 +592,7 @@ impl InfoView {
             let id = t.id.clone();
             let armed = self.armed == t.id;
             let btn = if !t.busy.is_empty() { w::disabled(w::button(("maint", i), t.busy.clone()), true) }
-                else if armed { w::danger(("maint", i), t.arm.clone()) }
+                else if armed { w::armed(w::danger(("maint", i), t.arm.clone()), true) }
                 else if t.danger { w::disabled(w::danger(("maint", i), "Remove").icon(IconName::Trash), !t.enabled) }
                 else { w::disabled(w::button(("maint", i), "Clear").icon(IconName::Trash), !t.enabled) };
             d = d.child(div().flex().items_center().gap(T::SP_12).py(T::SP_10).when(i > 0, |d| d.border_t_1().border_color(T::border_subtle()))

@@ -12,3 +12,4 @@ gpui-component.workspace = true
 gpui-kit-assets.workspace = true
 crundi-theme.workspace = true
 serde_json.workspace = true
+chrono.workspace = true

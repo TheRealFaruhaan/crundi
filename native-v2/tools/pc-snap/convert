@@ -1,0 +1,19 @@
+#!/bin/sh
+# shim for ImageMagick convert on a PC without it:
+#   convert xwd:- png:PATH            → grab the whole $DISPLAY with ffmpeg
+#   convert IN -crop WxH+X+Y +repage OUT  → crop with Python/PIL
+if [ "$1" = "xwd:-" ]; then
+  cat > /dev/null
+  out=$(echo "$2" | sed 's/^png://')
+  exec ffmpeg -loglevel error -y -f x11grab -i "$DISPLAY" -frames:v 1 "$out"
+fi
+exec python3 -I -W ignore -c '
+import sys, re
+from PIL import Image
+a = sys.argv[1:]; src, out = a[0], a[-1]
+im = Image.open(src).convert("RGB")
+if "-crop" in a:
+    w, h, x, y = map(int, re.match(r"(\d+)x(\d+)\+(\d+)\+(\d+)", a[a.index("-crop") + 1]).groups())
+    im = im.crop((x, y, x + w, y + h))
+im.save(out)
+' "$@"

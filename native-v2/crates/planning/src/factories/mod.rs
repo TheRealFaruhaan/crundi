@@ -183,7 +183,7 @@ impl Render for PanelLeaf {
 
 /// At start: the panel's pane kind, the live graph's timer.
 pub fn init(cx: &mut App) {
-    store(cx);
+    { let s = store(cx); crundi_shell::register_tab_badge(cx, "factories", &s, move |_, cx| { let b = store(cx).read(cx).f.badge.clone(); (!b.is_empty()).then(|| w::tab_count(b).into_any_element()) }); }
     crundi_workbench::register_kind(cx, crundi_workbench::PaneKind {
         prefix: "panel:factory",
         chat: false,

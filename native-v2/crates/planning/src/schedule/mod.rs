@@ -334,7 +334,7 @@ impl Sched {
         let d = cx.new(|cx| Dialog { sched: me.clone(), _sub: cx.observe(&me, |_, _, cx| cx.notify()) });
         let weak = me.downgrade();
         // (Deferred: the layer closes it from inside Sched's own update too.)
-        w::modal(window, cx, T::DIALOG_W_XL, d.into(), move |_, cx| { let weak = weak.clone(); cx.defer(move |cx| { let _ = weak.update(cx, |s, cx| s.close(cx)); }); });
+        w::modal_pinned(window, cx, T::DIALOG_W_XL, d.into(), move |_, cx| { let weak = weak.clone(); cx.defer(move |cx| { let _ = weak.update(cx, |s, cx| s.close(cx)); }); });
     }
 
     fn val(e: &Entity<w::InputState>, cx: &App) -> String { e.read(cx).value().to_string() }
@@ -877,13 +877,14 @@ impl Sched {
             .child(w::button("sched-c-term", "+ Open terminals").on_click(cx.listener(|s, _, window, cx| s.add_cond("terminals", window, cx))))
             .child(w::button("sched-c-kanban", "+ Kanban status").on_click(cx.listener(|s, _, window, cx| s.add_cond("kanban", window, cx)))));
 
-        let foot = div().flex().justify_end().gap(T::SP_8).px(T::SP_16).py(T::SP_12).border_t_1().border_color(T::border())
+        let foot = w::modal_foot()
             .child(w::button("sched-cancel", "Cancel").on_click(cx.listener(|s, _, window, cx| s.close_in(window, cx))))
             .child(w::primary("sched-save", "Save").on_click(cx.listener(|s, _, window, cx| s.save(window, cx))));
         let me = cx.entity().downgrade();
         let head = w::modal_head("sched-x", if editing { "Edit schedule" } else { "New schedule" }, false, move |_, window, cx| { let _ = me.update(cx, |s, cx| s.close_in(window, cx)); });
-        // (Esc closes it: the modal layer's.)
-        div().track_focus(&self.focus).flex().flex_col().child(head).child(w::rule()).child(body).child(foot).into_any_element()
+        // The head and footer stay in view; the form scrolls (the web's
+        // .sm-head / .sm-bodyscroll / .sm-foot). A click outside closes it.
+        w::dialog("sched-body", head, body, Some(foot.into_any_element())).track_focus(&self.focus).into_any_element()
     }
 }
 

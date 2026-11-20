@@ -53,8 +53,9 @@ export async function run(T, t) {
     await t.sleep(1500);
     const b = await T.state();
     const r = delta(a.renders, b.renders);
-    // (The page's game said a line: Cru is live, so the top bar's mark breathes.)
-    t.check('v2: with the page up, only Cru\'s views render (and the mark while Cru is live)', Object.keys(r).every((k) => ['cru', 'cru-frame', 'inbox'].includes(k) || (k === 'top-bar' && D(b).cru.phase !== 'ended')), { r, phase: D(b).cru.phase });
+    // (The page's game said a line: Cru is live, so the top bar's mark breathes:
+    // the mark is in the bar's right-hand piece, "top-right".)
+    t.check('v2: with the page up, only Cru\'s views render (and the mark while Cru is live)', Object.keys(r).every((k) => ['cru', 'cru-frame', 'inbox'].includes(k) || ((k === 'top-bar' || k === 'top-right') && D(b).cru.phase !== 'ended')), { r, phase: D(b).cru.phase });
   }
   await snap('cru-screen-frame');
   await T.act('cru-screen-full');

@@ -86,6 +86,9 @@ crundi_shell::register(cx, Area::new("planning")
   drawn as tables and code blocks keep syntax colours (`core::syntax`, the
   theme's `syn_*` tokens), with no language label. Any area showing
   Claude's text in the web's way uses `core::webmd`, not a TextView.
+- **The shell's slots** (`crundi_shell::slots`): `register_top_item(cx, "approvals" | "chips", &entity, draw)` (the top bar's approvals button beside the connection badge; the panel chips after the spacer), `register_tab_badge(cx, tab, &entity, draw)` (a project-bar tab's badge: Secrets, Factories, Settings), `register_login_restore(cx, &entity, open, draw)` (the sign-in page's "Restore from a backup instead" and its layer). Each slot redraws only its own piece when its entity notifies.
+- **Pane heads** (`crundi_workbench::register_head(cx, prefix, KindHead)`): a kind's icon, its head buttons (`HeadButton::icon` / `text`, run through `on_action`), and per pane its tags and lock (`HeadExtra`: the chat tag, the plan pill, collaborator and factory tags, "Secrets for this chat"). The web's panel head is icon, title, the kind's buttons ("?" for the mind map), Refresh, pin, ×.
+- **The "+" menu** is the workbench's (`add-menu`); `add-pane <kind>` is its driver action.
 - **The drawer**: Desktop gives the shell its view
   (`Shell::set_drawer_view(Some(Drawer { view, left }))`); the shell draws
   it beside the project area with the divider; `nav.set_drawer(open)`.
@@ -122,16 +125,34 @@ screen): `button`, `primary`, `danger`, `ghost`, `icon_button`,
 `menu_panel`, `toolbar`, `title_bar`, `page`, `tab_row`, `tab`, `nav_tab`,
 `sidebar_item`, `rail_avatar`, `dashed_button`, `outline_button`, `empty`,
 `error_state`, `loading`, `list_row`, `confirm`, `ask`, `ask_confirm`,
-`menu_at` (the one ask layer, drawn once by the shell), `modal` (the one
-modal layer, drawn once by the shell), `overlay_modal`, `modal_head`,
-`toast`, `divider`, `rule`, `tip` / `tooltip`, `send_button`,
+`menu_at` (the one ask layer, drawn once by the shell), `modal` /
+`modal_pinned` (the one modal layer, drawn once by the shell), `overlay_modal`,
+`overlay_dialog`, `dialog`, `modal_head`, `modal_foot`,
+`toast` (our own, the web's toast(): text only, no icon, the coloured left edge, under the top bar on the right, 3.5 s; one at a time), `divider`, `rule`, `tip` / `tooltip`, `send_button`,
 `stop_button`, `tone_button`, `square_button`, `suggest_row`,
 `queue_drawer`, `textarea` / `message_box`, `code_state` / `code_editor`,
 `spinner`, `shimmer`, `markdown`, `icon`, `brand_mark`, `cru_mark`,
 `primary_icon`, `liquid_mic`, `meter`, `spark`, `kbd`, `key_row`, `link`,
 `disclosure`, `filter_chip`, `seg_tabs`, `segmented_icons`, `icon_tag`,
 `page_item`, `round_button`, `arm_button`, `choice_row`, `choice_mark`,
-`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `ref_target` (dragging a file reference, dropping one), `layer` / `text_box` / `watch_focus` (paint layers: ARCHITECTURE.md).
+`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `drag_ref_row` / `ref_target` / `ref_target_drag` / `edge_scroll` (dragging a reference, dropping one, scrolling at the edges while dragging), `layer` / `text_box` / `watch_focus` (paint layers: ARCHITECTURE.md),
+`number_input`, `date_input` (date, and date with time), `time_input`, `option_buttons` (the web's wrapping `.sm-seg`), `ReadOnly` / `readonly_box` (a URL or secret, selected whole on a click), `armed` (a danger button kept red), and `paint` (a row painted as one element: `Draw`, `Txt`, and the controls at rest: `button_at`, `check_at`, `count_badge_at`, `icon_tag_at`, `lite_button`).
+
+- **Dialogs** (the web's): a press on the scrim closes a dialog, Esc does
+  not (a dialog the web closes with Esc, such as Add project or a help sheet,
+  handles it in its own keys); the title as written (not in capitals); at
+  most 90% of the window tall; a long form opens with `modal_pinned` and draws
+  `w::dialog(head, body, Some(foot))`: the head and footer stay in view and
+  the body alone scrolls.
+- **Danger buttons** (`danger`, an `arm_button` with the danger look) are
+  quiet at rest, bordered as `button`, and red on hover or once armed (the
+  web's `.svc-btn.danger`, `.dk-btn.armed`): never a red fill at rest.
+- **Drag and drop between panels** works as on the web (the owner, 20 Nov):
+  a row that carries a reference is a `drag_ref` source (Files, Git, Kanban
+  cards and subtasks, Mindmap ideas, Media cards, Notes blocks); a chat's box,
+  a terminal's screen and input, a notes page and Cru are `ref_target`s; a
+  container that scrolls while something is dragged over its edge uses
+  `edge_scroll`.
 
 - Every control's dimensions are the theme's (`T::BTN_H`, `ICON_BTN`,
   `INPUT_H`…); an area never sizes a control (no `.h`, `.px`,
@@ -144,15 +165,15 @@ modal layer, drawn once by the shell), `overlay_modal`, `modal_head`,
 
 ### The test driver
 
-`CRUNDI_TEST_PORT=<port>`: `state` (and `props`, the same), `snapshot`
+`CRUNDI_TEST_PORT=<port>`: `state` (and `props`, the same), `snapshot` (xwd and ImageMagick; on a PC without them, put `tools/pc-snap` first on PATH: ffmpeg grabs the virtual display),
 (xwd under X11), `ui`, `mouse` (move, click, dblclick, tripleclick,
 down, up, leave, wheel, `drag` from x,y to toX,toY in `steps`; a `move`
 with `buttons: ["left"]`; `mods`), `key`, `resize`. The chat's
 `log-texts` gives the log's texts on screen with their rects, the
 selection and the clipboard. The window's own `ui`
-actions: `check-server`, `sign-in-password`, `sign-in-pair`, `sign-out`,
+actions: `check-server`, `sign-in-password`, `sign-out`,
 `select-project`, `tab`, `drawer`, `stub`, `dialog-answer`, `menu-pick`,
-`toasts-clear`; every other name goes to the areas' `test_ui`
+`toasts-clear`, `toast <info|error|success> <text>`; every other name goes to the areas' `test_ui`
 (unprefixed: each in turn; `<area>:<name>`: that area). The state holds
 `signedIn`, `online`, `live` (`connects`, `silentDrops`, `streams`),
 `projects`, `project`, `tab`, and every area's own (`panes`,

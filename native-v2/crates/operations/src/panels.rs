@@ -932,6 +932,7 @@ fn on_widget_event(d: &Value, cx: &mut App) {
 /// "panel:widget:<n>", or a placed panel "panel:widget:@<id>"): each a
 /// cached view of its own, redrawn when the panels change.
 pub fn init(cx: &mut App) {
+    { let sig = changed(cx); crundi_shell::register_top_item(cx, "chips", &sig, chips); }
     crundi_workbench::register_kind(cx, crundi_workbench::PaneKind {
         prefix: "panel:widget",
         chat: false,

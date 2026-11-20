@@ -67,7 +67,6 @@ fn ui(r: &Request, stores: &Stores, window: &mut Window, cx: &mut App) -> Value 
     match name.as_str() {
         "check-server" => session.update(cx, |s, cx| s.check_server(&a(0), cx)),
         "sign-in-password" => session.update(cx, |s, cx| s.sign_in_password(&a(0), &a(1), &a(2), cx)),
-        "sign-in-pair" => session.update(cx, |s, cx| s.sign_in_pair(&a(0), cx)),
         "sign-out" => session.update(cx, |s, cx| s.sign_out("", cx)),
         "select-project" => stores.projects.update(cx, |p, cx| p.pick(&a(0), cx)),
         "tab" => stores.nav.update(cx, |n, cx| n.show_tab(&a(0), cx)),
@@ -76,6 +75,7 @@ fn ui(r: &Request, stores: &Stores, window: &mut Window, cx: &mut App) -> Value 
         "dialog-answer" => { let v = r.args().get(1).cloned(); if !crundi_widgets::ask_answer(a(0) == "true", v, window, cx) { crundi_widgets::close_dialog(window, cx) } }
         "menu-pick" => { crundi_widgets::menu_pick(&a(0), window, cx); }
         "toasts-clear" => crundi_widgets::clear_toasts(window, cx),
+        "toast" => { let k = match a(0).as_str() { "error" => crundi_widgets::Toast::Error, "success" => crundi_widgets::Toast::Success, _ => crundi_widgets::Toast::Info }; crundi_widgets::toast(window, cx, a(1), k); }
         _ => {
             let (area, short) = match name.split_once(':') { Some((a, n)) => (Some(a.to_string()), n.to_string()), None => (None, name.clone()) };
             for ar in registry::list(cx) {

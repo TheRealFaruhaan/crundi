@@ -166,6 +166,12 @@ fn upd<R>(cx: &mut App, f: impl FnOnce(&mut St) -> R) -> R {
 /// Change what the page does not show (no redraw).
 fn quiet<R>(cx: &mut App, f: impl FnOnce(&mut St) -> R) -> R { let e = ent(cx); e.update(cx, |s, _| f(s)) }
 
+/// The Settings tab's dot in the shell's project bar while an update is available.
+pub(crate) fn register_badge(cx: &mut App) {
+    let e = ent(cx);
+    crundi_shell::register_tab_badge(cx, "settings", &e, |_, cx| get(cx, |s| s.upd_avail).then(|| w::tip(div().id("update-badge").child(w::update_dot()), "Update available").into_any_element()));
+}
+
 fn get<R>(cx: &mut App, f: impl FnOnce(&St) -> R) -> R { let e = ent(cx); f(e.read(cx)) }
 
 /// The state, while the page draws (after `ensure`).

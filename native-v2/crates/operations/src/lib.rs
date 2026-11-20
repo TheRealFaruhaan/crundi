@@ -137,6 +137,8 @@ pub fn init(cx: &mut App) {
     panels::init(cx);
     extras::init(cx);
     skills::init(cx);
+    vault::register_badge(cx);
+    settings::register_badge(cx);
 }
 
 fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -> Option<Value> {

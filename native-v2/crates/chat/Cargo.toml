@@ -16,6 +16,12 @@ crundi-theme.workspace = true
 crundi-widgets.workspace = true
 crundi-shell.workspace = true
 crundi-workbench.workspace = true
+# The composer: attachments (base64, the file picker), the schedule's times, voice's channel.
+base64.workspace = true
+image.workspace = true
+chrono.workspace = true
+rfd.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

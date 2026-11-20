@@ -28,6 +28,7 @@ fn main() {
         // A chat code block's colours: the syntax set loads off the UI thread.
         crundi_core::syntax::warm();
         crundi_theme::init(cx);
+        crundi_widgets::init(cx);
         let stores = crundi_shell::init(cx);
         // The areas, before the session starts (they hear sign-in).
         crundi_workbench::init(cx);

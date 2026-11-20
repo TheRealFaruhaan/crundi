@@ -82,6 +82,7 @@ pub fn init(cx: &mut App) {
     let e = ent(cx);
     let layer = cx.new(|cx| NoticeLayer { _sub: cx.observe(&e, |_, _, cx| cx.notify()) });
     crundi_shell::register_overlay(cx, layer.into());
+    crundi_shell::register_login_restore(cx, &e, open_login_restore, login_restore);
 }
 
 /// Settings → Skills (its fold's body).

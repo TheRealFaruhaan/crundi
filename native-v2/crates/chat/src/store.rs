@@ -20,6 +20,7 @@ use std::rc::Rc;
 /// text is one row per markdown block (core::webmd), so the log lays out
 /// and paints only the blocks on screen, and a streamed delta changes only
 /// the last blocks' rows.
+#[derive(Clone)]
 pub struct Row {
     pub id: String,
     pub shown: Rc<Shown>,
@@ -54,6 +55,18 @@ pub struct Meta {
     /// The pane's text size step (A- / A+).
     pub zoom: i32,
     pub sending: bool,
+    /// The plan's status and the permission mode, while the chat has a plan
+    /// (the head's PLAN pill: crate::log::plan_status; the web's notifyMeta).
+    pub plan: Option<(String, String)>,
+    /// For the composer (it never observes the streaming store): the
+    /// permission mode and whether Bypass all is in its list (2.6), the
+    /// messages handed over while Claude works (2.9), the CLI's commands for
+    /// the slash menu (2.11), and whether a plan is shown (2.19).
+    pub mode: String,
+    pub skip: bool,
+    pub slots: Vec<crundi_core::chat::Slot>,
+    pub slash: Vec<Value>,
+    pub has_plan: bool,
 }
 
 pub struct ChatMeta(pub Meta);
@@ -78,6 +91,13 @@ pub struct ChatStore {
     /// What is left of this update's INLINE_PARSE.
     budget: usize,
     pub list: ListState,
+    /// Other lists over these rows (a bubble's log: its own scroll and
+    /// measurements, F65), spliced with `list`.
+    lists: Vec<(u64, ListState)>,
+    next_list: u64,
+    /// The log's state for this chat, shared by every log that shows it
+    /// (thinking rules, groups, side questions, question picks: crate::log).
+    pub log: crate::log::Shared,
     pub meta: Entity<ChatMeta>,
     /// Batches applied (the driver's count) and the rows spliced.
     pub batches: u64,
@@ -91,13 +111,17 @@ impl ChatStore {
         let list = ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW);
         list.set_follow_mode(FollowMode::Tail);
         let meta = cx.new(|_| ChatMeta(Meta::default()));
-        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, meta, batches: 0, spliced: 0 }
+        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, lists: vec![], next_list: 0, log: Default::default(), meta, batches: 0, spliced: 0 }
     }
 
     /// This frame's messages for this chat (ui-history, ui-event), applied in
     /// one go: rows re-derived only for the entries that changed, one notify.
     pub fn apply_batch(&mut self, msgs: &[Value], cx: &mut Context<Self>) {
         let mut any = false;
+        // A state from the server (or a whole snapshot) ends the composer's
+        // optimistic "working" after a send (Meta::sending).
+        let said_state = msgs.iter().any(|m| m.get("type").and_then(|t| t.as_str()) == Some("ui-history")
+            || matches!(m.pointer("/event/type").and_then(|t| t.as_str()), Some("state" | "exit" | "history")));
         for m in msgs {
             any |= match m.get("type").and_then(|t| t.as_str()).unwrap_or("") {
                 "ui-history" => { if let Some(s) = m.get("session") { self.conv.load(s); true } else { false } }
@@ -110,8 +134,23 @@ impl ChatStore {
         self.budget = INLINE_PARSE;
         let (reloaded, changed) = self.conv.take_changes();
         if reloaded { self.rebuild(cx); } else { self.update_rows(&changed, cx); }
-        self.sync_meta(cx);
+        crate::log::follow(self, reloaded, &changed, cx);
+        self.sync_meta(said_state, cx);
         cx.notify();
+    }
+
+    /// A change the client makes to its own copy of the conversation (the
+    /// composer's: a handed-over message's slot, a refused send's error row,
+    /// an event played by the driver): the rows it touched spliced, the meta
+    /// synced; the log notified only when a row changed.
+    pub fn edit_conv(&mut self, f: impl FnOnce(&mut Conversation), cx: &mut Context<Self>) {
+        f(&mut self.conv);
+        let (reloaded, changed) = self.conv.take_changes();
+        let rows = reloaded || !changed.is_empty();
+        if reloaded { self.rebuild(cx); } else if rows { self.update_rows(&changed, cx); }
+        if rows { crate::log::follow(self, reloaded, &changed, cx); }
+        self.sync_meta(false, cx);
+        if rows { cx.notify(); }
     }
 
     /// The blocks of an assistant text: the last cut when the text is the
@@ -181,7 +220,7 @@ impl ChatStore {
             let look = BlockRow { ix: j, prev: (j > 0).then(|| rows_kind(&rows, j - 1)).flatten(), kind: b.kind.clone(), last: j + 1 == n };
             let prev = old.get_mut(j).and_then(|o| o.take());
             match prev {
-                Some(mut r) if r.block.as_ref() == Some(&look) && r.blk.as_ref().is_some_and(|x| x.parts == b.parts) => { r.shown = shown.clone(); rows.push(r); }
+                Some(mut r) if r.block.as_ref() == Some(&look) && r.blk.as_ref().is_some_and(|x| x.parts == b.parts) && !(look.last && r.shown.status != shown.status) => { r.shown = shown.clone(); rows.push(r); }
                 _ => {
                     first_changed = first_changed.min(j);
                     let text = SharedString::from(webmd::copy_text(&b));
@@ -201,9 +240,10 @@ impl ChatStore {
         // it stays there; else on the same block of the same entry, at the
         // same offset (a reset alone would put the log back at its top).
         let first = self.span.is_empty();
-        let top = self.list.logical_scroll_top();
-        let top_at = self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.as_ref().map_or(0, |b| b.ix)));
-        let following = first || self.list.is_following_tail();
+        let places: Vec<_> = self.all_lists().map(|l| {
+            let top = l.logical_scroll_top();
+            (top, self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.as_ref().map_or(0, |b| b.ix))), first || l.is_following_tail())
+        }).collect();
         let mut old: HashMap<String, Vec<Row>> = HashMap::new();
         for r in self.rows.drain(..) { old.entry(r.id.clone()).or_default().push(r); }
         let entries = std::mem::take(&mut self.conv.entries);
@@ -218,11 +258,13 @@ impl ChatStore {
         self.cuts.retain(|id, _| span.contains_key(id));
         self.rows = rows;
         self.span = span;
-        self.list.reset(self.rows.len());
-        if following {
-            self.list.set_follow_mode(FollowMode::Tail);
-        } else if let Some((s, n)) = top_at.and_then(|(id, b)| self.span.get(&id).map(|&(s, n)| (s + b.min(n.saturating_sub(1)), n))) {
-            if n > 0 { self.list.scroll_to(ListOffset { item_ix: s, offset_in_item: top.offset_in_item }); }
+        for (l, (top, top_at, following)) in self.all_lists().zip(places) {
+            l.reset(self.rows.len());
+            if following {
+                l.set_follow_mode(FollowMode::Tail);
+            } else if let Some((s, n)) = top_at.and_then(|(id, b)| self.span.get(&id).map(|&(s, n)| (s + b.min(n.saturating_sub(1)), n))) {
+                if n > 0 { l.scroll_to(ListOffset { item_ix: s, offset_in_item: top.offset_in_item }); }
+            }
         }
         self.spliced += self.rows.len() as u64;
     }
@@ -248,7 +290,7 @@ impl ChatStore {
                         self.respan();
                     }
                     if j0 < n.max(len) {
-                        self.list.splice(start + j0..start + len.max(j0), n.saturating_sub(j0));
+                        self.splice(start + j0..start + len.max(j0), n.saturating_sub(j0));
                         self.spliced += n.saturating_sub(j0).max(1) as u64;
                     }
                 }
@@ -261,7 +303,7 @@ impl ChatStore {
                     let (i, n) = (self.rows.len(), new.len());
                     self.span.insert(id.clone(), (i, n));
                     self.rows.extend(new);
-                    self.list.splice(i..i, n);
+                    self.splice(i..i, n);
                     self.spliced += n as u64;
                 }
             }
@@ -278,6 +320,33 @@ impl ChatStore {
         }
     }
 
+    /// Every list over the rows: the pane's, then any other (a bubble's).
+    pub fn all_lists(&self) -> impl Iterator<Item = &ListState> { std::iter::once(&self.list).chain(self.lists.iter().map(|(_, l)| l)) }
+
+    fn splice(&self, range: std::ops::Range<usize>, n: usize) { for l in self.all_lists() { l.splice(range.clone(), n); } }
+
+    /// A second list over these rows (F65: a bubble's log scrolls and
+    /// measures on its own), following the end; `drop_list` when it goes.
+    pub fn add_list(&mut self) -> (u64, ListState) {
+        let l = ListState::new(self.rows.len(), ListAlignment::Top, T::LOG_OVERDRAW);
+        l.set_follow_mode(FollowMode::Tail);
+        self.next_list += 1;
+        self.lists.push((self.next_list, l.clone()));
+        (self.next_list, l)
+    }
+
+    pub fn drop_list(&mut self, id: u64) { self.lists.retain(|(i, _)| *i != id); }
+
+    /// An entry's rows measured again in every list (what a row draws
+    /// changed height without its text changing: a thinking block folded, a
+    /// side question under it, a call that became an agent's row).
+    pub fn remeasure(&mut self, id: &str) {
+        if let Some(&(s, n)) = self.span.get(id) { if n > 0 { self.splice(s..s + n, n); self.spliced += n as u64; } }
+    }
+
+    /// An entry's rows: (first, how many).
+    pub fn span_of(&self, id: &str) -> Option<(usize, usize)> { self.span.get(id).copied() }
+
     /// The row of an entry's block (the log's selection is kept by entry).
     pub fn row_index(&self, id: &str, blk: usize) -> Option<usize> {
         self.span.get(id).filter(|(_, n)| blk < *n).map(|(s, _)| s + blk)
@@ -289,10 +358,13 @@ impl ChatStore {
         self.rows.iter().filter(|r| r.block.as_ref().is_none_or(|b| b.ix == 0))
     }
 
-    fn sync_meta(&mut self, cx: &mut Context<Self>) {
+    fn sync_meta(&mut self, said_state: bool, cx: &mut Context<Self>) {
         let m = {
             let old = &self.meta.read(cx).0;
-            Meta { title: self.conv.title.clone(), state: self.conv.state.clone(), model: self.conv.model.clone(), cost: self.conv.cost, session_id: self.conv.session_id.clone(), ..old.clone() }
+            let c = &self.conv;
+            Meta { title: c.title.clone(), state: c.state.clone(), model: c.model.clone(), cost: c.cost, session_id: c.session_id.clone(),
+                mode: c.mode.clone(), skip: c.skip, slots: c.slots.clone(), slash: c.slash.clone(), has_plan: c.plan.is_some(), plan: crate::log::goal::plan_meta(c),
+                sending: old.sending && !said_state, ..old.clone() }
         };
         self.set_meta(m, cx);
     }
@@ -338,7 +410,7 @@ impl ChatStore {
         m.zoom = if d == 0 { 0 } else { (m.zoom + d).clamp(-4, 8) };
         self.set_meta(m, cx);
         // The rows' heights change with the text size.
-        self.list.remeasure();
+        for l in self.all_lists() { l.remeasure(); }
         cx.notify();
     }
 }
@@ -453,6 +525,25 @@ mod tests {
             assert!(looks[..301].iter().all(|b| !b.last) && looks[301].last);
             assert_eq!(s.entry_rows_shown().count(), 2);
         });
+    }
+
+    /// F65: a second list over the same rows (a bubble's log) is spliced
+    /// with the pane's, scrolls on its own, and goes when dropped.
+    #[gpui::test]
+    fn a_second_list_follows_the_rows(cx: &mut TestAppContext) {
+        let store = cx.new(|cx| ChatStore::new("c1", cx));
+        let hist = json!({ "type": "ui-history", "id": "c1", "session": { "id": "c1", "state": "idle", "messages": [{ "id": "u1", "kind": "user", "text": "a" }] } });
+        store.update(cx, |s, cx| s.apply_batch(&[hist], cx));
+        let (id, second) = store.update(cx, |s, _| s.add_list());
+        assert_eq!(second.item_count(), 1);
+        let more = json!({ "type": "ui-event", "id": "c1", "event": { "type": "entry", "entry": { "id": "u2", "kind": "user", "text": "b" } } });
+        store.update(cx, |s, cx| s.apply_batch(&[more], cx));
+        store.read_with(cx, |s, _| { assert_eq!(s.list.item_count(), 2); assert_eq!(second.item_count(), 2); assert_eq!(s.all_lists().count(), 2); });
+        // Its own scroll: the pane's list keeps following.
+        second.scroll_to(gpui::ListOffset { item_ix: 0, offset_in_item: gpui::px(0.) });
+        store.read_with(cx, |s, _| { assert!(s.list.is_following_tail()); assert!(!second.is_following_tail()); });
+        store.update(cx, |s, _| s.drop_list(id));
+        store.read_with(cx, |s, _| assert_eq!(s.all_lists().count(), 1));
     }
 
     /// A long reply in a history is cut on the background executor: until it

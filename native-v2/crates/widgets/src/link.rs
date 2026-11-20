@@ -10,3 +10,11 @@ pub fn link(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful
         .hover(|d| d.text_color(T::accent()).underline())
         .child(text.into())
 }
+
+/// A quiet link (the sign-in page's "I was invited to a project" and "Back
+/// to the normal sign-in", #collab-login-link): muted, accent on hover.
+pub fn quiet_link(id: impl Into<ElementId>, text: impl Into<SharedString>) -> Stateful<Div> {
+    div().id(id).flex_none().cursor_pointer().text_size(T::TEXT_12).text_color(T::text_muted())
+        .hover(|d| d.text_color(T::accent_hover()))
+        .child(text.into())
+}

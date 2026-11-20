@@ -207,6 +207,7 @@ pub fn init(cx: &mut App) {
     let sig = changed(cx);
     let layer = cx.new(|cx| ApprLayer { _sub: cx.observe(&sig, |_, _, cx| cx.notify()) });
     crundi_shell::register_overlay(cx, layer.into());
+    crundi_shell::register_top_item(cx, "approvals", &sig, |_, cx| approvals_button(cx));
 }
 
 // ─── Add project ───
@@ -239,7 +240,10 @@ impl Render for AddProject {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("add-project");
         let label = |t: &'static str| w::field_label(t).pt(T::SP_8);
+        // Esc closes it (the web's hideAddModal on Escape; the modal layer
+        // itself leaves Esc to its dialogs).
         div().flex().flex_col().gap(T::SP_4).p(T::SP_16)
+            .capture_key_down(|e, window, cx| if e.keystroke.key == "escape" { cx.stop_propagation(); w::close_dialog(window, cx); })
             .child(div().pb(T::SP_12).text_size(T::TEXT_16).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Add Project"))
             .when(self.single, |d| d
                 .child(label("PROJECT NAME")).child(w::input(&self.name))
@@ -621,8 +625,9 @@ fn wn_close(window: &mut Window, cx: &mut App) {
 fn wn_key(e: &KeyDownEvent, window: &mut Window, cx: &mut App) {
     let (at, last) = with(|st| st.wn.as_ref().map(|wn| (wn.at as i64, wn.at == wn.steps.len())).unwrap_or((0, false)));
     match e.keystroke.key.as_str() {
-        // Esc: the modal host closes it (wn_finish).
-        "escape" => return,
+        // Esc skips it (the web's close('skip'); the modal layer leaves Esc
+        // to its dialogs).
+        "escape" => wn_close(window, cx),
         "right" | "enter" | "pagedown" => { if last { wn_close(window, cx); } else { wn_go(at + 1, cx); } }
         "left" | "pageup" => wn_go(at - 1, cx),
         _ => {}

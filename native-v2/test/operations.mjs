@@ -48,7 +48,7 @@ async function idle(name, live = null) {
   // The shell's bars redraw on the server's own pushes (the top bar's usage):
   // such a frame is not this area's (the tab's layout view re-runs with the
   // shell). Anything of the area drawing, or more frames than those, fails.
-  const SHELL = ['top-bar', 'sidebar', 'project-bar'];
+  const SHELL = ['top-bar', 'sidebar', 'project-bar', 'usage-rows', 'usage-pill', 'top-right', 'conn-badge', 'reconn-line'];
   const shellDrew = SHELL.reduce((n, k) => n + ((r1[k] ?? 0) - (r0[k] ?? 0)), 0);
   const mine = drawn.filter((k) => !SHELL.includes(k) && k !== 'ops-tab');
   if (!live) return t.check(`${name}: idle draws no frames`, mine.length === 0 && f.frames <= shellDrew, { f, drawn });

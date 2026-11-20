@@ -28,19 +28,11 @@ use serde_json::{json, Value};
 #[derive(Clone, PartialEq, Default)]
 struct Head { title: String, state: String }
 
-/// The chat's title and state: the event stream's list first (a rename, an
-/// exited chat), else the chat's own (as the chat crate's pane head).
+/// The chat's title and state, as its pane's head shows them (the chat
+/// crate's `head_info`, F65).
 fn head_of(id: &str, meta: &crundi_chat::store::Meta, cx: &App) -> Head {
-    let p = crundi_shell::stores(cx).projects.read(cx);
-    let listed = p.terminals.iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some(id));
-    let mut title = listed.and_then(|t| t.get("title")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-    if title.is_empty() { title = meta.title.clone(); }
-    if title.is_empty() { title = "Chat".into(); }
-    let state = match listed {
-        Some(t) if crundi_core::head::chat_state(t) == "exited" => "exited".into(),
-        _ => crundi_core::head::composer_state(&meta.state, meta.sending),
-    };
-    Head { title, state }
+    let h = crundi_chat::head_info(&crundi_shell::stores(cx), id, meta, cx);
+    Head { title: h.title, state: h.state }
 }
 
 /// A press on the head or the bar: without moving, expand or collapse; a
@@ -73,9 +65,11 @@ pub struct Bubble {
 
 impl Bubble {
     fn new(chat: &str, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let store = crundi_chat::store(cx, chat);
+        // Held: kept subscribed whatever project is open (F65), let go with the bubble.
+        let store = crundi_chat::hold(cx, chat);
         let seen = store.read(cx).conv.entries.len();
-        let pane = ChatPane::new(store.clone(), window, cx);
+        // Its own list over the chat's rows: the pane's scroll stays where it is.
+        let pane = ChatPane::second(store.clone(), window, cx);
         let me = cx.weak_entity();
         let meta = store.read(cx).meta.clone();
         let head = head_of(chat, &meta.read(cx).0, cx);
@@ -85,7 +79,7 @@ impl Bubble {
         let subs = vec![cx.observe(&store, |this: &mut Bubble, s, cx| {
             let n = s.read(cx).conv.entries.len();
             if this.expanded { this.seen = n; } else if n > this.seen { this.knob.update(cx, |k, cx| if !k.unread { k.unread = true; cx.notify(); }); }
-        })];
+        }), cx.on_release(|this: &mut Bubble, cx| crundi_chat::release(cx, &this.chat))];
         Bubble { chat: chat.to_string(), store, pane, bar, knob, expanded: true, seen, _subs: subs }
     }
 

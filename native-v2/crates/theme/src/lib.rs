@@ -172,6 +172,11 @@ impl T {
     pub const DIALOG_W_LG: Pixels = px(460.);
     pub const DIALOG_W_XL: Pixels = px(560.);
     pub const DIALOG_MAX_H: Pixels = px(560.);
+    /// A dragged row's ghost (the web's drag-clone opacity).
+    pub const DRAG_GHOST_O: f32 = 0.92;
+    /// The toast (the web's .toast: at most 420 px, 0.85rem).
+    pub const TOAST_MAX_W: Pixels = px(420.);
+    pub const TOAST_TEXT: Pixels = Self::TEXT_14;
     pub const CONTROL_SM: Pixels = px(28.);
     pub const CONTROL: Pixels = px(34.);
     pub const CONTROL_LG: Pixels = px(36.);
@@ -637,6 +642,19 @@ impl T {
     /// The wake word training's level meter.
     pub const WAKE_METER_W: Pixels = px(160.);
     // ── end desktop ──
+    // ── chat ──
+    /// The chat log (claude-chat.js's CSS): "Go to the newest message" (38
+    /// round, its arrow 18, its dot 10), the copy button on code and links
+    /// (24 x 22, its icon 13), an open thinking block's height before it
+    /// scrolls (260), the floating dock's widest (the web's 420).
+    pub const LOG_JUMP: Pixels = px(38.);
+    pub const LOG_JUMP_ICON: Pixels = px(18.);
+    pub const LOG_COPY_W: Pixels = px(24.);
+    pub const LOG_COPY_H: Pixels = px(22.);
+    pub const LOG_COPY_ICON: Pixels = px(13.);
+    pub const LOG_THINK_MAX: Pixels = px(260.);
+    pub const LOG_DOCK_MAX_W: Pixels = px(420.);
+    // ── end chat ──
 }
 
 /// The bundled fonts (DejaVu, as the Slint client), so the look is the same

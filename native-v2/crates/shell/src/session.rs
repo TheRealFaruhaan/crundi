@@ -11,9 +11,11 @@ use gpui::*;
 use serde_json::Value;
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 
-/// Where sign-in is: which server, then signing in to it.
+/// Where sign-in is: which server, then signing in to it; `Boot` while a
+/// saved login is being resumed (the web's start-up screen, #boot: the
+/// sign-in form never flashes for a saved login).
 #[derive(Clone, Default, PartialEq, Debug)]
-pub enum Step { #[default] Server, Login }
+pub enum Step { #[default] Server, Login, Boot }
 
 #[derive(Default)]
 pub struct Session {
@@ -37,6 +39,21 @@ pub struct Session {
     oauth_cancel: Option<Arc<AtomicBool>>,
     /// The project to open after sign-in (the saved one).
     pub want_project: String,
+    /// The start-up screen has been up a while: its note says so (1.5 s).
+    pub boot_slow: bool,
+    /// The server has no sign-in set up yet (methods' setupRequired): the
+    /// first-run form (set a password, or restore from a backup).
+    pub setup_required: bool,
+    /// The password was just set: the authenticator's secret and its
+    /// otpauth address, shown once ("One more step"); the session waits in
+    /// `pending` until Continue.
+    pub enrol: Option<(String, String)>,
+    pending: Option<SignedIn>,
+    /// The collaborator's way in is shown instead of the owner's ("I was
+    /// invited to a project").
+    pub collab: bool,
+    /// Failed password sign-ins (and collaborator ones): the view clears the code (or passcode).
+    pub failed_logins: u64,
     /// The live link's channel, until the hub takes it.
     events: Option<futures::channel::mpsc::UnboundedReceiver<Event>>,
 }
@@ -63,7 +80,6 @@ impl Session {
         if saved.server.is_empty() {
             self.step = Step::Server;
         } else if !saved.refresh_token.is_empty() {
-            self.step = Step::Login;
             self.resume(saved, cx);
         } else {
             let s = saved.server.clone();
@@ -88,6 +104,14 @@ impl Session {
     }
 
     fn resume(&mut self, saved: store::Saved, cx: &mut Context<Self>) {
+        // The start-up screen until it is known which to show; slow, it says so.
+        self.step = Step::Boot;
+        self.boot_slow = false;
+        let t = cx.background_executor().timer(std::time::Duration::from_millis(1500));
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            t.await;
+            let _ = this.update(cx, |s, cx| if s.step == Step::Boot && !s.boot_slow { s.boot_slow = true; cx.notify(); });
+        }).detach();
         self.busy(true, "", cx);
         let (base, token, username) = (saved.server.clone(), saved.refresh_token.clone(), saved.username.clone());
         Self::run(cx, move || api::refresh(&base, &token).map(|tokens| SignedIn { base, tokens, username }), |s, r, cx| match r {
@@ -123,11 +147,17 @@ impl Session {
                     s.offer_password = on("password");
                     s.offer_google = on("google");
                     s.offer_github = on("github");
+                    s.setup_required = on("setupRequired");
                     s.step = Step::Login;
-                    if on("setupRequired") { s.signin_error = "This server has no sign-in set up yet: set one up in its web page first.".into(); }
+                    s.collab = false;
+                    s.enrol = None;
                     store::update(|st| { if st.server != base { st.refresh_token.clear(); } st.server = base.clone(); });
                 }
-                Err(e) => s.signin_error = e.to_string(),
+                Err(e) => {
+                    // A saved server that cannot be reached: its step, with why.
+                    if s.step == Step::Boot { s.step = Step::Server; }
+                    s.signin_error = e.to_string();
+                }
             }
             cx.notify();
         });
@@ -144,14 +174,59 @@ impl Session {
     pub fn sign_in_password(&mut self, server: &str, password: &str, code: &str, cx: &mut Context<Self>) {
         let (base, password, code) = (api::normalize_base(server), password.to_string(), code.to_string());
         self.busy(true, "", cx);
-        Self::run(cx, move || api::password_login(&base, &password, &code), Self::finish_sign_in);
+        Self::run(cx, move || api::password_login(&base, &password, &code), |s, r, cx| {
+            // Codes are single-use in practice: a failed one is cleared (the view).
+            if r.is_err() { s.failed_logins += 1; }
+            s.finish_sign_in(r, cx)
+        });
     }
 
-    /// Sign in with a pairing link from a signed-in session.
-    pub fn sign_in_pair(&mut self, link: &str, cx: &mut Context<Self>) {
-        let link = link.to_string();
+    /// The server being signed in to (its base URL).
+    pub fn signin_base(&self) -> String { api::normalize_base(&self.signin_server) }
+
+    /// The collaborator's way in, or back to the owner's.
+    pub fn show_collab(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.collab != on { self.collab = on; self.signin_error.clear(); cx.notify(); }
+    }
+
+    /// Sign in as an invited collaborator (POST /api/auth/collab: name and passcode).
+    pub fn sign_in_collab(&mut self, name: &str, passcode: &str, cx: &mut Context<Self>) {
+        let base = self.signin_base();
+        let body = serde_json::json!({ "name": name.trim(), "passcode": passcode });
         self.busy(true, "", cx);
-        Self::run(cx, move || api::pair_claim(&link), Self::finish_sign_in);
+        Self::run(cx, move || {
+            let v = api::open_call(&base, "POST", "/api/auth/collab", Some(&body)).map_err(|e| web_error(e, "Sign-in failed"))?;
+            let tokens = api::Tokens::from_answer(&v).ok_or_else(|| "Sign-in failed".to_string())?;
+            Ok(SignedIn { base, tokens, username: String::new() })
+        }, |s, r: Result<SignedIn, String>, cx| match r {
+            Ok(si) => { s.busy(false, "", cx); s.start_session(si, cx); }
+            Err(e) => { s.failed_logins += 1; s.busy(false, &e, cx) }
+        });
+    }
+
+    /// First run: set the password (POST /api/auth/setup). The server signs
+    /// this app in with it; the authenticator's secret is shown before the
+    /// app opens (`enrol`, then `finish_enrol`).
+    pub fn set_up_password(&mut self, password: &str, cx: &mut Context<Self>) {
+        let base = self.signin_base();
+        let body = serde_json::json!({ "method": "password", "password": password });
+        self.busy(true, "", cx);
+        Self::run(cx, move || {
+            let v = api::open_call(&base, "POST", "/api/auth/setup", Some(&body)).map_err(|e| web_error(e, "Could not set that"))?;
+            if v.get("ok").and_then(|o| o.as_bool()) == Some(false) { let e = st(&v, "error"); return Err(if e.is_empty() { "Could not set that".to_string() } else { e }); }
+            let tokens = api::Tokens::from_answer(&v).ok_or_else(|| "Could not set that".to_string())?;
+            Ok((SignedIn { base, tokens, username: String::new() }, st(&v, "totpSecret"), st(&v, "uri")))
+        }, |s, r: Result<(SignedIn, String, String), String>, cx| match r {
+            Ok((si, secret, uri)) => { s.pending = Some(si); s.enrol = Some((secret, uri)); s.setup_required = false; s.busy(false, "", cx); }
+            Err(e) => s.busy(false, &e, cx),
+        });
+    }
+
+    /// "I have added it": into the app with the session the setup made.
+    pub fn finish_enrol(&mut self, cx: &mut Context<Self>) {
+        self.enrol = None;
+        if let Some(si) = self.pending.take() { self.start_session(si, cx); }
+        cx.notify();
     }
 
     /// Sign in with Google, GitHub or Telegram (the login step's buttons):
@@ -255,7 +330,7 @@ impl Session {
     fn finish_sign_in(&mut self, r: Result<SignedIn, ApiError>, cx: &mut Context<Self>) {
         match r {
             Ok(si) => { self.busy(false, "", cx); self.start_session(si, cx); }
-            Err(e) => self.busy(false, &e.to_string(), cx),
+            Err(e) => self.busy(false, &web_error(e, "Sign-in failed"), cx),
         }
     }
 
@@ -297,6 +372,16 @@ impl Session {
         self.online = false;
         self.signin_error = why.to_string();
         self.step = Step::Login;
+        self.collab = false;
+        self.enrol = None;
+        // What the server offers now (the web asks again on its login page:
+        // a first-run server has a password by now).
+        let base = self.signin_base();
+        Self::run(cx, move || api::methods(&base), |s, r, cx| if let Ok(m) = r {
+            let on = |k: &str| m.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+            (s.offer_telegram, s.offer_password, s.offer_google, s.offer_github, s.setup_required) = (on("telegram"), on("password"), on("google"), on("github"), on("setupRequired"));
+            cx.notify();
+        });
         cx.emit(SessionEvent::SignedOut);
         cx.notify();
     }
@@ -315,6 +400,15 @@ pub fn open_url(url: &str) -> Result<(), String> {
     match std::env::var_os("CRUNDI_OPEN_URL_FILE") {
         Some(f) => std::fs::write(f, url).map_err(|e| e.to_string()),
         None => open::that(url).map_err(|e| e.to_string()),
+    }
+}
+
+/// A sign-in call's failure in the web's words.
+fn web_error(e: ApiError, fallback: &str) -> String {
+    match e {
+        ApiError::Net(m) => format!("Could not reach the server: {m}"),
+        ApiError::Status(_, m) if !m.is_empty() => m,
+        _ => fallback.to_string(),
     }
 }
 

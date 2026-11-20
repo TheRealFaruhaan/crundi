@@ -141,7 +141,8 @@ pub fn menu_props(cx: &App) -> Value {
 
 impl Render for AskLayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut root = div();
+        // The toast's own view (its changes redraw it alone).
+        let mut root = div().child(crate::toast_layer(cx));
         if let Some(m) = &self.menu {
             let vp = window.viewport_size();
             let rows: Vec<AnyElement> = m.items.iter().enumerate().flat_map(|(i, it)| {

@@ -5,6 +5,7 @@
 //! workbench's panes in step with the project's running chats, and the
 //! chat's driver actions.
 
+pub mod composer;
 pub mod log;
 pub mod pane;
 pub mod store;
@@ -25,6 +26,9 @@ use store::ChatStore;
 pub struct Chats {
     stores: HashMap<String, Entity<ChatStore>>,
     panes: HashMap<String, ChatPane>,
+    /// Chats kept subscribed whatever the open project (F65: a bubble
+    /// floating another project's chat), by how many hold each.
+    held: HashMap<String, usize>,
 }
 impl Global for Chats {}
 
@@ -39,6 +43,26 @@ pub fn store(cx: &mut App, id: &str) -> Entity<ChatStore> {
 
 pub fn find(cx: &App, id: &str) -> Option<Entity<ChatStore>> { cx.try_global::<Chats>().and_then(|c| c.stores.get(id).cloned()) }
 
+/// A chat's pane log, if its pane was made (the log's driver actions).
+pub fn log_of(cx: &App, id: &str) -> Option<Entity<log::LogView>> { cx.try_global::<Chats>().and_then(|c| c.panes.get(id)).map(|p| p.log.clone()) }
+
+/// Keep a chat's store and subscription whatever the open project, until
+/// `release` (F65: the bubble holds the chat it floats). Returns its store.
+pub fn hold(cx: &mut App, id: &str) -> Entity<ChatStore> {
+    *cx.default_global::<Chats>().held.entry(id.to_string()).or_default() += 1;
+    store(cx, id)
+}
+
+/// The hold ends; a chat no pane shows any more is dropped at the next sync.
+pub fn release(cx: &mut App, id: &str) {
+    let c = cx.default_global::<Chats>();
+    if let Some(n) = c.held.get_mut(id) { *n -= 1; if *n == 0 { c.held.remove(id); } }
+    let s = crundi_shell::stores(cx);
+    sync(&s, cx);
+}
+
+fn held(cx: &mut App, id: &str) -> bool { cx.default_global::<Chats>().held.contains_key(id) }
+
 fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> ChatPane {
     if let Some(p) = cx.default_global::<Chats>().panes.get(id) { return p.clone(); }
     let s = store(cx, id);
@@ -48,6 +72,7 @@ fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> ChatPane {
 }
 
 fn drop_chat(cx: &mut App, id: &str) {
+    if held(cx, id) { return; }
     let c = cx.default_global::<Chats>();
     c.panes.remove(id);
     if c.stores.remove(id).is_some() { crundi_shell::unsubscribe(cx, id); }
@@ -107,7 +132,8 @@ pub fn focused_chat(cx: &mut App) -> String {
 /// The chat's head: its title and long title from the event stream's list
 /// (a rename reaches every client there, live, as native-gpui's title_of);
 /// its state exited from that list, else its own (the chat's events).
-fn head_info(stores: &Stores, id: &str, meta: &store::Meta, cx: &App) -> HeadInfo {
+/// Public for the bubble's bar (F65).
+pub fn head_info(stores: &Stores, id: &str, meta: &store::Meta, cx: &App) -> HeadInfo {
     let p = stores.projects.read(cx);
     let listed = p.terminals.iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some(id));
     let field = |k: &str| listed.and_then(|t| t.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -122,6 +148,9 @@ fn head_info(stores: &Stores, id: &str, meta: &store::Meta, cx: &App) -> HeadInf
 }
 
 pub fn init(cx: &mut App) {
+    composer::init(cx);
+    // The log's features: the launcher's resume picker (F76), its driver.
+    log::driver::init(cx);
     wb::register_kind(cx, PaneKind {
         prefix: "live:",
         chat: true,
@@ -141,7 +170,10 @@ pub fn init(cx: &mut App) {
                 // The head redraws on the chat's meta and on the projects
                 // store (an exited chat), never on its streamed text.
                 // (`refresh` redraws it only when its title or state changed.)
-                watch: Box::new(move |cx| vec![cx.observe(&meta, |h: &mut PaneHead, _, cx| h.refresh(cx)), cx.observe(&projects, |h: &mut PaneHead, _, cx| h.refresh(cx))]),
+                watch: Box::new(move |cx| {
+                    let sec = composer::secrets::secrets_entity(cx);
+                    vec![cx.observe(&meta, |h: &mut PaneHead, _, cx| h.refresh(cx)), cx.observe(&projects, |h: &mut PaneHead, _, cx| h.refresh(cx)), cx.observe(&sec, |h: &mut PaneHead, _, cx| h.refresh(cx))]
+                }),
             }
         }),
         close: Some(Rc::new(|key, cx, done| {
@@ -156,6 +188,26 @@ pub fn init(cx: &mut App) {
         })),
         zoom: Some(Rc::new(|key, d, cx| { if let Some(s) = find(cx, key.trim_start_matches("live:")) { s.update(cx, |s, cx| s.zoom(d, cx)); } })),
     });
+    // The chat's head (the workbench's register_head): the web's tags (the
+    // plan pill with the chat's own plan status, collaborator, factory,
+    // CHAT) and the "Secrets for this chat" lock; the pill toggles the plan
+    // panel, the lock opens the secrets dialog. Read from the chat's meta
+    // and the secrets entity, both observed by the head (watch above).
+    let projects = crundi_shell::stores(cx).projects.clone();
+    wb::register_head(cx, "live:", wb::KindHead::new()
+        .extra(move |key, cx| {
+            let id = key.trim_start_matches("live:");
+            let p = projects.read(cx);
+            let listed = p.terminals.iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some(id));
+            let plan = log::goal::plan_status(id, cx).map(|(st, _)| st).unwrap_or_default();
+            let mut e = wb::HeadExtra::chat_from(listed, &plan);
+            e.secrets = composer::secrets::secrets_count(id, cx);
+            e
+        })
+        .on_action(|key, action, window, cx| {
+            let id = key.trim_start_matches("live:").to_string();
+            match action { "chat-plan" => log::goal::open_plan(&id, window, cx), "chat-secrets" => composer::secrets::open_secrets(&id, window, cx), _ => {} }
+        }));
     crundi_shell::register(cx, Area::new("chat")
         .on_batch(|stores, batch, cx| {
             route(cx, batch);
@@ -219,7 +271,13 @@ pub fn init(cx: &mut App) {
                 log.update(cx, |_, cx| cx.notify());
                 Some(json!({ "ok": true }))
             }
-            _ => None,
+            // The composer's own (composer/…): the focused chat's.
+            _ => {
+                let id = focused_chat(cx);
+                if id.is_empty() || find(cx, &id).is_none() { return None; }
+                let comp = pane_view(cx, &id, window).composer.clone();
+                composer::test_ui_for(&comp, name, args, window, cx)
+            }
         })
         .state(|stores, _, cx| {
             let id = focused_chat(cx);
@@ -238,6 +296,7 @@ pub fn init(cx: &mut App) {
                 Some(s) => { let s = s.read(cx); let h = head_info(stores, &id, &s.meta.read(cx).0, cx); (json!({ "title": h.title, "long": h.long, "state": h.state }), s.list.is_following_tail()) }
                 None => (Value::Null, false),
             };
-            json!({ "chat": id, "entries": entries, "rows": rows, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
+            let comp = cx.try_global::<Chats>().and_then(|c| c.panes.get(&id)).map(|p| p.composer.read(cx).state(cx)).unwrap_or(Value::Null);
+            json!({ "composer": comp, "chat": id, "entries": entries, "rows": rows, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
         }));
 }

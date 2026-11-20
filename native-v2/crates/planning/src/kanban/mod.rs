@@ -158,6 +158,10 @@ pub fn init(cx: &mut App) {
         close: None,
         zoom: None,
     });
+    // The pane's head as the web's headHtmlPanel: its icon, Refresh.
+    crundi_workbench::register_head(cx, "panel:kanban", crundi_workbench::KindHead::new().icon(crundi_theme::IconName::Kanban)
+        .button(crundi_workbench::HeadButton::icon("refresh", crundi_theme::IconName::RefreshCw, "Refresh"))
+        .on_action(|_, action, _, cx| if action == "refresh" { load(cx); }));
 }
 
 /// The Kanban tab's view (layout: its body places the cached parts).

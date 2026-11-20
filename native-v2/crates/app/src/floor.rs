@@ -137,6 +137,7 @@ fn main() {
         gpui_component::init(cx);
         crundi_core::syntax::warm();
         crundi_theme::init(cx);
+        crundi_widgets::init(cx);
         let stores = crundi_shell::init(cx);
         crundi_workbench::init(cx);
         crundi_chat::init(cx);

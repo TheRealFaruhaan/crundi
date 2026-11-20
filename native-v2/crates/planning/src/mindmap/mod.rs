@@ -359,6 +359,12 @@ pub fn init(cx: &mut App) {
         close: None,
         zoom: None,
     });
+    // The pane's head as the web's headHtmlPanel: its icon, "?" (the
+    // shortcuts), Refresh.
+    crundi_workbench::register_head(cx, "panel:mindmap", crundi_workbench::KindHead::new().icon(crundi_theme::IconName::Network)
+        .button(crundi_workbench::HeadButton::text("mm-help", "?", "Mindmap shortcuts"))
+        .button(crundi_workbench::HeadButton::icon("refresh", crundi_theme::IconName::RefreshCw, "Refresh"))
+        .on_action(|_, action, window, cx| match action { "mm-help" => open_help(window, cx), "refresh" => load(cx), _ => {} }));
 }
 
 /// A place the map shows (the tab, a pane): its views; loads the map the

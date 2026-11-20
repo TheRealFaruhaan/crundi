@@ -188,6 +188,12 @@ fn handle(cx: &mut App) -> Entity<Vault> {
     e
 }
 
+/// The Secrets tab's badge in the shell's project bar (the requests waiting).
+pub(crate) fn register_badge(cx: &mut App) {
+    let e = handle(cx);
+    crundi_shell::register_tab_badge(cx, "secrets", &e, |_, cx| { let b = badge(cx); (!b.is_empty()).then(|| w::tab_count(b).into_any_element()) });
+}
+
 /// The screen with its text boxes made (a window is at hand).
 fn ready(window: &mut Window, cx: &mut App) -> Entity<Vault> {
     let e = handle(cx);

@@ -30,7 +30,7 @@ pub use crundi_theme::IconName;
 pub mod control; pub use control::{sized, sized_text, icon_of, Ctl};
 pub use gpui_component::input::{Input, InputEvent, InputState};
 // One file per control (AREAS.md "A new control"), each once.
-pub mod modal; pub use modal::{modal, modal_layer, modal_open, ModalLayer};
+pub mod modal; pub use modal::{modal, modal_layer, modal_open, modal_pinned, ModalLayer};
 mod spinner; pub use spinner::spinner;
 pub mod layer; pub use layer::{layer, text_box, watch_focus, Layer};
 mod shimmer; pub use shimmer::shimmer;
@@ -38,8 +38,8 @@ mod markdown; pub use markdown::markdown;
 pub mod tip; pub use tip::{tip, tooltip};
 mod icon; pub use icon::icon;
 pub mod cru_mark; pub use cru_mark::cru_mark;
-pub mod brand_mark; pub use brand_mark::{brand_head, brand_mark};
-pub mod ref_drag; pub use ref_drag::{drag_ref, ref_target, ref_text, RefDrag};
+pub mod brand_mark; pub use brand_mark::{boot_mark, brand_head, brand_mark, sign_in_mark, warm_marks};
+pub mod ref_drag; pub use ref_drag::{drag_ref, drag_ref_row, edge_scroll, ref_target, ref_target_drag, ref_text, RefDrag, Scroller};
 pub mod textarea; pub use textarea::{code_editor, code_state, message_box, textarea, Editor, EditorState, Textarea, TextareaState};
 pub mod square; pub use square::{square_button, SquareLook};
 pub mod dropdown; pub use dropdown::{dropdown, dropdown_of};
@@ -48,11 +48,12 @@ pub mod stop_button; pub use stop_button::stop_button;
 pub mod choice; pub use choice::choice_mark;
 pub mod choice_row; pub use choice_row::choice_row;
 pub mod suggest_row; pub use suggest_row::suggest_row;
-pub mod overlay; pub use overlay::{overlay_modal, modal_head, Modal};
+pub mod overlay; pub use overlay::{dialog, modal_foot, modal_head, overlay_dialog, overlay_modal, Modal};
 mod ask; pub use ask::{ask, ask_confirm, ask_answer, ask_props, ask_layer, menu_at, menu_pick, menu_props, Ask, MenuEntry};
 pub mod queue_drawer; pub use queue_drawer::{queue_drawer, Drawer};
 pub mod send_button; pub use send_button::send_button;
 pub mod disclosure; pub use disclosure::disclosure;
+pub mod fold; pub use fold::{disclosure_at, fold_chevron};
 pub mod filter_chip; pub use filter_chip::filter_chip;
 pub mod kbd; pub use kbd::kbd;
 pub mod key_row; pub use key_row::key_row;
@@ -61,8 +62,11 @@ pub mod meter; pub use meter::meter;
 pub mod seg_tabs; pub use seg_tabs::{seg_tabs, SegTab};
 pub mod arm_button; pub use arm_button::{arm_button, ArmButton};
 pub mod select; pub use select::select;
-pub mod link; pub use link::link;
+pub mod link; pub use link::{link, quiet_link};
 pub mod spark; pub use spark::{spark, Series};
+pub mod paint;
+pub mod toast; pub use toast::{toast_layer, Toast, ToastLayer};
+pub mod fields; pub use fields::{date_input, date_state, date_value, datetime_state, datetime_value, number_input, number_state, number_value, option_buttons, readonly_box, time_input, time_state, time_value, DatePickerEvent, ReadOnly, TimeFieldEvent};
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
@@ -74,6 +78,13 @@ pub mod liquid_mic; pub use liquid_mic::{liquid_mic, radial_glow, Liquid, MicLoo
 pub mod label_icon_button; pub use label_icon_button::{label_icon_button, Look};
 pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip};
 pub mod launch_button; pub use launch_button::{launch_button, LaunchLook};
+pub mod status_pill; pub use status_pill::{status_pill, PillTone};
+pub mod topbar_act; pub use topbar_act::topbar_act;
+pub mod code_input; pub use code_input::{code_input, digits_state};
+pub mod project_marks; pub use project_marks::{drop_line, ecg_mark, factory_mark, remove_mark, sched_mark, tab_count, update_dot};
+pub mod launch_mark; pub use launch_mark::launch_mark;
+pub mod head_tag; pub use head_tag::{head_label_button, head_tag, state_badge, HeadTagLook};
+pub mod title_input; pub use title_input::title_input;
 
 // ─── Buttons ───
 
@@ -98,10 +109,40 @@ pub fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Butt
     sized(Button::new(id).primary(), Some(label.into()), None, false, Ctl::Normal)
 }
 
-/// A destructive button (Delete, Remove).
+/// A destructive button (Delete, Remove, Stop, Kill…): quiet at rest, a
+/// bordered button like `button` (the web's `.svc-btn.danger`, `.dk-btn
+/// .danger`), red only while hovered (`border-color: var(--red); color:
+/// var(--red); background: var(--red-dim)`). `armed(…)` keeps it red (the
+/// web's `.dk-btn.armed`, a two-click button waiting for its second click).
 pub fn danger(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
-    sized(Button::new(id).danger(), Some(label.into()), None, false, Ctl::Normal)
+    sized(quiet_danger(Button::new(id), false), Some(label.into()), None, false, Ctl::Normal)
 }
+
+/// Turn a danger button red at rest (armed) or back to quiet.
+pub fn armed(b: Button, on: bool) -> Button { if on { b.border_1().border_color(T::red()).text_color(T::red()).bg(T::red_dim()) } else { b } }
+
+thread_local! {
+    /// The quiet danger look (made once from the theme, `init`): its hover is
+    /// red, its rest the plain button's colours.
+    static QUIET: std::cell::Cell<Option<(gpui_component::button::ButtonCustomVariant, Hsla, Hsla, Hsla)>> = const { std::cell::Cell::new(None) };
+}
+
+/// Make the looks that need the theme (call once, after crundi_theme::init).
+pub fn init(cx: &mut App) {
+    use gpui_component::ActiveTheme as _;
+    let v = gpui_component::button::ButtonCustomVariant::new(cx).color(T::red()).foreground(T::red()).hover(T::red_dim()).active(T::red_dim());
+    let t = cx.theme();
+    QUIET.with(|q| q.set(Some((v, t.button, t.button_foreground, t.input))));
+}
+
+fn quiet_danger(b: Button, armed_now: bool) -> Button {
+    let Some((v, bg, fg, border)) = QUIET.with(|q| q.get()) else { return b.danger() };
+    let b = b.custom(v).border_1();
+    if armed_now { armed(b, true) } else { b.bg(bg).text_color(fg).border_color(border) }
+}
+
+/// The quiet danger look on a button built elsewhere (an arm button).
+pub fn danger_look(b: Button, armed_now: bool) -> Button { quiet_danger(b, armed_now) }
 
 /// A text button with no fill until hovered.
 pub fn ghost(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
@@ -551,30 +592,18 @@ pub fn toast_text(cx: &App) -> SharedString {
         .filter(|(_, at)| at.elapsed() < std::time::Duration::from_millis(3500)).map(|(t, _)| t).unwrap_or_default()
 }
 
-pub fn toast(window: &mut Window, cx: &mut App, text: impl Into<SharedString>, kind: Toast) {
+pub fn toast(_window: &mut Window, cx: &mut App, text: impl Into<SharedString>, kind: Toast) {
     let text: SharedString = text.into();
     cx.set_global(LastToast(Some((text.clone(), std::time::Instant::now()))));
-    let n = match kind {
-        Toast::Info => gpui_component::notification::Notification::info(text),
-        Toast::Error => gpui_component::notification::Notification::error(text),
-        Toast::Success => gpui_component::notification::Notification::success(text),
-    };
-    // One toast at a time, as the web's: a new one replaces the one on show
-    // (never two stacked over each other: F51, F59).
-    window.push_notification(n.id::<ToastSlot>(), cx);
+    // One toast at a time, as the web's: a new one replaces the one on show.
+    toast::show(cx, text, kind);
 }
-
-/// The one toast's slot (its notification id).
-struct ToastSlot;
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Toast { Info, Error, Success }
 
 /// Take every toast down (an error that an action has since answered, as a
 /// right PIN after a wrong one).
-pub fn clear_toasts(window: &mut Window, cx: &mut App) {
+pub fn clear_toasts(_window: &mut Window, cx: &mut App) {
     cx.set_global(LastToast(None));
-    window.clear_notifications(cx);
+    toast::clear(cx);
 }
 
 // ─── Dividers ───
