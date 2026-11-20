@@ -9,6 +9,7 @@
 //! Pure rules: docker/fmt.rs.
 
 mod fmt;
+mod shell;
 
 use crate::services::kit::{self, arr, s as ss, strs, t};
 use crate::compat::AreaEvent;
@@ -43,11 +44,14 @@ struct Detail {
     log_ref: Option<String>,
     shell_ref: Option<String>,
     shell_msg: Option<String>,
-    screen: fmt::Screen,
     samples: Vec<Value>,
     stats_msg: Option<String>,
     prompt: String,
 }
+
+/// What the virtual page lists.
+enum PageRows { Ctr(Vec<Ctr>), Things(String, Vec<Row>) }
+impl PageRows { fn len(&self) -> usize { match self { PageRows::Ctr(r) => r.len(), PageRows::Things(_, r) => r.len() } } }
 
 #[derive(Default)]
 struct Job { id: String, title: String, text: String, next: i64, done: bool, code: i64 }
@@ -60,7 +64,6 @@ struct Inputs {
     form_target: Entity<w::InputState>,
     newname: Entity<w::InputState>,
     log_filter: Entity<w::InputState>,
-    shell: Entity<w::InputState>,
 }
 
 pub struct Docker {
@@ -104,7 +107,14 @@ pub struct Docker {
     /// What the log list shows: its rows, for the filter and Times it was made with.
     log_rows: Rc<Vec<usize>>,
     log_key: (String, usize),
-    shell_scroll: ScrollHandle,
+    /// The shell's emulator and its two cached leaves (made with the window).
+    shell: Option<Entity<shell::ShellTerm>>,
+    shell_views: Option<shell::ShellViews>,
+    /// The page's virtual list (containers, images, volumes, networks), its
+    /// rows as last made and what they were made for (view, data version).
+    page_list: ListState,
+    page_rows: Rc<Option<PageRows>>,
+    page_key: (String, usize),
     job_scroll: ScrollHandle,
     subs: Vec<Subscription>,
 }
@@ -116,8 +126,8 @@ impl Default for Docker {
             disk: None, disk_loading: false, fwd_list: None, fwd_at: 0.0, fwd_opts: None, form: None, form_values: vec![], form_labels: vec![],
             form_mode: 0, form_public: false, form_watch: false, form_help: String::new(), detail: None, job: None, loading: false, refs: 0,
             last_url: String::new(), copied: String::new(), labels_open: false, rmvol: false, rmforce: true, log_follow: true, log_ts: false, log_wrap: true,
-            timer: None, stats_timer: None, inputs: None, log_list: ListState::new(0, ListAlignment::Bottom, T::SP_48 * 4.),
-            log_rows: Rc::new(vec![]), log_key: (String::new(), usize::MAX), shell_scroll: ScrollHandle::new(), job_scroll: ScrollHandle::new(), subs: vec![],
+            timer: None, stats_timer: None, inputs: None, log_list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.),
+            log_rows: Rc::new(vec![]), log_key: (String::new(), usize::MAX), shell: None, shell_views: None, page_list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), page_rows: Rc::new(None), page_key: (String::new(), usize::MAX), job_scroll: ScrollHandle::new(), subs: vec![],
         }
     }
 }
@@ -780,7 +790,12 @@ fn log_copy(cx: &mut App) {
 }
 
 fn log_option(k: &str, on: bool, cx: &mut App) {
-    upd(cx, |s| match k { "follow" => s.log_follow = on, "ts" => s.log_ts = on, _ => s.log_wrap = on });
+    upd(cx, |s| match k {
+        // Follow ticked: to the end at once (box.scrollTop = scrollHeight).
+        "follow" => { s.log_follow = on; let n = s.log_rows.len(); if on && n > 0 { s.log_list.scroll_to_reveal_item(n - 1); } }
+        "ts" => s.log_ts = on,
+        _ => s.log_wrap = on,
+    });
 }
 
 // ─── Stats ───
@@ -850,7 +865,8 @@ fn charts(samples: &[Value]) -> (Vec<Chart>, String) {
 fn open_shell(cx: &mut App) {
     let Some((id, live)) = rd(cx, |s| s.detail.as_ref().map(|d| (d.id.clone(), running(&d.data["container"])))) else { return };
     close_shell(cx);
-    upd(cx, |s| { let d = s.detail.as_mut().unwrap(); d.shell_msg = None; d.screen = fmt::Screen::new(); });
+    upd(cx, |s| s.detail.as_mut().unwrap().shell_msg = None);
+    if let Some(t) = rd(cx, |s| s.shell.clone()) { t.update(cx, |t, cx| t.clear(cx)); }
     if !live { return; }
     if !rd(cx, |s| s.connected) {
         upd(cx, |s| s.detail.as_mut().unwrap().shell_msg = Some("No connection to the server right now.".into()));
@@ -858,17 +874,32 @@ fn open_shell(cx: &mut App) {
     }
     let r = next_ref("s", cx);
     upd(cx, |s| s.detail.as_mut().unwrap().shell_ref = Some(r.clone()));
-    crundi_shell::ws_send(cx, &json!({ "type": "docker-shell-open", "ref": r, "id": id, "cols": 120, "rows": 32 }));
+    let t = shell_term(cx);
+    t.update(cx, |t, cx| t.open(r, id, cx));
 }
 
 fn close_shell(cx: &mut App) {
     let r = upd(cx, |s| s.detail.as_mut().and_then(|d| d.shell_ref.take()));
+    if let Some(t) = rd(cx, |s| s.shell.clone()) { t.update(cx, |t, cx| { t.close(); cx.notify(); }); }
     if let Some(r) = r { crundi_shell::ws_send(cx, &json!({ "type": "docker-shell-close", "ref": r })); }
 }
 
+/// The shell's emulator (one for the tab, made on first use).
+fn shell_term(cx: &mut App) -> Entity<shell::ShellTerm> {
+    if let Some(t) = rd(cx, |s| s.shell.clone()) { return t; }
+    let t = cx.new(|_| shell::ShellTerm::new());
+    hush(cx, |s| s.shell = Some(t.clone()));
+    t
+}
+
+/// The shell's end: the screen keeps what it showed; nothing more is sent.
+fn shell_ended(msg: String, cx: &mut App) {
+    upd(cx, |s| { let d = s.detail.as_mut().unwrap(); d.shell_ref = None; d.shell_msg = Some(msg); });
+    if let Some(t) = rd(cx, |s| s.shell.clone()) { t.update(cx, |t, cx| { t.close(); cx.notify(); }); }
+}
+
 fn shell_input(data: &str, cx: &mut App) {
-    let r = rd(cx, |s| s.detail.as_ref().and_then(|d| d.shell_ref.clone()));
-    if let Some(r) = r { crundi_shell::ws_send(cx, &json!({ "type": "docker-shell-input", "ref": r, "data": data })); }
+    if let Some(t) = rd(cx, |s| s.shell.clone()) { t.read(cx).input(data, cx); }
 }
 
 fn shell_key(k: &str, cx: &mut App) {
@@ -911,16 +942,18 @@ fn on_message(ty: &str, m: &Value, cx: &mut App) {
             sys_line(&eo(&ss(m, "error"), "Could not follow the log"), cx);
         }
         "docker-shell-data" if shell_ref.as_deref() == Some(&r) => {
-            upd(cx, |s| { s.detail.as_mut().unwrap().screen.write(&ss(m, "data")); s.shell_scroll.scroll_to_bottom(); });
+            // Into the emulator alone: the screen redraws, the tab does not.
+            let t = shell_term(cx);
+            let data = ss(m, "data");
+            t.update(cx, |t, cx| t.output(&data, cx));
         }
         "docker-shell-exit" if shell_ref.as_deref() == Some(&r) => {
             let code = ss(m, "code");
             let msg = if code == "126" || code == "127" { format!("This image may not include a shell (exit {code}).") } else { format!("The shell ended (exit {code}).") };
-            upd(cx, |s| { let d = s.detail.as_mut().unwrap(); d.shell_ref = None; d.shell_msg = Some(msg); });
+            shell_ended(msg, cx);
         }
         "docker-shell-error" if shell_ref.as_deref() == Some(&r) => {
-            let e = eo(&ss(m, "error"), "Could not open a shell");
-            upd(cx, |s| { let d = s.detail.as_mut().unwrap(); d.shell_ref = None; d.shell_msg = Some(e); });
+            shell_ended(eo(&ss(m, "error"), "Could not open a shell"), cx);
         }
         _ => {}
     }
@@ -931,7 +964,7 @@ fn on_reconnect(cx: &mut App) {
     // The server dropped our streams with the old socket.
     if log || tab == "logs" { follow_logs(cx); }
     if shell {
-        upd(cx, |s| { let d = s.detail.as_mut().unwrap(); d.shell_ref = None; d.shell_msg = Some("The connection dropped, which ended the shell.".into()); });
+        shell_ended("The connection dropped, which ended the shell.".into(), cx);
     }
 }
 
@@ -1132,7 +1165,7 @@ impl Docker {
                 let mut tags = Vec::new();
                 if t(fw, "public") { tags.push(chip("public", "warn", "", "")); }
                 let watch = t(fw, "watch");
-                if watch { tags.push(chip("watched", "ok", "watch", "")); }
+                if watch { tags.push(Chip { tip: "You are warned when this goes down".into(), ..chip("watched", "ok", "watch", "") }); }
                 let mut chips = Vec::new();
                 if let Some(c) = fw.get("container").filter(|c| c.is_object()) {
                     let live = running(c);
@@ -1305,7 +1338,8 @@ fn chip_el(id: impl Into<ElementId>, c: &Chip) -> AnyElement {
     let tone = match c.tone { "ok" => "ok", "warn" => "warn", "bad" => "error", "fwd" => "accent", _ => "" };
     let mut label = c.text.clone();
     if c.tone == "fwd" { label = format!("\u{2197} {label}"); }
-    let el = div().id(id).flex_none().child(w::tag(label, tone));
+    // The watched mark carries its bell (icon('bell') + 'watched').
+    let el = div().id(id).flex_none().child(if c.act == "watch" { w::icon_tag(IconName::Bell, label, tone) } else { w::tag(label, tone) });
     let el = w::tip(el, c.tip.clone());
     if c.act == "open" || c.act == "url" {
         let (a, tg) = (c.act, c.target.clone());
@@ -1369,7 +1403,6 @@ impl Docker {
             form_target: kit::input(window, cx, "Port"),
             newname: kit::input(window, cx, ""),
             log_filter: kit::input(window, cx, "Filter lines"),
-            shell: kit::input(window, cx, "Type a command, Enter to run it"),
         };
         self.subs.push(cx.subscribe_in(&i.filter, window, |this, inp, ev: &w::InputEvent, _, cx| {
             if let w::InputEvent::Change = ev { let v = inp.read(cx).value().to_string(); let k = this.view.clone(); this.filter.insert(k, v); cx.notify(); }
@@ -1382,13 +1415,10 @@ impl Docker {
         self.subs.push(cx.subscribe_in(&i.form_name, window, enter(|_, cx| create_forward(cx))));
         self.subs.push(cx.subscribe_in(&i.form_target, window, enter(|_, cx| create_forward(cx))));
         self.subs.push(cx.subscribe_in(&i.newname, window, enter(|_, cx| rename_do(cx))));
-        self.subs.push(cx.subscribe_in(&i.shell, window, |_, inp, ev: &w::InputEvent, window, cx| {
-            if let w::InputEvent::PressEnter { .. } = ev {
-                let line = inp.read(cx).value().to_string();
-                inp.update(cx, |s, cx| s.set_value("", window, cx));
-                window.defer(cx, move |_, cx| shell_input(&format!("{line}\r"), cx));
-            }
-        }));
+        if self.shell_views.is_none() {
+            let t = self.shell.get_or_insert_with(|| cx.new(|_| shell::ShellTerm::new())).clone();
+            self.shell_views = Some(shell::views(&t, window, cx));
+        }
         self.inputs = Some(i);
     }
 
@@ -1403,40 +1433,47 @@ impl Docker {
             .child(w::icon_button("dk-refresh", IconName::RefreshCw, "Refresh").on_click(|_, _, cx| refresh(cx)))
     }
 
+    /// The containers view's top: the counts and the bay plan.
+    fn ctr_head(stats: Vec<(String, String)>, bay: Vec<Bay>) -> Div {
+        div().flex().flex_col().gap(T::SP_12)
+            .child(div().flex().gap(T::SP_20).children(stats.into_iter().map(|(v, l)| div().flex().flex_col()
+                .child(div().font_family(T::MONO).text_size(T::TEXT_16).text_color(T::text()).child(v))
+                .child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(l)))))
+            // The bay plan: every container at a glance, by state.
+            .child(div().flex().flex_wrap().gap(T::SP_4).p(T::SP_10).rounded(T::R_CONTROL).bg(T::bg_secondary()).border_1().border_color(T::border_subtle())
+                .children(bay.into_iter().enumerate().map(|(i, b)| {
+                    let id = b.id.clone();
+                    w::tip(div().id(("dk-bay", i)).size(T::DOCKER_BAY).rounded(T::SP_2).bg(state_ink(&b.state)).cursor_pointer().hover(|d| d.opacity(0.6))
+                        .on_click(move |_, _, cx| open_detail(&id, cx)), b.tip)
+                })))
+    }
+
+    /// A container's row.
+    fn ctr_row(i: usize, c: &Ctr) -> Stateful<Div> {
+        let (id, id2, act) = (c.id.clone(), c.id.clone(), c.act);
+        let btn = match act {
+            "stop" => w::arm_button(("dk-ctr-act", i), "", Some(IconName::Square), "Stop?", move |_, cx| container_verb(&id2, "stop", cx)).into_any_element(),
+            _ => w::arm_button(("dk-ctr-act", i), "", Some(IconName::Play), "", move |_, cx| container_verb(&id2, act, cx)).into_any_element(),
+        };
+        row_frame(("dk-ctr", i)).cursor_pointer().hover(|d| d.bg(T::bg_hover())).on_click(move |_, _, cx| open_detail(&id, cx))
+            .child(dk_dot(&c.state))
+            .child(div().flex().flex_col().flex_grow(16.).flex_basis(relative(0.)).min_w_0().gap(T::SP_2)
+                .child(div().truncate().text_size(T::TEXT_13).text_color(T::text()).child(c.name.clone()))
+                .child(mono_sub(c.sub.clone())))
+            .child(chips_el("dk-ctr-chip", i, &c.chips).flex_grow(10.).flex_basis(relative(0.)).min_w_0())
+            .child(num_col(T::DOCKER_NUM_W, c.cpu.clone(), "CPU"))
+            .child(num_col(T::DOCKER_MEM_W, c.mem.clone(), "MEM"))
+            .child(div().flex_none().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(btn))
+    }
+
+    /// The containers view when it has no rows to list (empty, or nothing matches).
     fn render_containers(&self) -> Div {
-        let (stats, bay, rows, nomatch) = self.containers();
-        let mut p = div().flex().flex_col().gap(T::SP_12);
+        let (stats, bay, _, nomatch) = self.containers();
+        let p = div().flex().flex_col().gap(T::SP_12);
         if self.list("containers").is_empty() { return p.child(dk_empty(IconName::Container, "No containers", "Nothing has been created on this machine yet.")); }
-        p = p.child(div().flex().gap(T::SP_20).children(stats.into_iter().map(|(v, l)| div().flex().flex_col()
-            .child(div().font_family(T::MONO).text_size(T::TEXT_16).text_color(T::text()).child(v))
-            .child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(l)))));
-        // The bay plan: every container at a glance, by state.
-        p = p.child(div().flex().flex_wrap().gap(T::SP_4).p(T::SP_10).rounded(T::R_CONTROL).bg(T::bg_secondary()).border_1().border_color(T::border_subtle())
-            .children(bay.into_iter().enumerate().map(|(i, b)| {
-                let id = b.id.clone();
-                w::tip(div().id(("dk-bay", i)).size(T::DOCKER_BAY).rounded(T::SP_2).bg(state_ink(&b.state)).cursor_pointer().hover(|d| d.opacity(0.6))
-                    .on_click(move |_, _, cx| open_detail(&id, cx)), b.tip)
-            })));
+        let p = p.child(Self::ctr_head(stats, bay));
         if nomatch { return p.child(quiet("Nothing matches the filter.")); }
-        let mut list = dk_list();
-        for (i, c) in rows.iter().enumerate() {
-            if i > 0 { list = list.child(w::rule()); }
-            let (id, id2, act) = (c.id.clone(), c.id.clone(), c.act);
-            let btn = match act {
-                "stop" => w::arm_button(("dk-ctr-act", i), "", Some(IconName::Square), "Stop?", move |_, cx| container_verb(&id2, "stop", cx)).into_any_element(),
-                _ => w::arm_button(("dk-ctr-act", i), "", Some(IconName::Play), "", move |_, cx| container_verb(&id2, act, cx)).into_any_element(),
-            };
-            list = list.child(row_frame(("dk-ctr", i)).cursor_pointer().hover(|d| d.bg(T::bg_hover())).on_click(move |_, _, cx| open_detail(&id, cx))
-                .child(dk_dot(&c.state))
-                .child(div().flex().flex_col().flex_grow(16.).flex_basis(relative(0.)).min_w_0().gap(T::SP_2)
-                    .child(div().truncate().text_size(T::TEXT_13).text_color(T::text()).child(c.name.clone()))
-                    .child(mono_sub(c.sub.clone())))
-                .child(chips_el("dk-ctr-chip", i, &c.chips).flex_grow(10.).flex_basis(relative(0.)).min_w_0())
-                .child(num_col(T::DOCKER_NUM_W, c.cpu.clone(), "CPU"))
-                .child(num_col(T::DOCKER_MEM_W, c.mem.clone(), "MEM"))
-                .child(div().flex_none().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(btn)));
-        }
-        p.child(list)
+        p
     }
 
     fn render_stacks(&self) -> Div {
@@ -1476,8 +1513,8 @@ impl Docker {
         }))
     }
 
-    fn render_things(&self) -> Div {
-        let (head, empty, rows, nomatch) = self.things();
+    /// Images, volumes and networks: the bar (Pull, the counts, the cleans).
+    fn things_head(&self, head: String) -> Div {
         let view = self.view.clone();
         let mut bar = div().flex().items_center().gap(T::SP_8);
         if view == "images" {
@@ -1495,26 +1532,75 @@ impl Docker {
             "volumes" => bar = bar.child(w::arm_button("dk-prune-vol", "Clean unused", Some(IconName::Trash), "Delete every unused volume and its data?", |_, cx| prune("volumes", cx)).look("danger")),
             _ => bar = bar.child(w::arm_button("dk-prune-net", "Clean unused", Some(IconName::Trash), "Remove unused networks?", |_, cx| prune("networks", cx)).look("danger")),
         }
-        let mut p = div().flex().flex_col().gap(T::SP_12).child(bar);
-        if view == "images" { p = p.child(quiet(head)); }
+        let p = div().flex().flex_col().gap(T::SP_12).child(bar);
+        if view == "images" { p.child(quiet(head)) } else { p }
+    }
+
+    /// An image's, volume's or network's row.
+    fn thing_row(view: &str, i: usize, r: &Row) -> Stateful<Div> {
+        let (kind, key) = (view.to_string(), r.key.clone());
+        row_frame(("dk-row", i))
+            .child(div().flex().flex_col().flex_grow(16.).flex_basis(relative(0.)).min_w_0().gap(T::SP_2)
+                .child(div().flex().items_center().gap(T::SP_6)
+                    .child(w::tip(div().id(("dk-row-name", i)).truncate().text_size(T::TEXT_13).text_color(T::text()).child(r.name.clone()), r.tip.clone()))
+                    .children(r.tags.iter().enumerate().map(|(j, c)| chip_el(("dk-row-tag", i * 16 + j), c))))
+                .child(mono_sub(r.sub.clone())))
+            .child(chips_el("dk-row-chip", i, &r.chips).flex_grow(10.).flex_basis(relative(0.)).min_w_0())
+            .child(w::arm_button(("dk-row-rm", i), "", Some(IconName::Trash), r.arm, move |_, cx| remove_thing(&kind, &key, cx)).look(if r.can_rm { "danger" } else { "" }).disabled(!r.can_rm))
+    }
+
+    /// Images, volumes or networks with no rows to list (empty, or nothing matches).
+    fn render_things(&self) -> Div {
+        let (head, empty, _, _) = self.things();
+        let view = self.view.clone();
+        let p = self.things_head(head);
         if empty {
             return p.child(if view == "images" { dk_empty(IconName::Archive, "No images", "") } else { dk_empty(IconName::HardDrive, "No volumes", "") });
         }
-        if nomatch { return p.child(quiet("Nothing matches the filter.")); }
-        let mut list = dk_list();
-        for (i, r) in rows.iter().enumerate() {
-            if i > 0 { list = list.child(w::rule()); }
-            let (kind, key) = (view.clone(), r.key.clone());
-            list = list.child(row_frame(("dk-row", i))
-                .child(div().flex().flex_col().flex_grow(16.).flex_basis(relative(0.)).min_w_0().gap(T::SP_2)
-                    .child(div().flex().items_center().gap(T::SP_6)
-                        .child(w::tip(div().id(("dk-row-name", i)).truncate().text_size(T::TEXT_13).text_color(T::text()).child(r.name.clone()), r.tip.clone()))
-                        .children(r.tags.iter().enumerate().map(|(j, c)| chip_el(("dk-row-tag", i * 16 + j), c))))
-                    .child(mono_sub(r.sub.clone())))
-                .child(chips_el("dk-row-chip", i, &r.chips).flex_grow(10.).flex_basis(relative(0.)).min_w_0())
-                .child(w::arm_button(("dk-row-rm", i), "", Some(IconName::Trash), r.arm, move |_, cx| remove_thing(&kind, &key, cx)).look(if r.can_rm { "danger" } else { "" }).disabled(!r.can_rm)));
+        p.child(quiet("Nothing matches the filter."))
+    }
+
+    /// The rows the page lists (rule 4: a virtual list draws only those on
+    /// screen), made once per render; None when the view has nothing to list.
+    fn page_rows(&self) -> Option<PageRows> {
+        match self.view.as_str() {
+            "containers" => {
+                if self.list("containers").is_empty() { return None; }
+                let (_, _, rows, nomatch) = self.containers();
+                (!nomatch && !rows.is_empty()).then(|| PageRows::Ctr(rows))
+            }
+            "images" | "volumes" | "networks" => {
+                let (_, empty, rows, nomatch) = self.things();
+                (!empty && !nomatch && !rows.is_empty()).then(|| PageRows::Things(self.view.clone(), rows))
+            }
+            _ => None,
         }
-        p.child(list)
+    }
+
+    /// One item of the virtual page: 0 the view's top, then a row each, in
+    /// the list's frame (.dk-list: one border, rounded at its ends, a rule
+    /// between rows).
+    fn page_item(&self, ix: usize, rows: &PageRows) -> AnyElement {
+        let n = rows.len();
+        if ix == 0 {
+            let top = match rows {
+                PageRows::Ctr(_) => { let (stats, bay, _, _) = self.containers(); Self::ctr_head(stats, bay) }
+                PageRows::Things(_, _) => { let (head, _, _, _) = self.things(); self.things_head(head) }
+            };
+            return div().px(T::SP_16).pt(T::SP_16).pb(T::SP_12).child(top).into_any_element();
+        }
+        let i = ix - 1;
+        let row = match rows {
+            PageRows::Ctr(r) => Self::ctr_row(i, &r[i]),
+            PageRows::Things(v, r) => Self::thing_row(v, i, &r[i]),
+        };
+        let (first, last) = (i == 0, i + 1 == n);
+        let frame = div().flex().flex_col().overflow_hidden().bg(T::bg_card()).border_l_1().border_r_1().border_color(T::border())
+            .when(first, |d| d.border_t_1().rounded_t(T::R_FIELD))
+            .when(last, |d| d.border_b_1().rounded_b(T::R_FIELD))
+            .when(!first, |d| d.child(w::rule()))
+            .child(row);
+        div().px(T::SP_16).when(last, |d| d.pb(T::SP_16)).child(frame).into_any_element()
     }
 
     fn render_form(&self, blind: bool) -> Div {
@@ -1698,32 +1784,13 @@ impl Docker {
 
     fn render_shell(&self, d: &Detail) -> Div {
         let (bar, btn) = shell_bar(d);
-        let live = d.shell_ref.is_some();
         div().flex().flex_col().flex_1().min_w_0().min_h_0()
             .child(div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_12).h(T::CONTROL + T::SP_8).border_b_1().border_color(T::border_subtle())
                 .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).text_color(T::text_secondary()).child(bar))
                 .when(!btn.is_empty(), |x| x.child(w::button("dk-shell-again", btn).icon(if btn == "New shell" { IconName::RotateCcw } else { IconName::Terminal }).on_click(|_, _, cx| open_shell(cx)))))
-            .child(div().id("dk-shell-out").flex_1().min_w_0().min_h_0().overflow_y_scroll().track_scroll(&self.shell_scroll).bg(T::bg()).px(T::SP_8).py(T::SP_6)
-                .font_family(T::MONO).text_size(T::TEXT_13).text_color(T::text()).child(d.screen.text()))
-            // The keyboard goes to the shell through this line (no terminal
-            // emulator here: Enter sends the line; Ctrl+C/D/L/Z on an empty
-            // line, Tab and the arrows are sent as keys).
-            .when(live, |x| x.children(self.inputs.as_ref().map(|i| {
-                let inp = i.shell.clone();
-                div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_12).py(T::SP_4).bg(T::bg_secondary()).border_t_1().border_color(T::border_subtle())
-                    .capture_key_down(move |e: &KeyDownEvent, window, cx| {
-                        let k = &e.keystroke;
-                        let text = inp.read(cx).value().to_string();
-                        let key = if k.modifiers.control && text.is_empty() && ["c", "d", "l", "z"].contains(&k.key.as_str()) { format!("ctrl-{}", k.key) }
-                            else if k.key == "tab" { format!("tab:{text}") }
-                            else if k.key == "up" || k.key == "down" { k.key.clone() } else { return };
-                        if key.starts_with("tab:") { inp.update(cx, |s, cx| s.set_value("", window, cx)); }
-                        cx.stop_propagation();
-                        shell_key(&key, cx);
-                    })
-                    .child(div().font_family(T::MONO).text_size(T::TEXT_13).text_color(T::text_muted()).child("$"))
-                    .child(div().flex_1().min_w_0().child(w::input(&i.shell)))
-            })))
+            // The terminal (xterm.js in the web): the screen and its cursor,
+            // cached leaves: output redraws them, never this tab.
+            .children(self.shell_views.as_ref().map(|v| v.element()))
     }
 
     fn render_detail(&mut self, cx: &mut Context<Self>) -> Div {
@@ -1830,7 +1897,27 @@ impl Render for Docker {
         root = root.child(self.render_nav(cx));
         if self.detail.is_some() {
             root = root.child(self.render_detail(cx));
+        } else if let Some(rows) = (self.state() == "data").then(|| self.page_rows()).flatten() {
+            // A list to show: a virtual list, drawn only where on screen (rule
+            // 4); its rows made once per change (this render), measured again.
+            let n = rows.len() + 1;
+            let (old_view, old) = self.page_key.clone();
+            if old_view != self.view { self.page_list.reset(n); }
+            else {
+                if n > old { self.page_list.splice(old..old, n - old); } else if n < old { self.page_list.splice(n..old, 0); }
+                self.page_list.remeasure();
+            }
+            self.page_key = (self.view.clone(), n);
+            self.page_rows = Rc::new(Some(rows));
+            let (me, rows) = (cx.entity().downgrade(), self.page_rows.clone());
+            let l = list(self.page_list.clone(), move |ix, _, cx| {
+                let (Some(me), Some(r)) = (me.upgrade(), rows.as_ref().as_ref()) else { return div().into_any_element() };
+                me.read(cx).page_item(ix, r)
+            }).size_full();
+            root = root.child(div().id("dk-page").flex_1().min_w_0().min_h_0().child(l));
         } else {
+            self.page_key = (String::new(), usize::MAX);
+            self.page_rows = Rc::new(None);
             let body = match self.state() {
                 "loading" => quiet("Loading\u{2026}"),
                 "error" => { let (t, e) = self.error.clone().unwrap_or_default(); dk_empty(IconName::Container, t, e) }
@@ -1959,7 +2046,7 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
             "statsState": if d.stats_msg.is_some() { "msg" } else if d.samples.is_empty() { "measuring" } else { "data" },
             "statsMsg": d.stats_msg.clone().unwrap_or_default(),
             "charts": cs.iter().map(|c| json!({ "title": c.title, "value": c.value, "line": c.a.len() >= 2 })).collect::<Vec<_>>(), "statsNote": note,
-            "shellBar": bar, "shellBtn": btn, "shellLive": d.shell_ref.is_some(), "shellText": tail(&d.screen.text(), 2000),
+            "shellBar": bar, "shellBtn": btn, "shellLive": d.shell_ref.is_some(), "shellText": tail(&s.shell.as_ref().map(|t| t.read(cx).text()).unwrap_or_default(), 2000),
             "inspect": serde_json::to_string_pretty(&d.data["inspect"]).map(|x| x.len()).unwrap_or(0),
         })
     });

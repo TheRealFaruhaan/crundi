@@ -47,6 +47,9 @@ export async function run(T, t) {
   m = await T.mine();
   t.check('skills: it is in the project\'s group', m.skills.rows.some((r) => r.kind === 'skill' && r.name === 'native-test' && r.scope === 'project:demo' && r.open), m.skills.rows);
   t.check('skills: SKILL.md holds the description', /A skill the native test made/.test(m.skills.editor.text), m.skills.editor);
+  // The open skill sits below the fold, in the project's group: bring it into view for the snapshot (F106).
+  await T.act('settings-reveal-skill');
+  await new Promise((r) => setTimeout(r, 400));
   await T.snap('skills-open');
 
   // ── Edit and save ──

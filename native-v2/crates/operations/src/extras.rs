@@ -26,7 +26,7 @@ use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
-use std::{cell::RefCell, time::Duration};
+use std::time::Duration;
 
 // ─── Pure rules ───
 
@@ -176,23 +176,19 @@ struct St {
     wn_keys: Vec<String>,
 }
 
-// The screen's state is this module's own; what draws it (the approvals
-// layer, the tour) observes `Changed`, notified once per change.
-thread_local! { static ST: RefCell<St> = RefCell::new(St::default()); }
-fn with<R>(f: impl FnOnce(&mut St) -> R) -> R { ST.with(|x| f(&mut x.borrow_mut())) }
+// The screen's state is the area's own entity (rule 1), made in init; what
+// draws it (the approvals layer, the tour) observes it, notified once per
+// change (`bump`). A Global holds only the handle, for handlers.
+struct StH(Entity<St>);
+impl Global for StH {}
 
-pub struct Changed;
-struct ChangedH(Entity<Changed>);
-impl Global for ChangedH {}
+fn state(cx: &App) -> Entity<St> { cx.global::<StH>().0.clone() }
+/// Change the state (bookkeeping: no redraw; `bump` redraws).
+fn with<R>(cx: &mut App, f: impl FnOnce(&mut St) -> R) -> R { state(cx).update(cx, |st, _| f(st)) }
+/// Read the state.
+fn rd<R>(cx: &App, f: impl FnOnce(&St) -> R) -> R { f(cx.global::<StH>().0.read(cx)) }
 
-fn changed(cx: &mut App) -> Entity<Changed> {
-    if let Some(h) = cx.try_global::<ChangedH>() { return h.0.clone(); }
-    let e = cx.new(|_| Changed);
-    cx.set_global(ChangedH(e.clone()));
-    e
-}
-
-fn bump(cx: &mut App) { changed(cx).update(cx, |_, cx| cx.notify()); }
+fn bump(cx: &mut App) { state(cx).update(cx, |_, cx| cx.notify()); }
 
 /// The approvals panel's layer over the window (a cached view; empty while closed).
 pub struct ApprLayer { _sub: Subscription }
@@ -204,7 +200,8 @@ impl Render for ApprLayer {
 }
 
 pub fn init(cx: &mut App) {
-    let sig = changed(cx);
+    let sig = cx.new(|_| St::default());
+    cx.set_global(StH(sig.clone()));
     let layer = cx.new(|cx| ApprLayer { _sub: cx.observe(&sig, |_, _, cx| cx.notify()) });
     crundi_shell::register_overlay(cx, layer.into());
     crundi_shell::register_top_item(cx, "approvals", &sig, |_, cx| approvals_button(cx));
@@ -262,32 +259,32 @@ impl Render for AddProject {
 
 
 fn load_config(cx: &mut App) {
-    crundi_shell::call(cx, |api| api.get("/api/projects/config"), |r, _| {
-        if let Ok(v) = r { with(|st| { st.single = s(&v, "mode") == "single"; st.dir = s(&v, "projectsDir"); }); }
+    crundi_shell::call(cx, |api| api.get("/api/projects/config"), |r, cx| {
+        if let Ok(v) = r { with(cx, |st| { st.single = s(&v, "mode") == "single"; st.dir = s(&v, "projectsDir"); }); }
     });
 }
 
 /// The sidebar's "+ Add project": the dialog.
 pub fn open_add_project(window: &mut Window, cx: &mut App) {
-    let (single, dir) = with(|st| (st.single, st.dir.clone()));
+    let (single, dir) = with(cx, |st| (st.single, st.dir.clone()));
     let view = cx.new(|cx| AddProject::new(single, folder_hint(&dir), window, cx));
-    with(|st| st.add = Some(view.clone()));
-    w::modal(window, cx, T::EXTRAS_ADD_W, view.into(), |_, cx| { with(|st| st.add = None); bump(cx); });
+    with(cx, |st| st.add = Some(view.clone()));
+    w::modal(window, cx, T::EXTRAS_ADD_W, view.into(), |_, cx| { with(cx, |st| st.add = None); bump(cx); });
 }
 
 fn close_add(window: &mut Window, cx: &mut App) {
-    if with(|st| st.add.take()).is_some() && w::modal_open(cx) { w::close_dialog(window, cx); }
+    if with(cx, |st| st.add.take()).is_some() && w::modal_open(cx) { w::close_dialog(window, cx); }
     bump(cx);
 }
 
 fn val(i: &Entity<w::InputState>, cx: &App) -> String { i.read(cx).value().to_string() }
 
 fn set_busy(on: bool, cx: &mut App) {
-    if let Some(v) = with(|st| st.add.clone()) { v.update(cx, |v, cx| { v.busy = on; cx.notify(); }); }
+    if let Some(v) = with(cx, |st| st.add.clone()) { v.update(cx, |v, cx| { v.busy = on; cx.notify(); }); }
 }
 
 fn add(_window: &mut Window, cx: &mut App) {
-    let Some(v) = with(|st| st.add.clone()) else { return };
+    let Some(v) = with(cx, |st| st.add.clone()) else { return };
     let (single, busy, name, alias, path, dname) = { let x = v.read(cx); (x.single, x.busy, val(&x.name, cx), val(&x.alias, cx), val(&x.path, cx), val(&x.dname, cx)) };
     if busy { return; }
     if single {
@@ -330,11 +327,11 @@ fn register(body: Value, done: &'static str, cx: &mut App) {
                 toast(cx, done, w::Toast::Success);
                 // The server's state event brings the new list; the project
                 // opens then (and a moment later at the latest).
-                with(|st| st.select = Some(alias.clone()));
+                with(cx, |st| st.select = Some(alias.clone()));
                 cx.spawn(async move |cx: &mut AsyncApp| {
                     cx.background_executor().timer(Duration::from_millis(2500)).await;
                     let _ = cx.update(|cx| {
-                        let still = with(|st| if st.select.as_deref() == Some(alias.as_str()) { st.select.take() } else { None });
+                        let still = with(cx, |st| if st.select.as_deref() == Some(alias.as_str()) { st.select.take() } else { None });
                         if let Some(a) = still { crate::compat::session::select_project(cx, &a); }
                     });
                 }).detach();
@@ -355,20 +352,20 @@ fn load_approvals(cx: &mut App) {
 }
 
 fn set_items(items: Vec<Value>, cx: &mut App) {
-    with(|st| { st.items = items; if st.items.is_empty() { st.appr_open = false; } });
+    with(cx, |st| { st.items = items; if st.items.is_empty() { st.appr_open = false; } });
     bump(cx);
 }
 
-fn item(id: &str) -> Option<Value> { with(|st| st.items.iter().find(|i| s(i, "id") == id).cloned()) }
+fn item(id: &str, cx: &App) -> Option<Value> { rd(cx, |st| st.items.iter().find(|i| s(i, "id") == id).cloned()) }
 
-fn appr_toggle(cx: &mut App) { with(|st| st.appr_open = !st.appr_open && !st.items.is_empty()); bump(cx); }
+fn appr_toggle(cx: &mut App) { with(cx, |st| st.appr_open = !st.appr_open && !st.items.is_empty()); bump(cx); }
 
 fn show_tab(tab: &str, cx: &mut App) {
     crate::compat::show_tab(cx, tab);
 }
 
 fn appr_act(id: &str, act: &str, cx: &mut App) {
-    let Some(it) = item(id) else { return };
+    let Some(it) = item(id, cx) else { return };
     match act {
         "dismiss" => dismiss(vec![json!({ "id": id, "source": s(&it, "source") })], cx),
         "yes" => decide(id, true, "once", cx),
@@ -376,7 +373,7 @@ fn appr_act(id: &str, act: &str, cx: &mut App) {
         "yes-always" => decide(id, true, "always", cx),
         "no" => decide(id, false, "once", cx),
         "goto" => {
-            with(|st| st.appr_open = false);
+            with(cx, |st| st.appr_open = false);
             // The chat is usually in another project: open that first. The
             // live chat's own project wins over the one on the card.
             let sid = s(&it, "sessionId");
@@ -385,7 +382,7 @@ fn appr_act(id: &str, act: &str, cx: &mut App) {
             if !proj.is_empty() && proj.to_lowercase() != crundi_shell::project(cx).to_lowercase() { crate::compat::session::select_project(cx, &proj); }
             show_tab("workbench", cx);
         }
-        "secrets" => { with(|st| st.appr_open = false); show_tab("secrets", cx); }
+        "secrets" => { with(cx, |st| st.appr_open = false); show_tab("secrets", cx); }
         a if a.starts_with("kid:") || a.starts_with("cru:") => {
             let path = if a.starts_with("cru:") { "/api/voice/ask" } else { "/api/voice/kid/ask" };
             let choice = a[4..].to_string();
@@ -402,7 +399,7 @@ fn appr_act(id: &str, act: &str, cx: &mut App) {
 }
 
 fn appr_clear(window: &mut Window, cx: &mut App) {
-    let items = with(|st| st.items.clone());
+    let items = with(cx, |st| st.items.clone());
     if items.is_empty() { return; }
     let all: Vec<Value> = items.iter().map(|i| json!({ "id": s(i, "id"), "source": s(i, "source") })).collect();
     let k = declines(&items);
@@ -419,7 +416,7 @@ fn dismiss(list: Vec<Value>, cx: &mut App) {
     if list.is_empty() { return; }
     // Out at once; the server's broadcast confirms it.
     let ids: Vec<String> = list.iter().map(|x| s(x, "id")).collect();
-    let left: Vec<Value> = with(|st| st.items.iter().filter(|i| !ids.contains(&s(i, "id"))).cloned().collect());
+    let left: Vec<Value> = with(cx, |st| st.items.iter().filter(|i| !ids.contains(&s(i, "id"))).cloned().collect());
     set_items(left, cx);
     crundi_shell::call(cx, move |api| api.post("/api/approvals", &json!({ "action": "dismiss", "items": list })), |r, cx| match r {
         Ok(v) if v.get("ok").and_then(|o| o.as_bool()) == Some(true) => {}
@@ -439,8 +436,8 @@ fn decide(id: &str, approve: bool, scope: &str, cx: &mut App) {
 /// The top bar's button (#approvals-btn), beside the connection badge:
 /// None at zero (a permanent grey icon teaches you to stop looking at it);
 /// yellow with the count otherwise. A click toggles the panel.
-pub fn approvals_button(_cx: &App) -> Option<AnyElement> {
-    let k = with(|st| st.items.len());
+pub fn approvals_button(cx: &App) -> Option<AnyElement> {
+    let k = rd(cx, |st| st.items.len());
     if k == 0 { return None; }
     let b = div().id("approvals-btn").flex().flex_none().items_center().gap(T::SP_6).h(T::SP_24).px(T::SP_8).rounded(T::R_PILL)
         .border_1().border_color(T::yellow()).bg(T::bg_secondary()).cursor_pointer()
@@ -453,8 +450,8 @@ pub fn approvals_button(_cx: &App) -> Option<AnyElement> {
 
 /// The approvals panel (.appr-panel), under the top bar at the right, over
 /// the window; None while closed. For the shell to draw over everything.
-pub fn approvals_panel(window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-    let (open, items) = with(|st| (st.appr_open, st.items.clone()));
+pub fn approvals_panel(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    let (open, items) = rd(cx, |st| (st.appr_open, st.items.clone()));
     if !open { return None; }
     let vp = window.viewport_size();
     let pw = T::EXTRAS_APPR_W.min(vp.width - T::SP_16);
@@ -499,7 +496,7 @@ pub fn approvals_panel(window: &mut Window, _cx: &mut App) -> Option<AnyElement>
 pub struct WhatsNew { focus: FocusHandle, _sub: Subscription }
 
 fn schedule_whatsnew(cx: &mut App) {
-    let g = with(|st| { st.wn_tries = 0; st.wn_gen += 1; st.wn_gen });
+    let g = with(cx, |st| { st.wn_tries = 0; st.wn_gen += 1; st.wn_gen });
     later(cx, 1600, move |cx| maybe_show(g, cx));
 }
 
@@ -512,11 +509,11 @@ fn later(cx: &mut App, ms: u64, f: impl FnOnce(&mut App) + 'static) {
 
 /// Not on top of a dialog: a modal, the shared dialog, an ask.
 fn maybe_show(g: u32, cx: &mut App) {
-    if with(|st| st.wn_gen != g || st.wn.is_some()) || crundi_shell::api(cx).is_none() { return; }
+    if with(cx, |st| st.wn_gen != g || st.wn.is_some()) || crundi_shell::api(cx).is_none() { return; }
     with_window(cx, move |window, cx| {
-        let busy = w::dialog_open(window, cx) || !w::ask_props(cx).is_null() || with(|st| st.add.is_some());
+        let busy = w::dialog_open(window, cx) || !w::ask_props(cx).is_null() || with(cx, |st| st.add.is_some());
         if busy {
-            if with(|st| { st.wn_tries += 1; st.wn_tries < 20 }) { later(cx, 1500, move |cx| maybe_show(g, cx)); }
+            if with(cx, |st| { st.wn_tries += 1; st.wn_tries < 20 }) { later(cx, 1500, move |cx| maybe_show(g, cx)); }
             return;
         }
         open_whatsnew(false, cx);
@@ -536,11 +533,11 @@ pub fn open_whatsnew(all: bool, cx: &mut App) {
         }
         with_window(cx, move |window, cx| {
             wn_page_close(cx);
-            let sig = changed(cx);
+            let sig = state(cx);
             let view = cx.new(|cx| WhatsNew { focus: cx.focus_handle(), _sub: cx.observe(&sig, |_, _, cx| cx.notify()) });
             let fh = view.read(cx).focus.clone();
             let weak = view.downgrade();
-            with(|st| { st.wn = Some(Wn { version: s(&v, "version"), steps, at: 0, all, page: None }); st.wn_view = Some(weak); });
+            with(cx, |st| { st.wn = Some(Wn { version: s(&v, "version"), steps, at: 0, all, page: None }); st.wn_view = Some(weak); });
             // A full-window view: drawn by the modal host (its own card is
             // hidden under it), so it covers every tab and takes the keys.
             w::modal(window, cx, T::DIALOG_W, view.into(), |_, cx| { wn_finish(cx); });
@@ -550,17 +547,17 @@ pub fn open_whatsnew(all: bool, cx: &mut App) {
 }
 
 fn wn_go(i: i64, cx: &mut App) {
-    with(|st| if let Some(wn) = &mut st.wn { let k = wn.steps.len() as i64 + 1; wn.at = i.clamp(0, k - 1) as usize; });
+    with(cx, |st| if let Some(wn) = &mut st.wn { let k = wn.steps.len() as i64 + 1; wn.at = i.clamp(0, k - 1) as usize; });
     // Another step: its page swaps in as the frame draws (wn_page_seen).
-    let stale = with(|st| st.wn.as_ref().is_some_and(|wn| wn.page.as_ref().is_some_and(|p| p.at != wn.at)));
+    let stale = with(cx, |st| st.wn.as_ref().is_some_and(|wn| wn.page.as_ref().is_some_and(|p| p.at != wn.at)));
     if stale { wn_page_close(cx); }
     bump(cx);
 }
 
 /// Release the page's view (another step, the recap, the tour closed).
-fn wn_page_close(_cx: &mut App) {
-    let key = with(|st| st.wn.as_mut().and_then(|wn| wn.page.take()).map(|p| p.key));
-    if let (Some(k), Some(h)) = (key, crate::web::host(_cx)) { h.frame_close(&k); }
+fn wn_page_close(cx: &mut App) {
+    let key = with(cx, |st| st.wn.as_mut().and_then(|wn| wn.page.take()).map(|p| p.key));
+    if let (Some(k), Some(h)) = (key, crate::web::host(cx)) { h.frame_close(&k); }
 }
 
 /// The frame's stage reports where it is as it is drawn: the visible step's
@@ -568,7 +565,7 @@ fn wn_page_close(_cx: &mut App) {
 fn wn_page_seen(b: Bounds<Pixels>, scale: f32, cx: &mut App) {
     let Some(web) = crate::web::host(cx).filter(|h| h.started()) else { return };
     let Some(base) = crundi_shell::api(cx).map(|a| a.base().to_string()) else { return };
-    let Some((at, url, held)) = with(|st| st.wn.as_ref().map(|wn| {
+    let Some((at, url, held)) = with(cx, |st| st.wn.as_ref().map(|wn| {
         let url = wn.steps.get(wn.at).map(|x| wn_page_url(&base, x)).unwrap_or_default();
         (wn.at, url, wn.page.as_ref().map(|p| (p.key.clone(), p.at, p.url.clone())))
     })) else { return };
@@ -579,9 +576,9 @@ fn wn_page_seen(b: Bounds<Pixels>, scale: f32, cx: &mut App) {
         None => {}
     }
     if url.is_empty() || w < 1.0 || h < 1.0 { return; }
-    let key = with(|st| { st.wn_seq += 1; format!("whatsnew-{}", st.wn_seq) });
+    let key = with(cx, |st| { st.wn_seq += 1; format!("whatsnew-{}", st.wn_seq) });
     if !web.frame_open(&key, &url, w, h, scale) { return; }
-    with(|st| {
+    with(cx, |st| {
         st.wn_keys.retain(|k| web.frame_exists(k));
         st.wn_keys.push(key.clone());
         if let Some(wn) = &mut st.wn { wn.page = Some(WnPage { key, at, url }); }
@@ -592,14 +589,14 @@ fn wn_page_seen(b: Bounds<Pixels>, scale: f32, cx: &mut App) {
 /// While a page is live: the tour draws again when it paints (its own
 /// animation), at most every 33 ms.
 fn wn_ticker(cx: &mut App) {
-    if with(|st| std::mem::replace(&mut st.wn_ticking, true)) { return; }
+    if with(cx, |st| std::mem::replace(&mut st.wn_ticking, true)) { return; }
     cx.spawn(async move |cx: &mut AsyncApp| {
         let mut last = 0u64;
         loop {
             cx.background_executor().timer(Duration::from_millis(33)).await;
             let go = cx.update(|cx| {
-                let view = with(|st| st.wn.as_ref().and_then(|wn| wn.page.as_ref()).and(st.wn_view.clone()));
-                let Some(v) = view.and_then(|v| v.upgrade()) else { with(|st| st.wn_ticking = false); return false };
+                let view = with(cx, |st| st.wn.as_ref().and_then(|wn| wn.page.as_ref()).and(st.wn_view.clone()));
+                let Some(v) = view.and_then(|v| v.upgrade()) else { with(cx, |st| st.wn_ticking = false); return false };
                 let now = crate::web::host(cx).map(|h| h.frame_generation()).unwrap_or(0);
                 if now != last { last = now; v.update(cx, |_, cx| cx.notify()); }
                 true
@@ -612,7 +609,7 @@ fn wn_ticker(cx: &mut App) {
 /// Closed (Skip, Esc, Done): marked seen unless opened from Settings. True when it was open.
 fn wn_finish(cx: &mut App) -> bool {
     wn_page_close(cx);
-    let Some(wn) = with(|st| { st.wn_view = None; st.wn.take() }) else { return false };
+    let Some(wn) = with(cx, |st| { st.wn_view = None; st.wn.take() }) else { return false };
     if !wn.all { crundi_shell::call(cx, |api| api.post("/api/whatsnew/seen", &json!({})), |_, _| {}); }
     bump(cx);
     true
@@ -623,7 +620,7 @@ fn wn_close(window: &mut Window, cx: &mut App) {
 }
 
 fn wn_key(e: &KeyDownEvent, window: &mut Window, cx: &mut App) {
-    let (at, last) = with(|st| st.wn.as_ref().map(|wn| (wn.at as i64, wn.at == wn.steps.len())).unwrap_or((0, false)));
+    let (at, last) = with(cx, |st| st.wn.as_ref().map(|wn| (wn.at as i64, wn.at == wn.steps.len())).unwrap_or((0, false)));
     match e.keystroke.key.as_str() {
         // Esc skips it (the web's close('skip'); the modal layer leaves Esc
         // to its dialogs).
@@ -636,9 +633,9 @@ fn wn_key(e: &KeyDownEvent, window: &mut Window, cx: &mut App) {
 }
 
 impl Render for WhatsNew {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("whatsnew");
-        let Some((version, steps, at, page)) = with(|st| st.wn.as_ref().map(|wn| (wn.version.clone(), wn.steps.clone(), wn.at, wn.page.as_ref().filter(|p| p.at == wn.at).map(|p| p.key.clone())))) else { return div().into_any_element() };
+        let Some((version, steps, at, page)) = rd(cx, |st| st.wn.as_ref().map(|wn| (wn.version.clone(), wn.steps.clone(), wn.at, wn.page.as_ref().filter(|p| p.at == wn.at).map(|p| p.key.clone())))) else { return div().into_any_element() };
         let k = steps.len() + 1;
         let last = at == k - 1;
         let step = wn_step(&steps, at).cloned().unwrap_or(Value::Null);
@@ -667,7 +664,7 @@ impl Render for WhatsNew {
             // The step's page, live: its view's picture once it has painted;
             // until then a quiet spinner; the step's title when it can't load
             // (no CEF, no page from an older server, a failed load).
-            let web = crate::web::host(_cx).filter(|h| h.started());
+            let web = crate::web::host(cx).filter(|h| h.started());
             let report = canvas(|b, window, cx| wn_page_seen(b, window.scale_factor(), cx), |_, _, _, _| {}).absolute().inset_0().size_full();
             let no_page = web.is_none() || s(&step, "page").is_empty();
             let failed = no_page || page.as_ref().is_some_and(|k| web.as_ref().is_some_and(|h| h.frame_failed(k)));
@@ -729,6 +726,8 @@ impl Render for WhatsNew {
             .child(div().flex_1().min_w_0())
             .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Arrow keys, or swipe"))
             .child(w::label_icon_button("wn-next", if last { "Done" } else { "Next" }, if last { IconName::Check } else { IconName::ChevronRight }, !last, w::Look::Primary, true)
+                // .wn-btn.primary: its accent glow alone (no focus ring: F97).
+                .shadow(vec![BoxShadow { color: T::accent().opacity(0.35), offset: point(px(0.), T::SP_8), blur_radius: T::SP_24, spread_radius: px(0.), inset: false }])
                 .on_click(move |_, window, cx| if last { wn_close(window, cx) } else { wn_go(at_i + 1, cx) }));
         let full = div().id("whatsnew").occlude().track_focus(&self.focus).on_key_down(wn_key)
             .w(vp.width).h(vp.height).flex().flex_col().bg(T::bg()).text_color(T::text()).font(crundi_theme::ui_font())
@@ -750,9 +749,9 @@ pub fn on_event(e: &AreaEvent, cx: &mut App) {
         AreaEvent::Server("approvals", v) => set_items(v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default(), cx),
         AreaEvent::Connected(true) => load_approvals(cx),
         AreaEvent::State(v) => {
-            if let Some(alias) = with(|st| st.select.clone()) {
+            if let Some(alias) = with(cx, |st| st.select.clone()) {
                 let listed = v.get("projects").and_then(|p| p.as_array()).is_some_and(|p| p.iter().any(|x| s(x, "alias") == alias));
-                if listed { with(|st| st.select = None); cx.defer(move |cx| crate::compat::session::select_project(cx, &alias)); }
+                if listed { with(cx, |st| st.select = None); cx.defer(move |cx| crate::compat::session::select_project(cx, &alias)); }
             }
         }
         _ => {}
@@ -772,7 +771,7 @@ pub fn on_signed_in(cx: &mut App) {
 
 pub fn on_signed_out(cx: &mut App) {
     wn_page_close(cx);
-    with(|st| { st.wn_view = None; st.items.clear(); st.select = None; st.wn_gen += 1; st.appr_open = false; st.add = None; st.wn = None; });
+    with(cx, |st| { st.wn_view = None; st.items.clear(); st.select = None; st.wn_gen += 1; st.appr_open = false; st.add = None; st.wn = None; });
     with_window(cx, |window, cx| if w::modal_open(cx) { w::close_dialog(window, cx); });
     bump(cx);
 }
@@ -785,7 +784,7 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
     match name {
         "extras-add-open" => open_add_project(window, cx),
         "extras-add-set" => {
-            let Some(v) = with(|st| st.add.clone()) else { return Some(json!({ "ok": false, "error": "not open" })) };
+            let Some(v) = with(cx, |st| st.add.clone()) else { return Some(json!({ "ok": false, "error": "not open" })) };
             let x = v.read(cx);
             let i = match a(0).as_str() { "name" => x.name.clone(), "alias" => x.alias.clone(), "path" => x.path.clone(), "dname" => x.dname.clone(), _ => return Some(json!({ "ok": false })) };
             let t = a(1);
@@ -796,17 +795,17 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
         "extras-appr-toggle" => appr_toggle(cx),
         "extras-appr-act" => {
             // By id, or by the item's title.
-            let id = with(|st| st.items.iter().find(|i| s(i, "id") == a(0) || s(i, "title") == a(0)).map(|i| s(i, "id"))).unwrap_or_default();
+            let id = with(cx, |st| st.items.iter().find(|i| s(i, "id") == a(0) || s(i, "title") == a(0)).map(|i| s(i, "id"))).unwrap_or_default();
             appr_act(&id, &a(1), cx);
         }
         "extras-appr-clear" => appr_clear(window, cx),
         "extras-wn-open" => open_whatsnew(a(0) == "true", cx),
-        "extras-wn-auto" => { let g = with(|st| { st.wn_tries = 0; st.wn_gen += 1; st.wn_gen }); maybe_show(g, cx); }
+        "extras-wn-auto" => { let g = with(cx, |st| { st.wn_tries = 0; st.wn_gen += 1; st.wn_gen }); maybe_show(g, cx); }
         "extras-wn-go" => wn_go(a(0).parse().unwrap_or(0), cx),
         "extras-wn-close" => wn_close(window, cx),
         // The visible step's page path replaced (the fallback's check: a page that isn't there).
         "extras-wn-page" => {
-            with(|st| if let Some(wn) = &mut st.wn { let at = wn.at; if let Some(x) = wn.steps.get_mut(at) { x["page"] = json!(a(0)); } });
+            with(cx, |st| if let Some(wn) = &mut st.wn { let at = wn.at; if let Some(x) = wn.steps.get_mut(at) { x["page"] = json!(a(0)); } });
             bump(cx);
         }
         _ => return None,
@@ -816,8 +815,8 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
 
 /// The driver's view of this screen (the Slint client's names).
 pub fn props(_window: &mut Window, cx: &mut App) -> Value {
-    let (add, items, appr_open, select) = with(|st| (st.add.clone(), st.items.clone(), st.appr_open, st.select.clone()));
-    let wn = with(|st| st.wn.as_ref().map(|wn| {
+    let (add, items, appr_open, select) = rd(cx, |st| (st.add.clone(), st.items.clone(), st.appr_open, st.select.clone()));
+    let wn = rd(cx, |st| st.wn.as_ref().map(|wn| {
         let k = wn.steps.len() + 1;
         let step = wn.steps.get(wn.at);
         // The visible step's page view: the address the step names, the
@@ -834,7 +833,7 @@ pub fn props(_window: &mut Window, cx: &mut App) -> Value {
     }));
     // The tour's page views still held (none once it closed).
     let host = crate::web::host(cx);
-    let wn_views = with(|st| st.wn_keys.iter().filter(|k| host.as_ref().is_some_and(|h| h.frame_exists(k))).count());
+    let wn_views = with(cx, |st| st.wn_keys.iter().filter(|k| host.as_ref().is_some_and(|h| h.frame_exists(k))).count());
     let add_v = add.as_ref().map(|v| { let x = v.read(cx); json!({ "single": x.single, "hint": x.hint, "name": val(&x.name, cx), "alias": val(&x.alias, cx), "path": val(&x.path, cx), "dname": val(&x.dname, cx), "busy": x.busy }) });
     json!({
         "modal": add.is_some() || wn.is_some(),

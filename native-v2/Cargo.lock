@@ -1963,6 +1963,7 @@ dependencies = [
  "crundi-theme",
  "crundi-widgets",
  "crundi-workbench",
+ "crundi-workspace",
  "gpui-component",
  "gpui-pre",
  "log",

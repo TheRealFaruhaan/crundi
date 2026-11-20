@@ -102,6 +102,8 @@ pub struct St {
     ptt_capturing: bool,
     ptt_focus: Option<FocusHandle>,
     scroll_to: Option<&'static str>,
+    /// The driver asked to bring the open skill into view (its row's place as last laid out).
+    reveal_skill: bool,
 }
 
 /// The handle to the state (a Global holds only it: ARCHITECTURE.md rule 1).
@@ -144,6 +146,7 @@ impl Default for St {
             ptt_capturing: false,
             ptt_focus: None,
             scroll_to: None,
+            reveal_skill: false,
         }
     }
 }
@@ -175,6 +178,11 @@ pub(crate) fn register_badge(cx: &mut App) {
 fn get<R>(cx: &mut App, f: impl FnOnce(&St) -> R) -> R { let e = ent(cx); f(e.read(cx)) }
 
 /// The state, while the page draws (after `ensure`).
+/// Another area's part (compat::settings_part_changed) changed: redraw, if the page exists.
+pub(crate) fn parts_changed(cx: &mut App) {
+    if let Some(e) = cx.try_global::<StH>().map(|h| h.0.clone()) { e.update(cx, |_, cx| cx.notify()); }
+}
+
 fn st(cx: &App) -> &St { cx.global::<StH>().0.read(cx) }
 
 fn field(cx: &mut App, k: &str) -> String { get(cx, |s| s.f.get(k)) }
@@ -1290,6 +1298,9 @@ impl Render for Page {
                 if let Some(k) = quiet(cx, |s| s.scroll_to.take()) {
                     if let Some(i) = ITEMS.iter().position(|it| matches!(it, Item::Fold(x, _) if *x == k)) { self.list.scroll_to(ListOffset { item_ix: i, offset_in_item: px(0.) }); }
                 }
+                if quiet(cx, |s| std::mem::take(&mut s.reveal_skill)) {
+                    if let Some(y) = crate::skills::open_row_y() { self.list.scroll_by(y - self.list.viewport_bounds().origin.y - T::SP_16); }
+                }
                 list(self.list.clone(), cx.processor(|_: &mut Page, i: usize, window, cx| item(i, window, cx)))
                     .size_full().p(T::SP_16).bg(T::bg()).into_any_element()
             }
@@ -1353,6 +1364,14 @@ fn item(i: usize, window: &mut Window, cx: &mut App) -> AnyElement {
     div().w_full().when(i + 1 < ITEMS.len(), |d| d.pb(T::SP_12)).child(el).into_any_element()
 }
 
+/// A hint with its link at the end, inline (the web's `… <a>Open</a>` in the paragraph).
+fn hint_link(id: impl Into<ElementId>, text: &str, link: &str, after: &str, url: &'static str) -> Div {
+    let full: SharedString = format!("{text} {link}{after}").into();
+    let at = text.len() + 1..text.len() + 1 + link.len();
+    let st = StyledText::new(full.clone()).with_highlights(vec![(at.clone(), HighlightStyle { color: Some(T::accent_hover()), ..Default::default() })]);
+    div().text_size(T::TEXT_11).text_color(T::text_muted())
+        .child(InteractiveText::new(id, st).on_click(vec![at], move |_, _, cx| open_url(cx, url)))
+}
 fn hint(text: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_11).text_color(T::text_muted()).child(text.into()) }
 fn label(text: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(text.into()) }
 fn sub_head(text: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(text.into()) }
@@ -1488,15 +1507,23 @@ fn claude_body(cx: &mut App) -> AnyElement {
         "update" => {
             acts.push(w::button("cc-check", "Check").on_click(|_, _, cx| claude_update(cx, true)).into_any_element());
             // Past the tested version: another colour, so the two decisions never look alike.
-            let b = w::tone_button("cc-apply", IconName::TriangleAlert, Some(format!("Update to {}", v.latest).into()), if v.beyond { T::yellow() } else { T::accent_hover() }, if v.beyond { T::yellow() } else { T::accent() }, true, "", 1.0);
-            acts.push(if v.beyond { b.on_click(|_, _, cx| claude_apply(cx)).into_any_element() } else { w::primary("cc-apply", format!("Update to {}", v.latest)).on_click(|_, _, cx| claude_apply(cx)).into_any_element() });
+            // (The web's warn style: yellow edge and text on its dim fill; no icon.)
+            let b = if v.beyond { w::button("cc-apply", format!("Update to {}", v.latest)).border_1().border_color(T::yellow()).text_color(T::yellow()).bg(T::yellow_dim()) }
+                else { w::primary("cc-apply", format!("Update to {}", v.latest)) };
+            acts.push(b.on_click(|_, _, cx| claude_apply(cx)).into_any_element());
         }
         _ => acts.push(w::button("cc-check", "Check now").on_click(|_, _, cx| claude_update(cx, true)).into_any_element()),
     }
     col(T::SP_8)
         .child(info_row(&format!("Version {}", v.version), &v.sub, acts))
-        .when(!v.tested.is_empty(), |d| d.child(hint(v.tested.clone())))
-        .when(!v.tested_warn.is_empty(), |d| d.child(hint(v.tested_warn.clone()).text_color(T::yellow())))
+        // One line: the tested version, then its warning in yellow (a span in the web).
+        .when(!v.tested.is_empty(), |d| {
+            let warn = !v.tested_warn.is_empty();
+            let text: SharedString = if warn { format!("{} {}", v.tested, v.tested_warn).into() } else { v.tested.clone().into() };
+            let from = v.tested.len() + 1;
+            let st = StyledText::new(text.clone()).with_highlights(if warn { vec![(from..text.len(), HighlightStyle { color: Some(T::yellow()), ..Default::default() })] } else { vec![] });
+            d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(st))
+        })
         .when(!v.blocker.is_empty(), |d| d.child(hint(v.blocker.clone()).text_color(T::yellow())))
         .when(!v.sudo.is_empty(), |d| d.child(hint(v.sudo.clone())))
         .when(!v.last.is_empty(), |d| d.child(hint(v.last.clone())))
@@ -1671,8 +1698,7 @@ fn oauth_block(window: &mut Window, cx: &mut App, k: &'static str) -> AnyElement
                 .font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text())
                 .child(if url.is_empty() { "Unknown until this server has a public address".to_string() } else { url.clone() }))
             .when(!url.is_empty(), |d| d.child(w::button(eid("oauth-copy", k), "Copy").on_click(move |_, _, cx| oauth_copy(cx, k)))))
-        .child(div().flex().gap(T::SP_6).child(hint(format!("{}{}", o.v.howto, if o.v.local { " This is a local address: it only works when signing in on this computer." } else { "" })).flex_1().min_w_0())
-            .child(w::link(eid("oauth-open", k), "Open").on_click(move |_, _, cx| open_url(cx, open))))
+        .child(hint_link(eid("oauth-open", k), &o.v.howto, "Open", if o.v.local { " This is a local address: it only works when signing in on this computer." } else { "" }, open))
         .child(div().flex().gap(T::SP_8)
             .child(col(T::SP_4).flex_1().min_w_0().child(label("Client ID")).child(mono_box(&id)))
             .child(col(T::SP_4).flex_1().min_w_0().child(label("Client secret")).child(mono_box(&sec))))
@@ -1710,8 +1736,7 @@ fn signin_body(window: &mut Window, cx: &mut App) -> AnyElement {
     } else {
         d = d.child(col(T::SP_8).pt(T::SP_6).child(hairline())
             .child(toggle_row("tg-on", "Telegram", Some(TELEGRAM), &s.tg_status, s.tg_on, s.tg_can || s.tg_on, None, |on, cx| method_toggle(cx, "telegram", on)))
-            .child(div().flex().gap(T::SP_6).child(hint("In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel.").flex_1().min_w_0())
-                .child(w::link("tg-open", "Open").on_click(|_, _, cx| open_url(cx, "https://t.me/BotFather"))))
+            .child(hint_link("tg-open", "In Telegram, message @BotFather, send /newbot and copy the token it gives you. The same bot sends the Telegram notification channel.", "Open", "", "https://t.me/BotFather"))
             .child(div().flex().gap(T::SP_8)
                 .child(col(T::SP_4).flex_1().min_w_0().child(label("Bot token")).child(mono_box(&tok)))
                 .child(col(T::SP_4).flex_1().min_w_0().child(label("Allowed Telegram username")).child(input_box(&user))))
@@ -1882,6 +1907,8 @@ pub fn test_ui(name: &str, args: &[String], _window: &mut Window, cx: &mut App) 
     ensure(cx);
     match name {
         "settings-reload" => render(cx),
+        // Bring the open skill into view (the snapshot of an open skill).
+        "settings-reveal-skill" => upd(cx, |s| s.reveal_skill = true),
         // Open or close a section by its key (server, cc, signin…).
         "settings-open" => if !set_open(cx, &a(0), a(1) != "false") { return Some(json!({ "ok": false, "error": "no such section" })); },
         // Type into a field, as a person would.

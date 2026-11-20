@@ -601,9 +601,14 @@ fn lock_head(title: &'static str) -> Div {
 }
 
 /// A lock field: a PIN mono and centred, a passphrase plain (both hidden).
+/// In the PIN dialog (`big`, .pin-modal input) the text is centred: a PIN
+/// mono at 1.4rem, a passphrase (.pass) in the plain face at 0.95rem; the
+/// placeholder takes the same size.
 fn lock_field(l: &Line, lock: &str, big: bool) -> Div {
     let pin = lock != "passphrase";
-    div().w_full().when(pin, |d| d.font_family(T::MONO)).when(pin && big, |d| d.text_size(T::TEXT_20)).child(w::input(l))
+    let i = w::input(l).when(pin, |d| d.font_family(T::MONO))
+        .when(big, |d| d.text_align(TextAlign::Center).text_size(if pin { T::VAULT_PIN_TEXT } else { T::TEXT_15 }).when(pin, |d| d.h(T::INPUT_H + T::SP_12)));
+    div().w_full().child(i)
 }
 
 fn error_line(text: &str) -> Option<Div> {

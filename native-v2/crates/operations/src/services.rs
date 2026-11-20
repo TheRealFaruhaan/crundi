@@ -51,7 +51,6 @@ pub struct Services {
     /// Name, command, working directory, stop command, tunnel port.
     reg: [Option<Entity<w::InputState>>; 5],
     edit_name: Option<Entity<w::InputState>>,
-    subs: Vec<Subscription>,
     /// The open project, every project's alias (sync_projects).
     project: String,
     aliases: Vec<String>,
@@ -414,13 +413,8 @@ impl Services {
         if self.edit_name.is_some() { return; }
         let ph = ["Service name", "Command (e.g. npm run dev)", "Working directory (optional)", "Stop command (optional, e.g. docker compose down)", "Tunnel port (optional) \u{2014} expose via Cloudflare"];
         for (i, p) in ph.iter().enumerate() { self.reg[i] = Some(kit::input(window, cx, p)); }
-        let e = kit::input(window, cx, "name");
-        self.subs.push(cx.subscribe_in(&e, window, |this, _, ev: &w::InputEvent, window, cx| {
-            if let w::InputEvent::PressEnter { .. } = ev {
-                if let Some(k) = this.edit.as_ref().map(|e| e.key.clone()) { window.defer(cx, move |window, cx| save_expose(&k, window, cx)); }
-            }
-        }));
-        self.edit_name = Some(e);
+        // (The web's name box has no keys of its own: Save and Cancel only.)
+        self.edit_name = Some(kit::input(window, cx, "name"));
     }
 
     fn project_services(&self, project: &str) -> Vec<&Value> {
@@ -784,7 +778,6 @@ fn card_view(i: usize, c: &Card, edit_input: Option<&Entity<w::InputState>>, scr
         if let (true, Some(input)) = (c.editing, edit_input) {
             let (sk, pk) = (key.clone(), key.clone());
             body = body.child(div().flex().flex_col().gap(T::SP_8)
-                .on_key_down(|e: &KeyDownEvent, _, cx| if e.keystroke.key == "escape" { upd(cx, |st, _| st.edit = None); })
                 .child(div().flex_none().h(px(1.)).w_full().bg(T::border()))
                 .child(div().flex().items_center().gap(T::SP_8)
                     .when(!c.edit_prefix.is_empty(), |d| d.child(mono_muted(c.edit_prefix.clone())))
@@ -820,7 +813,7 @@ impl Render for Services {
         if self.reg_open {
             let mut form = w::card().p(T::SP_12).gap(T::SP_8)
                 .child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Register a service"));
-            for i in self.reg.iter().flatten() { form = form.child(w::input(i)); }
+            for i in self.reg.iter().flatten() { form = form.child(w::input(i).font_family(T::MONO)); }  // .svc-reg-input: mono
             form = form.child(div().flex().gap(T::SP_6)
                 .child(w::primary("svc-reg-ok", "Register").icon(IconName::Check).on_click(|_, _, cx| register_submit(cx)))
                 .child(w::button("svc-reg-cancel", "Cancel").on_click(|_, _, cx| register_cancel(cx))));
@@ -832,9 +825,8 @@ impl Render for Services {
         } else if self.loading && !self.loaded {
             page = page.child(w::loading("Loading\u{2026}"));
         } else if self.loaded && cards.is_empty() {
-            page = page.child(div().flex().flex_col().items_center().pt(T::SP_24).text_color(T::text_muted())
-                .child(w::icon(IconName::Server, T::SP_32))
-                .child(w::empty(if project.is_empty() { "No services registered" } else { "No services registered for this project" })));
+            // .services-empty: centred in the page, the icon faint and large.
+            page = page.child(w::empty_icon(IconName::Server, if project.is_empty() { "No services registered" } else { "No services registered for this project" }));
         }
         for (i, c) in cards.iter().enumerate() {
             page = page.child(card_view(i, c, self.edit_name.as_ref(), self.log_scroll.get(&c.key).cloned()));
