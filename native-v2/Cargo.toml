@@ -47,6 +47,7 @@ crundi-browser-link = { path = "crates/browser-link" }
 crundi-shell = { path = "crates/shell" }
 crundi-workbench = { path = "crates/workbench" }
 crundi-chat = { path = "crates/chat" }
+crundi-planning = { path = "crates/planning" }
 
 # Line numbers only in dev builds, so the shared build folder stays small and
 # links are quick. Release builds are unaffected.

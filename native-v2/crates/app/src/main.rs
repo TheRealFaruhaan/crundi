@@ -26,6 +26,7 @@ fn main() {
         // The areas, before the session starts (they hear sign-in).
         crundi_workbench::init(cx);
         crundi_chat::init(cx);
+        crundi_planning::init(cx);
 
         // Centred on the display when there is one; Xvfb reports none, so a
         // window centred on "nothing" would come out 10x10: place it instead.
