@@ -115,6 +115,8 @@ pub struct Panel {
     pub net_on: bool,
     /// The chat's cursor (browser_mouse), in page px, and when it moved.
     pub cursor_at: Option<(f32, f32, std::time::Instant)>,
+    /// How long the cursor glides there (ms; 0: it jumps), as the web's transition.
+    pub cursor_ms: f32,
     /// The last main-frame load failure ("Load failed (<code>): <text>").
     pub load_error: Option<String>,
     /// The chat's pointer (browser_mouse): where, and which button is held.

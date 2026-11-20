@@ -43,7 +43,7 @@ pub mod scrollbar; pub use scrollbar::scrollbar;
 pub mod ref_drag; pub use ref_drag::{drag_ref, drag_ref_row, edge_scroll, ref_target, ref_target_drag, ref_text, RefDrag, Scroller};
 pub mod textarea; pub use textarea::{code_editor, code_state, message_box, textarea, Editor, EditorState, Textarea, TextareaState};
 pub mod square; pub use square::{square_button, SquareLook};
-pub mod dropdown; pub use dropdown::{dropdown, dropdown_of, dropdown_off};
+pub mod dropdown; pub use dropdown::{dropdown, dropdown_groups, dropdown_of, dropdown_off};
 pub mod tone_button; pub use tone_button::tone_button;
 pub mod stop_button; pub use stop_button::stop_button;
 pub mod choice; pub use choice::choice_mark;
@@ -72,7 +72,7 @@ pub mod fields; pub use fields::{set_date, set_time, date_input, date_state, dat
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
-pub mod pick_menu; pub use pick_menu::{pick_menu, PickItem};
+pub mod pick_menu; pub use pick_menu::{pick_menu, pick_menu_open, PickItem};
 pub mod segmented_icons; pub use segmented_icons::segmented_icons;
 pub mod icon_tag; pub use icon_tag::icon_tag;
 pub mod round_button; pub use round_button::round_button;
@@ -437,10 +437,15 @@ pub fn tab_row() -> Div {
 }
 
 /// One tab in a tab row; the active one joins the area below it.
-pub fn tab(title: impl Into<SharedString>, on: bool) -> Div {
+pub fn tab(title: impl Into<SharedString>, on: bool) -> Div { tab_with(None, title, on, false) }
+
+/// A tab with something before its title (the drawer's network badge), its
+/// title dimmed and in italics while `asleep` (.brd-tab.sleeping .brd-t).
+pub fn tab_with(lead: Option<AnyElement>, title: impl Into<SharedString>, on: bool, asleep: bool) -> Div {
     let d = div().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).min_w(T::SP_48 + T::SP_16).max_w(T::DRAWER_W / 2.8).pl(T::SP_10).pr(T::SP_6)
         .rounded_t(T::R_CONTROL).text_size(T::TEXT_11)
-        .child(div().flex_1().min_w_0().truncate().child(title.into()));
+        .when_some(lead, |d, l| d.child(l))
+        .child(div().flex_1().min_w_0().truncate().when(asleep, |t| t.opacity(0.5).italic()).child(title.into()));
     if on { d.bg(T::bg_secondary()).border_1().border_b_0().border_color(T::border()).text_color(T::text()) } else { d.text_color(T::text_secondary()) }
 }
 
@@ -566,6 +571,14 @@ pub fn page_crashed(id: impl Into<ElementId>, reload: impl Fn(&ClickEvent, &mut 
         .child(div().text_color(T::text_muted()).child(icon(IconName::TriangleAlert, T::ICON_LG)))
         .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("This page crashed"))
         .child(icon_label_button(id, IconName::RotateCcw, "Reload").on_click(reload))
+}
+
+/// A line over a web page's place, centred and muted, the page still
+/// under it and taking the pointer (the drawer's .brd-diag: a load that
+/// failed, a page that crashed).
+pub fn page_message(text: impl Into<SharedString>) -> Div {
+    div().absolute().inset_0().flex().flex_col().items_center().justify_center().p(T::SP_24)
+        .child(div().text_center().text_size(T::TEXT_13).text_color(T::text_muted()).child(text.into()))
 }
 
 /// A web page on its way (the browser starting, the first frame not in

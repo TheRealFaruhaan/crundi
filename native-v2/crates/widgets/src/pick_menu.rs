@@ -30,6 +30,20 @@ pub fn pick_menu(
     items: impl Fn() -> Vec<PickItem> + 'static,
     pick: impl Fn(&str, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    pick_menu_open(id, icon, tip, title, items, pick, |_, _, _| {})
+}
+
+/// `pick_menu`, told when its menu opens and closes (`open(true)` as it
+/// shows): the drawer keeps which popover is open for its driver state.
+pub fn pick_menu_open(
+    id: impl Into<ElementId>,
+    icon: IconName,
+    tip: impl Into<SharedString>,
+    title: impl Into<SharedString>,
+    items: impl Fn() -> Vec<PickItem> + 'static,
+    pick: impl Fn(&str, &mut Window, &mut App) + 'static,
+    open: impl Fn(bool, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
     use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
     let (items, pick, title): (Rc<dyn Fn() -> Vec<PickItem>>, Rc<dyn Fn(&str, &mut Window, &mut App)>, SharedString) = (Rc::new(items), Rc::new(pick), title.into());
     icon_button(id, icon, tip).dropdown_menu(move |mut menu, _, _| {
@@ -48,5 +62,5 @@ pub fn pick_menu(
             }
         }
         menu
-    })
+    }).on_open_change(move |on, window, cx| open(*on, window, cx))
 }

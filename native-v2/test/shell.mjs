@@ -54,6 +54,9 @@ const ui = (n, ...args) => d.send({ cmd: 'ui', name: n, args });
 const mouse = (kind, x, y, extra = {}) => d.send({ cmd: 'mouse', kind, x, y, ...extra });
 async function snap(file) {
   mkdirSync(join(SCREENS, 'shell'), { recursive: true });
+  // (F107/F98: no toast of the step before over it, and its state drawn.)
+  await ui('toasts-clear');
+  await new Promise((r) => setTimeout(r, 350));
   const r = await d.send({ cmd: 'snapshot', path: join(SCREENS, 'shell', `${file}.png`) });
   if (!r?.ok) console.log(`(no snapshot shell/${file}: ${r?.error})`);
 }

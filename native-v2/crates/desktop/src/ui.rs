@@ -28,6 +28,7 @@ use crundi_theme::{IconName, T};
 use crundi_webview::{engine as browser, PageView};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
+use gpui_component::button::{Button, ButtonVariants as _};
 
 fn sr() -> StyleRefinement { StyleRefinement::default() }
 
@@ -121,7 +122,7 @@ impl BrowserDrawer {
 
         let has = act.is_some();
         // The tabs row.
-        let tabs = TabsCopy { tabs: drawer::tab_views() };
+        let tabs = TabsCopy { tabs: drawer::tab_views(), left: drawer::with(|d| d.side == "left") };
         self.tabs.update(cx, |v, cx| set_copy(&mut v.c, tabs, cx));
         // The address bar; the address follows the page while not typed in.
         let (back, fwd, loading) = act.as_ref().and_then(|t| t.panel).map(|i| browser::with(|st| st.panels.get(i).map(|p| (p.can_back, p.can_fwd, p.loading)).unwrap_or_default())).unwrap_or_default();
@@ -129,7 +130,6 @@ impl BrowserDrawer {
         let a = AddrCopy {
             has, back, fwd, loading, net_tip, tone, dev_tip, dev_on, annotating,
             logins: act.as_ref().map(|t| passwords::count_for(&t.url)).unwrap_or(0),
-            diag: act.as_ref().map(|t| t.diag.clone()).unwrap_or_default(),
         };
         let url = act.as_ref().map(|t| if t.url == "about:blank" { String::new() } else { t.url.clone() }).unwrap_or_default();
         self.addr.update(cx, |v, cx| { v.follow(url, window, cx); set_copy(&mut v.c, a, cx); });
@@ -183,6 +183,7 @@ impl Render for BrowserDrawer {
         };
         let focused = self.addr_focus.contains_focused(window, cx);
         div().relative().flex().flex_col().size_full().min_h_0().min_w_0().bg(T::bg_secondary()).overflow_hidden()
+            .child(canvas(|b, _, _| drawer::set_root(b), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
             .child(self.tabs.clone().cached(sr().w_full().h(T::TABBAR_H).flex_none()))
             .child(self.addr.clone().cached(sr().w_full().h(addr_h).flex_none()))
             .when(l.pw && l.has_tab, |d| d.child(self.pw.clone().cached(sr().w_full().h(pw_h).flex_none())))
@@ -196,30 +197,36 @@ impl Render for BrowserDrawer {
 // ─── The tabs row ───
 
 #[derive(Clone, PartialEq, Default)]
-struct TabsCopy { tabs: Vec<drawer::TabView> }
+struct TabsCopy { tabs: Vec<drawer::TabView>, left: bool }
 
 struct TabsBar { c: TabsCopy }
 
 impl Render for TabsBar {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         rendered("drawer-tabs");
-        let mut row = w::tab_row();
+        // (w_full: the row spans the drawer, so New tab sits after the tabs and the rest at the right.)
+        let mut row = w::tab_row().w_full();
         for (n, t) in self.c.tabs.iter().enumerate() {
-            let (id, id2) = (t.id.clone(), t.id.clone());
-            let mut tab = w::tab(t.title.clone(), t.active);
-            if t.sleeping { tab = tab.child(div().text_size(T::TEXT_10).text_color(T::text_muted()).child(IconName::Moon)); }
-            if !t.badge.is_empty() { tab = tab.child(w::tag(t.badge, if t.bad { "error" } else { "accent" })); }
-            tab = tab.child(w::icon_button(("tab-x", n), IconName::X, "Close tab").on_click(move |_, _, _| { let id = id2.clone(); browser::defer(move || drawer::close_tab(&id)); }));
-            row = row.child(div().id(("tab", n)).cursor_pointer().child(tab).tooltip(w::tooltip(t.tip.clone()))
-                .on_click(move |_, _, _| { let id = id.clone(); browser::defer(move || drawer::activate(&id)); }));
+            let (id, id2, id3) = (t.id.clone(), t.id.clone(), t.id.clone());
+            // The network's badge before the title (.brd-net-dot), the title dimmed while asleep.
+            let lead = (!t.badge.is_empty()).then(|| w::tag(t.badge, if t.bad { "error" } else if t.badge == "HP" { "ok" } else { "accent" }).into_any_element());
+            let tab = w::tab_with(lead, t.title.clone(), t.active, t.sleeping)
+                .child(w::icon_button(("tab-x", n), IconName::X, "Close tab").on_click(move |_, _, _| { let id = id2.clone(); browser::defer(move || drawer::close_tab(&id)); }));
+            row = row.child(div().id(("tab", n)).min_w_0().cursor_pointer().rounded_t(T::R_CONTROL)
+                .when(!t.active, |d| d.hover(|s| s.bg(T::bg_tertiary())))
+                .child(tab).tooltip(w::tooltip(t.tip.clone()))
+                .on_click(move |_, _, _| { let id = id.clone(); browser::defer(move || drawer::activate(&id)); })
+                // A middle click closes it (the tabs' auxclick).
+                .on_mouse_up(MouseButton::Middle, move |_, _, _| { let id = id3.clone(); browser::defer(move || drawer::close_tab(&id)); }));
         }
+        let hide_icon = if self.c.left { IconName::ChevronLeft } else { IconName::ChevronRight };
         w::layer(row.child(w::icon_button("new", IconName::Plus, "New tab").on_click(|_, _, _| {
                 let net = drawer::active_tab().map(|t| t.network).unwrap_or_else(|| "client".into());
                 match drawer::new_tab(&crate::ctx::project(), drawer::START, &net, true, false) { Ok(_) => drawer::show_active(), Err(e) => crate::ctx::toast_error(&e) }
             }))
             .child(div().flex_1())
-            .child(w::pick_menu("menu", IconName::Ellipsis, "History and browsing data", "", || pick_items("menu"), |id, _, _| pick("menu", id)))
-            .child(w::icon_button("hide", IconName::ChevronRight, "Hide the browser (pages keep running)").on_click(|_, _, _| drawer::close()))
+            .child(spot("menu", w::pick_menu_open("menu", IconName::Ellipsis, "History and browsing data", "", || pick_items("menu"), |id, _, _| pick("menu", id), |on, _, _| popped("menu", on))))
+            .child(w::icon_button("hide", hide_icon, "Hide the browser (pages keep running)").on_click(|_, _, _| drawer::close()))
             .child(w::icon_button("closeall", IconName::X, "Close the browser: every tab in this project").on_click(|_, _, _| browser::defer(drawer::close_all))))
     }
 }
@@ -230,12 +237,13 @@ impl Render for TabsBar {
 struct AddrCopy {
     has: bool, back: bool, fwd: bool, loading: bool,
     net_tip: String, tone: &'static str, dev_tip: String, dev_on: bool,
-    annotating: bool, logins: usize, diag: String,
+    annotating: bool, logins: usize,
 }
 
 struct AddressBar {
     c: AddrCopy,
     address: Entity<w::InputState>,
+    page_focus: FocusHandle,
     shown_url: String,
     height: Pixels,
     _subs: Vec<Subscription>,
@@ -246,6 +254,7 @@ impl Measured for AddressBar { fn height(&self) -> Pixels { self.height } fn set
 impl AddressBar {
     fn new(page_focus: FocusHandle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let address = cx.new(|cx| w::InputState::new(window, cx).placeholder("Enter URL or search"));
+        let pf = page_focus.clone();
         let mut subs = vec![cx.subscribe_in(&address, window, move |_, st, ev: &w::InputEvent, window, cx| match ev {
             w::InputEvent::PressEnter { .. } => {
                 let typed = st.read(cx).value().trim().to_string();
@@ -260,7 +269,7 @@ impl AddressBar {
         })];
         let f = address.read(cx).focus_handle(cx);
         subs.extend(w::watch_focus(&f, window, cx));
-        AddressBar { c: AddrCopy::default(), address, shown_url: String::new(), height: T::DRAWER_BARS_H - T::TABBAR_H, _subs: subs }
+        AddressBar { c: AddrCopy::default(), address, page_focus: pf, shown_url: String::new(), height: T::DRAWER_BARS_H - T::TABBAR_H, _subs: subs }
     }
 
     /// The address follows the page, unless the person is typing in it.
@@ -268,6 +277,17 @@ impl AddressBar {
         if url == self.shown_url || self.address.read(cx).focus_handle(cx).is_focused(window) { return; }
         self.shown_url = url.clone();
         self.address.update(cx, |st, cx| st.set_value(url, window, cx));
+    }
+
+    /// Esc in the address: what was typed goes, the page's address comes
+    /// back, and the field lets go (VD urlEl keydown Escape: blur, renderBar).
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let url = drawer::active_tab().map(|t| if t.url == "about:blank" { String::new() } else { t.url }).unwrap_or_default();
+        self.shown_url = url.clone();
+        self.address.update(cx, |st, cx| st.set_value(url, window, cx));
+        drawer::with(|d| d.suggest.clear());
+        window.focus(&self.page_focus, cx);
+        drawer::render();
     }
 }
 
@@ -278,19 +298,26 @@ impl Render for AddressBar {
         let net_icon = match c.tone { "server" => IconName::Server, "hp" => IconName::Globe, "bad" => IconName::TriangleAlert, _ => IconName::Network };
         let hist = |h: i32| move |_: &ClickEvent, _: &mut Window, _: &mut App| { if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::defer(move || browser::history(i, h)); } };
         let logins = c.logins;
+        // Reload: its arrow turns while the page loads (.brd-loading), still Reload.
+        let reload = if c.loading {
+            w::sized(Button::new("reload").ghost(), None, None, false, w::Ctl::Normal).tooltip("Reload")
+                .child(w::spinner(T::ICON_BTN_ICON).icon(IconName::RefreshCw).color(T::text_secondary()))
+        } else { w::icon_button("reload", IconName::RefreshCw, "Reload") };
         let bar = w::toolbar()
             .child(w::disabled(w::icon_button("back", IconName::ChevronLeft, "Back"), !c.back).on_click(hist(-1)))
             .child(w::disabled(w::icon_button("forward", IconName::ChevronRight, "Forward"), !c.fwd).on_click(hist(1)))
-            .child(w::disabled(w::icon_button("reload", if c.loading { IconName::X } else { IconName::RefreshCw }, "Reload"), !c.has).on_click(hist(0)))
+            .child(w::disabled(reload, !c.has).on_click(hist(0)))
             .child(div().flex_1().min_w_0().child(w::input(&self.address)))
             .when(logins > 0, |d| d.child(w::icon_button("pw-lock", IconName::Lock, if logins == 1 { "A saved login for this site".to_string() } else { format!("{logins} saved logins for this site") })
                 .on_click(|_, _, _| passwords::site_menu())))
-            .child(w::pick_menu("net", net_icon, c.net_tip.clone(), "This tab’s network", || pick_items("net"), |id, _, _| pick("net", id)))
-            .child(w::pick_menu("device", if c.dev_on { IconName::Smartphone } else { IconName::Monitor }, c.dev_tip.clone(), "Device size", || pick_items("dev"), |id, _, _| pick("dev", id)))
+            .child(spot("net", w::pick_menu_open("net", net_icon, c.net_tip.clone(), "This tab’s network", || pick_items("net"), |id, _, _| pick("net", id), |on, _, _| popped("net", on))))
+            .child(spot("device", w::pick_menu_open("device", if c.dev_on { IconName::Smartphone } else { IconName::Monitor }, c.dev_tip.clone(), "Device size", || pick_items("dev"), |id, _, _| pick("dev", id), |on, _, _| popped("device", on))))
             .child(w::disabled(w::icon_toggle("annotate", IconName::MessageSquare, "Annotate the page", c.annotating), !c.has).on_click(|_, _, _| { let on = !drawer::with(|d| d.annotating); drawer::annotate(on); }))
-            .child(w::disabled(w::icon_button("devtools", IconName::Code, "DevTools"), !c.has).on_click(|_, _, _| browser::defer(|| if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::devtools(i); })));
+            .child(w::disabled(w::icon_button("devtools", IconName::Terminal, "DevTools"), !c.has).on_click(|_, _, _| browser::defer(|| if let Some(i) = drawer::active_tab().and_then(|t| t.panel) { browser::devtools(i); })));
         let root = div().relative().w_full().flex().flex_col().child(bar)
-            .when(!c.diag.is_empty(), |d| d.child(div().px(T::SP_10).py(T::SP_4).text_size(T::TEXT_12).text_color(T::error_text()).bg(T::red_dim()).child(c.diag.clone())))
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if e.keystroke.key == "escape" && this.address.read(cx).focus_handle(cx).is_focused(window) { this.escape(window, cx); cx.stop_propagation(); }
+            }))
             .child(measure(cx.entity()));
         let f = self.address.read(cx).focus_handle(cx);
         w::text_box(&f, root, window, cx)
@@ -378,9 +405,9 @@ impl Render for PwBar {
         let row = match b {
             passwords::Bar::Save { origin, update: false, .. } => {
                 let user = self.pw_user.clone();
-                row.child(div().text_size(T::TEXT_12).text_color(T::text()).child(format!("Save the password for {}?", host(&origin))))
-                    .child(div().w(T::DRAWER_NOTE_W).child(w::input(&self.pw_user)))
-                    .child(div().flex_1())
+                // (.brd-pwmsg grows from 160 px; the username field up to 180 px, never cut.)
+                row.child(div().flex_1().min_w(px(160.)).text_size(T::TEXT_12).text_color(T::text()).child(format!("Save the password for {}?", host(&origin))))
+                    .child(div().flex_none().w(px(180.)).child(w::input(&self.pw_user)))
                     .child(w::primary("pw-save", "Save").on_click(move |_, _, cx| passwords::save(&t1, &user.read(cx).value())))
                     .child(w::button("pw-never", "Never").tooltip("Never offer to save passwords for this site").on_click(move |_, _, _| passwords::never(&t2)))
                     .child(w::icon_button("pw-x", IconName::X, "Not now").on_click(move |_, _, _| passwords::dismiss(&t3)))
@@ -395,14 +422,16 @@ impl Render for PwBar {
             passwords::Bar::Fill { origin, logins } => {
                 let sel = self.fill_sel.clone().filter(|s| logins.iter().any(|l| &l.0 == s)).unwrap_or_else(|| logins[0].0.clone());
                 let name = logins.iter().find(|l| l.0 == sel).map(|l| if l.1.is_empty() { "(no username)".to_string() } else { l.1.clone() }).unwrap_or_default();
-                let items: Vec<w::PickItem> = logins.iter().map(|l| w::PickItem { id: l.0.clone(), label: if l.1.is_empty() { "(no username)".into() } else { l.1.clone().into() }, kind: "item", on: l.0 == sel, icon: None }).collect();
+                let labels: Vec<SharedString> = logins.iter().map(|l| if l.1.is_empty() { "(no username)".into() } else { l.1.clone().into() }).collect();
+                let on = logins.iter().position(|l| l.0 == sel).unwrap_or(0);
+                let ids: Vec<String> = logins.iter().map(|l| l.0.clone()).collect();
                 let several = logins.len() > 1;
                 let me = cx.entity().downgrade();
-                row.child(div().text_size(T::TEXT_12).text_color(T::text()).child(format!("Fill your saved login for {}?", host(&origin))))
-                    .child(div().text_size(T::TEXT_12).font_weight(T::W_BOLD).text_color(T::text()).child(name))
-                    .when(several, |d| d.child(w::pick_menu("pw-pick", IconName::ChevronDown, "Choose a login", "", move || items.clone(),
-                        move |id, _, cx| { let _ = me.update(cx, |b, cx| { b.fill_sel = Some(id.to_string()); cx.notify(); }); })))
-                    .child(div().flex_1())
+                // Several logins: a select of them (.brd-pwpick); one: its name in bold.
+                row.child(div().flex_1().min_w(px(160.)).text_size(T::TEXT_12).text_color(T::text()).child(format!("Fill your saved login for {}?", host(&origin))))
+                    .when(several, |d| d.child(div().flex_none().max_w(px(180.)).child(w::dropdown_of("pw-pick", labels.clone(), on, false, false,
+                        move |i, _, cx| { let id = ids.get(i).cloned(); let _ = me.update(cx, |b, cx| { b.fill_sel = id; cx.notify(); }); }))))
+                    .when(!several, |d| d.child(div().flex_none().text_size(T::TEXT_12).font_weight(T::W_BOLD).text_color(T::text()).child(name)))
                     .child(w::primary("pw-fill", "Fill").on_click(move |_, _, _| passwords::fill(&t1, &sel)))
                     .child(w::icon_button("pw-x", IconName::X, "Not for this site (until the app restarts)").on_click(move |_, _, _| passwords::dismiss(&t3)))
             }
@@ -494,7 +523,7 @@ impl DrawerBody {
             .child(div().flex_1().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(T::text())
                 .child(match which { "history" => "History", "clear" => "Clear browsing data", "passwords" => "Saved passwords", _ => "Homepool for this browser" }))
             .when(which == "history", |d| d.child(w::button("to-clear", "Clear browsing data…").on_click(|_, _, _| drawer::open_panel("clear"))))
-            .child(w::button("panel-close", "Close").on_click(|_, _, _| drawer::panel_close()));
+            .child(w::icon_button("panel-close", IconName::X, "Close").on_click(|_, _, _| drawer::panel_close()));
         let scroll = |body: AnyElement| div().id("drawer-panel").flex_1().min_h_0().overflow_y_scroll().child(body).into_any_element();
         let body: AnyElement = match which {
             // The history: up to 200 rows, only those on screen drawn.
@@ -514,41 +543,54 @@ impl DrawerBody {
             }
             "clear" => {
                 let c = &self.c.clr;
-                let set = |f: fn(&mut drawer::Clear, bool)| move |on: &bool, _: &mut Window, _: &mut App| { drawer::with(|d| f(&mut d.clr, *on)); drawer::render(); };
-                scroll(div().flex().flex_col().gap(T::SP_10).p(T::SP_12)
-                    .child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("For this computer’s browser: every tab in every project, on every network. Open tabs stay open. For one site, the back and forward lists are left as they are."))
-                    .child(w::segmented("clr-scope", &["Every site", "Only this site"], c.site_only as usize, |i, _, _| { drawer::with(|d| d.clr.site_only = *i == 1); drawer::render(); }))
-                    .when(c.site_only, |d| d.child(w::input(&self.site)))
-                    .child(w::check("clr-history", "Browsing history", c.history, set(|c, on| c.history = on)))
-                    .child(w::check("clr-cookies", "Cookies and site data", c.cookies, set(|c, on| c.cookies = on)))
-                    .child(w::check("clr-cache", "Cached images and files", c.cache, set(|c, on| c.cache = on)))
-                    .child(w::check("clr-passwords", "Saved passwords", c.passwords, set(|c, on| c.passwords = on)))
-                    .child(div().pl(T::SP_24).text_size(T::TEXT_11).text_color(T::text_muted()).child("Every saved login, on every site (not limited to one site)"))
-                    .child(div().flex().gap(T::SP_8).child(w::danger("clr-run", "Clear").on_click(|_, _, _| drawer::clear_run())))
-                    .into_any_element())
+                let set = |f: fn(&mut drawer::Clear, bool)| move |on: bool| { drawer::with(|d| f(&mut d.clr, on)); drawer::render(); };
+                // A row (.brd-chk): its mark, its label and the line under it; the whole row takes the click.
+                fn row(id: &'static str, multi: bool, on: bool, label: &'static str, sub: &'static str, f: impl Fn(bool) + 'static) -> Stateful<Div> {
+                    div().id(id).flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2).cursor_pointer()
+                        .on_click(move |_, _, _| f(if multi { !on } else { true }))
+                        .child(w::choice_mark(multi, on, false))
+                        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label)
+                            .when(!sub.is_empty(), |d| d.child(div().pt(T::SP_2).text_size(T::TEXT_12).text_color(T::text_muted()).child(sub))))
+                }
+                let body = scroll(div().flex().flex_col().px(T::SP_12).py(T::SP_8)
+                    .child(row("clr-all", false, !c.site_only, "Every site", "", |_| { drawer::with(|d| d.clr.site_only = false); drawer::render(); }))
+                    .child(row("clr-site", false, c.site_only, "Only this site", "Its subdomains too", |_| { drawer::with(|d| d.clr.site_only = true); drawer::render(); }))
+                    .child(w::input(&self.site))
+                    .child(row("clr-history", true, c.history, "Browsing history", "Every address visited, and each tab’s back and forward list", set(|c, on| c.history = on)))
+                    .child(row("clr-cookies", true, c.cookies, "Cookies and site data", "Logins, local storage, databases, service workers. Signs you out of sites.", set(|c, on| c.cookies = on)))
+                    .child(row("clr-cache", true, c.cache, "Cached images and files", "Pages load again from the network", set(|c, on| c.cache = on)))
+                    .child(row("clr-passwords", true, c.passwords, "Saved passwords", "Every saved login, on every site (not limited to one site)", set(|c, on| c.passwords = on)))
+                    .child(div().my(T::SP_8).mx(T::SP_2).text_size(T::TEXT_12).text_color(T::text_muted()).child("For this computer’s browser: every tab in every project, on every network. Open tabs stay open. For one site, the back and forward lists are left as they are."))
+                    .into_any_element());
+                div().flex().flex_col().flex_1().min_h_0().child(body)
+                    .child(div().flex().flex_none().justify_end().gap(T::SP_8).px(T::SP_12).py(T::SP_10).border_t_1().border_color(T::border())
+                        .child(w::button("clr-cancel", "Cancel").on_click(|_, _, _| drawer::panel_close()))
+                        .child(w::danger("clr-run", "Clear").on_click(|_, _, _| drawer::clear_run())))
+                    .into_any_element()
             }
             "passwords" => {
                 let c = &self.c;
                 let mut d = div().flex().flex_col().gap(T::SP_8).p(T::SP_12);
                 if !c.pw_ok && !c.pw_reason.is_empty() { d = d.child(div().text_size(T::TEXT_12).text_color(T::error_text()).child(c.pw_reason.clone())); }
                 d = d.child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("Kept on this computer only, encrypted for your account on it, as Chrome keeps them. Filling needs no PIN; showing one does. Chats can never read them."));
-                if c.pw_rows.is_empty() { d = d.child(div().text_size(T::TEXT_13).text_color(T::text_muted()).child("No saved passwords yet. Sign in to a site in a drawer tab and choose Save.")); }
+                // The PIN row (.brd-pinrow): under the note, over the list, while a Show waits for it.
+                if c.pin_for.is_some() {
+                    let pin = self.pin.clone();
+                    d = d.child(div().flex().items_center().gap(T::SP_8).my(T::SP_8)
+                        .child(div().flex_none().w(px(140.)).child(w::input(&self.pin)))
+                        .child(w::primary("pw-unlock", "Unlock").on_click(move |_, _, cx| passwords::unlock(&pin.read(cx).value()))));
+                }
+                if c.pw_rows.is_empty() { d = d.child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("No saved passwords yet. Sign in to a site in a drawer tab and choose Save.")); }
                 for (n, (id, user, host)) in c.pw_rows.iter().enumerate() {
                     let shown = c.revealed.iter().find(|r| &r.0 == id).map(|r| r.1.clone());
                     let (i1, i2) = (id.clone(), id.clone());
-                    d = d.child(div().flex().items_center().gap(T::SP_8).py(T::SP_4).border_b_1().border_color(T::border_subtle())
+                    d = d.child(div().flex().items_center().gap(T::SP_8).py(T::SP_6).px(T::SP_2).border_b_1().border_color(T::border())
                         .child(div().flex().flex_col().flex_1().min_w_0()
                             .child(div().truncate().text_size(T::TEXT_13).text_color(T::text()).child(if user.is_empty() { "(no username)".to_string() } else { user.clone() }))
-                            .child(div().truncate().text_size(T::TEXT_11).text_color(T::text_muted()).child(host.clone())))
-                        .child(div().font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text_secondary()).child(shown.clone().unwrap_or_else(|| "••••••••".into())))
+                            .child(div().truncate().font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_muted()).child(host.clone())))
+                        .child(div().px(T::SP_6).py(T::SP_2).rounded(T::R_CHIP).bg(T::bg()).font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text()).child(shown.clone().unwrap_or_else(|| "••••••••".into())))
                         .child(w::button(("pw-show", n), if shown.is_some() { "Hide" } else { "Show" }).on_click(move |_, _, _| passwords::show(&i1)))
-                        .child(w::icon_button(("pw-del", n), IconName::Trash, "Delete").on_click(move |_, _, _| passwords::remove(&i2))));
-                    if c.pin_for.as_deref() == Some(id.as_str()) {
-                        let pin = self.pin.clone();
-                        d = d.child(div().flex().items_center().gap(T::SP_8)
-                            .child(div().flex_1().child(w::input(&self.pin)))
-                            .child(w::primary("pw-unlock", "Unlock").on_click(move |_, _, cx| passwords::unlock(&pin.read(cx).value()))));
-                    }
+                        .child(w::sized(Button::new(("pw-del", n)), None, Some(IconName::Trash), false, w::Ctl::Normal).tooltip("Delete").on_click(move |_, _, _| passwords::remove(&i2))));
                 }
                 if !c.pw_never.is_empty() {
                     d = d.child(div().pt(T::SP_8).text_size(T::TEXT_12).text_color(T::text_secondary()).child("Never offered for:"));
@@ -596,9 +638,11 @@ impl Measured for NoteBox { fn height(&self) -> Pixels { self.height } fn set_he
 impl NoteBox {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let note = cx.new(|cx| w::InputState::new(window, cx).placeholder("Note (Enter to keep, Esc to skip)"));
-        let mut subs = vec![cx.subscribe_in(&note, window, |_, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::PressEnter { .. } = ev {
-            let t = st.read(cx).value().to_string();
-            drawer::note(&t, true);
+        // Enter keeps the note; a click elsewhere keeps what was typed too
+        // (VD askNote: blur keeps a non-empty note, then the field goes).
+        let mut subs = vec![cx.subscribe_in(&note, window, |_, st, ev: &w::InputEvent, _, cx| match ev {
+            w::InputEvent::PressEnter { .. } | w::InputEvent::Blur => { let t = st.read(cx).value().to_string(); drawer::note(&t, true); }
+            _ => {}
         })];
         let f = note.read(cx).focus_handle(cx);
         subs.extend(w::watch_focus(&f, window, cx));
@@ -655,4 +699,19 @@ fn pick(which: &str, id: &str) {
     drawer::with(|d| d.pop = which.to_string());
     let id = id.to_string();
     browser::defer(move || drawer::pop_pick(&id));
+}
+
+/// A popover opened or closed (by a click on its button, a pick, Esc or a
+/// click outside): which one is open, for the driver's state.
+fn popped(which: &'static str, open: bool) {
+    let which = if which == "device" { "dev" } else { which };
+    drawer::with(|d| if open { d.pop = which.to_string() } else if d.pop == which { d.pop.clear() });
+    if open && which == "chat" { drawer::fill_chats(); }
+    if open && which == "net" { crate::hp_refresh(); }
+}
+
+/// A control whose place the driver reports (`spots` in the drawer's
+/// state: the suite clicks the real button, as a person does).
+fn spot(name: &'static str, el: impl IntoElement) -> Div {
+    div().relative().flex_none().child(el).child(canvas(move |b, _, _| drawer::set_spot(name, b), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
 }

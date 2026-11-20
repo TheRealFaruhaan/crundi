@@ -59,7 +59,16 @@ export async function run(T, t) {
   await T.until('panels: History lists the versions', (p) => mine(p).pane === 'history' && mine(p).versionsState === 'list' && mine(p).versions.length >= 2);
   const v1 = (await T.mine()).panels.versions.slice(-1)[0];
   await T.act('panels-restore', ID, v1);
-  await T.until('panels: Restore says so and goes back to the panel', (p) => String(p.toast?.text || p.toast || '').includes('Restored v' + v1) && mine(p).pane === '');
+  // (F115: the restored page reloads and its bridge's "status: …" toast soon
+  // replaces "Restored v1": watch for the toast on its own, from the act on,
+  // then for the pane, not both in one reading.)
+  {
+    const toastOf = (p) => String(p.toast?.text || p.toast || '');
+    let said = false;
+    for (const end = Date.now() + 10000; !said && Date.now() < end;) { said = toastOf(await T.props()).includes('Restored v' + v1); if (!said) await t.sleep(40); }
+    t.check('panels: Restore says so', said);
+    await T.until('panels: …and goes back to the panel', (p) => mine(p).pane === '');
+  }
 
   // ── Checks: none run yet ──
   await T.act('panels-pane', 'checks');

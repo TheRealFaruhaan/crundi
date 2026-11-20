@@ -855,6 +855,32 @@ pub fn note_at() -> Option<(f32, f32)> {
     }))
 }
 
+// ─── Where the bars' popover buttons are (the driver's) ───
+
+thread_local! {
+    /// Each button's place and the drawer's origin when it was laid out,
+    /// and the drawer's origin now: a cached bar moved with the drawer (a
+    /// banner above it went) is replayed where it now is without being laid
+    /// out again, so its place is kept relative to the drawer's.
+    static SPOTS: RefCell<BTreeMap<&'static str, ([f32; 4], [f32; 2])>> = const { RefCell::new(BTreeMap::new()) };
+    static ROOT: std::cell::Cell<[f32; 2]> = const { std::cell::Cell::new([0., 0.]) };
+}
+
+/// The drawer's origin in the window, each time it is laid out (its layout view is never cached).
+pub fn set_root(b: gpui::Bounds<gpui::Pixels>) { ROOT.with(|r| r.set([f32::from(b.origin.x), f32::from(b.origin.y)])); }
+
+/// A button's place in the window, as last laid out (`ui::spot`).
+pub fn set_spot(name: &'static str, b: gpui::Bounds<gpui::Pixels>) {
+    let v = [f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)];
+    let root = ROOT.with(|r| r.get());
+    SPOTS.with(|s| { s.borrow_mut().insert(name, (v, root)); });
+}
+
+fn spots() -> serde_json::Map<String, Value> {
+    let now = ROOT.with(|r| r.get());
+    SPOTS.with(|s| s.borrow().iter().map(|(k, (v, r))| (k.to_string(), json!([v[0] - r[0] + now[0], v[1] - r[1] + now[1], v[2], v[3]]))).collect())
+}
+
 // ─── Start ───
 
 pub fn init() {
@@ -881,6 +907,7 @@ pub fn props() -> Value {
             "paused": t.panel.is_some_and(browser::is_hidden),
         })).collect::<Vec<_>>()).unwrap_or_default(),
         "projects": d.projects.iter().map(|(k, p)| (k.clone(), json!(p.tabs.len()))).collect::<serde_json::Map<_, _>>(),
+        "spots": spots(), "root": ROOT.with(|r| r.get()).to_vec(),
     }))
 }
 

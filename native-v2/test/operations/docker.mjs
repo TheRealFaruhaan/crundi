@@ -155,7 +155,10 @@ export async function run(T, t) {
     // Images, and a pull that fails (a name that does not exist): the job drawer.
     await T.act('docker-view', 'images');
     p = await T.until('docker: images load', (p) => dk(p).view === 'images' && dk(p).state === 'data' && dk(p).rows.length > 0, 20000);
+    // (F108: the picture shows the suite's own image only, not this shared machine's.)
+    await T.act('docker-filter', 'alpine:3'); await t.sleep(300);
     await T.snap('docker-images');
+    await T.act('docker-filter', '');
     if (p) t.check('docker: the images line', /images, \d+ in use/.test(dk(p).listHead) && dk(p).rows.some((r) => r.name === 'alpine:3' && !r.canRm), dk(p).listHead);
     await T.act('docker-pull', `ops-native-test/does-not-exist-${tag}:none`);
     await T.until('docker: the job drawer shows the pull', (p) => dk(p).job && /^Pull /.test(dk(p).job.title), 10000);
@@ -176,7 +179,9 @@ export async function run(T, t) {
     await T.act('docker-view', 'networks');
     await T.act('docker-filter', '');
     p = await T.until('docker: networks load, the built-in ones locked', (p) => dk(p).view === 'networks' && dk(p).rows.some((r) => r.name === 'bridge' && !r.canRm && r.tags.includes('built in')), 20000);
+    await T.act('docker-filter', NET); await t.sleep(300);
     await T.snap('docker-networks');
+    await T.act('docker-filter', '');
     await T.act('docker-filter', NET);
     await T.until('docker: our network', (p) => dk(p).rows.length === 1 && dk(p).rows[0].canRm);
     const netKey = (await T.mine()).docker.rows[0].key;

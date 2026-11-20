@@ -184,9 +184,12 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
       catch (e) { return Number(String(e.stderr).trim().split(/\s/)[0]) || -1; }
     },
     /** A picture of the window into native-v2/screens/<area>/<file>.png (the latest only), for the UI reviewer. */
-    async snap(area, file) {
+    async snap(area, file, { keepToast = false } = {}) {
       const dir = join(SCREENS, area);
       mkdirSync(dir, { recursive: true });
+      // A toast left by the step before would cover the state the picture is
+      // named for (F107): cleared first, unless the picture is of a toast.
+      if (!keepToast && !/toast/i.test(file)) await d.send({ cmd: 'ui', name: 'toasts-clear', args: [] });
       // The state a check just saw is drawn on the next frame or two: wait
       // for it before the picture, so it shows the state it is named for (F98).
       await sleep(350);

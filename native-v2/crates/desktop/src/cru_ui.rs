@@ -296,7 +296,7 @@ impl CruScreen {
             .text_color(T::kid_text())
             .track_focus(&self.focus)
             .on_key_down(|e: &KeyDownEvent, _, _| if cru_kid::pin_shown() {
-                match e.keystroke.key.as_str() { "enter" => cru_kid::pin_key("OK"), "backspace" => cru_kid::pin_key("Back"), "escape" => cru_kid::pin_close(), k => cru_kid::pin_key(k) }
+                match e.keystroke.key.as_str() { "enter" => cru_kid::pin_key("OK"), "backspace" => cru_kid::pin_key("Back"), "escape" => {}, k => cru_kid::pin_key(k) }
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(top)

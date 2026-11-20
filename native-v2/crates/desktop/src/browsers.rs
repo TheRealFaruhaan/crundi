@@ -32,10 +32,14 @@ thread_local! {
     static S: RefCell<St> = RefCell::new(St { list: vec![], shots: HashMap::new(), loaded: false, device: PROFILES.iter().position(|p| p.0 == "iPhone 16 Pro").unwrap_or(0), place: 0, places: false });
 }
 
-/// "Apple · iPhone 16 Pro (393×852)", as the web's optgroups.
-fn labels() -> &'static [&'static str] {
-    thread_local! { static L: &'static [&'static str] = Box::leak(PROFILES.iter().map(|(n, w, h, g)| &*Box::leak(format!("{g} · {n} ({w}\u{d7}{h})").into_boxed_str())).collect::<Vec<&'static str>>().into_boxed_slice()); }
-    L.with(|l| *l)
+/// The devices by maker, as the web's <optgroup>s: "iPhone 16 Pro (393×852)" under Apple.
+fn groups() -> Vec<(SharedString, Vec<SharedString>)> {
+    let mut g: Vec<(SharedString, Vec<SharedString>)> = vec![];
+    for (n, w, h, grp) in PROFILES {
+        let label: SharedString = format!("{n} ({w}\u{d7}{h})").into();
+        match g.last_mut() { Some(last) if last.0.as_ref() == *grp => last.1.push(label), _ => g.push(((*grp).into(), vec![label])) }
+    }
+    g
 }
 
 pub fn load() {
@@ -213,9 +217,9 @@ impl BrowsersList {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // (The web's field starts with http://localhost:3000.)
         let url = cx.new(|cx| { let mut s = w::InputState::new(window, cx).placeholder("URL to open"); s.set_value("http://localhost:3000", window, cx); s });
-        let mut subs = vec![cx.subscribe_in(&url, window, |_, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::PressEnter { .. } = ev { open(&st.read(cx).value()); })];
+        // (Enter in it opens nothing: the web's field has no key of its own; + Open does.)
         let f = url.read(cx).focus_handle(cx);
-        subs.extend(w::watch_focus(&f, window, cx));
+        let subs = w::watch_focus(&f, window, cx).into_iter().collect::<Vec<_>>();
         BrowsersList { c: Copy::default(), url, urls: HashMap::new(), list: ListState::new(0, ListAlignment::Top, T::SHOT_H * 2.), _subs: subs }
     }
 
@@ -280,19 +284,17 @@ impl Render for BrowsersList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("browsers");
         let (device, place, places) = (self.c.device, self.c.place, self.c.places);
-        let me = cx.entity().downgrade();
+        // The device (a select of the devices by maker) and, when there is a
+        // choice, where it runs; then the URL and + Open (the web's toolbar).
         let tools = div().flex().flex_col().gap(T::SP_6)
-            .child(div().flex().items_center().gap(T::SP_6)
-                .child(w::menu_button("dev", IconName::Smartphone, "Device", labels(), device, me.clone(), |_, i, _| { S.with(|s| s.borrow_mut().device = i); kit::dirty(); }))
-                .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_13).text_color(T::text()).child(labels()[device]))
-                .when(places, |d| d
-                    .child(w::menu_button("place", IconName::Server, "Where it runs", PLACES, place, me.clone(), |_, i, _| { S.with(|s| s.borrow_mut().place = i); kit::dirty(); }))
-                    .child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child(PLACES[place]))))
+            .child(div().flex().items_center().gap(T::SP_6).flex_wrap()
+                .child(div().flex_1().min_w(px(140.)).child(w::dropdown_groups("dev", groups(), device, true, |i, _, _| { S.with(|s| s.borrow_mut().device = i); kit::dirty(); })))
+                .when(places, |d| d.child(div().flex_none().min_w(px(130.)).child(w::dropdown("place", PLACES, place, false, |i, _, _| { S.with(|s| s.borrow_mut().place = i); kit::dirty(); })))))
             .child(div().flex().items_center().gap(T::SP_6)
                 .child(div().flex_1().min_w_0().child(w::input(&self.url)))
                 .child(w::primary("open", "+ Open").on_click(cx.listener(|this, _, _, cx| open(&this.url.read(cx).value())))));
         let body: AnyElement = if self.c.loaded && self.c.cards.is_empty() {
-            w::empty("No browser instances open").into_any_element()
+            w::empty_icon(IconName::Globe, "No browser instances open").into_any_element()
         } else {
             list(self.list.clone(), cx.processor(|this, ix: usize, window, cx| this.card(ix, window, cx))).flex_1().min_h_0().into_any_element()
         };
