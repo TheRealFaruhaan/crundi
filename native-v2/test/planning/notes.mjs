@@ -175,6 +175,114 @@ export async function run(T, t) {
   await api({ action: 'save', id: plan.id, title: 'Plan, renamed', blocks: srv.blocks, baseVersion: srv.version });
   await T.until('a change from elsewhere shows live', (p) => tabPage(p).title === 'Plan, renamed' && N(p).tab.items.some((i) => i.title === 'Plan, renamed'));
 
+  // ── Editing as a person types (F119): the words formatted, never the source ──
+  const E = (p) => tabPage(p)?.edit || {};
+  // Where a block's words start: right of its "+" (shown with the pointer on it).
+  const wordsAt = async (i) => {
+    const p0 = await T.props();
+    const id = blocks(p0)[i].id;
+    const bx = tabPage(p0).boxes.find((x) => x.id === id);
+    await T.mouse('move', tabPage(p0).pageBox.x + tabPage(p0).pageBox.w / 2, bx.y + bx.h / 2);
+    const s1 = await T.until(`the pointer on block ${i} shows its "+"`, (p) => tabPage(p).plus.some((x) => x.id === id));
+    const pl = tabPage(s1).plus.find((x) => x.id === id);
+    return { id, x: pl.x + 40, y: bx.y + bx.h / 2, box: bx };
+  };
+  const plainOf1 = 'Some bold, italic, under, gone, code and a link.';
+  let w1 = await wordsAt(1);
+  await T.mouse('click', w1.x + 60, w1.y);
+  let e1 = await T.until('a click on formatted text puts the caret in it', (p) => E(p).on && E(p).id === w1.id);
+  t.check('the line being edited shows its words, formatted, not its Markdown source', E(e1).text === plainOf1 && E(e1).bold >= 1 && E(e1).decos >= 6, E(e1));
+  t.check('the caret lands where the click was, not at the end', E(e1).a > 0 && E(e1).a < plainOf1.length && E(e1).a === E(e1).b, E(e1));
+  await snap('notes-editing');
+  await T.key('End');
+  await T.key('!');
+  await T.until('typed text goes into the words; the source follows', (p) => E(p).text === plainOf1 + '!' && blocks(p)[1].src.endsWith('[a link](https://example.com).!'));
+  await T.key('Backspace');
+  await T.until('Backspace takes it out again', (p) => blocks(p)[1].src.endsWith('[a link](https://example.com).'));
+  // Ctrl+B over a selection, then typing at the bold word's end stays bold.
+  await T.key('Home');
+  for (let i = 0; i < 4; i++) await T.key('Right', ['shift']);
+  await T.key('b', ['ctrl']);
+  await T.until('Ctrl+B makes the selected words bold (a format toggle, not marks typed)', (p) => blocks(p)[1].src.startsWith('**Some** **bold**') && E(p).text === plainOf1);
+  await T.key('Right');
+  await T.key('X');
+  await T.until('typing at the end of bold words continues them bold', (p) => blocks(p)[1].src.startsWith('**SomeX** **bold**') && E(p).text.startsWith('SomeX bold'));
+  await T.key('Backspace');
+  await T.key('Home');
+  for (let i = 0; i < 4; i++) await T.key('Right', ['shift']);
+  await T.key('b', ['ctrl']);
+  await T.until('Ctrl+B again takes the bold off', (p) => blocks(p)[1].src.startsWith('Some **bold**,'));
+  // A code block is coloured while it is typed in.
+  const w8 = await wordsAt(8);
+  await T.mouse('click', w8.x + 30, w8.y + 6);
+  const e8 = await T.until('a click on code puts the caret in it', (p) => E(p).on && E(p).id === w8.id);
+  t.check('the code being edited is coloured by its language', E(e8).text === blocks(e8)[8].src && E(e8).colours >= 2 && E(e8).bold === 0, E(e8));
+  await T.key('End', ['ctrl']);
+  await T.key(' # hi');
+  await T.until('typed code is coloured as it is typed (a new comment)', (p) => blocks(p)[8].src.endsWith(' # hi') && E(p).colours > E(e8).colours);
+  await snap('notes-code-editing');
+
+  // ── Lists nest (the owner's: Tab / Shift+Tab, Enter goes on or steps out) ──
+  {
+    const p0 = await T.props();
+    const n0 = blocks(p0).length;
+    const last = tabPage(p0).boxes.find((x) => x.id === blocks(p0)[n0 - 1].id);
+    await T.mouse('click', tabPage(p0).pageBox.x + tabPage(p0).pageBox.w / 2, last.y + last.h + 40);
+    await T.until('a click under the page adds a line with the caret', (p) => blocks(p).length === n0 + 1 && E(p).on && E(p).id === blocks(p)[n0].id);
+    await T.key('- ');
+    await T.until('"- " makes a bulleted list', (p) => blocks(p)[n0].kind === 'bullet');
+    await T.key('one');
+    await T.key('Return');
+    await T.key('Tab');
+    await T.until('Tab nests the next item one level', (p) => blocks(p)[n0 + 1]?.kind === 'bullet' && blocks(p)[n0 + 1].level === 1);
+    await T.key('two');
+    await T.key('Return');
+    await T.until('Enter goes on at the same level', (p) => blocks(p)[n0 + 2]?.kind === 'bullet' && blocks(p)[n0 + 2].level === 1);
+    await T.key('Tab');
+    await T.key('Tab');
+    await T.until('an item nests at most one level below the one above it', (p) => blocks(p)[n0 + 2].level === 2);
+    await T.key('three');
+    await T.key('Return');
+    await T.key('Return');
+    await T.until('Enter on an empty nested item steps out one level', (p) => blocks(p)[n0 + 3]?.kind === 'bullet' && blocks(p)[n0 + 3].level === 1);
+    await T.key('Tab', ['shift']);
+    await T.until('Shift+Tab steps out too', (p) => blocks(p)[n0 + 3].level === 0);
+    await T.key('Return');
+    await T.until('and Enter on an empty item at the left ends the list', (p) => blocks(p)[n0 + 3].kind === 'p' && blocks(p).length === n0 + 4);
+    let q = await T.props();
+    t.check('one, two, three nest 0, 1, 2', blocks(q).slice(n0, n0 + 3).map((b) => `${b.src}:${b.level}`).join() === 'one:0,two:1,three:2', blocks(q).slice(n0));
+    await snap('notes-nested');
+    await T.act('notes-select', '', String(n0), String(n0 + 2));
+    await T.act('notes-sel-act', '', 'copy');
+    await T.until('nested items copy as nested Markdown', (p) => (p.clipboard ?? N(p).clipboard) === '- one\n  - two\n    - three');
+    await T.act('notes-sel-key', '', 'escape');
+    await T.until('the nesting is saved', (p) => tabPage(p).saveText === 'Saved' && !N(p).tabPage?.dirty);
+    const sv = await page(plan.id);
+    t.check('the server keeps each item\'s level', sv.blocks[n0 + 1].level === 1 && sv.blocks[n0 + 2].level === 2 && sv.blocks[n0].level === undefined, sv.blocks.slice(n0));
+
+    // ── Block keys: Alt+Up/Down move, Ctrl+D duplicates, Ctrl+Shift+K deletes ──
+    const w = await wordsAt(n0 + 1);
+    await T.mouse('click', w.x + 200, w.y);
+    await T.until('the caret in "two"', (p) => E(p).on && E(p).id === w.id);
+    await T.key('Down', ['alt']);
+    await T.until('Alt+Down moves the block down one, the caret with it', (p) => blocks(p)[n0 + 2].id === w.id && blocks(p)[n0 + 1].src === 'three' && E(p).id === w.id && E(p).on);
+    await T.key('Up', ['alt']);
+    await T.until('Alt+Up moves it back', (p) => blocks(p)[n0 + 1].id === w.id);
+    await T.key('d', ['ctrl']);
+    q = await T.until('Ctrl+D duplicates it below, the caret in the copy', (p) => blocks(p).length === n0 + 5 && blocks(p)[n0 + 2].src === 'two' && blocks(p)[n0 + 2].level === 1
+      && blocks(p)[n0 + 2].id !== w.id && E(p).id === blocks(p)[n0 + 2].id);
+    await T.key('k', ['ctrl', 'shift']);
+    await T.until('Ctrl+Shift+K deletes the block with the caret', (p) => blocks(p).length === n0 + 4 && blocks(p)[n0 + 2].src === 'three');
+    await T.act('notes-select', '', String(n0), String(n0 + 1));
+    await T.act('notes-sel-key', '', 'alt-down');
+    await T.until('Alt+Down moves selected blocks together, still selected', (p) => blocks(p)[n0].src === 'three' && blocks(p)[n0 + 1].src === 'one' && blocks(p)[n0 + 2].src === 'two' && tabPage(p).selCount === 2);
+    await T.act('notes-sel-key', '', 'ctrl-d');
+    await T.until('Ctrl+D copies selected blocks, the copies selected', (p) => blocks(p).length === n0 + 6 && blocks(p)[n0 + 3].src === 'one' && blocks(p)[n0 + 4].src === 'two' && tabPage(p).selCount === 2 && blocks(p)[n0 + 3].sel);
+    await T.act('notes-sel-key', '', 'ctrl-shift-k');
+    await T.until('Ctrl+Shift+K deletes them', (p) => blocks(p).length === n0 + 4 && tabPage(p).selCount === 0);
+    await T.until('all of it saved', (p) => tabPage(p).saveText === 'Saved');
+  }
+
   // ── Trash ──
   await T.act('notes-item-menu', ideas.id);
   await T.until('a page\'s menu: Move to trash', (p) => N(p).float === 'item' && N(p).menu?.items[0]?.name === 'Move to trash');

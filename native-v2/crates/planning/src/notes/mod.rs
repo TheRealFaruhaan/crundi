@@ -1059,7 +1059,11 @@ fn title_edited(key: &str, t: &str, cx: &mut App) {
 
 fn title_key(key: &str, name: &str, cx: &mut App) -> bool {
     match name {
-        "enter" | "down" => { focus_first(key, cx); true }
+        // Into the first block, at its start (the web's title keys).
+        "enter" | "down" => {
+            if let Some(id) = with(cx, |s| ed_mut(s, key, |e| e.blocks.first().map(|b| b.id.clone())).flatten()) { focus_block(key, &id, At::Start, cx); }
+            true
+        }
         "ctrl-a" => { hint_select_all(cx); false }
         "ctrl-shift-a" => { select_all(key, cx); true }
         _ => false,
@@ -1117,11 +1121,12 @@ fn text_key(key: &str, id: &str, name: &str, anchor: i32, caret: i32, first: boo
         "ctrl-a" => { if b.kind != "code" { hint_select_all(cx); } return false; }
         _ => {}
     }
+    if let Some(h) = block_key(key, id, -1, -1, name, a, c, cx) { return h; }
     let (prev, next) = neighbours(key, id, cx);
     if b.kind == "code" {
         return match name {
             "tab" => { let mut t = b.text.clone(); let (lo, hi) = (a.min(c).min(t.len()), a.max(c).min(t.len())); t.replace_range(lo..hi, "  "); set_text(key, id, t, cx); changed(key, cx); render(key, cx); request_focus(key, id, -1, -1, lo + 2, lo + 2, cx); true }
-            "shift-enter" | "ctrl-enter" => { let n = insert_after(key, Some(id), Block::new("p", ""), cx); focus_block(key, &n, At::Start, cx); true }
+            "shift-enter" => { let n = insert_after(key, Some(id), Block::new("p", ""), cx); focus_block(key, &n, At::Start, cx); true }
             "backspace" if b.text.is_empty() => { convert(key, id, "p", false, None, cx); focus_block(key, id, At::Start, cx); true }
             "up" if first && collapsed => { if let Some(p) = prev { focus_block(key, &p.id, At::End, cx); true } else { false } }
             "down" if last && collapsed => {
@@ -1143,8 +1148,16 @@ fn text_key(key: &str, id: &str, name: &str, anchor: i32, caret: i32, first: boo
         "ctrl-shift-s" => { mark(key, id, -1, -1, a, c, Mark::S, cx); true }
         "ctrl-k" => { open_fmt(key, id, -1, -1, a, c, true, cx); true }
         "ctrl-v" => paste(key, id, -1, -1, a, c, cx),
+        "tab" | "shift-tab" if doc::listy(&b.kind) => { close_float(cx); nest(key, id, name == "shift-tab", cx); true }
+        // Elsewhere Tab types no tab into the words (the web's leaves the line).
+        "tab" | "shift-tab" => true,
         "enter" => {
             close_float(cx);
+            if doc::listy(&b.kind) && b.level > 0 && doc::src_plain(&b.text).trim().is_empty() {
+                // An empty nested item steps out one level.
+                edit_block(key, id, cx, |b| b.level -= 1);
+                return true;
+            }
             if doc::listy(&b.kind) && doc::src_plain(&b.text).trim().is_empty() {
                 // An empty list item ends the list.
                 convert(key, id, "p", false, None, cx);
@@ -1157,7 +1170,9 @@ fn text_key(key: &str, id: &str, name: &str, anchor: i32, caret: i32, first: boo
             let (_, right) = doc::split_runs(&rest, hi - lo);
             set_text(key, id, doc::runs_to_src(&left), cx);
             let kind = if doc::listy(&b.kind) { b.kind.as_str() } else { "p" };
-            let nb = Block { id: doc::gen_id(), kind: kind.into(), text: doc::runs_to_src(&right), ..Default::default() };
+            // A list goes on at the same level.
+            let level = if doc::listy(&b.kind) { b.level } else { 0 };
+            let nb = Block { id: doc::gen_id(), kind: kind.into(), text: doc::runs_to_src(&right), level, ..Default::default() };
             let n = insert_after(key, Some(id), nb, cx);
             focus_block(key, &n, At::Start, cx);
             true
@@ -1305,7 +1320,71 @@ fn tail(key: &str, cx: &mut App) {
     }
 }
 
+// ─── Block keys (the owner's: Alt+Up/Down, Ctrl+D, Ctrl+Shift+K, Tab) ───
+
+/// Blocks lo..=hi one place up or down (Alt+Up / Alt+Down): the block past
+/// the range moves to its other side. False at the page's edge.
+fn move_range(key: &str, lo: usize, hi: usize, up: bool, cx: &mut App) -> bool {
+    let ok = with(cx, |s| ed_mut(s, key, |e| {
+        if hi >= e.blocks.len() || lo > hi { return false; }
+        if up { if lo == 0 { return false; } let b = e.blocks.remove(lo - 1); e.blocks.insert(hi, b); }
+        else { if hi + 1 >= e.blocks.len() { return false; } let b = e.blocks.remove(hi + 1); e.blocks.insert(lo, b); }
+        true
+    }).unwrap_or(false));
+    if ok { changed(key, cx); render(key, cx); }
+    ok
+}
+
+/// Copies of blocks lo..=hi after them (Ctrl+D); the copies' ids.
+fn dup_range(key: &str, lo: usize, hi: usize, cx: &mut App) -> Vec<String> {
+    let ids = with(cx, |s| ed_mut(s, key, |e| {
+        if hi >= e.blocks.len() || lo > hi { return vec![]; }
+        let copies: Vec<Block> = e.blocks[lo..=hi].iter().map(|b| Block { id: doc::gen_id(), ..b.clone() }).collect();
+        let ids = copies.iter().map(|b| b.id.clone()).collect();
+        for (k, b) in copies.into_iter().enumerate() { e.blocks.insert(hi + 1 + k, b); }
+        ids
+    }).unwrap_or_default());
+    if !ids.is_empty() { changed(key, cx); render(key, cx); }
+    ids
+}
+
+fn pos_of(key: &str, id: &str, cx: &mut App) -> Option<usize> { with(cx, |s| ed_mut(s, key, |e| e.blocks.iter().position(|b| b.id == id)).flatten()) }
+
+/// The keys every block takes, whatever its kind, with the caret in it
+/// (r, c: its cell; a, b: the caret, as source offsets): moved, duplicated
+/// (the caret into the copy, at the same place), deleted.
+#[allow(clippy::too_many_arguments)]
+fn block_key(key: &str, id: &str, r: i32, c: i32, name: &str, a: usize, b: usize, cx: &mut App) -> Option<bool> {
+    match name {
+        "alt-up" | "alt-down" => {
+            let i = pos_of(key, id, cx)?;
+            close_float(cx);
+            if move_range(key, i, i, name == "alt-up", cx) { request_focus(key, id, r, c, a, b, cx); }
+            Some(true)
+        }
+        "ctrl-d" => {
+            let i = pos_of(key, id, cx)?;
+            close_float(cx);
+            if let Some(n) = dup_range(key, i, i, cx).pop() { request_focus(key, &n, r, c, a, b, cx); }
+            Some(true)
+        }
+        "ctrl-shift-k" => { close_float(cx); block_menu_do(key, id, "del", cx); Some(true) }
+        _ => None,
+    }
+}
+
+/// Tab / Shift+Tab on a list item: one level deeper (at most one below the
+/// item above it, when that is a list item) or one level out.
+fn nest(key: &str, id: &str, out: bool, cx: &mut App) {
+    let (prev, _) = neighbours(key, id, cx);
+    let Some(b) = cur_block(key, id, cx) else { return };
+    let most = prev.filter(|p| doc::listy(&p.kind)).map(|p| p.level + 1).unwrap_or(0).min(doc::LEVEL_MAX);
+    let level = if out { b.level.saturating_sub(1) } else if b.level < most { b.level + 1 } else { b.level };
+    if level != b.level { edit_block(key, id, cx, |b| b.level = level); }
+}
+
 fn divider_key(key: &str, id: &str, name: &str, cx: &mut App) -> bool {
+    if let Some(h) = block_key(key, id, -1, -1, name, 0, 0, cx) { return h; }
     let (prev, next) = neighbours(key, id, cx);
     match name {
         "backspace" | "delete" => {
@@ -1391,6 +1470,7 @@ fn cell_key(key: &str, id: &str, r: i32, c: i32, name: &str, a: i32, cc: i32, cx
     let (ru, cu) = (r.max(0) as usize, c.max(0) as usize);
     let cols = b.rows.first().map(|x| x.len()).unwrap_or(1);
     let (a, cc) = (a.max(0) as usize, cc.max(0) as usize);
+    if let Some(h) = block_key(key, id, r, c, name, a, cc, cx) { return h; }
     match name {
         "tab" | "shift-tab" => {
             let flat = ru * cols + cu;
@@ -1525,6 +1605,20 @@ fn sel_key(key: &str, name: &str, cx: &mut App) -> bool {
         "backspace" | "delete" => { delete_selected(key, cx); true }
         "ctrl-c" => { copy_md(&doc::to_markdown(&selected(key, cx)), cx); true }
         "ctrl-a" | "ctrl-shift-a" => { select_all(key, cx); true }
+        "ctrl-shift-k" => { delete_selected(key, cx); true }
+        "alt-up" | "alt-down" => {
+            // The selection moves as one, and stays selected.
+            if let Some((lo, hi)) = with(cx, |s| ed_mut(s, key, |e| sel_range(e)).flatten()) { move_range(key, lo, hi, name == "alt-up", cx); }
+            true
+        }
+        "ctrl-d" => {
+            // The copies, after the selection, are selected.
+            if let Some((lo, hi)) = with(cx, |s| ed_mut(s, key, |e| sel_range(e)).flatten()) {
+                let n = dup_range(key, lo, hi, cx);
+                if let (Some(f), Some(l)) = (n.first(), n.last()) { set_sel(key, f, l, cx); }
+            }
+            true
+        }
         "shift-up" | "shift-down" => {
             let k = ids.iter().position(|i| *i == sf).unwrap_or(0) as i64 + if name == "shift-up" { -1 } else { 1 };
             if k >= 0 && (k as usize) < ids.len() { set_sel(key, &sa, &ids[k as usize], cx); }
@@ -2010,7 +2104,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "headTitle": pane_title_in(s, &p.key),
         "blocks": p.blocks.iter().map(|r| json!({ "id": r.b.id, "kind": r.b.kind, "src": if r.b.kind == "table" || r.b.kind == "divider" { String::new() } else { r.b.text.clone() }, "num": r.num, "checked": r.b.checked,
             "lang": doc::lang_name(&doc::norm_lang(&r.b.lang)), "wrap": r.b.wrap, "header": r.b.header, "sel": r.sel, "menuOpen": r.menu_open,
-            "rows": r.b.rows })).collect::<Vec<_>>(),
+            "rows": r.b.rows, "level": r.b.level })).collect::<Vec<_>>(),
         "items": p.items.iter().map(|i| json!({ "id": i.id, "title": i.title, "meta": i.meta, "busy": i.busy, "preview": i.preview })).collect::<Vec<_>>(),
         "listMsg": p.list_msg, "newBusy": p.new_busy,
     })).collect();
@@ -2022,6 +2116,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
             v["plus"] = json!(pl.plus.iter().map(|b| json!({ "id": b.0, "x": b.1, "y": b.2 })).collect::<Vec<_>>());
             v["pageBox"] = json!({ "x": pl.page_box.0, "y": pl.page_box.1, "w": pl.page_box.2, "h": pl.page_box.3 });
         }
+        if let Some(view) = s.views.get(&key) { v["edit"] = view.read(cx).edit_state(cx); }
         v
     }).collect();
     let (items, list_msg) = tab_list(s);

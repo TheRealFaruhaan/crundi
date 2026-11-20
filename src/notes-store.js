@@ -4,7 +4,7 @@
  * One file per page under <dataDir>/notes/<alias>/<id>.json, so typing in one
  * page rewrites that page only. A page is a title and a list of blocks:
  *
- *   { id, type, text?, checked?, lang?, wrap?, rows? }
+ *   { id, type, text?, checked?, level?, lang?, wrap?, rows? }
  *     type: p | h1 | h2 | h3 | todo | bullet | number | quote | code | table | divider
  *     text: inline HTML for text blocks (sanitised: b/strong/i/em/u/s/code/a/br)
  *           plain text for code blocks
@@ -87,6 +87,9 @@ function cleanBlock(b) {
   }
   out.text = sanitizeInline(b.text);
   if (type === 'todo') out.checked = !!b.checked;
+  // A list item's nesting (Tab / Shift+Tab), kept only when above 0.
+  const level = Math.min(5, Math.floor(Number(b.level)) || 0);
+  if ((type === 'todo' || type === 'bullet' || type === 'number') && level > 0) out.level = level;
   return out;
 }
 

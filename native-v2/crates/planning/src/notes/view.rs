@@ -17,15 +17,18 @@
 //! signature per row). A block's formatted text is parsed once per change
 //! of its source (`rich`, kept by block), never per frame.
 //!
-//! GPUI has no rich-text editor: a text block is edited as its source
-//! (doc.rs) in a text box while it has the caret, and drawn formatted
-//! otherwise. One text box per place serves whichever block (or table cell)
-//! has the caret.
+//! One text box per place serves whichever block (or table cell) has the
+//! caret. It holds the block's words, formatted as they are at rest (text
+//! decorations from the runs; a code block's colours from its language), and
+//! each change of the words is diffed into the runs (doc::edit_runs): the
+//! model keeps the source (doc.rs), the box never shows it. Offsets cross
+//! between the two with doc::box_to_src / src_to_box.
 
 use super::{doc, BlockRow, Item, PlaceRow, S};
 use crundi_theme::{IconName, T};
 use crundi_widgets::{self as w, HeadContent as C, HeadLook as L, InputEvent, InputState, TextareaState};
 use gpui::{prelude::FluentBuilder as _, *};
+use gpui_component::Sizable as _;
 use std::{collections::HashMap, hash::{Hash, Hasher}, rc::Rc};
 
 fn sid(s: impl Into<String>) -> ElementId { ElementId::Name(SharedString::from(s.into())) }
@@ -245,6 +248,21 @@ fn parse_rich(src: &str, done: bool) -> Rich {
     Rich { text: text.into(), hl, links }
 }
 
+/// The box's formatting for a block's source: the runs' styles, or a code
+/// block's colours (`lang`: the highlighter's language).
+fn decorations(src: &str, lang: Option<&str>, done: bool) -> Vec<gpui_component::input::TextDecoration> {
+    if src.is_empty() { return vec![]; }
+    let rich = match lang { Some(l) => parse_code(src, l), None => parse_rich(src, done) };
+    rich.hl.iter().map(|(r, h)| gpui_component::input::TextDecoration::new(r.clone(), *h)).collect()
+}
+
+/// A code block's language for the highlighter.
+fn code_lang(b: &doc::Block) -> String {
+    let hl = doc::hl_name(&doc::norm_lang(&b.lang));
+    if hl == "Dockerfile" { return hl; }
+    hl.rsplit('.').next().unwrap_or("").to_string()
+}
+
 /// One place: the picker, the page, or a line; in a pane, its tools' row.
 pub(crate) struct PlaceView {
     key: String,
@@ -268,6 +286,11 @@ pub(crate) struct PlaceView {
     fmt_size: Rc<std::cell::Cell<(f32, f32)>>,
     /// The block (row, column for a cell; -2 a divider) the text box serves.
     edit: Option<(String, i32, i32)>,
+    /// The source the box holds the words of; a code block's language (the
+    /// box holds its code as it is); a ticked to-do (struck through).
+    edit_src: String,
+    edit_lang: Option<String>,
+    edit_done: bool,
     editing: bool,
     last_sel: (usize, usize),
     width: f32,
@@ -310,9 +333,17 @@ impl PlaceView {
                 let Some((id, r, c)) = this.edit.clone() else { return };
                 match ev {
                     InputEvent::Change => {
+                        // The words changed: into the runs (typed text takes
+                        // its neighbour's style), the box's formatting again.
                         let (t, caret) = { let s = st.read(cx); (s.value().to_string(), s.cursor()) };
-                        if super::src_of(&k, &id, r, c, cx).as_deref() == Some(t.as_str()) { return; }
-                        if r >= 0 { super::cell_edited(&k, &id, r, c, &t, cx); } else { super::edited(&k, &id, &t, caret as i32, cx); }
+                        let code = this.edit_lang.is_some();
+                        let src = if code { t } else { doc::runs_to_src(&doc::edit_runs(&doc::src_to_runs(&this.edit_src), &t)) };
+                        if src == this.edit_src { return; }
+                        this.edit_src = src.clone();
+                        let decos = decorations(&src, this.edit_lang.as_deref(), this.edit_done);
+                        st.update(cx, |s, cx| s.set_decorations(decos, cx));
+                        let at = if code { caret } else { doc::box_to_src(&src, caret) };
+                        if r >= 0 { super::cell_edited(&k, &id, r, c, &src, cx); } else { super::edited(&k, &id, &src, at as i32, cx); }
                     }
                     InputEvent::Focus => { this.editing = true; super::focused(&k, &id, r, c, cx); }
                     InputEvent::Blur => { this.editing = false; super::blur(&k, &id, cx); cx.notify(); }
@@ -328,6 +359,7 @@ impl PlaceView {
                 if sel == this.last_sel { return; }
                 this.last_sel = sel;
                 let (a, c) = if rev { (range.end, range.start) } else { (range.start, range.end) };
+                let (a, c) = (this.to_src(a), this.to_src(c));
                 let (x, y) = caret.map(|(b, _)| (f32::from(b.origin.x), f32::from(b.origin.y))).unwrap_or_else(|| this.store.read(cx).caret_xy);
                 let k = this.key.clone();
                 cx.defer(move |cx| super::sel_moved(&k, &id, a as i32, c as i32, x, y, cx));
@@ -341,7 +373,7 @@ impl PlaceView {
         ];
         PlaceView {
             key, store, title_in, edit_in, search_in, query_in, link_in, sel_focus: cx.focus_handle(), div_focus: cx.focus_handle(),
-            applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, menu_scroll: ScrollHandle::new(), menu_shown: std::cell::Cell::new((u64::MAX, -1)), fmt_size: Rc::new(std::cell::Cell::new((0., 0.))), edit: None, editing: false, last_sel: (0, 0), width: 0.,
+            applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, menu_scroll: ScrollHandle::new(), menu_shown: std::cell::Cell::new((u64::MAX, -1)), fmt_size: Rc::new(std::cell::Cell::new((0., 0.))), edit: None, edit_src: String::new(), edit_lang: None, edit_done: false, editing: false, last_sel: (0, 0), width: 0.,
             page: ListState::new(0, ListAlignment::Top, T::SP_48 * 8.), page_sigs: vec![], pick: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), pick_sigs: vec![],
             mode: String::new(), shown_page: String::new(), rich: HashMap::new(), _subs: subs,
         }
@@ -389,21 +421,34 @@ impl PlaceView {
                     cx.defer(move |cx| super::focused(&k, &id, -1, -1, cx));
                 } else {
                     let src = if r >= 0 { row.b.rows.get(r as usize).and_then(|x| x.get(c as usize)).cloned().unwrap_or_default() } else { row.b.text.clone() };
-                    let n = src.len();
                     let was = self.edit.replace((id.clone(), r, c));
                     let same = was.as_ref() == Some(&(id.clone(), r, c)) && self.editing;
-                    self.last_sel = (a.min(n), b.min(n));
-                    self.edit_in.update(cx, |st, cx| {
-                        if st.value().as_ref() != src.as_str() { st.set_value(src, window, cx); }
-                        st.set_selected_range(a.min(n)..b.min(n), cx);
-                        st.focus(window, cx);
-                    });
+                    self.edit_lang = (r < 0 && row.b.kind == "code").then(|| code_lang(&row.b));
+                    self.edit_done = r < 0 && row.b.kind == "todo" && row.b.checked;
+                    self.edit_src = src;
+                    let (a, b) = (self.to_box(a), self.to_box(b));
+                    self.last_sel = (a, b);
+                    self.load_box(Some(a..b), window, cx);
+                    self.edit_in.update(cx, |st, cx| st.focus(window, cx));
                     if same {
                         // Still the same block: tell the model as a fresh focus would.
                         let k = self.key.clone();
                         cx.defer(move |cx| super::focused(&k, &id, r, c, cx));
                     }
                     self.editing = true;
+                }
+            }
+        }
+        // The block with the caret changed under it (another client's edit,
+        // the checkbox): the box takes its words and formatting again.
+        if let Some((id, r, c)) = self.edit.clone().filter(|e| e.1 > -2 && self.editing) {
+            if let Some(row) = p.blocks.iter().find(|x| x.b.id == id) {
+                let src = if r >= 0 { row.b.rows.get(r as usize).and_then(|x| x.get(c as usize)).cloned().unwrap_or_default() } else { row.b.text.clone() };
+                let done = r < 0 && row.b.kind == "todo" && row.b.checked;
+                if src != self.edit_src || done != self.edit_done {
+                    self.edit_src = src;
+                    self.edit_done = done;
+                    self.load_box(None, window, cx);
                 }
             }
         }
@@ -420,6 +465,35 @@ impl PlaceView {
             self.fmt_gen = fg;
             self.link_in.update(cx, |st, cx| { st.set_value(lv, window, cx); st.select_all(window, cx); st.focus(window, cx); });
         } else if mine && !link { self.fmt_gen = fg; }
+    }
+
+    /// For the driver: the block the box serves, its words, how many
+    /// formatted stretches it draws them with, the caret (box offsets).
+    pub(crate) fn edit_state(&self, cx: &App) -> serde_json::Value {
+        let st = self.edit_in.read(cx);
+        let r = st.selected_range();
+        serde_json::json!({ "id": self.edit.as_ref().map(|e| e.0.clone()).unwrap_or_default(), "on": self.editing, "text": st.value().to_string(),
+            "decos": st.decorations().len(), "bold": st.decorations().iter().filter(|d| d.style.font_weight.is_some()).count(), "colours": st.decorations().iter().filter(|d| d.style.color.is_some()).count(),
+            "a": r.start, "b": r.end })
+    }
+
+    /// A byte offset of the box's words as an offset of the block's source.
+    fn to_src(&self, at: usize) -> usize { if self.edit_lang.is_some() { at.min(self.edit_src.len()) } else { doc::box_to_src(&self.edit_src, at) } }
+    /// A source offset as an offset of the box's words.
+    fn to_box(&self, at: usize) -> usize { if self.edit_lang.is_some() { at.min(self.edit_src.len()) } else { doc::src_to_box(&self.edit_src, at) } }
+
+    /// The box takes edit_src's words and formatting; the selection given
+    /// (box offsets), or the one it had, kept inside the words.
+    fn load_box(&mut self, sel: Option<std::ops::Range<usize>>, window: &mut Window, cx: &mut Context<Self>) {
+        let text = if self.edit_lang.is_some() { self.edit_src.clone() } else { doc::src_plain(&self.edit_src) };
+        let decos = decorations(&self.edit_src, self.edit_lang.as_deref(), self.edit_done);
+        self.edit_in.update(cx, |st, cx| {
+            let sel = sel.unwrap_or_else(|| st.selected_range());
+            let n = text.len();
+            if st.value().as_ref() != text.as_str() { st.set_value(text, window, cx); }
+            st.set_decorations(decos, cx);
+            st.set_selected_range(sel.start.min(n)..sel.end.min(n), cx);
+        });
     }
 
     /// A key while one of this place's boxes has the caret: Some(handled).
@@ -442,12 +516,14 @@ impl PlaceView {
             let Some((id, r, c)) = self.edit.clone() else { return Some(false) };
             let (range, rev, text, caret_layout, ib) = { let s = self.edit_in.read(cx); (s.selected_range(), s.is_selection_reversed(), s.value().to_string(), s.cursor_layout(), s.input_bounds()) };
             let (a, cc) = if rev { (range.end, range.start) } else { (range.start, range.end) };
+            let (text, cc_box) = (text, cc);
+            let (a, cc) = (self.to_src(a), self.to_src(cc));
             if r >= 0 { return Some(super::cell_key(&k, &id, r, c, name, a as i32, cc as i32, cx)); }
             // On the first or last line (visually, from the caret's box; by
             // line breaks before the first layout).
             let (first, last) = match caret_layout {
                 Some((b, lh)) if ib.size.height > px(0.) => (b.top() < ib.top() + lh, b.bottom() > ib.bottom() - lh),
-                _ => (!text[..cc.min(text.len())].contains('\n'), !text[cc.min(text.len())..].contains('\n')),
+                _ => (!text[..cc_box.min(text.len())].contains('\n'), !text[cc_box.min(text.len())..].contains('\n')),
             };
             return Some(super::text_key(&k, &id, name, a as i32, cc as i32, first, last, cx));
         }
@@ -469,7 +545,8 @@ pub(crate) fn key(name: &str, window: &mut Window, cx: &mut App) -> bool {
 /// "ctrl-shift-a"…); "" for one the screen never takes.
 pub(crate) fn key_name(k: &Keystroke) -> String {
     let m = &k.modifiers;
-    if m.alt { return String::new(); }
+    // Alt only moves blocks (Alt+Up / Alt+Down).
+    if m.alt { return if !m.control && !m.platform && !m.shift && matches!(k.key.as_str(), "up" | "down") { format!("alt-{}", k.key) } else { String::new() }; }
     let ctrl = m.control || m.platform;
     let base = match k.key.as_str() {
         "enter" | "backspace" | "delete" | "up" | "down" | "tab" | "escape" => k.key.clone(),
@@ -641,7 +718,8 @@ impl PlaceView {
             col.child(this.block(p, i - 1, b, margin, k, window, cx)).into_any_element()
         })).size_full();
         let (kb, km, ku) = (key.clone(), key.clone(), key.clone());
-        let scroll = div().id(sid(format!("nt-page-{key}"))).size_full()
+        // Anything held near the page's top or bottom scrolls it (the web's wbAutoScroll).
+        let scroll = w::edge_scroll::<w::RefDrag>(div().id(sid(format!("nt-page-{key}"))), w::Scroller::List(self.page.clone()), false, true, cx.entity_id()).size_full()
             .on_mouse_move(move |e: &MouseMoveEvent, _, cx| if e.pressed_button == Some(MouseButton::Left) && !cx.has_active_drag() && super::store(cx).read(cx).press.is_some() { super::blk_over(&km, f32::from(e.position.y), cx); })
             .on_mouse_up(MouseButton::Left, move |_, _, cx| { let _ = &ku; super::store(cx).update(cx, |s, _| s.press = None); })
             // Blocks of this page in hand: where they would land; let go: they move.
@@ -745,6 +823,8 @@ impl PlaceView {
         };
         let _ = cx;
         body = body.child(div().flex_1().min_w_0().child(content));
+        // A nested list item: its marker under its parent's words.
+        if doc::listy(&b.kind) && b.level > 0 { body = body.pl((T::SP_20 + T::SP_2 + T::SP_6) * b.level as f32); }
         let (kbx, bbx) = (key.clone(), b.id.clone());
         div().id(sid(format!("nt-b-{key}-{ix}"))).group(group).relative().w_full().pt(top)
             .on_mouse_down(MouseButton::Left, move |e, _, cx| super::blk_press(&kp, &bp, e.modifiers.shift, cx))
@@ -771,8 +851,11 @@ impl PlaceView {
             if src.is_empty() && !ph.is_empty() {
                 d = d.child(div().absolute().left_0().top_0().text_size(fs).line_height(relative(T::LH_CHAT)).font_weight(weight).text_color(T::text_muted()).child(ph.to_string()));
             }
-            let t = w::textarea(&self.edit_in).appearance(false).text_size(fs).font_weight(weight).text_color(ink).line_height(relative(T::LH_CHAT));
-            return d.child(if mono { t.font_family(T::MONO) } else { t }).into_any_element();
+            // The box at its smallest size pads its words by 4 px each side and
+            // none above or below: pulled out by as much, the words stay
+            // exactly where they are drawn at rest.
+            let t = w::textarea(&self.edit_in).appearance(false).xsmall().w_full().text_size(fs).font_weight(weight).text_color(ink).line_height(relative(T::LH_CHAT));
+            return d.child(div().mx(-T::SP_4).child(if mono { t.font_family(T::MONO) } else { t })).into_any_element();
         }
         // The parse, once per source.
         let ck = format!("{id}-{r}-{c}");
@@ -836,9 +919,7 @@ impl PlaceView {
                 .on_click(move |_, _, cx| super::code_act(&k2, &b2, "wrap", 0., 0., cx)))
             .child(w::head_button(sid(format!("nt-copy-{key}-{}", b.id)), C::Icon(IconName::Copy), L::Rest, T::SP_24, T::SP_20 + T::SP_2, "Copy code")
                 .on_click(move |_, _, cx| super::code_act(&k3, &b3, "copy", 0., 0., cx)));
-        let hl = doc::hl_name(&doc::norm_lang(&b.lang));
-        let hl_lang = hl.rsplit('.').next().unwrap_or("").to_string();
-        let hl_lang = if hl == "Dockerfile" { "Dockerfile".to_string() } else { hl_lang };
+        let hl_lang = code_lang(b);
         let code = self.text_cell(key, &b.id, -1, -1, &b.text, "Code", T::TEXT_12 * k, T::W_REGULAR, T::text(), false, true, !b.wrap, Some(&hl_lang));
         div().relative().w_full().pt(T::SP_24 + T::SP_4).pb(T::SP_4)
             .child(div().id(sid(format!("nt-code-{key}-{}", b.id))).w_full().p(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1()
