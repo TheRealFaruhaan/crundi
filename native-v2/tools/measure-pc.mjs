@@ -34,6 +34,8 @@
 // the time limit), it stops the client by its PID and removes the config
 // folder (which holds the test server's refresh token); a dead client ends
 // the run at once instead of driving a port nobody answers (F16).
+//   PROFILE_AT=planning  the sampler runs in planning+stream+scroll instead
+//                        (after its numbers are taken)
 //   PROFILE=<gdb script> then a stack sampler on the UI thread while the
 //                        wheel sweeps (see native-v2/perf/README.md)
 //
@@ -224,7 +226,7 @@ try {
   r0 = (await state()).renders || {};
   m = fm.mark(); await scrollChat(8000); await sleep(300); stats('scroll-chat', m);
   s = await state(); report['scroll-chat'].renders = drew(r0, s);
-  if (process.env.PROFILE) {
+  if (process.env.PROFILE && process.env.PROFILE_AT !== 'planning') {
     // A stack sampler on the UI thread while the wheel sweeps (gdb; the
     // binary built with -C force-frame-pointers=yes; see perf/README.md).
     const g = spawn('gdb', ['-q', '-p', String(app.pid), '-batch', '-x', process.env.PROFILE], { env: { ...process.env, SAMPLE_OUT: join(OUT, 'samples.txt') }, stdio: ['ignore', 'ignore', 'inherit'] });
@@ -360,6 +362,17 @@ try {
     r0 = s.renders || {};
     m = fm.mark(); const n3 = await sweep(d, 8000); stats('planning+stream+scroll', m); report['planning+stream+scroll'].wheelEvents = n3;
     s = await state(); report['planning+stream+scroll'].renders = drew(r0, s);
+    // The panes the sweep really had (an open terminal comes back into the
+    // layout after measure-layout: the workspace's sync places it again).
+    report['planning+stream+scroll'].panes = s.panes;
+    if (process.env.PROFILE && process.env.PROFILE_AT === 'planning') {
+      // The sampler on the UI thread while this scenario's sweep goes on (the
+      // seven panes, the chat still streaming): where its time goes.
+      const g = spawn('gdb', ['-q', '-p', String(app.pid), '-batch', '-x', process.env.PROFILE], { env: { ...process.env, SAMPLE_OUT: join(OUT, 'samples.txt') }, stdio: ['ignore', 'ignore', 'inherit'] });
+      let gone = false; g.on('exit', () => { gone = true; });
+      const stop = Date.now() + 240000;
+      while (!gone && Date.now() < stop) await sweep(d, 2000);
+    }
     // The same, one region at a time (2 s each, while the chat still
     // streams): which pane's frames cost what.
     if (process.env.MEASURE_REGIONS !== '0') {

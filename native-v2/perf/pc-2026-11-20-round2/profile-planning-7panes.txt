@@ -1,0 +1,93 @@
+samples 400: busy 80, idle 320
+
+stage:
+    26 paint
+    19 render
+    19 other
+    16 layout
+
+owner x stage:
+    14 crundi_v2::main::  [other]
+    11 crundi_v2::main::  [layout]
+    10 crundi_v2::main::  [paint]
+     5 crundi_chat::log::LogView  [paint]
+     4 crundi_workbench::Workbench  [render]
+     4 crundi_shell::views::ProjectBar  [paint]
+     3 crundi_shell::views::Shell  [render]
+     3 crundi_v2::main::  [render]
+     3 crundi_planning::util::Layer  [layout]
+     2 crundi_chat::pane::Composer  [paint]
+     2 crundi_planning::mindmap::render::  [render]
+     2 crundi_planning::kanban::KStore  [other]
+     2 crundi_planning::kanban::card_el::CardEl  [paint]
+     1 crundi_planning::kanban::view::SRow  [render]
+     1 crundi_shell::views::TopBar  [paint]
+     1 crundi_chat::log::LogView  [render]
+     1 crundi_planning::mindmap::tree::Node  [other]
+     1 crundi_widgets::modal::ModalLayer  [paint]
+     1 crundi_planning::util::  [paint]
+     1 crundi_planning::kanban::board::Box4  [render]
+     1 crundi_planning::mindmap::load_from::  [other]
+     1 crundi_planning::mindmap::tree::Node  [render]
+     1 crundi_planning::kanban::load::  [other]
+     1 crundi_planning::mindmap::draw::Msg  [layout]
+     1 crundi_planning::kanban::view::add_task::  [render]
+
+leaf function:
+    30 ?
+     3 try_insert_with_key<slotmap::DefaultKey,
+     2 to_taffy
+     2 tcache_get_n
+     2 __GI___libc_free
+     2 atomic_load<usize,
+     1 replace<gpui::element::ElementDrawPhase<gpui::elements::div::DivFrameS
+     1 is_hovered
+     1 unlink_chunk
+     1 __memcpy_avx_unaligned_erms
+     1 clone
+     1 replace<std::collections::hash::map::HashMap<gpui::window::WindowId,
+     1 get
+     1 default
+     1 __rustc::__rust_dealloc
+
+functions on the stack (inclusive):
+    80 crundi_v2::main::
+    69 gpui::app::
+    51 gpui::app::async_context::AsyncApp
+    51 gpui::platform::RequestFrameOptions
+    50 gpui::view::ViewElement
+    50 gpui::window::
+    45 gpui::view::AnyView
+    43 gpui::elements::div::Div
+    43 gpui_component::window_border::WindowBorder
+    42 gpui::elements::div::Stateful
+    41 gpui::elements::div::
+    41 gpui::elements::div::InteractiveElementState
+    32 gpui::element::AnyElement
+    27 gpui::window::ElementId
+    24 gpui::app::entity_map::Entity
+    21 gpui::taffy::LayoutId
+    21 gpui::view::ViewElementState
+    14 gpui::window::FocusHandle
+    13 gpui::window::Hitbox
+    12 gpui::view::paint_view::
+    10 gpui::taffy::NodeContext
+     9 gpui::window::DispatchPhase
+     9 crundi_core::api::ApiError
+     9 crundi_shell::run::
+     8 gpui::elements::list::List
+     8 crundi_planning::util::Layer
+     6 gpui::interactive::MouseMoveEvent
+     6 crundi_planning::mindmap::load_from::
+     6 taffy::tree::taffy_tree::TaffyView
+     6 crundi_workbench::Workbench
+     5 gpui::geometry::ScaledPixels
+     5 crundi_planning::mindmap::M
+     4 crundi_planning::mindmap::render::
+     4 crundi_planning::util::in_window::
+     4 gpui::elements::list::LayoutItemsResponse
+     3 crundi_planning::kanban::KStore
+     3 crundi_planning::kanban::load::
+     3 crundi_shell::views::Shell
+     3 gpui::arena::ArenaBox
+     3 gpui::interactive::ScrollEvent
