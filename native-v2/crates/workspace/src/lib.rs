@@ -9,14 +9,16 @@
 //!   vt.rs        their terminal emulator (native-gpui's, unchanged)
 //!   git.rs       3.3 Git: status, staging, discard, commit, pull, push
 //!   diff.rs      the line diff, its chunks and patches (native-gpui's, unchanged)
-//!   diffview.rs  the diff window with staging per chunk
+//!   diffview.rs  the diff (a file window) with staging per chunk
+//!   frames.rs    pages shown live (a PDF, a video, audio): the Desktop area's browser hook
 //!   files.rs     3.4 Files: browse, search, the row menu, upload, download
-//!   wins.rs      the floating file windows: the editor and the picture viewer
+//!   wins.rs      the floating file windows: the editor, the viewer, the diff; the Arrange bar
 //!   media.rs     3.5 Media: the library, its cards and the lightbox
 
 pub mod diff;
 pub mod diffview;
 pub mod files;
+pub mod frames;
 pub mod git;
 pub mod media;
 pub mod terms;
@@ -25,6 +27,7 @@ pub mod wins;
 
 use crundi_core::live::Event;
 use crundi_shell::Area;
+use crundi_theme::IconName;
 use crundi_widgets as w;
 use crundi_workbench::{self as wb, HeadInfo, PaneHead, PaneKind, PaneParts};
 use gpui::*;
@@ -101,6 +104,15 @@ fn panel_kind(prefix: &'static str, title: &'static str, make: fn(&mut Window, &
     }
 }
 
+/// A panel's Refresh (refreshWbCell): its list again.
+fn refresh(prefix: &str, cx: &mut App) {
+    match prefix {
+        "panel:git" => if let Some(g) = git::view(cx) { g.update(cx, |g, cx| g.load(cx)); },
+        "panel:files" => if let Some(f) = files::view(cx) { f.update(cx, |f, cx| f.load(None, cx)); },
+        _ => if let Some(m) = media::view(cx) { m.update(cx, |m, cx| m.load(cx)); },
+    }
+}
+
 fn git_view(window: &mut Window, cx: &mut App) -> AnyView { git::ensure(window, cx).into() }
 fn files_view(window: &mut Window, cx: &mut App) -> AnyView { files::ensure(window, cx).into() }
 fn media_view(window: &mut Window, cx: &mut App) -> AnyView { media::ensure(window, cx).into() }
@@ -124,9 +136,16 @@ fn chip(kind: &str, cx: &mut App) {
 
 pub fn init(cx: &mut App) {
     wins::init(cx);
+    media::init(cx);
     wb::register_kind(cx, panel_kind("panel:git", "Git", git_view));
     wb::register_kind(cx, panel_kind("panel:files", "Files", files_view));
     wb::register_kind(cx, panel_kind("panel:media", "Media", media_view));
+    // The panels' heads as the web's headHtmlPanel: the kind's icon, Refresh.
+    for (prefix, icon) in [("panel:git", IconName::GitBranch), ("panel:files", IconName::Folder), ("panel:media", IconName::Images)] {
+        wb::register_head(cx, prefix, wb::KindHead::new().icon(icon)
+            .button(wb::HeadButton::icon("refresh", IconName::RefreshCw, "Refresh"))
+            .on_action(move |_, action, _, cx| if action == "refresh" { refresh(prefix, cx); }));
+    }
     // The Claude terminal panes (3.2): a chat's head (dot, A- ↺ A+, the
     // two-click ×), the screen and its input bar.
     wb::register_kind(cx, PaneKind {
@@ -198,7 +217,9 @@ fn test_ui(stores: &crundi_shell::Stores, name: &str, a: &[String], window: &mut
             return ok;
         }
         "open-path" => { files::open_path("", &s(0), cx); return ok; }
-        "lb-close" => { if media::view(cx).is_some_and(|m| m.read(cx).lb.is_some()) { w::close_dialog(window, cx); } return ok; }
+        "lb-close" => { if let Some(m) = media::view(cx) { m.update(cx, |m, cx| if m.lb.is_some() { m.close_lightbox(cx) }); } return ok; }
+        // A panel's Refresh in its pane head (git, files, media).
+        "panel-refresh" => { refresh(&format!("panel:{}", s(0)), cx); return ok; }
         _ => {}
     }
     if name.starts_with("term-") { return terms::act(name, a, window, cx); }
@@ -231,6 +252,10 @@ fn test_ui(stores: &crundi_shell::Stores, name: &str, a: &[String], window: &mut
             "paste" => f.paste_here(cx),
             "upload" => f.upload(cx),
             "download" => files::download(&s(0), cx),
+            "source" => wins::open_source(&crundi_shell::project(cx), &s(0), cx),
+            // A row dropped on a folder (from, to, the folder's name): the Move / Copy menu.
+            "drop-on" => f.drop_on_folder(&s(0), &s(1), &s(2), point(px(200.), px(200.)), cx),
+            "escape" => { f.search_escape(window, cx); }
             _ => {}
         });
         return ok;
@@ -257,15 +282,18 @@ fn test_ui(stores: &crundi_shell::Stores, name: &str, a: &[String], window: &mut
     match name {
         "diff-step" => { let d: i32 = s(1).parse().unwrap_or(0); diffview::find(cx, id)?.update(cx, |w, cx| w.step(d, cx)); }
         "diff-stage" => { let c: usize = s(1).parse().unwrap_or(0); diffview::find(cx, id)?.update(cx, |w, cx| w.stage(c, cx)); }
-        "win-close" => {
-            if diffview::find(cx, id).is_some() { w::close_dialog(window, cx); }
-            else { let l = wins::layer(cx)?; if !l.read(cx).has(id) { return None; } l.update(cx, |l, cx| l.close(id, cx)); }
-        }
+        "win-close" => { let l = wins::layer(cx)?; if !l.read(cx).has(id) { return None; } l.update(cx, |l, cx| l.close(id, cx)); }
         "win-edit" => { let t = s(1); wins::layer(cx)?.update(cx, |l, cx| l.set_text(id, &t, window, cx)); }
         "win-save" => { let t = s(1); wins::layer(cx)?.update(cx, |l, cx| { if !t.is_empty() { l.set_text(id, &t, window, cx); } l.save(id, cx) }); }
         "win-expand" => { wins::layer(cx)?.update(cx, |l, cx| l.expand(id, cx)); }
         "win-front" => { wins::layer(cx)?.update(cx, |l, cx| l.front(id, cx)); }
         "win-arrange" => { let m = s(0); wins::layer(cx)?.update(cx, |l, cx| l.arrange(&m, cx)); }
+        // A resize by a handle (e, s or c): from (x0, y0) to (x1, y1).
+        "win-resize" => {
+            let n = |i: usize| s(i).parse::<f32>().unwrap_or(0.);
+            let d = s(1).chars().next().unwrap_or('c');
+            wins::layer(cx)?.update(cx, |l, cx| { l.size(id, d, 0, n(2), n(3), cx); l.size(id, d, 1, n(4), n(5), cx); l.size(id, d, 2, n(4), n(5), cx); });
+        }
         // A drag by the title bar: from (x0, y0) to (x1, y1), dropped there.
         "win-drag" => {
             let n = |i: usize| s(i).parse::<f32>().unwrap_or(0.);

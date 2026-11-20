@@ -93,22 +93,47 @@ impl TermState {
         cx.notify();
     }
 
-    /// A key typed into the terminal: its bytes (xterm's), Shift+Enter a new
-    /// line (ESC CR, as the web's default), Ctrl+V a paste. True: taken.
+    /// A key typed into the terminal: its bytes (xterm's); the newline key
+    /// (Settings › Terminal: Shift+Enter, the default, or Ctrl+Enter) a new
+    /// line (ESC CR, as the web's); Ctrl+V a paste. True: taken.
     pub fn key(&mut self, text: &str, ctrl: bool, alt: bool, shift: bool, cx: &mut Context<Self>) -> bool {
         if ctrl && (text == "v" || text == "V") { self.paste(cx); return true; }
-        let bytes = if shift && (text == "\n" || text == "\r") { Some("\x1b\r".to_string()) } else { vt::key_bytes(text, ctrl, alt, shift, self.term.app_cursor) };
+        let enter = text == "\n" || text == "\r";
+        let newline = enter && !alt && (ctrl || shift) && { let c = newline_ctrl(); if c { ctrl && !shift } else { shift && !ctrl } };
+        let bytes = if newline { Some("\x1b\r".to_string()) } else { vt::key_bytes(text, ctrl, alt, shift, self.term.app_cursor) };
         let Some(b) = bytes else { return false };
         send(cx, &self.id, &b);
         self.bottom(cx);
         true
     }
 
-    /// The clipboard's text into the terminal (bracketed when it asks).
+    /// Ctrl+V: a picture on the clipboard is saved in the project
+    /// (/api/clipboard/paste-image) and its path typed in, "Screenshot
+    /// saved: <name>"; else the clipboard's text (bracketed when it asks).
     pub fn paste(&mut self, cx: &mut Context<Self>) {
-        let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()).filter(|t| !t.is_empty()) else { return };
+        let item = cx.read_from_clipboard();
+        if let Some(img) = item.as_ref().and_then(clip_image) { return self.paste_image(img, cx); }
+        let Some(text) = item.and_then(|c| c.text()).filter(|t| !t.is_empty()) else { return };
         let d = if self.term.bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text };
         send(cx, &self.id, &d);
+    }
+
+    /// A picture's bytes to /api/clipboard/paste-image (in the open
+    /// project); the path it was saved at goes to the terminal.
+    pub fn paste_image(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        let project = crundi_shell::project(cx);
+        if project.is_empty() { return; }
+        use base64::Engine;
+        let body = json!({ "project": project, "data": base64::engine::general_purpose::STANDARD.encode(&bytes) });
+        let id = self.id.clone();
+        crundi_shell::call(cx, move |api| api.post("/api/clipboard/paste-image", &body), move |r, cx| {
+            let Ok(d) = r else { return };
+            let path = d.get("path").and_then(|p| p.as_str()).unwrap_or("").to_string();
+            if d.get("ok").and_then(|o| o.as_bool()) != Some(true) || path.is_empty() { return; }
+            send(cx, &id, &path);
+            let name = d.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+            crate::toast(cx, format!("Screenshot saved: {name}"), w::Toast::Info);
+        });
     }
 
     /// A selection (cells on the lines in view): copied to the clipboard (as xterm.js does).
@@ -350,6 +375,33 @@ pub fn tool_bytes(name: &str) -> Option<&'static str> {
         "Enter" => "\r", "Space" => " ",
         _ => return None,
     })
+}
+
+/// Which key makes a new line in a terminal (Settings › Terminal, kept on
+/// this device by Operations' Settings in ops-settings.json: "ctrl" or the
+/// default Shift). Read when Enter comes with Ctrl or Shift, so a change
+/// applies to the terminals already open (the web reads it live).
+pub fn newline_ctrl() -> bool {
+    let f = crundi_core::store::config_dir().join("ops-settings.json");
+    std::fs::read(f).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| v.get("newline").and_then(|n| n.as_str()).map(|n| n == "ctrl")).unwrap_or(false)
+}
+
+/// A picture on the clipboard, as bytes.
+pub fn clip_image(item: &ClipboardItem) -> Option<Vec<u8>> {
+    item.entries().iter().find_map(|e| if let ClipboardEntry::Image(img) = e { Some(img.bytes.clone()) } else { None })
+}
+
+/// Text put in the box where the caret is (insertIntoTermInput): a space
+/// before it unless one is there, and one after.
+pub fn insert_at(text: &str, at: usize, ins: &str) -> (String, usize) {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) { at -= 1; }
+    let (before, after) = text.split_at(at);
+    let lead = if !before.is_empty() && !before.ends_with(char::is_whitespace) { " " } else { "" };
+    let trail = if after.is_empty() || !after.starts_with(char::is_whitespace) { " " } else { "" };
+    let piece = format!("{lead}{ins}{trail}");
+    (format!("{before}{piece}{after}"), at + piece.len())
 }
 
 /// A path put in the text box (insertIntoTermInput, at its end): a space
@@ -659,105 +711,152 @@ impl TermInput {
     pub fn tools_open(&self) -> bool { self.tools }
     pub fn uploading(&self) -> bool { self.up.on }
 
-    /// Put a dragged reference into the input, spaced from what is there.
-    fn insert_ref(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+    /// Text into the box (insertIntoTermInput): at the caret when the box
+    /// has the keys, else at its end; spaced from what is there; the box
+    /// takes the keys.
+    pub fn insert(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let focused = self.input.focus_handle(cx).is_focused(window);
         let old = self.text(cx);
-        let new = if old.is_empty() || old.ends_with(' ') { format!("{old}{text} ") } else { format!("{old} {text} ") };
-        self.set_text(&new, window, cx);
-        self.input.update(cx, |st, cx| st.focus(window, cx));
+        let at = if focused { self.input.read(cx).selected_range().start } else { old.len() };
+        let (new, caret) = insert_at(&old, at, text);
+        self.input.update(cx, |st, cx| { st.set_value(new, window, cx); st.set_selected_range(caret..caret, cx); st.focus(window, cx); });
+        cx.notify();
     }
 
-    /// Attach: the system's picker, the file to /api/attachments/upload in
-    /// the project (the strip shows its progress), its path into the box.
+    /// Attach: the system's picker, then the file uploads.
     pub fn attach(&mut self, cx: &mut Context<Self>) {
         if self.up.busy { return; }
-        let project = crundi_shell::project(cx);
-        if project.is_empty() { return; }
+        if crundi_shell::project(cx).is_empty() { return; }
         let me = cx.entity().downgrade();
         crundi_shell::run(cx, || crundi_core::driver::take_pick().or_else(|| rfd::FileDialog::new().pick_file()), move |p, cx| {
             let Some(path) = p else { return };
-            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
-            let bytes = match std::fs::read(&path) { Ok(b) => b, Err(e) => return crate::toast(cx, format!("Upload failed: {e}"), w::Toast::Error) };
-            let Some(api) = crundi_shell::api(cx) else { return };
-            let _ = me.update(cx, |t, cx| { t.up = Up { on: true, busy: true, name: name.clone(), label: "0%".into(), frac: 0.0, hide_gen: t.up.hide_gen + 1 }; cx.notify(); });
-            // The strip follows the body going out (10 times a second, only while it goes).
-            let prog = Arc::new(Mutex::new((0u64, 0u64, false)));
-            {
-                let (prog, me) = (prog.clone(), me.clone());
-                cx.spawn(async move |cx: &mut AsyncApp| loop {
-                    cx.background_executor().timer(Duration::from_millis(100)).await;
-                    let (sent, total, done) = *prog.lock().unwrap();
-                    if done { break; }
-                    let _ = me.update(cx, |t, cx| {
-                        let label = rules::progress_label(sent, total);
-                        if label != t.up.label { t.up.label = label; t.up.frac = if total == 0 { 0.0 } else { sent as f32 / total as f32 }; cx.notify(); }
-                    });
-                }).detach();
-            }
-            let n2 = name.clone();
-            crundi_shell::run(cx, move || {
-                use base64::Engine;
-                let body = serde_json::to_vec(&json!({ "project": project, "name": n2, "data": base64::engine::general_purpose::STANDARD.encode(&bytes) })).unwrap_or_default();
-                let p2 = prog.clone();
-                let r = api.post_with_progress("/api/attachments/upload", &body, &move |sent: u64, total: u64| { let mut g = p2.lock().unwrap(); g.0 = sent; g.1 = total; });
-                prog.lock().unwrap().2 = true;
-                r
-            }, move |r, cx| {
-                let answer = match r {
-                    Err(crundi_core::api::ApiError::SignedOut) => { let s = crundi_shell::stores(cx); s.session.update(cx, |s, cx| s.sign_out("Your sign-in ended. Sign in again.", cx)); return; }
-                    Err(_) => rules::upload_answer(0, "", &name),
-                    Ok((status, body)) => rules::upload_answer(status, &body, &name),
-                };
-                let path = answer.as_ref().ok().map(|(p, _)| p.clone());
-                let g = me.update(cx, |t, cx| { t.up.busy = false; cx.notify(); t.up.hide_gen }).ok();
-                if let Some(p) = path {
-                    let me = me.clone();
-                    crate::with_window(cx, move |window, cx| { let _ = me.update(cx, |t, cx| { let old = t.text(cx); t.set_text(&with_path(&old, &p), window, cx); }); });
-                }
-                match answer { Ok((_, n)) => crate::toast(cx, format!("Attached: {n}"), w::Toast::Success), Err(e) => crate::toast(cx, e, w::Toast::Error) }
-                // The strip stays a moment, then goes.
-                if let Some(g) = g {
-                    let me = me.clone();
-                    cx.spawn(async move |cx: &mut AsyncApp| {
-                        cx.background_executor().timer(Duration::from_millis(350)).await;
-                        let _ = me.update(cx, |t, cx| if t.up.hide_gen == g && !t.up.busy { t.up.on = false; cx.notify(); });
-                    }).detach();
-                }
-            });
+            let _ = me.update(cx, |t, cx| t.upload_path(&path, cx));
         });
     }
 
-    /// The key tools (.term-tool-panel): Esc / Tab / Shift+Tab; the Ctrl
-    /// keys and Space; Home End and the arrows round Enter.
+    /// A file from this machine, uploaded.
+    pub fn upload_path(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
+        match std::fs::read(path) { Ok(b) => self.upload(name, b, cx), Err(e) => crate::toast(cx, format!("Upload failed: {e}"), w::Toast::Error) }
+    }
+
+    /// Files dropped on the terminal (the web's .terminal-wrap drop): on the
+    /// machine Crundi runs on, their own paths go into the box ("File added",
+    /// "N files added"); otherwise each uploads. `upload_anyway`: as from
+    /// another machine (the driver's).
+    pub fn drop_files(&mut self, paths: Vec<std::path::PathBuf>, upload_anyway: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if paths.is_empty() || crundi_shell::project(cx).is_empty() { return; }
+        let local = crundi_shell::api(cx).is_some_and(|a| rules::is_local(a.base()));
+        if local && !upload_anyway {
+            let joined = paths.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ");
+            self.insert(&joined, window, cx);
+            crate::toast(cx, rules::added_toast(paths.len()), w::Toast::Info);
+        } else {
+            for p in paths { self.upload_path(&p, cx); }
+        }
+    }
+
+    /// The box's paste: a picture uploads (uploadAttachment, as image.png); a
+    /// copied file's path goes in; anything else is the ordinary paste.
+    fn paste_handler(cx: &mut Context<Self>) -> impl Fn(&ClipboardItem, &mut Window, &mut App) -> bool + 'static {
+        let me = cx.entity().downgrade();
+        move |item, window, cx| {
+            let Some(t) = me.upgrade() else { return false };
+            if crundi_shell::project(cx).is_empty() { return false; }
+            if let Some(img) = clip_image(item) { t.update(cx, |t, cx| t.upload("image.png".into(), img, cx)); return true; }
+            if item.text().is_none_or(|x| x.is_empty()) {
+                let paths: Vec<String> = item.entries().iter().filter_map(|e| if let ClipboardEntry::ExternalPaths(p) = e { Some(p.paths().iter().map(|x| x.to_string_lossy().to_string()).collect::<Vec<_>>()) } else { None }).flatten().collect();
+                if !paths.is_empty() { t.update(cx, |t, cx| t.insert(&paths.join(" "), window, cx)); return true; }
+            }
+            false
+        }
+    }
+
+    /// An upload to /api/attachments/upload in the project (the strip shows
+    /// its progress), its path into the box, "Attached: <name>".
+    pub fn upload(&mut self, name: String, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        let project = crundi_shell::project(cx);
+        if project.is_empty() { return; }
+        let me = cx.entity().downgrade();
+        let Some(api) = crundi_shell::api(cx) else { return };
+        self.up = Up { on: true, busy: true, name: name.clone(), label: "0%".into(), frac: 0.0, hide_gen: self.up.hide_gen + 1 };
+        cx.notify();
+        // The strip follows the body going out (10 times a second, only while it goes).
+        let prog = Arc::new(Mutex::new((0u64, 0u64, false)));
+        {
+            let (prog, me) = (prog.clone(), me.clone());
+            cx.spawn(async move |_, cx: &mut AsyncApp| loop {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+                let (sent, total, done) = *prog.lock().unwrap();
+                if done { break; }
+                let _ = me.update(cx, |t, cx| {
+                    let label = rules::progress_label(sent, total);
+                    if label != t.up.label { t.up.label = label; t.up.frac = if total == 0 { 0.0 } else { sent as f32 / total as f32 }; cx.notify(); }
+                });
+            }).detach();
+        }
+        let n2 = name.clone();
+        crundi_shell::run(cx, move || {
+            use base64::Engine;
+            let body = serde_json::to_vec(&json!({ "project": project, "name": n2, "data": base64::engine::general_purpose::STANDARD.encode(&bytes) })).unwrap_or_default();
+            let p2 = prog.clone();
+            let r = api.post_with_progress("/api/attachments/upload", &body, &move |sent: u64, total: u64| { let mut g = p2.lock().unwrap(); g.0 = sent; g.1 = total; });
+            prog.lock().unwrap().2 = true;
+            r
+        }, move |r, cx| {
+            let answer = match r {
+                Err(crundi_core::api::ApiError::SignedOut) => { let s = crundi_shell::stores(cx); s.session.update(cx, |s, cx| s.sign_out("Your sign-in ended. Sign in again.", cx)); return; }
+                Err(_) => rules::upload_answer(0, "", &name),
+                Ok((status, body)) => rules::upload_answer(status, &body, &name),
+            };
+            let path = answer.as_ref().ok().map(|(p, _)| p.clone());
+            let g = me.update(cx, |t, cx| { t.up.busy = false; cx.notify(); t.up.hide_gen }).ok();
+            if let Some(p) = path {
+                let me = me.clone();
+                crate::with_window(cx, move |window, cx| { let _ = me.update(cx, |t, cx| t.insert(&p, window, cx)); });
+            }
+            match answer { Ok((_, n)) => crate::toast(cx, format!("Attached: {n}"), w::Toast::Info), Err(e) => crate::toast(cx, e, w::Toast::Error) }
+            // The strip stays a moment, then goes.
+            if let Some(g) = g {
+                let me = me.clone();
+                cx.spawn(async move |cx: &mut AsyncApp| {
+                    cx.background_executor().timer(Duration::from_millis(350)).await;
+                    let _ = me.update(cx, |t, cx| if t.up.hide_gen == g && !t.up.busy { t.up.on = false; cx.notify(); });
+                }).detach();
+            }
+        });
+    }
+
+    /// The key tools (.term-tool-panel): Esc / Tab / ⇧Tab in a column;
+    /// the Ctrl keys two a row and Space across both; Home and End over the
+    /// arrows round Enter, at the right. Narrow, the groups wrap.
     fn tools_view(&self, cx: &mut Context<Self>) -> Div {
         let id = self.id.clone();
         let st = self.state.clone();
-        let kb = |k: &'static str, label: &'static str| -> AnyElement {
-            let st = st.clone();
-            w::button(SharedString::from(format!("tk-{k}-{id}")), label).on_click(move |_, _, cx| st.update(cx, |t, cx| t.tool(k, cx))).into_any_element()
-        };
-        let ki = |k: &'static str, icon: IconName, tip: &'static str| -> AnyElement {
-            let st = st.clone();
-            w::icon_button(SharedString::from(format!("tk-{k}-{id}")), icon, tip).on_click(move |_, _, cx| st.update(cx, |t, cx| t.tool(k, cx))).into_any_element()
-        };
         let _ = cx;
+        let key = |k: &'static str, label: &'static str, tip: &'static str| -> Stateful<Div> {
+            let st = st.clone();
+            let b = w::button(SharedString::from(format!("tk-{k}-{id}")), label).w_full().on_click(move |_, _, cx| st.update(cx, |t, cx| t.tool(k, cx)));
+            let b = if tip.is_empty() { b } else { b.tooltip(tip) };
+            div().id(SharedString::from(format!("tkc-{k}-{id}"))).min_w(T::WS_TERM_TOOL_W).child(b)
+        };
+        let kb = |k: &'static str, label: &'static str| key(k, label, "");
         let col = || div().flex().flex_col().gap(T::SP_4);
-        let row = || div().flex().items_center().justify_center().gap(T::SP_4);
-        div().mx(T::SP_8).my(T::SP_4).p(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg_secondary())
-            // Narrow, the d-pad wraps under the rest.
-            .flex().flex_wrap().gap(T::SP_16)
-            .child(col().child(kb("Escape", "Esc")).child(kb("Tab", "Tab")).child(kb("shift+tab", "Shift+Tab")))
+        let row = || div().flex().gap(T::SP_4);
+        let cell = || div().flex_none().w(T::WS_TERM_NAV_W);
+        div().mx(T::SP_8).my(T::SP_4).p(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg_secondary()).shadow_lg()
+            .flex().flex_wrap().items_start().justify_between().gap(T::SP_16)
+            .child(col().child(kb("Escape", "Esc")).child(kb("Tab", "Tab")).child(key("shift+tab", "⇧Tab", "Shift+Tab")))
             .child(col()
                 .child(row().child(kb("ctrl+c", "Ctrl+C")).child(kb("ctrl+z", "Ctrl+Z")))
                 .child(row().child(kb("ctrl+a", "Ctrl+A")).child(kb("ctrl+e", "Ctrl+E")))
                 .child(row().child(kb("ctrl+d", "Ctrl+D")).child(kb("ctrl+l", "Ctrl+L")))
                 .child(kb("Space", "Space")))
-            .child(div().flex_1())
-            .child(col()
-                .child(row().child(kb("Home", "Home")).child(kb("End", "End")))
-                .child(row().child(ki("ArrowUp", IconName::ArrowUp, "Up")))
-                .child(row().child(ki("ArrowLeft", IconName::ArrowLeft, "Left")).child(kb("Enter", "Enter")).child(ki("ArrowRight", IconName::ArrowRight, "Right")))
-                .child(row().child(ki("ArrowDown", IconName::ArrowDown, "Down"))))
+            .child(col().ml_auto()
+                .child(row().child(div().flex_none().w(T::WS_TERM_NAV_W * 2. + T::SP_4).child(kb("Home", "Home"))).child(cell().child(kb("End", "End"))))
+                .child(row().child(cell()).child(cell().child(kb("ArrowUp", "▲"))).child(cell()))
+                .child(row().child(cell().child(kb("ArrowLeft", "◀"))).child(cell().child(kb("Enter", "Enter"))).child(cell().child(kb("ArrowRight", "▶"))))
+                .child(row().child(cell()).child(cell().child(kb("ArrowDown", "▼"))).child(cell())))
     }
 
     fn upload_strip(&self) -> Option<Div> {
@@ -790,15 +889,23 @@ impl Render for TermInput {
             .child(div().flex().items_end().gap(T::SP_6)
                 .child(w::layer(w::square_button(SharedString::from(format!("term-tools-{id}")), IconName::Settings, "Keyboard tools", if self.tools { w::SquareLook::On } else { w::SquareLook::Plain }, T::CONTROL, T::ICON_LG)
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_tools(cx)))))
-                .child(div().flex_1().min_w_0().max_h(T::WS_TERM_INPUT_MAX).child({ let f = self.input.focus_handle(cx); w::text_box(&f, w::message_box(&self.input, fs), window, cx) }))
+                .child(div().flex_1().min_w_0().max_h(T::WS_TERM_INPUT_MAX).child({
+                    // The box in a paint layer only while it does not have the keys. Focused
+                    // from code (a drop, an upload), it is drawn as itself at once: in its
+                    // layer GPUI never sees it focused, and its blur (which stops the caret's
+                    // blink) would never come.
+                    let f = self.input.focus_handle(cx);
+                    let el = w::message_box(&self.input, fs).on_paste(Self::paste_handler(cx));
+                    if f.is_focused(window) { el.into_any_element() } else { w::text_box(&f, el, window, cx) }
+                }))
                 .child(w::layer(w::square_button(SharedString::from(format!("term-attach-{id}")), IconName::Paperclip, "Attach a file (uploads to crundi_attachments)", if self.up.busy { w::SquareLook::Busy } else { w::SquareLook::Plain }, T::CONTROL, T::ICON_LG)
                     .when(!self.up.busy, |d| d.on_click(cx.listener(|this, _, _, cx| this.attach(cx))))))
                 .child(w::layer(w::send_button(SharedString::from(format!("term-send-{id}")), "Send", 1.0).tooltip("Send to terminal")
                     .on_click(cx.listener(|this, _, window, cx| { let t = this.text(cx); this.send(&t, window, cx); })))));
         let me = cx.entity().downgrade();
-        // A dragged reference (a Files row): into this terminal's input.
+        // A dragged reference: into this terminal's input (insertIntoTermInput).
         w::ref_target(div().id(SharedString::from(format!("term-drop-{id}"))), move |text, window, cx| {
-            let _ = me.update(cx, |t, cx| t.insert_ref(text, window, cx));
+            let _ = me.update(cx, |t, cx| t.insert(text, window, cx));
         })
             .relative().w_full().flex().flex_col().bg(T::bg())
             .when(self.tools, |d| d.child(self.tools_view(cx)))
@@ -834,9 +941,14 @@ impl TermParts {
                 let data = if r.contains('\n') { format!("\x1b[200~{r}\x1b[201~") } else { format!("{r} ") };
                 send(cx, &id, &data);
                 focus.focus(window, cx);
+                crate::toast(cx, "Sent to terminal".into(), w::Toast::Info);
             }
         });
-        div().flex().flex_col().size_full().min_h_0().bg(T::bg())
+        // Files from the system dropped anywhere on the terminal: into its box.
+        let input = self.input.clone();
+        div().id(SharedString::from(format!("term-files-{id}"))).flex().flex_col().size_full().min_h_0().bg(T::bg())
+            .drag_over::<ExternalPaths>(|s, _, _, _| s.border_2().border_color(T::accent()))
+            .on_drop(move |p: &ExternalPaths, window, cx| { let v = p.paths().to_vec(); input.update(cx, |t, cx| t.drop_files(v, false, window, cx)); cx.stop_propagation(); })
             .child(screen.relative().w_full().flex_1().min_h_0().overflow_hidden()
                 .child(self.screen.clone().cached(StyleRefinement::default().size_full()))
                 .child(self.cursor.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full())))
@@ -1006,6 +1118,18 @@ pub fn act(name: &str, a: &[String], window: &mut Window, cx: &mut App) -> Optio
         "term-attach" => input.update(cx, |x, cx| x.attach(cx)),
         "term-bottom" => st.update(cx, |x, cx| x.bottom(cx)),
         "term-paste" => st.update(cx, |x, cx| x.paste(cx)),
+        // A picture pasted on the screen (Ctrl+V) or in the box, from a file.
+        "term-paste-image" | "term-input-paste-image" => {
+            let b = match std::fs::read(s(1)) { Ok(b) => b, Err(e) => return Some(json!({ "ok": false, "error": e.to_string() })) };
+            if name == "term-paste-image" { st.update(cx, |x, cx| x.paste_image(b, cx)); } else { input.update(cx, |x, cx| x.upload("image.png".into(), b, cx)); }
+        }
+        // Files from the system dropped on the terminal ("upload" first: as from another machine).
+        "term-drop-files" => {
+            let v: Vec<String> = a.iter().skip(1).filter(|x| !x.is_empty()).cloned().collect();
+            let force = v.first().is_some_and(|x| x == "upload");
+            let paths: Vec<std::path::PathBuf> = v.into_iter().filter(|x| x != "upload").map(Into::into).collect();
+            input.update(cx, |x, cx| x.drop_files(paths, force, window, cx));
+        }
         // The pane's × (twice): the server closes the terminal, the pane goes.
         "term-close" => {
             let key = s(0);
@@ -1019,6 +1143,8 @@ pub fn act(name: &str, a: &[String], window: &mut Window, cx: &mut App) -> Optio
             crundi_shell::call(cx, move |api| api.post(&format!("/api/terminals/{id}/rename"), &json!({ "title": title })), |r, cx| if let Err(e) = r { crate::toast(cx, e, w::Toast::Error) });
         }
         "term-focus" => { let f = p.screen.read(cx).focus.clone(); f.focus(window, cx); }
+        // The keys taken away from the terminal and its box (a click elsewhere).
+        "term-blur" => window.blur(cx),
         "term-select" => st.update(cx, |x, cx| x.select(n(1).max(0) as usize, n(2).max(0) as usize, n(3).max(0) as usize, n(4).max(0) as usize, cx)),
         "term-scroll" => { let l = n(1) as i32; st.update(cx, |x, cx| x.scroll(l, cx)); }
         "term-zoom" => { let d = n(1) as i32; st.update(cx, |x, cx| x.set_zoom(d, cx)); }
@@ -1039,6 +1165,7 @@ pub fn props(cx: &App) -> Value {
         v["text"] = json!(i.text(cx));
         v["tools"] = json!(i.tools_open());
         v["upload"] = json!(i.uploading());
+        v["inputH"] = json!(f32::from(i.height));
         // The rows the screen derived and shaped so far (a batch: the lines it wrote).
         v["derived"] = json!(p.screen.read(cx).cache.derived);
         v["screenUs"] = json!(SCREEN_US.load(std::sync::atomic::Ordering::Relaxed));

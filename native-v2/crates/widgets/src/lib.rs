@@ -78,6 +78,7 @@ pub mod liquid_mic; pub use liquid_mic::{liquid_mic, radial_glow, Liquid, MicLoo
 pub mod label_icon_button; pub use label_icon_button::{label_icon_button, Look};
 pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip};
 pub mod launch_button; pub use launch_button::{launch_button, LaunchLook};
+pub mod pill_button; pub use pill_button::{pill_button, scrim_button, tone_outline};
 pub mod status_pill; pub use status_pill::{status_pill, PillTone};
 pub mod topbar_act; pub use topbar_act::topbar_act;
 pub mod code_input; pub use code_input::{code_input, digits_state};
@@ -107,6 +108,11 @@ pub fn primary_icon(id: impl Into<ElementId>, icon: IconName, label: impl Into<S
 /// The accent button (+ Register service, Schedule…).
 pub fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
     sized(Button::new(id).primary(), Some(label.into()), None, false, Ctl::Normal)
+}
+
+/// The green button (the web's `.fe-header button.save`: a file window's Save).
+pub fn success(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Button {
+    sized(Button::new(id).success(), Some(label.into()), None, false, Ctl::Normal)
 }
 
 /// A destructive button (Delete, Remove, Stop, Kill…): quiet at rest, a
