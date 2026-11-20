@@ -125,7 +125,7 @@ impl Render for SignIn {
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, _| this.press.0 = None))
             .child(w::icon_button("win-min", IconName::Minus, "Minimize").on_click(|_, window, _| window.minimize_window()))
             .child(w::icon_button("win-max", IconName::Square, "Maximize").on_click(|_, window, _| window.zoom_window()))
-            .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit()));
+            .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, window, cx| crate::close_window(window, cx)));
         let page = div().flex().flex_col().size_full().bg(T::bg()).child(bar);
 
         // The start-up screen (#boot).

@@ -11,7 +11,8 @@ until it does).
 
 ```
 tools/build.sh                                          # the client: $HOME/.cache/crundi-native-target/debug/crundi-v2
-tools/build.sh test --workspace --exclude crundi-browser-host   # unit tests (headless)
+tools/build.sh test --workspace                         # unit tests (headless; the browser host's
+                                                        # need CEF: add --exclude crundi-browser-host without it)
 tools/check.sh                                          # no window refresh anywhere (CI runs it)
 node tools/frames.mjs <stderr log>                      # a ZED_MEASUREMENTS=1 log summed up
 ```

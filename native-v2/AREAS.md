@@ -53,6 +53,15 @@ crundi_shell::register(cx, Area::new("planning")
     .state(|stores, window, cx| json!({ … })));          // merged into the driver's state
 ```
 
+- **The driver's state** is merged one level deep: an area's own keys go
+  under `areas.<name>` (`json!({ "areas": { "planning": { … } } })`) or
+  under a top-level key only it uses (`planningArea`, `workspace`); two
+  areas never return the same top-level key with a plain value (F68).
+- **The window's close**: the window's × and the system's close (Alt+F4)
+  run the `window-close` action when an area registered one (Desktop's:
+  hide to the tray while it is up, kept while the kid screen is locked),
+  else the app quits (`crundi_shell::close_window`, F113).
+
 - **Tabs**: `registry::TABS` (the web's order). A tab's view is made once,
   when first shown; it is a *layout* view (not cached by the shell), its
   parts are the cached leaves (rule 3). A tab nobody registered says it
@@ -87,6 +96,7 @@ crundi_shell::register(cx, Area::new("planning")
   theme's `syn_*` tokens), with no language label. Any area showing
   Claude's text in the web's way uses `core::webmd`, not a TextView.
 - **The shell's slots** (`crundi_shell::slots`): `register_top_item(cx, "approvals" | "chips", &entity, draw)` (the top bar's approvals button beside the connection badge; the panel chips after the spacer), `register_tab_badge(cx, tab, &entity, draw)` (a project-bar tab's badge: Secrets, Factories, Settings), `register_login_restore(cx, &entity, open, draw)` (the sign-in page's "Restore from a backup instead" and its layer). Each slot redraws only its own piece when its entity notifies.
+- **Where things are, for Mini** (`crundi_shell::spots`, F101): a view that draws something Mini walks to calls `spots::begin(cx, group)` at the top of its render and puts `spots::spot(cx, group, name)` (a canvas, no layout) over it; `spots(cx).borrow().get(name)` gives its window bounds in handlers (a spot not drawn in its group's last render is gone). The shell's: `logo`, `usage:<wk|5h>[:fill]`, `approvals`, `tabbar`, `tab:<id>`, `tab-badge:<id>`, `sidebar:<input|->:<alias>`; the chat's: `composer|send|input|inrow|queue|sug|badge-cmd|badge-ag|pk-resume|pk-compact|pk-veil:<chat>`. `spots::set_logo_away` empties the logo's head while Mini is out (the TopBar observes it); `spots::tabs` is the project bar's scroll (Mini hauls it).
 - **Pane heads** (`crundi_workbench::register_head(cx, prefix, KindHead)`): a kind's icon, its head buttons (`HeadButton::icon` / `text`, run through `on_action`), and per pane its tags and lock (`HeadExtra`: the chat tag, the plan pill, collaborator and factory tags, "Secrets for this chat"). The web's panel head is icon, title, the kind's buttons ("?" for the mind map), Refresh, pin, ×.
 - **The "+" menu** is the workbench's (`add-menu`); `add-pane <kind>` is its driver action.
 - **The drawer**: Desktop gives the shell its view
@@ -120,7 +130,7 @@ never a copy in an area, never a gpui-component control used directly in a
 screen): `button`, `primary`, `danger`, `ghost`, `icon_button`,
 `icon_toggle`, `toggle`, `switch`, `check`, `segmented`, `input`,
 `field_label`, `menu_button`, `more_menu`, `pick_menu`, `dropdown`,
-`select`, `dot`, `state_color`, `badge`, `count_badge`, `tag`, `chip`,
+`select` (one control with `dropdown`: `dropdown::choices`), `toggled` (the web's `.kanban-btn` / `.toggled`), `dot`, `state_color`, `badge`, `count_badge`, `tag`, `chip`,
 `status_badge`, `card`, `panel` / `panel_box`, `pane_head`, `head_button`, `menu_item`,
 `menu_panel`, `toolbar`, `title_bar`, `page`, `tab_row`, `tab`, `nav_tab`,
 `sidebar_item`, `rail_avatar`, `dashed_button`, `outline_button`, `empty`,
@@ -173,7 +183,9 @@ with `buttons: ["left"]`; `mods`), `key`, `resize`. The chat's
 selection and the clipboard. The window's own `ui`
 actions: `check-server`, `sign-in-password`, `sign-out`,
 `select-project`, `tab`, `drawer`, `stub`, `dialog-answer`, `menu-pick`,
-`toasts-clear`, `toast <info|error|success> <text>`; every other name goes to the areas' `test_ui`
+`toasts-clear`, `toast <info|error|success> <text>`, `window-close` (the ×),
+`usage-clock off|on` (the top bar's minute tick held: `test/lib.mjs`
+holds it after sign-in, so an idle check never catches it, F122); every other name goes to the areas' `test_ui`
 (unprefixed: each in turn; `<area>:<name>`: that area). The state holds
 `signedIn`, `online`, `live` (`connects`, `silentDrops`, `streams`),
 `projects`, `project`, `tab`, and every area's own (`panes`,
@@ -182,15 +194,30 @@ actions: `check-server`, `sign-in-password`, `sign-out`,
 should redraw only on its own changes calls `crundi_core::driver::rendered`
 at the top of its `render`). The driver never redraws the window.
 
+The window has the keys, as a person's does (F109): at its first command
+the driver gives the window the X input focus (under Xvfb there is no
+window manager to do it). So focus and blur events, a text box's caret and
+`watch_focus` behave as on a display: a box that loses the keys stops its
+caret; a focused box blinks until the theme's 10 s rest (`CursorBlink`
+with an idle timeout, pushed to gpui_base by `Theme::sync_base`); a focused
+terminal's cursor blinks (redrawing its leaf). An idle check therefore
+blurs first (or waits out the rest).
+
 ## Building and testing
 
 - **Build** only with `native-v2/tools/build.sh [cargo args]` (the shared
   `CARGO_TARGET_DIR=$HOME/.cache/crundi-native-target`, two jobs, the lock,
   `oom_score_adj 1000`, the 20 GB floor, `tools/check.sh` first). One build
   at a time. `tools/build.sh -p crundi-chat` builds one crate;
-  `tools/build.sh test --workspace --exclude crundi-browser-host` runs the
-  unit tests (the browser host needs CEF: `CEF_PATH`, as CI fetches it).
-- **The binary**: `$CARGO_TARGET_DIR/debug/crundi-v2`.
+  `tools/build.sh test --workspace` runs the unit tests (the browser
+  host's need CEF, `CEF_PATH`, as CI fetches it; without CEF add
+  `--exclude crundi-browser-host`). README.md says the same (F72).
+- **The binary**: `$CARGO_TARGET_DIR/debug/crundi-v2` is the last build's,
+  whichever worktree made it. A client build also links it (with the
+  browser host and CEF's files) into this worktree's own
+  `native-v2/.bin/<debug|release>/` (`FROM` says whose); `test/lib.mjs` and
+  `tools/measure-pc.mjs` run that copy unless `NATIVE_BIN` / an argument
+  says otherwise (F118).
 - **Unit tests** are headless (`gpui::TestAppContext` with the
   `test-support` dev feature): the stores, the hub's batching, the rules.
 - **End-to-end suites** (`native-v2/test/<area>.mjs` on `test/lib.mjs`)

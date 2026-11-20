@@ -155,7 +155,10 @@ software Vulkan under Xvfb give the *idle* check and relative numbers.
 ```
 Root (gpui-component)
 └─ Shell                 layout   the frame; sign-in or the signed-in tree
-   ├─ TopBar             cached   brand, project, usage bars, Cru, Telegram, connection badge, window buttons
+   ├─ top bar            elements its leaves side by side, each cached at its measured width:
+   │                              UsageRows, TopBar (brand, project), UsagePill, TopRight (Telegram,
+   │                              Push / Ask to merge), CruButton (Cru's mark: its 24 fps breathing
+   │                              redraws it alone, F66), Approvals, ConnBadge, WinButtons, ReconnLine
    ├─ Sidebar            cached   PROJECTS, fold, the projects and their dots, + Add project, Inbox
    ├─ ProjectBar         cached   the tabs, "+", Browser
    ├─ <tab's root>       layout   one per tab, made when first shown; the workbench tab's is the Workbench
@@ -167,6 +170,7 @@ Root (gpui-component)
    │     │  └─ Composer  cached   the box, Send / Stop
    │     └─ Launcher     cached   ("pend:" panes) New terminal: Empty Shell, UI Mode, Terminal
    ├─ Drawer             cached   the browser drawer (Desktop)
+   ├─ (overlays)         cached   the areas' layers over the window (register_overlay), side by side
    └─ layers             layout   the ask layer (confirm, prompt, menus), the modal layer
 ```
 
@@ -387,6 +391,20 @@ inside theirs.
   cached parent, so its frames redraw that view alone.
 - Nothing animates in an idle window: no cursor blink outside a focused
   input, no spinner without work, no polling redraw.
+- A focused text box's caret blinks (500 ms) and rests, visible, 10 s after
+  the last key or move (the theme's `CursorBlink` idle timeout; written
+  through `gpui_component::Theme` and pushed to gpui_base's copy with
+  `Theme::sync_base`, which the caret reads: F109). A box that loses the
+  keys stops its caret at once (gpui-component's blur), and so does one in
+  a window that goes to the background (GPUI sends the blur then).
+- An animation's frame notifies its view, and GPUI marks the view's
+  ancestors dirty with it: an animated mark is a leaf placed **beside** its
+  neighbours (Cru's mark beside TopRight), never inside a view that does
+  work in its render.
+- Never a cached view around cached leaves to save their replay: while a
+  cached view re-renders, GPUI renders everything inside it afresh
+  (`window.refreshing`), so one leaf's notify would re-render all of them
+  (tried for the top bar and the overlays in round 9: the suites caught it).
 
 ## The crates
 
@@ -415,7 +433,9 @@ the store it changed, as a click would. It answers as soon as the command
 has run (one write, `TCP_NODELAY`: well under a millisecond, so a harness
 can send input at a 144 Hz wheel's rate), and its `state` holds `renders`,
 each counted view's renders (`core::driver::rendered`), so a suite can
-check that a change redraws only the views that show it.
+check that a change redraws only the views that show it. At its first
+command it gives the window the keys (the X input focus: under Xvfb no
+window manager does), so focus, blur and carets behave as on a display.
 
 ## Building
 

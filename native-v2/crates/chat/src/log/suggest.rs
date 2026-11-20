@@ -85,6 +85,7 @@ pub fn view(v: &mut LogView, cx: &mut Context<LogView>) -> Option<AnyElement> {
     }
     if let Some(text) = sug {
         let store = v.store.clone();
+        let spot = v.spot("sug", cx);
         col = col.child(div().flex().flex_col().items_end().gap(T::SP_2).mt(T::SP_4)
             .child(div().mr(T::SP_4).px(T::SP_4).rounded(T::R_CHIP).bg(T::bg()).text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child("Suggested, tap to send"))
             .child(div().id("sug").occlude().relative().max_w_full().pl(T::SP_12).pr(T::SP_24 + T::SP_6).py(T::SP_8)
@@ -94,6 +95,7 @@ pub fn view(v: &mut LogView, cx: &mut Context<LogView>) -> Option<AnyElement> {
                 .hover(|d| d.border_color(T::accent()).bg(T::accent_dim()).text_color(T::text()))
                 .tooltip(w::tooltip("Tap to send"))
                 .child(text)
+                .children(spot)
                 .on_click(cx.listener(|v, _, _, cx| send(v, cx)))
                 .child(close_x("sug-x", move |cx| dismiss(&store, cx)))));
     }

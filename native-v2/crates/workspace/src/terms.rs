@@ -1143,6 +1143,8 @@ pub fn act(name: &str, a: &[String], window: &mut Window, cx: &mut App) -> Optio
             crundi_shell::call(cx, move |api| api.post(&format!("/api/terminals/{id}/rename"), &json!({ "title": title })), |r, cx| if let Err(e) = r { crate::toast(cx, e, w::Toast::Error) });
         }
         "term-focus" => { let f = p.screen.read(cx).focus.clone(); f.focus(window, cx); }
+        // The input bar's box takes the keys (a click in it).
+        "term-input-focus" => { let b = input.read(cx).input.clone(); b.update(cx, |x, cx| x.focus(window, cx)); }
         // The keys taken away from the terminal and its box (a click elsewhere).
         "term-blur" => window.blur(cx),
         "term-select" => st.update(cx, |x, cx| x.select(n(1).max(0) as usize, n(2).max(0) as usize, n(3).max(0) as usize, n(4).max(0) as usize, cx)),

@@ -678,7 +678,7 @@ impl Sched {
         let tb = w::toolbar().px(T::SP_12).py(T::SP_10).gap(T::SP_8)
             .child(w::primary("sched-add", "+ Add schedule").on_click(cx.listener(|s, _, window, cx| s.act("add", "", window, cx))))
             .child(div().flex_1())
-            .when(has_project, |d| d.child(w::toggle("sched-filter", if filter { "This project" } else { "All projects" }, filter)
+            .when(has_project, |d| d.child(w::toggled("sched-filter", if filter { "This project" } else { "All projects" }, filter)
                 .on_click(cx.listener(|s, _, window, cx| s.act("filter", "", window, cx)))));
         // The project on each row when the filter is off (the web's !scheduleFilter).
         let show_proj = !filter;

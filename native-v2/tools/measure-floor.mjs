@@ -22,14 +22,15 @@
 // Per mode: idle (4 s, nothing changes: 0 frames), the sweep (8 s), with
 // frames, p50, p95, max, the share ≤ 7 ms, and which views rendered.
 import { spawn } from 'node:child_process';
-import { createWriteStream, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { driver, sleep } from '../test/lib.mjs';
 import { FrameMeter } from './frames.mjs';
 import { sweep } from './sweep.mjs';
 
-const BIN = process.env.FLOOR_BIN || join(homedir(), '.cache/crundi-native-target/release/crundi-v2-floor');
+const OWN = join(import.meta.dirname, '../.bin/release/crundi-v2-floor');
+const BIN = process.env.FLOOR_BIN || (existsSync(OWN) ? OWN : join(homedir(), '.cache/crundi-native-target/release/crundi-v2-floor'));
 const OUT = process.env.FLOOR_OUT || '/tmp/crundi-v2-floor';
 const PORT = Number(process.env.CRUNDI_TEST_PORT || 4882);
 const ALL = ['empty', 'list', 'uniform', 'workbench', 'chatlog', 'chatlog5', 'stream5'];

@@ -153,7 +153,8 @@ pub fn row(v: &mut LogView, e: &Shown, fs: f32, cx: &mut Context<LogView>) -> Op
 }
 
 /// One badge: the pill (icon, mono count, spinner or green dot).
-fn badge(task: bool, n: usize, run: bool, tip: String, on: bool, fs: f32, cx: &mut Context<LogView>) -> AnyElement {
+fn badge(v: &LogView, task: bool, n: usize, run: bool, tip: String, on: bool, fs: f32, cx: &mut Context<LogView>) -> AnyElement {
+    let spot = v.spot(if task { "badge-cmd" } else { "badge-ag" }, cx);
     div().id(if task { "ag-badge-cmd" } else { "ag-badge-ag" }).flex().items_center().gap(T::SP_6).min_h(T::CONTROL_SM).pl(T::SP_8).pr(T::SP_10).py(T::SP_4)
         .rounded(T::R_PILL).bg(T::bg_secondary()).border_1().border_color(if on { T::accent() } else { T::border() }).shadow_lg()
         .text_size(T::TEXT_12 * fs).text_color(if on { T::text() } else { T::text_secondary() }).cursor_pointer()
@@ -162,6 +163,7 @@ fn badge(task: bool, n: usize, run: bool, tip: String, on: bool, fs: f32, cx: &m
         .child(div().flex_none().when(run, |d| d.text_color(T::accent_hover())).child(w::icon(if task { IconName::SquareTerminal } else { IconName::Bot }, T::ICON_MD * fs)))
         .child(div().font_family(T::MONO).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(n.to_string()))
         .child(if run { w::spinner(T::ICON_SM * fs).into_any_element() } else { w::dot(T::green()).size(T::SP_6).into_any_element() })
+        .relative().children(spot)
         .on_click(cx.listener(move |v, _, _, cx| badge_click(v, task, cx)))
         .into_any_element()
 }
@@ -181,8 +183,8 @@ pub fn dock(v: &mut LogView, _window: &mut Window, cx: &mut Context<LogView>) ->
     let mut col = div().absolute().right(T::SP_10).bottom(T::SP_8).max_h(relative(0.9)).max_w(T::LOG_DOCK_MAX_W).overflow_hidden().flex().flex_col().justify_end().items_end().gap(T::SP_4);
     if cn + an > 0 {
         let mut b = div().flex().justify_end().gap(T::SP_6).occlude();
-        if cn > 0 { b = b.child(badge(true, cn, cr, ct, list == Some(true), fs, cx)); }
-        if an > 0 { b = b.child(badge(false, an, ar, at, list == Some(false), fs, cx)); }
+        if cn > 0 { b = b.child(badge(v, true, cn, cr, ct, list == Some(true), fs, cx)); }
+        if an > 0 { b = b.child(badge(v, false, an, ar, at, list == Some(false), fs, cx)); }
         col = col.child(b);
     }
     // Its height, for the log's room at the end (after the frame).

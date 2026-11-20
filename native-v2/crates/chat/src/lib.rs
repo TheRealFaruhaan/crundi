@@ -7,6 +7,7 @@
 
 pub mod composer;
 pub mod log;
+pub mod mini;
 pub mod pane;
 pub mod store;
 
@@ -73,6 +74,7 @@ fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> ChatPane {
 
 fn drop_chat(cx: &mut App, id: &str) {
     if held(cx, id) { return; }
+    mini::detach(id, cx);
     let c = cx.default_global::<Chats>();
     c.panes.remove(id);
     if c.stores.remove(id).is_some() { crundi_shell::unsubscribe(cx, id); }
@@ -149,6 +151,8 @@ pub fn head_info(stores: &Stores, id: &str, meta: &store::Meta, cx: &App) -> Hea
 
 pub fn init(cx: &mut App) {
     composer::init(cx);
+    // Mini (F101): the window's layer for the logo's walks and the top bar's outings.
+    mini::init(cx);
     // The log's features: the launcher's resume picker (F76), its driver.
     log::driver::init(cx);
     wb::register_kind(cx, PaneKind {
@@ -271,6 +275,8 @@ pub fn init(cx: &mut App) {
                 log.update(cx, |_, cx| cx.notify());
                 Some(json!({ "ok": true }))
             }
+            // Mini's (F101): on the focused chat.
+            n if n.starts_with("mini-") => { let id = focused_chat(cx); mini::test_ui(&id, n, args, cx) }
             // The composer's own (composer/…): the focused chat's.
             _ => {
                 let id = focused_chat(cx);
@@ -297,6 +303,7 @@ pub fn init(cx: &mut App) {
                 None => (Value::Null, false),
             };
             let comp = cx.try_global::<Chats>().and_then(|c| c.panes.get(&id)).map(|p| p.composer.read(cx).state(cx)).unwrap_or(Value::Null);
-            json!({ "composer": comp, "chat": id, "entries": entries, "rows": rows, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
+            let mini = mini::state(&id, cx);
+            json!({ "mini": mini, "composer": comp, "chat": id, "entries": entries, "rows": rows, "chatState": st, "chats": chats, "batches": batches, "spliced": spliced, "head": head, "logFollowing": following })
         }));
 }

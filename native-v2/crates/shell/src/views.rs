@@ -45,11 +45,12 @@ impl BarPress {
 // ─── The Shell ───
 
 /// The top bar's leaves.
-struct Top { rows: Entity<UsageRows>, bar: Entity<TopBar>, pill: Entity<UsagePill>, right: Entity<TopRight>, conn: Entity<conn::ConnBadge>, win: Entity<WinButtons>, line: Entity<conn::ReconnLine> }
+struct Top { rows: Entity<UsageRows>, bar: Entity<TopBar>, pill: Entity<UsagePill>, right: Entity<TopRight>, cru: Entity<CruButton>, appr: Entity<Approvals>, conn: Entity<conn::ConnBadge>, win: Entity<WinButtons>, line: Entity<conn::ReconnLine> }
 
 pub struct Shell {
     stores: Stores,
     top: Top,
+    press: BarPress,
     side: Entity<Sidebar>,
     bar: Entity<ProjectBar>,
     sign_in: Entity<SignIn>,
@@ -62,7 +63,6 @@ pub struct Shell {
     modal: Entity<w::ModalLayer>,
     ask: AnyView,
     dragging: bool,
-    press: BarPress,
     /// The areas' layers over the window (`register_overlay`), read once here.
     overlays: Vec<AnyView>,
     root_focus: FocusHandle,
@@ -79,7 +79,7 @@ pub struct Shell {
 /// The Shell's layout inputs: signed in, the tab, the fold, the drawer, the
 /// top bar's measured leaves (usage badge, right buttons, connection, window buttons).
 #[derive(Clone, PartialEq)]
-struct ShellLayout { signed_in: bool, tab: String, folded: bool, fold_from: Option<(Pixels, Instant)>, drawer_open: bool, drawer_w: Pixels, tw: [Pixels; 4] }
+struct ShellLayout { signed_in: bool, tab: String, folded: bool, fold_from: Option<(Pixels, Instant)>, drawer_open: bool, drawer_w: Pixels, tw: [Pixels; 6] }
 
 impl ShellLayout {
     fn of(stores: &Stores, widths: &Entity<slots::Widths>, cx: &App) -> Self {
@@ -87,7 +87,7 @@ impl ShellLayout {
         let wd = &widths.read(cx).0;
         let g = |k| wd.get(k).copied().unwrap_or(px(0.));
         ShellLayout { signed_in: stores.session.read(cx).signed_in(), tab: n.tab.clone(), folded: n.folded, fold_from: n.fold_from, drawer_open: n.drawer_open, drawer_w: n.drawer_w,
-            tw: [g("pill"), g("right"), g("conn"), g("win")] }
+            tw: [g("pill"), g("right"), g("cru"), g("appr"), g("conn"), g("win")] }
     }
 }
 
@@ -99,6 +99,8 @@ impl Shell {
             bar: cx.new(|cx| TopBar::new(stores.clone(), cx)),
             pill: cx.new(|cx| UsagePill::new(stores.clone(), cx)),
             right: cx.new(|cx| TopRight::new(stores.clone(), cx)),
+            cru: cx.new(|cx| CruButton::new(stores.clone(), cx)),
+            appr: cx.new(|cx| Approvals::new(stores.clone(), cx)),
             conn: cx.new(|cx| conn::ConnBadge::new(c.clone(), cx)),
             win: cx.new(|_| WinButtons),
             line: cx.new(|cx| conn::ReconnLine::new(c.clone(), cx)),
@@ -151,10 +153,12 @@ impl Shell {
         v.cached(StyleRefinement::default().size_full()).into_any_element()
     }
 
-    /// The top bar: its leaves side by side (a body, no view of its own).
+    /// The top bar: its leaves side by side (a body, no view of its own:
+    /// a cached view around cached leaves would re-render them all with any
+    /// one of them, rule 3).
     fn top_bar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let s = || StyleRefinement::default();
-        let [wp, wr, wc, ww] = self.lay.tw;
+        let [wp, wr, wm, wa, wc, ww] = self.lay.tw;
         let t = &self.top;
         div().id("topbar").relative().flex().flex_none().w_full().h(T::TOPBAR_H)
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, _| this.press.0 = (e.click_count == 1).then_some(e.position)))
@@ -165,6 +169,10 @@ impl Shell {
             .child(t.bar.clone().cached(s().flex_1().min_w_0().h_full()))
             .child(t.pill.clone().cached(s().flex_none().h_full().w(wp)))
             .child(t.right.clone().cached(s().flex_none().h_full().w(wr)))
+            // Cru's mark a leaf of its own beside the rest (not inside one):
+            // its breathing redraws it alone (F66).
+            .child(t.cru.clone().cached(s().flex_none().h_full().w(wm)))
+            .child(t.appr.clone().cached(s().flex_none().h_full().w(wa)))
             .child(t.conn.clone().cached(s().flex_none().h_full().w(wc)))
             .child(t.win.clone().cached(s().flex_none().h_full().w(ww)))
             .child(t.line.clone().cached(s().absolute().left_0().right_0().bottom_0().h(T::SP_2)))
@@ -282,16 +290,20 @@ impl UsageRows {
 impl Render for UsageRows {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("usage-rows");
+        crate::spots::begin(cx, "usage-rows");
         let now = crundi_core::time::now_secs();
-        let u = self.stores.usage.read(cx);
+        let r = self.stores.usage.read(cx).usage.as_ref().and_then(|(v, _)| crate::usage::rows(v, now));
         let mut rows = div().absolute().inset_0().flex().flex_col();
-        if let Some(r) = u.usage.as_ref().and_then(|(v, _)| crate::usage::rows(v, now)) {
+        if let Some(r) = r {
             for (i, row) in r.iter().enumerate() {
+                // (Where the row and its fill's end are, for Mini.)
+                let (sr, sf) = (crate::spots::spot(cx, "usage-rows", format!("usage:{}", row.tag)), crate::spots::spot(cx, "usage-rows", format!("usage:{}:fill", row.tag)));
                 let (used, time) = (row.used / 100.0, row.time.unwrap_or(0.0) / 100.0);
                 let over_c = { let t = crate::usage::over_strength(row.over); let c = T::yellow().blend(T::red().opacity(t)); c.opacity(0.18 + 0.4 * t) };
                 rows = rows.child(div().relative().flex_1().overflow_hidden().when(i > 0, |d| d.border_t_1().border_color(T::border_subtle()))
                     .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(time)).bg(T::usage_time()))
-                    .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(used)).bg(T::usage_used()))
+                    .child(div().absolute().left(px(0.)).top(px(0.)).bottom(px(0.)).w(relative(used)).bg(T::usage_used()).child(sf))
+                    .child(sr)
                     .when(row.over > 0.0, |d| d.child(div().absolute().top(px(0.)).bottom(px(0.)).left(relative(time)).w(relative(row.over / 100.0)).bg(over_c)))
                     // Each row's labels as the web's (.ublabel, placeUsageLabel):
                     // its usage on the row's top edge where the usage fill
@@ -309,7 +321,7 @@ impl Render for UsageRows {
 
 /// The mark and the project ("/ No project" when none is open), then a
 /// panel's chips at the right (the "chips" top item, Operations').
-pub struct TopBar { shown: (String, Option<Arc<Image>>), chips: Vec<Slot>, _subs: Vec<Subscription> }
+pub struct TopBar { shown: (String, Option<Arc<Image>>), chips: Vec<Slot>, away: bool, _subs: Vec<Subscription> }
 
 impl TopBar {
     fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
@@ -320,20 +332,25 @@ impl TopBar {
             let same = n.0 == this.shown.0 && match (&n.1, &this.shown.1) { (Some(a), Some(b)) => Arc::ptr_eq(a, b), (None, None) => true, _ => false };
             if !same { this.shown = n; cx.notify(); }
         })];
+        // Mini, the logo's head, out walking (the chat area's): its place is empty.
+        let logo = crate::spots::logo_away(cx);
+        subs.push(cx.observe(&logo, |this: &mut Self, l, cx| { let a = l.read(cx).0; if a != this.away { this.away = a; cx.notify(); } }));
         let chips: Vec<Slot> = slots::top_items(cx).into_iter().filter(|s| s.name == "chips").collect();
         subs.extend(slots::observe_slots(&chips, cx));
         let shown = of(stores.projects.read(cx));
-        TopBar { shown, chips, _subs: subs }
+        TopBar { shown, chips, away: false, _subs: subs }
     }
 }
 
 impl Render for TopBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("top-bar");
+        crate::spots::begin(cx, "top-bar");
         let (name, picon) = self.shown.clone();
+        let logo = crate::spots::spot(cx, "top-bar", "logo");
         let chips: Vec<AnyElement> = self.chips.iter().filter_map(|s| (s.draw)(window, cx)).collect();
         w::layer(div().flex().size_full().min_w_0().items_center().gap(T::SP_12).pl(T::SP_16).overflow_hidden()
-            .child(w::brand_mark(T::BRAND_HEAD))
+            .child(div().relative().flex_none().child(w::brand_mark_with(T::BRAND_HEAD, !self.away)).child(logo))
             .child(div().text_color(T::text_muted()).child("/"))
             .children(picon.map(w::project_icon))
             .child(div().id("current-project").min_w_0().truncate().text_color(T::text_secondary()).child(if name.is_empty() { "No project".to_string() } else { name }))
@@ -376,34 +393,26 @@ impl Render for UsagePill {
     }
 }
 
-/// Telegram's badge, a collaborator's Push and Ask to merge, Cru's mark and
-/// the approvals button (the "approvals" top item, Operations').
+/// Telegram's badge and a collaborator's Push and Ask to merge. (Cru's mark
+/// and the approvals button sit beside it, each a leaf of its own.)
 pub struct TopRight {
     stores: Stores,
-    mark: Entity<crate::CruMark>,
-    cru_hover: u64,
     /// The Telegram bot: configured, connected, its @name (copied from Usage when it changed).
     tg: Option<(bool, bool, String)>,
     collab: bool,
     pushing: bool,
     merging: bool,
-    appr: Vec<Slot>,
     _subs: Vec<Subscription>,
 }
 
 impl TopRight {
     fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
-        let mark = crate::cru_mark(cx);
-        let mut subs = vec![
+        let subs = vec![
             // Usage ticks each minute: only Telegram's status redraws this.
             cx.observe(&stores.usage, |this: &mut Self, u, cx| { let t = u.read(cx).tg.clone(); if t != this.tg { this.tg = t; cx.notify(); } }),
             cx.observe(&stores.projects, |this: &mut Self, p, cx| { let c = p.read(cx).collaborator(); if c != this.collab { this.collab = c; cx.notify(); } }),
-            // Cru's mark (Desktop's): live and unread.
-            cx.observe(&mark, |_, _, cx| cx.notify()),
         ];
-        let appr: Vec<Slot> = slots::top_items(cx).into_iter().filter(|s| s.name == "approvals").collect();
-        subs.extend(slots::observe_slots(&appr, cx));
-        TopRight { stores, mark, cru_hover: 0, tg: None, collab: false, pushing: false, merging: false, appr, _subs: subs }
+        TopRight { stores, tg: None, collab: false, pushing: false, merging: false, _subs: subs }
     }
 
     /// Push your branch (collabPush).
@@ -451,7 +460,7 @@ pub fn tg_badge(tg: &Option<(bool, bool, String)>) -> Option<(String, bool)> {
 }
 
 impl Render for TopRight {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("top-right");
         let tg = tg_badge(&self.tg).map(|(label, on)| w::tip(w::status_pill("tg-badge", None, label, if on { w::PillTone::Connected } else { w::PillTone::Disconnected }), "Telegram bot"));
         let collab = self.collab;
@@ -459,10 +468,33 @@ impl Render for TopRight {
             .when(!self.pushing, |d| d.on_click(cx.listener(|this, _, _, cx| this.push(cx)))), "Push your branch so the owner can see it"));
         let merge = collab.then(|| w::tip(w::topbar_act("collab-merge", IconName::GitMerge, "Ask to merge", self.merging)
             .when(!self.merging, |d| d.on_click(cx.listener(|this, _, window, cx| this.ask_merge(window, cx)))), "Ask the owner to merge your branch"));
+        let any = tg.is_some() || push.is_some();
+        // One paint layer (w::layer): replayed every frame.
+        w::layer(measured("right", div().flex().items_center().gap(T::SP_12).when(any, |d| d.pl(T::SP_12))
+            .children(tg).children(push).children(merge)))
+    }
+}
+
+/// Cru's mark (crundi-voice.js attach()), a leaf of the top bar: the bars
+/// breathe while Cru is live (24 fps, redrawing this alone); a red dot for
+/// unread reports. A click toggles Cru; resting on it opens Cru (on a wide
+/// window, after a moment), and it closes again when the pointer leaves
+/// unless Cru is busy (Desktop's actions).
+pub struct CruButton { stores: Stores, mark: Entity<crate::CruMark>, cru_hover: u64, _sub: Subscription }
+
+impl CruButton {
+    fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
+        let mark = crate::cru_mark(cx);
+        let _sub = cx.observe(&mark, |_, _, cx| cx.notify());
+        CruButton { stores, mark, cru_hover: 0, _sub }
+    }
+}
+
+impl Render for CruButton {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("cru-mark");
+        let _ = window;
         let stores = self.stores.clone();
-        // Cru's mark (crundi-voice.js attach()): the bars breathe while Cru is live; a red dot for
-        // unread reports. A click toggles Cru; resting on it opens Cru (on a wide window, after a
-        // moment), and it closes again when the pointer leaves unless Cru is busy (Desktop's actions).
         let m = self.mark.read(cx).clone();
         let tip: SharedString = if m.unread > 0 { format!("Talk to Cru ({} unread)", m.unread).into() } else { "Talk to Cru (voice assistant)".into() };
         let cru = div().id("cru").relative().flex_none().flex().items_center().p(T::SP_2).cursor_pointer()
@@ -484,11 +516,31 @@ impl Render for TopRight {
                     let _ = this.update_in(cx, |this, window, cx| if this.cru_hover == n { registry::run_action(&stores, "cru-hover", window, cx); });
                 }).detach();
             }));
-        // The approvals are the owner's.
-        let appr: Vec<AnyElement> = if collab { vec![] } else { self.appr.iter().filter_map(|s| (s.draw)(window, cx)).collect() };
-        // One paint layer (w::layer): replayed every frame.
-        w::layer(measured("right", div().flex().items_center().gap(T::SP_12).pl(T::SP_12)
-            .children(tg).children(push).children(merge).child(cru).children(appr)))
+        measured("cru", div().pl(T::SP_12).child(cru))
+    }
+}
+
+/// The approvals button (the "approvals" top item, Operations'): the owner's.
+pub struct Approvals { stores: Stores, appr: Vec<Slot>, collab: bool, _subs: Vec<Subscription> }
+
+impl Approvals {
+    fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
+        let appr: Vec<Slot> = slots::top_items(cx).into_iter().filter(|s| s.name == "approvals").collect();
+        let mut subs = slots::observe_slots(&appr, cx);
+        subs.push(cx.observe(&stores.projects, |this: &mut Self, p, cx| { let c = p.read(cx).collaborator(); if c != this.collab { this.collab = c; cx.notify(); } }));
+        Approvals { stores, appr, collab: false, _subs: subs }
+    }
+}
+
+impl Render for Approvals {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = &self.stores;
+        crate::spots::begin(cx, "approvals");
+        let appr: Vec<AnyElement> = if self.collab { vec![] } else { self.appr.iter().filter_map(|s| (s.draw)(window, cx)).collect() };
+        // (Where the bell is, for Mini.)
+        let appr: Vec<AnyElement> = appr.into_iter().map(|el| div().relative().flex_none().child(el).child(crate::spots::spot(cx, "approvals", "approvals")).into_any_element()).collect();
+        let any = !appr.is_empty();
+        w::layer(measured("appr", div().flex().items_center().gap(T::SP_12).when(any, |d| d.pl(T::SP_12)).children(appr)))
     }
 }
 
@@ -499,7 +551,7 @@ impl Render for WinButtons {
         w::layer(measured("win", div().flex().items_center().gap(T::SP_12).pl(T::SP_12).pr(T::SP_4)
             .child(w::icon_button("win-min", IconName::Minus, "Minimize").on_click(|_, window, _| window.minimize_window()))
             .child(w::icon_button("win-max", IconName::Square, "Maximize").on_click(|_, window, _| window.zoom_window()))
-            .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit()))))
+            .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, window, cx| crate::close_window(window, cx)))))
     }
 }
 
@@ -605,6 +657,7 @@ pub fn remove_project(stores: &Stores, alias: String, name: String, window: &mut
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("sidebar");
+        crate::spots::begin(cx, "sidebar");
         let folded = self.folded.unwrap_or(false);
         let (list_, open, mode, _) = self.seen.clone();
         let can_remove = mode != "single";
@@ -644,7 +697,8 @@ impl Render for Sidebar {
             let projects = self.stores.projects.clone();
             let rows = self.rows.clone();
             let a2 = pr.alias.clone();
-            list = list.child(div().id(("project", i)).relative().cursor_pointer().when(is_dragged, |d| d.opacity(0.4)).child(row)
+            let spot = crate::spots::spot(cx, "sidebar", format!("sidebar:{}:{}", if pr.dot == "needs-input" { "input" } else { "-" }, pr.alias));
+            list = list.child(div().id(("project", i)).relative().cursor_pointer().when(is_dragged, |d| d.opacity(0.4)).child(row).child(spot)
                 // Where it was drawn: the drag's targets.
                 .child(canvas(move |b, _, _| rows.borrow_mut().push((a2.clone(), b)), |_, _, _, _| {}).absolute().inset_0())
                 .tooltip(w::tooltip(pr.name.clone()))
@@ -721,13 +775,18 @@ impl ProjectBar {
         subs.extend(slots::observe_slots(&badges, cx));
         let p = stores.projects.read(cx);
         let scope = (!p.open.is_empty(), p.collaborator());
-        ProjectBar { stores, scroll: ScrollHandle::new(), scope, badges, _subs: subs }
+        let scroll = ScrollHandle::new();
+        // The tabs' scroll, for Mini (it hauls them along to Settings).
+        let bar: AnyWeakEntity = cx.entity().downgrade().into();
+        crate::spots::set_tabs(cx, crate::spots::Tabs { scroll: scroll.clone(), bar });
+        ProjectBar { stores, scroll, scope, badges, _subs: subs }
     }
 }
 
 impl Render for ProjectBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("project-bar");
+        crate::spots::begin(cx, "project-bar");
         let nav = self.stores.nav.read(cx);
         let (on_tab, drawer_open, docker) = (nav.tab.clone(), nav.drawer_open, nav.docker);
         let (project_open, collab) = self.scope;
@@ -737,8 +796,11 @@ impl Render for ProjectBar {
             if !crate::nav::tab_shown(id, project_open, docker) { continue; }
             if collab && COLLAB_HIDDEN_TABS.contains(id) { continue; }
             let badge: Vec<AnyElement> = self.badges.iter().filter(|s| s.name == *id).filter_map(|s| (s.draw)(window, cx)).collect();
+            // (Where each tab and its badge are, for Mini.)
+            let badge: Vec<AnyElement> = badge.into_iter().map(|b| div().relative().child(b).child(crate::spots::spot(cx, "project-bar", format!("tab-badge:{id}"))).into_any_element()).collect();
+            let tspot = crate::spots::spot(cx, "project-bar", format!("tab:{id}"));
             let (tid, nav) = (id.to_string(), self.stores.nav.clone());
-            tabs = tabs.child(w::nav_tab(icon.clone(), *label, on_tab == tid).children(badge).id(("tab", i)).flex_none().cursor_pointer()
+            tabs = tabs.child(w::nav_tab(icon.clone(), *label, on_tab == tid).relative().children(badge).child(tspot).id(("tab", i)).flex_none().cursor_pointer()
                 .tooltip(w::tooltip(tab_title(id, label)))
                 .on_click(move |_, _, cx| nav.update(cx, |n, cx| n.show_tab(&tid, cx))));
             if i == 0 {
@@ -758,7 +820,7 @@ impl Render for ProjectBar {
         }));
         // The web's strip: tabs past the edge are cut there (no fade) and
         // scroll in sideways; the Browser button stays at the right over it.
-        let scroller = div().relative().flex().flex_1().min_w_0().h_full().child(tabs);
+        let scroller = div().relative().flex().flex_1().min_w_0().h_full().child(tabs).child(crate::spots::spot(cx, "project-bar", "tabbar"));
         let mut bar = div().flex().size_full().items_center().px(T::SP_12).bg(T::bg_secondary()).border_b_1().border_color(T::border())
             .child(scroller);
         if !drawer_open {

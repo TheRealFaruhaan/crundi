@@ -130,12 +130,14 @@ pub fn render(c: &mut Composer, cx: &mut Context<Composer>) -> Option<AnyElement
     let h = handed(c);
     if h.is_none() && c.queue.held.is_empty() { return None; }
     let fs = c.fs();
+    // (Where the first one is, for Mini: it walks along its top.)
+    let mut spot = c.spot("queue", cx);
     let mut col = div().flex().flex_col().gap(crundi_theme::T::SP_6).w_full();
     if let Some((h, body)) = h {
         let (label, note, hint, tip, _) = handed_words(&h);
         let hint = if trimmed(&body) { format!("Shown trimmed · {hint}") } else { hint.to_string() };
         let recallable = h == Handed::Recallable;
-        let d = w::queue_drawer("q-sent", w::Drawer { held: false, label: label.into(), note: note.into(), body: body.into(), hint: hint.into(), tip: tip.into(), clickable: recallable }, fs);
+        let d = w::queue_drawer("q-sent", w::Drawer { held: false, label: label.into(), note: note.into(), body: body.into(), hint: hint.into(), tip: tip.into(), clickable: recallable }, fs).relative().children(spot.take());
         col = col.child(if recallable { d.on_click(cx.listener(|this, _, window, cx| { take_back(this, window, cx); })) } else { d });
     }
     if !c.queue.held.is_empty() {
@@ -145,9 +147,20 @@ pub fn render(c: &mut Composer, cx: &mut Context<Composer>) -> Option<AnyElement
         let note = if n == 1 { "1 line · as one message, at the next tool call".to_string() } else { format!("{n} lines · as one message, at the next tool call") };
         col = col.child(w::queue_drawer("q-held", w::Drawer { held: true, label: "Sending".into(), note: note.into(), body: body.into(), hint: hint.into(),
             tip: "Click to edit — brings every queued line back to the message box".into(), clickable: true }, fs)
+            .relative().children(spot.take())
             .on_click(cx.listener(|this, _, window, cx| { take_back(this, window, cx); })));
     }
     Some(w::layer(col).into_any_element())
+}
+
+/// The drawers as Mini counts them (the web's queueSig): how many, their
+/// text's length, its lines.
+pub(crate) fn sig(c: &Composer) -> (usize, usize, usize) {
+    let mut out = (0, 0, 0);
+    let mut add = |t: &str| { out.0 += 1; out.1 += t.chars().count(); out.2 += if t.is_empty() { 0 } else { t.split('\n').count() }; };
+    if let Some((_, body)) = handed(c) { add(&body); }
+    if !c.queue.held.is_empty() { add(&c.queue.held.join("\n")); }
+    out
 }
 
 /// take-back: as a click on a drawer.

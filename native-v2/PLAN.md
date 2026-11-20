@@ -117,7 +117,7 @@ are the owner's PC, release build; "—" not yet.
     boot screen for a saved login; the sign-in page as the web's (Mini,
     wording, collaborator sign-in, first run, restore, Enter, providers'
     order and OR, the code box, Electron's server step, maximise); the
-    pairing link removed. test/shell.mjs. Mini in chat panes: to do
+    pairing link removed. test/shell.mjs. Mini in chat panes: round 9
   - workbench (F80, F77, F64, F83): drag and swap, rename, the "…" menu,
     head tags and the secrets lock (`register_head`), full screen over the
     window, double-click maximise, the launcher's last used, the "+" menu
@@ -127,6 +127,41 @@ are the owner's PC, release build; "—" not yet.
     (F76), the bubble's hooks (F65: a second list, `hold` / `release`,
     `head_info`). Live frames: the hook (`log::frames::set_host`) waits for
     Desktop's host
+
+- [x] round 9 (the Architect: F109, F101, F113, F117, F118, F122, F123, F53,
+  F66, F72, F83's remainder; F65 dropped: the PC client has no bubble):
+  - F109: the caret rests 10 s after the last key (`Theme::sync_base`: the
+    timeout never reached gpui_base's copy, which the caret reads); the
+    test driver gives the window the X input focus, so under Xvfb focus and
+    blur behave as on a display (a blurred box stops its caret: the GPUI
+    blur needs an active window). test/workspace.mjs checks it.
+  - F101: Mini in chat panes and the top bar (`crates/chat/src/mini/`, the
+    shell's `spots` hook: where things are, the logo's head away);
+    test/chat-mini.mjs. Off under the driver until `mini-auto on`.
+  - F113: the window's × and the system's close go through
+    `crundi_shell::close_window` → Desktop's `window-close`: hidden to the
+    tray while it is up (X11 unmapped; macOS hidden; Wayland and Windows
+    minimised), kept while kid-locked; the tray's Open shows it again.
+  - F66: Cru's mark a top-bar leaf of its own (`CruButton`), beside
+    TopRight and the approvals (`Approvals`): its breathing redraws it alone.
+  - F118: `tools/build.sh` links the client (and the browser host, CEF's
+    links) into `native-v2/.bin/<profile>/`; suites and measure-pc run it.
+  - F122: the usage store draws nothing for the same sample or a blank one,
+    and the suites hold its minute tick (`usage-clock off`).
+  - F123: the toast at the browser's normal line height; `w::toggled` (the
+    web's `.kanban-btn.toggled`) for Schedule's scope.
+  - F83: `dropdown*` and `select` are one control (`dropdown::choices`);
+    the fields and the pane heads' icon and buttons were already in.
+  - F117: not a bug: the harness window is 1400x860, so a press at y 860
+    is on its edge (presses inside close the modal).
+  - F53: not reproduced: opening a Notes page draws 2 frames and settles
+    within 250 ms.
+  - F99: still open. An Xvfb journal A/B (perf/pc-2026-11-21-architect-round9.md)
+    puts the round's extra cost at ~0.5 ms of draw a frame, spread (Mini, the
+    log's overlays and the drop wrapper are not it; the Shell's 15 cached
+    replays are ~0.15 ms, but one host around them breaks caching, rule 3).
+    The display measurement waits for the Manager's go.
+  - Every suite passes on the PC under Xvfb (stub server).
 
 ### Open for the owner (via the Manager)
 

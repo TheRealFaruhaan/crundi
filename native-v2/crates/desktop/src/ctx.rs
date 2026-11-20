@@ -99,8 +99,46 @@ pub fn bg<T: Send + 'static>(work: impl FnOnce(&crundi_core::api::Api) -> T + Se
     });
 }
 
-/// Bring the window to the front (a notification's click).
-pub fn raise() { on_app(|win, _| win.activate_window()); }
+/// Bring the window to the front (a notification's click, the tray's Open),
+/// shown again first if the × hid it.
+pub fn raise() { on_app(|win, _| { show_window(win); win.activate_window() }); }
+
+thread_local! { static HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// The × hid the window (the driver's look).
+pub fn hidden() -> bool { HIDDEN.with(|h| h.get()) }
+
+/// The window's × with the tray up (Electron's mainWindow 'close': hidden,
+/// the app goes on; the tray's Open brings it back). X11: unmapped; macOS:
+/// the app hidden; Wayland and Windows: minimised (GPUI has no hide there).
+pub fn hide_window(win: &mut Window, cx: &mut App) {
+    HIDDEN.with(|h| h.set(true));
+    #[cfg(target_os = "macos")] { let _ = win; cx.hide(); }
+    #[cfg(not(target_os = "macos"))] { let _ = cx; if !x11_map(win, false) { win.minimize_window() } }
+}
+
+fn show_window(win: &mut Window) {
+    if !HIDDEN.with(|h| h.replace(false)) { return; }
+    #[cfg(not(target_os = "macos"))] { x11_map(win, true); }
+    #[cfg(target_os = "macos")] { let _ = win; }
+}
+
+/// Map or unmap the window on X11 (false: not an X11 window).
+#[cfg(target_os = "linux")]
+fn x11_map(win: &Window, on: bool) -> bool {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    let id = match HasWindowHandle::window_handle(win).map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
+        Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
+        _ => return false,
+    };
+    let Ok((c, _)) = x11rb::connect(None) else { return false };
+    let r = if on { c.map_window(id).map(|k| k.check()) } else { c.unmap_window(id).map(|k| k.check()) };
+    matches!(r, Ok(Ok(())))
+}
+#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
+fn x11_map(_: &Window, _: bool) -> bool { false }
 
 /// Calls from other threads (the microphone's, the speaker's), run on the
 /// main thread at the next pump.

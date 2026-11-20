@@ -84,7 +84,9 @@ import { FrameMeter } from './frames.mjs';
 import { sweep } from './sweep.mjs';
 
 const die = (m) => { console.error(m); process.exit(2); };
-const BIN = process.argv[2] || join(homedir(), '.cache/crundi-native-target/release/crundi-v2');
+// This worktree's release build (tools/build.sh --release links it into .bin/release; F118).
+const OWN = join(import.meta.dirname, '../.bin/release/crundi-v2');
+const BIN = process.argv[2] || (existsSync(OWN) ? OWN : join(homedir(), '.cache/crundi-native-target/release/crundi-v2'));
 const OUT = process.argv[3] || '/tmp/crundi-v2-measure';
 const PORT = Number(process.env.CRUNDI_TEST_PORT || 4881);
 const SERVER = process.env.MEASURE_SERVER;

@@ -111,6 +111,8 @@ impl T {
     pub const LH_CHAT: f32 = 1.55;
     pub const LH_UI: f32 = 1.3;
     pub const LH_COMPOSER: f32 = 1.45;
+    /// The browser's `line-height: normal` (the toast's lines; F123).
+    pub const LH_NORMAL: f32 = 1.2;
 
     // ─── Letter spacing: tight and wide (em) ───
     pub const TRACK_TIGHT: f32 = -0.01;
@@ -783,6 +785,10 @@ pub fn init(cx: &mut App) {
     n.margins.top = T::TOPBAR_H + T::SP_10;
     n.margins.right = T::SP_16;
     n.width = T::DIALOG_W_LG;
+    // What was written through global_mut reaches the base layer only when
+    // pushed down: the caret (gpui_base's BlinkCursor) reads the base's
+    // cursor_blink, so without this it never rested (F109).
+    gpui_component::Theme::sync_base(cx);
 }
 
 #[cfg(test)]

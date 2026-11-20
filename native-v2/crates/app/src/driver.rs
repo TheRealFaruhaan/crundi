@@ -13,6 +13,8 @@ use serde_json::{json, Map, Value};
 use std::sync::atomic::Ordering;
 
 pub fn handle(r: Request, stores: &Stores, window: &mut Window, cx: &mut App) {
+    static KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !KEYS.swap(true, Ordering::Relaxed) { give_keys(window); }
     let answer = match r.name() {
         "state" | "props" => json!({ "ok": true, "state": Value::Object(state(stores, window, cx)) }),
         "snapshot" => snapshot(window, &r.str("path")),
@@ -75,6 +77,10 @@ fn ui(r: &Request, stores: &Stores, window: &mut Window, cx: &mut App) -> Value 
         "dialog-answer" => { let v = r.args().get(1).cloned(); if !crundi_widgets::ask_answer(a(0) == "true", v, window, cx) { crundi_widgets::close_dialog(window, cx) } }
         "menu-pick" => { crundi_widgets::menu_pick(&a(0), window, cx); }
         "toasts-clear" => crundi_widgets::clear_toasts(window, cx),
+        // The window's × (or the system's close), as a click on it.
+        "window-close" => crundi_shell::close_window(window, cx),
+        // The top bar's minute tick held ("off") or let go ("on"), F122.
+        "usage-clock" => stores.usage.update(cx, |u, _| u.held = a(0) == "off"),
         "toast" => { let k = match a(0).as_str() { "error" => crundi_widgets::Toast::Error, "success" => crundi_widgets::Toast::Success, _ => crundi_widgets::Toast::Info }; crundi_widgets::toast(window, cx, a(1), k); }
         _ => {
             let (area, short) = match name.split_once(':') { Some((a, n)) => (Some(a.to_string()), n.to_string()), None => (None, name.clone()) };
@@ -169,6 +175,27 @@ fn key(r: &Request, window: &mut Window, cx: &mut App) {
         },
     }
 }
+
+/// The window takes the keys, as a person's window does (F109). Under Xvfb
+/// there is no window manager, so nothing ever gives the window the X input
+/// focus: GPUI then sees it inactive and sends no focus or blur events (a
+/// text box's caret never stops, `watch_focus` never fires), unlike on any
+/// display. Once, at the driver's first command (the window is mapped).
+#[cfg(target_os = "linux")]
+fn give_keys(window: &Window) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
+    let id = match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
+        Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
+        _ => return,
+    };
+    if let Ok((c, _)) = x11rb::connect(None) {
+        let _ = c.set_input_focus(InputFocus::PARENT, id, x11rb::CURRENT_TIME).map(|ck| ck.check());
+    }
+}
+#[cfg(not(target_os = "linux"))]
+fn give_keys(_: &Window) {}
 
 /// The window as drawn: xwd of its X window, as a PNG (ImageMagick's
 /// convert; under Xvfb on the server). GPUI draws with wgpu: no snapshot of its own.

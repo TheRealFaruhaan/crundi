@@ -76,11 +76,15 @@ pub fn brand_head(size: Pixels) -> Img {
 
 /// The head and the name side by side, as the web's top bar `.logo`: the
 /// head `size` square, the name in proportion (15 to the head's 24).
-pub fn brand_mark(size: Pixels) -> Div {
+pub fn brand_mark(size: Pixels) -> Div { brand_mark_with(size, true) }
+
+/// The same, its head's place left empty while `head` is false (the web's
+/// visibility: hidden on .cb-headmark while Mini, the head, is out walking).
+pub fn brand_mark_with(size: Pixels, head: bool) -> Div {
     let wh = size * T::BRAND_WORD_OF_HEAD;
     let (a, b) = pics(size);
     div().flex().flex_none().items_center().gap(size * T::BRAND_GAP_OF_HEAD)
-        .child(img(a).size(size).flex_none())
+        .child(if head { img(a).size(size).flex_none().into_any_element() } else { div().size(size).flex_none().into_any_element() })
         .child(img(b).h(wh).w(wh * WORD_RATIO).flex_none())
 }
 

@@ -7,6 +7,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+raw-window-handle = "0.6"
 gpui.workspace = true
 gpui-component.workspace = true
 gpui-kit-assets.workspace = true
@@ -44,6 +45,7 @@ ureq.workspace = true
 cpal.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
 ksni = { version = "=0.3.7", default-features = false, features = ["blocking", "async-io"] }
 keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
 

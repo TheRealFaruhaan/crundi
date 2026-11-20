@@ -38,7 +38,7 @@ mod markdown; pub use markdown::markdown;
 pub mod tip; pub use tip::{tip, tooltip};
 mod icon; pub use icon::icon;
 pub mod cru_mark; pub use cru_mark::cru_mark;
-pub mod brand_mark; pub use brand_mark::{boot_mark, brand_head, brand_mark, sign_in_mark, warm_marks};
+pub mod brand_mark; pub use brand_mark::{boot_mark, brand_head, brand_mark, brand_mark_with, sign_in_mark, warm_marks};
 pub mod scrollbar; pub use scrollbar::scrollbar;
 pub mod ref_drag; pub use ref_drag::{drag_ref, drag_ref_row, edge_scroll, ref_target, ref_target_drag, ref_text, RefDrag, Scroller};
 pub mod textarea; pub use textarea::{code_editor, code_state, message_box, textarea, Editor, EditorState, Textarea, TextareaState};
@@ -175,6 +175,14 @@ pub fn toggle(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool
     let b = Button::new(id);
     let b = if on { b.primary() } else { b.ghost() };
     sized(b, Some(label.into()), None, false, Ctl::Normal)
+}
+
+/// A bordered button that stays lit while `on` (the web's `.kanban-btn` and
+/// `.kanban-btn.toggled`: an accent-dim fill, the accent's edge, its lighter
+/// text; Schedule's "This project" / "All projects", F123).
+pub fn toggled(id: impl Into<ElementId>, label: impl Into<SharedString>, on: bool) -> Button {
+    let b = sized(Button::new(id).outline(), Some(label.into()), None, false, Ctl::Normal);
+    if on { b.bg(T::accent_dim()).text_color(T::accent_hover()).border_color(T::accent()) } else { b }
 }
 
 /// A button's look by name, for buttons built elsewhere (dialogs).

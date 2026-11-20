@@ -45,8 +45,24 @@ pub fn dropdown_off(
     full: bool,
     pick: impl Fn(usize, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
-    let off: Vec<bool> = off.to_vec();
     let label = items.get(on).cloned().unwrap_or_default();
+    choices(id, label, items, off.to_vec(), Some(on), disabled, full, pick)
+}
+
+/// The one <select> every form uses (`dropdown*` and `select`): the quiet
+/// button with `label` and a chevron, the menu of `items` with `on` ticked,
+/// `off[i]` shown but not pickable.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn choices(
+    id: impl Into<ElementId>,
+    label: SharedString,
+    items: Vec<SharedString>,
+    off: Vec<bool>,
+    on: Option<usize>,
+    disabled: bool,
+    full: bool,
+    pick: impl Fn(usize, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
     let pick = std::rc::Rc::new(pick);
     let b = crate::control::sized(Button::new(id), Some(label), Some(IconName::ChevronDown), true, crate::control::Ctl::Normal).disabled(disabled);
     let b = if full { b.w_full().justify_between() } else { b };
@@ -54,7 +70,7 @@ pub fn dropdown_off(
         menu = menu.max_h(T::DIALOG_MAX_H).scrollable(true);
         for (i, l) in items.iter().enumerate() {
             let pick = pick.clone();
-            menu = menu.item(PopupMenuItem::new(l.clone()).checked(i == on).disabled(off.get(i).copied().unwrap_or(false)).on_click(move |_, window, cx| pick(i, window, cx)));
+            menu = menu.item(PopupMenuItem::new(l.clone()).checked(Some(i) == on).disabled(off.get(i).copied().unwrap_or(false)).on_click(move |_, window, cx| pick(i, window, cx)));
         }
         menu
     })

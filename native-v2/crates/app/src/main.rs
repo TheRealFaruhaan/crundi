@@ -57,6 +57,8 @@ fn main() {
         };
         let s = stores.clone();
         let handle = cx.open_window(opts, move |window, cx| {
+            // The system's close goes the ×'s way (crundi_shell::close_window).
+            window.on_window_should_close(cx, |window, cx| { crundi_shell::close_window(window, cx); false });
             let shell = cx.new(|cx| crundi_shell::Shell::new(s.clone(), window, cx));
             crundi_desktop::init_window(&shell, window, cx);
             cx.new(|cx| Root::new(shell, window, cx))

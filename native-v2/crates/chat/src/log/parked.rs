@@ -152,6 +152,8 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
     let off = !busy.is_empty();
     let var = variant(v.ui.parked.body_h);
     let label = |mode: &str, idle: &str| if busy == mode { resume::park_busy_label(mode).to_string() } else { idle.to_string() };
+    // (Where the buttons and the card are, for Mini.)
+    let (s_resume, s_compact, s_veil) = (v.spot("pk-resume", cx), v.spot("pk-compact", cx), v.spot("pk-veil", cx));
     let resume_btn = w::disabled(w::primary("pk-resume", label("resume", "Resume")).icon(IconName::Play), off).on_click(cx.listener(|v, _, _, cx| resume_chat(v, "resume", cx)));
     let peek_btn = session.then(|| w::disabled(w::button("pk-peek", "Peek").icon(IconName::Eye).tooltip("Read the conversation without resuming it"), off)
         .on_click(cx.listener(|v, _, w, cx| peek(v, true, w, cx))));
@@ -167,7 +169,7 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
     let choices = session.then(|| {
         if heavy {
             div().flex().flex_wrap().justify_center().gap(T::SP_6)
-                .child(w::disabled(w::button("pk-compact", label("compact", "Compact and resume")), off).on_click(cx.listener(|v, _, _, cx| resume_chat(v, "compact", cx))))
+                .child(div().relative().child(w::disabled(w::button("pk-compact", label("compact", "Compact and resume")), off).on_click(cx.listener(|v, _, _, cx| resume_chat(v, "compact", cx)))).children(s_compact))
                 .child(w::disabled(w::button("pk-new", label("new", "New session")), off).on_click(cx.listener(|v, _, _, cx| resume_chat(v, "new", cx))))
         } else {
             div().flex().justify_center()
@@ -178,7 +180,7 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
     let card = div().flex().flex_col().items_center().gap(if var == 0 { T::SP_8 } else { T::SP_6 })
         .p(match var { 0 => T::SP_16, 1 => T::SP_12, _ => T::SP_8 }).w_full().max_w(T::PARK_CARD_W).text_center()
         .when(var == 2, |d| d.flex_row().flex_wrap().justify_center().max_w_full())
-        .child(div().flex().flex_wrap().justify_center().gap(T::SP_8).child(resume_btn).children(peek_btn))
+        .child(div().flex().flex_wrap().justify_center().gap(T::SP_8).child(div().relative().child(resume_btn).children(s_resume)).children(peek_btn))
         .when(var < 2, |d| d.child(div().text_size(T::TEXT_12).text_color(T::text()).child(why)))
         .when(var == 0, |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_secondary()).child(what)))
         .children(warn)
@@ -186,7 +188,8 @@ pub fn wrap(v: &mut LogView, log: AnyElement, _window: &mut Window, cx: &mut Con
     base.child(div().absolute().size_full().flex().flex_col().opacity(0.35).child(log))
         .child(div().id("pk-veil").occlude().absolute().size_full().bg(T::scrim()).overflow_y_scroll()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(div().min_h_full().flex().items_center().justify_center().child(card)))
+            .child(div().min_h_full().flex().items_center().justify_center().child(card))
+            .children(s_veil))
         .into_any_element()
 }
 

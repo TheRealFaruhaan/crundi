@@ -23,14 +23,20 @@
 
 import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, createWriteStream, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, createWriteStream, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { totpNow } from '../../src/auth-password.js';
 import { FrameMeter } from '../tools/frames.mjs';
 import { fileURLToPath } from 'node:url';
 
 const SCREENS = process.env.SCREENS_DIR || fileURLToPath(new URL('../screens/', import.meta.url));
+
+// This worktree's own client (tools/build.sh links it into .bin/debug),
+// unless NATIVE_BIN says otherwise: never another worktree's build left in
+// the shared target folder (F118). Set on import, for every suite.
+const OWN_BIN = fileURLToPath(new URL('../.bin/debug/crundi-v2', import.meta.url));
+if (!process.env.NATIVE_BIN && existsSync(OWN_BIN)) process.env.NATIVE_BIN = OWN_BIN;
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -111,6 +117,7 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   const SERVER = process.env.CRUNDI_TEST_SERVER;
   const PORT = Number(process.env.CRUNDI_TEST_PORT || 0);
   const BIN = process.env.NATIVE_BIN;
+  if (BIN) { let from = ''; try { from = readFileSync(join(dirname(BIN), 'FROM'), 'utf8').trim(); } catch { /* built elsewhere */ } console.log(`client: ${BIN}${from ? ` (${from})` : ''}`); }
   if (!SERVER || !PORT || !BIN) { console.error('Set CRUNDI_TEST_SERVER, CRUNDI_TEST_PORT and NATIVE_BIN (see test/lib.mjs)'); process.exit(2); }
   const OUT = process.env.DRIVE_OUT || join(tmpdir(), `crundi-v2-${name}-out`);
   mkdirSync(OUT, { recursive: true });
@@ -226,6 +233,9 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   await T.snap('sign-in', 'login-step');
   await T.ui('sign-in-password', via, password, totpNow(secret));
   await T.until('signed in, the project open, online', (s) => s.signedIn && s.project === 'demo' && s.online, 30000);
+  // The top bar's usage redraws once a minute (its time fill moves): held in
+  // the suites, so an idle check never catches that minute (F122).
+  await T.ui('usage-clock', 'off');
   await sleep(500);
   await T.snap('shell', 'signed-in-project');
   return T;

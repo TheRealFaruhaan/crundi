@@ -13,6 +13,12 @@
 #
 #   CRUNDI_BUILD_JOBS=<n>              more jobs where the machine is yours (default 2)
 #
+# The shared folder holds one debug/crundi-v2 for every worktree: the last
+# build's. So a build that made the client links its binaries into this
+# worktree's own native-v2/.bin/<debug|release>/ (with FROM: the worktree,
+# its HEAD, when), and the suites (test/lib.mjs) and measure-pc run that copy
+# by default, never another worktree's (F118).
+#
 # Before cargo runs, sources are touched when the last build came from another
 # worktree (native-gpui's F18: crates of the same name and version in two
 # worktrees share the folder). Never set CARGO_INCREMENTAL=0.
@@ -47,4 +53,22 @@ trap 'kill $PK 2>/dev/null; rm -f "$PEAKS" "$PEAKS.tmp"' EXIT
 S=$(date +%s)
 cargo "$CMD" -j"$JOBS" "$@"
 echo "$HERE" > "$LAST"
+# (Only a build of the client: not one crate's, whose client would be stale.)
+APP=1; PREV=""; for a in "$@"; do case "$PREV" in -p|--package) [ "$a" = crundi-app ] || APP=0;; esac; PREV="$a"; done
+if [ "$CMD" = build ] && [ "$APP" = 1 ]; then
+  PROFILE=debug; for a in "$@"; do [ "$a" = --release ] && PROFILE=release; done
+  mkdir -p ".bin/$PROFILE"
+  for b in crundi-v2 crundi-v2-floor; do
+    F="$CARGO_TARGET_DIR/$PROFILE/$b"
+    # (cargo just made it from this worktree's sources: up to date.)
+    if [ -f "$F" ]; then ln -f "$F" ".bin/$PROFILE/$b" 2>/dev/null || cp -f "$F" ".bin/$PROFILE/$b"; fi
+  done
+  # The browser host and CEF's files beside it, as tools/stage-browser.sh put
+  # them beside the shared binary (symlinks; the host as it was last built).
+  T="$CARGO_TARGET_DIR/$PROFILE"
+  [ -f "$T/crundi-browser-host" ] && { ln -f "$T/crundi-browser-host" ".bin/$PROFILE/" 2>/dev/null || cp -f "$T/crundi-browser-host" ".bin/$PROFILE/"; }
+  find "$T" -maxdepth 1 -type l -exec cp -P -f {} ".bin/$PROFILE/" \;
+  printf '%s %s %s\n' "$HERE" "$(git rev-parse --short HEAD 2>/dev/null)" "$(date -Is)" > ".bin/$PROFILE/FROM"
+  echo "this worktree's client: $HERE/.bin/$PROFILE/crundi-v2"
+fi
 echo "build took $(( $(date +%s) - S )) s; top rustc peaks:"; sleep 1.2; head -5 "$PEAKS" 2>/dev/null || true

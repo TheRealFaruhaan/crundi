@@ -15,6 +15,8 @@ pub mod registry;
 pub mod session;
 mod signin;
 pub mod slots;
+// Where things are on screen, for Mini (the chat area's), and the logo's place while it is out.
+pub mod spots;
 pub mod usage;
 mod usage_rows;
 mod views;
@@ -118,6 +120,15 @@ pub(crate) fn set_cru_anchor(cx: &mut App, b: Bounds<Pixels>) { if cru_anchor(cx
 
 /// The stores (after `init`).
 pub fn stores(cx: &App) -> Stores { cx.global::<StoresHandle>().0.clone() }
+
+/// The window's ×, and the system's close (Alt+F4, the taskbar's Close): an
+/// area's "window-close" action decides (the Desktop area's tray: hide to it,
+/// as Electron's mainWindow 'close'; kept while the kid screen is locked);
+/// with nobody to decide, the app quits (F113).
+pub fn close_window(window: &mut Window, cx: &mut App) {
+    let s = stores(cx);
+    if !registry::run_action(&s, "window-close", window, cx) { cx.quit() }
+}
 
 /// The API of the signed-in server (None when signed out).
 pub fn api(cx: &App) -> Option<Api> { cx.try_global::<StoresHandle>().and_then(|h| h.0.session.read(cx).api.clone()) }

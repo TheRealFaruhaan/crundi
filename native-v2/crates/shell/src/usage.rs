@@ -17,17 +17,27 @@ pub struct Usage {
     /// The Telegram bot: configured, connected, its @name.
     pub tg: Option<(bool, bool, String)>,
     ticking: bool,
+    /// The minute's tick held (the test driver's "usage-clock off": a suite's
+    /// idle checks then never catch the minute's redraw; F122).
+    pub held: bool,
 }
 
 impl Usage {
     pub fn set_usage(&mut self, u: Value, cx: &mut Context<Self>) {
+        // The same sample again (its fetchedAt with it): nothing to draw.
+        if self.usage.as_ref().is_some_and(|(v, _)| *v == u) { return; }
+        // A sample that shows nothing (no account's usage: not ok) after one
+        // that showed nothing draws nothing either.
+        let now = crundi_core::time::now_secs();
+        let blank = |v: &Value| crate::usage::rows(v, now).is_none();
+        let quiet = blank(&u) && self.usage.as_ref().is_none_or(|(v, _)| blank(v));
         self.usage = Some((u, Instant::now()));
-        cx.notify();
+        if !quiet { cx.notify(); }
         if !self.ticking {
             self.ticking = true;
             cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
                 cx.background_executor().timer(Duration::from_secs(60)).await;
-                let alive = this.update(cx, |u, cx| { if u.usage.is_some() { cx.notify(); true } else { u.ticking = false; false } });
+                let alive = this.update(cx, |u, cx| { if u.usage.is_some() { if !u.held { cx.notify(); } true } else { u.ticking = false; false } });
                 if !matches!(alive, Ok(true)) { break; }
             }).detach();
         }

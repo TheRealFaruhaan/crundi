@@ -65,7 +65,7 @@ impl Render for ToastLayer {
         let card = div().id(("toast", o.n as usize)).occlude().max_w(max_w)
             .bg(T::bg_secondary()).border_1().border_l(px(3.)).border_color(border).rounded(T::R_CONTROL)
             .shadow(vec![BoxShadow { color: hsla(0., 0., 0., 0.5), offset: point(px(0.), px(6.)), blur_radius: px(20.), spread_radius: px(0.), inset: false }])
-            .px(T::SP_20).py(T::SP_12).text_size(T::TOAST_TEXT).text_color(T::text())
+            .px(T::SP_20).py(T::SP_12).text_size(T::TOAST_TEXT).line_height(relative(T::LH_NORMAL)).text_color(T::text())
             .child(o.text.clone());
         // The left edge in its own colour: drawn as a strip over the border.
         let card = div().relative().child(card).child(div().absolute().top_0().bottom_0().left_0().w(px(3.)).rounded_l(T::R_CONTROL).bg(edge));

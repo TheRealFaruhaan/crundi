@@ -72,6 +72,9 @@ pub struct Composer {
     /// The schedule panel while open (2.10): a view of its own, drawn by
     /// the pane's body over the chat's foot (the web's .cc-schedpanel).
     pub(crate) sched: Option<(Entity<sched::SchedPanel>, Pixels)>,
+    /// This composer notes where its box, Send and queue are, for Mini (the
+    /// chat pane's composer; not a second one's).
+    pub(crate) spots: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -109,7 +112,7 @@ impl Composer {
         let mut c = Composer {
             store, id, meta, input, stores, exited, ctrl, stop_armed: false, stop_gen: 0, height: px(96.), width: px(0.), last_text: String::new(),
             shown: (None, String::new(), None), slash: Default::default(), queue: Default::default(), attach: Default::default(),
-            sched: None, _subs: subs,
+            sched: None, spots: false, _subs: subs,
         };
         drafts::restore(&mut c, window, cx);
         c.sync_box(window, cx);
@@ -117,6 +120,12 @@ impl Composer {
     }
 
     pub fn chat_id(&self) -> &str { &self.id }
+
+    /// A spot for Mini over its parent ("<what>:<chat>"), in this composer's group; None for a second composer.
+    pub(crate) fn spot(&self, what: &str, cx: &mut App) -> Option<Canvas<()>> {
+        if !self.spots { return None; }
+        Some(crundi_shell::spots::spot(cx, &format!("composer:{}", self.id), format!("{what}:{}", self.id)))
+    }
 
     /// The pane's text scale (A- / A+).
     pub fn fs(&self) -> f32 { scale(self.meta.zoom) }
@@ -406,6 +415,8 @@ fn state_label(st: &str) -> (&'static str, Hsla) {
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("composer");
+        if self.spots { let g = format!("composer:{}", self.id); crundi_shell::spots::begin(cx, &g); }
+        let (s_input, s_send, s_row, s_all) = (self.spot("input", cx), self.spot("send", cx), self.spot("inrow", cx), self.spot("composer", cx));
         let st = self.state_now();
         let exited = st == "exited";
         let (narrow, fs) = (self.narrow(), self.fs());
@@ -430,6 +441,7 @@ impl Render for Composer {
                 .capture_action(cx.listener(|this, _: &Escape, _, cx| if slash::escape(this, cx) { cx.stop_propagation(); }))
                 .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| if attach::shift_insert(this, e, window, cx) { cx.stop_propagation(); }))
                 .child(w::text_box(&focus, mbox, window, cx))
+                .relative().children(s_input)
                 .into_any_element()
         };
         let stop = (st == "working").then(|| w::layer(w::stop_button("stop", self.stop_armed, fs).on_click(cx.listener(|this, _, _, cx| this.stop(cx)))).into_any_element());
@@ -439,16 +451,16 @@ impl Render for Composer {
             // Wide, Send sits beside the box at its own width; narrow, it
             // fills the rest of the row under the box.
             let b = w::send_button("send", if busy { "Queue" } else { "Send" }, fs).on_click(cx.listener(|this, _, window, cx| this.send(window, cx)));
-            w::layer(if narrow { div().flex_1().flex().child(b.w_full()).into_any_element() } else { b.into_any_element() }).into_any_element()
+            w::layer(if narrow { div().flex_1().flex().relative().child(b.w_full()).children(s_send).into_any_element() } else { div().relative().flex_none().child(b).children(s_send).into_any_element() }).into_any_element()
         };
         let mic = voice::mic(self, cx).map(|m| w::layer(m).into_any_element());
         let attach_btn = w::layer(attach::button(self, cx));
         let row = if narrow {
-            div().flex().flex_col().gap(T::SP_8)
+            div().relative().children(s_row).flex().flex_col().gap(T::SP_8)
                 .child(div().flex().child(the_box))
                 .child(div().flex().items_center().gap(T::SP_8).child(attach_btn).child(w::layer(sched::clock_button(self, true, cx))).children(stop).children(mic).child(send))
         } else {
-            div().flex().items_end().gap(T::SP_8).child(the_box).child(attach_btn).children(stop).children(mic).child(send)
+            div().relative().children(s_row).flex().items_end().gap(T::SP_8).child(the_box).child(attach_btn).children(stop).children(mic).child(send)
         };
 
         // The meta row: one row; a narrow pane drops the session id and the
@@ -494,6 +506,7 @@ impl Render for Composer {
                 .children(slash::render(self, cx)))
             .child(w::layer(meta))
             .child(measure)
+            .children(s_all)
     }
 }
 

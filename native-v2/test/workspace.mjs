@@ -422,8 +422,29 @@ await T.until('↺ resets it', (s) => TS(s)?.zoom === 0);
   t.check('idle: no frames at all for 5 s', idle.frames === 0, { idle, drew });
 }
 
-// The input bar's box (after the idle check: a box that had the keys
-// keeps its caret blinking after it lost them: reported to the Architect).
+// A box that had the keys stops its caret when it loses them (F109): the
+// box, then the screen (whose own cursor blinks, redrawing it alone); the
+// bar is not drawn again. Then nothing has the keys: no frames.
+{
+  await act('term-input-focus', key);
+  await t.sleep(1200);
+  await act('term-focus', key);
+  await t.sleep(600);
+  const r0 = (await T.state()).renders || {};
+  await t.sleep(3000);
+  const r1 = (await T.state()).renders || {};
+  t.check('a blurred box stops its caret: the input bar is not drawn again', (r1['term-input'] || 0) === (r0['term-input'] || 0), { before: r0['term-input'], after: r1['term-input'] });
+  await act('term-blur', key);
+  await T.settle(1500, 6000);
+  const from = T.frames.mark();
+  const q0 = (await T.state()).renders || {};
+  await t.sleep(4000);
+  const q1 = (await T.state()).renders || {};
+  const drew = Object.fromEntries(Object.keys(q1).filter((k) => q1[k] !== (q0[k] || 0)).map((k) => [k, q1[k] - (q0[k] || 0)]));
+  t.check('…and with the keys nowhere: no frames for 4 s', T.frames.since(from).frames === 0, { idle: T.frames.since(from), drew });
+}
+
+// The input bar's box.
 // In the box: it uploads, its path goes in.
 await act('term-input-paste-image', key, png);
 await T.until('a picture pasted in the box uploads, its path goes in', (s) => /crundi_attachments\/.*\.png $/.test(TS(s)?.text || '') && /^Attached/.test(s.toast), 20000);

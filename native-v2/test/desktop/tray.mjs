@@ -30,4 +30,12 @@ export async function run(T, t) {
   await T.ui('tab', 'workbench');
   await T.act('tray-pick', 'open');
   t.check('Open keeps the client', !T.exited);
+  // The window's × with the tray up hides the window to it, as Electron's
+  // (F113); the client goes on, and the tray's Open brings it back.
+  if (tr(p).shown) {
+    await T.ui('window-close');
+    await T.until('× hides the window to the tray (the client goes on)', (p) => tr(p).hidden === true && !T.exited);
+    await T.act('tray-pick', 'open');
+    await T.until('…and the tray\'s Open shows it again', (p) => tr(p).hidden === false);
+  }
 }

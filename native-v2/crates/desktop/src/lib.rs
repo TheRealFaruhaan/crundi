@@ -118,6 +118,12 @@ pub fn init(cx: &mut App) {
         // The project bar's Browser button: the drawer's own open (page and host).
         .action("browser", |_, _, _| { if ctx::project().is_empty() { ctx::toast_error("Select a project first") } else { drawer::open() } })
         .action("cru", |_, _, _| cru::click())
+        // The window's × (crundi_shell::close_window, F113): kept while the kid
+        // screen is locked; hidden to the tray while it is up; else quit.
+        .action("window-close", |_, window, cx| {
+            if crate::cru_kid::on() { return; }
+            if tray::up() { ctx::hide_window(window, cx) } else { cx.quit() }
+        })
         // The top bar's Cru mark: rested on (a moment), left; push to talk held and let go.
         // (A chat's voice holding the mic would keep a hover from opening Cru: v2's chats have none yet.)
         .action("cru-hover", |_, _, _| cru::hover(false))

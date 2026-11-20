@@ -42,6 +42,10 @@ crundi-webview.workspace = true
 crundi-desktop.workspace = true
 
 # The in-process sampler (frame-journal builds only, Linux and macOS: src/journal.rs).
+# The test driver gives its window the keys under Xvfb (driver.rs give_keys).
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"
+
 [target.'cfg(unix)'.dependencies]
 pprof = { version = "0.15", default-features = false, features = ["frame-pointer"], optional = true }
 

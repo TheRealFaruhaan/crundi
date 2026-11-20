@@ -251,7 +251,9 @@ await untilLog('Resume: the chat is live again', (l2) => l2.parked === null || l
 await T.until('the resumed chat is idle', (st) => st.chatState === 'idle', 30000);
 await t.sleep(5000);
 const idleFrom = T.frames.mark();
+const idleR0 = (await T.state()).renders || {};
 await t.sleep(4000);
 const idle = T.frames.since(idleFrom);
-t.check('idle: no frames for 4 s', idle.frames === 0, idle);
+const idleR1 = (await T.state()).renders || {};
+t.check('idle: no frames for 4 s', idle.frames === 0, { idle, drew: Object.fromEntries(Object.keys(idleR1).filter((k) => idleR1[k] !== (idleR0[k] || 0)).map((k) => [k, idleR1[k] - (idleR0[k] || 0)])) });
 await T.end();

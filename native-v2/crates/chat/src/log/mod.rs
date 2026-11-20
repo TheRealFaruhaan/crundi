@@ -111,6 +111,9 @@ pub struct LogView {
     pub(crate) hot: Option<(usize, usize, Range<usize>)>,
     /// The features' own state for this log (a pane's and a bubble's differ).
     pub(crate) ui: Ui,
+    /// This log notes where its suggestion, badges and parked card are, for
+    /// Mini (the chat pane's log; not a second one's).
+    pub(crate) spots: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -156,7 +159,7 @@ impl LogView {
         let focus = cx.focus_handle();
         let zoom = Some(store.read(cx).meta.read(cx).0.zoom);
         let seen = store.read(cx).conv.entries.len();
-        let mut v = LogView { store, list, open: Default::default(), zoom, focus, sel: None, drag: None, hits: Default::default(), mouse: Point::default(), edge: false, edge_task: None, over_link: false, range: None, laid: Default::default(), tables: Default::default(), hot: None, ui: Ui::default(), _subs: subs };
+        let mut v = LogView { store, list, open: Default::default(), zoom, focus, sel: None, drag: None, hits: Default::default(), mouse: Point::default(), edge: false, edge_task: None, over_link: false, range: None, laid: Default::default(), tables: Default::default(), hot: None, ui: Ui::default(), spots: false, _subs: subs };
         v.ui.jump.seen = seen;
         parked::follow(&mut v, cx);
         v
@@ -164,6 +167,13 @@ impl LogView {
 
     /// The chat's id.
     pub fn chat(&self, cx: &App) -> String { self.store.read(cx).id.clone() }
+
+    /// A spot for Mini over its parent ("<what>:<chat>"), in this log's group; None for a second log.
+    pub(crate) fn spot(&self, what: &str, cx: &mut App) -> Option<Canvas<()>> {
+        if !self.spots { return None; }
+        let id = self.chat(cx);
+        Some(crundi_shell::spots::spot(cx, &format!("log:{id}"), format!("{what}:{id}")))
+    }
 
     /// Open or close a card or a group (its head clicked): its rows measured again in this log.
     pub(crate) fn toggle(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -602,6 +612,7 @@ pub(crate) fn open_link(l: &Link, cx: &mut App) {
 impl Render for LogView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("log");
+        if self.spots { let g = format!("log:{}", self.chat(cx)); crundi_shell::spots::begin(cx, &g); }
         // The texts report themselves again as the list lays them out.
         self.hits.borrow_mut().clear();
         self.range = self.ordered(cx);

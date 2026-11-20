@@ -127,6 +127,9 @@ fn set(s: State) {
     if *ok { platform::update(&s); }
 }
 
+/// The tray is up (the window's × hides to it then).
+pub fn up() -> bool { SHOWN.lock().unwrap().as_ref().is_some_and(|x| x.0) }
+
 /// The connection changed: the status line and the tooltip follow.
 pub fn set_online(online: bool) { set(now(status_label(online).to_string())); }
 
@@ -135,7 +138,7 @@ pub fn props() -> Value {
     let s = SHOWN.lock().unwrap().clone();
     let (shown, st) = s.unwrap_or_default();
     json!({
-        "shown": shown, "tooltip": tooltip(&st.status),
+        "shown": shown, "tooltip": tooltip(&st.status), "hidden": crate::ctx::hidden(),
         "menu": menu(&st).iter().map(|(id, l, en, ch)| json!({ "id": id, "label": l, "enabled": en, "checked": ch })).collect::<Vec<_>>(),
     })
 }

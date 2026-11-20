@@ -1851,6 +1851,7 @@ dependencies = [
  "raw-window-handle",
  "serde_json",
  "winresource",
+ "x11rb",
 ]
 
 [[package]]
@@ -1939,6 +1940,7 @@ dependencies = [
  "keyring",
  "ksni",
  "open",
+ "raw-window-handle",
  "rfd",
  "serde_json",
  "sha2 0.10.9",
@@ -1947,6 +1949,7 @@ dependencies = [
  "tray-icon",
  "tungstenite",
  "ureq 3.5.2",
+ "x11rb",
 ]
 
 [[package]]
