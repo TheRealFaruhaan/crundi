@@ -20,15 +20,33 @@ impl Default for Cell { fn default() -> Self { Cell { ch: ' ', st: Style::defaul
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Mode { Ground, Esc, EscInter(char), Csi, Osc, OscEsc, Str, StrEsc }
 
+/// A line of cells with an id that changes whenever a cell in it changes
+/// (any mutable access stamps a fresh one): the screen keeps what it derived
+/// from a line (its runs, its shaped text) by that id, so a batch costs only
+/// the lines it wrote, and a line that scrolls keeps its id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Line { cells: Vec<Cell>, id: u64 }
+
+static NEXT_LINE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+fn fresh_id() -> u64 { NEXT_LINE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+
+impl Line {
+    pub fn new(cells: Vec<Cell>) -> Line { Line { cells, id: fresh_id() } }
+    /// The id of the line's current content.
+    pub fn id(&self) -> u64 { self.id }
+}
+impl std::ops::Deref for Line { type Target = Vec<Cell>; fn deref(&self) -> &Vec<Cell> { &self.cells } }
+impl std::ops::DerefMut for Line { fn deref_mut(&mut self) -> &mut Vec<Cell> { self.id = fresh_id(); &mut self.cells } }
+
 #[derive(Clone)]
-struct Screen { rows: Vec<Vec<Cell>>, cx: usize, cy: usize, saved: (usize, usize, Style), top: usize, bottom: usize }
+struct Screen { rows: Vec<Line>, cx: usize, cy: usize, saved: (usize, usize, Style), top: usize, bottom: usize }
 
 pub struct Term {
     pub cols: usize,
     pub rows: usize,
     main: Screen,
     alt: Option<Screen>,
-    pub scrollback: Vec<Vec<Cell>>,
+    pub scrollback: Vec<Line>,
     pub max_scrollback: usize,
     st: Style,
     mode: Mode,
@@ -50,7 +68,7 @@ pub struct Term {
     pub generation: u64,
 }
 
-fn blank_row(cols: usize) -> Vec<Cell> { vec![Cell::default(); cols] }
+fn blank_row(cols: usize) -> Line { Line::new(vec![Cell::default(); cols]) }
 
 /// A character's width in cells: 2 for East Asian wide and most emoji, 0 for
 /// combining marks, else 1.
@@ -338,7 +356,7 @@ impl Term {
 
 
     /// The `rows` lines on show when scrolled `back` lines up from the bottom.
-    pub fn view(&self, back: usize) -> Vec<&Vec<Cell>> {
+    pub fn view(&self, back: usize) -> Vec<&Line> {
         let scr = self.scr_ref();
         if self.alt.is_some() { return scr.rows.iter().collect(); }
         let back = back.min(self.scrollback.len());
@@ -490,6 +508,30 @@ mod tests {
         assert_eq!(key_bytes("\u{8}", false, false, false, false).as_deref(), Some("\x7f"));
         assert_eq!(key_bytes("x", false, true, false, false).as_deref(), Some("\x1bx"));
         assert_eq!(key_bytes("\u{f710}", false, false, false, false), None);
+    }
+
+    /// A line's id changes with its cells and only then: a batch that writes
+    /// one line leaves the others' ids, a scroll moves lines with their ids.
+    #[test]
+    fn line_ids_follow_changes() {
+        let mut t = Term::new(10, 3);
+        t.feed("a\r\nb\r\nc");
+        let ids = |t: &Term| t.view(0).iter().map(|l| l.id()).collect::<Vec<_>>();
+        let before = ids(&t);
+        t.feed("x");
+        let after = ids(&t);
+        assert_eq!(before[..2], after[..2]);
+        assert_ne!(before[2], after[2]);
+        t.feed("\r\nd");
+        let scrolled = ids(&t);
+        assert_eq!(t.scrollback[0].id(), after[0]);
+        assert_eq!(scrolled[..2], after[1..]);
+        // Scrolled back one line: the same ids, one down.
+        let back: Vec<u64> = t.view(1).iter().map(|l| l.id()).collect();
+        assert_eq!(back, vec![after[0], after[1], after[2]]);
+        t.feed("\x1b[1;1H\x1b[K");
+        assert_ne!(ids(&t)[0], scrolled[0]);
+        assert_eq!(ids(&t)[1..], scrolled[1..]);
     }
 
     #[test]
