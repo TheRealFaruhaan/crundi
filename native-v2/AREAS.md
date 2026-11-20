@@ -19,7 +19,7 @@ reference is unclear, ask the Manager.
 | `crates/chat` (`crundi-chat`) | Chat area | `Chats`, `ChatStore` + `ChatMeta`, ChatPane, LogView, Composer, the streaming path. The log's features (2.13-2.23) and the composer's (2.5-2.12b, 2.24) are added here, one module each (`log/…`, `composer/…`) |
 | `crates/app` (`crundi-app`) | Architect | The binary `crundi-v2`: makes the stores, inits the areas, the window, the test driver |
 | `crates/browser-link`, `crates/browser-host` | Desktop area | The browser host process (the only CEF), its link. Ported from native-gpui; not a default member |
-| `crates/webview`, `crates/desktop` (to come) | Desktop area | The browser bridge, the drawer, Browsers tab, native host, tray, Inbox, bubble, passwords, homepool node, Cru |
+| `crates/webview`, `crates/desktop` (to come) | Desktop area | The browser bridge, the drawer, Browsers tab, native host, tray, Inbox, passwords, homepool node, Cru |
 | `crates/workspace` (to come) | Workspace area | Git, Files, Media |
 | `crates/planning` (to come) | Planning area | Kanban, Mind map, Notes, Schedules, webhooks, Factories |
 | `crates/operations` (to come) | Operations area | Services, Docker, Secrets, Skills, Usage, Settings, Homepool, Info, Panels, What's new |

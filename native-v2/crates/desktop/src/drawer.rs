@@ -432,6 +432,7 @@ pub fn set_network(id: &str, network: &str) {
     }
     persist();
     show_active();
+    if network.starts_with("hp:") { crate::hpdrawer::refresh(); }
 }
 
 pub fn label(network: &str) -> String {
@@ -605,7 +606,7 @@ pub fn open_panel(which: &str) {
             with(|d| d.clr = Clear { site_only: false, site, history: true, cookies: false, cache: true, passwords: false });
         }
         "passwords" => crate::passwords::show_panel(),
-        "homepool" => {}
+        "homepool" => crate::hpdrawer::opened(),
         _ => {}
     }
     render();

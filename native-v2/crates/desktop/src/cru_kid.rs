@@ -45,6 +45,8 @@ pub fn state(st: &Value) {
     if !kid_device() { return; }
     if !with(|k| k.on) {
         with(|k| { k.on = true; k.pin_at = None; k.pin.clear(); k.pin_err.clear(); });
+        // The window locked to the kid screen (app/main.js kidLockWindow).
+        kit::lock_window(true);
         if cru::with(|c| c.open) { cru::close(); }
         cru::open(false);
     }
@@ -106,6 +108,7 @@ pub fn pin_try() {
 pub fn exit() {
     mark_device(false);
     with(|k| *k = Kid::default());
+    if !crate::pclock::on() { kit::lock_window(false); }
     if cru::with(|c| c.open) { cru::close(); }
     cru::render();
 }

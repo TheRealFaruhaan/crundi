@@ -75,7 +75,8 @@ pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook}
 pub mod pick_menu; pub use pick_menu::{pick_menu, pick_menu_open, PickItem};
 pub mod segmented_icons; pub use segmented_icons::segmented_icons;
 pub mod icon_tag; pub use icon_tag::icon_tag;
-pub mod round_button; pub use round_button::round_button;
+pub mod round_button; pub use round_button::{round_button, round_pill_button};
+pub mod pin_pad; pub use pin_pad::{pin_pad, PinLook};
 pub mod liquid_mic; pub use liquid_mic::{liquid_mic, radial_glow, Liquid, MicLook};
 pub mod label_icon_button; pub use label_icon_button::{label_icon_button, Look};
 pub mod leaf_chip; pub use leaf_chip::{leaf_act, leaf_chip};

@@ -35,6 +35,8 @@ thread_local! {
 pub fn init(cx: &mut App) {
     ops::set_host(cx, Rc::new(OpsHost));
     crundi_chat::log::frames::set_host(cx, Rc::new(ChatHost));
+    // Workspace's pages: a PDF or AVIF in a file window, a PDF, video or audio in the media lightbox (F110).
+    crundi_workspace::frames::set_host(cx, Rc::new(ChatHost));
 }
 
 /// The pump: each page view and live frame takes its copy (a notify only when it moved).
@@ -88,8 +90,18 @@ struct ChatHost;
 
 impl crundi_chat::log::frames::FrameHost for ChatHost {
     fn started(&self) -> bool { crundi_webview::started() }
-    fn frame(&self, key: &str, url: &str, _window: &mut Window, cx: &mut App) -> AnyElement {
-        let key = format!("chat:{key}");
+    fn frame(&self, key: &str, url: &str, _window: &mut Window, cx: &mut App) -> AnyElement { live_frame(format!("chat:{key}"), url, cx) }
+}
+
+/// Workspace's pages are drawn as the chat's frames are (their own keys).
+impl crundi_workspace::frames::PageHost for ChatHost {
+    fn started(&self) -> bool { crundi_webview::started() }
+    fn frame(&self, key: &str, url: &str, _window: &mut Window, cx: &mut App) -> AnyElement { live_frame(format!("ws:{key}"), url, cx) }
+}
+
+/// A page live in its box, its view kept by key (at most MAX_LIVE at once).
+fn live_frame(key: String, url: &str, cx: &mut App) -> AnyElement {
+    {
         let have = FRAMES.with(|f| f.borrow_mut().get_mut(&key).map(|(e, at)| { *at = Instant::now(); e.clone() }));
         let e = match have {
             Some(e) => e,

@@ -68,7 +68,7 @@ struct Copy {
     words: String,
     legend: Vec<(&'static str, String)>, arcs: Vec<(&'static str, f32)>, cells: Vec<cru::Cell>,
     /// The live screen: what is up, a page in the frame, Cru's full view.
-    screen: Option<Value>, target: bool, full: bool,
+    screen: Option<Value>, target: bool, full: bool, folded: bool,
     /// The push-to-talk shortcut as the hint names it.
     ptt: String,
 }
@@ -78,7 +78,7 @@ impl Copy {
         if !cru::with(|c| c.open) { return Copy::default(); }
         let kid = cru_kid::on().then(|| cru_kid::with(|k| Kid { paused: k.paused, muted: k.muted, pin: k.pin_at.is_some(), pin_len: k.pin.len(), pin_err: k.pin_err.clone() }));
         let turns = cru::turns().into_iter().map(|(mine, text, show, at)| Turn { mine, text, show, when: cru::when(at) }).collect();
-        let (screen, target) = cru_screen::with(|s| (s.screen.clone(), !s.target.is_empty()));
+        let (screen, target, folded) = cru_screen::with(|s| (s.screen.clone(), !s.target.is_empty(), s.folded));
         let mut c = cru::with(|c| Copy {
             open: true, kid,
             phase: c.phase.clone(), reply: c.reply.clone(), detail: c.detail.clone(), notice: c.notice.clone(), question: !c.question.is_empty(),
@@ -87,7 +87,7 @@ impl Copy {
             att: c.att.clone(), admin: c.settings.get("adminMode").and_then(|a| a.as_bool()) == Some(true),
             turns, pending_len: c.pending.len(),
             queued: cru::queued(c), hearing: cru::hearing(c), can_cancel: cru::can_cancel(c), cancellable: !c.no_cancel,
-            screen, target, full: false,
+            screen, target, full: false, folded,
             ..Default::default()
         });
         c.full = cru_screen::full();
@@ -243,30 +243,34 @@ impl CruScreen {
     /// Keyboard mode's box takes the keys (the web focuses it as it opens).
     fn focus_box(&self, window: &mut Window, cx: &mut Context<Self>) { if let Some(i) = &self.input { i.update(cx, |s, cx| s.focus(window, cx)); } }
 
-    /// The live screen's panel: its head (title; Full view, or Normal view; ×) and its body (blocks, then the frame).
-    fn screen_panel(&self, full: bool, kid: bool) -> Option<Div> {
+    /// The live screen's panel (.cv-scr): its head (the title; Fold the panel in the chat view;
+    /// Full view; Close the panel) and its body (blocks, then the frame). In Cru's full view and on
+    /// the kid screen, no head; folded (the chat view), the head alone.
+    fn screen_panel(&self, full: bool, kid: bool, chat: bool) -> Option<Div> {
         let scr = self.copy.screen.as_ref()?;
         let title = scr.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
         let video = scr.get("video").is_some();
         let target = self.copy.target;
+        let folded = chat && !full && self.copy.folded;
         let blocks = scr.get("blocks").and_then(|b| b.as_array()).cloned().unwrap_or_default();
-        let head = div().flex().flex_none().items_center().gap(T::SP_6)
-            .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(title))
-            .when(full, |d| d.child(w::button("cru-normal", "Normal view").icon(IconName::Minimize2).on_click(|_, _, _| cru_screen::normal_view())))
-            .when(!full && !video, |d| d.child(w::icon_button("cru-full", IconName::Maximize2, "Full view").on_click(|_, _, _| cru_screen::full_view())))
-            .child(w::icon_button("cru-scr-x", IconName::X, "Close what Cru shows").on_click(|_, _, _| cru_screen::close_screen()));
+        let x = |id: &'static str, icon: IconName, tip: &'static str| w::round_button(id, icon, tip, false, None, T::CRU_SCR_BTN, T::ICON_SM);
+        let head = div().flex().flex_none().items_center().gap(T::SP_6).px(T::SP_2).pb(T::SP_6)
+            .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
+            .when(chat, |d| d.child(x("cru-scr-min", IconName::ChevronUp, "Fold the panel").on_click(|_, _, _| cru_screen::fold())))
+            .when(!video, |d| d.child(x("cru-full", IconName::Maximize2, "Full view: Cru's screen over the whole area").on_click(|_, _, _| cru_screen::full_view())))
+            .child(x("cru-scr-x", IconName::X, "Close the panel").on_click(|_, _, _| cru_screen::close_screen()));
         let grow = full || kid;
         let mut body = div().flex().flex_col().gap(T::SP_8).when(grow, |d| d.flex_1().min_h_0());
-        if !blocks.is_empty() { body = body.child(div().id("cru-blocks").max_h(T::CRU_SCREEN_H).overflow_y_scroll().child(cru_blocks::blocks(&blocks, kid))); }
+        if !blocks.is_empty() { body = body.child(div().id("cru-blocks").when(!grow, |d| d.max_h(T::CRU_SCREEN_H)).overflow_y_scroll().child(cru_blocks::blocks(&blocks, kid))); }
         if target { body = body.child(div().when(grow, |d| d.flex_1().min_h_0()).when(!grow, |d| d.h(T::CRU_SCREEN_H)).child(self.frame.clone())); }
-        Some(div().flex().flex_col().gap(T::SP_6).when(grow, |d| d.flex_1().min_h_0()).when(!kid, |d| d.child(head)).child(body))
+        Some(div().flex().flex_col().when(grow, |d| d.flex_1().min_h_0()).when(!kid && !full, |d| d.child(head)).when(!folded, |d| d.child(body)))
     }
 
     fn kid_view(&self, cx: &mut Context<Self>) -> AnyElement {
         let c = &self.copy;
         let (phase, reply, heard) = (c.phase.clone(), c.reply.clone(), if c.interim.is_empty() { c.heard.clone() } else { c.interim.clone() });
         let Kid { paused, muted, pin, pin_len, pin_err } = c.kid.clone().unwrap_or_default();
-        let screen = self.screen_panel(false, true);
+        let screen = self.screen_panel(false, true, false);
         let has_screen = screen.is_some();
         let top = div().flex().items_center().px(T::SP_24).pt(T::SP_16)
             .child(div().text_color(T::kid_button()).text_size(T::KID_HEADING).child(IconName::AudioLines))
@@ -295,8 +299,8 @@ impl CruScreen {
             .bg(linear_gradient(175., linear_color_stop(T::kid_sky(), 0.), linear_color_stop(T::kid_sun(), 1.)))
             .text_color(T::kid_text())
             .track_focus(&self.focus)
-            .on_key_down(|e: &KeyDownEvent, _, _| if cru_kid::pin_shown() {
-                match e.keystroke.key.as_str() { "enter" => cru_kid::pin_key("OK"), "backspace" => cru_kid::pin_key("Back"), "escape" => {}, k => cru_kid::pin_key(k) }
+            .on_key_down(|e: &KeyDownEvent, _, cx| if cru_kid::pin_shown() {
+                match e.keystroke.key.as_str() { "enter" => cru_kid::pin_key("OK"), "backspace" => cru_kid::pin_key("Back"), "escape" => cx.stop_propagation(), k => cru_kid::pin_key(k) }
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(top)
@@ -310,21 +314,19 @@ impl CruScreen {
                 .child(div().text_size(T::KID_MIC_ICON).child(IconName::Sun)).child("Break time! See you soon."));
         }
         if pin {
-            let mut keys = div().flex().flex_wrap().justify_center().gap(T::SP_8);
-            for key in ["1", "2", "3", "4", "5", "6", "7", "8", "9", "Back", "0", "OK"] {
-                keys = keys.child(div().id(("pin-key", key.as_bytes()[0] as usize + key.len())).size(T::KID_KEY).rounded_full().bg(if key == "OK" { T::kid_button() } else { T::bg_tertiary() })
-                    .flex().items_center().justify_center().text_color(T::white()).text_size(T::TEXT_20).font_weight(T::W_BOLD).cursor_pointer()
-                    .child(if key == "Back" { "←".to_string() } else { key.to_string() })
-                    .on_click(move |_, _, _| cru_kid::pin_key(key)));
-            }
-            root = root.child(div().id("kid-pin").absolute().inset_0().flex().items_center().justify_center().bg(T::scrim())
+            // The grown-ups' PIN pad (crundi-voice.js .cv-pin): over the kid screen, a
+            // click beside the box closes it; Esc does nothing (Electron blocks it).
+            let look = w::PinLook { key_w: T::KID_KEY, key_h: T::KID_PIN_KEY_H, gap: T::SP_10, radius: T::R_BUBBLE, bg: T::kid_pin_key(), hover: None, edge: T::border(), fg: T::text(), text: T::TEXT_20, icons: false };
+            root = root.child(div().id("kid-pin").absolute().inset_0().flex().items_center().justify_center().bg(T::kid_pin_scrim())
                 .on_click(|_, _, _| cru_kid::pin_close())
-                .child(div().id("kid-pin-box").w(T::KID_PAD_W).p(T::SP_20).rounded(T::R_CARD).bg(T::bg_secondary()).text_color(T::text()).flex().flex_col().gap(T::SP_12).items_center()
+                .child(div().id("kid-pin-box").flex().flex_col().gap(T::SP_12).items_center().text_color(T::text())
                     .on_click(|_, _, cx| cx.stop_propagation())
-                    .child(div().text_size(T::TEXT_14).text_center().child("Grown-ups: enter the PIN to leave kid mode"))
-                    .child(div().h(T::CONTROL).text_size(T::TEXT_20).font_family(T::MONO).child("•".repeat(pin_len)))
-                    .child(keys)
-                    .when(!pin_err.is_empty(), |d| d.child(div().text_size(T::TEXT_13).text_color(T::red()).child(pin_err)))));
+                    .child(div().text_size(T::TEXT_14).text_color(T::text_secondary()).child("Grown-ups: enter the PIN to leave kid mode"))
+                    .child(div().id("kid-pin-in").w(T::KID_PIN_IN_W).p(T::SP_8).rounded(T::R_BUBBLE).border_1().border_color(T::border()).bg(T::kid_pin_key())
+                        .flex().justify_center().text_size(T::KID_PIN_IN_TEXT).font_weight(T::W_SEMIBOLD).font_family(T::MONO).text_color(T::text())
+                        .child(div().h(T::KID_PIN_IN_TEXT * 1.2).child("\u{2022}".repeat(pin_len))))
+                    .child(w::pin_pad("kid-pin-key", look, |k, _, _| cru_kid::pin_key(k)))
+                    .child(div().min_h(T::PCL_ERR_H).text_size(T::TEXT_13).text_color(T::red()).child(pin_err))));
         }
         let _ = cx;
         root.into_any_element()
@@ -333,12 +335,14 @@ impl CruScreen {
 
 impl CruScreen {
     /// The top row and the usage line under it (with the ⋯ menu over the screen).
-    fn top(&self, live: bool, unread: bool, admin: bool, legend: Vec<(&'static str, String)>) -> Div {
+    fn top(&self, live: bool, unread: bool, admin: bool, legend: Vec<(&'static str, String)>, full: bool) -> Div {
         let row = div().flex().w_full().items_center().gap(T::SP_8)
             .child(div().id("cru-wordmark").child(w::cru_mark(live)))
             .child(div().flex_1())
             .when(admin, |d| d.child(w::tone_button("cru-admin", IconName::ShieldAlert, None, T::red(), T::error_edge(), true,
                 "Admin mode is on: Cru can run any command on the server. Turn it off in Settings, or say \"admin mode off\".", 1.)))
+            .when(full, |d| d.child(w::round_pill_button("cru-normal", IconName::X, "Normal view", "Back to the normal view", T::CRU_BTN, T::ICON_SM)
+                .on_click(|_, _, _| cru_screen::normal_view())))
             .child(w::round_button("cru-more", IconName::Ellipsis, "More", false, None, T::CRU_BTN, T::CRU_BTN_ICON)
                 .when(unread, |d| d.child(w::dot(T::red()).absolute().top(T::SP_2).right(T::SP_2)))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -430,6 +434,12 @@ impl CruScreen {
     }
 
     /// The voice view's words (.cv-words): heard, the reply, the detail, Yes / No, the note.
+    /// Cru's latest words under its full view (.cv-ov.full .cv-words): one short line, read, not said.
+    fn full_words(c: &Copy) -> Stateful<Div> {
+        div().id("cru-words").flex_none().w_full().max_h(T::CRU_FULL_WORDS_H).overflow_hidden().px(T::SP_16).pt(T::SP_4).text_center()
+            .when(!c.reply.is_empty(), |d| d.child(div().mt(T::SP_2).text_size(T::TEXT_14).line_height(px(20.)).text_color(T::text_secondary()).child(c.reply.clone())))
+    }
+
     fn words(c: &Copy, note: String) -> Stateful<Div> {
         let (phase, reply, detail, question) = (c.phase.as_str(), c.reply.clone(), c.detail.clone(), c.question);
         let heard = c.words.clone();
@@ -458,17 +468,12 @@ impl Render for CruScreen {
         let c = self.copy.clone();
         if !c.open { return div().into_any_element(); }
         if c.kid.is_some() { return self.kid_view(cx); }
-        // Cru's full view: the project area (on a wide enough window).
-        if c.full && window.viewport_size().width >= T::CRU_FULL_MIN_W {
-            if let Some(p) = self.screen_panel(true, false) {
-                return div().absolute().top(T::TOPBAR_H).left_0().right_0().bottom_0().flex().flex_col().p(T::SP_16).bg(T::bg())
-                    .track_focus(&self.focus)
-                    .on_key_down(|e: &KeyDownEvent, _, _| if e.keystroke.key == "escape" { cru::close(); })
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(p).into_any_element();
-            }
-        }
-        let (phase, keyboard, chat_view) = (c.phase.clone(), c.keyboard, c.chat_view);
+        // Cru's full view (.cv-ov.full): over the whole content area on a wide enough window; the
+        // top row (with "Normal view"), Cru's screen without its head, its latest words as a short
+        // line, and the bottom bar. The field, the chat and the words being heard make way.
+        let full = c.full && c.screen.is_some() && window.viewport_size().width >= T::CRU_FULL_MIN_W;
+        let (phase, keyboard) = (c.phase.clone(), c.keyboard);
+        let chat_view = c.chat_view && !full;
         let un = !c.unavailable.is_empty();
         let tone = cru::tone(&phase, un);
         let word = cru::status_word(&phase, un);
@@ -479,7 +484,7 @@ impl Render for CruScreen {
         let ms = t as f64 * 1000.;
         let mic_level = if phase == "listen" { self.level } else { 0. };
         let fphase = if un { "ended".to_string() } else { phase.clone() };
-        let panel = self.screen_panel(false, false);
+        let panel = self.screen_panel(full, false, chat_view);
         let has_scr = panel.is_some();
         let mut animate = !keyboard;
         let field_shown = !chat_view && !has_scr;
@@ -498,7 +503,7 @@ impl Render for CruScreen {
         // Each part in a paint layer (the screen is replayed while other views draw); the typing
         // box with its caret, and the ⋯ menu over the rest, are drawn outside / over them.
         let mut col = div().flex().flex_col().items_center().size_full()
-            .child(w::layer(self.top(phase != "ended", c.unread && !chat_view, c.admin, c.legend.clone())));
+            .child(w::layer(self.top(phase != "ended", c.unread && !chat_view, c.admin, c.legend.clone(), full)));
         if c.confirm {
             col = col.child(w::layer(div().id("cru-confirm").flex().flex_wrap().items_center().gap(T::SP_8).mx(T::SP_12).mt(T::SP_8).px(T::SP_12).py(T::SP_10)
                 .rounded(T::R_BUBBLE).bg(T::bg_secondary()).border_1().border_color(T::border()).text_size(T::TEXT_13)
@@ -509,19 +514,19 @@ impl Render for CruScreen {
         let mut panel = panel;
         if chat_view {
             // The chat view: the live screen above the messages.
-            if let Some(p) = panel.take() { col = col.child(div().flex_none().w_full().px(T::SP_12).pt(T::SP_8).child(p)); }
+            if let Some(p) = panel.take() { col = col.child(div().flex_none().w_full().max_h(vp.height * 0.42).px(T::SP_12).pt(T::SP_8).child(p)); }
             let chat = self.chat(&phase, &c.interim, c.more, &c.saying);
             col = col.child(w::layer(chat));
         } else {
             // The voice view: the live screen takes the field's place.
             if let Some(p) = panel.take() {
-                col = col.child(div().flex().flex_col().flex_1().flex_grow(T::CRU_FIELD_GROW).min_h_0().w_full().px(T::SP_12).pt(T::SP_8).child(p));
+                col = col.child(div().flex().flex_col().flex_1().flex_grow(T::CRU_FIELD_GROW).min_h_0().w_full().px(T::SP_12).pt(if full { T::SP_10 } else { T::SP_8 }).child(p));
             } else {
                 let arcs = c.arcs.iter().map(|(k, v)| (usage_color(k), *v)).collect();
                 let frame = cru_field::Frame { t, phase: fphase.clone(), state: self.field.clone(), cells: c.cells.clone(), arcs };
                 col = col.child(div().id("cru-field").relative().flex_1().flex_grow(T::CRU_FIELD_GROW).min_h(T::CRU_FIELD_MIN).w_full().child(cru_field::field(frame)));
             }
-            col = col.child(w::layer(Self::words(&c, note.clone())));
+            col = col.child(w::layer(if full { Self::full_words(&c) } else { Self::words(&c, note.clone()) }));
         }
         let hint = format!("Hold {} to talk · click the mic to keep this open", c.ptt);
         if !keyboard {
@@ -575,7 +580,7 @@ impl Render for CruScreen {
         let ui = serde_json::json!({
             "top": f32::from(top), "right": f32::from(right), "w": f32::from(pw), "h": f32::from(ph), "viewportW": f32::from(vp.width),
             "anchor": anchor.map(|(r, b)| serde_json::json!({ "right": f32::from(r), "bottom": f32::from(b) })),
-            "view": if chat_view { "chat" } else { "voice" }, "wordmark": true, "more": true, "close": true,
+            "view": if chat_view { "chat" } else { "voice" }, "full": full, "folded": c.folded && chat_view, "wordmark": true, "more": true, "close": true,
             "menuItems": if c.menu { serde_json::json!([if chat_view { "Voice view" } else { "Chat view" }, "Mute Cru's voice", "Compact the conversation"]) } else { serde_json::json!([]) },
             "bubbles": n_bubbles, "empty": chat_view && n_bubbles == 0 && phase != "think" && c.queued.is_empty() && c.hearing.is_empty(),
             "field": field_shown, "note": if chat_view { String::new() } else { note.clone() }, "noteColor": "amber",
@@ -585,12 +590,14 @@ impl Render for CruScreen {
             "typingBox": keyboard, "mic": !keyboard, "micBox": f32::from(if chat_view { T::CRU_MIC_CHAT } else { T::CRU_MIC }), "word": word, "tone": tone, "animating": animate,
         });
         cru::with(|c| c.ui = ui);
-        div().id("cru-panel").absolute().top(top).right(right).w(pw).h(ph)
+        let root = if full { div().id("cru-panel").absolute().top(T::TOPBAR_H).left_0().right_0().bottom_0() }
+            else { div().id("cru-panel").absolute().top(top).right(right).w(pw).h(ph).rounded(T::CRU_BUBBLE_R).border_1().border_color(T::border()).shadow_lg() };
+        root
             .track_focus(&self.focus)
             .on_key_down(|e: &KeyDownEvent, _, _| if e.keystroke.key == "escape" { cru::close(); })
             .on_mouse_down(MouseButton::Left, |_, _, cx| { cru::panel_pressed(); if cru::with(|c| c.menu) { cru::with(|c| c.menu = false); cru::render(); } cx.stop_propagation(); })
             .on_hover(|on, _, _| cru::panel_hover(*on))
-            .bg(T::bg()).text_color(T::text()).rounded(T::CRU_BUBBLE_R).border_1().border_color(T::border()).shadow_lg().overflow_hidden()
+            .bg(T::bg()).text_color(T::text()).overflow_hidden()
             .child(col)
             .into_any_element()
     }
