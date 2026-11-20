@@ -524,6 +524,8 @@ impl T {
     /// vault: the PIN modal (.pin-box 320) and the lock dialogs (.csl-card 420).
     pub const VAULT_PIN_W: Pixels = px(320.);
     pub const VAULT_LOCK_W: Pixels = px(420.);
+    /// vault: the PIN dialog's PIN (.pin-modal input: 1.4rem, mono, centred).
+    pub const VAULT_PIN_TEXT: Pixels = px(22.4);
     /// vault: a request's separator (.secret-request rgba(245,158,11,0.25)).
     pub fn vault_yellow_edge() -> Hsla { rgba(0xf59e0b40).into() }
     // ── end operations ──

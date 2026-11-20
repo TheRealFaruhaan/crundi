@@ -532,6 +532,15 @@ fn kv(label: impl Into<SharedString>, value: impl Into<SharedString>, rule: bool
         .child(div().max_w(relative(T::INFO_VALUE_SHARE)).text_right().font_family(T::MONO).text_size(T::TEXT_12).text_color(T::text()).child(value.into()))
 }
 
+/// A line of the machine panel (.sys-line): no padding of its own (the
+/// block's 6 px gap spaces them), the value mono at the line's size.
+fn sys_line(k: impl Into<SharedString>, v: impl Into<SharedString>) -> Div {
+    div().flex().items_baseline().gap(T::SP_8).text_size(T::TEXT_13)
+        .child(div().flex_none().text_color(T::text_secondary()).child(k.into()))
+        .child(div().flex_1().min_w_0())
+        .child(div().text_right().font_family(T::MONO).text_color(T::text()).child(v.into()))
+}
+
 fn quiet(t: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_13).text_color(T::text_muted()).child(t.into()) }
 fn hint(t: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_11).text_color(T::text_muted()).child(t.into()) }
 fn label(t: impl Into<SharedString>) -> Div { div().pt(T::SP_4).text_size(T::TEXT_12).text_color(T::text_secondary()).child(t.into()) }
@@ -543,7 +552,7 @@ fn note(warn: bool) -> Div {
 impl InfoView {
     fn sys_panel(&self) -> Div {
         let Some(sys) = &self.sys else { return div().child(quiet("Reading the machine…")) };
-        let mut d = div().flex().flex_col().gap(T::SP_6).child(kv("CPU", sys.cpu.clone(), false));
+        let mut d = div().flex().flex_col().gap(T::SP_6).child(sys_line("CPU", sys.cpu.clone()));
         if !sys.cores.is_empty() {
             d = d.child(div().flex().h(T::SP_24 + T::SP_4).gap(T::SP_2).children(sys.cores.iter().map(|c| {
                 let c = c.clamp(0.0, 100.0);
@@ -571,8 +580,9 @@ impl InfoView {
         }).size_full()));
         for r in &sys.rows {
             d = d.child(match r {
-                SysRow::Gap => div().h(T::SP_8),
-                SysRow::Line(k, v) => kv(k.clone(), v.clone(), false),
+                // .sys-block + .sys-block: 14 px between blocks (6 + 2 + 6).
+                SysRow::Gap => div().h(T::SP_2),
+                SysRow::Line(k, v) => sys_line(k.clone(), v.clone()),
                 SysRow::Bar(p) => w::meter((*p / 100.0) as f32, level_color(*p), T::SP_6),
             });
         }

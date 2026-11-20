@@ -18,6 +18,7 @@ use gpui::*;
 use serde_json::{json, Value};
 
 pub use backup::open_login_restore;
+pub(crate) use list::open_row_y;
 
 /// Every text box the driver can type into (its names).
 const FIELDS: &[&str] = &["new-name", "new-desc", "link", "pending-name", "rename", "as", "newfile", "editor",

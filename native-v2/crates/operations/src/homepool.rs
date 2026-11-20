@@ -678,7 +678,8 @@ impl Hp {
                 .child(w::primary("hp-dlg-ok", self.dlg_label.clone()).on_click(|_, _, cx| dlg_ok(cx)));
         }
         let children = vec![
-            w::modal_head("hp-dlg-x", self.dlg_title.clone(), false, |_, _, cx| close_dlg(cx)).into_any_element(),
+            // .hp-dlg h3: the title alone (no ×: Cancel / Done, Esc and the scrim close it).
+            div().px(T::SP_8).pt(T::SP_8).pb(T::SP_10).text_size(T::TEXT_16).font_weight(T::W_BOLD).text_color(T::text()).child(self.dlg_title.clone()).into_any_element(),
             div().flex().flex_col().gap(T::SP_12).px(T::SP_8).children(self.dialog_body()).into_any_element(),
             acts.into_any_element(),
         ];

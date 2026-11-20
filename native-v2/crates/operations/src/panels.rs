@@ -31,7 +31,7 @@ use crate::web::PageView;
 use crundi_widgets as w;
 use gpui::*;
 use serde_json::{json, Value};
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, time::{Duration, Instant}};
+use std::{collections::HashMap, rc::Rc, sync::Arc, time::{Duration, Instant}};
 
 // ─── Small readers (the Slint kit's) ───
 
@@ -265,7 +265,7 @@ pub(crate) struct View {
 }
 
 #[derive(Default)]
-struct St {
+pub(crate) struct St {
     project: String,
     widgets: Vec<Value>,
     loaded: bool,
@@ -295,42 +295,39 @@ struct St {
     live: Vec<String>,
 }
 
-// The screen's state is the area's own (this module's), changed only here;
-// what draws it observes `Changed` (an entity notified once per change), so
-// a change redraws the views that show panels and nothing else.
-thread_local! { static ST: RefCell<St> = RefCell::new(St::default()); }
+// The screen's state is the area's own entity (rule 1), made in init and
+// changed only here; the views that show it hold its handle and observe it,
+// notified once per change (`bump`), so a change redraws the views that show
+// panels and nothing else. A Global holds only the handle, for handlers.
+struct StH(Entity<St>);
+impl Global for StH {}
 
-fn with<R>(f: impl FnOnce(&mut St) -> R) -> R { ST.with(|x| f(&mut x.borrow_mut())) }
+/// The state's entity (made in init).
+pub(crate) fn state(cx: &App) -> Entity<St> { cx.global::<StH>().0.clone() }
 
-/// Notified when the state changed: the Panels tab and the panel panes observe it.
-pub struct Changed;
-struct ChangedH(Entity<Changed>);
-impl Global for ChangedH {}
+/// Change the state (bookkeeping: no redraw; `bump` redraws).
+fn with<R>(cx: &mut App, f: impl FnOnce(&mut St) -> R) -> R { state(cx).update(cx, |st, _| f(st)) }
 
-pub(crate) fn changed(cx: &mut App) -> Entity<Changed> {
-    if let Some(h) = cx.try_global::<ChangedH>() { return h.0.clone(); }
-    let e = cx.new(|_| Changed);
-    cx.set_global(ChangedH(e.clone()));
-    e
-}
+/// Read the state.
+fn rd<R>(cx: &App, f: impl FnOnce(&St) -> R) -> R { f(cx.global::<StH>().0.read(cx)) }
 
-fn bump(cx: &mut App) { changed(cx).update(cx, |_, cx| cx.notify()); }
+fn bump(cx: &mut App) { state(cx).update(cx, |_, cx| cx.notify()); }
 
 fn by_id(st: &St, id: &str) -> Option<Value> { st.widgets.iter().find(|w| s(w, "id") == id).cloned() }
 
 /// The chats of the project on screen (a docked panel needs its chat):
 /// kept in the state (`sync_live`, on the server's state and a project
 /// change), so drawing never reads the shell's stores (rule 1).
-fn live_chats(_project: &str, _cx: &App) -> Vec<String> { with(|st| st.live.clone()) }
+fn live_chats(_project: &str, cx: &App) -> Vec<String> { rd(cx, |st| st.live.clone()) }
 
 /// The project's chats from the session; a change places the panels again.
 fn sync_live(cx: &mut App) {
-    let p = with(|st| st.project.clone());
+    let p = with(cx, |st| st.project.clone());
     let live: Vec<String> = crate::compat::session::get(cx).terminals.iter()
         .filter(|t| s(t, "kind") == "ui" && s(t, "project").eq_ignore_ascii_case(&p))
         .map(|t| s(t, "id")).collect();
-    if with(|st| st.live == live) { return; }
-    with(|st| st.live = live);
+    if with(cx, |st| st.live == live) { return; }
+    with(cx, |st| st.live = live);
     sync_cells(cx);
     bump(cx);
 }
@@ -346,17 +343,17 @@ const AUTO: &str = "panel:widget:@";
 
 /// The ids of the panels that are workbench panes now.
 pub fn cell_ids(cx: &App) -> Vec<String> {
-    let (list, p) = with(|st| (st.widgets.clone(), st.project.clone()));
+    let (list, p) = rd(cx, |st| (st.widgets.clone(), st.project.clone()));
     if p.is_empty() { return vec![]; }
     let live = live_chats(&p, cx);
     list.iter().filter(|w| place_of(w, &live) == "cell").map(|w| s(w, "id")).collect()
 }
 
 /// A panel's title (a pane's header).
-pub fn title_of(id: &str) -> String { with(|st| by_id(st, id).map(|w| s(&w, "title")).unwrap_or_default()) }
+pub fn title_of(id: &str, cx: &App) -> String { rd(cx, |st| by_id(st, id).map(|w| s(&w, "title")).unwrap_or_default()) }
 
 /// Is a panel waiting for the owner's approval (a pane header's "approve")?
-pub fn needs_grant(id: &str) -> bool { with(|st| by_id(st, id).is_some_and(|w| flag(&w, "needsGrant"))) }
+pub fn needs_grant(id: &str, cx: &App) -> bool { rd(cx, |st| by_id(st, id).is_some_and(|w| flag(&w, "needsGrant"))) }
 
 /// A pane header's Reload and × (the web's widget-reload, widget-close).
 pub fn reload(id: &str, cx: &mut App) { reload_id(id, cx); }
@@ -364,7 +361,7 @@ pub fn close(id: &str, cx: &mut App) { user_patch(id, json!({ "closed": true }),
 
 /// A pane header's slot control: the slots as a menu at a window point.
 pub fn slot_menu(id: &str, at: Point<Pixels>, cx: &mut App) {
-    let Some(wv) = with(|st| by_id(st, id)) else { return };
+    let Some(wv) = with(cx, |st| by_id(st, id)) else { return };
     let (labels, values, cur) = slot_options(&wv);
     let items = labels.iter().zip(values.iter()).enumerate()
         .map(|(i, (l, v))| { let e = w::MenuEntry::new(v, *l); if i == cur { e.icon(w::IconName::Check) } else { e } }).collect();
@@ -375,11 +372,11 @@ pub fn slot_menu(id: &str, at: Point<Pixels>, cx: &mut App) {
 // ─── The list ───
 
 fn refresh(cx: &mut App) {
-    let (p, seq) = with(|st| { st.seq += 1; (st.project.clone(), st.seq) });
+    let (p, seq) = with(cx, |st| { st.seq += 1; (st.project.clone(), st.seq) });
     if crundi_shell::api(cx).is_none() { return; }
     crundi_shell::call(cx, move |api| api.get(&format!("/api/widgets?project={}", enc(&p))), move |r, cx| {
-        if with(|st| st.seq != seq) { return; }
-        with(|st| match r {
+        if with(cx, |st| st.seq != seq) { return; }
+        with(cx, |st| match r {
             Ok(v) => {
                 st.widgets = if ok_of(&v) { v.get("widgets").and_then(|x| x.as_array()).cloned().unwrap_or_default() } else { vec![] };
                 st.loaded = true;
@@ -394,9 +391,9 @@ fn refresh(cx: &mut App) {
 
 /// The list changed: the selection, the choosers' picks, chips, panes.
 fn after_list(cx: &mut App) {
-    let (p, list) = with(|st| (st.project.clone(), st.widgets.clone()));
+    let (p, list) = with(cx, |st| (st.project.clone(), st.widgets.clone()));
     let live = live_chats(&p, cx);
-    with(|st| {
+    with(cx, |st| {
         let order = tab_order(&st.widgets);
         if by_id(st, &st.selected).is_none() { st.selected = order.first().map(|w| s(w, "id")).unwrap_or_default(); st.pane.clear(); }
         // A chooser whose panel left the workbench shows the list again
@@ -417,13 +414,13 @@ fn after_list(cx: &mut App) {
 /// a pane whose panel left goes. Only when the set changes, so a pane
 /// closed by hand stays closed.
 fn sync_cells(cx: &mut App) {
-    let p = with(|st| st.project.clone());
+    let p = with(cx, |st| st.project.clone());
     if p.is_empty() { return; }
     let cells = cell_ids(cx);
     let sig = format!("{p}|{}", cells.join(","));
-    if with(|st| { let same = st.cells_sig == sig; st.cells_sig = sig; same }) { return; }
+    if with(cx, |st| { let same = st.cells_sig == sig; st.cells_sig = sig; same }) { return; }
     let Some(wb) = crundi_workbench::workbench(cx) else { return };
-    let picked: Vec<String> = with(|st| st.picked.values().map(|x| x.0.clone()).collect());
+    let picked: Vec<String> = with(cx, |st| st.picked.values().map(|x| x.0.clone()).collect());
     // (The workbench shows the open project's layout.)
     if !crundi_shell::project(cx).eq_ignore_ascii_case(&p) { return; }
     wb.update(cx, |wb, cx| {
@@ -443,13 +440,13 @@ fn load_chip_value(wv: &Value, cx: &mut App) {
     if source.is_empty() { return; }
     let path = s(chip, "path");
     let id = s(wv, "id");
-    let p = with(|st| st.project.clone());
+    let p = with(cx, |st| st.project.clone());
     let q = format!("/api/widgets/data?project={}&id={}&source={}", enc(&p), enc(&id), enc(&source));
     crundi_shell::call(cx, move |api| api.get(&q), move |r, cx| {
         let Ok(d) = r else { return };
         let entry = if ok_of(&d) { d.get("data").and_then(|x| x.get(&source)).and_then(|e| e.get("value")) } else { None };
         let text = chip_text(entry.and_then(|v| path_get(v, &path)));
-        with(|st| st.chip_values.insert(id, text));
+        with(cx, |st| st.chip_values.insert(id, text));
         bump(cx);
     });
 }
@@ -463,18 +460,18 @@ fn when(ms: f64) -> String {
 // ─── The tab ───
 
 fn select(id: &str, cx: &mut App) {
-    with(|st| { st.selected = id.to_string(); st.pane.clear(); });
+    with(cx, |st| { st.selected = id.to_string(); st.pane.clear(); });
     bump(cx);
 }
 
 fn show_pane(pane: &str, cx: &mut App) {
-    let (p, id) = with(|st| { st.pane = pane.to_string(); (st.project.clone(), st.selected.clone()) });
+    let (p, id) = with(cx, |st| { st.pane = pane.to_string(); (st.project.clone(), st.selected.clone()) });
     if pane == "history" {
-        with(|st| { st.versions.clear(); st.versions_state = "loading".into(); });
+        with(cx, |st| { st.versions.clear(); st.versions_state = "loading".into(); });
         let q = format!("/api/widgets/versions?project={}&id={}", enc(&p), enc(&id));
         crundi_shell::call(cx, move |api| api.get(&q), move |r, cx| {
             let list = r.ok().filter(ok_of).and_then(|d| d.get("versions").and_then(|x| x.as_array()).cloned()).unwrap_or_default();
-            with(|st| { st.versions_state = if list.is_empty() { "empty".into() } else { "list".into() }; st.versions = list; });
+            with(cx, |st| { st.versions_state = if list.is_empty() { "empty".into() } else { "list".into() }; st.versions = list; });
             bump(cx);
         });
     }
@@ -484,14 +481,14 @@ fn show_pane(pane: &str, cx: &mut App) {
 
 /// The screenshots of Claude's last check (the web's shotsNode).
 fn load_shots(cx: &mut App) {
-    let (p, id, seq) = with(|st| { st.checks_seq += 1; st.shots.clear(); st.checks_state = "loading".into(); (st.project.clone(), st.selected.clone(), st.checks_seq) });
+    let (p, id, seq) = with(cx, |st| { st.checks_seq += 1; st.shots.clear(); st.checks_state = "loading".into(); (st.project.clone(), st.selected.clone(), st.checks_seq) });
     let q = format!("/api/widgets/renders?project={}&id={}", enc(&p), enc(&id));
     crundi_shell::call(cx, move |api| api.get(&q), move |r, cx| {
-        if with(|st| st.checks_seq != seq) { return; }
+        if with(cx, |st| st.checks_seq != seq) { return; }
         let renders = r.ok().filter(ok_of).and_then(|d| d.get("renders").cloned()).unwrap_or(Value::Null);
         let shots = renders.get("shots").and_then(|x| x.as_array()).cloned().unwrap_or_default();
         let at = s(&renders, "at");
-        with(|st| {
+        with(cx, |st| {
             st.checks_state = if shots.is_empty() { "none".into() } else { "list".into() };
             st.shots = shots.iter().map(|sh| {
                 let (f, stt) = (s(sh, "frame"), s(sh, "state"));
@@ -506,11 +503,11 @@ fn load_shots(cx: &mut App) {
             let api = api.clone();
             crundi_shell::run(cx, move || api.get_bytes(&path).ok().filter(|(st, b)| *st == 200 && !b.is_empty()).map(|(_, b)| b), move |b, cx| {
                 let Some(b) = b else { return };
-                if with(|st| st.checks_seq != seq) { return; }
+                if with(cx, |st| st.checks_seq != seq) { return; }
                 let (w0, h0) = image_size(&b);
                 let fmt = if b.starts_with(b"\x89PNG") { ImageFormat::Png } else if b.starts_with(b"RIFF") { ImageFormat::Webp } else { ImageFormat::Jpeg };
                 let img = Arc::new(Image::from_bytes(fmt, b));
-                with(|st| if let Some(x) = st.shots.get_mut(i) { x.1 = Some((img, w0, h0)); });
+                with(cx, |st| if let Some(x) = st.shots.get_mut(i) { x.1 = Some((img, w0, h0)); });
                 bump(cx);
             });
         }
@@ -518,7 +515,7 @@ fn load_shots(cx: &mut App) {
 }
 
 fn user_patch(id: &str, patch: Value, cx: &mut App, then: impl FnOnce(bool, &mut App) + 'static) {
-    let p = with(|st| st.project.clone());
+    let p = with(cx, |st| st.project.clone());
     let body = json!({ "project": p, "id": id, "patch": patch });
     crundi_shell::call(cx, move |api| api.post("/api/widgets/user", &body), move |r, cx| {
         let ok = match r {
@@ -531,7 +528,7 @@ fn user_patch(id: &str, patch: Value, cx: &mut App, then: impl FnOnce(bool, &mut
 }
 
 fn set_scope(id: &str, global: bool, cx: &mut App) {
-    let p = with(|st| st.project.clone());
+    let p = with(cx, |st| st.project.clone());
     let body = json!({ "project": p, "id": id, "global": global });
     crundi_shell::call(cx, move |api| api.post("/api/widgets/scope", &body), move |r, cx| {
         let v = match r { Ok(v) => v, Err(e) => return toast_error(cx, e) };
@@ -546,8 +543,8 @@ fn set_scope(id: &str, global: bool, cx: &mut App) {
 }
 
 fn delete(id: &str, window: &mut Window, cx: &mut App) {
-    let Some(wv) = with(|st| by_id(st, id)) else { return };
-    let (p, id) = (with(|st| st.project.clone()), id.to_string());
+    let Some(wv) = with(cx, |st| by_id(st, id)) else { return };
+    let (p, id) = (with(cx, |st| st.project.clone()), id.to_string());
     let msg = format!("Delete \"{}\" and its source files? This cannot be undone.", s(&wv, "title"));
     w::ask_confirm(window, cx, w::Ask { title: "Delete panel".into(), message: msg.into(), ok: "Delete".into(), danger: true, ..Default::default() }, move |ok, _, cx| {
         if !ok { return; }
@@ -561,7 +558,7 @@ fn delete(id: &str, window: &mut Window, cx: &mut App) {
 }
 
 fn restore(id: &str, version: &str, cx: &mut App) {
-    let p = with(|st| st.project.clone());
+    let p = with(cx, |st| st.project.clone());
     let ver: Value = version.parse::<u64>().map(Value::from).unwrap_or_else(|_| Value::from(version));
     let body = json!({ "project": p, "id": id, "version": ver });
     let version = version.to_string();
@@ -574,27 +571,27 @@ fn restore(id: &str, version: &str, cx: &mut App) {
 
 /// Reload: every copy of the panel in this project loads again.
 fn reload_id(id: &str, cx: &mut App) {
-    let pk = with(|st| pkey(&st.project));
-    let keys: Vec<String> = with(|st| st.views.iter().filter(|(_, v)| v.id == id && pkey(&v.alias) == pk).map(|(k, _)| k.clone()).collect());
+    let pk = with(cx, |st| pkey(&st.project));
+    let keys: Vec<String> = with(cx, |st| st.views.iter().filter(|(_, v)| v.id == id && pkey(&v.alias) == pk).map(|(k, _)| k.clone()).collect());
     for k in keys { load(&k, cx); }
 }
 
 fn slot(id: &str, v: &str, cx: &mut App) {
-    let in_pop = with(|st| st.pop == id);
+    let in_pop = with(cx, |st| st.pop == id);
     user_patch(id, json!({ "slot": v }), cx, move |_, cx| if in_pop { close_pop(cx); });
 }
 
 fn pin(id: &str, cx: &mut App) {
-    let pinned = with(|st| by_id(st, id).is_some_and(|w| s(&w, "lifecycle") == "pinned"));
+    let pinned = with(cx, |st| by_id(st, id).is_some_and(|w| s(&w, "lifecycle") == "pinned"));
     user_patch(id, json!({ "pinned": !pinned }), cx, |_, _| {});
 }
 
 fn reopen(id: &str, cx: &mut App) { user_patch(id, json!({ "closed": false }), cx, |_, _| {}); }
 
-fn retry(cx: &mut App) { with(|st| st.error.clear()); bump(cx); refresh(cx); }
+fn retry(cx: &mut App) { with(cx, |st| st.error.clear()); bump(cx); refresh(cx); }
 
 fn open_tab(id: &str, cx: &mut App) {
-    with(|st| { st.selected = id.to_string(); st.pane.clear(); });
+    with(cx, |st| { st.selected = id.to_string(); st.pane.clear(); });
     crate::compat::show_tab(cx, "panels");
     bump(cx);
 }
@@ -604,9 +601,9 @@ fn open_tab(id: &str, cx: &mut App) {
 /// A copy's view, made the first time it is drawn (its first load then).
 pub(crate) fn ensure_view(key: &str, cx: &mut App) -> Option<PageView> {
     let (frame, alias, id) = parse_key(key)?;
-    if let Some(p) = with(|st| st.views.get(key).and_then(|v| v.page.clone())) { return Some(p); }
+    if let Some(p) = with(cx, |st| st.views.get(key).and_then(|v| v.page.clone())) { return Some(p); }
     let page = crate::web::host(cx).map(|h| h.page_view(cx));
-    let first = with(|st| {
+    let first = with(cx, |st| {
         let v = st.views.entry(key.to_string()).or_insert_with(|| View { frame, alias, id, ..Default::default() });
         v.page = page.clone();
         v.seen = Some(Instant::now());
@@ -621,15 +618,16 @@ pub(crate) fn ensure_view(key: &str, cx: &mut App) -> Option<PageView> {
 /// its browser back loads again.
 pub(crate) fn seen_box(key: &str, b: Bounds<Pixels>, cx: &mut App) {
     let (w0, h0) = (f32::from(b.size.width), f32::from(b.size.height));
-    let again = with(|st| {
+    let host = crate::web::host(cx);
+    let again = with(cx, |st| {
         let Some(v) = st.views.get_mut(key) else { return false };
         v.seen = Some(Instant::now());
         v.size = (w0, h0);
         // Drawn again: shown in the host at once.
-        if std::mem::take(&mut v.hidden) { if let Some(i) = v.panel { if let Some(h) = crate::web::host(cx) { h.panel_parked(i, false); } } }
+        if std::mem::take(&mut v.hidden) { if let Some(i) = v.panel { if let Some(h) = &host { h.panel_parked(i, false); } } }
         v.state == "ready" && !v.loading && v.panel.is_none() && v.reload_at.is_none() && v.handed.is_none_or(|t| t.elapsed() > Duration::from_millis(1500))
     });
-    if again { with(|st| if let Some(v) = st.views.get_mut(key) { v.reload_at = Some(Instant::now()); }); let _ = cx; }
+    if again { with(cx, |st| if let Some(v) = st.views.get_mut(key) { v.reload_at = Some(Instant::now()); }); let _ = cx; }
 }
 
 /// The engine panel is there and has drawn.
@@ -639,11 +637,11 @@ fn panel_live(i: Option<usize>, cx: &App) -> (bool, bool) {
     (p.live, p.painted)
 }
 
-pub(crate) fn painted(key: &str, cx: &App) -> bool { panel_live(with(|st| st.views.get(key).and_then(|v| v.panel)), cx).1 }
+pub(crate) fn painted(key: &str, cx: &App) -> bool { panel_live(rd(cx, |st| st.views.get(key).and_then(|v| v.panel)), cx).1 }
 
 /// Load (or reload) a view's page: its document and data, then the page.
 fn load(key: &str, cx: &mut App) {
-    let Some((alias, id, frame, nonce)) = with(|st| st.views.get_mut(key).map(|v| {
+    let Some((alias, id, frame, nonce)) = with(cx, |st| st.views.get_mut(key).map(|v| {
         v.loading = true;
         v.nonce += 1;
         v.reload_at = None;
@@ -669,7 +667,8 @@ fn load(key: &str, cx: &mut App) {
 
 fn loaded(key: &str, nonce: u64, r: Result<Value, String>, cx: &mut App) {
     let mut hand: Option<String> = None;
-    let stale = with(|st| {
+    let started = crate::web::started(cx);
+    let stale = with(cx, |st| {
         let Some(v) = st.views.get_mut(key) else { return true };
         if v.nonce != nonce { return true; }
         v.loading = false;
@@ -680,7 +679,7 @@ fn loaded(key: &str, nonce: u64, r: Result<Value, String>, cx: &mut App) {
                 if !ok_of(&doc) {
                     v.state = "error".into();
                     v.error = err_or(&doc, "This panel could not be loaded.");
-                } else if !crate::web::started(cx) {
+                } else if !started {
                     v.state = "error".into();
                     v.error = "The browser did not start, so panels cannot be shown here.".into();
                 } else {
@@ -720,7 +719,7 @@ fn loaded(key: &str, nonce: u64, r: Result<Value, String>, cx: &mut App) {
 fn show_html(key: &str, html: &str, cx: &mut App) {
     use base64::Engine as _;
     let url = format!("data:text/html;charset=utf-8;base64,{}", base64::engine::general_purpose::STANDARD.encode(html.as_bytes()));
-    let Some((panel, page, size)) = with(|st| st.views.get(key).map(|v| (v.panel, v.page.clone(), v.size))) else { return };
+    let Some((panel, page, size)) = with(cx, |st| st.views.get(key).map(|v| (v.panel, v.page.clone(), v.size))) else { return };
     let Some(h) = crate::web::host(cx) else { return };
     let i = match panel {
         Some(i) if panel_live(Some(i), cx).0 => { h.panel_navigate(i, &url); i }
@@ -731,25 +730,25 @@ fn show_html(key: &str, html: &str, cx: &mut App) {
             i
         }
     };
-    with(|st| if let Some(v) = st.views.get_mut(key) { v.panel = Some(i); });
+    with(cx, |st| if let Some(v) = st.views.get_mut(key) { v.panel = Some(i); });
     if let Some(p) = page { (p.set_panel)(Some(i), cx); }
 }
 
 /// A view gives its browser back (not drawn for a while, or signed out).
 fn release(key: &str, cx: &mut App) {
-    let (panel, page) = with(|st| st.views.get_mut(key).map(|v| { v.handed = None; v.hidden = false; (v.panel.take(), v.page.clone()) }).unwrap_or((None, None)));
+    let (panel, page) = with(cx, |st| st.views.get_mut(key).map(|v| { v.handed = None; v.hidden = false; (v.panel.take(), v.page.clone()) }).unwrap_or((None, None)));
     if let (Some(i), Some(h)) = (panel, crate::web::host(cx)) { h.panel_close(i); }
     if let Some(p) = page { (p.set_panel)(None, cx); }
 }
 
 /// The page's messages, from its title (see the top of this file).
 fn read_title(key: &str, cx: &mut App) {
-    let Some((nonce, panel)) = with(|st| st.views.get(key).map(|v| (v.nonce, v.panel))) else { return };
+    let Some((nonce, panel)) = with(cx, |st| st.views.get(key).map(|v| (v.nonce, v.panel))) else { return };
     let Some(i) = panel else { return };
     let Some(h) = crate::web::host(cx) else { return };
     let title = h.panel_state(i).title;
     let Some(msgs) = parse_title(&title, nonce) else { return };
-    let fresh: Vec<Value> = with(|st| {
+    let fresh: Vec<Value> = with(cx, |st| {
         let Some(v) = st.views.get_mut(key) else { return vec![] };
         let out: Vec<Value> = msgs.iter().filter(|(q, _)| *q > v.last_seq).map(|(_, m)| m.clone()).collect();
         if let Some((q, _)) = msgs.last() { v.last_seq = v.last_seq.max(*q); }
@@ -762,7 +761,7 @@ fn read_title(key: &str, cx: &mut App) {
 fn on_message(key: &str, m: &Value, cx: &mut App) {
     match s(m, "t").as_str() {
         "height" => {
-            with(|st| if let Some(v) = st.views.get_mut(key) {
+            with(cx, |st| if let Some(v) = st.views.get_mut(key) {
                 v.height = n(m, "h") as f32;
                 v.measured = true;
                 if m.get("w").is_some() { v.chip_w = n(m, "w") as f32; }
@@ -770,7 +769,7 @@ fn on_message(key: &str, m: &Value, cx: &mut App) {
             bump(cx);
         }
         "fault" => {
-            let Some((alias, id, k)) = with(|st| st.views.get_mut(key).map(|v| { v.faults += 1; (v.alias.clone(), v.id.clone(), v.faults) })) else { return };
+            let Some((alias, id, k)) = with(cx, |st| st.views.get_mut(key).map(|v| { v.faults += 1; (v.alias.clone(), v.id.clone(), v.faults) })) else { return };
             // A handful is a diagnosis; a flood is a loop.
             if k > 5 { return; }
             let body = json!({ "project": alias, "id": id, "message": s(m, "message").chars().take(500).collect::<String>(), "where": s(m, "where").chars().take(120).collect::<String>() });
@@ -783,7 +782,7 @@ fn on_message(key: &str, m: &Value, cx: &mut App) {
 
 /// Something done inside a panel: toast and openLink here, the rest by the server.
 fn on_call(key: &str, m: &Value, cx: &mut App) {
-    let Some((alias, id, ok)) = with(|st| st.views.get_mut(key).map(|v| {
+    let Some((alias, id, ok)) = with(cx, |st| st.views.get_mut(key).map(|v| {
         let now = Instant::now();
         v.calls.retain(|t| now.duration_since(*t) < Duration::from_secs(10));
         let ok = v.calls.len() < 40;
@@ -797,32 +796,32 @@ fn on_call(key: &str, m: &Value, cx: &mut App) {
         "toast" => {
             let text: String = s(&a, "text").chars().take(200).collect();
             toast(cx, text, if s(&a, "kind") == "error" { w::Toast::Error } else { w::Toast::Info });
-            with(|st| st.last_call = json!({ "op": op, "ok": true }));
+            with(cx, |st| st.last_call = json!({ "op": op, "ok": true }));
         }
         "openLink" => {
             let url = s(&a, "url");
             let lower = url.to_lowercase();
             // http(s) only: never javascript: or data: in a real browser.
             if lower.starts_with("http://") || lower.starts_with("https://") {
-                with(|st| st.opened = url.clone());
+                with(cx, |st| st.opened = url.clone());
                 if std::env::var_os("CRUNDI_TEST_PORT").is_none() { let _ = open::that(&url); }
             }
-            with(|st| st.last_call = json!({ "op": op, "url": url }));
+            with(cx, |st| st.last_call = json!({ "op": op, "url": url }));
         }
         _ => {
-            if op == "store.set" { with(|st| if let Some(v) = st.views.get_mut(key) { v.store_call = Some(Instant::now()); }); }
+            if op == "store.set" { with(cx, |st| if let Some(v) = st.views.get_mut(key) { v.store_call = Some(Instant::now()); }); }
             let body = json!({ "project": alias, "id": id, "op": op, "args": a });
             let op2 = op.clone();
-            crundi_shell::call(cx, move |api| api.post("/api/widgets/call", &body), move |r, _| {
+            crundi_shell::call(cx, move |api| api.post("/api/widgets/call", &body), move |r, cx| {
                 let res = match r { Ok(v) => v, Err(e) => json!({ "ok": false, "error": e }) };
-                with(|st| st.last_call = json!({ "op": op2, "result": res }));
+                with(cx, |st| st.last_call = json!({ "op": op2, "result": res }));
             });
         }
     }
 }
 
 fn approve(key: &str, cx: &mut App) {
-    let Some((alias, id, hash)) = with(|st| st.views.get_mut(key).and_then(|v| { v.approving = true; v.grant.as_ref().map(|g| (v.alias.clone(), v.id.clone(), g.hash.clone())) })) else { return };
+    let Some((alias, id, hash)) = with(cx, |st| st.views.get_mut(key).and_then(|v| { v.approving = true; v.grant.as_ref().map(|g| (v.alias.clone(), v.id.clone(), g.hash.clone())) })) else { return };
     bump(cx);
     let body = json!({ "project": alias, "id": id, "hash": hash });
     let key = key.to_string();
@@ -830,12 +829,12 @@ fn approve(key: &str, cx: &mut App) {
         let v = r.unwrap_or_else(|e| json!({ "ok": false, "error": e }));
         if ok_of(&v) { return toast(cx, "Approved", w::Toast::Info); }
         toast_error(cx, err_or(&v, "Could not approve"));
-        if flag(&v, "stale") { load(&key, cx); } else { with(|st| if let Some(v) = st.views.get_mut(&key) { v.approving = false; }); bump(cx); }
+        if flag(&v, "stale") { load(&key, cx); } else { with(cx, |st| if let Some(v) = st.views.get_mut(&key) { v.approving = false; }); bump(cx); }
     });
 }
 
 fn not_now(key: &str, cx: &mut App) {
-    with(|st| if let Some(v) = st.views.get_mut(key) { v.grant_hidden = true; });
+    with(cx, |st| if let Some(v) = st.views.get_mut(key) { v.grant_hidden = true; });
     bump(cx);
 }
 
@@ -843,8 +842,8 @@ fn not_now(key: &str, cx: &mut App) {
 /// approving, height when measured, title, chip width).
 pub(crate) struct FrameInfo { pub state: String, pub error: String, pub grant: Option<Vec<(String, String)>>, pub approving: bool, pub height: Option<f32>, pub title: String }
 
-pub(crate) fn frame_info(key: &str) -> FrameInfo {
-    with(|st| match st.views.get(key) {
+pub(crate) fn frame_info(key: &str, cx: &App) -> FrameInfo {
+    rd(cx, |st| match st.views.get(key) {
         None => FrameInfo { state: "loading".into(), error: String::new(), grant: None, approving: false, height: None, title: String::new() },
         Some(v) => FrameInfo {
             state: if v.state.is_empty() { "loading".into() } else { v.state.clone() }, error: v.error.clone(),
@@ -856,7 +855,7 @@ pub(crate) fn frame_info(key: &str) -> FrameInfo {
 
 /// The panels docked to a chat: (id, title, approve, collapsed, the slot select).
 pub(crate) fn docks(chat: &str, cx: &App) -> Vec<Value> {
-    let (p, list) = with(|st| (st.project.clone(), st.widgets.clone()));
+    let (p, list) = rd(cx, |st| (st.project.clone(), st.widgets.clone()));
     let mut live = live_chats(&p, cx);
     // The chat asking is on screen, whatever the last state said.
     if !live.iter().any(|c| c == chat) { live.push(chat.to_string()); }
@@ -864,52 +863,52 @@ pub(crate) fn docks(chat: &str, cx: &App) -> Vec<Value> {
 }
 
 /// A pane's panel: "panel:widget:@<id>" that one; a chooser's pick ("" none yet).
-pub(crate) fn picked_of(key: &str) -> String {
+pub(crate) fn picked_of(key: &str, cx: &App) -> String {
     if let Some(id) = key.strip_prefix(AUTO) { return id.to_string(); }
-    with(|st| st.picked.get(key).map(|x| x.0.clone()).unwrap_or_default())
+    rd(cx, |st| st.picked.get(key).map(|x| x.0.clone()).unwrap_or_default())
 }
 
 fn pick(key: &str, id: &str, cx: &mut App) {
-    with(|st| st.picked.insert(key.to_string(), (id.to_string(), Instant::now())));
+    with(cx, |st| st.picked.insert(key.to_string(), (id.to_string(), Instant::now())));
     bump(cx);
     let (k, i) = (key.to_string(), id.to_string());
     user_patch(id, json!({ "closed": false, "slot": "cell" }), cx, move |ok, cx| {
-        if !ok { with(|st| if st.picked.get(&k).is_some_and(|x| x.0 == i) { st.picked.remove(&k); }); bump(cx); }
+        if !ok { with(cx, |st| if st.picked.get(&k).is_some_and(|x| x.0 == i) { st.picked.remove(&k); }); bump(cx); }
     });
 }
 
 fn collapse(id: &str, c: bool, cx: &mut App) {
-    with(|st| if let Some(w) = st.widgets.iter_mut().find(|w| s(w, "id") == id) { w["collapsed"] = Value::Bool(c); });
+    with(cx, |st| if let Some(w) = st.widgets.iter_mut().find(|w| s(w, "id") == id) { w["collapsed"] = Value::Bool(c); });
     bump(cx);
     user_patch(id, json!({ "collapsed": c }), cx, |_, _| {});
 }
 
-fn open_pop(id: &str, cx: &mut App) { with(|st| st.pop = id.to_string()); bump(cx); }
-fn close_pop(cx: &mut App) { with(|st| st.pop.clear()); bump(cx); }
+fn open_pop(id: &str, cx: &mut App) { with(cx, |st| st.pop = id.to_string()); bump(cx); }
+fn close_pop(cx: &mut App) { with(cx, |st| st.pop.clear()); bump(cx); }
 
 // ─── Live events ───
 
 fn on_widget_event(d: &Value, cx: &mut App) {
     let project = s(d, "project");
     let g = project == "_global";
-    let mine = with(|st| pkey(&st.project));
+    let mine = with(cx, |st| pkey(&st.project));
     if !g && project != mine { return; }
     let id = s(d, "id");
     let kind = s(d, "kind");
-    let matching = |skip_store: bool| -> Vec<String> {
-        with(|st| st.views.iter().filter(|(_, v)| v.id == id && (g || pkey(&v.alias) == project))
+    let matching = |skip_store: bool, cx: &App| -> Vec<String> {
+        rd(cx, |st| st.views.iter().filter(|(_, v)| v.id == id && (g || pkey(&v.alias) == project))
             .filter(|(_, v)| !(skip_store && v.store_call.is_some_and(|t| t.elapsed() < Duration::from_secs(3))))
             .map(|(k, _)| k.clone()).collect())
     };
     match kind.as_str() {
         "data" | "store" => {
             // New values: the page loads again with them.
-            let keys = matching(kind == "store");
-            with(|st| for k in &keys { if let Some(v) = st.views.get_mut(k) { v.reload_at.get_or_insert(Instant::now() + Duration::from_millis(300)); } });
+            let keys = matching(kind == "store", cx);
+            with(cx, |st| for k in &keys { if let Some(v) = st.views.get_mut(k) { v.reload_at.get_or_insert(Instant::now() + Duration::from_millis(300)); } });
             if kind == "data" {
                 let source = s(d, "source");
-                let wv = with(|st| by_id(st, &id));
-                let live = live_chats(&with(|st| st.project.clone()), cx);
+                let wv = with(cx, |st| by_id(st, &id));
+                let live = live_chats(&with(cx, |st| st.project.clone()), cx);
                 if let Some(wv) = wv.filter(|w| place_of(w, &live) == "chip") {
                     let cs = wv.get("chip").map(|c| s(c, "source")).unwrap_or_default();
                     if source.is_empty() || cs.is_empty() || cs == source { load_chip_value(&wv, cx); }
@@ -917,13 +916,13 @@ fn on_widget_event(d: &Value, cx: &mut App) {
             }
         }
         "doc" => {
-            for k in matching(false) { load(&k, cx); }
+            for k in matching(false, cx) { load(&k, cx); }
             refresh(cx);
         }
-        "render" => { if with(|st| st.pane == "checks" && st.selected == id) { load_shots(cx); } }
+        "render" => { if with(cx, |st| st.pane == "checks" && st.selected == id) { load_shots(cx); } }
         _ => {
             refresh(cx);
-            if with(|st| st.selected == id && !st.pane.is_empty()) { let p = with(|st| st.pane.clone()); show_pane(&p, cx); }
+            if with(cx, |st| st.selected == id && !st.pane.is_empty()) { let p = with(cx, |st| st.pane.clone()); show_pane(&p, cx); }
         }
     }
 }
@@ -932,22 +931,24 @@ fn on_widget_event(d: &Value, cx: &mut App) {
 /// "panel:widget:<n>", or a placed panel "panel:widget:@<id>"): each a
 /// cached view of its own, redrawn when the panels change.
 pub fn init(cx: &mut App) {
-    { let sig = changed(cx); crundi_shell::register_top_item(cx, "chips", &sig, chips); }
+    let st = cx.new(|_| St::default());
+    cx.set_global(StH(st.clone()));
+    crundi_shell::register_top_item(cx, "chips", &st, chips);
     crundi_workbench::register_kind(cx, crundi_workbench::PaneKind {
         prefix: "panel:widget",
         chat: false,
         make: Rc::new(|key, _, _window, cx| {
-            let sig = changed(cx);
+            let sig = state(cx);
             let k = key.to_string();
             let v = cx.new(|cx| PaneView { key: k.clone(), _sub: cx.observe(&sig, |_, _, cx| cx.notify()) });
             crundi_workbench::PaneParts {
                 body: Rc::new(move |_| div().size_full().child(v.clone().cached(StyleRefinement::default().size_full())).into_any_element()),
-                info: Rc::new(move |_| {
-                    let id = picked_of(&k);
-                    let t = if id.is_empty() { String::new() } else { title_of(&id) };
+                info: Rc::new(move |cx| {
+                    let id = picked_of(&k, cx);
+                    let t = if id.is_empty() { String::new() } else { title_of(&id, cx) };
                     crundi_workbench::HeadInfo { title: if t.is_empty() { "Panel".to_string() } else { t }, long: String::new(), state: "idle".into() }
                 }),
-                watch: Box::new(move |cx| { let sig = changed(cx); vec![cx.observe(&sig, |h, _, cx| h.refresh(cx))] }),
+                watch: Box::new(move |cx| { let sig = state(cx); vec![cx.observe(&sig, |h, _, cx| h.refresh(cx))] }),
             }
         }),
         close: None,
@@ -980,11 +981,11 @@ fn on_screen(key: &str, cx: &mut App) -> Option<bool> {
     let (frame, _, id) = parse_key(key)?;
     let tab = crate::compat::current_tab(cx);
     Some(match frame.as_str() {
-        "tab" => tab == "panels" && with(|st| st.selected == id && st.pane.is_empty()),
-        "pop" => with(|st| st.pop == id),
+        "tab" => tab == "panels" && with(cx, |st| st.selected == id && st.pane.is_empty()),
+        "pop" => with(cx, |st| st.pop == id),
         "cell" => tab == "workbench" && crundi_workbench::workbench(cx).is_some_and(|wb| {
             let keys = wb.update(cx, |w, _| w.keys());
-            keys.iter().any(|k| k.starts_with("panel:widget:") && picked_of(k) == id)
+            keys.iter().any(|k| k.starts_with("panel:widget:") && picked_of(k, cx) == id)
         }),
         _ => return None,
     })
@@ -995,29 +996,29 @@ fn on_screen(key: &str, cx: &mut App) -> Option<bool> {
 /// (30 s); every 25 s the server hears which panels are on screen. It stops
 /// when no copy is left (nothing wakes an idle window).
 fn ticker(cx: &mut App) {
-    if with(|st| std::mem::replace(&mut st.ticking, true)) { return; }
+    if with(cx, |st| std::mem::replace(&mut st.ticking, true)) { return; }
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor().timer(Duration::from_millis(250)).await;
         let go = cx.update(|cx| {
             tick(cx);
-            with(|st| { if st.views.is_empty() { st.ticking = false; false } else { true } })
+            with(cx, |st| { if st.views.is_empty() { st.ticking = false; false } else { true } })
         });
         if !go { break; }
     }).detach();
 }
 
 fn tick(cx: &mut App) {
-    let keys: Vec<String> = with(|st| st.views.keys().cloned().collect());
+    let keys: Vec<String> = with(cx, |st| st.views.keys().cloned().collect());
     for k in &keys { read_title(k, cx); }
     // A copy known to be on screen is seen now (a cached view on a still
     // screen is not laid out again, so its own report would stop).
     let now = Instant::now();
     for k in &keys {
-        if on_screen(k, cx) == Some(true) { with(|st| if let Some(v) = st.views.get_mut(k) { v.seen = Some(now); }); }
+        if on_screen(k, cx) == Some(true) { with(cx, |st| if let Some(v) = st.views.get_mut(k) { v.seen = Some(now); }); }
     }
     let grace = crate::web::unload_grace(cx);
     let host = crate::web::host(cx);
-    let (due, unseen, gone, watch) = with(|st| {
+    let (due, unseen, gone, watch) = with(cx, |st| {
         st.ticks += 1;
         let now = Instant::now();
         let due: Vec<String> = st.views.iter().filter(|(_, v)| v.reload_at.is_some_and(|t| t <= now) && !v.loading).map(|(k, _)| k.clone()).collect();
@@ -1032,16 +1033,16 @@ fn tick(cx: &mut App) {
         (due, unseen, gone, st.ticks % 100 == 0)
     });
     for k in due {
-        let drawn = with(|st| st.views.get(&k).is_some_and(|v| v.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(2))));
-        if drawn { load(&k, cx); } else { with(|st| if let Some(v) = st.views.get_mut(&k) { v.reload_at = None; }); release(&k, cx); }
+        let drawn = with(cx, |st| st.views.get(&k).is_some_and(|v| v.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(2))));
+        if drawn { load(&k, cx); } else { with(cx, |st| if let Some(v) = st.views.get_mut(&k) { v.reload_at = None; }); release(&k, cx); }
     }
     for k in unseen { release(&k, cx); }
-    for k in gone { release(&k, cx); with(|st| st.views.remove(&k)); }
+    for k in gone { release(&k, cx); with(cx, |st| st.views.remove(&k)); }
     if watch { keep_alive(cx); }
 }
 
 fn keep_alive(cx: &mut App) {
-    let (p, list, mut by) = with(|st| {
+    let (p, list, mut by) = with(cx, |st| {
         let mut by: HashMap<String, Vec<String>> = HashMap::new();
         for v in st.views.values().filter(|v| v.seen.is_some_and(|t| t.elapsed() < Duration::from_secs(2))) {
             let e = by.entry(v.alias.clone()).or_default();
@@ -1074,7 +1075,7 @@ impl Render for Screen {
 /// This screen's tab ("" for none): its page.
 pub fn view(tab: &str, _window: &mut Window, cx: &mut App) -> Option<AnyView> {
     if tab != "panels" { return None; }
-    let sig = changed(cx);
+    let sig = state(cx);
     Some(cx.new(|cx| Screen { _sub: cx.observe(&sig, |_, _, cx| cx.notify()) }).into())
 }
 
@@ -1088,7 +1089,7 @@ pub fn on_event(e: &AreaEvent, cx: &mut App) {
 }
 
 pub fn on_project(alias: &str, cx: &mut App) {
-    let changed = with(|st| {
+    let changed = with(cx, |st| {
         if st.project == alias && st.loaded { return false; }
         st.project = alias.to_string();
         // Global panels belong to every project: they stay while the list loads.
@@ -1100,20 +1101,20 @@ pub fn on_project(alias: &str, cx: &mut App) {
         st.cells_sig = String::from("\u{0}");
         true
     });
-    if changed { with(|st| st.live.clear()); sync_live(cx); bump(cx); refresh(cx); }
+    if changed { with(cx, |st| st.live.clear()); sync_live(cx); bump(cx); refresh(cx); }
 }
 
 pub fn on_signed_in(cx: &mut App) {
     let p = crundi_shell::project(cx);
-    with(|st| st.project = p);
+    with(cx, |st| st.project = p);
     sync_live(cx);
     refresh(cx);
 }
 
 pub fn on_signed_out(cx: &mut App) {
-    let keys: Vec<String> = with(|st| st.views.keys().cloned().collect());
+    let keys: Vec<String> = with(cx, |st| st.views.keys().cloned().collect());
     for k in &keys { release(k, cx); }
-    with(|st| { let ticking = st.ticking; *st = St { ticking, ..Default::default() }; });
+    with(cx, |st| { let ticking = st.ticking; *st = St { ticking, ..Default::default() }; });
     bump(cx);
 }
 
@@ -1146,16 +1147,16 @@ pub fn test_ui(name: &str, args: &[String], window: &mut Window, cx: &mut App) -
         "panels-collapse" => { collapse(&a(0), a(1) == "true", cx); ok }
         "panels-slot-menu" => { slot_menu(&a(0), point(crundi_theme::T::DIALOG_W, crundi_theme::T::SP_48 * 4.), cx); ok }
         // The driver's look at an inline card (project, id, chat; no id: hide).
-        "panels-card" => { with(|st| st.preview = (a(0), a(1), a(2))); bump(cx); ok }
-        "panels-cells" => json!({ "ok": true, "cells": cell_ids(cx), "swaps": with(|st| st.picked.iter().map(|(k, v)| (k.clone(), Value::from(v.0.clone()))).collect::<serde_json::Map<_, _>>()) }),
+        "panels-card" => { with(cx, |st| st.preview = (a(0), a(1), a(2))); bump(cx); ok }
+        "panels-cells" => json!({ "ok": true, "cells": cell_ids(cx), "swaps": with(cx, |st| st.picked.iter().map(|(k, v)| (k.clone(), Value::from(v.0.clone()))).collect::<serde_json::Map<_, _>>()) }),
         _ => return None,
     })
 }
 
 /// The driver's view of this screen (the Slint client's names).
 pub fn props(_window: &mut Window, cx: &mut App) -> Value {
-    let live = live_chats(&with(|st| st.project.clone()), cx);
-    with(|st| {
+    let live = live_chats(&rd(cx, |st| st.project.clone()), cx);
+    rd(cx, |st| {
         let views: serde_json::Map<String, Value> = st.views.iter().map(|(k, v)| {
             let (lv, pt) = panel_live(v.panel, cx);
             (k.clone(), json!({

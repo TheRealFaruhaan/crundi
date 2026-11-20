@@ -95,6 +95,10 @@ pub fn register_settings_part(cx: &mut App, slot: &'static str, f: impl Fn(&mut 
     cx.default_global::<SettingsParts>().0.push((slot, std::rc::Rc::new(f)));
 }
 
+/// A part's own state changed: Settings draws its parts again (the part's
+/// owner calls this, as a part's state is its own, not Settings').
+pub fn settings_part_changed(cx: &mut App) { crate::settings::parts_changed(cx); }
+
 /// What the parts put in `slot`, drawn now.
 pub fn settings_parts(window: &mut Window, cx: &mut App, slot: &str) -> Vec<AnyElement> {
     let fs: Vec<SettingsPart> = cx.try_global::<SettingsParts>().map(|p| p.0.iter().filter(|(s, _)| *s == slot).map(|(_, f)| f.clone()).collect()).unwrap_or_default();

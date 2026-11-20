@@ -91,7 +91,7 @@ pub struct Row {
     pub kind: &'static str, pub title: String, pub path: String, pub toggle: String,
     pub scope: String, pub name: String, pub open: bool, pub meta: String, pub desc: String,
     pub bundled: bool, pub synced: bool, pub linked: bool, pub github: bool, pub problem: bool,
-    pub first: bool, pub last: bool,
+    pub first: bool, #[allow(dead_code)] pub last: bool,
 }
 
 /// The list's rows, by group (drawSkills' group()).
@@ -575,6 +575,11 @@ fn pick_asset(cx: &mut App) {
 fn hint(text: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_12).text_color(T::text_muted()).child(text.into()) }
 fn err(text: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_12).text_color(T::red()).child(text.into()) }
 fn head(text: impl Into<SharedString>) -> Div { div().text_size(T::TEXT_11).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(text.into()) }
+thread_local! { static OPEN_Y: std::cell::Cell<Option<Pixels>> = const { std::cell::Cell::new(None) }; }
+
+/// Where the open skill's row was last laid out (window y), if one is open.
+pub fn open_row_y() -> Option<Pixels> { OPEN_Y.get() }
+
 fn row() -> Div { div().flex().items_center().gap(T::SP_8) }
 fn col(gap: Pixels) -> Div { div().flex().flex_col().gap(gap) }
 /// A boxed note with its icon (SkNote): muted, or amber when it warns.
@@ -674,13 +679,23 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         ]));
     }
     let mut detail = detail;
+    // Each group's skills in one list (.bk-list: one frame, rounded; each
+    // .sk-item a hairline over it but the first).
+    let list = || div().flex().flex_col().border_1().border_color(T::border()).rounded(T::R_FIELD).overflow_hidden();
+    let mut cur: Option<Div> = None;
     for (i, r) in rows_of(&d, &l.open, l.show_synced).into_iter().enumerate() {
         match r.kind {
-            "group" => out = out.child(row().pt(T::SP_16).pb(T::SP_2)
-                .child(head(r.title.clone()))
-                .child(div().flex_1().min_w_0().truncate().font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_muted()).child(r.path.clone()))
-                .when(!r.toggle.is_empty(), |d| d.child(btn("sk-synced", &r.toggle, None, false, false, |cx| act(cx, "synced-toggle", ""))))),
-            "empty" => out = out.child(div().p(T::SP_12).rounded(T::R_FIELD).border_1().border_color(T::border()).text_size(T::TEXT_13).text_color(T::text_muted()).child("None yet.")),
+            "group" => {
+                if let Some(x) = cur.take() { out = out.child(x); }
+                out = out.child(row().pt(T::SP_16).pb(T::SP_2)
+                    .child(head(r.title.clone()))
+                    .child(div().flex_1().min_w_0().truncate().font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_muted()).child(r.path.clone()))
+                    .when(!r.toggle.is_empty(), |d| d.child(btn("sk-synced", &r.toggle, None, false, false, |cx| act(cx, "synced-toggle", "")))));
+            }
+            "empty" => {
+                if let Some(x) = cur.take() { out = out.child(x); }
+                out = out.child(list().child(div().p(T::SP_12 + T::SP_2).text_size(T::TEXT_13).text_color(T::text_muted()).child("None yet.")));
+            }
             _ => {
                 let arg = format!("{}\n{}", r.scope, r.name);
                 let tags = [(r.bundled, "Included with Crundi", ""), (r.synced, "Synced", ""), (r.linked, "Link", ""), (r.github, "GitHub", ""), (r.problem, "Needs attention", "warn")];
@@ -692,14 +707,16 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                         .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(r.meta.clone())))
                     .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).when(!r.open, |d| d.line_clamp(2).text_ellipsis()).child(r.desc.clone()))
                     .on_click(move |_, _, cx| act(cx, "open", &arg));
-                let rad = T::R_FIELD;
-                out = out.child(div().flex().flex_col().border_1().border_color(T::border()).overflow_hidden()
-                    .when(r.first, |d| d.rounded_t(rad)).when(r.last, |d| d.rounded_b(rad)).when(!r.first, |d| d.border_t_0())
+                let item = div().flex().flex_col().when(!r.first, |d| d.border_t_1().border_color(T::border()))
+                    // The open skill's place, for the driver's reveal (settings-reveal-skill).
+                    .when(r.open, |d| d.relative().child(canvas(|b, _, _| OPEN_Y.set(Some(b.origin.y)), |_, _, _, _| {}).absolute().top_0().left_0().size_0()))
                     .child(headr)
-                    .when(r.open, |d| d.children(detail.take())));
+                    .when(r.open, |d| d.children(detail.take()));
+                cur = Some(cur.take().unwrap_or_else(list).child(item));
             }
         }
     }
+    if let Some(x) = cur.take() { out = out.child(x); }
     out.into_any_element()
 }
 

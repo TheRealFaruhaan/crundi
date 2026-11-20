@@ -41,7 +41,7 @@ use crundi_shell::{Area, Stores};
 use gpui::*;
 use serde_json::{json, Map, Value};
 
-pub use compat::register_settings_part;
+pub use compat::{register_settings_part, settings_part_changed};
 
 macro_rules! each { ($f:ident ( $($a:expr),* )) => { services::$f($($a),*); docker::$f($($a),*); homepool::$f($($a),*); info::$f($($a),*); vault::$f($($a),*); settings::$f($($a),*); skills::$f($($a),*); panels::$f($($a),*); extras::$f($($a),*); }; }
 

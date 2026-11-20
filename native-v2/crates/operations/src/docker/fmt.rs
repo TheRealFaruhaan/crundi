@@ -235,81 +235,6 @@ pub fn rates(samples: &[Value], key: &str) -> Vec<Option<f64>> {
     out
 }
 
-// ─── The shell's screen ───
-
-/// The closest a plain text view gets to xterm (Slint has no terminal
-/// emulator): lines, a cursor column, carriage return, backspace, erase to
-/// the end of the line and clear; colours and cursor moves are dropped.
-#[derive(Default, Clone, Debug)]
-pub struct Screen { pub lines: Vec<Vec<char>>, col: usize, esc: Option<String> }
-
-const SCREEN_MAX: usize = 3000;
-
-impl Screen {
-    pub fn new() -> Screen { Screen { lines: vec![Vec::new()], col: 0, esc: None } }
-
-    pub fn write(&mut self, data: &str) {
-        if self.lines.is_empty() { self.lines.push(Vec::new()); }
-        for c in data.chars() {
-            if let Some(mut seq) = self.esc.take() {
-                seq.push(c);
-                if !self.seq_done(&seq) { self.esc = Some(seq); }
-                continue;
-            }
-            match c {
-                '\u{1b}' => self.esc = Some(String::new()),
-                '\r' => self.col = 0,
-                '\n' => { self.lines.push(Vec::new()); self.col = 0; }
-                '\u{8}' => self.col = self.col.saturating_sub(1),
-                '\t' => { let n = 8 - self.col % 8; for _ in 0..n { self.put(' '); } }
-                c if (c as u32) < 32 || c == '\u{7f}' => {}
-                c => self.put(c),
-            }
-        }
-        if self.lines.len() > SCREEN_MAX { let cut = self.lines.len() - SCREEN_MAX; self.lines.drain(..cut); }
-    }
-
-    fn put(&mut self, c: char) {
-        let line = self.lines.last_mut().unwrap();
-        while line.len() < self.col { line.push(' '); }
-        if self.col < line.len() { line[self.col] = c; } else { line.push(c); }
-        self.col += 1;
-    }
-
-    /// Whether an escape sequence (after ESC) is complete; a finished one is applied.
-    fn seq_done(&mut self, seq: &str) -> bool {
-        let first = seq.chars().next().unwrap_or(' ');
-        match first {
-            '[' => {
-                let last = seq.chars().last().unwrap_or(' ');
-                if seq.len() < 2 || !(('@'..='~').contains(&last)) { return false; }
-                let params = &seq[1..seq.len() - 1];
-                match last {
-                    'K' => {
-                        let line = self.lines.last_mut().unwrap();
-                        match params { "1" => { for x in line.iter_mut().take(self.col) { *x = ' '; } } "2" => line.clear(), _ => line.truncate(self.col) }
-                    }
-                    'J' if params == "2" || params == "3" => { self.lines = vec![Vec::new()]; self.col = 0; }
-                    'D' => { let n: usize = params.parse().unwrap_or(1); self.col = self.col.saturating_sub(n.max(1)); }
-                    'C' => { let n: usize = params.parse().unwrap_or(1); self.col += n.max(1); }
-                    'G' => { let n: usize = params.parse().unwrap_or(1); self.col = n.max(1) - 1; }
-                    'P' => { let n: usize = params.parse().unwrap_or(1); let col = self.col; let line = self.lines.last_mut().unwrap(); for _ in 0..n.max(1) { if col < line.len() { line.remove(col); } } }
-                    _ => {}
-                }
-                true
-            }
-            // OSC: up to BEL or ESC \.
-            ']' => seq.ends_with('\u{7}') || seq.ends_with("\u{1b}\\"),
-            '(' | ')' | '#' => seq.chars().count() >= 2,
-            _ => true,
-        }
-    }
-
-    pub fn text(&self) -> String {
-        self.lines.iter().map(|l| l.iter().collect::<String>().trim_end().to_string()).collect::<Vec<_>>().join("\n")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,16 +312,5 @@ mod tests {
         let s = vec![json!({ "at": 0, "netRx": 0 }), json!({ "at": 2000, "netRx": 1000 }), json!({ "at": 4000, "netRx": 500 })];
         assert_eq!(rates(&s, "netRx"), vec![Some(500.0), Some(0.0)]);
         assert_eq!(chart_max(&[&[Some(3.0), None], &[Some(7.0)]], 0.0), 7.0);
-    }
-
-    #[::core::prelude::v1::test]
-    fn screen() {
-        let mut s = Screen::new();
-        s.write("\u{1b}]0;title\u{7}root@x:/# ls\r\nbin  etc\r\n\u{1b}[01;32mroot@x\u{1b}[00m:/# abc\u{8}\u{1b}[K");
-        assert_eq!(s.text(), "root@x:/# ls\nbin  etc\nroot@x:/# ab");
-        s.write("\r\u{1b}[Kdone");
-        assert_eq!(s.text(), "root@x:/# ls\nbin  etc\ndone");
-        s.write("\u{1b}[H\u{1b}[2J$ ");
-        assert_eq!(s.text(), "$");
     }
 }
