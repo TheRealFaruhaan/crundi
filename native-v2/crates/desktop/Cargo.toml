@@ -18,6 +18,8 @@ crundi-shell.workspace = true
 crundi-webview.workspace = true
 crundi-workbench.workspace = true
 crundi-chat.workspace = true
+# The browser lent to Operations' Panels and What's new (crundi_operations::web::set_host).
+crundi-operations.workspace = true
 futures.workspace = true
 tungstenite.workspace = true
 base64.workspace = true

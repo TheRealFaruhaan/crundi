@@ -8,19 +8,21 @@ use gpui_component::{Icon, Sizable as _, Size};
 use std::time::Duration;
 
 /// The spinner at icon size `size` (T::ICON_SM in a card's head), in the accent.
-pub fn spinner(size: Pixels) -> Spin { Spin { size, color: T::accent() } }
+pub fn spinner(size: Pixels) -> Spin { Spin { size, color: T::accent(), icon: IconName::LoaderCircle } }
 
 #[derive(IntoElement)]
-pub struct Spin { size: Pixels, color: Hsla }
+pub struct Spin { size: Pixels, color: Hsla, icon: IconName }
 
 impl Spin {
     /// Another colour than the accent.
     pub fn color(mut self, c: Hsla) -> Self { self.color = c; self }
+    /// Another icon turning (the drawer's Reload turns its own arrow while a page loads).
+    pub fn icon(mut self, i: IconName) -> Self { self.icon = i; self }
 }
 
 impl RenderOnce for Spin {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let icon: Icon = IconName::LoaderCircle.into();
+        let icon: Icon = self.icon.into();
         div().flex_none().child(
             icon.with_size(Size::Size(self.size)).text_color(self.color).with_animation(
                 "spin",

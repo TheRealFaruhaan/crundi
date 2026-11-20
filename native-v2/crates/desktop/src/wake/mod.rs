@@ -322,6 +322,10 @@ pub fn train_start() {
     redraw();
 }
 
+/// Training runs while Settings shows it: leaving Settings ends it (the web's
+/// Voice assistant section going away stops its recorder).
+pub fn left_settings() { if with(|s| s.training.active) { train_stop(); } }
+
 pub fn train_stop() {
     if let Some(st) = with(|s| { let st = s.training.stop.take(); s.training.active = false; s.training.rec = None; st }) { st.store(true, Ordering::Relaxed); }
     log("training ended".into());

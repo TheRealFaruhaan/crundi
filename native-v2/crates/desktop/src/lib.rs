@@ -37,6 +37,7 @@ mod cru_ui;
 pub mod homepool;
 pub mod drawer;
 mod host;
+mod hosts;
 mod inbox;
 mod inbox_ui;
 mod notify;
@@ -100,6 +101,7 @@ pub fn init(cx: &mut App) {
     web::set_waker(|| { if let Some(t) = WAKE.get() { let _ = t.unbounded_send(()); } });
     PUMP_RX.with(|r| *r.borrow_mut() = Some(rx));
     passwords::init();
+    hosts::init(cx);
     drawer::init();
     homepool::init();
     wake::init();
@@ -148,7 +150,7 @@ pub fn init(cx: &mut App) {
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, _, cx| { let mut p = props(); p["bubble"] = bubble::props(cx); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, _, cx| { let mut p = props(); p["bubble"] = bubble::props(cx); p["chatFrames"] = hosts::props(); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
@@ -165,6 +167,23 @@ pub fn init_window(shell: &Entity<crundi_shell::Shell>, window: &mut Window, cx:
     cx.set_global(ViewsHandle(Views { drawer: drawer.clone(), browsers, inbox, cru }));
     let left = drawer::with(|d| d.side == "left");
     shell.update(cx, |s, cx| s.set_drawer_view(Some(Drawer { view: drawer.into(), left }), cx));
+    // The drawer's width is the person's and is kept across relaunches
+    // (VD st.width in localStorage): the shell's split moves Nav's, which
+    // is kept here half a second after the last move.
+    let nav = crundi_shell::stores(cx).nav;
+    let saved = px(drawer::with(|d| d.width));
+    nav.update(cx, |n, cx| if n.drawer_w != saved { n.drawer_w = saved; cx.notify(); });
+    cx.observe(&nav, |nav, cx| {
+        // Leaving Settings stops "Hey Cru" training.
+        let tab = nav.read(cx).tab.clone();
+        if LAST_TAB.with(|t| t.replace(tab.clone())) == "settings" && tab != "settings" { wake::left_settings(); }
+        let w = f32::from(nav.read(cx).drawer_w);
+        if (drawer::with(|d| d.width) - w).abs() < 0.5 { return; }
+        drawer::with(|d| d.width = w);
+        WIDTH_SEQ.with(|s| s.set(s.get() + 1));
+        let seq = WIDTH_SEQ.with(|s| s.get());
+        web::later(Duration::from_millis(500), move || if WIDTH_SEQ.with(|s| s.get()) == seq { drawer::persist(); });
+    }).detach();
     let handle = window.window_handle();
     let Some(mut rx) = PUMP_RX.with(|r| r.borrow_mut().take()) else { return };
     cx.spawn(async move |cx: &mut AsyncApp| loop {
@@ -187,6 +206,13 @@ pub fn init_window(shell: &Entity<crundi_shell::Shell>, window: &mut Window, cx:
     web::wake();
 }
 
+thread_local! {
+    /// Counts the drawer's width changes: the last one in half a second is kept.
+    static WIDTH_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The tab shown last (to see Settings left).
+    static LAST_TAB: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
 /// One frame at 144 Hz, rounded up (the live hub's).
 const FRAME: Duration = crundi_shell::live_hub::FRAME;
 
@@ -204,6 +230,7 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     refresh(cx);
     web::pump();
     web::frames::drop_old(window);
+    hosts::pump(window, cx);
     host::pump();
     passwords::pump();
     cru_screen::pump();
@@ -280,6 +307,8 @@ fn signed_in(s: &Stores, cx: &mut App) {
     let base = s.session.read(cx).server.clone();
     let local = base.contains("://localhost") || base.contains("://127.0.0.1") || base.contains("://[::1]");
     web::net::set_local(local);
+    // A frame's https or loopback page carries the server's origin as its referrer.
+    web::frames::set_origin(&s.session.read(cx).api.as_ref().map(|a| a.base().to_string()).unwrap_or(base.clone()));
     drawer::with(|d| { d.mode = if local { "local".into() } else { "remote".into() }; d.status = if local { "direct".into() } else { "offline".into() }; });
     drawer::render();
     cru_kid::load();

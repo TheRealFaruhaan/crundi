@@ -1924,6 +1924,7 @@ dependencies = [
  "cpal",
  "crundi-chat",
  "crundi-core",
+ "crundi-operations",
  "crundi-shell",
  "crundi-theme",
  "crundi-webview",

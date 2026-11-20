@@ -42,16 +42,27 @@ fn kind_look(k: &str) -> (IconName, Hsla) {
     (icon, tint)
 }
 
-/// The thread's round picture (ibxThreadIcon): its glyph; a chat's or a
-/// project's thread with the project's initials as a small badge.
-fn avatar(kind: &str, badge: &str) -> Div {
+/// The thread's round picture (ibxThreadIcon): its glyph; a project's
+/// thread shows the project's own picture where it has one; a chat's (or a
+/// project's without one) keeps its glyph with the project's picture, or its
+/// initials, as a small badge.
+fn avatar(kind: &str, badge: &str, pic: Option<&Pic2>) -> Div {
     let (icon, tint) = thread_look(kind);
+    if kind == "project" { if let Some(p) = pic {
+        return div().flex_none().size(T::CONTROL).child(img(p.0.clone()).size_full().rounded(T::R_CARD).object_fit(ObjectFit::Cover));
+    } }
     div().relative().flex_none().size(T::CONTROL).rounded_full().bg(T::bg_tertiary()).flex().items_center().justify_center()
         .text_color(tint).text_size(T::ICON_LG).child(icon)
-        .when(!badge.is_empty(), |d| d.child(div().absolute().right(-T::SP_2).bottom(-T::SP_2).size(T::SP_16).rounded(T::R_CHIP)
+        .when(!badge.is_empty() || pic.is_some(), |d| d.child(div().absolute().right(-T::SP_2).bottom(-T::SP_2).size(T::SP_16).rounded(T::R_CHIP).overflow_hidden()
             .bg(T::accent()).border_1().border_color(T::bg_secondary()).flex().items_center().justify_center()
-            .text_color(T::white()).text_size(T::TEXT_9).font_weight(T::W_BOLD).child(badge.to_string())))
+            .text_color(T::white()).text_size(T::TEXT_9).font_weight(T::W_BOLD)
+            .map(|d| match pic { Some(p) => d.child(img(p.0.clone()).size_full().object_fit(ObjectFit::Cover)), None => d.child(badge.to_string()) })))
 }
+
+/// A project's picture in a copy (compared by the picture it is).
+#[derive(Clone)]
+struct Pic2(Arc<Image>);
+impl PartialEq for Pic2 { fn eq(&self, o: &Self) -> bool { Arc::ptr_eq(&self.0, &o.0) } }
 
 /// The empty state (.ibx-empty): the envelope over a muted line.
 fn empty(text: &'static str) -> Div {
@@ -84,7 +95,7 @@ fn splice<R: PartialEq>(list: &ListState, old: &mut Vec<R>, new: Vec<R>) -> bool
 struct HeadCopy { sub: String }
 
 #[derive(Clone, PartialEq)]
-struct ThreadRow { key: String, kind: String, badge: String, title: String, sub: String, last: String, when: String, unread: i64, active: bool }
+struct ThreadRow { key: String, kind: String, badge: String, pic: Option<Pic2>, title: String, sub: String, last: String, when: String, unread: i64, active: bool }
 
 /// A picture's state: loading, read, or not read (then a file's button).
 #[derive(Clone)]
@@ -106,13 +117,13 @@ struct Msg { id: String, kind: String, title: String, text: String, at: String, 
 enum Item { Older, Msg(Msg, bool) }
 
 #[derive(Clone, PartialEq, Default)]
-struct ConvHead { kind: String, title: String, sub: String, chat: bool }
+struct ConvHead { kind: String, pic: Option<Pic2>, title: String, sub: String, chat: bool }
 
 #[derive(Clone, PartialEq, Default)]
 struct ConvCopy { head: Option<ConvHead>, any: bool }
 
 /// Everything taken from inbox.rs once per change (never in render).
-fn take() -> (HeadCopy, Vec<ThreadRow>, bool, ConvCopy, Vec<Item>, u64) {
+fn take(pic_of: impl Fn(&str) -> Option<Arc<Image>>) -> (HeadCopy, Vec<ThreadRow>, bool, ConvCopy, Vec<Item>, u64) {
     let projects = kit::get().projects;
     let initials = |p: &str| -> String {
         if p.is_empty() { return String::new(); }
@@ -127,14 +138,16 @@ fn take() -> (HeadCopy, Vec<ThreadRow>, bool, ConvCopy, Vec<Item>, u64) {
         let rows: Vec<ThreadRow> = i.threads.iter().map(|t| {
             let last = t.get("last").cloned().unwrap_or(Value::Null);
             let kind = kit::s(t, "kind");
-            let badge = if kind == "chat" || kind == "project" { initials(&kit::s(t, "project")) } else { String::new() };
+            let proj = kit::s(t, "project");
+            let badge = if kind == "chat" || kind == "project" { initials(&proj) } else { String::new() };
+            let pic = if (kind == "chat" || kind == "project") && !proj.is_empty() { pic_of(&proj).map(Pic2) } else { None };
             ThreadRow {
-                key: kit::s(t, "key"), badge, kind, title: kit::s(t, "title"), sub: kit::s(t, "subtitle"), last: kit::s(&last, "title"),
+                key: kit::s(t, "key"), badge, pic, kind, title: kit::s(t, "title"), sub: kit::s(t, "subtitle"), last: kit::s(&last, "title"),
                 when: inbox::when(now, kit::n(&last, "at")), unread: kit::n(t, "unread") as i64, active: kit::s(t, "key") == i.open,
             }
         }).collect();
         let t = i.threads.iter().find(|t| kit::s(t, "key") == i.open);
-        let head = t.map(|t| ConvHead { kind: kit::s(t, "kind"), title: kit::s(t, "title"), sub: kit::s(t, "subtitle"), chat: kit::s(t, "kind") == "chat" && !kit::s(t, "chatId").is_empty() });
+        let head = t.map(|t| ConvHead { pic: { let p = kit::s(t, "project"); if p.is_empty() { None } else { pic_of(&p).map(Pic2) } }, kind: kit::s(t, "kind"), title: kit::s(t, "title"), sub: kit::s(t, "subtitle"), chat: kit::s(t, "kind") == "chat" && !kit::s(t, "chatId").is_empty() });
         let mut items = vec![];
         if head.is_some() {
             if i.more { items.push(Item::Older); }
@@ -166,6 +179,7 @@ pub struct InboxPage {
     seen: Option<u64>,
     shown: bool,
     _nav: Subscription,
+    _projects: Subscription,
 }
 
 impl InboxPage {
@@ -185,7 +199,10 @@ impl InboxPage {
             if on && !this.shown { inbox::on_show(); }
             this.shown = on;
         });
-        InboxPage { head, threads, conv, seen: None, shown: false, _nav }
+        // A project's picture arrived (or the projects changed): the rows take it.
+        let projects = crundi_shell::stores(cx).projects.clone();
+        let _projects = cx.observe(&projects, |this: &mut Self, _, cx| { this.seen = None; this.pump(cx); });
+        InboxPage { head, threads, conv, seen: None, shown: false, _nav, _projects }
     }
 
     /// The logic changed (lib.rs `pump`): copy what is drawn when inbox.rs
@@ -194,7 +211,11 @@ impl InboxPage {
         let g = inbox::generation();
         if self.seen == Some(g) { return; }
         self.seen = Some(g);
-        let (head, rows, loading, conv, items, pin) = take();
+        // (A project's picture by its alias, or by its name, as the web's.)
+        let projects = crundi_shell::stores(cx).projects.read(cx);
+        let pics: Vec<(String, String, Option<Arc<Image>>)> = projects.list.iter().map(|p| (p.alias.to_lowercase(), p.name.to_lowercase(), projects.icon_of(&p.alias))).collect();
+        let pic_of = |k: &str| { let k = k.to_lowercase(); pics.iter().find(|p| p.0 == k).or_else(|| pics.iter().find(|p| p.1 == k)).and_then(|p| p.2.clone()) };
+        let (head, rows, loading, conv, items, pin) = take(pic_of);
         self.head.update(cx, |h, cx| if h.copy != head { h.copy = head; cx.notify(); });
         self.threads.update(cx, |t, cx| {
             let moved = splice(&t.list, &mut t.rows, rows);
@@ -253,10 +274,10 @@ impl Threads {
         let Some(t) = self.rows.get(ix) else { return div().into_any_element() };
         let key = t.key.clone();
         let u = t.unread;
-        div().id(("ibx-thread", ix)).flex().items_start().gap(T::SP_10).px(T::SP_16).py(T::SP_12).cursor_pointer()
+        div().id(("ibx-thread", ix)).w_full().flex().items_start().gap(T::SP_10).px(T::SP_16).py(T::SP_12).cursor_pointer()
             .border_b_1().border_color(T::border_subtle())
             .when(t.active, |d| d.bg(T::accent_dim())).when(!t.active, |d| d.hover(|d| d.bg(T::bg_hover())))
-            .child(avatar(&t.kind, &t.badge))
+            .child(avatar(&t.kind, &t.badge, t.pic.as_ref()))
             .child(div().flex().flex_col().flex_1().min_w_0().gap(T::SP_2)
                 .child(div().truncate().text_size(T::TEXT_14).text_color(T::text()).when(u > 0, |d| d.font_weight(T::W_SEMIBOLD)).child(t.title.clone()))
                 .when(!t.sub.is_empty(), |d| d.child(div().truncate().text_size(T::TEXT_11).text_color(T::text_muted()).child(t.sub.clone())))
@@ -302,8 +323,9 @@ impl Conversation {
 fn message(ix: usize, m: &Msg) -> Div {
     let (icon, tint) = kind_look(&m.kind);
     let id = m.id.clone();
-    let mut card = w::card().max_w(T::INBOX_MSG_W).px(T::SP_16).pt(T::SP_10).pb(T::SP_12).gap(T::SP_6).border_color(T::border_subtle())
-        .when(m.fresh, |d| d.border_l_2().border_color(T::accent()))
+    // (.ibx-msg.new: an accent line on its left edge only; the other edges stay subtle.)
+    let mut card = w::card().relative().overflow_hidden().max_w(T::INBOX_MSG_W).px(T::SP_16).pt(T::SP_10).pb(T::SP_12).gap(T::SP_6).border_color(T::border_subtle())
+        .when(m.fresh, |d| d.child(div().absolute().left_0().top_0().bottom_0().w(px(3.)).bg(T::accent())))
         .child(div().flex().items_center().gap(T::SP_8)
             .child(div().id(("ibx-kind", ix)).text_size(T::ICON_MD).text_color(tint).child(icon).tooltip(w::tooltip(inbox::kind_label(&m.kind))))
             .child(div().flex_1().min_w_0().font_weight(T::W_SEMIBOLD).text_size(T::TEXT_14).text_color(T::text()).child(m.title.clone()))
@@ -341,7 +363,7 @@ impl Render for Conversation {
             return w::layer(empty(if self.copy.any { "Choose a conversation to read it." } else { "Nothing here yet." }).size_full()).into_any_element();
         };
         let head = div().flex().flex_none().items_center().gap(T::SP_10).px(T::SP_16).py(T::SP_12).border_b_1().border_color(T::border_subtle())
-            .child(avatar(&t.kind, ""))
+            .child(avatar(&t.kind, "", t.pic.as_ref()))
             .child(div().flex().flex_col().min_w_0()
                 .child(div().truncate().font_weight(T::W_SEMIBOLD).text_size(T::TEXT_15).text_color(T::text()).child(t.title.clone()))
                 .when(!t.sub.is_empty(), |d| d.child(div().truncate().text_size(T::TEXT_12).text_color(T::text_muted()).child(t.sub.clone()))))

@@ -43,3 +43,32 @@ pub fn dropdown_of(
         menu
     })
 }
+
+/// A dropdown whose choices come in named groups (a <select> with
+/// <optgroup>s: the Browsers tab's devices by maker). `on` and `pick` count
+/// the choices in order across the groups; the button shows the choice.
+pub fn dropdown_groups(
+    id: impl Into<ElementId>,
+    groups: Vec<(SharedString, Vec<SharedString>)>,
+    on: usize,
+    full: bool,
+    pick: impl Fn(usize, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let label = groups.iter().flat_map(|g| g.1.iter()).nth(on).cloned().unwrap_or_default();
+    let pick = std::rc::Rc::new(pick);
+    let b = crate::control::sized(Button::new(id), Some(label), Some(IconName::ChevronDown), true, crate::control::Ctl::Normal);
+    let b = if full { b.w_full().justify_between() } else { b };
+    b.dropdown_menu(move |mut menu, _, _| {
+        menu = menu.max_h(T::DIALOG_MAX_H).scrollable(true);
+        let mut i = 0;
+        for (g, items) in &groups {
+            menu = menu.label(g.clone());
+            for l in items {
+                let (pick, n) = (pick.clone(), i);
+                menu = menu.item(PopupMenuItem::new(l.clone()).checked(n == on).on_click(move |_, window, cx| pick(n, window, cx)));
+                i += 1;
+            }
+        }
+        menu
+    })
+}

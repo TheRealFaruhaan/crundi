@@ -135,6 +135,23 @@ export async function relaunch(T, t, env = {}, signal = 'SIGTERM') {
   await T.until('the project is open again', (p) => p.project === 'demo' && p.online, 30000);
 }
 
+/** Open a bar's popover with a click on its button (its place from the
+ *  drawer's `spots`): the menu the person sees, drawn over the page. */
+export async function openPop(T, t, spot, which) {
+  const p0 = await T.state();
+  const b = dr(T, p0).spots?.[spot];
+  t.check(`the ${spot} button has a place`, !!b, dr(T, p0).spots);
+  if (!b) return null;
+  await T.mouse('click', b[0] + b[2] / 2, b[1] + b[3] / 2);
+  return T.until(`a click on ${spot} opens its popover`, (p) => dr(T, p).pop === which, 5000);
+}
+
+/** Esc closes the open popover (the menu has the keys). */
+export async function closePop(T, t, which) {
+  await T.key('Escape');
+  await T.until(`Esc closes the ${which} popover`, (p) => dr(T, p).pop !== which, 5000);
+}
+
 export async function run(T, t) {
   const PAGE = await pageServer();
   const D = (p) => dr(T, p);
@@ -166,17 +183,25 @@ export async function run(T, t) {
   await T.snap('desktop', 'drawer-history');
   await T.act('panel-close');
   await T.until('Close leaves the panel', (p) => D(p).panel === '');
+  // Clear browsing data: Every site / Only this site, what to clear, Cancel and Clear.
+  await T.act('panel', 'clear');
+  await T.until('the Clear browsing data panel', (p) => D(p).panel === 'clear');
+  await T.snap('desktop', 'drawer-clear');
+  await T.act('panel-close');
+  await T.until('…closed', (p) => D(p).panel === '');
 
   // A link that opens a window: a new tab in the project.
   const before = D(await T.state()).tabs.length;
   await T.act('click', first, '60', '170');
   await T.until('a window a page opens becomes a new tab', (p) => D(p).tabs.length === before + 1 && D(p).tabs.some((x) => x.url.endsWith('/popped')));
 
-  // Devices: the popover, a phone.
+  // Devices: the popover (opened by a click on its button, as a person
+  // does: F104), a phone.
   await T.act('activate', first);
-  await T.act('pop', 'dev');
-  await T.until('the device popover', (p) => D(p).pop === 'dev');
+  await openPop(T, t, 'device', 'dev');
   await T.snap('desktop', 'drawer-devices');
+  await closePop(T, t, 'dev');
+  await T.act('pop', 'dev');
   await T.act('pick', '3');
   p = await T.until('iPhone 15 Pro on the tab', (p) => D(p).tabs.find((x) => x.id === first)?.device === 3);
   await t.sleep(2500);
@@ -188,15 +213,32 @@ export async function run(T, t) {
   await T.until('back to Responsive', (p) => D(p).tabs.find((x) => x.id === first)?.device === 0);
 
   // Networks: the popover's labels; the server's network for a tab.
-  await T.act('pop', 'net');
-  p = await T.until('the network popover', (p) => D(p).pop === 'net');
+  p = await openPop(T, t, 'net', 'net');
   await T.snap('desktop', 'drawer-network');
+  await closePop(T, t, 'net');
+  await T.act('pop', 'net');
   await T.act('pick', 'server');
   p = await T.until('the tab moves to the server\'s network (a page of its own)', (p) => D(p).tabs.find((x) => x.id === first)?.network === 'server');
   await T.until('…and loads there again', (p) => /page \/a/.test(D(p).tabs.find((x) => x.id === first)?.title || ''), 30000);
   await T.act('pop', 'net');
   await T.act('pick', 'client');
   await T.until('back on this PC', (p) => D(p).tabs.find((x) => x.id === first)?.network === 'client');
+
+  // The width: dragged on the split, kept for the next launch (VD st.width).
+  {
+    const p0 = await T.state();
+    const [x0] = D(p0).root || [0, 0];
+    const w0 = D(p0).width;
+    await T.mouse('drag', x0 - 3, 500, { toX: x0 - 83, toY: 500 });
+    const p1 = await T.until('dragging the split widens the drawer', (p) => Math.abs(D(p).width - (w0 + 80)) < 4, 5000);
+    await t.sleep(1200);
+    let kept = null;
+    try { kept = JSON.parse(readFileSync(join(T.configDir, 'desktop-drawer.json'), 'utf8')).width; } catch { /* not yet */ }
+    t.check('…and the width is kept for the next launch', p1 && Math.abs(kept - D(p1).width) < 1, { kept, width: p1 && D(p1).width });
+    const [x1] = D(await T.state()).root || [0, 0];
+    await T.mouse('drag', x1 - 3, 500, { toX: x0 - 3, toY: 500 });
+    await T.until('…dragged back', (p) => Math.abs(D(p).width - w0) < 8, 5000);
+  }
 
   // Annotating: the annotation bar, a leaf of its own.
   await T.act('annotate', 'true');

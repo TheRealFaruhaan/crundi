@@ -133,7 +133,7 @@ fn run(i: usize, drawer: bool, mut steps: std::collections::VecDeque<Step>, done
         Step::Sleep(ms) => later(Duration::from_millis(ms.max(0.0) as u64), move || run(i, drawer, steps, done)),
         Step::Cursor { x, y, ms, end, .. } => {
             if drawer {
-                browser::with(|st| st.panels[i].cursor_at = Some((x as f32, y as f32, std::time::Instant::now())));
+                browser::with(|st| { let p = &mut st.panels[i]; p.cursor_at = Some((x as f32, y as f32, std::time::Instant::now())); p.cursor_ms = ms as f32; });
                 browser::sync(i);
                 if end { cursor_fade(i); }
             }

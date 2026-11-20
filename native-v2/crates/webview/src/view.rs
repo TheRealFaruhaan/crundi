@@ -31,6 +31,11 @@ struct Snap {
     sized: bool,
     crashed: bool,
     waiting: bool,
+    /// Why the page is not shown (a load that failed), over it.
+    diag: String,
+    /// How long the chat's cursor glides to `chat_at` (ms), and whether its button is held.
+    chat_ms: f32,
+    chat_down: bool,
 }
 
 impl Snap {
@@ -39,7 +44,8 @@ impl Snap {
             let (vw, vh, ..) = p.view();
             let (k, ox, oy) = p.fit();
             Snap { vw, vh, k, ox, oy, anns: p.ann.clone(), hover: p.hover.clone(), chat_at: p.cursor_at.map(|c| (c.0, c.1)), cursor: p.cursor,
-                sized: p.custom.is_some() || p.device != 0, crashed: p.crashed, waiting: p.browser.is_some() && p.frames == 0 }
+                sized: p.custom.is_some() || p.device != 0, crashed: p.crashed, waiting: p.browser.is_some() && p.frames == 0,
+                diag: p.load_error.clone().unwrap_or_default(), chat_ms: p.cursor_ms, chat_down: p.mouse_down.is_some() }
         })).unwrap_or(Snap { k: 1., ..Snap::default() })
     }
 }
@@ -55,11 +61,18 @@ pub struct PageView {
     origin: Point<Pixels>,
     focus: FocusHandle,
     snap: Snap,
+    /// The chat's cursor as drawn: where it glides from, where it was last
+    /// (to fade out there), and a count that restarts its animation.
+    cur_from: Option<(f32, f32)>,
+    cur_last: Option<(f32, f32)>,
+    cur_seq: u64,
+    /// It was not on show before this move: it fades in.
+    cur_in: bool,
 }
 
 impl PageView {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        PageView { panel: None, annotating: false, image: None, shown: None, stage: (0., 0.), origin: Point::default(), focus: cx.focus_handle(), snap: Snap { k: 1., ..Snap::default() } }
+        PageView { panel: None, annotating: false, image: None, shown: None, stage: (0., 0.), origin: Point::default(), focus: cx.focus_handle(), snap: Snap { k: 1., ..Snap::default() }, cur_from: None, cur_last: None, cur_seq: 0, cur_in: false }
     }
 
     /// Show another panel (or none).
@@ -90,7 +103,18 @@ impl PageView {
             return;
         };
         let snap = Snap::of(i);
-        if snap != self.snap { self.snap = snap; cx.notify(); }
+        if snap != self.snap {
+            // The chat's cursor moved, came or went: it glides from where it
+            // was drawn (VD placeCursor), fades in and out.
+            if snap.chat_at != self.snap.chat_at {
+                self.cur_in = self.snap.chat_at.is_none();
+                self.cur_from = self.snap.chat_at.or(self.cur_last);
+                if snap.chat_at.is_some() { self.cur_last = snap.chat_at; }
+                self.cur_seq += 1;
+            }
+            self.snap = snap;
+            cx.notify();
+        }
         // The panel's slot made again under this view (closed and reused:
         // a network switch): it is shown, as it is drawn here.
         if !engine::is_shown(i) { engine::set_shown(i, true); }
@@ -133,6 +157,20 @@ impl PageView {
     }
 }
 
+/// The chat's cursor's frames a second while it glides or fades (rule 6).
+const CURSOR_FPS: f32 = 60.;
+
+/// The glide's ease (the web's cubic-bezier(.3,.7,.3,1): fast, then settling).
+fn ease_glide(t: f32) -> f32 { 1. - (1. - t).powi(3) }
+
+/// The chat's cursor: the pointer, its "Claude" tag, a ring while pressed.
+fn cursor_el(down: bool) -> Div {
+    div().absolute().size(T::PAGE_CURSOR)
+        .when(down, |d| d.child(div().absolute().left(-T::MARK_R).top(-T::MARK_R).size(T::MARK_D).rounded(T::R_PILL).border_2().border_color(T::accent()).bg(T::accent().opacity(0.28))))
+        .child(svg().absolute().left(px(-2.)).top(px(-2.)).path(crundi_theme::IconName::MousePointer2.path()).size(T::PAGE_CURSOR).text_color(T::accent()))
+        .child(div().absolute().left(px(15.)).top(px(21.)).px(T::SP_6).rounded(T::R_PILL).bg(T::accent()).text_color(T::white()).text_size(T::TEXT_11).font_weight(T::W_SEMIBOLD).whitespace_nowrap().child("Claude"))
+}
+
 /// A mark's colour: a chat's in the accent, yours in the annotate colour.
 fn mark_color(a: &Ann) -> Hsla { if a.by == "claude" { T::accent() } else { T::annotate() } }
 
@@ -157,7 +195,7 @@ impl Render for PageView {
         crundi_core::driver::rendered("page");
         let me = cx.entity();
         // What is drawn (the copy `pump` took): the page's place, the marks, the hover, the chat's cursor.
-        let Snap { vw, vh, k, ox, oy, anns, hover, chat_at, cursor, sized, crashed, waiting } = if self.panel.is_some() { self.snap.clone() } else { Snap { k: 1., ..Snap::default() } };
+        let Snap { vw, vh, k, ox, oy, anns, hover, chat_at, cursor, sized, crashed, waiting, diag, chat_ms, chat_down } = if self.panel.is_some() { self.snap.clone() } else { Snap { k: 1., ..Snap::default() } };
         let at = move |x: f32, y: f32| point(px(x * k + ox), px(y * k + oy));
         let mut d = div()
             .id("page").relative().size_full().overflow_hidden()
@@ -184,8 +222,9 @@ impl Render for PageView {
                 let o = bounds.origin;
                 let pt = |x: f32, y: f32| o + at(x, y);
                 if let Some((x, y, w, h, _)) = &h2 {
-                    let b = Bounds { origin: pt(*x, *y), size: size(px(w * k), px(h * k)) };
-                    window.paint_quad(quad(b, px(0.), T::accent_dim(), px(2.), T::accent(), BorderStyle::Solid));
+                    // (.brd-hov: the annotate colour, a 12% fill.)
+                    let b = Bounds { origin: pt(*x, *y), size: size(px((w * k).max(2.)), px((h * k).max(2.))) };
+                    window.paint_quad(quad(b, px(2.), T::annotate().opacity(0.12), px(2.), T::annotate(), BorderStyle::Solid));
                 }
                 for a in &a2 {
                     let c = mark_color(a);
@@ -220,37 +259,57 @@ impl Render for PageView {
                 }
             },
         ).absolute().inset_0().size_full());
-        // The numbers and notes (text, so elements): a disc on a pin, else at the mark's corner.
+        // The hovered element's selector, on a tag above its box (.brd-hov span).
+        if let Some((x, y, _, _, sel)) = hover.as_ref().filter(|h| !h.4.is_empty()) {
+            let p = at(*x, *y);
+            d = d.child(div().absolute().left(p.x - px(2.)).top(p.y - px(22.)).max_w(px(320.)).px(T::SP_6).py(px(1.)).rounded(T::R_CHIP)
+                .bg(T::annotate()).text_color(T::white()).text_size(T::TEXT_11).font_family(T::MONO).truncate().child(sel.clone()));
+        }
+        // Each mark's label (.brd-lbl): its number (and "Claude"), its note,
+        // a picked element's selector under it, at the mark's corner.
         for (n, a) in anns.iter().enumerate() {
             let c = mark_color(a);
-            let r = T::MARK_R;
             let (cx0, cy0) = match a.kind.as_str() {
-                "pin" => (a.x, a.y),
-                "arrow" => (a.x, a.y),
                 "pen" => a.points.first().copied().unwrap_or((a.x, a.y)),
                 _ => (a.x, a.y),
             };
             let p = at(cx0, cy0);
-            let (left, top) = if a.kind == "pin" { (p.x - r, p.y - r) } else { (p.x, p.y) };
-            let label = if a.by == "claude" { format!("{} Claude", n + 1) } else { format!("{}", n + 1) };
-            d = d.child(div().absolute().left(left).top(top).flex().items_center().gap(T::SP_4)
-                .child(div().h(T::MARK_D).min_w(T::MARK_D).px(T::SP_4).rounded(T::R_PILL).bg(c).border_1().border_color(T::white())
-                    .flex().items_center().justify_center().text_color(T::white()).text_size(T::TEXT_11).font_weight(T::W_BOLD).child(label))
-                .when(!a.text.is_empty(), |d| d.child(div().max_w(T::DRAWER_NOTE_W).px(T::SP_6).py(T::SP_2).rounded(T::R_CHIP).bg(c)
-                    .text_color(T::white()).text_size(T::TEXT_11).truncate().child(a.text.clone()))));
+            let who = if a.by == "claude" { format!("{} Claude", n + 1) } else { format!("{}", n + 1) };
+            d = d.child(div().absolute().left(p.x).top(p.y).max_w(T::DRAWER_NOTE_W).px(T::SP_6).py(px(3.)).rounded(T::R_CONTROL).bg(c)
+                .text_color(T::white()).text_size(T::TEXT_12)
+                .child(div().flex().gap(T::SP_4).child(div().flex_none().font_weight(T::W_BOLD).opacity(0.85).child(who))
+                    .when(!a.text.is_empty(), |d| d.child(div().min_w_0().child(a.text.clone()))))
+                .when(a.kind == "element" && !a.selector.is_empty(), |d| d.child(div().font_family(T::MONO).text_size(T::TEXT_10).opacity(0.85).child(a.selector.clone()))));
         }
-        // The chat's cursor (browser_mouse), with its tag.
+        // The chat's cursor (browser_mouse) with its tag: it glides to where
+        // it points (as long as the move takes), a ring while its button is
+        // held, and fades in and out (VD placeCursor).
+        let seq = self.cur_seq;
         if let Some((x, y)) = chat_at {
+            let from = self.cur_from.unwrap_or((x, y));
+            let fade_in = self.cur_in;
+            let (a0, a1) = (at(from.0, from.1), at(x, y));
+            let ms = chat_ms.max(200.);
+            // (The glide takes chat_ms of it; a jump is there at once, the fade 0.2 s.)
+            let glide = chat_ms;
+            d = d.child(cursor_el(chat_down).with_animation(("chat-cur", seq as usize), Animation::new(std::time::Duration::from_millis(ms as u64)).with_max_fps(CURSOR_FPS),
+                move |el, t| {
+                    let g = if glide <= 0. { 1. } else { ease_glide((t * ms / glide).min(1.)) };
+                    el.left(a0.x + (a1.x - a0.x) * g).top(a0.y + (a1.y - a0.y) * g).opacity(if fade_in { (t * ms / 200.).min(1.) } else { 1. })
+                }));
+        } else if let Some((x, y)) = self.cur_last.filter(|_| seq > 0) {
             let p = at(x, y);
-            d = d.child(div().absolute().left(p.x).top(p.y).flex().flex_col().gap(T::SP_2)
-                .child(svg().path(crundi_theme::IconName::MousePointer2.path()).size(T::PAGE_CURSOR).text_color(T::accent()))
-                .child(div().px(T::SP_4).rounded(T::R_CHIP).bg(T::accent()).text_color(T::white()).text_size(T::TEXT_10).font_weight(T::W_BOLD).child("Claude")));
+            d = d.child(cursor_el(false).left(p.x).top(p.y).with_animation(("chat-cur", seq as usize), Animation::new(std::time::Duration::from_millis(200)).with_max_fps(CURSOR_FPS),
+                move |el, t| el.opacity(1. - t)));
         }
         // The browser host starting, or the page not drawn yet: a quiet
-        // spinner; its page process or the whole host gone: the crash, Reload.
-        if let Some(i) = self.panel {
+        // spinner; its page process or the whole host gone, or a load failed: the line saying so.
+        if self.panel.is_some() {
+            // (.brd-diag: one centred muted line over the page; Reload is the bar's.)
             if crashed {
-                d = d.child(crundi_widgets::page_crashed("page-reload", move |_, _, _| engine::defer(move || engine::reload(i))));
+                d = d.child(crundi_widgets::page_message("The page crashed. Reload to try again."));
+            } else if !diag.is_empty() {
+                d = d.child(crundi_widgets::page_message(diag));
             } else if waiting {
                 d = d.child(crundi_widgets::page_loading());
             }
