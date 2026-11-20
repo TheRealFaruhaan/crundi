@@ -47,8 +47,9 @@ pub(super) fn adopt_saved(d: &mut Value, saved: &Value) {
 pub(super) fn section(s: &mut Sched, d: &Value, m: &Dm, window: &mut Window, cx: &mut Context<Sched>) -> Div {
     let signed = ss(&d["webhook"], "auth") == "signature";
     // The URL and secret are read-only boxes (selectable), kept to the draft's.
-    Sched::set(&s.f.url, &m.url, window, cx);
-    Sched::set(&s.f.secret, &m.secret, window, cx);
+    let (u, sc) = (m.url.clone(), m.secret.clone());
+    s.f.url.update(cx, |r, cx| r.set(u, window, cx));
+    s.f.secret.update(cx, |r, cx| r.set(sc, window, cx));
     let ts_empty = s.f.ts.read(cx).value().is_empty();
     let f = &s.f;
     let mut d = div().flex().flex_col()
@@ -67,8 +68,8 @@ pub(super) fn section(s: &mut Sched, d: &Value, m: &Dm, window: &mut Window, cx:
         return d.child(note("Save the schedule to get its URL."));
     }
     let hint = if ts_empty { "(HMAC-SHA256 of the raw body; hex or sha256=hex)" } else { "(HMAC-SHA256 of the raw body, or of time:body with the timestamp header, as Grafana does; hex or sha256=hex)" };
-    d.child(label("URL", "(POST, JSON body)", false)).child(w::input(&s.f.url).readonly(true))
-        .when(signed, |d| d.child(label("SECRET", hint, false)).child(w::input(&s.f.secret).readonly(true)))
+    d.child(label("URL", "(POST, JSON body)", false)).child(w::readonly_box(&s.f.url))
+        .when(signed, |d| d.child(label("SECRET", hint, false)).child(w::readonly_box(&s.f.secret)))
         .child(div().flex().pt(T::SP_6)
             .child(w::button("sched-rotate", if signed { "New secret" } else { "New key" }).on_click(cx.listener(|s, _, window, cx| rotate(s, window, cx)))))
 }

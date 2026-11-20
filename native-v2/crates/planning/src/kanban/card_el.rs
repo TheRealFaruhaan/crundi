@@ -47,8 +47,8 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
 
     // The title row: the title, the mind map count, the paperclip, the menu (compact).
     let mut rights: Vec<Pixels> = vec![];
-    let mm_text = (cd.mm > 0).then(|| Rc::new(Txt::shape(&cd.mm.to_string(), T::TEXT_11, T::W_SEMIBOLD, d.fade(T::accent_hover()), PHI, None, None, window, cx)));
-    let mm_w = mm_text.as_ref().map(|t| T::SP_4 + T::ICON_SM + T::SP_2 + t.w + T::SP_6);
+    // The mind map count (`w::icon_tag`, accent): measured here, painted below.
+    let mm_w = (cd.mm > 0).then(|| { let mut m = Draw::default(); crundi_widgets::paint::icon_tag_at(&mut m, px(0.), px(0.), IconName::Share2, &cd.mm.to_string(), "accent", window, cx).size.width });
     if let Some(w) = mm_w { rights.push(w); }
     let media = (cd.media > 0).then(|| cd.media.to_string());
     rights.push(button_w(media.as_deref(), on(k.clip), window, cx));
@@ -60,14 +60,11 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
     let th = title.h;
     d.text(title, point(x0, y));
     let mut x = x0 + tw + T::SP_8;
-    if let (Some(t), Some(w)) = (mm_text, mm_w) {
-        let (cy, ch) = (y + T::SP_2, T::SP_16 + T::SP_2);
-        d.bg(b(x, cy, w, ch), T::R_PILL, T::accent_dim());
-        d.icon(IconName::Share2, b(x + T::SP_4, cy + r((ch - T::ICON_SM) / 2.), T::ICON_SM, T::ICON_SM), T::accent_hover());
-        let tt = t.h;
-        d.text(t, point(x + T::SP_4 + T::ICON_SM + T::SP_2, cy + r((ch - tt) / 2.)));
-        row_h = row_h.max(T::SP_2 + ch);
-        d.hits.push((b(x, cy, w, ch), "mm".into()));
+    if let Some(w) = mm_w {
+        let cy = y + T::SP_2;
+        let tb = crundi_widgets::paint::icon_tag_at(&mut d, x, cy, IconName::Share2, &cd.mm.to_string(), "accent", window, cx);
+        row_h = row_h.max(T::SP_2 + tb.size.height);
+        d.hits.push((tb, "mm".into()));
         x += w + T::SP_8;
     }
     let w = button(&mut d, x, y, media.as_deref(), IconName::Paperclip, on(k.clip), "clip", window, cx);
@@ -212,7 +209,9 @@ impl Element for CardEl {
             b2.borrow_mut().pressing = false;
             let Some(was) = pressed.borrow_mut().take() else { return };
             if !h2.is_hovered(window) || at(e.position, &d2).as_deref() != Some(was.as_str()) { return; }
-            super::click_control(&id2, &was, e.position, cw, window, cx);
+            let Some((hb, _)) = d2.hits.iter().find(|(_, n)| *n == was) else { return };
+            let bx = super::board::Box4 { x: f32::from(origin.x + hb.origin.x), y: f32::from(origin.y + hb.origin.y), w: f32::from(hb.size.width), h: f32::from(hb.size.height) };
+            super::click_control(&id2, &was, bx, cw, window, cx);
         });
         crate::paint::paint_draw(&d, bounds.origin, window, cx);
     }

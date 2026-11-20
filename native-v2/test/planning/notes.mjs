@@ -71,9 +71,22 @@ export async function run(T, t) {
   await T.act('notes-type', '', '11', '## ');
   await T.until('"## " makes a heading', (p) => blocks(p)[11].kind === 'h2' && blocks(p)[11].src === '');
   await T.act('notes-type', '', '11', 'Next steps');
-  await T.act('notes-add-below', '', '11');
-  await T.until('+ adds a line and opens the slash menu', (p) => N(p).float === 'slash' && N(p).menu?.label === 'Turn this into, or add' && blocks(p).length === 13
+  // The real "+" (F56): the pointer on the line shows its "+"; a click adds a
+  // line under it and opens the slash menu there, under the new line.
+  const p0 = await T.props();
+  const b11 = blocks(p0)[11];
+  const box11 = tabPage(p0).boxes.find((x) => x.id === b11.id);
+  const pg = tabPage(p0).pageBox;
+  await T.mouse('move', pg.x + pg.w / 2, box11.y + box11.h / 2);
+  const shown = await T.until('the pointer on a line shows its "+"', (p) => tabPage(p).plus.some((x) => x.id === b11.id));
+  const plus = tabPage(shown).plus.find((x) => x.id === b11.id);
+  await T.mouse('move', plus.x, plus.y);
+  await T.mouse('click', plus.x, plus.y);
+  const slash = await T.until('+ adds a line and opens the slash menu', (p) => N(p).float === 'slash' && N(p).menu?.label === 'Turn this into, or add' && blocks(p).length === 13
     && N(p).menu.items.map((i) => i.name).join() === 'Text,Heading 1,Heading 2,Heading 3,To-do,Bulleted list,Numbered list,Quote,Code,Table,Divider');
+  t.check('the slash menu opens under the new line, by the words (not at the window\'s corner)',
+    N(slash).menu.y >= box11.y + box11.h && N(slash).menu.y < box11.y + box11.h + 120 && N(slash).menu.x > pg.x && N(slash).menu.x < pg.x + pg.w / 2,
+    { menu: { x: N(slash).menu.x, y: N(slash).menu.y }, line: box11, page: pg });
   await snap('notes-slash');
   await T.act('notes-menu-pick', 'todo');
   await T.until('the slash menu turns it into a to-do', (p) => blocks(p)[12].kind === 'todo' && !N(p).menu);

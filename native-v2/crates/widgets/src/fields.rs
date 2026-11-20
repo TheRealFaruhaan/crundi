@@ -102,6 +102,24 @@ pub fn time_input(state: &Entity<TimeFieldState>) -> TimeField {
     TimeField::new(state).with_size(gpui_component::Size::Size(T::INPUT_TEXT)).h(T::INPUT_H)
 }
 
+/// Put a date in a date box ("YYYY-MM-DD"; "" or a date that does not
+/// read empties it).
+pub fn set_date(state: &Entity<DatePickerState>, value: &str, window: &mut Window, cx: &mut App) {
+    let d = parse_date(value);
+    if date_value(state, cx) == d.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default() { return; }
+    state.update(cx, |s, cx| match d {
+        Some(d) => s.set_date(d, window, cx),
+        None => s.set_date(gpui_component::calendar::Date::Single(None), window, cx),
+    });
+}
+
+/// Put a time in a time box ("HH:MM"; one that does not read leaves it).
+pub fn set_time(state: &Entity<TimeFieldState>, value: &str, window: &mut Window, cx: &mut App) {
+    let Some(t) = parse_time(value) else { return };
+    if time_value(state, cx) == t.format("%H:%M").to_string() { return; }
+    state.update(cx, |s, cx| s.set_time(t, window, cx));
+}
+
 /// A time box's value: "HH:MM".
 pub fn time_value(state: &Entity<TimeFieldState>, cx: &App) -> String { state.read(cx).time().format("%H:%M").to_string() }
 

@@ -30,6 +30,22 @@ pub fn dropdown_of(
     full: bool,
     pick: impl Fn(usize, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
+    dropdown_off(id, items, &[], on, disabled, full, pick)
+}
+
+/// The same, with some choices shown but not pickable (`off[i]`: the web's
+/// `<option disabled>`, a draft factory in the start form). Added by
+/// Planning (Factories, F92).
+pub fn dropdown_off(
+    id: impl Into<ElementId>,
+    items: Vec<SharedString>,
+    off: &[bool],
+    on: usize,
+    disabled: bool,
+    full: bool,
+    pick: impl Fn(usize, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    let off: Vec<bool> = off.to_vec();
     let label = items.get(on).cloned().unwrap_or_default();
     let pick = std::rc::Rc::new(pick);
     let b = crate::control::sized(Button::new(id), Some(label), Some(IconName::ChevronDown), true, crate::control::Ctl::Normal).disabled(disabled);
@@ -38,7 +54,7 @@ pub fn dropdown_of(
         menu = menu.max_h(T::DIALOG_MAX_H).scrollable(true);
         for (i, l) in items.iter().enumerate() {
             let pick = pick.clone();
-            menu = menu.item(PopupMenuItem::new(l.clone()).checked(i == on).on_click(move |_, window, cx| pick(i, window, cx)));
+            menu = menu.item(PopupMenuItem::new(l.clone()).checked(i == on).disabled(off.get(i).copied().unwrap_or(false)).on_click(move |_, window, cx| pick(i, window, cx)));
         }
         menu
     })

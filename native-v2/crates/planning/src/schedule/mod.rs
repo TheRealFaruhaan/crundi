@@ -83,16 +83,18 @@ fn in_view(cx: &mut App, f: impl FnOnce(&mut Sched, &mut Window, &mut Context<Sc
 
 struct Fields {
     name: Entity<w::InputState>,
-    date: Entity<w::InputState>,
-    time: Entity<w::InputState>,
+    /// The web's `type="date"` and `type="time"` boxes.
+    date: Entity<gpui_component::date_picker::DatePickerState>,
+    time: Entity<gpui_component::time_field::TimeFieldState>,
     session_id: Entity<w::InputState>,
     cwd: Entity<w::InputState>,
     command: Entity<w::InputState>,
     sig: Entity<w::InputState>,
     ts: Entity<w::InputState>,
     idem: Entity<w::InputState>,
-    url: Entity<w::InputState>,
-    secret: Entity<w::InputState>,
+    /// Read-only, selected whole on a click (the web's `readonly onfocus="this.select()"`).
+    url: Entity<w::ReadOnly>,
+    secret: Entity<w::ReadOnly>,
     prompt: Entity<w::TextareaState>,
 }
 
@@ -170,16 +172,16 @@ impl Sched {
         let inp = |ph: &str, window: &mut Window, cx: &mut Context<Self>| { let ph = ph.to_string(); cx.new(|cx| w::InputState::new(window, cx).placeholder(ph)) };
         let f = Fields {
             name: inp("My scheduled task", window, cx),
-            date: inp("YYYY-MM-DD", window, cx),
-            time: inp("HH:MM", window, cx),
+            date: w::date_state(window, cx, ""),
+            time: w::time_state(window, cx, "09:00"),
             session_id: inp("session id e.g. 8441d374-fd1a-...", window, cx),
             cwd: inp("/absolute/path", window, cx),
             command: inp("e.g. npm run build", window, cx),
             sig: inp("", window, cx),
             ts: inp("X-Grafana-Alerting-Signature-Timestamp", window, cx),
             idem: inp("{{payload.messageId}}", window, cx),
-            url: inp("", window, cx),
-            secret: inp("", window, cx),
+            url: cx.new(|cx| w::ReadOnly::new(window, cx, "")),
+            secret: cx.new(|cx| w::ReadOnly::new(window, cx, "")),
             prompt: cx.new(|cx| w::TextareaState::new(window, cx).auto_grow(3, 10).placeholder("What should the agent do?")),
         };
         Sched {
@@ -298,7 +300,6 @@ impl Sched {
             s.fill(window, cx);
             s.open_flag = true;
             s.show_dialog(window, cx);
-            s.f.name.update(cx, |st, cx| st.focus(window, cx));
             cx.notify();
         });
     }
@@ -350,8 +351,8 @@ impl Sched {
         let vals: Vec<String> = self.cond_vals.iter().map(|e| Self::val(e, cx)).collect();
         let Some(d) = self.draft.as_mut() else { return };
         d["name"] = json!(Self::val(&f.name, cx));
-        d["when"]["time"] = json!(Self::val(&f.time, cx));
-        d["when"]["date"] = json!(Self::val(&f.date, cx));
+        d["when"]["time"] = json!(w::time_value(&f.time, cx));
+        d["when"]["date"] = json!(w::date_value(&f.date, cx));
         let a = &mut d["action"];
         a["sessionId"] = json!(Self::val(&f.session_id, cx));
         a["prompt"] = json!(f.prompt.read(cx).value().to_string());
@@ -377,8 +378,8 @@ impl Sched {
         let wm = &d["when"];
         let a = &d["action"];
         Self::set(&f.name, &ss(&d, "name"), window, cx);
-        Self::set(&f.date, &ss(wm, "date"), window, cx);
-        Self::set(&f.time, &{ let t = ss(wm, "time"); if t.is_empty() { "09:00".to_string() } else { t } }, window, cx);
+        w::set_date(&f.date, &ss(wm, "date"), window, cx);
+        w::set_time(&f.time, &{ let t = ss(wm, "time"); if t.is_empty() { "09:00".to_string() } else { t } }, window, cx);
         Self::set(&f.session_id, &ss(a, "sessionId"), window, cx);
         Self::set(&f.cwd, &ss(a, "cwd"), window, cx);
         Self::set(&f.command, &ss(a, "command"), window, cx);
@@ -392,7 +393,7 @@ impl Sched {
     fn sync_conds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cs = self.draft.as_ref().and_then(|d| d["conditions"].as_array().cloned()).unwrap_or_default();
         self.cond_vals.truncate(cs.len());
-        while self.cond_vals.len() < cs.len() { self.cond_vals.push(cx.new(|cx| w::InputState::new(window, cx))); }
+        while self.cond_vals.len() < cs.len() { self.cond_vals.push(w::number_state(window, cx, "", Some(0.), None, 1.)); }
         for (c, e) in cs.iter().zip(self.cond_vals.clone()) {
             let t = ss(c, "type");
             let v = if c["value"].is_null() { if t == "usage" { "50".into() } else { "1".into() } } else { ss(c, "value") };
@@ -571,10 +572,6 @@ impl Sched {
         // The web's time and date inputs only ever hold a valid value or nothing.
         d["when"]["time"] = json!(rules::norm_time(&ss(&d["when"], "time")));
         d["when"]["date"] = json!(rules::norm_date(&ss(&d["when"], "date")));
-        // A time or date that reads right is shown tidied ("7:5" → "07:05"); one that doesn't stays as typed.
-        let (t, dt) = (ss(&d["when"], "time"), ss(&d["when"], "date"));
-        if !t.is_empty() { Self::set(&self.f.time, &t, window, cx); }
-        if !dt.is_empty() { Self::set(&self.f.date, &dt, window, cx); }
         if let Err(e) = rules::validate(&d) { toast_err(window, cx, e); return; }
         self.draft = Some(d.clone());
         let hook = ss(&d["when"], "mode") == "webhook";
@@ -664,13 +661,15 @@ impl Sched {
         move |i, window, cx| { let f = f.clone(); let _ = me.update(cx, |s, cx| f(s, i, window, cx)); }
     }
 
+    /// The web's .sm-seg (`w::option_buttons`: they wrap when narrow).
     fn seg_ctl(&self, id: &'static str, group: &'static str, labels: &[&'static str], keys: &'static [&'static str], on: usize, cx: &mut Context<Self>) -> Div {
         let me = cx.entity().downgrade();
-        // As wide as its choices (the web's .sm-seg), not the form's width.
-        div().flex().child(w::segmented(id, labels, on, move |i, _, cx| {
-            let k = keys.get(*i).copied().unwrap_or("");
+        let opts: Vec<(&str, &str)> = keys.iter().copied().zip(labels.iter().copied()).collect();
+        let cur = keys.get(on).copied().unwrap_or("");
+        w::option_buttons(id, &opts, cur, false, move |k, _, cx| {
+            let k = keys.iter().copied().find(|x| *x == k).unwrap_or("");
             let _ = me.update(cx, |s, cx| s.seg(group, k, cx));
-        }))
+        })
     }
 
     fn render_list(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -681,9 +680,10 @@ impl Sched {
             .child(div().flex_1())
             .when(has_project, |d| d.child(w::toggle("sched-filter", if filter { "This project" } else { "All projects" }, filter)
                 .on_click(cx.listener(|s, _, window, cx| s.act("filter", "", window, cx)))));
-        let show_proj = !filter || !has_project;
+        // The project on each row when the filter is off (the web's !scheduleFilter).
+        let show_proj = !filter;
         let body = if self.schedules.is_empty() {
-            w::empty(if filter && has_project { "No scheduled tasks for this project" } else { "No scheduled tasks" }).into_any_element()
+            w::empty_icon(IconName::Clock, if filter && has_project { "No scheduled tasks for this project" } else { "No scheduled tasks" }).into_any_element()
         } else {
             // A virtualised list (only the schedules on screen are drawn): the
             // list's padding (sp-12 across, sp-10 down) and its gap (sp-8) per row.
@@ -721,7 +721,8 @@ impl Sched {
             .when(!summary.is_empty(), |d| d.child(div().min_w_0().text_size(T::TEXT_13).text_color(T::text_secondary()).child(summary)))
             .child(chips)
             .when(!last.is_empty(), |d| d.child(div().pt(T::SP_4).text_size(T::TEXT_10).text_color(T::text_muted()).child(last)));
-        div().flex().items_start().gap(T::SP_10).px(T::SP_12).py(T::SP_10).rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg_card())
+        // The row (.sched-item): the shared card.
+        w::card().flex_row().items_start().gap(T::SP_10).px(T::SP_12).py(T::SP_10)
             .when(!on, |d| d.opacity(T::SCHED_O_OFF))
             .child(power)
             .child(body)
@@ -748,13 +749,12 @@ impl Sched {
 
     /// An extra condition (.sm-cond): its label, its fields, × to remove.
     fn cond_row(&self, i: usize, r: &Row, m: &Dm, cx: &mut Context<Self>) -> AnyElement {
-        let mut d = div().flex().flex_wrap().items_center().gap(T::SP_6).px(T::SP_8).py(T::SP_6).rounded(T::R_CONTROL)
-            .border_1().border_color(T::border_subtle()).bg(T::bg_tertiary())
+        let mut d = w::inset()
             .child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(r.title.clone()));
         if r.kind != "kanban" {
             let ops: Vec<SharedString> = rules::OPS.iter().map(|o| SharedString::from(*o)).collect();
             d = d.child(div().w(T::SP_48 * 2.).child(w::dropdown_of(("sched-cop", i), ops, r.op, false, true, Self::weak_pick(cx, move |s, k, _, cx| s.cond_pick(i, "op", k, cx)))));
-            if let Some(e) = self.cond_vals.get(i) { d = d.child(div().w(T::SP_32 * 2.).child(w::input(e))); }
+            if let Some(e) = self.cond_vals.get(i) { d = d.child(div().w(T::SP_48 * 2.).child(w::number_input(e))); }
             if r.kind == "usage" { d = d.child(div().text_size(T::TEXT_13).text_color(T::text_secondary()).child("%")); }
             d = d.child(div().flex_1());
         } else {
@@ -794,7 +794,7 @@ impl Sched {
         } else {
             let mut row = div().flex().flex_wrap().items_center().gap(T::SP_10).pt(T::SP_6);
             if mode == "once" {
-                row = row.child(div().w(T::SP_48 * 2. + T::SP_32).child(w::input(&self.f.date)));
+                row = row.child(div().w(T::SP_48 * 3.).child(w::date_input(&self.f.date)));
             } else {
                 let mut days = div().flex().gap(T::SP_4);
                 for (i, n) in rules::DAYS.iter().enumerate() {
@@ -802,7 +802,7 @@ impl Sched {
                 }
                 row = row.child(days);
             }
-            row = row.child(div().w(T::SP_48 + T::SP_40).child(w::input(&self.f.time)));
+            row = row.child(div().w(T::SP_48 * 2.).child(w::time_input(&self.f.time)));
             body = body.child(row);
         }
         body = body.child(label("ACTION", "", false))
@@ -892,8 +892,9 @@ impl Render for Sched {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("schedule");
         let main = match self.state {
-            "loading" => w::loading("Loading…").into_any_element(),
-            "error" => w::error_state("sched-retry", self.error.clone(), cx.listener(|s, _, _, cx| s.load(cx))).into_any_element(),
+            // Loading: nothing yet; an error: its words (the web's .git-empty).
+            "loading" => div().into_any_element(),
+            "error" => w::empty(self.error.clone()).into_any_element(),
             _ => self.render_list(cx),
         };
         div().flex().flex_col().size_full().bg(T::bg()).child(main)
@@ -980,12 +981,14 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
                 let v = a(1);
                 let f = &s.f;
                 let e = match a(0).as_str() {
-                    "name" => Some(&f.name), "date" => Some(&f.date), "time" => Some(&f.time), "command" => Some(&f.command),
+                    "name" => Some(&f.name), "command" => Some(&f.command),
                     "cwd" => Some(&f.cwd), "session-id" => Some(&f.session_id), "sig-header" => Some(&f.sig), "ts-header" => Some(&f.ts),
                     "idem" => Some(&f.idem), _ => None,
                 }.cloned();
                 if let Some(e) = e { Sched::set(&e, &v, window, cx); }
-                if a(0) == "prompt" { s.f.prompt.clone().update(cx, |st, cx| st.set_value(v, window, cx)); }
+                if a(0) == "prompt" { s.f.prompt.clone().update(cx, |st, cx| st.set_value(v.clone(), window, cx)); }
+                if a(0) == "date" { let e = s.f.date.clone(); w::set_date(&e, &v, window, cx); }
+                if a(0) == "time" { let e = s.f.time.clone(); w::set_time(&e, &v, window, cx); }
             }
             "schedule-save" => s.save(window, cx),
             "schedule-close" => s.close_in(window, cx),
@@ -1017,7 +1020,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
             let mut put = |k: &str, x: Value| { o.insert(k.to_string(), x); };
             put("title", json!(if ss(&d, "id").is_empty() { "New schedule" } else { "Edit schedule" }));
             put("name", json!(v(&f.name))); put("projects", json!(m.popts)); put("project", json!(m.pi));
-            put("when", json!(ss(&d["when"], "mode"))); put("date", json!(v(&f.date))); put("time", json!(v(&f.time))); put("days", json!(m.days));
+            put("when", json!(ss(&d["when"], "mode"))); put("date", json!(w::date_value(&f.date, cx))); put("time", json!(w::time_value(&f.time, cx))); put("days", json!(m.days));
             put("hookAuth", json!(if ss(wh, "auth") == "signature" { "signature" } else { "key" }));
             put("sigHeader", json!(v(&f.sig))); put("tsHeader", json!(v(&f.ts))); put("idem", json!(v(&f.idem)));
             put("hookUrl", json!(m.url)); put("hookSecret", json!(m.secret));

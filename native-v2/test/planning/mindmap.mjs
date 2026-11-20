@@ -167,6 +167,26 @@ export async function run(T_, t) {
   await T.key('\u007f');
   await server(t, 'the second deletes it', (ns) => !ns.some((n) => n.text === 'Flights'));
 
+  // ── A press outside the map lets go of the ring (the web's document pointerdown) ──
+  await T.act('mindmap-select', 'Hotel');
+  await T.until('the ring on Hotel', (p) => M(p).sel === node(p, 'Hotel')?.id);
+  await T.mouse('click', 140, 500);
+  await T.until('a press outside the map (the sidebar) lets go of the ring', (p) => !M(p).sel);
+
+  // ── A drag let go outside the map ends there, and nothing moves ──
+  await T.act('mindmap-measure');
+  mp = await T.until('measured', (p) => node(p, 'Hotel')?.box);
+  const hotelParent = (await mm()).find((n) => n.text === 'Hotel')?.parentId;
+  const [ox, oy] = centre(node(mp, 'Hotel'));
+  await T.mouse('move', ox, oy);
+  await T.mouse('down', ox, oy);
+  for (const [x, y] of [[ox + 20, oy + 20], [ox + 60, oy + 40], [600, 500], [140, 500]]) { await T.mouse('move', x, y); await sleep(60); }
+  await T.until('the drag follows the pointer out of the map', (p) => M(p).drag);
+  await T.mouse('up', 140, 500);
+  await T.until('let go outside the map: the drag ends', (p) => !M(p).drag);
+  await sleep(400);
+  t.check('…and nothing moved', (await mm()).find((n) => n.text === 'Hotel')?.parentId === hotelParent);
+
   // ── Zoom: Ctrl and +, Ctrl and the wheel ──
   const z0 = M(await T.props()).zoom;
   await T.key('=', ['Control']);
@@ -186,8 +206,14 @@ export async function run(T_, t) {
   await sleep(300); await T.snap('planning', 'mindmap-help');
   await T.act('mindmap-h-act', 'all');
   await T.until('Show all pictures', (p) => M(p).help.all && M(p).help.rows.filter((r) => r.dia).every((r) => r.open));
-  await T.act('mindmap-h-act', 'close');
-  await T.until('closed', (p) => !M(p).help && !modal(p));
+  // A press outside the sheet (on the scrim) closes it, as the web's.
+  await T.mouse('click', 300, 500);
+  await T.until('a press outside the sheet closes it', (p) => !M(p).help && !modal(p));
+  // …and the idea dialog the same way.
+  await T.act('mindmap-detail', 'Hotel');
+  await T.until('the idea dialog again', (p) => M(p).detail?.title === 'Hotel' && modal(p));
+  await T.mouse('click', 300, 500);
+  await T.until('a press outside the idea dialog closes it', (p) => !M(p).detail && !modal(p));
 
   // ── A failed load says so ──
   await T.act('mindmap-load-path', '/api/mindmap-nope');

@@ -36,7 +36,8 @@ impl Global for AskG {}
 fn g(cx: &mut App) -> &mut AskG { cx.default_global::<AskG>() }
 
 /// Ask for text (and a choice): `then(Some((text, choice)))` on OK or Enter
-/// (Ctrl+Enter in a box of many lines), `then(None)` on Cancel, × or Esc.
+/// (Ctrl+Enter in a box of many lines), `then(None)` on Cancel or a press on
+/// the scrim (the web's #input-modal: no ×, Esc does nothing).
 #[allow(clippy::too_many_arguments)]
 pub fn ask(window: &mut Window, cx: &mut App, title: &str, label: &str, value: &str, multiline: bool, ok: &str, choice: Option<Choice>,
            then: impl FnOnce(Option<(String, String)>, &mut Window, &mut App) + 'static) {
@@ -63,7 +64,7 @@ pub fn ask(window: &mut Window, cx: &mut App, title: &str, label: &str, value: &
         AskView { title, label, ok, choice, chosen, field, _sub: sub }
     });
     g(cx).0 = Some((view.clone(), Some(Box::new(then))));
-    // Esc (the modal layer's) cancels it.
+    // A press on the scrim cancels it.
     w::modal(window, cx, T::DIALOG_W_LG, view.into(), |window, cx| answer(false, window, cx));
 }
 
@@ -113,8 +114,11 @@ pub fn props(cx: &App) -> Value {
 
 impl Render for AskView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut form = div().flex().flex_col().gap(T::SP_8).px(T::SP_8).pb(T::SP_4);
-        if !self.label.is_empty() { form = form.child(w::field_label(self.label.clone())); }
+        // The web's .im-box: the title, the label, the field, the choice, then
+        // Cancel and the action side by side, sharing the row.
+        let mut form = div().flex().flex_col().p(T::SP_16)
+            .child(div().pb(T::SP_8).text_size(T::TEXT_16).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(self.title.clone()));
+        if !self.label.is_empty() { form = form.child(div().pb(T::SP_10).text_size(T::TEXT_13).text_color(T::text_secondary()).child(self.label.clone())); }
         form = match &self.field {
             Field::Line(e) => form.child(w::input(e)),
             Field::Area(e) => form.child(w::textarea(e)),
@@ -126,15 +130,12 @@ impl Render for AskView {
                 pills = pills.child(w::toggle(("kanban-ask-pill", i), t.clone(), self.chosen == *k)
                     .on_click(cx.listener(move |this, _, _, cx| { this.chosen = key.clone(); cx.notify(); })));
             }
-            form = form.child(div().flex().flex_col().gap(T::SP_6).pt(T::SP_2)
+            form = form.child(div().flex().flex_col().gap(T::SP_6).pt(T::SP_12)
                 .when(!c.label.is_empty(), |d| d.child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(c.label.clone())))
                 .child(pills));
         }
-        div().flex().flex_col()
-            .child(w::modal_head("kanban-ask-x", self.title.clone(), false, |_, window, cx| answer(false, window, cx)))
-            .child(form)
-            .child(div().flex().justify_end().gap(T::SP_8).p(T::SP_8)
-                .child(w::button("kanban-ask-cancel", "Cancel").on_click(|_, window, cx| answer(false, window, cx)))
-                .child(w::primary("kanban-ask-ok", self.ok.clone()).on_click(|_, window, cx| answer(true, window, cx))))
+        form.child(div().flex().gap(T::SP_10).pt(T::SP_12)
+            .child(div().flex_1().flex().child(w::button("kanban-ask-cancel", "Cancel").w_full().on_click(|_, window, cx| answer(false, window, cx))))
+            .child(div().flex_1().flex().child(w::primary("kanban-ask-ok", self.ok.clone()).w_full().on_click(|_, window, cx| answer(true, window, cx)))))
     }
 }

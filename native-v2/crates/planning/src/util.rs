@@ -73,3 +73,11 @@ pub mod prefs {
 /// The ids of elements, from a prefix and a key.
 pub fn eid(p: &str, k: &str) -> ElementId { ElementId::Name(format!("{p}-{k}").into()) }
 
+
+/// The ghost of a reference dragged from a screen that draws its own clone
+/// (a Kanban card, a Mindmap idea): nothing (the shared drag layer carries
+/// the reference to a chat or terminal; the screen shows the drag).
+pub struct NoGhost;
+impl gpui::Render for NoGhost {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement { gpui::div() }
+}

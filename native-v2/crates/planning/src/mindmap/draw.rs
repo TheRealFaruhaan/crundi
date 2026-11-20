@@ -110,6 +110,11 @@ fn card(r: &Row, mode: Mode, z: f32, edit: Option<&Entity<w::TextareaState>>, ho
         .when(r.root && on, |d| d.child(div().absolute().top_0().left_0().size_full().rounded(T::R_BUBBLE * z).bg(T::accent_dim())))
         .child(body)
         .children(chips);
+    // Dropped on a chat's box or a terminal: its id goes in (the shared drag
+    // layer; on the map the drag below rearranges it).
+    if mode != Mode::Editing && (hot || mode == Mode::Open) && !r.pending {
+        d = d.on_drag(w::RefDrag::new("mindmap", &r.id, r.text.clone()), |_, _, _, cx| cx.new(|_| crate::util::NoGhost));
+    }
     if mode == Mode::Editing {
         d = d.cursor_text().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     } else if mode == Mode::Normal {
@@ -416,21 +421,26 @@ pub(crate) fn open_dialog(kind: Dlg, window: &mut Window, cx: &mut App) {
 
 /// One place the map shows (the tab, or a pane): its views. Cheap to clone.
 #[derive(Clone)]
-pub struct Host { store: Entity<M>, msg: Entity<Msg>, toolbar: Entity<Toolbar>, dots: Entity<Dots>, map: Entity<MapView> }
+pub struct Host { msg: Entity<Msg>, toolbar: Entity<Toolbar>, dots: Entity<Dots>, map: Entity<MapView> }
 
 impl Host {
-    pub fn new(_window: &mut Window, cx: &mut App) -> Self {
+    /// `embedded`: a workbench pane (its head has the "?"; the toolbar's
+    /// Shortcuts is not shown there, the web's `.wb-cell-body .mm-help-btn`).
+    pub fn new(embedded: bool, _window: &mut Window, cx: &mut App) -> Self {
         let store = super::store(cx);
         let msg = cx.new(|cx| Msg::new(store.clone(), cx));
-        let toolbar = cx.new(|cx| Toolbar::new(store.clone(), cx));
+        let toolbar = cx.new(|cx| Toolbar::new(store.clone(), embedded, cx));
         let dots = cx.new(|_| Dots);
         let map = cx.new(|cx| MapView::new(store.clone(), cx));
-        Host { store, msg, toolbar, dots, map }
+        Host { msg, toolbar, dots, map }
     }
 
     /// The host's body: layout only, placing the cached views.
     pub fn body(&self, cx: &mut App) -> AnyElement {
-        let state = self.store.read(cx).state.clone();
+        // The state from the Msg view's copy (its observer notifies only when
+        // it changed), never the store: a store notify costs this layout view
+        // nothing (F57).
+        let state = self.msg.read(cx).shape.0.clone();
         let mut root = div().relative().size_full().flex().flex_col().min_h_0().bg(T::bg());
         match state.as_str() {
             "loading" | "error" => return root.child(self.msg.clone().cached(StyleRefinement::default().size_full())).into_any_element(),
@@ -473,7 +483,7 @@ impl Render for Msg {
         rendered("mindmap-msg");
         let _ = &self.store;
         match self.shape.0.as_str() {
-            "loading" => w::loading("Loading…").into_any_element(),
+            // Loading: nothing yet (the web's panel is empty until the map comes).
             "error" => w::empty(self.shape.1.clone()).into_any_element(),
             "empty" => w::empty("No ideas yet. Add one, or hit \u{201c}Brainstorm\u{201d} on a Kanban card to extend a task here.").into_any_element(),
             _ => div().into_any_element(),
@@ -486,13 +496,13 @@ impl Render for Msg {
 #[derive(Clone, PartialEq, Default)]
 struct Bar { bar: bool, chips: Vec<(String, String, bool)>, hidden: usize }
 
-pub struct Toolbar { store: Entity<M>, bar: Bar, fold: bool, pub height: Pixels, _sub: Subscription }
+pub struct Toolbar { store: Entity<M>, bar: Bar, fold: bool, embedded: bool, pub height: Pixels, _sub: Subscription }
 
 impl Toolbar {
-    fn new(store: Entity<M>, cx: &mut Context<Self>) -> Self {
+    fn new(store: Entity<M>, embedded: bool, cx: &mut Context<Self>) -> Self {
         let sub = cx.observe(&store, |this: &mut Self, s, cx| { let b = bar_of(s.read(cx)); if b != this.bar { this.bar = b; cx.notify(); } });
         let bar = bar_of(store.read(cx));
-        Toolbar { store, bar, fold: false, height: T::BTN_H + T::SP_6 * 2. + px(1.), _sub: sub }
+        Toolbar { store, bar, fold: false, embedded, height: T::BTN_H + T::SP_6 * 2. + px(1.), _sub: sub }
     }
 }
 
@@ -519,7 +529,7 @@ impl Render for Toolbar {
                 .child(w::layer(w::button("mm-media", if fold { "" } else { "Media" }).icon(IconName::Images).on_click(|_, window, cx| super::act("media", "", window, cx))))
                 .child(div().w(T::SP_48 * 3. + T::SP_16).children(search.as_ref().map(w::input)))
                 .child(div().flex_1())
-                .child(w::layer(w::button("mm-help", if fold { "?" } else { "? Shortcuts" }).on_click(|_, window, cx| super::act("help", "", window, cx)))));
+                .when(!self.embedded, |d| d.child(w::layer(w::button("mm-help", if fold { "?" } else { "? Shortcuts" }).tooltip("Mindmap shortcuts").on_click(|_, window, cx| super::act("help", "", window, cx))))));
         // The project bar (.mm-proj-bar): its chips wrap, as the web's.
         if self.bar.bar && s.state != "empty" {
             let mut bar = div().flex().flex_none().flex_wrap().items_center().gap(T::SP_6).px(T::SP_12).py(T::SP_8).bg(T::bg_secondary()).border_b_1().border_color(T::border())
@@ -741,9 +751,18 @@ impl Render for MapView {
         if s.draft_on { content = content.child(draft(s, z, &u.draft)); }
         if !s.drag_id.is_empty() { content = content.child(clone_box(s, z)); }
         let lh = window.line_height();
+        let held = s.press.is_some();
+        // The canvas's scrollbars (the web's .mindmap-canvas overflow: auto),
+        // over the map in their own layer (a thumb lies over the ideas).
+        let (vw, vh) = (s.view_w, s.view_h);
+        let canvas_fh = u.canvas.clone();
+        let both = cw > vw + 1. && ch > vh + 1.;
+        let corner = if both { T::SP_6 } else { px(0.) };
+        let vbar = w::scrollbar("mm-vbar", true, vh, ch, pany, corner, window, cx, move |y, _, cx| { let x = super::store(cx).read(cx).pan().read(cx).x; super::set_scroll(x, y, cx); });
+        let hbar = w::scrollbar("mm-hbar", false, vw, cw, panx, corner, window, cx, move |x, _, cx| { let y = super::store(cx).read(cx).pan().read(cx).y; super::set_scroll(x, y, cx); });
         // The keys of the map (the web's document keydown while the map was
         // the last thing pressed): a press anywhere in it gives it the keys.
-        div().id("mindmap").track_focus(&u.canvas).relative().size_full().overflow_hidden()
+        div().id("mindmap").track_focus(&canvas_fh).relative().size_full().overflow_hidden()
             .key_context(super::MAP_CONTEXT)
             .on_action(|_: &super::MapTab, window, cx| { super::key(&Key { key: "tab", ctrl: false, shift: false, alt: false }, window, cx); })
             .on_action(|_: &super::MapBackTab, window, cx| { super::key(&Key { key: "tab", ctrl: false, shift: true, alt: false }, window, cx); })
@@ -755,8 +774,11 @@ impl Render for MapView {
             // opened up, the one being edited, the draft) take their own.
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
                 this.hover_at(e.position, window, cx);
-                super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx)
+                // (A held press's moves are taken window-wide: `held` below.)
+                if !super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx) }
             }))
+            // A press anywhere else lets go of the ring (the web's document pointerdown).
+            .on_mouse_down_out(|_, _, cx| super::press_outside(cx))
             .on_hover(cx.listener(|this, on: &bool, window, cx| if !*on { this.set_hot(None, window, cx); }))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, window, cx| {
                 let h = this.hit(e.position, cx);
@@ -797,8 +819,20 @@ impl Render for MapView {
                 super::pinch_zoom(e.delta, f32::from(e.position.x) - ox, f32::from(e.position.y) - oy, window, cx);
                 cx.stop_propagation();
             })
-            .child(canvas(|b, _, cx| super::canvas_measured(b, cx), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
+            .child(canvas(|b, _, cx| super::canvas_measured(b, cx), move |b, _, window, _| {
+                // While a press on an idea is held, its moves and its release
+                // are taken window-wide: a drag may leave the map, and a
+                // release outside it ends the drag (nothing moves there).
+                if !held { return; }
+                window.on_mouse_event(|e: &MouseMoveEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble && super::pressing(cx) { super::pointer_move(f32::from(e.position.x), f32::from(e.position.y), window, cx); }
+                });
+                window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble && e.button == MouseButton::Left && !b.contains(&e.position) && super::pressing(cx) { super::release_outside(window, cx); }
+                });
+            }).absolute().top_0().left_0().size_full())
             .child(w::layer(content))
+            .when(vbar.is_some() || hbar.is_some(), |d| d.child(w::layer(div().absolute().top_0().left_0().size_full().children(vbar).children(hbar))))
             .into_any_element()
     }
 }

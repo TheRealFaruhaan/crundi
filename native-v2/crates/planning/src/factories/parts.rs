@@ -43,6 +43,8 @@ pub struct Node {
     pub badge: i32, pub badge_level: String, pub token: String, pub token_kind: String,
     pub doing: bool, pub doing_who: String, pub doing_text: String, pub doing_busy: bool,
     pub skills: String, pub outs: Vec<Out>, pub agent: bool, pub has_in: bool,
+    /// The badge's title (its issues and fixes); someone at work whose transcript opens.
+    pub badge_tip: String, pub doing_chat: bool,
 }
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct Edge { pub id: String, pub path: String, pub arrow: String, pub tone: String, pub sel: bool, pub pulse: bool, pub label: String, pub icon: String, pub lx: f32, pub ly: f32 }
@@ -153,7 +155,16 @@ pub struct P {
     drag: HashMap<&'static str, Drag>,
     focus: HashMap<&'static str, FocusHandle>,
     parsed: HashMap<String, Rc<Parsed>>,
+    /// The '/' skills menu open under a text field (SkillText's `menu`).
+    pub slash: Option<Slash>,
+    /// The skills each skill field offers (name, description).
+    skills: HashMap<String, Rc<Vec<(String, String)>>>,
 }
+
+/// The '/' menu: under which field, where the "/query" starts (a byte
+/// offset of its query), the skills it offers and the one the keys are on.
+#[derive(Clone, Default, Debug)]
+pub struct Slash { pub key: String, pub start: usize, pub items: Vec<(String, String)>, pub at: usize }
 
 /// The parts' state, from a handler.
 pub fn pwith<R>(cx: &mut App, f: impl FnOnce(&mut P) -> R) -> R { super::with_fx(cx, |x| f(&mut x.p)) }
@@ -220,6 +231,134 @@ pub fn area(p: &mut P, key: &str, value: &str, placeholder: &str, rows: usize, m
     };
     sync(p, key, value, window, cx);
     div().w_full().when(mono, |d| d.font_family(T::MONO)).child(w::textarea(&e)).into_any_element()
+}
+
+/// A text box where /skill-name can be written (fields.jsx SkillText):
+/// typing "/" offers the skills this machine has (those starting with what
+/// follows the slash, eight at most); the arrows move, Enter or Tab picks,
+/// Esc closes; a click picks too. The named skills are shown under it by
+/// the caller (`mentions`).
+#[allow(clippy::too_many_arguments)]
+pub fn skill_area(p: &mut P, key: &str, value: &str, placeholder: &str, rows: usize, skills: Vec<(String, String)>, window: &mut Window, cx: &mut App, on: impl Fn(String, &mut App) + 'static) -> AnyElement {
+    p.skills.insert(key.to_string(), Rc::new(skills));
+    p.on.insert(key.to_string(), Rc::new(on));
+    let have = p.fields.get(key).map(|x| match &x.b { Box_::Area(e) => Some(e.clone()), _ => None });
+    let e = match have.flatten() {
+        Some(e) => e,
+        None => {
+            let ph = placeholder.to_string();
+            let rows = rows.max(1);
+            let e = cx.new(|cx| { let mut s = w::TextareaState::new(window, cx).auto_grow(rows, rows.max(12)).placeholder(ph); s.set_value(value.to_string(), window, cx); s });
+            let k = key.to_string();
+            let sub = window.subscribe(&e, cx, move |st, ev: &w::InputEvent, _w, cx| match ev {
+                w::InputEvent::Change => { let v = st.read(cx).value().to_string(); fire(&k, v, cx); look(&k, cx); }
+                w::InputEvent::Focus => look(&k, cx),
+                // A press on a row picks before the box loses focus: close a moment later (the web's 150 ms).
+                w::InputEvent::Blur => { let k = k.clone(); after(cx, 150, move |cx| close_slash(&k, cx)); }
+                _ => {}
+            });
+            p.fields.insert(key.to_string(), FieldState { b: Box_::Area(e.clone()), synced: value.to_string(), _sub: sub });
+            e
+        }
+    };
+    sync(p, key, value, window, cx);
+    let menu = p.slash.clone().filter(|m| m.key == key);
+    let open = menu.is_some();
+    use gpui_component::input::{Enter, Escape, IndentInline, MoveDown, MoveUp};
+    let k = key.to_string();
+    let (k1, k2, k3, k4, k5) = (k.clone(), k.clone(), k.clone(), k.clone(), k.clone());
+    let mut d = div().w_full().relative()
+        // The menu takes its keys first (before the box's own), only while open.
+        .when(open, |d| d
+            .capture_action(move |_: &MoveDown, _, cx| { slash_move(&k1, 1, cx); cx.stop_propagation(); })
+            .capture_action(move |_: &MoveUp, _, cx| { slash_move(&k2, -1, cx); cx.stop_propagation(); })
+            .capture_action(move |_: &Enter, window, cx| { slash_pick(&k3, None, window, cx); cx.stop_propagation(); })
+            .capture_action(move |_: &IndentInline, window, cx| { slash_pick(&k4, None, window, cx); cx.stop_propagation(); })
+            .capture_action(move |_: &Escape, _, cx| { close_slash(&k5, cx); cx.stop_propagation(); }))
+        .child(w::textarea(&e));
+    if let Some(m) = menu {
+        // .ff-menu: under the box, over what follows it.
+        let mut panel = w::menu_panel("fx-slash").min_w(T::NOTES_MENU_W);
+        for (i, (name, desc)) in m.items.iter().enumerate() {
+            let (k, name2) = (k.clone(), name.clone());
+            panel = panel.child(w::list_row(("fx-slash-item", i), IconName::BookOpen, format!("/{name}"), desc.clone(), "", i == m.at)
+                // Picked on the press, before the box hears it lose focus.
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| { cx.stop_propagation(); slash_pick(&k, Some(&name2), window, cx); }));
+        }
+        d = d.child(div().w_full().h(px(0.)).child(deferred(anchored().snap_to_window_with_margin(T::SP_8).child(div().pt(T::SP_2).child(panel))).with_priority(2)));
+    }
+    d.into_any_element()
+}
+
+/// The box's text and caret (a byte offset).
+fn text_and_caret(key: &str, cx: &mut App) -> Option<(Entity<w::TextareaState>, String, usize)> {
+    let e = pwith(cx, |p| p.fields.get(key).and_then(|x| match &x.b { Box_::Area(e) => Some(e.clone()), _ => None }))?;
+    let (v, c) = { let st = e.read(cx); (st.value().to_string(), st.cursor()) };
+    Some((e, v, c))
+}
+
+/// look(): what is typed before the caret opens, follows or closes the menu.
+fn look(key: &str, cx: &mut App) {
+    let Some((_, v, caret)) = text_and_caret(key, cx) else { return };
+    let skills = pwith(cx, |p| p.skills.get(key).cloned()).unwrap_or_default();
+    let found = slash_query(&v, caret).and_then(|(start, q)| {
+        let items: Vec<(String, String)> = skills.iter().filter(|s| s.0.starts_with(&q)).take(8).cloned().collect();
+        (!items.is_empty()).then_some((start, items))
+    });
+    let changed = pwith(cx, |p| {
+        let was = p.slash.clone();
+        p.slash = match found {
+            Some((start, items)) => Some(Slash { key: key.to_string(), start, items, at: 0 }),
+            None => if was.as_ref().is_some_and(|m| m.key != key) { was.clone() } else { None },
+        };
+        was.map(|m| (m.key, m.start, m.items.len())) != p.slash.as_ref().map(|m| (m.key.clone(), m.start, m.items.len()))
+    });
+    if changed { super::bump(cx); }
+}
+
+/// The query of a "/skill" being typed before the caret: (where it starts, what it is so far).
+/// The web's /(^|[\s(\[{,;"'`])\/([a-z0-9:-]*)$/.
+pub fn slash_query(text: &str, caret: usize) -> Option<(usize, String)> {
+    let before = text.get(..caret.min(text.len()))?;
+    let slash = before.rfind('/')?;
+    let q = &before[slash + 1..];
+    if !q.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == ':' || c == '-') { return None; }
+    let ok = before[..slash].chars().next_back().map(|c| c.is_whitespace() || "([{,;\"'`".contains(c)).unwrap_or(true);
+    ok.then(|| (slash + 1, q.to_string()))
+}
+
+fn close_slash(key: &str, cx: &mut App) {
+    if pwith(cx, |p| { let open = p.slash.as_ref().is_some_and(|m| m.key == key); if open { p.slash = None; } open }) { super::bump(cx); }
+}
+
+fn slash_move(key: &str, by: i32, cx: &mut App) {
+    pwith(cx, |p| if let Some(m) = p.slash.as_mut().filter(|m| m.key == key) { let n = m.items.len() as i32; m.at = ((m.at as i32 + by).rem_euclid(n.max(1))) as usize; });
+    super::bump(cx);
+}
+
+/// pick(): the skill's name (and a space) in place of what was typed after the slash.
+pub fn slash_pick(key: &str, name: Option<&str>, window: &mut Window, cx: &mut App) -> bool {
+    let Some(m) = pwith(cx, |p| p.slash.clone()).filter(|m| m.key == key) else { return false };
+    let Some(name) = name.map(String::from).or_else(|| m.items.get(m.at).map(|x| x.0.clone())) else { return false };
+    let Some((e, v, caret)) = text_and_caret(key, cx) else { return false };
+    let end = caret.max(m.start).min(v.len());
+    let next = format!("{}{} {}", &v[..m.start.min(v.len())], name, &v[end..]);
+    let at = m.start + name.len() + 1;
+    pwith(cx, |p| { p.slash = None; if let Some(x) = p.fields.get_mut(key) { x.synced = next.clone(); } });
+    e.update(cx, |s, cx| { s.set_value(next.clone(), window, cx); s.set_selected_range(at..at, cx); s.focus(window, cx); });
+    fire(key, next, cx);
+    true
+}
+
+/// The driver: type `text` into the skill field `key` (the caret at its end), as if typed.
+pub fn slash_type(key: &str, text: &str, window: &mut Window, cx: &mut App) -> bool {
+    let Some((e, _, _)) = text_and_caret(key, cx) else { return false };
+    let t = text.to_string();
+    pwith(cx, |p| if let Some(x) = p.fields.get_mut(key) { x.synced = t.clone(); });
+    e.update(cx, |s, cx| { s.set_value(t.clone(), window, cx); let n = t.len(); s.set_selected_range(n..n, cx); });
+    fire(key, t, cx);
+    look(key, cx);
+    true
 }
 
 /// The model's value changed from elsewhere (a reload, undo, another step selected): show it.
@@ -304,10 +443,13 @@ pub fn issue(id: impl Into<ElementId>, level: &str, message: &str, fix: &str) ->
             .when(!fix.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(fg).opacity(T::FACTORIES_O_SOFT).child(fix.to_string()))))
 }
 
-/// The skills a text names (.ff-chip ok / warn).
+/// The skills a text names (.ff-chip ok / warn), each with its title.
 pub fn mentions(items: &[Check]) -> Div {
     let mut d = div().flex().flex_wrap().gap(T::SP_4);
-    for m in items { d = d.child(w::icon_tag(if m.on { IconName::Check } else { IconName::CircleAlert }, format!("/{}", m.label), if m.on { "ok" } else { "warn" })); }
+    for (i, m) in items.iter().enumerate() {
+        let tip = if m.on { m.sub.clone() } else { "Not installed for all projects. It will need to exist in the project you run this in.".to_string() };
+        d = d.child(w::tip(div().id(SharedString::from(format!("fx-mention-{i}-{}", m.label))).child(w::icon_tag(if m.on { IconName::Check } else { IconName::CircleAlert }, format!("/{}", m.label), if m.on { "ok" } else { "warn" })), tip));
+    }
     d
 }
 
@@ -613,7 +755,9 @@ fn node_view(i: usize, n: &Node, c: &Canvas, _window: &mut Window, _cx: &mut App
             .text_size(T::TEXT_13 * z).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(div().truncate().child(n.title.clone())));
     let body_top = (T::SP_10 + T::SP_16 + T::SP_2 + T::SP_20) * z;
     card = if n.doing {
-        card.child(div().absolute().left(pad).right(pad).top(body_top).h(body_h).flex().gap(T::SP_6 * z).overflow_hidden()
+        let doing = div().id(("fx-doing", i)).absolute().left(pad).right(pad).top(body_top).h(body_h).flex().gap(T::SP_6 * z).overflow_hidden();
+        let doing = if n.doing_chat { doing.tooltip(w::tooltip("Tap to read the transcript")) } else { doing };
+        card.child(doing
             .child(div().mt(T::SP_4 * z).flex_none().size(T::SP_8 * z).rounded(T::R_PILL).bg(if n.doing_busy { T::green() } else { T::text_muted() }))
             .child(div().flex_1().min_w_0().text_size(T::TEXT_11 * z).line_height(T::SP_16 * z).text_color(T::text_secondary()).child(format!("{} {}", n.doing_who, n.doing_text))))
     } else {
@@ -635,8 +779,8 @@ fn node_view(i: usize, n: &Node, c: &Canvas, _window: &mut Window, _cx: &mut App
     let ring = |c: Hsla| div().absolute().size(hs).rounded(T::R_PILL).bg(T::bg_card()).border(T::SP_2 * z).border_color(c);
     if n.has_in { card = card.child(ring(T::text_secondary()).left(px(n.w * z / 2.) - hs / 2.).top(-hs / 2.)); }
     if n.agent {
-        card = card.child(ring(T::yellow()).left(-hs / 2.).top(px(n.h * z / 2.) - hs / 2.));
-        card = card.child(handle(i * 100 + 99, which, &n.id, "note", T::yellow(), editable, cb.clone()).left(px(n.w * z) - hs / 2.).top(px(n.h * z / 2.) - hs / 2.).size(hs).border(T::SP_2 * z));
+        card = card.child(ring(T::yellow()).id(("fx-notein", i)).tooltip(w::tooltip("Notes arrive here")).left(-hs / 2.).top(px(n.h * z / 2.) - hs / 2.));
+        card = card.child(handle(i * 100 + 99, which, &n.id, "note", T::yellow(), editable, cb.clone()).tooltip(w::tooltip("Drag to leave a note for someone")).left(px(n.w * z) - hs / 2.).top(px(n.h * z / 2.) - hs / 2.).size(hs).border(T::SP_2 * z));
     }
     for (j, o) in n.outs.iter().enumerate() {
         let cx0 = n.w * z * (2 * j + 1) as f32 / (2 * outs) as f32;
@@ -645,13 +789,14 @@ fn node_view(i: usize, n: &Node, c: &Canvas, _window: &mut Window, _cx: &mut App
     // The issues badge and the token pill.
     if n.badge > 0 {
         let fg = if n.badge_level == "error" { T::white() } else { T::bg() };
-        card = card.child(div().absolute().right(-T::SP_8 * z).top(-T::SP_8 * z).h(T::SP_16 * z).px(T::SP_4 * z).flex().items_center().gap(T::SP_2 * z).rounded(T::R_PILL)
+        card = card.child(div().id(("fx-badge", i)).tooltip(w::tooltip(n.badge_tip.clone())).absolute().right(-T::SP_8 * z).top(-T::SP_8 * z).h(T::SP_16 * z).px(T::SP_4 * z).flex().items_center().gap(T::SP_2 * z).rounded(T::R_PILL)
             .bg(if n.badge_level == "error" { T::red() } else { T::yellow() }).text_color(fg).text_size(T::TEXT_10 * z).font_weight(T::W_BOLD)
             .child(w::icon(IconName::TriangleAlert, T::ICON_SM * z)).child(n.badge.to_string()));
     }
     if !n.token.is_empty() {
-        card = card.child(div().absolute().left(pad).top(-T::SP_10 * z).h(T::SP_16 * z).px(T::SP_6 * z).flex().items_center().rounded(T::R_PILL)
-            .bg(token_color(&n.token_kind)).text_color(T::bg()).text_size(T::TEXT_10 * z).font_weight(T::W_BOLD).child(n.token.clone()));
+        let pill = div().id(("fx-token", i)).absolute().left(pad).top(-T::SP_10 * z).h(T::SP_16 * z).px(T::SP_6 * z).flex().items_center().rounded(T::R_PILL)
+            .bg(token_color(&n.token_kind)).text_color(T::bg()).text_size(T::TEXT_10 * z).font_weight(T::W_BOLD).child(n.token.clone());
+        card = card.child(if n.token_kind == "blocked" { pill.tooltip(w::tooltip("Waiting for the Manager (or the Gatekeeper) to answer a permission request")) } else { pill });
     }
     let cbd = cb.clone();
     let id2 = id.clone();

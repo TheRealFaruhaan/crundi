@@ -656,14 +656,13 @@ pub fn slash_items(q: &str) -> Vec<&'static (&'static str, &'static str, &'stati
 // ─── Code languages (the web's CM.langs) ───
 
 pub const LANGS: &[(&str, &str)] = &[
-    ("plain", "Plain text"), ("bash", "Bash"), ("c", "C"), ("cpp", "C++"), ("csharp", "C#"), ("css", "CSS"), ("go", "Go"), ("html", "HTML"),
-    ("java", "Java"), ("javascript", "JavaScript"), ("json", "JSON"), ("jsx", "JSX"), ("kotlin", "Kotlin"), ("markdown", "Markdown"),
-    ("php", "PHP"), ("python", "Python"), ("ruby", "Ruby"), ("rust", "Rust"), ("scss", "SCSS"), ("sql", "SQL"), ("swift", "Swift"),
-    ("toml", "TOML"), ("tsx", "TSX"), ("typescript", "TypeScript"), ("xml", "XML"), ("yaml", "YAML"),
+    ("plain", "Plain text"), ("bash", "Shell"), ("javascript", "JavaScript"), ("typescript", "TypeScript"), ("jsx", "JSX"), ("tsx", "TSX"), ("json", "JSON"), ("html", "HTML"), ("css", "CSS"), ("markdown", "Markdown"), ("python", "Python"), ("go", "Go"), ("rust", "Rust"), ("java", "Java"), ("kotlin", "Kotlin"), ("csharp", "C#"), ("scala", "Scala"), ("c", "C"), ("cpp", "C++"), ("swift", "Swift"), ("ruby", "Ruby"), ("php", "PHP"), ("lua", "Lua"), ("sql", "SQL"), ("yaml", "YAML"), ("toml", "TOML"), ("ini", "INI / .env"), ("xml", "XML"), ("dockerfile", "Dockerfile"), ("powershell", "PowerShell"), ("diff", "Diff"), ("vue", "Vue"),
 ];
 
-const ALIASES: &[(&str, &str)] = &[("sh", "bash"), ("shell", "bash"), ("zsh", "bash"), ("js", "javascript"), ("node", "javascript"), ("mjs", "javascript"), ("ts", "typescript"),
-    ("py", "python"), ("rs", "rust"), ("rb", "ruby"), ("md", "markdown"), ("yml", "yaml"), ("c++", "cpp"), ("cs", "csharp"), ("c#", "csharp"), ("htm", "html"), ("svg", "xml"), ("kt", "kotlin"), ("text", "plain"), ("txt", "plain")];
+/// Every other name a language goes by (CM.langs' aliases).
+const ALIASES: &[(&str, &str)] = &[
+    ("text", "plain"), ("txt", "plain"), ("plaintext", "plain"), ("sh", "bash"), ("shell", "bash"), ("zsh", "bash"), ("console", "bash"), ("js", "javascript"), ("mjs", "javascript"), ("cjs", "javascript"), ("node", "javascript"), ("ts", "typescript"), ("mts", "typescript"), ("cts", "typescript"), ("jsonl", "json"), ("json5", "json"), ("htm", "html"), ("svelte", "html"), ("scss", "css"), ("less", "css"), ("md", "markdown"), ("mdx", "markdown"), ("py", "python"), ("pyw", "python"), ("python3", "python"), ("golang", "go"), ("rs", "rust"), ("kt", "kotlin"), ("kts", "kotlin"), ("cs", "csharp"), ("c#", "csharp"), ("h", "c"), ("cxx", "cpp"), ("cc", "cpp"), ("hpp", "cpp"), ("c++", "cpp"), ("rb", "ruby"), ("psql", "sql"), ("mysql", "sql"), ("yml", "yaml"), ("env", "ini"), ("properties", "ini"), ("conf", "ini"), ("cfg", "ini"), ("svg", "xml"), ("xsl", "xml"), ("xsd", "xml"), ("plist", "xml"), ("docker", "dockerfile"), ("ps1", "powershell"), ("psm1", "powershell"), ("pwsh", "powershell"), ("patch", "diff"),
+];
 
 /// A language id from whatever was written ('sh', 'ts', 'Python'…); '' is plain.
 pub fn norm_lang(name: &str) -> String {
@@ -687,7 +686,8 @@ pub fn lang_items(q: &str) -> Vec<(&'static str, &'static str)> {
 
 /// A language for the highlighter (src/workspace/hl.rs works by file name).
 pub fn hl_name(id: &str) -> String {
-    let ext = match id { "bash" => "sh", "javascript" => "js", "typescript" => "ts", "python" => "py", "rust" => "rs", "ruby" => "rb", "markdown" => "md", "csharp" => "cs", "kotlin" => "kt", "plain" => "txt", x => x };
+    if id == "dockerfile" { return "Dockerfile".into(); }
+    let ext = match id { "bash" => "sh", "javascript" => "js", "typescript" => "ts", "python" => "py", "rust" => "rs", "ruby" => "rb", "markdown" => "md", "csharp" => "cs", "kotlin" => "kt", "powershell" => "ps1", "plain" => "txt", x => x };
     format!("x.{ext}")
 }
 
