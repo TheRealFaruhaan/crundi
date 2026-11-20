@@ -535,7 +535,8 @@ impl Render for ColumnView {
         if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
         let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
-        let body = div().w_full().flex_1().min_h_0().child(w::layer(list(self.list.clone(), move |ix, _, cx| items.get(ix).map(|it| item_el(it, card_w, &inp2, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element()))
+        // A card held near the column's top or bottom scrolls it (the web's wbAutoScroll).
+        let body = w::edge_scroll::<w::RefDrag>(div().id("kanban-col-body"), w::Scroller::List(self.list.clone()), false, true, cx.entity_id()).w_full().flex_1().min_h_0().child(w::layer(list(self.list.clone(), move |ix, _, cx| items.get(ix).map(|it| item_el(it, card_w, &inp2, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element()))
             .size_full().into_any_element()));
         let (ls, me, status, other, boxes) = (self.list.clone(), cx.entity().downgrade(), c.status.clone(), c.other, inp.boxes.clone());
         // After the list has laid out: the column's box (a drop target), and
@@ -647,7 +648,7 @@ impl Render for StackView {
         if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
         let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
-        div().id("kanban-stack").size_full()
+        w::edge_scroll::<w::RefDrag>(div().id("kanban-stack"), w::Scroller::List(self.list.clone()), false, true, cx.entity_id()).size_full()
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
                 if this.store.read(cx).boxes.borrow().pressing { return; }
                 let h = hot_at(&this.list, this.rows.len(), e.position); if h != this.hot { this.hot = h; cx.notify(); }

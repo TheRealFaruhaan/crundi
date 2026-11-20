@@ -2,9 +2,10 @@
 //!
 //! A page is a title and blocks (src/notes-store.js). Text blocks hold a
 //! little inline HTML on the server (strong, em, u, s, code, a, br). The
-//! native client has no rich-text editor (the web's contenteditable; neither
-//! Slint nor GPUI has one), so it edits a block as a short markup *source* and
-//! draws it formatted when it is not being edited:
+//! model keeps a block as a short markup *source*; the editor shows only its
+//! words, formatted, while it is edited too (view.rs: the box's text
+//! decorations, each change diffed back into the runs by edit_runs). The
+//! source:
 //!
 //!   **bold**  *italic*  __underline__  ~~strike~~  `code`  [text](https://…)
 //!
@@ -493,7 +494,13 @@ pub struct Block {
     /// A table's cells, as sources.
     pub rows: Vec<Vec<String>>,
     pub header: bool,
+    /// A list item's nesting (0 at the left; Tab / Shift+Tab, the owner's
+    /// decision): stored as "level" only when above 0.
+    pub level: u8,
 }
+
+/// The deepest a list item nests.
+pub const LEVEL_MAX: u8 = 5;
 
 pub fn gen_id() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -527,7 +534,11 @@ impl Block {
                 if b.rows.is_empty() { b.rows = vec![vec![String::new(); 2]; 2]; }
                 b.header = v.get("header").and_then(|x| x.as_bool()).unwrap_or(false);
             }
-            _ => { b.text = html_to_src(&s("text")); b.checked = kind == "todo" && v.get("checked").and_then(|x| x.as_bool()).unwrap_or(false); }
+            _ => {
+                b.text = html_to_src(&s("text"));
+                b.checked = kind == "todo" && v.get("checked").and_then(|x| x.as_bool()).unwrap_or(false);
+                if listy(&kind) { b.level = v.get("level").and_then(|x| x.as_u64()).unwrap_or(0).min(LEVEL_MAX as u64) as u8; }
+            }
         }
         b
     }
@@ -538,9 +549,14 @@ impl Block {
             "divider" => json!({ "id": self.id, "type": "divider" }),
             "code" => { let mut o = json!({ "id": self.id, "type": "code", "text": self.text, "lang": if self.lang == "plain" { "" } else { self.lang.as_str() } }); if self.wrap { o["wrap"] = json!(true); } o }
             "table" => json!({ "id": self.id, "type": "table", "rows": self.rows.iter().map(|r| r.iter().map(|c| src_to_html(c)).collect::<Vec<_>>()).collect::<Vec<_>>(), "header": self.header }),
-            "todo" => json!({ "id": self.id, "type": "todo", "text": src_to_html(&self.text), "checked": self.checked }),
-            k => json!({ "id": self.id, "type": k, "text": src_to_html(&self.text) }),
+            "todo" => self.leveled(json!({ "id": self.id, "type": "todo", "text": src_to_html(&self.text), "checked": self.checked })),
+            k => self.leveled(json!({ "id": self.id, "type": k, "text": src_to_html(&self.text) })),
         }
+    }
+
+    fn leveled(&self, mut o: Value) -> Value {
+        if self.level > 0 && listy(&self.kind) { o["level"] = json!(self.level); }
+        o
     }
 
     /// Turn into another type, keeping the text where both have text (convert()).
@@ -552,6 +568,8 @@ impl Block {
             "divider" => {}
             _ => nb.text = if self.kind == "code" { runs_to_src(&[Run { text: self.text.clone(), st: Sty::default() }]) } else if self.kind == "table" || self.kind == "divider" { String::new() } else { self.text.clone() },
         }
+        // A list item turned into another list item keeps its nesting.
+        if listy(kind) && listy(&self.kind) { nb.level = self.level; }
         nb
     }
 }
@@ -563,26 +581,39 @@ pub fn blocks_from(v: &Value) -> Vec<Block> {
 }
 
 /// The list's numbers ("1.", "2." …) for numbered items, "" for the rest.
+/// Each nesting level counts on its own: a deeper item starts at 1, and a
+/// shallower one ends the deeper counts under it.
 pub fn numbers(blocks: &[Block]) -> Vec<String> {
-    let mut n = 0;
-    blocks.iter().map(|b| if b.kind == "number" { n += 1; format!("{n}.") } else { n = 0; String::new() }).collect()
+    let mut n = [0usize; LEVEL_MAX as usize + 1];
+    blocks.iter().map(|b| {
+        let l = (b.level.min(LEVEL_MAX)) as usize;
+        if !listy(&b.kind) { n = [0; LEVEL_MAX as usize + 1]; return String::new(); }
+        for d in n.iter_mut().skip(l + 1) { *d = 0; }
+        if b.kind == "number" { n[l] += 1; format!("{}.", n[l]) } else { n[l] = 0; String::new() }
+    }).collect()
 }
 
 /// Blocks as Markdown (toMarkdown()), consecutive numbered items numbered.
 pub fn to_markdown(blocks: &[Block]) -> String {
     let mut out: Vec<String> = vec![];
-    let mut n = 0;
-    for b in blocks {
-        if b.kind != "number" { n = 0; }
+    let nums = numbers(blocks);
+    for (bi, b) in blocks.iter().enumerate() {
         let t = if matches!(b.kind.as_str(), "code" | "table" | "divider") { String::new() } else { src_md(&b.text) };
         let rest = |s: &str, pad: &str| s.replace('\n', &format!("\n{pad}"));
         out.push(match b.kind.as_str() {
             "h1" => format!("# {t}"),
             "h2" => format!("## {t}"),
             "h3" => format!("### {t}"),
-            "todo" => format!("- [{}] {}", if b.checked { "x" } else { " " }, rest(&t, "  ")),
-            "bullet" => format!("- {}", rest(&t, "  ")),
-            "number" => { n += 1; format!("{n}. {}", rest(&t, "   ")) }
+            "todo" | "bullet" | "number" => {
+                // Nested items indent by their parent's marker width.
+                let ind = "  ".repeat(b.level as usize);
+                let (m, pad) = match b.kind.as_str() {
+                    "todo" => (format!("- [{}] ", if b.checked { "x" } else { " " }), "  ".to_string()),
+                    "bullet" => ("- ".to_string(), "  ".to_string()),
+                    _ => (format!("{} ", nums[bi]), " ".repeat(nums[bi].len() + 1)),
+                };
+                format!("{ind}{m}{}", rest(&t, &format!("{ind}{pad}")))
+            }
             "quote" => format!("> {}", t.replace('\n', "\n> ")),
             "divider" => "---".into(),
             "code" => format!("```{}\n{}\n```", if b.lang == "plain" { "" } else { &b.lang }, b.text),
@@ -689,6 +720,44 @@ pub fn hl_name(id: &str) -> String {
     if id == "dockerfile" { return "Dockerfile".into(); }
     let ext = match id { "bash" => "sh", "javascript" => "js", "typescript" => "ts", "python" => "py", "rust" => "rs", "ruby" => "rb", "markdown" => "md", "csharp" => "cs", "kotlin" => "kt", "powershell" => "ps1", "plain" => "txt", x => x };
     format!("x.{ext}")
+}
+
+// ─── Editing the plain text (the box shows the words, formatted) ───
+
+/// Runs after the box's words changed to `new`: the part that differs from
+/// the old words (by common start and end) is replaced, and typed text takes
+/// the style of the character before it (the one after at the start), as a
+/// contenteditable does.
+pub fn edit_runs(runs: &[Run], new: &str) -> Vec<Run> {
+    let old: Vec<char> = plain(runs).chars().collect();
+    let nw: Vec<char> = new.chars().collect();
+    let mut p = 0;
+    while p < old.len() && p < nw.len() && old[p] == nw[p] { p += 1; }
+    let mut s = 0;
+    while s < old.len() - p && s < nw.len() - p && old[old.len() - 1 - s] == nw[nw.len() - 1 - s] { s += 1; }
+    let ins: String = nw[p..nw.len() - s].iter().collect();
+    let (left, rest) = split_runs(runs, p);
+    let (_, right) = split_runs(&rest, old.len() - s - p);
+    let st = left.last().or(right.first()).map(|r| r.st.clone()).unwrap_or_default();
+    norm(left.into_iter().chain(std::iter::once(Run { text: ins, st })).chain(right).collect())
+}
+
+/// A source byte offset as a byte offset of its plain words.
+pub fn src_to_box(src: &str, byte: usize) -> usize {
+    let k = src_to_plain_at(src, byte);
+    let p = src_plain(src);
+    p.char_indices().nth(k).map(|x| x.0).unwrap_or(p.len())
+}
+
+/// A byte offset of the plain words as a source byte offset.
+pub fn box_to_src(src: &str, byte: usize) -> usize {
+    let (runs, map) = src_to_runs_map(src);
+    let p = plain(&runs);
+    let k = p.get(..byte.min(p.len())).map(|t| t.chars().count()).unwrap_or_else(|| p.char_indices().take_while(|x| x.0 < byte).count());
+    // The ends are the source's ends (before an opening mark, after a closing one).
+    if k == 0 { return 0; }
+    if byte >= p.len() { return src.len(); }
+    plain_to_src_at(&map, k)
 }
 
 // ─── Inline edits on runs (format bar, Ctrl+B…) ───
@@ -966,6 +1035,41 @@ mod tests {
         assert_eq!(filter(&p, Some(false), "zz").len(), 0);
         assert_eq!(ago(1000.0, 990.0), "just now");
         assert_eq!(ago(10000.0, 10000.0 - 7200.0), "2h ago");
+    }
+
+    #[test]
+    fn plain_edits() {
+        let runs = src_to_runs("a **bold** c");
+        // Typing at the end of the bold word continues it.
+        assert_eq!(runs_to_src(&edit_runs(&runs, "a bolder c")), "a **bolder** c");
+        // At the start of a plain stretch, plain.
+        assert_eq!(runs_to_src(&edit_runs(&runs, "xa bold c")), "xa **bold** c");
+        // A deletion across styles.
+        assert_eq!(runs_to_src(&edit_runs(&runs, "a bc")), "a **b**c");
+        assert_eq!(runs_to_src(&edit_runs(&[], "hi")), "hi");
+        // Offsets between the source and the words.
+        let s = "a **bold** c";
+        assert_eq!(src_to_box(s, 4), 2);
+        assert_eq!(box_to_src(s, 2), 4);
+        assert_eq!(box_to_src(s, 6), 10);
+        assert_eq!(box_to_src(s, 8), 12);
+        assert_eq!(src_to_box(s, s.len()), 8);
+        assert_eq!(box_to_src("**b**", 0), 0);
+        assert_eq!(box_to_src("**b**", 1), 5);
+    }
+
+    #[test]
+    fn levels() {
+        let mut b = vec![Block::new("number", "a"), Block::new("number", "b"), Block::new("number", "c"), Block::new("number", "d"), Block::new("bullet", "e")];
+        b[1].level = 1; b[2].level = 1;
+        assert_eq!(numbers(&b), vec!["1.", "1.", "2.", "2.", ""]);
+        assert_eq!(to_markdown(&b), "1. a\n  1. b\n  2. c\n2. d\n- e");
+        let j = b[1].to_json();
+        assert_eq!(j["level"], 1);
+        assert_eq!(Block::from_json(&j).level, 1);
+        assert!(b[0].to_json().get("level").is_none());
+        assert_eq!(b[1].converted("todo").level, 1);
+        assert_eq!(b[1].converted("p").level, 0);
     }
 
     #[test]
