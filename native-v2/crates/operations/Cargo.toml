@@ -1,0 +1,26 @@
+[package]
+name = "crundi-operations"
+description = "The operations area: Services, Docker, Homepool, Info, Secrets, Settings (Skills, Usage, Backup), Panels, Add project, approvals, What's new"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+log.workspace = true
+crundi-core.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-shell.workspace = true
+crundi-workbench.workspace = true
+rfd.workspace = true
+open.workspace = true
+base64.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

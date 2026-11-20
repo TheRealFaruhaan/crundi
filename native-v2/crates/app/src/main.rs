@@ -32,6 +32,7 @@ fn main() {
         crundi_chat::init(cx);
         crundi_planning::init(cx);
         crundi_workspace::init(cx);
+        crundi_operations::init(cx);
 
         // Centred on the display when there is one; Xvfb reports none, so a
         // window centred on "nothing" would come out 10x10: place it instead.

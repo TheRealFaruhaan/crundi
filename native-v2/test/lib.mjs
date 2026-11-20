@@ -156,6 +156,8 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   const state = async () => (await d.send({ cmd: 'state' })).state || {};
   const T = {
     name, SERVER, api, OUT, configDir, frames, proxy: px, app, d,
+    // (The operations suite's settings section signs in again with these.)
+    password, secret, projDir,
     get exited() { return exited; },
     state,
     ui: (n, ...args) => d.send({ cmd: 'ui', name: n, args }),

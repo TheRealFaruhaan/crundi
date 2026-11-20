@@ -52,6 +52,7 @@ crundi-workbench = { path = "crates/workbench" }
 crundi-chat = { path = "crates/chat" }
 crundi-planning = { path = "crates/planning" }
 crundi-workspace = { path = "crates/workspace" }
+crundi-operations = { path = "crates/operations" }
 
 # Line numbers only in dev builds, so the shared build folder stays small and
 # links are quick. Release builds are unaffected.
