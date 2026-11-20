@@ -1741,15 +1741,18 @@ dependencies = [
 name = "crundi-planning"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "crundi-core",
  "crundi-shell",
  "crundi-theme",
  "crundi-widgets",
  "crundi-workbench",
+ "crundi-workspace",
  "gpui-component",
  "gpui-pre",
  "log",
+ "rfd",
  "serde_json",
 ]
 

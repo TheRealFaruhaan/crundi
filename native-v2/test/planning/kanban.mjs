@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
 // Kanban and the card dialog (run by test/planning.mjs), ported from
 // native-gpui/test/planning/kanban.mjs, with v2's checks: a column's list
 // draws only the cards on screen, a scroll redraws that column alone, the
@@ -69,11 +71,36 @@ export async function run(T_, t) {
   // The subtask's "…": the shared menu (Attach media, Rename, Delete).
   await T.act('kanban-todo-menu', c1.id, c1.todos[1].id, '700', '300');
   await T.until('the subtask menu', (p) => menu(p)?.items?.map((i) => i.id).join() === 'media,rename,delete' && menu(p).items[2].danger);
+  await t.sleep(300); // the menu's frame on screen before the snap (F45)
   await T.snap('planning', 'kanban-subtask-menu');
   await pick('rename');
   await T.until('Rename asks', (p) => dialog(p)?.title === 'Edit subtask' && dialog(p).value === 'Step two');
   await answerDialog(true, 'Step 2');
   await T.until('the subtask is renamed', (p) => cardBy(p, 'First card').todos[1].text === 'Step 2');
+  // The subtask's Attach media: the web's openMediaModal, its media alone, uploads linked to it (F44).
+  const MM = (p) => PA(p).mediaModal;
+  const scratch = join(T.OUT, 'scratch'); mkdirSync(scratch, { recursive: true });
+  const png = join(scratch, 'step.png');
+  writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64'));
+  await T.act('kanban-todo-menu', c1.id, c1.todos[1].id, '700', '300');
+  await T.until('the menu again', (p) => !!menu(p));
+  await pick('media');
+  await T.until('Subtask media opens: attached here, nothing yet', (p) => MM(p)?.title === 'Subtask media' && MM(p).attachedHere && MM(p).loaded && MM(p).cards.length === 0 && /No media here yet/.test(MM(p).empty));
+  await T.ui('workspace:pick-next', png);
+  await T.act('media-modal-upload');
+  await T.until('Upload links it to the subtask', (p) => MM(p)?.cards.length === 1 && MM(p).cards[0].link?.type === 'todo' && MM(p).cards[0].link.todoId === c1.todos[1].id && p.toast === 'Uploaded 1 file');
+  await T.until('its picture loads', (p) => MM(p)?.cards[0].thumb);
+  await t.sleep(300); await T.snap('planning', 'kanban-subtask-media');
+  await T.act('media-modal-view', MM(await T.props()).cards[0].id);
+  await T.until('View: the lightbox over it', (p) => MM(p)?.lightbox === 'step.png');
+  await T.act('media-modal-lb-close');
+  await T.until('the lightbox closes, the modal stays', (p) => MM(p) && !MM(p).lightbox);
+  await T.act('media-modal-close');
+  await T.until('Close; the board counts the subtask\'s media', (p) => !MM(p) && cardBy(p, 'First card').todos[1].media === 1);
+  await T.act('kanban-act', 'media');
+  await T.until('the toolbar\'s Media: the Kanban\'s, with the chips', (p) => MM(p)?.title === 'Media \u00b7 Kanban' && !MM(p).attachedHere && MM(p).kind === 'kanban' && MM(p).cards.some((c) => c.name === 'step.png'));
+  await T.act('media-modal-close');
+  await T.until('closed', (p) => !MM(p));
   await T.act('kanban-todo-menu', c1.id, c1.todos[1].id, '700', '300');
   await T.until('the menu again', (p) => !!menu(p));
   await pick('delete');

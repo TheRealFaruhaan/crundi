@@ -9,8 +9,11 @@
 //! batch (each screen takes the events it cares about, once per batch), the
 //! project and sign-in changes, the driver's actions and state.
 
+pub mod factories;
 pub mod kanban;
+pub mod media;
 pub mod mindmap;
+pub mod notes;
 pub mod paint;
 pub mod schedule;
 pub mod util;
@@ -23,21 +26,29 @@ use serde_json::{json, Value};
 pub fn init(cx: &mut App) {
     kanban::init(cx);
     mindmap::init(cx);
+    notes::init(cx);
+    factories::init(cx);
     crundi_shell::register(cx, Area::new("planning")
         .tab("kanban", |stores, window, cx| kanban::tab(stores, window, cx))
         .tab("mindmap", |stores, window, cx| mindmap::tab(stores, window, cx))
         .tab("schedule", |stores, window, cx| schedule::tab(stores, window, cx))
+        .tab("notes", |stores, window, cx| notes::tab(stores, window, cx))
+        .tab("factories", |stores, window, cx| factories::tab(stores, window, cx))
         .on_batch(|stores, batch: &[Event], cx| {
             kanban::on_batch(stores, batch, cx);
             mindmap::on_batch(stores, batch, cx);
             schedule::on_batch(stores, batch, cx);
+            notes::on_batch(stores, batch, cx);
+            factories::on_batch(stores, batch, cx);
         })
-        .on_project(|stores, alias, cx| { kanban::on_project(stores, alias, cx); mindmap::on_project(stores, alias, cx); schedule::on_project(stores, alias, cx); })
-        .on_signed_in(|stores, cx| { watch_tab(stores, cx); kanban::on_signed_in(stores, cx); mindmap::on_signed_in(stores, cx); schedule::on_signed_in(stores, cx); })
-        .on_signed_out(|stores, cx| { kanban::on_signed_out(stores, cx); mindmap::on_signed_out(stores, cx); schedule::on_signed_out(stores, cx); })
+        .on_project(|stores, alias, cx| { kanban::on_project(stores, alias, cx); mindmap::on_project(stores, alias, cx); schedule::on_project(stores, alias, cx); notes::on_project(stores, alias, cx); factories::on_project(stores, alias, cx); })
+        .on_signed_in(|stores, cx| { watch_tab(stores, cx); kanban::on_signed_in(stores, cx); mindmap::on_signed_in(stores, cx); schedule::on_signed_in(stores, cx); notes::on_signed_in(stores, cx); factories::on_signed_in(stores, cx); })
+        .on_signed_out(|stores, cx| { kanban::on_signed_out(stores, cx); mindmap::on_signed_out(stores, cx); schedule::on_signed_out(stores, cx); notes::on_signed_out(stores, cx); factories::on_signed_out(stores, cx); })
         // The empty pane's chips (the workbench runs "wb-chip:<kind>").
         .action("wb-chip:kanban", |_, _, cx| place(cx, "panel:kanban"))
         .action("wb-chip:mindmap", |_, _, cx| place(cx, "panel:mindmap"))
+        .action("wb-chip:notes", |_, _, cx| notes::add_pane(cx))
+        .action("wb-chip:factory", |_, _, cx| place(cx, "panel:factory"))
         .test_ui(|stores, name, args, window, cx| test_ui(stores, name, args, window, cx))
         // Under "planningArea", the names native-gpui's suites read; the
         // window-wide prompt and menu too (the driver's state has "dialog").
@@ -45,11 +56,14 @@ pub fn init(cx: &mut App) {
             let k = kanban::state(stores, window, cx);
             let m = mindmap::state(stores, window, cx);
             let sc = schedule::state(stores, window, cx);
+            let nt = notes::state(stores, window, cx);
+            let fx = factories::state(stores, window, cx);
+            let fx_open = fx["factories"]["pointerModal"].as_bool().unwrap_or(false);
             let sched_open = sc.get("pointerModal").and_then(|v| v.as_bool()).unwrap_or(false);
             let ask = kanban::ask::props(cx);
-            let modal = !ask.is_null() || !crundi_widgets::ask_props(cx).is_null() || m.get("dialogOpen").and_then(|v| v.as_bool()).unwrap_or(false) || sched_open;
-            json!({ "planningArea": { "kanban": k, "mindmap": m, "schedule": sc, "ask": ask, "pointerModal": modal,
-                "dialog": crundi_widgets::ask_props(cx), "menu": crundi_widgets::menu_props(cx) } })
+            let modal = !ask.is_null() || !crundi_widgets::ask_props(cx).is_null() || m.get("dialogOpen").and_then(|v| v.as_bool()).unwrap_or(false) || sched_open || fx_open || !media::props(cx).is_null();
+            json!({ "planningArea": { "kanban": k, "mindmap": m, "schedule": sc, "notes": nt, "factories": fx["factories"], "ask": ask, "pointerModal": modal,
+                "dialog": crundi_widgets::ask_props(cx), "menu": crundi_widgets::menu_props(cx), "mediaModal": media::props(cx) } })
         }));
 }
 
@@ -67,6 +81,9 @@ fn watch_tab(stores: &Stores, cx: &mut App) {
         if tab == last { return; }
         last = tab.clone();
         let tab2 = tab.clone();
+        let tab3 = tab.clone();
+        cx.defer(move |cx| notes::on_tab(&tab3, cx));
+        cx.defer(move |cx| factories::on_tab(&tab, cx));
         cx.defer(move |cx| match tab2.as_str() {
             "kanban" => kanban::load(cx),
             "mindmap" => mindmap::reload(cx),
@@ -122,5 +139,6 @@ fn test_ui(stores: &Stores, name: &str, args: &[String], window: &mut Window, cx
         "measure-layout" => return Some(json!({ "ok": measure_layout(args.first().map(|s| s.as_str()).unwrap_or(""), cx) })),
         _ => {}
     }
-    kanban::test_ui(stores, name, args, window, cx).or_else(|| mindmap::test_ui(stores, name, args, window, cx)).or_else(|| schedule::test_ui(stores, name, args, window, cx))
+    if let Some(v) = media::test_ui(name, args, window, cx) { return Some(v); }
+    kanban::test_ui(stores, name, args, window, cx).or_else(|| mindmap::test_ui(stores, name, args, window, cx)).or_else(|| schedule::test_ui(stores, name, args, window, cx)).or_else(|| notes::test_ui(stores, name, args, window, cx)).or_else(|| factories::test_ui(stores, name, args, window, cx))
 }

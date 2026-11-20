@@ -41,6 +41,7 @@ export async function run(T_, t) {
   await t.sleep(600);
   const live = await T.snap('planning', 'kanban-look-live');
   await T.ui('kanban-all-live', 'false');
+  await t.sleep(400); // the cards at rest drawn again (their controls reported) before the clicks below
   if (rest?.ok && live?.ok) {
     const col = K(await T.state()).boxes.cols.find((c) => c.status === 'todo');
     const crop = `${Math.round(col.w)}x${Math.round(col.h)}+${Math.round(col.x)}+${Math.round(col.y)}`;

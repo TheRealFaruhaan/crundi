@@ -317,6 +317,8 @@ impl T {
     pub const MINDMAP_O_CLONE: f32 = 0.92;
     /// schedule (4.5): a switched-off schedule's faded row (the web's .sched-item.off).
     pub const SCHED_O_OFF: f32 = 0.55;
+    /// The Media modal (#media-modal .im-box: max-width 780px).
+    pub const MEDIA_MODAL_W: Pixels = px(780.);
     // Kanban (4.1): a column's narrowest and widest (.kanban-col), the panel
     // width under which columns stack (@container 700px), the width under
     // which the toolbar folds (480), a card under which its action labels

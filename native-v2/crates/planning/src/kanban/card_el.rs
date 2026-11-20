@@ -163,7 +163,7 @@ pub fn lay(k: &Key, window: &mut Window, cx: &App) -> Draw {
             let h = t.h;
             d.text(t, point(cx_, ry));
             cx_ += tw + T::SP_8;
-            if let (Some(m), Some(w)) = (media.as_deref(), mw) { button(&mut d, cx_, ry, Some(m), IconName::Paperclip, Look::Default, "tmedia", window, cx); cx_ += w + T::SP_8; }
+            if let (Some(m), Some(w)) = (media.as_deref(), mw) { button(&mut d, cx_, ry, Some(m), IconName::Paperclip, Look::Default, &format!("tmedia:{}", td.id), window, cx); cx_ += w + T::SP_8; }
             // The "…" at its faint opacity (times the card's).
             let was = d.opacity;
             d.opacity = Some(was.unwrap_or(1.) * T::KANBAN_O_CARET);

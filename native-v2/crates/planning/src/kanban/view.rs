@@ -450,7 +450,7 @@ fn todo_row(task: &str, td: &board::Todo, live: bool, cx: &App) -> AnyElement {
         .rounded(T::R_CONTROL).hover(|d| d.bg(T::bg_hover()))
         .child(div().pt(T::SP_2).child(w::check(eid("kanban-tick", &key), "", done, move |v, _, cx| super::toggle_todo(&t1, &d1, *v, cx))))
         .child(div().flex_1().min_w_0().text_size(T::TEXT_13).text_color(if done { T::text_muted() } else { T::text() }).child(td.text.clone()))
-        .when(td.media > 0, |d| d.child(w::button(eid("kanban-tmedia", &key), td.media.to_string()).icon(IconName::Paperclip).on_click(|_, _, cx| super::media_modal(cx))))
+        .when(td.media > 0, |d| d.child(w::button(eid("kanban-tmedia", &key), td.media.to_string()).icon(IconName::Paperclip).on_click({ let (t, d) = (task.to_string(), td.id.clone()); move |_, _, cx| super::media_todo(&t, &d, cx) })))
         .child(div().opacity(T::KANBAN_O_CARET).group_hover("kanban-todo", |d| d.opacity(1.))
             .child(w::icon_button(eid("kanban-tmore", &key), IconName::Ellipsis, "More").on_click(move |e, _, cx| {
                 let p = e.position();
@@ -856,6 +856,6 @@ fn clip_pop(store: &Entity<KStore>, window: &Window, cx: &App) -> Option<AnyElem
                 .child(strip)
                 .child(div().flex_none().h_full().border_l_1().border_color(T::border_subtle()).flex().items_center().px(T::SP_4)
                     .child(w::square_button("kanban-clip-add", IconName::Plus, "Attach media", w::SquareLook::Plain, T::SP_40, T::ICON_XL)
-                        .on_click(|_, _, cx| super::media_modal(cx))))),
+                        .on_click({ let t = task.to_string(); move |_, _, cx| super::media_task(&t, cx) })))),
     )).with_priority(1).into_any_element())
 }
