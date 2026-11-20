@@ -90,6 +90,11 @@ pub struct FilesView {
     project: String,
     search: Entity<w::InputState>,
     list: UniformListScrollHandle,
+    /// Where each drawn row's "…" is in the window, recorded as it is laid
+    /// out: its menu opens below it (the web's openFileMenu at the button's
+    /// right − 4, bottom + 2), and the driver's state shows it so a test
+    /// clicks it as a person would.
+    more_at: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Bounds<Pixels>>>>,
     _sub: Subscription,
 }
 
@@ -102,7 +107,7 @@ impl FilesView {
         let search = cx.new(|cx| w::InputState::new(window, cx).placeholder("Search files & folders…"));
         let _sub = cx.subscribe_in(&search, window, |f, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::Change = ev { let q = st.read(cx).value().to_string(); f.search(&q, cx); });
         FilesView { path: String::new(), parent: None, inside: false, entries: vec![], crumbs: vec![], shell: None, state: "loading".into(), error: String::new(), q: String::new(), results: None, search_gen: 0, selected: String::new(), clip: None, copied: String::new(),
-            rows: vec![], note: String::new(), empty: String::new(), root: String::new(), project: crundi_shell::project(cx), search, list: UniformListScrollHandle::new(), _sub }
+            rows: vec![], note: String::new(), empty: String::new(), root: String::new(), project: crundi_shell::project(cx), search, list: UniformListScrollHandle::new(), more_at: Default::default(), _sub }
     }
 
     fn clip_here(&self, cx: &App) -> bool { self.clip.as_ref().is_some_and(|c| c.project == crundi_shell::project(cx) && !c.paths.is_empty()) }
@@ -402,7 +407,8 @@ impl FilesView {
             "path": self.path, "inside": self.inside, "parent": self.parent, "searching": self.results.is_some(), "selected": self.selected,
             "note": note, "empty": empty,
             "clip": self.clip.as_ref().map(|c| json!({ "op": c.op, "paths": c.paths })),
-            "rows": rows.iter().map(|r| json!({ "name": r.name, "dir": r.dir, "path": r.path, "isDir": r.is_dir, "size": r.size, "mark": r.mark, "cut": r.cut, "selected": r.selected })).collect::<Vec<_>>(),
+            "rows": rows.iter().map(|r| json!({ "name": r.name, "dir": r.dir, "path": r.path, "isDir": r.is_dir, "size": r.size, "mark": r.mark, "cut": r.cut, "selected": r.selected,
+                "more": self.more_at.borrow().get(&r.path).map(|b| [f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)]) })).collect::<Vec<_>>(),
             "crumbs": self.crumbs.iter().map(|c| s(c, "name")).collect::<Vec<_>>(),
         })
     }
@@ -415,7 +421,7 @@ impl FilesView {
         };
         let abs = self.abs_path(&r.path);
         let (drop_dir, is_folder) = (r.path.clone(), r.is_dir && !r.up);
-        let row = div().id(("file", i)).group("file-row").flex().items_center().gap(T::SP_8).h(T::CONTROL_SM).px(T::SP_10).cursor_pointer();
+        let row = div().id(("file", i)).group("file-row").w_full().flex().items_center().gap(T::SP_8).h(T::CONTROL_SM).px(T::SP_10).cursor_pointer();
         // Dragged into a chat or a terminal: its path, as the web's [File Path: …].
         let row = if r.up { row } else { w::drag_ref(row, if r.is_dir { "folder" } else { "file" }, &abs, r.name.clone()) };
         // A folder takes files dropped from the system: into it.
@@ -433,7 +439,16 @@ impl FilesView {
                 .when(!r.dir.is_empty(), |d| d.child(div().text_color(T::text_muted()).truncate().child(r.dir.clone())))
                 .child(div().text_color(T::text()).truncate().child(r.name.clone())))
             .child(div().flex_none().text_size(T::TEXT_11).font_family(T::MONO).text_color(T::text_muted()).child(r.size.clone()))
-            .when(!r.up, |d| d.child(w::icon_button(("file-more", i), IconName::Ellipsis, "More").on_click(cx.listener(move |f, e: &ClickEvent, _, cx| f.menu(&p3, e.position(), cx)))))
+            .when(!r.up, |d| {
+                let (at, p4) = (self.more_at.clone(), r.path.clone());
+                d.child(div().relative().flex_none()
+                    .child(w::icon_button(("file-more", i), IconName::Ellipsis, "More").on_click(cx.listener(move |f, e: &ClickEvent, _, cx| {
+                        // Under the button, as the web's; the click's point if it was never laid out.
+                        let at = f.more_at.borrow().get(&p3).map(|b| point(b.right() - px(4.), b.bottom() + px(2.))).unwrap_or(e.position());
+                        f.menu(&p3, at, cx)
+                    })))
+                    .child(canvas(move |b, _, _| { at.borrow_mut().insert(p4.clone(), b); }, |_, _, _, _| {}).absolute().top_0().left_0().size_full()))
+            })
             .into_any_element()
     }
 }
@@ -497,7 +512,7 @@ impl Render for FilesView {
                 else {
                     list = list.child(uniform_list("files-list", self.rows.len(), cx.processor(|f, range: std::ops::Range<usize>, _, cx| {
                         range.filter_map(|i| f.rows.get(i).cloned().map(|r| (i, r))).map(|(i, r)| f.line(&r, i, cx)).collect::<Vec<_>>()
-                    })).track_scroll(&self.list).flex_1().min_h_0());
+                    })).track_scroll(&self.list).w_full().flex_1().min_h_0());
                 }
                 list.into_any_element()
             }

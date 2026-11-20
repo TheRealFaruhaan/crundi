@@ -383,33 +383,55 @@ impl Render for TermScreen {
                 let state = state.clone();
                 cx.defer(move |cx| { let _ = state.update(cx, |t, cx| t.size(c, r, cx)); });
             },
-            move |bounds, _, window, cx| {
+            move |bounds, _, window, _| {
                 let o = bounds.origin + point(pad, pad);
                 let lh = px(ch);
-                for (r, row) in rows.iter().enumerate() {
-                    let y = o.y + px(r as f32 * ch);
-                    for run in row {
-                        let x = o.x + px(run.col as f32 * cw);
-                        if let Some(b) = run.bg { window.paint_quad(fill(Bounds { origin: point(x, y), size: size(px(run.cells as f32 * cw), lh) }, b)); }
-                        if run.text.trim().is_empty() && !run.underline { continue; }
-                        let tr = TextRun { len: run.text.len(), font: mono(run.bold, run.italic), color: run.fg, background_color: None,
-                            underline: run.underline.then(|| UnderlineStyle { thickness: px(1.), color: Some(run.fg), wavy: false }), strikethrough: None };
-                        let line = window.text_system().shape_line(run.text.clone(), fsize, &[tr], run.ascii.then_some(px(cw)));
-                        let _ = line.paint(point(x, y), lh, TextAlign::Left, None, window, cx);
+                // One paint layer for the whole screen (as the chat's log):
+                // its quads and glyphs take the layer's order, so the screen
+                // costs one insert into the scene's bounds tree, not one per
+                // glyph. Backgrounds and the selection are quads (under the
+                // text), each run's glyphs are painted straight in.
+                window.paint_layer(bounds, |window| {
+                    for (r, row) in rows.iter().enumerate() {
+                        let y = o.y + px(r as f32 * ch);
+                        for run in row {
+                            if let Some(b) = run.bg { window.paint_quad(fill(Bounds { origin: point(o.x + px(run.col as f32 * cw), y), size: size(px(run.cells as f32 * cw), lh) }, b)); }
+                        }
                     }
-                }
-                // The selection: whole cells, row by row.
-                if sel.on {
-                    let ((c0, r0), (c1, r1)) = if (sel.r1, sel.c1) < (sel.r0, sel.c0) { ((sel.c1, sel.r1), (sel.c0, sel.r0)) } else { ((sel.c0, sel.r0), (sel.c1, sel.r1)) };
-                    for r in r0..=r1 {
-                        let from = if r == r0 { c0 } else { 0 };
-                        let to = if r == r1 { c1 } else { cols.saturating_sub(1) };
-                        if to < from { continue; }
-                        window.paint_quad(fill(Bounds { origin: point(o.x + px(from as f32 * cw), o.y + px(r as f32 * ch)), size: size(px((to - from + 1) as f32 * cw), lh) }, T::ws_term_sel()));
+                    // The selection: whole cells, row by row.
+                    if sel.on {
+                        let ((c0, r0), (c1, r1)) = if (sel.r1, sel.c1) < (sel.r0, sel.c0) { ((sel.c1, sel.r1), (sel.c0, sel.r0)) } else { ((sel.c0, sel.r0), (sel.c1, sel.r1)) };
+                        for r in r0..=r1 {
+                            let from = if r == r0 { c0 } else { 0 };
+                            let to = if r == r1 { c1 } else { cols.saturating_sub(1) };
+                            if to < from { continue; }
+                            window.paint_quad(fill(Bounds { origin: point(o.x + px(from as f32 * cw), o.y + px(r as f32 * ch)), size: size(px((to - from + 1) as f32 * cw), lh) }, T::ws_term_sel()));
+                        }
                     }
-                }
+                    for (r, row) in rows.iter().enumerate() {
+                        let y = o.y + px(r as f32 * ch);
+                        for run in row {
+                            if run.text.trim().is_empty() && !run.underline { continue; }
+                            let x = o.x + px(run.col as f32 * cw);
+                            let tr = TextRun { len: run.text.len(), font: mono(run.bold, run.italic), color: run.fg, background_color: None, underline: None, strikethrough: None };
+                            // (The text system keeps a laid-out line from frame to frame.)
+                            let layout = window.text_system().layout_line(&run.text, fsize, &[tr], run.ascii.then_some(px(cw)));
+                            let base = y + (lh - layout.ascent - layout.descent) / 2. + layout.ascent;
+                            for sr in &layout.runs {
+                                for g in &sr.glyphs {
+                                    let at = point(x + g.position.x, base);
+                                    let _ = if g.is_emoji { window.paint_emoji(at, sr.font_id, g.id, fsize) } else { window.paint_glyph(at, sr.font_id, g.id, fsize, run.fg) };
+                                }
+                            }
+                            if run.underline {
+                                let uy = y + underline_y_offset(lh, layout.ascent, layout.descent);
+                                window.paint_underline(point(x, uy), px(run.cells as f32 * cw), &UnderlineStyle { thickness: px(1.), color: Some(run.fg), wavy: false });
+                            }
+                        }
+                    }
+                });
             },
-        ).absolute().size_full();
+        ).absolute().top_0().left_0().size_full();
         div().id(SharedString::from(format!("term-{id}"))).track_focus(&self.focus).relative().size_full().overflow_hidden().bg(T::bg()).cursor_text()
             .child(grid)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
@@ -670,7 +692,7 @@ impl Render for TermInput {
             let h = b.size.height;
             // (After the frame: a notify while drawing would not draw again.)
             if (me.read(cx).height - h).abs() > px(0.5) { let me = me.clone(); cx.defer(move |cx| me.update(cx, |c, cx| { c.height = h; cx.notify(); })); }
-        }, |_, _, _, _| {}).absolute().size_full();
+        }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
         // The input bar (.term-input-bar): tools, the box, attach, Send.
         let bar = div().flex_none().flex().flex_col().px(T::SP_8).py(T::SP_6).bg(T::bg_secondary()).border_t_1().border_color(T::border())
             .when_some(self.upload_strip(), |d, s| d.child(s))
@@ -885,6 +907,12 @@ pub fn act(name: &str, a: &[String], window: &mut Window, cx: &mut App) -> Optio
             let key = s(0);
             let k2 = key.clone();
             close(&k2, cx, Box::new(move |ok, cx| if ok { if let Some(w) = crundi_workbench::workbench(cx) { w.update(cx, |w, cx| w.retain(|k| k != key, cx)); } }));
+        }
+        // The pane's title renamed (/api/terminals/:id/rename): every client
+        // sees it through the event stream's list, the head with it.
+        "term-rename" => {
+            let (id, title) = (id_of(&s(0)), s(1));
+            crundi_shell::call(cx, move |api| api.post(&format!("/api/terminals/{id}/rename"), &json!({ "title": title })), |r, cx| if let Err(e) = r { crate::toast(cx, e, w::Toast::Error) });
         }
         "term-focus" => { let f = p.screen.read(cx).focus.clone(); f.focus(window, cx); }
         "term-select" => st.update(cx, |x, cx| x.select(n(1).max(0) as usize, n(2).max(0) as usize, n(3).max(0) as usize, n(4).max(0) as usize, cx)),

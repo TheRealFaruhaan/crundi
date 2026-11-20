@@ -18,6 +18,7 @@
 pub(crate) mod tree;
 pub(crate) mod help;
 mod draw;
+mod idea_el;
 
 use crate::util::{after, enc, in_window, truthy};
 use crundi_core::live::Event;
@@ -205,6 +206,9 @@ pub struct M {
     h_open: Vec<bool>,
     h_all: bool,
     ui: Option<Ui>,
+    /// The driver's "mindmap-all-div": every idea drawn as its div (to
+    /// check that an idea at rest looks the same as its div).
+    pub(crate) all_div: bool,
     /// The ideas the map drew in its last frame (for the driver).
     pub(crate) drawn: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 }
@@ -237,7 +241,9 @@ fn toast_error(window: &mut Window, cx: &mut App, text: &str) { w::toast(window,
 /// An idea's height before it is drawn (unscaled), from its words as the
 /// card wraps them (two lines at most) and its chips: the map lays out every
 /// idea, and draws (and so measures) only those on screen.
-fn estimate(text: &str, chips: bool, cx: &App) -> f32 {
+/// `chips`: 0 none, 1 a row of chips, 2 one with an inherited chip (its
+/// dashed border is 1 px more each side).
+fn estimate(text: &str, chips: u8, cx: &App) -> f32 {
     let font = Font { family: T::UI_FONT.into(), weight: T::W_SEMIBOLD, ..crundi_theme::ui_font() };
     let mut wrapper = cx.text_system().line_wrapper(font, T::TEXT_13);
     let wrap = T::MINDMAP_NODE - (T::SP_10 + px(1.)) * 2. - px(2.);
@@ -249,7 +255,9 @@ fn estimate(text: &str, chips: bool, cx: &App) -> f32 {
     // As drawn and measured: the card's padding box (its border is outside
     // it), each line of words at its line height rounded to whole pixels.
     let lh = (f32::from(T::TEXT_13) * T::LH_UI).round();
-    let chip = if chips { f32::from(T::SP_6) + (f32::from(T::TEXT_11) * T::LH_UI).round() + 2. } else { 0. };
+    // A chip's row: its words' line (the text's φ, snapped), its 1 px
+    // padding (an inherited one's dashed border is 1 px more each side).
+    let chip = if chips == 2 { 2. } else { 0. } + if chips > 0 { f32::from(T::SP_6) + (f32::from(T::TEXT_11) * crate::paint::PHI).round().max(f32::from(T::ICON_SM)) + 2. } else { 0. };
     f32::from(T::SP_8) * 2. + lines.clamp(1, 2) as f32 * lh + chip
 }
 
@@ -402,6 +410,9 @@ pub fn on_signed_out(_: &Stores, cx: &mut App) {
 /// their way are not in what it would send back: wait for them.
 fn load(cx: &mut App) { load_from("/api/mindmap", cx); }
 
+/// The map again (its tab or pane came into view).
+pub fn reload(cx: &mut App) { if with(cx, |s| s.load_gen > 0 || s.loaded) { load(cx); } }
+
 fn load_from(path: &str, cx: &mut App) {
     if with(cx, |s| { if s.saving > 0 { s.reload_wanted = true; true } else { false } }) { return; }
     let g_ = with(cx, |s| { s.load_gen += 1; s.load_gen });
@@ -502,8 +513,9 @@ fn render(window: &mut Window, cx: &mut App) {
     let names = project_names(cx);
     // Every idea has a height before it is drawn (an estimate from its
     // words; the drawn ones correct it as they paint: `measured`).
-    let todo: Vec<(String, String, bool, u64)> = with(cx, |s| s.nodes.iter().filter_map(|n| {
-        let chips = n.linked || !n.project.is_empty() || !n.eff.is_empty() || !n.notes.is_empty();
+    let todo: Vec<(String, String, u8, u64)> = with(cx, |s| s.nodes.iter().filter_map(|n| {
+        let inherited = !n.linked && n.project.is_empty() && !n.eff.is_empty();
+        let chips = if inherited { 2 } else if n.linked || !n.project.is_empty() || !n.notes.is_empty() { 1 } else { 0 };
         let sig = { use std::hash::{Hash, Hasher}; let mut h = std::collections::hash_map::DefaultHasher::new(); n.text.hash(&mut h); chips.hash(&mut h); h.finish() };
         (s.est_sig.get(&n.id) != Some(&sig)).then(|| (n.id.clone(), n.text.clone(), chips, sig))
     }).collect());
@@ -1529,6 +1541,7 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         // The canvas's place is measured as it is drawn (every frame here).
         "mindmap-measure" => json!({ "ok": true }),
         // Pan by (dx, dy) canvas pixels (+: further right, further down).
+        "mindmap-all-div" => { let on = a(0) == "true"; with(cx, |s| s.all_div = on); redraw(cx); json!({ "ok": true }) }
         "mindmap-pan" => { scroll_by(-a(0).parse().unwrap_or(0.0), -a(1).parse().unwrap_or(0.0), cx); json!({ "ok": true }) }
         "mindmap-flash" => { let id = id_of(&a(0), cx); flash_node(&id, a(1) == "true", window, cx); json!({ "ok": true }) }
         _ => return None,

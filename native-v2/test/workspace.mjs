@@ -153,13 +153,25 @@ if (win) {
   for (const w of W(await T.state()).wins) await act('win-close', String(w.id));
 }
 
-// The row menu: Copy path, Cut and Paste, Delete.
-await act('files-menu', join(P, 'README.md'));
-await T.until('the row menu opens with the web\'s items', (s) => W(s).menu?.items?.map((i) => i.id).join(',').startsWith('open,') && W(s).menu.items.some((i) => i.id === 'delete' && i.danger) && W(s).menu.items.some((i) => i.id === 'download'));
+// The row menu: Copy path, Cut and Paste, Delete. Opened as a person does:
+// a click on the row's "…" (where it is drawn: the files state's "more"),
+// so the menu sits there (F40).
+const clickMore = async (path) => {
+  await T.until(`the row of ${path.split('/').pop()} is drawn with its "…"`, (s) => W(s).files.rows.find((r) => r.path === path)?.more);
+  await t.sleep(300); // (the frame that drew it is on screen)
+  const b = W(await T.state()).files.rows.find((r) => r.path === path)?.more;
+  if (!b) return null;
+  await T.mouse('click', b[0] + b[2] / 2, b[1] + b[3] / 2);
+  return b;
+};
+let at = await clickMore(join(P, 'README.md'));
+s = await T.until('the row menu opens with the web\'s items', (s) => W(s).menu?.items?.map((i) => i.id).join(',').startsWith('open,') && W(s).menu.items.some((i) => i.id === 'delete' && i.danger) && W(s).menu.items.some((i) => i.id === 'download'));
+// As the web's openFileMenu: under the button, from its right edge less 4 (kept in the window).
+t.check('the menu opens under the row\'s "…" (not the window\'s corner)', at && W(s) && Math.abs(W(s).menu.x - (at[0] + at[2] - 4)) < 1 && Math.abs(W(s).menu.y - (at[1] + at[3] + 2)) < 1, { at, menu: W(s || {})?.menu && [W(s).menu.x, W(s).menu.y] });
 await snap('files-menu');
 await T.ui('menu-pick', 'path');
 await T.until('Copy path copies the absolute path', (s) => W(s).copied === join(P, 'README.md') && s.toast === 'Path copied');
-await act('files-menu', join(P, 'README.md'));
+await clickMore(join(P, 'README.md'));
 await T.until('the menu again', (s) => !!W(s).menu);
 await T.ui('menu-pick', 'cut');
 await T.until('Cut marks the row and offers Paste', (s) => W(s).files.rows.some((r) => r.name === 'README.md' && r.cut) && /ready to move/.test(s.toast));
@@ -168,7 +180,7 @@ await T.until('in another folder', (s) => W(s).files.path === join(P, 'docs'));
 await act('files-paste');
 await T.until('Paste moves it here', (s) => W(s).files.rows.some((r) => r.name === 'README.md') && /^Moved README.md/.test(s.toast));
 t.check('the file moved on disk', existsSync(join(P, 'docs/README.md')) && !existsSync(join(P, 'README.md')));
-await act('files-menu', join(P, 'docs/README.md'));
+await clickMore(join(P, 'docs/README.md'));
 await T.until('the menu on the moved file', (s) => !!W(s).menu);
 await T.ui('menu-pick', 'delete');
 await T.until('Delete asks first', (s) => s.dialog?.danger && /Delete "README.md"/.test(s.dialog.message));
@@ -317,21 +329,41 @@ await T.until('↺ resets it', (s) => TS(s)?.zoom === 0);
   t.check('idle: no frames at all for 5 s', idle.frames === 0, idle);
 }
 
-// An empty pane's chips: a panel each, a second refused.
-await act('chip', 'git');
-await T.until('the Git chip puts Git in the workbench', (s) => s.panes?.includes('panel:git'));
-await act('chip', 'git');
-await T.until('a second Git is refused', (s) => s.toast === 'Git is already in the workbench' && s.panes.filter((k) => k === 'panel:git').length === 1);
-await act('chip', 'files');
+// The terminal renamed: the head shows the new title (from the event
+// stream's list, as every client sees it).
+await act('term-rename', key, 'My shell');
+await T.until('the terminal renames, its head with it', (s) => s.heads?.[key] === 'My shell', 15000);
+
+// An empty pane's chips: the panel goes into the leaf whose chip was
+// clicked (F35), a second of a kind is refused. Two empty leaves first
+// (split right, then down), and the chip of the second one.
+await T.ui('workbench:pane-split', key, 'false');
+await T.until('a split gives an empty leaf', (s) => s.leaves?.filter((l) => !l.key).length === 1);
+await T.ui('workbench:pane-split', key, 'true');
+s = await T.until('a second split, a second empty leaf', (s) => s.leaves?.filter((l) => !l.key).length === 2);
+const empties = (s?.leaves || []).filter((l) => !l.key);
+if (empties.length === 2) {
+  const [first, second] = empties;
+  await T.ui('workbench:leaf-chip', String(second.id), 'git');
+  await T.until('the Git chip fills the leaf it was clicked in (not the first empty one)', (s) => s.leaves.find((l) => l.id === second.id)?.key === 'panel:git' && !s.leaves.find((l) => l.id === first.id)?.key);
+  await T.ui('workbench:leaf-chip', String(first.id), 'git');
+  await T.until('a second Git is refused, its leaf stays empty', (s) => s.toast === 'Git is already in the workbench' && s.panes.filter((k) => k === 'panel:git').length === 1 && !s.leaves.find((l) => l.id === first.id)?.key);
+  await T.ui('workbench:leaf-chip', String(first.id), 'files');
+  await T.until('the Files chip fills its leaf', (s) => s.leaves.find((l) => l.id === first.id)?.key === 'panel:files');
+}
 await act('chip', 'media');
-await T.until('Files and Media in panes', (s) => s.panes?.includes('panel:files') && s.panes.includes('panel:media'));
+await T.until('Git, Files and Media in panes', (s) => s.panes?.includes('panel:git') && s.panes.includes('panel:files') && s.panes.includes('panel:media'));
+await T.ui('toasts-clear');
 await t.sleep(800);
 await snap('workbench-panels');
 
-// Closing the terminal closes it on the server.
+// The head's × (F36): one click arms "Sure?", the second closes the
+// terminal on the server, and its pane goes.
 const termId = key.slice('term:'.length);
-await act('term-close', key);
-await T.until('× closes the terminal and its pane', (s) => !W(s).terms.some((x) => x.key === key) && !s.panes.includes(key), 30000);
+await T.ui('workbench:pane-close', key);
+await T.until('the first × arms "Sure?"', (s) => s.leaves?.find((l) => l.key === key)?.armed);
+await T.ui('workbench:pane-close', key);
+await T.until('the second closes the terminal and its pane', (s) => !W(s).terms.some((x) => x.key === key) && !s.panes.includes(key), 30000);
 const list = await T.api.http('GET', '/api/terminals');
 t.check('the server has no terminal left open', !(list.body?.terminals || list.body || []).some?.((x) => x.id === termId && x.status !== 'exited'), list.body);
 

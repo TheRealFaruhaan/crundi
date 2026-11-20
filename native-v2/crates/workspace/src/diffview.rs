@@ -87,12 +87,12 @@ impl DiffWin {
         if r.chunk >= 0 {
             let c = r.chunk as usize;
             let done = self.staged.contains(&c);
-            return div().flex().items_center().gap(T::SP_8).h(T::SP_24).px(T::SP_8).bg(T::ws_diff_chunk())
+            return div().w_full().flex().items_center().gap(T::SP_8).h(T::SP_24).px(T::SP_8).bg(T::ws_diff_chunk())
                 .child(if done { w::tag("Staged", "ok").into_any_element() } else { w::button(("stage-chunk", c), "Stage").on_click(cx.listener(move |w, _, _, cx| w.stage(c, cx))).into_any_element() })
                 .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(format!("Chunk {}", c + 1)))
                 .into_any_element();
         }
-        div().flex().gap(px(1.)).bg(T::border())
+        div().w_full().flex().gap(px(1.)).bg(T::border())
             .child(Self::half(&r.old_ln, &r.old, r.old_kind, &r.old_words))
             .child(Self::half(&r.new_ln, &r.new, r.new_kind, &r.new_words))
             .into_any_element()
@@ -107,7 +107,7 @@ impl Render for DiffWin {
         // only the rows scroll, the head stays (the owner, 18 Nov).
         let vp = window.viewport_size();
         let room = (vp.height - T::SP_16 * 2.).min(T::DIALOG_MAX_H) - T::SP_6 * 2. - px(2.);
-        let rows = list(self.list.clone(), cx.processor(|this, i: usize, _, cx| this.row(i, cx))).flex_1().min_h_0();
+        let rows = list(self.list.clone(), cx.processor(|this, i: usize, _, cx| this.row(i, cx))).w_full().flex_1().min_h_0();
         div().flex().flex_col().w(T::WS_DIFF_W).h(T::WS_DIFF_H.min(room).max(px(0.)))
             .child(div().flex_none().child(w::modal_head("diff-head", self.file.clone(), false, |_, window, cx| w::close_dialog(window, cx))))
             .child(div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_10).h(T::CONTROL_SM).border_b_1().border_color(T::border())

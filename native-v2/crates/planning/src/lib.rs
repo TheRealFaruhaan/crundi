@@ -11,6 +11,8 @@
 
 pub mod kanban;
 pub mod mindmap;
+pub mod paint;
+pub mod schedule;
 pub mod util;
 
 use crundi_core::live::Event;
@@ -24,13 +26,15 @@ pub fn init(cx: &mut App) {
     crundi_shell::register(cx, Area::new("planning")
         .tab("kanban", |stores, window, cx| kanban::tab(stores, window, cx))
         .tab("mindmap", |stores, window, cx| mindmap::tab(stores, window, cx))
+        .tab("schedule", |stores, window, cx| schedule::tab(stores, window, cx))
         .on_batch(|stores, batch: &[Event], cx| {
             kanban::on_batch(stores, batch, cx);
             mindmap::on_batch(stores, batch, cx);
+            schedule::on_batch(stores, batch, cx);
         })
-        .on_project(|stores, alias, cx| { kanban::on_project(stores, alias, cx); mindmap::on_project(stores, alias, cx); })
-        .on_signed_in(|stores, cx| { kanban::on_signed_in(stores, cx); mindmap::on_signed_in(stores, cx); })
-        .on_signed_out(|stores, cx| { kanban::on_signed_out(stores, cx); mindmap::on_signed_out(stores, cx); })
+        .on_project(|stores, alias, cx| { kanban::on_project(stores, alias, cx); mindmap::on_project(stores, alias, cx); schedule::on_project(stores, alias, cx); })
+        .on_signed_in(|stores, cx| { watch_tab(stores, cx); kanban::on_signed_in(stores, cx); mindmap::on_signed_in(stores, cx); schedule::on_signed_in(stores, cx); })
+        .on_signed_out(|stores, cx| { kanban::on_signed_out(stores, cx); mindmap::on_signed_out(stores, cx); schedule::on_signed_out(stores, cx); })
         // The empty pane's chips (the workbench runs "wb-chip:<kind>").
         .action("wb-chip:kanban", |_, _, cx| place(cx, "panel:kanban"))
         .action("wb-chip:mindmap", |_, _, cx| place(cx, "panel:mindmap"))
@@ -40,11 +44,41 @@ pub fn init(cx: &mut App) {
         .state(|stores, window, cx| {
             let k = kanban::state(stores, window, cx);
             let m = mindmap::state(stores, window, cx);
+            let sc = schedule::state(stores, window, cx);
+            let sched_open = sc.get("pointerModal").and_then(|v| v.as_bool()).unwrap_or(false);
             let ask = kanban::ask::props(cx);
-            let modal = !ask.is_null() || !crundi_widgets::ask_props(cx).is_null() || m.get("dialogOpen").and_then(|v| v.as_bool()).unwrap_or(false);
-            json!({ "planningArea": { "kanban": k, "mindmap": m, "ask": ask, "pointerModal": modal,
+            let modal = !ask.is_null() || !crundi_widgets::ask_props(cx).is_null() || m.get("dialogOpen").and_then(|v| v.as_bool()).unwrap_or(false) || sched_open;
+            json!({ "planningArea": { "kanban": k, "mindmap": m, "schedule": sc, "ask": ask, "pointerModal": modal,
                 "dialog": crundi_widgets::ask_props(cx), "menu": crundi_widgets::menu_props(cx) } })
         }));
+}
+
+/// A screen coming into view loads again (what changed while it was not on
+/// show: the web reloads a tab as it shows it): the Kanban and Mindmap tabs,
+/// their panes on the workbench, the Schedule tab.
+struct TabWatch(#[allow(dead_code)] Subscription);
+impl Global for TabWatch {}
+
+fn watch_tab(stores: &Stores, cx: &mut App) {
+    if cx.has_global::<TabWatch>() { return; }
+    let mut last = String::new();
+    let sub = cx.observe(&stores.nav, move |nav, cx| {
+        let tab = nav.read(cx).tab.clone();
+        if tab == last { return; }
+        last = tab.clone();
+        let tab2 = tab.clone();
+        cx.defer(move |cx| match tab2.as_str() {
+            "kanban" => kanban::load(cx),
+            "mindmap" => mindmap::reload(cx),
+            "schedule" => schedule::reload(cx),
+            "workbench" => {
+                if util::pane_shown(cx, "panel:kanban") { kanban::load(cx); }
+                if util::pane_shown(cx, "panel:mindmap") { mindmap::reload(cx); }
+            }
+            _ => {}
+        });
+    });
+    cx.set_global(TabWatch(sub));
 }
 
 /// Put a planning panel on the workbench (the empty pane's chip, the driver).
@@ -52,11 +86,41 @@ pub fn place(cx: &mut App, key: &str) {
     if let Some(wb) = crundi_workbench::workbench(cx) { let k = key.to_string(); wb.update(cx, |w, cx| w.place(&k, cx)); }
 }
 
+fn measure_layout(stream: &str, cx: &mut App) -> bool {
+    use crundi_core::mosaic::{Dir, Mosaic};
+    let Some(wb) = crundi_workbench::workbench(cx) else { return false };
+    let stream = stream.to_string();
+    wb.update(cx, |w, cx| {
+        let keys = w.keys();
+        let chats: Vec<String> = keys.iter().filter(|k| k.starts_with("live:") && **k != stream).cloned().collect();
+        let mut m = Mosaic::preset("cols3", vec!["panel:kanban".into(), "panel:mindmap".into(), stream.clone()]);
+        let under = |m: &mut Mosaic, above: &str, key: Option<&String>, dir: Dir| {
+            let (Some(k), Some(l)) = (key, m.leaf_of(above)) else { return };
+            let n = m.split(l, dir);
+            m.assign(n, Some(k.clone()));
+        };
+        under(&mut m, "panel:kanban", chats.first(), Dir::Col);
+        under(&mut m, "panel:mindmap", chats.get(1), Dir::Col);
+        under(&mut m, &stream, chats.get(2), Dir::Col);
+        if let Some(c3) = chats.get(2).cloned() { under(&mut m, &c3, chats.get(3), Dir::Row); }
+        for k in chats.iter().skip(4) { m.place(k); }
+        *w.mosaic() = m;
+        // The streaming chat has the focus (the driver's "send" goes to it).
+        w.focus_key(&stream, cx);
+        cx.notify();
+    });
+    true
+}
+
 fn test_ui(stores: &Stores, name: &str, args: &[String], window: &mut Window, cx: &mut App) -> Option<Value> {
     match name {
         "ping" => return Some(json!({ "ok": true, "area": "planning" })),
         "open-pane" => { let k = format!("panel:{}", args.first().cloned().unwrap_or_default()); place(cx, &k); return Some(json!({ "ok": true })); }
+        // The frame budget's layout (tools/measure-pc.mjs): every pane in
+        // view, in three columns: the Kanban over a chat, the Mindmap over a
+        // chat, the given chat (the one streaming, focused) over the others.
+        "measure-layout" => return Some(json!({ "ok": measure_layout(args.first().map(|s| s.as_str()).unwrap_or(""), cx) })),
         _ => {}
     }
-    kanban::test_ui(stores, name, args, window, cx).or_else(|| mindmap::test_ui(stores, name, args, window, cx))
+    kanban::test_ui(stores, name, args, window, cx).or_else(|| mindmap::test_ui(stores, name, args, window, cx)).or_else(|| schedule::test_ui(stores, name, args, window, cx))
 }

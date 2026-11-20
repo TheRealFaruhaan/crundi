@@ -304,12 +304,12 @@ impl Render for MediaView {
                 let measure = canvas(move |b, _, cx| {
                     let n = cols_for(f32::from(b.size.width));
                     if me.read(cx).cols != n { let me = me.clone(); cx.defer(move |cx| me.update(cx, |m, cx| { m.cols = n; cx.notify(); })); }
-                }, |_, _, _, _| {}).absolute().size_full();
+                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
                 let cols = self.cols.max(1);
                 let rows = self.shown.len().div_ceil(cols);
                 let grid = uniform_list("media-grid", rows, cx.processor(move |m, range: std::ops::Range<usize>, _, cx| {
                     range.map(|r| {
-                        let mut row = div().flex().gap(T::SP_12).px(T::SP_12).pt(T::SP_12);
+                        let mut row = div().w_full().flex().gap(T::SP_12).px(T::SP_12).pt(T::SP_12);
                         for i in r * cols..((r + 1) * cols).min(m.shown.len()) { let it = m.shown[i].clone(); row = row.child(m.card(&it, i, cx)); }
                         row.into_any_element()
                     }).collect::<Vec<_>>()

@@ -30,10 +30,7 @@ crundi-widgets.workspace = true
 crundi-shell.workspace = true
 crundi-workbench.workspace = true
 crundi-chat.workspace = true
-<<<<<<< ours
 crundi-planning.workspace = true
-=======
->>>>>>> theirs
 crundi-workspace.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]

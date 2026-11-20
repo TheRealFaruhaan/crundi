@@ -52,8 +52,17 @@
 //   pan-mindmap   the Mindmap tab: the wheel over the map, down and sideways
 //   idle-planning the Mindmap tab after it: 0 frames
 //   planning+stream+scroll  the workbench with a Kanban and a Mindmap pane
-//                 beside the chats (seven panes), the wheel sweep while the
-//                 fifth chat streams another long reply
+//                 beside the chats (seven panes, laid out so every one is in
+//                 view: planning's "measure-layout"), the wheel sweep while
+//                 the fifth chat streams another long reply (its renders show
+//                 the Kanban's and the map's views redrawn under the wheel)
+// Then the workspace's (MEASURE_TERMINAL=0 skips them): an Empty Shell pane
+// beside the chats (a real shell on the test server):
+//   term-stream   the shell prints 3000 lines, one every 2 ms or so (about
+//                 8 s of steady output; batched: one feed and one screen
+//                 redraw a frame at most)
+//   term-stream+scroll  the wheel sweep while it prints them again
+//   idle-terminal after it (the terminal not focused: no blink): 0 frames
 // Each: frames, p50, p95, max, ≤7 ms share, frames over 7 and over 16 ms.
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, realpathSync } from 'node:fs';
@@ -256,6 +265,47 @@ try {
     report['idle-end'].head = { before: e0.head, after: s.head };
   }
 
+  if (process.env.MEASURE_TERMINAL !== '0') {
+    // An Empty Shell in a new pane (the empty pane's Terminal chip, then the
+    // launcher's Empty Shell), beside the chats.
+    const ws = (name, ...args) => d.send({ cmd: 'ui', name: `workspace:${name}`, args: args.map(String) });
+    const TS = (s, key) => (s.workspace?.terms || []).find((x) => x.key === key);
+    await d.send({ cmd: 'ui', name: 'tab', args: ['workbench'] });
+    await ws('chip', 'terminal');
+    for (let i = 0; i < 40; i++) { s = await state(); if (s.panes?.some((k) => k.startsWith('pend:'))) break; await sleep(250); }
+    const pend = s.panes?.find((k) => k.startsWith('pend:'));
+    if (!pend) throw new Error('no launcher for the terminal');
+    await ws('launch', pend, 'shell');
+    let key = null;
+    for (let i = 0; i < 120; i++) { s = await state(); key = s.panes?.find((k) => k.startsWith('term:')); if (key && TS(s, key)?.sized && TS(s, key).screen.some((l) => /\$\s*$/.test(l) || /\$ /.test(l))) break; await sleep(250); }
+    if (!key) throw new Error('no terminal pane');
+    report.setup.terminal = { key, panes: s.panes.length, size: [TS(s, key)?.cols, TS(s, key)?.rows] };
+    await sleep(1500);
+    const streamTerm = async (name, scroll) => {
+      const n = scroll ? 3001 : 3000;
+      await ws('term-send', key, `sleep 1; for ((i=1;i<=${n};i++)); do printf 'line %d ..........................................................\\n' $i; sleep 0.002; done`);
+      await sleep(600);
+      const s0 = await state();
+      const r0 = s0.renders || {}, b0 = TS(s0, key)?.batches || 0;
+      const from = fm.mark();
+      let wheel = 0;
+      const done = (s) => TS(s, key)?.screen.some((l) => l.startsWith(`line ${n} `));
+      if (scroll) { while (!done(await state()) && Date.now() - from < 60000) wheel += await sweep(d, 1000); }
+      else { for (let i = 0; i < 900; i++) { if (done(await state())) break; await sleep(100); } }
+      stats(name, from);
+      const s1 = await state();
+      report[name].renders = drew(r0, s1);
+      report[name].batches = (TS(s1, key)?.batches || 0) - b0;
+      if (scroll) report[name].wheelEvents = wheel;
+    };
+    await streamTerm('term-stream', false);
+    await streamTerm('term-stream+scroll', true);
+    await sleep(2000);
+    const i0 = (await state()).renders || {};
+    m = fm.mark(); await sleep(6000); stats('idle-terminal', m);
+    report['idle-terminal'].renders = drew(i0, await state());
+  }
+
   if (process.env.MEASURE_PLANNING !== '0') {
     const ui = (name, ...args) => d.send({ cmd: 'ui', name, args: args.map(String) });
     const K = (s) => s.planningArea?.kanban;
@@ -291,17 +341,43 @@ try {
     await ui('tab', 'workbench');
     await ui('open-pane', 'kanban');
     await ui('open-pane', 'mindmap');
+    await sleep(1000);
+    s = await state();
+    // Every pane in view (seven do not fit in one row): the Kanban and the
+    // Mindmap each over a chat, the chat that streams over the others.
+    const sc = report.setup.streamChat || s.chat;
+    if (sc) await ui('measure-layout', `live:${sc}`);
     await sleep(2500);
     s = await state();
     report.setup.planningPanes = s.panes;
+    report.setup.planningInView = { focused: s.chat, kanbanCols: (K(s)?.boxes?.cols || []).length, mindmapCanvas: MM(s)?.canvas, mindmapView: MM(s)?.view };
     if (process.env.MEASURE_STREAM !== '0' && s.chat) {
       await d.send({ cmd: 'ui', name: 'send', args: [SEEDS[2]] });
       const n0 = (s.entries || []).length;
       for (let i = 0; i < 600; i++) { s = await state(); if ((s.entries || []).length > n0 + 1 && s.chatState === 'working') break; await sleep(200); }
+      report.setup.planningStream = { chat: s.chat, state: s.chatState };
     }
     r0 = s.renders || {};
     m = fm.mark(); const n3 = await sweep(d, 8000); stats('planning+stream+scroll', m); report['planning+stream+scroll'].wheelEvents = n3;
     s = await state(); report['planning+stream+scroll'].renders = drew(r0, s);
+    // The same, one region at a time (2 s each, while the chat still
+    // streams): which pane's frames cost what.
+    if (process.env.MEASURE_REGIONS !== '0') {
+      s = await state();
+      const kb = (K(s)?.boxes?.cols || [])[0];
+      const [mx, my] = MM(s)?.canvas || [0, 0];
+      const [mw, mh] = MM(s)?.view || [0, 0];
+      const regions = { kanban: kb && [kb.x + kb.w / 2, kb.y + Math.min(kb.h / 2, 300)], mindmap: mw > 0 && [mx + mw - 20, my + mh / 2] };
+      for (const [name, at] of Object.entries(regions)) {
+        if (!at) continue;
+        const r1 = (await state()).renders || {};
+        const mm0 = fm.mark();
+        const end = Date.now() + 2000; let i = 0;
+        while (Date.now() < end) { await d.send({ cmd: 'mouse', kind: 'wheel', x: at[0], y: at[1], dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); }
+        stats(`region:${name}`, mm0);
+        report[`region:${name}`].renders = drew(r1, await state());
+      }
+    }
     for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
   }
   d.close();

@@ -266,7 +266,7 @@ impl Render for WinLayer {
                 window.on_mouse_event(move |e: &MouseUpEvent, phase, _, cx| if phase == DispatchPhase::Bubble {
                     let _ = m.update(cx, |l, cx| if let Some((id, ..)) = l.drag { l.drag(id, 2, f32::from(e.position.x), f32::from(e.position.y), cx) });
                 });
-            }).absolute().size_full());
+            }).absolute().top_0().left_0().size_full());
         // While dragging into a zone: where the window will land.
         if let Some(r) = self.zone.and_then(|z| snap_rect(z, self.vw, self.vh)) {
             root = root.child(div().absolute().left(px(r.x)).top(px(r.y)).w(px(r.w)).h(px(r.h)).rounded(T::R_CARD).border_2().border_color(T::accent()).bg(T::accent_dim()));

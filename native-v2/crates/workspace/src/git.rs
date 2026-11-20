@@ -234,7 +234,7 @@ impl GitView {
 
     fn section(staged: bool, n: usize, cx: &mut Context<Self>) -> AnyElement {
         let (title, act, tip) = if staged { ("STAGED", IconName::Minus, "Unstage all") } else { ("CHANGES", IconName::Plus, "Stage all") };
-        div().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).bg(T::bg_secondary())
+        div().w_full().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).bg(T::bg_secondary())
             .child(div().text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_muted()).child(title))
             .child(div().text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_secondary()).child(format!("({n})")))
             .child(div().flex_1())
@@ -255,7 +255,7 @@ impl GitView {
             acts.child(w::icon_button((id.0, i * 4 + 1), IconName::Plus, "Stage").on_click(cx.listener(move |g, _, _, cx| g.stage(&file2, cx))))
                 .child(w::icon_button((id.0, i * 4 + 2), IconName::RotateCcw, "Discard").on_click(cx.listener(move |g, _, window, cx| g.discard(&file3, window, cx))))
         };
-        div().id(id).flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).hover(|s| s.bg(T::bg_hover()))
+        div().id(id).w_full().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).hover(|s| s.bg(T::bg_hover()))
             .child(div().flex_none().w(T::ICON_MD).text_size(T::TEXT_11).font_weight(T::W_BOLD).font_family(T::MONO).text_color(code_color).child(f.code.clone()))
             .child(div().flex().flex_1().min_w_0().items_center().text_size(T::TEXT_12).font_family(T::MONO)
                 .when(!f.dir.is_empty(), |d| d.child(div().text_color(T::text_muted()).truncate().child(f.dir.clone())))
@@ -291,7 +291,7 @@ impl Render for GitView {
                             Line::Section { staged, n } => Self::section(staged, n, cx),
                             Line::File(f, i) => Self::file_line(&f, i, cx),
                         }).collect::<Vec<_>>()
-                    })).track_scroll(&self.list).flex_1().min_h_0().into_any_element()
+                    })).track_scroll(&self.list).w_full().flex_1().min_h_0().into_any_element()
                 };
                 let msg = self.msg.clone();
                 let foot = div().flex().flex_col().flex_none().gap(T::SP_8).p(T::SP_10).border_t_1().border_color(T::border())

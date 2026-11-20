@@ -17,6 +17,7 @@
 
 pub mod ask;
 pub mod board;
+mod card_el;
 mod view;
 
 use crate::util::{self, enc, prefs, s, truthy};
@@ -59,6 +60,11 @@ pub(crate) struct Boxes {
     pub cols: Vec<(String, Box4)>,
     /// (status, id, box).
     pub cards: Vec<(String, String, Box4)>,
+    /// A card at rest's controls: (card id, control, box) (for the driver).
+    pub controls: Vec<(String, String, Box4)>,
+    /// A press began on a card at rest: it stays at rest until the release
+    /// (its click is its own, card_el.rs).
+    pub pressing: bool,
 }
 
 pub struct KStore {
@@ -141,8 +147,8 @@ pub fn init(cx: &mut App) {
         chat: false,
         make: Rc::new(|_, stores, window, cx| {
             let host = Host::new(stores, true, window, cx);
-            // Shown before anything loaded it (a pane restored with the layout).
-            if with(cx, |k| k.board.is_none() && k.state != "error") { load(cx); }
+            // The board now (a pane opened, or restored with the layout).
+            load(cx);
             crundi_workbench::PaneParts {
                 body: Rc::new(move |cx| host.body(cx)),
                 info: Rc::new(|_| crundi_workbench::HeadInfo { title: "Kanban".into(), long: String::new(), state: "idle".into() }),
@@ -405,6 +411,21 @@ pub(crate) fn act(a: &str, task_id: &str, extra: &str, window: &mut Window, cx: 
     }
 }
 
+/// A click on a control of a card at rest (card_el.rs): what the live one does.
+pub(crate) fn click_control(task: &str, ctl: &str, at: Point<Pixels>, card_w: Pixels, window: &mut Window, cx: &mut App) {
+    let (x, y) = (f32::from(at.x + crundi_theme::T::SP_12), f32::from(at.y + crundi_theme::T::SP_12));
+    match ctl.split(':').collect::<Vec<_>>().as_slice() {
+        ["clip"] => clip_open(task, x, y, f32::from(card_w), cx),
+        ["menu"] => act("card-menu", task, "", window, cx),
+        ["mm"] => act("goto-mindmap", task, "", window, cx),
+        ["sub"] => act("add-subtask", task, "", window, cx),
+        ["tmedia"] => media_modal(cx),
+        ["tick", td, done] => toggle_todo(task, td, *done != "true", cx),
+        ["more", td] => todo_menu(task, td, x, y, cx),
+        _ => {}
+    }
+}
+
 pub(crate) fn toggle_todo(t: &str, td: &str, done: bool, cx: &mut App) {
     post(cx, json!({ "action": "updateTodo", "taskId": t, "todoId": td, "done": done }), reload);
 }
@@ -507,6 +528,7 @@ pub(crate) fn pointer_move(p: Point<Pixels>, cx: &mut App) {
 }
 
 pub(crate) fn pointer_up(cx: &mut App) {
+    with(cx, |k| k.boxes.borrow_mut().pressing = false);
     let (d, t) = drag_with(cx, |k| { k.press = None; (k.drag.take(), k.target.take()) });
     if let (Some(d), Some((stt, i, _))) = (d.as_ref(), t) {
         post(cx, json!({ "action": "moveTask", "taskId": d.id, "status": stt, "index": i }), reload);
@@ -558,6 +580,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "boxes": {
             "cols": merged_cols(&b.cols).iter().map(|(st, b)| json!({ "status": st, "x": b.x, "y": b.y, "w": b.w, "h": b.h })).collect::<Vec<_>>(),
             "cards": b.cards.iter().map(|(st, id, b)| json!({ "status": st, "id": id, "x": b.x, "y": b.y, "w": b.w, "h": b.h })).collect::<Vec<_>>(),
+            "controls": b.controls.iter().map(|(id, c, b)| json!({ "id": id, "control": c, "x": b.x, "y": b.y, "w": b.w, "h": b.h })).collect::<Vec<_>>(),
         },
     })
 }

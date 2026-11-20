@@ -267,7 +267,7 @@ fn items_of(c: &Col, drag: &Drag, clip: Option<&str>) -> Vec<Item> {
 
 /// The inputs the items draw (the blank card's, the new subtask's).
 #[derive(Clone)]
-struct Inputs { task: Option<Entity<w::InputState>>, todo: Option<Entity<w::InputState>>, boxes: Rc<RefCell<super::Boxes>> }
+struct Inputs { task: Option<Entity<w::InputState>>, todo: Option<Entity<w::InputState>>, boxes: Rc<RefCell<super::Boxes>>, cards: super::card_el::Cache }
 
 fn drop_line() -> Div { div().flex_none().h(T::SP_2).rounded(T::R_PILL).bg(T::accent()) }
 
@@ -276,7 +276,11 @@ fn item_el(it: &Item, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> Any
     match it {
         Item::Card { status, card, dragged, clip, line } => div().w_full().flex().flex_col().gap(T::SP_8).px(T::SP_8).pt(T::SP_8)
             .when(*line, |d| d.child(drop_line()))
-            .child(card_el(card, status, *dragged, *clip, card_w, inp, live, cx))
+            // At rest: one element, laid out once (card_el.rs); the card under
+            // the pointer, or in use, the live controls.
+            .map(|d| if live || card.menu_open || card.adding { d.child(card_el(card, status, *dragged, *clip, card_w, inp, true, cx)) } else {
+                d.child(super::card_el::CardEl { key: super::card_el::Key { card: (**card).clone(), dragged: *dragged, clip: *clip, width: px(0.) }, cache: inp.cards.clone(), status: status.clone(), boxes: inp.boxes.clone() })
+            })
             .into_any_element(),
         Item::Foot { status, adding, line, other } => div().w_full().flex().flex_col().gap(T::SP_8).px(T::SP_8).pt(T::SP_8).pb(T::SP_8)
             .when(*line, |d| d.child(drop_line()))
@@ -465,9 +469,9 @@ fn col_head(c: &Col) -> Div {
 
 fn edge(drop_here: bool, other: bool) -> Hsla { if drop_here { T::accent() } else if other { T::yellow() } else { T::border() } }
 
-fn inputs(store: &Entity<KStore>, cx: &App) -> Inputs {
+fn inputs(store: &Entity<KStore>, cards: &super::card_el::Cache, cx: &App) -> Inputs {
     let k = store.read(cx);
-    Inputs { task: k.task_input.clone(), todo: k.todo_input.clone(), boxes: k.boxes.clone() }
+    Inputs { task: k.task_input.clone(), todo: k.todo_input.clone(), boxes: k.boxes.clone(), cards: cards.clone() }
 }
 
 // ─── A column (the wide board) ───
@@ -482,7 +486,11 @@ pub struct ColumnView {
     drop_here: bool,
     /// The item under the pointer (its card has the live controls).
     hot: Option<usize>,
+    /// The scroll as last drawn (a scroll lets go of the live card).
+    last_top: Option<ListOffset>,
     all_live: bool,
+    /// Its cards at rest, laid out (card_el.rs).
+    cards: super::card_el::Cache,
     /// The height it needs (head and cards; the board caps it), as last laid out.
     pub needed: Pixels,
     _subs: Vec<Subscription>,
@@ -495,7 +503,7 @@ impl ColumnView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, all_live: false, needed: px(4000.), _subs: subs };
+        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), _subs: subs };
         v.sync(cx);
         v
     }
@@ -534,12 +542,17 @@ impl Render for ColumnView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rendered("kanban-col");
         let Some(c) = self.col.clone() else { return div().into_any_element() };
-        let inp = inputs(&self.store, cx);
+        let inp = inputs(&self.store, &self.cards, cx);
         // This column's boxes are taken again as it paints.
-        { let mut b = inp.boxes.borrow_mut(); b.cards.retain(|x| x.0 != c.status || c.other); b.cols.retain(|x| x.0 != c.status || c.other); }
+        { let mut b = inp.boxes.borrow_mut(); b.cards.retain(|x| x.0 != c.status || c.other); b.cols.retain(|x| x.0 != c.status || c.other); let ids: Vec<&String> = c.cards.iter().map(|x| &x.id).collect(); b.controls.retain(|x| !ids.contains(&&x.0)); }
         let (items, card_w, inp2) = (self.items.clone(), self.geom.card_w, inp.clone());
         // The card under the pointer (as this frame lays the list out) has the live controls.
-        self.hot = hot_at(&self.list, self.items.len(), window.mouse_position());
+        // (While it scrolls, no card is live: the pointer's next move makes
+        // the one under it live; a click before that is the card at rest's.)
+        let top = self.list.logical_scroll_top();
+        if self.last_top != Some(top) { if self.last_top.is_some() { self.hot = None; } self.last_top = Some(top); }
+        if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
+        let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
         let body = div().w_full().flex_1().min_h_0().child(crate::util::Layer(list(self.list.clone(), move |ix, _, cx| items.get(ix).map(|it| item_el(it, card_w, &inp2, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element()))
             .size_full().into_any_element()));
@@ -559,7 +572,11 @@ impl Render for ColumnView {
         }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
         div().id(("kanban-col", self.idx)).relative().size_full().flex().flex_col().min_h_0()
             // The pointer onto another card: that card gets the live controls.
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| { let h = hot_at(&this.list, this.items.len(), e.position); if h != this.hot { this.hot = h; cx.notify(); } }))
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                // (Not while a press on a card at rest is held: that card's click is its own.)
+                if this.store.read(cx).boxes.borrow().pressing { return; }
+                let h = hot_at(&this.list, this.items.len(), e.position); if h != this.hot { this.hot = h; cx.notify(); }
+            }))
             .on_hover(cx.listener(|this, on: &bool, _, cx| if !*on && this.hot.is_some() { this.hot = None; cx.notify(); }))
             .rounded(T::R_CARD).border_1().bg(T::bg_secondary()).border_color(edge(self.drop_here, c.other))
             .child(col_head(&c))
@@ -576,7 +593,7 @@ impl Render for ColumnView {
 #[derive(Clone, PartialEq)]
 enum SRow { Gap(Pixels), Head { col: Rc<Col>, drop: bool }, It { item: Item, drop: bool, other: bool, last: bool } }
 
-pub struct StackView { store: Entity<KStore>, rows: Rc<Vec<SRow>>, list: ListState, geom: Geom, hot: Option<usize>, all_live: bool, _subs: Vec<Subscription> }
+pub struct StackView { store: Entity<KStore>, rows: Rc<Vec<SRow>>, list: ListState, geom: Geom, hot: Option<usize>, last_top: Option<ListOffset>, all_live: bool, cards: super::card_el::Cache, _subs: Vec<Subscription> }
 
 impl StackView {
     fn new(store: Entity<KStore>, cx: &mut Context<Self>) -> Self {
@@ -585,7 +602,7 @@ impl StackView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, all_live: false, _subs: subs };
+        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), _subs: subs };
         v.sync(cx);
         v
     }
@@ -623,11 +640,11 @@ fn srow_el(r: &SRow, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> AnyE
     let colbox = |status: String, other: bool, boxes: Rc<RefCell<super::Boxes>>| canvas(move |b, _, _| if !other { boxes.borrow_mut().cols.push((status, b4(b))) }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
     match r {
         SRow::Gap(h) => div().w_full().h(*h).into_any_element(),
-        SRow::Head { col, drop } => div().relative().w_full().px(T::SP_12).child(div().relative().flex().flex_col().bg(T::bg_secondary()).border_t_1().border_x_1().border_color(edge(*drop, col.other))
+        SRow::Head { col, drop } => (div().relative().w_full().flex().flex_col().bg(T::bg_secondary()).border_t_1().border_x_1().border_color(edge(*drop, col.other))
             .rounded_t(T::R_CARD)
             .child(colbox(col.status.clone(), col.other, inp.boxes.clone()))
             .child(col_head(col)).child(w::rule())).into_any_element(),
-        SRow::It { item, drop, other, last } => div().relative().w_full().px(T::SP_12).child(div().relative().bg(T::bg_secondary()).border_x_1().border_color(edge(*drop, *other))
+        SRow::It { item, drop, other, last } => (div().relative().w_full().bg(T::bg_secondary()).border_x_1().border_color(edge(*drop, *other))
             .when(*last, |d| d.border_b_1().rounded_b(T::R_CARD))
             .child(colbox(status_of(item), *other, inp.boxes.clone()))
             .child(item_el(item, card_w, inp, live, cx))).into_any_element(),
@@ -637,15 +654,22 @@ fn srow_el(r: &SRow, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> AnyE
 impl Render for StackView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rendered("kanban-stack");
-        let inp = inputs(&self.store, cx);
-        { let mut b = inp.boxes.borrow_mut(); b.cards.clear(); b.cols.clear(); }
+        let inp = inputs(&self.store, &self.cards, cx);
+        { let mut b = inp.boxes.borrow_mut(); b.cards.clear(); b.cols.clear(); b.controls.clear(); }
         let (rows, card_w) = (self.rows.clone(), self.geom.card_w);
-        self.hot = hot_at(&self.list, rows.len(), window.mouse_position());
+        let top = self.list.logical_scroll_top();
+        if self.last_top != Some(top) { if self.last_top.is_some() { self.hot = None; } self.last_top = Some(top); }
+        if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
+        let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
         div().id("kanban-stack").size_full()
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| { let h = hot_at(&this.list, this.rows.len(), e.position); if h != this.hot { this.hot = h; cx.notify(); } }))
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                if this.store.read(cx).boxes.borrow().pressing { return; }
+                let h = hot_at(&this.list, this.rows.len(), e.position); if h != this.hot { this.hot = h; cx.notify(); }
+            }))
             .on_hover(cx.listener(|this, on: &bool, _, cx| if !*on && this.hot.is_some() { this.hot = None; cx.notify(); }))
-            .child(crate::util::Layer(list(self.list.clone(), move |ix, _, cx| rows.get(ix).map(|r| srow_el(r, card_w, &inp, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element())).size_full().into_any_element()))
+            // (The stack's sides, sp-12, are the list's padding.)
+            .child(crate::util::Layer(list(self.list.clone(), move |ix, _, cx| rows.get(ix).map(|r| srow_el(r, card_w, &inp, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element())).size_full().px(T::SP_12).into_any_element()))
     }
 }
 

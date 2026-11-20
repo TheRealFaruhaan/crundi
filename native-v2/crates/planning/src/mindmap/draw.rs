@@ -15,7 +15,7 @@
 
 use super::{help, tree, Key, Pan, Row, M};
 use crundi_core::driver::rendered;
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
 use gpui::{prelude::FluentBuilder as _, *};
@@ -567,7 +567,15 @@ impl Render for Dots {
 }
 
 /// The map: the ideas and links that cross the view, panned by its `Pan`.
-pub struct MapView { store: Entity<M>, pan: Entity<Pan>, edges: Option<Edges>, hot: Option<Hot>, pressed: Option<Hot>, _subs: Vec<Subscription> }
+pub struct MapView {
+    store: Entity<M>, pan: Entity<Pan>, edges: Option<Edges>, hot: Option<Hot>, pressed: Option<Hot>,
+    /// The ideas at rest, laid out (idea_el.rs), and the ghost's drawing per zoom.
+    ideas: super::idea_el::Cache,
+    ghost: Option<(u32, Rc<crate::paint::Draw>)>,
+    /// The pan and zoom as last drawn.
+    last_pan: Option<(f32, f32, f32)>,
+    _subs: Vec<Subscription>,
+}
 
 /// What the pointer is on: an idea, its fold button, an "add idea" box (its
 /// row, its idea).
@@ -635,7 +643,7 @@ impl MapView {
     fn new(store: Entity<M>, cx: &mut Context<Self>) -> Self {
         let pan = store.read(cx).pan();
         let subs = vec![cx.observe(&store, |_, _, cx| cx.notify()), cx.observe(&pan, |_, _, cx| cx.notify())];
-        MapView { store, pan, edges: None, hot: None, pressed: None, _subs: subs }
+        MapView { store, pan, edges: None, hot: None, pressed: None, ideas: Rc::default(), ghost: None, last_pan: None, _subs: subs }
     }
 }
 
@@ -684,22 +692,46 @@ impl Render for MapView {
         let mut content = div().id("mm-content").absolute().left(px(-panx)).top(px(-pany)).w(px(cw)).h(px(ch)).child(edges);
         // What the pointer is on, as this frame places the map (a pan moves
         // the ideas under a still pointer).
-        self.hot = self.hit(window.mouse_position(), cx);
+        // While it pans, nothing is drawn hovered (the pointer's next move
+        // hovers what is under it; a press hits through `hit` regardless).
+        let pan_now = (panx, pany, z);
+        if self.last_pan != Some(pan_now) { if self.last_pan.is_some() { self.hot = None; } self.last_pan = Some(pan_now); }
         let s = store.read(cx);
         let mut drawn = vec![];
+        // The ideas and ghosts at rest: one element paints them from their
+        // drawings (idea_el.rs). The one under the pointer, and the ones that
+        // must stay divs (a glow, a cut chip), are divs over it.
+        let mut rest: Vec<super::idea_el::Item> = vec![];
+        let mut divs: Vec<AnyElement> = vec![];
+        let ghost_draw = match &self.ghost { Some((zb, d)) if *zb == z.to_bits() => d.clone(), _ => { let d = Rc::new(super::idea_el::lay_ghost(z, window, cx)); self.ghost = Some((z.to_bits(), d.clone())); d } };
         for r in &s.rows {
             if !seen(r.x, r.y, r.h) { continue; }
             match r.kind {
                 "node" => {
                     drawn.push(r.id.clone());
                     let (h, f) = match &self.hot { Some(Hot::Node(i)) if *i == r.id => (true, false), Some(Hot::Fold(i)) if *i == r.id => (true, true), _ => (false, false) };
-                    content = content.child(card(r, Mode::Normal, z, None, h, f))
+                    if !h && !s.all_div {
+                        let k = super::idea_el::key(r, z);
+                        let cached = self.ideas.borrow().get(&r.id).filter(|(kk, _)| *kk == k).map(|(_, d)| d.clone());
+                        let d = match cached { Some(d) => d, None => { let d = super::idea_el::lay_idea(r, z, window, cx).map(Rc::new); self.ideas.borrow_mut().insert(r.id.clone(), (k, d.clone())); d } };
+                        if let Some(d) = d {
+                            let top = crate::paint::r(px((r.y * z - r.h * z / 2.).max(f32::from(T::SP_4) * z)));
+                            rest.push(super::idea_el::Item { id: r.id.clone(), left: crate::paint::r(px(r.x * z)), top, draw: d });
+                            continue;
+                        }
+                    }
+                    divs.push(card(r, Mode::Normal, z, None, h, f))
                 }
-                "ghost" if !r.hidden => content = content.child(ghost(r, z, matches!(&self.hot, Some(Hot::Ghost(i, _)) if *i == r.id))),
-                "drop" => content = content.child(drop_box(r, z)),
+                "ghost" if !r.hidden => {
+                    let h = matches!(&self.hot, Some(Hot::Ghost(i, _)) if *i == r.id);
+                    if !h && !s.all_div { rest.push(super::idea_el::Item { id: r.id.clone(), left: crate::paint::r(px(r.x * z)), top: crate::paint::r(px(r.y * z - r.h * z / 2.)), draw: ghost_draw.clone() }); }
+                    else { divs.push(ghost(r, z, h)); }
+                }
+                "drop" => divs.push(drop_box(r, z)),
                 _ => {}
             }
         }
+        content = content.child(super::idea_el::MapEl { items: rest, z }).children(divs);
         *s.drawn.borrow_mut() = drawn;
         if s.ring_on { content = content.child(ring(s, z)); }
         if let Some(h) = &s.hover { if !(s.edit_on && s.edit_node.as_ref().is_some_and(|e| e.id == h.id)) { content = content.child(card(h, Mode::Open, z, None, true, false)); } }

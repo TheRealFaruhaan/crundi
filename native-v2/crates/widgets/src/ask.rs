@@ -163,10 +163,11 @@ impl Render for AskLayer {
                 div().id("ask-menu-back").occlude().w(vp.width).h(vp.height)
                     .on_mouse_down(MouseButton::Left, cx.listener(|l, _, _, cx| { l.menu = None; cx.notify(); }))
                     .on_mouse_down(MouseButton::Right, cx.listener(|l, _, _, cx| { l.menu = None; cx.notify(); }))
-                    .child(div().absolute().left(m.at.x).top(m.at.y).min_w(T::MENU_MIN_W).p(T::SP_4).flex().flex_col()
+                    // Kept inside the window, 6 px in, as the web's openCtxMenu.
+                    .child(anchored().position(m.at).snap_to_window_with_margin(px(6.)).child(div().min_w(T::MENU_MIN_W).p(T::SP_4).flex().flex_col()
                         .bg(T::bg_secondary()).border_1().border_color(T::border()).rounded(T::R_FIELD)
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .children(rows)),
+                        .children(rows))),
             )).with_priority(2));
         }
         if let Some(p) = &self.pending {

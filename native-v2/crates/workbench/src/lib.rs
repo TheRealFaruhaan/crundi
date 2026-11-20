@@ -102,13 +102,17 @@ pub struct Workbench {
     /// Panes just started here, kept for a while even if the server's list
     /// does not have them yet.
     protect: HashMap<String, Instant>,
+    /// The empty leaf whose chip is being clicked: the chip's action places
+    /// its pane there (the web fills the clicked leaf), set only while the
+    /// action runs.
+    chip_leaf: Option<u32>,
 }
 
 impl Workbench {
     pub fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
         cx.set_global(Handle(cx.entity().downgrade()));
         let project = stores.projects.read(cx).open.clone();
-        Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new() }
+        Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new(), chip_leaf: None }
     }
 
     /// The open project's mosaic (loaded from the saved layouts the first time).
@@ -137,6 +141,12 @@ impl Workbench {
     /// workbench, else an empty leaf, else a new one to the right).
     pub fn place(&mut self, key: &str, cx: &mut Context<Self>) {
         if self.mosaic().leaf_of(key).is_some() { return; }
+        // An empty leaf's chip: that leaf.
+        if let Some(l) = self.chip_leaf.take().filter(|l| self.leaf_empty(*l)) {
+            self.mosaic().assign(l, Some(key.to_string()));
+            self.focused = l;
+            return self.changed(cx);
+        }
         if let Some(seed) = self.seeded.take().filter(|_| !key.starts_with("pend:")) {
             if let Some(l) = self.mosaic().leaf_of(&seed) { self.mosaic().assign(l, Some(key.to_string())); self.focused = l; return self.changed(cx); }
         }
@@ -195,6 +205,20 @@ impl Workbench {
     fn key_of(&mut self, leaf: u32) -> Option<String> {
         let (w, h) = self.area;
         self.mosaic().layout(w.max(1.), h.max(1.)).0.into_iter().find(|l| l.id == leaf).and_then(|l| l.key)
+    }
+
+    /// A leaf that is laid out and holds no pane.
+    fn leaf_empty(&mut self, leaf: u32) -> bool {
+        let (w, h) = self.area;
+        self.mosaic().layout(w.max(1.), h.max(1.)).0.iter().any(|l| l.id == leaf && l.key.is_none())
+    }
+
+    /// An empty leaf's chip, clicked: its action runs with that leaf as the
+    /// place for what it opens (the driver's "leaf-chip" too).
+    pub fn chip(this: &Entity<Self>, leaf: u32, kind: &str, window: &mut Window, cx: &mut App) {
+        let stores = this.update(cx, |w, _| { w.chip_leaf = Some(leaf); w.stores.clone() });
+        crundi_shell::run_action(&stores, &format!("wb-chip:{kind}"), window, cx);
+        this.update(cx, |w, _| w.chip_leaf = None);
     }
 
     fn focus_pane(&mut self, leaf: u32, cx: &mut Context<Self>) {
@@ -300,9 +324,9 @@ impl Workbench {
         let mut chips = div().flex().flex_wrap().justify_center().gap(T::SP_6).max_w(T::LEAF_CHIPS_W).mb(T::SP_2);
         for (k, label) in empty_chips(open) {
             let icon = match k { "terminal" => IconName::Terminal, "files" => IconName::Folder, "git" => IconName::GitBranch, "kanban" => IconName::Kanban, "notes" => IconName::FileText, "mindmap" => IconName::Network, "media" => IconName::Images, "factory" => IconName::Factory, _ => IconName::PanelsTopLeft };
-            let s = self.stores.clone();
+            let me = cx.entity();
             chips = chips.child(w::leaf_chip(SharedString::from(format!("chip-{k}-{id}")), icon, label, format!("Add {label}"))
-                .on_click(move |_, window, cx| { crundi_shell::run_action(&s, &format!("wb-chip:{k}"), window, cx); }));
+                .on_click(move |_, window, cx| Workbench::chip(&me, id, k, window, cx)));
         }
         // The web's .mosaic-empty: 3px in, a 2px dashed border, the message,
         // the chips and the actions 10 apart, centred.
@@ -447,14 +471,32 @@ pub fn init(cx: &mut App) {
             w.into()
         })
         .on_project(|_, alias, cx| if let Some(w) = workbench(cx) { w.update(cx, |w, cx| w.set_project(alias, cx)); })
+        // The driver's head and leaf actions, as a person's clicks: ×
+        // (twice: the first arms "Sure?"), split, A- / A+, an empty leaf's chip.
+        .test_ui(|_, name, a, window, cx| {
+            let w = workbench(cx)?;
+            let s = |i: usize| a.get(i).cloned().unwrap_or_default();
+            let leaf_of = |w: &Entity<Workbench>, key: &str, cx: &mut App| -> Option<u32> { if let Ok(n) = key.parse::<u32>() { return Some(n); } w.update(cx, |w, _| w.mosaic().leaf_of(key)) };
+            match name {
+                "pane-close" => { let l = leaf_of(&w, &s(0), cx)?; w.update(cx, |w, cx| w.pane_close(l, cx)); }
+                "pane-split" => { let l = leaf_of(&w, &s(0), cx)?; let down = s(1) == "true" || s(1) == "down"; w.update(cx, |w, cx| w.split(l, down, cx)); }
+                "pane-zoom" => { let l = leaf_of(&w, &s(0), cx)?; let d: i32 = s(1).parse().unwrap_or(0); w.update(cx, |w, cx| w.pane_zoom(l, d, cx)); }
+                "leaf-chip" => { let l: u32 = s(0).parse().ok()?; let k = s(1); Workbench::chip(&w, l, &k, window, cx); }
+                _ => return None,
+            }
+            Some(serde_json::json!({ "ok": true }))
+        })
         .state(|_, _, cx| {
             let Some(w) = workbench(cx) else { return serde_json::json!({}) };
-            let (keys, focused, heads) = w.update(cx, |w, cx| {
+            let (keys, focused, heads, leaves) = w.update(cx, |w, cx| {
                 let heads: serde_json::Map<String, serde_json::Value> = w.panes.iter().filter_map(|(k, p)| p.head.read(cx).drawn_title().map(|t| (k.clone(), t.into()))).collect();
-                (w.keys(), w.focused_key(), heads)
+                let ((aw, ah), armed) = (w.area, w.armed);
+                let leaves: Vec<serde_json::Value> = w.mosaic().layout(aw.max(1.), ah.max(1.)).0.iter().map(|l| serde_json::json!({ "id": l.id, "key": l.key, "armed": armed == l.id })).collect();
+                (w.keys(), w.focused_key(), heads, leaves)
             });
-            // "heads": each pane head's title as it last drew it (F29).
-            serde_json::json!({ "panes": keys, "focusedPane": focused, "heads": heads })
+            // "heads": each pane head's title as it last drew it (F29);
+            // "leaves": every leaf (empty ones too), its pane and its ×'s "Sure?".
+            serde_json::json!({ "panes": keys, "focusedPane": focused, "heads": heads, "leaves": leaves })
         }));
 }
 
