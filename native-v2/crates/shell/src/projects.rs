@@ -40,6 +40,9 @@ impl Projects {
         self.list.iter().find(|p| p.alias == self.open).map(|p| p.name.clone()).unwrap_or_default()
     }
 
+    /// The projects as the server sent them (Operations: a project's settings, Homepool's lists).
+    pub fn raw(&self) -> &[Value] { &self.raw }
+
     /// A project's folder on the server ("" when unknown).
     pub fn path_of(&self, alias: &str) -> String {
         self.raw.iter().find(|p| p.get("alias").and_then(|a| a.as_str()) == Some(alias)).and_then(|p| p.get("path").and_then(|v| v.as_str())).unwrap_or("").to_string()

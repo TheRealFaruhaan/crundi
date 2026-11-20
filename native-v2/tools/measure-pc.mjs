@@ -69,6 +69,8 @@
 // (a chat streaming, a chat, Kanban, Mindmap, the shell):
 //   cr-sweep      the wheel sweep over the window while the chat streams
 //   cr-scroll     the wheel over the chat, the Kanban and the map in turn
+// Then the operations area's (MEASURE_OPS=1): scroll-info, idle-info,
+// scroll-settings, idle-settings, scroll-docker (see the block).
 // Each: frames, p50, p95, max, ≤7 ms share, frames over 7 and over 16 ms.
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, realpathSync } from 'node:fs';
@@ -471,6 +473,41 @@ try {
     stats('cr-scroll', m);
     s = await state(); report['cr-scroll'].renders = drew(r0, s); report['cr-scroll'].streaming = s.chatState;
     for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
+  }
+  // The operations area's heavy screens (MEASURE_OPS=1; after the rest):
+  //   scroll-info      the Info tab: the wheel over the page, then over its
+  //                    server log (a virtual list, live from the server)
+  //   idle-info        Info still: only its live figures redraw it (2 s poll)
+  //   scroll-settings  Settings with every section open: the wheel over the page
+  //   idle-settings    Settings still: 0 frames
+  //   scroll-docker    the Docker tab's list: the wheel over it
+  if (process.env.MEASURE_OPS === '1') {
+    const ui = (name, ...args) => d.send({ cmd: 'ui', name, args: args.map(String) });
+    const ops = (name, ...args) => ui(`ops:${name}`, ...args);
+    const wheelAt = async (pts, ms) => { const end = Date.now() + ms; let i = 0; while (Date.now() < end) { const [x, y] = pts[Math.floor(i / 40) % pts.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x, y, dy: (i % 40) < 20 ? 60 : -60 }); i++; await sleep(7); } return i; };
+    const opsRun = async (name, pts, ms = 8000) => {
+      const r = (await state()).renders || {};
+      const mm = fm.mark(); const n = await wheelAt(pts, ms); await sleep(300); stats(name, mm);
+      report[name].wheelEvents = n; report[name].renders = drew(r, await state());
+    };
+    await ui('tab', 'info');
+    await sleep(4000);
+    s = await state();
+    report.setup.ops = { infoLogs: s.areas?.ops?.info?.logs };
+    await opsRun('scroll-info', [[W / 2, H / 2], [W / 2, H - 140]]);
+    let r1 = (await state()).renders || {};
+    m = fm.mark(); await sleep(6000); stats('idle-info', m); report['idle-info'].renders = drew(r1, await state());
+    await ui('tab', 'settings');
+    await sleep(2000);
+    for (const sec of ['server', 'cc', 'whatsnew', 'sysprompt', 'skills', 'usage', 'voice', 'channels', 'notify', 'signin', 'phone', 'session', 'config', 'terminal', 'backup', 'desktop']) await ops('settings-open', sec, 'true');
+    await sleep(4000);
+    await opsRun('scroll-settings', [[W / 2, H / 2]]);
+    r1 = (await state()).renders || {};
+    m = fm.mark(); await sleep(6000); stats('idle-settings', m); report['idle-settings'].renders = drew(r1, await state());
+    await ui('tab', 'docker');
+    await sleep(4000);
+    await opsRun('scroll-docker', [[W / 2, H / 2]]);
+    await ui('tab', 'workbench');
   }
   d.close();
 } catch (e) { done = true; report.allFrames = fm.frames.length; finish(1, String(e)); }

@@ -1665,6 +1665,7 @@ version = "0.1.0"
 dependencies = [
  "crundi-chat",
  "crundi-core",
+ "crundi-operations",
  "crundi-planning",
  "crundi-shell",
  "crundi-theme",
@@ -1736,6 +1737,26 @@ dependencies = [
  "tungstenite",
  "two-face",
  "ureq",
+]
+
+[[package]]
+name = "crundi-operations"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "crundi-core",
+ "crundi-shell",
+ "crundi-theme",
+ "crundi-widgets",
+ "crundi-workbench",
+ "gpui-component",
+ "gpui-pre",
+ "log",
+ "open",
+ "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
