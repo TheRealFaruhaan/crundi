@@ -1,0 +1,390 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:e9065c86438b2560",
+   "live:9e032b906f1d35f6",
+   "live:739a271058000a10",
+   "live:20b3493c6949b793"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "20b3493c6949b793",
+  "focusedRows": 98,
+  "streamChat": "734c3d10e6ead050",
+  "panesWhileStreaming": 5,
+  "batches": 290,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880,
+  "terminal": {
+   "key": "term:2410a15ab9d37e47",
+   "panes": 6,
+   "size": [
+    42,
+    52
+   ]
+  },
+  "kanban": {
+   "columns": 4,
+   "cards": 80
+  },
+  "mindmap": {
+   "ideas": 133,
+   "drawn": 20,
+   "view": [
+    1638,
+    873
+   ]
+  },
+  "planningPanes": [
+   "panel:kanban",
+   "live:e9065c86438b2560",
+   "panel:mindmap",
+   "live:9e032b906f1d35f6",
+   "live:734c3d10e6ead050",
+   "live:739a271058000a10",
+   "live:20b3493c6949b793",
+   "term:2410a15ab9d37e47"
+  ],
+  "planningInView": {
+   "focused": "",
+   "kanbanCols": 1,
+   "mindmapCanvas": [
+    615,
+    179
+   ],
+   "mindmapView": [
+    338,
+    378
+   ]
+  },
+  "cr": {
+   "panes": [
+    "panel:kanban",
+    "live:e9065c86438b2560",
+    "panel:mindmap",
+    "term:2410a15ab9d37e47",
+    "live:734c3d10e6ead050"
+   ],
+   "kanbanCols": 1,
+   "mindmapCanvas": [
+    812,
+    179
+   ],
+   "mindmapView": [
+    535,
+    378
+   ],
+   "points": [
+    [
+     535.5,
+     800
+    ],
+    [
+     535.5,
+     383
+    ],
+    [
+     1327,
+     368
+    ]
+   ]
+  }
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 600,
+  "p50": 3.91,
+  "p95": 5.58,
+  "max": 7.02,
+  "share7": 1,
+  "over7": 1,
+  "over16": 0,
+  "seconds": 8.3,
+  "wheelEvents": 904,
+  "renders": {
+   "workbench": 600,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 4,
+   "log": 606,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 603,
+  "p50": 3.74,
+  "p95": 5.58,
+  "max": 5.93,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 603,
+   "log": 603
+  }
+ },
+ "stream+scroll": {
+  "frames": 588,
+  "p50": 4.72,
+  "p95": 6.54,
+  "max": 8.05,
+  "share7": 0.98,
+  "over7": 13,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 857
+ },
+ "stream": {
+  "frames": 86,
+  "p50": 5.07,
+  "p95": 6.31,
+  "max": 6.84,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 3.5,
+  "renders": {
+   "workbench": 674,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 1,
+   "log": 850,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "term-stream": {
+  "frames": 2142,
+  "p50": 4.1,
+  "p95": 6.52,
+  "max": 7.88,
+  "share7": 0.99,
+  "over7": 32,
+  "over16": 0,
+  "seconds": 29.5,
+  "renders": {
+   "workbench": 2142,
+   "top-bar": 1,
+   "term-screen": 2142,
+   "term-cursor": 2142
+  },
+  "batches": 2767,
+  "screen": {
+   "paints": 2142,
+   "usPerPaint": 417
+  }
+ },
+ "term-stream+scroll": {
+  "frames": 2238,
+  "p50": 4.92,
+  "p95": 7.31,
+  "max": 9.8,
+  "share7": 0.89,
+  "over7": 249,
+  "over16": 0,
+  "seconds": 31.3,
+  "renders": {
+   "workbench": 2238,
+   "top-bar": 1,
+   "log": 2245,
+   "term-screen": 2147,
+   "term-cursor": 2147
+  },
+  "batches": 2770,
+  "screen": {
+   "paints": 2147,
+   "usPerPaint": 439
+  },
+  "wheelEvents": 3174
+ },
+ "idle-terminal": {
+  "frames": 1,
+  "p50": 5.67,
+  "p95": 5.67,
+  "max": 5.67,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 6,
+  "renders": {
+   "workbench": 1,
+   "top-bar": 1
+  }
+ },
+ "scroll-kanban": {
+  "frames": 632,
+  "p50": 3.25,
+  "p95": 3.99,
+  "max": 5.27,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "kanban-col": 646
+  }
+ },
+ "pan-mindmap": {
+  "frames": 321,
+  "p50": 4.37,
+  "p95": 5.19,
+  "max": 5.85,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8.3,
+  "renders": {
+   "mindmap-map": 321
+  },
+  "drawnAtEnd": 20,
+  "relayouts": 0
+ },
+ "idle-planning": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 6
+ },
+ "planning+stream+scroll": {
+  "frames": 482,
+  "p50": 6.04,
+  "p95": 7.64,
+  "max": 9.11,
+  "share7": 0.79,
+  "over7": 102,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 796,
+  "renders": {
+   "workbench": 482,
+   "top-bar": 1,
+   "log": 199,
+   "term-screen": 69,
+   "term-cursor": 69,
+   "mindmap-map": 136,
+   "kanban-stack": 80
+  },
+  "panes": [
+   "panel:kanban",
+   "live:e9065c86438b2560",
+   "panel:mindmap",
+   "live:9e032b906f1d35f6",
+   "live:734c3d10e6ead050",
+   "live:739a271058000a10",
+   "live:20b3493c6949b793",
+   "term:2410a15ab9d37e47"
+  ]
+ },
+ "region:kanban": {
+  "frames": 134,
+  "p50": 6.15,
+  "p95": 7.02,
+  "max": 8.49,
+  "share7": 0.94,
+  "over7": 8,
+  "over16": 0,
+  "seconds": 2,
+  "renders": {
+   "workbench": 134,
+   "kanban-stack": 134
+  }
+ },
+ "region:mindmap": {
+  "frames": 138,
+  "p50": 6.06,
+  "p95": 6.49,
+  "max": 6.92,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 2,
+  "renders": {
+   "workbench": 138,
+   "mindmap-map": 138
+  }
+ },
+ "cr-sweep": {
+  "frames": 561,
+  "p50": 5.44,
+  "p95": 6.34,
+  "max": 7.31,
+  "share7": 1,
+  "over7": 2,
+  "over16": 0,
+  "seconds": 8,
+  "wheelEvents": 813,
+  "renders": {
+   "workbench": 562,
+   "log": 367,
+   "term-screen": 56,
+   "term-cursor": 56,
+   "mindmap-map": 121,
+   "kanban-stack": 160
+  },
+  "streaming": "working"
+ },
+ "crWheel": 939,
+ "cr-scroll": {
+  "frames": 636,
+  "p50": 5.05,
+  "p95": 6.7,
+  "max": 8.96,
+  "share7": 0.97,
+  "over7": 16,
+  "over16": 0,
+  "seconds": 9,
+  "renders": {
+   "workbench": 637,
+   "log": 436,
+   "mindmap-map": 214,
+   "kanban-stack": 217
+  },
+  "streaming": "working"
+ },
+ "allFrames": 9750,
+ "ranSeconds": 230
+}

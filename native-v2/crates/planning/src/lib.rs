@@ -103,10 +103,25 @@ pub fn place(cx: &mut App, key: &str) {
     if let Some(wb) = crundi_workbench::workbench(cx) { let k = key.to_string(); wb.update(cx, |w, cx| w.place(&k, cx)); }
 }
 
-fn measure_layout(stream: &str, cx: &mut App) -> bool {
+fn measure_layout(stream: &str, cr: Option<(&str, &str)>, cx: &mut App) -> bool {
     use crundi_core::mosaic::{Dir, Mosaic};
     let Some(wb) = crundi_workbench::workbench(cx) else { return false };
     let stream = stream.to_string();
+    // The change request's five panes: the Kanban over a chat, the Mindmap
+    // over a terminal, the streaming chat (focused) in the third column.
+    if let Some((chat, term)) = cr {
+        let (chat, term) = (chat.to_string(), term.to_string());
+        wb.update(cx, |w, cx| {
+            let mut m = Mosaic::preset("cols3", vec!["panel:kanban".into(), "panel:mindmap".into(), stream.clone()]);
+            for (above, k) in [("panel:kanban", &chat), ("panel:mindmap", &term)] {
+                if let Some(l) = m.leaf_of(above) { let n = m.split(l, Dir::Col); m.assign(n, Some(k.clone())); }
+            }
+            *w.mosaic() = m;
+            w.focus_key(&stream, cx);
+            cx.notify();
+        });
+        return true;
+    }
     wb.update(cx, |w, cx| {
         let keys = w.keys();
         let chats: Vec<String> = keys.iter().filter(|k| k.starts_with("live:") && **k != stream).cloned().collect();
@@ -136,7 +151,12 @@ fn test_ui(stores: &Stores, name: &str, args: &[String], window: &mut Window, cx
         // The frame budget's layout (tools/measure-pc.mjs): every pane in
         // view, in three columns: the Kanban over a chat, the Mindmap over a
         // chat, the given chat (the one streaming, focused) over the others.
-        "measure-layout" => return Some(json!({ "ok": measure_layout(args.first().map(|s| s.as_str()).unwrap_or(""), cx) })),
+        "measure-layout" => {
+            let a = |i: usize| args.get(i).map(|s| s.as_str()).unwrap_or("");
+            // "measure-layout <stream> cr <chat> <terminal>": the CR's five panes.
+            let cr = (a(1) == "cr").then(|| (a(2), a(3)));
+            return Some(json!({ "ok": measure_layout(a(0), cr, cx) }));
+        }
         _ => {}
     }
     if let Some(v) = media::test_ui(name, args, window, cx) { return Some(v); }

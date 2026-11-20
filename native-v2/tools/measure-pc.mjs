@@ -65,6 +65,10 @@
 //                 redraw a frame at most)
 //   term-stream+scroll  the wheel sweep while it prints them again
 //   idle-terminal after it (the terminal not focused: no blink): 0 frames
+// Last, the change request's scenario (MEASURE_CR=0 skips it): five panes
+// (a chat streaming, a chat, Kanban, Mindmap, the shell):
+//   cr-sweep      the wheel sweep over the window while the chat streams
+//   cr-scroll     the wheel over the chat, the Kanban and the map in turn
 // Each: frames, p50, p95, max, ≤7 ms share, frames over 7 and over 16 ms.
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, realpathSync } from 'node:fs';
@@ -189,7 +193,12 @@ let done = false;
 // The client died: nothing more to drive.
 app.on('exit', (code, sig) => { exited = true; if (!done) finish(1, `the client exited (${sig || code}) before the run was done`); });
 
+// MEASURE_PPROF=<scenario> (a frame-journal build, CRUNDI_PPROF_DIR set):
+// the in-process sampler runs through that scenario only.
+const PPROF = process.env.MEASURE_PPROF, PDIR = process.env.CRUNDI_PPROF_DIR;
+const ppStart = (name) => { if (PPROF === name && PDIR) writeFileSync(join(PDIR, 'start'), ''); };
 const stats = (name, from, until = Date.now()) => {
+  if (PPROF === name && PDIR) writeFileSync(join(PDIR, 'stop'), '');
   const s = fm.since(from, until);
   const r = { ...s, seconds: Math.round((until - from) / 100) / 10 };
   report[name] = r;
@@ -218,7 +227,7 @@ try {
   let m = fm.mark(); await sleep(8000); stats('idle-open', m);
   const drew = (r0, s) => Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]).filter(([, v]) => v));
   let r0 = s.renders || {};
-  m = fm.mark(); const n1 = await sweep(d, 8000); await sleep(300); stats('scroll-panes', m); report['scroll-panes'].wheelEvents = n1;
+  ppStart('scroll-panes'); m = fm.mark(); const n1 = await sweep(d, 8000); await sleep(300); stats('scroll-panes', m); report['scroll-panes'].wheelEvents = n1;
   s = await state(); report['scroll-panes'].renders = Object.fromEntries(Object.entries(s.renders || {}).map(([k, v]) => [k, v - (r0[k] || 0)]));
   // The focused chat's log scrolled (as the slice suite), up then down, 7 ms apart.
   const scrollChat = async (ms) => { const end = Date.now() + ms; let i = 0; while (Date.now() < end) { await d.send({ cmd: 'ui', name: 'log-scroll', args: [(i % 60) < 30 ? '-50' : '50'] }); i++; await sleep(7); } return i; };
@@ -289,6 +298,7 @@ try {
       await sleep(600);
       const s0 = await state();
       const r0 = s0.renders || {}, b0 = TS(s0, key)?.batches || 0;
+      ppStart(name);
       const from = fm.mark();
       let wheel = 0;
       const done = (s) => TS(s, key)?.screen.some((l) => l.startsWith(`line ${n} `));
@@ -375,7 +385,7 @@ try {
       report.setup.planningStream = { chat: s.chat, state: s.chatState };
     }
     r0 = s.renders || {};
-    m = fm.mark(); const n3 = await sweep(d, 8000); stats('planning+stream+scroll', m); report['planning+stream+scroll'].wheelEvents = n3;
+    ppStart('planning+stream+scroll'); m = fm.mark(); const n3 = await sweep(d, 8000); stats('planning+stream+scroll', m); report['planning+stream+scroll'].wheelEvents = n3;
     s = await state(); report['planning+stream+scroll'].renders = drew(r0, s);
     // The panes the sweep really had (an open terminal comes back into the
     // layout after measure-layout: the workspace's sync places it again).
@@ -412,6 +422,54 @@ try {
         report[`region:${name}`].renders = drew(r1, await state());
       }
     }
+    for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
+  }
+
+  // The change request's own scenario (MEASURE_CR=0 skips it; it needs the
+  // terminal, the planning panes and the stream): five panes, the Kanban
+  // over a chat, the Mindmap over the shell, the streaming chat in the third
+  // column. The other seeded chats are closed on the server first (every
+  // running chat has a pane). Then, while the chat streams: the wheel sweep
+  // over the window (cr-sweep) and the wheel over the chat, the Kanban and
+  // the map in turn (cr-scroll).
+  const tk = report.setup.terminal?.key, sc = report.setup.streamChat;
+  if (process.env.MEASURE_CR !== '0' && tk && sc && process.env.MEASURE_PLANNING !== '0' && process.env.MEASURE_STREAM !== '0') {
+    const ui = (name, ...args) => d.send({ cmd: 'ui', name, args: args.map(String) });
+    const K = (s) => s.planningArea?.kanban;
+    const MM = (s) => s.planningArea?.mindmap;
+    const other = seeded[0];
+    for (const id of seeded.slice(1)) await api.http('POST', `/api/ui-sessions/${id}/close`, {});
+    for (let i = 0; i < 60; i++) { s = await state(); if (!(s.panes || []).some((k) => seeded.slice(1).some((id) => k === `live:${id}`))) break; await sleep(250); }
+    await ui('measure-layout', `live:${sc}`, 'cr', `live:${other}`, tk);
+    await sleep(2500);
+    s = await state();
+    report.setup.cr = { panes: s.panes, kanbanCols: (K(s)?.boxes?.cols || []).length, mindmapCanvas: MM(s)?.canvas, mindmapView: MM(s)?.view };
+    console.log('cr layout', JSON.stringify(report.setup.cr));
+    if ((s.panes || []).length !== 5) throw new Error('the CR layout has ' + (s.panes || []).length + ' panes: ' + JSON.stringify(s.panes));
+    // The longest reply (the cities: about 19 s with the stub), sent anew
+    // for each of the two so the chat streams through both.
+    const stream = async () => {
+      for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
+      const n0 = (s.entries || []).length;
+      await d.send({ cmd: 'ui', name: 'send', args: [SEEDS[2]] });
+      for (let i = 0; i < 600; i++) { s = await state(); if ((s.entries || []).length > n0 + 1 && s.chatState === 'working') break; await sleep(200); }
+    };
+    await stream();
+    // The chat pane's place: the leaf under the Kanban (its column's lower half).
+    const kb = (K(s)?.boxes?.cols || [])[0];
+    const [mx, my] = MM(s)?.canvas || [0, 0];
+    const [mw, mh] = MM(s)?.view || [0, 0];
+    const pts = [[kb ? kb.x + kb.w / 2 : 320, 800], kb && [kb.x + kb.w / 2, kb.y + Math.min(kb.h / 2, 200)], mw > 0 && [mx + mw - 20, my + mh / 2]].filter(Boolean);
+    report.setup.cr.points = pts;
+    r0 = s.renders || {};
+    ppStart('cr-sweep'); m = fm.mark(); const n4 = await sweep(d, 8000); stats('cr-sweep', m); report['cr-sweep'].wheelEvents = n4;
+    s = await state(); report['cr-sweep'].renders = drew(r0, s); report['cr-sweep'].streaming = s.chatState;
+    await stream();
+    r0 = s.renders || {};
+    ppStart('cr-scroll'); m = fm.mark();
+    { const end = Date.now() + 9000; let i = 0; while (Date.now() < end) { const [x, y] = pts[Math.floor(i / 40) % pts.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x, y, dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } report.crWheel = i; }
+    stats('cr-scroll', m);
+    s = await state(); report['cr-scroll'].renders = drew(r0, s); report['cr-scroll'].streaming = s.chatState;
     for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
   }
   d.close();

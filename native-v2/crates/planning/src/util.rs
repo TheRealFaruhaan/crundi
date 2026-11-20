@@ -73,29 +73,3 @@ pub mod prefs {
 /// The ids of elements, from a prefix and a key.
 pub fn eid(p: &str, k: &str) -> ElementId { ElementId::Name(format!("{p}-{k}").into()) }
 
-/// An element painted in one paint layer (as the chat log's list,
-/// ARCHITECTURE.md "One paint layer per log"): its primitives take the
-/// layer's order instead of one bounds-tree insert each, also when a clean
-/// view is replayed. No layout of its own: its child's.
-pub struct Layer(pub AnyElement);
-
-impl IntoElement for Layer {
-    type Element = Self;
-    fn into_element(self) -> Self { self }
-}
-
-impl Element for Layer {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-    fn id(&self) -> Option<ElementId> { None }
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
-    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
-        (self.0.request_layout(window, cx), ())
-    }
-    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) {
-        self.0.prepaint(window, cx);
-    }
-    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), _: &mut (), window: &mut Window, cx: &mut App) {
-        window.paint_layer(bounds, |window| self.0.paint(window, cx));
-    }
-}

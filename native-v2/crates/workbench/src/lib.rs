@@ -342,10 +342,13 @@ impl Workbench {
                         .on_click(cx.listener(move |this, _, _, cx| { this.mosaic().close(id); this.changed(cx); })))))
     }
 
-    /// A pane: its head and body side by side, each cached (rule 3).
-    fn frame(&mut self, key: &str, f: head::Frame, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// A pane: its head and body side by side, each cached (rule 3). The
+    /// panel's own box, which the caller places (the leaf): the Workbench
+    /// re-renders on every frame that draws any pane, so a pane is as few
+    /// elements as it can be (the box, its head, its body's box, the kind's).
+    fn frame(&mut self, key: &str, f: head::Frame, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let Some((head, body)) = self.pane(key, window, cx) else {
-            return w::empty("Not built yet in the v2 client.").into_any_element();
+            return div().size_full().child(w::empty("Not built yet in the v2 client."));
         };
         // The head's frame (armed, pinned, narrow, focused) is the
         // workbench's: the head reads it, and is notified here only when its
@@ -361,10 +364,10 @@ impl Workbench {
             .on_scroll(|_, _, cx| cx.stop_propagation())
             // The kind's body: elements around its cached views.
             .child(body(cx));
-        w::panel(head.cached(StyleRefinement::default().w_full().h(hh).flex_none()), body)
-            .size_full()
+        w::panel_box()
+            .child(head.cached(StyleRefinement::default().w_full().h(hh).flex_none()))
+            .child(body)
             .when(f.focused && !f.full, |d| d.border_color(T::accent()))
-            .into_any_element()
     }
 }
 
@@ -413,13 +416,13 @@ impl Render for Workbench {
         let mut grid = div().relative().w(px(gw)).h(px(ah));
         for l in &leaves {
             let id = l.id;
-            let inner = match &l.key {
+            // The leaf is the pane's panel itself (one element less per pane).
+            let leaf = match &l.key {
                 Some(k) => { let f = self.head_state(id, l.pinned, l.w, false); self.frame(k, f, window, cx) }
-                None => self.empty_leaf(id, &open, cx).into_any_element(),
+                None => self.empty_leaf(id, &open, cx),
             };
-            grid = grid.child(div().id(("leaf", id)).absolute().left(px(l.x)).top(px(l.y)).w(px(l.w)).h(px(l.h))
-                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.focus_pane(id, cx)))
-                .child(inner));
+            grid = grid.child(leaf.id(("leaf", id)).absolute().left(px(l.x)).top(px(l.y)).w(px(l.w)).h(px(l.h))
+                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| this.focus_pane(id, cx))));
         }
         for (n, g) in gutters.into_iter().enumerate() {
             let (split, index, row, span, locked) = (g.split, g.index, g.dir == Dir::Row, g.span, g.locked);

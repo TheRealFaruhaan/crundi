@@ -70,6 +70,9 @@ impl Composer {
                 if let InputEvent::PressEnter { shift: false, secondary: false } = ev { this.send(window, cx); }
             }),
         ];
+        let mut subs = subs;
+        let focus = input.focus_handle(cx);
+        subs.extend(w::watch_focus(&focus, window, cx));
         let meta = meta_e.read(cx).0.clone();
         Composer { store, meta, input, stop_armed: false, height: px(96.), _subs: subs }
     }
@@ -111,7 +114,7 @@ fn state_label(st: &str) -> (&'static str, Hsla) {
 }
 
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("composer");
         let m = &self.meta;
         let fs = scale(m.zoom);
@@ -126,14 +129,19 @@ impl Render for Composer {
             // (After the frame: a notify while drawing would not draw again.)
             if (me.read(cx).height - h).abs() > px(0.5) { let me = me.clone(); cx.defer(move |cx| me.update(cx, |c, cx| { c.height = h; cx.notify(); })); }
         }, |_, _, _, _| {}).absolute().size_full();
+        // Its buttons and its meta row each in one paint layer (w::layer;
+        // every composer is replayed each frame); the message box only while
+        // it is not focused (w::text_box: a caret is drawn over the text).
+        let focus = self.input.focus_handle(cx);
+        let mbox = w::text_box(&focus, w::message_box(&self.input, fs), window, cx);
         div().relative().flex().flex_col().w_full().gap(T::SP_6).px(T::SP_12).pt(T::SP_8).pb(T::SP_8).border_t_1().border_color(T::border()).bg(T::bg())
-            .when(!m.error.is_empty(), |d| d.child(div().text_size(T::TEXT_12).text_color(T::red()).child(m.error.clone())))
-            .child(div().flex().items_end().gap(T::SP_8).child(div().flex_1().min_w_0().child(w::message_box(&self.input, fs))).children(stop).child(send))
-            .child(div().flex().items_center().min_w_0().overflow_hidden().gap(T::SP_8).text_size(T::TEXT_11 * fs).text_color(T::text_muted())
+            .when(!m.error.is_empty(), |d| d.child(w::layer(div().text_size(T::TEXT_12).text_color(T::red()).child(m.error.clone()))))
+            .child(div().flex().items_end().gap(T::SP_8).child(div().flex_1().min_w_0().child(mbox)).children(stop.map(w::layer)).child(w::layer(send)))
+            .child(w::layer(div().flex().items_center().min_w_0().overflow_hidden().gap(T::SP_8).text_size(T::TEXT_11 * fs).text_color(T::text_muted())
                 .child(div().text_color(label_c).child(label))
                 .child(div().flex_1())
                 .when(!m.model.is_empty(), |d| d.child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(m.model.clone())))
-                .when(m.cost > 0.0, |d| d.child(format!("${:.4}", m.cost))))
+                .when(m.cost > 0.0, |d| d.child(format!("${:.4}", m.cost)))))
             .child(measure)
     }
 }

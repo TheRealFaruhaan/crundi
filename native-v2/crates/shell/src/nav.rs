@@ -69,14 +69,18 @@ impl Nav {
     }
 
     /// The sidebar's width now, and whether it is still easing.
-    pub fn sidebar_width(&self) -> (Pixels, bool) {
-        let to = if self.folded { T::SIDEBAR_FOLDED } else { T::SIDEBAR_W };
-        let Some((from, at)) = self.fold_from else { return (to, false) };
-        let t = (at.elapsed().as_secs_f32() / T::LAYOUT_EASE.as_secs_f32()).min(1.0);
-        if t >= 1.0 { return (to, false); }
-        let e = 1.0 - (1.0 - t).powi(3);
-        (from + (to - from) * e, true)
-    }
+    pub fn sidebar_width(&self) -> (Pixels, bool) { sidebar_width(self.folded, self.fold_from) }
+}
+
+/// The sidebar's width now (folded or not, easing from `fold_from`), and
+/// whether it is still easing.
+pub fn sidebar_width(folded: bool, fold_from: Option<(Pixels, Instant)>) -> (Pixels, bool) {
+    let to = if folded { T::SIDEBAR_FOLDED } else { T::SIDEBAR_W };
+    let Some((from, at)) = fold_from else { return (to, false) };
+    let t = (at.elapsed().as_secs_f32() / T::LAYOUT_EASE.as_secs_f32()).min(1.0);
+    if t >= 1.0 { return (to, false); }
+    let e = 1.0 - (1.0 - t).powi(3);
+    (from + (to - from) * e, true)
 }
 
 #[cfg(test)]

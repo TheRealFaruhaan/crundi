@@ -238,7 +238,8 @@ impl Render for Toolbar {
                 let h = b.size.height;
                 if let Some(me) = me.upgrade() { if (me.read(cx).height - h).abs() > px(0.5) { cx.defer(move |cx| me.update(cx, |t, cx| { t.height = h; cx.notify(); })); } }
             }, |_, _, _, _| {}).absolute().top_0().left_0().size_full());
-        div().w_full().child(bar.relative())
+        // One paint layer (w::layer): the bar is replayed every frame.
+        w::layer(div().w_full().child(bar.relative()))
     }
 }
 
@@ -554,7 +555,7 @@ impl Render for ColumnView {
         if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
         let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
-        let body = div().w_full().flex_1().min_h_0().child(crate::util::Layer(list(self.list.clone(), move |ix, _, cx| items.get(ix).map(|it| item_el(it, card_w, &inp2, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element()))
+        let body = div().w_full().flex_1().min_h_0().child(w::layer(list(self.list.clone(), move |ix, _, cx| items.get(ix).map(|it| item_el(it, card_w, &inp2, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element()))
             .size_full().into_any_element()));
         let (ls, me, status, other, boxes) = (self.list.clone(), cx.entity().downgrade(), c.status.clone(), c.other, inp.boxes.clone());
         // After the list has laid out: the column's box (a drop target), and
@@ -669,7 +670,7 @@ impl Render for StackView {
             }))
             .on_hover(cx.listener(|this, on: &bool, _, cx| if !*on && this.hot.is_some() { this.hot = None; cx.notify(); }))
             // (The stack's sides, sp-12, are the list's padding.)
-            .child(crate::util::Layer(list(self.list.clone(), move |ix, _, cx| rows.get(ix).map(|r| srow_el(r, card_w, &inp, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element())).size_full().px(T::SP_12).into_any_element()))
+            .child(w::layer(list(self.list.clone(), move |ix, _, cx| rows.get(ix).map(|r| srow_el(r, card_w, &inp, all || hot == Some(ix), cx)).unwrap_or_else(|| div().into_any_element())).size_full().px(T::SP_12).into_any_element()))
     }
 }
 

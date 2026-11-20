@@ -32,10 +32,28 @@ export function summary(ms) {
   return { frames: s.length, p50: r(q(0.5)), p95: r(q(0.95)), max: r(s.at(-1) ?? 0), share7: s.length ? r(s.filter((x) => x <= 7).length / s.length) : 1, over7: s.filter((x) => x > 7).length, over16: s.filter((x) => x > 16).length };
 }
 
+/** The journal's lines summed up: each draw phase's p50 / p95 (µs), the
+ * present's, and the views whose own work took 0.5 ms or more (count, total
+ * ms, by phase and name). */
+export function phases(lines) {
+  const q = (a, p) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.ceil(p * s.length) - 1)] : 0; };
+  const draws = lines.filter((f) => f[0] === 'draw').map((f) => f.slice(1).map(Number));
+  const pres = lines.filter((f) => f[0] === 'present').map((f) => Number(f[1]));
+  const col = (i) => draws.map((d) => d[i]);
+  const views = {};
+  for (const f of lines.filter((f) => f[0] === 'view')) { const k = `${f[1]} ${f.slice(3).join(' ')}`; const v = views[k] ||= { n: 0, ms: 0 }; v.n++; v.ms += Number(f[2]) / 1000; }
+  for (const v of Object.values(views)) v.ms = Math.round(v.ms);
+  const pq = (a) => [q(a, 0.5), q(a, 0.95)];
+  return { draws: draws.length, layout: pq(col(0)), prepaint: pq(col(1)), paint: pq(col(2)), draw: pq(col(3)), present: pq(pres), views };
+}
+
 export class FrameMeter {
   /** @param stream the app's stderr; `echo` gets every other line (the log). */
   constructor(stream, echo = () => {}) {
     this.frames = []; // [arrival ms, duration ms]
+    // The frame journal's lines (a `--features frame-journal` build with
+    // CRUNDI_FRAME_JOURNAL=1: crates/app/src/journal.rs), [arrival, fields].
+    this.journal = [];
     let buf = '';
     stream.on('data', (d) => {
       buf += d;
@@ -43,14 +61,22 @@ export class FrameMeter {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 1);
         const ms = parse(line);
-        if (ms === null) echo(line + '\n'); else this.frames.push([Date.now(), ms]);
+        if (ms !== null) this.frames.push([Date.now(), ms]);
+        else if (line.startsWith('fj ')) this.journal.push([Date.now(), line.slice(3).split(' ')]);
+        else echo(line + '\n');
       }
     });
   }
   /** Now, to measure from. */
   mark() { return Date.now(); }
   /** The frames drawn since `t` (and before `until`). */
-  since(t, until = Infinity) { return summary(this.frames.filter(([at]) => at >= t && at < until).map(([, ms]) => ms)); }
+  since(t, until = Infinity) {
+    const s = summary(this.frames.filter(([at]) => at >= t && at < until).map(([, ms]) => ms));
+    // The journal arrives up to 100 ms late: its lines are taken from t to until + 150 ms.
+    const j = this.journal.filter(([at]) => at >= t + 150 && at < (until === Infinity ? Infinity : until + 150)).map(([, f]) => f);
+    if (j.length) s.journal = phases(j);
+    return s;
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

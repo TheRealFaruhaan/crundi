@@ -103,6 +103,12 @@ crundi_shell::register(cx, Area::new("planning")
   `T::ANIM_FPS`); a new one uses `with_max_fps` and runs only while shown.
 - Every element with hover or a tooltip has an `.id(…)`.
 - No `refresh_windows()`, no `window.refresh()` (`tools/check.sh`, CI).
+- A cached view that is replayed on every frame (a bar, a head, a list)
+  paints in a layer (`w::layer`), its text boxes through `w::text_box` with
+  `w::watch_focus` (ARCHITECTURE.md, "Paint layers": what may go in one).
+- A layout view (not cached) never reads a store in `render`: it keeps a
+  copy of what it lays out, set by an observer that notifies on a change
+  (GPUI draws a frame for any notify on an entity read during the last draw).
 
 ### The shared controls (`crates/widgets`)
 
@@ -112,7 +118,7 @@ screen): `button`, `primary`, `danger`, `ghost`, `icon_button`,
 `icon_toggle`, `toggle`, `switch`, `check`, `segmented`, `input`,
 `field_label`, `menu_button`, `more_menu`, `pick_menu`, `dropdown`,
 `select`, `dot`, `state_color`, `badge`, `count_badge`, `tag`, `chip`,
-`status_badge`, `card`, `panel`, `pane_head`, `head_button`, `menu_item`,
+`status_badge`, `card`, `panel` / `panel_box`, `pane_head`, `head_button`, `menu_item`,
 `menu_panel`, `toolbar`, `title_bar`, `page`, `tab_row`, `tab`, `nav_tab`,
 `sidebar_item`, `rail_avatar`, `dashed_button`, `outline_button`, `empty`,
 `error_state`, `loading`, `list_row`, `confirm`, `ask`, `ask_confirm`,
@@ -125,7 +131,7 @@ modal layer, drawn once by the shell), `overlay_modal`, `modal_head`,
 `primary_icon`, `liquid_mic`, `meter`, `spark`, `kbd`, `key_row`, `link`,
 `disclosure`, `filter_chip`, `seg_tabs`, `segmented_icons`, `icon_tag`,
 `page_item`, `round_button`, `arm_button`, `choice_row`, `choice_mark`,
-`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `ref_target` (dragging a file reference, dropping one).
+`label_icon_button`, `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `ref_target` (dragging a file reference, dropping one), `layer` / `text_box` / `watch_focus` (paint layers: ARCHITECTURE.md).
 
 - Every control's dimensions are the theme's (`T::BTN_H`, `ICON_BTN`,
   `INPUT_H`…); an area never sizes a control (no `.h`, `.px`,

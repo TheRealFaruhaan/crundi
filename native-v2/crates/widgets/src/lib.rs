@@ -32,6 +32,7 @@ pub use gpui_component::input::{Input, InputEvent, InputState};
 // One file per control (AREAS.md "A new control"), each once.
 pub mod modal; pub use modal::{modal, modal_layer, modal_open, ModalLayer};
 mod spinner; pub use spinner::spinner;
+pub mod layer; pub use layer::{layer, text_box, watch_focus, Layer};
 mod shimmer; pub use shimmer::shimmer;
 mod markdown; pub use markdown::markdown;
 pub mod tip; pub use tip::{tip, tooltip};
@@ -329,12 +330,18 @@ pub fn card() -> Div {
 
 /// A workbench pane: the frame, its head, then the body filling the rest.
 pub fn panel(head: impl IntoElement, body: impl IntoElement) -> Div {
+    panel_box().child(head).child(div().flex().flex_col().flex_1().min_h_0().child(body))
+}
+
+/// The panel's frame alone (a column: its head, then its body, given by the
+/// caller as one flex child that takes the rest: `flex_1().min_h_0()`), for
+/// the workbench, which draws every pane on every frame and so spends no
+/// element it does not need.
+pub fn panel_box() -> Div {
     div()
         .flex().flex_col().size_full().min_h_0().min_w_0()
         .bg(T::bg_secondary()).border_1().border_color(T::border()).rounded(T::R_CARD)
         .overflow_hidden()
-        .child(head)
-        .child(div().flex().flex_col().flex_1().min_h_0().child(body))
 }
 
 /// A pane's head: its state dot, the title, then whatever goes on the right

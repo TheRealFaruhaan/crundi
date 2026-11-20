@@ -577,32 +577,6 @@ impl Element for HitText {
     }
 }
 
-/// An element painted in one layer (the log's list: LogView::render): its
-/// primitives take the layer's order instead of one bounds-tree insert
-/// each, also when the frame replays a clean pane (ARCHITECTURE.md, "One
-/// paint layer per log"). No layout of its own: its child's.
-struct Layer(AnyElement);
-
-impl IntoElement for Layer {
-    type Element = Self;
-    fn into_element(self) -> Self { self }
-}
-
-impl Element for Layer {
-    type RequestLayoutState = ();
-    type PrepaintState = ();
-    fn id(&self) -> Option<ElementId> { None }
-    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> { None }
-    fn request_layout(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, window: &mut Window, cx: &mut App) -> (LayoutId, ()) {
-        (self.0.request_layout(window, cx), ())
-    }
-    fn prepaint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, _: Bounds<Pixels>, _: &mut (), window: &mut Window, cx: &mut App) {
-        self.0.prepaint(window, cx);
-    }
-    fn paint(&mut self, _: Option<&GlobalElementId>, _: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _: &mut (), _: &mut (), window: &mut Window, cx: &mut App) {
-        window.paint_layer(bounds, |window| self.0.paint(window, cx));
-    }
-}
 
 /// One block of Claude's text as one element (F31, ARCHITECTURE.md "What a
 /// scroll frame costs"): a measured leaf (no taffy subtree), its lines
@@ -1096,7 +1070,7 @@ impl Render for LogView {
                 let m = &e.keystroke.modifiers;
                 if (m.control || m.platform) && e.keystroke.key == "c" && this.copy(cx) { cx.stop_propagation(); }
             }))
-            .child(Layer(list(self.list.clone(), cx.processor(|this, ix: usize, window, cx| this.item(ix, window, cx))).size_full().into_any_element()))
+            .child(w::layer(list(self.list.clone(), cx.processor(|this, ix: usize, window, cx| this.item(ix, window, cx))).size_full()))
             .child(track)
     }
 }

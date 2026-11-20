@@ -9,6 +9,8 @@
 //!                             stderr ("frame duration: …"): tools/frames.mjs
 
 mod driver;
+#[cfg(feature = "frame-journal")]
+mod journal;
 
 use crundi_theme::T;
 use futures::StreamExt as _;
@@ -19,6 +21,8 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
     gpui_platform::application().with_assets(crundi_theme::AllAssets).run(move |cx: &mut App| {
         gpui_component::init(cx);
+        #[cfg(feature = "frame-journal")]
+        journal::start(cx);
         // A chat code block's colours: the syntax set loads off the UI thread.
         crundi_core::syntax::warm();
         crundi_theme::init(cx);

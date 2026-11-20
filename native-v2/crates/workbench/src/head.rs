@@ -111,11 +111,12 @@ impl Render for PaneHead {
             }.on_click(cx.listener(move |this, _, _, cx| this.act(cx, move |w, cx| w.pane_close(id, cx)))));
         }
         row = row.child(t);
-        div()
+        // One paint layer (w::layer): every pane's head is replayed each frame.
+        w::layer(div()
             .id(("head", id)).relative().size_full().bg(T::bg_secondary()).border_b_1().border_color(T::border())
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, e: &MouseDownEvent, _, cx| {
                 if e.click_count == 2 { this.act(cx, move |w, cx| w.pane_maximize(id, cx)); } else { this.act(cx, move |w, cx| w.focus_pane(id, cx)); }
             }))
-            .child(row)
+            .child(row))
     }
 }

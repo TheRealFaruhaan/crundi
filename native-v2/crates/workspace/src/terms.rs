@@ -633,6 +633,9 @@ impl TermInput {
                 }
             }),
         ];
+        let mut subs = subs;
+        let focus = input.focus_handle(cx);
+        subs.extend(w::watch_focus(&focus, window, cx));
         let (id, zoom) = { let s = state.read(cx); (s.id.clone(), s.zoom) };
         TermInput { state, id, zoom, tools: false, input, up: Up::default(), height: px(48.), _subs: subs }
     }
@@ -769,7 +772,7 @@ impl TermInput {
 }
 
 impl Render for TermInput {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("term-input");
         let id = self.id.clone();
         let fs = scale(self.zoom);
@@ -782,14 +785,16 @@ impl Render for TermInput {
         // The input bar (.term-input-bar): tools, the box, attach, Send.
         let bar = div().flex_none().flex().flex_col().px(T::SP_8).py(T::SP_6).bg(T::bg_secondary()).border_t_1().border_color(T::border())
             .when_some(self.upload_strip(), |d, s| d.child(s))
+            // The buttons each in a paint layer (w::layer: the bar is replayed
+            // every frame); the box only while not focused (w::text_box: its caret).
             .child(div().flex().items_end().gap(T::SP_6)
-                .child(w::square_button(SharedString::from(format!("term-tools-{id}")), IconName::Settings, "Keyboard tools", if self.tools { w::SquareLook::On } else { w::SquareLook::Plain }, T::CONTROL, T::ICON_LG)
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle_tools(cx))))
-                .child(div().flex_1().min_w_0().max_h(T::WS_TERM_INPUT_MAX).child(w::message_box(&self.input, fs)))
-                .child(w::square_button(SharedString::from(format!("term-attach-{id}")), IconName::Paperclip, "Attach a file (uploads to crundi_attachments)", if self.up.busy { w::SquareLook::Busy } else { w::SquareLook::Plain }, T::CONTROL, T::ICON_LG)
-                    .when(!self.up.busy, |d| d.on_click(cx.listener(|this, _, _, cx| this.attach(cx)))))
-                .child(w::send_button(SharedString::from(format!("term-send-{id}")), "Send", 1.0).tooltip("Send to terminal")
-                    .on_click(cx.listener(|this, _, window, cx| { let t = this.text(cx); this.send(&t, window, cx); }))));
+                .child(w::layer(w::square_button(SharedString::from(format!("term-tools-{id}")), IconName::Settings, "Keyboard tools", if self.tools { w::SquareLook::On } else { w::SquareLook::Plain }, T::CONTROL, T::ICON_LG)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_tools(cx)))))
+                .child(div().flex_1().min_w_0().max_h(T::WS_TERM_INPUT_MAX).child({ let f = self.input.focus_handle(cx); w::text_box(&f, w::message_box(&self.input, fs), window, cx) }))
+                .child(w::layer(w::square_button(SharedString::from(format!("term-attach-{id}")), IconName::Paperclip, "Attach a file (uploads to crundi_attachments)", if self.up.busy { w::SquareLook::Busy } else { w::SquareLook::Plain }, T::CONTROL, T::ICON_LG)
+                    .when(!self.up.busy, |d| d.on_click(cx.listener(|this, _, _, cx| this.attach(cx))))))
+                .child(w::layer(w::send_button(SharedString::from(format!("term-send-{id}")), "Send", 1.0).tooltip("Send to terminal")
+                    .on_click(cx.listener(|this, _, window, cx| { let t = this.text(cx); this.send(&t, window, cx); })))));
         let me = cx.entity().downgrade();
         // A dragged reference (a Files row): into this terminal's input.
         w::ref_target(div().id(SharedString::from(format!("term-drop-{id}"))), move |text, window, cx| {

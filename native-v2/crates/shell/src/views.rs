@@ -51,7 +51,22 @@ pub struct Shell {
     /// The areas' layers over the window (`register_overlay`), read once here.
     overlays: Vec<AnyView>,
     root_focus: FocusHandle,
+    /// What the Shell lays out, copied from Session and Nav when they change
+    /// (it never reads them while rendering: a notify on either that
+    /// changes none of this draws no frame; ARCHITECTURE.md, rule 1).
+    lay: ShellLayout,
     _subs: Vec<Subscription>,
+}
+
+/// The Shell's layout inputs: signed in, the tab, the fold, the drawer.
+#[derive(Clone, PartialEq)]
+struct ShellLayout { signed_in: bool, tab: String, folded: bool, fold_from: Option<(Pixels, std::time::Instant)>, drawer_open: bool, drawer_w: Pixels }
+
+impl ShellLayout {
+    fn of(stores: &Stores, cx: &App) -> Self {
+        let n = stores.nav.read(cx);
+        ShellLayout { signed_in: stores.session.read(cx).signed_in(), tab: n.tab.clone(), folded: n.folded, fold_from: n.fold_from, drawer_open: n.drawer_open, drawer_w: n.drawer_w }
+    }
 }
 
 impl Shell {
@@ -62,14 +77,16 @@ impl Shell {
         let sign_in = cx.new(|cx| SignIn::new(stores.clone(), window, cx));
         // The Shell re-renders only when its layout changes: signed in or out
         // (the session's event, not its every notify), the tab, the fold, the drawer.
+        let relay = |this: &mut Self, cx: &mut Context<Self>| { let l = ShellLayout::of(&this.stores, cx); if l != this.lay { this.lay = l; cx.notify(); } };
         let subs = vec![
-            cx.subscribe(&stores.session, |_, _, _: &crate::SessionEvent, cx| cx.notify()),
-            cx.observe(&stores.nav, |_, _, cx| cx.notify()),
+            cx.subscribe(&stores.session, move |this, _, _: &crate::SessionEvent, cx| relay(this, cx)),
+            cx.observe(&stores.nav, move |this, _, cx| relay(this, cx)),
         ];
+        let lay = ShellLayout::of(&stores, cx);
         let modal = w::modal_layer(cx);
         let ask = w::ask_layer(cx);
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { stores, top, side, bar, sign_in, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), _subs: subs }
+        Shell { stores, top, side, bar, sign_in, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), lay, _subs: subs }
     }
 
     /// The browser drawer's view (Desktop registers it).
@@ -103,12 +120,12 @@ impl Render for Shell {
         if window.focused(cx).is_none() { window.focus(&self.root_focus, cx); }
         let root = div().key_context("CrundiWindow").relative().flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font())
             .child(div().absolute().size_0().track_focus(&self.root_focus));
-        if !self.stores.session.read(cx).signed_in() {
+        let l = self.lay.clone();
+        if !l.signed_in {
             return root.child(self.sign_in.clone().cached(StyleRefinement::default().size_full())).into_any_element();
         }
-        let nav = self.stores.nav.read(cx);
-        let (tab, drawer_open, drawer_w) = (nav.tab.clone(), nav.drawer_open, nav.drawer_w);
-        let (sw, easing) = nav.sidebar_width();
+        let (tab, drawer_open, drawer_w) = (l.tab, l.drawer_open, l.drawer_w);
+        let (sw, easing) = crate::nav::sidebar_width(l.folded, l.fold_from);
         // The fold's ease: frames only while it runs (rule 6).
         if easing { window.request_animation_frame(); }
         let body = self.body(&tab, window, cx);
@@ -226,8 +243,9 @@ impl Render for TopBar {
             let tip = if connected { format!("Telegram: @{}", if n.is_empty() { "bot".to_string() } else { n }) } else { "Telegram: offline".to_string() };
             w::tip(div().id("tg").relative().flex().items_center().justify_center().size(T::ICON_BTN).text_color(T::text_secondary())
                 .child(w::icon(IconName::Send, T::ICON_LG))
-                .child(div().absolute().right(T::SP_4).bottom(T::SP_4).size(T::SP_6 + px(1.)).rounded(T::R_PILL).border_1().border_color(T::bg_secondary())
-                    .bg(if connected { T::green() } else { T::red() })), tip)
+                // The dot over the icon: a layer of its own, over the bar's (w::layer).
+            .child(w::layer(div().absolute().right(T::SP_4).bottom(T::SP_4).size(T::SP_6 + px(1.)).rounded(T::R_PILL).border_1().border_color(T::bg_secondary())
+                    .bg(if connected { T::green() } else { T::red() }))), tip)
         });
         let stores = self.stores.clone();
         let cru = div().id("cru").relative().flex_none().flex().items_center().p(T::SP_2).cursor_pointer()
@@ -235,7 +253,8 @@ impl Render for TopBar {
             .tooltip(w::tooltip("Talk to Cru (voice assistant)"))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| { registry::run_action(&stores, "cru", window, cx); });
-        div()
+        // One paint layer (w::layer): the bar is replayed every frame.
+        w::layer(div()
             .id("topbar").relative().flex().size_full()
             .bg(T::bg_secondary()).border_b_1().border_color(T::border())
             .on_mouse_down(MouseButton::Left, cx.listener(|this, e: &MouseDownEvent, _, _| this.press.0 = (e.click_count == 1).then_some(e.position)))
@@ -253,7 +272,7 @@ impl Render for TopBar {
                 .child(w::status_badge(if online { "connected" } else { "offline" }, online).id("conn").tooltip(w::tooltip(server)))
                 .child(w::icon_button("win-min", IconName::Minus, "Minimize").on_click(|_, window, _| window.minimize_window()))
                 .child(w::icon_button("win-max", IconName::Square, if window.is_maximized() { "Restore" } else { "Maximize" }).on_click(|_, window, _| window.zoom_window()))
-                .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit())))
+                .child(w::icon_button("win-close", IconName::X, "Close").on_click(|_, _, cx| cx.quit()))))
     }
 }
 
@@ -305,13 +324,14 @@ impl Render for Sidebar {
                 .child(fold)
         };
         let (s1, s2) = (self.stores.clone(), self.stores.clone());
-        div()
+        // One paint layer (w::layer): the sidebar is replayed every frame.
+        w::layer(div()
             .flex().flex_col().size_full().overflow_hidden().bg(T::bg_secondary()).border_r_1().border_color(T::border())
             .child(head)
             .child(list)
             .child(div().flex().flex_col().gap(T::SP_8).py(T::SP_10).px(if folded { T::SP_6 } else { T::SP_8 }).border_t_1().border_color(T::border_subtle())
                 .child(w::dashed_button("add-project", if folded { "+" } else { "+ Add project" }).on_click(move |_, window, cx| { registry::run_action(&s1, "add-project", window, cx); }))
-                .child(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" }).on_click(move |_, _, cx| s2.nav.update(cx, |n, cx| n.show_tab("inbox", cx)))))
+                .child(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" }).on_click(move |_, _, cx| s2.nav.update(cx, |n, cx| n.show_tab("inbox", cx))))))
     }
 }
 
@@ -367,7 +387,8 @@ impl Render for ProjectBar {
             bar = bar.child(w::nav_tab(IconName::Globe, "Browser", false).id("browser").flex_none().cursor_pointer()
                 .on_click(move |_, window, cx| { if !registry::run_action(&s, "browser", window, cx) { s.nav.update(cx, |n, cx| n.set_drawer(true, cx)); } }));
         }
-        bar
+        // One paint layer (w::layer): the bar is replayed every frame.
+        w::layer(bar)
     }
 }
 

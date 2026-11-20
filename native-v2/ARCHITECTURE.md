@@ -160,6 +160,7 @@ Root (gpui-component)
    ├─ ProjectBar         cached   the tabs, "+", Browser
    ├─ <tab's root>       layout   one per tab, made when first shown; the workbench tab's is the Workbench
    │  └─ Workbench       layout   the mosaic's rectangles, gutters, empty panes
+   │     ├─ (leaf)       elements one per pane: its panel's box, placed by the mosaic
    │     ├─ PaneHead     cached   one per pane: grip, dot, title, badge, tools, ×
    │     ├─ (chat body)  elements (a pane kind's body, no view) log over composer
    │     │  ├─ LogView   cached   the virtualised log (list): only visible rows
@@ -255,7 +256,7 @@ Root (gpui-component)
   the rest shared equally) with edges rounded where they fall in the
   window, and a border quad's background is its own colour at no alpha,
   as a div paints it.
-- **One paint layer per log** (`chat::log::Layer` around the list): each
+- **One paint layer per log** (`w::layer` around the list; "Paint layers" below): each
   clean cached view's last paint is replayed every frame, primitive by
   primitive (scene.rs `replay`). Outside a layer, each glyph and quad is
   inserted again into the scene's bounds tree. Inside one, it takes the
@@ -276,6 +277,47 @@ Root (gpui-component)
   per entry at a time, the rows refreshed when it lands. Until then a known
   reply keeps its last cut; a reply never cut draws nothing yet. The syntax
   set loads on a background thread at start (`syntax::warm`).
+
+## Paint layers
+
+Every frame, GPUI replays the last paint of every clean cached view into the
+new scene, primitive by primitive (scene.rs `replay`, window.rs
+`reuse_paint`), and the renderer uploads and draws the whole scene. A
+primitive painted outside a paint layer is inserted into the scene's bounds
+tree to find its draw order, and that tree holds every such primitive of the
+frame, so each insert costs more the more there is on screen; a primitive
+inside a layer takes the layer's order with no insert, and the layer's
+primitives batch together (fewer draw calls). Measured on the owner's PC
+(perf/pc-2026-11-20-architect.md), the pane heads, the composers and the
+bars, painted outside layers, cost more per frame than the five chat logs
+inside theirs.
+
+- **The rule**: a view replayed on every frame paints in layers
+  (`crundi_widgets::layer`, one element with no layout of its own): every
+  pane head, the top bar, the sidebar, the project bar, the planning
+  toolbars, the composer's and the terminal input's buttons and rows, each
+  log, the Kanban's lists, the map, the terminal's screen.
+- **What may go in one**: inside a layer GPUI keeps the paint order among
+  quads and among glyphs and icons, but draws every quad, path and
+  underline under every glyph and icon. So a layer holds what draws its
+  backgrounds under its text, and nothing that must cover text or an icon
+  drawn before it. Such a thing (the Telegram dot on its icon) is a layer of
+  its own inside: a nested layer is drawn over the one around it.
+- **Text boxes**: a focused text box draws its caret, a quad, over its text,
+  so it is never in a layer while focused. `w::text_box` puts it in one only
+  while the focus is not in it (no caret then), and the view that draws it
+  re-renders on focus and blur (`w::watch_focus`): the composer's message
+  box, the terminal's input.
+- **What stays outside**: the layout views' own boxes (the panel frames,
+  gutters), a few quads a frame; a text box with the focus; whatever a view
+  draws over its own text (a scrollbar thumb draws its own layer).
+- **Fewer elements in the layout views**: the Workbench re-renders on
+  every frame that draws any pane (GPUI marks every ancestor of a notified
+  view dirty), and a cached view under a dirty cached view is drawn again,
+  not reused (view.rs: a dirty view renders with `refreshing` set), so the
+  Workbench cannot itself be cached. It spends as few elements as it can: a
+  pane is its panel's box (`w::panel_box`, which is also the leaf), its
+  cached head, its body's box and the kind's body.
 
 ## Text and selection
 

@@ -62,23 +62,31 @@ pub(crate) fn tab_view(window: &mut Window, cx: &mut App) -> Entity<TabView> {
     let place = place_view("", window, cx);
     let side = match st.read(cx).side.clone() { Some(s) => s, None => { let s = cx.new(|cx| SideView::new(st.clone(), window, cx)); st.update(cx, |x, _| x.side = Some(s.clone())); s } };
     let bar = match st.read(cx).bar.clone() { Some(b) => b, None => { let b = cx.new(|_| TabBar { store: st.clone() }); st.update(cx, |x, _| x.bar = Some(b.clone())); b } };
-    cx.new(|_| TabView { store: st, place, side, bar, width: 0. })
+    cx.new(|cx| {
+        // Whether a project is open, copied when the store changes it: the
+        // tab is a layout view and never reads the store while rendering (a
+        // store notify that changes nothing it lays out draws no frame).
+        let sub = cx.observe(&st, |this: &mut TabView, s, cx| { let p = s.read(cx).tab_project; if p != this.project { this.project = p; cx.notify(); } });
+        let project = st.read(cx).tab_project;
+        TabView { place, side, bar, width: 0., project, _sub: sub }
+    })
 }
 
 /// The Notes tab: a layout (no text of its own): the bar over the list and
 /// the page, side by side (stacked when narrow).
 pub(crate) struct TabView {
-    store: Entity<S>,
     place: Entity<PlaceView>,
     side: Entity<SideView>,
     bar: Entity<TabBar>,
     width: f32,
+    project: bool,
+    _sub: Subscription,
 }
 
 impl Render for TabView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("notes-tab");
-        let project = self.store.read(cx).tab_project;
+        let project = self.project;
         let stack = self.width > 0. && self.width < f32::from(T::NOTES_STACK);
         let me = cx.entity().downgrade();
         let full = || StyleRefinement::default().size_full();

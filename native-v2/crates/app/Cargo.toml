@@ -15,6 +15,11 @@ path = "src/main.rs"
 name = "crundi-v2-floor"
 path = "src/floor.rs"
 
+# Where a frame goes (perf/README.md): gpui's profiler and the frame
+# journal (src/journal.rs). Measurement builds only, never a release.
+[features]
+frame-journal = ["gpui/profiler", "dep:pprof"]
+
 [dependencies]
 gpui.workspace = true
 gpui_platform.workspace = true
@@ -32,6 +37,10 @@ crundi-workbench.workspace = true
 crundi-chat.workspace = true
 crundi-planning.workspace = true
 crundi-workspace.workspace = true
+
+# The in-process sampler (frame-journal builds only, Linux and macOS: src/journal.rs).
+[target.'cfg(unix)'.dependencies]
+pprof = { version = "0.15", default-features = false, features = ["frame-pointer"], optional = true }
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

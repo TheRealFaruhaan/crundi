@@ -1,0 +1,916 @@
+{
+ "setup": {
+  "server": "http://localhost:4884",
+  "project": "demo",
+  "panes": [
+   "live:3e4c22f705ee16bb",
+   "live:90413dacb7695d6b",
+   "live:ec5630493cdf4d4c",
+   "live:1f17375c02c8906f"
+  ],
+  "chats": 4,
+  "window": "1920x1040",
+  "focused": "1f17375c02c8906f",
+  "focusedRows": 98,
+  "streamChat": "fe0b756def09eb5b",
+  "panesWhileStreaming": 5,
+  "batches": 289,
+  "spliced": 600,
+  "rows": 302,
+  "replyChars": 6880,
+  "terminal": {
+   "key": "term:615a02bc0a9b850b",
+   "panes": 6,
+   "size": [
+    42,
+    52
+   ]
+  },
+  "kanban": {
+   "columns": 4,
+   "cards": 80
+  },
+  "mindmap": {
+   "ideas": 133,
+   "drawn": 20,
+   "view": [
+    1638,
+    873
+   ]
+  },
+  "planningPanes": [
+   "panel:kanban",
+   "live:3e4c22f705ee16bb",
+   "panel:mindmap",
+   "live:90413dacb7695d6b",
+   "live:fe0b756def09eb5b",
+   "live:ec5630493cdf4d4c",
+   "live:1f17375c02c8906f",
+   "term:615a02bc0a9b850b"
+  ],
+  "planningInView": {
+   "focused": "",
+   "kanbanCols": 1,
+   "mindmapCanvas": [
+    615,
+    179
+   ],
+   "mindmapView": [
+    338,
+    378
+   ]
+  },
+  "cr": {
+   "panes": [
+    "panel:kanban",
+    "live:3e4c22f705ee16bb",
+    "panel:mindmap",
+    "term:615a02bc0a9b850b",
+    "live:fe0b756def09eb5b"
+   ],
+   "kanbanCols": 1,
+   "mindmapCanvas": [
+    812,
+    179
+   ],
+   "mindmapView": [
+    535,
+    378
+   ],
+   "points": [
+    [
+     535.5,
+     800
+    ],
+    [
+     535.5,
+     201
+    ],
+    [
+     1327,
+     368
+    ]
+   ]
+  }
+ },
+ "idle-open": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8
+ },
+ "scroll-panes": {
+  "frames": 597,
+  "p50": 4.32,
+  "p95": 5.68,
+  "max": 11.87,
+  "share7": 1,
+  "over7": 2,
+  "over16": 0,
+  "journal": {
+   "draws": 590,
+   "layout": [
+    586,
+    760
+   ],
+   "prepaint": [
+    740,
+    1129
+   ],
+   "paint": [
+    1320,
+    1929
+   ],
+   "draw": [
+    3142,
+    4267
+   ],
+   "present": [
+    1283,
+    1708
+   ],
+   "views": {
+    "prepaint crundi_chat::log::LogView": {
+     "n": 38,
+     "ms": 26
+    },
+    "paint crundi_chat::log::LogView": {
+     "n": 182,
+     "ms": 111
+    }
+   }
+  },
+  "seconds": 8.3,
+  "wheelEvents": 875,
+  "renders": {
+   "workbench": 597,
+   "top-bar": 0,
+   "sidebar": 0,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 4,
+   "log": 599,
+   "composer": 4
+  }
+ },
+ "scroll-chat": {
+  "frames": 599,
+  "p50": 4.25,
+  "p95": 5.77,
+  "max": 7.9,
+  "share7": 1,
+  "over7": 1,
+  "over16": 0,
+  "journal": {
+   "draws": 593,
+   "layout": [
+    602,
+    783
+   ],
+   "prepaint": [
+    782,
+    1146
+   ],
+   "paint": [
+    1276,
+    1920
+   ],
+   "draw": [
+    3114,
+    4299
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "paint crundi_chat::log::LogView": {
+     "n": 159,
+     "ms": 90
+    },
+    "prepaint crundi_chat::log::LogView": {
+     "n": 25,
+     "ms": 16
+    }
+   }
+  },
+  "seconds": 8.3,
+  "renders": {
+   "workbench": 599,
+   "log": 599
+  }
+ },
+ "stream+scroll": {
+  "frames": 599,
+  "p50": 4,
+  "p95": 6.23,
+  "max": 8.31,
+  "share7": 0.99,
+  "over7": 3,
+  "over16": 0,
+  "journal": {
+   "draws": 591,
+   "layout": [
+    611,
+    823
+   ],
+   "prepaint": [
+    741,
+    1226
+   ],
+   "paint": [
+    1087,
+    2034
+   ],
+   "draw": [
+    2948,
+    4614
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "prepaint crundi_chat::log::LogView": {
+     "n": 17,
+     "ms": 10
+    },
+    "paint crundi_chat::log::LogView": {
+     "n": 79,
+     "ms": 45
+    },
+    "prepaint crundi_shell::views::Shell": {
+     "n": 1,
+     "ms": 1
+    }
+   }
+  },
+  "seconds": 8,
+  "wheelEvents": 873
+ },
+ "stream": {
+  "frames": 86,
+  "p50": 4.38,
+  "p95": 5.57,
+  "max": 7.88,
+  "share7": 0.99,
+  "over7": 1,
+  "over16": 0,
+  "journal": {
+   "draws": 83,
+   "layout": [
+    500,
+    747
+   ],
+   "prepaint": [
+    784,
+    1143
+   ],
+   "paint": [
+    1480,
+    1891
+   ],
+   "draw": [
+    3429,
+    4166
+   ],
+   "present": [
+    1215,
+    1620
+   ],
+   "views": {
+    "prepaint crundi_shell::views::TopBar": {
+     "n": 1,
+     "ms": 1
+    }
+   }
+  },
+  "seconds": 3.5,
+  "renders": {
+   "workbench": 685,
+   "top-bar": 2,
+   "sidebar": 1,
+   "project-bar": 0,
+   "wins": 0,
+   "head": 1,
+   "log": 861,
+   "composer": 1
+  }
+ },
+ "idle-end": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "seconds": 8,
+  "renders": {},
+  "batches": 0,
+  "head": {
+   "before": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   },
+   "after": {
+    "title": "Number list in words",
+    "long": "",
+    "state": "idle"
+   }
+  }
+ },
+ "term-stream": {
+  "frames": 2184,
+  "p50": 4.03,
+  "p95": 6.28,
+  "max": 7.86,
+  "share7": 0.99,
+  "over7": 15,
+  "over16": 0,
+  "journal": {
+   "draws": 2183,
+   "layout": [
+    694,
+    920
+   ],
+   "prepaint": [
+    638,
+    988
+   ],
+   "paint": [
+    1160,
+    2268
+   ],
+   "draw": [
+    2970,
+    4735
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "paint crundi_workspace::terms::TermScreen": {
+     "n": 490,
+     "ms": 290
+    },
+    "request_layout crundi_workbench::Workbench": {
+     "n": 7,
+     "ms": 4
+    },
+    "prepaint crundi_workspace::terms::TermCursor": {
+     "n": 1,
+     "ms": 2
+    }
+   }
+  },
+  "seconds": 29.7,
+  "renders": {
+   "workbench": 2184,
+   "top-bar": 1,
+   "term-screen": 2184,
+   "term-cursor": 2184
+  },
+  "batches": 2795,
+  "screen": {
+   "paints": 2184,
+   "usPerPaint": 394
+  }
+ },
+ "term-stream+scroll": {
+  "frames": 2169,
+  "p50": 4.88,
+  "p95": 7.34,
+  "max": 8.79,
+  "share7": 0.89,
+  "over7": 238,
+  "over16": 0,
+  "journal": {
+   "draws": 2161,
+   "layout": [
+    725,
+    962
+   ],
+   "prepaint": [
+    962,
+    1404
+   ],
+   "paint": [
+    1561,
+    2704
+   ],
+   "draw": [
+    3743,
+    5658
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "paint crundi_chat::log::LogView": {
+     "n": 439,
+     "ms": 248
+    },
+    "paint crundi_workspace::terms::TermScreen": {
+     "n": 706,
+     "ms": 413
+    },
+    "request_layout crundi_workbench::Workbench": {
+     "n": 15,
+     "ms": 8
+    },
+    "prepaint crundi_chat::log::LogView": {
+     "n": 66,
+     "ms": 36
+    }
+   }
+  },
+  "seconds": 30.4,
+  "renders": {
+   "workbench": 2170,
+   "top-bar": 1,
+   "log": 2175,
+   "term-screen": 2074,
+   "term-cursor": 2074
+  },
+  "batches": 2683,
+  "screen": {
+   "paints": 2074,
+   "usPerPaint": 431
+  },
+  "wheelEvents": 3030
+ },
+ "idle-terminal": {
+  "frames": 1,
+  "p50": 5.21,
+  "p95": 5.21,
+  "max": 5.21,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "journal": {
+   "draws": 1,
+   "layout": [
+    666,
+    666
+   ],
+   "prepaint": [
+    1277,
+    1277
+   ],
+   "paint": [
+    1639,
+    1639
+   ],
+   "draw": [
+    4284,
+    4284
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "prepaint crundi_shell::views::TopBar": {
+     "n": 1,
+     "ms": 1
+    }
+   }
+  },
+  "seconds": 6,
+  "renders": {
+   "workbench": 1,
+   "top-bar": 1
+  }
+ },
+ "scroll-kanban": {
+  "frames": 647,
+  "p50": 3.04,
+  "p95": 4.17,
+  "max": 5.02,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "journal": {
+   "draws": 641,
+   "layout": [
+    450,
+    616
+   ],
+   "prepaint": [
+    762,
+    1070
+   ],
+   "paint": [
+    591,
+    996
+   ],
+   "draw": [
+    1994,
+    2806
+   ],
+   "present": [
+    1084,
+    1362
+   ],
+   "views": {
+    "prepaint crundi_planning::kanban::view::ColumnView": {
+     "n": 45,
+     "ms": 25
+    }
+   }
+  },
+  "seconds": 8.3,
+  "renders": {
+   "kanban-col": 660
+  }
+ },
+ "pan-mindmap": {
+  "frames": 328,
+  "p50": 4.06,
+  "p95": 5.34,
+  "max": 5.9,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "journal": {
+   "draws": 322,
+   "layout": [
+    425,
+    562
+   ],
+   "prepaint": [
+    598,
+    892
+   ],
+   "paint": [
+    954,
+    1569
+   ],
+   "draw": [
+    2314,
+    3161
+   ],
+   "present": [
+    1905,
+    2443
+   ],
+   "views": {
+    "paint crundi_planning::mindmap::draw::MapView": {
+     "n": 72,
+     "ms": 42
+    },
+    "paint crundi_planning::mindmap::draw::Dots": {
+     "n": 23,
+     "ms": 13
+    },
+    "prepaint crundi_planning::mindmap::draw::MapView": {
+     "n": 4,
+     "ms": 2
+    }
+   }
+  },
+  "seconds": 8.3,
+  "renders": {
+   "mindmap-map": 328
+  },
+  "drawnAtEnd": 20,
+  "relayouts": 0
+ },
+ "idle-planning": {
+  "frames": 0,
+  "p50": 0,
+  "p95": 0,
+  "max": 0,
+  "share7": 1,
+  "over7": 0,
+  "over16": 0,
+  "journal": {
+   "draws": 0,
+   "layout": [
+    0,
+    0
+   ],
+   "prepaint": [
+    0,
+    0
+   ],
+   "paint": [
+    0,
+    0
+   ],
+   "draw": [
+    0,
+    0
+   ],
+   "present": [
+    2045,
+    2420
+   ],
+   "views": {}
+  },
+  "seconds": 6
+ },
+ "planning+stream+scroll": {
+  "frames": 488,
+  "p50": 5.31,
+  "p95": 7.19,
+  "max": 8.18,
+  "share7": 0.92,
+  "over7": 38,
+  "over16": 0,
+  "journal": {
+   "draws": 481,
+   "layout": [
+    867,
+    1126
+   ],
+   "prepaint": [
+    918,
+    1316
+   ],
+   "paint": [
+    1518,
+    2281
+   ],
+   "draw": [
+    3774,
+    5162
+   ],
+   "present": [
+    1504,
+    1971
+   ],
+   "views": {
+    "prepaint crundi_planning::kanban::view::StackView": {
+     "n": 3,
+     "ms": 2
+    },
+    "request_layout crundi_workbench::Workbench": {
+     "n": 95,
+     "ms": 53
+    },
+    "prepaint crundi_chat::log::LogView": {
+     "n": 2,
+     "ms": 1
+    },
+    "paint crundi_workspace::terms::TermScreen": {
+     "n": 26,
+     "ms": 19
+    },
+    "prepaint crundi_shell::views::TopBar": {
+     "n": 1,
+     "ms": 1
+    }
+   }
+  },
+  "seconds": 8,
+  "wheelEvents": 802,
+  "renders": {
+   "workbench": 489,
+   "top-bar": 1,
+   "log": 198,
+   "term-screen": 71,
+   "term-cursor": 71,
+   "mindmap-map": 138,
+   "kanban-stack": 86
+  },
+  "panes": [
+   "panel:kanban",
+   "live:3e4c22f705ee16bb",
+   "panel:mindmap",
+   "live:90413dacb7695d6b",
+   "live:fe0b756def09eb5b",
+   "live:ec5630493cdf4d4c",
+   "live:1f17375c02c8906f",
+   "term:615a02bc0a9b850b"
+  ]
+ },
+ "region:kanban": {
+  "frames": 143,
+  "p50": 4.48,
+  "p95": 6.69,
+  "max": 7.82,
+  "share7": 0.98,
+  "over7": 3,
+  "over16": 0,
+  "journal": {
+   "draws": 128,
+   "layout": [
+    785,
+    1048
+   ],
+   "prepaint": [
+    695,
+    1196
+   ],
+   "paint": [
+    1136,
+    1985
+   ],
+   "draw": [
+    3121,
+    4743
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "request_layout crundi_workbench::Workbench": {
+     "n": 15,
+     "ms": 8
+    },
+    "prepaint crundi_planning::kanban::view::StackView": {
+     "n": 1,
+     "ms": 1
+    }
+   }
+  },
+  "seconds": 2,
+  "renders": {
+   "workbench": 144,
+   "kanban-stack": 144
+  }
+ },
+ "region:mindmap": {
+  "frames": 141,
+  "p50": 4.47,
+  "p95": 6.83,
+  "max": 8.05,
+  "share7": 0.96,
+  "over7": 5,
+  "over16": 0,
+  "journal": {
+   "draws": 133,
+   "layout": [
+    837,
+    1093
+   ],
+   "prepaint": [
+    708,
+    1117
+   ],
+   "paint": [
+    1136,
+    1980
+   ],
+   "draw": [
+    3062,
+    4808
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "request_layout crundi_workbench::Workbench": {
+     "n": 21,
+     "ms": 11
+    }
+   }
+  },
+  "seconds": 2,
+  "renders": {
+   "workbench": 141,
+   "mindmap-map": 141
+  }
+ },
+ "cr-sweep": {
+  "frames": 573,
+  "p50": 4.5,
+  "p95": 6.14,
+  "max": 8.83,
+  "share7": 0.99,
+  "over7": 5,
+  "over16": 0,
+  "journal": {
+   "draws": 566,
+   "layout": [
+    730,
+    955
+   ],
+   "prepaint": [
+    868,
+    1373
+   ],
+   "paint": [
+    1113,
+    1731
+   ],
+   "draw": [
+    3050,
+    4335
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "prepaint crundi_planning::kanban::view::StackView": {
+     "n": 1,
+     "ms": 1
+    },
+    "prepaint crundi_planning::mindmap::draw::MapView": {
+     "n": 3,
+     "ms": 2
+    },
+    "prepaint crundi_chat::log::LogView": {
+     "n": 20,
+     "ms": 14
+    },
+    "request_layout crundi_workbench::Workbench": {
+     "n": 3,
+     "ms": 2
+    },
+    "prepaint crundi_workspace::terms::TermScreen": {
+     "n": 1,
+     "ms": 1
+    }
+   }
+  },
+  "seconds": 8,
+  "wheelEvents": 845,
+  "renders": {
+   "workbench": 574,
+   "log": 359,
+   "term-screen": 56,
+   "term-cursor": 56,
+   "mindmap-map": 138,
+   "kanban-stack": 165
+  },
+  "streaming": "working"
+ },
+ "crWheel": 918,
+ "cr-scroll": {
+  "frames": 631,
+  "p50": 5.21,
+  "p95": 6.49,
+  "max": 9.61,
+  "share7": 0.99,
+  "over7": 9,
+  "over16": 0,
+  "journal": {
+   "draws": 625,
+   "layout": [
+    762,
+    980
+   ],
+   "prepaint": [
+    904,
+    1369
+   ],
+   "paint": [
+    1365,
+    1807
+   ],
+   "draw": [
+    3493,
+    4531
+   ],
+   "present": [
+    0,
+    0
+   ],
+   "views": {
+    "prepaint crundi_planning::mindmap::draw::MapView": {
+     "n": 6,
+     "ms": 3
+    },
+    "prepaint crundi_chat::log::LogView": {
+     "n": 2,
+     "ms": 1
+    },
+    "paint crundi_chat::log::LogView": {
+     "n": 1,
+     "ms": 1
+    },
+    "request_layout crundi_workbench::Workbench": {
+     "n": 9,
+     "ms": 5
+    },
+    "paint crundi_shell::views::TopBar": {
+     "n": 1,
+     "ms": 3
+    }
+   }
+  },
+  "seconds": 9,
+  "renders": {
+   "workbench": 632,
+   "log": 437,
+   "mindmap-map": 199,
+   "kanban-stack": 229
+  },
+  "streaming": "working"
+ },
+ "allFrames": 9776,
+ "ranSeconds": 230
+}

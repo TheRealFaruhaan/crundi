@@ -512,12 +512,14 @@ impl Render for Toolbar {
                 let (search, canvas) = { let m = st.read(cx); (m.ui.as_ref().map(|u| u.search.clone()), m.ui.as_ref().map(|u| u.canvas.clone())) };
                 if !search.is_some_and(|e| e.focus_handle(cx).is_focused(window)) { if let Some(c) = canvas { c.focus(window, cx); } }
             })
+            // Its buttons and chips in paint layers (w::layer: the bar is
+            // replayed every frame); the filter box is not (its caret).
             .child(w::toolbar()
-                .child(w::primary("mm-add", "+ Add idea").on_click(|_, window, cx| super::act("add-root", "", window, cx)))
-                .child(w::button("mm-media", if fold { "" } else { "Media" }).icon(IconName::Images).on_click(|_, window, cx| super::act("media", "", window, cx)))
+                .child(w::layer(w::primary("mm-add", "+ Add idea").on_click(|_, window, cx| super::act("add-root", "", window, cx))))
+                .child(w::layer(w::button("mm-media", if fold { "" } else { "Media" }).icon(IconName::Images).on_click(|_, window, cx| super::act("media", "", window, cx))))
                 .child(div().w(T::SP_48 * 3. + T::SP_16).children(search.as_ref().map(w::input)))
                 .child(div().flex_1())
-                .child(w::button("mm-help", if fold { "?" } else { "? Shortcuts" }).on_click(|_, window, cx| super::act("help", "", window, cx))));
+                .child(w::layer(w::button("mm-help", if fold { "?" } else { "? Shortcuts" }).on_click(|_, window, cx| super::act("help", "", window, cx)))));
         // The project bar (.mm-proj-bar): its chips wrap, as the web's.
         if self.bar.bar && s.state != "empty" {
             let mut bar = div().flex().flex_none().flex_wrap().items_center().gap(T::SP_6).px(T::SP_12).py(T::SP_8).bg(T::bg_secondary()).border_b_1().border_color(T::border())
@@ -531,7 +533,7 @@ impl Render for Toolbar {
                         .child(w::icon(IconName::Funnel, T::ICON_SM)).child(format!("filtered ({} hidden)", self.bar.hidden)))
                     .child(w::filter_chip("mm-proj-all", "Show all", false, true).on_click(|_, window, cx| super::act("chip-all", "", window, cx)));
             }
-            col = col.child(bar);
+            col = col.child(w::layer(bar));
         }
         // Cached at the height it laid out at; the width folds it (the web's @container 480px).
         let me = cx.entity().downgrade();
@@ -796,7 +798,7 @@ impl Render for MapView {
                 cx.stop_propagation();
             })
             .child(canvas(|b, _, cx| super::canvas_measured(b, cx), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
-            .child(crate::util::Layer(content.into_any_element()))
+            .child(w::layer(content))
             .into_any_element()
     }
 }

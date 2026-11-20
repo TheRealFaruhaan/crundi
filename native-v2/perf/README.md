@@ -86,3 +86,28 @@ Under xvfb-run, `FLOOR_HEADLESS=1` is required: without it, GPUI follows
 `WAYLAND_DISPLAY` to the desktop session and opens the window there.
 `PROFILE=native-v2/perf/gdb-sample.py SAMPLES=…` samples the UI thread
 after the sweep, as above. Results: `perf/floor-2026-11-20.md`.
+
+## Where a frame goes (the frame journal and the sampler)
+
+A measurement build, never a release: `crundi-app`'s `frame-journal`
+feature turns on gpui's profiler and `crates/app/src/journal.rs`. Build it
+in a target folder of its own, so the shared one is not rebuilt with gpui's
+profiler:
+
+    CARGO_TARGET_DIR=$HOME/.cache/crundi-v2-journal-target RUSTFLAGS='-C force-frame-pointers=yes' \
+      cargo build --release -p crundi-app --bin crundi-v2 --features frame-journal
+
+- `CRUNDI_FRAME_JOURNAL=1`: a background thread drains gpui's foreground
+  journal every 100 ms and prints `fj draw|present|view …` lines on stderr.
+  `tools/frames.mjs` adds a `journal` to each scenario of the report: each
+  draw phase's p50 / p95 in µs (request_layout, prepaint, paint, the whole
+  draw), the present, and every view whose own work in a phase took 0.5 ms
+  or more (count and total ms). The journal's own timing adds about 0.3 ms
+  a frame: compare journal runs with journal runs only.
+- `CRUNDI_PPROF_DIR=<dir> MEASURE_PPROF=<scenario>`: an in-process stack
+  sampler (pprof-rs, 1 kHz of CPU time, frame pointers; no perf rights
+  needed) runs through that one scenario and writes `<dir>/folded.txt`
+  (folded stacks, one line per stack, the thread first). pprof keeps the
+  innermost 128 frames, so read it from the leaf side: which leaf
+  functions, under which view (`Entity<…>` in the frames). The sampler
+  slows the frames it samples: take numbers from runs without it.
