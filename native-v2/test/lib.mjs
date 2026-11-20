@@ -160,6 +160,15 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
     password, secret, projDir,
     get exited() { return exited; },
     state,
+    /** Before an idle check: wait until no frame has been drawn for `quiet` ms
+     *  (at most `max`), so a last frame of the step before (a late server
+     *  event, a busy machine's slow frame) is not counted as idle drawing.
+     *  A view that keeps drawing never settles, and its idle check fails (F70). */
+    async settle(quiet = 1500, max = 12000) {
+      const end = Date.now() + max;
+      while (Date.now() < end) { const m = frames.mark(); await sleep(quiet); if (frames.since(m).frames === 0) return true; }
+      return false;
+    },
     ui: (n, ...args) => d.send({ cmd: 'ui', name: n, args }),
     /** A key to the focused element (text or a named key; mods: ctrl, shift…). */
     key: (text, mods = []) => d.send({ cmd: 'key', text, mods }),
@@ -178,6 +187,9 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
     async snap(area, file) {
       const dir = join(SCREENS, area);
       mkdirSync(dir, { recursive: true });
+      // The state a check just saw is drawn on the next frame or two: wait
+      // for it before the picture, so it shows the state it is named for (F98).
+      await sleep(350);
       const r = await d.send({ cmd: 'snapshot', path: join(dir, `${file}.png`) });
       if (!r?.ok) console.log(`(no snapshot ${area}/${file}: ${r?.error})`);
       return r;

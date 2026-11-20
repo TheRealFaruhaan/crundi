@@ -142,6 +142,7 @@ export async function run(T, t) {
     // v2: closed again, nothing of Cru's keeps drawing.
     await T.ui('tab', 'inbox');
     await t.sleep(1500);
+    await T.settle(); // (F70)
     const m = T.frames.mark();
     await t.sleep(2000);
     t.check('closed: no frames', T.frames.since(m).frames === 0, T.frames.since(m));

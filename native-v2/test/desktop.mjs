@@ -48,6 +48,9 @@ if (existsSync('/tmp/vw-install/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-0
 // (honoured only with the driver on), so no keyring is asked.
 const cef = process.env.CRUNDI_CEF_CACHE ? null : mkdtempSync(join(tmpdir(), 'crundi-v2-desktop-cef-'));
 if (cef) process.env.CRUNDI_CEF_CACHE = cef;
+// The run's own folders go however it ends (T.end() exits the process, F71).
+const dropFolders = () => { try { rmSync(xdg, { recursive: true, force: true }); if (cef) rmSync(cef, { recursive: true, force: true }); } catch { /* gone */ } };
+process.on('exit', dropFolders);
 process.env.CRUNDI_PW_TEST_KEY ||= Array.from({ length: 32 }, () => Math.floor(Math.random() * 256).toString(16).padStart(2, '0')).join('');
 const T = await t.begin('desktop');
 // native-gpui's suites' names for the driver: act (a desktop action), props (the state).
@@ -61,5 +64,3 @@ for (const p of PARTS) {
   await m.run(T, t);
 }
 await T.end();
-rmSync(xdg, { recursive: true, force: true });
-if (cef) rmSync(cef, { recursive: true, force: true });

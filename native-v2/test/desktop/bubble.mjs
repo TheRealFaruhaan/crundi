@@ -31,6 +31,7 @@ export async function run(T, t) {
     prev = r;
     await t.sleep(2000);
   }
+  await T.settle(); // (F70)
   let i0 = await T.state();
   let m = T.frames.mark();
   await t.sleep(2000);

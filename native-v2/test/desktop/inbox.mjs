@@ -45,8 +45,9 @@ export async function run(T, t) {
   await T.until('opening a thread shows its messages and reads them', (p) => D(p).inbox.open === th && D(p).inbox.items.length >= 1 && D(p).inbox.unread === 0);
   await T.snap('desktop', 'inbox-thread');
 
-  // v2: idle on the Inbox: no frames, no pumps.
+  // v2: idle on the Inbox: no frames, no pumps (once the window has settled: F70).
   await t.sleep(1500);
+  await T.settle();
   let s0 = await T.state();
   let m = T.frames.mark();
   await t.sleep(2500);

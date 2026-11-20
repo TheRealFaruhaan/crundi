@@ -149,11 +149,13 @@ export async function run(T, t) {
     // Stacks.
     await T.act('docker-view', 'stacks');
     p = await T.until('docker: stacks load', (p) => dk(p).view === 'stacks' && dk(p).state === 'data' && (dk(p).stacksEmpty || dk(p).stacks.length > 0), 20000);
+    await T.snap('docker-stacks'); // (F98)
     if (p && !dk(p).stacksEmpty) t.check('docker: a stack says how many run', /\d+\/\d+ running/.test(dk(p).stacks[0].chip), dk(p).stacks[0]);
 
     // Images, and a pull that fails (a name that does not exist): the job drawer.
     await T.act('docker-view', 'images');
     p = await T.until('docker: images load', (p) => dk(p).view === 'images' && dk(p).state === 'data' && dk(p).rows.length > 0, 20000);
+    await T.snap('docker-images');
     if (p) t.check('docker: the images line', /images, \d+ in use/.test(dk(p).listHead) && dk(p).rows.some((r) => r.name === 'alpine:3' && !r.canRm), dk(p).listHead);
     await T.act('docker-pull', `ops-native-test/does-not-exist-${tag}:none`);
     await T.until('docker: the job drawer shows the pull', (p) => dk(p).job && /^Pull /.test(dk(p).job.title), 10000);
@@ -165,6 +167,7 @@ export async function run(T, t) {
     await T.act('docker-view', 'volumes');
     await T.act('docker-filter', VOL);
     p = await T.until('docker: our volume, unused', (p) => dk(p).view === 'volumes' && dk(p).rows.length === 1 && dk(p).rows[0].canRm && dk(p).rows[0].chips[0] === 'unused', 20000);
+    await T.snap('docker-volumes');
     await T.act('docker-rm', 'volumes', VOL);
     if (!await T.until('docker: the volume is removed', (p) => dk(p).rows.length === 0, 20000)) { const m = await T.mine(); console.log('     volumes:', JSON.stringify({ rows: m.docker.rows, nomatch: m.docker.nomatch, state: m.docker.state, toast: m.toast }).slice(0, 1500)); }
     t.check('docker: and gone from Docker', sh('volume', 'ls', '-q', '--filter', `name=${VOL}`) === '');
@@ -173,6 +176,7 @@ export async function run(T, t) {
     await T.act('docker-view', 'networks');
     await T.act('docker-filter', '');
     p = await T.until('docker: networks load, the built-in ones locked', (p) => dk(p).view === 'networks' && dk(p).rows.some((r) => r.name === 'bridge' && !r.canRm && r.tags.includes('built in')), 20000);
+    await T.snap('docker-networks');
     await T.act('docker-filter', NET);
     await T.until('docker: our network', (p) => dk(p).rows.length === 1 && dk(p).rows[0].canRm);
     const netKey = (await T.mine()).docker.rows[0].key;
@@ -200,6 +204,7 @@ export async function run(T, t) {
     // System.
     await T.act('docker-view', 'system');
     p = await T.until('docker: the engine', (p) => dk(p).view === 'system' && dk(p).engine.some(([k]) => k === 'Docker'), 20000);
+    await T.snap('docker-system');
     await T.until('docker: the disk use, measured', (p) => dk(p).diskState === 'data' && dk(p).disk.length === 4, 120000);
 
     // Remove the container from its detail (it is running: stopped first).
