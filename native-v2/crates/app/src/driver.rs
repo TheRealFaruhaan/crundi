@@ -44,7 +44,18 @@ fn state(stores: &Stores, window: &mut Window, cx: &mut App) -> Map<String, Valu
     m.insert("toast".into(), json!(crundi_widgets::toast_text(cx).to_string()));
     m.insert("renders".into(), crundi_core::driver::renders());
     for a in registry::list(cx) {
-        if let Some(f) = &a.state { if let Value::Object(o) = f(stores, window, cx) { m.extend(o); } }
+        // Merged one level deep: two areas each giving "areas": {<theirs>}
+        // keep both (a plain extend let the last area's replace the others').
+        if let Some(f) = &a.state {
+            if let Value::Object(o) = f(stores, window, cx) {
+                for (k, v) in o {
+                    match (m.get_mut(&k), v) {
+                        (Some(Value::Object(have)), Value::Object(add)) => have.extend(add),
+                        (_, v) => { m.insert(k, v); }
+                    }
+                }
+            }
+        }
     }
     m
 }

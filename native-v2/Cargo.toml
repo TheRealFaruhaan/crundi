@@ -42,6 +42,8 @@ log = "0.4"
 # The workspace area: file pickers and uploads (as native-gpui).
 base64 = "0.22"
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
+# The desktop area: a page's picture (webview's shot.rs).
+png = "0.17"
 # The areas.
 crundi-core = { path = "crates/core" }
 crundi-theme = { path = "crates/theme" }
@@ -53,6 +55,9 @@ crundi-chat = { path = "crates/chat" }
 crundi-planning = { path = "crates/planning" }
 crundi-workspace = { path = "crates/workspace" }
 crundi-operations = { path = "crates/operations" }
+# The desktop area (the browser bridge, the drawer, the PC extras).
+crundi-webview = { path = "crates/webview" }
+crundi-desktop = { path = "crates/desktop" }
 
 # Line numbers only in dev builds, so the shared build folder stays small and
 # links are quick. Release builds are unaffected.

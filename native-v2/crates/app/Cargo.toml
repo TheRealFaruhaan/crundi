@@ -38,6 +38,8 @@ crundi-chat.workspace = true
 crundi-planning.workspace = true
 crundi-workspace.workspace = true
 crundi-operations.workspace = true
+crundi-webview.workspace = true
+crundi-desktop.workspace = true
 
 # The in-process sampler (frame-journal builds only, Linux and macOS: src/journal.rs).
 [target.'cfg(unix)'.dependencies]

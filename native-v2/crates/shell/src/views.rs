@@ -51,6 +51,8 @@ pub struct Shell {
     /// The areas' layers over the window (`register_overlay`), read once here.
     overlays: Vec<AnyView>,
     root_focus: FocusHandle,
+    /// Cru's push to talk is held (its shortcut, ptt.rs).
+    ptt_held: bool,
     /// What the Shell lays out, copied from Session and Nav when they change
     /// (it never reads them while rendering: a notify on either that
     /// changes none of this draws no frame; ARCHITECTURE.md, rule 1).
@@ -78,15 +80,23 @@ impl Shell {
         // The Shell re-renders only when its layout changes: signed in or out
         // (the session's event, not its every notify), the tab, the fold, the drawer.
         let relay = |this: &mut Self, cx: &mut Context<Self>| { let l = ShellLayout::of(&this.stores, cx); if l != this.lay { this.lay = l; cx.notify(); } };
-        let subs = vec![
+        let mut subs = vec![
             cx.subscribe(&stores.session, move |this, _, _: &crate::SessionEvent, cx| relay(this, cx)),
             cx.observe(&stores.nav, move |this, _, cx| relay(this, cx)),
         ];
         let lay = ShellLayout::of(&stores, cx);
         let modal = w::modal_layer(cx);
         let ask = w::ask_layer(cx);
+        // A focused element gone (a closed drawer's field, Cru's screen): the focus goes to its
+        // nearest focusable ancestor still drawn, else to the window's root, never to nothing
+        // (GPUI sends keys along the focused element's path only: with none, the window's own
+        // shortcuts, Cru's push to talk, would hear no key). As native-gpui's Shell.
+        subs.push(cx.on_focus_lost(window, |this: &mut Self, window, cx| {
+            let to = window.focus_lost_restore_target(cx).unwrap_or_else(|| this.root_focus.clone());
+            window.focus(&to, cx);
+        }));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { stores, top, side, bar, sign_in, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), lay, _subs: subs }
+        Shell { stores, top, side, bar, sign_in, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, lay, _subs: subs }
     }
 
     /// The browser drawer's view (Desktop registers it).
@@ -140,7 +150,7 @@ impl Render for Shell {
                 if e.click_count >= 2 { this.stores.nav.update(cx, |n, cx| { n.drawer_w = T::DRAWER_W; cx.notify(); }); this.dragging = false; } else { this.dragging = true; }
                 cx.notify();
             }));
-        let dview = drawer.map(|d| div().flex_none().w(drawer_w).h_full().min_h_0().child(d.view.cached(StyleRefinement::default().size_full())));
+        let dview = drawer.map(|d| div().flex_none().w(drawer_w).h_full().min_h_0().child(d.view)); // layout (Desktop's): its bars and page are its cached leaves
         let main = div().flex().flex_1().min_h_0().child(self.side.clone().cached(StyleRefinement::default().w(sw).h_full().flex_none()));
         let main = match dview {
             Some(v) if left => main.child(v).child(split).child(project),
@@ -159,6 +169,19 @@ impl Render for Shell {
                 this.stores.nav.update(cx, |n, cx| { n.drawer_w = wd; cx.notify(); });
             }))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| if this.dragging { this.dragging = false; cx.notify(); }))
+            // Cru's push to talk (the web's default, Ctrl+Space; per device, ptt.rs): held, Cru
+            // opens listening (or stops talking); let go, what was heard goes (Desktop's actions).
+            // Settings may be waiting for the next key to become the shortcut.
+            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if crate::ptt::capture(cx, &e.keystroke) { cx.stop_propagation(); return; }
+                if crate::ptt::matches(&crate::ptt::get(), &e.keystroke) {
+                    cx.stop_propagation();
+                    if !this.ptt_held && !e.is_held { this.ptt_held = true; registry::run_action(&this.stores.clone(), "cru-ptt", window, cx); }
+                }
+            }))
+            .capture_key_up(cx.listener(|this, e: &KeyUpEvent, window, cx| {
+                if this.ptt_held && crate::ptt::releases(&crate::ptt::get(), &e.keystroke.key) { this.ptt_held = false; registry::run_action(&this.stores.clone(), "cru-ptt-up", window, cx); }
+            }))
             .child(self.top.clone().cached(StyleRefinement::default().w_full().h(T::TOPBAR_H).flex_none()))
             .child(main)
             .children(self.overlays.iter().map(|v| v.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full())))
@@ -189,7 +212,7 @@ fn usage_label(at: f32, top: bool) -> Div {
 /// The logo and project; for the owner the weekly and 5-hour usage bars and
 /// their "updated … ago" badge (a click opens Usage); Cru's mark; Telegram's
 /// status; the connection badge; the window buttons.
-pub struct TopBar { stores: Stores, press: BarPress, _subs: Vec<Subscription> }
+pub struct TopBar { stores: Stores, press: BarPress, mark: Entity<crate::CruMark>, cru_hover: u64, _subs: Vec<Subscription> }
 
 impl TopBar {
     fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
@@ -198,7 +221,11 @@ impl TopBar {
             cx.observe(&stores.projects, |_, _, cx| cx.notify()),
             cx.observe(&stores.usage, |_, _, cx| cx.notify()),
         ];
-        TopBar { stores, press: BarPress::default(), _subs: subs }
+        // Cru's mark (Desktop's): live and unread.
+        let mark = crate::cru_mark(cx);
+        let mut subs = subs;
+        subs.push(cx.observe(&mark, |_, _, cx| cx.notify()));
+        TopBar { stores, press: BarPress::default(), mark, cru_hover: 0, _subs: subs }
     }
 }
 
@@ -248,11 +275,30 @@ impl Render for TopBar {
                     .bg(if connected { T::green() } else { T::red() }))), tip)
         });
         let stores = self.stores.clone();
+        // Cru's mark (crundi-voice.js attach()): the bars breathe while Cru is live; a red dot for
+        // unread reports. A click toggles Cru; resting on it opens Cru (on a wide window, after a
+        // moment), and it closes again when the pointer leaves unless Cru is busy (Desktop's actions).
+        let m = self.mark.read(cx).clone();
+        let tip: SharedString = if m.unread > 0 { format!("Talk to Cru ({} unread)", m.unread).into() } else { "Talk to Cru (voice assistant)".into() };
         let cru = div().id("cru").relative().flex_none().flex().items_center().p(T::SP_2).cursor_pointer()
-            .child(w::cru_mark(false))
-            .tooltip(w::tooltip("Talk to Cru (voice assistant)"))
+            .child(w::cru_mark(m.live))
+            // Where the mark is: Cru's screen opens under it (cru_anchor).
+            .child(canvas(|b, _, cx| crate::set_cru_anchor(cx, b), |_, _, _, _| {}).absolute().inset_0())
+            .when(m.unread > 0, |d| d.child(w::layer(w::dot(T::red()).absolute().top(px(1.)).right(px(1.)).border_2().border_color(T::bg_secondary()))))
+            .tooltip(w::tooltip(tip))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| { registry::run_action(&stores, "cru", window, cx); });
+            .on_click(cx.listener(move |this, _, window, cx| { this.cru_hover += 1; registry::run_action(&stores, "cru", window, cx); }))
+            .on_hover(cx.listener(|this, on: &bool, window, cx| {
+                this.cru_hover += 1;
+                let stores = this.stores.clone();
+                if !*on { registry::run_action(&stores, "cru-leave", window, cx); return; }
+                if window.viewport_size().width < T::CRU_HOVER_MIN_W { return; }
+                let n = this.cru_hover;
+                cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(std::time::Duration::from_millis(350)).await;
+                    let _ = this.update_in(cx, |this, window, cx| if this.cru_hover == n { registry::run_action(&stores, "cru-hover", window, cx); });
+                }).detach();
+            }));
         // One paint layer (w::layer): the bar is replayed every frame.
         w::layer(div()
             .id("topbar").relative().flex().size_full()
@@ -281,16 +327,19 @@ impl Render for TopBar {
 /// The projects sidebar: the header (PROJECTS and the fold button) the top
 /// bar's height; rows 32 high, 2 apart; folded, a rail of avatars 48 apart;
 /// + Add project and Inbox at the foot.
-pub struct Sidebar { stores: Stores, folded: Option<bool>, _subs: Vec<Subscription> }
+pub struct Sidebar { stores: Stores, folded: Option<bool>, inbox: Entity<crate::InboxBadge>, _subs: Vec<Subscription> }
 
 impl Sidebar {
     fn new(stores: Stores, cx: &mut Context<Self>) -> Self {
+        let inbox = crate::inbox_badge(cx);
         let subs = vec![
             cx.observe(&stores.projects, |_, _, cx| cx.notify()),
             // Only the fold changes the sidebar's own drawing (not the tab).
             cx.observe(&stores.nav, |this: &mut Self, nav, cx| { let f = nav.read(cx).folded; if this.folded != Some(f) { this.folded = Some(f); cx.notify(); } }),
+            // The Inbox button's count (Desktop's).
+            cx.observe(&inbox, |_, _, cx| cx.notify()),
         ];
-        Sidebar { stores, _subs: subs, folded: None }.with_fold(cx)
+        Sidebar { stores, _subs: subs, folded: None, inbox }.with_fold(cx)
     }
     fn with_fold(mut self, cx: &App) -> Self { self.folded = Some(self.stores.nav.read(cx).folded); self }
 }
@@ -324,6 +373,7 @@ impl Render for Sidebar {
                 .child(fold)
         };
         let (s1, s2) = (self.stores.clone(), self.stores.clone());
+        let ib = self.inbox.read(cx).clone();
         // One paint layer (w::layer): the sidebar is replayed every frame.
         w::layer(div()
             .flex().flex_col().size_full().overflow_hidden().bg(T::bg_secondary()).border_r_1().border_color(T::border())
@@ -331,7 +381,11 @@ impl Render for Sidebar {
             .child(list)
             .child(div().flex().flex_col().gap(T::SP_8).py(T::SP_10).px(if folded { T::SP_6 } else { T::SP_8 }).border_t_1().border_color(T::border_subtle())
                 .child(w::dashed_button("add-project", if folded { "+" } else { "+ Add project" }).on_click(move |_, window, cx| { registry::run_action(&s1, "add-project", window, cx); }))
-                .child(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" }).on_click(move |_, _, cx| s2.nav.update(cx, |n, cx| n.show_tab("inbox", cx))))))
+                .when(ib.supported, |d| d.child(w::outline_button("inbox", IconName::Mail, if folded { "" } else { "Inbox" })
+                    // The web's .has-unread: brighter, an accent edge, the count's badge; its title.
+                    .when(ib.unread > 0, |b| b.border_color(T::accent()).text_color(T::text()).child(w::count_badge(if ib.unread > 99 { "99+".to_string() } else { ib.unread.to_string() })))
+                    .tooltip(w::tooltip(if ib.unread > 0 { format!("Inbox: {} unread", ib.unread) } else { "Inbox".to_string() }))
+                    .on_click(move |_, _, cx| s2.nav.update(cx, |n, cx| n.show_tab("inbox", cx)))))))
     }
 }
 

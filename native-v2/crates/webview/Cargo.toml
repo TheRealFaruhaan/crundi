@@ -1,0 +1,25 @@
+[package]
+name = "crundi-webview"
+description = "The browser bridge: off-screen Chromium in its own process (the browser host, crates/browser-host), pages drawn as GPUI images (Desktop's). No CEF here: the app never maps libcef"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui-component.workspace = true
+gpui-kit-assets.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+crundi-theme.workspace = true
+crundi-widgets.workspace = true
+crundi-browser-link.workspace = true
+crundi-core.workspace = true
+
+image.workspace = true
+base64.workspace = true
+png.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

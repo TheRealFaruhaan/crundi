@@ -160,7 +160,7 @@ are the owner's PC, release build; "—" not yet.
 | Operations | Homepool (networks, nodes, access keys, requests, activity; its 3 s refresh draws only on a change), Info (the project, this machine (live, 2 s), reclaim disk space, outside collaborators, the tunnel, the server log as a virtual list spliced per line) | operations/homepool.rs, info.rs | ported (suites: test/operations/homepool.mjs, info.mjs) | PC, release: Info's scroll p95 8.5 (78%; was 10.2); still: redraws only for new machine figures |
 | Operations | Panels (widgets): the tab (list, bar, Checks, History), the panel panes (`panel:widget:<n>` chooser, `panel:widget:@<id>`), the chip's popover, docks and the inline card (for the chat area), live `widget` events; the bridge to each copy's page | operations/panels.rs | ported; the pages are drawn by the Desktop area's browser through `crundi_operations::web::set_host` (until it is set, a copy says the browser did not start). No forever timer (native-gpui's 16 ms loop): a 250 ms tick only while copies exist, the host's view redraws itself as its page paints. Suite: test/operations/panels.mjs (the page checks run when the host is there) | — |
 | Operations | Add project, the approvals panel (a window layer; its top-bar button needs a shell slot: asked), What's new (the tour; each step's page through the same browser hook), the scheduled-backup notice (a window layer) | operations/extras.rs, skills/backup.rs | ported (suite: test/operations/extras.mjs) | — |
-| Desktop (desktop, webview, browser-*) | The browser drawer (tabs per project, address bar, Network / Device menus, Annotate, DevTools), the Browsers tab, the native host (`test/drive.mjs`), tray and notifications, Inbox, the chat bubble, saved passwords, the homepool node, Cru (voice screen, live screen, kid mode, "Hey Cru") | desktop, webview, browser-host, browser-link | browser-host / link ported (not built here: CEF); the rest to do | — |
+| Desktop (desktop, webview, browser-*) | The browser drawer (tabs per project, address bar and history suggestions, Network / Device menus, Annotate and sending marks to a chat, DevTools, History, Clear browsing data; a layout view of 8 cached leaves: a page's frame redraws its `PageView` alone), the Browsers tab, the native host (the server's browser_* tools on drawer tabs and hidden browsers), saved passwords (the PIN), the unload rule and the browser host process (lazy, idle stop, crash and Reload); Inbox (threads and conversation, virtualised; the sidebar's unread badge), notifications, the tray (id `crundi-v2`), startup, the chat bubble (the chat crate's ChatPane in a window of its own), the homepool node; Cru (its screen as an overlay under the top bar's mark, the live screen, kid mode and its PIN, "Hey Cru", push-to-talk) | desktop, webview, browser-host, browser-link | ported (suite: test/desktop.mjs, 14 parts, 276 checks on the PC under Xvfb and a private D-Bus; snapshots on the server). No pump timer: the area's one pump task sleeps until woken (the host's frames and events, a deferred call, an effect) or until a part's deadline (`next_due`) | see the runs below |
 
 ## The frame budget's runs (to fill)
 
@@ -169,7 +169,37 @@ are the owner's PC, release build; "—" not yet.
 | slice | debug | server (Xvfb, lavapipe) | — | — | n/a | n/a | — |
 | workspace (F37) | release | owner's PC (1920x1040 window, Wayland), four chats + an Empty Shell pane (six panes), stub server (perf/pc-2026-11-20-workspace.md) | terminal printing 3000 lines over 29 s: 4.47 / 6.95 / 95%; with the wheel swept over every pane: 5.18 / 8.09 / 80% (an earlier run 4.69 / 7.71 / 91%) | the same run's chats: scroll-panes 6.06 / 100%, scroll-chat 5.82 / 100%, stream+scroll 6.49 / 99% | n/a | n/a | 0 (open, end); 1 after the terminal (the top bar and the workbench's layout once: the server's state, not the terminal) |
 | planning | release | owner's PC, Kanban tab 80 cards / Mindmap tab 133 ideas / workbench with both panels beside the chats (perf/pc-2026-11-20-planning.md) | — | — | p95 8.0 (70% ≤7 ms; was 11.1) | p95 7.9 (60%; was 20.4) | 0 |
+| desktop | release | owner's PC (1920x1040 window, Wayland), the CR's five panes with a chat streaming, then the browser drawer open beside them on a static page (perf/pc-2026-11-20-desktop.md) | cr-sweep 4.59 / 5.89 / 99%; with the drawer: cr-drawer-sweep 4.64 / 6.11 / 99% | cr-scroll 5.57 / 100%; with the drawer 5.74 / 99% | (in the CR scenario) | (in the CR scenario) | 0 (open, end, planning); 1 with the drawer open (the stream's end, not the drawer) |
 | slice | release | owner's PC (1920x1080, 144 Hz, Renoir, Wayland), 5 panes, a chat streaming (perf/pc-2026-11-19.md) | 16.9 / 24.2 / 0% (with wheel: 9.1 / 17.1 / 29%) | 5.5 / 28.7 / 71–82% (a 300-line reply on screen; 4.2 / 6.1 / 98% without it) | not built | not built | 0 (open), 0 (after the stream) |
+
+### Desktop: how it runs, and what is still open (round of 20 Nov)
+
+- `crates/webview`: native-gpui's, its 8 ms pump replaced by a waker
+  (`crundi_webview::wake`, set by the area) and deadlines (`next_due`: timers,
+  the host's idle stop, a panel's hide). `crates/desktop`: native-gpui's logic
+  (plain state on the UI thread); its views render from copies taken in the
+  pump and notify only when the copy changed; chrome in paint layers.
+- Shared-file edits (additive): the app inits the area (`init`,
+  `init_window`); `crundi_shell::ptt` (ported, no window refresh); the
+  shell's `CruMark` and `cru_anchor` (the top bar's mark breathes while Cru is
+  live, its unread dot and title, hover and push-to-talk actions, the focus
+  never lost to nothing); `InboxBadge` (the sidebar's Inbox count, the web's
+  ibxBadge); the drawer placed uncached (it is layout: its bars and page are
+  its leaves); `tools/stage-browser.sh` (the host and CEF beside the app);
+  `tools/measure-pc.mjs`'s drawer scenarios (MEASURE_DRAWER=0 skips them).
+- Not yet: a chat's live frames (2.16f, the chat area's) and so the "not
+  visible" rule's chat-embed half; Settings › Voice assistant's "On this
+  device" part (`wake::settings_part`) waits for a settings hook
+  (Operations); `test/cru-voice.mjs` (needs a Deepgram stand-in).
+- For the owner (via the Manager): "Hey Cru"'s speaker model on GitHub now
+  hashes differently from the pinned checksum, so the voice check stays off
+  (any voice wakes Cru, and it says so); the tray gained Electron's "Listen
+  for "Hey Cru" while plugged in" item native-gpui lacked; Chromium waits
+  ~25 s for a keyring on a session with no secrets service before the first
+  page (pass `--password-store=basic`?).
+- Requests to the chat area: a second list over one `ChatStore` (the bubble
+  shares the pane's scroll), `head_info` public, a chat kept subscribed
+  outside the open project (a bubble from another project).
 
 ## Open questions for the Manager
 
