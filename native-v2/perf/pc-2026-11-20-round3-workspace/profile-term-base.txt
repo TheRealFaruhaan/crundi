@@ -1,0 +1,93 @@
+samples 500: busy 293, idle 207
+
+stage:
+   147 paint
+    53 render
+    51 other
+    42 layout
+
+owner x stage:
+    50 crundi_v2::main::  [other]
+    32 crundi_v2::main::  [paint]
+    28 crundi_v2::main::  [render]
+    25 crundi_chat::log::LogView  [paint]
+    25 crundi_v2::main::  [layout]
+    23 crundi_chat::log::BlockEl  [paint]
+    15 crundi_workbench::head::PaneHead  [paint]
+    14 crundi_chat::pane::Composer  [paint]
+    11 crundi_shell::views::ProjectBar  [paint]
+     7 crundi_shell::views::Shell  [render]
+     6 crundi_chat::log::LogView  [render]
+     6 crundi_chat::log::Layer  [paint]
+     5 crundi_workbench::Workbench  [render]
+     5 crundi_shell::views::TopBar  [paint]
+     5 crundi_chat::log::  [paint]
+     4 crundi_workspace::terms::TermScreen  [paint]
+     4 crundi_chat::log::Layer  [layout]
+     3 crundi_chat::log::  [layout]
+     3 crundi_chat::log::BlockEl  [layout]
+     2 crundi_shell::views::Sidebar  [paint]
+     2 crundi_workspace::terms::TermInput  [paint]
+     2 crundi_chat::log::HitText  [layout]
+     2 crundi_chat::log::BlockEl  [render]
+     2 crundi_chat::log::Laid  [layout]
+     1 crundi_workspace::terms::TermScreen  [render]
+
+leaf function:
+   119 ?
+     8 tcache_get_n
+     8 clone
+     7 copy_nonoverlapping<gpui::scene::SubpixelSprite>
+     6 refine
+     6 total_cmp
+     5 write<core::ptr::non_null::NonNull<gpui::bounds_tree::Node<gpui::geome
+     4 __memcpy_avx_unaligned_erms
+     4 eq
+     4 find_max_ordering<gpui::geometry::ScaledPixels>
+     3 unlink_chunk
+     3 _int_free_create_chunk
+     3 drop_glue<gpui::scene::PaintOperation>
+     3 from<gpui::scene::Primitive>
+     3 pop<core::ptr::non_null::NonNull<gpui::bounds_tree::Node<gpui::geometr
+
+functions on the stack (inclusive):
+   293 crundi_v2::main::
+   286 gpui::app::
+   274 gpui::window::
+   274 gpui::platform::RequestFrameOptions
+   273 gpui::app::async_context::AsyncApp
+   210 gpui::view::ViewElement
+   198 gpui::elements::div::Stateful
+   198 gpui::view::AnyView
+   197 gpui::elements::div::Div
+   194 gpui_component::window_border::WindowBorder
+   192 gpui::elements::div::
+   192 gpui::elements::div::InteractiveElementState
+   163 gpui::window::ElementId
+   137 gpui::app::entity_map::Entity
+   135 gpui::view::ViewElementState
+   105 gpui::view::paint_view::
+    88 gpui::element::AnyElement
+    54 gpui::window::Hitbox
+    54 gpui::window::FocusHandle
+    54 crundi_chat::log::Layer
+    53 gpui::elements::list::List
+    46 gpui::geometry::ScaledPixels
+    43 gpui::taffy::LayoutId
+    35 gpui::element::Drawable
+    34 crundi_chat::log::
+    33 gpui::scene::Primitive
+    33 crundi_chat::log::BlockEl
+    33 gpui::elements::list::
+    29 gpui::taffy::NodeContext
+    24 gpui::scene::
+    23 gpui::elements::list::LayoutItemsResponse
+    15 gpui::bounds_tree::Node
+    14 gpui::scene::SubpixelSprite
+    13 taffy::tree::taffy_tree::TaffyView
+     9 gpui::arena::ArenaBox
+     9 gpui::text_system::line::paint_line::
+     9 taffy::tree::node::NodeId
+     9 gpui::scene::PaintOperation
+     8 crundi_shell::views::Shell
+     8 taffy::tree::taffy_tree::NodeData

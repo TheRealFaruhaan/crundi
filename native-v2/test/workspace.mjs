@@ -168,6 +168,7 @@ let at = await clickMore(join(P, 'README.md'));
 s = await T.until('the row menu opens with the web\'s items', (s) => W(s).menu?.items?.map((i) => i.id).join(',').startsWith('open,') && W(s).menu.items.some((i) => i.id === 'delete' && i.danger) && W(s).menu.items.some((i) => i.id === 'download'));
 // As the web's openFileMenu: under the button, from its right edge less 4 (kept in the window).
 t.check('the menu opens under the row\'s "…" (not the window\'s corner)', at && W(s) && Math.abs(W(s).menu.x - (at[0] + at[2] - 4)) < 1 && Math.abs(W(s).menu.y - (at[1] + at[3] + 2)) < 1, { at, menu: W(s || {})?.menu && [W(s).menu.x, W(s).menu.y] });
+await t.sleep(300); // (the frame that drew the menu is on screen: F45)
 await snap('files-menu');
 await T.ui('menu-pick', 'path');
 await T.until('Copy path copies the absolute path', (s) => W(s).copied === join(P, 'README.md') && s.toast === 'Path copied');
@@ -294,10 +295,25 @@ await snap('terminal');
   t.check('streaming never redrew the input bar', (r1['term-input'] || 0) === (r0['term-input'] || 0), { before: r0['term-input'], after: r1['term-input'] });
   t.check('streaming never redrew a pane head', (r1.head || 0) === (r0.head || 0), { before: r0.head, after: r1.head });
 }
+// The screen derives and shapes a line once per change (F46/F50): the
+// wheel derives only the lines that came into view, a short echo only the
+// lines it wrote, never the whole screen again.
+let d0 = TS(await T.state())?.derived || 0;
+const rowsOn = TS(await T.state())?.rows || 0;
 await act('term-scroll', key, '30');
-await T.until('the wheel goes back up', (s) => TS(s)?.back === 30);
+s = await T.until('the wheel goes back up', (s) => TS(s)?.back === 30);
+await t.sleep(300);
+let d1 = TS(await T.state())?.derived || 0;
+t.check('scrolling back derives only the lines that came into view', d1 - d0 >= 1 && d1 - d0 <= Math.min(30, rowsOn) + 2, { derived: d1 - d0, rows: rowsOn });
 await act('term-scroll', key, '-30');
 await T.until('and down again', (s) => TS(s)?.back === 0);
+await t.sleep(300);
+d0 = TS(await T.state())?.derived || 0;
+await act('term-send', key, 'echo one-line');
+await T.until('a short echo shows', (s) => TS(s)?.screen.some((l) => l.trim() === 'one-line'));
+await t.sleep(500);
+d1 = TS(await T.state())?.derived || 0;
+t.check('a short echo derives only the lines it wrote (not the screen)', d1 - d0 >= 1 && d1 - d0 <= 8 && d1 - d0 < rowsOn, { derived: d1 - d0, rows: rowsOn });
 await act('term-send', key, 'sleep 30');
 await t.sleep(400);
 await act('term-tool', key, 'ctrl+c');

@@ -298,10 +298,25 @@ try {
       const s1 = await state();
       report[name].renders = drew(r0, s1);
       report[name].batches = (TS(s1, key)?.batches || 0) - b0;
+      // The screen's own time on the UI thread (render + paint), per paint.
+      const us = (TS(s1, key)?.screenUs || 0) - (TS(s0, key)?.screenUs || 0), np = (TS(s1, key)?.screenPaints || 0) - (TS(s0, key)?.screenPaints || 0);
+      report[name].screen = { paints: np, usPerPaint: np ? Math.round(us / np) : 0 };
+      console.log(`  ${name} screen: ${np} paints, ${np ? Math.round(us / np) : 0} µs each (render + paint)`);
       if (scroll) report[name].wheelEvents = wheel;
     };
     await streamTerm('term-stream', false);
     await streamTerm('term-stream+scroll', true);
+    if (process.env.PROFILE && process.env.PROFILE_AT === 'term') {
+      // PROFILE_AT=term: the sampler on the UI thread while the shell prints
+      // and the wheel sweeps (after the numbers above are taken).
+      await ws('term-send', key, `for ((i=1;i<=40000;i++)); do printf 'line %d ..........................................................\\n' $i; sleep 0.002; done`);
+      await sleep(600);
+      const g = spawn('gdb', ['-q', '-p', String(app.pid), '-batch', '-x', process.env.PROFILE], { env: { ...process.env, SAMPLE_OUT: join(OUT, 'samples.txt') }, stdio: ['ignore', 'ignore', 'inherit'] });
+      let gone = false; g.on('exit', () => { gone = true; });
+      const stop = Date.now() + 240000;
+      while (!gone && Date.now() < stop) await sweep(d, 2000);
+      await ws('term-tool', key, 'ctrl+c');
+    }
     await sleep(2000);
     const i0 = (await state()).renders || {};
     m = fm.mark(); await sleep(6000); stats('idle-terminal', m);
@@ -381,8 +396,14 @@ try {
       const [mx, my] = MM(s)?.canvas || [0, 0];
       const [mw, mh] = MM(s)?.view || [0, 0];
       const regions = { kanban: kb && [kb.x + kb.w / 2, kb.y + Math.min(kb.h / 2, 300)], mindmap: mw > 0 && [mx + mw - 20, my + mh / 2] };
+      // MEASURE_TERM_CLEAR=1: the Kanban's region again with the open shell's
+      // screen cleared (what an idle terminal's drawn text costs the others).
+      const tk = report.setup.terminal?.key;
+      if (process.env.MEASURE_TERM_CLEAR === '1' && tk && regions.kanban) { regions['kanban-termclear'] = regions.kanban; regions['kanban-termfull'] = regions.kanban; }
       for (const [name, at] of Object.entries(regions)) {
         if (!at) continue;
+        if (name === 'kanban-termclear') { await d.send({ cmd: 'ui', name: 'workspace:term-send', args: [tk, 'clear'] }); await sleep(1500); }
+        if (name === 'kanban-termfull') { await d.send({ cmd: 'ui', name: 'workspace:term-send', args: [tk, "for ((i=1;i<=300;i++)); do printf 'line %d ..........................................................\\n' $i; done"] }); await sleep(2500); }
         const r1 = (await state()).renders || {};
         const mm0 = fm.mark();
         const end = Date.now() + 2000; let i = 0;

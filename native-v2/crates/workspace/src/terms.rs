@@ -234,24 +234,104 @@ pub fn split_runs(row: &[vt::Cell]) -> Vec<vt::Run> {
 
 /// A run as painted: its column and width in cells, its text, colours and face.
 #[derive(Clone)]
-struct PRun { col: usize, cells: usize, text: SharedString, fg: Hsla, bg: Option<Hsla>, bold: bool, italic: bool, underline: bool, ascii: bool }
+struct PRun { col: usize, cells: usize, text: SharedString, fg: Hsla, bg: Option<Hsla>, bold: bool, italic: bool, underline: bool }
 
-fn paint_rows(term: &vt::Term, back: usize) -> Vec<Vec<PRun>> {
-    let named = named();
-    term.view(back).iter().map(|row| split_runs(row).into_iter().filter_map(|r| {
-        let (fg, bg) = run_colors(&r.st, &named);
+/// A line's runs, derived once per change of the line (not per frame).
+fn paint_runs(row: &[vt::Cell], named: &[Hsla]) -> Vec<PRun> {
+    split_runs(row).into_iter().filter_map(|r| {
+        let (fg, bg) = run_colors(&r.st, named);
         if bg.is_none() && r.text.trim().is_empty() && !r.st.underline { return None; }
-        let ascii = r.text.is_ascii();
-        Some(PRun { col: r.col, cells: r.cells, text: r.text.into(), fg, bg, bold: r.st.bold, italic: r.st.italic, underline: r.st.underline, ascii })
-    }).collect()).collect()
+        Some(PRun { col: r.col, cells: r.cells, text: r.text.into(), fg, bg, bold: r.st.bold, italic: r.st.italic, underline: r.st.underline })
+    }).collect()
+}
+
+/// A glyph of a row, as painted: its place from the row's top left (on its
+/// run's baseline), its face and colour.
+#[derive(Clone, Copy)]
+struct PGlyph { at: Point<Pixels>, font: FontId, id: GlyphId, emoji: bool, color: Hsla }
+
+/// A character as shaped once in a face (bold, italic) at the screen's text
+/// size: its glyphs from the cell's left (an ASCII one fills its cell, as
+/// the web's xterm.js draws a cell at a time: no ligatures), the baseline
+/// and the underline's offset from the row's top.
+struct CharShape { glyphs: Vec<(Pixels, FontId, GlyphId, bool)>, base: Pixels, uy: Pixels }
+
+type CharKey = (char, bool, bool);
+
+fn shape_char(c: char, bold: bool, italic: bool, fsize: Pixels, cw: f32, lh: Pixels, window: &Window) -> CharShape {
+    let mut buf = [0u8; 4];
+    let text = c.encode_utf8(&mut buf);
+    let tr = TextRun { len: text.len(), font: mono(bold, italic), color: T::text(), background_color: None, underline: None, strikethrough: None };
+    let layout = window.text_system().layout_line(text, fsize, &[tr], c.is_ascii().then_some(px(cw)));
+    let glyphs = layout.runs.iter().flat_map(|sr| sr.glyphs.iter().map(move |g| (g.position.x, sr.font_id, g.id, g.is_emoji))).collect();
+    CharShape { glyphs, base: (lh - layout.ascent - layout.descent) / 2. + layout.ascent, uy: underline_y_offset(lh, layout.ascent, layout.descent) }
+}
+
+/// One row as painted (one per visible line): its backgrounds, its glyphs
+/// (from the characters' shapes, at the text size and cell width it was
+/// made for) and its underlines (column, width in cells, colour, offset
+/// from the row's top).
+struct RowPaint { bgs: Vec<(usize, usize, Hsla)>, glyphs: Vec<PGlyph>, unders: Vec<(usize, usize, Hsla, Pixels)> }
+
+impl RowPaint {
+    fn new(row: &[vt::Cell], named: &[Hsla], fsize: Pixels, cw: f32, lh: Pixels, chars: &mut HashMap<CharKey, Rc<CharShape>>, window: &Window) -> RowPaint {
+        let mut p = RowPaint { bgs: vec![], glyphs: vec![], unders: vec![] };
+        let mut shape = |c: char, b: bool, i: bool| chars.entry((c, b, i)).or_insert_with(|| Rc::new(shape_char(c, b, i, fsize, cw, lh, window))).clone();
+        for run in paint_runs(row, named) {
+            if let Some(b) = run.bg { p.bgs.push((run.col, run.cells, b)); }
+            if run.underline { let s = shape(' ', run.bold, run.italic); p.unders.push((run.col, run.cells, run.fg, s.uy)); }
+            // Each character at its cell (split_runs: an ASCII run one cell
+            // a character, anything else a run of its own); spaces draw nothing.
+            let mut col = run.col;
+            for c in run.text.chars() {
+                if c != ' ' {
+                    let s = shape(c, run.bold, run.italic);
+                    let x0 = px(col as f32 * cw);
+                    for &(x, font, id, emoji) in &s.glyphs { p.glyphs.push(PGlyph { at: point(x0 + x, s.base), font, id, emoji, color: run.fg }); }
+                }
+                col += if c.is_ascii() { 1 } else { vt::width(c).max(1) };
+            }
+        }
+        p
+    }
+}
+
+/// The rows on show, by line id: what the screen derived from each line,
+/// kept while the line is on show and unchanged (a batch derives only the
+/// lines it wrote; scrolling only the lines that came into view), and the
+/// characters shaped so far, for one text size and cell width.
+#[derive(Default)]
+struct RowCache { rows: HashMap<u64, Rc<RowPaint>>, chars: HashMap<CharKey, Rc<CharShape>>, for_size: (Pixels, u32), derived: u64 }
+
+impl RowCache {
+    /// The visible lines' rows, each from the cache or derived now; lines
+    /// no longer on show are let go.
+    fn visible(&mut self, lines: &[&vt::Line], fsize: Pixels, cell: (f32, f32), window: &Window) -> Vec<Rc<RowPaint>> {
+        let key = (fsize, cell.0.to_bits());
+        if self.for_size != key { self.rows.clear(); self.chars.clear(); self.for_size = key; }
+        let named = named();
+        let lh = px(cell.1);
+        let mut next: HashMap<u64, Rc<RowPaint>> = HashMap::with_capacity(lines.len());
+        let out = lines.iter().map(|l| {
+            let id = l.id();
+            let r = match next.get(&id).or_else(|| self.rows.get(&id)) {
+                Some(r) => r.clone(),
+                None => { self.derived += 1; Rc::new(RowPaint::new(l, &named, fsize, cell.0, lh, &mut self.chars, window)) }
+            };
+            next.insert(id, r.clone());
+            r
+        }).collect();
+        self.rows = next;
+        out
+    }
 }
 
 /// The text of a selection on the lines in view (from c0,r0 to c1,r1 in
 /// order), each line's trailing spaces dropped.
-pub fn selection_text(lines: &[&Vec<vt::Cell>], c0: usize, r0: usize, c1: usize, r1: usize) -> String {
+pub fn selection_text(lines: &[&vt::Line], c0: usize, r0: usize, c1: usize, r1: usize) -> String {
     let mut out = vec![];
     for r in r0..=r1.min(lines.len().saturating_sub(1)) {
-        let row = lines[r];
+        let row: &[vt::Cell] = lines[r];
         let from = if r == r0 { c0 } else { 0 };
         let to = if r == r1 { (c1 + 1).min(row.len()) } else { row.len() };
         let s: String = row.get(from.min(row.len())..to.max(from).min(row.len())).unwrap_or(&[]).iter().filter(|c| !c.cont).map(|c| c.ch).collect();
@@ -312,13 +392,23 @@ fn mono(bold: bool, italic: bool) -> Font {
     f
 }
 
+/// The time the screens spent rendering and painting (µs, all terminals),
+/// and how many paints: the driver's props show it (what a terminal frame
+/// costs the UI thread, measured, not sampled).
+pub static SCREEN_US: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static SCREEN_PAINTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+fn add_us(t: std::time::Instant) { SCREEN_US.fetch_add(t.elapsed().as_micros() as u64, std::sync::atomic::Ordering::Relaxed); }
+
 pub struct TermScreen {
     state: Entity<TermState>,
     pub focus: FocusHandle,
-    /// The rows as painted, and what they were derived from (the state's
-    /// batches and scroll, the selection does not count: drawn over).
-    rows: Rc<Vec<Vec<PRun>>>,
-    drawn: Option<(u64, usize, usize, usize, u64)>,
+    /// Each visible line's row as painted, kept by line id (RowCache), and
+    /// the rows on show with what they were taken for (the terminal's
+    /// generation, the scroll and the text size; the selection does not
+    /// count: drawn over).
+    cache: RowCache,
+    shown: Rc<Vec<Rc<RowPaint>>>,
+    drawn: Option<(u64, usize, Pixels)>,
     /// A cell's size, for the text size it was measured at.
     cell: (f32, f32),
     cell_for: Pixels,
@@ -331,7 +421,7 @@ pub struct TermScreen {
 impl TermScreen {
     fn new(state: Entity<TermState>, cx: &mut Context<Self>) -> Self {
         let _sub = cx.observe(&state, |_, _, cx| cx.notify());
-        TermScreen { state, focus: cx.focus_handle(), rows: Rc::new(vec![]), drawn: None, cell: (8., 16.), cell_for: px(0.), origin: Rc::new(StdCell::new(point(px(0.), px(0.)))), pressing: false, sel: Sel::default(), _sub }
+        TermScreen { state, focus: cx.focus_handle(), cache: RowCache::default(), shown: Rc::new(vec![]), drawn: None, cell: (8., 16.), cell_for: px(0.), origin: Rc::new(StdCell::new(point(px(0.), px(0.)))), pressing: false, sel: Sel::default(), _sub }
     }
 
     fn cell_at(&self, p: Point<Pixels>) -> (usize, usize) {
@@ -347,6 +437,7 @@ impl TermScreen {
 impl Render for TermScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("term-screen");
+        let t0 = std::time::Instant::now();
         let st = self.state.read(cx);
         let fsize = T::TEXT_13 * scale(st.zoom);
         // The cell: the mono face's advance at this size, measured on a
@@ -360,16 +451,19 @@ impl Render for TermScreen {
             self.cell_for = fsize;
             st.cell.set(self.cell);
         }
-        // The rows, derived again only when the terminal changed.
-        let key = (st.batches, st.back, st.term.cols, st.term.rows, st.term.generation);
+        // The rows on show, taken again only when the terminal changed; of
+        // those only the lines that changed or came into view are derived
+        // and shaped (the rest are the cache's).
+        let key = (st.term.generation, st.back, fsize);
         if self.drawn != Some(key) {
-            self.rows = Rc::new(paint_rows(&st.term, st.back));
+            let lines = st.term.view(st.back);
+            self.shown = Rc::new(self.cache.visible(&lines, fsize, self.cell, window));
             self.drawn = Some(key);
         }
         let (cw, ch) = self.cell;
         let (back, cols) = (st.back, st.term.cols);
         let id = st.id.clone();
-        let rows = self.rows.clone();
+        let rows = self.shown.clone();
         let sel = self.sel;
         let origin = self.origin.clone();
         let state = self.state.downgrade();
@@ -384,19 +478,20 @@ impl Render for TermScreen {
                 cx.defer(move |cx| { let _ = state.update(cx, |t, cx| t.size(c, r, cx)); });
             },
             move |bounds, _, window, _| {
+                let t0 = std::time::Instant::now();
+                SCREEN_PAINTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let o = bounds.origin + point(pad, pad);
                 let lh = px(ch);
                 // One paint layer for the whole screen (as the chat's log):
                 // its quads and glyphs take the layer's order, so the screen
                 // costs one insert into the scene's bounds tree, not one per
-                // glyph. Backgrounds and the selection are quads (under the
-                // text), each run's glyphs are painted straight in.
+                // glyph. Each row paints what it shaped when its line last
+                // changed: backgrounds and the selection (quads, under the
+                // text), then its glyphs and underlines.
                 window.paint_layer(bounds, |window| {
                     for (r, row) in rows.iter().enumerate() {
                         let y = o.y + px(r as f32 * ch);
-                        for run in row {
-                            if let Some(b) = run.bg { window.paint_quad(fill(Bounds { origin: point(o.x + px(run.col as f32 * cw), y), size: size(px(run.cells as f32 * cw), lh) }, b)); }
-                        }
+                        for &(col, cells, b) in &row.bgs { window.paint_quad(fill(Bounds { origin: point(o.x + px(col as f32 * cw), y), size: size(px(cells as f32 * cw), lh) }, b)); }
                     }
                     // The selection: whole cells, row by row.
                     if sel.on {
@@ -409,29 +504,20 @@ impl Render for TermScreen {
                         }
                     }
                     for (r, row) in rows.iter().enumerate() {
-                        let y = o.y + px(r as f32 * ch);
-                        for run in row {
-                            if run.text.trim().is_empty() && !run.underline { continue; }
-                            let x = o.x + px(run.col as f32 * cw);
-                            let tr = TextRun { len: run.text.len(), font: mono(run.bold, run.italic), color: run.fg, background_color: None, underline: None, strikethrough: None };
-                            // (The text system keeps a laid-out line from frame to frame.)
-                            let layout = window.text_system().layout_line(&run.text, fsize, &[tr], run.ascii.then_some(px(cw)));
-                            let base = y + (lh - layout.ascent - layout.descent) / 2. + layout.ascent;
-                            for sr in &layout.runs {
-                                for g in &sr.glyphs {
-                                    let at = point(x + g.position.x, base);
-                                    let _ = if g.is_emoji { window.paint_emoji(at, sr.font_id, g.id, fsize) } else { window.paint_glyph(at, sr.font_id, g.id, fsize, run.fg) };
-                                }
-                            }
-                            if run.underline {
-                                let uy = y + underline_y_offset(lh, layout.ascent, layout.descent);
-                                window.paint_underline(point(x, uy), px(run.cells as f32 * cw), &UnderlineStyle { thickness: px(1.), color: Some(run.fg), wavy: false });
-                            }
+                        let top = point(o.x, o.y + px(r as f32 * ch));
+                        for g in &row.glyphs {
+                            let at = top + g.at;
+                            let _ = if g.emoji { window.paint_emoji(at, g.font, g.id, fsize) } else { window.paint_glyph(at, g.font, g.id, fsize, g.color) };
+                        }
+                        for &(col, cells, c, uy) in &row.unders {
+                            window.paint_underline(point(top.x + px(col as f32 * cw), top.y + uy), px(cells as f32 * cw), &UnderlineStyle { thickness: px(1.), color: Some(c), wavy: false });
                         }
                     }
                 });
+                add_us(t0);
             },
         ).absolute().top_0().left_0().size_full();
+        add_us(t0);
         div().id(SharedString::from(format!("term-{id}"))).track_focus(&self.focus).relative().size_full().overflow_hidden().bg(T::bg()).cursor_text()
             .child(grid)
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
@@ -935,6 +1021,10 @@ pub fn props(cx: &App) -> Value {
         v["text"] = json!(i.text(cx));
         v["tools"] = json!(i.tools_open());
         v["upload"] = json!(i.uploading());
+        // The rows the screen derived and shaped so far (a batch: the lines it wrote).
+        v["derived"] = json!(p.screen.read(cx).cache.derived);
+        v["screenUs"] = json!(SCREEN_US.load(std::sync::atomic::Ordering::Relaxed));
+        v["screenPaints"] = json!(SCREEN_PAINTS.load(std::sync::atomic::Ordering::Relaxed));
         v
     }).collect()).unwrap_or_default())
 }
