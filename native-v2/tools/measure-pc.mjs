@@ -45,6 +45,15 @@
 //   stream+scroll the wheel sweep while a fifth chat streams a long reply
 //   stream        the rest of that stream
 //   idle-end      after it all: 0 frames
+// Then the planning area's (MEASURE_PLANNING=0 skips them; the board and the
+// map are seeded before the client starts: 4 columns of 20 cards, some with
+// subtasks; a map of 133 ideas):
+//   scroll-kanban the Kanban tab: the wheel over each column, 7 ms apart
+//   pan-mindmap   the Mindmap tab: the wheel over the map, down and sideways
+//   idle-planning the Mindmap tab after it: 0 frames
+//   planning+stream+scroll  the workbench with a Kanban and a Mindmap pane
+//                 beside the chats (seven panes), the wheel sweep while the
+//                 fifth chat streams another long reply
 // Each: frames, p50, p95, max, ≤7 ms share, frames over 7 and over 16 ms.
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, realpathSync } from 'node:fs';
@@ -124,6 +133,21 @@ const SEEDS = [
   'Write a markdown list of the 120 largest cities in the world with one sentence about each. Do not use any tools.',
   'Write a long markdown article (about 2000 words) on the history of the printing press, with sections, quotes and lists. Do not use any tools.',
 ];
+// The planning area's data (a board and a map big enough to scroll).
+if (process.env.MEASURE_PLANNING !== '0') {
+  const STS = ['backlog', 'todo', 'in_progress', 'done'];
+  for (let i = 0; i < 80; i++) {
+    const r = await api.http('POST', '/api/kanban', { project: 'demo', action: 'addTask', title: `Task ${i + 1}: ${['Write the plan', 'Fix the build', 'Review the layout', 'Ship the release'][i % 4]}`, status: STS[i % 4] });
+    const tid = r.body?.task?.id || r.body?.id;
+    if (tid && i % 3 === 0) for (let j = 0; j < 3; j++) await api.http('POST', '/api/kanban', { project: 'demo', action: 'addTodo', taskId: tid, text: `Step ${j + 1}` });
+  }
+  const root = (await api.http('POST', '/api/mindmap', { action: 'addNode', text: 'The plan', project: 'demo' })).body?.node?.id;
+  for (let i = 0; i < 12; i++) {
+    const b = (await api.http('POST', '/api/mindmap', { action: 'addNode', text: `Branch ${i + 1}`, parentId: root })).body?.node?.id;
+    for (let j = 0; j < 10; j++) await api.http('POST', '/api/mindmap', { action: 'addNode', text: `Idea ${i + 1}.${j + 1}: a few words that wrap onto a second line`, parentId: b });
+  }
+  console.log('seeded the board (80 cards) and the map (133 ideas)');
+}
 const seeded = [];
 for (const [i, text] of SEEDS.entries()) {
   const c = await api.http('POST', '/api/ui-sessions/create', { project: 'demo', title: `Measure ${i + 1}`, sessionMode: 'new' });
@@ -230,6 +254,55 @@ try {
     report['idle-end'].renders = drew(e0.renders || {}, s);
     report['idle-end'].batches = (s.batches || 0) - (e0.batches || 0);
     report['idle-end'].head = { before: e0.head, after: s.head };
+  }
+
+  if (process.env.MEASURE_PLANNING !== '0') {
+    const ui = (name, ...args) => d.send({ cmd: 'ui', name, args: args.map(String) });
+    const K = (s) => s.planningArea?.kanban;
+    const MM = (s) => s.planningArea?.mindmap;
+    // The Kanban tab: the wheel over each column in turn, 20 up then 20 down.
+    await ui('tab', 'kanban');
+    for (let i = 0; i < 60; i++) { s = await state(); if (K(s)?.state === 'ok' && K(s).boxes?.cols?.length >= 4) break; await sleep(250); }
+    await sleep(1500);
+    s = await state();
+    const cols = K(s)?.boxes?.cols || [];
+    report.setup.kanban = { columns: cols.length, cards: (K(s)?.columns || []).reduce((a, c) => a + c.cards.length, 0) };
+    r0 = s.renders || {};
+    m = fm.mark();
+    { const end = Date.now() + 8000; let i = 0; while (Date.now() < end && cols.length) { const c = cols[Math.floor(i / 40) % cols.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x: c.x + c.w / 2, y: c.y + Math.min(c.h / 2, 400), dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } }
+    await sleep(300); stats('scroll-kanban', m);
+    s = await state(); report['scroll-kanban'].renders = drew(r0, s);
+    // The Mindmap tab: the wheel down and up, then sideways (Shift), over the map.
+    await ui('tab', 'mindmap');
+    for (let i = 0; i < 60; i++) { s = await state(); if (MM(s)?.state === 'ok' && MM(s).view?.[1] > 0) break; await sleep(250); }
+    await ui('mindmap-zoom', '1');
+    await sleep(1500);
+    s = await state();
+    const [cx0, cy0] = MM(s)?.canvas || [400, 200];
+    const [vw, vh] = MM(s)?.view || [800, 600];
+    report.setup.mindmap = { ideas: (MM(s)?.nodes || []).filter((n) => n.kind === 'node').length, drawn: (MM(s)?.drawn || []).length, view: [vw, vh] };
+    r0 = s.renders || {};
+    m = fm.mark();
+    { const end = Date.now() + 8000; let i = 0; while (Date.now() < end) { const side = Math.floor(i / 80) % 2 === 1; await d.send({ cmd: 'mouse', kind: 'wheel', x: cx0 + vw - 30, y: cy0 + vh / 2, dy: (i % 40) < 20 ? -60 : 60, mods: side ? ['shift'] : [] }); i++; await sleep(7); } }
+    await sleep(300); stats('pan-mindmap', m);
+    s = await state(); report['pan-mindmap'].renders = drew(r0, s); report['pan-mindmap'].drawnAtEnd = (MM(s)?.drawn || []).length; report['pan-mindmap'].relayouts = MM(s)?.relayouts;
+    m = fm.mark(); await sleep(6000); stats('idle-planning', m);
+    // The workbench with both panels beside the chats, a chat streaming.
+    await ui('tab', 'workbench');
+    await ui('open-pane', 'kanban');
+    await ui('open-pane', 'mindmap');
+    await sleep(2500);
+    s = await state();
+    report.setup.planningPanes = s.panes;
+    if (process.env.MEASURE_STREAM !== '0' && s.chat) {
+      await d.send({ cmd: 'ui', name: 'send', args: [SEEDS[2]] });
+      const n0 = (s.entries || []).length;
+      for (let i = 0; i < 600; i++) { s = await state(); if ((s.entries || []).length > n0 + 1 && s.chatState === 'working') break; await sleep(200); }
+    }
+    r0 = s.renders || {};
+    m = fm.mark(); const n3 = await sweep(d, 8000); stats('planning+stream+scroll', m); report['planning+stream+scroll'].wheelEvents = n3;
+    s = await state(); report['planning+stream+scroll'].renders = drew(r0, s);
+    for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
   }
   d.close();
 } catch (e) { done = true; report.allFrames = fm.frames.length; finish(1, String(e)); }
