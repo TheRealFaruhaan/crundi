@@ -459,6 +459,8 @@ struct BodyCopy {
     pw_never: Vec<String>,
     pin_for: Option<String>,
     revealed: Vec<(String, String)>,
+    /// Homepool for this browser.
+    hp: crate::hpdrawer::PanelCopy,
 }
 
 impl BodyCopy {
@@ -467,6 +469,7 @@ impl BodyCopy {
         match panel {
             "history" => { let (rows, empty) = drawer::history_rows(); c.hist = rows; c.hist_empty = empty; }
             "clear" => c.clr = drawer::with(|d| d.clr.clone()),
+            "homepool" => c.hp = crate::hpdrawer::panel(),
             "passwords" => {
                 (c.pw_ok, c.pw_reason) = passwords::status();
                 (c.pw_rows, c.pw_never) = passwords::panel_rows();
@@ -544,14 +547,6 @@ impl DrawerBody {
             "clear" => {
                 let c = &self.c.clr;
                 let set = |f: fn(&mut drawer::Clear, bool)| move |on: bool| { drawer::with(|d| f(&mut d.clr, on)); drawer::render(); };
-                // A row (.brd-chk): its mark, its label and the line under it; the whole row takes the click.
-                fn row(id: &'static str, multi: bool, on: bool, label: &'static str, sub: &'static str, f: impl Fn(bool) + 'static) -> Stateful<Div> {
-                    div().id(id).flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2).cursor_pointer()
-                        .on_click(move |_, _, _| f(if multi { !on } else { true }))
-                        .child(w::choice_mark(multi, on, false))
-                        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label)
-                            .when(!sub.is_empty(), |d| d.child(div().pt(T::SP_2).text_size(T::TEXT_12).text_color(T::text_muted()).child(sub))))
-                }
                 let body = scroll(div().flex().flex_col().px(T::SP_12).py(T::SP_8)
                     .child(row("clr-all", false, !c.site_only, "Every site", "", |_| { drawer::with(|d| d.clr.site_only = false); drawer::render(); }))
                     .child(row("clr-site", false, c.site_only, "Only this site", "Its subdomains too", |_| { drawer::with(|d| d.clr.site_only = true); drawer::render(); }))
@@ -602,6 +597,58 @@ impl DrawerBody {
                     }
                 }
                 scroll(d.into_any_element())
+            }
+            "homepool" => {
+                use crate::hpdrawer as hp;
+                let c = &self.c.hp;
+                let note = |t: String| div().text_size(T::TEXT_12).text_color(T::text_muted()).child(t);
+                let foot = div().flex().flex_none().justify_end().gap(T::SP_8).px(T::SP_12).py(T::SP_10).border_t_1().border_color(T::border());
+                if !c.available {
+                    scroll(div().p(T::SP_12).child(note("Homepool is not available on this server.".into())).into_any_element())
+                } else {
+                    let nets = |d: Div| c.nets.iter().enumerate().fold(d, |d, (n, (id, name, me, on))| {
+                        let id = id.clone();
+                        d.child(chk_row(("hp-net", n), true, *on, *me, name.clone(), if *me { "This PC is a node of this network, so its browser does not use it" } else { "" }, T::text_muted(), move |_| hp::toggle_net(&id)))
+                    });
+                    let mut d = div().flex().flex_col().px(T::SP_12).py(T::SP_8);
+                    if !c.has_key {
+                        d = d.child(note("Tabs can go out through your homepool networks: your home line, a friend\u{2019}s. This makes the PC browser key: you choose the networks it may use, and switch it off here or in Homepool \u{203a} Access at any time. Chats ask you before they use it.".into()));
+                        d = if c.nets.is_empty() { d.child(note("You have no homepool networks yet: make one in the Homepool tab.".into())) } else { nets(d) };
+                        d = d.child(row("hp-fb", true, c.fallback, "Leave from the server when no exit is up", "Off: with no node up, pages do not load (nothing leaves another way)", |_| hp::toggle_fallback()));
+                        let none = c.nets.is_empty();
+                        div().flex().flex_col().flex_1().min_h_0().child(scroll(d.into_any_element()))
+                            .child(foot.child(w::button("hp-cancel", "Cancel").on_click(|_, _, _| drawer::panel_close()))
+                                .child(w::disabled(w::danger("hp-create", "Make the PC browser key"), none).on_click(|_, _, _| hp::save())))
+                            .into_any_element()
+                    } else {
+                        let refusal = !c.refusal.is_empty();
+                        d = d.child(chk_row("hp-on", true, c.on, false, "PC browser key on", if refusal { c.refusal.clone() } else { "Off: homepool tabs stop loading at once".into() }, if refusal { T::red() } else { T::text_muted() }, |_| hp::toggle_on()));
+                        d = d.child(note("Exits now (each network keeps one line, so its tabs keep one address):".into()));
+                        if c.exits.is_empty() { d = d.child(note("No networks.".into())); }
+                        for (name, text, up) in &c.exits {
+                            d = d.child(div().flex().items_center().gap(T::SP_8).py(T::SP_6).text_size(T::TEXT_13)
+                                .child(div().text_color(T::text()).child(name.clone())).child(div().flex_1())
+                                .child(div().text_size(T::TEXT_12).text_color(if *up { T::green() } else { T::red() }).child(text.clone())));
+                        }
+                        d = d.child(div().mt(T::SP_12).child(note("Networks it may use:".into())));
+                        d = nets(d);
+                        d = d.child(row("hp-fb", true, c.fallback, "Leave from the server when no exit is up", "", |_| hp::toggle_fallback()));
+                        d = d.child(div().mt(T::SP_12).child(note("Chats you approved (others ask you first; their requests are in Homepool \u{203a} Requests):".into())));
+                        if c.approvals.is_empty() { d = d.child(note("None yet.".into())); }
+                        for (n, (chat, project, label, under)) in c.approvals.iter().enumerate() {
+                            let (ch, pr) = (chat.clone(), project.clone());
+                            d = d.child(div().flex().items_center().gap(T::SP_8).py(T::SP_6).text_size(T::TEXT_13)
+                                .child(div().text_color(T::text()).child(label.clone()))
+                                .when(!under.is_empty(), |d| d.child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(under.clone())))
+                                .child(div().flex_1())
+                                .child(w::button(("hp-rm", n), "Remove").on_click(move |_, _, _| hp::revoke(&ch, &pr))));
+                        }
+                        div().flex().flex_col().flex_1().min_h_0().child(scroll(d.into_any_element()))
+                            .child(foot.child(w::button("hp-close", "Close").on_click(|_, _, _| drawer::panel_close()))
+                                .child(w::danger("hp-save", "Save").on_click(|_, _, _| hp::save())))
+                            .into_any_element()
+                    }
+                }
             }
             _ => w::empty("Homepool is not available on this server.").into_any_element(),
         };
@@ -690,6 +737,23 @@ impl Render for SuggestList {
 }
 
 /// A popover's rows as the widgets crate's pick menu takes them (made when it opens).
+/// A row (.brd-chk): its mark, its label and the line under it; the whole row takes the click.
+fn row(id: impl Into<ElementId>, multi: bool, on: bool, label: impl Into<SharedString>, sub: impl Into<SharedString>, f: impl Fn(bool) + 'static) -> Stateful<Div> {
+    chk_row(id, multi, on, false, label, sub, T::text_muted(), f)
+}
+
+/// A row that may be off (a network this PC is a node of), its line in a tone of its own.
+#[allow(clippy::too_many_arguments)]
+fn chk_row(id: impl Into<ElementId>, multi: bool, on: bool, off: bool, label: impl Into<SharedString>, sub: impl Into<SharedString>, sub_tone: Hsla, f: impl Fn(bool) + 'static) -> Stateful<Div> {
+    let sub: SharedString = sub.into();
+    div().id(id).flex().items_start().gap(T::SP_10).py(T::SP_8).px(T::SP_2)
+        .when(!off, |d| d.cursor_pointer().on_click(move |_, _, _| f(if multi { !on } else { true })))
+        .when(off, |d| d.opacity(0.5))
+        .child(w::choice_mark(multi, on, false))
+        .child(div().flex().flex_col().min_w_0().text_size(T::TEXT_13).text_color(T::text()).child(label.into())
+            .when(!sub.is_empty(), |d| d.child(div().pt(T::SP_2).text_size(T::TEXT_12).text_color(sub_tone).child(sub))))
+}
+
 fn pick_items(which: &str) -> Vec<w::PickItem> {
     drawer::pop_items(which).1.into_iter().map(|p| w::PickItem { id: p.id, label: p.label.into(), kind: p.kind, on: p.on, icon: p.icon }).collect()
 }

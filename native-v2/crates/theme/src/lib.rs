@@ -659,13 +659,12 @@ impl T {
     pub fn cru_label() -> Hsla { rgb(0xb8b8d0).into() }
     pub fn cru_drop() -> Hsla { rgb(0x7dd3fc).into() }
     pub fn cru_me() -> Hsla { rgb(0x2b2b55).into() }
-    /// The chat bubble: its round head, and the expanded chat's window.
-    pub const BUBBLE_HEAD: Pixels = px(56.);
-    pub const BUBBLE_W: Pixels = px(380.);
-    pub const BUBBLE_H: Pixels = px(640.);
     /// Cru's live screen: the panel's frame height, the full view's least
     /// window width, a chip's edge and fill strength.
     pub const CRU_SCREEN_H: Pixels = px(300.);
+    /// The live screen's head buttons (.cv-scr-h .cv-x 28), Cru's words under its full view (66).
+    pub const CRU_SCR_BTN: Pixels = px(28.);
+    pub const CRU_FULL_WORDS_H: Pixels = px(66.);
     pub const CRU_FULL_MIN_W: Pixels = px(900.);
     pub const CHIP_EDGE: f32 = 0.45;
     pub const CHIP_FILL: f32 = 0.12;
@@ -684,6 +683,43 @@ impl T {
     pub const KID_REPLY_R: Pixels = px(28.);
     /// The wake word training's level meter.
     pub const WAKE_METER_W: Pixels = px(160.);
+    /// The kid screen's PIN pad (.cv-pin, .cv-pin-k button, .cv-pin-in).
+    pub const KID_PIN_KEY_H: Pixels = px(56.);
+    pub const KID_PIN_IN_W: Pixels = px(220.);
+    pub const KID_PIN_IN_TEXT: Pixels = px(26.);
+    pub fn kid_pin_scrim() -> Hsla { rgba(0x0a0a0ff0).into() }
+    pub fn kid_pin_key() -> Hsla { rgb(0x1a1a28).into() }
+    /// The PC lock (src/webapp-html.js #pc-lock): the badge, the clock, the
+    /// PIN box and its keypad, the full screen's night and the visible
+    /// lock's see-through veil and ring.
+    pub const PCL_TOP: Pixels = px(18.);
+    pub const PCL_TIME: Pixels = px(140.);
+    pub const PCL_DATE: Pixels = px(28.);
+    pub const PCL_KEY_W: Pixels = px(64.);
+    pub const PCL_KEY_H: Pixels = px(52.);
+    pub const PCL_KEY_R: Pixels = px(12.);
+    pub const PCL_BOX_R: Pixels = px(18.);
+    pub const PCL_IN_W: Pixels = px(220.);
+    pub const PCL_IN_W_VIS: Pixels = px(160.);
+    pub const PCL_ERR_H: Pixels = px(18.);
+    pub const PCL_HINT: f32 = 0.7;
+    pub const SP_14: Pixels = px(14.);
+    pub const SP_22: Pixels = px(22.);
+    pub const TEXT_18: Pixels = px(18.);
+    pub const TEXT_24: Pixels = px(24.);
+    pub fn pcl_full() -> Hsla { rgb(0x0b1022).into() }
+    pub fn pcl_glow_a() -> Hsla { rgb(0x3b3f8f).into() }
+    pub fn pcl_glow_b() -> Hsla { rgb(0x0e7490).into() }
+    pub fn pcl_vis() -> Hsla { rgba(0x08_0a_18_61).into() }
+    pub fn pcl_vis_ring() -> Hsla { rgba(0xa5b4fc8c).into() }
+    pub fn pcl_badge() -> Hsla { rgba(0x00000073).into() }
+    pub fn pcl_badge_edge() -> Hsla { rgba(0xffffff40).into() }
+    pub fn pcl_box() -> Hsla { rgba(0x0f1228b8).into() }
+    pub fn pcl_box_edge() -> Hsla { rgba(0xffffff24).into() }
+    pub fn pcl_key() -> Hsla { rgba(0xffffff14).into() }
+    pub fn pcl_key_hover() -> Hsla { rgba(0xffffff29).into() }
+    pub fn pcl_key_edge() -> Hsla { rgba(0xffffff2e).into() }
+    pub fn pcl_err() -> Hsla { rgb(0xfca5a5).into() }
     // ── end desktop ──
     // ── chat ──
     /// The chat log (claude-chat.js's CSS): "Go to the newest message" (38

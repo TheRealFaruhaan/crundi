@@ -2,7 +2,7 @@
 //! area, below the top bar, as the PC client's app/vendor/crundi-browser-drawer.js)
 //! on the webview crate's pages, the native host's full browser protocol
 //! (the server's browser_* tools drive this client's pages), the Browsers
-//! tab, notifications and the tray, the Inbox, the chat bubble, saved
+//! tab, notifications and the tray, the Inbox, saved
 //! passwords, the homepool node and Cru.
 //!
 //! - `drawer`: tabs per project, the address bar, devices, networks,
@@ -25,7 +25,6 @@
 //! themselves only when their copy moved. A page's new frame notifies its
 //! `PageView` alone.
 mod browsers;
-mod bubble;
 mod ctx;
 mod cru;
 mod cru_blocks;
@@ -38,11 +37,14 @@ pub mod homepool;
 pub mod drawer;
 mod host;
 mod hosts;
+mod hpdrawer;
+mod idle;
 mod inbox;
 mod inbox_ui;
 mod notify;
 mod marks;
 mod passwords;
+mod pclock;
 mod pointer;
 mod pwstore;
 pub mod rules;
@@ -54,6 +56,7 @@ pub mod wake;
 use crundi_shell::{Area, Drawer, Stores};
 use crundi_core::live::Event;
 use crundi_webview as web;
+use crundi_widgets as w;
 use futures::StreamExt as _;
 use gpui::*;
 use serde_json::{json, Value};
@@ -68,11 +71,21 @@ pub struct Views {
     pub browsers: Entity<browsers::BrowsersPage>,
     pub inbox: Entity<inbox_ui::InboxPage>,
     pub cru: Entity<cru_ui::CruScreen>,
+    pub lock: Entity<pclock::PcLockScreen>,
 }
 struct ViewsHandle(Views);
 /// Cru's screen, made at init (an overlay: registered before the Shell is made).
-struct CruView(Entity<cru_ui::CruScreen>);
+struct CruView(Entity<cru_ui::CruScreen>, Entity<pclock::PcLockScreen>);
 impl Global for CruView {}
+
+actions!(crundi_desktop, [LockVisible, LockFull]);
+
+/// Opens the window again with these bounds (the app's: Wayland's hide closes it).
+type Reopen = std::rc::Rc<dyn Fn(Bounds<Pixels>, &mut App)>;
+struct ReopenHook(Reopen);
+impl Global for ReopenHook {}
+/// The app gives the way to open its window again (the × on Wayland closes it, F127).
+pub fn set_reopen(cx: &mut App, f: impl Fn(Bounds<Pixels>, &mut App) + 'static) { cx.set_global(ReopenHook(std::rc::Rc::new(f))); }
 impl Global for ViewsHandle {}
 fn views(cx: &App) -> Option<Views> { cx.try_global::<ViewsHandle>().map(|v| v.0.clone()) }
 
@@ -108,9 +121,17 @@ pub fn init(cx: &mut App) {
     tray::start(false);
     // Cru's screen: a layer over the window (the shell reads its overlays when it makes the Shell,
     // before the window's views are made); its typing box comes with the window (init_window).
+    // The PC lock's screen under Cru's ("Hey Cru" works while locked).
+    let lock_view = cx.new(pclock::PcLockScreen::new);
+    crundi_shell::register_overlay(cx, lock_view.clone().into());
     let cru_view = cx.new(cru_ui::CruScreen::new);
     crundi_shell::register_overlay(cx, cru_view.clone().into());
-    cx.set_global(CruView(cru_view));
+    cx.set_global(CruView(cru_view, lock_view));
+    // The PC lock's keys while the window has them (app/main.js wirePcLockKeys):
+    // Ctrl+Shift+L the visible lock, Super+Shift+L the full one.
+    cx.bind_keys([KeyBinding::new("ctrl-shift-l", LockVisible, None), KeyBinding::new("super-shift-l", LockFull, None)]);
+    cx.on_action(|_: &LockVisible, _| pclock::ask("visible", "shortcut"));
+    cx.on_action(|_: &LockFull, _| pclock::ask("full", "shortcut"));
     crundi_shell::register(cx, Area::new("desktop")
         .tab("browsers", |_, _, cx| views(cx).map(|v| v.browsers.into()).expect("the desktop's views"))
         // (The page loads as it comes on show: InboxPage hears the tab.)
@@ -121,7 +142,7 @@ pub fn init(cx: &mut App) {
         // The window's × (crundi_shell::close_window, F113): kept while the kid
         // screen is locked; hidden to the tray while it is up; else quit.
         .action("window-close", |_, window, cx| {
-            if crate::cru_kid::on() { return; }
+            if crate::cru_kid::on() || pclock::on() { return; }
             if tray::up() { ctx::hide_window(window, cx) } else { cx.quit() }
         })
         // The top bar's Cru mark: rested on (a moment), left; push to talk held and let go.
@@ -135,10 +156,13 @@ pub fn init(cx: &mut App) {
         .on_signed_out(|_, _| { drawer::close(); inbox::signed_out(); })
         .on_batch(|_, batch, _| {
             for e in batch { match e {
-                Event::Connected(true) => { drawer::render(); inbox::load(); cru::load_unread(); tray::set_online(true); }
+                Event::Connected(true) => { drawer::render(); hpdrawer::refresh(); inbox::load(); cru::load_unread(); tray::set_online(true); }
                 Event::Connected(false) => tray::set_online(false),
                 Event::Ws(t, v) if t == "voice-report" => cru::report(v),
                 Event::Server(t, v) | Event::Ws(t, v) if t == "voice-kid" => cru_kid::state(v),
+                // The PC lock: the event stream's state, the desktop socket's { lock }.
+                Event::Server(t, v) if t == "pc-lock" => pclock::apply(v),
+                Event::Ws(t, v) if t == "pc-lock" => pclock::apply(&v["lock"]),
                 _ => {}
             } }
             // The batch's inbox events, as one (one reload, one copy).
@@ -156,7 +180,7 @@ pub fn init(cx: &mut App) {
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, _, cx| { let mut p = props(); p["bubble"] = bubble::props(cx); p["chatFrames"] = hosts::props(); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, _, _| { let mut p = props(); p["chatFrames"] = hosts::props(); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }
@@ -168,11 +192,21 @@ pub fn init_window(shell: &Entity<crundi_shell::Shell>, window: &mut Window, cx:
     drawer.update(cx, |d, _| d.set_shell(shell.downgrade()));
     let browsers = cx.new(|cx| browsers::BrowsersPage::new(window, cx));
     let inbox = cx.new(inbox_ui::InboxPage::new);
-    let cru = cx.global::<CruView>().0.clone();
+    let (cru, lock) = { let g = cx.global::<CruView>(); (g.0.clone(), g.1.clone()) };
     cru.update(cx, |c, cx| c.attach(window, cx));
-    cx.set_global(ViewsHandle(Views { drawer: drawer.clone(), browsers, inbox, cru }));
+    lock.update(cx, |l, cx| l.attach(window, cx));
+    LOCK_VIEW.with(|l| *l.borrow_mut() = Some(lock.clone()));
+    cx.set_global(ViewsHandle(Views { drawer: drawer.clone(), browsers, inbox, cru, lock: lock.clone() }));
     let left = drawer::with(|d| d.side == "left");
     shell.update(cx, |s, cx| s.set_drawer_view(Some(Drawer { view: drawer.into(), left }), cx));
+    // While kid mode or the PC lock holds the window, it comes straight back
+    // to the front when it loses the keys (app/main.js wireKidLock's blur).
+    let _ = lock.update(cx, |_, cx| cx.observe_window_activation(window, |_, window, _| {
+        if ctx::window_locked() && !window.is_window_active() { window.activate_window(); }
+    }).detach());
+    WINDOW.with(|w| w.set(Some(window.window_handle())));
+    // Opened again (Wayland's hide closed it): the same entities, the same pump.
+    if ONCE.with(|o| o.replace(true)) { web::wake(); return; }
     // The drawer's width is the person's and is kept across relaunches
     // (VD st.width in localStorage): the shell's split moves Nav's, which
     // is kept here half a second after the last move.
@@ -190,7 +224,6 @@ pub fn init_window(shell: &Entity<crundi_shell::Shell>, window: &mut Window, cx:
         let seq = WIDTH_SEQ.with(|s| s.get());
         web::later(Duration::from_millis(500), move || if WIDTH_SEQ.with(|s| s.get()) == seq { drawer::persist(); });
     }).detach();
-    let handle = window.window_handle();
     let Some(mut rx) = PUMP_RX.with(|r| r.borrow_mut().take()) else { return };
     cx.spawn(async move |cx: &mut AsyncApp| loop {
         // Asleep until woken or until something falls due; never a tick.
@@ -205,14 +238,60 @@ pub fn init_window(shell: &Entity<crundi_shell::Shell>, window: &mut Window, cx:
             None => if rx.next().await.is_none() { break },
         }
         while rx.try_recv().is_ok() {}
-        if cx.update_window(handle, |_, window, cx| pump(window, cx)).is_err() { break; }
+        let handle = WINDOW.with(|w| w.get());
+        let shown = handle.is_some_and(|h| cx.update_window(h, |_, window, cx| pump(window, cx)).is_ok());
+        // No window (closed to hide it): the tray's picks with the App alone.
+        if !shown { cx.update(windowless); }
         // At most one pump a frame, however fast the host sends.
         cx.background_executor().timer(FRAME).await;
     }).detach();
     web::wake();
 }
 
+/// The pump with the window closed (Wayland's hide, F127): Quit and "Hey
+/// Cru" act here; anything that needs the window (Open, Kid mode, Server…,
+/// a lock, a notification's click) opens it again first and is done there.
+fn windowless(cx: &mut App) {
+    let picks = tray::take_picks();
+    let mut need = ctx::has_effects();
+    let mut keep = vec![];
+    for p in picks {
+        match p.as_str() {
+            "quit" => if !cru_kid::on() && !pclock::on() { cx.quit(); return; },
+            "wake" => tray::act("wake"),
+            _ => { need = true; keep.push(p); }
+        }
+    }
+    for f in ctx::take_main() { f(); }
+    if need { tray::requeue(keep); reopen(cx); }
+}
+
+/// Open the window again where it was (the app's hook), shown.
+pub fn reopen(cx: &mut App) {
+    let Some(b) = ctx::closed() else { return };
+    let Some(f) = cx.try_global::<ReopenHook>().map(|h| h.0.clone()) else { return };
+    ctx::reopened();
+    WINDOW.with(|w| w.set(None));
+    f(b, cx);
+}
+
+/// The window is closed to hide it (the app's driver answers for it then).
+pub fn window_closed() -> bool { ctx::closed().is_some() }
+
+/// The test driver with the window closed: the tray's state, and its picks.
+pub fn windowless_driver(name: &str, args: &[String]) -> Option<Value> {
+    match name {
+        "state" => Some(json!({ "areas": { "desktop": { "tray": tray::props(), "window": false } } })),
+        "desktop:tray-pick" => { tray::test_pick(args.first().map(String::as_str).unwrap_or("")); Some(json!({ "ok": true })) }
+        _ => None,
+    }
+}
+
 thread_local! {
+    /// The window the pump draws in (another after Wayland's hide opened it again).
+    static WINDOW: std::cell::Cell<Option<AnyWindowHandle>> = const { std::cell::Cell::new(None) };
+    /// The window's first opening done (the observers and the pump are made once).
+    static ONCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Counts the drawer's width changes: the last one in half a second is kept.
     static WIDTH_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The tab shown last (to see Settings left).
@@ -248,14 +327,6 @@ pub fn pump(window: &mut Window, cx: &mut App) {
     for p in tray::take_picks() { tray::act(&p); }
     // The tray's menu follows the kid lock and "Hey Cru" (told only of a change).
     tray::refresh();
-    if let Some((what, arg)) = BUBBLE_ASK.with(|b| b.borrow_mut().take()) {
-        match what {
-            "open" => { let id = if arg.is_empty() { focused_chat(cx) } else { arg }; bubble::open(&id, cx); }
-            "toggle" => bubble::toggle(cx),
-            "close" => bubble::close(cx),
-            _ => bubble::send(&arg, cx),
-        }
-    }
     for f in ctx::take_effects() { f(window, cx); }
     // The sidebar's Inbox button: its count (notifies only on a change).
     let (supported, unread) = inbox::with(|i| (i.supported, i.unread));
@@ -270,16 +341,12 @@ pub fn pump(window: &mut Window, cx: &mut App) {
         let dirty = ctx::take_dirty();
         v.drawer.update(cx, |d, cx| d.pump(dirty, window, cx));
         v.cru.update(cx, |c, cx| c.pump(dirty, window, cx));
+        if dirty { v.lock.update(cx, |l, cx| l.pump(window, cx)); }
         if dirty {
             v.browsers.update(cx, |b, cx| b.pump(window, cx));
             v.inbox.update(cx, |i, cx| i.pump(cx));
         }
     }
-}
-
-/// The focused chat in the workbench ("" for none).
-fn focused_chat(cx: &mut App) -> String {
-    crundi_workbench::workbench(cx).and_then(|wb| wb.update(cx, |wb, _| wb.focused_key())).and_then(|k| k.strip_prefix("live:").map(str::to_string)).unwrap_or_default()
 }
 
 /// The session as the logic reads it (ctx), each pump: cheap reads only.
@@ -318,6 +385,7 @@ fn signed_in(s: &Stores, cx: &mut App) {
     drawer::with(|d| { d.mode = if local { "local".into() } else { "remote".into() }; d.status = if local { "direct".into() } else { "offline".into() }; });
     drawer::render();
     cru_kid::load();
+    pclock::load();
 }
 
 thread_local! {
@@ -359,8 +427,6 @@ fn go_to_chat(chat: &str) {
 
 thread_local! {
     /// The driver's evals: the last token, and the answers by token.
-    /// A bubble action from the driver, for the next pump (it needs the App).
-    static BUBBLE_ASK: RefCell<Option<(&'static str, String)>> = const { RefCell::new(None) };
     static EVALS: RefCell<(u64, serde_json::Map<String, Value>)> = RefCell::new((0, serde_json::Map::new()));
 }
 
@@ -375,13 +441,13 @@ fn load_failed(i: usize) {
 
 // ─── Homepool and Cru for the drawer (phase 6) ───
 
-fn hp_name(_id: &str) -> Option<String> { None }
-fn hp_refresh() {}
-fn hp_offered() -> Vec<(String, String, bool)> { vec![] }
-fn hp_available() -> bool { false }
-fn hp_has_key() -> bool { false }
-fn hp_exit_up(_net: &str) -> bool { false }
-fn exit_text(_net: &str) -> String { "checking…".into() }
+fn hp_name(id: &str) -> Option<String> { hpdrawer::name(id) }
+fn hp_refresh() { hpdrawer::refresh() }
+fn hp_offered() -> Vec<(String, String, bool)> { hpdrawer::offered() }
+fn hp_available() -> bool { hpdrawer::available() }
+fn hp_has_key() -> bool { hpdrawer::has_key() }
+fn hp_exit_up(net: &str) -> bool { hpdrawer::exit_up(net) }
+fn exit_text(net: &str) -> String { hpdrawer::exit_text(net) }
 fn cru_available() -> bool { cru::available() }
 
 // ─── The test driver ───
@@ -449,6 +515,12 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "cru-mic" => { cru::mic(); ok() }
         "cru-attach" => { cru::attach(); ok() }
         "cru-history" => { cru::history(None); ok() }
+        // The drawer's homepool panel: a network's check, the fallback, the key on, Save / Make, Remove.
+        "hp-net" => { hpdrawer::toggle_net(&a(0)); ok() }
+        "hp-fallback" => { hpdrawer::toggle_fallback(); ok() }
+        "hp-on" => { hpdrawer::toggle_on(); ok() }
+        "hp-save" => { hpdrawer::save(); ok() }
+        "hp-refresh" => { hpdrawer::refresh(); ok() }
         "pw-save" => { if let Some(t) = drawer::active_tab() { passwords::save(&t.id, &a(0)); } ok() }
         "pw-never" => { if let Some(t) = drawer::active_tab() { passwords::never(&t.id); } ok() }
         "pw-dismiss" => { if let Some(t) = drawer::active_tab() { passwords::dismiss(&t.id); } ok() }
@@ -458,18 +530,22 @@ fn test_ui(name: &str, args: &[String]) -> Option<Value> {
         "pw-unlock" => { passwords::unlock(&a(0)); ok() }
         "pw-remove" => { passwords::remove(&a(0)); ok() }
         "pw-unnever" => { passwords::unnever(&a(0)); ok() }
-        "bubble-open" => { let id = Some(a(0)).filter(|x| !x.is_empty()); BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("open", id.unwrap_or_default()))); ok() }
-        "bubble-toggle" => { BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("toggle", String::new()))); ok() }
-        "bubble-close" => { BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("close", String::new()))); ok() }
-        "bubble-send" => { BUBBLE_ASK.with(|b| *b.borrow_mut() = Some(("send", a(0)))); ok() }
-        "bubble-snap" => Some(json!({ "ok": bubble::snap(&a(0)) })),
         "tray-pick" => { tray::test_pick(&a(0)); ok() }
+        // The window's ×'s way here ("close": Wayland's, tried on X11 too).
+        "hide-how" => { ctx::force_hide(&a(0)); ok() }
+        // The PC lock: asked (as a shortcut or the tray), a key of its pad, a PIN typed.
+        "lock-ask" => { pclock::ask(&a(0), "shortcut"); ok() }
+        "lock-pin" => { pclock::try_pin(&a(0)); ok() }
+        "lock-key" => { if let Some(v) = views_global() { let k: &'static str = pin_key(&a(0)); ctx::on_app(move |win, cx| v.update(cx, |l, cx| l.press(k, win, cx))); } ok() }
+        // The auto lock's idle reading (seconds, screen locked) instead of the OS's, and a look now.
+        "lock-idle" => { idle::fake(a(0).parse().ok().map(|s: u64| (s, a(1) == "true"))); idle::check(); ok() }
         "startup" => Some(json!({ "ok": true, "enabled": startup::enabled() })),
         // Cru's live screen: an event as the voice socket brings it ({type: "screen", screen}).
         "cru-event" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::event(&v); } ok() }
         "cru-screen-close" => { cru_screen::close_screen(); ok() }
         "cru-screen-full" => { cru_screen::full_view(); ok() }
         "cru-screen-normal" => { cru_screen::normal_view(); ok() }
+        "cru-fold" => { cru_screen::fold(); ok() }
         // A message as Cru's page posts it.
         "cru-frame-message" => { if let Ok(v) = serde_json::from_str::<Value>(&a(0)) { cru_screen::message(&v); } ok() }
         "kid-start" => { cru_kid::start(&Some(a(0)).filter(|x| !x.is_empty()).unwrap_or_else(|| "tray".into())); ok() }
@@ -522,8 +598,16 @@ fn props() -> Value {
         "due": due_ms(),
         "drawer": drawer::props(), "drawerActive": active, "evals": EVALS.with(|e| Value::Object(e.borrow().1.clone())),
         "browsers": browsers::props(),
-        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "wake": wake::status(), "homepool": homepool::status(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
+        "inbox": inbox::props(), "cru": cru::props(), "cruScreen": cru_screen::props(), "kid": cru_kid::props(), "lock": pclock::props(), "windowLocked": ctx::window_locked(), "hideHow": ctx::hide_how_name(), "wake": wake::status(), "homepool": homepool::status(), "hp": hpdrawer::props(), "tray": tray::props(), "passwords": passwords::props(), "notifications": notify::props(), "hidden": hidden,
         "host": { "features": host::features() },
         "browserHost": web::host_props(),
     })
+}
+
+/// The PC lock's screen (the driver's keys).
+fn views_global() -> Option<Entity<pclock::PcLockScreen>> { LOCK_VIEW.with(|l| l.borrow().clone()) }
+thread_local! { static LOCK_VIEW: RefCell<Option<Entity<pclock::PcLockScreen>>> = const { RefCell::new(None) }; }
+
+fn pin_key(k: &str) -> &'static str {
+    w::pin_pad::KEYS.iter().find(|x| **x == k).copied().unwrap_or("")
 }

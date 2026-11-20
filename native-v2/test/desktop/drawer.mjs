@@ -227,6 +227,32 @@ export async function run(T, t) {
   await T.act('pick', 'client');
   await T.until('back on this PC', (p) => D(p).tabs.find((x) => x.id === first)?.network === 'client');
 
+  // Homepool (F94): the menu offers the PC browser key's networks; its panel makes the key.
+  {
+    const H = (p) => T.D(p).hp;
+    const net = await T.api.http('POST', '/api/homepool', { action: 'network-add', name: 'Home line' });
+    const hid = net?.body?.id;
+    await T.act('pop', 'net');
+    p = await T.until('the Network menu asks the server: homepool is there, no key yet', (p) => H(p).available && !H(p).key && H(p).nets.some((n) => n.name === 'Home line'), 10000);
+    await T.act('pick', 'hp-settings');
+    p = await T.until('"Homepool: set up…" opens "Homepool for this browser", every network checked', (p) => D(p).panel === 'homepool' && H(p).nets.find((n) => n.name === 'Home line')?.on);
+    await T.snap('desktop', 'drawer-homepool-setup');
+    for (const n of H(p).nets.filter((n) => n.on)) await T.act('hp-net', n.id);
+    await T.act('hp-save');
+    await T.until('…none checked: "Choose at least one network"', (p) => /at least one network/.test(p.toast || ''), 5000);
+    await T.act('hp-net', hid);
+    await T.act('hp-save');
+    p = await T.until('Make the PC browser key: the key is made, its network offered', (p) => H(p).key && H(p).offered.some((n) => n.id === hid), 10000);
+    await T.snap('desktop', 'drawer-homepool');
+    await T.act('panel-close');
+    await T.act('pop', 'net');
+    await T.act('pick', `hp:${hid}`);
+    p = await T.until('a tab on the homepool network: no exit up, its badge says so', (p) => D(p).tabs.find((x) => x.id === first)?.network === `hp:${hid}` && H(p).polling && !H(p).offered.find((n) => n.id === hid)?.exit, 10000);
+    await T.act('pop', 'net');
+    await T.act('pick', 'client');
+    await T.until('…back on this PC', (p) => D(p).tabs.find((x) => x.id === first)?.network === 'client');
+  }
+
   // The width: dragged on the split, kept for the next launch (VD st.width).
   {
     const p0 = await T.state();

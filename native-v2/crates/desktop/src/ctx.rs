@@ -40,6 +40,7 @@ pub fn project() -> String { CTX.with(|c| c.borrow().project.clone()) }
 
 /// Run with the window at the next pump.
 pub fn on_app(f: impl FnOnce(&mut Window, &mut App) + 'static) { EFFECTS.with(|e| e.borrow_mut().push(Box::new(f))); crundi_webview::wake(); }
+pub fn has_effects() -> bool { EFFECTS.with(|e| !e.borrow().is_empty()) }
 pub fn take_effects() -> Vec<Effect> { EFFECTS.with(|e| std::mem::take(&mut *e.borrow_mut())) }
 
 /// The drawer's state changed: draw it again.
@@ -100,45 +101,136 @@ pub fn bg<T: Send + 'static>(work: impl FnOnce(&crundi_core::api::Api) -> T + Se
 }
 
 /// Bring the window to the front (a notification's click, the tray's Open),
-/// shown again first if the × hid it.
+/// shown again first if the × hid it. With the window closed (Wayland's
+/// hide), the pump opens it again first (lib.rs `windowless`).
 pub fn raise() { on_app(|win, _| { show_window(win); win.activate_window() }); }
 
-thread_local! { static HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+thread_local! {
+    static HIDDEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The window was closed to hide it (Wayland): its bounds, to open it again there.
+    static CLOSED: std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>> = const { std::cell::Cell::new(None) };
+    /// The window lock (kid mode, the PC lock): on, and whether it made the window full screen.
+    static LOCKED: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
+}
+
+static FORCE_CLOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+fn forced_close() -> bool { FORCE_CLOSE.load(std::sync::atomic::Ordering::Relaxed) || std::env::var("CRUNDI_HIDE").is_ok_and(|v| v == "close") }
+/// The driver: hide by closing ("close"), or the platform's way ("").
+pub fn force_hide(how: &str) { FORCE_CLOSE.store(how == "close", std::sync::atomic::Ordering::Relaxed); }
+/// How the × hides here, without the window (the driver's look).
+pub fn hide_how_name() -> &'static str {
+    if forced_close() { return "close"; }
+    if cfg!(target_os = "linux") { if std::env::var_os("WAYLAND_DISPLAY").is_some() { "close" } else { "unmap" } } else { "hide" }
+}
 
 /// The × hid the window (the driver's look).
 pub fn hidden() -> bool { HIDDEN.with(|h| h.get()) }
+/// The window is closed to hide it (Wayland): the bounds to open it again with.
+pub fn closed() -> Option<gpui::Bounds<gpui::Pixels>> { CLOSED.with(|c| c.get()) }
+/// Opened again (lib.rs): shown.
+pub fn reopened() { CLOSED.with(|c| c.set(None)); HIDDEN.with(|h| h.set(false)); }
+
+/// How the × hides the window here: "unmap" (X11), "close" (Wayland: the
+/// window closed, the app going on in the tray, opened again by the tray's
+/// Open with the same state), "hide" (Windows: SW_HIDE; macOS: the app
+/// hidden). CRUNDI_HIDE=close tries Wayland's way anywhere (the suite, on Xvfb).
+pub fn hide_how(win: &Window) -> &'static str {
+    if forced_close() { return "close"; }
+    #[cfg(target_os = "linux")] { if x11_id(win).is_some() { "unmap" } else { "close" } }
+    #[cfg(not(target_os = "linux"))] { let _ = win; "hide" }
+}
 
 /// The window's × with the tray up (Electron's mainWindow 'close': hidden,
-/// the app goes on; the tray's Open brings it back). X11: unmapped; macOS:
-/// the app hidden; Wayland and Windows: minimised (GPUI has no hide there).
+/// the app goes on; the tray's Open brings it back). Never minimised.
 pub fn hide_window(win: &mut Window, cx: &mut App) {
     HIDDEN.with(|h| h.set(true));
-    #[cfg(target_os = "macos")] { let _ = win; cx.hide(); }
-    #[cfg(not(target_os = "macos"))] { let _ = cx; if !x11_map(win, false) { win.minimize_window() } }
+    match hide_how(win) {
+        "close" => { CLOSED.with(|c| c.set(Some(win.bounds()))); win.remove_window(); }
+        #[cfg(target_os = "linux")]
+        "unmap" => { let _ = cx; x11_map(win, false); }
+        _ => platform_hide(win, cx),
+    }
 }
 
 fn show_window(win: &mut Window) {
     if !HIDDEN.with(|h| h.replace(false)) { return; }
-    #[cfg(not(target_os = "macos"))] { x11_map(win, true); }
-    #[cfg(target_os = "macos")] { let _ = win; }
+    #[cfg(target_os = "linux")] { x11_map(win, true); }
+    #[cfg(not(target_os = "linux"))] { platform_show(win); }
+}
+
+#[cfg(target_os = "macos")]
+fn platform_hide(_: &mut Window, cx: &mut App) { cx.hide(); }
+#[cfg(target_os = "macos")]
+fn platform_show(_: &mut Window) {}
+
+/// Windows: SW_HIDE, and SW_SHOW with the window brought to the front.
+#[cfg(target_os = "windows")]
+fn hwnd(win: &Window) -> Option<windows_sys::Win32::Foundation::HWND> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(win).map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Win32(h)) => Some(h.hwnd.get() as windows_sys::Win32::Foundation::HWND),
+        _ => None,
+    }
+}
+#[cfg(target_os = "windows")]
+fn platform_hide(win: &mut Window, _: &mut App) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    // SAFETY: the window's own handle, alive while `win` is.
+    if let Some(h) = hwnd(win) { unsafe { ShowWindow(h, SW_HIDE); } }
+}
+#[cfg(target_os = "windows")]
+fn platform_show(win: &mut Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_SHOW};
+    if let Some(h) = hwnd(win) { unsafe { ShowWindow(h, SW_SHOW); SetForegroundWindow(h); } }
+}
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn platform_hide(win: &mut Window, _: &mut App) { win.minimize_window() }
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn platform_show(_: &mut Window) {}
+#[cfg(target_os = "linux")]
+fn platform_hide(win: &mut Window, _: &mut App) { win.remove_window() }
+
+/// The window locked to the screen (app/main.js kidLockWindow): shown, in
+/// front and full screen while kid mode or the PC lock is on; as it was
+/// when both are off. Brought back to the front if it loses the keys (lib.rs).
+pub fn lock_window(on: bool) {
+    on_app(move |win, _| {
+        let (was, made_full) = LOCKED.with(|l| l.get());
+        if on == was { if on && !win.is_fullscreen() { win.toggle_fullscreen(); } return; }
+        if on {
+            show_window(win);
+            win.activate_window();
+            let full = !win.is_fullscreen();
+            if full { win.toggle_fullscreen(); }
+            LOCKED.with(|l| l.set((true, full)));
+        } else {
+            if made_full && win.is_fullscreen() { win.toggle_fullscreen(); }
+            LOCKED.with(|l| l.set((false, false)));
+        }
+    });
+}
+pub fn window_locked() -> bool { LOCKED.with(|l| l.get().0) }
+
+/// The X11 window's id (None: not an X11 window).
+#[cfg(target_os = "linux")]
+fn x11_id(win: &Window) -> Option<u32> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    match HasWindowHandle::window_handle(win).map(|h| h.as_raw()) {
+        Ok(RawWindowHandle::Xlib(h)) => Some(h.window as u32),
+        Ok(RawWindowHandle::Xcb(h)) => Some(h.window.get()),
+        _ => None,
+    }
 }
 
 /// Map or unmap the window on X11 (false: not an X11 window).
 #[cfg(target_os = "linux")]
 fn x11_map(win: &Window, on: bool) -> bool {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use x11rb::protocol::xproto::ConnectionExt as _;
-    let id = match HasWindowHandle::window_handle(win).map(|h| h.as_raw()) {
-        Ok(RawWindowHandle::Xlib(h)) => h.window as u32,
-        Ok(RawWindowHandle::Xcb(h)) => h.window.get(),
-        _ => return false,
-    };
+    let Some(id) = x11_id(win) else { return false };
     let Ok((c, _)) = x11rb::connect(None) else { return false };
     let r = if on { c.map_window(id).map(|k| k.check()) } else { c.unmap_window(id).map(|k| k.check()) };
     matches!(r, Ok(Ok(())))
 }
-#[cfg(all(not(target_os = "linux"), not(target_os = "macos")))]
-fn x11_map(_: &Window, _: bool) -> bool { false }
 
 /// Calls from other threads (the microphone's, the speaker's), run on the
 /// main thread at the next pump.

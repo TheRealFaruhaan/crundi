@@ -12,8 +12,8 @@ export async function run(T, t) {
   const tr = (p) => D(p).tray;
   const p = await T.until('the tray says the connection', (p) => tr(p).tooltip === 'Crundi — Running');
   const labels = tr(p).menu.map((m) => m.label);
-  const want = ['Crundi', '', 'Running', '', 'Open', 'Kid mode', 'Server…', '', WAKE];
-  t.check('its menu', JSON.stringify(labels.slice(0, 9)) === JSON.stringify(want) && labels[labels.length - 1] === 'Quit' && labels[labels.length - 2] === '', labels);
+  const want = ['Crundi', '', 'Running', '', 'Open', 'Lock (visible)', 'Lock (full)', 'Kid mode', 'Server…', '', WAKE];
+  t.check('its menu', JSON.stringify(labels.slice(0, 11)) === JSON.stringify(want) && labels[labels.length - 1] === 'Quit' && labels[labels.length - 2] === '', labels);
   const wake = tr(p).menu.find((m) => m.id === 'wake');
   const trained = !!D(p).wake?.trained;
   t.check('…"Hey Cru" a check item, off until trained', wake && wake.checked === !!D(p).wake?.enabled && wake.enabled === trained
@@ -37,5 +37,26 @@ export async function run(T, t) {
     await T.until('× hides the window to the tray (the client goes on)', (p) => tr(p).hidden === true && !T.exited);
     await T.act('tray-pick', 'open');
     await T.until('…and the tray\'s Open shows it again', (p) => tr(p).hidden === false);
+    // Wayland's way (F127): the window closed, the app going on in the tray,
+    // opened again by Open on the same state (here on X11, asked of the driver).
+    await T.ui('tab', 'inbox');
+    await T.act('hide-how', 'close');
+    await T.ui('window-close');
+    await T.until('Wayland: × closes the window, the client goes on in the tray', (p) => D(p).window === false && tr(p).hidden === true && !T.exited);
+    await T.act('tray-pick', 'open');
+    let q = await T.until('…the tray\'s Open opens it again, on the same screen', (p) => D(p).window !== false && tr(p).hidden === false && p.tab === 'inbox', 20000);
+    t.check('…signed in, the same project', q.signedIn && q.project === 'demo', { signedIn: q.signedIn, project: q.project });
+    await T.act('hide-how', '');
+    // Kid-locked, the window stays shown.
+    await T.api.http('POST', '/api/voice/kid/pin', { pin: '2468' });
+    await T.act('kid-start', 'tray');
+    await T.until('kid mode on', (p) => D(p).kid.on, 15000);
+    await T.ui('window-close');
+    await t.sleep(400);
+    t.check('…while kid-locked, the × keeps the window', tr(await T.state()).hidden === false && D(await T.state()).windowLocked);
+    await T.act('kid-pin');
+    for (const k of ['2', '4', '6', '8', 'OK']) await T.act('kid-key', k);
+    await T.until('…kid mode left: the window let go', (p) => !D(p).kid.on && !D(p).windowLocked, 10000);
+    await T.ui('tab', 'workbench');
   }
 }

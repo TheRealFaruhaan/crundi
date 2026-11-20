@@ -19,3 +19,16 @@ pub fn round_button(id: impl Into<ElementId>, icon: IconName, tip: impl Into<Sha
         .child(icon)
         .tooltip(crate::tooltip(tip))
 }
+
+/// A round button grown into a pill with its words (crundi-voice.js
+/// .cv-ov.full .cv-fullx: "Normal view"): the accent fill, the icon then
+/// the label, 12 px semibold white, `size` tall.
+pub fn round_pill_button(id: impl Into<ElementId>, icon: IconName, label: impl Into<SharedString>, tip: impl Into<SharedString>, size: Pixels, icon_size: Pixels) -> Stateful<Div> {
+    let tip: SharedString = tip.into();
+    div().id(id).flex().flex_none().items_center().gap(T::SP_6).h(size).pl(T::SP_10).pr(T::SP_12).rounded(size / 2.).cursor_pointer()
+        .bg(T::accent()).text_color(T::white()).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).whitespace_nowrap()
+        .hover(|s| s.bg(T::accent_hover()))
+        .child(div().text_size(icon_size).child(icon))
+        .child(label.into())
+        .tooltip(crate::tooltip(tip))
+}

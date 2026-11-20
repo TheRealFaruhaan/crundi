@@ -27,6 +27,18 @@ pub fn handle(r: Request, stores: &Stores, window: &mut Window, cx: &mut App) {
     r.answer(answer);
 }
 
+/// With the window closed to hide it (Wayland, F127): the tray's state and picks.
+pub fn windowless(r: Request) {
+    let name = match r.name() { "ui" => r.str("name"), "props" => "state".into(), n => n.to_string() };
+    let args = r.args();
+    let answer = match crundi_desktop::windowless_driver(&name, &args) {
+        Some(v) if name == "state" => json!({ "ok": true, "state": v }),
+        Some(v) => v,
+        None => json!({ "ok": false, "error": "the window is closed (hidden to the tray)" }),
+    };
+    r.answer(answer);
+}
+
 /// The window's state: the session, the live link's counters, the
 /// projects, the tab, and every area's own.
 fn state(stores: &Stores, window: &mut Window, cx: &mut App) -> Map<String, Value> {

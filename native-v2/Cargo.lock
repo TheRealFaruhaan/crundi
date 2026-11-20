@@ -1931,6 +1931,7 @@ dependencies = [
  "crundi-webview",
  "crundi-widgets",
  "crundi-workbench",
+ "crundi-workspace",
  "futures",
  "gethostname",
  "gpui-component",
@@ -1942,6 +1943,7 @@ dependencies = [
  "open",
  "raw-window-handle",
  "rfd",
+ "serde",
  "serde_json",
  "sha2 0.10.9",
  "sherpa-onnx",
@@ -1949,7 +1951,9 @@ dependencies = [
  "tray-icon",
  "tungstenite",
  "ureq 3.5.2",
+ "windows-sys 0.59.0",
  "x11rb",
+ "zbus 5.19.0",
 ]
 
 [[package]]

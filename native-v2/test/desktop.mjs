@@ -4,7 +4,7 @@
 // the address bar, devices, networks, annotations sent to a chat, history
 // and clearing, saved passwords), the native host's browser protocol on
 // drawer tabs and hidden browsers, the Browsers tab, the Inbox,
-// notifications, the tray, the chat bubble, the homepool node, Cru (its
+// notifications, the tray, the homepool node, Cru (its
 // screen, live screen, kid mode, "Hey Cru"), the unload rule and the
 // browser host process. Each part's checks are in test/desktop/<part>.mjs
 // (run(T, t)); ONLY=drawer,host,… runs some.
@@ -28,7 +28,7 @@ import { join } from 'node:path';
 
 // In this order: the drawer first (it opens the browser host), the host
 // process last (it kills the app).
-const PARTS = ['drawer', 'host', 'passwords', 'browsers', 'inbox', 'tray', 'node', 'bubble', 'cru', 'cruscreen', 'kid', 'wake', 'unload', 'hostproc'];
+const PARTS = ['drawer', 'host', 'passwords', 'browsers', 'inbox', 'tray', 'lock', 'node', 'cru', 'cruscreen', 'kid', 'wake', 'unload', 'hostproc'];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 
 const bus = process.env.DBUS_SESSION_BUS_ADDRESS || '';

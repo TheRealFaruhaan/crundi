@@ -23,6 +23,8 @@ pub const FRAME: &str = "cru-screen";
 #[derive(Default)]
 pub struct Screen {
     pub screen: Option<Value>,
+    /// The chat view's panel folded to its head (.cv-ov.scr-min).
+    pub folded: bool,
     /// The frame's page as made (to keep it when only the blocks change).
     pub target: String,
     loads: u64,
@@ -35,6 +37,9 @@ pub struct Screen {
 
 thread_local! { static S: RefCell<Screen> = RefCell::new(Screen::default()); }
 pub fn with<R>(f: impl FnOnce(&mut Screen) -> R) -> R { S.with(|s| f(&mut s.borrow_mut())) }
+
+/// The chat view's "Fold the panel": its body hidden, or shown again.
+pub fn fold() { with(|s| s.folded = !s.folded); crate::cru::render(); }
 
 pub fn screen() -> Option<Value> { with(|s| s.screen.clone()) }
 

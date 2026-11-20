@@ -60,10 +60,27 @@ export async function run(T, t) {
   await snap('cru-screen-frame');
   await T.act('cru-screen-full');
   await T.until('Full view: Cru\'s whole view', (p) => CS(p).full);
+  {
+    const p = await T.until('…over the content area: the top row and the bottom bar stay (F95)', (p) => D(p).cru.ui?.full && (D(p).cru.ui.mic || D(p).cru.ui.typingBox) && !D(p).cru.ui.field, 5000);
+    t.check('…under the top bar, the window\'s width', D(p).cru.ui.full, D(p).cru.ui);
+  }
   await t.sleep(500);
   await snap('cru-full');
   await T.act('cru-screen-normal');
-  await T.until('Normal view: the panel again', (p) => !CS(p).full && CS(p).screen);
+  await T.until('Normal view: the panel again', (p) => !CS(p).full && CS(p).screen && !D(p).cru.ui?.full);
+  // The chat view: the panel above the messages, folded to its head and back (Fold the panel).
+  const wasChat = D(await T.state()).cru.ui?.view === 'chat';
+  if (!wasChat) await T.act('cru-menu', 'chat-view');
+  await T.until('the chat view with the panel', (p) => D(p).cru.ui?.view === 'chat');
+  await T.act('cru-fold');
+  await T.until('Fold the panel: its head alone', (p) => D(p).cru.ui?.folded);
+  await snap('cru-screen-folded');
+  await T.act('cru-fold');
+  await T.until('…and open again', (p) => !D(p).cru.ui?.folded);
+  if (!wasChat) {
+    await T.act('cru-menu', 'chat-view');
+    await T.until('back to the voice view', (p) => D(p).cru.ui?.view === 'voice');
+  }
   await T.act('cru-screen-close');
   await T.until('× takes it down', (p) => !CS(p).screen && !CS(p).frame);
   await T.act('cru');

@@ -2,8 +2,9 @@
 //! createTray, updateTrayMenu): the head icon, the tooltip "Crundi —
 //! <status>", and the menu in the PC client's order and wording, as far as
 //! it applies to this client: no Start/Stop (no bundled server: A.3's note),
-//! no PC lock, no updates (phase 7). Kid mode as the PC client's: "Locked"
-//! and Quit off while the kid screen is locked. "Hey Cru" (voiceWakeTrayItems)
+//! no updates (phase 7). The PC lock's "Lock (visible)" and "Lock (full)".
+//! Kid mode as the PC client's: "Locked", the locks and Quit off while the
+//! window is locked (kid mode or the PC lock: Electron's kidLocked). "Hey Cru" (voiceWakeTrayItems)
 //! with its note. A click (Linux; double click elsewhere) shows the window.
 //!
 //! Linux: a StatusNotifierItem (ksni, over the session D-Bus). Windows and
@@ -44,6 +45,8 @@ pub fn menu(s: &State) -> Vec<Item> {
         ("status", s.status.clone(), false, None),
         sep(),
         ("open", "Open".into(), true, None),
+        ("lock-visible", "Lock (visible)".into(), !s.kid_locked, None),
+        ("lock-full", "Lock (full)".into(), !s.kid_locked, None),
         ("kid", if s.kid_locked { "Locked".into() } else { "Kid mode".into() }, !s.kid_locked, None),
         ("server", "Server\u{2026}".into(), true, None),
         sep(),
@@ -74,11 +77,16 @@ fn pick(id: &str) { PICKS.lock().unwrap().push(id.to_string()); crundi_webview::
 /// The tray's picks since the last pump.
 pub fn take_picks() -> Vec<String> { std::mem::take(&mut *PICKS.lock().unwrap()) }
 
+/// Picks put back for the pump with the window (opened again for them).
+pub fn requeue(picks: Vec<String>) { if picks.is_empty() { return; } let mut g = PICKS.lock().unwrap(); for (i, p) in picks.into_iter().enumerate() { g.insert(i, p); } }
+
 /// Act on a pick (the area's pump, with the window).
 pub fn act(id: &str) {
-    let locked = crate::cru_kid::on();
+    let locked = crate::cru_kid::on() || crate::pclock::on();
     match id {
         "open" => ctx::raise(),
+        "lock-visible" if !locked => crate::pclock::ask("visible", "tray"),
+        "lock-full" if !locked => crate::pclock::ask("full", "tray"),
         // A.3's "Kid mode": started here (the kid screen opens on this PC).
         "kid" if !locked => { ctx::raise(); crate::cru_kid::start("tray"); }
         // The server's settings (the PC client's "Server…" shows its server page).
@@ -102,7 +110,7 @@ fn icon_rgba() -> Option<(Vec<u8>, u32, u32)> {
 fn now(status: String) -> State {
     let w = crate::wake::status();
     let b = |k: &str| w[k].as_bool().unwrap_or(false);
-    State { status, kid_locked: crate::cru_kid::on(), wake: Some((b("enabled"), b("trained"), w["label"].as_str().filter(|_| b("enabled")).unwrap_or("").to_string())) }
+    State { status, kid_locked: crate::cru_kid::on() || crate::pclock::on(), wake: Some((b("enabled"), b("trained"), w["label"].as_str().filter(|_| b("enabled")).unwrap_or("").to_string())) }
 }
 
 /// Make the tray (once, at start).
@@ -256,9 +264,9 @@ mod tests {
     #[test]
     fn the_menu_and_its_words() {
         let s = State { status: "Running".into(), ..Default::default() };
-        assert_eq!(labels(&s), ["Crundi", "", "Running", "", "Open", "Kid mode", "Server…", "", "Quit"]);
+        assert_eq!(labels(&s), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", "Quit"]);
         let m = menu(&s);
-        assert!(!m[0].2 && !m[2].2 && m[4].2 && m[5].2 && m[8].2);
+        assert!(!m[0].2 && !m[2].2 && m[4].2 && m[5].2 && m[6].2 && m[7].2 && m[10].2);
         assert_eq!(tooltip("Stopped"), "Crundi — Stopped");
         assert_eq!(status_label(true), "Running");
         assert_eq!(status_label(false), "Stopped");
@@ -272,19 +280,20 @@ mod tests {
         let kid = m.iter().find(|x| x.0 == "kid").unwrap();
         assert_eq!((kid.1.as_str(), kid.2), ("Locked", false));
         assert!(!m.iter().find(|x| x.0 == "quit").unwrap().2);
+        assert!(!m.iter().find(|x| x.0 == "lock-visible").unwrap().2 && !m.iter().find(|x| x.0 == "lock-full").unwrap().2);
     }
 
     #[test]
     fn hey_cru() {
         let untrained = State { status: "Running".into(), kid_locked: false, wake: Some((false, false, String::new())) };
-        assert_eq!(labels(&untrained), ["Crundi", "", "Running", "", "Open", "Kid mode", "Server…", "", WAKE_LABEL, "    Train it first in Settings, Voice assistant", "", "Quit"]);
+        assert_eq!(labels(&untrained), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "    Train it first in Settings, Voice assistant", "", "Quit"]);
         let m = menu(&untrained);
-        assert_eq!((m[8].2, m[8].3), (false, Some(false)));
+        assert_eq!((m[10].2, m[10].3), (false, Some(false)));
         let on = State { wake: Some((true, true, "Listening".into())), ..untrained.clone() };
         let m = menu(&on);
-        assert_eq!((m[8].2, m[8].3), (true, Some(true)));
-        assert_eq!(m[9].1, "    Listening");
+        assert_eq!((m[10].2, m[10].3), (true, Some(true)));
+        assert_eq!(m[11].1, "    Listening");
         let off = State { wake: Some((false, true, String::new())), ..untrained };
-        assert_eq!(labels(&off), ["Crundi", "", "Running", "", "Open", "Kid mode", "Server…", "", WAKE_LABEL, "", "Quit"]);
+        assert_eq!(labels(&off), ["Crundi", "", "Running", "", "Open", "Lock (visible)", "Lock (full)", "Kid mode", "Server…", "", WAKE_LABEL, "", "Quit"]);
     }
 }
