@@ -69,6 +69,8 @@
 // (a chat streaming, a chat, Kanban, Mindmap, the shell):
 //   cr-sweep      the wheel sweep over the window while the chat streams
 //   cr-scroll     the wheel over the chat, the Kanban and the map in turn
+// and the same with the browser drawer open on a static page beside them
+// (MEASURE_DRAWER=0 skips it): cr-drawer-sweep, cr-drawer-scroll, idle-drawer.
 // Each: frames, p50, p95, max, ≤7 ms share, frames over 7 and over 16 ms.
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync, realpathSync } from 'node:fs';
@@ -471,6 +473,46 @@ try {
     stats('cr-scroll', m);
     s = await state(); report['cr-scroll'].renders = drew(r0, s); report['cr-scroll'].streaming = s.chatState;
     for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
+    // The same with the browser drawer open beside the panes (MEASURE_DRAWER=0
+    // skips it; the Desktop area's): a static page from this harness in a
+    // drawer tab, the five panes narrower beside it. cr-drawer-sweep sweeps the
+    // whole window (the page too: its wheel scrolls the page, whose new frames
+    // redraw its view alone), cr-drawer-scroll the chat, the Kanban and the map
+    // in turn, and idle-drawer: nothing changes, 0 frames.
+    if (process.env.MEASURE_DRAWER !== '0') {
+      const http = await import('node:http');
+      const rows = Array.from({ length: 200 }, (_, i) => `<p>Line ${i + 1}: a static page in the drawer, long enough to scroll.</p>`).join('');
+      const page = http.createServer((_, res) => { res.setHeader('Content-Type', 'text/html'); res.end(`<!doctype html><title>measure</title><body style="font:15px sans-serif;margin:20px">${rows}`); });
+      await new Promise((r) => page.listen(0, '127.0.0.1', r));
+      const D = (s) => s.areas?.desktop || {};
+      await ui('desktop:browser');
+      await ui('desktop:new-tab', `http://127.0.0.1:${page.address().port}/`);
+      for (let i = 0; i < 150; i++) { s = await state(); const t = (D(s).drawer?.tabs || []).find((x) => x.id === D(s).drawer?.active); if (t && t.frames > 0 && t.title === 'measure') break; await sleep(200); }
+      await sleep(2500);
+      s = await state();
+      const kb2 = (K(s)?.boxes?.cols || [])[0];
+      const [mx2, my2] = MM(s)?.canvas || [0, 0];
+      const [mw2, mh2] = MM(s)?.view || [0, 0];
+      const pts2 = [[kb2 ? kb2.x + kb2.w / 2 : 320, 800], kb2 && [kb2.x + kb2.w / 2, kb2.y + Math.min(kb2.h / 2, 200)], mw2 > 0 && [mx2 + mw2 - 20, my2 + mh2 / 2]].filter(Boolean);
+      report.setup.drawer = { open: D(s).drawer?.open, tabs: (D(s).drawer?.tabs || []).length, points: pts2 };
+      console.log('drawer', JSON.stringify(report.setup.drawer));
+      await stream();
+      r0 = s.renders || {};
+      ppStart('cr-drawer-sweep'); m = fm.mark(); const n5 = await sweep(d, 8000); stats('cr-drawer-sweep', m); report['cr-drawer-sweep'].wheelEvents = n5;
+      s = await state(); report['cr-drawer-sweep'].renders = drew(r0, s); report['cr-drawer-sweep'].streaming = s.chatState;
+      await stream();
+      r0 = s.renders || {};
+      ppStart('cr-drawer-scroll'); m = fm.mark();
+      { const end = Date.now() + 9000; let i = 0; while (Date.now() < end) { const [x, y] = pts2[Math.floor(i / 40) % pts2.length]; await d.send({ cmd: 'mouse', kind: 'wheel', x, y, dy: (i % 40) < 20 ? -60 : 60 }); i++; await sleep(7); } }
+      stats('cr-drawer-scroll', m);
+      s = await state(); report['cr-drawer-scroll'].renders = drew(r0, s); report['cr-drawer-scroll'].streaming = s.chatState;
+      for (let i = 0; i < 900; i++) { s = await state(); if (s.chatState !== 'working') break; await sleep(200); }
+      await sleep(2000);
+      r0 = (await state()).renders || {};
+      m = fm.mark(); await sleep(4000); stats('idle-drawer', m);
+      report['idle-drawer'].renders = drew(r0, await state());
+      page.close();
+    }
   }
   d.close();
 } catch (e) { done = true; report.allFrames = fm.frames.length; finish(1, String(e)); }

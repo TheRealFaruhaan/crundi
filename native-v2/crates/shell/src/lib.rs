@@ -8,6 +8,8 @@
 pub mod live_hub;
 pub mod nav;
 pub mod projects;
+// Cru's push-to-talk shortcut (ptt.json), ported for the Desktop area (additive).
+pub mod ptt;
 pub mod registry;
 pub mod session;
 pub mod usage;
@@ -53,6 +55,53 @@ impl Global for OpenPath {}
 pub struct Overlays(pub Vec<AnyView>);
 impl Global for Overlays {}
 pub fn register_overlay(cx: &mut App, v: AnyView) { cx.default_global::<Overlays>().0.push(v); }
+
+/// What Cru's mark in the top bar shows (Desktop sets it, `set_cru_mark`):
+/// Cru live (listening, thinking, talking) and its unread reports. An
+/// entity the TopBar observes: it redraws only when this changed.
+#[derive(Clone, Default, PartialEq)]
+pub struct CruMark { pub live: bool, pub unread: i64 }
+struct CruMarkHandle(Entity<CruMark>);
+impl Global for CruMarkHandle {}
+pub fn cru_mark(cx: &mut App) -> Entity<CruMark> {
+    if let Some(h) = cx.try_global::<CruMarkHandle>() { return h.0.clone(); }
+    let e = cx.new(|_| CruMark::default());
+    cx.set_global(CruMarkHandle(e.clone()));
+    e
+}
+pub fn set_cru_mark(cx: &mut App, live: bool, unread: i64) {
+    let m = CruMark { live, unread };
+    let e = cru_mark(cx);
+    if *e.read(cx) != m { e.update(cx, |x, cx| { *x = m; cx.notify(); }); }
+}
+
+/// The sidebar's Inbox button (the web's ibxBadge; Desktop sets it,
+/// `set_inbox_badge`): hidden where the server has no Inbox, its unread
+/// count. An entity the Sidebar observes: it redraws only when this changed.
+#[derive(Clone, PartialEq)]
+pub struct InboxBadge { pub supported: bool, pub unread: i64 }
+impl Default for InboxBadge { fn default() -> Self { InboxBadge { supported: true, unread: 0 } } }
+struct InboxBadgeHandle(Entity<InboxBadge>);
+impl Global for InboxBadgeHandle {}
+pub fn inbox_badge(cx: &mut App) -> Entity<InboxBadge> {
+    if let Some(h) = cx.try_global::<InboxBadgeHandle>() { return h.0.clone(); }
+    let e = cx.new(|_| InboxBadge::default());
+    cx.set_global(InboxBadgeHandle(e.clone()));
+    e
+}
+pub fn set_inbox_badge(cx: &mut App, supported: bool, unread: i64) {
+    let b = InboxBadge { supported, unread };
+    let e = inbox_badge(cx);
+    if *e.read(cx) != b { e.update(cx, |x, cx| { *x = b; cx.notify(); }); }
+}
+
+/// Where Cru's mark was last painted (Cru's screen opens under it, at its
+/// right, as the web's anchor). Set in the top bar's paint; read in handlers.
+#[derive(Clone, Copy)]
+struct CruAnchor(Bounds<Pixels>);
+impl Global for CruAnchor {}
+pub fn cru_anchor(cx: &App) -> Option<Bounds<Pixels>> { cx.try_global::<CruAnchor>().map(|a| a.0) }
+pub(crate) fn set_cru_anchor(cx: &mut App, b: Bounds<Pixels>) { if cru_anchor(cx) != Some(b) { cx.set_global(CruAnchor(b)); } }
 
 /// The stores (after `init`).
 pub fn stores(cx: &App) -> Stores { cx.global::<StoresHandle>().0.clone() }

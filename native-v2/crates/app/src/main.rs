@@ -18,6 +18,8 @@ use gpui::*;
 use gpui_component::Root;
 
 fn main() {
+    // Started as the browser host or a CEF helper: become the host (never returns).
+    crundi_webview::init_process();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn,zbus=off")).init();
     gpui_platform::application().with_assets(crundi_theme::AllAssets).run(move |cx: &mut App| {
         gpui_component::init(cx);
@@ -32,6 +34,10 @@ fn main() {
         crundi_chat::init(cx);
         crundi_planning::init(cx);
         crundi_workspace::init(cx);
+        // The desktop area (the browser drawer, Inbox, tray, Cru…). The
+        // browser host is not started here: it starts with the first page.
+        crundi_webview::start(&crundi_core::store::config_dir());
+        crundi_desktop::init(cx);
 
         // Centred on the display when there is one; Xvfb reports none, so a
         // window centred on "nothing" would come out 10x10: place it instead.
@@ -50,6 +56,7 @@ fn main() {
         let s = stores.clone();
         let handle = cx.open_window(opts, move |window, cx| {
             let shell = cx.new(|cx| crundi_shell::Shell::new(s.clone(), window, cx));
+            crundi_desktop::init_window(&shell, window, cx);
             cx.new(|cx| Root::new(shell, window, cx))
         }).expect("window");
         stores.session.update(cx, |s, cx| s.start(cx));
@@ -69,6 +76,7 @@ fn main() {
             }).detach();
         }
     });
+    crundi_webview::shutdown();
 }
 
 /// The app's icon, 256 px (assets/icon-256.png, the PC client's).
