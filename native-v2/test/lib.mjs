@@ -167,7 +167,8 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
     diff(a, b, crop) {
       const c = crop ? ['-crop', crop, '+repage'] : [];
       // (The crops go to the run's out folder, never beside the screens: F41.)
-      const cut = (f) => { const o = join(OUT, `${f.split('/').pop()}.cut.png`); execFileSync('convert', [f, ...c, o]); return o; };
+      let side = 0;
+      const cut = (f) => { const o = join(OUT, `${f.split('/').pop()}.${side++ ? 'b' : 'a'}.${process.pid}.cut.png`); execFileSync('convert', [f, ...c, o]); return o; };
       try { execFileSync('compare', ['-metric', 'AE', cut(a), cut(b), 'null:'], { stdio: ['ignore', 'ignore', 'pipe'] }); return 0; }
       catch (e) { return Number(String(e.stderr).trim().split(/\s/)[0]) || -1; }
     },

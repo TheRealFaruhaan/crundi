@@ -1181,11 +1181,18 @@ fn drag_end(commit: bool, window: &mut Window, cx: &mut App) {
 
 // ─── Media (the Media modal and viewer are Workspace's) ───
 
-/// The Media modal isn't on the GPUI client yet (Workspace's, phase 3): the
-/// Slint client's fallback, the Media tab.
-fn media_modal(window: &mut Window, cx: &mut App) {
-    w::toast(window, cx, "Media opens in the Media tab", w::Toast::Info);
-    crate::util::show_tab(cx, "media");
+/// The toolbar's Media (openMediaModal 'Media · Mindmap').
+fn media_modal(_window: &mut Window, cx: &mut App) {
+    crate::media::open("Media \u{00b7} Mindmap", crate::media::Scope::kind("mindmap"), None, None, cx);
+}
+
+/// The idea dialog's Media and paperclip (openNodeMediaModal): the idea's
+/// media, uploads linked to it; the dialog shows again when it closes.
+fn node_media(id: &str, window: &mut Window, cx: &mut App) {
+    close_detail(window, cx);
+    let id = id.to_string();
+    let back: crate::media::Back = { let id = id.clone(); std::rc::Rc::new(move |window, cx| open_detail(&id, window, cx)) };
+    crate::media::open("Idea media", crate::media::Scope::linked(json!({ "type": "node", "nodeId": id }), None), None, Some(back), cx);
 }
 
 // ─── The idea dialog ───
@@ -1267,8 +1274,12 @@ fn fill_thumbs(cx: &mut App) {
     }
 }
 
+/// A thumbnail in the idea dialog's strip: the lightbox (openMediaLightbox), then the dialog again.
 fn open_media(id: &str, window: &mut Window, cx: &mut App) {
-    if with(cx, |s| s.d_media.iter().any(|x| s_of(x, "id") == id)) { media_modal(window, cx); }
+    let Some((it, node)) = with(cx, |s| s.d_media.iter().find(|x| s_of(x, "id") == id).cloned().zip(s.detail.clone())) else { return };
+    if s_of(&it, "kind") != "other" { close_detail(window, cx); }
+    let back: crate::media::Back = std::rc::Rc::new(move |window, cx| open_detail(&node, window, cx));
+    crate::media::lightbox(it, Some(back), cx);
 }
 
 fn close_detail(window: &mut Window, cx: &mut App) {
@@ -1338,7 +1349,7 @@ fn d_act(a: &str, window: &mut Window, cx: &mut App) {
             // "Unlink" clears a task link and a project scope alike.
             if linked { post(json!({ "action": "unlinkNode", "id": id }), cx, |_, _, cx| load(cx)); } else { open_link(&id, window, cx); }
         }
-        "media" => media_modal(window, cx),
+        "media" => node_media(&id, window, cx),
         "delete" => {
             close_detail(window, cx);
             w::confirm(window, cx, w::Confirm { title: "".into(), message: "Delete this idea and all its sub-ideas?".into(), ok: "Delete".into(), danger: true }, move |_, cx| {

@@ -12,7 +12,7 @@
 
 import * as t from './lib.mjs';
 
-const SCREENS = ['kanban', 'kanban-look', 'mindmap', 'mindmap-look', 'schedule'];
+const SCREENS = ['kanban', 'kanban-look', 'mindmap', 'mindmap-look', 'schedule', 'notes', 'factories'];
 const ONLY = (process.env.ONLY || '').split(',').filter(Boolean);
 
 const T = await t.begin('planning');

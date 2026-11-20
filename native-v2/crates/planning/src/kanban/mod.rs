@@ -323,7 +323,7 @@ pub(crate) fn act(a: &str, task_id: &str, extra: &str, window: &mut Window, cx: 
             refresh(cx);
             load(cx);
         }
-        "media" => media_modal(cx),
+        "media" => media_kind(cx),
         "card-menu" => { with(cx, |k| if !k.menu_open.remove(task_id) { k.menu_open.insert(task_id.to_string()); }); refresh(cx); }
         "add-task-inline" => {
             let stt = extra.to_string();
@@ -419,7 +419,7 @@ pub(crate) fn click_control(task: &str, ctl: &str, at: Point<Pixels>, card_w: Pi
         ["menu"] => act("card-menu", task, "", window, cx),
         ["mm"] => act("goto-mindmap", task, "", window, cx),
         ["sub"] => act("add-subtask", task, "", window, cx),
-        ["tmedia"] => media_modal(cx),
+        ["tmedia", td] => media_todo(task, td, cx),
         ["tick", td, done] => toggle_todo(task, td, *done != "true", cx),
         ["more", td] => todo_menu(task, td, x, y, cx),
         _ => {}
@@ -442,7 +442,7 @@ pub(crate) fn todo_menu(t: &str, td: &str, x: f32, y: f32, cx: &mut App) {
     ];
     let mx = (x - f32::from(crundi_theme::T::MENU_MIN_W)).max(0.);
     w::menu_at(cx, point(px(mx), px(y)), items, move |id, window, cx| match id.as_str() {
-        "media" => media_modal(cx),
+        "media" => media_todo(&t, &td, cx),
         "rename" => {
             let cur = with(cx, |k| k.task(&t)).and_then(|x| x.get("todos").and_then(|a| a.as_array()).and_then(|a| a.iter().find(|y| s(y, "id") == td)).map(|y| s(y, "text"))).unwrap_or_default();
             let (t, td) = (t.clone(), td.clone());
@@ -455,14 +455,27 @@ pub(crate) fn todo_menu(t: &str, td: &str, x: f32, y: f32, cx: &mut App) {
     });
 }
 
-// ─── Media (the Media modal and viewer are Workspace's) ───
+// ─── Media (the web's openMediaModal: crate::media) ───
 
-/// The web's openMediaModal: Workspace's Media modal is not in v2 yet, so the
-/// Media tab (as native-gpui does).
-pub(crate) fn media_modal(cx: &mut App) {
+fn media_open(title: &str, st: crate::media::Scope, cx: &mut App) {
     if with(cx, |k| k.clip.take().is_some()) { refresh(cx); }
-    util::toast(cx, "Media opens in the Media tab", w::Toast::Info);
-    util::show_tab(cx, "media");
+    // An upload or a delete there shows on the board's strips (loadKanban).
+    crate::media::open(title, st, Some(std::rc::Rc::new(|cx: &mut App| load(cx))), None, cx);
+}
+
+/// The toolbar's Media: the project's Kanban media.
+pub(crate) fn media_kind(cx: &mut App) { media_open("Media \u{00b7} Kanban", crate::media::Scope::kind("kanban"), cx); }
+
+/// A task's media (the attachments' "+", Attach a file): uploads linked to it.
+pub(crate) fn media_task(t: &str, cx: &mut App) {
+    let p = crundi_shell::project(cx);
+    media_open("Task media", crate::media::Scope::linked(json!({ "type": "task", "taskId": t }), Some(p)), cx);
+}
+
+/// A subtask's media (its paperclip, its menu's Attach media).
+pub(crate) fn media_todo(t: &str, td: &str, cx: &mut App) {
+    let p = crundi_shell::project(cx);
+    media_open("Subtask media", crate::media::Scope::linked(json!({ "type": "todo", "taskId": t, "todoId": td }), Some(p)), cx);
 }
 
 pub(crate) fn clip_open(t: &str, x: f32, y: f32, wd: f32, cx: &mut App) {
@@ -489,8 +502,12 @@ fn load_thumbs(cx: &mut App) {
     }
 }
 
-/// A thumbnail opened: the viewer is Workspace's (not in v2 yet), so the Media tab.
-pub(crate) fn open_media(_id: &str, cx: &mut App) { media_modal(cx); }
+/// A thumbnail in the attachments strip opened: the lightbox (openMediaLightbox).
+pub(crate) fn open_media(id: &str, cx: &mut App) {
+    let it = with(cx, |k| { let c = k.clip.take(); c.and_then(|c| k.media_task.get(&c.task).and_then(|v| v.iter().find(|x| s(x, "id") == id).cloned())) });
+    refresh(cx);
+    if let Some(it) = it { crate::media::lightbox(it, None, cx); }
+}
 
 // ─── Drag to move ───
 
