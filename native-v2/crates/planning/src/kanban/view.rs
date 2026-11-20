@@ -89,7 +89,7 @@ impl Host {
     /// The host's width changed (measured as it was laid out): each view
     /// takes its geometry, and notifies only if its own changed.
     fn width_changed(&self, cx: &mut App) {
-        let n = self.store.read(cx).cols.len();
+        let n = self.msg.read(cx).shape.ncols;
         let g = geom(px(self.width.get()), n);
         self.msg.update(cx, |v, cx| v.set_geom(g, cx));
         self.toolbar.update(cx, |v, cx| v.set_fold(g.fold, cx));
@@ -100,7 +100,10 @@ impl Host {
     /// The host's body: layout only, placing the cached views (built in the
     /// tab's render, or in the Workbench's as the pane's body).
     pub fn body(&self, cx: &mut App) -> AnyElement {
-        let (state, view, n) = { let k = self.store.read(cx); (k.state.clone(), k.view.clone(), k.cols.len()) };
+        // What it lays out, from the Msg view's copy (set by its observer,
+        // notified only when the shape changed): never the store itself, so a
+        // store notify that changes no shape costs this layout view nothing (F57).
+        let (state, view, n) = { let m = &self.msg.read(cx).shape; (m.state.clone(), m.view.clone(), m.ncols) };
         // One view per column (made the first time the board has it).
         let made = self.cols.borrow().len();
         if made < n {
@@ -193,8 +196,8 @@ impl Render for Msg {
         match self.shape.state.as_str() {
             "none" => muted("Select a project to use its Kanban board.").into_any_element(),
             "error" => muted(self.shape.error.clone()).into_any_element(),
-            "ok" => div().into_any_element(),
-            _ => w::loading("Loading…").into_any_element(),
+            // Loading: nothing yet (the web's renderKanban waits for the board).
+            _ => div().into_any_element(),
         }
     }
 }
@@ -304,17 +307,17 @@ fn add_task(status: &str, adding: bool, inp: &Inputs) -> AnyElement {
         .child(w::input(&i)).into_any_element()
 }
 
-use crundi_widgets::paint::Look;
+/// Where a control was painted (its pop opens against it: the web's placePop).
+fn report(boxes: &Rc<RefCell<super::Boxes>>, task: &str, ctl: String) -> impl IntoElement {
+    let (boxes, task) = (boxes.clone(), task.to_string());
+    canvas(move |b, _, _| boxes.borrow_mut().controls.push((task, ctl, b4(b))), |_, _, _, _| {}).absolute().top_0().left_0().size_full()
+}
 
-/// A card's control drawn at rest, for a card the pointer is not on
-/// (`w::paint::lite_button`: the control's box, colours, icon and label
-/// without its focus, hover, tooltip and handlers; only the card under the
-/// pointer, or one in use, has the live controls: `Card::live`).
-fn lite(label: Option<SharedString>, icon: Option<IconName>, look: Look, cx: &App) -> AnyElement { crundi_widgets::paint::lite_button(label, icon, look, cx) }
 
+/// The live card (the one under the pointer, or in use; one at rest is
+/// card_el.rs's element).
 #[allow(clippy::too_many_arguments)]
-fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> AnyElement {
-    let live = live || cd.menu_open || cd.adding;
+fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixels, inp: &Inputs, _live: bool, _cx: &App) -> AnyElement {
     let fold = card_w < if cd.compact { T::KANBAN_CARD_FOLD_COMPACT } else { T::KANBAN_CARD_FOLD };
     let id = cd.id.clone();
     let sid = SharedString::from(cd.id.clone());
@@ -323,30 +326,20 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
     // The title row: title, the mind map count, the paperclip, the menu (compact).
     let mut title = div().flex().items_start().gap(T::SP_8)
         .child(div().flex_1().min_w_0().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(cd.title.clone()));
-    if cd.mm > 0 && !live {
-        title = title.child(div().flex().flex_none().items_center().gap(T::SP_2).h(T::SP_16 + T::SP_2).pl(T::SP_4).pr(T::SP_6).mt(T::SP_2)
-            .rounded(T::R_PILL).bg(T::accent_dim()).text_color(T::accent_hover()).text_size(T::TEXT_11).font_weight(T::W_SEMIBOLD)
-            .child(w::icon(IconName::Share2, T::ICON_SM)).child(cd.mm.to_string()));
-    } else if cd.mm > 0 {
-        title = title.child(w::tip(div().id(eid("kanban-mm", &sid)).flex().flex_none().items_center().gap(T::SP_2).h(T::SP_16 + T::SP_2).pl(T::SP_4).pr(T::SP_6).mt(T::SP_2)
-            .rounded(T::R_PILL).bg(T::accent_dim()).text_color(T::accent_hover()).text_size(T::TEXT_11).font_weight(T::W_SEMIBOLD).cursor_pointer()
-            .child(w::icon(IconName::Share2, T::ICON_SM)).child(cd.mm.to_string())
-            .on_click(a("goto-mindmap", id.clone())), "Open in the Mindmap"));
+    if cd.mm > 0 {
+        title = title.child(div().id(eid("kanban-mm", &sid)).flex_none().mt(T::SP_2).cursor_pointer()
+            .child(w::icon_tag(IconName::Share2, cd.mm.to_string(), "accent"))
+            .tooltip(w::tooltip(format!("{} linked mindmap idea(s)", cd.mm)))
+            .on_click(a("goto-mindmap", id.clone())));
     }
     let tid = id.clone();
-    let on_look = |on: bool| if on { Look::Primary } else { Look::Ghost };
-    if !live {
-        title = title.child(if cd.media > 0 { lite(Some(cd.media.to_string().into()), Some(IconName::Paperclip), on_look(clip_open), cx) } else { lite(None, Some(IconName::Paperclip), on_look(clip_open), cx) });
-        if cd.compact { title = title.child(lite(None, Some(IconName::Menu), on_look(cd.menu_open), cx)); }
-    } else {
-    let clip_btn = if cd.media > 0 { w::toggle(eid("kanban-clip", &sid), cd.media.to_string(), clip_open).icon(IconName::Paperclip) }
+    let clip_btn = if cd.media > 0 { w::toggle(eid("kanban-clip", &sid), cd.media.to_string(), clip_open).icon(IconName::Paperclip).tooltip("Attachments") }
         else { w::icon_toggle(eid("kanban-clip", &sid), IconName::Paperclip, "Attachments", clip_open) };
-    title = title.child(clip_btn.on_click(move |e, _, cx| {
-        let p = e.position();
-        super::clip_open(&tid, f32::from(p.x + T::SP_12), f32::from(p.y + T::SP_12), f32::from(card_w), cx);
-    }));
+    title = title.child(div().relative().flex_none().child(clip_btn.on_click(move |_, _, cx| {
+        let b = super::control_box(&tid, "clip", cx).unwrap_or_default();
+        super::clip_open(&tid, b, f32::from(card_w), cx);
+    })).child(report(&inp.boxes, &id, "clip".into())));
     if cd.compact { title = title.child(w::icon_toggle(eid("kanban-menu-c", &sid), IconName::Menu, "Task actions", cd.menu_open).on_click(a("card-menu", id.clone()))); }
-    }
 
     let mut col = div().flex().flex_col().px(T::SP_12).pt(T::SP_12).pb(T::SP_10).child(title);
     if !cd.desc.is_empty() { col = col.child(div().w_full().min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary()).child(cd.desc.clone())); }
@@ -354,7 +347,7 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
     // Subtasks, the new-subtask row, and the progress line.
     if cd.total > 0 || cd.adding {
         let mut list = div().flex().flex_col().pt(T::SP_8).gap(px(1.));
-        for td in cd.todos.iter() { list = list.child(todo_row(&cd.id, td, live, cx)); }
+        for td in cd.todos.iter() { list = list.child(todo_row(&cd.id, td, card_w, &inp.boxes)); }
         if cd.adding {
             if let Some(i) = inp.todo.clone() {
                 list = list.child(div().flex().items_center().gap(T::SP_8).pl(T::SP_6).pr(T::SP_4).py(T::SP_4).rounded(T::R_CONTROL)
@@ -374,14 +367,10 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
             .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(format!("{} of {}", cd.done, cd.total))));
     }
     // The footer: the menu, then + Subtask (not on a compact card).
-    if !cd.compact && !live {
-        col = col.child(div().flex().items_center().gap(T::SP_6).pt(T::SP_10)
-            .child(lite(None, Some(IconName::Menu), on_look(cd.menu_open), cx))
-            .child(lite(Some("Subtask".into()), Some(IconName::Plus), Look::Default, cx)));
-    } else if !cd.compact {
+    if !cd.compact {
         col = col.child(div().flex().items_center().gap(T::SP_6).pt(T::SP_10)
             .child(w::icon_toggle(eid("kanban-menu", &sid), IconName::Menu, "Task actions", cd.menu_open).on_click(a("card-menu", id.clone())))
-            .child(w::button(eid("kanban-sub", &sid), "Subtask").icon(IconName::Plus).on_click(a("add-subtask", id.clone()))));
+            .child(w::button(eid("kanban-sub", &sid), "Subtask").icon(IconName::Plus).tooltip("Add a subtask").on_click(a("add-subtask", id.clone()))));
     }
     // The card's actions, under its menu.
     if cd.menu_open {
@@ -396,58 +385,66 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
                 .child(del.on_click(a("del-task", id.clone())))));
     }
     let title_text = cd.title.clone();
-    let (st_, id2, boxes) = (status.to_string(), cd.id.clone(), inp.boxes.clone());
+    let (st_, id2, boxes, b2) = (status.to_string(), cd.id.clone(), inp.boxes.clone(), inp.boxes.clone());
     div().id(eid("kanban-card", &sid)).relative().flex_none().rounded(T::R_CARD).border_1().bg(T::bg_card())
+        // Dropped on a chat's box or a terminal: its task id goes in (the
+        // shared drag layer; on the board the drag below moves it).
+        .on_drag(w::RefDrag::new("kanban-task", &cd.id, cd.title.clone()), |_, _, _, cx| cx.new(|_| crate::util::NoGhost))
         .border_color(T::border()).hover(|d| d.border_color(T::kanban_slate_edge()))
         .when(dragged, |d| d.opacity(T::KANBAN_O_DIM))
         .cursor(if dragged { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
         // Its box, as painted (the drop target, a press's grab).
         .child(canvas(move |b, _, _| boxes.borrow_mut().cards.push((st_, id2, b4(b))), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
         // A press anywhere arms a drag; past a few px it moves (mod.rs pointer_move).
-        .on_mouse_down(MouseButton::Left, move |e, _, cx| super::press(&id, &title_text, e.position, cx))
+        .on_mouse_down(MouseButton::Left, move |e, _, cx| {
+            // A press on a subtask is the subtask's own drag (the web's interactiveSelector).
+            if std::mem::take(&mut b2.borrow_mut().sub_press) { return; }
+            super::press(&id, &title_text, e.position, cx)
+        })
         .child(col)
         .into_any_element()
 }
 
-/// One subtask row (.kanban-todo): checkbox, text, media count, "…".
-fn todo_row(task: &str, td: &board::Todo, live: bool, cx: &App) -> AnyElement {
-    if !live {
-        // At rest: the box, the text, the media count, the faint "…".
-        return div().flex().items_start().gap(T::SP_8).pl(T::SP_6).pr(T::SP_4).py(T::SP_4).rounded(T::R_CONTROL)
-            .child(div().pt(T::SP_2).child(div().flex().items_center().gap(T::CHECK_GAP)
-                .child(div().flex_none().flex().items_center().justify_center().size(T::CHECK_BOX).rounded(T::R_CHIP).border_1()
-                    .border_color(if td.done { T::accent() } else { T::text_muted() }).bg(if td.done { T::accent() } else { T::bg() })
-                    .when(td.done, |d| d.text_color(T::white()).child(w::icon(IconName::Check, T::CHECK_BOX - T::SP_2 * 2.))))))
-            .child(div().flex_1().min_w_0().text_size(T::TEXT_13).text_color(if td.done { T::text_muted() } else { T::text() }).child(td.text.clone()))
-            .when(td.media > 0, |d| d.child(lite(Some(td.media.to_string().into()), Some(IconName::Paperclip), Look::Default, cx)))
-            .child(div().opacity(T::KANBAN_O_CARET).child(lite(None, Some(IconName::Ellipsis), Look::Ghost, cx)))
-            .into_any_element();
-    }
+/// One subtask row (.kanban-todo): checkbox, text, media count, "…". It is
+/// a drag source of its own (a subtask id dropped on a chat or terminal).
+fn todo_row(task: &str, td: &board::Todo, card_w: Pixels, boxes: &Rc<RefCell<super::Boxes>>) -> AnyElement {
     let key = SharedString::from(format!("{task}-{}", td.id));
     let (t1, d1, done) = (task.to_string(), td.id.clone(), td.done);
     let (t2, d2) = (task.to_string(), td.id.clone());
-    div().id(eid("kanban-todo", &key)).group("kanban-todo").flex().items_start().gap(T::SP_8).pl(T::SP_6).pr(T::SP_4).py(T::SP_4)
+    let (text, b1) = (td.text.clone(), boxes.clone());
+    let row = div().id(eid("kanban-todo", &key)).group("kanban-todo").flex().items_start().gap(T::SP_8).pl(T::SP_6).pr(T::SP_4).py(T::SP_4)
         .rounded(T::R_CONTROL).hover(|d| d.bg(T::bg_hover()))
+        .tooltip(w::tooltip("Drag onto a terminal to insert this subtask id"))
+        .on_mouse_down(MouseButton::Left, move |_, _, _| b1.borrow_mut().sub_press = true)
         .child(div().pt(T::SP_2).child(w::check(eid("kanban-tick", &key), "", done, move |v, _, cx| super::toggle_todo(&t1, &d1, *v, cx))))
         .child(div().flex_1().min_w_0().text_size(T::TEXT_13).text_color(if done { T::text_muted() } else { T::text() }).child(td.text.clone()))
-        .when(td.media > 0, |d| d.child(w::button(eid("kanban-tmedia", &key), td.media.to_string()).icon(IconName::Paperclip).on_click({ let (t, d) = (task.to_string(), td.id.clone()); move |_, _, cx| super::media_todo(&t, &d, cx) })))
-        .child(div().opacity(T::KANBAN_O_CARET).group_hover("kanban-todo", |d| d.opacity(1.))
-            .child(w::icon_button(eid("kanban-tmore", &key), IconName::Ellipsis, "More").on_click(move |e, _, cx| {
-                let p = e.position();
-                super::todo_menu(&t2, &d2, f32::from(p.x + T::SP_12), f32::from(p.y + T::SP_12), cx);
-            })))
-        .into_any_element()
+        .when(td.media > 0, |d| d.child(w::button(eid("kanban-tmedia", &key), td.media.to_string()).icon(IconName::Paperclip).tooltip("Subtask media").on_click({ let (t, d) = (task.to_string(), td.id.clone()); move |_, _, cx| super::media_todo(&t, &d, cx) })))
+        .child(div().relative().opacity(T::KANBAN_O_CARET).group_hover("kanban-todo", |d| d.opacity(1.))
+            .child(w::icon_button(eid("kanban-tmore", &key), IconName::Ellipsis, "Subtask actions").on_click(move |_, _, cx| {
+                let b = super::control_box(&t2, &format!("more:{d2}"), cx).unwrap_or_default();
+                super::todo_menu(&t2, &d2, b, cx);
+            }))
+            .child(report(boxes, task, format!("more:{}", td.id))));
+    // The ghost: the row itself (the web's drag-clone of it).
+    let ghost_w = card_w - T::SP_12 * 2. + T::SP_6 * 2.;
+    w::drag_ref_row(row, "kanban-subtask", &td.id, text.clone(), ghost_w, move || {
+        div().flex().items_start().gap(T::SP_8).pl(T::SP_6).pr(T::SP_4).py(T::SP_4).rounded(T::R_CONTROL).bg(T::bg_card()).border_1().border_color(T::border())
+            .child(div().pt(T::SP_2).child(w::check("kanban-ghost-tick", "", done, |_, _, _| {})))
+            .child(div().flex_1().min_w_0().text_size(T::TEXT_13).text_color(if done { T::text_muted() } else { T::text() }).child(text.clone()))
+            .into_any_element()
+    }).into_any_element()
 }
 
 /// A column's head (.kanban-col-head): its label and count.
 fn col_head(c: &Col) -> Div {
     div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_12).pt(T::SP_10).pb(T::SP_8)
         .child(div().flex_1().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).text_color(if c.other { T::yellow() } else { T::text() }).child(c.label.clone()))
-        .child(div().flex_none().min_w(T::SP_20 + T::SP_2).h(T::SP_16 + T::SP_2).px(T::SP_6).rounded(T::R_PILL).bg(T::bg_tertiary())
-            .flex().items_center().justify_center().text_size(T::TEXT_11).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary()).child(c.cards.len().to_string()))
+        .child(w::count_pill(c.cards.len().to_string()))
 }
 
-fn edge(drop_here: bool, other: bool) -> Hsla { if drop_here { T::accent() } else if other { T::yellow() } else { T::border() } }
+/// A column's edge: the Other column's yellow (a column under a drag is not
+/// marked: the web shows the drop line alone).
+fn edge(_drop_here: bool, other: bool) -> Hsla { if other { T::yellow() } else { T::border() } }
 
 fn inputs(store: &Entity<KStore>, cards: &super::card_el::Cache, cx: &App) -> Inputs {
     let k = store.read(cx);
@@ -530,7 +527,11 @@ impl Render for ColumnView {
         // (While it scrolls, no card is live: the pointer's next move makes
         // the one under it live; a click before that is the card at rest's.)
         let top = self.list.logical_scroll_top();
-        if self.last_top != Some(top) { if self.last_top.is_some() { self.hot = None; } self.last_top = Some(top); }
+        if self.last_top != Some(top) {
+            // A scroll lets go of the live card, and closes the attachments strip (the web's scroll capture).
+            if self.last_top.is_some() { self.hot = None; if self.store.read(cx).clip.is_some() { cx.defer(super::clip_close); } }
+            self.last_top = Some(top);
+        }
         if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
         let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
@@ -638,7 +639,11 @@ impl Render for StackView {
         { let mut b = inp.boxes.borrow_mut(); b.cards.clear(); b.cols.clear(); b.controls.clear(); }
         let (rows, card_w) = (self.rows.clone(), self.geom.card_w);
         let top = self.list.logical_scroll_top();
-        if self.last_top != Some(top) { if self.last_top.is_some() { self.hot = None; } self.last_top = Some(top); }
+        if self.last_top != Some(top) {
+            // A scroll lets go of the live card, and closes the attachments strip (the web's scroll capture).
+            if self.last_top.is_some() { self.hot = None; if self.store.read(cx).clip.is_some() { cx.defer(super::clip_close); } }
+            self.last_top = Some(top);
+        }
         if self.store.read(cx).boxes.borrow().pressing { self.hot = None; }
         let _ = window;
         let (hot, all) = (self.hot, self.store.read(cx).all_live);
@@ -704,7 +709,7 @@ fn trow_el(r: &TRow, first: bool, last: bool) -> AnyElement {
             let id = t.task.clone();
             div().flex().flex_col().gap(T::SP_8).px(T::SP_12).pt(T::SP_12).pb(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::border()).bg(T::bg_card())
                 .child(div().w_full().min_w_0().opacity(T::KANBAN_O_SOFT).text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(t.text.clone()))
-                .child(div().flex().child(w::button(("kanban-restore", *i), "Restore").icon(IconName::RotateCcw).on_click(move |_, window, cx| act("restore-task", &id, "", window, cx))))
+                .child(div().flex().child(w::button(("kanban-restore", *i), "Restore").on_click(move |_, window, cx| act("restore-task", &id, "", window, cx))))
                 .into_any_element()
         }
         TRow::Todo(i, t) => {
@@ -761,7 +766,7 @@ impl Render for HistView {
 
 // ─── The layers over the board ───
 
-pub struct Overlay { store: Entity<KStore>, drag: Entity<Drag>, _subs: Vec<Subscription> }
+pub struct Overlay { store: Entity<KStore>, drag: Entity<Drag>, focus: FocusHandle, focused_for: Option<String>, _subs: Vec<Subscription> }
 
 impl Overlay {
     fn new(store: Entity<KStore>, _embedded: bool, cx: &mut Context<Self>) -> Self {
@@ -772,7 +777,7 @@ impl Overlay {
             // The strip and its pictures: redrawn when they change.
             cx.observe(&store, move |_, s, cx| { let c = s.read(cx).clip.clone(); if c != clip || c.is_some() { clip = c; cx.notify(); } }),
         ];
-        Overlay { store, drag, _subs: subs }
+        Overlay { store, drag, focus: cx.focus_handle(), focused_for: None, _subs: subs }
     }
 }
 
@@ -798,23 +803,43 @@ impl Render for Overlay {
                     .shadow_lg().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(d.title.clone()),
             )).with_priority(1));
         }
-        root.children(clip_pop(&self.store, window, cx))
+        // The strip takes the keys as it opens (its Esc closes it).
+        let task = self.store.read(cx).clip.as_ref().map(|c| c.task.clone());
+        if task != self.focused_for {
+            self.focused_for = task.clone();
+            if task.is_some() { let f = self.focus.clone(); cx.defer_in(window, move |_, window, cx| window.focus(&f, cx)); }
+        }
+        root.children(clip_pop(&self.store, &self.focus, window, cx))
     }
 }
 
-/// A card's attachments (.kc-media-pop): thumbnails (or "No attachments yet") and the + that opens
-/// the task's media, under the paperclip. A press outside closes it.
-fn clip_pop(store: &Entity<KStore>, window: &Window, cx: &App) -> Option<AnyElement> {
+/// A card's attachments (.kc-media-pop): thumbnails (or "No attachments
+/// yet") and the + that opens the task's media, against the paperclip (the
+/// web's placePop: under it, right edges together; above it when there is no
+/// room below). It blocks nothing: a press anywhere else, Esc, or the board
+/// scrolling closes it (a press on the paperclip is the paperclip's toggle).
+/// Where the strip goes (the web's placePop): under the paperclip, right
+/// edges together; above it when there is no room below; 8 px inside the window.
+pub(crate) fn pop_rect(c: &super::Clip, vp: Size<Pixels>) -> Bounds<Pixels> {
+    let btn = &c.btn;
+    let pw = (px(c.w) - T::SP_8).clamp(T::KANBAN_POP_MIN, T::KANBAN_POP_MAX);
+    let ph = T::KANBAN_THUMB + T::SP_8 * 2. + px(2.);
+    let gap = T::SP_4;
+    let left = (px(btn.x + btn.w) - pw).min(vp.width - pw - T::SP_8).max(T::SP_8);
+    let below = px(btn.y + btn.h) + gap;
+    let top = if below + ph > vp.height - T::SP_8 { (px(btn.y) - ph - gap).max(T::SP_8) } else { below };
+    Bounds { origin: point(left, top), size: size(pw, ph) }
+}
+
+fn clip_pop(store: &Entity<KStore>, focus: &FocusHandle, window: &Window, cx: &App) -> Option<AnyElement> {
     let k = store.read(cx);
-    let super::Clip { task, x, y, w: cw } = k.clip.as_ref()?;
-    let vp = window.viewport_size();
-    let pw = (px(*cw) - T::SP_8).clamp(T::KANBAN_POP_MIN, T::KANBAN_POP_MAX);
-    let ph = T::KANBAN_THUMB + T::SP_8 * 2.;
-    let px_ = (px(*x) - pw).min(vp.width - pw - T::SP_8).max(T::SP_8);
-    let py_ = if px(*y) + ph > vp.height - T::SP_8 { (px(*y) - ph - T::SP_32).max(T::SP_8) } else { px(*y) };
+    let clip = k.clip.as_ref()?;
+    let super::Clip { task, btn, .. } = clip;
+    let r = pop_rect(clip, window.viewport_size());
+    let (left, top, pw, ph) = (r.origin.x, r.origin.y, r.size.width, r.size.height);
     let items = k.media_task.get(task).cloned().unwrap_or_default();
     let mut strip = div().id("kanban-clip-strip").flex_1().min_w_0().overflow_x_scroll().flex().items_center().gap(T::SP_6).p(T::SP_8);
-    if items.is_empty() { strip = strip.child(div().text_size(T::TEXT_12).text_color(T::text_muted()).child("No attachments yet")); }
+    if items.is_empty() { strip = strip.child(div().px(T::SP_4).text_size(T::TEXT_12).text_color(T::text_muted()).child("No attachments yet")); }
     for (i, it) in items.iter().enumerate() {
         let id = it.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let kind = it.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -826,16 +851,20 @@ fn clip_pop(store: &Entity<KStore>, window: &Window, cx: &App) -> Option<AnyElem
             .map(|d| match pic { Some(p) => d.child(img(ImageSource::Image(p)).size_full().object_fit(ObjectFit::Cover)), None => d.child(w::icon(icon, T::ICON_XL)) })
             .on_click(move |_, _, cx| super::open_media(&id, cx)));
     }
-    let (vw, vh) = (vp.width, vp.height);
-    Some(deferred(anchored().position(point(px(0.), px(0.))).child(
-        div().id("kanban-clip-back").occlude().w(vw).h(vh)
-            .on_mouse_down(MouseButton::Left, |_, _, cx| super::clip_close(cx))
-            .child(div().id("kanban-clip-pop").absolute().left(px_).top(py_).w(pw).h(ph).flex().rounded(T::R_FIELD).border_1().border_color(T::border())
-                .bg(T::bg_secondary()).shadow_lg().overflow_hidden()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .child(strip)
-                .child(div().flex_none().h_full().border_l_1().border_color(T::border_subtle()).flex().items_center().px(T::SP_4)
-                    .child(w::square_button("kanban-clip-add", IconName::Plus, "Attach media", w::SquareLook::Plain, T::SP_40, T::ICON_XL)
-                        .on_click({ let t = task.to_string(); move |_, _, cx| super::media_task(&t, cx) })))),
+    let b = *btn;
+    Some(deferred(anchored().position(point(left, top)).child(
+        div().id("kanban-clip-pop").w(pw).h(ph).flex().rounded(T::R_FIELD).border_1().border_color(T::border())
+            .bg(T::bg_secondary()).shadow_lg().overflow_hidden().occlude()
+            // Esc closes it (the web's keydown on the document).
+            .track_focus(focus)
+            .on_key_down(|e: &KeyDownEvent, _, cx| if e.keystroke.key == "escape" { super::clip_close(cx); cx.stop_propagation(); })
+            .on_mouse_down_out(move |e: &MouseDownEvent, _, cx| {
+                let (x, y) = (f32::from(e.position.x), f32::from(e.position.y));
+                if !b.has(x, y) { super::clip_close(cx); }
+            })
+            .child(strip)
+            .child(div().flex_none().h_full().border_l_1().border_color(T::border_subtle()).flex().items_center().px(T::SP_4)
+                .child(w::square_button("kanban-clip-add", IconName::Plus, "Attach a file", w::SquareLook::Plain, T::SP_40, T::ICON_XL)
+                    .on_click({ let t = task.to_string(); move |_, _, cx| super::media_task(&t, cx) }))),
     )).with_priority(1).into_any_element())
 }

@@ -21,7 +21,6 @@
 #[allow(dead_code)]
 pub mod doc;
 mod view;
-use view::BlockDrag;
 
 use crate::util;
 use crundi_core::live::Event;
@@ -82,6 +81,8 @@ struct Place {
     boxes: Vec<(String, f32, f32)>,
     /// The page's box (x, y, w, h), from the last frame.
     page_box: (f32, f32, f32, f32),
+    /// Each block's "+" (its centre, window px), from the last frame (the driver).
+    plus: Vec<(String, f32, f32)>,
 }
 
 /// The tab's list (mountManager).
@@ -120,7 +121,7 @@ impl Float {
 }
 
 #[derive(Clone)]
-struct Drag { key: String, ids: Vec<String>, text: String, spot: Option<(usize, bool)> }
+struct Drag { key: String, ids: Vec<String>, spot: Option<(usize, bool)> }
 
 /// A menu's row (.nt-menu button): its key box, name, hint, a tick.
 #[derive(Clone, Default)]
@@ -170,6 +171,9 @@ pub(crate) struct S {
     drag_label: String,
     press: Option<(String, String, bool)>,
     caret_xy: (f32, f32),
+    /// Where the caret was when nothing was selected (the selection's
+    /// other end: the format bar centres between the two).
+    sel_anchor: (f32, f32),
     hint_at: Option<Instant>,
     last_tab: String,
     seen: HashSet<String>,
@@ -199,7 +203,7 @@ fn place_new(key: &str) -> Place {
         key: key.into(), page: None, title: String::new(), mode: if key.is_empty() { "empty".into() } else { "picker".into() }, msg: String::new(), ed: None, fresh: false,
         pages: vec![], search: String::new(), list_msg: String::new(), new_busy: false,
         focus: (String::new(), -1, -1, 0, 0), focus_gen: 0, title_gen: 0, drop_y: None, cur_id: String::new(), focus_n: 0,
-        boxes: vec![], page_box: (0.0, 0.0, 0.0, 0.0),
+        boxes: vec![], page_box: (0.0, 0.0, 0.0, 0.0), plus: vec![],
     }
 }
 
@@ -1276,9 +1280,20 @@ fn paste(key: &str, id: &str, r: i32, c: i32, a: usize, b: usize, cx: &mut App) 
     true
 }
 
-fn add_below(key: &str, id: &str, cx: &mut App) {
+/// The "+" in a block's margin: a new line under it, and the slash menu
+/// there (`at`: the "+" button's place; the line goes where the block ends).
+pub(crate) fn add_below(key: &str, id: &str, at: Option<(f32, f32)>, cx: &mut App) {
+    // Where the new line will be: under this block, its words' left edge
+    // (the "+" sits in the margin, its width to the left of the words).
+    let place = with(cx, |s| idx(s, key).map(|i| {
+        let p = &s.places[i];
+        let bottom = p.boxes.iter().find(|b| b.0 == id).map(|b| b.1 + b.2).unwrap_or(p.page_box.1 + f32::from(crundi_theme::T::SP_48));
+        let x = match at { Some((x, _)) => x + f32::from(crundi_theme::T::SP_40), None => p.page_box.0 + f32::from(crundi_theme::T::SP_48) };
+        (x, bottom)
+    }));
     let n = insert_after(key, Some(id), Block::new("p", ""), cx);
     focus_block(key, &n, At::End, cx);
+    if let Some(p) = place { with(cx, |s| s.caret_xy = p); }
     open_slash(key, &n, None, cx);
 }
 
@@ -1528,6 +1543,9 @@ fn sel_key(key: &str, name: &str, cx: &mut App) -> bool {
 }
 
 /// A press in a block's margin (Shift: select from the caret's block).
+/// Blocks are selected on this place's page.
+fn has_sel(key: &str, cx: &mut App) -> bool { with(cx, |s| ed_mut(s, key, |e| e.sel.is_some()).unwrap_or(false)) }
+
 fn blk_press(key: &str, id: &str, shift: bool, cx: &mut App) {
     if shift {
         let from = with(cx, |s| ed_mut(s, key, |e| e.sel.as_ref().map(|x| x.0.clone()).or_else(|| e.focus.clone())).flatten());
@@ -1552,8 +1570,9 @@ fn blk_over(key: &str, y: f32, cx: &mut App) {
 
 // ─── Dragging blocks within the page to move them ───
 
-fn drag_start(key: &str, id: &str, cx: &mut App) -> Option<BlockDrag> {
-    let (k, ids, text) = if key == "__fmt" {
+/// What a grip drags: the place, the blocks, their Markdown.
+fn drag_what(key: &str, id: &str, cx: &mut App) -> Option<(String, Vec<String>, String)> {
+    Some(if key == "__fmt" {
         // The format bar's grip: the selected text.
         match with(cx, |s| s.float.clone()) {
             Some(Float::Fmt { key, id, r, c, a, b, .. }) => {
@@ -1576,10 +1595,44 @@ fn drag_start(key: &str, id: &str, cx: &mut App) -> Option<BlockDrag> {
             let b = cur_block(key, id, cx).into_iter().collect::<Vec<_>>();
             (key.to_string(), vec![id.to_string()], doc::to_markdown(&b))
         }
-    };
-    let label = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(60).collect::<String>();
-    with(cx, |s| { s.drag = Some(Drag { key: k.clone(), ids, text, spot: None }); s.drag_label = label.clone(); });
-    Some(BlockDrag { key: k, label })
+    })
+}
+
+fn label_of(text: &str) -> String { text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").chars().take(60).collect::<String>() }
+
+/// A grip's drag (the shared drag layer's reference, "note": its Markdown):
+/// a chat's box or a terminal takes the Markdown as it is; a page of these
+/// notes moves the blocks.
+pub(crate) fn drag_payload(key: &str, id: &str, cx: &mut App) -> Option<w::RefDrag> {
+    let (_, _, text) = drag_what(key, id, cx)?;
+    let label = label_of(&text);
+    Some(w::RefDrag::new("note", &text, label))
+}
+
+/// The drag begins: the blocks in hand (a drop on a page moves them).
+fn drag_start(key: &str, id: &str, cx: &mut App) {
+    let Some((k, ids, text)) = drag_what(key, id, cx) else { return };
+    let label = label_of(&text);
+    with(cx, |s| { s.drag = Some(Drag { key: k, ids, spot: None }); s.drag_label = label; });
+}
+
+/// The place whose blocks are in hand.
+pub(crate) fn drag_key(cx: &App) -> Option<String> { cx.try_global::<Handle>().and_then(|h| h.0.read(cx).drag.as_ref().map(|d| d.key.clone())) }
+
+/// A reference from another panel (a file, a task, an idea…) dropped on a
+/// page: its text goes in under the block at the pointer (the web's
+/// dropText), and a toast says so.
+pub(crate) fn drop_text(key: &str, y: f32, text: &str, cx: &mut App) {
+    if text.trim().is_empty() { return; }
+    let after = with(cx, |s| idx(s, key).and_then(|i| {
+        let p = &s.places[i];
+        p.boxes.iter().filter(|b| b.1 <= y).max_by(|a, b| a.1.total_cmp(&b.1)).map(|b| b.0.clone())
+    }));
+    let has_page = with(cx, |s| ed_mut(s, key, |_| ()).is_some());
+    if !has_page { return; }
+    let n = insert_after(key, after.as_deref(), Block::new("p", &doc::runs_to_src(&[doc::Run { text: text.to_string(), st: Default::default() }])), cx);
+    focus_block(key, &n, At::End, cx);
+    toast(cx, "Added to the note");
 }
 
 /// The pointer moved with a block in hand: where it would land (window px).
@@ -1620,10 +1673,7 @@ fn drag_end(commit: bool, cx: &mut App) {
         changed(&d.key, cx);
         render(&d.key, cx);
     }
-    // GPUI gap: a drop onto a chat or terminal pane (the Markdown into its
-    // box) needs crundi_chats::insert_text (shared/requests.md); the text is
-    // on the clipboard meanwhile.
-    else if !d.text.is_empty() { copy(&d.text, cx); toast(cx, "Copied as Markdown"); }
+    // (A chat's box or a terminal took the Markdown itself: the shared drag layer.)
 }
 
 // ─── Menus ───
@@ -1807,9 +1857,11 @@ fn sel_moved(key: &str, id: &str, a: i32, c: i32, x: f32, y: f32, cx: &mut App) 
     if kind == "code" { return; }
     let fl = with(cx, |s| s.float.clone());
     if a != c {
-        if !matches!(fl, Some(Float::Fmt { link: true, .. })) { open_fmt(key, id, r, cc, a, c, false, cx); with(cx, |s| { s.fmt.x = x; s.fmt.y = y; }); }
-    } else if matches!(fl, Some(Float::Fmt { link: false, .. })) {
-        close_float(cx);
+        // Over the selection's middle, its top (the web's showFormatBar).
+        if !matches!(fl, Some(Float::Fmt { link: true, .. })) { open_fmt(key, id, r, cc, a, c, false, cx); with(cx, |s| { let (ax, ay) = s.sel_anchor; s.fmt.x = (ax + x) / 2.; s.fmt.y = ay.min(y); }); }
+    } else {
+        with(cx, |s| s.sel_anchor = (x, y));
+        if matches!(fl, Some(Float::Fmt { link: false, .. })) { close_float(cx); }
     }
 }
 
@@ -1918,7 +1970,7 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], _window: &mut Window, cx
         "notes-table" => { let k = a(0); let id = bid(&k, n(1), cx); table_act(&k, &id, &a(2), cx); json!({ "ok": true }) }
         "notes-check" => { let k = a(0); let id = bid(&k, n(1), cx); let v = a(2) == "true"; edit_block(&k, &id, cx, |b| b.checked = v); json!({ "ok": true }) }
         "notes-grip" => { let k = a(0); let id = bid(&k, n(1), cx); block_menu(&k, &id, 300.0, 300.0, cx); json!({ "ok": true }) }
-        "notes-add-below" => { let k = a(0); let id = bid(&k, n(1), cx); add_below(&k, &id, cx); json!({ "ok": true }) }
+        "notes-add-below" => { let k = a(0); let id = bid(&k, n(1), cx); add_below(&k, &id, None, cx); json!({ "ok": true }) }
         "notes-code" => { let k = a(0); let id = bid(&k, n(1), cx); code_act(&k, &id, &a(2), 600.0, 300.0, cx); json!({ "ok": true }) }
         "notes-menu-pick" => { let want = a(0); let i = rd(cx, |s| s.menu_ids.iter().position(|x| *x == want)).map(|i| i as i32).unwrap_or(-1); if i >= 0 { menu_pick(i, cx); } json!({ "ok": i >= 0 }) }
         "notes-menu-key" => { json!({ "ok": true, "handled": menu_key(&a(0), cx) }) }
@@ -1934,7 +1986,7 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], _window: &mut Window, cx
             // Move block i before block j (the grip's drag, done directly).
             let k = a(0); let id = bid(&k, n(1), cx);
             let to = n(2) as usize;
-            with(cx, |s| s.drag = Some(Drag { key: k.clone(), ids: vec![id], text: String::new(), spot: Some((to, true)) }));
+            with(cx, |s| s.drag = Some(Drag { key: k.clone(), ids: vec![id], spot: Some((to, true)) }));
             drag_end(true, cx);
             json!({ "ok": true })
         }
@@ -1962,6 +2014,16 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "items": p.items.iter().map(|i| json!({ "id": i.id, "title": i.title, "meta": i.meta, "busy": i.busy, "preview": i.preview })).collect::<Vec<_>>(),
         "listMsg": p.list_msg, "newBusy": p.new_busy,
     })).collect();
+    // Where things are (window px): each block's box and "+", the page's box.
+    let places: Vec<Value> = places.into_iter().map(|mut v| {
+        let key = v["key"].as_str().unwrap_or("").to_string();
+        if let Some(pl) = s.places.iter().find(|p| p.key == key) {
+            v["boxes"] = json!(pl.boxes.iter().map(|b| json!({ "id": b.0, "y": b.1, "h": b.2 })).collect::<Vec<_>>());
+            v["plus"] = json!(pl.plus.iter().map(|b| json!({ "id": b.0, "x": b.1, "y": b.2 })).collect::<Vec<_>>());
+            v["pageBox"] = json!({ "x": pl.page_box.0, "y": pl.page_box.1, "w": pl.page_box.2, "h": pl.page_box.3 });
+        }
+        v
+    }).collect();
     let (items, list_msg) = tab_list(s);
     let tab_page = s.places.iter().find(|p| p.key.is_empty()).and_then(|p| p.ed.as_ref().map(|e| json!({ "blocks": e.blocks.iter().map(|b| b.to_json()).collect::<Vec<_>>(), "dirty": e.dirty, "version": e.version }))).unwrap_or(Value::Null);
     let float = match &s.float {
@@ -1976,7 +2038,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "places": places,
         "tabPage": tab_page,
         "float": float,
-        "menu": if m.open { json!({ "label": m.label, "act": m.act, "query": m.query, "queryOn": m.query_on, "empty": m.empty,
+        "menu": if m.open { json!({ "x": m.x, "y": m.y, "label": m.label, "act": m.act, "query": m.query, "queryOn": m.query_on, "empty": m.empty,
             "items": m.items.iter().map(|i| json!({ "id": i.id, "k": i.k, "name": i.name, "d": i.d, "check": i.check, "danger": i.danger })).collect::<Vec<_>>() }) } else { Value::Null },
         "fmt": if s.fmt.open { json!({ "link": s.fmt.link, "value": s.fmt.link_value, "hasLink": s.fmt.has_link }) } else { Value::Null },
         "drag": s.drag.is_some(),

@@ -349,7 +349,7 @@ pub fn init(cx: &mut App) {
         prefix: "panel:mindmap",
         chat: false,
         make: std::rc::Rc::new(|_, _, window, cx| {
-            let host = host(window, cx);
+            let host = host(true, window, cx);
             crundi_workbench::PaneParts {
                 body: std::rc::Rc::new(move |cx| host.body(cx)),
                 info: std::rc::Rc::new(|_| crundi_workbench::HeadInfo { title: "Mindmap".into(), long: String::new(), state: "idle".into() }),
@@ -369,16 +369,16 @@ pub fn init(cx: &mut App) {
 
 /// A place the map shows (the tab, a pane): its views; loads the map the
 /// first time it shows (a pane restored with the layout).
-fn host(window: &mut Window, cx: &mut App) -> draw::Host {
+fn host(embedded: bool, window: &mut Window, cx: &mut App) -> draw::Host {
     ensure(window, cx);
     let signed_in = crundi_shell::stores(cx).session.read(cx).signed_in();
     if with(cx, |s| !s.loaded && s.load_gen == 0 && s.state == "loading") && signed_in { load(cx); }
-    draw::Host::new(window, cx)
+    draw::Host::new(embedded, window, cx)
 }
 
 /// The Mindmap tab's view (layout: its body places the cached parts).
 pub fn tab(_: &Stores, window: &mut Window, cx: &mut App) -> AnyView {
-    let h = host(window, cx);
+    let h = host(false, window, cx);
     load(cx);
     cx.new(|_| draw::Tab(h)).into()
 }
@@ -685,7 +685,7 @@ fn scroll_to(id: &str, cx: &mut App) {
     set_scroll(sl, st, cx);
 }
 
-fn set_scroll(sl: f32, st: f32, cx: &mut App) {
+pub(crate) fn set_scroll(sl: f32, st: f32, cx: &mut App) {
     let (x, y, pan) = with(cx, |s| {
         let z = s.zoom;
         let cw = s.view_w.max(s.base_w * z);
@@ -809,6 +809,11 @@ fn map_key(k: &Key, window: &mut Window, cx: &mut App) -> bool {
 
 /// A key for the map: the box with the keys decides which handler reads it.
 pub(crate) fn key(k: &Key, window: &mut Window, cx: &mut App) -> bool {
+    // Ctrl and + or −: zoom about the middle, while typing too (the web's).
+    if k.ctrl && !k.alt && (k.plus() || k.minus()) && (draft_focused(window, cx) || edit_focused(window, cx) || canvas_focused(window, cx) || search_focused(window, cx)) {
+        zoom_step(k.plus(), window, cx);
+        return true;
+    }
     if draft_focused(window, cx) && with(cx, |s| s.draft.is_some()) { return draft_key(k, window, cx); }
     if edit_focused(window, cx) && with(cx, |s| s.edit.is_some()) { return edit_key(k, window, cx); }
     if canvas_focused(window, cx) { return map_key(k, window, cx); }
@@ -1004,6 +1009,25 @@ fn edit_key(k: &Key, window: &mut Window, cx: &mut App) -> bool {
 
 // ─── Pointer ───
 
+/// The filter box has the keys.
+fn search_focused(window: &Window, cx: &App) -> bool {
+    cx.try_global::<Handle>().and_then(|h| h.0.read(cx).ui.as_ref().map(|u| u.search.focus_handle(cx).is_focused(window))).unwrap_or(false)
+}
+
+/// A press outside the map (the toolbar, anywhere else in the app) lets go
+/// of the ring and of a Delete warning (the web's document pointerdown).
+pub(crate) fn press_outside(cx: &mut App) {
+    let had = with(cx, |s| !s.sel.is_empty() || !s.del_armed.is_empty());
+    if !had { return; }
+    disarm_now(cx);
+    clear_sel(cx);
+    redraw(cx);
+}
+
+/// A press is held on an idea (its moves and its release are taken
+/// window-wide: a drag may leave the map).
+pub(crate) fn pressing(cx: &App) -> bool { cx.try_global::<Handle>().is_some_and(|h| h.0.read(cx).press.is_some()) }
+
 fn canvas_press(window: &mut Window, cx: &mut App) {
     disarm_now(cx);
     if with(cx, |s| s.draft.is_some()) { end_draft(window, cx); }
@@ -1065,7 +1089,7 @@ pub(crate) fn redraw(cx: &mut App) { store(cx).update(cx, |_, cx| cx.notify()); 
 
 /// The press moving over the canvas (window coordinates): a drag once it
 /// has gone sp-6 from where it started.
-fn pointer_move(x: f32, y: f32, window: &mut Window, cx: &mut App) {
+pub(crate) fn pointer_move(x: f32, y: f32, window: &mut Window, cx: &mut App) {
     let Some(p) = with(cx, |s| s.press.clone()) else { return };
     let (sx, sy) = scroll_now(cx);
     let (z, ox, oy) = with(cx, |s| (s.zoom.max(0.01), s.canvas_x, s.canvas_y));
@@ -1089,8 +1113,16 @@ fn pointer_move(x: f32, y: f32, window: &mut Window, cx: &mut App) {
 }
 
 /// The press let go off an idea: the end of a drag, if one.
-fn pointer_up(window: &mut Window, cx: &mut App) {
+pub(crate) fn pointer_up(window: &mut Window, cx: &mut App) {
     if with(cx, |s| !s.drag_id.is_empty()) { drag_end(true, window, cx); }
+    with(cx, |s| s.press = None);
+}
+
+/// The press let go outside the map (over a chat, a terminal, another
+/// pane): the drag ends and nothing moves (a chat or terminal under it
+/// takes the idea's id through the shared drag layer).
+pub(crate) fn release_outside(window: &mut Window, cx: &mut App) {
+    if with(cx, |s| !s.drag_id.is_empty()) { with(cx, |s| { s.target = None; s.want.clear(); s.want_gen += 1; }); drag_end(false, window, cx); }
     with(cx, |s| s.press = None);
 }
 

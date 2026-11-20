@@ -5,12 +5,12 @@
 //! 1.2 s after the last change (Ctrl+S at once; Saved / Unsaved / Saving… /
 //! Changed elsewhere with Reload / Not saved with Retry).
 //!
-//! Known gaps (as the Slint client): the web checks a factory in the browser
-//! as it changes (the server's validateFactory, bundled); this client shows
-//! the server's check, which comes back with each save. The Dry run walks the
-//! flow with the server's engine, bundled in the web; this client has none.
-//! Typing "/" in a persona does not offer the skills (the named skills still
-//! show under the text, marked when not installed).
+//! As the web, the factory is checked here as it changes (valid.rs, the
+//! server's validateFactory), so its issues show at once; the Dry run walks
+//! the flow with the server's engine (engine.rs) without Claude; typing "/"
+//! in a question, a prompt, the description or a persona offers the skills.
+//! Narrow (the web's phone): no palette; Add, Edit, Team, Issues and Dry run
+//! are a bar at the bottom, each opening its pane as a sheet over the canvas.
 
 use super::model::{self, arr, b, n, s, Rect};
 use super::parts::{self, btn, field, note, sub, Check, CrSec, Edge, Issue, Node, Opt, Out, Person};
@@ -25,7 +25,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 #[derive(Clone, Default, PartialEq, Debug)]
 pub struct Ed {
     pub state: String, pub error: String, pub name: String, pub save: String, pub save_label: String, pub draft: bool,
-    pub can_undo: bool, pub can_redo: bool, pub tab: String, pub issues_label: String, pub issues_bad: bool, pub toast: String,
+    pub can_undo: bool, pub can_redo: bool, pub tab: String, pub issues_label: String, pub issues_bad: bool,
     pub zoom: f32, pub pan_x: f32, pub pan_y: f32, pub bx: f32, pub by: f32, pub bw: f32, pub bh: f32,
     pub conn: bool, pub conn_path: String,
 }
@@ -78,9 +78,9 @@ pub(crate) struct E {
     fitted: bool,
     drag: Option<(String, f64, f64, Value, bool)>,
     conn: Option<String>,
-    toast: String,
-    toast_gen: u64,
     save_gen: u64,
+    /// The narrow editor's first draw closed its sheet (the web starts a phone with no tab).
+    phone_seen: bool,
     insp_key: String,
     state: String,
     error: String,
@@ -89,6 +89,17 @@ pub(crate) struct E {
     gn: u64,
     cr_open: bool,
     more_open: bool,
+    /// Narrow (the web's phone), as last drawn.
+    phone: bool,
+    /// The Dry run (DryRun.jsx): the run being walked, what is answered for
+    /// whoever has the work, the notes, the last refusal, the log.
+    run: Option<Value>,
+    dry_answers: serde_json::Map<String, Value>,
+    dry_notes: serde_json::Map<String, Value>,
+    dry_err: String,
+    dry_log: Vec<String>,
+    dry_same: bool,
+    dry_tree: u64,
     // What it shows.
     ed: Ed,
     nodes: Vec<Node>,
@@ -152,7 +163,7 @@ pub fn open(id: &str, cx: &mut App) {
 
 fn mutate(key: &str, cx: &mut App, f: impl FnOnce(&mut Value)) {
     let ok = with(cx, |e| {
-        if !e.open || e.state != "ok" { return false; }
+        if !e.open || e.state != "ok" || e.run.is_some() { return false; }
         let now = model::now_ms();
         let coalesce = !key.is_empty() && e.last_key == key && now - e.last_at < 1500.0;
         e.last_key = key.to_string(); e.last_at = now;
@@ -165,11 +176,11 @@ fn mutate(key: &str, cx: &mut App, f: impl FnOnce(&mut Value)) {
 }
 
 fn undo(cx: &mut App) {
-    let ok = with(cx, |e| { let Some(p) = e.past.pop() else { return false }; let cur = std::mem::replace(&mut e.f, p); e.future.push(cur); e.last_key.clear(); e.dirty = true; e.save = "dirty".into(); true });
+    let ok = with(cx, |e| { if e.run.is_some() { return false; } let Some(p) = e.past.pop() else { return false }; let cur = std::mem::replace(&mut e.f, p); e.future.push(cur); e.last_key.clear(); e.dirty = true; e.save = "dirty".into(); true });
     if ok { schedule_save(cx); render_model(cx); }
 }
 fn redo(cx: &mut App) {
-    let ok = with(cx, |e| { let Some(p) = e.future.pop() else { return false }; let cur = std::mem::replace(&mut e.f, p); e.past.push(cur); e.last_key.clear(); e.dirty = true; e.save = "dirty".into(); true });
+    let ok = with(cx, |e| { if e.run.is_some() { return false; } let Some(p) = e.future.pop() else { return false }; let cur = std::mem::replace(&mut e.f, p); e.past.push(cur); e.last_key.clear(); e.dirty = true; e.save = "dirty".into(); true });
     if ok { schedule_save(cx); render_model(cx); }
 }
 
@@ -209,11 +220,8 @@ fn reload(cx: &mut App) {
     });
 }
 
-fn flash(t: &str, cx: &mut App) {
-    let gn = with(cx, |e| { e.toast = t.to_string(); e.toast_gen += 1; e.toast_gen });
-    push_ed(cx);
-    parts::after(cx, 4000, move |cx| { if with(cx, |e| e.toast_gen == gn) { with(cx, |e| e.toast.clear()); push_ed(cx); } });
-}
+/// flash(): a word about what just happened (the shared toast).
+fn flash(t: &str, cx: &mut App) { parts::toast(cx, t); }
 
 // ─── Building what it shows ───
 
@@ -226,12 +234,13 @@ fn push_ed(cx: &mut App) {
             state: e.state.clone(), error: e.error.clone(), name: s(&e.f, "name"), save: e.save.clone(),
             save_label: match e.save.as_str() { "saving" => "Saving…", "dirty" => "Unsaved", "conflict" => "Changed elsewhere", "error" => "Not saved", _ => "Saved" }.into(),
             draft: e.state == "ok" && !ok, can_undo: !e.past.is_empty(), can_redo: !e.future.is_empty(), tab: e.tab.clone(),
-            issues_label: if ok { "Issues".to_string() } else { format!("Fix {errs}") }, issues_bad: !ok && e.state == "ok", toast: e.toast.clone(),
+            issues_label: if ok { "Issues".to_string() } else { format!("Fix {errs}") }, issues_bad: !ok && e.state == "ok",
             zoom: e.z, pan_x: e.px, pan_y: e.py, bx: old.bx, by: old.by, bw: old.bw, bh: old.bh, conn: e.conn.is_some(), conn_path: e.conn.clone().unwrap_or_default(),
         };
     });
 }
 
+/// uniqueSkills: each skill once, by name (name, description).
 fn known_skills(cx: &mut App) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = vec![];
     for (nm, d, _) in with(cx, |e| e.skills.clone()) { if !out.iter().any(|x| x.0 == nm) { out.push((nm, d)); } }
@@ -245,8 +254,16 @@ fn mentions(cx: &mut App, text: &str) -> Vec<Check> {
 fn render_model(cx: &mut App) {
     let st = with(cx, |e| e.state.clone());
     if st != "ok" { push_ed(cx); return; }
-    let (f, validation, sel) = with(cx, |e| (e.f.clone(), e.validation.clone(), e.sel.clone()));
+    let (f, sel, skills) = with(cx, |e| (e.f.clone(), e.sel.clone(), e.skills.clone()));
+    // validateFactory(f, { skills: the global ones, once they are known }), here, at each change.
+    let global: HashSet<String> = skills.iter().filter(|x| x.2 == "global" || x.2 == "synced").map(|x| x.0.clone()).collect();
+    let validation = super::valid::validate(&f, if skills.is_empty() { None } else { Some(&global) });
+    with(cx, |e| e.validation = validation.clone());
     let (by_node, by_edge, _) = model::issues_by(&validation);
+    // A dry run on show: where its work is, and how many rounds each loop used.
+    let run = with(cx, |e| e.run.clone());
+    let mut tokens_at: HashMap<String, Vec<Value>> = HashMap::new();
+    if let Some(r) = &run { for t in arr(r, "tokens") { tokens_at.entry(s(t, "nodeId")).or_default().push(t.clone()); } }
     let mut nodes = vec![];
     let mut rects: HashMap<String, Rect> = HashMap::new();
     let mut outs_of: HashMap<String, Vec<String>> = HashMap::new();
@@ -255,6 +272,10 @@ fn render_model(cx: &mut App) {
         let ty = { let t = s(node, "type"); if ["start", "manager", "employee", "decision", "join", "ask", "wait", "end"].contains(&t.as_str()) { t } else { "employee".into() } };
         let issues = by_node.get(&id).cloned().unwrap_or_default();
         let (badge, level) = model::badge_of(&issues);
+        // The badge's title: the errors (else the warnings), each with its fix.
+        let errs: Vec<&model::Issue> = issues.iter().filter(|i| i.0 == "error").collect();
+        let shown: Vec<&model::Issue> = if errs.is_empty() { issues.iter().collect() } else { errs };
+        let badge_tip = shown.iter().map(|i| format!("{}{}", i.1, if i.2.is_empty() { String::new() } else { format!("\n  {}", i.2) })).collect::<Vec<_>>().join("\n");
         let body = model::node_body(node, &f);
         let outs = model::outputs_of(node);
         let w = model::node_w(&ty);
@@ -262,7 +283,10 @@ fn render_model(cx: &mut App) {
         let h = model::node_h(lines, false, outs.len());
         let r = Rect { x: n(&node["position"], "x") as f32, y: n(&node["position"], "y") as f32, w, h };
         rects.insert(id.clone(), r);
+        let toks = tokens_at.get(&id).cloned().unwrap_or_default();
+        let (token, token_kind) = model::token_pill(&toks, false);
         nodes.push(Node {
+            token, token_kind, active: !toks.is_empty(), badge_tip,
             id: id.clone(), kind: ty.clone(), kind_label: model::kind_label(&ty).to_uppercase(), title: model::node_title(node, &f), body, lines,
             x: r.x, y: r.y, w, h, sel: sel.as_ref().map(|x| x.0 == "node" && x.1 == id).unwrap_or(false), bad: issues.iter().any(|i| i.0 == "error"),
             badge, badge_level: level,
@@ -282,10 +306,11 @@ fn render_model(cx: &mut App) {
         let (tx, ty) = model::in_point(tr, note);
         let (path, lx, ly) = match lanes.get(&id) { Some(l) if !note => model::loop_path(sx, sy, tx, ty, *l), _ => model::bezier(sx, sy, tx, ty, note) };
         let bad = by_edge.get(&id).map(|l| l.iter().any(|i| i.0 == "error")).unwrap_or(false);
-        let tone = if bad { "bad" } else if n(e, "maxRounds") > 0.0 && !note { "loop" } else if note { "note" } else { "flow" };
+        let used = run.as_ref().map(|r| n(&r["edgeCounts"], &id) as i64);
+        let tone = if bad { "bad" } else if used.unwrap_or(0) > 0 { "used" } else if n(e, "maxRounds") > 0.0 && !note { "loop" } else if note { "note" } else { "flow" };
         edges.push(Edge {
             id: id.clone(), path, arrow: model::arrow(tx, ty, note), tone: tone.into(), sel: sel.as_ref().map(|x| x.0 == "edge" && x.1 == id).unwrap_or(false), pulse: false,
-            label: model::edge_label(e, None), icon: if n(e, "maxRounds") > 0.0 && !note { "loop".into() } else if note { "note".into() } else { String::new() }, lx, ly,
+            label: model::edge_label(e, used), icon: if n(e, "maxRounds") > 0.0 && !note { "loop".into() } else if note { "note".into() } else { String::new() }, lx, ly,
         });
     }
     let bounds = model::union(&rects.values().copied().collect::<Vec<_>>()).unwrap_or(Rect { x: 0.0, y: 0.0, w: 1.0, h: 1.0 });
@@ -558,10 +583,13 @@ pub fn connect_ids(src: &str, h: &str, tgt: &str, cx: &mut App) -> bool {
 }
 
 pub fn edge_click(cx: &mut App, id: &str) { select(cx, "edge", id); }
-pub fn pane_click(cx: &mut App) { if with(cx, |e| e.sel.is_some()) { with(cx, |e| e.sel = None); render_model(cx); } }
+pub fn pane_click(cx: &mut App) {
+    // The phone's sheet closes too.
+    if with(cx, |e| { let was = e.sel.is_some() || (e.phone && !e.tab.is_empty()); e.sel = None; if e.phone { e.tab.clear(); } was }) { render_model(cx); }
+}
 
 pub fn key(k: &str, cx: &mut App) {
-    if k != "delete" { return; }
+    if k != "delete" || with(cx, |e| e.run.is_some()) { return; }
     let sel = with(cx, |e| e.sel.clone());
     match sel {
         Some((kind, id)) if kind == "node" => {
@@ -588,7 +616,7 @@ fn add_at(kind: &str, at: Option<(f32, f32)>, cx: &mut App) {
     });
     with(cx, |e| {
         e.sel = Some(("node".into(), id.clone()));
-        if kind == "employee:" { e.roster_add_to = Some(id.clone()); e.roster_sel = None; e.tab = "team".into(); } else { e.tab = "edit".into(); }
+        if kind == "employee:" { e.roster_add_to = Some(id.clone()); e.roster_sel = None; e.tab = "team".into(); } else { e.tab = if e.phone { String::new() } else { "edit".into() }; }
     });
     render_model(cx);
 }
@@ -657,7 +685,14 @@ pub fn act(a: &str, x: &str, y: &str, cx: &mut App) {
         "e-reload" => reload(cx),
         "e-undo" => undo(cx),
         "e-redo" => redo(cx),
-        "e-tidy" => tidy(cx),
+        "e-tidy" => if with(cx, |e| e.run.is_none()) { tidy(cx) },
+        "e-dry-start" => dry_start(cx),
+        "e-dry-end" => { with(cx, |e| { e.run = None; e.dry_log.clear(); e.dry_err.clear(); e.dry_answers.clear(); e.dry_notes.clear(); }); render_model(cx); }
+        "e-dry-handoff" => dry_send(x, y, cx),
+        "e-dry-answer" => dry_answer(x, y, cx),
+        "e-dry-reply" => dry_reply(x, y, cx),
+        "e-dry-wait" => dry_wait(x, y, cx),
+        "e-dry-same" => { with(cx, |e| e.dry_same = !e.dry_same); render_model(cx); }
         "e-settings" => { with(cx, |e| { e.sel = None; e.tab = "edit".into(); }); render_model(cx); }
         "e-tab" => { with(cx, |e| e.tab = x.to_string()); render_model(cx); }
         "e-add" => add_at(x, None, cx),
@@ -691,6 +726,8 @@ fn set_in(f: &mut Value, path: &[&str], v: Value) { let mut cur = f; for p in &p
 
 /// A field of the pane changed (Inspector.jsx's set()).
 pub fn edit(k: &str, v: &str, cx: &mut App) {
+    // The Dry run's notes (not the factory).
+    if let Some(nk) = k.strip_prefix("dry-note:") { with(cx, |e| { e.dry_notes.insert(nk.to_string(), json!(v)); }); return; }
     let (sel, roster_sel, tab) = with(cx, |e| (e.sel.clone(), e.roster_sel.clone(), e.tab.clone()));
     let v2 = v.to_string();
     if tab == "team" {
@@ -871,11 +908,14 @@ fn edit_settings(k: &str, v: &str, cx: &mut App) {
 }
 
 pub fn props(cx: &mut App) -> Value {
-    with(cx, |e| {
+    let fx_slash = parts::pwith(cx, |p| p.slash.as_ref().map(|m| json!({ "field": m.key.trim_start_matches("ed|"), "items": m.items.iter().map(|x| x.0.clone()).collect::<Vec<_>>(), "at": m.at })).unwrap_or(Value::Null));
+    let toast = w::toast_text(cx).to_string();
+    let mut out = with(cx, |e| {
         let ed = &e.ed;
         json!({
             "state": ed.state, "error": ed.error, "name": ed.name, "save": ed.save, "saveLabel": ed.save_label, "draft": ed.draft,
-            "canUndo": ed.can_undo, "canRedo": ed.can_redo, "tab": ed.tab, "issuesLabel": ed.issues_label, "toast": ed.toast, "zoom": e.z, "conn": ed.conn,
+            "canUndo": ed.can_undo, "canRedo": ed.can_redo, "tab": ed.tab, "issuesLabel": ed.issues_label, "zoom": e.z, "conn": ed.conn,
+            "slash": fx_slash.clone(),
             "id": e.id, "sel": e.sel.clone().map(|x| format!("{}:{}", x.0, x.1)).unwrap_or_default(),
             "nodes": e.nodes.iter().map(|n2| json!({ "id": n2.id, "kind": n2.kind, "title": n2.title, "body": n2.body, "x": n2.x, "y": n2.y, "sel": n2.sel, "badge": n2.badge, "outs": n2.outs.iter().map(|o| json!({ "id": o.id, "label": o.label })).collect::<Vec<_>>() })).collect::<Vec<_>>(),
             "edges": e.edges.iter().map(|x| json!({ "id": x.id, "tone": x.tone, "label": x.label, "sel": x.sel })).collect::<Vec<_>>(),
@@ -884,7 +924,11 @@ pub fn props(cx: &mut App) -> Value {
                 "people": d.people.iter().map(|p| p.name.clone()).collect::<Vec<_>>(), "dkind": d.dkind_i, "options": d.options.iter().map(|o| o.label.clone()).collect::<Vec<_>>(), "rounds": d.rounds,
                 "issuesTitle": d.issues_title, "persona": d.persona, "edgeDesc": d.edge_desc })).unwrap_or(Value::Null),
         })
-    })
+    });
+    // The editor's word (a loop's limit): the shared toast's, while it shows.
+    out["toast"] = json!(toast);
+    out["dry"] = dry_props(cx);
+    out
 }
 
 // ─── Drawing ───
@@ -925,6 +969,14 @@ fn line(k: &str, v: &str, ph: &str, mono: bool, fx: &mut Fx, window: &mut Window
 fn area(k: &str, v: &str, ph: &str, rows: usize, mono: bool, fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
     let k2 = k.to_string();
     parts::area(&mut fx.p, &format!("ed|{k}"), v, ph, rows, mono, window, cx, move |t, cx| set(&k2, &t, cx))
+}
+/// A SkillText: "/" offers the machine's skills; the skills it names under it.
+fn skill_text(k: &str, v: &str, ph: &str, rows: usize, mentions: &[Check], fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> Div {
+    let k2 = k.to_string();
+    let skills: Vec<(String, String)> = { let mut out: Vec<(String, String)> = vec![]; for (nm, d, _) in &fx.e.skills { if !out.iter().any(|x| x.0 == *nm) { out.push((nm.clone(), d.clone())); } } out };
+    div().flex().flex_col().gap(T::SP_4)
+        .child(parts::skill_area(&mut fx.p, &format!("ed|{k}"), v, ph, rows, skills, window, cx, move |t, cx| set(&k2, &t, cx)))
+        .child(parts::mentions(mentions))
 }
 
 /// The pane's title row (.ff-pane-title): back, the words, delete.
@@ -976,7 +1028,7 @@ fn node_insp(d: &Insp, p: Stateful<Div>, fx: &mut Fx, window: &mut Window, cx: &
         }
         "manager" => { p = p.child(div().child(btn("e-mpersona", "Edit the Manager's persona", Some(IconName::Crown), "ghost", true, false).on_click(a("e-person", "manager".into())))); }
         "decision" => {
-            p = p.child(field("Question", "", "Answered at handoff. You can name skills with /skill-name.", div().flex().flex_col().gap(T::SP_4).child(area("question", &d.question, "Does it need a UI change?", 2, false, fx, window, cx)).child(parts::mentions(&d.mentions_q))))
+            p = p.child(field("Question", "", "Answered at handoff. You can name skills with /skill-name.", skill_text("question", &d.question, "Does it need a UI change?", 2, &d.mentions_q, fx, window, cx)))
                 .child(field("Kind of answer", "", "", pick("e-dkind", vec!["Yes or no".into(), "Pick one".into(), "Pick any (runs them in parallel)".into()], d.dkind_i, "dkind")));
             if d.dkind_i != 0 { p = p.child(field("Options", "", "", choices("options", &d.options, 2, "Add option", fx, window, cx))); }
             if d.dkind_i == 0 {
@@ -986,7 +1038,7 @@ fn node_insp(d: &Insp, p: Stateful<Div>, fx: &mut Fx, window: &mut Window, cx: &
             p = p.child(field("Who answers", "", "Usually whoever arrives here. After a Join or an Ask me, someone has to be named.", pick("e-answered", d.answered.clone(), d.answered_i, "answered")));
         }
         "ask" => {
-            p = p.child(field("What you are asked", "", "You get a notification and the run waits for your reply.", div().flex().flex_col().gap(T::SP_4).child(area("prompt", &d.prompt, "Ship it?", 2, false, fx, window, cx)).child(parts::mentions(&d.mentions_q))))
+            p = p.child(field("What you are asked", "", "You get a notification and the run waits for your reply.", skill_text("prompt", &d.prompt, "Ship it?", 2, &d.mentions_q, fx, window, cx)))
                 .child(field("Replies", "", "", choices("replies", &d.replies, 1, "Add reply", fx, window, cx)));
         }
         "wait" => {
@@ -1028,7 +1080,7 @@ fn settings_insp(d: &Insp, p: Stateful<Div>, fx: &mut Fx, window: &mut Window, c
     let cr_open = re(fx, |e| e.cr_open);
     let mut p = p.child(pane_title("Factory", false, false, "", ""))
         .child(field("Name", "", "", line("name", &d.name, "", false, fx, window, cx)))
-        .child(field("Description", "", "What this factory is for. /skill-name works here too.", div().flex().flex_col().gap(T::SP_4).child(area("description", &d.description, "", 3, false, fx, window, cx)).child(parts::mentions(&d.mentions_d))))
+        .child(field("Description", "", "What this factory is for. /skill-name works here too.", skill_text("description", &d.description, "", 3, &d.mentions_d, fx, window, cx)))
         .child(w::disclosure("e-cr-open", "Change request form", cr_open).on_click(a0("e-cr-open")));
     if cr_open {
         let mut c = div().flex().flex_col().gap(T::SP_8).child(note("hint", "What the person fills in to start a run. The Manager gets all of it; every step gets the title, the goal and the \"done\" checks. The title and attachments are always there."));
@@ -1098,17 +1150,17 @@ fn settings_insp(d: &Insp, p: Stateful<Div>, fx: &mut Fx, window: &mut Window, c
 fn team_insp(d: &Insp, p: Stateful<Div>) -> Stateful<Div> {
     let mut list = div().flex().flex_col().gap(T::SP_4);
     for (i, pp) in d.people.iter().enumerate() {
-        list = list.child(div().id(("e-person", i)).flex().items_center().gap(T::SP_8).px(T::SP_10).py(T::SP_8).rounded(T::R_FIELD).border_1().border_color(T::border())
-            .bg(T::bg_card()).hover(|d| d.bg(T::bg_hover())).cursor_pointer()
-            .child(div().text_color(T::text_secondary()).child(w::icon(if pp.manager { IconName::Crown } else { IconName::User }, T::ICON_LG)))
-            .child(div().flex().flex_col().flex_1().min_w_0()
-                .child(div().truncate().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).child(pp.name.clone()))
-                .child(div().truncate().text_size(T::TEXT_11).text_color(T::text_muted()).child(pp.meta.clone())))
+        list = list.child(w::list_row(("e-person", i), if pp.manager { IconName::Crown } else { IconName::User }, pp.name.clone(), pp.meta.clone(), "", false)
             .on_click(a("e-person", pp.id.clone())));
     }
     let mut pills = div().flex().flex_wrap().gap(T::SP_6);
+    let dd = data();
     for (i, o) in d.personas.iter().enumerate() {
-        pills = pills.child(btn(("e-tpl", i), &o.label, Some(IconName::Plus), "", true, false).on_click(a("e-add-person", o.id.clone())));
+        // Its title: the persona it starts from.
+        let persona = arr(&dd, "personas").iter().find(|p| s(p, "key") == o.id && !o.id.is_empty()).map(|p| s(p, "persona")).unwrap_or_default();
+        let b2 = btn(("e-tpl", i), &o.label, Some(IconName::Plus), "", true, false);
+        let b2 = if persona.is_empty() { b2 } else { b2.tooltip(persona) };
+        pills = pills.child(b2.on_click(a("e-add-person", o.id.clone())));
     }
     p.child(pane_title("Team", false, false, "", "")).child(list).child(sub("ADD SOMEONE")).child(pills)
         .child(note("hint", "Templates are starting points: change the persona however you like."))
@@ -1118,7 +1170,7 @@ fn person_insp(d: &Insp, p: Stateful<Div>, fx: &mut Fx, window: &mut Window, cx:
     let more = re(fx, |e| e.more_open);
     let mut p = issues(p.child(pane_title(if d.manager { "Manager" } else { "Employee" }, true, !d.manager, "Remove from the team", "e-remove-person")), &d.issues, false);
     p = p.child(field("Name", "", "", line("p-name", &d.name, "", false, fx, window, cx)))
-        .child(field("Persona", "", "Who they are and how they work. They read it and act as it says. /skill-name names a skill they should use.", div().flex().flex_col().gap(T::SP_4).child(area("persona", &d.persona, "", 9, false, fx, window, cx)).child(parts::mentions(&d.mentions_p))))
+        .child(field("Persona", "", "Who they are and how they work. They read it and act as it says. /skill-name names a skill they should use.", skill_text("persona", &d.persona, "", 9, &d.mentions_p, fx, window, cx)))
         .child(pair(field("Model", "", "", pick("e-model", vec!["Default".into(), "Opus".into(), "Sonnet".into(), "Haiku".into()], d.model_i, "model")),
             field("Effort", "", "", pick("e-effort", ["Default", "low", "medium", "high", "xhigh", "max"].iter().map(|x| x.to_string()).collect(), d.effort_i, "effort"))));
     if !d.manager {
@@ -1146,12 +1198,252 @@ fn issues_insp(d: &Insp, p: Stateful<Div>) -> Stateful<Div> {
     issues(p, &d.issues, true)
 }
 
-fn dry_insp(d: &Insp, p: Stateful<Div>) -> Stateful<Div> {
-    p.child(pane_title("Dry run", false, false, "", ""))
-        .child(note("hint", "Walk through the flow by hand, answering for each person, before spending anything on Claude. The canvas shows where the work is and how many rounds each loop has used."))
-        .when(!d.ok, |p| p.child(parts::issue("e-dry-bad", "error", "Fix the problems first: a factory that cannot run cannot be walked either.", "")))
-        .child(div().child(btn("e-dry", "Start a dry run", Some(IconName::Play), "primary", false, false)))
-        .child(note("hint", "The dry run is in the web app for now: it walks the flow with the server's factory engine, which this client does not have yet."))
+// ─── The Dry run (DryRun.jsx) ───
+
+/// apply(): a step of the engine; its refusal shows, or the run moves on and the log says what happened.
+fn dry_apply(res: Value, what: String, cx: &mut App) {
+    if !b(&res, "ok") { let er = s(&res, "error"); with(cx, |e| e.dry_err = er); render_model(cx); return; }
+    let names: HashMap<String, String> = with(cx, |e| arr(&e.f, "roster").iter().map(|r| (s(r, "id"), s(r, "name"))).collect());
+    let lines: Vec<String> = arr(&res, "effects").iter().map(|x| format!("  \u{2192} {}", describe_effect(x, &names))).collect();
+    with(cx, |e| {
+        e.dry_err.clear();
+        e.run = Some(res["run"].clone());
+        e.dry_answers.clear(); e.dry_notes.clear();
+        e.dry_log.push(what); e.dry_log.extend(lines);
+        let n2 = e.dry_log.len(); if n2 > 80 { e.dry_log.drain(..n2 - 80); }
+    });
+    parts::pwith(cx, |p| parts::forget(p, "ed|dry-"));
+    render_model(cx);
+}
+
+/// describe(): an effect in words.
+fn describe_effect(x: &Value, names: &HashMap<String, String>) -> String {
+    let who = |k: &str| names.get(&s(x, k)).cloned().unwrap_or_else(|| "undefined".into());
+    match s(x, "type").as_str() {
+        "activate" => if s(x, "mode") == "answer" { format!("{} is asked to decide", who("employeeId")) } else { format!("{} gets the work", who("employeeId")) },
+        "workspace" => format!("a separate worktree is made for \"{}\"", s(x, "name")),
+        "merge" => if b(x, "abort") { "the branches are stopped and their work merged back".into() } else { "the branches are merged back together".into() },
+        "cancel" => "the other branches are stopped".into(),
+        "ask" => format!("you are asked: {}", s(x, "prompt")),
+        "wait" => "the flow waits".into(),
+        "finish" => "the Manager finishes and presents the result".into(),
+        "cap" => format!("the run reaches its limit of {} handoffs and waits for you", x.get("limit").map(|l| l.to_string()).unwrap_or_default()),
+        t => t.to_string(),
+    }
+}
+
+fn dry_start(cx: &mut App) {
+    let (f, ok) = with(cx, |e| (super::valid::normalize(&e.f), b(&e.validation, "ok")));
+    if !ok { return; }
+    let r = super::engine::create_run("dry", "dry", &f, "A dry run");
+    let res = super::engine::start(&r);
+    with(cx, |e| { e.dry_log.clear(); e.dry_tree = 0; });
+    dry_apply(res, "Started".into(), cx);
+}
+
+/// send(): whoever has `token` hands off (extra: "" | finish | escalate).
+fn dry_send(token: &str, extra: &str, cx: &mut App) {
+    let Some(run) = with(cx, |e| e.run.clone()) else { return };
+    let req = super::engine::requirements(&run, token);
+    let who_id = s(&req, "who");
+    let who = with(cx, |e| arr(&e.f, "roster").iter().find(|r| s(r, "id") == who_id).map(|r| s(r, "name"))).unwrap_or(who_id);
+    let (answers, notes, same, tree) = with(cx, |e| { e.dry_tree += 1; (e.dry_answers.clone(), e.dry_notes.clone(), e.dry_same, e.dry_tree) });
+    let mut payload = json!({ "summary": "Dry run step", "answers": answers, "notes": notes });
+    if extra == "finish" { payload["finish"] = json!(true); }
+    if extra == "escalate" { payload["escalate"] = json!("Stuck in the dry run"); }
+    let res = super::engine::handoff(&run, token, &payload, &if same { "same".to_string() } else { format!("tree{tree}") });
+    dry_apply(res, format!("{who} handed off{}", match extra { "finish" => " (finish)", "escalate" => " (escalated)", _ => "" }), cx);
+}
+
+/// A decision's answer (toggle()); "" with `none`: the pick-any's None.
+fn dry_answer(decision: &str, h: &str, cx: &mut App) {
+    let Some(run) = with(cx, |e| e.run.clone()) else { return };
+    // The routes of everyone with work now: the decision is in one of them.
+    let routes: Vec<Value> = arr(&run, "tokens").iter().filter(|t| ["work", "answer"].contains(&s(t, "status").as_str())).map(|t| super::engine::requirements(&run, &s(t, "id"))["route"].clone()).collect();
+    let dc = find_decision(&routes, decision);
+    let many = dc.as_ref().map(|d| s(d, "kind") == "many").unwrap_or(false);
+    let last = dc.map(|d| d["lastPicks"].clone()).unwrap_or(Value::Null);
+    with(cx, |e| {
+        if !many { e.dry_answers.insert(decision.to_string(), json!(h)); return; }
+        if h.is_empty() { e.dry_answers.insert(decision.to_string(), json!([])); return; }
+        let cur = e.dry_answers.get(decision).cloned().filter(|v| v.is_array()).or_else(|| last.is_array().then(|| last.clone())).unwrap_or(json!([]));
+        let mut l: Vec<String> = cur.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+        if let Some(i) = l.iter().position(|x| x == h) { l.remove(i); } else { l.push(h.to_string()); }
+        e.dry_answers.insert(decision.to_string(), json!(l));
+    });
+    render_model(cx);
+}
+
+fn find_decision(routes: &[Value], id: &str) -> Option<Value> {
+    fn walk(item: &Value, id: &str) -> Option<Value> {
+        let d = &item["decision"];
+        if d.is_object() {
+            if s(d, "id") == id { return Some(d.clone()); }
+            for br in arr(d, "branches") { if let Some(x) = walk(&br["next"], id) { return Some(x); } }
+        }
+        None
+    }
+    routes.iter().find_map(|r| walk(r, id))
+}
+
+fn dry_reply(token: &str, reply: &str, cx: &mut App) {
+    let Some(run) = with(cx, |e| e.run.clone()) else { return };
+    let (label, note) = with(cx, |e| {
+        let node = arr(&run, "tokens").iter().find(|t| s(t, "id") == token).map(|t| s(t, "nodeId")).and_then(|nid| arr(&e.f, "nodes").iter().find(|x| s(x, "id") == nid).cloned()).unwrap_or(Value::Null);
+        (arr(&node["ask"], "replies").iter().find(|r| s(r, "id") == reply).map(|r| s(r, "label")).unwrap_or_default(), e.dry_notes.get("__ask").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    });
+    dry_apply(super::engine::ask_reply(&run, token, reply, &note), format!("You replied \"{label}\""), cx);
+}
+
+fn dry_wait(token: &str, outcome: &str, cx: &mut App) {
+    let Some(run) = with(cx, |e| e.run.clone()) else { return };
+    let two = with(cx, |e| arr(&run, "tokens").iter().find(|t| s(t, "id") == token).map(|t| s(t, "nodeId")).and_then(|nid| arr(&e.f, "nodes").iter().find(|x| s(x, "id") == nid).map(|x| { let k = s(&x["wait"], "kind"); k == "command" || k == "signal" })).unwrap_or(false));
+    let what = if outcome == "timeout" { "The wait timed out" } else if two { "The wait was done" } else { "The time passed" };
+    dry_apply(super::engine::wait_done(&run, token, outcome, "in the dry run"), what.into(), cx);
+}
+
+fn dry_insp(d: &Insp, mut p: Stateful<Div>, fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> Stateful<Div> {
+    let Some(run) = fx.e.run.clone() else {
+        return p.child(pane_title("Dry run", false, false, "", ""))
+            .child(note("hint", "Walk through the flow by hand, answering for each person, before spending anything on Claude. The canvas shows where the work is and how many rounds each loop has used."))
+            .when(!d.ok, |p| p.child(parts::issue("e-dry-bad", "error", "Fix the problems first: a factory that cannot run cannot be walked either.", "")))
+            .child(div().child(btn("e-dry", "Start a dry run", Some(IconName::Play), "primary", d.ok, false).on_click(a0("e-dry-start"))));
+    };
+    let f = fx.e.f.clone();
+    let roster: HashMap<String, String> = arr(&f, "roster").iter().map(|r| (s(r, "id"), s(r, "name"))).collect();
+    let status = s(&run, "status");
+    p = p.child(div().flex().items_center().gap(T::SP_8)
+        .child(div().flex_1().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).child("Dry run"))
+        .child(btn("e-dry-end", "End", Some(IconName::X), "ghost", true, false).on_click(a0("e-dry-end"))))
+        .child(note("hint", format!("Handoffs: {}{}", n(&run, "handoffs") as i64, if status == "waiting" { " · waiting for you" } else { "" })));
+    if status == "finishing" {
+        p = p.child(div().flex().items_center().gap(T::SP_6).text_color(T::green()).text_size(T::TEXT_13).child(w::icon(IconName::Check, T::ICON_MD)).child("Finished: the Manager would now present the result."));
+    }
+    let active: Vec<Value> = arr(&run, "tokens").iter().filter(|t| ["work", "answer", "ask", "wait"].contains(&s(t, "status").as_str())).cloned().collect();
+    for (i, t) in active.iter().enumerate() { p = p.child(dry_actor(i, t, &run, &f, &roster, fx, window, cx)); }
+    let (err, log) = (fx.e.dry_err.clone(), fx.e.dry_log.clone());
+    if !err.is_empty() { p = p.child(parts::issue("e-dry-err", "error", &err, "")); }
+    if !log.is_empty() {
+        p = p.child(div().id("e-dry-log").max_h(T::FACTORIES_MINI_W).overflow_y_scroll().p(T::SP_8).rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg())
+            .font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_secondary()).child(log.join("\n")));
+    }
+    p
+}
+
+/// Actor(): the one with the work (a wait, a question for you, or a person).
+#[allow(clippy::too_many_arguments)]
+fn dry_actor(i: usize, t: &Value, run: &Value, f: &Value, roster: &HashMap<String, String>, fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> Div {
+    let node = arr(f, "nodes").iter().find(|x| s(x, "id") == s(t, "nodeId")).cloned().unwrap_or(Value::Null);
+    let tid = s(t, "id");
+    let head = |icon: IconName, text: String| div().flex().items_center().gap(T::SP_6).font_weight(T::W_SEMIBOLD).text_size(T::TEXT_13).child(w::icon(icon, T::ICON_MD)).child(text);
+    let card = w::card().p(T::SP_10).gap(T::SP_8);
+    match s(t, "status").as_str() {
+        "wait" => {
+            let wt = &node["wait"];
+            let two = { let k = s(wt, "kind"); k == "command" || k == "signal" };
+            let l = s(&node, "label");
+            let (t1, t2) = (tid.clone(), tid.clone());
+            card.child(head(IconName::Clock, format!("{}: {}", if l.is_empty() { "Wait".to_string() } else { l }, model::wait_text(wt))))
+                .child(div().flex().flex_wrap().gap(T::SP_6)
+                    .child(btn(("e-dry-done", i), if two { "Done" } else { "Time passes" }, None, "", true, false).on_click(move |_, _, cx| fact("e-dry-wait", &t1, "done", cx)))
+                    .when(two, |d| d.child(btn(("e-dry-timeout", i), "Timed out", None, "", true, false).on_click(move |_, _, cx| fact("e-dry-wait", &t2, "timeout", cx)))))
+        }
+        "ask" => {
+            let note_v = fx.e.dry_notes.get("__ask").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mut row = div().flex().flex_wrap().gap(T::SP_6);
+            for (j, r) in arr(&node["ask"], "replies").iter().enumerate() {
+                let (t1, rid) = (tid.clone(), s(r, "id"));
+                row = row.child(btn(("e-dry-reply", i * 100 + j), &s(r, "label"), None, "", true, false).on_click(move |_, _, cx| fact("e-dry-reply", &t1, &rid, cx)));
+            }
+            card.child(head(IconName::MessageCircleQuestionMark, format!("You are asked: {}", s(&node["ask"], "prompt"))))
+                .child(area("dry-note:__ask", &note_v, "Optional note", 2, false, fx, window, cx))
+                .child(row)
+        }
+        st => {
+            let req = super::engine::requirements(run, &tid);
+            let who_id = s(&req, "who");
+            let who = roster.get(&who_id).cloned().unwrap_or_else(|| who_id.clone());
+            let l = s(&node, "label");
+            let mut c = card.child(head(if who_id == "manager" { IconName::Crown } else { IconName::User },
+                format!("{who} {}{}", if st == "answer" { "is asked to decide" } else { "has the work" }, if !l.is_empty() && l != who { format!(" · {l}") } else { String::new() })));
+            let route = &req["route"];
+            if route.is_object() { c = c.child(dry_route(route, fx, window, cx)); } else { c = c.child(note("hint", "No decisions here.")); }
+            for nt in arr(&req, "noteTargets") {
+                let k = s(nt, "key");
+                let v = fx.e.dry_notes.get(&k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let lb = s(nt, "label");
+                c = c.child(line(&format!("dry-note:{k}"), &v, &format!("Optional note for {}{}", s(nt, "to"), if lb.is_empty() { String::new() } else { format!(" ({lb})") }), false, fx, window, cx));
+            }
+            let (t1, t2, t3) = (tid.clone(), tid.clone(), tid.clone());
+            c = c.child(div().flex().flex_wrap().gap(T::SP_6)
+                .child(btn(("e-dry-hand", i), "Hand off", None, "primary", true, false).on_click(move |_, _, cx| fact("e-dry-handoff", &t1, "", cx)))
+                .when(b(&req, "canFinish"), |d| d.child(btn(("e-dry-finish", i), "Finish", None, "", true, false).on_click(move |_, _, cx| fact("e-dry-handoff", &t2, "finish", cx))))
+                .when(s(&req, "mode") == "work" && who_id != "manager", |d| d.child(btn(("e-dry-esc", i), "Escalate", None, "ghost", true, false).on_click(move |_, _, cx| fact("e-dry-handoff", &t3, "escalate", cx)))));
+            if who_id != "manager" && st == "work" {
+                c = c.child(w::check(("e-dry-same", i), "Pretend nothing changed in the code (tests the no-progress check)", fx.e.dry_same, |_, _, cx| fact("e-dry-same", "", "", cx)));
+            }
+            c
+        }
+    }
+}
+
+/// Route(): a route's note, then where it goes, or its question and the routes of the answers chosen.
+fn dry_route(item: &Value, fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
+    let mut d = div().flex().flex_col().gap(T::SP_6);
+    if b(item, "requireNote") {
+        let k = s(item, "edgeId");
+        let v = fx.e.dry_notes.get(&k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let nl = s(item, "noteLabel");
+        d = d.child(line(&format!("dry-note:{k}"), &v, &format!("Required: {}", if nl.is_empty() { "a note".to_string() } else { nl }), false, fx, window, cx));
+    }
+    let dc = &item["decision"];
+    if !dc.is_object() {
+        let to = &item["to"];
+        let (nm, ab) = (s(to, "name"), s(to, "answeredBy"));
+        let where_ = if !nm.is_empty() || !ab.is_empty() { if s(to, "type") == "decision" { format!("{ab} is asked \"{}\"", s(to, "label")) } else { nm } } else { let l = s(to, "label"); if l.is_empty() { s(to, "type") } else { l } };
+        let mr = n(item, "maxRounds") as i64;
+        let rounds = if mr > 0 { format!(" (round {} of {mr})", ((n(item, "used") as i64) + 1).min(mr)) } else { String::new() };
+        return d.child(note("hint", format!("Then: {where_}{rounds}"))).into_any_element();
+    }
+    let id = s(dc, "id");
+    let kind = s(dc, "kind");
+    let many = kind == "many";
+    let cur = fx.e.dry_answers.get(&id).cloned();
+    let handles: Vec<String> = if kind == "yesno" { vec!["yes".into(), "no".into()] } else { arr(dc, "options").iter().map(|o| s(o, "id")).collect() };
+    let label = |h: &str| -> String { if kind == "yesno" { if h == "yes" { "Yes".into() } else { "No".into() } } else { arr(dc, "options").iter().find(|o| s(o, "id") == h).map(|o| s(o, "label")).unwrap_or_default() } };
+    let picked: Vec<String> = if many {
+        match &cur { Some(Value::Array(a)) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(), None if dc["lastPicks"].is_array() => arr(dc, "lastPicks").iter().filter_map(|x| x.as_str().map(String::from)).collect(), _ => vec![] }
+    } else { cur.as_ref().and_then(|v| v.as_str()).map(|x| vec![x.to_string()]).unwrap_or_default() };
+    let q = { let x = s(dc, "question"); if x.is_empty() { s(dc, "label") } else { x } };
+    let mut row = div().flex().flex_wrap().gap(T::SP_6);
+    for h in &handles {
+        let on = picked.contains(h);
+        let (id2, h2) = (id.clone(), h.clone());
+        row = row.child(w::toggle(SharedString::from(format!("e-dry-pick-{id}-{h}")), label(h), on).on_click(move |_, _, cx| fact("e-dry-answer", &id2, &h2, cx)));
+    }
+    if many {
+        let id2 = id.clone();
+        let none_on = matches!(&cur, Some(Value::Array(a)) if a.is_empty());
+        row = row.child(w::toggle(SharedString::from(format!("e-dry-none-{id}")), "None", none_on).on_click(move |_, _, cx| fact("e-dry-answer", &id2, "", cx)));
+    }
+    d = d.child(div().text_size(T::TEXT_12).child(q)).child(row);
+    if many && dc["lastPicks"].is_array() && cur.is_none() { d = d.child(note("hint", "Last time's picks are used unless you change them.")); }
+    let chosen: Vec<String> = if many { if picked.is_empty() { vec!["none".into()] } else { picked } } else { picked };
+    for h in chosen {
+        if let Some(br) = arr(dc, "branches").iter().find(|x| s(x, "answer") == h) {
+            if br["next"].is_object() { d = d.child(div().flex().flex_col().gap(T::SP_6).pl(T::SP_10).border_l_2().border_color(T::border()).child(dry_route(&br["next"], fx, window, cx))); }
+        }
+    }
+    d.into_any_element()
+}
+
+pub fn dry_props(cx: &mut App) -> Value {
+    with(cx, |e| match &e.run {
+        None => json!({ "on": false }),
+        Some(r) => json!({ "on": true, "status": s(r, "status"), "handoffs": n(r, "handoffs"), "error": e.dry_err, "log": e.dry_log,
+            "tokens": arr(r, "tokens").iter().filter(|t| ["work", "answer", "ask", "wait"].contains(&s(t, "status").as_str())).map(|t| json!({ "id": s(t, "id"), "nodeId": s(t, "nodeId"), "status": s(t, "status") })).collect::<Vec<_>>(),
+            "edgeCounts": r["edgeCounts"].clone() }),
+    })
 }
 
 /// A palette item (.ff-pal-item): a click adds it in the middle of the view; dragged onto the canvas, where it is let go.
@@ -1164,14 +1456,31 @@ impl Render for PalGhost {
     }
 }
 
-fn pal_item(i: usize, label: &str, icon: IconName, ghost: bool, kind: String) -> Stateful<Div> {
+fn pal_item(i: usize, label: &str, icon: IconName, ghost: bool, kind: String, hint: &str) -> Stateful<Div> {
     let k2 = kind.clone();
-    div().id(("e-pal", i)).flex().items_center().gap(T::SP_8).px(T::SP_8).h(T::CONTROL_SM + T::SP_2).rounded(T::R_FIELD).border_1().border_color(T::border())
+    let el = div().id(("e-pal", i)).flex().items_center().gap(T::SP_8).px(T::SP_8).h(T::CONTROL_SM + T::SP_2).rounded(T::R_FIELD).border_1().border_color(T::border())
         .when(!ghost, |d| d.bg(T::bg_card())).hover(|d| d.border_color(T::accent())).cursor_grab()
         .text_color(if ghost { T::text_secondary() } else { T::text() })
         .child(w::icon(icon, T::ICON_MD)).child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).child(label.to_string()))
         .on_click(move |_, _, cx| fact("e-add", &k2, "", cx))
-        .on_drag(PalDrag { kind, label: label.to_string() }, |d, _, _, cx| cx.new(|_| PalGhost(d.label.clone())))
+        .on_drag(PalDrag { kind, label: label.to_string() }, |d, _, _, cx| cx.new(|_| PalGhost(d.label.clone())));
+    w::tip(el, hint.to_string())
+}
+
+/// The Palette (.ff-palette): the people, someone new, the flow's steps.
+fn palette(people: &[Opt]) -> Vec<AnyElement> {
+    let mut out = vec![sub("PEOPLE").into_any_element()];
+    let mut i = 0;
+    for p in people { out.push(pal_item(i, &p.label, IconName::User, false, format!("employee:{}", p.id), "").into_any_element()); i += 1; }
+    out.push(pal_item(i, "Someone new", IconName::Plus, true, "employee:".into(), "").into_any_element());
+    out.push(sub("FLOW").into_any_element());
+    for (label, icon, kind, hint) in [("Yes / no question", IconName::GitBranch, "decision:yesno", ""), ("Pick one", IconName::GitBranch, "decision:one", ""), ("Pick any (parallel)", IconName::GitBranch, "decision:many", "Comes with its Join"),
+        ("Join", IconName::GitMerge, "join", ""), ("Ask me", IconName::MessageCircleQuestionMark, "ask", ""), ("Wait", IconName::Clock, "wait", "A time, a command, a signal")] {
+        i += 1;
+        out.push(pal_item(i, label, icon, false, kind.into(), hint).into_any_element());
+    }
+    out.push(note("hint", "Drag onto the canvas, or tap to add. Connect an output (bottom) to a step's top. Drag from the side dot of a person to leave a note.").into_any_element());
+    out
 }
 
 /// The editor.
@@ -1182,73 +1491,81 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
         return div().flex().flex_col().p(T::SP_24).gap(T::SP_10).child(note("note", ed.error.clone()))
             .child(div().child(btn("e-back-err", "Back", None, "", true, false).on_click(a0("e-back")))).into_any_element();
     }
-    let narrow = parts::bounds_of(&fx.p, "fx-ed").map(|b| b.size.width < T::FACTORIES_NARROW).unwrap_or(false);
+    // Narrow: the web's phone. Its first draw starts with no pane open.
+    let phone = parts::bounds_of(&fx.p, "fx-ed").map(|b| b.size.width < T::FACTORIES_NARROW).unwrap_or(false);
+    fx.e.phone = phone;
+    if phone && !fx.e.phone_seen { fx.e.phone_seen = true; fx.e.tab.clear(); fx.e.ed.tab.clear(); }
+    let tab_now = fx.e.tab.clone();
+    let dry = fx.e.run.is_some();
     let save_c = if ed.save == "conflict" || ed.save == "error" { T::red() } else if ed.draft { T::yellow() } else if ed.save == "saving" || ed.save == "dirty" { T::text_secondary() } else { T::text_muted() };
+    let show_status = !phone || ed.save == "conflict" || ed.save == "error";
+    let status = div().id("e-status").text_size(T::TEXT_11).text_color(save_c).child(format!("{}{}", ed.save_label, if ed.draft { " · draft" } else { "" }));
+    let status = w::tip(status, if ed.draft { "Saved as a draft: fix the problems to run it" } else { "" });
     let top = div().flex().flex_none().items_center().gap(T::SP_6).px(T::SP_8).h(T::CONTROL + T::SP_10).bg(T::bg_secondary()).border_b_1().border_color(T::border())
         .child(w::icon_button("e-back", IconName::ArrowLeft, "Back").on_click(a0("e-back")))
-        .child(div().id("e-name").px(T::SP_6).rounded(T::R_CONTROL).cursor_pointer().hover(|d| d.bg(T::bg_hover())).max_w(T::FACTORIES_RIGHT)
-            .truncate().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).child(if ed.name.is_empty() { "Untitled factory".to_string() } else { ed.name.clone() })
-            .on_click(a0("e-settings")))
-        .child(div().text_size(T::TEXT_11).text_color(save_c).child(format!("{}{}", ed.save_label, if ed.draft { " · draft" } else { "" })))
+        // .ff-name: the factory's settings.
+        .child(w::ghost("e-name", if ed.name.is_empty() { "Untitled factory".to_string() } else { ed.name.clone() }).tooltip("Factory settings").on_click(a0("e-settings")))
+        .when(show_status, |d| d.child(status))
         .when(ed.save == "conflict", |d| d.child(btn("e-reload", "Reload", None, "", true, false).on_click(a0("e-reload"))))
         .when(ed.save == "error", |d| d.child(btn("e-retry", "Retry", None, "", true, false).on_click(a0("e-save"))))
         .child(div().flex_1())
-        .child(w::disabled(w::icon_button("e-undo", IconName::Undo2, "Undo (Ctrl+Z)"), !ed.can_undo).on_click(a0("e-undo")))
-        .child(w::disabled(w::icon_button("e-redo", IconName::Redo2, "Redo (Ctrl+Shift+Z)"), !ed.can_redo).on_click(a0("e-redo")))
-        .child(w::icon_button("e-tidy", IconName::LayoutGrid, "Tidy the layout").on_click(a0("e-tidy")))
+        .child(w::disabled(w::icon_button("e-undo", IconName::Undo2, "Undo (Ctrl+Z)"), !ed.can_undo || dry).on_click(a0("e-undo")))
+        .child(w::disabled(w::icon_button("e-redo", IconName::Redo2, "Redo (Ctrl+Shift+Z)"), !ed.can_redo || dry).on_click(a0("e-redo")))
+        .child(w::disabled(w::icon_button("e-tidy", IconName::LayoutGrid, "Tidy the layout"), dry).on_click(a0("e-tidy")))
         .child(w::icon_button("e-fit", IconName::Maximize, "Fit to screen").on_click(|_, _, cx| fact("cv-fit", "e", "", cx)));
     let mut row = div().flex().flex_1().min_h_0();
-    if !narrow {
-        let mut pal = div().id("e-palette").flex().flex_col().flex_none().w(T::FACTORIES_LEFT).bg(T::bg_secondary()).border_r_1().border_color(T::border()).overflow_y_scroll().p(T::SP_12).gap(T::SP_10)
-            .child(sub("PEOPLE"));
-        let mut i = 0;
-        for p in &people { pal = pal.child(pal_item(i, &p.label, IconName::User, false, format!("employee:{}", p.id))); i += 1; }
-        pal = pal.child(pal_item(i, "Someone new", IconName::Plus, true, "employee:".into())).child(sub("FLOW"));
-        for (label, icon, kind) in [("Yes / no question", IconName::GitBranch, "decision:yesno"), ("Pick one", IconName::GitBranch, "decision:one"), ("Pick any (parallel)", IconName::GitBranch, "decision:many"),
-            ("Join", IconName::GitMerge, "join"), ("Ask me", IconName::MessageCircleQuestionMark, "ask"), ("Wait", IconName::Clock, "wait")] {
-            i += 1;
-            pal = pal.child(pal_item(i, label, icon, false, kind.into()));
-        }
-        pal = pal.child(note("hint", "Drag onto the canvas, or tap to add. Connect an output (bottom) to a step's top. Drag from the side dot of a person to leave a note."));
-        row = row.child(pal);
+    if !phone {
+        row = row.child(div().id("e-palette").flex().flex_col().flex_none().w(T::FACTORIES_LEFT).bg(T::bg_secondary()).border_r_1().border_color(T::border()).overflow_y_scroll().p(T::SP_12).gap(T::SP_10)
+            .children(palette(&people)));
     }
-    let cv = parts::canvas_view(&mut fx.p, cx.entity(), parts::Canvas { which: "e", nodes, edges, zoom: ed.zoom, pan_x: ed.pan_x, pan_y: ed.pan_y, editable: true, minimap: !narrow, controls_top: narrow, bounds: (ed.bx, ed.by, ed.bw, ed.bh), conn: ed.conn.then(|| ed.conn_path.clone()), cb: calls() }, window, cx);
-    row = row.child(div().relative().flex().flex_1().min_w_0()
+    let cv = parts::canvas_view(&mut fx.p, cx.entity(), parts::Canvas { which: "e", nodes, edges, zoom: ed.zoom, pan_x: ed.pan_x, pan_y: ed.pan_y, editable: !dry, minimap: !phone, controls_top: phone, bounds: (ed.bx, ed.by, ed.bw, ed.bh), conn: ed.conn.then(|| ed.conn_path.clone()), cb: calls() }, window, cx);
+    let mut canvas_box = div().relative().flex().flex_1().min_w_0()
         .on_drop(|d: &PalDrag, window, cx| {
             let (x, y) = { let o = parts::bounds_in(cx, "cv-e").map(|b| b.origin).unwrap_or_default(); let m = window.mouse_position(); (f32::from(m.x - o.x), f32::from(m.y - o.y)) };
             fact("e-add-at", &d.kind, &format!("{x},{y}"), cx);
         })
-        .child(cv)
-        .when(!ed.toast.is_empty(), |d| d.child(div().absolute().bottom(T::SP_16).left_0().right_0().flex().justify_center()
-            .child(div().max_w(T::FACTORIES_MODAL_W).px(T::SP_12).py(T::SP_8).rounded(T::R_FIELD).border_1().border_color(T::border()).bg(T::bg_card()).text_size(T::TEXT_12).child(ed.toast.clone())))));
-    // .ff-right: the tabs and the pane.
-    let tab = |i: usize, id: &'static str, icon: IconName, label: String| {
-        let on = ed.tab == id;
-        let fg = if id == "issues" && ed.issues_bad { T::yellow() } else if on { T::text() } else { T::text_secondary() };
-        div().id(("e-tab", i)).flex().flex_1().items_center().justify_center().gap(T::SP_4).h(T::CONTROL_SM + T::SP_2).rounded(T::R_CONTROL).cursor_pointer()
-            .text_size(T::TEXT_12).text_color(fg).when(on, |d| d.bg(T::bg_hover())).hover(|d| d.bg(T::bg_hover()))
-            .child(w::icon(icon, T::ICON_MD)).child(label)
-            .on_click(move |_, _, cx| fact("e-tab", id, "", cx))
-    };
-    let tabs = div().flex().flex_none().gap(T::SP_2).p(T::SP_6).border_b_1().border_color(T::border())
-        .child(tab(0, "edit", IconName::SlidersHorizontal, "Edit".into()))
-        .child(tab(1, "team", IconName::Users, "Team".into()))
-        .child(tab(2, "issues", IconName::TriangleAlert, ed.issues_label.clone()))
-        .child(tab(3, "dry", IconName::Route, "Dry run".into()));
+        .child(cv);
+    // .ff-tabs: (Add on a phone,) Edit, Team, Issues (Fix n), Dry run.
+    let mut ids: Vec<(&'static str, IconName, String)> = vec![];
+    if phone { ids.push(("add", IconName::Plus, "Add".into())); }
+    ids.push(("edit", IconName::SlidersHorizontal, "Edit".into()));
+    ids.push(("team", IconName::Users, "Team".into()));
+    ids.push(("issues", IconName::TriangleAlert, ed.issues_label.clone()));
+    ids.push(("dry", IconName::Route, "Dry run".into()));
+    let on = ids.iter().position(|t| t.0 == tab_now).or_else(|| ids.iter().position(|t| t.0 == "edit")).unwrap_or(0);
+    let marked: Vec<bool> = ids.iter().map(|t| t.0 == "issues" && ed.issues_bad).collect();
+    let keys: Vec<&'static str> = ids.iter().map(|t| t.0).collect();
+    let segs = |labels: bool| ids.iter().enumerate().map(|(i, t)| w::SegTab { icon: Some(t.1), label: if labels || i == on { t.2.clone().into() } else { SharedString::default() }, ..Default::default() }).collect::<Vec<_>>();
+    let pick = { let keys = keys.clone(); move |i: usize, _: &mut Window, cx: &mut App| fact("e-tab", keys.get(i).copied().unwrap_or("edit"), "", cx) };
+    let tabs = div().flex().flex_none().items_center().gap(T::SP_6).p(T::SP_6).border_b_1().border_color(T::border())
+        .child(div().flex_1().min_w_0().child(w::seg_tabs_marked("e-tab", segs(!phone), on, &marked, pick.clone())))
+        .when(phone, |d| d.child(w::icon_button("e-sheet-x", IconName::X, "Close").on_click(|_, _, cx| fact("e-tab", "", "", cx))));
     let pane = div().id("e-pane").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().p(T::SP_12).gap(T::SP_10);
-    let pane = match insp.as_ref() {
+    let pane = if tab_now == "add" { pane.children(palette(&people)) } else { match insp.as_ref() {
         Some(d) => match d.mode.as_str() {
             "node" => node_insp(d, pane, fx, window, cx),
             "edge" => edge_insp(d, pane, fx, window, cx),
             "team" => team_insp(d, pane),
             "person" => person_insp(d, pane, fx, window, cx),
             "issues" => issues_insp(d, pane),
-            "dry" => dry_insp(d, pane),
+            "dry" => dry_insp(d, pane, fx, window, cx),
             _ => settings_insp(d, pane, fx, window, cx),
         },
         None => pane,
-    };
-    row = row.child(div().flex().flex_col().flex_none().w(T::FACTORIES_RIGHT).bg(T::bg_secondary()).border_l_1().border_color(T::border()).child(tabs).child(pane));
+    } };
+    let right = div().flex().flex_col().bg(T::bg_secondary()).child(tabs).child(pane);
+    if !phone {
+        row = row.child(canvas_box).child(right.flex_none().w(T::FACTORIES_RIGHT).border_l_1().border_color(T::border()));
+    } else {
+        // The pane as a sheet over the canvas, or the bar of tabs under it.
+        if !tab_now.is_empty() {
+            canvas_box = canvas_box.child(right.absolute().left_0().right_0().bottom_0().max_h(relative(T::FACTORIES_CANVAS_SHARE)).border_t_1().border_color(T::border()).rounded_t(T::R_CARD).shadow_lg()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).on_scroll(|_, _, cx| cx.stop_propagation()));
+        }
+        row = row.child(canvas_box);
+    }
+    let bar = (phone && tab_now.is_empty()).then(|| div().flex().flex_none().p(T::SP_4).bg(T::bg_secondary()).border_t_1().border_color(T::border())
+        .child(div().flex_1().child(w::seg_tabs_marked("e-bar", segs(true), usize::MAX, &marked, pick))));
     div().relative().flex().flex_col().size_full().min_h_0()
         .child(parts::probe(cx.entity(), "fx-ed", |_, _| {}))
         .on_key_down(|e, _, cx| {
@@ -1261,5 +1578,5 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
                 _ => {}
             }
         })
-        .child(top).child(row).into_any_element()
+        .child(top).child(row).children(bar).into_any_element()
 }

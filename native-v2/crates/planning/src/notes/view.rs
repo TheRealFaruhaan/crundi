@@ -205,6 +205,21 @@ fn side_item(it: &Item, trash: bool) -> AnyElement {
 /// its links.
 struct Rich { text: SharedString, hl: Vec<(std::ops::Range<usize>, HighlightStyle)>, links: Vec<(std::ops::Range<usize>, String)> }
 
+/// A code block's text as it is, coloured by its language (`core::syntax`,
+/// the theme's syn_* colours, as the chat colours code).
+fn parse_code(src: &str, lang: &str) -> Rich {
+    use crundi_core::syntax::{highlight, Syn};
+    let hl = highlight(lang, src).into_iter().map(|(r, k)| {
+        let c = match k {
+            Syn::Comment => T::syn_comment(), Syn::String => T::syn_string(), Syn::Number => T::syn_number(), Syn::Keyword => T::syn_keyword(),
+            Syn::Type => T::syn_type(), Syn::Function => T::syn_function(), Syn::Tag => T::syn_keyword(), Syn::Attribute => T::syn_number(),
+        };
+        (r, HighlightStyle { color: Some(c), ..Default::default() })
+    }).collect();
+    let text: SharedString = if src.is_empty() { "\u{a0}".into() } else { src.to_string().into() };
+    Rich { text, hl, links: vec![] }
+}
+
 fn parse_rich(src: &str, done: bool) -> Rich {
     let runs = doc::src_to_runs(src);
     let mut text = String::new();
@@ -245,6 +260,12 @@ pub(crate) struct PlaceView {
     applied_title: i32,
     menu_gen: u64,
     fmt_gen: u64,
+    /// The open menu's scroll, and the item last scrolled into view (its
+    /// generation, the active item): a menu opens at its current item.
+    menu_scroll: ScrollHandle,
+    menu_shown: std::cell::Cell<(u64, i32)>,
+    /// The format bar's size as last laid out (it centres on the selection).
+    fmt_size: Rc<std::cell::Cell<(f32, f32)>>,
     /// The block (row, column for a cell; -2 a divider) the text box serves.
     edit: Option<(String, i32, i32)>,
     editing: bool,
@@ -320,7 +341,7 @@ impl PlaceView {
         ];
         PlaceView {
             key, store, title_in, edit_in, search_in, query_in, link_in, sel_focus: cx.focus_handle(), div_focus: cx.focus_handle(),
-            applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, edit: None, editing: false, last_sel: (0, 0), width: 0.,
+            applied_focus: 0, applied_title: -1, menu_gen: 0, fmt_gen: 0, menu_scroll: ScrollHandle::new(), menu_shown: std::cell::Cell::new((u64::MAX, -1)), fmt_size: Rc::new(std::cell::Cell::new((0., 0.))), edit: None, editing: false, last_sel: (0, 0), width: 0.,
             page: ListState::new(0, ListAlignment::Top, T::SP_48 * 8.), page_sigs: vec![], pick: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), pick_sigs: vec![],
             mode: String::new(), shown_page: String::new(), rich: HashMap::new(), _subs: subs,
         }
@@ -621,10 +642,17 @@ impl PlaceView {
         })).size_full();
         let (kb, km, ku) = (key.clone(), key.clone(), key.clone());
         let scroll = div().id(sid(format!("nt-page-{key}"))).size_full()
-            .on_mouse_move(move |e: &MouseMoveEvent, _, cx| if e.pressed_button == Some(MouseButton::Left) && super::store(cx).read(cx).press.is_some() { super::blk_over(&km, f32::from(e.position.y), cx); })
+            .on_mouse_move(move |e: &MouseMoveEvent, _, cx| if e.pressed_button == Some(MouseButton::Left) && !cx.has_active_drag() && super::store(cx).read(cx).press.is_some() { super::blk_over(&km, f32::from(e.position.y), cx); })
             .on_mouse_up(MouseButton::Left, move |_, _, cx| { let _ = &ku; super::store(cx).update(cx, |s, _| s.press = None); })
-            .on_drag_move::<BlockDrag>(move |e, _, cx| { if e.drag(cx).key == kb { super::drag_move(f32::from(e.event.position.x), f32::from(e.event.position.y), cx); } })
-            .on_drop::<BlockDrag>(|_, _, cx| super::drag_end(true, cx))
+            // Blocks of this page in hand: where they would land; let go: they move.
+            .on_drag_move::<w::RefDrag>(move |e, _, cx| { if e.drag(cx).kind == "note" && super::drag_key(cx).as_deref() == Some(kb.as_str()) { super::drag_move(f32::from(e.event.position.x), f32::from(e.event.position.y), cx); } })
+            // Anything else (another panel's reference, another page's
+            // blocks) goes in as text under the pointer (the web's dropText).
+            .on_drop::<w::RefDrag>({ let kd = key.clone(); move |d, window, cx| {
+                if d.kind == "note" && super::drag_key(cx).as_deref() == Some(kd.as_str()) { super::drag_end(true, cx); }
+                else { let y = f32::from(window.mouse_position().y); super::drop_text(&kd, y, &d.plain(), cx); }
+                cx.stop_propagation();
+            } })
             .child(canvas({ let key = key.clone(); move |b, _, cx| super::store(cx).update(cx, |s, _| if let Some(i) = super::idx(s, &key) { s.places[i].page_box = (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)); }) }, |_, _, _, _| {}).absolute().size_full())
             .child(page_list);
         // The save status (.nt-bar), top right; its tooltip, the last edit.
@@ -650,7 +678,7 @@ impl PlaceView {
             let (k1, k2, k3, k4) = (key.clone(), key.clone(), key.clone(), key.clone());
             root = root.child(div().id(sid(format!("nt-selbar-{key}"))).occlude().absolute().top_0().left_0().right_0().flex().items_center().gap(T::SP_4).px(T::SP_12).py(T::SP_6)
                 .bg(T::bg_secondary()).border_b_1().border_color(T::border())
-                .child(grip(&key, "", "Drag the selection onto a chat or terminal", k, false))
+                .child(grip(&key, "", "Drag the selection onto a chat or terminal", k, false, cx))
                 .child(div().text_size(T::TEXT_12 * k).text_color(T::text_secondary()).child(if n == 1 { "1 block selected".to_string() } else { format!("{n} blocks selected") }))
                 .child(div().flex_1())
                 .child(w::button(sid(format!("nt-sel-copy-{key}")), "Copy").tooltip("Copy as Markdown (Ctrl+C)").on_click(move |_, _, cx| super::sel_act(&k1, "copy", cx)))
@@ -671,26 +699,34 @@ impl PlaceView {
         let fs = match b.kind.as_str() { "h1" => (T::TEXT_20 + T::SP_2) * k, "h2" => (T::TEXT_16 + T::SP_2) * k, "h3" => T::TEXT_16 * k, _ => T::TEXT_15 * k };
         let top = match b.kind.as_str() { "h1" => T::SP_16, "h2" => T::SP_12, "h3" => T::SP_8, _ => px(0.) };
         let (kp, bp) = (key.clone(), b.id.clone());
-        let margin_area = div().absolute().left_0().top_0().bottom_0().w(margin)
-            .on_mouse_down(MouseButton::Left, move |e, _, cx| super::blk_press(&kp, &bp, e.modifiers.shift, cx));
+        // A press anywhere on the block (its margin or its words) may start a
+        // block selection: a drag into the next block selects blocks, and
+        // Shift with a press on another block selects from the one with the
+        // caret (the web's). Inside one block, the words select as text.
+        let margin_area = div().absolute().left_0().top_0().bottom_0().w(margin);
         let (ka, ba) = (key.clone(), b.id.clone());
+        let (kpl, bpl) = (key.clone(), b.id.clone());
+        // Where its "+" is (the driver clicks the real one).
+        let plus_at = canvas(move |bd, _, cx| super::store(cx).update(cx, |s, _| if let Some(i) = super::idx(s, &kpl) {
+            let pl = &mut s.places[i].plus;
+            pl.retain(|x| x.0 != bpl);
+            pl.push((bpl.clone(), f32::from(bd.origin.x) + f32::from(T::SP_20) / 2., f32::from(bd.origin.y) + f32::from(bd.size.height) / 2.));
+        }), |_, _, _, _| {}).absolute().left_0().top_0().w(T::SP_20).h_full();
         let tools = div().absolute().left(margin - T::SP_40 - T::SP_2).top(top + T::SP_2).w(T::SP_40).h(T::SP_24).flex().gap(px(1.))
             .when(!r.menu_open, |d| d.invisible().group_hover(group.clone(), |s| s.visible()))
+            .child(plus_at)
             .child(w::square_button(sid(format!("nt-add-{key}-{}", b.id)), IconName::Plus, "Add a block below", w::SquareLook::Bare, T::SP_20, T::ICON_MD * k)
-                .on_click(move |_, _, cx| super::add_below(&ka, &ba, cx)))
-            .child(grip(&key, &b.id, "Click: turn into, move, duplicate, delete. Drag: onto a chat or terminal to send it as Markdown", k, true));
+                .on_click(move |e, window, cx| { let p = e.position(); let p = if p.x > px(0.) { p } else { window.mouse_position() }; super::add_below(&ka, &ba, Some((f32::from(p.x), f32::from(p.y))), cx) }))
+            .child(grip(&key, &b.id, "Click: turn into, move, duplicate, delete. Drag: onto a chat or terminal to send it as Markdown", k, true, cx));
         let lh = fs * T::LH_CHAT;
         let mut body = div().flex().w_full().gap(T::SP_6).py(px(1.));
         match b.kind.as_str() {
             "todo" => {
                 let (kc, bc, on) = (key.clone(), b.id.clone(), b.checked);
-                body = body.child(div().flex_none().pl(T::SP_2).pr(T::SP_4).pt((lh - T::SP_16) / 2.)
-                    .child(div().id(sid(format!("nt-chk-{key}-{}", b.id))).size(T::SP_16).rounded(T::R_CHIP).border_1().cursor_pointer()
-                        .border_color(if on { T::accent() } else { T::composer_slate_edge() }).bg(if on { T::accent() } else { T::bg() })
-                        .hover(|s| s.border_color(T::accent_hover()))
-                        .flex().items_center().justify_center().text_color(T::white()).text_size(T::ICON_SM)
-                        .when(on, |d| d.child(IconName::Check))
-                        .on_click(move |_, _, cx| super::edit_block(&kc, &bc, cx, |b| b.checked = !on))));
+                // The to-do's box: the shared check (its own press, not the block's).
+                body = body.child(div().flex_none().pl(T::SP_2).pr(T::SP_4).pt((lh - T::CHECK_BOX) / 2.)
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(w::check(sid(format!("nt-chk-{key}-{}", b.id)), "", on, move |_, _, cx| super::edit_block(&kc, &bc, cx, |b| b.checked = !on))));
             }
             "bullet" => { body = body.child(div().flex_none().w(T::SP_20 + T::SP_2).pt((lh - T::SP_6) / 2. + px(1.)).child(div().size(T::SP_6).rounded(T::R_PILL).bg(T::text_secondary()))); }
             "number" => { body = body.child(div().flex_none().w(T::SP_20 + T::SP_2).pr(T::SP_2).h(lh).flex().items_center().justify_end().text_size(fs).text_color(T::text_secondary()).child(r.num.clone())); }
@@ -704,13 +740,14 @@ impl PlaceView {
             _ => {
                 let weight = match b.kind.as_str() { "h1" => T::W_BOLD, "h2" | "h3" => T::W_SEMIBOLD, _ => T::W_REGULAR };
                 let ink = if b.kind == "quote" { T::text_secondary() } else if b.kind == "todo" && b.checked { T::text_muted() } else { T::text() };
-                self.text_cell(&key, &b.id, -1, -1, &b.text, doc::placeholder(&b.kind), fs, weight, ink, b.kind == "todo" && b.checked, false, false).into_any_element()
+                self.text_cell(&key, &b.id, -1, -1, &b.text, doc::placeholder(&b.kind), fs, weight, ink, b.kind == "todo" && b.checked, false, false, None).into_any_element()
             }
         };
         let _ = cx;
         body = body.child(div().flex_1().min_w_0().child(content));
         let (kbx, bbx) = (key.clone(), b.id.clone());
         div().id(sid(format!("nt-b-{key}-{ix}"))).group(group).relative().w_full().pt(top)
+            .on_mouse_down(MouseButton::Left, move |e, _, cx| super::blk_press(&kp, &bp, e.modifiers.shift, cx))
             .child(canvas(move |bd, _, cx| super::store(cx).update(cx, |s, _| if let Some(i) = super::idx(s, &kbx) {
                 let bx = &mut s.places[i].boxes;
                 bx.retain(|x| x.0 != bbx);
@@ -727,7 +764,7 @@ impl PlaceView {
     /// formatted text otherwise (a click puts the caret at its end; with
     /// Ctrl, a click on a link opens it, the web's).
     #[allow(clippy::too_many_arguments)]
-    fn text_cell(&mut self, key: &str, id: &str, r: i32, c: i32, src: &str, ph: &str, fs: Pixels, weight: FontWeight, ink: Hsla, done: bool, mono: bool, nowrap: bool) -> AnyElement {
+    fn text_cell(&mut self, key: &str, id: &str, r: i32, c: i32, src: &str, ph: &str, fs: Pixels, weight: FontWeight, ink: Hsla, done: bool, mono: bool, nowrap: bool, lang: Option<&str>) -> AnyElement {
         let here = self.editing && self.edit.as_ref() == Some(&(id.to_string(), r, c));
         if here {
             let mut d = div().relative().w_full();
@@ -739,23 +776,46 @@ impl PlaceView {
         }
         // The parse, once per source.
         let ck = format!("{id}-{r}-{c}");
+        // (A code block's key carries its language: a new one colours it again.)
+        let ck = match lang { Some(l) => format!("{ck}-{l}"), None => ck };
         let rich = match self.rich.get(&ck) {
             Some((s, d, x)) if s == src && *d == done => x.clone(),
-            _ => { let x = Rc::new(parse_rich(src, done)); self.rich.insert(ck, (src.to_string(), done, x.clone())); x }
+            _ => {
+                let x = Rc::new(match lang { Some(l) => parse_code(src, l), None => parse_rich(src, done) });
+                self.rich.insert(ck, (src.to_string(), done, x.clone()));
+                x
+            }
         };
         let styled = StyledText::new(rich.text.clone()).with_highlights(rich.hl.clone());
         let layout = styled.layout().clone();
         let (k, i) = (key.to_string(), id.to_string());
         let n = src.len();
+        let src_s = src.to_string();
+        let is_code = lang.is_some();
         div().id(sid(format!("nt-t-{key}-{id}-{r}-{c}"))).w_full().cursor_text().font_weight(weight).text_color(ink)
             .on_click(move |e, window, cx| {
                 let m = window.modifiers();
+                // Shift with a press here selected blocks (blk_press): no caret.
+                if m.shift && super::has_sel(&k, cx) { return; }
+                let hit = if e.position().x > px(0.) { layout.index_for_position(e.position()) } else { Err(rich.text.len()) };
                 if (m.control || m.platform) && !rich.links.is_empty() {
-                    if let Ok(ix) = layout.index_for_position(e.position()) {
+                    if let Ok(ix) = hit {
                         if let Some(l) = rich.links.iter().find(|l| l.0.contains(&ix)) { super::open_link(&l.1, cx); }
                     }
                 }
-                super::request_focus(&k, &i, r, c, n, n, cx);
+                // The caret where the click was (the web's caret from the
+                // point), as a source offset; a click past the words: its end.
+                let at = match hit {
+                    // Code is its own source: the offset as it is.
+                    Ok(ix) | Err(ix) if !src_s.is_empty() && is_code => ix.min(src_s.len()),
+                    Ok(ix) | Err(ix) if !src_s.is_empty() => {
+                        let ix = ix.min(rich.text.len());
+                        let k = rich.text.get(..ix).map(|t| t.chars().count()).unwrap_or(0);
+                        doc::plain_to_src_at(&doc::src_to_runs_map(&src_s).1, k)
+                    }
+                    _ => n,
+                };
+                super::request_focus(&k, &i, r, c, at, at, cx);
             })
             .child(div().w_full().text_size(fs).line_height(relative(T::LH_CHAT)).when(mono, |d| d.font_family(T::MONO)).when(nowrap, |d| d.whitespace_nowrap()).child(styled))
             .into_any_element()
@@ -776,7 +836,10 @@ impl PlaceView {
                 .on_click(move |_, _, cx| super::code_act(&k2, &b2, "wrap", 0., 0., cx)))
             .child(w::head_button(sid(format!("nt-copy-{key}-{}", b.id)), C::Icon(IconName::Copy), L::Rest, T::SP_24, T::SP_20 + T::SP_2, "Copy code")
                 .on_click(move |_, _, cx| super::code_act(&k3, &b3, "copy", 0., 0., cx)));
-        let code = self.text_cell(key, &b.id, -1, -1, &b.text, "Code", T::TEXT_12 * k, T::W_REGULAR, T::text(), false, true, !b.wrap);
+        let hl = doc::hl_name(&doc::norm_lang(&b.lang));
+        let hl_lang = hl.rsplit('.').next().unwrap_or("").to_string();
+        let hl_lang = if hl == "Dockerfile" { "Dockerfile".to_string() } else { hl_lang };
+        let code = self.text_cell(key, &b.id, -1, -1, &b.text, "Code", T::TEXT_12 * k, T::W_REGULAR, T::text(), false, true, !b.wrap, Some(&hl_lang));
         div().relative().w_full().pt(T::SP_24 + T::SP_4).pb(T::SP_4)
             .child(div().id(sid(format!("nt-code-{key}-{}", b.id))).w_full().p(T::SP_12).rounded(T::R_FIELD).bg(T::bg_secondary()).border_1()
                 .border_color(if editing { T::accent_edge() } else { T::border_subtle() })
@@ -797,7 +860,7 @@ impl PlaceView {
             for (ci, cell) in row.iter().enumerate() {
                 let head = b.header && ri == 0;
                 let here = self.editing && self.edit.as_ref() == Some(&(b.id.clone(), ri as i32, ci as i32));
-                let t = self.text_cell(&key, &b.id, ri as i32, ci as i32, cell, "", T::TEXT_15 * k, if head { T::W_SEMIBOLD } else { T::W_REGULAR }, T::text(), false, false, false);
+                let t = self.text_cell(&key, &b.id, ri as i32, ci as i32, cell, "", T::TEXT_15 * k, if head { T::W_SEMIBOLD } else { T::W_REGULAR }, T::text(), false, false, false, None);
                 line = line.child(div().flex_1().min_w(T::SP_40).px(T::SP_8).py(T::SP_6)
                     .when(head, |d| d.bg(T::bg_secondary()))
                     .when(ci + 1 < cols, |d| d.border_r_1().border_color(T::border()))
@@ -833,20 +896,22 @@ impl PlaceView {
 }
 
 /// The grip (.nt-grip): click for the block's menu, drag to move it.
-fn grip(key: &str, bid: &str, tip: &str, k: f32, click: bool) -> Stateful<Div> {
+fn grip(key: &str, bid: &str, tip: &str, k: f32, click: bool, cx: &mut App) -> Stateful<Div> {
     let (k1, b1, k2, b2) = (key.to_string(), bid.to_string(), key.to_string(), bid.to_string());
     let g = w::square_button(sid(format!("nt-grip-{key}-{bid}")), IconName::GripVertical, tip.to_string(), w::SquareLook::Bare, T::SP_20, T::ICON_MD * k)
-        .cursor_grab()
-        .on_drag(BlockDrag { key: key.to_string(), label: String::new() }, move |_, _, _, cx| {
-            let label = super::drag_start(&k1, &b1, cx).map(|d| d.label).unwrap_or_default();
+        .cursor_grab();
+    // The drag carries the blocks' Markdown (the shared drag layer).
+    let g = match super::drag_payload(key, bid, cx) {
+        Some(p) => g.on_drag(p, move |d, _, _, cx| {
+            super::drag_start(&k1, &b1, cx);
+            let label = d.label.to_string();
             cx.new(|_| DragGhost(label))
-        });
+        }),
+        None => g,
+    };
     if click { g.on_click(move |e, window, cx| { let p = e.position(); let p = if p.x > px(0.) { p } else { window.mouse_position() }; super::block_menu(&k2, &b2, f32::from(p.x), f32::from(p.y) + f32::from(T::SP_12), cx); }) } else { g }
 }
 
-/// What a grip's drag carries (GPUI's drag and drop).
-#[derive(Clone)]
-pub(crate) struct BlockDrag { pub key: String, pub label: String }
 
 // ─── What floats over the page: the menus, the format bar ───
 
@@ -858,7 +923,14 @@ impl PlaceView {
         let win = window.viewport_size();
         if menu.open {
             let x = menu.x.max(f32::from(T::SP_8)).min(f32::from(win.width - T::NOTES_MENU_W - T::SP_8));
-            let mut panel = w::menu_panel("nt-menu").w(T::NOTES_MENU_W).max_h(T::NOTES_MENU_MAX_H).overflow_y_scroll().p(T::SP_4).gap(px(0.))
+            // The active item in view (the language menu opens at the current one).
+            if menu.act >= 0 && self.menu_shown.get() != (menu.gen_n, menu.act) {
+                self.menu_shown.set((menu.gen_n, menu.act));
+                let before = menu.query_on as usize + (!menu.label.is_empty()) as usize;
+                let seps = menu.items.iter().take(menu.act as usize + 1).filter(|it| it.sep).count();
+                self.menu_scroll.scroll_to_item(before + seps + menu.act as usize);
+            }
+            let mut panel = w::menu_panel("nt-menu").w(T::NOTES_MENU_W).max_h(T::NOTES_MENU_MAX_H).overflow_y_scroll().track_scroll(&self.menu_scroll).p(T::SP_4).gap(px(0.))
                 .on_mouse_down_out(|_, _, cx| super::close_float(cx));
             if menu.query_on { panel = panel.child(div().pb(T::SP_6).child(w::input(&self.query_in))); }
             if !menu.label.is_empty() { panel = panel.child(div().px(T::SP_8).pt(T::SP_6).pb(T::SP_2).text_size(T::TEXT_11).text_color(T::text_muted()).child(menu.label.clone())); }
@@ -870,13 +942,24 @@ impl PlaceView {
                 panel = panel.child(w::key_row(sid(format!("nt-mi-{i}")), it.k.clone(), it.name.clone(), it.d.clone(), it.check, it.danger, i as i32 == menu.act)
                     .on_click(move |_, _, cx| super::menu_pick(i as i32, cx)));
             }
-            out.push(deferred(anchored().position(point(px(x), px(menu.y))).snap_to_window_with_margin(T::SP_8).child(panel)).with_priority(2).into_any_element());
+            // Under its line; with no room below, above the line (the web's
+            // place(): top + 330 past the window: the line's top - 330).
+            let room = f32::from(T::NOTES_MENU_MAX_H) + 10.;
+            let line = f32::from(T::TEXT_15) * T::LH_CHAT;
+            let y = if menu.y + room > f32::from(win.height) { (menu.y - line - 6. - room).max(8.) } else { menu.y };
+            out.push(deferred(anchored().position(point(px(x), px(y))).snap_to_window_with_margin(T::SP_8).child(panel)).with_priority(2).into_any_element());
         }
         if fmt.open {
-            let mut bar = div().id("nt-fmt").occlude().flex().items_center().gap(T::SP_2).p(T::SP_4).bg(T::bg_secondary()).border_1().border_color(T::border()).rounded(T::R_FIELD).shadow_lg();
+            // (The shared menu panel, as a row.)
+            let (size, me) = (self.fmt_size.clone(), cx.entity().downgrade());
+            let measure = canvas(move |b, _, cx| {
+                let now = (f32::from(b.size.width), f32::from(b.size.height));
+                if size.get() != now { size.set(now); if let Some(me) = me.upgrade() { cx.defer(move |cx| me.update(cx, |_, cx| cx.notify())); } }
+            }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
+            let mut bar = w::menu_panel("nt-fmt").relative().flex_row().items_center().gap(T::SP_2).p(T::SP_4).child(measure);
             if !fmt.link {
                 bar = bar.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                    .child(grip("__fmt", "", "Drag the selected text onto a chat or terminal", 1., false));
+                    .child(grip("__fmt", "", "Drag the selected text onto a chat or terminal", 1., false, cx));
                 for (a, label, tip) in [("bold", "B", "Bold (Ctrl+B)"), ("italic", "I", "Italic (Ctrl+I)"), ("underline", "U", "Underline (Ctrl+U)"), ("strike", "S", "Strikethrough (Ctrl+Shift+S)"), ("code", "</>", "Code (Ctrl+E)"), ("link", "Link", "Link (Ctrl+K)")] {
                     bar = bar.child(w::ghost(sid(format!("nt-fmt-{a}")), label).tooltip(tip).on_click(move |_, _, cx| super::fmt_act(a, cx)));
                 }
@@ -888,8 +971,13 @@ impl PlaceView {
                     .child(div().w(T::NOTES_LINK_W).child(w::input(&self.link_in)));
                 if fmt.has_link { bar = bar.child(w::ghost("nt-link-rm", "Remove").tooltip("Remove the link").on_click(|_, _, cx| super::link_apply("", cx))); }
             }
-            let y = (fmt.y - f32::from(T::SP_40 + T::SP_8)).max(f32::from(T::SP_8));
-            let x = (fmt.x - f32::from(T::NOTES_MENU_W)).max(f32::from(T::SP_8));
+            // Centred over the selection, 8 px above it (below it when there
+            // is no room above), kept 8 px inside the window.
+            let (bw, bh) = self.fmt_size.get();
+            let line = f32::from(T::TEXT_15) * T::LH_CHAT;
+            let above = fmt.y - bh - 8.;
+            let y = if above < 8. { fmt.y + line + 8. } else { above };
+            let x = (fmt.x - bw / 2.).min(f32::from(win.width) - bw - 8.).max(8.);
             out.push(deferred(anchored().position(point(px(x), px(y))).snap_to_window_with_margin(T::SP_8).child(bar)).with_priority(2).into_any_element());
         }
         out

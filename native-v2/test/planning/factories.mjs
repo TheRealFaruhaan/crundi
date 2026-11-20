@@ -90,6 +90,24 @@ export async function run(T_, t) {
   await fe('ed', 'rounds', '5');
   await T.until('the round limit changes', (p) => E(p).edges.some((e) => e.label === 'max 5'));
   await T.until('it saves and checks out', (p) => E(p).saveLabel === 'Saved' && !E(p).draft, 10000);
+  // The Dry run walks the flow without Claude (the engine, here): the Manager has the work, hands it on.
+  await fx('e-tab', 'dry');
+  await fx('e-dry-start');
+  const dr = await T.until('the dry run starts with someone at work', (p) => E(p).dry?.on && E(p).dry.tokens.length >= 1);
+  await fx('e-dry-handoff', E(dr).dry.tokens[0].id, '');
+  await T.until('a handoff moves it on and is logged', (p) => E(p).dry.log.some((l) => /handed off/.test(l)) && E(p).dry.handoffs >= 1);
+  await fx('e-dry-end');
+  await T.until('End leaves the dry run', (p) => E(p).dry && !E(p).dry.on);
+  // The '/' skills menu in the description (when this machine has skills).
+  await fx('e-settings');
+  await T.until('the factory settings', (p) => E(p).pane?.mode === 'settings');
+  await T.act('factories-slash', 'description', 'Use /');
+  const sl = await T.props();
+  if (E(sl).slash?.items?.length) {
+    const sk = E(sl).slash.items[0];
+    await T.act('factories-slash-pick', sk);
+    await T.until('picking a skill writes its name', (p) => !E(p).slash && E(p).pane?.mode === 'settings');
+  }
   await sleep(300); await T.snap('planning', 'factories-editor-new');
   await fx('e-back');
   const two = await T.until('two factories in the library', (p) => F(p).sub === '' && F(p).library.factories.length === 2);
@@ -127,6 +145,14 @@ export async function run(T_, t) {
   await T.until('the step pane', (p) => V(p).sel && /working|not reached|done|waiting|deciding/.test(V(p).now));
   await fx('v-tab', 'timeline');
   await T.until('the timeline tab', (p) => V(p).tab === 'timeline');
+  // The replay slider: to the first event, then back to live.
+  const ev = V(await T.props()).events;
+  if (ev > 1) {
+    await T.act('factories-slider', '1');
+    await T.until('the slider replays the first event', (p) => !V(p).live && V(p).at === 1);
+    await T.act('factories-slider', String(ev));
+    await T.until('at its end it is live again', (p) => V(p).live);
+  }
   await fx('v-tab', 'run');
   await fx('v-unselect');
 

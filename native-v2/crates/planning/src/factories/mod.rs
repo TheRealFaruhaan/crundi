@@ -29,6 +29,8 @@ mod parts;
 mod view;
 mod edit;
 mod dlg;
+mod valid;
+mod engine;
 
 use crundi_core::live::Event;
 use crundi_shell::Stores;
@@ -56,9 +58,6 @@ pub(crate) struct Tab {
     gn: u64,
     // What the tab shows (the Slint global's properties).
     lib_loading: bool,
-    /// The library could not be loaded (the server unreachable, say): shown
-    /// with Retry instead of an empty library (F66; the web shows it empty).
-    lib_err: String,
     factories: Vec<Card>,
     templates: Vec<Tpl>,
     runs_loading: bool,
@@ -201,7 +200,6 @@ pub fn init(cx: &mut App) {
         close: None,
         zoom: None,
     });
-    view::start_timer(cx);
 }
 
 pub fn on_signed_in(_: &Stores, cx: &mut App) {
@@ -232,6 +230,8 @@ pub fn on_tab(tab: &str, cx: &mut App) {
     } else if tab == "workbench" && panel_visible(cx) {
         panel_load(cx);
     }
+    // The run graph's poll runs only while it is on show (F52).
+    view::sync_timer(cx);
     bump(cx);
 }
 
@@ -327,16 +327,14 @@ pub(crate) fn open_run_in_tab(id: &str, cx: &mut App) {
 
 fn load_library(cx: &mut App) {
     let gn = with(cx, |s| { s.tab.gn += 1; s.tab.gn });
+    // As the web: a library that could not be read shows as empty.
     crundi_shell::call(cx, |api| {
-        let f = match api.get("/api/factories") { Ok(v) => v, Err(e) => return Ok(json!({ "err": e.to_string() })) };
+        let f = api.get("/api/factories").unwrap_or_else(|_| json!({ "factories": [] }));
         let t = api.get("/api/factory-templates").unwrap_or_else(|_| json!({ "templates": [] }));
         Ok(json!({ "f": f, "t": t }))
     }, move |r, cx| {
-        let v = match r { Ok(v) => v, Err(e) => json!({ "err": e }) };
+        let v = r.unwrap_or(Value::Null);
         if with(cx, |s| s.tab.gn != gn) { return; }
-        let err = s(&v, "err");
-        with(cx, |st| st.tab.lib_err = if err.is_empty() { String::new() } else { format!("Could not load the factories: {err}") });
-        if !err.is_empty() { with(cx, |st| st.tab.lib_loading = false); bump(cx); return; }
         let list = arr(&v["f"], "factories").to_vec();
         let tpls = arr(&v["t"], "templates").to_vec();
         with(cx, |s| s.tab.lib = Some((list, tpls)));
@@ -630,7 +628,7 @@ fn factory_card(i: usize, f: &Card) -> AnyElement {
         .child(div().flex_1())
         .child(div().flex().flex_wrap().gap(T::SP_6)
             .child(btn(("fx-edit", i), "Edit", Some(IconName::Pencil), "primary", true, false).on_click(a("edit", id.clone())))
-            .child(btn(("fx-start", i), "Start", Some(IconName::Play), "", f.runnable, false).on_click(a("start-one", id.clone())))
+            .child(btn(("fx-start", i), "Start", Some(IconName::Play), "", f.runnable, false).when(!f.runnable, |b| b.tooltip("Fix it in the editor first")).on_click(a("start-one", id.clone())))
             .child(btn(("fx-copy", i), "Copy", Some(IconName::Copy), "ghost", true, false).on_click(a("copy", id.clone())))
             .child(btn(("fx-export", i), "Export", Some(IconName::Download), "ghost", true, false).on_click(a("export", id.clone())))
             .child(btn(("fx-delete", i), "Delete", Some(IconName::Trash), "ghost-danger", true, false).on_click(a("delete", id))))
@@ -694,13 +692,7 @@ fn tab_page(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElemen
             if rf(fx, |s| s.tab.clean_loading) { body = body.child(note("note", "Looking for leftovers…")); } else { body = body.gap(T::SP_10).child(cleanup_body(fx, window, cx)); }
         }
         _ => {
-            let (loading, cards, tpls, err) = rf(fx, |s| (s.tab.lib_loading, s.tab.factories.clone(), s.tab.templates.clone(), s.tab.lib_err.clone()));
-            if !err.is_empty() {
-                let body = body.child(w::error_state("fx-retry", err, |_, _, cx| { with(cx, |s| { s.tab.lib_err.clear(); s.tab.lib_loading = true; }); load_library(cx); bump(cx); }));
-                return div().relative().flex().flex_col().size_full().min_h_0()
-                    .child(parts::probe(cx.entity(), "fx-tab", |_, _| {}))
-                    .child(head).child(body).into_any_element();
-            }
+            let (loading, cards, tpls) = rf(fx, |s| (s.tab.lib_loading, s.tab.factories.clone(), s.tab.templates.clone()));
             let cols = lib_cols(&fx.p);
             body = body.child(div().relative().w_full().h(px(1.)).child(parts::probe(cx.entity(), "fx-lib", |_, _| {})));
             if loading { body = body.child(note("note", "Loading…")); }
@@ -760,8 +752,8 @@ fn panel_view(_key: &str, fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>
     let body = match state.as_str() {
         "live" => view::render(fx, window, cx),
         "idle" => panel_idle(fx),
-        "none" => w::empty("Open a project first.").into_any_element(),
-        _ => w::loading("Loading…").into_any_element(),
+        // As the web: nothing while it loads, or with no project open.
+        _ => div().into_any_element(),
     };
     div().flex().flex_col().size_full().min_h_0().bg(T::bg()).child(body)
         .children(dlg::render(fx, window, cx))
@@ -813,6 +805,12 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         "key" => { edit::key(&a(0), cx); json!({ "ok": true }) }
         "pane" => { if a(0) == "v" { view::pane_click(cx) } else { edit::pane_click(cx) } json!({ "ok": true }) }
         "badge" => json!({ "ok": true, "badge": with(cx, |s| s.badge.clone()) }),
+        // The editor's '/' skills menu: type into a skill field (question, prompt,
+        // description, persona), then pick one of what it offers (by name, or the one the keys are on).
+        "slash" => json!({ "ok": parts::slash_type(&format!("ed|{}", a(0)), &a(1), window, cx) }),
+        "slash-pick" => { let k = parts::pwith(cx, |p| p.slash.as_ref().map(|m| m.key.clone())).unwrap_or_default(); let nm = a(0); json!({ "ok": parts::slash_pick(&k, (!nm.is_empty()).then_some(nm.as_str()), window, cx) }) }
+        // The replay bar's slider: set it to an event (its last: live).
+        "slider" => { act("v-at", &a(0), "", cx); json!({ "ok": true }) }
         // GPUI: the confirm and the prompt (the widgets' ask) answered here
         // until the driver's dialog-answer reaches them (shared/requests.md).
         "dialog" => { let ok = a(0) == "true"; let v = a(1); json!({ "ok": w::ask_answer(ok, (!v.is_empty()).then_some(v), window, cx) }) }
@@ -830,7 +828,7 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
     let f = with(cx, |s| json!({
         "view": s.tab.view, "sub": s.tab.sub, "subError": s.tab.sub_error, "badge": s.badge,
         "library": {
-            "loading": s.tab.lib_loading, "error": s.tab.lib_err, "empty": s.tab.factories.is_empty(), "cols": cols,
+            "loading": s.tab.lib_loading, "empty": s.tab.factories.is_empty(), "cols": cols,
             "factories": s.tab.factories.iter().map(|c| json!({ "id": c.id, "name": c.name, "runnable": c.runnable, "chip": c.chip, "desc": c.desc, "meta": c.meta })).collect::<Vec<_>>(),
             "templates": s.tab.templates.iter().map(|c| json!({ "id": c.id, "name": c.name, "team": c.team })).collect::<Vec<_>>(),
         },

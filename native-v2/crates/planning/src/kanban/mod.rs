@@ -48,9 +48,10 @@ pub struct Drag {
     pub(crate) target: Option<(String, usize, String)>,
 }
 
-/// A card's attachments strip, under its paperclip (x, y: the button's bottom right).
+/// A card's attachments strip, against its paperclip (`btn`: the button's
+/// box on the window; `w`: the card's width), as the web's placePop.
 #[derive(Clone, PartialEq)]
-pub(crate) struct Clip { pub task: String, pub x: f32, pub y: f32, pub w: f32 }
+pub(crate) struct Clip { pub task: String, pub btn: Box4, pub w: f32 }
 
 /// Every column's and card's box on the window, as last painted (for the
 /// drop target and the driver). Written while painting, never notified.
@@ -65,6 +66,8 @@ pub(crate) struct Boxes {
     /// A press began on a card at rest: it stays at rest until the release
     /// (its click is its own, card_el.rs).
     pub pressing: bool,
+    /// A press began on a subtask row (its own drag; the card's press skips it).
+    pub sub_press: bool,
 }
 
 pub struct KStore {
@@ -415,17 +418,22 @@ pub(crate) fn act(a: &str, task_id: &str, extra: &str, window: &mut Window, cx: 
     }
 }
 
+/// A control's box as last painted (a card's paperclip, a subtask's "…"):
+/// where its pop opens.
+pub(crate) fn control_box(task: &str, ctl: &str, cx: &App) -> Option<Box4> {
+    store(cx).read(cx).boxes.borrow().controls.iter().find(|(t, c, _)| t == task && c == ctl).map(|x| x.2)
+}
+
 /// A click on a control of a card at rest (card_el.rs): what the live one does.
-pub(crate) fn click_control(task: &str, ctl: &str, at: Point<Pixels>, card_w: Pixels, window: &mut Window, cx: &mut App) {
-    let (x, y) = (f32::from(at.x + crundi_theme::T::SP_12), f32::from(at.y + crundi_theme::T::SP_12));
+pub(crate) fn click_control(task: &str, ctl: &str, btn: Box4, card_w: Pixels, window: &mut Window, cx: &mut App) {
     match ctl.split(':').collect::<Vec<_>>().as_slice() {
-        ["clip"] => clip_open(task, x, y, f32::from(card_w), cx),
+        ["clip"] => clip_open(task, btn, f32::from(card_w), cx),
         ["menu"] => act("card-menu", task, "", window, cx),
         ["mm"] => act("goto-mindmap", task, "", window, cx),
         ["sub"] => act("add-subtask", task, "", window, cx),
         ["tmedia", td] => media_todo(task, td, cx),
         ["tick", td, done] => toggle_todo(task, td, *done != "true", cx),
-        ["more", td] => todo_menu(task, td, x, y, cx),
+        ["more", td] => todo_menu(task, td, btn, cx),
         _ => {}
     }
 }
@@ -434,8 +442,10 @@ pub(crate) fn toggle_todo(t: &str, td: &str, done: bool, cx: &mut App) {
     post(cx, json!({ "action": "updateTodo", "taskId": t, "todoId": td, "done": done }), reload);
 }
 
-/// The subtask's "…": the shared menu at (x, y), its right edge there (the web's .kt-pop).
-pub(crate) fn todo_menu(t: &str, td: &str, x: f32, y: f32, cx: &mut App) {
+/// The subtask's "…": the shared menu under the button, its right edge on
+/// the button's (the web's .kt-pop, placePop).
+pub(crate) fn todo_menu(t: &str, td: &str, btn: Box4, cx: &mut App) {
+    let (x, y) = (btn.x + btn.w, btn.y + btn.h + 4.);
     let n = with(cx, |k| k.media_todo.get(td).map(|v| v.len()).unwrap_or(0));
     let (t, td) = (t.to_string(), td.to_string());
     let attach = if n > 0 { format!("Attach media  {n}") } else { "Attach media".to_string() };
@@ -482,8 +492,9 @@ pub(crate) fn media_todo(t: &str, td: &str, cx: &mut App) {
     media_open("Subtask media", crate::media::Scope::linked(json!({ "type": "todo", "taskId": t, "todoId": td }), Some(p)), cx);
 }
 
-pub(crate) fn clip_open(t: &str, x: f32, y: f32, wd: f32, cx: &mut App) {
-    with(cx, |k| { let same = k.clip.as_ref().is_some_and(|c| c.task == t); k.clip = if same { None } else { Some(Clip { task: t.to_string(), x, y, w: wd }) }; });
+/// The paperclip: its strip opens (or, open, closes).
+pub(crate) fn clip_open(t: &str, btn: Box4, wd: f32, cx: &mut App) {
+    with(cx, |k| { let same = k.clip.as_ref().is_some_and(|c| c.task == t); k.clip = if same { None } else { Some(Clip { task: t.to_string(), btn, w: wd }) }; });
     refresh(cx);
 }
 
@@ -570,8 +581,8 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         "kanban-type-todo" => { let i = line(true, window, cx); let v = a(0); i.update(cx, |s, cx| s.set_value(v, window, cx)); ok }
         "kanban-commit-task" => { commit(false, a(0), a(1) == "true", window, cx); ok }
         "kanban-commit-todo" => { commit(true, a(0), a(1) == "true", window, cx); ok }
-        "kanban-todo-menu" => { todo_menu(&a(0), &a(1), a(2).parse().unwrap_or(400.0), a(3).parse().unwrap_or(300.0), cx); ok }
-        "kanban-clip" => { clip_open(&a(0), a(1).parse().unwrap_or(600.0), a(2).parse().unwrap_or(300.0), 300.0, cx); ok }
+        "kanban-todo-menu" => { let b = control_box(&a(0), &format!("more:{}", a(1)), cx).unwrap_or(Box4 { x: a(2).parse().unwrap_or(400.0), y: a(3).parse().unwrap_or(300.0), w: 0., h: 0. }); todo_menu(&a(0), &a(1), b, cx); ok }
+        "kanban-clip" => { let b = control_box(&a(0), "clip", cx).unwrap_or(Box4 { x: a(1).parse().unwrap_or(600.0), y: a(2).parse().unwrap_or(300.0), w: 0., h: 0. }); clip_open(&a(0), b, 300.0, cx); ok }
         // The boxes are taken as the views paint: nothing to do but answer.
         "kanban-measure" => ok,
         "kanban-move" => { let i = a(2).parse::<usize>().unwrap_or(0); post(cx, json!({ "action": "moveTask", "taskId": a(0), "status": a(1), "index": i }), reload); ok }
@@ -582,7 +593,8 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
 }
 
 /// This screen's state for the driver (native-gpui's names).
-pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
+pub fn state(_: &Stores, window: &mut Window, cx: &mut App) -> Value {
+    let vp = window.viewport_size();
     let st = store(cx);
     let k = st.read(cx);
     let d = k.drag.read(cx);
@@ -597,7 +609,8 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         "history": k.history.iter().map(|r| json!({ "text": r.text, "ts": r.sub })).collect::<Vec<_>>(),
         "taskDraft": input_value(&k.task_input, cx), "todoDraft": input_value(&k.todo_input, cx),
         "drag": match &d.drag { None => Value::Null, Some(g) => { let t = d.target.clone(); json!({ "id": g.id, "status": t.as_ref().map(|x| x.0.clone()).unwrap_or_default(), "index": t.as_ref().map(|x| x.1 as i64).unwrap_or(-1), "before": t.map(|x| x.2).unwrap_or_default() }) } },
-        "clip": match &k.clip { None => Value::Null, Some(c) => json!({ "task": c.task, "items": k.media_task.get(&c.task).map(|v| v.iter().map(|it| { let id = s(it, "id"); json!({ "kind": s(it, "kind"), "image": k.thumbs.get(&id).is_some_and(|x| x.is_some()), "id": id }) }).collect::<Vec<_>>()).unwrap_or_default() }) },
+        "clip": match &k.clip { None => Value::Null, Some(c) => json!({ "task": c.task,
+            "pop": (pop_json(view::pop_rect(c, vp))), "items": k.media_task.get(&c.task).map(|v| v.iter().map(|it| { let id = s(it, "id"); json!({ "kind": s(it, "kind"), "image": k.thumbs.get(&id).is_some_and(|x| x.is_some()), "id": id }) }).collect::<Vec<_>>()).unwrap_or_default() }) },
         "boxes": {
             "cols": merged_cols(&b.cols).iter().map(|(st, b)| json!({ "status": st, "x": b.x, "y": b.y, "w": b.w, "h": b.h })).collect::<Vec<_>>(),
             "cards": b.cards.iter().map(|(st, id, b)| json!({ "status": st, "id": id, "x": b.x, "y": b.y, "w": b.w, "h": b.h })).collect::<Vec<_>>(),
@@ -605,6 +618,8 @@ pub fn state(_: &Stores, _window: &mut Window, cx: &mut App) -> Value {
         },
     })
 }
+
+fn pop_json(r: Bounds<Pixels>) -> Value { json!({ "x": f32::from(r.origin.x), "y": f32::from(r.origin.y), "w": f32::from(r.size.width), "h": f32::from(r.size.height) }) }
 
 fn card_json(cd: &Card) -> Value {
     json!({ "id": cd.id, "title": cd.title, "desc": cd.desc, "mm": cd.mm, "media": cd.media, "compact": cd.compact, "menuOpen": cd.menu_open, "adding": cd.adding, "done": cd.done, "total": cd.total,

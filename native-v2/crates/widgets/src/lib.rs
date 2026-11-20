@@ -39,10 +39,11 @@ pub mod tip; pub use tip::{tip, tooltip};
 mod icon; pub use icon::icon;
 pub mod cru_mark; pub use cru_mark::cru_mark;
 pub mod brand_mark; pub use brand_mark::{boot_mark, brand_head, brand_mark, sign_in_mark, warm_marks};
+pub mod scrollbar; pub use scrollbar::scrollbar;
 pub mod ref_drag; pub use ref_drag::{drag_ref, drag_ref_row, edge_scroll, ref_target, ref_target_drag, ref_text, RefDrag, Scroller};
 pub mod textarea; pub use textarea::{code_editor, code_state, message_box, textarea, Editor, EditorState, Textarea, TextareaState};
 pub mod square; pub use square::{square_button, SquareLook};
-pub mod dropdown; pub use dropdown::{dropdown, dropdown_of};
+pub mod dropdown; pub use dropdown::{dropdown, dropdown_of, dropdown_off};
 pub mod tone_button; pub use tone_button::tone_button;
 pub mod stop_button; pub use stop_button::stop_button;
 pub mod choice; pub use choice::choice_mark;
@@ -59,14 +60,15 @@ pub mod kbd; pub use kbd::kbd;
 pub mod key_row; pub use key_row::key_row;
 pub mod page_item; pub use page_item::page_item;
 pub mod meter; pub use meter::meter;
-pub mod seg_tabs; pub use seg_tabs::{seg_tabs, SegTab};
+pub mod seg_tabs; pub use seg_tabs::{seg_tabs, seg_tabs_marked, SegTab};
+pub mod slider; pub use slider::slider;
 pub mod arm_button; pub use arm_button::{arm_button, ArmButton};
 pub mod select; pub use select::select;
 pub mod link; pub use link::{link, quiet_link};
 pub mod spark; pub use spark::{spark, Series};
 pub mod paint;
 pub mod toast; pub use toast::{toast_layer, Toast, ToastLayer};
-pub mod fields; pub use fields::{date_input, date_state, date_value, datetime_state, datetime_value, number_input, number_state, number_value, option_buttons, readonly_box, time_input, time_state, time_value, DatePickerEvent, ReadOnly, TimeFieldEvent};
+pub mod fields; pub use fields::{set_date, set_time, date_input, date_state, date_value, datetime_state, datetime_value, number_input, number_state, number_value, option_buttons, readonly_box, time_input, time_state, time_value, DatePickerEvent, ReadOnly, TimeFieldEvent};
 
 mod head_button;
 pub use head_button::{head_button, menu_item, menu_panel, HeadContent, HeadLook};
@@ -329,6 +331,14 @@ pub fn badge(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// A quiet count beside a heading (the web's `.kanban-col-head .count`: a
+/// grey pill, secondary text, tabular figures).
+pub fn count_pill(text: impl Into<SharedString>) -> Div {
+    div().flex_none().min_w(T::SP_20 + T::SP_2).h(T::SP_16 + T::SP_2).px(T::SP_6).rounded(T::R_PILL).bg(T::bg_tertiary())
+        .flex().items_center().justify_center().text_size(T::TEXT_11).font_weight(T::W_SEMIBOLD).text_color(T::text_secondary())
+        .child(text.into())
+}
+
 /// A count on a tab or a button (the inbox, the factories); "" draws nothing.
 pub fn count_badge(text: impl Into<SharedString>) -> Div {
     let t: SharedString = text.into();
@@ -517,6 +527,22 @@ pub fn outline_button(id: impl Into<ElementId>, icon: IconName, label: impl Into
 pub fn empty(text: impl Into<SharedString>) -> Div {
     div().flex().flex_col().flex_1().items_center().justify_center().gap(T::SP_12).p(T::SP_24)
         .text_size(T::TEXT_14).text_color(T::text_muted()).child(text.into())
+}
+
+/// Nothing to show, with its picture (the web's `.services-empty`: the icon
+/// faint and large over the line).
+pub fn empty_icon(icon: IconName, text: impl Into<SharedString>) -> Div {
+    div().flex().flex_col().flex_1().items_center().justify_center().gap(T::SP_12).p(T::SP_24)
+        .text_size(T::TEXT_14).text_color(T::text_muted())
+        .child(div().flex().opacity(0.4).child(icon_of(icon, T::SP_40)))
+        .child(text.into())
+}
+
+/// A recessed group of fields inside a form (the web's `.sm-cond`: the
+/// tertiary ground, a subtle border, small corners), its children wrapping.
+pub fn inset() -> Div {
+    div().flex().flex_wrap().items_center().gap(T::SP_6).px(T::SP_8 + px(1.)).py(T::SP_6 + px(1.)).rounded(T::R_CONTROL)
+        .border_1().border_color(T::border_subtle()).bg(T::bg_tertiary())
 }
 
 /// A load that failed: the server's words in red, and Retry.

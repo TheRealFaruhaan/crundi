@@ -32,6 +32,8 @@ struct St {
     projects: Vec<(String, String)>,
     factories: Vec<Value>,
     factory_labels: Vec<String>,
+    /// The drafts: shown, not pickable (the web's disabled options).
+    factory_off: Vec<bool>,
     project_i: usize,
     factory_i: usize,
     merge_i: usize,
@@ -52,6 +54,11 @@ struct St {
     save_gen: u64,
     focus: bool,
 }
+
+/// After a start: secrets unlocked with an old lock, offered a passphrase
+/// (crundi-secret-lock.js upgrade()), one at a time.
+#[derive(Default)]
+struct Up { queue: Vec<(String, String, String, String)>, open: bool, a: String, b: String, err: String, busy: bool }
 
 #[derive(Default)]
 struct Pin { list: Vec<Value>, i: usize, pins: serde_json::Map<String, Value>, value: String, err: String, open: bool, name: String, step: String, sub: String, pass: bool, busy: bool }
@@ -82,7 +89,7 @@ struct Hook { url: String, signed: bool, secret: String, hint: String, curl: Str
 type PinThen = Box<dyn FnOnce(Option<Value>, &mut App)>;
 
 #[derive(Default)]
-pub(crate) struct D { st: St, pin: Pin, tr: Tr, pin_then: Option<PinThen>, handles: HashMap<&'static str, Handles> }
+pub(crate) struct D { st: St, pin: Pin, up: Up, tr: Tr, pin_then: Option<PinThen>, handles: HashMap<&'static str, Handles> }
 
 struct Handles { focus: FocusHandle, scroll: ScrollHandle }
 
@@ -98,7 +105,7 @@ const BUSY: [&str; 3] = ["manager", "queue", "skip"];
 const KINDS: [&str; 3] = ["kanban", "schedule", "webhook"];
 
 /// One of these is open (the pointer goes to it only).
-pub fn modal_open(cx: &mut App) -> bool { with(cx, |d| d.st.open || d.tr.open || d.pin.open) || fwith(cx, |f| f.chat_open) }
+pub fn modal_open(cx: &mut App) -> bool { with(cx, |d| d.st.open || d.tr.open || d.pin.open || d.up.open) || fwith(cx, |f| f.chat_open) }
 
 pub fn close_all(cx: &mut App) {
     with(cx, |d| *d = D::default());
@@ -126,7 +133,7 @@ pub fn open_start(o: StartOpts, cx: &mut App) {
         if list.is_empty() { with(cx, |d| { d.st.loading = false; d.st.empty = true; }); return; }
         let fi = list.iter().position(|f| s(f, "id") == want && !want.is_empty()).or_else(|| list.iter().position(|f| b(f, "runnable"))).unwrap_or(0);
         let labels: Vec<String> = list.iter().map(|f| format!("{}{}", s(f, "name"), if b(f, "runnable") { String::new() } else { format!(" (draft: {} to fix)", n(f, "errorCount") as i64) })).collect();
-        with(cx, |d| { d.st.factories = list.clone(); d.st.factory_i = fi; d.st.factory_labels = labels; });
+        with(cx, |d| { d.st.factories = list.clone(); d.st.factory_i = fi; d.st.factory_labels = labels; d.st.factory_off = list.iter().map(|f| !b(f, "runnable")).collect(); });
         render_sections(cx, None);
         with(cx, |d| { d.st.loading = false; d.st.empty = false; });
         precheck(cx);
@@ -259,7 +266,19 @@ fn start2(anyway: bool, pins: Option<Value>, cx: &mut App) {
             parts::toast_ok(cx, "Factory started.");
             let run_id = s(&r["run"], "id");
             match then { Then::Viewer => super::open_sub("viewer", &run_id, cx), Then::Panel => super::panel_load(cx), Then::None => {} }
-            // Known gap: secrets unlocked with an old lock are not offered a passphrase here (the vault is Operations').
+            // Secrets unlocked with an old lock: offer to set a passphrase now,
+            // with what was just typed (the run keeps working: the server moves
+            // its kept lock to the new one).
+            if let (Some(p), Some(ids)) = (pins.as_ref(), r.get("upgradable").and_then(|x| x.as_array())) {
+                let known = with(cx, |d| d.st.to_unlock.clone());
+                let q: Vec<(String, String, String, String)> = ids.iter().filter_map(|x| x.as_str()).filter_map(|id| {
+                    let pin = s(p, id);
+                    if pin.is_empty() { return None; }
+                    let x = known.iter().find(|k| s(k, "id") == id);
+                    Some((id.to_string(), x.map(|k| s(k, "name")).unwrap_or_default(), x.map(|k| s(k, "lock")).unwrap_or_default(), pin))
+                }).collect();
+                if !q.is_empty() { upgrade(q, cx); }
+            }
             return;
         }
         if s(&r, "field") == "secrets" { with(cx, |d| d.st.info = vec![("err".into(), format!("{} Press Start to type it again.", parts::err_text(&r, "A secret could not be unlocked.")), String::new())]); return; }
@@ -332,6 +351,59 @@ fn pin_unlock(cx: &mut App) {
         with(cx, |d| { d.pin.pins.insert(id, json!(pin)); d.pin.i += 1; });
         show_pin(cx);
     });
+}
+
+// ─── A secret's new lock (crundi-secret-lock.js upgrade) ───
+
+const RULE: &str = "At least 8 characters, and not only digits";
+fn passphrase_ok(t: &str) -> bool { t.chars().count() >= 8 && t.chars().any(|c| !c.is_ascii_digit()) }
+
+/// Asked only when the server lists 'secret-upgrade'.
+fn upgrade(q: Vec<(String, String, String, String)>, cx: &mut App) {
+    super::caps(cx, move |caps, cx| {
+        if !caps.iter().any(|c| c == "secret-upgrade") { return; }
+        let show = with(cx, |d| { let idle = !d.up.open && d.up.queue.is_empty(); d.up.queue.extend(q); idle });
+        if show { next_upgrade(cx); }
+    });
+}
+
+fn next_upgrade(cx: &mut App) {
+    parts::pwith(cx, |p| parts::forget(p, "up|"));
+    with(cx, |d| { let open = !d.up.queue.is_empty(); d.up = Up { queue: std::mem::take(&mut d.up.queue), open, ..Default::default() }; });
+}
+
+/// What is wrong with the new passphrase so far ("" nothing yet).
+fn up_why(a: &str, b: &str) -> String {
+    if a.is_empty() { return String::new(); }
+    if !passphrase_ok(a) { return format!("{RULE}."); }
+    if !b.is_empty() && b != a { return "The two do not match.".into(); }
+    String::new()
+}
+
+fn up_go(cx: &mut App) {
+    let job = with(cx, |d| {
+        let u = &d.up;
+        if u.busy || !passphrase_ok(&u.a) || u.a != u.b { return None; }
+        u.queue.first().map(|x| (x.0.clone(), x.3.clone(), u.a.clone()))
+    });
+    let Some((id, old, np)) = job else { return };
+    with(cx, |d| { d.up.busy = true; d.up.err.clear(); });
+    parts::post(cx, "/api/secrets", json!({ "action": "edit", "id": id, "pin": old, "newPin": np }), |r, cx| {
+        if !with(cx, |d| d.up.open) { return; }
+        if b(&r, "ok") {
+            parts::toast_ok(cx, "Lock updated");
+            with(cx, |d| { if !d.up.queue.is_empty() { d.up.queue.remove(0); } });
+            next_upgrade(cx);
+            return;
+        }
+        let e = { let x = s(&r, "error"); if x.is_empty() { "Could not update it.".to_string() } else if x.contains("Unknown secrets action") { "This server does not support this yet. Update the server to use it.".into() } else { x } };
+        with(cx, |d| { d.up.busy = false; d.up.err = e; });
+    });
+}
+
+fn up_later(cx: &mut App) {
+    with(cx, |d| { if !d.up.queue.is_empty() { d.up.queue.remove(0); } });
+    next_upgrade(cx);
 }
 
 // ─── A trigger ───
@@ -490,6 +562,8 @@ pub fn act(a: &str, x: &str, _y: &str, cx: &mut App) {
         }
         "st-open-active" => { close_start(cx); super::open_run_in_tab(x, cx); }
         "pin-cancel" => pin_done(None, cx),
+        "pin-up-later" => up_later(cx),
+        "pin-up-go" => up_go(cx),
         "pin-skip" => { with(cx, |d| d.pin.i += 1); show_pin(cx); }
         "pin-unlock" => pin_unlock(cx),
         "tr-close" => close_trigger(cx),
@@ -551,6 +625,8 @@ pub fn edit(form: &str, k: &str, v: &str, cx: &mut App) {
             _ => {}
         },
         "pin" if k == "value" => with(cx, |d| d.pin.value = v.to_string()),
+        "pin" if k == "up-a" => with(cx, |d| d.up.a = v.to_string()),
+        "pin" if k == "up-b" => with(cx, |d| d.up.b = v.to_string()),
         "trig" => {
             let i: usize = v.parse().unwrap_or(0);
             let mut rerender = false;
@@ -590,6 +666,7 @@ pub fn edit(form: &str, k: &str, v: &str, cx: &mut App) {
 
 pub fn props(cx: &mut App) -> Value {
     with(cx, |d| {
+        let up_hint = { let w2 = up_why(&d.up.a, &d.up.b); if w2.is_empty() { format!("{RULE}.") } else { w2 } };
         let st = &d.st;
         let tr = &d.tr;
         let c = &tr.cur;
@@ -600,6 +677,7 @@ pub fn props(cx: &mut App) -> Value {
                 "files": st.files.iter().map(|p| p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default()).collect::<Vec<_>>(),
                 "info": st.info.iter().map(|(k, t, id)| json!({ "kind": k, "text": t, "id": id })).collect::<Vec<_>>() },
             "pin": { "open": d.pin.open, "name": d.pin.name, "step": d.pin.step, "err": d.pin.err, "pass": d.pin.pass },
+            "upgrade": { "open": d.up.open, "name": d.up.queue.first().map(|x| x.1.clone()).unwrap_or_default(), "err": d.up.err, "hint": up_hint, "ready": passphrase_ok(&d.up.a) && d.up.a == d.up.b },
             "trigger": { "open": tr.open, "loading": tr.loading, "empty": tr.empty, "title": tr.title, "editing": tr.saved.is_some(), "name": s(c, "name"),
                 "kind": KINDS.iter().position(|k| *k == s(c, "kind")).unwrap_or(0), "crTitle": s(&c["cr"], "title"), "crHead": model::trigger_cr_head(&s(c, "kind")),
                 "busy": BUSY.iter().position(|m| *m == s(c, "ifBusy")).unwrap_or(1), "enabled": c.get("enabled").map(|x| x != &json!(false)).unwrap_or(true),
@@ -623,7 +701,8 @@ fn modal(id: &'static str, width: Pixels, close: &'static str, title: &str, body
         on_close: Rc::new(move |_, cx| fact(close, "", "", cx)),
         on_key: Rc::new(move |e: &KeyDownEvent, _, cx| if e.keystroke.key == "escape" { fact(close, "", "", cx) }),
     };
-    let mut kids = vec![w::modal_head(match close { "st-close" => "st-x", "tr-close" => "tr-x", "chat-close" => "chat-x", _ => "pin-x" }, title.to_string(), false, move |_, _, cx| fact(close, "", "", cx)).into_any_element()];
+    // A dialog with no title (the PIN box, the lock's update) draws its own head.
+    let mut kids = if title.is_empty() { vec![] } else { vec![w::modal_head(match close { "st-close" => "st-x", "tr-close" => "tr-x", "chat-close" => "chat-x", _ => "pin-x" }, title.to_string(), false, move |_, _, cx| fact(close, "", "", cx)).into_any_element()] };
     kids.push(div().flex().flex_col().gap(T::SP_12).px(T::SP_10).pb(T::SP_10).children(body).into_any_element());
     w::overlay_modal(m, window, kids).into_any_element()
 }
@@ -639,16 +718,18 @@ fn pair(stack: bool, a: impl IntoElement, b: impl IntoElement) -> Div {
 /// Every dialog of the screen that is open, drawn over the window.
 pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> Vec<AnyElement> {
     let mut out = vec![];
-    let (st, tr, pin) = rd(fx, |d| (d.st.open, d.tr.open, d.pin.open));
+    let (st, tr, pin, up) = rd(fx, |d| (d.st.open, d.tr.open, d.pin.open, d.up.open));
     let in_graph = rf(fx, |f| f.chat_open);
     if in_graph { out.push(chat_sheet(fx, window, cx)); }
     if tr { out.push(trigger_dialog(fx, window, cx)); }
     if st { out.push(start_dialog(fx, window, cx)); }
     if pin { out.push(pin_dialog(fx, window, cx)); }
+    if up { out.push(upgrade_dialog(fx, window, cx)); }
     out
 }
 
 fn start_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
+    let off = rd(fx, |d| d.st.factory_off.clone());
     let d = rd(fx, |d| (d.st.loading, d.st.empty, d.st.projects.iter().map(|p| p.1.clone()).collect::<Vec<_>>(), d.st.factory_labels.clone(), d.st.project_i, d.st.factory_i, d.st.merge_i,
         d.st.title.clone(), d.st.title_bad, d.st.rows.clone(), d.st.files.clone(), d.st.info.clone(), d.st.go_label.clone(), d.st.go_enabled, std::mem::take(&mut d.st.focus)));
     let (loading, empty, projects, factories, pi, fi, mi, title, title_bad, rows, files, info, go_label, go_enabled, focus) = d;
@@ -659,7 +740,7 @@ fn start_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyEl
         body.push(note("note", "There are no factories yet. Create one in the Factories tab first.").into_any_element());
         body.push(div().flex().justify_end().child(btn("st-close-e", "Close", None, "ghost", true, false).on_click(|_, _, cx| fact("st-close", "", "", cx))).into_any_element());
     } else {
-        body.push(pair(stack, field("Project", "", "", sel("st-project", "start", "project", projects, pi)), field("Factory", "", "", sel("st-factory", "start", "factory", factories, fi))).into_any_element());
+        body.push(pair(stack, field("Project", "", "", sel("st-project", "start", "project", projects, pi)), field("Factory", "", "", w::dropdown_off("st-factory", factories.into_iter().map(SharedString::from).collect(), &off, fi, false, true, |i, _, cx| set("start", "factory", &i.to_string(), cx)))).into_any_element());
         // .fx-cr: the change request.
         let title_box = parts::line(&mut fx.p, "start|title", &title, "One line: what should change", false, false, parts::Commit::Change, window, cx, |v, cx| set("start", "title", &v, cx));
         if focus { parts::focus(&mut fx.p, "start|title", window, cx); }
@@ -678,9 +759,8 @@ fn start_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyEl
             let nm = f.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
             let chip = FileChip { image: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].iter().any(|e| nm.to_lowercase().ends_with(e)), name: nm };
             let is = i.to_string();
-            att = att.child(div().flex().items_center().gap(T::SP_4).h(T::CONTROL_SM - T::SP_2).max_w(T::FACTORIES_CHIP_MAX).pl(T::SP_8).pr(T::SP_4).rounded(T::R_PILL).border_1().border_color(T::border()).bg(T::bg_tertiary())
-                .child(w::icon(if chip.image { IconName::Image } else { IconName::File }, T::ICON_MD))
-                .child(div().min_w_0().truncate().text_size(T::TEXT_12).child(chip.name.clone()))
+            // .fx-chip: the file's icon, its name, its ×.
+            att = att.child(w::chip(if chip.image { IconName::Image } else { IconName::File }, chip.name.clone(), false)
                 .child(w::icon_button(("st-unattach", i), IconName::X, "Remove").on_click(move |_, _, cx| fact("st-unattach", &is, "", cx))));
         }
         att = att.child(btn("st-attach", "Attach", Some(IconName::Paperclip), "", true, false).on_click(|_, _, cx| fact("st-attach", "", "", cx)));
@@ -720,7 +800,29 @@ fn pin_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
             .child(div().flex_1().child(btn("pin-skip", "Skip", None, "", true, false).on_click(|_, _, cx| fact("pin-skip", "", "", cx))))
             .child(div().flex_1().child(btn("pin-unlock", "Unlock", Some(IconName::Lock), "primary", !busy, false).on_click(|_, _, cx| fact("pin-unlock", "", "", cx)))).into_any_element(),
     ];
-    modal("fx-pin", T::FACTORIES_PIN_W, "pin-cancel", "Unlock", body, fx, window, cx)
+    // The web's .fx-pin box: no title; its head is the lock and the secret's name.
+    modal("fx-pin", T::FACTORIES_PIN_W, "pin-cancel", "", body, fx, window, cx)
+}
+
+/// "Update this secret’s lock" (crundi-secret-lock.js drawUpgrade).
+fn upgrade_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
+    let (name, lock, a, b2, err, busy) = rd(fx, |d| { let x = d.up.queue.first().cloned().unwrap_or_default(); (x.1, x.2, d.up.a.clone(), d.up.b.clone(), d.up.err.clone(), d.up.busy) });
+    let why = up_why(&a, &b2);
+    let ready = passphrase_ok(&a) && a == b2;
+    let first = parts::line(&mut fx.p, "up|a", &a, "New passphrase", false, true, parts::Commit::Change, window, cx, |v, cx| set("pin", "up-a", &v, cx));
+    let second = parts::line(&mut fx.p, "up|b", &b2, "Confirm the passphrase", false, true, parts::Commit::Change, window, cx, |v, cx| set("pin", "up-b", &v, cx));
+    let body = vec![
+        div().flex().items_center().gap(T::SP_8).child(w::icon(IconName::Lock, T::ICON_LG)).child(div().text_size(T::TEXT_15).font_weight(T::W_SEMIBOLD).child("Update this secret\u{2019}s lock")).into_any_element(),
+        div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).child(if name.is_empty() { "This secret".to_string() } else { name }).into_any_element(),
+        div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(if lock != "passphrase" { "This secret uses an old 6-digit PIN. Set a new passphrase (8+ characters)." } else { "This secret uses an older, weaker lock. Set a passphrase (8+ characters) to seal it again; it may be the same one." }).into_any_element(),
+        first, second,
+        div().text_size(T::TEXT_11).text_color(if why.is_empty() { T::text_muted() } else { T::yellow() }).child(if why.is_empty() { format!("{RULE}.") } else { why }).into_any_element(),
+        div().min_h(T::SP_16).text_size(T::TEXT_12).text_color(T::red()).child(err).into_any_element(),
+        div().flex().justify_end().gap(T::SP_8)
+            .child(btn("pin-up-later", "Not now", None, "", !busy, false).on_click(|_, _, cx| fact("pin-up-later", "", "", cx)))
+            .child(btn("pin-up-go", if busy { "Updating…" } else { "Update" }, None, "primary", ready && !busy, false).on_click(|_, _, cx| fact("pin-up-go", "", "", cx))).into_any_element(),
+    ];
+    modal("fx-upgrade", T::FACTORIES_PIN_W, "pin-up-later", "", body, fx, window, cx)
 }
 
 fn trigger_dialog(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {

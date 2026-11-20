@@ -64,6 +64,8 @@ pub(crate) struct V {
     limits_open: bool,
     limits: Value,
     findings_open: bool,
+    /// The poll while the graph is on show (F52): none while it is hidden.
+    timer: Option<Task<()>>,
     z: f32, px: f32, py: f32, cw: f32, ch: f32,
     fitted: bool,
     active_key: String,
@@ -96,12 +98,21 @@ fn with<R>(cx: &mut App, f: impl FnOnce(&mut V) -> R) -> R { super::with_fx(cx, 
 fn rv<R>(fx: &mut Fx, f: impl FnOnce(&mut V) -> R) -> R { f(&mut fx.v) }
 fn rf<R>(fx: &mut Fx, f: impl FnOnce(&mut super::F) -> R) -> R { f(&mut fx.f) }
 
-/// Every few seconds, while the graph is on show (ACTIVITY_MS).
-pub fn start_timer(cx: &mut App) {
-    cx.spawn(async move |cx: &mut AsyncApp| loop {
+/// Every few seconds while the graph is on show (ACTIVITY_MS): a missed push
+/// must not leave it behind. The poll runs only while the graph shows (F52):
+/// started when it is shown, dropped when it is hidden or closed; with no
+/// graph on show there is no timer at all.
+pub fn sync_timer(cx: &mut App) {
+    let on = showing(cx);
+    let has = with(cx, |v| v.timer.is_some());
+    if on == has { return; }
+    if !on { with(cx, |v| v.timer = None); return; }
+    let t = cx.spawn(async move |cx: &mut AsyncApp| loop {
         cx.background_executor().timer(std::time::Duration::from_millis(3000)).await;
-        cx.update(|cx| { if showing(cx) { fetch(cx); } });
-    }).detach();
+        let go = cx.update(|cx| { if showing(cx) { fetch(cx); true } else { with(cx, |v| v.timer = None); false } });
+        if !go { break; }
+    });
+    with(cx, |v| v.timer = Some(t));
 }
 
 pub fn reset(cx: &mut App) { with(cx, |v| *v = blank()); }
@@ -127,10 +138,11 @@ pub fn open(id: &str, panel: bool, cx: &mut App) {
         super::caps(cx, |c, cx| { with(cx, |v| v.pause_opts = c.iter().any(|x| x == "factory-pause-options")); });
     }
     fetch(cx);
+    sync_timer(cx);
 }
 
 pub fn close(cx: &mut App) {
-    with(cx, |v| { v.open = false; v.chat = None; v.ui.chat = false; });
+    with(cx, |v| { v.open = false; v.chat = None; v.ui.chat = false; v.timer = None; });
 }
 
 /// The journal (only what is new) and the run's record, then drawn.
@@ -234,6 +246,7 @@ pub fn build(cx: &mut App) {
         let mut body = model::node_body(node, &f);
         if let Some(last) = done.iter().rev().find(|h| s(h, "nodeId") == id) { let sm = s(last, "summary"); if !sm.is_empty() { body = model::first(&sm, 110); } }
         let (mut doing, mut doing_who, mut doing_text, mut doing_busy) = (false, String::new(), String::new(), false);
+        let mut doing_chat_of = false;
         if live && !quiet {
             if let Some(tok) = toks.iter().find(|t| { let x = s(t, "status"); x == "work" || x == "answer" }) {
                 let emp = &employees[s(tok, "employeeId")];
@@ -242,6 +255,7 @@ pub fn build(cx: &mut App) {
                 doing_who = { let e = s(tok, "employee"); if e.is_empty() { names.get(&s(tok, "employeeId")).cloned().unwrap_or_default() } else { e } };
                 doing_text = { let t = s(act, "text"); if !t.is_empty() { t } else if s(tok, "status") == "answer" { "Deciding".into() } else { "Starting".into() } };
                 doing_busy = s(act, "state") == "working";
+                doing_chat_of = !s(emp, "chatId").is_empty();
             } else if !who.is_empty() {
                 if let Some(job) = tokens.iter().find(|t| !s(t, "job").is_empty() && s(t, "employeeId") == who && s(t, "status") == "work") {
                     if !job_nodes.iter().any(|(j, _)| *j == s(job, "id")) {
@@ -251,6 +265,7 @@ pub fn build(cx: &mut App) {
                         doing_who = { let x = s(job, "employee"); if x.is_empty() { names.get(&who).cloned().unwrap_or_default() } else { x } };
                         doing_text = if at2.is_empty() { format!("Job: {}", model::first(&s(job, "job"), 60)) } else { format!("Job: {at2}") };
                         doing_busy = s(&e["activity"], "state") == "working";
+                        doing_chat_of = !s(e, "chatId").is_empty();
                         job_nodes.push((s(job, "id"), id.clone()));
                         toks.push(json!({ "id": s(job, "id"), "status": "work" }));
                     }
@@ -273,7 +288,8 @@ pub fn build(cx: &mut App) {
             retired: !who.is_empty() && b(&employees[who.as_str()], "retired"), badge: 0, badge_level: String::new(), token, token_kind,
             doing, doing_who, doing_text, doing_busy, skills,
             outs: outs.iter().map(|h2| Out { id: h2.clone(), label: model::handle_label(node, h2), finish: h2 == "finish" }).collect(),
-            agent: model::is_agent(&ty), has_in: ty != "start",
+            agent: model::is_agent(&ty), has_in: ty != "start", doing_chat: doing_chat_of,
+            ..Default::default()
         });
         outs_of.insert(id.clone(), outs);
     }
@@ -624,10 +640,8 @@ pub fn act(a: &str, x: &str, y: &str, cx: &mut App) {
             build(cx);
         }
         "v-live" => { with(cx, |v| v.at = None); build(cx); }
-        "v-copy-curl" => {
-            cx.write_to_clipboard(ClipboardItem::new_string(format!("curl -X POST '{y}'")));
-            parts::toast(cx, "Copied.");
-        }
+        // The web copies without a word.
+        "v-copy-curl" => cx.write_to_clipboard(ClipboardItem::new_string(format!("curl -X POST '{y}'"))),
         _ => {}
     }
 }
@@ -707,15 +721,15 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
     // .ff-top
     let top = div().flex().flex_none().items_center().gap(T::SP_6).px(T::SP_8).py(T::SP_6).min_h(T::CONTROL + T::SP_10).bg(T::bg_secondary()).border_b_1().border_color(T::border())
         .when(u.back, |d| d.child(w::icon_button("v-back", IconName::ArrowLeft, "Back").on_click(a0("v-back"))))
-        .when(chat_over, |d| d.child(btn("v-graph", "Graph", Some(IconName::ArrowLeft), "primary", true, compact).on_click(a0("v-chat-close"))))
-        .child(div().min_w(T::SP_48).truncate().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).child(u.name.clone()))
+        .when(chat_over, |d| d.child(btn("v-graph", "Graph", Some(IconName::ArrowLeft), "primary", true, compact).tooltip("Back to the graph").on_click(a0("v-chat-close"))))
+        .child(div().id("v-name").min_w(T::SP_48).truncate().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).tooltip(w::tooltip(u.name.clone())).child(u.name.clone()))
         .child(w::tag(u.st_label.clone(), if u.live { parts::tone(parts::state_tone(&u.st)) } else { "" }))
         .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_11).text_color(T::text_muted()).when(!compact, |d| d.child(u.progress.clone())))
-        .when(panel && !u.chat, |d| d.child(btn("v-follow", "Follow", Some(IconName::Route), if u.follow { "primary" } else { "" }, true, compact).on_click(a0("v-follow"))))
-        .when(panel, |d| d.child(btn("v-drawer", "Details", Some(IconName::SlidersHorizontal), if u.drawer { "primary" } else { "" }, true, compact).on_click(a0("v-drawer"))))
-        .when(u.can_pause, |d| d.child(btn("v-pause", "Pause", compact.then_some(IconName::Pause), "", !u.busy, compact).on_click(a0("v-pause"))))
-        .when(u.can_resume, |d| d.child(btn("v-resume", "Resume", compact.then_some(IconName::Play), "", !u.busy, compact).on_click(a0("v-resume"))))
-        .when(u.can_stop, |d| d.child(btn("v-stop", "Stop", compact.then_some(IconName::Square), "ghost", !u.busy, compact).on_click(a0("v-stop"))));
+        .when(panel && !u.chat, |d| d.child(btn("v-follow", "Follow", Some(IconName::Route), if u.follow { "primary" } else { "" }, true, compact).tooltip("Follow: keep the view on where people are working").on_click(a0("v-follow"))))
+        .when(panel, |d| d.child(btn("v-drawer", "Details", Some(IconName::SlidersHorizontal), if u.drawer { "primary" } else { "" }, true, compact).tooltip("Details: the run and its timeline").on_click(a0("v-drawer"))))
+        .when(u.can_pause, |d| d.child(btn("v-pause", "Pause", compact.then_some(IconName::Pause), "", !u.busy, compact).tooltip("Pause").on_click(a0("v-pause"))))
+        .when(u.can_resume, |d| d.child(btn("v-resume", "Resume", compact.then_some(IconName::Play), "", !u.busy, compact).tooltip("Resume").on_click(a0("v-resume"))))
+        .when(u.can_stop, |d| d.child(btn("v-stop", "Stop", compact.then_some(IconName::Square), "ghost", !u.busy, compact).tooltip("Stop").on_click(a0("v-stop"))));
     let mut col = div().relative().flex().flex_col().size_full().min_h_0().child(parts::probe(cx.entity(), key, |_, _| {})).child(top);
     if u.pause_menu {
         col = col.child(div().flex().flex_col().gap(T::SP_6).px(T::SP_12).py(T::SP_8).bg(T::bg_card()).border_b_1().border_color(T::border())
@@ -738,14 +752,12 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
         let mut row = div().flex().flex_none().flex_wrap().gap(T::SP_6).p(T::SP_6);
         for (i, wk) in working.iter().enumerate() {
             let (chat, name) = (wk.chat.clone(), wk.name.clone());
-            row = row.child(div().id(("v-worker", i)).flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).max_w(T::FACTORIES_RIGHT).px(T::SP_10).rounded(T::R_PILL).border_1()
-                .border_color(if wk.blocked { T::factories_yellow_edge() } else if wk.busy { T::factories_green_ring() } else { T::border() })
-                .bg(T::bg_card()).when(!chat.is_empty(), |d| d.cursor_pointer().hover(|d| d.bg(T::bg_hover())))
-                .when(wk.queued, |d| d.opacity(T::FACTORIES_O_SOFT))
-                .child(w::dot(if wk.blocked { T::yellow() } else if wk.busy { T::green() } else { T::text_muted() }))
-                .child(div().flex_none().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).child(wk.name.clone()))
-                .child(div().min_w_0().truncate().text_size(T::TEXT_12).text_color(T::text_secondary()).child(wk.what.clone()))
-                .when(!chat.is_empty(), |d| d.on_click(move |_, _, cx| fact("v-person", &chat, &name, cx))));
+            // .ff-worker: who, and what they are at; busy green, blocked yellow.
+            let tone = if wk.blocked { w::PillTone::Reconnecting } else if wk.busy { w::PillTone::Connected } else { w::PillTone::Neutral };
+            let tip = if wk.queued { "Waiting for a free seat: the run's limit on people at once".to_string() } else if chat.is_empty() { String::new() } else { format!("Open {}'s transcript", wk.name) };
+            let pill = w::status_pill(("v-worker", i), None, format!("{} {}", wk.name, wk.what), tone).when(wk.queued, |d| d.opacity(T::FACTORIES_O_SOFT));
+            let pill = w::tip(pill, tip);
+            row = row.child(if chat.is_empty() { pill } else { pill.on_click(move |_, _, cx| fact("v-person", &chat, &name, cx)) });
         }
         col = col.child(row);
     }
@@ -768,22 +780,19 @@ pub fn render(fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElem
     }
     if chat_over { bodyd = bodyd.child(div().absolute().top_0().left_0().size_full().bg(T::bg()).flex().flex_col().child(transcript_body(fx))); }
     col = col.child(bodyd);
-    if !panel && u.events > 1 { col = col.child(replay(&u, cx)); }
+    if !panel && u.events > 1 { col = col.child(replay(&u)); }
     col.into_any_element()
 }
 
 /// The right side (.ff-right): the tabs (Run / Step, Timeline) and the pane.
 fn side_view(u: &Vx, fx: &mut Fx, window: &mut Window, cx: &mut Context<Fx>) -> AnyElement {
-    let tab = |i: usize, id: &'static str, icon: IconName, label: String| {
-        let on = u.tab == id;
-        div().id(("v-tab", i)).flex().flex_1().items_center().justify_center().gap(T::SP_6).h(T::CONTROL_SM + T::SP_2).rounded(T::R_CONTROL).cursor_pointer()
-            .text_size(T::TEXT_12).text_color(if on { T::text() } else { T::text_secondary() }).when(on, |d| d.bg(T::bg_hover())).hover(|d| d.bg(T::bg_hover()))
-            .child(w::icon(icon, T::ICON_MD)).child(label)
-            .on_click(move |_, _, cx| fact("v-tab", id, "", cx))
-    };
-    let tabs = div().flex().flex_none().gap(T::SP_2).p(T::SP_6).border_b_1().border_color(T::border())
-        .child(tab(0, "run", IconName::SlidersHorizontal, if u.sel.is_empty() { "Run".into() } else { "Step".into() }))
-        .child(tab(1, "timeline", IconName::Route, "Timeline".into()));
+    // .ff-tabs: Run (or Step), Timeline.
+    let segs = vec![
+        w::SegTab { icon: Some(IconName::SlidersHorizontal), label: if u.sel.is_empty() { "Run".into() } else { "Step".into() }, ..Default::default() },
+        w::SegTab { icon: Some(IconName::Route), label: "Timeline".into(), ..Default::default() },
+    ];
+    let tabs = div().flex().flex_none().p(T::SP_6).border_b_1().border_color(T::border())
+        .child(w::seg_tabs("v-tab", segs, if u.tab == "timeline" { 1 } else { 0 }, |i, _, cx| fact("v-tab", if i == 1 { "timeline" } else { "run" }, "", cx)));
     let pane = div().id("v-pane").flex().flex_col().flex_1().min_h_0().overflow_y_scroll().p(T::SP_12).gap(T::SP_10);
     let pane = if u.tab == "timeline" { timeline_pane(fx, pane) } else if !u.sel.is_empty() { step_pane(fx, pane, u) } else { run_pane(pane, u, fx, window, cx) };
     div().flex().flex_col().size_full().min_h_0().bg(T::bg_secondary()).child(tabs).child(pane).into_any_element()
@@ -894,23 +903,11 @@ fn timeline_pane(fx: &mut Fx, mut d: Stateful<Div>) -> Stateful<Div> {
 }
 
 /// The replay bar (.ff-replay): step back, the track, step forward, where.
-fn replay(u: &Vx, cx: &mut Context<Fx>) -> AnyElement {
+fn replay(u: &Vx) -> AnyElement {
     let (nn, total) = (u.at, u.events);
-    let share = if total > 1 { (nn - 1).max(0) as f32 / (total - 1) as f32 } else { 1.0 };
-    let at_of = move |x: Pixels, cx: &mut App| -> String {
-        let b = parts::bounds_in(cx, "v-track");
-        let f = b.map(|b| (f32::from(x - b.origin.x) / f32::from(b.size.width)).clamp(0.0, 1.0)).unwrap_or(1.0);
-        ((1.0 + f * (total - 1) as f32).round() as i32).to_string()
-    };
     div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_8).h(T::CONTROL + T::SP_8).bg(T::bg_secondary()).border_t_1().border_color(T::border())
         .child(w::disabled(w::icon_button("v-back1", IconName::Undo2, "Step back"), nn <= 1).on_click(a("v-at", (nn - 1).max(1).to_string(), String::new())))
-        .child(div().id("v-track").relative().flex_1().h(T::SP_16).flex().items_center().cursor_pointer()
-            .child(parts::probe(cx.entity(), "v-track", |_, _| {}))
-            .child(div().absolute().left_0().right_0().h(T::SP_4).rounded(T::R_PILL).bg(T::bg_tertiary()))
-            .child(div().absolute().left_0().h(T::SP_4).rounded(T::R_PILL).bg(T::accent()).w(relative(share)))
-            .child(div().absolute().left(relative(share)).ml(-T::SP_6).size(T::SP_12).rounded(T::R_PILL).bg(T::white()))
-            .on_mouse_down(MouseButton::Left, move |e, _, cx| fact("v-at", &at_of(e.position.x, cx), "", cx))
-            .on_mouse_move(move |e, _, cx| if e.pressed_button == Some(MouseButton::Left) { fact("v-at", &at_of(e.position.x, cx), "", cx) }))
+        .child(w::slider("v-track", 1.0, total.max(1) as f32, 1.0, nn.max(1) as f32, false, |v, _, cx| fact("v-at", &(v.round() as i32).to_string(), "", cx)))
         .child(w::disabled(w::icon_button("v-fwd1", IconName::Redo2, "Step forward"), u.live).on_click(a("v-at", (nn + 1).to_string(), String::new())))
         .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child(u.at_label.clone()))
         .when(!u.live, |d| d.child(btn("v-live", "Back to live", None, "", true, false).on_click(a0("v-live"))))

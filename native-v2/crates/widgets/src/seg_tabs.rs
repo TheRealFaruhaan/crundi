@@ -18,6 +18,13 @@ pub struct SegTab {
 }
 
 pub fn seg_tabs(id: &'static str, tabs: Vec<SegTab>, on: usize, pick: impl Fn(usize, &mut Window, &mut App) + 'static) -> Div {
+    seg_tabs_marked(id, tabs, on, &[], pick)
+}
+
+/// The same, with some sections' words in the warning colour (`marked[i]`:
+/// the web's `.ff-tab.bad`, a factory editor's "Fix 3"). Added by Planning
+/// (Factories, F92).
+pub fn seg_tabs_marked(id: &'static str, tabs: Vec<SegTab>, on: usize, marked: &[bool], pick: impl Fn(usize, &mut Window, &mut App) + 'static) -> Div {
     let pick = Rc::new(pick);
     let mut d = div().flex().flex_none().items_center().p(T::SP_2).gap(T::SP_2).rounded(T::R_FIELD).bg(T::bg_tertiary()).border_1().border_color(T::border());
     for (i, t) in tabs.into_iter().enumerate() {
@@ -25,7 +32,7 @@ pub fn seg_tabs(id: &'static str, tabs: Vec<SegTab>, on: usize, pick: impl Fn(us
         let sel = i == on;
         d = d.child(div().id((id, i)).flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).rounded(T::R_CONTROL).cursor_pointer()
             .text_size(T::TEXT_12)
-            .text_color(if sel { T::text() } else { T::text_secondary() })
+            .text_color(if marked.get(i).copied().unwrap_or(false) { T::yellow() } else if sel { T::text() } else { T::text_secondary() })
             .when(sel, |d| d.bg(T::bg_hover()).border_1().border_color(T::border()))
             .hover(|d| d.text_color(T::text()))
             .children(t.icon.map(|ic| crate::icon(ic, T::ICON_MD)))

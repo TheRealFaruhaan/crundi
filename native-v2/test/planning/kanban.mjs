@@ -100,6 +100,37 @@ export async function run(T_, t) {
   await T.act('kanban-act', 'media');
   await T.until('the toolbar\'s Media: the Kanban\'s, with the chips', (p) => MM(p)?.title === 'Media \u00b7 Kanban' && !MM(p).attachedHere && MM(p).kind === 'kanban' && MM(p).cards.some((c) => c.name === 'step.png'));
   await T.act('media-modal-close');
+  // The paperclip's strip (.kc-media-pop, the web's placePop): under the
+  // button, right edges together; it blocks nothing; Esc or a press
+  // elsewhere closes it; a scroll of the board too.
+  {
+    const fc = cardBy(await T.props(), 'First card');
+    const clipBox = (p) => K(p).boxes.controls.find((c) => c.id === fc.id && c.control === 'clip');
+    const cb0 = clipBox(await T.props());
+    t.check('the paperclip is on the card', !!cb0, K(await T.props()).boxes.controls.filter((c) => c.id === fc.id));
+    if (cb0) {
+      await T.mouse('move', cb0.x + cb0.w / 2, cb0.y + cb0.h / 2);
+      await t.sleep(150);
+      const cb = clipBox(await T.props()) || cb0;
+      await T.mouse('click', cb.x + cb.w / 2, cb.y + cb.h / 2);
+      const op = await T.until('a click on the paperclip opens its strip', (p) => K(p).clip?.task === fc.id);
+      const pop = K(op).clip.pop;
+      t.check('the strip is just under the paperclip, right edges together', Math.abs(pop.x + pop.w - (cb.x + cb.w)) < 1.5 && Math.abs(pop.y - (cb.y + cb.h + 4)) < 1.5, { pop, btn: cb });
+      await T.key('Escape');
+      await T.until('Esc closes it', (p) => !K(p).clip);
+      await T.mouse('click', cb.x + cb.w / 2, cb.y + cb.h / 2);
+      await T.until('the paperclip opens it again', (p) => K(p).clip?.task === fc.id);
+      await T.mouse('click', cb.x + cb.w / 2, cb.y + cb.h / 2);
+      await T.until('…and a second click on it closes it', (p) => !K(p).clip);
+      await T.mouse('click', cb.x + cb.w / 2, cb.y + cb.h / 2);
+      await T.until('open once more', (p) => K(p).clip?.task === fc.id);
+      // A press on the board's toolbar goes through (nothing is blocked) and closes it.
+      const p1 = await T.props();
+      const col = K(p1).boxes.cols[0];
+      await T.mouse('click', col.x + col.w / 2, col.y + 12);
+      await T.until('a press elsewhere closes it', (p) => !K(p).clip);
+    }
+  }
   await T.until('closed', (p) => !MM(p));
   await T.act('kanban-todo-menu', c1.id, c1.todos[1].id, '700', '300');
   await T.until('the menu again', (p) => !!menu(p));
