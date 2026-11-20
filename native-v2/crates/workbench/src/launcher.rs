@@ -23,12 +23,29 @@ struct Chooser(Choose);
 impl Global for Chooser {}
 /// The resume picker (the chat area's).
 pub fn set_chooser(cx: &mut App, f: Choose) { cx.set_global(Chooser(f)); }
+/// The resume picker, if the chat area registered one (the terminal area
+/// asks it too before Terminal starts, as the web's openSessionChooser).
+pub fn chooser(cx: &App) -> Option<Choose> { cx.try_global::<Chooser>().map(|c| c.0.clone()) }
 
 /// Start a terminal in a launcher's pane (its key, mode shell | normal | skip).
 pub type LaunchTerminal = Rc<dyn Fn(&str, &'static str, &mut Window, &mut App)>;
 struct TermLauncher(LaunchTerminal);
 impl Global for TermLauncher {}
 pub fn set_terminal_launcher(cx: &mut App, f: LaunchTerminal) { cx.set_global(TermLauncher(f)); }
+
+/// The launchers on show, by pane key (handles, for the terminal area to
+/// show its button busy while its terminal starts).
+#[derive(Default)]
+struct Launchers(std::collections::HashMap<String, WeakEntity<Launcher>>);
+impl Global for Launchers {}
+
+/// The pressed terminal button of a launcher while its start is under way
+/// (3 Empty Shell, 4 Terminal, 5 its Skip Permissions; 0 when done), as the
+/// web shows the button busy until the server answers.
+pub fn set_busy(cx: &mut App, key: &str, busy: u8) {
+    let Some(l) = cx.try_global::<Launchers>().and_then(|l| l.0.get(key)).and_then(|w| w.upgrade()) else { return };
+    l.update(cx, |l, cx| if l.busy != busy { l.busy = busy; cx.notify(); });
+}
 
 pub struct Launcher {
     key: String,
@@ -51,6 +68,10 @@ impl Launcher {
                 if this.update(cx, |l, cx| { l.peek = row; cx.notify(); }).is_err() { return; }
             }
         });
+        let me = cx.entity().downgrade();
+        let launchers = cx.default_global::<Launchers>();
+        launchers.0.retain(|_, w| w.upgrade().is_some());
+        launchers.0.insert(key.to_string(), me);
         Launcher { key: key.to_string(), busy: 0, open: 0, peek: 0, _peek: Some(peek) }
     }
 

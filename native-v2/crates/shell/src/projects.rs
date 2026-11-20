@@ -40,6 +40,16 @@ impl Projects {
         self.list.iter().find(|p| p.alias == self.open).map(|p| p.name.clone()).unwrap_or_default()
     }
 
+    /// A project's folder on the server ("" when unknown).
+    pub fn path_of(&self, alias: &str) -> String {
+        self.raw.iter().find(|p| p.get("alias").and_then(|a| a.as_str()) == Some(alias)).and_then(|p| p.get("path").and_then(|v| v.as_str())).unwrap_or("").to_string()
+    }
+
+    /// Every project's alias and folder (a path from a chat finds its project).
+    pub fn paths(&self) -> Vec<(String, String)> {
+        self.raw.iter().map(|p| (p.get("alias").and_then(|a| a.as_str()).unwrap_or("").to_string(), p.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string())).collect()
+    }
+
     /// The picture of a project's icon, if it has arrived.
     pub fn icon_of(&self, alias: &str) -> Option<Arc<Image>> {
         let p = self.list.iter().find(|p| p.alias == alias)?;

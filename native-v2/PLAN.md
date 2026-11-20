@@ -107,11 +107,16 @@ are the owner's PC, release build; "—" not yet.
 ### Hooks the areas plug into (from round 3)
 
 - `crundi_workbench::launcher::set_chooser` (the chat area's resume
-  picker: which conversation, before UI Mode / Terminal start);
-  `set_terminal_launcher` (the terminal area: Empty Shell, Terminal and
-  its Skip Permissions; until then they do nothing).
-- The "open-path" action with `crundi_shell::OpenPath` (the Files area's
-  file viewer: a path clicked in a chat).
+  picker: which conversation, before UI Mode / Terminal start; the
+  workspace asks it through `launcher::chooser`); `set_terminal_launcher`
+  (registered by the workspace: Empty Shell, Terminal and its Skip
+  Permissions, the button busy through `launcher::set_busy`).
+- The "open-path" action with `crundi_shell::OpenPath` (registered by the
+  workspace: the file viewer, a path clicked in a chat).
+- `crundi_shell::register_overlay` (a cached layer over the signed-in tree:
+  the file windows) and `Projects::path_of` / `paths` (a project's folder),
+  added for the workspace (additive).
+- The empty pane's chips `wb-chip:git|files|media|terminal` (workspace).
 - Still to port in the chat log: the hover copy button on code, links and
   paths (`.cc-copyhint`), the streaming caret (`.cc-cursor`), a path's
   hover colour; the launcher's "last used" dot.
@@ -133,7 +138,10 @@ are the owner's PC, release build; "—" not yet.
 | Chat (chat) | The pane: log over composer, its kind `live:`, panes kept in step with the project's chats | chats | slice | — |
 | Chat: log | (F10) a reply drawn one row per markdown block, as the web's markdown (F24; tables and code colours the owner's call); one selection across the log (F15); 2.13 questions, 2.14 tool cards (groups, bodies), 2.15 thinking, 2.16 prose / code blocks / bubble / results / errors / notices, 2.16m media, 2.16f live frames, 2.17 suggestions and recaps, 2.18 agent dock, 2.19 goal and plan, 2.20 cards, 2.21 side questions, 2.22 resume picker, 2.23 parked panes, "Go to the newest message" | chat-log | slice: bubble, markdown, tool card (bash / JSON), thinking, result, error, notice; the rest to do | streaming: — |
 | Chat: composer | 2.5 composer and Stop, 2.6 mode picker, 2.7 attachments, 2.8 drafts, 2.9 queued, 2.10 scheduled, 2.11 slash menu, 2.12 secrets dialog, 2.12b secret requests, 2.24 voice input, the Enter switch, session id | chat-composer | slice: box, Send / Queue, Stop (Sure?), state, model, cost; the rest to do | — |
-| Workspace (workspace) | Git, Files (tree, editor), Media | workspace | to do | — |
+| Workspace (workspace) | 3.2 Claude terminal panes (`term:<id>`): the screen (one element: rows derived once per change, painted as shaped lines), the cursor (its own leaf: the blink redraws it alone, only while focused), the input bar (its own leaf: Ctrl+Enter / Send, the key tools, attach with its strip, a dragged reference), selection copy, wheel and scrollback, ↓ to the bottom, A- ↺ A+, the two-click ×; the launcher's Empty Shell / Terminal / Skip Permissions (busy until the server answers); output batched to one feed and one notify per terminal per frame | workspace/terms.rs, vt.rs | built (suite on the PC under Xvfb: 94/94; snapshots on the server) | streaming 20000 lines: 3 batches, 1 screen render, input bar and heads not redrawn; idle 0 frames |
+| Workspace | 3.3 Git (status, stage / unstage / all, discard, commit, pull, push; rows derived on load, `uniform_list`; a refresh with nothing new draws nothing), the diff window (diffed off the UI thread, `gpui::list`, staging a chunk) | git.rs, diffview.rs | built | — |
+| Workspace | 3.4 Files (browse, search, the row menu, cut / copy / paste, upload, download, drop from the system, drag a reference; rows derived per answer, `uniform_list`), the file windows (editor, viewer, drag and snap, expand, tile / grid / cascade; one cached layer over the window, redrawn on a key only when Save turns on or off), a path from a chat ("open-path") | files.rs, wins.rs | built | — |
+| Workspace | 3.5 Media (upload, search, kinds, scope, cards, lightbox, copy path, jump to source, delete; the grid virtualised as rows of cards) and Git / Files / Media as workbench panels (the empty pane's chips, a second refused) | media.rs | built | — |
 | Planning (planning) | Kanban (and the card dialog): toolbar, Board / Trash / History, columns (a cached view each, a virtualised list of cards, shrunk to its cards as the web's), the stacked board (narrow: one virtualised list), blank card, subtasks, card menu, subtask menu, Edit (title, column, description), drag to move, attachments strip, Brainstorm, live `kanban` events; the `panel:kanban` pane | planning/kanban | ported (suite: test/planning/kanban.mjs, 41 checks; Media modal → the Media tab until Workspace's lands, as native-gpui) | see the runs below |
 | Planning | Mind map: toolbar, filter, project chips, the map (draws only the ideas and links in view; its own pan; links tessellated once per layout), typing ideas in place (Tab, Ctrl+Enter, Enter, Esc), editing, keyboard walk, fold, Delete twice, drag to rearrange, zoom (Ctrl+wheel, Ctrl +/−, pinch), idea dialog, link picker, shortcut sheet, live `mindmap` events; the `panel:mindmap` pane | planning/mindmap | ported (suite: test/planning/mindmap.mjs, 62 checks) | see the runs below |
 | Planning | Notes, Schedules and webhooks, Factories (editor, live run graph, factory panel) | planning | to do (next) | — |

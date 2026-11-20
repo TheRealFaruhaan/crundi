@@ -45,6 +45,15 @@ impl Global for StoresHandle {}
 pub struct OpenPath(pub String);
 impl Global for OpenPath {}
 
+/// Layers an area draws over the whole window (the Files area's file
+/// windows), registered at init, before the window opens. Each is a cached
+/// view placed over the signed-in tree; it draws nothing (and takes no
+/// pointer) while it has nothing to show.
+#[derive(Default)]
+pub struct Overlays(pub Vec<AnyView>);
+impl Global for Overlays {}
+pub fn register_overlay(cx: &mut App, v: AnyView) { cx.default_global::<Overlays>().0.push(v); }
+
 /// The stores (after `init`).
 pub fn stores(cx: &App) -> Stores { cx.global::<StoresHandle>().0.clone() }
 
