@@ -1,9 +1,12 @@
 //! Media (phase 3.5; the web's renderMediaBrowser and the media* actions,
 //! the Slint client's src/workspace/media.rs): Upload, the search, All /
 //! Kanban / Mindmap / Unlinked, This project / All projects; the cards
-//! (thumbnail or kind and extension, the name, project and link line, View
-//! or Get, Copy path, Jump to source, Delete); the lightbox for a picture
-//! (video, audio and PDF say they open in the system's app).
+//! (the kind's badge, the thumbnail or kind and extension, the name, the
+//! project and the link to the source, View or Get, Copy path, Jump to
+//! source, Delete); a card drags onto a chat or terminal (its path). The
+//! lightbox is a dark layer over the whole window (the web's
+//! #media-lightbox): the name, Download and Close, the picture, or the PDF,
+//! video or audio playing (frames.rs: the Desktop area's browser).
 //!
 //! The cards on show are filtered once per change (a load, a key in the
 //! search), never while drawing; the grid draws only the rows of cards on
@@ -50,11 +53,14 @@ pub struct MediaView {
     err: String,
     thumbs: HashMap<String, Option<Arc<Image>>>,
     pub lb: Option<Value>,
+    lightbox: Entity<Lightbox>,
     search: Entity<w::InputState>,
     q: String,
     /// The cards on show (the search applied), and how many fit a row.
     shown: Vec<Value>,
     cols: usize,
+    /// The grid's width (cards share it: minmax(150px, 1fr)).
+    width: f32,
     project: String,
     grid: UniformListScrollHandle,
     _sub: Subscription,
@@ -68,7 +74,8 @@ impl MediaView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| w::InputState::new(window, cx).placeholder("Search media…"));
         let _sub = cx.subscribe_in(&search, window, |m, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::Change = ev { let q = st.read(cx).value().to_string(); if q != m.q { m.q = q; m.derive(cx); } });
-        MediaView { kind: "all".into(), scope: "project".into(), items: vec![], state: "loading".into(), err: String::new(), thumbs: HashMap::new(), lb: None, search, q: String::new(), shown: vec![], cols: 1, project: crundi_shell::project(cx), grid: UniformListScrollHandle::new(), _sub }
+        let lightbox = lightbox(cx).expect("media::init first");
+        MediaView { kind: "all".into(), scope: "project".into(), items: vec![], state: "loading".into(), err: String::new(), thumbs: HashMap::new(), lb: None, lightbox, search, q: String::new(), shown: vec![], cols: 1, width: 0., project: crundi_shell::project(cx), grid: UniformListScrollHandle::new(), _sub }
     }
 
     pub fn shown(&self) -> Vec<Value> { self.items.iter().filter(|it| matches(it, &self.q)).cloned().collect() }
@@ -90,14 +97,16 @@ impl MediaView {
     pub fn load(&mut self, cx: &mut Context<Self>) {
         let project = crundi_shell::project(cx);
         if project.is_empty() && self.scope == "project" { self.scope = "all".into(); }
+        self.project = project.clone();
         let path = list_url(&self.scope, &self.kind, &project);
         let me = cx.entity().downgrade();
         crundi_shell::call(cx, move |api| api.get(&path), move |r, cx| {
             let _ = me.update(cx, |m, cx| {
                 match r {
                     Ok(v) if v.get("ok").is_some_and(truthy) => { m.items = v.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default(); m.state = "ok".into(); m.err.clear(); }
-                    Ok(v) => { m.items.clear(); m.state = "error".into(); m.err = { let e = s(&v, "error"); if e.is_empty() { "Could not load media".into() } else { e } }; }
-                    Err(e) => { m.items.clear(); m.state = "error".into(); m.err = format!("Could not load media: {e}"); }
+                    // A failed list is an empty one (fetchMedia), its reason kept for the driver.
+                    Ok(v) => { m.items.clear(); m.state = "ok".into(); m.err = s(&v, "error"); }
+                    Err(e) => { m.items.clear(); m.state = "ok".into(); m.err = e.to_string(); }
                 }
                 m.thumbs_wanted(cx);
                 m.derive(cx);
@@ -112,10 +121,15 @@ impl MediaView {
             self.thumbs.insert(id.clone(), None);
             let Some(api) = crundi_shell::api(cx) else { return };
             let path = format!("/api/media/raw/{}", crate::enc(&id));
-            let format = match ext.trim_start_matches('.').to_ascii_lowercase().as_str() { "jpg" | "jpeg" => ImageFormat::Jpeg, "gif" => ImageFormat::Gif, "webp" => ImageFormat::Webp, "svg" => ImageFormat::Svg, _ => ImageFormat::Png };
+            let format = match ext.trim_start_matches('.').to_ascii_lowercase().as_str() { "jpg" | "jpeg" => ImageFormat::Jpeg, "gif" => ImageFormat::Gif, "webp" => ImageFormat::Webp, "svg" => ImageFormat::Svg, "bmp" => ImageFormat::Bmp, "ico" => ImageFormat::Ico, _ => ImageFormat::Png };
             let me = cx.entity().downgrade();
             crundi_shell::run(cx, move || match api.get_bytes(&path) { Ok((200, b)) => Some(b), _ => None }, move |b, cx| {
-                if let Some(b) = b { let _ = me.update(cx, |m, cx| { m.thumbs.insert(id, Some(Arc::new(Image::from_bytes(format, b)))); cx.notify(); }); }
+                if let Some(b) = b { let _ = me.update(cx, |m, cx| {
+                    let img = Arc::new(Image::from_bytes(format, b));
+                    m.lightbox.update(cx, |l, cx| if l.id == id && l.img.is_none() { l.img = Some(img.clone()); cx.notify(); });
+                    m.thumbs.insert(id, Some(img));
+                    cx.notify();
+                }); }
             });
         }
     }
@@ -153,18 +167,24 @@ impl MediaView {
         });
     }
 
-    /// View: a picture (or video, audio, PDF) in the lightbox; anything else downloads.
+    /// View: a picture, PDF, video or audio in the lightbox (openMediaLightbox); anything else downloads.
     pub fn open(&mut self, id: &str, cx: &mut Context<Self>) {
         let Some(it) = self.item(id) else { return };
         if s(&it, "kind") == "other" { return self.get(id, cx); }
         if s(&it, "kind") == "image" && !self.thumbs.contains_key(id) { self.thumbs_wanted(cx); }
-        self.lb = Some(it);
+        let img = self.thumbs.get(id).cloned().flatten();
+        let url = crundi_shell::api(cx).map(|a| format!("{}/api/media/raw/{}?token={}", a.base().trim_end_matches('/'), crate::enc(id), crate::enc(&a.access()))).unwrap_or_default();
+        self.lb = Some(it.clone());
+        let me = cx.entity().downgrade();
+        self.lightbox.update(cx, |l, cx| { l.show(it, img, url, me); cx.notify(); });
         cx.notify();
-        let me = cx.entity();
-        crate::with_window(cx, move |window, cx| {
-            let lb = cx.new(|_| Lightbox(me.clone()));
-            w::modal(window, cx, T::WS_DIFF_W, lb.into(), move |_, cx| { let _ = me.update(cx, |m, cx| { m.lb = None; cx.notify(); }); });
-        });
+    }
+
+    /// The lightbox closed (Close, or a press on the dark around it).
+    pub fn close_lightbox(&mut self, cx: &mut Context<Self>) {
+        self.lb = None;
+        self.lightbox.update(cx, |l, cx| { l.hide(); cx.notify(); });
+        cx.notify();
     }
 
     /// Get / Download: where to save, then the file.
@@ -185,10 +205,14 @@ impl MediaView {
         let Some(it) = self.item(id) else { return };
         if it.get("link").is_none_or(|l| l.is_null()) { return; }
         if s(&it, "linkStatus") == "deleted" { return toast(cx, "The original was deleted".into(), w::Toast::Error); }
-        if self.lb.take().is_some() { w::close_dialog(window, cx); }
+        let _ = window;
+        if self.lb.is_some() { self.close_lightbox(cx); }
         let p = s(&it, "project");
         let stores = crundi_shell::stores(cx);
-        if !p.is_empty() && p != crundi_shell::project(cx) { stores.projects.update(cx, |x, cx| x.pick(&p, cx)); }
+        if !p.is_empty() && p != crundi_shell::project(cx) {
+            if !stores.projects.read(cx).paths().iter().any(|(a, _)| *a == p) { return toast(cx, "Source project not available".into(), w::Toast::Error); }
+            stores.projects.update(cx, |x, cx| x.pick(&p, cx));
+        }
         let node = it.get("link").map(|l| s(l, "type") == "node").unwrap_or(false);
         stores.nav.update(cx, |n, cx| n.show_tab(if node { "mindmap" } else { "kanban" }, cx));
     }
@@ -221,110 +245,200 @@ impl MediaView {
         })
     }
 
-    fn card(&self, it: &Value, i: usize, cx: &mut Context<Self>) -> AnyElement {
+    /// A card (mediaCardHtml): the thumbnail with the kind's badge, the
+    /// name, the project and the link to the source, the actions.
+    fn card(&self, it: &Value, i: usize, cw: Pixels, cx: &mut Context<Self>) -> AnyElement {
         let id = s(it, "id");
         let kind = s(it, "kind");
         let ext = { let e = s(it, "ext").trim_start_matches('.').to_string(); if e.is_empty() { kind.clone() } else { e } }.to_uppercase();
         let thumb = self.thumbs.get(&id).cloned().flatten();
         let linked = it.get("link").is_some_and(|l| !l.is_null());
         let deleted = s(it, "linkStatus") == "deleted";
-        let sub = [s(it, "projectName"), if linked { format!("{} {}", link_word(it), s(it, "linkLabel")) } else { "Unlinked".into() }].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · ");
-        let glyph = match kind.as_str() { "video" => IconName::Video, "audio" => IconName::Music, "pdf" => IconName::FileText, "image" => IconName::Image, _ => IconName::File };
+        let path = s(it, "path");
+        let glyph = kind_icon(&kind);
+        let name = s(it, "originalName");
         let (a, b, c, d) = (id.clone(), id.clone(), id.clone(), id.clone());
-        w::card().w(T::WS_MEDIA_CARD).overflow_hidden()
-            .child(div().id(("media-thumb", i)).h(T::WS_MEDIA_THUMB).w_full().flex().items_center().justify_center().bg(T::bg_secondary()).cursor_pointer()
-                .on_click(cx.listener(move |m, _, _, cx| m.open(&a, cx)))
-                .child(match thumb {
-                    Some(img) => gpui::img(img).size_full().object_fit(ObjectFit::Cover).into_any_element(),
-                    None => div().flex().flex_col().items_center().gap(T::SP_4).text_color(T::text_muted())
-                        .child(w::icon(glyph, T::ICON_XL)).child(div().text_size(T::TEXT_10).font_weight(T::W_BOLD).child(ext)).into_any_element(),
+        // The source (mediaLinkSubHtml): a link to it, or struck through once deleted.
+        let word = link_word(it);
+        let link: AnyElement = if !linked { div().child("Unlinked").into_any_element() }
+            else if deleted { div().flex().items_center().gap(T::SP_2).line_through().child(w::icon(IconName::ExternalLink, T::TEXT_10)).child(format!("{word} (deleted)")).into_any_element() }
+            else {
+                let label = { let l = s(it, "linkLabel"); trunc(if l.is_empty() { &word } else { &l }, 22) };
+                let j = id.clone();
+                w::tip(div().id(("media-link", i)).flex().items_center().gap(T::SP_2).text_color(T::green()).cursor_pointer().hover(|d| d.underline())
+                    .child(w::icon(IconName::ExternalLink, T::TEXT_10)).child(label)
+                    .on_click(cx.listener(move |m, _, window, cx| m.jump(&j, window, cx))), format!("Jump to {}", word.to_lowercase())).into_any_element()
+            };
+        let project = s(it, "projectName");
+        let thumb_box = div().id(("media-thumb", i)).relative().h(T::WS_MEDIA_THUMB).w_full().flex().items_center().justify_center().overflow_hidden().bg(T::bg_secondary()).cursor_pointer()
+            .on_click(cx.listener(move |m, _, _, cx| m.open(&a, cx)))
+            .child(match thumb {
+                Some(img) => gpui::img(img).size_full().object_fit(ObjectFit::Cover).into_any_element(),
+                None => div().flex().flex_col().items_center().gap(T::SP_6).text_color(T::text_muted())
+                    .child(w::icon(glyph.clone(), T::ICON_XL)).child(div().text_size(T::TEXT_10).child(ext)).into_any_element(),
+            })
+            // The kind's badge (.media-kindbadge), top left.
+            .child(div().absolute().top(T::SP_6).left(T::SP_6).px(T::SP_4).py(T::SP_2).rounded(T::SP_6).bg(T::ws_ml_scrim().opacity(T::WS_MEDIA_BADGE_O)).text_color(T::white()).child(w::icon(glyph, T::TEXT_13)));
+        let card = w::card().id(("media-card", i)).w(cw).overflow_hidden().bg(T::bg_card());
+        let card = if path.is_empty() { card } else { w::tip(w::drag_ref(card.cursor_grab(), "media", &path, name.clone()), "Drag onto a terminal to insert this path") };
+        card.child(thumb_box)
+            .child(div().flex().flex_col().gap(T::SP_2).px(T::SP_8).py(T::SP_6)
+                .child(w::tip(div().id(("media-name", i)).text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text()).line_clamp(2).child(name.clone()), name))
+                .child(div().flex().flex_wrap().items_center().gap(T::SP_6).text_size(T::TEXT_10).text_color(T::text_muted())
+                    .when(!project.is_empty(), |d| d.child(trunc(&project, 16)))
+                    .child(link)))
+            .child(div().flex().gap(T::SP_4).px(T::SP_8).pb(T::SP_8)
+                .child(div().flex_1().child(if kind == "other" {
+                    w::icon_label_button(("media-view", i), IconName::Download, "Get").tooltip("Download").w_full().on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx)))
+                } else {
+                    w::icon_label_button(("media-view", i), IconName::Image, "View").tooltip("Preview").w_full().on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx)))
                 }))
-            .child(div().flex().flex_col().gap(T::SP_2).p(T::SP_8)
-                .child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text()).truncate().child(s(it, "originalName")))
-                .child(div().text_size(T::TEXT_10).text_color(if deleted { T::text_muted() } else if linked { T::accent_hover() } else { T::text_muted() }).truncate().child(sub))
-                .child(div().flex().gap(T::SP_4).pt(T::SP_4)
-                    .child(w::button(("media-view", i), if kind == "other" { "Get" } else { "View" }).icon(if kind == "other" { IconName::Download } else { IconName::Eye })
-                        .on_click(cx.listener(move |m, _, _, cx| m.open(&b, cx))))
-                    .child(w::icon_button(("media-copy", i), IconName::Copy, "Copy path").on_click(cx.listener(move |m, _, _, cx| m.copy(&c, cx))))
-                    .when(linked, |d0| { let j = id.clone(); d0.child(w::disabled(w::icon_button(("media-jump", i), IconName::ExternalLink, "Jump to source"), deleted).on_click(cx.listener(move |m, _, window, cx| m.jump(&j, window, cx)))) })
-                    .child(w::icon_button(("media-del", i), IconName::Trash, "Delete").on_click(cx.listener(move |m, _, window, cx| m.delete(&d, window, cx))))))
+                .when(!path.is_empty(), |d0| d0.child(w::icon_button(("media-copy", i), IconName::Copy, "Copy file path").on_click(cx.listener(move |m, _, _, cx| m.copy(&c, cx)))))
+                .when(linked, |d0| { let j = id.clone(); d0.child(w::disabled(w::icon_button(("media-jump", i), IconName::ExternalLink, "Jump to source"), deleted).on_click(cx.listener(move |m, _, window, cx| m.jump(&j, window, cx)))) })
+                .child(w::icon_button(("media-del", i), IconName::Trash, "Delete").on_click(cx.listener(move |m, _, window, cx| m.delete(&d, window, cx)))))
             .into_any_element()
     }
 }
 
-/// The lightbox's view (in the one modal): the title, the picture (or what
-/// a video, audio or PDF does), Download, Close.
-struct Lightbox(Entity<MediaView>);
+fn kind_icon(kind: &str) -> IconName { match kind { "video" => IconName::Film, "audio" => IconName::Music, "pdf" => IconName::FileText, "image" => IconName::Image, _ => IconName::File } }
+
+/// A label cut to n characters with an ellipsis (mtrunc).
+fn trunc(t: &str, n: usize) -> String { if t.chars().count() > n { format!("{}…", t.chars().take(n - 1).collect::<String>()) } else { t.to_string() } }
+
+/// The lightbox (#media-lightbox): its own layer over the window, drawn by
+/// the shell (register_overlay), so opening it redraws nothing else.
+pub struct Lightbox {
+    pub id: String,
+    item: Option<Value>,
+    img: Option<Arc<Image>>,
+    url: String,
+    media: WeakEntity<MediaView>,
+}
+
+impl Lightbox {
+    fn show(&mut self, it: Value, img: Option<Arc<Image>>, url: String, media: WeakEntity<MediaView>) {
+        self.id = s(&it, "id");
+        (self.item, self.img, self.url, self.media) = (Some(it), img, url, media);
+    }
+    fn hide(&mut self) { self.id.clear(); self.item = None; self.img = None; self.url.clear(); }
+}
 
 impl Render for Lightbox {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let m = self.0.read(cx);
-        let Some(it) = m.lb.clone() else { return div().into_any_element() };
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("lightbox");
+        let Some(it) = self.item.clone() else { return div().into_any_element() };
         let id = s(&it, "id");
         let kind = s(&it, "kind");
-        let thumb = m.thumbs.get(&id).cloned().flatten();
-        let note = match kind.as_str() { "video" => "Videos play in the system's player.", "audio" => "Audio plays in the system's player.", "pdf" => "PDFs open in the system's viewer.", _ => "" };
-        let mv = self.0.clone();
-        div().flex().flex_col().w(T::WS_DIFF_W).h(T::WS_DIFF_H)
-            .child(w::modal_head("lb-head", s(&it, "originalName"), false, |_, window, cx| w::close_dialog(window, cx)))
-            .child(div().flex_1().min_h_0().flex().items_center().justify_center().bg(T::bg()).p(T::SP_12)
-                .child(match thumb { Some(img) => gpui::img(img).max_w_full().max_h_full().object_fit(ObjectFit::Contain).into_any_element(), None => w::empty(if note.is_empty() { "Loading…" } else { note }).into_any_element() }))
-            .child(w::toolbar().px(T::SP_16).py(T::SP_10).child(div().flex_1()).child(w::button("lb-download", "Download").icon(IconName::Download).on_click(move |_, _, cx| { let id = id.clone(); mv.update(cx, |m, cx| m.get(&id, cx)); })))
+        let vs = window.viewport_size();
+        let (mw, mh) = (vs.width * T::WS_ML_W, vs.height * T::WS_ML_H);
+        let media = self.media.clone();
+        let close = move |cx: &mut App| { let _ = media.update(cx, |m, cx| m.close_lightbox(cx)); };
+        let (c1, c2) = (close.clone(), close);
+        let stage: AnyElement = if kind == "image" {
+            match &self.img {
+                Some(img) => div().id("ml-stage").max_w(mw).max_h(mh).flex().items_center().justify_center().shadow_lg()
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .child(gpui::img(img.clone()).max_w(mw).max_h(mh).object_fit(ObjectFit::Contain)).into_any_element(),
+                None => div().into_any_element(),
+            }
+        } else {
+            // A PDF, video or audio plays in the browser (iframe, <video controls autoplay>, <audio>).
+            let h = if kind == "audio" { T::WS_ML_AUDIO_H } else { mh };
+            div().id("ml-stage").relative().w(mw).h(h).rounded(T::SP_6).overflow_hidden().when(kind == "pdf", |d| d.bg(T::white()))
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .child(crate::frames::page(&format!("lb-{id}"), &self.url, window, cx)).into_any_element()
+        };
+        let mv = self.media.clone();
+        div().id("media-lightbox").occlude().absolute().inset_0().flex().flex_col().items_center().justify_center().p(T::SP_24).bg(T::ws_ml_scrim())
+            .on_click(move |_, _, cx| c1(cx))
+            .child(div().absolute().top_0().left_0().w_full().flex().items_center().gap(T::SP_10).px(T::SP_16).py(T::SP_12).text_color(T::white())
+                .child(div().text_size(T::TEXT_13).font_weight(T::W_SEMIBOLD).child(s(&it, "originalName")))
+                .child(div().flex_1())
+                .child(w::scrim_button("ml-download", "Download").on_click(move |_, _, cx| { cx.stop_propagation(); let id = id.clone(); let _ = mv.update(cx, |m, cx| m.get(&id, cx)); }))
+                .child(w::scrim_button("ml-close", "Close").on_click(move |_, _, cx| { cx.stop_propagation(); c2(cx) })))
+            .child(stage)
             .into_any_element()
     }
+}
+
+struct LightboxHandle(Entity<Lightbox>);
+impl Global for LightboxHandle {}
+fn lightbox(cx: &App) -> Option<Entity<Lightbox>> { cx.try_global::<LightboxHandle>().map(|h| h.0.clone()) }
+
+/// The lightbox's layer (at the area's init: the shell takes its overlays then).
+pub fn init(cx: &mut App) {
+    let l = cx.new(|_| Lightbox { id: String::new(), item: None, img: None, url: String::new(), media: WeakEntity::new_invalid() });
+    cx.set_global(LightboxHandle(l.clone()));
+    crundi_shell::register_overlay(cx, l.into());
 }
 
 impl Render for MediaView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("media");
-        let filt = |id: &'static str, label: &'static str, on: bool| w::toggle(id, label, on);
+        let chip = |id: &'static str, label: &'static str, on: bool| w::toggle(id, label, on);
         let has_project = !self.project.is_empty();
         // The bar wraps in a narrow pane (the web's flex-wrap): the search
         // keeps its width instead of collapsing (F86).
-        let bar = w::toolbar().flex_wrap()
+        let bar = w::toolbar().flex_wrap().gap(T::SP_8).px(T::SP_12).py(T::SP_10)
             .child(w::primary_icon("media-upload", IconName::Upload, "Upload").on_click(cx.listener(|m, _, _, cx| m.upload(cx))))
-            .child(div().flex_none().w(T::WS_MEDIA_SEARCH).child(w::input(&self.search)))
-            .child(filt("mk-all", "All", self.kind == "all").on_click(cx.listener(|m, _, _, cx| m.set_kind("all", cx))))
-            .child(filt("mk-kanban", "Kanban", self.kind == "kanban").on_click(cx.listener(|m, _, _, cx| m.set_kind("kanban", cx))))
-            .child(filt("mk-mindmap", "Mindmap", self.kind == "mindmap").on_click(cx.listener(|m, _, _, cx| m.set_kind("mindmap", cx))))
-            .child(filt("mk-unlinked", "Unlinked", self.kind == "unlinked").on_click(cx.listener(|m, _, _, cx| m.set_kind("unlinked", cx))))
+            .child(div().flex_none().w(T::WS_MEDIA_SEARCH).child(w::input(&self.search).font_family(T::MONO)))
+            .child(chip("mk-all", "All", self.kind == "all").on_click(cx.listener(|m, _, _, cx| m.set_kind("all", cx))))
+            .child(chip("mk-kanban", "Kanban", self.kind == "kanban").icon(IconName::Kanban).on_click(cx.listener(|m, _, _, cx| m.set_kind("kanban", cx))))
+            .child(chip("mk-mindmap", "Mindmap", self.kind == "mindmap").icon(IconName::Network).on_click(cx.listener(|m, _, _, cx| m.set_kind("mindmap", cx))))
+            .child(chip("mk-unlinked", "Unlinked", self.kind == "unlinked").on_click(cx.listener(|m, _, _, cx| m.set_kind("unlinked", cx))))
             .child(div().flex_1())
-            .child(w::disabled(filt("ms-project", "This project", self.scope == "project"), !has_project).on_click(cx.listener(|m, _, _, cx| m.set_scope("project", cx))))
-            .child(filt("ms-all", "All projects", self.scope == "all").on_click(cx.listener(|m, _, _, cx| m.set_scope("all", cx))));
+            .when(has_project, |d| d.child(chip("ms-project", "This project", self.scope == "project").on_click(cx.listener(|m, _, _, cx| m.set_scope("project", cx)))))
+            .child(chip("ms-all", "All projects", self.scope == "all").on_click(cx.listener(|m, _, _, cx| m.set_scope("all", cx))));
         let body: AnyElement = match self.state.as_str() {
-            "loading" => w::loading("Loading…").into_any_element(),
-            "error" => w::error_state("media-retry", self.err.clone(), cx.listener(|m, _, _, cx| { m.state = "loading".into(); m.load(cx); })).into_any_element(),
-            _ if self.scope == "project" && !has_project => w::empty("Select a project, or switch to All projects.").into_any_element(),
-            _ if self.items.is_empty() => w::empty("No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.").into_any_element(),
-            _ if self.shown.is_empty() => w::empty(format!("No media matches \u{201c}{}\u{201d}.", self.q)).into_any_element(),
+            // Before the first answer: nothing yet, as the web's.
+            "loading" => div().into_any_element(),
+            _ if self.scope == "project" && !has_project => media_empty(div().flex().justify_center().gap(T::SP_4).child("Select a project, or switch to").child(div().font_weight(T::W_BOLD).child("All projects")).child(".")).into_any_element(),
+            _ if self.items.is_empty() => media_empty(div().child("No media here yet. Upload files, or attach them to a Kanban task/subtask or a Mindmap idea.")).into_any_element(),
+            _ if self.shown.is_empty() => media_empty(div().child(format!("No media matches \u{201c}{}\u{201d}.", self.q))).into_any_element(),
             _ => {
-                // The width decides how many cards a row holds (measured; a
-                // change re-lays the rows out once).
+                // The width decides how many cards a row holds and how wide
+                // each is (minmax(150px, 1fr); measured; a change re-lays
+                // the rows out once).
                 let me = cx.entity();
                 let measure = canvas(move |b, _, cx| {
-                    let n = cols_for(f32::from(b.size.width));
-                    if me.read(cx).cols != n { let me = me.clone(); cx.defer(move |cx| me.update(cx, |m, cx| { m.cols = n; cx.notify(); })); }
+                    let wd = f32::from(b.size.width);
+                    if (me.read(cx).width - wd).abs() > 0.5 { let me = me.clone(); cx.defer(move |cx| me.update(cx, |m, cx| { m.width = wd; m.cols = cols_for(wd); cx.notify(); })); }
                 }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
                 let cols = self.cols.max(1);
+                let cw = card_width(self.width, cols);
                 let rows = self.shown.len().div_ceil(cols);
                 let grid = uniform_list("media-grid", rows, cx.processor(move |m, range: std::ops::Range<usize>, _, cx| {
                     range.map(|r| {
                         let mut row = div().w_full().flex().gap(T::SP_12).px(T::SP_12).pt(T::SP_12);
-                        for i in r * cols..((r + 1) * cols).min(m.shown.len()) { let it = m.shown[i].clone(); row = row.child(m.card(&it, i, cx)); }
+                        for i in r * cols..((r + 1) * cols).min(m.shown.len()) { let it = m.shown[i].clone(); row = row.child(m.card(&it, i, px(cw), cx)); }
                         row.into_any_element()
                     }).collect::<Vec<_>>()
                 })).track_scroll(&self.grid).size_full();
-                div().relative().flex_1().min_h_0().child(measure).child(grid).into_any_element()
+                // While a card is dragged near its edges, the grid scrolls.
+                w::edge_scroll::<w::RefDrag>(div().id("media-body"), w::Scroller::Uniform(self.grid.clone()), false, true, cx.entity_id())
+                    .relative().flex_1().min_h_0().child(measure).child(grid).into_any_element()
             }
         };
         div().flex().flex_col().size_full().bg(T::bg()).child(bar).child(body)
     }
 }
 
+/// The grid's lone line (.media-empty).
+fn media_empty(d: Div) -> Div {
+    div().w_full().flex().justify_center().px(T::SP_12).py(T::SP_40).text_size(T::TEXT_14).text_color(T::text_muted()).child(d)
+}
+
+/// A card's width in a row of `cols` across `width` (12 in from each side, 12 apart).
+pub fn card_width(width: f32, cols: usize) -> f32 {
+    let gap = f32::from(T::SP_12);
+    ((width - 2. * gap - gap * (cols as f32 - 1.)) / cols as f32).max(f32::from(T::WS_MEDIA_CARD))
+}
+
 /// How many cards a row of this width holds (the web's wrapping grid:
 /// cards of a fixed width, 12 apart, 12 in from each side).
 pub fn cols_for(width: f32) -> usize {
     let (card, gap) = (f32::from(T::WS_MEDIA_CARD), f32::from(T::SP_12));
+    // auto-fill, minmax(card, 1fr)
     (((width - 2. * gap + gap) / (card + gap)).floor() as usize).max(1)
 }
 
@@ -349,6 +463,6 @@ mod tests {
         assert!(matches(&it, "LOGO") && !matches(&it, "zip"));
         assert_eq!(link_word(&it), "Idea");
         assert_eq!(cols_for(100.), 1);
-        assert_eq!(cols_for(12. + 200. + 12. + 200. + 12.), 2);
+        assert_eq!(cols_for(12. + 150. + 12. + 150. + 12.), 2);
     }
 }

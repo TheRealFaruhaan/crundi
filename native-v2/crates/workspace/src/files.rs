@@ -25,23 +25,27 @@ fn err_of(v: &Value, fail: &str) -> String { let e = s(v, "error"); if e.is_empt
 /// A path's last part, whichever way its slashes lean.
 pub fn base_name(p: &str) -> String { p.rsplit(['/', '\\']).next().unwrap_or("").to_string() }
 
-/// A file's mark in the list (fileIcon): its short text, or an icon; its tone.
-pub fn file_mark(name: &str) -> (&'static str, Option<IconName>) {
+/// A file's mark in the list (fileIcon): its short text, or an icon; its
+/// colour's name (T::ws_ft), none for the muted default.
+pub fn file_mark(name: &str) -> (&'static str, Option<IconName>, Option<&'static str>) {
     let base = name.to_ascii_lowercase();
     let ext = base.rfind('.').map(|i| &base[i..]).unwrap_or("");
-    if base == "dockerfile" || base.starts_with("dockerfile.") { return ("", Some(IconName::Container)); }
-    if base == "package.json" || base == "package-lock.json" { return ("npm", None); }
-    if base == ".env" || base.starts_with(".env.") { return ("", Some(IconName::Lock)); }
+    if base == "dockerfile" || base.starts_with("dockerfile.") { return ("", Some(IconName::Container), Some("docker")); }
+    if base == ".gitignore" || base == ".gitattributes" { return ("", Some(IconName::File), Some("git")); }
+    if base == "package.json" || base == "package-lock.json" { return ("npm", None, Some("npm")); }
+    if base == ".env" || base.starts_with(".env.") { return ("", Some(IconName::Lock), Some("env")); }
+    let t = |m: &'static str, k: &'static str| (m, None, Some(k));
     match ext {
-        ".js" | ".mjs" | ".cjs" => ("JS", None), ".ts" => ("TS", None), ".tsx" => ("TX", None), ".jsx" => ("JX", None),
-        ".json" => ("{}", None), ".html" => ("◇", None), ".css" | ".scss" => ("#", None), ".py" => ("PY", None),
-        ".go" => ("Go", None), ".rs" => ("RS", None), ".java" => ("JV", None), ".c" => ("C", None), ".cpp" => ("C+", None),
-        ".h" => ("H", None), ".sh" => ("$_", None), ".ps1" => ("PS", None), ".sql" => ("DB", None), ".md" => ("M↓", None),
-        ".yaml" | ".yml" => ("YML", None), ".xml" => ("XML", None), ".vue" => ("V", None), ".svelte" => ("S", None),
-        ".svg" | ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp" => ("", Some(IconName::Image)),
-        ".zip" | ".tar" | ".gz" => ("", Some(IconName::Archive)),
-        ".pdf" => ("", Some(IconName::FileText)), ".lock" => ("", Some(IconName::Lock)), ".log" => ("", Some(IconName::List)),
-        _ => ("", Some(IconName::File)),
+        ".js" | ".mjs" | ".cjs" => t("JS", "js"), ".ts" => t("TS", "ts"), ".tsx" => t("TX", "ts"), ".jsx" => t("JX", "jsx"),
+        ".json" => t("{}", "json"), ".html" => t("◇", "html"), ".css" => t("#", "css"), ".scss" => t("#", "scss"), ".py" => t("PY", "py"),
+        ".go" => t("Go", "go"), ".rs" => t("RS", "rs"), ".java" => t("JV", "java"), ".c" => t("C", "c"), ".cpp" => t("C+", "cpp"),
+        ".h" => t("H", "c"), ".sh" => t("$_", "sh"), ".ps1" => t("PS", "ps1"), ".sql" => t("DB", "sql"), ".md" => t("M↓", "md"),
+        ".yaml" | ".yml" => t("YML", "yaml"), ".xml" => t("XML", "xml"), ".vue" => t("V", "vue"), ".svelte" => t("S", "svelte"),
+        ".svg" => ("", Some(IconName::Image), Some("svg")),
+        ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp" => ("", Some(IconName::Image), None),
+        ".zip" | ".tar" | ".gz" => ("", Some(IconName::Archive), None),
+        ".pdf" => ("", Some(IconName::FileText), Some("pdf")), ".lock" => ("", Some(IconName::Lock), Some("lock")), ".log" => ("", Some(IconName::List), None),
+        _ => ("", Some(IconName::File), None),
     }
 }
 
@@ -64,7 +68,7 @@ struct Clip { op: String, project: String, paths: Vec<String> }
 
 /// One row as drawn and listed.
 #[derive(Clone)]
-pub struct Row { pub path: String, pub name: String, pub dir: String, pub is_dir: bool, pub up: bool, pub size: String, pub mark: String, pub icon: Option<IconName>, pub cut: bool, pub selected: bool }
+pub struct Row { pub path: String, pub name: String, pub dir: String, pub is_dir: bool, pub up: bool, pub size: String, pub mark: String, pub icon: Option<IconName>, pub tone: Option<&'static str>, pub cut: bool, pub selected: bool }
 
 pub struct FilesView {
     pub path: String,
@@ -95,6 +99,8 @@ pub struct FilesView {
     /// right − 4, bottom + 2), and the driver's state shows it so a test
     /// clicks it as a person would.
     more_at: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Bounds<Pixels>>>>,
+    /// The list's width (a dragged row's ghost is the row at this width).
+    width: Pixels,
     _sub: Subscription,
 }
 
@@ -107,7 +113,7 @@ impl FilesView {
         let search = cx.new(|cx| w::InputState::new(window, cx).placeholder("Search files & folders…"));
         let _sub = cx.subscribe_in(&search, window, |f, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::Change = ev { let q = st.read(cx).value().to_string(); f.search(&q, cx); });
         FilesView { path: String::new(), parent: None, inside: false, entries: vec![], crumbs: vec![], shell: None, state: "loading".into(), error: String::new(), q: String::new(), results: None, search_gen: 0, selected: String::new(), clip: None, copied: String::new(),
-            rows: vec![], note: String::new(), empty: String::new(), root: String::new(), project: crundi_shell::project(cx), search, list: UniformListScrollHandle::new(), more_at: Default::default(), _sub }
+            rows: vec![], note: String::new(), empty: String::new(), root: String::new(), project: crundi_shell::project(cx), search, list: UniformListScrollHandle::new(), more_at: Default::default(), width: px(320.), _sub }
     }
 
     fn clip_here(&self, cx: &App) -> bool { self.clip.as_ref().is_some_and(|c| c.project == crundi_shell::project(cx) && !c.paths.is_empty()) }
@@ -116,11 +122,11 @@ impl FilesView {
         let path = s(e, "path");
         let name = s(e, "name");
         let is_dir = s(e, "type") == "dir";
-        let (mark, icon) = if is_dir { ("", Some(IconName::Folder)) } else { file_mark(&name) };
+        let (mark, icon, tone) = if is_dir { ("", Some(IconName::Folder), None) } else { file_mark(&name) };
         Row {
             cut: self.clip.as_ref().is_some_and(|c| c.op == "cut" && c.paths.contains(&path)), selected: self.selected == path,
             size: if is_dir { String::new() } else { fmt_size(e.get("size").and_then(|v| v.as_f64()).unwrap_or(0.)) },
-            path, name, dir: dir.unwrap_or_default(), is_dir, up: false, mark: mark.into(), icon,
+            path, name, dir: dir.unwrap_or_default(), is_dir, up: false, mark: mark.into(), icon, tone,
         }
     }
 
@@ -144,7 +150,7 @@ impl FilesView {
                 for e in &list { let rel = s(e, "rel"); rows.push(self.row(e, rel.rfind('/').map(|i| rel[..=i].to_string()))); }
             }
         } else {
-            if let Some(p) = &self.parent { rows.push(Row { path: p.clone(), name: "..".into(), dir: String::new(), is_dir: true, up: true, size: String::new(), mark: String::new(), icon: Some(IconName::ArrowUp), cut: false, selected: false }); }
+            if let Some(p) = &self.parent { rows.push(Row { path: p.clone(), name: "..".into(), dir: String::new(), is_dir: true, up: true, size: String::new(), mark: String::new(), icon: Some(IconName::ArrowUp), tone: None, cut: false, selected: false }); }
             for e in &self.entries { rows.push(self.row(e, None)); }
         }
         (rows, note, empty)
@@ -219,6 +225,12 @@ impl FilesView {
         }).detach();
     }
 
+    /// Esc in the search: it empties, the folder shows again.
+    pub fn search_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |st, cx| st.set_value("", window, cx));
+        self.search("", cx);
+    }
+
     fn is_dir(&self, path: &str) -> bool {
         if self.parent.as_deref() == Some(path) { return true; }
         let list = self.results.as_ref().and_then(|r| r.get("entries")).and_then(|e| e.as_array()).cloned().unwrap_or_default();
@@ -240,6 +252,7 @@ impl FilesView {
         let clip = self.clip.clone().filter(|_| self.clip_here(cx));
         let here = self.path.clone();
         let mut items = vec![w::MenuEntry::new("open", "Open").icon(if dir { IconName::Folder } else { IconName::File })];
+        if !dir && wins::is_source_preview(&name) { items.push(w::MenuEntry::new("source", "Edit the source").icon(IconName::Pencil)); }
         if let Some(sh) = &self.shell {
             let fm = s(sh, "fileManager");
             if !dir { items.push(w::MenuEntry::new("ext", "Open externally").icon(IconName::ExternalLink).sep()); }
@@ -263,6 +276,7 @@ impl FilesView {
             let here = here.clone();
             let _ = me.update(cx, |f, cx| match id.as_str() {
                 "open" => f.open(&p, cx),
+                "source" => wins::open_source(&crundi_shell::project(cx), &p, cx),
                 "ext" | "shell-open" => f.shell_act("open", &p, cx),
                 "reveal" => f.shell_act("reveal", &p, cx),
                 "cut" => f.set_clip("cut", &p, cx),
@@ -300,8 +314,13 @@ impl FilesView {
         if !self.clip_here(cx) { return; }
         let Some(c) = self.clip.take() else { return };
         let op = if c.op == "cut" { "move" } else { "copy" };
-        let body = json!({ "project": crundi_shell::project(cx), "op": op, "items": c.paths, "to": to });
         self.derive(cx);
+        self.transfer(op, c.paths, to, cx);
+    }
+
+    /// /api/files/transfer: move or copy into a folder, then the list again.
+    fn transfer(&mut self, op: &'static str, paths: Vec<String>, to: &str, cx: &mut Context<Self>) {
+        let body = json!({ "project": crundi_shell::project(cx), "op": op, "items": paths, "to": to });
         let me = cx.entity().downgrade();
         crundi_shell::call(cx, move |api| api.post("/api/files/transfer", &body), move |r, cx| {
             match r {
@@ -365,12 +384,22 @@ impl FilesView {
         if root.is_empty() { p.to_string() } else if p.is_empty() { root } else { format!("{root}/{}", p.trim_start_matches('/')) }
     }
 
-    /// Files dropped from the system: into `dir` (the folder on show, or the
-    /// folder row they were dropped on), as Upload does.
-    pub fn drop_into(&mut self, dir: String, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
-        let files: Vec<_> = paths.into_iter().filter(|p| p.is_file()).collect();
-        if files.is_empty() { return toast(cx, "Only files can be dropped here (not folders).".into(), w::Toast::Error); }
-        self.upload_into(dir, Some(files), cx);
+    /// A Files row dropped on a folder (a row, "..", or a folder in the path
+    /// bar): which, since a drag does not say (filesDropMenu): Move to,
+    /// Copy to, Cancel.
+    pub fn drop_on_folder(&mut self, from: &str, to: &str, name: &str, at: Point<Pixels>, cx: &mut Context<Self>) {
+        if from == to || !self.rows.iter().any(|r| r.path == from && !r.up) { return; }
+        let items = vec![
+            w::MenuEntry::new("move", format!("Move to \u{201c}{name}\u{201d}")).icon(IconName::Scissors),
+            w::MenuEntry::new("copy", format!("Copy to \u{201c}{name}\u{201d}")).icon(IconName::Copy),
+            w::MenuEntry::new("cancel", "Cancel").icon(IconName::X).sep(),
+        ];
+        let (from, to) = (from.to_string(), to.to_string());
+        let me = cx.entity().downgrade();
+        w::menu_at(cx, at, items, move |id, _, cx| {
+            let op = match id.as_str() { "move" => "move", "copy" => "copy", _ => return };
+            let _ = me.update(cx, |f, cx| f.transfer(op, vec![from.clone()], &to, cx));
+        });
     }
 
     /// Upload `given` (else the system's picker) into `dir`.
@@ -412,35 +441,50 @@ impl FilesView {
         })
     }
 
-    fn line(&self, r: &Row, i: usize, cx: &mut Context<Self>) -> AnyElement {
-        let (p1, p2, p3) = (r.path.clone(), r.path.clone(), r.path.clone());
-        let mark: AnyElement = match (&r.icon, r.mark.is_empty()) {
-            (Some(icon), true) => div().text_color(if r.is_dir { T::amber() } else { T::text_secondary() }).child(w::icon(icon.clone(), T::ICON_MD)).into_any_element(),
-            _ => div().text_size(T::TEXT_10).font_weight(T::W_BOLD).font_family(T::MONO).text_color(T::accent_hover()).child(r.mark.clone()).into_any_element(),
-        };
-        let abs = self.abs_path(&r.path);
-        let (drop_dir, is_folder) = (r.path.clone(), r.is_dir && !r.up);
-        let row = div().id(("file", i)).group("file-row").w_full().flex().items_center().gap(T::SP_8).h(T::CONTROL_SM).px(T::SP_10).cursor_pointer();
-        // Dragged into a chat or a terminal: its path, as the web's [File Path: …].
-        let row = if r.up { row } else { w::drag_ref(row, if r.is_dir { "folder" } else { "file" }, &abs, r.name.clone()) };
-        // A folder takes files dropped from the system: into it.
-        let row = if is_folder {
-            row.drag_over::<ExternalPaths>(|s, _, _, _| s.bg(T::accent_dim()))
-                .on_drop(cx.listener(move |f, p: &ExternalPaths, _, cx| { cx.stop_propagation(); f.drop_into(drop_dir.clone(), p.paths().to_vec(), cx); }))
-        } else { row };
-        row
-            .when(r.selected, |d| d.bg(T::bg_tertiary())).hover(|s| s.bg(T::bg_hover()))
-            .when(r.cut, |d| d.opacity(T::WS_O_CUT))
-            .on_click(cx.listener(move |f, e: &ClickEvent, _, cx| { if e.click_count() >= 2 { f.open(&p1, cx) } else if f.selected != p1 { f.selected = p1.clone(); f.derive(cx); } }))
-            .on_mouse_down(MouseButton::Right, cx.listener(move |f, e: &MouseDownEvent, _, cx| f.menu(&p2, e.position, cx)))
-            .child(div().flex_none().w(T::ICON_LG).flex().justify_center().child(mark))
-            .child(div().flex().flex_1().min_w_0().items_center().text_size(T::TEXT_13)
+    /// A row's mark: a folder yellow, a file's in its kind's colour.
+    fn mark(r: &Row) -> AnyElement {
+        let tone = if r.is_dir && !r.up { T::yellow() } else { r.tone.map(T::ws_ft).unwrap_or(T::text_muted()) };
+        match (&r.icon, r.mark.is_empty()) {
+            (Some(icon), true) => div().text_color(tone).child(w::icon(icon.clone(), T::ICON_MD)).into_any_element(),
+            _ => div().text_size(T::TEXT_10).font_weight(T::W_BOLD).font_family(T::MONO).text_color(tone).child(r.mark.clone()).into_any_element(),
+        }
+    }
+
+    /// A row's look (.file-item; the dragged ghost is the row itself).
+    fn cells<E: Styled + ParentElement>(r: &Row, d: E) -> E {
+        d.flex().items_center().gap(T::SP_8).h(T::CONTROL_SM).px(T::SP_12).text_size(T::TEXT_12).font_family(T::MONO)
+            .child(div().flex_none().w(T::ICON_LG).flex().justify_center().child(Self::mark(r)))
+            .child(div().flex().flex_1().min_w_0().items_center()
                 .when(!r.dir.is_empty(), |d| d.child(div().text_color(T::text_muted()).truncate().child(r.dir.clone())))
                 .child(div().text_color(T::text()).truncate().child(r.name.clone())))
-            .child(div().flex_none().text_size(T::TEXT_11).font_family(T::MONO).text_color(T::text_muted()).child(r.size.clone()))
+            .child(div().flex_none().text_size(T::TEXT_11).text_color(T::text_muted()).child(r.size.clone()))
+    }
+
+    fn line(&self, r: &Row, i: usize, cx: &mut Context<Self>) -> AnyElement {
+        let (p1, p2, p3) = (r.path.clone(), r.path.clone(), r.path.clone());
+        let abs = self.abs_path(&r.path);
+        let row = div().id(("file", i)).group("file-row").w_full().cursor_pointer();
+        let row = if r.up { row } else {
+            let r2 = r.clone();
+            w::drag_ref_row(row, if r.is_dir { "folder" } else { "file" }, &abs, r.name.clone(), self.width, move || Self::cells(&r2, div().w_full().bg(T::bg_hover())).into_any_element())
+        };
+        // A folder (a row or "..") takes a Files row dropped on it: move or copy.
+        let row = if r.is_dir {
+            let (to, name) = (r.path.clone(), if r.up { "the parent folder".to_string() } else { r.name.clone() });
+            row.drag_over::<w::RefDrag>(|s, _, _, _| s.border_2().border_dashed().border_color(T::accent()).bg(T::accent_dim()))
+                .on_drop(cx.listener(move |f, d: &w::RefDrag, window, cx| { cx.stop_propagation(); let at = window.mouse_position(); f.drop_on_folder(&d.value, &to, &name, at, cx); }))
+        } else { row };
+        let tip = if r.up { "Double-click to go up" } else { "Double-click to open. Right-click for more. Drag onto a terminal to insert its path." };
+        let more_on = r.selected;
+        Self::cells(r, w::tip(row, tip).flex()
+            .when(r.selected, |d| d.bg(T::accent_dim()).border_l_2().border_color(T::accent())).hover(|s| s.bg(T::bg_hover()))
+            .when(r.cut, |d| d.opacity(T::WS_O_CUT))
+            .on_click(cx.listener(move |f, e: &ClickEvent, _, cx| { if e.click_count() >= 2 { f.open(&p1, cx) } else if f.selected != p1 { f.selected = p1.clone(); f.derive(cx); } }))
+            .when(!r.up, |d| d.on_mouse_down(MouseButton::Right, cx.listener(move |f, e: &MouseDownEvent, _, cx| f.menu(&p2, e.position, cx)))))
             .when(!r.up, |d| {
                 let (at, p4) = (self.more_at.clone(), r.path.clone());
-                d.child(div().relative().flex_none()
+                // "More" (.fi-more): shown on the row's hover, or while it is selected.
+                d.child(div().relative().flex_none().when(!more_on, |d| d.opacity(0.).group_hover("file-row", |s| s.opacity(1.)))
                     .child(w::icon_button(("file-more", i), IconName::Ellipsis, "More").on_click(cx.listener(move |f, e: &ClickEvent, _, cx| {
                         // Under the button, as the web's; the click's point if it was never laid out.
                         let at = f.more_at.borrow().get(&p3).map(|b| point(b.right() - px(4.), b.bottom() + px(2.))).unwrap_or(e.position());
@@ -487,44 +531,58 @@ pub fn open_path(project: &str, raw: &str, cx: &mut App) {
 impl Render for FilesView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("files");
+        let root = div().id("files-view").flex().flex_col().size_full().bg(T::bg());
+        // Before the first answer (and with no project): nothing yet, as the web's.
+        if self.project.is_empty() || self.state == "loading" { return root; }
+        if self.state == "error" { return root.child(empty_line(self.error.clone())); }
         let (note, empty) = (self.note.clone(), self.empty.clone());
-        let mut crumbs = div().flex().flex_1().min_w_0().items_center().gap(T::SP_4).overflow_hidden();
+        // The path bar (.files-crumbs): each folder a link; a Files row dropped on one moves or copies there.
+        let mut crumbs = div().flex().flex_1().min_w_0().items_center().gap(T::SP_4).overflow_hidden().text_size(T::TEXT_12);
+        if self.crumbs.is_empty() { crumbs = crumbs.child(div().text_color(T::text_muted()).child("—")); }
         for (i, c) in self.crumbs.clone().iter().enumerate() {
-            if i > 0 { crumbs = crumbs.child(div().text_color(T::text_muted()).child("/")); }
-            let p = s(c, "path");
-            crumbs = crumbs.child(div().id(("crumb", i)).text_size(T::TEXT_12).text_color(T::accent_hover()).cursor_pointer().hover(|s| s.text_color(T::text()))
-                .on_click(cx.listener(move |f, _, _, cx| f.load(Some(p.clone()), cx))).child(s(c, "name")));
+            if i > 0 { crumbs = crumbs.child(div().text_color(T::text_muted()).opacity(T::WS_CRUMB_SEP_O).child("/")); }
+            let (p, p2, name) = (s(c, "path"), s(c, "path"), s(c, "name"));
+            let n2 = name.clone();
+            crumbs = crumbs.child(w::link(("crumb", i), name)
+                .drag_over::<w::RefDrag>(|s, _, _, _| s.border_2().border_dashed().border_color(T::accent()).bg(T::accent_dim()))
+                .on_drop(cx.listener(move |f, d: &w::RefDrag, window, cx| { cx.stop_propagation(); let at = window.mouse_position(); f.drop_on_folder(&d.value, &p2, &n2, at, cx); }))
+                .on_click(cx.listener(move |f, _, _, cx| f.load(Some(p.clone()), cx))));
         }
-        let paste = self.inside && self.clip.as_ref().is_some_and(|c| c.project == self.project && !c.paths.is_empty());
-        let bar = w::toolbar().child(crumbs)
-            .when(paste, |d| d.child(w::icon_button("files-paste", IconName::Clipboard, "Paste into this folder").on_click(cx.listener(|f, _, _, cx| f.paste_here(cx)))))
-            .when(self.parent.is_some(), |d| d.child(w::icon_button("files-up", IconName::ArrowUp, "Up").on_click(cx.listener(|f, _, _, cx| f.up(cx)))))
-            .child(w::icon_button("files-upload", IconName::Upload, "Upload").on_click(cx.listener(|f, _, _, cx| f.upload(cx))));
-        let body: AnyElement = match self.state.as_str() {
-            _ if self.project.is_empty() => w::empty("Select a project").into_any_element(),
-            "loading" => w::loading("Loading…").into_any_element(),
-            "error" => w::error_state("files-retry", self.error.clone(), cx.listener(|f, _, _, cx| f.load(None, cx))).into_any_element(),
-            _ => {
-                let mut list = div().flex().flex_col().flex_1().min_h_0();
-                if !note.is_empty() { list = list.child(div().flex_none().px(T::SP_10).py(T::SP_4).text_size(T::TEXT_11).text_color(T::text_muted()).child(note)); }
-                if self.rows.is_empty() { list = list.child(w::empty(if empty.is_empty() { "Empty folder".to_string() } else { empty })); }
-                else {
-                    list = list.child(uniform_list("files-list", self.rows.len(), cx.processor(|f, range: std::ops::Range<usize>, _, cx| {
-                        range.filter_map(|i| f.rows.get(i).cloned().map(|r| (i, r))).map(|(i, r)| f.line(&r, i, cx)).collect::<Vec<_>>()
-                    })).track_scroll(&self.list).w_full().flex_1().min_h_0());
-                }
-                list.into_any_element()
-            }
-        };
-        let here = self.path.clone();
-        div().id("files-view").flex().flex_col().size_full().bg(T::bg())
-            // Files from the system, dropped anywhere here: into the folder on show.
-            .drag_over::<ExternalPaths>(|s, _, _, _| s.border_2().border_dashed().border_color(T::accent()))
-            .on_drop(cx.listener(move |f, p: &ExternalPaths, _, cx| f.drop_into(here.clone(), p.paths().to_vec(), cx)))
-            .child(div().p(T::SP_8).border_b_1().border_color(T::border()).child(w::input(&self.search)))
-            .child(bar)
-            .child(body)
+        let clip = self.clip.clone().filter(|c| self.inside && c.project == self.project && !c.paths.is_empty());
+        let paste_tip = clip.as_ref().map(|c| format!("Paste {} into this folder ({})", if c.paths.len() == 1 { base_name(&c.paths[0]) } else { format!("{} items", c.paths.len()) }, if c.op == "cut" { "move" } else { "copy" })).unwrap_or_default();
+        let bar = div().flex().flex_none().items_center().gap(T::SP_8).pl(T::SP_12).pr(T::SP_8).py(T::SP_6).child(crumbs)
+            .child(div().flex().flex_none().gap(T::SP_4)
+                .when(clip.is_some(), |d| d.child(w::icon_button("files-paste", IconName::Clipboard, paste_tip).on_click(cx.listener(|f, _, _, cx| f.paste_here(cx)))))
+                .when(self.parent.is_some(), |d| d.child(w::icon_button("files-up", IconName::ArrowUp, "Up to parent folder").on_click(cx.listener(|f, _, _, cx| f.up(cx)))))
+                .when(self.inside, |d| d.child(w::icon_button("files-upload", IconName::Upload, "Upload to this folder").on_click(cx.listener(|f, _, _, cx| f.upload(cx))))));
+        // The search (#files-search), inside the project only; Esc empties it.
+        let search = self.inside.then(|| div().id("files-search").flex_none().border_b_1().border_color(T::border_subtle())
+            .on_key_down(cx.listener(|f, e: &KeyDownEvent, window, cx| if e.keystroke.key == "escape" { f.search_escape(window, cx); cx.stop_propagation(); }))
+            .child(w::input(&self.search).appearance(false).font_family(T::MONO)));
+        let mut list = div().flex().flex_col().flex_1().min_h_0();
+        if !note.is_empty() { list = list.child(div().flex_none().px(T::SP_12).py(T::SP_6).border_b_1().border_color(T::border_subtle()).text_size(T::TEXT_11).text_color(T::text_muted()).child(note)); }
+        if self.rows.is_empty() { if !empty.is_empty() { list = list.child(empty_line(empty)); } }
+        else {
+            let me = cx.entity();
+            let measure = canvas(move |b, _, cx| {
+                let wd = b.size.width;
+                if (me.read(cx).width - wd).abs() > px(0.5) { let me = me.clone(); cx.defer(move |cx| me.update(cx, |f, _| f.width = wd)); }
+            }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
+            let ul = uniform_list("files-list", self.rows.len(), cx.processor(|f, range: std::ops::Range<usize>, _, cx| {
+                range.filter_map(|i| f.rows.get(i).cloned().map(|r| (i, r))).map(|(i, r)| f.line(&r, i, cx)).collect::<Vec<_>>()
+            })).track_scroll(&self.list).size_full();
+            // While a row is dragged near its edges, the list scrolls.
+            list = list.child(w::edge_scroll::<w::RefDrag>(div().id("files-results"), w::Scroller::Uniform(self.list.clone()), false, true, cx.entity_id())
+                .relative().w_full().flex_1().min_h_0().child(measure).child(ul));
+        }
+        root.child(div().flex_none().border_b_1().border_color(T::border_subtle()).when_some(search, |d, x| d.child(x)).child(bar))
+            .child(list)
     }
+}
+
+/// The panel's lone line (.git-empty): an empty folder, no matches, an error.
+fn empty_line(text: impl Into<SharedString>) -> Div {
+    div().w_full().flex().justify_center().px(T::SP_12).py(T::SP_20).text_size(T::TEXT_12).text_color(T::text_muted()).child(text.into())
 }
 
 pub fn ensure(window: &mut Window, cx: &mut App) -> Entity<FilesView> {

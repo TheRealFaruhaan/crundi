@@ -244,11 +244,17 @@ impl T {
     pub const WS_DIFF_W: Pixels = px(1100.);
     pub const WS_DIFF_H: Pixels = px(620.);
     /// Media's cards (.media-card), their thumbnail, the search box.
-    pub const WS_MEDIA_CARD: Pixels = px(200.);
-    pub const WS_MEDIA_THUMB: Pixels = px(120.);
+    pub const WS_MEDIA_CARD: Pixels = px(150.);
+    pub const WS_MEDIA_THUMB: Pixels = px(110.);
+    /// A card's kind badge: the scrim at this.
+    pub const WS_MEDIA_BADGE_O: f32 = 0.63;
+    /// The lightbox's audio player's height.
+    pub const WS_ML_AUDIO_H: Pixels = px(64.);
     pub const WS_MEDIA_SEARCH: Pixels = px(220.);
     /// A file row that is cut (waiting to be pasted).
-    pub const WS_O_CUT: f32 = 0.5;
+    pub const WS_O_CUT: f32 = 0.45;
+    /// The path bar's "/" between folders.
+    pub const WS_CRUMB_SEP_O: f32 = 0.6;
     /// A diff row's line-number gutter.
     pub const WS_DIFF_LN: Pixels = px(44.);
     pub fn ws_diff_del() -> Hsla { rgb(0x2d1215).into() }
@@ -274,8 +280,43 @@ impl T {
     pub const WS_TERM_INPUT_MAX: Pixels = px(120.);
     pub const WS_TERM_BLINK_MS: u64 = 500;
     pub const WS_TERM_WHEEL: i32 = 3;
+    /// The key tools' buttons (.term-tool-btn min-width), and the d-pad's columns.
+    pub const WS_TERM_TOOL_W: Pixels = px(40.);
+    pub const WS_TERM_NAV_W: Pixels = px(52.);
     /// Dim (SGR 2) text: its colour at this opacity.
     pub const WS_TERM_DIM: f32 = 0.5;
+    /// The media lightbox (.media-lightbox): its scrim, its buttons' fill
+    /// (rest, hovered: white at these), the picture's share of the window.
+    pub fn ws_ml_scrim() -> Hsla { rgba(0x000000db).into() }
+    pub const WS_ML_BTN_O: f32 = 0.12;
+    pub const WS_ML_BTN_HOVER_O: f32 = 0.25;
+    pub const WS_ML_W: f32 = 0.9;
+    pub const WS_ML_H: f32 = 0.82;
+    /// The file windows (.fe-window): the top they keep under (the top bar),
+    /// their least size, the snap zone, the resize handles (edge, corner),
+    /// the Arrange bar's top, how long it lingers after a drag (ms), and
+    /// after the pointer leaves it.
+    pub const WS_WIN_TOP: f32 = 48.0;
+    pub const WS_WIN_MIN_W: f32 = 360.0;
+    pub const WS_WIN_MIN_H: f32 = 200.0;
+    pub const WS_WIN_ZONE: f32 = 36.0;
+    pub const WS_WIN_EDGE: Pixels = px(8.);
+    pub const WS_WIN_CORNER: Pixels = px(16.);
+    pub const WS_WIN_ARRANGE_TOP: Pixels = px(54.);
+    pub const WS_WIN_ARRANGE_MS: u64 = 3500;
+    pub const WS_WIN_ARRANGE_LEAVE_MS: u64 = 1200;
+    /// The file list's marks (fileIcon): each kind's colour.
+    pub fn ws_ft(kind: &str) -> Hsla {
+        rgb(match kind {
+            "docker" => 0x2496ed, "git" => 0xf1502f, "npm" => 0xcb3837, "env" | "lock" => 0xecd53f,
+            "js" => 0xf7df1e, "ts" => 0x3178c6, "jsx" => 0x61dafb, "json" => 0xa8a8a2, "html" => 0xe34c26,
+            "css" => 0x264de4, "scss" => 0xcd6799, "py" => 0x3776ab, "go" => 0x00add8, "rs" => 0xdea584,
+            "java" => 0xf89820, "c" => 0x555555, "cpp" => 0x659ad2, "sh" => 0x4eaa25, "ps1" => 0x012456,
+            "sql" => 0xe38c00, "md" => 0x519aba, "yaml" => 0xcb171e, "xml" => 0xe37933, "svg" => 0xffb13b,
+            "pdf" => 0xe5252a, "vue" => 0x42b883, "svelte" => 0xff3e00,
+            _ => 0x6b7280,
+        }).into()
+    }
     // ── end workspace ──
     // ── planning ──
     /// secrets (2.12): the dialog's pick list stops here and scrolls.

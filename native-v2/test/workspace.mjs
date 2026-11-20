@@ -80,6 +80,7 @@ if (win) {
   await act('diff-stage', String(win.id), '0');
   await T.until('Stage on a chunk stages that chunk', (s) => W(s).wins.find((w) => w.id === win.id)?.staged === 1 && /staged/.test(s.toast));
   t.check('the file is partly staged', /^MM src\/app.js/m.test(sh('git status --porcelain')), sh('git status --porcelain'));
+  t.check('the diff is a floating file window, not a dialog', !W(s).pointerModal && !s.dialog);
   await act('win-close', String(win.id));
   await T.until('Close closes the window', (s) => !W(s).wins.some((w) => w.id === win.id));
 }
@@ -118,8 +119,8 @@ await T.until('Up goes to the parent', (s) => W(s).files.path === P);
 await act('files-search', 'lib');
 await T.until('search finds by name, with its folder', (s) => W(s).files.searching && W(s).files.rows.some((r) => r.name === 'lib.rs' && r.dir === 'src/'));
 await snap('files-search');
-await act('files-search', '');
-await T.until('clearing the search shows the folder again', (s) => !W(s).files.searching && W(s).files.rows.some((r) => r.name === 'src'));
+await act('files-escape');
+await T.until('Esc in the search clears it: the folder again', (s) => !W(s).files.searching && W(s).files.rows.some((r) => r.name === 'src'));
 
 // The editor: edited, saved.
 await act('files-open', join(P, 'src/lib.rs'));
@@ -139,7 +140,23 @@ if (win) {
   t.check('the file on disk changed', readFileSync(join(P, 'src/lib.rs'), 'utf8').includes('a + b + 0'));
   await T.until('then Save is off again', (s) => !W(s).wins.find((w) => w.id === win.id)?.dirty);
 
-  // The windows: snap to the left half, expand, arrange.
+  // The windows: dragged by the header (with the pointer, as a person
+  // does), the Arrange bar shows while dragging and a moment after; snap
+  // to the left half, resize by the corner, expand, arrange.
+  t.check('no Tile / Grid / Cascade in the header: the Arrange bar shows only while dragging', !W(await T.state()).wins.find((w) => w.id === win.id)?.arrange);
+  {
+    const w0 = W(await T.state()).wins.find((w) => w.id === win.id);
+    await T.mouse('drag', w0.x + 60, w0.y + 14, { toX: w0.x + 160, toY: w0.y + 64, steps: 6 });
+    s = await T.until('a drag by the header moves the window', (s) => { const w = W(s).wins.find((x) => x.id === win.id); return w && Math.abs(w.x - (w0.x + 100)) < 2 && Math.abs(w.y - (w0.y + 50)) < 2; });
+    t.check('the Arrange bar shows after a drag', W(s)?.wins.find((w) => w.id === win.id)?.arrange);
+    await snap('editor-arrange');
+    await T.until('and goes a moment later', (s) => !W(s).wins.find((w) => w.id === win.id)?.arrange, 8000);
+    const w1 = W(await T.state()).wins.find((w) => w.id === win.id);
+    await T.mouse('drag', w1.x + w1.w - 5, w1.y + w1.h - 5, { toX: w1.x + w1.w + 75, toY: w1.y + w1.h + 35, steps: 6 });
+    await T.until('the corner handle resizes it', (s) => { const w = W(s).wins.find((x) => x.id === win.id); return w && Math.abs(w.w - (w1.w + 80)) < 2 && Math.abs(w.h - (w1.h + 40)) < 2; });
+    await act('win-resize', String(win.id), 'e', '0', '0', '-2000', '0');
+    await T.until('no narrower than 360', (s) => W(s).wins.find((x) => x.id === win.id)?.w === 360);
+  }
   await act('win-drag', String(win.id), '700', '70', '10', '400');
   await T.until('dropped at the left edge, it snaps to the left half', (s) => { const w = W(s).wins.find((x) => x.id === win.id); return w && w.x === 4 && w.y === 48 && Math.abs(w.w - W(s).windowW / 2 + 6) < 1; });
   await act('win-expand', String(win.id));
@@ -150,6 +167,10 @@ if (win) {
   await act('win-arrange', 'tile');
   s = await T.until('Tile puts them side by side', (s) => { const ws = W(s).wins; return ws.length === 2 && ws[0].y === 48 && ws[1].y === 48 && ws[0].x !== ws[1].x; });
   await snap('editor-tiled');
+  // Esc closes the front window (the one opened last, or pressed last).
+  const front = W(await T.state()).wins.find((w) => w.front);
+  await T.key('Escape');
+  await T.until('Esc closes the front window', (s) => W(s).wins.length === 1 && !W(s).wins.some((w) => w.id === front?.id));
   for (const w of W(await T.state()).wins) await act('win-close', String(w.id));
 }
 
@@ -209,6 +230,31 @@ await T.ui('toasts-clear'); await t.sleep(300);
 await snap('viewer');
 for (const w of W(await T.state()).wins) await act('win-close', String(w.id));
 
+// An SVG previews as a picture; its menu offers "Edit the source". A PDF
+// and a BMP open in the viewer too.
+writeFileSync(join(P, 'docs/mark.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="18" fill="#6366f1"/></svg>\n');
+writeFileSync(join(P, 'docs/paper.pdf'), '%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n');
+await act('files-refresh');
+await T.until('the new files are listed', (s) => W(s).files.rows.some((r) => r.name === 'mark.svg') && W(s).files.rows.some((r) => r.name === 'paper.pdf'));
+await act('files-open', join(P, 'docs/mark.svg'));
+await T.until('an SVG opens as a picture', (s) => W(s).wins.some((w) => w.kind === 'view' && /mark\.svg$/.test(w.title) && w.img));
+await clickMore(join(P, 'docs/mark.svg'));
+s = await T.until('its menu offers Edit the source', (s) => W(s).menu?.items?.some((i) => i.id === 'source'));
+await T.ui('menu-pick', 'source');
+await T.until('Edit the source opens it in the editor', (s) => W(s).wins.some((w) => w.kind === 'edit' && /mark\.svg$/.test(w.title) && w.lines >= 1));
+await act('files-open', join(P, 'docs/paper.pdf'));
+await T.until('a PDF opens in the viewer as a page (not as text)', (s) => W(s).wins.some((w) => w.kind === 'view' && /paper\.pdf$/.test(w.title) && w.page));
+await T.ui('toasts-clear'); await t.sleep(300);
+await snap('viewer-pdf');
+for (const w of W(await T.state()).wins) await act('win-close', String(w.id));
+// A Files row dropped on a folder asks Move or Copy.
+await act('files-drop-on', join(P, 'docs/notes.txt'), P, 'proj');
+s = await T.until('a row dropped on a folder asks Move to or Copy to', (s) => W(s).menu?.items?.map((i) => i.id).join(',') === 'move,copy,cancel');
+t.check('worded as the web\'s', W(s)?.menu?.items?.[0]?.label === 'Move to \u201cproj\u201d', W(s)?.menu?.items);
+await T.ui('menu-pick', 'copy');
+await T.until('Copy to copies it there', (s) => /^Copied notes.txt/.test(s.toast) && existsSync(join(P, 'notes.txt')));
+rmSync(join(P, 'notes.txt'), { force: true });
+
 // A path in a chat's reply opens in the editor (2.16's path chips).
 await act('open-path', 'src/app.js:3');
 await T.until('a path from a chat opens the file', (s) => W(s).wins.some((w) => w.kind === 'edit' && /src\/app\.js$/.test(w.title)));
@@ -239,11 +285,16 @@ await T.until('All projects lists them too', (s) => W(s).media.scope === 'all' &
 const logo = W(await T.state()).media.cards.find((c) => c.name === 'logo.png');
 if (logo) {
   await act('media-open', logo.id);
-  await T.until('View opens the lightbox', (s) => W(s).media.lightbox === 'logo.png' && W(s).pointerModal);
+  await T.until('View opens the lightbox (a dark layer, not a dialog)', (s) => W(s).media.lightbox === 'logo.png' && !W(s).pointerModal);
   await t.sleep(600);
   await snap('media-lightbox');
+  // A press on the dark around the picture closes it.
+  await T.mouse('click', 30, Math.round(W(await T.state()).windowW > 0 ? 600 : 600));
+  await T.until('a press on the dark closes it', (s) => !W(s).media.lightbox);
+  await act('media-open', logo.id);
+  await T.until('View opens it again', (s) => W(s).media.lightbox === 'logo.png');
   await act('lb-close');
-  await T.until('Close closes it', (s) => !W(s).media.lightbox && !W(s).pointerModal);
+  await T.until('Close closes it', (s) => !W(s).media.lightbox);
   await act('media-copy', logo.id);
   await T.until('Copy path', (s) => s.toast === 'Path copied' && /\.png$/.test(W(s).copied));
   await act('media-delete', logo.id);
@@ -320,12 +371,33 @@ await act('term-tool', key, 'ctrl+c');
 await act('term-send', key, 'echo after-ctrl-c');
 await T.until('the tools\' Ctrl+C stops it', (s) => TS(s)?.screen.some((l) => l.trim() === 'after-ctrl-c'), 15000);
 await act('term-tools', key);
-await T.until('the key tools open', (s) => TS(s)?.tools);
+s = await T.until('the key tools open, and the bar grows to hold them (the box stays under them)', (s) => TS(s)?.tools && TS(s).inputH > 150);
 await snap('terminal-tools');
 await act('term-tools', key);
-await act('pick-next', join(scratch, 'shot.png'));
-await act('term-attach', key);
-await T.until('attach uploads and puts the path in the input', (s) => /crundi_attachments\/.*shot.*\.png $/.test(TS(s)?.text || '') && /^Attached/.test(s.toast), 20000);
+await T.until('closed, the bar is its own height again', (s) => !TS(s)?.tools && TS(s).inputH < 100);
+
+// The newline key (Settings › Terminal): Shift+Enter by default, Ctrl+Enter
+// when chosen there; either sends ESC CR (cat -v shows it as ^[).
+const ops = join(T.configDir, 'ops-settings.json');
+await act('term-send', key, 'cat -v');
+await t.sleep(500);
+await act('term-focus', key);
+await act('term-key', key, '\n', 'shift');
+await T.until('Shift+Enter makes a new line (ESC CR)', (s) => TS(s)?.screen.some((l) => l.trim() === '^['));
+writeFileSync(ops, JSON.stringify({ newline: 'ctrl' }));
+await act('term-key', key, 'x', '');
+await act('term-key', key, '\n', 'ctrl');
+await T.until('with Ctrl+Enter chosen, Ctrl+Enter does', (s) => TS(s)?.screen.some((l) => l.trim() === 'x^['));
+await act('term-key', key, 'y', '');
+await act('term-key', key, '\n', 'shift');
+await T.until('and Shift+Enter is a plain Enter then', (s) => TS(s)?.screen.some((l) => l.trim() === 'y'));
+rmSync(ops, { force: true });
+await act('term-tool', key, 'ctrl+c');
+
+// A picture pasted on the screen is saved in the project, its path typed in.
+await act('term-paste-image', key, png);
+await T.until('a pasted picture: "Screenshot saved", its path typed in', (s) => /^Screenshot saved: /.test(s.toast) && TS(s)?.screen.some((l) => /\.png/.test(l)), 15000);
+await act('term-tool', key, 'ctrl+c');
 await act('term-input', key, '');
 await act('term-zoom', key, '1');
 await T.until('A+ makes its text larger', (s) => TS(s)?.zoom === 1);
@@ -335,15 +407,35 @@ await T.until('↺ resets it', (s) => TS(s)?.zoom === 0);
 // Idle (the terminal not focused: no blink), nothing animating: no frames.
 {
   await act('term-bottom', key);
+  await act('term-blur', key);
   await T.ui('tab', 'files');
   await T.ui('tab', 'workbench');
   await T.ui('toasts-clear');
-  await t.sleep(1500);
+  // (The box's caret, which had the keys, rests 10 s after the last key.)
+  await T.settle(1500, 15000);
   const from = T.frames.mark();
+  const r0 = (await T.state()).renders || {};
   await t.sleep(5000);
   const idle = T.frames.since(from);
-  t.check('idle: no frames at all for 5 s', idle.frames === 0, idle);
+  const r1 = (await T.state()).renders || {};
+  const drew = Object.fromEntries(Object.keys(r1).filter((k) => r1[k] !== (r0[k] || 0)).map((k) => [k, r1[k] - (r0[k] || 0)]));
+  t.check('idle: no frames at all for 5 s', idle.frames === 0, { idle, drew });
 }
+
+// The input bar's box (after the idle check: a box that had the keys
+// keeps its caret blinking after it lost them: reported to the Architect).
+// In the box: it uploads, its path goes in.
+await act('term-input-paste-image', key, png);
+await T.until('a picture pasted in the box uploads, its path goes in', (s) => /crundi_attachments\/.*\.png $/.test(TS(s)?.text || '') && /^Attached/.test(s.toast), 20000);
+await act('term-input', key, '');
+// Files from the system dropped on the terminal: their paths into the box.
+await act('term-drop-files', key, join(scratch, 'shot.png'));
+await T.until('a file dropped on the terminal: its path in the box, "File added"', (s) => (TS(s)?.text || '').includes(join(scratch, 'shot.png')) && s.toast === 'File added');
+await act('term-input', key, '');
+await act('pick-next', join(scratch, 'shot.png'));
+await act('term-attach', key);
+await T.until('attach uploads and puts the path in the input', (s) => /crundi_attachments\/.*shot.*\.png $/.test(TS(s)?.text || '') && /^Attached/.test(s.toast), 20000);
+await act('term-input', key, '');
 
 // The terminal renamed: the head shows the new title (from the event
 // stream's list, as every client sees it).
@@ -372,6 +464,25 @@ await T.until('Git, Files and Media in panes', (s) => s.panes?.includes('panel:g
 await T.ui('toasts-clear');
 await t.sleep(800);
 await snap('workbench-panels');
+
+// A Files row dragged onto the terminal (with the pointer): its path goes
+// to the program, "Sent to terminal".
+{
+  await act('files-nav', join(P, 'docs'));
+  const row = await T.until('the Files pane lists docs', (s) => W(s).files.rows.find((r) => r.name === 'notes.txt')?.more);
+  const b = W(row || {})?.files?.rows.find((r) => r.name === 'notes.txt')?.more;
+  const leaf = row?.leaves?.find((l) => l.key === key);
+  const fl = row?.leaves?.find((l) => l.key === 'panel:files');
+  if (b && leaf && fl) {
+    await act('term-send', key, 'cat > /dev/null');
+    await t.sleep(400);
+    await T.ui('toasts-clear');
+    await T.mouse('drag', fl.x + 60, b[1] + b[3] / 2, { toX: leaf.x + leaf.w / 2, toY: leaf.y + leaf.h / 3, steps: 12 });
+    const got = await T.until('dropped on the terminal: its path is typed there, "Sent to terminal"', (s) => s.toast === 'Sent to terminal' && (TS(s)?.screen || []).join('').includes('[File Path: ' + join(P, 'docs/notes.txt') + ']'), 10000);
+    if (!got) { const z = await T.state(); console.log('  drag from', fl.x + 60, b[1], 'to', leaf, 'toast', z.toast, 'screen', TS(z)?.screen.slice(-4)); }
+    await act('term-tool', key, 'ctrl+c');
+  } else t.check('the row and the terminal are on screen to drag between', false, { b, leaf, fl });
+}
 
 // The head's × (F36): one click arms "Sure?", the second closes the
 // terminal on the server, and its pane goes.

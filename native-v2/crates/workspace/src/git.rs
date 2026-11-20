@@ -68,8 +68,12 @@ pub struct GitView {
     pub pushing: bool,
     loading: bool,
     project: String,
-    msg: Entity<w::InputState>,
+    msg: Entity<w::TextareaState>,
     list: UniformListScrollHandle,
+    /// The project's folder (a row's path from it, dragged into a chat) and
+    /// the list's width (a dragged row's ghost is the row at this width).
+    root: String,
+    width: Pixels,
 }
 
 pub struct GitHandle(pub Entity<GitView>);
@@ -79,8 +83,8 @@ pub fn view(cx: &App) -> Option<Entity<GitView>> { cx.try_global::<GitHandle>().
 
 impl GitView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let msg = cx.new(|cx| w::InputState::new(window, cx).placeholder("Commit message…"));
-        GitView { state: "loading".into(), error: String::new(), branch: String::new(), sync: String::new(), staged: vec![], changes: vec![], rows: vec![], pulling: false, pushing: false, loading: false, project: crundi_shell::project(cx), msg, list: UniformListScrollHandle::new() }
+        let msg = cx.new(|cx| w::TextareaState::new(window, cx).auto_grow(2, 2).placeholder("Commit message…"));
+        GitView { state: "loading".into(), error: String::new(), branch: String::new(), sync: String::new(), staged: vec![], changes: vec![], rows: vec![], pulling: false, pushing: false, loading: false, project: crundi_shell::project(cx), msg, list: UniformListScrollHandle::new(), root: String::new(), width: px(320.) }
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -113,6 +117,7 @@ impl GitView {
                     Err(e) => ("error".into(), e, g.branch.clone(), g.sync.clone(), g.staged.clone(), g.changes.clone()),
                 };
                 if (&state, &error, &branch, &sync, &staged, &changes) == (&g.state, &g.error, &g.branch, &g.sync, &g.staged, &g.changes) { return; }
+                g.root = crundi_shell::stores(cx).projects.read(cx).path_of(&project);
                 g.rows = lines(&staged, &changes);
                 (g.state, g.error, g.branch, g.sync, g.staged, g.changes) = (state, error, branch, sync, staged, changes);
                 cx.notify();
@@ -234,7 +239,7 @@ impl GitView {
 
     fn section(staged: bool, n: usize, cx: &mut Context<Self>) -> AnyElement {
         let (title, act, tip) = if staged { ("STAGED", IconName::Minus, "Unstage all") } else { ("CHANGES", IconName::Plus, "Stage all") };
-        div().w_full().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).bg(T::bg_secondary())
+        div().w_full().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_12)
             .child(div().text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_muted()).child(title))
             .child(div().text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(T::text_secondary()).child(format!("({n})")))
             .child(div().flex_1())
@@ -242,8 +247,9 @@ impl GitView {
             .into_any_element()
     }
 
-    fn file_line(f: &FileRow, i: usize, cx: &mut Context<Self>) -> AnyElement {
-        let code_color = match f.code.as_str() { "M" => T::yellow(), "A" | "?" => T::green(), "D" => T::red(), _ => T::text_secondary() };
+    fn file_line(&self, f: &FileRow, i: usize, cx: &mut Context<Self>) -> AnyElement {
+        // gf-M yellow, gf-A green, gf-D red, gf-U accent; any other letter the row's own.
+        let code_color = match f.code.as_str() { "M" => T::yellow(), "A" => T::green(), "D" => T::red(), "U" => T::accent(), _ => T::text() };
         let (file, file2, file3) = (f.file.clone(), f.file.clone(), f.file.clone());
         let staged = f.staged;
         let id = (if staged { "staged" } else { "change" }, i);
@@ -255,55 +261,84 @@ impl GitView {
             acts.child(w::icon_button((id.0, i * 4 + 1), IconName::Plus, "Stage").on_click(cx.listener(move |g, _, _, cx| g.stage(&file2, cx))))
                 .child(w::icon_button((id.0, i * 4 + 2), IconName::RotateCcw, "Discard").on_click(cx.listener(move |g, _, window, cx| g.discard(&file3, window, cx))))
         };
-        div().id(id).w_full().flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).px(T::SP_10).hover(|s| s.bg(T::bg_hover()))
-            .child(div().flex_none().w(T::ICON_MD).text_size(T::TEXT_11).font_weight(T::W_BOLD).font_family(T::MONO).text_color(code_color).child(f.code.clone()))
-            .child(div().flex().flex_1().min_w_0().items_center().text_size(T::TEXT_12).font_family(T::MONO)
-                .when(!f.dir.is_empty(), |d| d.child(div().text_color(T::text_muted()).truncate().child(f.dir.clone())))
-                .child(div().text_color(T::text()).truncate().child(f.name.clone())))
-            .when(!f.add.is_empty(), |d| d.child(div().text_size(T::TEXT_10).font_family(T::MONO).text_color(T::green()).child(format!("+{}", f.add))))
-            .when(!f.del.is_empty(), |d| d.child(div().text_size(T::TEXT_10).font_family(T::MONO).text_color(T::red()).child(format!("-{}", f.del))))
-            .child(acts)
+        // The row's look (and the dragged ghost's: the row itself).
+        let cells = {
+            let (code, dir, name, add, del) = (f.code.clone(), f.dir.clone(), f.name.clone(), f.add.clone(), f.del.clone());
+            move |d: Div| d.flex().items_center().gap(T::SP_6).h(T::CONTROL_SM).pl(T::SP_20).pr(T::SP_12)
+                .child(div().flex_none().w(T::ICON_MD).text_size(T::TEXT_11).font_weight(T::W_BOLD).font_family(T::MONO).text_color(code_color).child(code.clone()))
+                .child(div().flex().flex_1().min_w_0().items_center().text_size(T::TEXT_12).font_family(T::MONO)
+                    .when(!dir.is_empty(), |d| d.child(div().text_color(T::text_muted()).truncate().child(dir.clone())))
+                    .child(div().text_color(T::text()).truncate().child(name.clone())))
+                .when(!add.is_empty(), |d| d.child(div().text_size(T::TEXT_10).font_family(T::MONO).text_color(T::green()).child(format!("+{add}"))))
+                .when(!del.is_empty(), |d| d.child(div().text_size(T::TEXT_10).font_family(T::MONO).text_color(T::red()).child(format!("-{del}"))))
+        };
+        let c2 = cells.clone();
+        let row = div().id(id).w_full().cursor_grab().hover(|s| s.bg(T::bg_hover()));
+        // Dragged onto a chat or a terminal: its path from the project's root (data-drag-abs).
+        let row = w::drag_ref_row(row, "file", &self.abs_path(&f.file), f.name.clone(), self.width, move || c2(div().w_full().bg(T::bg_hover())).into_any_element());
+        w::tip(row, "Drag onto a terminal to insert its path")
+            .child(cells(div().w_full())
+                .child(acts))
             .into_any_element()
     }
+
+    /// A path from the project's root (the web's absProjectPath).
+    fn abs_path(&self, p: &str) -> String {
+        let root = self.root.trim_end_matches('/');
+        if root.is_empty() { p.to_string() } else { format!("{root}/{}", p.trim_start_matches('/')) }
+    }
+}
+
+/// The panel's lone line (.git-empty): "No changes", "Not a git repository", an error.
+fn git_empty(text: impl Into<SharedString>) -> Div {
+    div().w_full().flex().justify_center().px(T::SP_12).py(T::SP_20).text_size(T::TEXT_12).text_color(T::text_muted()).child(text.into())
 }
 
 impl Render for GitView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("git");
-        let branch = if self.branch.is_empty() { "—".to_string() } else { self.branch.clone() };
-        let head = w::toolbar()
-            .child(div().text_size(T::ICON_MD).text_color(T::accent_hover()).child(IconName::GitBranch))
-            .child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).font_family(T::MONO).text_color(T::text()).child(branch))
-            .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(self.sync.clone()))
-            .child(div().flex_1())
-            .child(w::icon_button("git-refresh", IconName::RefreshCw, "Refresh").on_click(cx.listener(|g, _, _, cx| g.load(cx))));
+        let root = div().flex().flex_col().size_full().bg(T::bg());
         let body: AnyElement = match self.state.as_str() {
-            _ if self.project.is_empty() => w::empty("Select a project").into_any_element(),
-            "loading" => w::loading("Loading…").into_any_element(),
-            "not-repo" => w::empty("Not a git repository").into_any_element(),
-            "error" => w::error_state("git-retry", format!("Error: {}", self.error), cx.listener(|g, _, _, cx| g.load(cx))).into_any_element(),
+            // Before the first answer (and with no project): nothing yet, as the web's.
+            _ if self.project.is_empty() => return root,
+            "loading" => return root,
+            "not-repo" => return root.child(git_empty("Not a git repository")),
+            "error" => return root.child(git_empty(format!("Error: {}", self.error))),
             _ => {
+                let me = cx.entity();
+                let measure = canvas(move |b, _, cx| {
+                    let wd = b.size.width;
+                    if (me.read(cx).width - wd).abs() > px(0.5) { let me = me.clone(); cx.defer(move |cx| me.update(cx, |g, _| g.width = wd)); }
+                }, |_, _, _, _| {}).absolute().top_0().left_0().size_full();
                 let list: AnyElement = if self.rows.is_empty() {
-                    div().flex_1().min_h_0().child(w::empty("No changes")).into_any_element()
+                    div().flex_1().min_h_0().child(git_empty("No changes")).into_any_element()
                 } else {
-                    uniform_list("git-list", self.rows.len(), cx.processor(|g, range: std::ops::Range<usize>, _, cx| {
+                    let ul = uniform_list("git-list", self.rows.len(), cx.processor(|g, range: std::ops::Range<usize>, _, cx| {
                         range.filter_map(|i| g.rows.get(i).cloned()).map(|l| match l {
                             Line::Section { staged, n } => Self::section(staged, n, cx),
-                            Line::File(f, i) => Self::file_line(&f, i, cx),
+                            Line::File(f, i) => g.file_line(&f, i, cx),
                         }).collect::<Vec<_>>()
-                    })).track_scroll(&self.list).w_full().flex_1().min_h_0().into_any_element()
+                    })).track_scroll(&self.list).size_full().py(T::SP_4);
+                    // While a row is dragged near its edges, the list scrolls.
+                    w::edge_scroll::<w::RefDrag>(div().id("git-files"), w::Scroller::Uniform(self.list.clone()), false, true, cx.entity_id())
+                        .relative().w_full().flex_1().min_h_0().child(measure).child(ul).into_any_element()
                 };
                 let msg = self.msg.clone();
-                let foot = div().flex().flex_col().flex_none().gap(T::SP_8).p(T::SP_10).border_t_1().border_color(T::border())
-                    .child(w::input(&self.msg))
-                    .child(div().flex().gap(T::SP_8)
+                let foot = div().flex().flex_col().flex_none().gap(T::SP_8).px(T::SP_12).py(T::SP_10).border_t_1().border_color(T::border())
+                    .child(w::textarea(&self.msg))
+                    .child(div().flex().gap(T::SP_6)
                         .child(div().flex_1().child(w::disabled(w::button("git-pull", if self.pulling { "Pulling…" } else { "Pull" }).icon(IconName::ArrowDown), self.pulling).w_full().on_click(cx.listener(|g, _, _, cx| g.pull(cx)))))
                         .child(div().flex_1().child(w::disabled(w::button("git-push", if self.pushing { "Pushing…" } else { "Push" }).icon(IconName::ArrowUp), self.pushing).w_full().on_click(cx.listener(|g, _, _, cx| g.push(cx)))))
                         .child(div().flex_1().child(w::primary("git-commit", "Commit").w_full().on_click(cx.listener(move |g, _, window, cx| { let t = msg.read(cx).value().to_string(); g.commit(&t, window, cx) })))));
                 div().flex().flex_col().flex_1().min_h_0().child(list).child(foot).into_any_element()
             }
         };
-        div().flex().flex_col().size_full().bg(T::bg()).child(head).child(body)
+        // The branch (.git-branch): its name, ↑ahead ↓behind.
+        let branch = if self.branch.is_empty() { "—".to_string() } else { self.branch.clone() };
+        let head = div().flex().flex_none().items_center().gap(T::SP_6).px(T::SP_12).py(T::SP_8).border_b_1().border_color(T::border_subtle())
+            .child(div().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::accent_hover()).child(branch))
+            .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(self.sync.clone()));
+        root.child(head).child(body)
     }
 }
 
