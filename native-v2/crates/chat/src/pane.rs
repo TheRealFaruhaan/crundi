@@ -36,14 +36,6 @@ impl ChatPane {
         ChatPane { store, log, composer, mini }
     }
 
-    /// A second pane over the same chat (F65: the bubble): its log has its
-    /// own list (its own scroll and measurements) over the chat's rows.
-    pub fn second(store: Entity<ChatStore>, window: &mut Window, cx: &mut App) -> Self {
-        let log = cx.new(|cx| LogView::second(store.clone(), cx));
-        let composer = cx.new(|cx| Composer::new(store.clone(), window, cx));
-        ChatPane { store, log, composer, mini: None }
-    }
-
     /// The pane's body (the workbench's PaneParts::body).
     pub fn body(&self, cx: &App) -> AnyElement {
         // The composer is cached at the height it measured itself (it grows

@@ -57,6 +57,10 @@ fn state(stores: &Stores, window: &mut Window, cx: &mut App) -> Map<String, Valu
     m.insert("dialog".into(), crundi_widgets::ask_props(cx));
     m.insert("toast".into(), json!(crundi_widgets::toast_text(cx).to_string()));
     m.insert("renders".into(), crundi_core::driver::renders());
+    // The window as the system has it: active (mapped, in front, with the
+    // keys: on Wayland, the compositor's "activated"), its bounds.
+    let b = window.bounds();
+    m.insert("window".into(), json!({ "active": window.is_window_active(), "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height) }));
     for a in registry::list(cx) {
         // Merged one level deep: two areas each giving "areas": {<theirs>}
         // keep both (a plain extend let the last area's replace the others').

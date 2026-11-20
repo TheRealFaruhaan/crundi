@@ -53,7 +53,7 @@ pub struct Shell {
     press: BarPress,
     side: Entity<Sidebar>,
     bar: Entity<ProjectBar>,
-    sign_in: Entity<SignIn>,
+    pub(crate) sign_in: Entity<SignIn>,
     restore: Entity<RestoreLayer>,
     widths: Entity<slots::Widths>,
     /// Each tab's body, made the first time it is shown.
@@ -68,6 +68,8 @@ pub struct Shell {
     root_focus: FocusHandle,
     /// Cru's push to talk is held (its shortcut, ptt.rs).
     ptt_held: bool,
+    /// The element that had the keys at the last render (F137: see render).
+    seen_focus: Option<FocusHandle>,
     /// What the Shell lays out, copied from Session, Nav and the top bar's
     /// widths when they change (it never reads them while rendering: a
     /// notify on either that changes none of this draws no frame;
@@ -79,14 +81,14 @@ pub struct Shell {
 /// The Shell's layout inputs: signed in, the tab, the fold, the drawer, the
 /// top bar's measured leaves (usage badge, right buttons, connection, window buttons).
 #[derive(Clone, PartialEq)]
-struct ShellLayout { signed_in: bool, tab: String, folded: bool, fold_from: Option<(Pixels, Instant)>, drawer_open: bool, drawer_w: Pixels, tw: [Pixels; 6] }
+struct ShellLayout { signed_in: bool, server_over: bool, tab: String, folded: bool, fold_from: Option<(Pixels, Instant)>, drawer_open: bool, drawer_w: Pixels, tw: [Pixels; 6] }
 
 impl ShellLayout {
     fn of(stores: &Stores, widths: &Entity<slots::Widths>, cx: &App) -> Self {
         let n = stores.nav.read(cx);
         let wd = &widths.read(cx).0;
         let g = |k| wd.get(k).copied().unwrap_or(px(0.));
-        ShellLayout { signed_in: stores.session.read(cx).signed_in(), tab: n.tab.clone(), folded: n.folded, fold_from: n.fold_from, drawer_open: n.drawer_open, drawer_w: n.drawer_w,
+        ShellLayout { signed_in: stores.session.read(cx).signed_in(), server_over: stores.session.read(cx).server_over, tab: n.tab.clone(), folded: n.folded, fold_from: n.fold_from, drawer_open: n.drawer_open, drawer_w: n.drawer_w,
             tw: [g("pill"), g("right"), g("cru"), g("appr"), g("conn"), g("win")] }
     }
 }
@@ -131,7 +133,7 @@ impl Shell {
             window.focus(&to, cx);
         }));
         cx.set_global(ShellHandle(cx.entity().downgrade()));
-        Shell { stores, top, side, bar, sign_in, restore, widths, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, press: BarPress::default(), overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, lay, _subs: subs }
+        Shell { stores, top, side, bar, sign_in, restore, widths, tabs: HashMap::new(), missing: HashMap::new(), drawer: None, modal, ask, dragging: false, press: BarPress::default(), overlays: cx.try_global::<crate::Overlays>().map(|o| o.0.clone()).unwrap_or_default(), root_focus: cx.focus_handle(), ptt_held: false, seen_focus: None, lay, _subs: subs }
     }
 
     /// The browser drawer's view (Desktop registers it).
@@ -188,10 +190,24 @@ pub fn shell(cx: &App) -> Option<Entity<Shell>> { cx.try_global::<ShellHandle>()
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if window.focused(cx).is_none() { window.focus(&self.root_focus, cx); }
+        // F137: GPUI runs focus listeners (on_focus, on_blur, on_focus_in/out,
+        // an input's Focus and Blur) inside the draw, after paint, where a
+        // notify marks the view dirty but asks for no frame: the view would
+        // stay stale (a blurred box's caret, its layer) until something else
+        // draws, an idle frame much later. Every focus change goes through
+        // window.focus or blur, which re-render the whole window, the Shell
+        // with it: so when the keys moved, one more frame is asked for, and it
+        // draws what those listeners changed (nothing else is dirty).
+        let now = window.focused(cx);
+        if now != self.seen_focus {
+            self.seen_focus = now;
+            let me = cx.entity().entity_id();
+            window.on_next_frame(move |_, cx| cx.notify(me));
+        }
         let root = div().key_context("CrundiWindow").relative().flex().flex_col().size_full().bg(T::bg()).text_color(T::text()).text_size(T::TEXT_13).font(crundi_theme::ui_font())
             .child(div().absolute().size_0().track_focus(&self.root_focus));
         let l = self.lay.clone();
-        if !l.signed_in {
+        if !l.signed_in || l.server_over {
             return root.child(self.sign_in.clone().cached(StyleRefinement::default().size_full()))
                 // The restore from a backup (Operations'), over the sign-in page while open.
                 .child(self.restore.clone().cached(StyleRefinement::default().absolute().top_0().left_0().size_full()))
@@ -846,7 +862,7 @@ pub fn driver_state(stores: &Stores, cx: &App) -> Value {
         "projectName": if p.open.is_empty() { "No project".to_string() } else { p.open_name() },
         "role": p.role, "mode": p.mode,
         "rows": p.list.iter().map(|x| json!({ "alias": x.alias, "heart": x.heart.map(|h| json!([h.0, h.1])), "heartTip": x.heart_tip(), "sched": x.sched, "factory": x.factory_tip() })).collect::<Vec<_>>(),
-        "signin": { "setupRequired": s.setup_required, "enrol": s.enrol.is_some(), "enrolSecret": s.enrol.as_ref().map(|e| e.0.clone()), "collab": s.collab, "bootSlow": s.boot_slow,
+        "signin": { "setupRequired": s.setup_required, "enrol": s.enrol.is_some(), "enrolSecret": s.enrol.as_ref().map(|e| e.0.clone()), "collab": s.collab, "bootSlow": s.boot_slow, "serverOver": s.server_over, "serverNote": s.server_note,
             "prompt": crate::signin::prompt(s.setup_required, s.offer_telegram, s.offer_google, s.offer_github, s.offer_password) },
     })
 }

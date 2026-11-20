@@ -1,4 +1,4 @@
-//! What every log of one chat shares (a pane's and a bubble's): kept in the
+//! What a chat's log keeps beside its rows: kept in the
 //! chat's store (`ChatStore::log`) and followed once per batch (`follow`,
 //! called by the store after it derived its rows), never in render.
 //!
@@ -14,7 +14,7 @@
 //!
 //! A change that alters a row's height without its text changing (a block
 //! folded, a call turned into an agent's row) measures that entry's rows
-//! again in every list (`ChatStore::remeasure`).
+//! again (`ChatStore::remeasure`).
 
 use crate::store::ChatStore;
 use crundi_core::think::{Think, LINGER_MS};

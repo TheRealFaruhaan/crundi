@@ -133,19 +133,8 @@ pub(crate) struct Ui {
 impl LogView {
     pub(crate) fn new(store: Entity<ChatStore>, cx: &mut Context<Self>) -> Self {
         let list = store.read(cx).list.clone();
-        Self::with_list(store, list, None, cx)
-    }
-
-    /// A log with its own list over the chat's rows (F65: the bubble's log
-    /// scrolls and measures on its own while the pane's stays where it is).
-    pub fn second(store: Entity<ChatStore>, cx: &mut Context<Self>) -> Self {
-        let (id, list) = store.update(cx, |s, _| s.add_list());
-        Self::with_list(store, list, Some(id), cx)
-    }
-
-    fn with_list(store: Entity<ChatStore>, list: ListState, list_id: Option<u64>, cx: &mut Context<Self>) -> Self {
         let projects = crundi_shell::stores(cx).projects.clone();
-        let mut subs = vec![
+        let subs = vec![
             // A store change redraws the log; something new below while the
             // reader is up the log lights the jump button's dot.
             cx.observe(&store, |this: &mut Self, _, cx| { prose::arrived(this, cx); cx.notify(); }),
@@ -154,7 +143,6 @@ impl LogView {
             // The text size changes every row.
             cx.observe(&store.read(cx).meta.clone(), |this: &mut Self, m, cx| { let z = m.read(cx).0.zoom; if this.zoom != Some(z) { this.zoom = Some(z); cx.notify(); } }),
         ];
-        if let Some(id) = list_id { subs.push(cx.on_release(move |this: &mut Self, cx| this.store.update(cx, |s, _| s.drop_list(id)))); }
         // A text box in a card taking or losing the keyboard: the paint layer follows.
         let focus = cx.focus_handle();
         let zoom = Some(store.read(cx).meta.read(cx).0.zoom);

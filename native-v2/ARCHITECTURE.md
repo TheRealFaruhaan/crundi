@@ -203,6 +203,16 @@ Root (gpui-component)
   view; its fields are its own `InputState`s).
 - Any view that changes per frame during an animation (the sidebar's fold)
   is the animated view alone; its siblings stay cached.
+- Focus listeners (`on_focus`, `on_blur`, `on_focus_in/out`, an input's
+  Focus and Blur events) run inside the draw, after paint. A notify there
+  marks the view dirty but asks for no frame (gpui's `invalidate_view`
+  wakes the platform only outside a draw), so the view would stay stale
+  until some unrelated frame, an idle frame much later (F137). The Shell
+  handles it once for every area: each focus change re-renders the window
+  (`window.focus` and `blur` refresh it), and when the Shell sees the
+  keys moved it asks for one more frame, which draws what the listeners
+  changed. Areas notify from focus listeners as usual; nothing else is
+  needed.
 
 ## Virtualised lists
 
@@ -436,6 +446,12 @@ each counted view's renders (`core::driver::rendered`), so a suite can
 check that a change redraws only the views that show it. At its first
 command it gives the window the keys (the X input focus: under Xvfb no
 window manager does), so focus, blur and carets behave as on a display.
+Its `state` also holds `window` (active, as the system has it, and the
+bounds): on Wayland "active" is the compositor's activated state, so it
+shows the window is mapped and in front. A suite never reaches the
+desktop's own session bus: `test/lib.mjs` drops the login session's bus
+(the tray icon would show on that person's panel with its window on
+Xvfb); test/desktop.mjs runs under `dbus-run-session`.
 
 ## Building
 

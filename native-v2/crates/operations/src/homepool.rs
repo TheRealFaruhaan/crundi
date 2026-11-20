@@ -516,7 +516,7 @@ fn node_row(n: &rules::Node, move_opts: &[&'static str], first: bool) -> Div {
             .child(meta(n.meta.clone()))
             .child(div().flex().flex_wrap().items_center().gap(T::SP_6)
                 .child(w::dropdown(eid("move", &n.id), move_opts, n.net, false, move |i, _, cx| node_move(&id1, i, cx)))
-                .child(w::switch(eid("on", &n.id), n.on, move |on, _, cx| toggle("node", &id2, *on, cx)))
+                .child(w::switch(eid("on", &n.id), n.on, move |on, _, cx| toggle("node", &id2, *on, cx)).tone("green"))
                 .child(w::button(eid("rename", &n.id), "Rename").on_click(move |_, window, cx| action("node-rename", &id3, window, cx)))
                 .child(w::button(eid("reissue", &n.id), "New key").on_click(move |_, window, cx| action("node-reissue", &id4, window, cx)))
                 .child(w::danger(eid("remove", &n.id), "Remove").on_click(move |_, window, cx| action("node-remove", &id5, window, cx)))))
@@ -529,7 +529,7 @@ fn networks(m: &Model) -> Vec<AnyElement> {
         let mut head = vec![hp_title(n.name.clone()), chip(n.id.clone(), "").into_any_element()];
         if !n.chip.is_empty() { head.push(chip(n.chip.clone(), n.tone).into_any_element()); }
         head.push(spacer());
-        if n.kind == "pool" { head.push(w::switch("hp-pool-on", n.on, |on, _, cx| toggle("pool", "pool", *on, cx)).into_any_element()); }
+        if n.kind == "pool" { head.push(w::switch("hp-pool-on", n.on, |on, _, cx| toggle("pool", "pool", *on, cx)).tone("green").into_any_element()); }
         if n.kind == "own" {
             let (a, b) = (n.id.clone(), n.id.clone());
             head.push(w::button(eid("net-rename", &n.id), "Rename").on_click(move |_, window, cx| action("net-rename", &a, window, cx)).into_any_element());
@@ -558,7 +558,7 @@ fn access(m: &Model) -> Vec<AnyElement> {
         head.push(chip(k.state.clone(), k.tone).into_any_element());
         head.push(spacer());
         let id = k.id.clone();
-        head.push(w::switch(eid("key-on", &k.id), k.on, move |on, _, cx| toggle("key", &id, *on, cx)).into_any_element());
+        head.push(w::switch(eid("key-on", &k.id), k.on, move |on, _, cx| toggle("key", &id, *on, cx)).tone("green").into_any_element());
         let (a, b, c, e) = (k.id.clone(), k.id.clone(), k.id.clone(), k.id.clone());
         let mut btns = div().flex().flex_wrap().gap(T::SP_6)
             .child(w::button(eid("key-use", &k.id), if k.open { "Hide" } else { "How to use" }).on_click(move |_, window, cx| action("key-use", &a, window, cx)))

@@ -27,9 +27,6 @@ use store::ChatStore;
 pub struct Chats {
     stores: HashMap<String, Entity<ChatStore>>,
     panes: HashMap<String, ChatPane>,
-    /// Chats kept subscribed whatever the open project (F65: a bubble
-    /// floating another project's chat), by how many hold each.
-    held: HashMap<String, usize>,
 }
 impl Global for Chats {}
 
@@ -47,23 +44,6 @@ pub fn find(cx: &App, id: &str) -> Option<Entity<ChatStore>> { cx.try_global::<C
 /// A chat's pane log, if its pane was made (the log's driver actions).
 pub fn log_of(cx: &App, id: &str) -> Option<Entity<log::LogView>> { cx.try_global::<Chats>().and_then(|c| c.panes.get(id)).map(|p| p.log.clone()) }
 
-/// Keep a chat's store and subscription whatever the open project, until
-/// `release` (F65: the bubble holds the chat it floats). Returns its store.
-pub fn hold(cx: &mut App, id: &str) -> Entity<ChatStore> {
-    *cx.default_global::<Chats>().held.entry(id.to_string()).or_default() += 1;
-    store(cx, id)
-}
-
-/// The hold ends; a chat no pane shows any more is dropped at the next sync.
-pub fn release(cx: &mut App, id: &str) {
-    let c = cx.default_global::<Chats>();
-    if let Some(n) = c.held.get_mut(id) { *n -= 1; if *n == 0 { c.held.remove(id); } }
-    let s = crundi_shell::stores(cx);
-    sync(&s, cx);
-}
-
-fn held(cx: &mut App, id: &str) -> bool { cx.default_global::<Chats>().held.contains_key(id) }
-
 fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> ChatPane {
     if let Some(p) = cx.default_global::<Chats>().panes.get(id) { return p.clone(); }
     let s = store(cx, id);
@@ -73,7 +53,6 @@ fn pane_view(cx: &mut App, id: &str, window: &mut Window) -> ChatPane {
 }
 
 fn drop_chat(cx: &mut App, id: &str) {
-    if held(cx, id) { return; }
     mini::detach(id, cx);
     let c = cx.default_global::<Chats>();
     c.panes.remove(id);

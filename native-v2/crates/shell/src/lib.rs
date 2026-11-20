@@ -118,6 +118,15 @@ impl Global for CruAnchor {}
 pub fn cru_anchor(cx: &App) -> Option<Bounds<Pixels>> { cx.try_global::<CruAnchor>().map(|a| a.0) }
 pub(crate) fn set_cru_anchor(cx: &mut App, b: Bounds<Pixels>) { if cru_anchor(cx) != Some(b) { cx.set_global(CruAnchor(b)); } }
 
+/// The server step over the signed-in app (the tray's "Server…", Electron's
+/// showServerScreen; F131), its box holding the saved address; `false` goes
+/// back to the app (its Cancel). Signed out, it is the sign-in's server step.
+pub fn show_server_screen(on: bool, window: &mut Window, cx: &mut App) {
+    if on { if let Some(sh) = views::shell(cx) { let si = sh.read(cx).sign_in.clone(); si.update(cx, |v, cx| v.fill_server(window, cx)); } }
+    let s = stores(cx);
+    s.session.update(cx, |x, cx| x.show_server_over(on, cx));
+}
+
 /// The stores (after `init`).
 pub fn stores(cx: &App) -> Stores { cx.global::<StoresHandle>().0.clone() }
 
@@ -210,6 +219,7 @@ pub fn init(cx: &mut App) -> Stores {
             s.usage.update(cx, |u, cx| u.clear(cx));
             for a in registry::list(cx) { if let Some(f) = &a.on_signed_out { f(&s, cx); } }
         }
+        SessionEvent::ServerScreen => {}
     }).detach();
     // The connection badge and line follow the live link.
     let c = conn::conn(cx);
@@ -227,6 +237,8 @@ pub fn init(cx: &mut App) -> Stores {
                 "finish-enrol" => session.update(cx, |s, cx| s.finish_enrol(cx)),
                 "login-restore" => match slots::restore(cx) { Some((_, open, _)) => { let b = session.read(cx).signin_base(); open(cx, &b) } None => return Some(serde_json::json!({ "ok": false, "error": "no restore registered" })) },
                 // The link as a dropped connection would leave it (the badge's timers run as for real).
+                "server-screen" => show_server_screen(a(0) != "false", window, cx),
+                "server-screen-save" => session.update(cx, |s, cx| s.save_server_over(&a(0), cx)),
                 "conn-link" => { let c = conn::conn(cx); c.update(cx, |c, cx| c.link(a(0) == "true", cx)) }
                 "remove-project" => {
                     let n = stores.projects.read(cx).list.iter().find(|p| p.alias == a(0)).map(|p| p.name.clone()).unwrap_or_else(|| a(0));

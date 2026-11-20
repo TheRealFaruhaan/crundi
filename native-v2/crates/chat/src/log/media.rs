@@ -295,7 +295,7 @@ pub fn clamp_pan(pan: (f32, f32), pic: (f32, f32), room: (f32, f32)) -> (f32, f3
 }
 
 /// Over the whole window: the viewer (when its picture is this chat's) and
-/// the download rows (this chat's). Only the pane's log draws them (a second log, the bubble's, does not).
+/// the download rows (this chat's). Only the pane's log draws them (a log without spots does not).
 pub fn overlay(v: &mut LogView, window: &mut Window, cx: &mut Context<LogView>) -> Vec<AnyElement> {
     let chat = v.chat(cx);
     let mut out = vec![];

@@ -59,7 +59,7 @@ pub fn ask(store: &Entity<ChatStore>, text: String, question: String, cx: &mut A
         let anchor = st.conv.entries.last().and_then(|e| e.get("id")).and_then(|i| i.as_str()).unwrap_or("").to_string();
         let n = st.log.aside_next;
         st.log.asides.push(Aside { id: n, anchor: anchor.clone(), question: question.clone(), state: "pending".into(), text: String::new() });
-        for l in st.all_lists() { l.set_follow_mode(FollowMode::Tail); }
+        st.list.set_follow_mode(FollowMode::Tail);
         (st.id.clone(), anchor, n)
     });
     super::suggest::recap_dismiss(store, cx);

@@ -1,4 +1,4 @@
-// ─── The tray: its menu in the PC client's order and words; Server… opens the server's settings ───
+// ─── The tray: its menu in the PC client's order and words; Server… shows the server step over the app ───
 // (native-gpui/test/desktop.mjs's section; app/main.js updateTrayMenu, with
 // "Hey Cru"'s item as voiceWakeTrayItems adds it.) v2: a pick wakes the pump
 // from the tray's thread; no pick, no pump.
@@ -25,9 +25,14 @@ export async function run(T, t) {
     const names = execSync('gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.ListNames').toString();
     t.check('…a StatusNotifierItem on the session bus', /org\.kde\.StatusNotifierItem-\d+-\d+/.test(names), names.slice(0, 300));
   } else console.log('  no session bus: the tray is not checked (run under dbus-run-session)');
+  // Electron's showServerScreen (F131): the server step over the signed-in
+  // app, its box holding the address; Cancel goes back to the app.
   await T.act('tray-pick', 'server');
-  await T.until('Server… shows the server\'s settings', (p) => p.tab === 'settings');
-  await T.ui('tab', 'workbench');
+  await T.until('Server… shows the server step over the app, still signed in', (p) => p.signin?.serverOver === true && /^Connected/.test(p.signin?.serverNote || '') && p.signedIn !== false);
+  await T.ui('server-screen-save', 'crundi.example.com');
+  await T.until('…an address without http(s):// is refused, as Electron\'s', (p) => p.signin?.serverNote === 'Enter the full server address, including http:// or https://');
+  await T.ui('server-screen', 'false');
+  await T.until('…Cancel goes back to the app', (p) => p.signin?.serverOver === false);
   await T.act('tray-pick', 'open');
   t.check('Open keeps the client', !T.exited);
   // The window's × with the tray up hides the window to it, as Electron's

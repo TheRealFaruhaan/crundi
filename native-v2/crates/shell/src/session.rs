@@ -52,6 +52,12 @@ pub struct Session {
     /// The collaborator's way in is shown instead of the owner's ("I was
     /// invited to a project").
     pub collab: bool,
+    /// The server step shown over the signed-in app (the tray's "Server…",
+    /// Electron's showServerScreen; F131): Cancel goes back, Save keeps the
+    /// address for the next start.
+    pub server_over: bool,
+    /// The server step's note while over the app (Electron's #srv-note).
+    pub server_note: String,
     /// Failed password sign-ins (and collaborator ones): the view clears the code (or passcode).
     pub failed_logins: u64,
     /// The live link's channel, until the hub takes it.
@@ -59,7 +65,7 @@ pub struct Session {
 }
 
 /// Signed in (the live link's channel waits in `take_events`) or out.
-pub enum SessionEvent { SignedIn, SignedOut }
+pub enum SessionEvent { SignedIn, SignedOut, ServerScreen }
 impl EventEmitter<SessionEvent> for Session {}
 
 impl Session {
@@ -161,6 +167,30 @@ impl Session {
             }
             cx.notify();
         });
+    }
+
+    /// The server step over the signed-in app, or back to the app (F131).
+    pub fn show_server_over(&mut self, on: bool, cx: &mut Context<Self>) {
+        if !self.signed_in() && on { return self.change_server(cx); }
+        self.server_over = on;
+        self.server_note = if on && self.online { "Connected \u{2014} the browser panel is being served from this machine.".into() } else if on { "Not currently connected.".into() } else { String::new() };
+        cx.emit(SessionEvent::ServerScreen);
+        cx.notify();
+    }
+
+    /// Save, over the app: the address is kept for the next start (Electron's
+    /// client:setConfig: the window keeps what it is connected to until then).
+    pub fn save_server_over(&mut self, input: &str, cx: &mut Context<Self>) {
+        let t = input.trim();
+        let lower = t.to_ascii_lowercase();
+        if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+            self.server_note = "Enter the full server address, including http:// or https://".into();
+        } else {
+            let base = api::normalize_base(t);
+            store::update(|st| { if st.server != base { st.refresh_token.clear(); } st.server = base.clone(); });
+            self.server_note = "Saved. Restart Crundi for it to take effect.".into();
+        }
+        cx.notify();
     }
 
     /// Back to the server step (the login step's "Change").

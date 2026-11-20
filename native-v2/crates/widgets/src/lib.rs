@@ -198,22 +198,29 @@ pub fn disabled(b: Button, off: bool) -> Button { b.disabled(off) }
 
 /// An on/off switch (settings).
 pub fn switch(id: impl Into<ElementId>, on: bool, toggled: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Switch {
-    Switch { id: id.into(), on, disabled: false, toggled: std::rc::Rc::new(toggled) }
+    Switch { id: id.into(), on, disabled: false, green: false, toggled: std::rc::Rc::new(toggled) }
 }
 
 /// The switch (every dimension a token: F69); off, the track shows on a card (F67).
 #[derive(IntoElement)]
-pub struct Switch { id: ElementId, on: bool, disabled: bool, toggled: std::rc::Rc<dyn Fn(&bool, &mut Window, &mut App)> }
+pub struct Switch { id: ElementId, on: bool, disabled: bool, green: bool, toggled: std::rc::Rc<dyn Fn(&bool, &mut Window, &mut App)> }
 impl gpui_component::Disableable for Switch { fn disabled(mut self, d: bool) -> Self { self.disabled = d; self } }
+impl Switch {
+    /// The switch's tone when on: "green" is Homepool's `.hp-sw.on` (a
+    /// green-dim track, the green edge and a green thumb; F128); anything
+    /// else keeps the accent.
+    pub fn tone(mut self, tone: &str) -> Self { self.green = tone == "green"; self }
+}
 impl RenderOnce for Switch {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let (on, off, f) = (self.on, self.disabled, self.toggled);
+        let (on, off, f, green) = (self.on, self.disabled, self.toggled, self.green);
+        let (track, edge, thumb) = if green { (T::green_dim(), T::green(), T::green()) } else { (T::accent(), T::accent(), T::white()) };
         div().id(self.id).flex_none().flex().items_center().w(T::TOGGLE_W).h(T::TOGGLE_H).p(T::TOGGLE_INSET).rounded(T::R_PILL)
-            .bg(if on { T::accent() } else { T::bg_hover() }).border_1().border_color(if on { T::accent() } else { T::text_muted() })
+            .bg(if on { track } else { T::bg_hover() }).border_1().border_color(if on { edge } else { T::text_muted() })
             .when(on, |d| d.justify_end())
             .when(off, |d| d.opacity(0.5))
             .when(!off, |d| d.cursor_pointer().on_click(move |_, window, cx| f(&!on, window, cx)))
-            .child(div().flex_none().size(T::TOGGLE_THUMB).rounded(T::R_PILL).bg(if on { T::white() } else { T::text_secondary() }))
+            .child(div().flex_none().size(T::TOGGLE_THUMB).rounded(T::R_PILL).bg(if on { thumb } else { T::text_secondary() }))
     }
 }
 

@@ -147,6 +147,12 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
   process.on('exit', dropConfig);
   // Only ever on the virtual display xvfb-run gives: never a Wayland
   // session the shell happens to carry (it would open on a person's screen).
+  // Nor the login session's bus: there the client's tray icon (and its
+  // notifications) would show on that person's desktop with no window
+  // behind it (the window is on Xvfb). Without it, as on the Crundi server
+  // (test/desktop/tray.mjs then skips its bus check); under
+  // dbus-run-session the private bus stays.
+  if (process.env.DBUS_SESSION_BUS_ADDRESS === `unix:path=/run/user/${process.getuid?.()}/bus`) delete process.env.DBUS_SESSION_BUS_ADDRESS;
   const env = { ...process.env, CRUNDI_TEST_PORT: String(PORT), CRUNDI_CONFIG_DIR: configDir, CRUNDI_OPEN_URL_FILE: join(configDir, 'open-url.txt'), ZED_MEASUREMENTS: '1' };
   delete env.WAYLAND_DISPLAY;
   if (!env.DISPLAY || env.DISPLAY === ':0') { console.error('Run under xvfb-run (DISPLAY is not a virtual display).'); process.exit(2); }

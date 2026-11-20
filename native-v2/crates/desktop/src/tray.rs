@@ -89,8 +89,9 @@ pub fn act(id: &str) {
         "lock-full" if !locked => crate::pclock::ask("full", "tray"),
         // A.3's "Kid mode": started here (the kid screen opens on this PC).
         "kid" if !locked => { ctx::raise(); crate::cru_kid::start("tray"); }
-        // The server's settings (the PC client's "Server…" shows its server page).
-        "server" => { ctx::raise(); ctx::show_tab("settings"); }
+        // Electron's showServerScreen: the server step over the signed-in app
+        // (its address, Cancel and Save; F131).
+        "server" => { ctx::raise(); ctx::on_app(|win, cx| crundi_shell::show_server_screen(true, win, cx)); }
         "wake" => { let on = crate::wake::status()["enabled"].as_bool().unwrap_or(false); crate::wake::set(!on); }
         // Not while the kid screen is locked: only the PIN ends it.
         "quit" if !locked => ctx::on_app(|_, cx| cx.quit()),

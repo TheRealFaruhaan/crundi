@@ -91,10 +91,6 @@ pub struct ChatStore {
     /// What is left of this update's INLINE_PARSE.
     budget: usize,
     pub list: ListState,
-    /// Other lists over these rows (a bubble's log: its own scroll and
-    /// measurements, F65), spliced with `list`.
-    lists: Vec<(u64, ListState)>,
-    next_list: u64,
     /// The log's state for this chat, shared by every log that shows it
     /// (thinking rules, groups, side questions, question picks: crate::log).
     pub log: crate::log::Shared,
@@ -111,7 +107,7 @@ impl ChatStore {
         let list = ListState::new(0, ListAlignment::Top, T::LOG_OVERDRAW);
         list.set_follow_mode(FollowMode::Tail);
         let meta = cx.new(|_| ChatMeta(Meta::default()));
-        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, lists: vec![], next_list: 0, log: Default::default(), meta, batches: 0, spliced: 0 }
+        ChatStore { id: id.to_string(), conv, rows: vec![], span: HashMap::new(), cuts: HashMap::new(), jobs: HashMap::new(), budget: INLINE_PARSE, list, log: Default::default(), meta, batches: 0, spliced: 0 }
     }
 
     /// This frame's messages for this chat (ui-history, ui-event), applied in
@@ -240,10 +236,9 @@ impl ChatStore {
         // it stays there; else on the same block of the same entry, at the
         // same offset (a reset alone would put the log back at its top).
         let first = self.span.is_empty();
-        let places: Vec<_> = self.all_lists().map(|l| {
-            let top = l.logical_scroll_top();
-            (top, self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.as_ref().map_or(0, |b| b.ix))), first || l.is_following_tail())
-        }).collect();
+        let l = &self.list;
+        let top = l.logical_scroll_top();
+        let (top_at, following) = (self.rows.get(top.item_ix).map(|r| (r.id.clone(), r.block.as_ref().map_or(0, |b| b.ix))), first || l.is_following_tail());
         let mut old: HashMap<String, Vec<Row>> = HashMap::new();
         for r in self.rows.drain(..) { old.entry(r.id.clone()).or_default().push(r); }
         let entries = std::mem::take(&mut self.conv.entries);
@@ -258,13 +253,12 @@ impl ChatStore {
         self.cuts.retain(|id, _| span.contains_key(id));
         self.rows = rows;
         self.span = span;
-        for (l, (top, top_at, following)) in self.all_lists().zip(places) {
-            l.reset(self.rows.len());
-            if following {
-                l.set_follow_mode(FollowMode::Tail);
-            } else if let Some((s, n)) = top_at.and_then(|(id, b)| self.span.get(&id).map(|&(s, n)| (s + b.min(n.saturating_sub(1)), n))) {
-                if n > 0 { l.scroll_to(ListOffset { item_ix: s, offset_in_item: top.offset_in_item }); }
-            }
+        let l = &self.list;
+        l.reset(self.rows.len());
+        if following {
+            l.set_follow_mode(FollowMode::Tail);
+        } else if let Some((s, n)) = top_at.and_then(|(id, b)| self.span.get(&id).map(|&(s, n)| (s + b.min(n.saturating_sub(1)), n))) {
+            if n > 0 { l.scroll_to(ListOffset { item_ix: s, offset_in_item: top.offset_in_item }); }
         }
         self.spliced += self.rows.len() as u64;
     }
@@ -320,24 +314,9 @@ impl ChatStore {
         }
     }
 
-    /// Every list over the rows: the pane's, then any other (a bubble's).
-    pub fn all_lists(&self) -> impl Iterator<Item = &ListState> { std::iter::once(&self.list).chain(self.lists.iter().map(|(_, l)| l)) }
+    fn splice(&self, range: std::ops::Range<usize>, n: usize) { self.list.splice(range, n); }
 
-    fn splice(&self, range: std::ops::Range<usize>, n: usize) { for l in self.all_lists() { l.splice(range.clone(), n); } }
-
-    /// A second list over these rows (F65: a bubble's log scrolls and
-    /// measures on its own), following the end; `drop_list` when it goes.
-    pub fn add_list(&mut self) -> (u64, ListState) {
-        let l = ListState::new(self.rows.len(), ListAlignment::Top, T::LOG_OVERDRAW);
-        l.set_follow_mode(FollowMode::Tail);
-        self.next_list += 1;
-        self.lists.push((self.next_list, l.clone()));
-        (self.next_list, l)
-    }
-
-    pub fn drop_list(&mut self, id: u64) { self.lists.retain(|(i, _)| *i != id); }
-
-    /// An entry's rows measured again in every list (what a row draws
+    /// An entry's rows measured again (what a row draws
     /// changed height without its text changing: a thinking block folded, a
     /// side question under it, a call that became an agent's row).
     pub fn remeasure(&mut self, id: &str) {
@@ -410,7 +389,7 @@ impl ChatStore {
         m.zoom = if d == 0 { 0 } else { (m.zoom + d).clamp(-4, 8) };
         self.set_meta(m, cx);
         // The rows' heights change with the text size.
-        for l in self.all_lists() { l.remeasure(); }
+        self.list.remeasure();
         cx.notify();
     }
 }
@@ -525,25 +504,6 @@ mod tests {
             assert!(looks[..301].iter().all(|b| !b.last) && looks[301].last);
             assert_eq!(s.entry_rows_shown().count(), 2);
         });
-    }
-
-    /// F65: a second list over the same rows (a bubble's log) is spliced
-    /// with the pane's, scrolls on its own, and goes when dropped.
-    #[gpui::test]
-    fn a_second_list_follows_the_rows(cx: &mut TestAppContext) {
-        let store = cx.new(|cx| ChatStore::new("c1", cx));
-        let hist = json!({ "type": "ui-history", "id": "c1", "session": { "id": "c1", "state": "idle", "messages": [{ "id": "u1", "kind": "user", "text": "a" }] } });
-        store.update(cx, |s, cx| s.apply_batch(&[hist], cx));
-        let (id, second) = store.update(cx, |s, _| s.add_list());
-        assert_eq!(second.item_count(), 1);
-        let more = json!({ "type": "ui-event", "id": "c1", "event": { "type": "entry", "entry": { "id": "u2", "kind": "user", "text": "b" } } });
-        store.update(cx, |s, cx| s.apply_batch(&[more], cx));
-        store.read_with(cx, |s, _| { assert_eq!(s.list.item_count(), 2); assert_eq!(second.item_count(), 2); assert_eq!(s.all_lists().count(), 2); });
-        // Its own scroll: the pane's list keeps following.
-        second.scroll_to(gpui::ListOffset { item_ix: 0, offset_in_item: gpui::px(0.) });
-        store.read_with(cx, |s, _| { assert!(s.list.is_following_tail()); assert!(!second.is_following_tail()); });
-        store.update(cx, |s, _| s.drop_list(id));
-        store.read_with(cx, |s, _| assert_eq!(s.all_lists().count(), 1));
     }
 
     /// A long reply in a history is cut on the background executor: until it

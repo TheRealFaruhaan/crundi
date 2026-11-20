@@ -13,3 +13,10 @@ PROFILE=debug; [ "${1:-}" = --release ] && PROFILE=release
 tools/build.sh -p crundi-browser-host "$@"
 # (build.sh builds into the shared folder; STAGE_DIR for a build made elsewhere.)
 STAGE_NAME=crundi-v2 STAGE_HOST=crundi-browser-host node ../native-gpui/scripts/stage-cef.mjs "${STAGE_DIR:-$HOME/.cache/crundi-native-target/$PROFILE}"
+# This worktree's .bin gets the host just built and CEF's files beside it
+# (build.sh links .bin only on a build of the client; F138).
+T="${STAGE_DIR:-$HOME/.cache/crundi-native-target/$PROFILE}"
+mkdir -p ".bin/$PROFILE"
+[ -f "$T/crundi-browser-host" ] && { ln -f "$T/crundi-browser-host" ".bin/$PROFILE/" 2>/dev/null || cp -f "$T/crundi-browser-host" ".bin/$PROFILE/"; }
+find "$T" -maxdepth 1 -type l -exec cp -P -f {} ".bin/$PROFILE/" \;
+echo "this worktree's browser host: $(pwd)/.bin/$PROFILE/crundi-browser-host"

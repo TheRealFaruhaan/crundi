@@ -78,7 +78,12 @@ impl SignIn {
         if self.stores.session.read(cx).signin_busy { return; }
         let val = |e: &Entity<w::InputState>, cx: &App| e.read(cx).value().to_string();
         match what {
-            Submit::Server => { let v = val(&self.server_input, cx); self.stores.session.update(cx, |s, cx| s.check_server(&v, cx)); }
+            Submit::Server => {
+                let v = val(&self.server_input, cx);
+                // Over the signed-in app: kept for the next start (F131).
+                if self.stores.session.read(cx).server_over { self.stores.session.update(cx, |s, cx| s.save_server_over(&v, cx)); }
+                else { self.stores.session.update(cx, |s, cx| s.check_server(&v, cx)); }
+            }
             Submit::Password => {
                 let (p, c) = (val(&self.password_input, cx), val(&self.code_input, cx));
                 self.stores.session.update(cx, |s, cx| { let srv = s.signin_server.clone(); s.sign_in_password(&srv, &p, &c, cx) });
@@ -107,6 +112,14 @@ pub fn prompt(setup: bool, telegram: bool, google: bool, github: bool, password:
 /// A column of a form in the box (the web's 260 wide forms).
 fn form(w_: Pixels) -> Div { div().flex().flex_col().gap(T::SP_10).w(w_) }
 
+impl SignIn {
+    /// The server box with the saved address (the server step over the app).
+    pub(crate) fn fill_server(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let srv = crundi_core::store::load().server;
+        self.server_input.update(cx, |st, cx| st.set_value(srv, window, cx));
+    }
+}
+
 impl Render for SignIn {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("sign-in");
@@ -114,6 +127,7 @@ impl Render for SignIn {
         let (step, err, busy, srv) = (s.step.clone(), s.signin_error.clone(), s.signin_busy, s.signin_server.clone());
         let (code, google, github, telegram, password) = (s.oauth_code.clone(), s.offer_google, s.offer_github, s.offer_telegram, s.offer_password);
         let (setup, enrol, collab, boot_slow, base) = (s.setup_required, s.enrol.clone(), s.collab, s.boot_slow, s.signin_base());
+        let (over, note) = (s.server_over, s.server_note.clone());
         let had_server = !srv.is_empty();
         let session = self.stores.session.clone();
         let error = div().min_h(T::SP_12 + T::SP_2).text_size(T::TEXT_12).text_color(T::red()).child(err.clone());
@@ -138,16 +152,19 @@ impl Render for SignIn {
         }
 
         // The server step (Electron's #server-screen, the client-only build).
-        if step == Step::Server {
+        if step == Step::Server || over {
+            let (err, had_server) = if over { (note, true) } else { (err, had_server) };
             let card = w::card().w(T::DIALOG_W_LG).p(T::SP_24).gap(T::SP_6).bg(T::bg_secondary())
                 .child(div().text_size(T::TEXT_20).font_weight(T::W_SEMIBOLD).text_color(T::text()).child("Server"))
                 .child(div().mb(T::SP_10).text_size(T::TEXT_13).text_color(T::text_muted())
                     .child("Crundi can run its own server on this machine, or connect to one running elsewhere — a container on your network, for instance. Either way the browser panel opens here, in front of you."))
                 .child(w::input(&self.server_input))
-                .child(div().min_h(T::SP_16).mb(T::SP_6).text_size(T::TEXT_12).text_color(if err.is_empty() { T::text_muted() } else { T::red() }).child(err.clone()))
+                .child(div().min_h(T::SP_16).mb(T::SP_6).text_size(T::TEXT_12).text_color(if err.is_empty() || over { T::text_muted() } else { T::red() }).child(err.clone()))
                 .child(div().flex().gap(T::SP_8)
                     .child(w::disabled(w::primary("srv-save", "Save"), busy).on_click(cx.listener(|this, _, _, cx| this.submit(Submit::Server, cx))))
                     .when(had_server, |d| d.child(w::button("srv-cancel", "Cancel").on_click({ let session = session.clone(); move |_, _, cx| {
+                        // Over the app: back to it (Electron's hideServerScreen).
+                        if session.read(cx).server_over { return session.update(cx, |s, cx| s.show_server_over(false, cx)); }
                         let srv = crundi_core::store::load().server;
                         session.update(cx, |s, cx| s.check_server(&srv, cx));
                     } }))));

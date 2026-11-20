@@ -48,6 +48,8 @@ fn main() {
         let wsize = size(T::WINDOW_W, T::WINDOW_H);
         let bounds = if cx.primary_display().is_some() { Bounds::centered(None, wsize, cx) } else { Bounds { origin: point(px(0.), px(0.)), size: wsize } };
         let handle = open_main(&stores, bounds, cx);
+        // In front with the keys, as Electron's mainWindow.show() and focus().
+        let _ = handle.update(cx, |_, window, _| window.activate_window());
         // The tray's Open after Wayland's hide: the window again, on the same entities.
         let s = stores.clone();
         crundi_desktop::set_reopen(cx, move |b, cx| { let h = open_main(&s, b, cx); let _ = h.update(cx, |_, window, _| window.activate_window()); });
