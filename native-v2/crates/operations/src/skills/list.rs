@@ -7,6 +7,7 @@ use super::{get, upd, Sk};
 use crundi_core::api::ApiError;
 use crundi_theme::{IconName, T};
 use crundi_widgets as w;
+use crate::rows::{parts, Parts, Want};
 use gpui::{prelude::FluentBuilder as _, *};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -613,10 +614,10 @@ fn editor_save(k: &'static str, arg: &str, cx: &mut App) {
     if get(cx, |s| s.l.file.as_ref().is_some_and(|f| !f.read_only)) { key(k, arg, cx); }
 }
 
-pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(want: Want, window: &mut Window, cx: &mut App) -> Parts {
     let state = get(cx, |s| if s.l.data.is_some() { "data" } else if s.l.loaded && !s.l.load_error.is_empty() { "error" } else { "loading" });
-    if state == "loading" { return hint("Loading\u{2026}").into_any_element(); }
-    if state == "error" { return err(get(cx, |s| s.l.load_error.clone())).into_any_element(); }
+    if state == "loading" { return Parts::one(hint("Loading\u{2026}")); }
+    if state == "error" { return Parts::one(err(get(cx, |s| s.l.load_error.clone()))); }
     let link = c::line::<Sk>(window, cx, "link", "https://github.com/owner/repo --skill name", false, Some(key));
     let (form, pending_name) = get(cx, |s| (s.l.form.clone(), matches!(s.l.pending, Some(Pending::Upload { needs_name: true, .. }))));
     let new_name = (form == "new").then(|| c::line::<Sk>(window, cx, "new-name", "skill-name", false, Some(key)));
@@ -630,24 +631,24 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     let target = sc.iter().position(|x| c::s(x, "id") == l.target).unwrap_or(0);
     let mb = (d.pointer("/limits/upload").and_then(|x| x.as_f64()).unwrap_or(52428800.0) / 1048576.0).round() as i64;
     let link_off = l.link_ok == Some(false);
-    let mut out = col(T::SP_8)
-        .child(hint("A skill is a folder with a SKILL.md that tells Claude how to do one kind of task. A chat loads its skills when it starts, so changes here reach new chats. Chats that are already running keep the skills they started with."))
-        .child(row().pt(T::SP_4)
+    let mut out = parts(T::SP_8).wanting(want)
+        .part(|| hint("A skill is a folder with a SKILL.md that tells Claude how to do one kind of task. A chat loads its skills when it starts, so changes here reach new chats. Chats that are already running keep the skills they started with."))
+        .part(|| row().pt(T::SP_4)
             .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).child("Add to"))
             .child(w::select("sk-target", sc.iter().map(|x| SharedString::from(c::s(x, "label"))).collect(), Some(target), "", false, |i, _, cx| act(cx, "target", &i.to_string())))
             .child(btn("sk-upload", "Upload", Some(IconName::Upload), true, l.busy, |cx| act(cx, "upload", "")))
             .child(btn("sk-new", "New", Some(IconName::Plus), false, false, |cx| act(cx, "new", ""))))
-        .child(hint(format!("Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to {mb} MB.")))
-        .child(sk_form("Or install from a GitHub link, or paste an npx skills add line. Only the skill\u{2019}s files are copied; nothing from the repository is run.", vec![
+        .part(|| hint(format!("Upload a .zip or .skill archive holding one or more skills, or a single SKILL.md. Up to {mb} MB.")))
+        .part(|| sk_form("Or install from a GitHub link, or paste an npx skills add line. Only the skill\u{2019}s files are copied; nothing from the repository is run.", vec![
             grow(div().font_family(T::MONO).child(w::input(&link).disabled(link_off || l.link_busy))),
             btn("sk-link-go", if l.link_busy { "Fetching\u{2026}" } else { "Install from link" }, Some(IconName::GitBranch), true, link_off || l.link_busy, |cx| act(cx, "link-go", "")),
         ]))
-        .when(link_off, |d| d.child(hint("This server does not support this yet. Update the server to use it. Upload still works.")))
-        .when(!l.error.is_empty(), |d| d.child(err(l.error.clone())));
+        .when(link_off, |d| d.part(|| hint("This server does not support this yet. Update the server to use it. Upload still works.")))
+        .when(!l.error.is_empty(), |d| d.part(|| err(l.error.clone())));
     match &l.pending {
         Some(Pending::Choose { message, skills, .. }) => {
             let n = skills.len();
-            out = out.child(sk_note(IconName::Info, true, message.clone())
+            out = out.part(|| sk_note(IconName::Info, true, message.clone())
                 .child(col(T::SP_6).children(skills.iter().enumerate().map(|(i, (nm, ds))| {
                     let nm2 = nm.clone();
                     row().p(T::SP_6).pl(T::SP_8).rounded(T::R_CONTROL).border_1().border_color(T::border()).bg(T::bg())
@@ -659,20 +660,20 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         }
         Some(Pending::Upload { needs_name: true, message, .. }) => {
             if let Some(p) = &pname {
-                out = out.child(sk_form(message.clone(), vec![grow(w::input(p)),
+                out = out.part(|| sk_form(message.clone(), vec![grow(w::input(p)),
                     btn("sk-pend-name", "Install", None, true, l.busy, |cx| act(cx, "pending-name", "")),
                     btn("sk-pend-cancel", "Cancel", None, false, false, |cx| act(cx, "pending-cancel", ""))]));
             }
         }
         Some(Pending::Upload { existing, scope, .. }) | Some(Pending::Link { existing, scope, .. }) | Some(Pending::Transfer { existing, scope, .. }) => {
-            out = out.child(sk_note(IconName::Info, true, replace_text(existing, &scope_label(Some(&d), scope)))
+            out = out.part(|| sk_note(IconName::Info, true, replace_text(existing, &scope_label(Some(&d), scope)))
                 .child(row().child(w::disabled(w::danger("sk-replace", "Replace"), l.busy || l.link_busy).on_click(|_, _, cx| act(cx, "pending-replace", "")))
                     .child(btn("sk-pend-cancel", "Cancel", None, false, false, |cx| act(cx, "pending-cancel", "")))));
         }
         None => {}
     }
     if let (Some(nn), Some(nd)) = (&new_name, &new_desc) {
-        out = out.child(sk_form(format!("A new, empty skill in {}. The description is how Claude decides when to use it.", scope_label(Some(&d), &l.target)), vec![
+        out = out.part(|| sk_form(format!("A new, empty skill in {}. The description is how Claude decides when to use it.", scope_label(Some(&d), &l.target)), vec![
             grow(w::input(nn)), div().flex_grow(3.).flex_basis(relative(0.)).min_w_0().child(w::input(nd)).into_any_element(),
             btn("sk-new-go", "Create", None, true, l.busy, |cx| act(cx, "new-go", "")),
             btn("sk-form-close", "Cancel", None, false, false, |cx| act(cx, "form-close", "")),
@@ -680,22 +681,25 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
     }
     let mut detail = detail;
     // Each group's skills in one list (.bk-list: one frame, rounded; each
-    // .sk-item a hairline over it but the first).
-    let list = || div().flex().flex_col().border_1().border_color(T::border()).rounded(T::R_FIELD).overflow_hidden();
-    let mut cur: Option<Div> = None;
+    // .sk-item a hairline over it but the first), each skill a part of its
+    // own drawing its slice of the frame (Parts::framed).
+    let mut cur: Vec<AnyElement> = vec![];
+    let flush = |out: Parts, cur: &mut Vec<AnyElement>| if cur.is_empty() { out } else { out.framed(std::mem::take(cur), T::R_FIELD, T::border(), None) };
     for (i, r) in rows_of(&d, &l.open, l.show_synced).into_iter().enumerate() {
         match r.kind {
             "group" => {
-                if let Some(x) = cur.take() { out = out.child(x); }
-                out = out.child(row().pt(T::SP_16).pb(T::SP_2)
+                out = flush(out, &mut cur);
+                out = out.part(|| row().pt(T::SP_16).pb(T::SP_2)
                     .child(head(r.title.clone()))
                     .child(div().flex_1().min_w_0().truncate().font_family(T::MONO).text_size(T::TEXT_11).text_color(T::text_muted()).child(r.path.clone()))
                     .when(!r.toggle.is_empty(), |d| d.child(btn("sk-synced", &r.toggle, None, false, false, |cx| act(cx, "synced-toggle", "")))));
             }
             "empty" => {
-                if let Some(x) = cur.take() { out = out.child(x); }
-                out = out.child(list().child(div().p(T::SP_12 + T::SP_2).text_size(T::TEXT_13).text_color(T::text_muted()).child("None yet.")));
+                out = flush(out, &mut cur);
+                out = out.framed(vec![div().p(T::SP_12 + T::SP_2).text_size(T::TEXT_13).text_color(T::text_muted()).child("None yet.").into_any_element()], T::R_FIELD, T::border(), None);
             }
+            // A skill's row is built only when its part is wanted (Parts).
+            _ if want.is_some_and(|w| w != out.len() + cur.len()) && !r.open => cur.push(div().into_any_element()),
             _ => {
                 let arg = format!("{}\n{}", r.scope, r.name);
                 let tags = [(r.bundled, "Included with Crundi", ""), (r.synced, "Synced", ""), (r.linked, "Link", ""), (r.github, "GitHub", ""), (r.problem, "Needs attention", "warn")];
@@ -712,12 +716,12 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                     .when(r.open, |d| d.relative().child(canvas(|b, _, _| OPEN_Y.set(Some(b.origin.y)), |_, _, _, _| {}).absolute().top_0().left_0().size_0()))
                     .child(headr)
                     .when(r.open, |d| d.children(detail.take()));
-                cur = Some(cur.take().unwrap_or_else(list).child(item));
+                cur.push(item.into_any_element());
             }
         }
     }
-    if let Some(x) = cur.take() { out = out.child(x); }
-    out.into_any_element()
+    out = flush(out, &mut cur);
+    out
 }
 
 /// The open skill (SkDetail): notes, actions, forms, files and the editor.

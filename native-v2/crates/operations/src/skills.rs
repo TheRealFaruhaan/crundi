@@ -87,11 +87,11 @@ pub fn init(cx: &mut App) {
 }
 
 /// Settings → Skills (its fold's body).
-pub fn skills_section(window: &mut Window, cx: &mut App) -> AnyElement { ensure(cx); list::render(window, cx) }
+pub fn skills_section(want: crate::rows::Want, window: &mut Window, cx: &mut App) -> crate::rows::Parts { ensure(cx); list::render(want, window, cx) }
 /// Settings → Usage.
-pub fn usage_section(window: &mut Window, cx: &mut App) -> AnyElement { ensure(cx); backup::usage_render(window, cx) }
+pub fn usage_section(_want: crate::rows::Want, window: &mut Window, cx: &mut App) -> crate::rows::Parts { ensure(cx); backup::usage_render(window, cx) }
 /// Settings → Backup & restore.
-pub fn backup_section(window: &mut Window, cx: &mut App) -> AnyElement { ensure(cx); backup::render(window, cx) }
+pub fn backup_section(want: crate::rows::Want, window: &mut Window, cx: &mut App) -> crate::rows::Parts { ensure(cx); backup::render(want, window, cx) }
 /// The sign-in page's restore, over the whole window while open (None when closed).
 pub fn login_restore(window: &mut Window, cx: &mut App) -> Option<AnyElement> { ensure(cx); backup::lr_render(window, cx) }
 /// The scheduled-backup notice, bottom left of the window (None when hidden).

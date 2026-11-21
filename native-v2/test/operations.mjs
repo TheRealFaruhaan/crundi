@@ -53,9 +53,10 @@ async function idle(name, live = null) {
   const mine = drawn.filter((k) => !SHELL.includes(k) && k !== 'ops-tab');
   if (!live) return t.check(`${name}: idle draws no frames`, mine.length === 0 && f.frames <= shellDrew, { f, drawn });
   // A screen of live figures (the web polls them too): it redraws only when
-  // a poll brings new ones, at most once per poll, and nothing else draws.
+  // a poll brings new ones, at most once per poll, and nothing else draws
+  // (its page's rows, "ops-row", are that screen's: crates/operations/src/rows.rs).
   t.check(`${name}: still, it redraws only for new figures (at most once per ${live.every / 1000} s poll)`,
-    f.frames <= Math.ceil(3000 / live.every) + shellDrew && mine.every((k) => k === live.view), { f, drawn });
+    f.frames <= Math.ceil(3000 / live.every) + shellDrew && mine.every((k) => k === live.view || k === 'ops-row'), { f, drawn });
 }
 
 for (const name of SECTIONS) {
