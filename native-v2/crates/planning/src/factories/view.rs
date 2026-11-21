@@ -710,6 +710,9 @@ fn chat_of(fx: &mut Fx, id: &str, back: &'static str, project: &str, window: &mu
     // Mini lives in the workbench's chats, not here (the chat area's plain pane).
     let pane = crundi_chat::pane::ChatPane::plain(store.clone(), window, cx);
     let head = cx.new(|cx| ChatHead::new(store.clone(), id, back, project, window, cx));
+    // ⋯'s "Show the plan" opens this transcript's plan panel.
+    let log = pane.log.downgrade();
+    head.update(cx, |h, _| h.plan_log = Some(log));
     // The server replays the conversation on subscribe (ui-history).
     crundi_shell::subscribe(cx, id);
     let shared = crundi_chat::find(cx, id).is_some();

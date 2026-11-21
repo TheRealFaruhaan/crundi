@@ -86,7 +86,22 @@ fn kind_of(cx: &App, key: &str) -> Option<PaneKind> {
 
 struct Pane {
     head: Entity<PaneHead>,
-    body: Body,
+    body: Entity<PaneBody>,
+}
+
+/// A pane's body, hosted in a cached view of its own (F146). The Workbench
+/// renders with every change in any pane (it is their ancestor); with the
+/// bodies cached (and GPUI patch (a)), it replays the clean panes' bodies
+/// instead of building them again, and a pane whose leaf changed renders
+/// its body around its other leaves, replayed. The kind's body reads only
+/// its own views (a change in them notifies this host, their ancestor).
+pub struct PaneBody { body: Body }
+impl Render for PaneBody {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("pane-body");
+        let b = self.body.clone();
+        b(cx)
+    }
 }
 
 struct Handle(WeakEntity<Workbench>);
@@ -108,14 +123,17 @@ struct Press { leaf: u32, x: f32, y: f32 }
 struct Drag { src: u32, target: u32, x: f32, y: f32, dx: f32, dy: f32 }
 
 /// The card that follows the pointer while a pane moves: the pane's title
-/// on a header's strip as wide as the pane (a view of its own, cached).
-struct Ghost { title: SharedString }
+/// on a header's strip as wide as the pane (a view of its own, cached). It
+/// places itself (a deferred draw at the pointer), so a move that lights no
+/// other leaf redraws the card alone (F105).
+struct Ghost { title: SharedString, at: (f32, f32), w: f32 }
 impl Render for Ghost {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("drag-card");
-        div().size_full().flex().items_center().px(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::accent()).bg(T::bg_tertiary()).opacity(0.92)
+        let card = div().w(px(self.w)).h(T::PANE_HEAD).flex().items_center().px(T::SP_10).rounded(T::R_CARD).border_1().border_color(T::accent()).bg(T::bg_tertiary()).opacity(0.92)
             .shadow_lg().text_size(T::TEXT_12).font_weight(T::W_SEMIBOLD).text_color(T::text())
-            .child(div().truncate().child(self.title.clone()))
+            .child(div().truncate().child(self.title.clone()));
+        div().size_0().child(deferred(anchored().position(point(px(self.at.0), px(self.at.1))).child(card)).with_priority(2))
     }
 }
 
@@ -152,6 +170,9 @@ pub struct Workbench {
     /// The last press moved a pane (its title's click is then no rename).
     moved: bool,
     ghost: Option<Entity<Ghost>>,
+    /// The edge ramp while a pane is moved near the grid's left or right
+    /// edge (F181; the web's wbAutoScroll in makeDraggable's move).
+    edge: Option<Task<()>>,
     /// The mosaic laid out (F99): once per change of the mosaic, the
     /// project or the area, not on every frame the Workbench renders.
     laid: Option<Rc<Laid>>,
@@ -166,7 +187,7 @@ impl Workbench {
         cx.set_global(Handle(cx.entity().downgrade()));
         let project = stores.projects.read(cx).open.clone();
         Workbench { stores, project, layouts: HashMap::new(), panes: HashMap::new(), area: (0., 0.), focused: 0, armed: 0, arm_gen: 0, full: None, gutter: None, scroll: ScrollHandle::new(), frames: HashMap::new(), seeded: None, pend: 0, protect: HashMap::new(), chip_leaf: None,
-            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, laid: None }
+            origin: Rc::new(Cell::new((0., 0.))), press: None, drag: None, moved: false, ghost: None, edge: None, laid: None }
     }
 
     /// The open project's mosaic (loaded from the saved layouts the first
@@ -440,18 +461,70 @@ impl Workbench {
             let Some(l) = self.leaves().into_iter().find(|l| l.id == p.leaf) else { self.press = None; return };
             let (lx, ly, _, _) = self.window_rect(&l);
             let title = l.key.as_ref().and_then(|k| self.panes.get(k)).and_then(|p| p.head.read(cx).drawn_title()).unwrap_or_default();
-            self.ghost = Some(cx.new(|_| Ghost { title: title.into() }));
-            self.drag = Some(Drag { src: p.leaf, target: 0, x, y, dx: p.x - lx, dy: p.y - ly });
+            let (dx, dy) = (p.x - lx, p.y - ly);
+            self.ghost = Some(cx.new(|_| Ghost { title: title.into(), at: (x - dx, y - dy), w: l.w }));
+            self.drag = Some(Drag { src: p.leaf, target: 0, x, y, dx, dy });
             self.moved = true;
+            cx.notify();
         }
-        // The leaf under the pointer, unless it is pinned (the web lights none then).
-        let t = self.leaf_at(x, y).filter(|l| !l.pinned).map(|l| l.id).unwrap_or(0);
-        if let Some(d) = self.drag.as_mut() { d.target = t; d.x = x; d.y = y; }
-        cx.notify();
+        if let Some(d) = self.drag.as_mut() { d.x = x; d.y = y; }
+        if let (Some(d), Some(g)) = (self.drag, self.ghost.clone()) {
+            g.update(cx, |g, cx| { let at = (d.x - d.dx, d.y - d.dy); if g.at != at { g.at = at; cx.notify(); } });
+        }
+        self.retarget(cx);
+        self.edge_ramp(cx);
+    }
+
+    /// The leaf under the pointer lit, unless it is pinned (the web lights
+    /// none then): the Workbench redraws only when that changes.
+    fn retarget(&mut self, cx: &mut Context<Self>) {
+        let Some(d) = self.drag else { return };
+        let t = self.leaf_at(d.x, d.y).filter(|l| !l.pinned).map(|l| l.id).unwrap_or(0);
+        if t != d.target { if let Some(d) = self.drag.as_mut() { d.target = t; } cx.notify(); }
+    }
+
+    /// The grid's box in the window (the wb-grid element: the Workbench's).
+    fn grid_bounds(&self) -> Bounds<Pixels> {
+        let (ox, oy) = self.origin.get();
+        Bounds::new(point(px(ox), px(oy)), size(px(self.area.0), px(self.area.1)))
+    }
+
+    /// While a pane is moved with the pointer in the grid's 60 px edge band,
+    /// the grid scrolls sideways every 16 ms, ramped (w::edge_step), and the
+    /// lit leaf follows what is now under the pointer.
+    fn edge_ramp(&mut self, cx: &mut Context<Self>) {
+        let Some(d) = self.drag else { self.edge = None; return };
+        if self.edge.is_some() { return; }
+        // Only with the pointer in the band (left or right, inside the grid).
+        let b = self.grid_bounds();
+        let (l, r) = (f32::from(b.left()), f32::from(b.right()));
+        let inside = b.contains(&point(px(d.x), px(d.y)));
+        if !inside || (d.x > l + 60. && d.x < r - 60.) { return; }
+        self.edge = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(w::EDGE_TICK).await;
+                let go = this.update(cx, |this, cx| {
+                    let Some(d) = this.drag else { return false };
+                    let sc = w::Scroller::Handle(this.scroll.clone());
+                    let (band, moved) = w::edge_step(&sc, this.grid_bounds(), point(px(d.x), px(d.y)), true, false);
+                    if !band { return false; }
+                    if moved {
+                        // The grid moved under a still pointer: the lit leaf
+                        // is the one now there; the grid redraws scrolled.
+                        this.retarget(cx);
+                        cx.notify();
+                    }
+                    true
+                }).unwrap_or(false);
+                if !go { break; }
+            }
+            let _ = this.update(cx, |this, _| this.edge = None);
+        }));
     }
 
     fn drag_end(&mut self, x: f32, y: f32, window: &mut Window, cx: &mut Context<Self>) {
         self.press = None;
+        self.edge = None;
         let Some(d) = self.drag.take() else { return };
         self.ghost = None;
         let target = self.leaf_at(x, y).map(|l| l.id);
@@ -464,7 +537,7 @@ impl Workbench {
 
     /// A pane's views, made the first time it is laid out (in a handler: the
     /// layout pass that found it, before its frame is drawn).
-    fn pane(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<(Entity<PaneHead>, Body)> {
+    fn pane(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> Option<(Entity<PaneHead>, Entity<PaneBody>)> {
         if !self.panes.contains_key(key) {
             let kind = kind_of(cx, key)?;
             let parts = (kind.make)(key, &self.stores, window, cx);
@@ -472,7 +545,9 @@ impl Workbench {
             let k = key.to_string();
             let projects = self.stores.projects.clone();
             let head = cx.new(|cx| PaneHead::new(k, kind.chat, parts.info, projects, me, parts.watch, cx));
-            self.panes.insert(key.to_string(), Pane { head, body: parts.body });
+            let body = parts.body;
+            let body = cx.new(|_| PaneBody { body });
+            self.panes.insert(key.to_string(), Pane { head, body });
         }
         self.panes.get(key).map(|p| (p.head.clone(), p.body.clone()))
     }
@@ -545,8 +620,8 @@ impl Workbench {
         // would otherwise move with a log: native-gpui's 19 Nov fix).
         let body = div().relative().flex_1().min_h_0().w_full().overflow_hidden()
             .on_scroll(|_, _, cx| cx.stop_propagation())
-            // The kind's body: elements around its cached views.
-            .child(body(cx));
+            // The kind's body (elements around its cached views), hosted cached.
+            .child(body.cached(StyleRefinement::default().size_full()));
         w::panel_box()
             .child(head.cached(StyleRefinement::default().w_full().h(hh).flex_none()))
             .child(body)
@@ -616,6 +691,12 @@ impl Render for Workbench {
         let keys: Vec<String> = leaves.iter().filter_map(|l| l.key.clone()).collect();
         self.panes.retain(|k, _| keys.contains(k));
         self.frames.retain(|k, _| keys.contains(k));
+        // What is drawn over a pane from outside (Mini's layers, F179) follows
+        // the panes laid out and the full one (after the frame: no notify
+        // while drawing).
+        let full_key = self.full.clone().filter(|f| keys.contains(f));
+        let shown = crundi_shell::spots::WbPanes { shown: keys.clone(), full: full_key };
+        cx.defer(move |cx| crundi_shell::spots::set_wb_panes(cx, shown));
         let me = cx.entity();
         let (me2, origin) = (me.downgrade(), self.origin.clone());
         let measure = canvas(
@@ -683,11 +764,9 @@ impl Render for Workbench {
                     this.gutter = Some(GutterDrag { split, index, a0, b0, total: span - crundi_core::mosaic::GUTTER, row, from });
                 })));
         }
-        // The card that follows the pointer while a pane moves.
-        let card = self.drag.zip(self.ghost.clone()).and_then(|(d, g)| leaves.iter().find(|l| l.id == d.src).map(|l| (d, g, l.w))).map(|(d, g, lw)| {
-            deferred(anchored().position(point(px(d.x - d.dx), px(d.y - d.dy))).child(
-                g.cached(StyleRefinement::default().w(px(lw)).h(T::PANE_HEAD)))).with_priority(2)
-        });
+        // The card that follows the pointer while a pane moves (it places
+        // itself: a move redraws it alone).
+        let card = self.drag.and(self.ghost.clone()).map(|g| g.cached(StyleRefinement::default().absolute().top_0().left_0().size_0()));
         div().id("workbench").relative().size_full()
             .child(measure)
             .when(self.drag.is_some(), |d| d.cursor_grabbing())
@@ -768,7 +847,7 @@ pub fn init(cx: &mut App) {
             let add = add_menu::props(cx);
             let last = launcher::last_mode(&stores.projects.read(cx).open);
             let Some(w) = workbench(cx) else { return serde_json::json!({ "addMenu": add, "launchLast": last }) };
-            let (keys, focused, heads, head_props, leaves, full, drag) = w.update(cx, |w, cx| {
+            let (keys, focused, heads, head_props, leaves, full, drag, grid) = w.update(cx, |w, cx| {
                 let heads: serde_json::Map<String, serde_json::Value> = w.panes.iter().filter_map(|(k, p)| p.head.read(cx).drawn_title().map(|t| (k.clone(), t.into()))).collect();
                 let props: serde_json::Map<String, serde_json::Value> = w.panes.iter().map(|(k, p)| (k.clone(), p.head.read(cx).props())).collect();
                 let armed = w.armed;
@@ -779,15 +858,20 @@ pub fn init(cx: &mut App) {
                     serde_json::json!({ "id": l.id, "key": l.key, "armed": armed == l.id, "pinned": l.pinned, "narrow": narrow, "x": x, "y": y, "w": lw, "h": lh })
                 }).collect();
                 let drag = w.drag.map(|d| serde_json::json!({ "src": d.src, "target": d.target }));
-                (w.keys(), w.focused_key(), heads, props, leaves, w.full.clone(), drag)
+                let b = w.grid_bounds();
+                let grid = serde_json::json!({ "x": f32::from(b.origin.x), "y": f32::from(b.origin.y), "w": f32::from(b.size.width), "h": f32::from(b.size.height),
+                    "scroll": -f32::from(w.scroll.offset().x), "max": f32::from(w.scroll.max_offset().x), "edge": w.edge.is_some() });
+                (w.keys(), w.focused_key(), heads, props, leaves, w.full.clone(), drag, grid)
             });
             // "heads": each pane head's title as it last drew it (F29);
             // "headProps": its tags, buttons, lock, "…" menu and rename box;
             // "leaves": every leaf (empty ones too), its pane, its ×'s
             // "Sure?", pinned, narrow, its rect in the window; "full": the
             // pane over the window; "drag": a pane being moved; "addMenu":
-            // the "+" menu; "launchLast": the launcher's last-used mode.
-            serde_json::json!({ "panes": keys, "focusedPane": focused, "heads": heads, "headProps": head_props, "leaves": leaves, "full": full, "drag": drag, "addMenu": add, "launchLast": last })
+            // the "+" menu; "launchLast": the launcher's last-used mode;
+            // "grid": the grid's box in the window, its sideways scroll and
+            // its most, and the edge ramp running (F181).
+            serde_json::json!({ "panes": keys, "focusedPane": focused, "heads": heads, "headProps": head_props, "leaves": leaves, "full": full, "drag": drag, "grid": grid, "addMenu": add, "launchLast": last })
         }));
 }
 

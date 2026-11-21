@@ -263,7 +263,7 @@ fn item(chat: &str, id: &str, i: &media::Item, sev: bool, one: bool, fs: f32, wi
     let cap_row = (kind != "file" && (!cap.is_empty() || !link.is_empty())).then(|| {
         div().flex().flex_wrap().gap(T::SP_4).items_baseline()
             .child(caption(&format!("{cap}{}", if link.is_empty() { "" } else { " ·" }), fs))
-            .when(!link.is_empty(), |d| d.child(div().id(SharedString::from(format!("open-{id}"))).text_size(T::TEXT_12 * fs).text_color(T::accent_hover()).underline().cursor_pointer().child(link.clone())
+            .when(!link.is_empty(), |d| d.child(w::link_sized(SharedString::from(format!("open-{id}")), link.clone(), T::TEXT_12 * fs)
                 .on_click(move |_, _, cx| open_frame(&c2, &n2, &url, cx))))
     });
     div().flex().flex_col().gap(T::SP_4).flex_none().when(one, |d| d.max_w_full()).child(inner).children(cap_row).into_any_element()

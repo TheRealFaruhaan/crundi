@@ -43,17 +43,27 @@ its own.
    view that changes seldom, such as the browser drawer's, may itself be
    cached around its leaves.) So:
    - a **layout view** (the Shell, a tab's root, the Workbench) holds child
-     views and little else; it is **not cached** (it is an ancestor of
-     everything that changes and re-renders with any of it, so it must be
-     cheap: no text, no lists, no parsing);
-   - **between a layout view and its leaves there is no view at all** when
-     the part is layout only and holds several leaves (a chat pane's log
-     over its composer): it is a **body**, elements built in its layout
-     view's render (`workbench::PaneParts::body`, `chat::ChatPane::body`),
-     placing its leaves cached. As a view it would be in every leaf's dirty
-     path: uncached, every pane's would re-render with any one log's
-     notify (F31, 20 Nov: 2164 ChatPane renders in 541 frames); cached, it
-     would re-render its other leaves (its composer) with it;
+     views and little else; it is an ancestor of everything that changes
+     and re-renders with any of it, so it must be cheap: no text, no
+     lists, no parsing. The Shell is the window's root; **a tab's root is
+     cached where the Shell draws it** (the Workbench included, F179): with
+     PATCH.md (a) a change in the Shell (the top bar, an overlay, Mini)
+     replays the tab, and a change in the tab renders the Shell around its
+     replayed leaves, never the other tabs' parts;
+   - what is drawn **over a pane from outside it** (Mini's layer over a
+     chat) is not a child of the Workbench: it is a Shell overlay
+     (`chat::mini::MiniPanes`) placed over the bounds the pane's body
+     records, so its frames never render the Workbench (F179);
+   - a part that is layout only and holds several leaves (a chat pane's
+     log over its composer) is a **body**: elements placing its leaves
+     cached (`workbench::PaneParts::body`, `chat::ChatPane::body`), built
+     by a closure that reads only its own leaves. The Workbench hosts each
+     pane's body in a cached view of its own (`workbench::PaneBody`, F146):
+     with PATCH.md (a) a leaf's notify renders that pane's host around its
+     other leaves, replayed, and the Workbench around the other panes'
+     hosts, replayed (before the patch, a host would have re-rendered all
+     its leaves, and an uncached one every pane's: F31, 2164 ChatPane
+     renders in 541 frames);
    - a **leaf view** (TopBar, Sidebar, ProjectBar, a PaneHead, a LogView, a
      Composer, a kanban column…) is cached and holds **no cached view
      inside it**; the top cached views sit side by side;
@@ -361,14 +371,16 @@ inside theirs.
 - **What stays outside**: the layout views' own boxes (the panel frames,
   gutters), a few quads a frame; a text box with the focus; whatever a view
   draws over its own text (a scrollbar thumb draws its own layer).
-- **Caching is one level deep in GPUI 0.3.12** (perf/pc-2026-11-21-architect-bisect.md):
+- **Caching was one level deep in GPUI 0.3.12** (perf/pc-2026-11-21-architect-bisect.md):
   a notify dirties the view and every view above it, and a cached view
-  that re-renders draws every cached view inside it again
-  (`window.refreshing`). So a cached view's cache is only worth anything
-  when the views above it are not cached: the Shell (the window's root,
-  drawn every frame) and the Workbench render every frame, and the
-  leaves (heads, logs, composers, the panels' views) are the cached
-  level. A pane made a cached view of its own would draw its log, its
+  that re-renders drew every cached view inside it again
+  (`window.refreshing`). The patch in `vendor/gpui` (PATCH.md (a), (b),
+  (c)) keeps clean nested caches, replays a view that only moved, and
+  keeps a click's press, its release and a tooltip from redrawing the
+  whole window. The dirty chain (the Shell, the tab's root, the Workbench)
+  still renders with each change below it, so it stays cheap; the
+  leaves (heads, logs, composers, the panels' views) are where the work is
+  cached. A pane made a cached view of its own would draw its log, its
   composer and its head again on every frame that any one of them
   changes. What a frame costs is the dirty leaves' work plus replaying
   every clean leaf (scene, hitboxes, element states, text layouts) and
@@ -379,9 +391,10 @@ inside theirs.
   or the area changes; the Workbench's render places them.
 - **Fewer elements in the layout views**: the Workbench re-renders on
   every frame that draws any pane (GPUI marks every ancestor of a notified
-  view dirty), and a cached view under a dirty cached view is drawn again,
-  not reused (view.rs: a dirty view renders with `refreshing` set), so the
-  Workbench cannot itself be cached. It spends as few elements as it can: a
+  view dirty). It is cached at the Shell (so the Shell's own changes don't
+  render it), and a pane moved by its head redraws its card alone (the
+  card places itself) and the Workbench only when the lit leaf changes
+  (F105). It spends as few elements as it can: a
   pane is its panel's box (`w::panel_box`, which is also the leaf), its
   cached head, its body's box and the kind's body.
 

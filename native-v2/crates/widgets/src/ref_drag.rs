@@ -133,6 +133,17 @@ fn scroll(s: &Scroller, d: Point<Pixels>) -> bool {
     }
 }
 
+/// One tick of the edge ramp, for a drag a view tracks itself (a pane moved
+/// by its head, F181): how far `s` moves for a pointer at `p` in `b` (60 px
+/// band, 22 px a tick, ramped), and whether it moved. Call every `EDGE_TICK`.
+pub fn edge_step(s: &Scroller, b: Bounds<Pixels>, p: Point<Pixels>, x: bool, y: bool) -> (bool, bool) {
+    let d = delta(p, b, x, y);
+    if d == Point::default() { return (false, false); }
+    (true, scroll(s, d))
+}
+/// The edge ramp's tick.
+pub const EDGE_TICK: Duration = TICK;
+
 /// Scroll `s` while something of type `D` is dragged near the element's
 /// edges (`x` / `y`: the axes it scrolls on); `view` is the view that draws
 /// it (notified when it moved: nothing else redraws).

@@ -67,7 +67,7 @@ pub fn view(key: &str, chat: &str, target: &str, item: &media::Item, window: &mu
     }
     let (c, n, u) = (chat.to_string(), item.name.clone(), if item.url.is_empty() { item.src.clone() } else { item.url.clone() });
     div().absolute().inset_0().flex().items_center().justify_center()
-        .child(div().id(SharedString::from(format!("fr-open-{key}"))).text_size(T::TEXT_13).text_color(T::accent_hover()).underline().cursor_pointer().child("Open")
+        .child(crundi_widgets::link_sized(SharedString::from(format!("fr-open-{key}")), "Open", T::TEXT_13)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(move |_, _, cx| super::media::open_frame(&c, &n, &u, cx)))
         .into_any_element()

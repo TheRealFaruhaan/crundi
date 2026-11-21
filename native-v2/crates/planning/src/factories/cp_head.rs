@@ -75,6 +75,8 @@ pub struct ChatHead {
     /// The chat's name as the server lists it (loadMeta: /api/ui-sessions'
     /// longTitle, else title; the event stream's list when it has the chat).
     listed: String,
+    /// The transcript's log (⋯'s "Show the plan" toggles its plan panel).
+    pub plan_log: Option<WeakEntity<crundi_chat::log::LogView>>,
     _subs: Vec<Subscription>,
 }
 
@@ -114,7 +116,7 @@ impl ChatHead {
         if !asks(cx).read(cx).loaded { load_asks(cx); }
         let me = cx.entity().downgrade();
         if listed.is_empty() { load_title(id, me, cx); }
-        ChatHead { meta, store, id: id.to_string(), back, project: project.to_string(), dot, asks: asks_v, width: Rc::new(Cell::new(0.)), wide: false, rename: None, icon, listed, _subs: subs }
+        ChatHead { meta, store, id: id.to_string(), back, project: project.to_string(), dot, asks: asks_v, width: Rc::new(Cell::new(0.)), wide: false, rename: None, icon, listed, plan_log: None, _subs: subs }
     }
 
     /// The name shown: the list's, else the chat's own, else "Chat".
@@ -173,7 +175,10 @@ impl ChatHead {
         let working = self.meta.read(cx).0.state == "working";
         let n = crundi_chat::composer::secrets_count(&self.id, cx);
         let item = |id: &str, label: String, disabled: bool| w::MenuEntry { id: id.into(), label: label.into(), icon: None, danger: false, sep: false, disabled };
-        let mut items = vec![item("rename", "Rename chat".into(), false)];
+        let mut items = vec![];
+        // "Show the plan", while the chat has one (the page's hasPlan).
+        if self.meta.read(cx).0.plan.is_some() && self.plan_log.is_some() { items.push(item("plan", "Show the plan".into(), false)); }
+        items.push(item("rename", "Rename chat".into(), false));
         // The lock's line, when the head has no room for the lock.
         if let Some(n) = n.filter(|_| !self.wide) { items.push(item("secrets", if n > 0 { format!("Secrets for this chat ({n})") } else { "Secrets for this chat".into() }, false)); }
         items.push(item("stop", "Stop Claude".into(), !working));
@@ -185,6 +190,8 @@ impl ChatHead {
     fn menu_pick(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         match id {
             "rename" => self.start_rename(window, cx),
+            // view.togglePlan(): the transcript's plan panel opens or closes.
+            "plan" => if let Some(l) = self.plan_log.as_ref().and_then(|l| l.upgrade()) { l.update(cx, |v, cx| crundi_chat::log::goal::toggle(v, cx)); },
             "secrets" => crundi_chat::composer::open_secrets(&self.id, window, cx),
             "stop" => self.store.update(cx, |s, cx| s.stop(cx)),
             // openMain('/chat/<id>'): the chat in Crundi itself.
@@ -317,6 +324,11 @@ pub struct AskCards {
     pin: Entity<w::InputState>,
     /// The requests shown, as last drawn (a change of them redraws).
     shown: Vec<Req>,
+    /// "Allow for this chat" on the open card (the web's askAllow): ticked,
+    /// and for how long (a key of sreq::ALLOW_FOR); a new card starts unticked.
+    allow: (bool, &'static str),
+    /// The server pre-authorises ('chat-secret-preauth').
+    preauth: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -328,9 +340,25 @@ impl AskCards {
             cx.observe(&a, |this, _, cx| this.sync(cx)),
             cx.subscribe_in(&pin, window, |this, _, ev: &w::InputEvent, window, cx| if let w::InputEvent::PressEnter { .. } = ev { this.approve(window, cx); }),
         ];
-        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, shown: vec![], _subs: subs };
+        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
         me.sync(cx);
+        // (After this update: the Factories tab, which keeps the server's
+        // capabilities, may be the one making this card.)
+        let w8 = cx.entity().downgrade();
+        cx.defer(move |cx| super::caps(cx, move |caps, cx| {
+            let yes = caps.iter().any(|c| c == "chat-secret-preauth");
+            let _ = w8.update(cx, |this, cx| if this.preauth != yes { this.preauth = yes; cx.notify(); });
+        }));
         me
+    }
+
+    /// "Allow for this chat" is offered (CS.isSupported, a run this chat
+    /// asked for, not a collaborator's chat).
+    fn can_allow(&self, r: &Req, cx: &App) -> bool {
+        let collab = crundi_shell::stores(cx).projects.read(cx).terminals.iter()
+            .find(|t| t.get("id").and_then(|i| i.as_str()) == Some(self.id.as_str()))
+            .and_then(|c| c.get("collaborator").cloned()).is_some_and(|v| v.as_bool().unwrap_or(!v.is_null()));
+        sreq::can_allow(r, self.preauth, collab) && r.session == self.id
     }
 
     /// Mine: asked by this chat, or by no chat in this project (loadAsks).
@@ -352,6 +380,7 @@ impl AskCards {
         self.armed = id.to_string();
         self.auto = false;
         self.err.clear();
+        self.allow.0 = false;
         self.pin.update(cx, |s, cx| { s.set_value("", window, cx); s.focus(window, cx); });
         cx.notify();
     }
@@ -360,15 +389,20 @@ impl AskCards {
         let Some(r) = self.shown.iter().find(|r| r.id == self.armed).cloned() else { return };
         let v = self.pin.read(cx).value().to_string();
         if let Err(e) = sreq::check(&r.lock, &v) { self.err = e.into(); cx.notify(); return; }
-        let body = sreq::approve_body(&r, &v, None);
+        let allow = (self.allow.0 && self.can_allow(&r, cx)).then_some(self.allow.1);
+        let body = sreq::approve_body(&r, &v, allow);
         let me = cx.entity().downgrade();
         let _ = window;
+        let pin = if r.lock == "pin" { v.trim().to_string() } else { v.clone() };
         crundi_shell::call(cx, move |api| api.post("/api/secrets", &body), move |res, cx| {
-            match sreq::answer(res.map(|v| (200, v)), false) {
+            let upgrade = res.as_ref().ok().and_then(|d| d.get("needsUpgrade")).and_then(|x| x.as_bool()).unwrap_or(false) || r.upgrade;
+            match sreq::answer(res.map(|v| (200, v)), allow.is_some()) {
                 Ok(t) => {
-                    let _ = me.update(cx, |this, cx| { this.armed.clear(); this.err.clear(); cx.notify(); });
+                    let _ = me.update(cx, |this, cx| { this.armed.clear(); this.err.clear(); this.allow.0 = false; cx.notify(); });
                     crundi_shell::toast(cx, t, w::Toast::Success);
                     load_asks(cx);
+                    // An old lock: offer to set a passphrase now, with the one just typed.
+                    if upgrade { super::dlg::upgrade(vec![(r.secret.clone(), r.name.clone(), r.lock.clone(), pin)], cx); }
                 }
                 // A wrong PIN leaves the request waiting: the card says why.
                 Err(e) => { let _ = me.update(cx, |this, cx| { this.err = e; cx.notify(); }); }
@@ -384,7 +418,8 @@ impl AskCards {
     }
 
     fn props(&self, _: &App) -> Value {
-        json!({ "cards": self.shown.iter().map(|r| json!({ "id": r.id, "name": r.name, "run": r.run, "armed": r.id == self.armed })).collect::<Vec<_>>(), "error": self.err })
+        json!({ "cards": self.shown.iter().map(|r| json!({ "id": r.id, "name": r.name, "run": r.run, "armed": r.id == self.armed })).collect::<Vec<_>>(), "error": self.err,
+            "allow": { "on": self.allow.0, "for": self.allow.1 } })
     }
 }
 
@@ -417,7 +452,19 @@ impl Render for AskCards {
                 row = row.child(w::primary(("fx-cp-approve", i), "Approve").on_click(cx.listener(move |this, _, window, cx| this.arm(&id, window, cx))));
             }
             row = row.child(w::button(("fx-cp-reject", i), "Reject").on_click(cx.listener(move |this, _, _, cx| this.reject(&id2, cx))));
-            card = card.child(row).when(armed && !self.err.is_empty(), |d| d.child(div().mt(T::SP_6).text_size(T::TEXT_12).text_color(T::red()).child(self.err.clone())));
+            card = card.child(row);
+            // "Allow for this chat" under the open card's PIN (CS.allowRow).
+            if armed && self.can_allow(r, cx) {
+                let (on, dur) = self.allow;
+                let at = sreq::ALLOW_FOR.iter().position(|(k, _)| *k == dur);
+                let names: Vec<SharedString> = sreq::ALLOW_FOR.iter().map(|(_, l)| SharedString::from(*l)).collect();
+                card = card.child(div().flex().flex_wrap().items_center().gap(T::SP_8).mt(T::SP_6).text_size(T::TEXT_13)
+                    .child(w::check(("fx-cp-allow", i), "Allow for this chat", on, cx.listener(|this, v: &bool, _, cx| { this.allow.0 = *v; cx.notify(); })))
+                    .child(w::select(("fx-cp-allow-for", i), names, at, "1 hour", !on, { let me = cx.entity().downgrade(); move |k: usize, _: &mut Window, cx: &mut App| { if let Some((key, _)) = sreq::ALLOW_FOR.get(k) { let _ = me.update(cx, |this, cx| { this.allow.1 = key; cx.notify(); }); } } }))
+                    .when(on, |d| d.child(div().w_full().text_size(T::TEXT_12).text_color(T::text_secondary()).line_height(relative(1.45))
+                        .child("This chat may then run commands with this secret without asking, until then. Its value is never shown."))));
+            }
+            card = card.when(armed && !self.err.is_empty(), |d| d.child(div().mt(T::SP_6).text_size(T::TEXT_12).text_color(T::red()).child(self.err.clone())));
             host = host.child(card);
         }
         host.into_any_element()

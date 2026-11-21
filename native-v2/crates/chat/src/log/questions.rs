@@ -349,13 +349,9 @@ pub fn row(v: &mut LogView, r: &Row, fs: f32, window: &mut Window, cx: &mut Cont
                             .on_click(cx.listener(move |this, _, window, cx| { cx.stop_propagation(); do_note_remove(this, &e3, qi, window, cx); }))));
                 }
             }
-            let row = keep(div().id(SharedString::from(format!("qo-{entry}-{qi}-{oi}"))).relative())
+            let row = keep(w::choice_card(SharedString::from(format!("qo-{entry}-{qi}-{oi}")), on))
                 .track_focus(&h)
-                .flex().items_start().gap(T::SP_8).py(T::SP_8).pl(T::SP_10).pr(T::SP_32 + T::SP_4)
-                .rounded(T::R_CONTROL).border_1().cursor_pointer()
-                .border_color(if on { T::accent() } else { T::border() })
-                .bg(if on { T::accent_dim() } else { T::bg() })
-                .when(!on, |d| d.hover(|d| d.border_color(T::accent_hover())))
+                .pr(T::SP_32 + T::SP_4)
                 .child(w::choice_mark(multi, on, focused))
                 .child(text)
                 .child(div().absolute().top(T::SP_4).right(T::SP_4)

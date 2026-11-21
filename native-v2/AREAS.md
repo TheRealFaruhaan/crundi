@@ -158,6 +158,12 @@ screen): `button`, `primary`, `danger`, `ghost`, `icon_button`,
 `primary_icon`, `liquid_mic`, `meter`, `spark`, `kbd`, `key_row`, `link`,
 `disclosure`, `filter_chip`, `seg_tabs`, `segmented_icons`, `icon_tag`,
 `page_item`, `round_button`, `arm_button`, `choice_row`, `choice_mark`,
+`choice_card` (a question card's option), `tone_pill` (a bordered pill in a
+tone: the chat head's PLAN), `icon_switch` (a two-way switch that is one
+button, its label inside: the composer's Enter switch), `status_line` /
+`LineTone` (the voice line), `link_sized` / `muted_link`, `edge_step` /
+`EDGE_TICK` (the edge ramp for a drag a view tracks itself: a pane moved by
+its head),
 `label_icon_button`, the chat's own controls (`chat_controls`: `log_jump`, `log_copy`, `call_mark`, `call_head`, `call_aside`, `call_card`, `agent_row`, `agent_list_row`, `dock_badge`, `pick_card`, `suggest_caption`, `suggest_bubble`, `id_link`, F159), `leaf_chip` / `leaf_act` (an empty pane's launch chips and actions), `launch_button` (the launcher's Empty Shell, UI Mode, Terminal and shields), `drag_ref` / `drag_ref_row` / `ref_target` / `ref_target_drag` / `edge_scroll` (dragging a reference, dropping one, scrolling at the edges while dragging), `layer` / `text_box` / `watch_focus` (paint layers: ARCHITECTURE.md),
 `number_input`, `date_input` (date, and date with time), `time_input`, `option_buttons` (the web's wrapping `.sm-seg`), `ReadOnly` / `readonly_box` (a URL or secret, selected whole on a click), `armed` (a danger button kept red), and `paint` (a row painted as one element: `Draw`, `Txt`, and the controls at rest: `button_at`, `check_at`, `count_badge_at`, `icon_tag_at`, `lite_button`).
 

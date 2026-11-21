@@ -23,7 +23,7 @@ pub const TABS: &[(&str, &str, IconName, &str)] = &[
     ("factories", "Factories", IconName::Factory, "planning"),
     ("schedule", "Schedule", IconName::Clock, "planning"),
     ("services", "Services", IconName::Server, "operations"),
-    ("docker", "Docker", IconName::Container, "operations"),
+    ("docker", "Docker", IconName::Box, "operations"),
     ("homepool", "Homepool", IconName::House, "operations"),
     ("browsers", "Browsers", IconName::Globe, "desktop"),
     ("info", "Info", IconName::Info, "operations"),

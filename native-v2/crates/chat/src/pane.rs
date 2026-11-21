@@ -84,9 +84,19 @@ impl ChatPane {
             .children(act)
             .when(!parked, |d| d.child(self.composer.clone().cached(StyleRefinement::default().w_full().h(h).flex_none())))
             .when_some(sched.filter(|_| !parked), |d, (v, sh)| d.child(v.cached(StyleRefinement::default().absolute().left(T::SP_8).right(T::SP_8).bottom(T::SP_8).h(sh).max_h(relative(0.82)))))
-            // Mini (F101): its own leaf over the whole chat; a key in the
-            // chat is the person getting on with things.
-            .when_some(self.mini.clone(), |d, m| d.child(m.cached(StyleRefinement::default().absolute().inset_0())))
+            // Mini (F101): drawn at window level by MiniPanes over the bounds
+            // noted here (F179), so its frames never render the Workbench.
+            // The recorder runs whenever the Workbench lays the pane out; a
+            // move redraws the layer once, after the frame. A key in the chat
+            // is the person getting on with things.
+            .when_some(self.mini.clone(), |d, m| {
+                let (layer, clip) = m.read(cx).anchor();
+                let id = m.entity_id();
+                d.child(canvas(move |b, window, cx| {
+                    let c = window.content_mask().bounds.intersect(&b);
+                    if layer.get() != b || clip.get() != c { layer.set(b); clip.set(c); cx.defer(move |cx| cx.notify(id)); }
+                }, |_, _, _, _| {}).absolute().inset_0())
+            })
             .when(self.mini.is_some(), |d| d.capture_key_down(move |_, _, cx| crate::mini::acted(&chat, cx)))
             .drag_over::<ExternalPaths>(|s, _, _, _| s.border_2().border_dashed().border_color(T::accent()))
             // (Deferred, as the reference below: the composer's box is

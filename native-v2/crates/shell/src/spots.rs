@@ -102,3 +102,23 @@ pub fn scroll_tabs(cx: &mut App, x: Pixels) {
     t.scroll.set_offset(point(x.clamp(-t.scroll.max_offset().x, px(0.)), o.y));
     if let Some(e) = t.bar.upgrade() { cx.notify(e.entity_id()); }
 }
+
+/// The panes the Workbench lays out (their keys) and the one full screen,
+/// for what is drawn over a pane from outside the Workbench (Mini's pane
+/// layers, a window overlay: F179). The Workbench sets it after a render
+/// that changed it; readers observe it.
+#[derive(Clone, Default, PartialEq)]
+pub struct WbPanes { pub shown: Vec<String>, pub full: Option<String> }
+struct WbPanesHandle(Entity<WbPanes>);
+impl Global for WbPanesHandle {}
+pub fn wb_panes(cx: &mut App) -> Entity<WbPanes> {
+    if let Some(h) = cx.try_global::<WbPanesHandle>() { return h.0.clone(); }
+    let e = cx.new(|_| WbPanes::default());
+    cx.set_global(WbPanesHandle(e.clone()));
+    e
+}
+/// Set (and notify) only when it changed.
+pub fn set_wb_panes(cx: &mut App, p: WbPanes) {
+    let e = wb_panes(cx);
+    if *e.read(cx) != p { e.update(cx, |x, cx| { *x = p; cx.notify(); }); }
+}

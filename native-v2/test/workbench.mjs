@@ -91,9 +91,12 @@ s = await T.state();
 const a = leafOf(s, chat);
 const b = s.leaves.find((l) => l.key && l.key !== chat);
 const bKey = b.key;
-const r0 = s.renders || {};
-// Pick it up and move; look mid-drag.
+// Pick it up and move; look mid-drag. (Counted from just after the press:
+// the press itself may clear the head's own tooltip, which redraws that
+// head alone, GPUI patch (c).)
 await T.mouse('down', a.x + 200, a.y + 12);
+await t.sleep(150);
+const r0 = (await T.state()).renders || {};
 for (let i = 1; i <= 6; i++) await T.mouse('move', a.x + 200 + i * ((b.x + b.w / 2 - a.x - 200) / 6), a.y + 12 + i * 40, { buttons: ['left'] });
 const mid = await T.state();
 t.check('mid-drag: the pane is picked up and the other lit', mid.drag && mid.drag.src === a.id && mid.drag.target === b.id, mid.drag);
@@ -156,6 +159,39 @@ await T.ui('add-pane', 'terminal');
 await T.until('the project\'s last launch mode is known', (s) => s.launchLast === 'normal', 3000);
 await t.sleep(300);
 await snap('launcher-last-used');
+
+// ─── Moving a pane near the grid's edge scrolls it (F181) ───
+// The web's makeDraggable runs wbAutoScroll on every move, the pane move by
+// its head too (src/webapp-html.js:8388, 16998): four columns at 1400 px are
+// wider than the grid, and a pane held in its 60 px edge band scrolls it.
+await T.d.send({ cmd: 'resize', w: 1400, h: 860 });
+await T.ui('add-pane', 'layout:cols3');
+s = await T.state();
+await T.ui('pane-split', s.leaves.find((l) => l.key).key, 'right');
+s = await T.until('four columns, wider than the grid', (s) => s.leaves.length >= 4 && s.grid?.max > 100, 5000);
+const g = s.grid;
+const src = s.leaves.filter((l) => l.key && l.x >= g.x).sort((p, q) => p.x - q.x)[0];
+const hx = Math.max(src.x + 60, g.x + 80), hy = src.y + 12;
+await T.mouse('move', hx, hy);
+await T.mouse('down', hx, hy);
+const ry = hy + 200, rx = g.x + g.w - 15;
+for (let i = 1; i <= 6; i++) { await T.mouse('move', hx + (rx - hx) * i / 6, ry, { buttons: ['left'] }); await t.sleep(30); }
+s = await T.until('held at the right edge, the grid scrolls right', (s) => s.drag && s.grid.scroll > 60, 5000);
+const lit = s.leaves.find((l) => l.id === s.drag.target);
+t.check('…and the lit pane is the one now under the pointer', !s.drag.target || (lit && rx >= lit.x && rx < lit.x + lit.w), { target: s.drag.target, lit, rx });
+s = await T.until('…up to its end', (s) => s.drag && Math.abs(s.grid.scroll - s.grid.max) < 1, 5000);
+const lx = g.x + 15;
+for (let i = 1; i <= 6; i++) { await T.mouse('move', rx + (lx - rx) * i / 6, ry, { buttons: ['left'] }); await t.sleep(30); }
+s = await T.until('held at the left edge, it scrolls back', (s) => s.drag && s.grid.scroll < 1, 5000);
+await T.mouse('move', g.x + g.w / 2, ry, { buttons: ['left'] });
+s = await T.until('away from the edges, the ramp stops', (s) => s.drag && !s.grid.edge, 3000);
+const sc = s.grid.scroll;
+await t.sleep(300);
+s = await T.state();
+t.check('…and the grid stays where it is', Math.abs(s.grid.scroll - sc) < 1, { before: sc, after: s.grid.scroll });
+await T.mouse('up', g.x + g.w / 2, ry);
+await T.until('let go, the move ends', (s) => !s.drag, 3000);
+await T.d.send({ cmd: 'resize', w: 1440, h: 900 });
 
 // (No idle check here: the launcher on screen animates UI Mode, by the owner's call.)
 await T.end();

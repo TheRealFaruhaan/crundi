@@ -20,6 +20,10 @@ pub struct Req {
     pub lock: String,
     /// The chat that asked ("" when none did).
     pub session: String,
+    /// The secret's id, and whether its lock is an old one (after an
+    /// Approve, a passphrase is offered: crundi-secret-lock.js upgrade).
+    pub secret: String,
+    pub upgrade: bool,
 }
 
 fn st(v: &Value, k: &str) -> String {
@@ -39,6 +43,8 @@ pub fn parse(v: &Value) -> Vec<Req> {
         env: st(r, "envName"),
         lock: if st(r, "lock") == "pin" { "pin".into() } else { "passphrase".into() },
         session: st(r, "sessionId"),
+        secret: st(r, "secretId"),
+        upgrade: r.get("needsUpgrade").and_then(|x| x.as_bool()).unwrap_or(false),
     }).collect()).unwrap_or_default()
 }
 
@@ -72,6 +78,10 @@ pub fn approve_body(req: &Req, pin: &str, allow: Option<&str>) -> Value {
     b
 }
 
+/// "Allow for this chat"'s lengths (crundi-chat-secrets.js PRESETS): the
+/// key sent, the words shown.
+pub const ALLOW_FOR: [(&str, &str); 4] = [("15m", "15 minutes"), ("1h", "1 hour"), ("8h", "8 hours"), ("chat", "Until this chat ends")];
+
 /// The server's answer to Approve: Ok(the toast) or Err(the error line).
 pub fn answer(r: Result<(u16, Value), String>, allow_sent: bool) -> Result<&'static str, String> {
     match r {
@@ -100,7 +110,7 @@ mod tests {
     fn parses_the_list() {
         let l = parse(&list());
         assert_eq!(l.len(), 2);
-        assert_eq!(l[0], Req { id: "a".into(), name: "GITHUB_TOKEN".into(), project: "demo".into(), reason: "why".into(), run: true, command: "echo hi".into(), env: "SECRET".into(), lock: "passphrase".into(), session: "c1".into() });
+        assert_eq!(l[0], Req { id: "a".into(), name: "GITHUB_TOKEN".into(), project: "demo".into(), reason: "why".into(), run: true, command: "echo hi".into(), env: "SECRET".into(), lock: "passphrase".into(), session: "c1".into(), secret: "s1".into(), upgrade: false });
         assert!(!l[1].run);
         assert_eq!(l[1].lock, "pin");
         assert_eq!(l[1].session, "");

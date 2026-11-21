@@ -197,8 +197,8 @@ fn panel_entries(st: &crate::store::ChatStore, tid: &str) -> Vec<Shown> {
 /// The sheet's head: (back link), title, sub, (Dismiss all), ×.
 fn head(back_link: Option<&'static str>, title: String, sub: String, all: Option<bool>, fs: f32, cx: &mut Context<LogView>) -> Div {
     div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_10).py(T::SP_8).border_b_1().border_color(T::border_subtle())
-        .when_some(back_link, |d, b| d.child(div().id("ag-back").flex_none().pr(T::SP_6).text_size(T::TEXT_12 * fs).text_color(T::text_muted()).cursor_pointer()
-            .hover(|d| d.text_color(T::text())).tooltip(w::tooltip("Back to the list")).child(b).on_click(cx.listener(|v, _, _, cx| back(v, cx)))))
+        .when_some(back_link, |d, b| d.child(w::muted_link("ag-back", b, T::TEXT_12 * fs)
+            .tooltip(w::tooltip("Back to the list")).on_click(cx.listener(|v, _, _, cx| back(v, cx)))))
         .child(div().flex_none().max_w(relative(0.7)).truncate().text_size(T::TEXT_13 * fs).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
         .child(div().flex_1().min_w_0().truncate().font_family(T::MONO).text_size(T::TEXT_11 * fs).text_color(T::text_muted()).child(sub))
         .when_some(all, |d, task| d.child(w::button("ag-dismiss-all", "Dismiss all").on_click(cx.listener(move |v, _, _, cx| dismiss_all(v, task, cx)))))

@@ -563,13 +563,9 @@ pub fn vline(c: &Composer, cx: &mut Context<Composer>) -> Option<AnyElement> {
     }).absolute().size_0());
     let Some((kind, text, _)) = l else { return hooks.map(|h| h.into_any_element()) };
     let soft = kind == "speaking" || kind == "paused";
-    Some(div().id("vline").relative().flex().items_center().gap(T::SP_6).px(T::SP_2).cursor_pointer()
+    let tone = if kind == "error" { w::LineTone::Error } else if soft { w::LineTone::Soft } else { w::LineTone::Note };
+    Some(w::status_line("vline", text, tone)
         .on_click(move |_, _, cx| vline_click(cx, &chat))
-        .when(kind != "error", |d| d.child(div().flex_none().size(T::SP_6).rounded_full().bg(if soft { T::sky() } else { T::yellow() })))
-        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(T::TEXT_12)
-            .when(soft, |d| d.italic())
-            .text_color(if kind == "error" { T::red() } else if soft { T::text_muted() } else { T::text_secondary() })
-            .child(text))
         .children(hooks)
         .into_any_element())
 }

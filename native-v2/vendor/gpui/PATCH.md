@@ -1,7 +1,8 @@
 # gpui-pre 0.3.12, patched for native-v2
 
 This is the published `gpui-pre` 0.3.12 (crates.io; a snapshot of Zed's gpui
-at d2a4fb6) with two changes to how cached views are reused. The owner chose
+at d2a4fb6) with two changes to how cached views are reused and one to what a click
+redraws. The owner chose
 this on 21 Nov 2026 (shared/OWNER-DECISIONS.md, F146): patch GPUI until
 upstream has an equivalent fix.
 
@@ -13,7 +14,7 @@ Trimmed from the published crate: `examples/`, `benches/`, `tests/` and their
 `[[example]]`, `[[bench]]` and `[[test]]` tables in `Cargo.toml`. Only gpui's
 own unit tests used them, and they don't run here: `vendor/` is excluded from
 the workspace. Everything else is byte for byte the published crate, except
-the lines marked `crundi patch (a)` or `crundi patch (b)` in:
+the lines marked `crundi patch (a)`, `crundi patch (b)` or `crundi patch (c)` in:
 
 - `src/view.rs`: `prepaint_view`, `paint_view`, `ViewElementState`,
   `view_state_type`, `view_state`, `shift_prepaint`, `shift_paint` and
@@ -26,6 +27,9 @@ the lines marked `crundi patch (a)` or `crundi patch (b)` in:
   the frames are swapped in `draw`
 - `src/text_system/line_layout.rs`: `LineLayoutIndex::shifted`
 - `src/scene.rs`: `can_offset` and `replay_offset`
+- `src/elements/div.rs` (c): `paint_mouse_listeners` (the pending press,
+  its release, the active style), `clear_active_tooltip_if_not_hoverable`,
+  `register_tooltip_mouse_handlers` and `show_tooltip`
 
 `crates/shell/tests/gpui_patch.rs` checks both behaviours in `cargo test`
 on every OS: a clean cached child isn't rendered when its parent is, a moved
@@ -126,6 +130,27 @@ when it stops, not one per frame. A click landing on a moved view before
 that render would use the old positions; within 120 ms of a scroll, that
 is not something a person does.
 
+## (c) A click and a tooltip redraw their own view, not the window (F105)
+
+**Upstream.** `div.rs` answers a press on any element with a click
+listener, its release, the active (pressed) style, and a tooltip shown or
+cleared by the pointer with `window.refresh()`: every view in the window
+renders again. With the panes, the top bar and the overlays cached, one
+press-drag-release on a pane's head rendered every Shell and overlay view
+one to two times (shared/uir-round3/shell.md).
+
+**The change.** The press and its release change nothing that is drawn
+(`pending_mouse_down` is read by the listeners and the tooltip checks, not
+by a render), so they redraw nothing. The active style, a tooltip shown,
+and a tooltip cleared by a press or the wheel notify the view that drew the
+element (`window.current_view()` at paint, as upstream's own hover and
+tooltip-visibility code already does): that view renders, its ancestors
+with it, and their clean cached children are replayed. A tooltip hidden by
+its timer or by the window's prepaint check still refreshes the window, as
+upstream (they are rare and outside any scroll or drag). A GPUI drag
+(`on_drag`, `cx.active_drag`) still redraws the window on every move,
+as upstream.
+
 ## The upstream fix to watch for
 
 Zed's gpui, `crates/gpui/src/view.rs`, `prepaint_view`:
@@ -135,7 +160,10 @@ Zed's gpui, `crates/gpui/src/view.rs`, `prepaint_view`:
 - for (b), a cache key that tolerates an origin change: replay at an offset,
   or element-relative coordinates in the scene and hitboxes.
 
-When a `gpui-pre` release (the snapshot gpui-component pins) has both,
+For (c), a click's or a tooltip's state change notifying its view rather
+than `window.refresh()`.
+
+When a `gpui-pre` release (the snapshot gpui-component pins) has all three,
 delete the patch: the cached views here are written for the published
 semantics plus these two. When it has only one, keep the other here, and
 re-measure with `tools/measure-pc.mjs` on the owner's display either way.

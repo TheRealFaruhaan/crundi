@@ -3014,6 +3014,9 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
+                // crundi patch (c): the press and release of a click redraw
+                // nothing. What they change is drawn by its own handler: the
+                // active style and a tooltip notify the element's view.
                 window.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
@@ -3024,7 +3027,7 @@ impl Interactivity {
                             && hitbox.is_hovered(window)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
-                            window.refresh();
+                            // crundi patch (c): no window.refresh()
                         }
                     }
                 });
@@ -3152,7 +3155,7 @@ impl Interactivity {
                             let mut pending_mouse_down = pending_mouse_down.borrow_mut();
                             if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
                                 captured_mouse_down = pending_mouse_down.take();
-                                window.refresh();
+                                // crundi patch (c): no window.refresh()
                             } else if pending_mouse_down.is_some() {
                                 // Clear the pending mouse down event (without firing click handlers)
                                 // if the hitbox is not being hovered.
@@ -3160,7 +3163,7 @@ impl Interactivity {
                                 // immediately after being clicked.
                                 // See https://github.com/zed-industries/zed/issues/24600 for more details
                                 pending_mouse_down.take();
-                                window.refresh();
+                                // crundi patch (c): no window.refresh()
                             }
                         }
                         // Fire click handlers during the bubble phase.
@@ -3298,12 +3301,14 @@ impl Interactivity {
                 .get_or_insert_with(Default::default)
                 .clone();
 
+            // crundi patch (c): the active style redraws its own view only.
+            let current_view = window.current_view();
             {
                 let active_state = active_state.clone();
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, _window, cx| {
                     if phase == DispatchPhase::Capture && active_state.borrow().is_clicked() {
                         *active_state.borrow_mut() = ElementClickedState::default();
-                        window.refresh();
+                        cx.notify(current_view); // crundi patch (c)
                     }
                 });
             }
@@ -3314,7 +3319,7 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
                 let hitbox = hitbox.clone();
-                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
+                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         let group_hovered = active_group_hitbox
                             .is_some_and(|group_hitbox_id| group_hitbox_id.is_hovered(window));
@@ -3324,7 +3329,7 @@ impl Interactivity {
                                 group: group_hovered,
                                 element: element_hovered,
                             };
-                            window.refresh();
+                            cx.notify(current_view); // crundi patch (c)
                         }
                     }
                 });
@@ -3743,7 +3748,8 @@ pub(crate) fn clear_active_tooltip(
 
 pub(crate) fn clear_active_tooltip_if_not_hoverable(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
-    window: &mut Window,
+    current_view: EntityId,
+    cx: &mut App,
 ) {
     let should_clear = match active_tooltip.borrow().as_ref() {
         None => false,
@@ -3753,7 +3759,9 @@ pub(crate) fn clear_active_tooltip_if_not_hoverable(
     };
     if should_clear {
         active_tooltip.borrow_mut().take();
-        window.refresh();
+        // crundi patch (c): the view that set the tooltip draws again (it
+        // sets the window's tooltip in its prepaint), not the whole window.
+        cx.notify(current_view);
     }
 }
 
@@ -3806,9 +3814,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
 
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
-        move |_: &MouseDownEvent, _phase, window: &mut Window, _cx| {
+        move |_: &MouseDownEvent, _phase, window: &mut Window, cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
-                clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
+                clear_active_tooltip_if_not_hoverable(&active_tooltip, current_view, cx);
             }
         }
     });
@@ -3829,6 +3837,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
                         &build_tooltip,
                         &check_is_hovered_during_prepaint,
                         Some(long_press_tooltip_active.clone()),
+                        current_view,
                         window,
                         cx,
                     ) {
@@ -3853,9 +3862,9 @@ pub(crate) fn register_tooltip_mouse_handlers(
 
     window.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
-        move |_: &ScrollEvent, _phase, window: &mut Window, _cx| {
+        move |_: &ScrollEvent, _phase, window: &mut Window, cx| {
             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
-                clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
+                clear_active_tooltip_if_not_hoverable(&active_tooltip, current_view, cx);
             }
         }
     });
@@ -3955,6 +3964,7 @@ fn handle_tooltip_mouse_move(
                             &build_tooltip,
                             &check_is_hovered_during_prepaint,
                             None,
+                            current_view,
                             window,
                             cx,
                         );
@@ -3977,6 +3987,7 @@ fn show_tooltip(
     build_tooltip: &Rc<dyn Fn(&mut Window, &mut App) -> Option<(AnyView, bool)>>,
     check_is_hovered_during_prepaint: &Rc<dyn Fn(&Window) -> bool>,
     long_press_tooltip_active: Option<Rc<Cell<bool>>>,
+    current_view: EntityId,
     window: &mut Window,
     cx: &mut App,
 ) -> bool {
@@ -4012,7 +4023,8 @@ fn show_tooltip(
     });
     let did_show = new_tooltip.is_some();
     *active_tooltip.borrow_mut() = new_tooltip;
-    window.refresh();
+    // crundi patch (c): the view that sets the tooltip draws again.
+    cx.notify(current_view);
     did_show
 }
 

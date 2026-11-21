@@ -1,5 +1,9 @@
-//! Mini's two layers. `MiniLayer`: a cached leaf over a chat pane's body
-//! (the web's .cm-layer): Mini and its effects, clipped to the pane; only
+//! Mini's two layers. `MiniLayer`: a chat pane's layer (the web's
+//! .cm-layer): Mini and its effects, clipped to the pane. It is drawn at
+//! window level by `MiniPanes`, a Shell overlay, over the bounds the pane's
+//! body records (`ChatPane::body`), not inside the Workbench: a frame of Mini
+//! then renders Mini (and the Shell's frame around it, its other parts
+//! replayed), never the Workbench and its panes (F179). Only
 //! the robot takes a tap (the rest of the pane gets every event as before);
 //! it also hears the pane's presses and wheel (the person getting on with
 //! things) and the pointer (its eyes follow it). `TopLayer`: a window
@@ -16,6 +20,8 @@ pub struct MiniLayer {
     sys: SysRef,
     id: String,
     layer: Rc<Cell<Bounds<Pixels>>>,
+    /// The pane's visible part (the layer within the grid's clip).
+    clip: Rc<Cell<Bounds<Pixels>>>,
     /// The pointer is over the pane (the web's pointerleave).
     inside: Rc<Cell<bool>>,
     /// The log's parked look, as last seen (a change is a new attach).
@@ -40,8 +46,14 @@ impl MiniLayer {
                 if p != this.parked { this.parked = p; ch(this, cx); }
             }),
         ];
-        MiniLayer { sys, id, layer, inside: Rc::new(Cell::new(false)), parked: (false, false), _subs: subs }
+        MiniLayer { sys, id, layer, clip: Rc::new(Cell::new(Bounds::default())), inside: Rc::new(Cell::new(false)), parked: (false, false), _subs: subs }
     }
+}
+
+impl MiniLayer {
+    /// Where the pane's body is (window coordinates) and its visible part:
+    /// the body's recorder sets them, and notifies this layer when they move.
+    pub fn anchor(&self) -> (Rc<Cell<Bounds<Pixels>>>, Rc<Cell<Bounds<Pixels>>>) { (self.layer.clone(), self.clip.clone()) }
 }
 
 impl Render for MiniLayer {
@@ -63,23 +75,23 @@ impl Render for MiniLayer {
             }
             (shapes, tap)
         };
-        let (layer, sys, id, inside) = (self.layer.clone(), self.sys.clone(), self.id.clone(), self.inside.clone());
-        canvas(move |bounds, window, _| {
-            layer.set(bounds);
-            tap.map(|t| window.insert_hitbox(Bounds::new(bounds.origin + t.origin, t.size), HitboxBehavior::BlockMouse))
-        }, move |bounds, hit, window, _| {
-            window.with_content_mask(Some(ContentMask { bounds }), |window| draw::paint(&shapes, bounds.origin, window));
+        let (layer, clip, sys, id, inside) = (self.layer.clone(), self.clip.clone(), self.sys.clone(), self.id.clone(), self.inside.clone());
+        let (bounds, clip) = (layer.get(), clip.get());
+        canvas(move |_, window, _| {
+            tap.map(|t| window.insert_hitbox(Bounds::new(bounds.origin + t.origin, t.size).intersect(&clip), HitboxBehavior::BlockMouse))
+        }, move |_, hit, window, _| {
+            window.with_content_mask(Some(ContentMask { bounds: clip }), |window| draw::paint(&shapes, bounds.origin, window));
             if let Some(h) = &hit { window.set_cursor_style(CursorStyle::PointingHand, h); }
             // A press in the pane (not on Mini), the wheel: the person is at it.
             let (h1, id1) = (hit.clone(), id.clone());
             window.on_mouse_event(move |e: &MouseDownEvent, phase, window, cx| {
-                if phase != DispatchPhase::Capture || !bounds.contains(&e.position) { return; }
+                if phase != DispatchPhase::Capture || !clip.contains(&e.position) { return; }
                 if h1.as_ref().is_some_and(|h| h.is_hovered(window)) { return; }
                 super::acted(&id1, cx);
             });
             let id2 = id.clone();
             window.on_mouse_event(move |e: &ScrollEvent, phase, _, cx| {
-                if phase == DispatchPhase::Capture && bounds.contains(&e.position) { super::acted(&id2, cx); }
+                if phase == DispatchPhase::Capture && clip.contains(&e.position) { super::acted(&id2, cx); }
             });
             // A tap on the robot: it is not passed on to what is behind.
             let (h3, id3, s3) = (hit.clone(), id.clone(), sys.clone());
@@ -93,7 +105,7 @@ impl Render for MiniLayer {
             let (id4, s4) = (id.clone(), sys.clone());
             window.on_mouse_event(move |e: &MouseMoveEvent, phase, _, cx| {
                 if phase != DispatchPhase::Bubble { return; }
-                let inn = bounds.contains(&e.position);
+                let inn = clip.contains(&e.position);
                 if !inn && !inside.get() { return; }
                 inside.set(inn);
                 let p = inn.then(|| (f32::from(e.position.x - bounds.origin.x), f32::from(e.position.y - bounds.origin.y)));
@@ -130,5 +142,52 @@ impl Render for TopLayer {
             let clip = Bounds::new(bounds.origin, size(bounds.size.width, px(clip_h).min(bounds.size.height)));
             window.with_content_mask(Some(ContentMask { bounds: clip }), |window| draw::paint(&shapes, bounds.origin, window));
         }).size_full()
+    }
+}
+
+/// Every chat pane's Mini layer, at window level (a Shell overlay, under the
+/// top layer): each shown pane's layer, cached over the whole window; the
+/// full-screen pane's over the Workbench's cover (a deferred draw after it).
+/// It renders when the shown panes, the tab or the sign-in change, and when
+/// a chat's layer is made; a frame of Mini renders that layer alone.
+pub struct MiniPanes { sys: SysRef, seen: (bool, bool), _subs: Vec<Subscription> }
+
+impl MiniPanes {
+    pub fn new(sys: SysRef, cx: &mut Context<Self>) -> Self {
+        let stores = crundi_shell::stores(cx);
+        let panes = crundi_shell::spots::wb_panes(cx);
+        let look = |cx: &mut Context<Self>| { let s = crundi_shell::stores(cx); (s.session.read(cx).signed_in(), s.nav.read(cx).tab == "workbench") };
+        let seen = look(cx);
+        let subs = vec![
+            cx.observe(&panes, |_, _, cx| cx.notify()),
+            cx.observe(&stores.nav, move |this: &mut Self, _, cx| { let l = look(cx); if l != this.seen { this.seen = l; cx.notify(); } }),
+            cx.observe(&stores.session, move |this: &mut Self, _, cx| { let l = look(cx); if l != this.seen { this.seen = l; cx.notify(); } }),
+        ];
+        MiniPanes { sys, seen, _subs: subs }
+    }
+}
+
+impl Render for MiniPanes {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crundi_core::driver::rendered("mini-panes");
+        let mut root = div().absolute().top_0().left_0().size_full();
+        if self.seen != (true, true) { return root; }
+        let p = crundi_shell::spots::wb_panes(cx).read(cx).clone();
+        let mut views: Vec<(String, Entity<MiniLayer>)> = self.sys.borrow().chats.iter()
+            .filter_map(|(id, c)| c.view.as_ref().and_then(|v| v.upgrade()).map(|v| (format!("live:{id}"), v))).collect();
+        views.sort_by(|a, b| a.0.cmp(&b.0));
+        let vp = window.viewport_size();
+        for (key, v) in views {
+            if !p.shown.contains(&key) { continue; }
+            match &p.full {
+                Some(f) if *f == key => {
+                    root = root.child(deferred(anchored().position(point(px(0.), px(0.))).child(
+                        div().w(vp.width).h(vp.height).child(v.cached(StyleRefinement::default().size_full())))));
+                }
+                Some(_) => {}
+                None => { root = root.child(v.cached(StyleRefinement::default().absolute().top_0().left_0().size_full())); }
+            }
+        }
+        root
     }
 }

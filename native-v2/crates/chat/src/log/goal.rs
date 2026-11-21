@@ -138,9 +138,8 @@ pub fn plan_pill(log: &Entity<LogView>, cx: &App) -> Option<AnyElement> {
     let st = status_of(v.store.read(cx).conv.plan.as_ref()?);
     let (fg, edge) = match st.as_str() { "executing" => (T::green(), T::green()), "rejected" => (T::text_muted(), T::border()), _ => (T::yellow(), T::yellow()) };
     let log = log.clone();
-    Some(div().id("plan-pill").flex_none().px(T::SP_6).rounded(T::R_PILL).border_1().border_color(edge)
-        .text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(fg).cursor_pointer().hover(|d| d.bg(T::bg_hover()))
-        .tooltip(w::tooltip(pill_tip(&st))).child("PLAN")
+    Some(w::tone_pill("plan-pill", "PLAN", fg, edge)
+        .tooltip(w::tooltip(pill_tip(&st)))
         .on_click(move |_, _, cx| log.update(cx, |v, cx| toggle(v, cx)))
         .into_any_element())
 }

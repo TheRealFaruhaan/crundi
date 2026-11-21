@@ -33,7 +33,7 @@ use gpui::*;
 use scenes::{Aims, Env, Parked, Top, TopRead};
 use serde_json::{json, Value};
 use std::{cell::{Cell, RefCell}, collections::{HashMap, VecDeque}, rc::Rc, time::{Duration, Instant}};
-pub use view::{MiniLayer, TopLayer};
+pub use view::{MiniLayer, MiniPanes, TopLayer};
 
 /// The web's DELAY: queue, sit, nudge (ms).
 #[derive(Clone, Copy)]
@@ -193,6 +193,9 @@ pub fn init(cx: &mut App) {
     let s = sys(cx);
     let v = cx.new(|cx| TopLayer::new(s.clone(), cx));
     s.borrow_mut().top_view = Some(v.downgrade());
+    // The chat panes' layers first: the top layer draws over them.
+    let panes = cx.new(|cx| MiniPanes::new(s.clone(), cx));
+    crundi_shell::register_overlay(cx, panes.into());
     crundi_shell::register_overlay(cx, v.into());
     // The top bar's own outings: its look round every 3 s (the web's topTick).
     schedule(&s, cx);
@@ -211,6 +214,9 @@ pub fn attach(id: &str, store: &Entity<crate::store::ChatStore>, composer: &Enti
         eyeing: Rc::new(Cell::new(false)), mouse_at: Rc::new(Cell::new(None)), last_sig: None, delay: DELAY,
         want_at: 0., handing: false, last_at: None, dirty: false,
     });
+    // MiniPanes draws the new layer (it observes the shown panes).
+    let panes = crundi_shell::spots::wb_panes(cx);
+    cx.notify(panes.entity_id());
     v
 }
 

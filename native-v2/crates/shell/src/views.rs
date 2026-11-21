@@ -145,9 +145,11 @@ impl Shell {
                 self.tabs.insert(tab.to_string(), v);
             }
         }
-        // Not cached here: a tab's view is layout, its parts are the cached
-        // leaves (a cached view re-rendering ignores every cache inside it).
-        if let Some(v) = self.tabs.get(tab) { return div().size_full().child(v.clone()).into_any_element(); }
+        // Cached here (rule 3): with GPUI patch (a) a cached view that renders
+        // again keeps its clean cached leaves, so a tab's notify (the
+        // Workbench's, on every pane's change) no longer renders the Shell,
+        // and a Shell change (the top bar, an overlay) no longer renders the tab.
+        if let Some(v) = self.tabs.get(tab) { return v.clone().cached(StyleRefinement::default().size_full()).into_any_element(); }
         let t = tab.to_string();
         let v = self.missing.entry(t.clone()).or_insert_with(|| cx.new(|_| NotBuilt(t))).clone();
         v.cached(StyleRefinement::default().size_full()).into_any_element()

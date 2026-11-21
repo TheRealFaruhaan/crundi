@@ -41,3 +41,13 @@ pub fn quiet_pill(id: impl Into<ElementId>, label: impl Into<SharedString>) -> S
         .bg(T::bg_tertiary()).text_color(T::text_secondary()).text_size(T::TEXT_12)
         .child(label.into())
 }
+
+/// A small bordered pill in a tone of its own (the chat head's PLAN pill:
+/// its edge and bold 10 px text in the plan's colour), no fill; hovered,
+/// bg-hover.
+pub fn tone_pill(id: impl Into<ElementId>, label: impl Into<SharedString>, fg: Hsla, edge: Hsla) -> Stateful<Div> {
+    div().id(id).flex().flex_none().items_center().px(T::SP_6).rounded(T::R_PILL).border_1().border_color(edge).cursor_pointer()
+        .text_size(T::TEXT_10).font_weight(T::W_BOLD).text_color(fg)
+        .hover(|d| d.bg(T::bg_hover()))
+        .child(label.into())
+}

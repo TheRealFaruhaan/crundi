@@ -18,3 +18,15 @@ pub fn choice_mark(multi: bool, on: bool, focused: bool) -> Div {
         .when(focused, |d| d.bg(T::accent_edge()))
         .child(mark)
 }
+
+/// A choice's card (a question card's option, the web's .cc-opt): a
+/// bordered box, the whole card the press target; picked, an accent edge on
+/// accent-dim; not picked, its edge goes accent-hover on hover. The caller
+/// puts the mark (`choice_mark`) and the text in, and its press.
+pub fn choice_card(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+    div().id(id).relative().flex().items_start().gap(T::SP_8).py(T::SP_8).pl(T::SP_10)
+        .rounded(T::R_CONTROL).border_1().cursor_pointer()
+        .border_color(if on { T::accent() } else { T::border() })
+        .bg(if on { T::accent_dim() } else { T::bg() })
+        .when(!on, |d| d.hover(|d| d.border_color(T::accent_hover())))
+}

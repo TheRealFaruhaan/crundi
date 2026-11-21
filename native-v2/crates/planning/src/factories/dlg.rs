@@ -385,7 +385,7 @@ const RULE: &str = "At least 8 characters, and not only digits";
 fn passphrase_ok(t: &str) -> bool { t.chars().count() >= 8 && t.chars().any(|c| !c.is_ascii_digit()) }
 
 /// Asked only when the server lists 'secret-upgrade'.
-fn upgrade(q: Vec<(String, String, String, String)>, cx: &mut App) {
+pub(crate) fn upgrade(q: Vec<(String, String, String, String)>, cx: &mut App) {
     super::caps(cx, move |caps, cx| {
         if !caps.iter().any(|c| c == "secret-upgrade") { return; }
         let show = with(cx, |d| { let idle = !d.up.open && d.up.queue.is_empty(); d.up.queue.extend(q); idle });
