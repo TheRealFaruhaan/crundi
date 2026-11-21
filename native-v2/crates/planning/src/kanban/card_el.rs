@@ -231,6 +231,9 @@ impl Element for CardEl {
         window.on_mouse_event(move |e: &MouseUpEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || e.button != MouseButton::Left { return; }
             b2.borrow_mut().pressing = false;
+            // Its own release lets go of the card: a press and release in one
+            // frame come before the overlay listens for the release (F213).
+            if h2.is_hovered(window) { super::pointer_up(cx); }
             let Some(was) = pressed.borrow_mut().take() else { return };
             if !h2.is_hovered(window) || at(e.position, &d2).as_deref() != Some(was.as_str()) { return; }
             let Some((hb, _)) = d2.hits.iter().find(|(_, n)| *n == was) else { return };

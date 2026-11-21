@@ -212,6 +212,11 @@ impl ChatHead {
                 self.finish_rename(what == "rename", cx);
                 true
             }
+            // The secret requests' cards: the list as the server would send
+            // it (ask-set <requests JSON>), the box typed, a card's Reject.
+            "ask-set" => { let v: Value = serde_json::from_str(arg).unwrap_or(Value::Null); set_asks(&json!({ "requests": v }), cx); true }
+            "ask-type" => { let v = arg.to_string(); self.asks.update(cx, |a, cx| a.pin.update(cx, |s, cx| s.set_value(v, window, cx))); true }
+            "ask-reject" => { let id = arg.to_string(); self.asks.update(cx, |a, cx| a.reject(&id, window, cx)); true }
             _ => false,
         }
     }
@@ -322,6 +327,8 @@ pub struct AskCards {
     auto: bool,
     err: String,
     pin: Entity<w::InputState>,
+    /// The box's word ('PIN' or 'Passphrase', the armed request's lock).
+    ph: &'static str,
     /// The requests shown, as last drawn (a change of them redraws).
     shown: Vec<Req>,
     /// "Allow for this chat" on the open card (the web's askAllow): ticked,
@@ -337,11 +344,11 @@ impl AskCards {
         let pin = cx.new(|cx| w::InputState::new(window, cx).masked(true).placeholder("PIN"));
         let a = asks(cx);
         let subs = vec![
-            cx.observe(&a, |this, _, cx| this.sync(cx)),
+            cx.observe_in(&a, window, |this, _, window, cx| this.sync(window, cx)),
             cx.subscribe_in(&pin, window, |this, _, ev: &w::InputEvent, window, cx| if let w::InputEvent::PressEnter { .. } = ev { this.approve(window, cx); }),
         ];
-        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
-        me.sync(cx);
+        let mut me = AskCards { id: id.to_string(), project: project.to_string(), armed: String::new(), auto: false, err: String::new(), pin, ph: "PIN", shown: vec![], allow: (false, "1h"), preauth: false, _subs: subs };
+        me.sync(window, cx);
         // (After this update: the Factories tab, which keeps the server's
         // capabilities, may be the one making this card.)
         let w8 = cx.entity().downgrade();
@@ -367,13 +374,27 @@ impl AskCards {
         h.0.read(cx).list.iter().filter(|r| if !r.session.is_empty() { r.session == self.id } else { r.project.is_empty() || r.project == self.project }).cloned().collect()
     }
 
-    fn sync(&mut self, cx: &mut Context<Self>) {
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let list = self.mine(cx);
         match sreq::armed(&list, (!self.armed.is_empty()).then_some(self.armed.as_str())) {
-            Some((id, kept)) => if !kept { self.armed = id; self.auto = true; self.err.clear(); },
+            // A request armed by itself starts with an empty box (the web
+            // draws every card's box anew), its word from its lock (F210).
+            Some((id, kept)) => if !kept {
+                let lock = list.iter().find(|r| r.id == id).map(|r| r.lock.clone()).unwrap_or_default();
+                self.armed = id; self.auto = true; self.err.clear();
+                self.fresh(&lock, false, window, cx);
+            },
             None => { self.armed.clear(); self.err.clear(); }
         }
         if list != self.shown { self.shown = list; cx.notify(); }
+    }
+
+    /// The box as a new card has it: empty, saying 'PIN' or 'Passphrase'
+    /// for the request's lock (SL.field), focused when chosen by hand.
+    fn fresh(&mut self, lock: &str, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let ph = if lock == "passphrase" { "Passphrase" } else { "PIN" };
+        self.ph = ph;
+        self.pin.update(cx, |s, cx| { s.set_value("", window, cx); s.set_placeholder(ph, window, cx); if focus { s.focus(window, cx); } });
     }
 
     fn arm(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -381,7 +402,8 @@ impl AskCards {
         self.auto = false;
         self.err.clear();
         self.allow.0 = false;
-        self.pin.update(cx, |s, cx| { s.set_value("", window, cx); s.focus(window, cx); });
+        let lock = self.shown.iter().find(|r| r.id == id).map(|r| r.lock.clone()).unwrap_or_default();
+        self.fresh(&lock, true, window, cx);
         cx.notify();
     }
 
@@ -392,13 +414,15 @@ impl AskCards {
         let allow = (self.allow.0 && self.can_allow(&r, cx)).then_some(self.allow.1);
         let body = sreq::approve_body(&r, &v, allow);
         let me = cx.entity().downgrade();
-        let _ = window;
+        let wh = window.window_handle();
         let pin = if r.lock == "pin" { v.trim().to_string() } else { v.clone() };
         crundi_shell::call(cx, move |api| api.post("/api/secrets", &body), move |res, cx| {
             let upgrade = res.as_ref().ok().and_then(|d| d.get("needsUpgrade")).and_then(|x| x.as_bool()).unwrap_or(false) || r.upgrade;
             match sreq::answer(res.map(|v| (200, v)), allow.is_some()) {
                 Ok(t) => {
                     let _ = me.update(cx, |this, cx| { this.armed.clear(); this.err.clear(); this.allow.0 = false; cx.notify(); });
+                    // Released: the PIN doesn't stay for the next request (F210).
+                    let _ = wh.update(cx, |_, window, cx| { let _ = me.update(cx, |this, cx| this.pin.update(cx, |s, cx| s.set_value("", window, cx))); });
                     crundi_shell::toast(cx, t, w::Toast::Success);
                     load_asks(cx);
                     // An old lock: offer to set a passphrase now, with the one just typed.
@@ -410,15 +434,17 @@ impl AskCards {
         });
     }
 
-    fn reject(&mut self, id: &str, cx: &mut Context<Self>) {
+    fn reject(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.armed == id { self.armed.clear(); self.err.clear(); }
+        self.pin.update(cx, |s, cx| s.set_value("", window, cx));
         let body = json!({ "action": "deny", "reqId": id });
         crundi_shell::call(cx, move |api| api.post("/api/secrets", &body), |_, cx| load_asks(cx));
         cx.notify();
     }
 
-    fn props(&self, _: &App) -> Value {
+    fn props(&self, cx: &App) -> Value {
         json!({ "cards": self.shown.iter().map(|r| json!({ "id": r.id, "name": r.name, "run": r.run, "armed": r.id == self.armed })).collect::<Vec<_>>(), "error": self.err,
+            "pin": self.pin.read(cx).value().to_string(), "placeholder": self.ph,
             "allow": { "on": self.allow.0, "for": self.allow.1 } })
     }
 }
@@ -451,7 +477,7 @@ impl Render for AskCards {
             } else {
                 row = row.child(w::primary(("fx-cp-approve", i), "Approve").on_click(cx.listener(move |this, _, window, cx| this.arm(&id, window, cx))));
             }
-            row = row.child(w::button(("fx-cp-reject", i), "Reject").on_click(cx.listener(move |this, _, _, cx| this.reject(&id2, cx))));
+            row = row.child(w::button(("fx-cp-reject", i), "Reject").on_click(cx.listener(move |this, _, window, cx| this.reject(&id2, window, cx))));
             card = card.child(row);
             // "Allow for this chat" under the open card's PIN (CS.allowRow).
             if armed && self.can_allow(r, cx) {

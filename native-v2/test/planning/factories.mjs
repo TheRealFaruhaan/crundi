@@ -207,6 +207,27 @@ export async function run(T_, t) {
       await sleep(800);
       t.check('…Escape keeps the name', H(await T.props()).title === 'Renamed in the head');
       t.check('no secret requests: no approval cards', (H(await T.props()).asks?.cards || []).length === 0, H(await T.props()).asks);
+      // F210: each card starts with an empty box, its word from the lock; a
+      // PIN typed for one request never stays for the next.
+      {
+        const rq = (id, lock, name) => ({ id, lock, secretName: name, secretId: 's-' + id, kind: 'read', reason: 'test', project: '', sessionId: '' });
+        const A = (p) => H(p).asks || {};
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqa', 'pin', 'Alpha')]));
+        const a1 = await T.until('a secret request: its card, armed, the box saying PIN', (p) => A(p).cards?.[0]?.armed && A(p).placeholder === 'PIN', 6000);
+        t.check('…the box empty', A(a1).pin === '', A(a1));
+        await T.act('factories-transcript-head', 'ask-type', '123456');
+        await T.until('…the PIN typed', (p) => A(p).pin === '123456');
+        await T.act('factories-transcript-head', 'ask-set', JSON.stringify([rq('rqb', 'passphrase', 'Beta')]));
+        const a2 = await T.until('the next request armed by itself', (p) => A(p).cards?.[0]?.id === 'rqb' && A(p).cards[0].armed, 6000);
+        t.check('…its box empty: the PIN typed before is gone', A(a2).pin === '', A(a2));
+        t.check('…saying Passphrase for a passphrase lock', A(a2).placeholder === 'Passphrase', A(a2));
+        await T.act('factories-transcript-head', 'ask-type', 'a passphrase');
+        await T.act('factories-transcript-head', 'ask-reject', 'rqb');
+        const a3 = await T.until('Reject empties the box', (p) => A(p).pin === '', 6000);
+        t.check('…the box empty after Reject', A(a3).pin === '', A(a3));
+        await T.act('factories-transcript-head', 'ask-set', '[]');
+        await T.until('…no requests: no cards', (p) => (A(p).cards || []).length === 0);
+      }
     }
     await fx('chat-close');
     await T.until('closed, the transcript lets go of the chat', (p) => !TR(p).open && TR(p).views.length === 0);
