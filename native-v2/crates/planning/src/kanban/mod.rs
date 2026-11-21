@@ -101,6 +101,9 @@ pub struct KStore {
     /// A card shown from elsewhere (Cru's show_in_crundi): its id and the
     /// flash's count (each show flashes again), until the flash is over.
     pub(crate) flash: Option<(String, u64)>,
+    /// The shows so far: only goes up, so each show has its own count, even
+    /// after the last flash is over (F173: the views reveal each count once).
+    flash_seq: u64,
     /// The last load that came back (its load_gen).
     loaded_gen: u64,
 }
@@ -111,7 +114,7 @@ impl KStore {
             board: None, project: String::new(), view: "board".into(), state: "loading".into(), error: String::new(),
             menu_open: HashSet::new(), adding_task: None, adding_todo: None, media_task: HashMap::new(), media_todo: HashMap::new(),
             thumbs: HashMap::new(), load_gen: 0, clip: None, task_input: None, todo_input: None, subs: vec![],
-            cols: vec![], trash: Rc::default(), history: Rc::default(), boxes: Rc::default(), drag: cx.new(|_| Drag::default()), all_live: false, flash: None, loaded_gen: 0,
+            cols: vec![], trash: Rc::default(), history: Rc::default(), boxes: Rc::default(), drag: cx.new(|_| Drag::default()), all_live: false, flash: None, flash_seq: 0, loaded_gen: 0,
         }
     }
 
@@ -591,7 +594,7 @@ pub fn show_card(id: &str, open: bool, after: u64, window: &mut Window, cx: &mut
     let (loaded, has) = { let k = store(cx).read(cx); (k.board.is_some() && k.project == project && k.loaded_gen >= after, k.task(id).is_some()) };
     if !loaded { return None; }
     if !has { return Some(false); }
-    let n = store(cx).update(cx, |k, cx| { let n = k.flash.as_ref().map(|f| f.1).unwrap_or(0) + 1; k.flash = Some((id.to_string(), n)); cx.notify(); n });
+    let n = store(cx).update(cx, |k, cx| { k.flash_seq += 1; let n = k.flash_seq; k.flash = Some((id.to_string(), n)); cx.notify(); n });
     crate::util::after(cx, 2400, move |_, cx| { store(cx).update(cx, |k, cx| if k.flash.as_ref().is_some_and(|f| f.1 == n) { k.flash = None; cx.notify(); }); });
     if open { act("edit-task", id, "", window, cx); }
     Some(true)
@@ -614,6 +617,8 @@ pub fn test_ui(_: &Stores, name: &str, args: &[String], window: &mut Window, cx:
         "kanban-measure" => ok,
         "kanban-move" => { let i = a(2).parse::<usize>().unwrap_or(0); post(cx, json!({ "action": "moveTask", "taskId": a(0), "status": a(1), "index": i }), reload); ok }
         "kanban-reload" => { load(cx); ok }
+        // A card shown from elsewhere (Cru's show_in_crundi): kanban-show <id> [open].
+        "kanban-show" => json!({ "ok": show_card(&a(0), a(1) == "true", 0, window, cx) }),
         "kanban-all-live" => { let on = a(0) == "true"; store(cx).update(cx, |k, cx| { k.all_live = on; cx.notify(); }); ok }
         _ => return None,
     })
@@ -635,6 +640,7 @@ pub fn state(_: &Stores, window: &mut Window, cx: &mut App) -> Value {
         "deletedTodos": dd.iter().map(|r| json!({ "text": r.text, "sub": r.sub, "task": r.task, "todo": r.todo })).collect::<Vec<_>>(),
         "history": k.history.iter().map(|r| json!({ "text": r.text, "ts": r.sub })).collect::<Vec<_>>(),
         "taskDraft": input_value(&k.task_input, cx), "todoDraft": input_value(&k.todo_input, cx),
+        "held": d.press.is_some(),
         "drag": match &d.drag { None => Value::Null, Some(g) => { let t = d.target.clone(); json!({ "id": g.id, "status": t.as_ref().map(|x| x.0.clone()).unwrap_or_default(), "index": t.as_ref().map(|x| x.1 as i64).unwrap_or(-1), "before": t.map(|x| x.2).unwrap_or_default() }) } },
         "clip": match &k.clip { None => Value::Null, Some(c) => json!({ "task": c.task,
             "pop": (pop_json(view::pop_rect(c, vp))), "items": k.media_task.get(&c.task).map(|v| v.iter().map(|it| { let id = s(it, "id"); json!({ "kind": s(it, "kind"), "image": k.thumbs.get(&id).is_some_and(|x| x.is_some()), "id": id }) }).collect::<Vec<_>>()).unwrap_or_default() }) },

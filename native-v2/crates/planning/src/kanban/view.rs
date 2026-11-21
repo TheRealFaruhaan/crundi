@@ -423,6 +423,9 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
             if std::mem::take(&mut b2.borrow_mut().sub_press) { return; }
             super::press(&id, &title_text, e.position, cx)
         })
+        // Its own release lets go too: a press and release in one frame
+        // come before the overlay listens for the release (F213).
+        .on_mouse_up(MouseButton::Left, |_, _, cx| super::pointer_up(cx))
         .child(col)
         .into_any_element()
 }
@@ -497,6 +500,8 @@ pub struct ColumnView {
     /// The last flash this view brought into sight (F173: once per show, so
     /// nothing else, a held card at the board's edge say, is pulled back).
     revealed: u64,
+    /// A shown card's item still to centre (its height not known yet).
+    centre: Option<(usize, u8)>,
     _subs: Vec<Subscription>,
 }
 
@@ -507,7 +512,7 @@ impl ColumnView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), hscroll, revealed: 0, _subs: subs };
+        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), hscroll, revealed: 0, centre: None, _subs: subs };
         v.sync(cx);
         v
     }
@@ -529,7 +534,7 @@ impl ColumnView {
         let shown = k.flash.as_ref().filter(|f| f.1 != self.revealed).and_then(|f| items.iter().position(|it| matches!(it, Item::Card { card, .. } if card.id == f.0)).map(|ix| (f.1, ix)));
         if let Some((n, ix)) = shown {
             self.revealed = n;
-            self.list.scroll_to_reveal_item(ix);
+            self.centre = (!centre_item(&self.list, ix)).then_some((ix, 0));
             let vb = self.hscroll.bounds();
             let (vw, max) = (vb.size.width, self.hscroll.max_offset().x);
             if vw > px(0.) {
@@ -555,6 +560,31 @@ impl ColumnView {
     }
 }
 
+/// Scroll a list so item `ix` sits in the middle of its viewport, as the
+/// web's scrollIntoView({block:'center'}) (webapp-html.js:19142-19147).
+/// The item is put at the top first (so it is in sight even when this can't
+/// centre it); false when its height or the viewport isn't known yet.
+fn centre_item(list: &ListState, ix: usize) -> bool {
+    list.scroll_to(ListOffset { item_ix: ix, offset_in_item: px(0.) });
+    let vh = list.viewport_bounds().size.height;
+    let Some(b) = list.bounds_for_item(ix) else { return false };
+    if vh <= px(0.) { return false; }
+    let top = -list.scroll_px_offset_for_scrollbar().y;
+    let goal = (top - (vh - b.size.height) / 2.).clamp(px(0.), list.max_offset_for_scrollbar().y.max(px(0.)));
+    list.scroll_to(ListOffset { item_ix: 0, offset_in_item: px(0.) });
+    list.scroll_by(goal);
+    true
+}
+
+/// Centre a shown card a view couldn't centre when it synced (its row not
+/// measured or laid out yet): at this render, or after the next frames (a
+/// few tries; the card stays at the top if it never can be).
+fn centre_later<V: 'static>(list: &ListState, pending: &mut Option<(usize, u8)>, window: &mut Window, cx: &mut Context<V>) {
+    let Some((ix, tries)) = *pending else { return };
+    if centre_item(list, ix) || tries >= 4 { *pending = None; }
+    else { *pending = Some((ix, tries + 1)); cx.on_next_frame(window, |_, _, cx| cx.notify()); }
+}
+
 /// The list item under the pointer, at the list's current scroll.
 fn hot_at(list: &ListState, n: usize, at: Point<Pixels>) -> Option<usize> {
     if !list.viewport_bounds().contains(&at) { return None; }
@@ -565,6 +595,7 @@ impl Render for ColumnView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rendered("kanban-col");
         let Some(c) = self.col.clone() else { return div().into_any_element() };
+        centre_later(&self.list, &mut self.centre, window, cx);
         let inp = inputs(&self.store, &self.cards, cx);
         // This column's boxes are taken again as it paints.
         { let mut b = inp.boxes.borrow_mut(); b.cards.retain(|x| x.0 != c.status || c.other); b.cols.retain(|x| x.0 != c.status || c.other); let ids: Vec<&String> = c.cards.iter().map(|x| &x.id).collect(); b.controls.retain(|x| !ids.contains(&&x.0)); }
@@ -621,7 +652,7 @@ impl Render for ColumnView {
 #[derive(Clone, PartialEq)]
 enum SRow { Gap(Pixels), Head { col: Rc<Col>, drop: bool }, It { item: Item, drop: bool, other: bool, last: bool } }
 
-pub struct StackView { store: Entity<KStore>, rows: Rc<Vec<SRow>>, list: ListState, geom: Geom, hot: Option<usize>, last_top: Option<ListOffset>, all_live: bool, cards: super::card_el::Cache, revealed: u64, _subs: Vec<Subscription> }
+pub struct StackView { store: Entity<KStore>, rows: Rc<Vec<SRow>>, list: ListState, geom: Geom, hot: Option<usize>, last_top: Option<ListOffset>, all_live: bool, cards: super::card_el::Cache, revealed: u64, centre: Option<(usize, u8)>, _subs: Vec<Subscription> }
 
 impl StackView {
     fn new(store: Entity<KStore>, cx: &mut Context<Self>) -> Self {
@@ -630,7 +661,7 @@ impl StackView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), revealed: 0, _subs: subs };
+        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), revealed: 0, centre: None, _subs: subs };
         v.sync(cx);
         v
     }
@@ -652,7 +683,7 @@ impl StackView {
         let changed = splice_diff(&self.list, &self.rows, &rows) || k.all_live != self.all_live;
         // A card shown from elsewhere: its row brought into sight once (F173).
         let shown = k.flash.as_ref().filter(|f| f.1 != self.revealed).and_then(|f| rows.iter().position(|r| matches!(r, SRow::It { item: Item::Card { card, .. }, .. } if card.id == f.0)).map(|ix| (f.1, ix)));
-        if let Some((n, ix)) = shown { self.revealed = n; self.list.scroll_to_reveal_item(ix); }
+        if let Some((n, ix)) = shown { self.revealed = n; self.centre = (!centre_item(&self.list, ix)).then_some((ix, 0)); }
         let changed = changed || shown.is_some();
         self.all_live = k.all_live;
         self.rows = Rc::new(rows);
@@ -686,6 +717,7 @@ fn srow_el(r: &SRow, card_w: Pixels, inp: &Inputs, live: bool, cx: &App) -> AnyE
 impl Render for StackView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         rendered("kanban-stack");
+        centre_later(&self.list, &mut self.centre, window, cx);
         let inp = inputs(&self.store, &self.cards, cx);
         { let mut b = inp.boxes.borrow_mut(); b.cards.clear(); b.cols.clear(); b.controls.clear(); }
         let (rows, card_w) = (self.rows.clone(), self.geom.card_w);

@@ -162,6 +162,15 @@ export async function run(T_, t) {
   await T.mouse('up', done.x + done.w / 2, done.y + 40);
   await T.until('the card moved to Done', (p) => cardBy(p, 'Second card')?.status === 'done' && !K(p).drag);
 
+  // F213: a click whose press and release come in one frame leaves no card held.
+  {
+    const c = K(await T.props()).boxes.cards.find((b) => b.status === 'todo') ?? K(await T.props()).boxes.cards[0];
+    await T.mouse('click', c.x + c.w / 2, c.y + c.h - 6);
+    await t.sleep(200);
+    const p = await T.props();
+    t.check('a one-frame click on a card leaves it not held', K(p).held === false && !K(p).drag, { held: K(p).held, drag: K(p).drag });
+  }
+
   // F135: a card held near the wide board's right or left edge scrolls it
   // sideways (the web's wbScrollTick). A narrower window makes the four
   // columns wider than the board (not yet stacked).
@@ -226,11 +235,40 @@ export async function run(T_, t) {
   await t.sleep(1500);
   t.check('the idle board draws no frames', T.frames.since(idle).frames === 0, T.frames.since(idle));
 
+  // F173: a card shown from elsewhere (Cru's show_in_crundi) is centred in its
+  // column (scrollIntoView({block:'center'})), and each show does it again.
+  {
+    const ids = col(await T.props(), 'backlog').cards.map((c) => c.id);
+    const target = ids[Math.floor(ids.length / 2)];
+    const centred = (p) => { const c = K(p)?.boxes?.cards?.find((b) => b.id === target); const k = K(p)?.boxes?.cols?.find((b) => b.status === 'backlog'); return c && k && Math.abs((c.y + c.h / 2) - (k.y + k.h / 2)) < 80; };
+    const off = (await T.props());
+    t.check('the card to show is off screen first', !K(off).boxes.cards.some((b) => b.id === target), target);
+    await T.act('kanban-show', target);
+    const s1 = await T.until('shown: the card flashed and centred in its column', (p) => K(p).flash === target && centred(p), 6000);
+    t.check('…centred', !!s1);
+    await T.until('…the flash over', (p) => !K(p).flash, 6000);
+    for (let i = 0; i < 30; i++) { await T.mouse('wheel', bl.x + bl.w / 2, bl.y + bl.h / 2, { dy: 120 }); await t.sleep(8); }
+    await T.until('scrolled back to the top: the card off screen', (p) => !K(p).boxes.cards.some((b) => b.id === target), 6000);
+    await T.act('kanban-show', target);
+    const s2 = await T.until('shown again after its flash: centred again', (p) => K(p).flash === target && centred(p), 6000);
+    t.check('…a second show brings it back (its own count)', !!s2);
+    await T.until('…the flash over', (p) => !K(p).flash, 6000);
+  }
+
   // The panel in a workbench pane: the narrow board stacks its columns.
   await T.act('open-pane', 'kanban');
   await T.ui('tab', 'workbench');
   await T.until('a Kanban pane on the workbench', (p) => p.panes?.includes('panel:kanban') && p.tab === 'workbench');
   await t.sleep(600);
   await T.snap('planning', 'kanban-panel');
+  // F173: the stacked board brings a shown card into sight too.
+  {
+    const ids = col(await T.props(), 'backlog').cards.map((c) => c.id);
+    const target = ids[ids.length - 5];
+    t.check('the stacked board: the card off screen first', !K(await T.props()).boxes.cards.some((b) => b.id === target), target);
+    await T.act('kanban-show', target);
+    await T.until('…shown: drawn in the stacked board', (p) => K(p).flash === target && K(p).boxes.cards.some((b) => b.id === target), 6000);
+    await T.until('…the flash over', (p) => !K(p).flash, 6000);
+  }
   await T.ui('tab', 'kanban');
 }
