@@ -17,9 +17,11 @@ pub struct Usage {
     /// The Telegram bot: configured, connected, its @name.
     pub tg: Option<(bool, bool, String)>,
     ticking: bool,
-    /// The minute's tick held (the test driver's "usage-clock off": a suite's
-    /// idle checks then never catch the minute's redraw; F122).
-    pub held: bool,
+    /// The top bar's usage redraws held (the test driver's "usage-clock off":
+    /// the minute's tick and the server's minutely `usage` sample, so a
+    /// suite's idle checks never catch them; F122). Drawn once when let go.
+    held: bool,
+    missed: bool,
 }
 
 impl Usage {
@@ -32,15 +34,25 @@ impl Usage {
         let blank = |v: &Value| crate::usage::rows(v, now).is_none();
         let quiet = blank(&u) && self.usage.as_ref().is_none_or(|(v, _)| blank(v));
         self.usage = Some((u, Instant::now()));
-        if !quiet { cx.notify(); }
+        if !quiet { self.changed(cx); }
         if !self.ticking {
             self.ticking = true;
             cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| loop {
                 cx.background_executor().timer(Duration::from_secs(60)).await;
-                let alive = this.update(cx, |u, cx| { if u.usage.is_some() { if !u.held { cx.notify(); } true } else { u.ticking = false; false } });
+                let alive = this.update(cx, |u, cx| { if u.usage.is_some() { u.changed(cx); true } else { u.ticking = false; false } });
                 if !matches!(alive, Ok(true)) { break; }
             }).detach();
         }
+    }
+
+    /// Hold the bars' redraws (the test driver), or let them go.
+    pub fn hold(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.held = on;
+        if !on && std::mem::take(&mut self.missed) { cx.notify(); }
+    }
+
+    fn changed(&mut self, cx: &mut Context<Self>) {
+        if self.held { self.missed = true; } else { cx.notify(); }
     }
 
     pub fn set_tg(&mut self, tg: (bool, bool, String), cx: &mut Context<Self>) {

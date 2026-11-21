@@ -139,7 +139,7 @@ fn kid_mic_look(tone: &str, phase: &str, t: f32) -> w::MicLook {
 fn kid_dots() -> AnyElement {
     let dots = || div().flex().gap(T::KID_DOTS_GAP).h(T::KID_DOTS_H).items_center().children((0..3).map(|_| div().size(T::KID_DOT).rounded_full().bg(T::accent())));
     div().id("kid-dots").min_w(T::KID_DOTS_W).child(dots().with_animation("kid-dots", Animation::new(std::time::Duration::from_secs(1)).repeat().with_max_fps(T::ANIM_FPS),
-        |d, t| { let k = (1. - (std::f32::consts::TAU * t).cos()) / 2.; d.opacity(0.35 + 0.65 * k).mt(px(-5. * k)) })).into_any_element()
+        |d, t| { let k = (1. - (std::f32::consts::TAU * t).cos()) / 2.; d.opacity(0.35 + 0.65 * k).mt(px(-T::KID_DOTS_RISE * k)) })).into_any_element()
 }
 
 /// A legend item's or an arc's colour: wk, 5h, Claude, Deepgram.

@@ -36,7 +36,7 @@ pub enum Bar {
     Fill { origin: String, logins: Vec<(String, String)> },
 }
 
-struct Pending { origin: String, username: String, password: String, kind: &'static str, navigated: bool }
+struct Pending { origin: String, username: String, password: String, kind: &'static str, navigated: bool, timer: u64 }
 struct Offer { tab: String, origin: String, username: String, password: String, at: Instant }
 
 #[derive(Default)]
@@ -272,13 +272,14 @@ fn report(i: usize, v: &Value) {
             with(|s| { let x = s.secrets.entry(tab.clone()).or_default(); if !x.contains(&pw) { x.push(pw.clone()); } });
             let kind = store(|st| st.check(&origin, &user, &pw)).unwrap_or("new");
             if kind == "never" || kind == "same" { return; }
-            with(|s| s.pending.insert(tab.clone(), Pending { origin, username: user, password: pw, kind, navigated: false }));
             let t2 = tab.clone();
-            // No word in time: a new login worked, a changed one did not.
-            later(VERDICT, move || {
+            // No word in time: a new login worked, a changed one did not. (Cancelled when the
+            // word comes first, so a moot timer never wakes the idle pump: F105.)
+            let timer = crundi_webview::later_id(VERDICT, move || {
                 let k = with(|s| s.pending.get(&t2).map(|p| p.kind));
                 match k { Some("new") => verdict(&t2, true), Some(_) => verdict(&t2, false), None => {} }
             });
+            if let Some(old) = with(|s| s.pending.insert(tab.clone(), Pending { origin, username: user, password: pw, kind, navigated: false, timer })) { crundi_webview::cancel(old.timer); }
         }
         "after" => if with(|s| s.pending.contains_key(&tab)) { verdict(&tab, !v.get("stillForm").and_then(|x| x.as_bool()).unwrap_or(true)); },
         "page" => {
@@ -297,6 +298,7 @@ fn report(i: usize, v: &Value) {
 
 fn verdict(tab: &str, worked: bool) {
     let Some(p) = with(|s| s.pending.remove(tab)) else { return };
+    crundi_webview::cancel(p.timer);
     if !worked { eprintln!("[passwords] login on {} looks refused: nothing offered", p.origin); return; }
     let (available, reason) = status();
     if !available { return kit::toast_error(&format!("A login was not saved: {reason}")); }
