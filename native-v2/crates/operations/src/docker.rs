@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, rc::Rc, time::Duration};
 
 const VIEWS: [(&str, &str, IconName); 7] = [
-    ("containers", "Containers", IconName::Container), ("stacks", "Stacks", IconName::Layers), ("images", "Images", IconName::Archive),
+    ("containers", "Containers", IconName::Hexagon), ("stacks", "Stacks", IconName::Layers), ("images", "Images", IconName::Archive),
     ("volumes", "Volumes", IconName::HardDrive), ("networks", "Networks", IconName::Network), ("forwards", "Forwards", IconName::Globe),
     ("system", "System", IconName::Server),
 ];
@@ -925,6 +925,14 @@ fn shell_bar(d: &Detail) -> (String, &'static str) {
     }
 }
 
+/// The bar's words, with the container's name in bold (the web's `<b>`).
+fn bar_text(bar: String, name: String) -> StyledText {
+    const LEAD: &str = "A shell inside ";
+    let hl = (!name.is_empty() && bar.starts_with(LEAD) && bar[LEAD.len()..].starts_with(&name))
+        .then(|| (LEAD.len()..LEAD.len() + name.len(), HighlightStyle { font_weight: Some(T::W_BOLD), ..Default::default() }));
+    StyledText::new(bar).with_highlights(hl)
+}
+
 // ─── Socket messages ───
 
 fn on_message(ty: &str, m: &Value, cx: &mut App) {
@@ -1327,7 +1335,7 @@ fn dk_sec(title: &str) -> Div {
 fn dk_kv(k: &str, v: &str, hid: bool) -> Div {
     div().flex().gap(T::SP_8).text_size(T::TEXT_12)
         .child(div().flex_none().w(T::DOCKER_KV_W).text_color(T::text_muted()).child(k.to_string()))
-        .child(div().flex_1().min_w_0().overflow_hidden().font_family(T::MONO).text_color(if hid { T::text_muted() } else { T::text() }).child(v.to_string()))
+        .child(div().flex_1().min_w_0().overflow_hidden().text_color(if hid { T::text_muted() } else { T::text() }).when(hid, |d| d.italic()).when(!hid, |d| d.font_family(T::MONO)).child(v.to_string()))
 }
 
 fn row_frame(id: impl Into<ElementId>) -> Stateful<Div> {
@@ -1470,7 +1478,7 @@ impl Docker {
     fn render_containers(&self) -> Div {
         let (stats, bay, _, nomatch) = self.containers();
         let p = div().flex().flex_col().gap(T::SP_12);
-        if self.list("containers").is_empty() { return p.child(dk_empty(IconName::Container, "No containers", "Nothing has been created on this machine yet.")); }
+        if self.list("containers").is_empty() { return p.child(dk_empty(IconName::Hexagon, "No containers", "Nothing has been created on this machine yet.")); }
         let p = p.child(Self::ctr_head(stats, bay));
         if nomatch { return p.child(quiet("Nothing matches the filter.")); }
         p
@@ -1786,7 +1794,7 @@ impl Docker {
         let (bar, btn) = shell_bar(d);
         div().flex().flex_col().flex_1().min_w_0().min_h_0()
             .child(div().flex().flex_none().items_center().gap(T::SP_8).px(T::SP_12).h(T::CONTROL + T::SP_8).border_b_1().border_color(T::border_subtle())
-                .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).text_color(T::text_secondary()).child(bar))
+                .child(div().flex_1().min_w_0().truncate().text_size(T::TEXT_12).text_color(T::text_secondary()).child(bar_text(bar, ss(&d.data["container"], "name"))))
                 .when(!btn.is_empty(), |x| x.child(w::button("dk-shell-again", btn).icon(if btn == "New shell" { IconName::RotateCcw } else { IconName::Terminal }).on_click(|_, _, cx| open_shell(cx)))))
             // The terminal (xterm.js in the web): the screen and its cursor,
             // cached leaves: output redraws them, never this tab.
@@ -1885,11 +1893,11 @@ impl Render for Docker {
         self.ensure_inputs(window, cx);
         let mut root = div().relative().flex().flex_col().size_full().bg(T::bg());
         match self.gate() {
-            "loading" => return root.child(dk_empty(IconName::Container, "Loading\u{2026}", "")),
-            "absent" => return root.child(dk_empty(IconName::Container, "Docker is not installed", "Install Docker Engine on this machine and this tab will manage it.")),
+            "loading" => return root.child(dk_empty(IconName::Hexagon, "Loading\u{2026}", "")),
+            "absent" => return root.child(dk_empty(IconName::Hexagon, "Docker is not installed", "Install Docker Engine on this machine and this tab will manage it.")),
             "unreachable" => {
                 let e = self.status.as_ref().map(|x| ss(x, "error")).unwrap_or_default();
-                return root.child(dk_empty(IconName::Container, "Docker is installed, but Crundi cannot reach it", e)
+                return root.child(dk_empty(IconName::Hexagon, "Docker is installed, but Crundi cannot reach it", e)
                     .child(w::button("dk-recheck", "Try again").icon(IconName::RefreshCw).on_click(|_, _, cx| recheck(cx))));
             }
             _ => {}
@@ -1920,7 +1928,7 @@ impl Render for Docker {
             self.page_rows = Rc::new(None);
             let body = match self.state() {
                 "loading" => quiet("Loading\u{2026}"),
-                "error" => { let (t, e) = self.error.clone().unwrap_or_default(); dk_empty(IconName::Container, t, e) }
+                "error" => { let (t, e) = self.error.clone().unwrap_or_default(); dk_empty(IconName::Hexagon, t, e) }
                 _ => match self.view.as_str() {
                     "containers" => self.render_containers(),
                     "stacks" => self.render_stacks(),

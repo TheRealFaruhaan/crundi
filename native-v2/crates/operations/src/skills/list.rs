@@ -702,7 +702,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
                 let headr = div().id(("sk-row", i)).flex().flex_col().gap(T::SP_4).px(T::SP_12).py(T::SP_10).cursor_pointer()
                     .when(r.open, |d| d.bg(T::bg_hover())).hover(|d| d.bg(T::bg_hover()))
                     .child(row().child(div().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).truncate().child(r.name.clone()))
-                        .children(tags.into_iter().filter(|t| t.0).map(|t| w::tag(t.1, t.2)))
+                        .children(tags.into_iter().filter(|t| t.0).map(|t| sk_tag(t.1, t.2 == "warn")))
                         .child(div().flex_1().min_w_0())
                         .child(div().text_size(T::TEXT_11).text_color(T::text_muted()).child(r.meta.clone())))
                     .child(div().text_size(T::TEXT_12).text_color(T::text_secondary()).when(!r.open, |d| d.line_clamp(2).text_ellipsis()).child(r.desc.clone()))
@@ -881,4 +881,12 @@ mod tests {
         assert_eq!(installed_text(&["x".into(), "y".into()]), "Installed 2 skills. New chats will have them.");
         assert_eq!(source_rest(&json!({ "repo": "o/r", "ref": "main", "path": "skills/x", "commit": "abcdef123" })), ", main, skills/x at abcdef1. Update installs it again from there.");
     }
+}
+
+/// A row's tag (the web's `.sk-tag`: the UI font, not monospace; 0.66rem,
+/// medium, 1px 6px, a 4 px radius; `.warn` in yellow).
+fn sk_tag(text: &'static str, warn: bool) -> Div {
+    div().flex_none().px(T::SP_6).py(px(1.)).rounded(T::R_CHIP).text_size(T::TEXT_10).font_weight(T::W_MEDIUM)
+        .bg(if warn { T::yellow_dim() } else { T::bg_tertiary() }).text_color(if warn { T::yellow() } else { T::text_secondary() })
+        .child(text)
 }
