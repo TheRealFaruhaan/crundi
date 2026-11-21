@@ -49,14 +49,14 @@ pub fn ask(window: &mut Window, cx: &mut App, title: &str, label: &str, value: &
             let e = cx.new(|cx| { let mut s = w::TextareaState::new(window, cx).auto_grow(6, 12); s.set_value(v, window, cx); s });
             e.update(cx, |s, cx| s.focus(window, cx));
             let sub = cx.subscribe_in(&e, window, |_, _, ev: &w::InputEvent, window, cx| {
-                if let w::InputEvent::PressEnter { secondary: true, .. } = ev { answer(true, window, cx); }
+                if let w::InputEvent::PressEnter { secondary: true, .. } = ev { window.defer(cx, |window, cx| answer(true, window, cx)); }
             });
             (Field::Area(e), sub)
         } else {
             let e = cx.new(|cx| { let mut s = w::InputState::new(window, cx); s.set_value(v, window, cx); s });
             e.update(cx, |s, cx| { s.focus(window, cx); s.select_all(window, cx); });
             let sub = cx.subscribe_in(&e, window, |_, _, ev: &w::InputEvent, window, cx| {
-                if let w::InputEvent::PressEnter { .. } = ev { answer(true, window, cx); }
+                if let w::InputEvent::PressEnter { .. } = ev { window.defer(cx, |window, cx| answer(true, window, cx)); }
             });
             (Field::Line(e), sub)
         };
@@ -72,7 +72,8 @@ fn value_of(o: &AskView, cx: &App) -> String {
     match &o.field { Field::Line(e) => e.read(cx).value().to_string(), Field::Area(e) => e.read(cx).value().to_string() }
 }
 
-/// Close it: OK (with the text and the choice) or not.
+/// Close it: OK (with the text and the choice) or not. Never call it while
+/// the AskView is being updated (its input's Enter defers it): it reads it.
 pub fn answer(ok: bool, window: &mut Window, cx: &mut App) {
     let Some((v, then)) = g(cx).0.take() else { return };
     let r = ok.then(|| { let o = v.read(cx); (value_of(o, cx), o.chosen.clone()) });
