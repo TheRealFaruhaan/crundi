@@ -19,6 +19,13 @@ use crundi_theme::T;
 use gpui::*;
 use std::rc::Rc;
 
+thread_local! { static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
+
+/// While the PC lock or the kid screen is on, a dialog's keys do nothing and an
+/// ask takes no focus (F228; the web drops every key outside the lock).
+pub fn hold_keys(on: bool) { HELD.with(|h| h.set(on)); }
+pub fn keys_held() -> bool { HELD.with(|h| h.get()) }
+
 pub struct Modal {
     pub id: &'static str,
     pub width: Pixels,
@@ -38,7 +45,7 @@ fn frame(m: Modal, window: &Window, padded: bool, inner: AnyElement) -> impl Int
     let vp = window.viewport_size();
     let w = m.width.min(vp.width - T::SP_16 * 2.);
     let (close, key) = (m.on_close.clone(), m.on_key.clone());
-    let card = div().id((m.id, 1usize)).track_focus(&m.focus).on_key_down(move |e, window, cx| key(e, window, cx))
+    let card = div().id((m.id, 1usize)).track_focus(&m.focus).on_key_down(move |e, window, cx| if !keys_held() { key(e, window, cx) })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .w(w).max_h(max_h(window)).flex().flex_col().overflow_hidden().bg(T::bg_secondary()).border_1().border_color(T::border()).rounded(T::R_CARD);
     let card = if padded { card.p(T::SP_6) } else { card };

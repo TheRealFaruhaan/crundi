@@ -28,6 +28,18 @@ export async function run(T, t) {
   await t.sleep(400);
   p = await T.state();
   t.check('…a press over the dialog\'s scrim is the lock\'s: the dialog is still open', !!p.dialog && L(p).on, p.dialog);
+  // Its keys are the lock's (F228; the web drops every key outside the lock, WH:6533): Enter on
+  // the lock answers no dialog under it, one left open or one opened while locked.
+  await T.key('Enter');
+  await t.sleep(400);
+  p = await T.state();
+  t.check('…Enter on the lock does not answer the dialog under it', !!p.dialog && L(p).on, p.dialog);
+  await T.act('test-ask');
+  await t.sleep(400);
+  await T.key('Enter');
+  await t.sleep(400);
+  p = await T.state();
+  t.check('…nor one opened while locked', !!p.dialog && p.dialog.title === 'Left open' && L(p).on, p.dialog);
   t.check('…the tray says "Locked"; the locks and Quit are off', item(p, 'kid').label === 'Locked' && !item(p, 'kid').enabled && !item(p, 'lock-visible').enabled && !item(p, 'lock-full').enabled && !item(p, 'quit').enabled, menu(p));
   await t.sleep(400);
   await T.snap('desktop', 'pc-lock-full');

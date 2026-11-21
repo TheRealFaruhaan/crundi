@@ -203,6 +203,15 @@ export async function run(T, t) {
   await T.act('activate', first);
   // F221: with the shared context menu open, the press elsewhere closes it and goes through
   // (the web's capturing pointerdown): one click on the device button opens its popover.
+  // F227: a real pointer's click on a context-menu item picks it (no double lease on the menu's layer).
+  await T.act('test-menu', '40', '400');
+  await T.until('a context menu open', (p) => !!T.D(p).menu, 5000);
+  await t.sleep(300);
+  await T.mouse('click', 70, 418);
+  {
+    const p = await T.until('a real click on a menu item picks it and closes the menu', (p) => !T.D(p).menu && T.D(p).menuPicked === 'left-open', 5000);
+    t.check('…the client lives on (the item\'s pick ran once)', T.D(p).menuPicked === 'left-open', T.D(p).menuPicked);
+  }
   await T.act('test-menu', '40', '400');
   await T.until('a context menu open', (p) => !!T.D(p).menu, 5000);
   await openPop(T, t, 'device', 'dev');

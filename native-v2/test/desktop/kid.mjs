@@ -10,12 +10,16 @@ export async function run(T, t) {
   await T.api.http('POST', '/api/voice/kid/pin', { pin: '2468' });
   // On the Inbox (the workbench's empty launcher pane animates by design).
   await T.ui('tab', 'inbox');
-  // A dialog left open (as Cru's open:true card move leaves one): the kid screen closes it (F212).
+  // A dialog left open (as Cru's open:true card move leaves one): the kid screen covers it (F212)
+  // and leaves it as it was, as the web's (F231); its keys are the kid screen's (F228).
   await T.act('test-ask');
   await T.until('a dialog left open', (p) => !!p.dialog, 5000);
   await T.act('kid-start', 'tray');
   const k0 = await T.until('the kid screen opens over everything', (p) => K(p).on && D(p).cru.open, 15000);
-  t.check('…the dialog left open is closed', !k0.dialog, k0.dialog);
+  t.check('…the dialog left open stays, under it (not cancelled)', !!k0.dialog && k0.dialog.title === 'Left open', k0.dialog);
+  await T.key('Enter');
+  await t.sleep(400);
+  t.check('…Enter does not answer it', !!(await T.state()).dialog);
   await t.sleep(500);
   await T.snap('desktop', 'cru-kid');
   // Its keyboard button (F194): typing; back to the voice needs a Deepgram key, which this
@@ -43,6 +47,11 @@ export async function run(T, t) {
   await T.until('a wrong PIN: "That is not the PIN"', (p) => /not the PIN/.test(K(p).pinError) && K(p).on, 10000);
   await T.snap('desktop', 'cru-kid-pin');
   for (const k of ['2', '4', '6', '8', 'OK']) await T.act('kid-key', k);
-  await T.until('the right PIN leaves kid mode', (p) => !K(p).on && !D(p).cru.open, 10000);
+  {
+    const p = await T.until('the right PIN leaves kid mode', (p) => !K(p).on && !D(p).cru.open, 10000);
+    t.check('…and the dialog is there as it was', !!p.dialog && p.dialog.title === 'Left open', p.dialog);
+    await T.ui('dialog-answer', 'false');
+    await T.until('…answered', (p) => !p.dialog, 5000);
+  }
   await T.ui('tab', 'workbench');
 }

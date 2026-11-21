@@ -65,6 +65,7 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, time::{Duration, Instant}};
 
 pub use ui::BrowserDrawer;
+thread_local! { static TEST_MENU_PICK: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) }; }
 
 /// The area's views (handles only, set once when the window opens).
 #[derive(Clone)]
@@ -188,7 +189,8 @@ pub fn init(cx: &mut App) {
             if name == "test-menu" {
                 // The shared context menu at a point (its press-outside, F221).
                 let n = |i: usize| args.get(i).and_then(|v| v.parse::<f32>().ok()).unwrap_or(40.);
-                w::menu_at(cx, point(px(n(0)), px(n(1))), vec![w::MenuEntry::new("left-open", "Left open")], |_, _, _| {});
+                // Its pick kept for the suite (a real pointer's click on an item, F227).
+                w::menu_at(cx, point(px(n(0)), px(n(1))), vec![w::MenuEntry::new("left-open", "Left open")], |id, _, _| TEST_MENU_PICK.with(|p| *p.borrow_mut() = id));
                 return Some(json!({ "ok": true }));
             }
             let r = test_ui(name, args);
@@ -196,7 +198,7 @@ pub fn init(cx: &mut App) {
             if r.is_some() { pump(window, cx); }
             r
         })
-        .state(|_, _, cx| { let mut p = props(); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); json!({ "areas": { "desktop": p } }) }));
+        .state(|_, _, cx| { let mut p = props(); p["chatFrames"] = hosts::props(); p["cruSpot"] = cru_spot::state(cx); p["menu"] = w::menu_props(cx); p["menuPicked"] = json!(TEST_MENU_PICK.with(|p| p.borrow().clone())); json!({ "areas": { "desktop": p } }) }));
     // Browser-only mode (test/drive.mjs): a socket of its own to a server.
     if let Ok(url) = std::env::var("CRUNDI_SERVER") { if !url.is_empty() { host::start(url); } }
 }

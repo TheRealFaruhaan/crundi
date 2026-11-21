@@ -87,8 +87,30 @@ pub fn ask(window: &mut Window, cx: &mut App, a: Ask, then: impl Fn(Option<Strin
         cx.new(|cx| { let mut s = InputState::new(window, cx).placeholder(ph); s.set_value(v, window, cx); s })
     });
     let fh = l.read(cx).focus.clone();
-    if let Some(i) = &input { i.update(cx, |s, cx| { s.focus(window, cx); s.select_all(window, cx); }); } else { window.focus(&fh, cx); }
+    // While the PC lock or the kid screen is on the focus stays there (F228; the web drops every
+    // key outside the lock, src/webapp-html.js:6533): the dialog takes it when the lock goes.
+    if !crate::overlay::keys_held() {
+        if let Some(i) = &input { i.update(cx, |s, cx| { s.focus(window, cx); s.select_all(window, cx); }); } else { window.focus(&fh, cx); }
+    }
     l.update(cx, |l, cx| { l.pending = Some(Pending { a, input, then: Rc::new(then) }); cx.notify(); });
+}
+
+/// The lock's start: the open dialog lets go of the keys (F228).
+pub fn ask_release_focus(window: &mut Window, cx: &mut App) {
+    let Some(h) = cx.try_global::<Handle>().map(|h| h.0.clone()) else { return };
+    let held = {
+        let l = h.read(cx);
+        let Some(p) = l.pending.as_ref() else { return };
+        l.focus.is_focused(window) || p.input.as_ref().is_some_and(|i| i.read(cx).focus_handle(cx).is_focused(window))
+    };
+    if held { window.blur(cx); }
+}
+
+/// The lock's end: the open dialog takes the keys again.
+pub fn ask_refocus(window: &mut Window, cx: &mut App) {
+    let Some(h) = cx.try_global::<Handle>().map(|h| h.0.clone()) else { return };
+    let (fh, input) = { let l = h.read(cx); let Some(p) = l.pending.as_ref() else { return }; (l.focus.clone(), p.input.clone()) };
+    if let Some(i) = input { i.update(cx, |s, cx| s.focus(window, cx)); } else { window.focus(&fh, cx); }
 }
 
 /// A confirm: `then(true)` on OK, `then(false)` otherwise.
@@ -156,7 +178,9 @@ impl Render for AskLayer {
                     .when(!off, |d| d.cursor_pointer().hover(|d| d.bg(T::bg_hover())))
                     .children(it.icon.map(|ic| crate::icon(ic, T::ICON_MD)))
                     .child(it.label.clone())
-                    .when(!off, |d| d.on_click(cx.listener(move |_, _, w, cx| { let id = id.clone(); menu_pick(&id, w, cx); })))
+                    // A plain closure: menu_pick updates this layer, so a listener on it would
+                    // lease it twice (F227).
+                    .when(!off, |d| d.on_click(move |_, w, cx| { menu_pick(&id, w, cx); }))
                     .into_any_element());
                 v
             }).collect();
@@ -189,11 +213,11 @@ impl Render for AskLayer {
             let m = crate::Modal {
                 id: "ask-dialog", width: T::DIALOG_W, focus: self.focus.clone(), scroll: self.scroll.clone(),
                 on_close: Rc::new(move |w, cx| { let _ = me.upgrade(); ask_answer(false, None, w, cx); }),
-                on_key: Rc::new(move |e, w, cx| match e.keystroke.key.as_str() {
+                on_key: Rc::new(move |e, w, cx| if crate::overlay::keys_held() {} else { match e.keystroke.key.as_str() {
                     "escape" => { ask_answer(false, None, w, cx); }
                     "enter" => { let _ = me2.upgrade(); ask_answer(true, None, w, cx); }
                     _ => {}
-                }),
+                } }),
             };
             root = root.child(crate::overlay_modal(m, window, body));
         }
