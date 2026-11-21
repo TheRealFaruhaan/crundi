@@ -100,7 +100,7 @@ t.check('mid-drag: the pane is picked up and the other lit', mid.drag && mid.dra
 await snap('drag-mid');
 await T.mouse('up', b.x + b.w / 2, a.y + 12 + 240);
 const r1 = (await T.state()).renders || {};
-t.check('moving a pane redrew no head (only the card and the layout views)', (r1.head || 0) - (r0.head || 0) <= 2, { before: r0, after: r1 });
+t.check('moving a pane redrew no head (only the card and the layout views)', (r1.head || 0) - (r0.head || 0) <= 2, { head: [r0.head, r1.head], workbench: [r0.workbench, r1.workbench] });
 s = await T.until('the drop swaps the two panes', (s) => keyAt(s, a.id) === bKey && keyAt(s, b.id) === chat, 3000);
 // Back with the driver's drag (one go, as a hand fast).
 s = await T.state();

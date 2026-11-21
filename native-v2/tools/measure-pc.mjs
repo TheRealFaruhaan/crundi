@@ -94,6 +94,12 @@ const die = (m) => { console.error(m); process.exit(2); };
 const OWN = join(import.meta.dirname, '../.bin/release/crundi-v2');
 const BIN = process.argv[2] || (existsSync(OWN) ? OWN : join(homedir(), '.cache/crundi-native-target/release/crundi-v2'));
 const OUT = process.argv[3] || '/tmp/crundi-v2-measure';
+// The drawer's scenarios need the browser host beside the client
+// (tools/stage-browser.sh --release). Without it the drawer shows an empty
+// white page and nothing of a page is measured: refused, not measured.
+if (process.env.MEASURE_DRAWER !== '0' && !existsSync(join(BIN, '..', 'crundi-browser-host'))) {
+  die(`No crundi-browser-host beside ${BIN}: run native-v2/tools/stage-browser.sh --release first (or MEASURE_DRAWER=0 to skip the drawer's scenarios).`);
+}
 const PORT = Number(process.env.CRUNDI_TEST_PORT || 4881);
 const SERVER = process.env.MEASURE_SERVER;
 
@@ -517,7 +523,10 @@ try {
       const [mx2, my2] = MM(s)?.canvas || [0, 0];
       const [mw2, mh2] = MM(s)?.view || [0, 0];
       const pts2 = [[kb2 ? kb2.x + kb2.w / 2 : 320, 800], kb2 && [kb2.x + kb2.w / 2, kb2.y + Math.min(kb2.h / 2, 200)], mw2 > 0 && [mx2 + mw2 - 20, my2 + mh2 / 2]].filter(Boolean);
-      report.setup.drawer = { open: D(s).drawer?.open, tabs: (D(s).drawer?.tabs || []).length, points: pts2 };
+      // The page has to be on show, not a white drawer (no host, a page that never loaded).
+      const shown = (D(s).drawer?.tabs || []).find((x) => x.id === D(s).drawer?.active);
+      if (!(shown && shown.frames > 0 && shown.title === 'measure')) throw new Error('the drawer\'s page never showed: ' + JSON.stringify({ tab: shown, host: D(s).browserHost }));
+      report.setup.drawer = { open: D(s).drawer?.open, tabs: (D(s).drawer?.tabs || []).length, page: { title: shown.title, frames: shown.frames }, points: pts2 };
       console.log('drawer', JSON.stringify(report.setup.drawer));
       await stream();
       r0 = s.renders || {};

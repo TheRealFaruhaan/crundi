@@ -13,8 +13,10 @@ break is a question for the Manager, not a shortcut. `AREAS.md` is the
 contract between the areas (who owns which crate, the hooks, the shared
 controls); `PLAN.md` is where every screen stands.
 
-GPUI is `gpui-pre =0.3.12` (a snapshot of Zed's gpui, imported as `gpui`)
-with `gpui-component` / `gpui-kit-assets =0.10.0`; CEF `=156.4.0` only in
+GPUI is `gpui-pre =0.3.12` (a snapshot of Zed's gpui, imported as `gpui`),
+patched in `vendor/gpui` (`PATCH.md`, the owner's call of 21 Nov) so a
+cached view keeps its clean cached children and a cached view that only
+moved is replayed at an offset, with `gpui-component` / `gpui-kit-assets =0.10.0`; CEF `=156.4.0` only in
 the browser host (`crates/browser-host`), started lazily in a process of
 its own.
 
@@ -33,11 +35,13 @@ its own.
    anywhere** (both drop every view cache in the window); `tools/check.sh`
    fails the build on one, and CI runs it.
 3. **Every view is cached at the right level** (`Entity::cached(style)`),
-   and **only leaves are cached**. Two facts of gpui (`view.rs`,
-   `window.rs`) decide where: a notify marks the view *and all its
-   ancestors* dirty (`Window::mark_view_dirty`), and a cached view that
-   re-renders does so with `window.refreshing` set, so **every cached view
-   inside it is ignored and re-rendered too**. So:
+   and **only leaves are cached**. A fact of gpui (`view.rs`,
+   `window.rs`) decides where: a notify marks the view *and all its
+   ancestors* dirty (`Window::mark_view_dirty`). (Upstream gpui 0.3.12 also
+   re-renders every cached view inside a cached view that re-renders; the
+   patch in `vendor/gpui` keeps the clean ones (PATCH.md (a)), so a layout
+   view that changes seldom, such as the browser drawer's, may itself be
+   cached around its leaves.) So:
    - a **layout view** (the Shell, a tab's root, the Workbench) holds child
      views and little else; it is **not cached** (it is an ancestor of
      everything that changes and re-renders with any of it, so it must be
@@ -277,9 +281,12 @@ Root (gpui-component)
   GPUI 0.3.12 has no scroll that skips the view. `gpui::list` and
   `uniform_list` move their offset and then notify the view that drew them
   (list.rs `StateInner::scroll`: `cx.notify(current_view)`; Zed's lists do
-  the same), and a cached view is reused only at the same bounds, so every
-  visible row is built, laid out and painted again on each frame that
-  scrolls. So the work per row is what has to be small. As Zed's editor
+  the same), and upstream a cached view is reused only at the same
+  bounds. The patch replays a cached view that only moved (by whole device
+  pixels, wholly inside its clip) at the offset (PATCH.md (b)), so a list
+  of views scrolls by replay. A row that is not a view of its own (the
+  log's rows are elements) is still built, laid out and painted again on
+  each frame that scrolls. So the work per row is what has to be small. As Zed's editor
   draws its lines, **each of Claude's blocks is one element**:
   `chat::log::BlockEl` (a paragraph, a heading, a quote, a list item, a
   rule) and `chat::log::TableEl` (a table). Each is a single measured

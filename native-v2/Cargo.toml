@@ -8,6 +8,9 @@ members = ["crates/*"]
 # The app. The browser host (crates/browser-host, the only crate linking
 # libcef) is built on its own, when a browser is needed (README).
 default-members = ["crates/app"]
+# GPUI patched for nested and moved caches (vendor/gpui/PATCH.md): a path
+# dependency, not a member.
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.1.0"
@@ -58,6 +61,12 @@ crundi-operations = { path = "crates/operations" }
 # The desktop area (the browser bridge, the drawer, the PC extras).
 crundi-webview = { path = "crates/webview" }
 crundi-desktop = { path = "crates/desktop" }
+
+# GPUI 0.3.12 with two cache fixes (vendor/gpui/PATCH.md, the owner's call
+# of 21 Nov): delete this table (and vendor/gpui) to go back to the
+# published crate once upstream has the equivalent.
+[patch.crates-io]
+gpui = { package = "gpui-pre", path = "vendor/gpui" }
 
 # Line numbers only in dev builds, so the shared build folder stays small and
 # links are quick. Release builds are unaffected.

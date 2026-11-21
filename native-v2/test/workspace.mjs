@@ -403,20 +403,20 @@ await T.until('closed, the bar is its own height again', (s) => !TS(s)?.tools &&
 
 // The newline key (Settings › Terminal): Shift+Enter by default, Ctrl+Enter
 // when chosen there; either sends ESC CR (cat -v shows it as ^[).
-const ops = join(T.configDir, 'ops-settings.json');
 await act('term-send', key, 'cat -v');
 await t.sleep(500);
 await act('term-focus', key);
 await act('term-key', key, '\n', 'shift');
 await T.until('Shift+Enter makes a new line (ESC CR)', (s) => TS(s)?.screen.some((l) => l.trim() === '^['));
-writeFileSync(ops, JSON.stringify({ newline: 'ctrl' }));
+// (Chosen as a person does, in Operations' Settings: the client's saved settings, F147.)
+await T.ui('ops:settings-do', 'set-newline-key', '1');
 await act('term-key', key, 'x', '');
 await act('term-key', key, '\n', 'ctrl');
 await T.until('with Ctrl+Enter chosen, Ctrl+Enter does', (s) => TS(s)?.screen.some((l) => l.trim() === 'x^['));
 await act('term-key', key, 'y', '');
 await act('term-key', key, '\n', 'shift');
 await T.until('and Shift+Enter is a plain Enter then', (s) => TS(s)?.screen.some((l) => l.trim() === 'y'));
-rmSync(ops, { force: true });
+await T.ui('ops:settings-do', 'set-newline-key', '0');
 await act('term-tool', key, 'ctrl+c');
 
 // A picture pasted on the screen is saved in the project, its path typed in.

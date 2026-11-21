@@ -101,7 +101,9 @@ crundi_shell::register(cx, Area::new("planning")
 - **The "+" menu** is the workbench's (`add-menu`); `add-pane <kind>` is its driver action.
 - **The drawer**: Desktop gives the shell its view
   (`Shell::set_drawer_view(Some(Drawer { view, left }))`); the shell draws
-  it beside the project area with the divider; `nav.set_drawer(open)`.
+  it, cached (F151: it redraws only when it notifies, so it observes all it
+  shows, its address field's focus included), beside the project area with
+  the divider; `nav.set_drawer(open)`.
 - **The chat outside a workbench pane** (crundi_chat): `ChatPane::plain(store,
   window, cx)` is a chat's log and box with no Mini and no spots (the
   factory panel's transcript, F169), placed with `body(cx)`;

@@ -227,12 +227,11 @@ impl Render for Shell {
                 if e.click_count >= 2 { this.stores.nav.update(cx, |n, cx| { n.drawer_w = T::DRAWER_W; cx.notify(); }); this.dragging = false; } else { this.dragging = true; }
                 cx.notify();
             }));
-        // The drawer's layout (Desktop's): its bars and page are its cached
-        // leaves. Not cached itself yet (F151): in GPUI 0.3.12 a cached view
-        // that redraws (a page's frame) re-renders its cached children too,
-        // so its bars would redraw with every frame; it waits for the GPUI
-        // patch (a cached view keeps its clean cached children).
-        let dview = drawer.map(|d| div().flex_none().w(drawer_w).h_full().min_h_0().child(d.view));
+        // The drawer's layout (Desktop's), cached here (F151): a notify of
+        // another view under the Shell (a chat's log, the workbench) replays
+        // it. Its bars and page are its own cached leaves, kept when a page's
+        // frame redraws the layout (vendor/gpui/PATCH.md (a)).
+        let dview = drawer.map(|d| div().flex_none().w(drawer_w).h_full().min_h_0().child(d.view.cached(StyleRefinement::default().size_full())));
         let main = div().flex().flex_1().min_h_0().child(self.side.clone().cached(StyleRefinement::default().w(sw).h_full().flex_none()));
         let main = match dview {
             Some(v) if left => main.child(v).child(split).child(project),

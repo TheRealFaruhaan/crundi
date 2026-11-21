@@ -72,6 +72,9 @@ pub struct BrowserDrawer {
     lay: Lay,
     /// The shell (to move the drawer to the other side).
     shell: Option<WeakEntity<crundi_shell::Shell>>,
+    /// The address field taking or losing the keys redraws this layout (its
+    /// suggestions show only while it has them): the Shell caches it (F151).
+    _focus: Vec<Subscription>,
 }
 
 impl BrowserDrawer {
@@ -80,6 +83,10 @@ impl BrowserDrawer {
         let page_focus = page.read(cx).focus_handle().clone();
         let addr = cx.new(|cx| AddressBar::new(page_focus, window, cx));
         let addr_focus = addr.read(cx).address.read(cx).focus_handle(cx);
+        let _focus = vec![
+            cx.on_focus_in(&addr_focus, window, |_, _, cx| cx.notify()),
+            cx.on_focus_out(&addr_focus, window, |_, _, _, cx| cx.notify()),
+        ];
         BrowserDrawer {
             page,
             tabs: cx.new(|_| TabsBar { c: TabsCopy::default() }),
@@ -92,6 +99,7 @@ impl BrowserDrawer {
             addr_focus,
             lay: Lay { left: drawer::with(|d| d.side == "left"), ..Lay::default() },
             shell: None,
+            _focus,
         }
     }
 

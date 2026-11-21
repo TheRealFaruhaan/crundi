@@ -8,6 +8,9 @@ until it does).
 - `AREAS.md`: who owns which crate, how an area plugs in, the shared
   controls, building and testing.
 - `PLAN.md`: every screen and where it stands, with its frame numbers.
+- `vendor/gpui`: GPUI 0.3.12 with two cache fixes (`PATCH.md`: nested
+  cached views, moved views replayed), wired by `[patch.crates-io]` in
+  `Cargo.toml`; delete both to go back to the published crate.
 
 ```
 tools/build.sh                                          # the client: $HOME/.cache/crundi-native-target/debug/crundi-v2
