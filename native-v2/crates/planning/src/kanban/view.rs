@@ -337,7 +337,7 @@ fn report(boxes: &Rc<RefCell<super::Boxes>>, task: &str, ctl: String) -> impl In
 /// The live card (the one under the pointer, or in use; one at rest is
 /// card_el.rs's element).
 #[allow(clippy::too_many_arguments)]
-fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixels, inp: &Inputs, _live: bool, _cx: &App) -> AnyElement {
+fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixels, inp: &Inputs, _live: bool, cx: &App) -> AnyElement {
     let fold = card_w < if cd.compact { T::KANBAN_CARD_FOLD_COMPACT } else { T::KANBAN_CARD_FOLD };
     let id = cd.id.clone();
     let sid = SharedString::from(cd.id.clone());
@@ -345,10 +345,11 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
 
     // The title row: title, the mind map count, the paperclip, the menu (compact).
     let mut title = div().flex().items_start().gap(T::SP_8)
-        .child(div().flex_1().min_w_0().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(cd.title.clone()));
+        .child(div().relative().flex_1().min_w_0().text_size(T::TEXT_14).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(cd.title.clone()).child(w::find::mark(cd.title.clone())));
     if cd.mm > 0 {
-        title = title.child(div().id(eid("kanban-mm", &sid)).flex_none().mt(T::SP_2).cursor_pointer()
+        title = title.child(div().id(eid("kanban-mm", &sid)).relative().flex_none().mt(T::SP_2).cursor_pointer()
             .child(w::icon_tag(IconName::Share2, cd.mm.to_string(), "accent"))
+            .child(w::find::label_mark(format!("{} linked mindmap idea(s)", cd.mm)))
             .tooltip(w::tooltip(format!("{} linked mindmap idea(s)", cd.mm)))
             .on_click(a("goto-mindmap", id.clone())));
     }
@@ -359,15 +360,15 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
         else { w::icon_button(eid("kanban-clip", &sid), IconName::Paperclip, "Attachments") };
     // (The card at rest paints the same colours: card_el.rs.)
     let (bg, fg, edge) = super::card_el::clip_look(cd.media > 0, clip_open);
-    let clip_btn = clip_btn.border_1().border_color(edge).text_color(fg).when_some(bg, |b, c| b.bg(c));
+    let clip_btn = tinted(clip_btn, (bg, fg, edge), (T::bg_tertiary(), T::text(), T::border()), cx);
     title = title.child(div().relative().flex_none().child(clip_btn.on_click(move |_, _, cx| {
         let b = super::control_box(&tid, "clip", cx).unwrap_or_default();
         super::clip_open(&tid, b, f32::from(card_w), cx);
     })).child(report(&inp.boxes, &id, "clip".into())));
-    if cd.compact { title = title.child(menu_btn(eid("kanban-menu-c", &sid), false, cd.menu_open).on_click(a("card-menu", id.clone()))); }
+    if cd.compact { title = title.child(menu_btn(eid("kanban-menu-c", &sid), false, cd.menu_open, cx).on_click(a("card-menu", id.clone()))); }
 
     let mut col = div().flex().flex_col().px(T::SP_12).pt(T::SP_12).pb(T::SP_10).child(title);
-    if !cd.desc.is_empty() { col = col.child(div().w_full().min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary()).child(cd.desc.clone())); }
+    if !cd.desc.is_empty() { col = col.child(div().relative().w_full().min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary()).child(cd.desc.clone()).child(w::find::mark(cd.desc.clone()))); }
 
     // Subtasks, the new-subtask row, and the progress line.
     if cd.total > 0 || cd.adding {
@@ -394,7 +395,7 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
     // The footer: the menu, then + Subtask (not on a compact card).
     if !cd.compact {
         col = col.child(div().flex().items_center().gap(T::SP_6).pt(T::SP_10)
-            .child(menu_btn(eid("kanban-menu", &sid), true, cd.menu_open).on_click(a("card-menu", id.clone())))
+            .child(menu_btn(eid("kanban-menu", &sid), true, cd.menu_open, cx).on_click(a("card-menu", id.clone())))
             .child(w::button(eid("kanban-sub", &sid), "Subtask").icon(IconName::Plus).tooltip("Add a subtask").on_click(a("add-subtask", id.clone()))));
     }
     // The card's actions, under its menu.
@@ -429,6 +430,9 @@ fn card_el(cd: &Card, status: &str, dragged: bool, clip_open: bool, card_w: Pixe
         // Its own release lets go too: a press and release in one frame
         // come before the overlay listens for the release (F213).
         .on_mouse_up(MouseButton::Left, |_, _, cx| super::pointer_up(cx))
+        // Released off it (a flick onto a terminal in one frame): it lets go
+        // of itself if it is the one held.
+        .on_mouse_up_out(MouseButton::Left, { let id = cd.id.clone(); move |_, _, cx| super::release(&id, cx) })
         .child(col)
         .into_any_element()
 }
@@ -445,7 +449,7 @@ fn todo_row(task: &str, td: &board::Todo, card_w: Pixels, boxes: &Rc<RefCell<sup
         .tooltip(w::tooltip("Drag onto a terminal to insert this subtask id"))
         .on_mouse_down(MouseButton::Left, move |_, _, _| b1.borrow_mut().sub_press = true)
         .child(div().pt(T::SP_2).child(w::check(eid("kanban-tick", &key), "", done, move |v, _, cx| super::toggle_todo(&t1, &d1, *v, cx))))
-        .child(div().flex_1().min_w_0().text_size(T::TEXT_13).text_color(if done { T::text_muted() } else { T::text() }).child(td.text.clone()))
+        .child(div().relative().flex_1().min_w_0().text_size(T::TEXT_13).text_color(if done { T::text_muted() } else { T::text() }).child(td.text.clone()).child(w::find::mark(td.text.clone())))
         .when(td.media > 0, |d| d.child(w::button(eid("kanban-tmedia", &key), td.media.to_string()).icon(IconName::Paperclip).tooltip("Subtask media").on_click({ let (t, d) = (task.to_string(), td.id.clone()); move |_, _, cx| super::media_todo(&t, &d, cx) })))
         .child(div().relative().opacity(T::KANBAN_O_CARET).group_hover("kanban-todo", |d| d.opacity(1.))
             .child(w::icon_button(eid("kanban-tmore", &key), IconName::Ellipsis, "Subtask actions").on_click(move |_, _, cx| {
@@ -964,8 +968,22 @@ fn clip_pop(store: &Entity<KStore>, focus: &FocusHandle, window: &Window, cx: &A
 /// The card's menu button (.kc-menu): in the footer bordered and secondary,
 /// in a compact card's title borderless and muted; open, it is outlined and
 /// tinted (.kanban-card.menu-open .kc-menu: the accent's edge, accent-dim,
-/// its lighter text).
-fn menu_btn(id: ElementId, foot: bool, open: bool) -> gpui_component::button::Button {
-    let (bg, fg, edge) = super::card_el::menu_look(foot, open);
-    w::icon_button(id, IconName::Menu, "Task actions").border_1().border_color(edge).text_color(fg).when_some(bg, |b, c| b.bg(c))
+/// its lighter text), and stays so while hovered (the open rule outranks
+/// the hover one). Hovered shut: the tertiary fill, the primary text and an
+/// edge (the footer's #3c3c58, the title's border).
+fn menu_btn(id: ElementId, foot: bool, open: bool, cx: &App) -> gpui_component::button::Button {
+    let rest = super::card_el::menu_look(foot, open);
+    let hover = if open { (T::accent_dim(), T::accent_hover(), T::accent()) }
+        else { (T::bg_tertiary(), T::text(), if foot { T::kanban_btn_edge() } else { T::border() }) };
+    tinted(w::icon_button(id, IconName::Menu, "Task actions"), rest, hover, cx)
+}
+
+/// A card button with its own colours at rest (background, text, edge) and
+/// hovered (F215): a custom look, so the button's hover paints these and
+/// keeps the 1 px edge (a ghost's hover clears the edge and fills with the
+/// theme's accent).
+fn tinted(b: gpui_component::button::Button, (bg, fg, edge): (Option<Hsla>, Hsla, Hsla), (hbg, hfg, hedge): (Hsla, Hsla, Hsla), cx: &App) -> gpui_component::button::Button {
+    use gpui_component::button::{ButtonCustomVariant, ButtonVariants as _};
+    let v = ButtonCustomVariant::new(cx).color(hedge).foreground(hfg).hover(hbg).active(hbg);
+    b.custom(v).border_1().border_color(edge).text_color(fg).bg(bg.unwrap_or(transparent_black()))
 }

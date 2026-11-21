@@ -397,7 +397,8 @@ impl T {
     // which the toolbar folds (480), a card under which its action labels
     // fold (220; 320 compact), the attachments strip's bounds and thumbs,
     // the dragged card's look (o-dim), its clone (o-clone), Trash's faded
-    // cards (o-soft), a subtask's resting "…" (o-caret), the slate edge.
+    // cards (o-soft), a subtask's resting "…" (o-caret), the slate edge,
+    // a footer button's hovered edge.
     pub const KANBAN_COL_MIN: Pixels = px(220.);
     pub const KANBAN_COL_MAX: Pixels = px(360.);
     pub const KANBAN_STACK: Pixels = px(700.);
@@ -412,6 +413,8 @@ impl T {
     pub const KANBAN_O_SOFT: f32 = 0.6;
     pub const KANBAN_O_CARET: f32 = 0.55;
     pub fn kanban_slate_edge() -> Hsla { rgba(0x94a3b873).into() }
+    /// A card's footer button hovered (.kanban-card .card-foot button:hover's edge).
+    pub fn kanban_btn_edge() -> Hsla { rgb(0x3c3c58).into() }
     // Notes (4.4): the tab's page list (.nt-side), the width under which the
     // list goes over the page and the page's margins shrink, the page's
     // widest, the room under the last block, the picker's widest, a menu's
