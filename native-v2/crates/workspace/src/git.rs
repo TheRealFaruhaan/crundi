@@ -69,6 +69,8 @@ pub struct GitView {
     loading: bool,
     project: String,
     msg: Entity<w::TextareaState>,
+    /// Each row's place on screen as last painted ("staged:<file>" / "change:<file>"), for the test driver.
+    row_at: std::rc::Rc<std::cell::RefCell<std::collections::HashMap<String, Bounds<Pixels>>>>,
     list: UniformListScrollHandle,
     /// The project's folder (a row's path from it, dragged into a chat) and
     /// the list's width (a dragged row's ghost is the row at this width).
@@ -84,7 +86,7 @@ pub fn view(cx: &App) -> Option<Entity<GitView>> { cx.try_global::<GitHandle>().
 impl GitView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let msg = cx.new(|cx| w::TextareaState::new(window, cx).auto_grow(2, 2).placeholder("Commit message…"));
-        GitView { state: "loading".into(), error: String::new(), branch: String::new(), sync: String::new(), staged: vec![], changes: vec![], rows: vec![], pulling: false, pushing: false, loading: false, project: crundi_shell::project(cx), msg, list: UniformListScrollHandle::new(), root: String::new(), width: px(320.) }
+        GitView { state: "loading".into(), error: String::new(), branch: String::new(), sync: String::new(), staged: vec![], changes: vec![], rows: vec![], pulling: false, pushing: false, loading: false, project: crundi_shell::project(cx), msg, list: UniformListScrollHandle::new(), root: String::new(), width: px(320.), row_at: Default::default() }
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -229,10 +231,14 @@ impl GitView {
         let state = if crundi_shell::project(cx).is_empty() { "none".to_string() } else { self.state.clone() };
         json!({
             "state": state, "branch": self.branch, "sync": self.sync,
-            "staged": self.staged.iter().map(|f| json!({ "file": f.file, "code": f.code })).collect::<Vec<_>>(),
-            "changes": self.changes.iter().map(|f| json!({ "file": f.file, "code": f.code })).collect::<Vec<_>>(),
+            "staged": self.staged.iter().map(|f| json!({ "file": f.file, "code": f.code, "box": self.row_box("staged", &f.file) })).collect::<Vec<_>>(),
+            "changes": self.changes.iter().map(|f| json!({ "file": f.file, "code": f.code, "box": self.row_box("change", &f.file) })).collect::<Vec<_>>(),
             "pulling": self.pulling, "pushing": self.pushing, "rows": self.rows.len(),
         })
+    }
+
+    fn row_box(&self, side: &str, file: &str) -> Option<[f32; 4]> {
+        self.row_at.borrow().get(&format!("{side}:{file}")).map(|b| [f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.size.width), f32::from(b.size.height)])
     }
 
     // ─── Drawing ───
@@ -276,9 +282,11 @@ impl GitView {
         let row = div().id(id).w_full().cursor_grab().hover(|s| s.bg(T::bg_hover()));
         // Dragged onto a chat or a terminal: its path from the project's root (data-drag-abs).
         let row = w::drag_ref_row(row, "file", &self.abs_path(&f.file), f.name.clone(), self.width, move || c2(div().w_full().bg(T::bg_hover())).into_any_element());
+        let (at, k) = (self.row_at.clone(), format!("{}:{}", id.0, f.file));
         w::tip(row, "Drag onto a terminal to insert its path")
-            .child(cells(div().w_full())
-                .child(acts))
+            .child(cells(div().w_full().relative())
+                .child(acts)
+                .child(canvas(move |b, _, _| { at.borrow_mut().insert(k.clone(), b); }, |_, _, _, _| {}).absolute().top_0().left_0().size_full()))
             .into_any_element()
     }
 

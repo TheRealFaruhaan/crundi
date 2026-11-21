@@ -515,5 +515,72 @@ await T.until('the second closes the terminal and its pane', (s) => !W(s).terms.
 const list = await T.api.http('GET', '/api/terminals');
 t.check('the server has no terminal left open', !(list.body?.terminals || list.body || []).some?.((x) => x.id === termId && x.status !== 'exited'), list.body);
 
+// A Git row, a Media card and a Files row dragged onto a chat (with the
+// pointer, F140): each goes in at the box's caret as the web's labelled
+// reference, "Added to chat". Each from its pane alone beside the chat
+// (more panes than two would overflow the window at their minimum width).
+{
+  writeFileSync(join(P, 'docs/dropped.txt'), 'to drag\n');
+  await act('git-refresh');
+  await T.ui('new-chat');
+  s = await T.until('a chat pane', (s) => s.composer?.state === 'idle' && s.leaves?.some((l) => l.key?.startsWith('live:')), 30000);
+  const chatLeaf = (s) => s.leaves.find((l) => l.key?.startsWith('live:'));
+  const onScreen = (s, l) => l && l.x >= 0 && l.x + l.w <= (s.window?.w || 1400) + 1;
+  // Only `panel:<kind>` and the chat in the workbench, both on screen.
+  const beside = async (kind) => {
+    for (const k of (await T.state()).panes || []) if (k.startsWith('panel:') && k !== `panel:${kind}`) await T.ui('workbench:pane-close', k);
+    if (!(await T.state()).panes.includes(`panel:${kind}`)) await T.ui('add-pane', kind);
+    await T.ui('add-pane', 'fit');
+    return T.until(`${kind} and the chat side by side`, (s) => s.panes?.length === 2 && onScreen(s, chatLeaf(s)) && onScreen(s, s.leaves.find((l) => l.key === `panel:${kind}`)));
+  };
+  // A box drawn where its pane now is (boxes are kept as last painted).
+  const inLeaf = (s, key, b) => { const l = s.leaves?.find((x) => x.key === key); return !!(l && b && b[0] >= l.x && b[0] + 20 < l.x + l.w && b[1] > l.y && b[1] < l.y + l.h); };
+  const dropOnChat = async (what, x, y, want) => {
+    // (A press in the chat's log focuses it: its box is the one emptied.)
+    const c0 = chatLeaf(await T.state());
+    await T.mouse('click', c0.x + c0.w / 2, c0.y + 120);
+    await T.until('the chat focused', (q) => q.focusedPane === c0.key && q.composer);
+    await T.ui('composer-text', '');
+    await T.ui('toasts-clear');
+    const cl = chatLeaf(await T.state());
+    await T.mouse('move', x, y);
+    await t.sleep(200);
+    await T.mouse('drag', x, y, { toX: cl.x + cl.w / 2, toY: cl.y + cl.h - 40, steps: 12 });
+    const got = await T.until(`${what} dropped on the chat: "${want}" in its box, "Added to chat"`, (q) => q.toast === 'Added to chat' && (q.composer?.text || '').includes(want), 10000);
+    if (!got) { const z = await T.state(); console.log('  drag from', x, y, 'to', cl, 'toast', z.toast, 'box', JSON.stringify(z.composer?.text)); }
+  };
+  if (s) {
+    // A Git row: its path from the project's root.
+    await beside('git');
+    const gitBox = (s) => inLeaf(s, 'panel:git', W(s).git.changes?.find((f) => f.file === 'docs/dropped.txt')?.box);
+    await T.until('Git lists docs/dropped.txt on screen', gitBox);
+    await t.sleep(300);
+    s = await T.until('…where its pane now is', gitBox);
+    const g = s && W(s).git.changes.find((f) => f.file === 'docs/dropped.txt').box;
+    if (g) await dropOnChat('a Git row', g[0] + 60, g[1] + g[3] / 2, '[File Path: ' + join(P, 'docs/dropped.txt') + ']');
+    // A Media card: its path on the server.
+    await beside('media');
+    const card = (s) => W(s).media.cards?.find((c) => inLeaf(s, 'panel:media', c.box));
+    await T.until('a Media card on screen', card);
+    await t.sleep(300);
+    s = await T.until('…where its pane now is', card);
+    const mc = s && card(s);
+    if (mc) await dropOnChat('a Media card', mc.box[0] + mc.box[2] / 2, mc.box[1] + 40, '[Media Path: ');
+    // A Files row.
+    await beside('files');
+    await act('files-nav', join(P, 'docs'));
+    // (Its row where the pane now is: drawn since the panes moved.)
+    const inFiles = (s) => inLeaf(s, 'panel:files', W(s).files.rows.find((r) => r.name === 'notes.txt')?.more);
+    await T.until('the Files pane lists docs', inFiles);
+    await t.sleep(300);
+    s = await T.until('…its rows settled', inFiles);
+    const fl = s?.leaves.find((l) => l.key === 'panel:files');
+    const b = s && W(s).files.rows.find((r) => r.name === 'notes.txt').more;
+    if (b && fl) await dropOnChat('a Files row', fl.x + 60, b[1] + b[3] / 2, '[File Path: ' + join(P, 'docs/notes.txt') + ']');
+    await T.ui('composer-text', '');
+  }
+  rmSync(join(P, 'docs/dropped.txt'), { force: true });
+}
+
 rmSync(scratch, { recursive: true, force: true });
 await T.end();

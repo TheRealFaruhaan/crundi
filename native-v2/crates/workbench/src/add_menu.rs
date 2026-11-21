@@ -29,6 +29,10 @@ pub struct AddMenu {
     open: bool,
     at: Point<Pixels>,
     layouts: bool,
+    /// Open and Layout's submenu as last drawn: what the driver reports, so
+    /// a test's next press finds the menu on screen (or its backdrop gone),
+    /// never only in state (F145).
+    drawn: (bool, bool),
 }
 
 struct Handle(Entity<AddMenu>);
@@ -36,7 +40,7 @@ impl Global for Handle {}
 
 /// Made at init and given to the shell as a layer.
 pub(crate) fn init(cx: &mut App) {
-    let m = cx.new(|_| AddMenu { open: false, at: point(px(0.), px(0.)), layouts: false });
+    let m = cx.new(|_| AddMenu { open: false, at: point(px(0.), px(0.)), layouts: false, drawn: (false, false) });
     cx.set_global(Handle(m.clone()));
     crundi_shell::register_overlay(cx, m.into());
 }
@@ -70,7 +74,7 @@ pub fn set_open(open: bool, window: &mut Window, cx: &mut App) {
 pub fn props(cx: &App) -> serde_json::Value {
     let Some(m) = menu(cx) else { return serde_json::Value::Null };
     let m = m.read(cx);
-    if !m.open { return serde_json::json!({ "open": false }); }
+    if !m.drawn.0 { return serde_json::json!({ "open": false }); }
     let (x, y) = (f32::from(m.at.x), f32::from(m.at.y));
     let row = f32::from(row_h()) + 2.;
     let first = y + 1. + 6.;
@@ -80,7 +84,7 @@ pub fn props(cx: &App) -> serde_json::Value {
     items.push(serde_json::json!({ "id": "layout", "label": "Layout", "x": x + 7., "y": first + 10. * row, "w": w - 14., "h": row - 2. }));
     let sx = x + w + f32::from(T::SP_4);
     let sub: Vec<serde_json::Value> = PRESETS.iter().enumerate().map(|(i, (id, label, _))| serde_json::json!({ "id": format!("layout:{id}"), "label": label, "x": sx + 7., "y": first + 10. * row + i as f32 * row, "w": w - 14., "h": row - 2. })).collect();
-    serde_json::json!({ "open": true, "x": x, "y": y, "layouts": m.layouts, "items": items, "sub": sub })
+    serde_json::json!({ "open": true, "x": x, "y": y, "layouts": m.drawn.1, "items": items, "sub": sub })
 }
 
 /// A menu row's height (w::menu_item's).
@@ -99,6 +103,7 @@ impl AddMenu {
 impl Render for AddMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crundi_core::driver::rendered("add-menu");
+        self.drawn = (self.open, self.open && self.layouts);
         if !self.open { return div().into_any_element(); }
         let at = self.at;
         let mut m = w::menu_panel("add-menu").absolute().left(at.x).top(at.y).w(T::MENU_MIN_W)
