@@ -104,7 +104,7 @@ export async function relaunch(T, t, env = {}, signal = 'SIGTERM') {
   Object.assign(T, {
     app, d, frames, state, props: state, __end0: end0,
     ui: (n, ...args) => d.send({ cmd: 'ui', name: n, args }),
-    key: (text, mods = []) => d.send({ cmd: 'key', text, mods }),
+    key: (text, mods = []) => d.send({ cmd: 'key', text: text === 'Enter' ? 'Return' : text, mods }),
     mouse: (kind, x, y, extra = {}) => d.send({ cmd: 'mouse', kind, x, y, ...extra }),
     async snap(area, file) {
       const dir = join(process.env.SCREENS_DIR || fileURLToPath(new URL('../../screens/', import.meta.url)), area);
@@ -212,6 +212,11 @@ export async function run(T, t) {
     const p = await T.until('a real click on a menu item picks it and closes the menu', (p) => !T.D(p).menu && T.D(p).menuPicked === 'left-open', 5000);
     t.check('…the client lives on (the item\'s pick ran once)', T.D(p).menuPicked === 'left-open', T.D(p).menuPicked);
   }
+  // F236: Escape closes it (the web's document keydown, WH:12187), wherever the keys are.
+  await T.act('test-menu', '40', '400');
+  await T.until('a context menu open', (p) => !!T.D(p).menu, 5000);
+  await T.key('Escape');
+  await T.until('Escape closes the context menu, nothing picked', (p) => !T.D(p).menu, 5000);
   await T.act('test-menu', '40', '400');
   await T.until('a context menu open', (p) => !!T.D(p).menu, 5000);
   await openPop(T, t, 'device', 'dev');

@@ -49,8 +49,11 @@ export async function run(T, t) {
   for (const k of ['1', '1', '1', '1', 'OK']) await T.act('lock-key', k);
   p = await T.until('a wrong PIN on the keypad: "That is not the PIN", the box shakes', (p) => /not the PIN/.test(L(p).error) && L(p).shakes >= 1 && L(p).on, 10000);
   await T.snap('desktop', 'pc-lock-wrong');
-  await T.act('lock-pin', '2468');
-  p = await T.until('the right PIN unlocks it, and the window is let go', (p) => !L(p).on && !D(p).windowLocked, 10000);
+  // F233: the PIN typed on the keyboard reaches the box (the web lets keys inside the lock
+  // through, WH:6524): the right one and Enter unlock.
+  await T.key('2468');
+  await T.key('Enter');
+  p = await T.until('the right PIN typed with real keys and Enter unlocks it, and the window is let go', (p) => !L(p).on && !D(p).windowLocked, 10000);
   t.check('…and the dialog is there as it was', !!p.dialog && p.dialog.title === 'Left open', p.dialog);
   await T.ui('dialog-answer', 'false');
   await T.until('…answered', (p) => !p.dialog, 5000);
@@ -63,6 +66,13 @@ export async function run(T, t) {
   await T.snap('desktop', 'pc-lock-visible');
   await T.api.http('POST', '/api/lock/end', {});
   await T.until('ended from the phone: unlocked with no other action', (p) => !L(p).on && !D(p).windowLocked, 10000);
+  // The windowed lock has no keypad: the keyboard is the way in at the PC (F233).
+  await T.key('l', ['ctrl', 'shift']);
+  await T.until('the visible lock again', (p) => L(p).on && L(p).mode === 'visible', 15000);
+  await t.sleep(400);
+  await T.key('2468');
+  await T.key('Enter');
+  await T.until('…the PIN typed with real keys and Enter unlocks the visible lock', (p) => !L(p).on && !D(p).windowLocked, 10000);
   await T.key('l', ['super', 'shift']);
   await T.until('Super+Shift+L: the full lock', (p) => L(p).on && L(p).mode === 'full', 15000);
   await T.api.http('POST', '/api/lock/end', {});

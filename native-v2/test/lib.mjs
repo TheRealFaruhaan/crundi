@@ -184,7 +184,8 @@ export async function begin(name, { proxy: withProxy = false } = {}) {
     },
     ui: (n, ...args) => d.send({ cmd: 'ui', name: n, args }),
     /** A key to the focused element (text or a named key; mods: ctrl, shift…). */
-    key: (text, mods = []) => d.send({ cmd: 'key', text, mods }),
+    // 'Enter' is the Enter key ('Return' to the driver; F234), never the letters E-n-t-e-r.
+    key: (text, mods = []) => d.send({ cmd: 'key', text: text === 'Enter' ? 'Return' : text, mods }),
     /** The pointer, as a person's (move, click, wheel with dy, drag to toX/toY…), at window x,y. */
     mouse: (kind, x, y, extra = {}) => d.send({ cmd: 'mouse', kind, x, y, ...extra }),
     /** How many pixels differ between two PNGs, optionally in a crop WxH+X+Y. */

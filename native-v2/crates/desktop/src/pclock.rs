@@ -158,15 +158,21 @@ pub struct PcLockScreen {
     input: Option<Entity<w::InputState>>,
     /// The minute the clock shows (it redraws only when that changes).
     minute: i64,
+    /// The window the PIN box was made in (made again for a window the tray's × closed and
+    /// Open made again: a box of the old window hears no Enter in the new one).
+    win: Option<AnyWindowHandle>,
     _subs: Vec<Subscription>,
 }
 
 impl PcLockScreen {
-    pub fn new(_cx: &mut Context<Self>) -> Self { PcLockScreen { copy: Lock::default(), input: None, minute: 0, _subs: vec![] } }
+    pub fn new(_cx: &mut Context<Self>) -> Self { PcLockScreen { copy: Lock::default(), input: None, minute: 0, win: None, _subs: vec![] } }
 
     /// With the window: the PIN box (Enter tries it, a key clears the error).
     pub fn attach(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.input.is_some() { return; }
+        let win = window.window_handle();
+        if self.win == Some(win) { return; }
+        self.win = Some(win);
+        self._subs.clear();
         let input = cx.new(|cx| w::InputState::new(window, cx).masked(true).placeholder("PIN")
             .validate(|s, _| s.chars().count() <= 8));
         self._subs.push(cx.subscribe_in(&input, window, |_, st, ev: &w::InputEvent, window, cx| match ev {
@@ -277,8 +283,9 @@ impl PcLockScreen {
                 // A click anywhere goes nowhere but back to the PIN box.
                 cx.stop_propagation();
                 if let Some(i) = focus_in.as_ref() { let f = i.read(cx).focus_handle(cx); window.focus(&f, cx); }
-            })
-            .on_key_down(|_, _, cx| cx.stop_propagation());
+            });
+        // Keys reach the PIN box (F233; the web lets keys inside the lock through, WH:6533);
+        // w::hold_keys keeps every dialog under the lock from getting them.
         if full {
             root = root.justify_between().pt(relative(0.07)).pb(relative(0.05))
                 .child(canvas(|_, _, _| (), |b, _, window, _| {

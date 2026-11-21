@@ -70,6 +70,13 @@ fn layer(cx: &mut App) -> Entity<AskLayer> {
     if let Some(h) = cx.try_global::<Handle>() { return h.0.clone(); }
     let e = cx.new(|cx| AskLayer { pending: None, menu: None, focus: cx.focus_handle(), scroll: ScrollHandle::new() });
     cx.set_global(Handle(e.clone()));
+    // Escape closes an open menu, wherever the keys are (the web's document keydown,
+    // src/webapp-html.js:12187; F236); the key goes on to what it would have reached.
+    let weak = e.downgrade();
+    cx.intercept_keystrokes(move |ev, _, cx| {
+        if ev.keystroke.key != "escape" { return; }
+        let _ = weak.update(cx, |l, cx| if l.menu.take().is_some() { cx.notify(); });
+    }).detach();
     e
 }
 
