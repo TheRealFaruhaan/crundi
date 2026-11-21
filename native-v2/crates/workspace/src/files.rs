@@ -93,6 +93,8 @@ pub struct FilesView {
     root: String,
     project: String,
     search: Entity<w::InputState>,
+    /// The window the search box is in (a load's answer empties it).
+    win: AnyWindowHandle,
     list: UniformListScrollHandle,
     /// Where each drawn row's "…" is in the window, recorded as it is laid
     /// out: its menu opens below it (the web's openFileMenu at the button's
@@ -113,7 +115,7 @@ impl FilesView {
         let search = cx.new(|cx| w::InputState::new(window, cx).placeholder("Search files & folders…"));
         let _sub = cx.subscribe_in(&search, window, |f, st, ev: &w::InputEvent, _, cx| if let w::InputEvent::Change = ev { let q = st.read(cx).value().to_string(); f.search(&q, cx); });
         FilesView { path: String::new(), parent: None, inside: false, entries: vec![], crumbs: vec![], shell: None, state: "loading".into(), error: String::new(), q: String::new(), results: None, search_gen: 0, selected: String::new(), clip: None, copied: String::new(),
-            rows: vec![], note: String::new(), empty: String::new(), root: String::new(), project: crundi_shell::project(cx), search, list: UniformListScrollHandle::new(), more_at: Default::default(), width: px(320.), _sub }
+            rows: vec![], note: String::new(), empty: String::new(), root: String::new(), project: crundi_shell::project(cx), search, win: window.window_handle(), list: UniformListScrollHandle::new(), more_at: Default::default(), width: px(320.), _sub }
     }
 
     fn clip_here(&self, cx: &App) -> bool { self.clip.as_ref().is_some_and(|c| c.project == crundi_shell::project(cx) && !c.paths.is_empty()) }
@@ -172,6 +174,7 @@ impl FilesView {
         crundi_shell::call(cx, move |api| api.get(&path), move |r, cx| {
             if crundi_shell::project(cx) != project { return; }
             let mut fell = None;
+            let mut cleared = false;
             let _ = me.update(cx, |f, cx| {
                 match r {
                     Ok(v) if v.get("ok").is_some_and(truthy) => {
@@ -185,12 +188,18 @@ impl FilesView {
                         f.state = "ok".into();
                         f.q.clear();
                         f.results = None;
+                        cleared = true;
                     }
                     Ok(v) => { f.state = "error".into(); f.error = err_of(&v, "Failed"); }
                     Err(e) => { f.state = "error".into(); f.error = format!("Error: {e}"); }
                 }
                 f.derive(cx);
             });
+            // A load empties the search box too (the web's filesSearchQuery = '').
+            if cleared { if let Some(f) = me.upgrade() {
+                let (st, win) = { let f = f.read(cx); (f.search.clone(), f.win) };
+                if !st.read(cx).value().is_empty() { let _ = win.update(cx, |_, window, cx| st.update(cx, |st, cx| st.set_value("", window, cx))); }
+            } }
             if let Some(p) = fell { let b = base_name(&p); toast(cx, format!("That folder no longer exists. Showing {} instead.", if b.is_empty() { p } else { b }), w::Toast::Info); }
         });
     }
@@ -223,6 +232,12 @@ impl FilesView {
                 });
             });
         }).detach();
+    }
+
+    /// Text typed into the search box (the test driver): the box reads it.
+    pub fn type_search(&mut self, q: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.update(cx, |st, cx| st.set_value(q.to_string(), window, cx));
+        self.search(q, cx);
     }
 
     /// Esc in the search: it empties, the folder shows again.
@@ -432,7 +447,7 @@ impl FilesView {
         let (rows, note, empty) = (&self.rows, &self.note, &self.empty);
         json!({
             "state": if crundi_shell::project(cx).is_empty() { "none".to_string() } else { self.state.clone() },
-            "path": self.path, "inside": self.inside, "parent": self.parent, "searching": self.results.is_some(), "selected": self.selected,
+            "path": self.path, "inside": self.inside, "parent": self.parent, "searching": self.results.is_some(), "query": self.search.read(cx).value().to_string(), "selected": self.selected,
             "note": note, "empty": empty,
             "clip": self.clip.as_ref().map(|c| json!({ "op": c.op, "paths": c.paths })),
             "rows": rows.iter().map(|r| json!({ "name": r.name, "dir": r.dir, "path": r.path, "isDir": r.is_dir, "size": r.size, "mark": r.mark, "cut": r.cut, "selected": r.selected,
