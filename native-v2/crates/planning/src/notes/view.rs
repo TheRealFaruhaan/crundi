@@ -353,22 +353,10 @@ impl PlaceView {
                     _ => {}
                 }
             }),
-            cx.observe(&edit_in, |this, st, cx| {
+            cx.observe(&edit_in, |this, _, cx| {
                 // The selection moved: the format bar follows it (sel_moved).
-                let Some((id, _, _)) = this.edit.clone() else { return };
                 if !this.editing { return; }
-                let (range, rev, caret, span) = { let s = st.read(cx); let r = s.selected_range(); let span = (r.start != r.end).then(|| s.range_to_bounds(&r)).flatten(); (r, s.is_selection_reversed(), s.cursor_layout(), span) };
-                let sel = (range.start, range.end);
-                if sel == this.last_sel { return; }
-                this.last_sel = sel;
-                let (a, c) = if rev { (range.end, range.start) } else { (range.start, range.end) };
-                let (a, c) = (this.to_src(a), this.to_src(c));
-                let (x, y) = caret.map(|(b, _)| (f32::from(b.origin.x), f32::from(b.origin.y))).unwrap_or_else(|| this.store.read(cx).caret_xy);
-                let k = this.key.clone();
-                // The selection's own ends (a double-click selects a word in
-                // one go: no caret was seen before it to anchor the bar).
-                let span = span.map(|b| (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.origin.x + b.size.width)));
-                cx.defer(move |cx| super::sel_moved(&k, &id, a as i32, c as i32, x, y, span, cx));
+                this.report_sel(false, cx);
             }),
             cx.subscribe(&search_in, |this, st, ev: &InputEvent, cx| if let InputEvent::Change = ev { let q = st.read(cx).value().to_string(); let k = this.key.clone(); super::search(&k, &q, cx); }),
             cx.subscribe(&query_in, |this, st, ev: &InputEvent, cx| if let InputEvent::Change = ev {
@@ -436,6 +424,14 @@ impl PlaceView {
                     self.last_sel = (a, b);
                     self.load_box(Some(a..b), window, cx);
                     self.edit_in.update(cx, |st, cx| st.focus(window, cx));
+                    if a != b && p.focus_fmt {
+                        // A held drag-selection handed to the box (F187): the
+                        // web's mouseup runs maybeFormatBar. The box starts with
+                        // the range, so its observer sees no move; once it has
+                        // drawn the words (range_to_bounds), the bar opens over them.
+                        let me = cx.entity().downgrade();
+                        window.on_next_frame(move |_, cx| { let _ = me.update(cx, |this, cx| if this.editing && this.last_sel == (a, b) { this.report_sel(true, cx) }); });
+                    }
                     if same {
                         // Still the same block: tell the model as a fresh focus would.
                         let k = self.key.clone();
@@ -484,6 +480,25 @@ impl PlaceView {
     }
 
     /// A byte offset of the box's words as an offset of the block's source.
+    /// The box's selection to the model (sel_moved: the format bar follows
+    /// it). `force`: even when the range is the one last seen (a held
+    /// drag-selection handed to the box starts with its range, F187).
+    fn report_sel(&mut self, force: bool, cx: &mut Context<Self>) {
+        let Some((id, _, _)) = self.edit.clone() else { return };
+        let (range, rev, caret, span) = { let s = self.edit_in.read(cx); let r = s.selected_range(); let span = (r.start != r.end).then(|| s.range_to_bounds(&r)).flatten(); (r, s.is_selection_reversed(), s.cursor_layout(), span) };
+        let sel = (range.start, range.end);
+        if sel == self.last_sel && !force { return; }
+        self.last_sel = sel;
+        let (a, c) = if rev { (range.end, range.start) } else { (range.start, range.end) };
+        let (a, c) = (self.to_src(a), self.to_src(c));
+        let (x, y) = caret.map(|(b, _)| (f32::from(b.origin.x), f32::from(b.origin.y))).unwrap_or_else(|| self.store.read(cx).caret_xy);
+        let k = self.key.clone();
+        // The selection's own ends (a double-click selects a word in
+        // one go: no caret was seen before it to anchor the bar).
+        let span = span.map(|b| (f32::from(b.origin.x), f32::from(b.origin.y), f32::from(b.origin.x + b.size.width)));
+        cx.defer(move |cx| super::sel_moved(&k, &id, a as i32, c as i32, x, y, span, cx));
+    }
+
     fn to_src(&self, at: usize) -> usize { if self.edit_lang.is_some() { at.min(self.edit_src.len()) } else { doc::box_to_src(&self.edit_src, at) } }
     /// A source offset as an offset of the box's words.
     fn to_box(&self, at: usize) -> usize { if self.edit_lang.is_some() { at.min(self.edit_src.len()) } else { doc::src_to_box(&self.edit_src, at) } }
@@ -956,7 +971,7 @@ impl PlaceView {
             .on_click(move |e, window, cx| {
                 let m = window.modifiers();
                 let held = super::tsel_end(&k, cx).filter(|t| t.id == i && t.r == r && t.c == c && t.a != t.b);
-                if let Some(t) = held { super::request_focus(&k, &i, r, c, src_at(t.a), src_at(t.b), cx); return; }
+                if let Some(t) = held { super::request_focus_sel(&k, &i, r, c, src_at(t.a), src_at(t.b), cx); return; }
                 // Shift with a press here selected blocks (blk_press): no caret.
                 if m.shift && super::has_sel(&k, cx) { return; }
                 let hit = if e.position().x > px(0.) { layout.index_for_position(e.position()) } else { Err(rich.text.len()) };

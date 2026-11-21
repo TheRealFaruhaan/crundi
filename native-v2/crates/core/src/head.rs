@@ -225,6 +225,60 @@ pub fn title_shown(title: &str, long: &str, pane_w: f32) -> (String, f32) {
     if !long.is_empty() && long_fits(pane_w) { (long.to_string(), LONG_CAP.min(content * LONG_SHARE)) } else { (title.to_string(), TITLE_CAP) }
 }
 
+// ─── A project's mark (src/project-mark.js) ───
+
+/// "my-cool_project" -> "MC", "crundi" -> "C", "" -> "?" (markInitials:
+/// the first letters of the first two runs of letters and digits).
+pub fn mark_initials(name: &str) -> String {
+    let words: Vec<&str> = name.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect();
+    let Some(w0) = words.first() else { return "?".into() };
+    let mut out: String = w0.chars().take(1).collect();
+    if let Some(w1) = words.get(1) { out.extend(w1.chars().take(1)); }
+    out.to_uppercase()
+}
+
+/// markHue: FNV-1a over the lower-cased name's UTF-16 units, mod 360.
+pub fn mark_hue(name: &str) -> u32 {
+    let mut h: u32 = 0x811c9dc5;
+    for u in name.to_lowercase().encode_utf16() { h ^= u as u32; h = h.wrapping_mul(0x01000193); }
+    h % 360
+}
+
+fn hsl_rgb(h: f64, s: f64, l: f64) -> u32 {
+    let a = s * l.min(1. - l);
+    let f = |n: f64| { let k = (n + h / 30.) % 12.; (255. * (l - a * (-1f64).max((k - 3.).min(9. - k).min(1.)))).round() as u32 };
+    (f(0.) << 16) | (f(8.) << 8) | f(4.)
+}
+
+fn luminance(c: u32) -> f64 {
+    let ch = |v: u32| { let c = v as f64 / 255.; if c <= 0.03928 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) } };
+    0.2126 * ch((c >> 16) & 255) + 0.7152 * ch((c >> 8) & 255) + 0.0722 * ch(c & 255)
+}
+
+/// projectMark: (initials, the tile's colour, its gradient's deep end), as
+/// 0xRRGGBB. The tile is stepped darker until white reads on it at 3 to 1.
+pub fn project_mark(name: &str) -> (String, u32, u32) {
+    let hue = mark_hue(name) as f64;
+    let mut l = 0.46;
+    let mut color = hsl_rgb(hue, 0.58, l);
+    for _ in 0..12 {
+        if 1.05 / (luminance(color) + 0.05) >= 3. { break; }
+        l = ((l - 0.02) * 100f64).round() / 100.;
+        color = hsl_rgb(hue, 0.58, l);
+    }
+    (mark_initials(name), color, hsl_rgb(hue, 0.62, (l * 74.).round() / 100.))
+}
+
+/// chatMark: the project's colours with the chat's initials (a chat named
+/// nothing, or "Chat", keeps the project's letters).
+pub fn chat_mark(project: &str, title: &str) -> (String, u32, u32) {
+    let (pi, c, d) = project_mark(project);
+    let t = title.trim();
+    let named = !t.is_empty() && t.to_lowercase() != "chat";
+    let ini = if named { mark_initials(t) } else { pi.clone() };
+    (if ini == "?" { pi } else { ini }, c, d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,5 +404,16 @@ mod tests {
         assert_eq!(shown_mode("", true), "default");
         assert_eq!(mode_error("No session \"x\""), "Could not switch permission mode: No session \"x\"");
         assert_eq!(mode_error("Not supported by this server"), "Not supported by this server");
+    }
+
+    #[test]
+    fn marks_match_the_web() {
+        // Pinned from src/project-mark.js (node).
+        assert_eq!(project_mark("crundi"), ("C".into(), 0xb93195, 0x8c2170));
+        assert_eq!(project_mark("My App"), ("MA".into(), 0x5631b9, 0x3e218c));
+        assert_eq!(project_mark("yellow-thing"), ("YT".into(), 0x2ba199, 0x1d7c76));
+        assert_eq!(project_mark(""), ("?".into(), 0x979929, 0x72741b));
+        assert_eq!(chat_mark("crundi", "Factory: Native build").0, "FN");
+        assert_eq!(chat_mark("crundi", "Chat").0, "C");
     }
 }

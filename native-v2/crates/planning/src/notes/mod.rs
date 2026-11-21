@@ -73,6 +73,8 @@ struct Place {
     // the selection), bumped each time; the title to show again.
     focus: (String, i32, i32, i32, i32),
     focus_gen: i32,
+    /// The focus hands a held drag-selection to the box: it opens the format bar (F187).
+    focus_fmt: bool,
     title_gen: i32,
     drop_y: Option<f32>,
     cur_id: String,
@@ -151,7 +153,7 @@ pub(crate) struct PlaceRow {
     pub key: String, pub mode: String, pub msg: String, pub page_id: String, pub title: String, pub title_gen: i32,
     pub save_state: String, pub save_text: String, pub save_tip: String,
     pub blocks: Vec<BlockRow>, pub sel_count: usize,
-    pub focus: (String, i32, i32, i32, i32), pub focus_gen: i32, pub cur_id: String, pub drop_y: Option<f32>,
+    pub focus: (String, i32, i32, i32, i32), pub focus_gen: i32, pub focus_fmt: bool, pub cur_id: String, pub drop_y: Option<f32>,
     pub items: Vec<Item>, pub list_msg: String, pub new_busy: bool,
 }
 
@@ -257,7 +259,7 @@ fn place_new(key: &str) -> Place {
     Place {
         key: key.into(), page: None, title: String::new(), mode: if key.is_empty() { "empty".into() } else { "picker".into() }, msg: String::new(), ed: None, fresh: false,
         pages: vec![], search: String::new(), list_msg: String::new(), new_busy: false,
-        focus: (String::new(), -1, -1, 0, 0), focus_gen: 0, title_gen: 0, drop_y: None, cur_id: String::new(), focus_n: 0,
+        focus: (String::new(), -1, -1, 0, 0), focus_gen: 0, focus_fmt: false, title_gen: 0, drop_y: None, cur_id: String::new(), focus_n: 0,
         boxes: vec![], page_box: (0.0, 0.0, 0.0, 0.0), plus: vec![],
     }
 }
@@ -568,7 +570,7 @@ pub(crate) fn place_row(s: &S, key: &str) -> Option<PlaceRow> {
             key: p.key.clone(), mode: p.mode.clone(), msg: p.msg.clone(), page_id: p.ed.as_ref().map(|e| e.page_id.clone()).unwrap_or_default(),
             title: p.ed.as_ref().map(|e| e.title.clone()).unwrap_or_default(), title_gen: p.title_gen,
             save_state: save.0, save_text: save.1, save_tip: save.2,
-            blocks, sel_count, focus: p.focus.clone(), focus_gen: p.focus_gen, cur_id: p.cur_id.clone(), drop_y: p.drop_y,
+            blocks, sel_count, focus: p.focus.clone(), focus_gen: p.focus_gen, focus_fmt: p.focus_fmt, cur_id: p.cur_id.clone(), drop_y: p.drop_y,
             items, list_msg, new_busy: p.new_busy,
         })
     }
@@ -1007,8 +1009,15 @@ fn remote_change(key: &str, info: &Value, cx: &mut App) {
 
 // ─── Focus ───
 
-fn request_focus(key: &str, id: &str, r: i32, c: i32, a: usize, b: usize, cx: &mut App) {
-    with(cx, |s| if let Some(i) = idx(s, key) { let p = &mut s.places[i]; p.focus = (id.to_string(), r, c, a as i32, b as i32); p.focus_gen += 1; });
+fn request_focus(key: &str, id: &str, r: i32, c: i32, a: usize, b: usize, cx: &mut App) { focus_req(key, id, r, c, a, b, false, cx) }
+
+/// A held drag-selection let go (tsel_end): the box takes its range and,
+/// as the web's mouseup runs maybeFormatBar, the format bar opens over it.
+fn request_focus_sel(key: &str, id: &str, r: i32, c: i32, a: usize, b: usize, cx: &mut App) { focus_req(key, id, r, c, a, b, true, cx) }
+
+#[allow(clippy::too_many_arguments)]
+fn focus_req(key: &str, id: &str, r: i32, c: i32, a: usize, b: usize, fmt: bool, cx: &mut App) {
+    with(cx, |s| if let Some(i) = idx(s, key) { let p = &mut s.places[i]; p.focus = (id.to_string(), r, c, a as i32, b as i32); p.focus_gen += 1; p.focus_fmt = fmt; });
     render(key, cx);
 }
 

@@ -167,6 +167,31 @@ fn btn_label(t: &str, color: Hsla, window: &mut Window, cx: &App) -> Rc<Txt> {
 pub fn button_at(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: Look, window: &mut Window, cx: &App) -> Pixels {
     let (bg, fg, border) = colors(look, cx);
     let bw = if border.is_some() { px(1.) } else { px(0.) };
+    paint_button(d, x, y, label, icon, (bg, fg, border), bw, window, cx)
+}
+
+/// A button at rest with its own colours (background, text, edge) and
+/// always a 1 px edge, drawn only when the edge colour shows: the ghost
+/// buttons an area tints itself (the Kanban card's paperclip and menu, whose
+/// live twins are `w::icon_button` / `w::ghost` with the same colours).
+/// The same box as `button_at`; returns its width (`button_tinted_w`).
+#[allow(clippy::too_many_arguments)]
+pub fn button_tinted_at(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, (bg, fg, edge): (Option<Hsla>, Hsla, Hsla), window: &mut Window, cx: &App) -> Pixels {
+    paint_button(d, x, y, label, icon, (bg.map(Background::from), fg, (edge.a > 0.).then_some(edge)), px(1.), window, cx)
+}
+
+/// `button_tinted_at`'s width.
+pub fn button_tinted_w(label: Option<&str>, window: &mut Window, cx: &App) -> Pixels { width(label, px(1.), window, cx) }
+
+fn width(label: Option<&str>, bw: Pixels, window: &mut Window, cx: &App) -> Pixels {
+    match label {
+        None => T::ICON_BTN,
+        Some(l) => bw * 2. + T::BTN_PAD_X * 2. + T::BTN_ICON + r(T::BTN_TEXT * 0.5) + btn_label(l, white(), window, cx).w,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_button(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, (bg, fg, border): (Option<Background>, Hsla, Option<Hsla>), bw: Pixels, window: &mut Window, cx: &App) -> Pixels {
     match label {
         None => {
             let s = T::ICON_BTN;
@@ -195,13 +220,7 @@ pub fn button_at(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: 
 
 /// A button's width at rest (laid out without painting).
 pub fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> Pixels {
-    match label {
-        None => T::ICON_BTN,
-        Some(l) => {
-            let bw = if matches!(look, Look::Default) { px(1.) } else { px(0.) };
-            bw * 2. + T::BTN_PAD_X * 2. + T::BTN_ICON + r(T::BTN_TEXT * 0.5) + btn_label(l, white(), window, cx).w
-        }
-    }
+    width(label, if matches!(look, Look::Default) { px(1.) } else { px(0.) }, window, cx)
 }
 
 /// `w::check`'s box at rest at `at` (CHECK_BOX square), ticked when `on`.

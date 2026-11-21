@@ -653,6 +653,8 @@ pub struct ChatView {
     shared: bool,
 }
 
+impl ChatView { pub(crate) fn head(&self) -> Entity<ChatHead> { self.head.clone() } }
+
 /// The chats a transcript shows now: the panel's (over the graph), the tab's sheet.
 fn wanted_chats(fx: &Fx) -> Vec<String> {
     let mut out = vec![];
@@ -676,6 +678,7 @@ pub(crate) fn release_chats(cx: &mut App) {
 /// The frame's messages for the chats on show (ui-history, ui-event), in one
 /// update per chat; a chat the chat area let go of is subscribed again.
 pub(crate) fn route_chat(batch: &[crundi_core::live::Event], cx: &mut App) {
+    for e in batch { if let crundi_core::live::Event::SecretRequests(v) = e { super::cp_head::on_requests(v, cx); } }
     let stores: Vec<(String, Entity<crundi_chat::store::ChatStore>)> = super::with_fx(cx, |fx| fx.f.chats.iter().map(|c| (c.id.clone(), c.pane.store.clone())).collect());
     if stores.is_empty() { return; }
     for (id, st) in &stores {
@@ -700,14 +703,13 @@ pub(crate) fn route_chat(batch: &[crundi_core::live::Event], cx: &mut App) {
 fn chat_of(fx: &mut Fx, id: &str, back: &'static str, project: &str, window: &mut Window, cx: &mut Context<Fx>) -> (crundi_chat::pane::ChatPane, Entity<ChatHead>) {
     if let Some(c) = fx.f.chats.iter().find(|c| c.id == id) {
         let (pane, head) = (c.pane.clone(), c.head.clone());
-        head.update(cx, |h, cx| if h.back != back || h.project != project { h.back = back; h.project = project.to_string(); cx.notify(); });
+        head.update(cx, |h, cx| h.set_place(back, project, cx));
         return (pane, head);
     }
     let store = cx.new(|cx| crundi_chat::store::ChatStore::new(id, cx));
     // Mini lives in the workbench's chats, not here (the chat area's plain pane).
     let pane = crundi_chat::pane::ChatPane::plain(store.clone(), window, cx);
-    let meta = store.read(cx).meta.clone();
-    let head = cx.new(|cx| ChatHead { meta: meta.clone(), back, project: project.to_string(), _sub: cx.observe(&meta, |_, _, cx| cx.notify()) });
+    let head = cx.new(|cx| ChatHead::new(store.clone(), id, back, project, window, cx));
     // The server replays the conversation on subscribe (ui-history).
     crundi_shell::subscribe(cx, id);
     let shared = crundi_chat::find(cx, id).is_some();
@@ -715,29 +717,17 @@ fn chat_of(fx: &mut Fx, id: &str, back: &'static str, project: &str, window: &mu
     (pane, head)
 }
 
-/// The chat page's header (#cp-head): back, the project's mark, the chat's
-/// title and, under it, its state's dot, the project and the state's word.
-pub struct ChatHead { meta: Entity<crundi_chat::store::ChatMeta>, back: &'static str, project: String, _sub: Subscription }
-impl Render for ChatHead {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let m = &self.meta.read(cx).0;
-        let title = if m.title.is_empty() { "Chat".to_string() } else { m.title.clone() };
-        let word = match m.state.as_str() { "working" => "Working", "needs-input" => "Needs you", "waiting" => "Waiting", "idle" => "Ready", _ => "" };
-        let sub = format!("{}{}{}", self.project, if !word.is_empty() && !self.project.is_empty() { " · " } else { "" }, word);
-        let dot = match m.state.as_str() { "working" => T::amber(), "needs-input" => T::accent_hover(), "idle" => T::green(), _ => T::text_muted() };
-        let back = self.back;
-        div().flex().flex_none().items_center().gap(T::SP_10).px(T::SP_10).py(T::SP_8).bg(T::bg_secondary()).border_b_1().border_color(T::border_subtle())
-            .child(div().id("fx-cp-back").flex_none().size(T::SP_32 + T::SP_6).rounded_full().flex().items_center().justify_center().cursor_pointer()
-                .text_color(T::text_secondary()).active(|s| s.bg(T::bg_hover())).child(w::icon(IconName::ArrowLeft, T::SP_20))
-                .on_click(move |_, _, cx| fact(back, "", "", cx)))
-            .child(div().flex_none().size(T::SP_32 + T::SP_6).rounded(T::R_BUBBLE).bg(T::bg_tertiary()).flex().items_center().justify_center()
-                .text_size(T::TEXT_15).font_weight(T::W_BOLD).text_color(T::white()).child(crundi_core::head::project_initials(&self.project)))
-            .child(div().flex().flex_col().flex_1().min_w_0()
-                .child(div().truncate().text_size(T::TEXT_15).font_weight(T::W_SEMIBOLD).text_color(T::text()).child(title))
-                .child(div().flex().items_center().gap(T::SP_6).min_w_0().text_size(T::TEXT_12).text_color(T::text_secondary())
-                    .child(div().flex_none().size(px(7.)).rounded_full().bg(dot))
-                    .child(div().truncate().child(sub))))
-    }
+pub use super::cp_head::ChatHead;
+
+/// Open in Crundi (the page's openMain('/chat/<id>')): the chat in the
+/// workbench, on its pane (placed there when it has none), the sheet put away.
+pub(crate) fn open_in_crundi(chat: &str, cx: &mut App) {
+    fwith(cx, |s2| { if s2.chat.as_ref().is_some_and(|c| c.0 == chat) { s2.chat_open = false; } });
+    with(cx, |v| if v.chat.as_ref().is_some_and(|c| c.0 == chat) { v.chat = None; });
+    super::bump(cx);
+    crate::util::show_tab(cx, "workbench");
+    let key = format!("live:{chat}");
+    cx.defer(move |cx| if let Some(wb) = crundi_workbench::workbench(cx) { wb.update(cx, |w, cx| { if !w.keys().contains(&key) { w.place(&key, cx); } w.focus_key(&key, cx); }); });
 }
 
 // ─── Actions ───
@@ -823,10 +813,11 @@ pub fn edit(cx: &mut App, form: &str, k: &str, v: &str) {
 
 pub fn props(cx: &mut App) -> Value {
     // The transcripts' conversations, as their stores hold them (rows, entries, state).
-    let chats: Vec<Value> = super::with_fx(cx, |fx| fx.f.chats.iter().map(|c| (c.id.clone(), c.pane.store.clone())).collect::<Vec<_>>()).into_iter().map(|(id, st)| {
+    let chats: Vec<Value> = super::with_fx(cx, |fx| fx.f.chats.iter().map(|c| (c.id.clone(), c.pane.store.clone(), c.head.clone())).collect::<Vec<_>>()).into_iter().map(|(id, st, head)| {
         let s2 = st.read(cx);
         let m = &s2.meta.read(cx).0;
-        json!({ "id": id, "rows": s2.rows.len(), "batches": s2.batches, "title": m.title, "state": m.state })
+        // The page's header (#cp-head) and its approval cards (#cp-ask).
+        json!({ "id": id, "rows": s2.rows.len(), "batches": s2.batches, "title": m.title, "state": m.state, "head": head.read(cx).props(cx) })
     }).collect();
     let mut o = props_of(cx);
     o["transcript"]["stores"] = json!(chats);
@@ -1107,9 +1098,12 @@ pub fn transcript_body(fx: &mut Fx, chat: &str, back: &'static str, window: &mut
     if chat.is_empty() { return div().into_any_element(); }
     let project = { let p = fx.v.run.as_ref().map(|r| s(r, "project")).unwrap_or_default(); if p.is_empty() { fx.f.panel.project.clone() } else { p } };
     let (pane, head) = chat_of(fx, chat, back, &project, window, cx);
+    let asks = head.read(cx).asks.clone();
     // (#cp-head: 8 px above and below a 38 px button.)
     div().id("fx-transcript").flex().flex_col().flex_1().min_h_0().size_full()
-        .child(head.cached(StyleRefinement::default().w_full().h(T::SP_32 + T::SP_6 + T::SP_16).flex_none()))
+        .child(head.clone().cached(StyleRefinement::default().w_full().h(T::SP_32 + T::SP_6 + T::SP_16).flex_none()))
+        // #cp-ask: the secret requests waiting on the owner, under the head.
+        .child(asks.cached(StyleRefinement::default().w_full().flex_none()))
         .child(div().flex().flex_col().flex_1().min_h_0().child(pane.body(cx)))
         .into_any_element()
 }

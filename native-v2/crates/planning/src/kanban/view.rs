@@ -110,7 +110,8 @@ impl Host {
             let g = geom(px(self.width.get()), n);
             for i in made..n {
                 let st = self.store.clone();
-                let v = cx.new(|cx| ColumnView::new(st, i, g, cx));
+                let hs = self.hscroll.clone();
+                let v = cx.new(|cx| ColumnView::new(st, i, g, hs, cx));
                 self.cols.borrow_mut().push(v);
             }
         }
@@ -491,17 +492,22 @@ pub struct ColumnView {
     cards: super::card_el::Cache,
     /// The height it needs (head and cards; the board caps it), as last laid out.
     pub needed: Pixels,
+    /// The board's sideways scroll (a card shown from elsewhere brings its column in).
+    hscroll: ScrollHandle,
+    /// The last flash this view brought into sight (F173: once per show, so
+    /// nothing else, a held card at the board's edge say, is pulled back).
+    revealed: u64,
     _subs: Vec<Subscription>,
 }
 
 impl ColumnView {
-    fn new(store: Entity<KStore>, idx: usize, geom: Geom, cx: &mut Context<Self>) -> Self {
+    fn new(store: Entity<KStore>, idx: usize, geom: Geom, hscroll: ScrollHandle, cx: &mut Context<Self>) -> Self {
         let drag = store.read(cx).drag.clone();
         let subs = vec![
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), _subs: subs };
+        let mut v = ColumnView { store, idx, col: None, items: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.).measure_all(), geom, drop_here: false, hot: None, last_top: None, all_live: false, cards: Rc::default(), needed: px(4000.), hscroll, revealed: 0, _subs: subs };
         v.sync(cx);
         v
     }
@@ -517,6 +523,25 @@ impl ColumnView {
         let head_changed = self.col.as_ref().is_none_or(|o| o.label != c.label || o.cards.len() != c.cards.len() || o.other != c.other || o.status != c.status);
         let spliced = splice_diff(&self.list, &self.items, &items);
         let changed = spliced || head_changed || drop_here != self.drop_here || k.all_live != self.all_live;
+        // A card shown from elsewhere (Cru's show_in_crundi): brought into
+        // sight once, as the web's scrollIntoView({block:'center'}) does
+        // (webapp-html.js:19142-19147): its row in the column, its column on the board.
+        let shown = k.flash.as_ref().filter(|f| f.1 != self.revealed).and_then(|f| items.iter().position(|it| matches!(it, Item::Card { card, .. } if card.id == f.0)).map(|ix| (f.1, ix)));
+        if let Some((n, ix)) = shown {
+            self.revealed = n;
+            self.list.scroll_to_reveal_item(ix);
+            let vb = self.hscroll.bounds();
+            let (vw, max) = (vb.size.width, self.hscroll.max_offset().x);
+            if vw > px(0.) {
+                let x = T::SP_12 + (self.geom.col_w + T::SP_12) * self.idx as f32;
+                let off = -self.hscroll.offset().x;
+                if x < off || x + self.geom.col_w > off + vw {
+                    let to = (x - (vw - self.geom.col_w) / 2.).clamp(px(0.), max.max(px(0.)));
+                    self.hscroll.set_offset(point(-to, px(0.)));
+                }
+            }
+        }
+        let changed = changed || shown.is_some();
         self.all_live = k.all_live;
         self.col = col;
         self.items = Rc::new(items);
@@ -596,7 +621,7 @@ impl Render for ColumnView {
 #[derive(Clone, PartialEq)]
 enum SRow { Gap(Pixels), Head { col: Rc<Col>, drop: bool }, It { item: Item, drop: bool, other: bool, last: bool } }
 
-pub struct StackView { store: Entity<KStore>, rows: Rc<Vec<SRow>>, list: ListState, geom: Geom, hot: Option<usize>, last_top: Option<ListOffset>, all_live: bool, cards: super::card_el::Cache, _subs: Vec<Subscription> }
+pub struct StackView { store: Entity<KStore>, rows: Rc<Vec<SRow>>, list: ListState, geom: Geom, hot: Option<usize>, last_top: Option<ListOffset>, all_live: bool, cards: super::card_el::Cache, revealed: u64, _subs: Vec<Subscription> }
 
 impl StackView {
     fn new(store: Entity<KStore>, cx: &mut Context<Self>) -> Self {
@@ -605,7 +630,7 @@ impl StackView {
             cx.observe(&store, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
             cx.observe(&drag, |this: &mut Self, _, cx| if this.sync(cx) { cx.notify() }),
         ];
-        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), _subs: subs };
+        let mut v = StackView { store, rows: Rc::new(vec![]), list: ListState::new(0, ListAlignment::Top, T::SP_48 * 4.), geom: Geom::default(), hot: None, last_top: None, all_live: false, cards: Rc::default(), revealed: 0, _subs: subs };
         v.sync(cx);
         v
     }
@@ -625,6 +650,10 @@ impl StackView {
         }
         rows.push(SRow::Gap(T::SP_12));
         let changed = splice_diff(&self.list, &self.rows, &rows) || k.all_live != self.all_live;
+        // A card shown from elsewhere: its row brought into sight once (F173).
+        let shown = k.flash.as_ref().filter(|f| f.1 != self.revealed).and_then(|f| rows.iter().position(|r| matches!(r, SRow::It { item: Item::Card { card, .. }, .. } if card.id == f.0)).map(|ix| (f.1, ix)));
+        if let Some((n, ix)) = shown { self.revealed = n; self.list.scroll_to_reveal_item(ix); }
+        let changed = changed || shown.is_some();
         self.all_live = k.all_live;
         self.rows = Rc::new(rows);
         changed

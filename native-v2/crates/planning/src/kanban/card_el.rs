@@ -32,47 +32,18 @@ fn button(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconNam
 
 fn button_w(label: Option<&str>, look: Look, window: &mut Window, cx: &App) -> Pixels { crundi_widgets::paint::button_w(label, look, window, cx) }
 
-/// A ghost button with its own colours and a 1 px edge (transparent when
-/// none), as view.rs builds the paperclip and the menu: `w::paint::button_at`
-/// with (background, text, edge) given. Returns its width.
+/// A ghost button with its own colours (clip_look / menu_look, the same
+/// colours view.rs gives the live paperclip and menu): `w::paint::button_tinted_at`,
+/// its place a hit. Returns its width.
 #[allow(clippy::too_many_arguments)]
-fn button_tint(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, (bg, fg, edge): (Option<Hsla>, Hsla, Hsla), hit: &str, window: &mut Window, cx: &App) -> Pixels {
-    let bw = px(1.);
-    let w = match label {
-        None => {
-            let s = T::ICON_BTN;
-            if let Some(c) = bg { d.bg(b(x, y, s, s), T::BTN_RADIUS, c); }
-            let o = r((s - bw * 2. - T::ICON_BTN_ICON) / 2.);
-            d.icon(icon, b(x + bw + o, y + bw + o, T::ICON_BTN_ICON, T::ICON_BTN_ICON), fg);
-            if edge.a > 0. { d.border(b(x, y, s, s), T::BTN_RADIUS, bw, edge); }
-            s
-        }
-        Some(l) => {
-            let t = Rc::new(Txt::shape(l, T::BTN_TEXT, T::BTN_WEIGHT, d.fade(fg), 1.25, None, None, window, cx));
-            let gap = r(T::BTN_TEXT * 0.5);
-            let w = tint_w(Some(l), window, cx);
-            let h = T::BTN_H;
-            if let Some(c) = bg { d.bg(b(x, y, w, h), T::BTN_RADIUS, c); }
-            let inner = h - bw * 2.;
-            let cx0 = x + bw + T::BTN_PAD_X;
-            d.icon(icon, b(cx0, y + bw + r((inner - T::BTN_ICON) / 2.), T::BTN_ICON, T::BTN_ICON), fg);
-            let th_ = t.h;
-            d.text(t, point(cx0 + T::BTN_ICON + gap, y + bw + r((inner - th_) / 2.)));
-            if edge.a > 0. { d.border(b(x, y, w, h), T::BTN_RADIUS, bw, edge); }
-            w
-        }
-    };
+fn button_tint(d: &mut Draw, x: Pixels, y: Pixels, label: Option<&str>, icon: IconName, look: (Option<Hsla>, Hsla, Hsla), hit: &str, window: &mut Window, cx: &App) -> Pixels {
+    let w = crundi_widgets::paint::button_tinted_at(d, x, y, label, icon, look, window, cx);
     d.hits.push((b(x, y, w, T::BTN_H.max(T::ICON_BTN)), hit.to_string()));
     w
 }
 
 /// `button_tint`'s width.
-fn tint_w(label: Option<&str>, window: &mut Window, cx: &App) -> Pixels {
-    match label {
-        None => T::ICON_BTN,
-        Some(l) => px(2.) + T::BTN_PAD_X * 2. + T::BTN_ICON + r(T::BTN_TEXT * 0.5) + Txt::shape(l, T::BTN_TEXT, T::BTN_WEIGHT, T::white(), 1.25, None, None, window, cx).w,
-    }
-}
+fn tint_w(label: Option<&str>, window: &mut Window, cx: &App) -> Pixels { crundi_widgets::paint::button_tinted_w(label, window, cx) }
 
 /// The paperclip's colours (view.rs: .card-clip, .has, .open).
 pub(crate) fn clip_look(media: bool, open: bool) -> (Option<Hsla>, Hsla, Hsla) {

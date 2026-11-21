@@ -56,6 +56,7 @@ pub mod send_button; pub use send_button::send_button;
 pub mod disclosure; pub use disclosure::disclosure;
 pub mod fold; pub use fold::{disclosure_at, fold_chevron};
 pub mod filter_chip; pub use filter_chip::filter_chip;
+pub mod day_toggle; pub use day_toggle::day_toggle;
 pub mod kbd; pub use kbd::kbd;
 pub mod key_row; pub use key_row::key_row;
 pub mod page_item; pub use page_item::page_item;
